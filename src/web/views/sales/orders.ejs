@@ -28,6 +28,7 @@
   var unpaid = done.filter(function (o) { return o.status === 'FULFILLED' && o.next && o.next.rank > 10; });
   var stuck = open.filter(function (o) { return o.next && o.next.rank >= 80; });
   var ready = open.filter(function (o) { return o.next && o.next.rank === 60; });
+  var waiting = open.filter(function (o) { return o.next && o.next.rank >= 70 && o.next.rank < 80; });
   var moving = open.filter(function (o) { return o.next && o.next.rank < 60; });
 
   var counts = { all: orders.length, stuck: stuck.length, ready: ready.length, moving: moving.length, unpaid: unpaid.length, done: done.length };
@@ -44,18 +45,18 @@
   };
   var stepHref = function (order) {
     var target = order.next && order.next.href && order.next.href.charAt(0) === '#' ? order.next.href.slice(1) : null;
-    return target ? '/orders/' + order.id + '/detail?open=' + target + '#' + target : '/orders/' + order.id;
+    return target ? '/orders/' + order.id + '?open=' + target + '#' + target : '/orders/' + order.id;
   };
 %>
 
-<p class="rm-stamp"><%= counts.stuck %> need you · <%= counts.ready + counts.moving %> moving · <%= counts.unpaid %> unpaid · <%= counts.done %> done</p>
+<p class="rm-stamp"><%= counts.stuck %> fulfilment exceptions · <%= waiting.length %> waiting for stock · <%= counts.ready + counts.moving %> ready or moving · <%= counts.unpaid %> unpaid · <%= counts.done %> done</p>
 <h1 class="rm-figure">
   <% if (view === 'stuck') { %><%= counts.stuck %> order<%= counts.stuck === 1 ? ' needs' : 's need' %> you.
   <% } else if (view === 'ready') { %><%= counts.ready %> order<%= counts.ready === 1 ? ' is' : 's are' %> ready to pick.
   <% } else if (view === 'moving') { %><%= counts.moving %> order<%= counts.moving === 1 ? ' is' : 's are' %> being picked or shipped.
-  <% } else if (view === 'unpaid') { %><%= counts.unpaid %> shipped order<%= counts.unpaid === 1 ? ' is' : 's are' %> still unpaid.
+  <% } else if (view === 'unpaid') { %><%= counts.unpaid %> completed order<%= counts.unpaid === 1 ? ' is' : 's are' %> still unpaid.
   <% } else if (view === 'done') { %><%= counts.done %> order<%= counts.done === 1 ? ' is' : 's are' %> done.
-  <% } else if (!counts.stuck && !counts.ready && !counts.moving && counts.unpaid) { %><%= counts.unpaid %> delivered order<%= counts.unpaid === 1 ? ' is' : 's are' %> still unpaid.
+  <% } else if (!counts.stuck && !counts.ready && !counts.moving && counts.unpaid) { %><%= counts.unpaid %> completed order<%= counts.unpaid === 1 ? ' is' : 's are' %> still unpaid.
   <% } else { %><%= summary %><% } %>
 </h1>
 <p class="rm-sub">
@@ -64,12 +65,16 @@
     it becomes a page that tells the whole story of it.
   <% } else if (stuck.length && view === 'all') { %>
     The ones that need you are first. Everything below them is moving on its own.
+  <% } else if (waiting.length && view === 'all') { %>
+    <%= waiting.length %> orders are waiting for physical stock. Incoming purchases do not count as available; open an order to review its shortage and supply dates.
+  <% } else if (open.length && counts.unpaid && view === 'all') { %>
+    Open the active <%= open.length === 1 ? 'order' : 'orders' %> to see the current fulfilment step, or follow up on the completed <%= counts.unpaid === 1 ? 'order that still needs' : 'orders that still need' %> payment.
   <% } else if (open.length) { %>
-    Nothing is stuck. Each of these is on its way and I am getting on with it.
+    Nothing is stuck. <%= open.length === 1 ? 'The active order is' : 'These active orders are' %> moving.
   <% } else if (counts.done && !counts.unpaid) { %>
     No active order is waiting. Completed and cancelled orders remain below as history.
   <% } else if (counts.unpaid) { %>
-    Nothing is waiting to ship, but <%= counts.unpaid === 1 ? 'one shipped order has' : counts.unpaid + ' shipped orders have' %> not been paid for.
+    Nothing is waiting to fulfil, but <%= counts.unpaid === 1 ? 'one completed order has' : counts.unpaid + ' completed orders have' %> not been paid for.
   <% } else { %>
     No active order is waiting.
   <% } %>
@@ -87,7 +92,7 @@
     <% if (counts.stuck) { %><a class="chip <%= view === 'stuck' ? 'is-active' : '' %>" href="/orders?view=stuck">Need you · <%= counts.stuck %></a><% } %>
     <a class="chip <%= view === 'ready' ? 'is-active' : '' %>" href="/orders?view=ready">Ready to pick · <%= counts.ready %></a>
     <a class="chip <%= view === 'moving' ? 'is-active' : '' %>" href="/orders?view=moving">Being picked or shipped · <%= counts.moving %></a>
-    <% if (counts.unpaid) { %><a class="chip <%= view === 'unpaid' ? 'is-active' : '' %>" href="/orders?view=unpaid">Shipped, unpaid · <%= counts.unpaid %></a><% } %>
+    <% if (counts.unpaid) { %><a class="chip <%= view === 'unpaid' ? 'is-active' : '' %>" href="/orders?view=unpaid">Completed, unpaid · <%= counts.unpaid %></a><% } %>
     <a class="chip <%= view === 'done' ? 'is-active' : '' %>" href="/orders?view=done">Done · <%= counts.done %></a>
   </div>
 <% } %>
@@ -117,7 +122,7 @@
 <% } %>
 
 <% if (done.length) { %>
-  <p class="rm-stamp"><%= view === 'unpaid' ? 'Shipped, unpaid' : 'Done' %> · <%= done.length %></p>
+  <p class="rm-stamp"><%= view === 'unpaid' ? 'Completed, unpaid' : 'Done' %> · <%= done.length %></p>
   <div class="rm-told">
     <% done.slice(0, view === 'all' ? 12 : done.length).forEach(function (order) { %>
       <% var owed = order.status === 'FULFILLED' && order.next && order.next.rank > 10; %>

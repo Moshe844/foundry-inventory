@@ -5,6 +5,27 @@
   </div>
 </div>
 
+<% if (canAdmin && !authorityProposal.alreadyConfigured) { %>
+<section class="card section" aria-label="Limits from your own records">
+  <div class="card-head"><h2>Suggested limits from your records</h2></div>
+  <div class="card-body">
+  <% if (authorityProposal.available) { %>
+    <% if (authorityProposal.suppliers.length) { %><p>Based on <%= authorityProposal.evidence.length %> priced USD orders placed in the last 90 days. Usual suppliers: <%= authorityProposal.suppliers.map(function (supplier) { return supplier.name; }).join(', ') %>.</p><% } else { %><p>Your recent label history supports the shipping limits below. There is not enough qualifying supplier history to propose purchase authority.</p><% } %>
+    <% if (authorityProposal.suppliers.length) { %><p>Approve replenishment for the <%= authorityProposal.itemScope.length %> previously purchased products, up to <strong>$<%= authorityProposal.maximumValue.toFixed(2) %> per order</strong> and <strong>$<%= authorityProposal.maximumValuePerWeek.toFixed(2) %> in any rolling seven days</strong>. These are your largest observed order and seven-day spend, not invented budgets.</p><% } %>
+    <p>Demand, incoming supply, pack rules and price checks still have to pass. <%= authorityProposal.excludedCount %> orders were excluded because evidence or supplier history was insufficient.</p>
+    <% authorityProposal.email.forEach(function (email) { %><p>Send newly approved routine POs and status follow-ups to <strong><%= email.supplierName %> · <%= email.recipient %></strong> using <%= email.mailboxName %>, up to <strong>$<%= (email.maximumValueMinor / 100).toFixed(2) %> USD per order</strong>. Initial POs approved before this confirmation still require individual review.</p><% }) %>
+    <% authorityProposal.shipping.forEach(function (shipping) { %><p>Buy <strong><%= shipping.carrier %> <%= shipping.service %></strong> labels for packed, eligible parcels up to <strong>$<%= (shipping.maximumValueMinor / 100).toFixed(2) %> USD per label</strong>, based on <%= shipping.evidence.length %> recorded successful purchases. Fresh rates and any promised delivery date must pass.</p><% }) %>
+    <% if (!authorityProposal.email.length) { %><p>Supplier email still asks first: a usual supplier needs a saved recipient and connected Gmail or Outlook mailbox.</p><% } %>
+    <% if (!authorityProposal.shipping.length) { %><p>Shipping labels still ask first: connect a carrier account and record at least three successful USD label purchases for a service. If accounting is enabled, its base currency must also be USD.</p><% } %>
+    <p>Payments are not authorised by this confirmation. Connected status and recorded history are not live-provider certification. Existing authorisations are never silently widened.</p>
+    <form method="post" action="/autopilot/authority-proposal/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="expectedHash" value="<%= authorityProposal.integrityHash %>"><button class="btn btn--primary" type="submit">Confirm these limits</button></form>
+  <% } else { %>
+    <p>No spending limits are guessed. Add at least three priced USD orders actually placed with a supplier to get a proposal. You can set your own limits below instead.</p>
+  <% } %>
+  </div>
+</section>
+<% } %>
+<p><a href="/autopilot/daily">Daily digest and batch approvals</a> · <a href="/autopilot/misses">Report or review an Ask miss</a></p>
 <div class="card section">
   <div class="card-head">
     <h2>How should StockChief work?</h2>
@@ -138,12 +159,14 @@
                   <span class="routine-limit"><span>$</span><input class="input" type="number" name="maximumValue" value="<%= routine.purchasing.maximumValue %>" min="0.01" step="0.01" required> <span>per order</span></span>
                 </label>
                 <fieldset class="field routine-suppliers">
+                  <label class="field"><span class="field-label">USD budget in any rolling seven days (blank means no weekly cap)</span><input class="input" type="number" name="maximumValuePerWeek" min="0.01" step="0.01" value="<%= routine.purchasing.maximumValuePerWeek || '' %>"></label>
+                  <% if (routine.purchasing.itemScope.length) { %><p>Limited to the <%= routine.purchasing.itemScope.length %> products covered by your data-backed approval. Saving here preserves that product scope.</p><% } %>
                   <legend class="field-label">Approved suppliers</legend>
                   <% suppliers.forEach(function (supplier) { %>
                     <label class="check"><input type="checkbox" name="supplierScope" value="<%= supplier.id %>" <%= routine.purchasing.supplierIds.includes(supplier.id) ? 'checked' : '' %>> <%= supplier.name %></label>
                   <% }) %>
                 </fieldset>
-                <p class="field-help"><strong>No supplier connection is active.</strong> “Ordered” is recorded inside StockChief; this version does not email, upload or transmit the PO to the supplier.</p>
+                <p class="field-help">“Ordered” records the internal purchase approval, not supplier delivery. Email is sent only when a saved recipient, connected mailbox and separately approved email limits all pass. Check the daily digest for the actual message status.</p>
               </div>
             <% } else { %>
               <p class="field-help routine-capability__limits">Add an active supplier before StockChief can reorder.</p>

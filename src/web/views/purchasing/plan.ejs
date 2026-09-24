@@ -17,7 +17,8 @@
    * those four are places to go, and now look like it.
    */
   var short = plan.blocked.filter(function (line) { return line.reason === 'no_supplier'; });
-  var unknown = plan.blocked.filter(function (line) { return line.reason !== 'no_supplier'; });
+  var unknown = plan.blocked.filter(function (line) { return line.reason === 'no_usage_evidence'; });
+  var timingRisks = plan.blocked.filter(function (line) { return line.reason === 'incoming_timing_risk'; });
   var stuck = short.length > 0;
   var hasPlan = plan.recommendations.length > 0;
 
@@ -251,7 +252,9 @@
   <% } else { %>
     <div class="quiet-note">
       <span class="dot dot--ok" aria-hidden="true"></span>
-      <% if (unknown.length && plan.covered.length) { %>
+      <% if (timingRisks.length) { %>
+        Incoming quantities are not sufficient proof of timely coverage. Review the arrival decisions below; no duplicate purchase was prepared.
+      <% } else if (unknown.length && plan.covered.length) { %>
         <%= plan.covered.length === 1 ? 'One version was checked and is' : plan.covered.length + ' versions were checked and are' %>
         fine for now. StockChief has not seen the other <%= unknown.length === 1 ? 'one' : unknown.length %> selling yet.
       <% } else if (unknown.length) { %>
@@ -269,6 +272,12 @@
   <% } %>
 </section>
 
+<% if (timingRisks.length) { %>
+<section class="card section" role="alert"><div class="card-head"><h2>Incoming stock is not proven coverage</h2></div><div class="card-body">
+  <p>The aggregate order quantity is sufficient, but its timing needs review. Nothing has been ordered twice.</p>
+  <% timingRisks.forEach(function(line) { %><article class="fold-note"><h3><a href="/purchasing/why/<%= line.skuId %>"><%= line.displayName %></a></h3><p><%= line.explanation %></p><% line.incoming.orders.forEach(function(order) { %><p><a href="/purchasing/orders/<%= order.poId %>">Review <%= order.poNumber %></a></p><% }) %></article><% }) %>
+</div></section>
+<% } %>
 <%# ------------------------------------------------------------- On the way %>
 <section class="section">
   <div class="section-head">

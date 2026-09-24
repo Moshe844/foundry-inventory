@@ -66,18 +66,17 @@ function listItems(db, workspaceId, options = {}) {
   }
 
   const stockExpr = options.locationId
-    ? `COALESCE((SELECT SUM(b.on_hand) FROM balances b JOIN skus s ON s.id = b.sku_id
-                  WHERE s.item_id = i.id AND b.location_id = @locationId), 0)`
-    : `COALESCE((SELECT SUM(b.on_hand) FROM balances b JOIN skus s ON s.id = b.sku_id
-                  WHERE s.item_id = i.id), 0)`;
+    ? `COALESCE((SELECT r.on_hand FROM item_location_balances r
+                  WHERE r.item_id = i.id AND r.location_id = @locationId), 0)`
+    : `COALESCE((SELECT SUM(r.on_hand) FROM item_location_balances r WHERE r.item_id = i.id), 0)`;
 
   const sql = `
     SELECT i.*,
            ${stockExpr} AS on_hand,
-           (SELECT COUNT(*) FROM skus s WHERE s.item_id = i.id) AS sku_count,
-           (SELECT COUNT(DISTINCT b.location_id) FROM balances b JOIN skus s ON s.id = b.sku_id
-             WHERE s.item_id = i.id AND b.on_hand <> 0) AS location_count,
-           (SELECT s.code FROM skus s WHERE s.item_id = i.id ORDER BY s.position LIMIT 1) AS first_sku_code
+           COALESCE((SELECT r.sku_count FROM item_catalog_rollups r WHERE r.item_id = i.id), 0) AS sku_count,
+           (SELECT COUNT(*) FROM item_location_balances r
+             WHERE r.item_id = i.id AND r.on_hand <> 0) AS location_count,
+           (SELECT r.first_sku_code FROM item_catalog_rollups r WHERE r.item_id = i.id) AS first_sku_code
       FROM items i
      WHERE ${where.join(' AND ')}
      ORDER BY ${orderClause(options.sort)}

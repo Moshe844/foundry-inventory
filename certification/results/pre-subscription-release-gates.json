@@ -1,0 +1,23 @@
+{
+  "certificationScenarios": { "passed": 100, "total": 100, "skipped": 0 },
+  "engineIntegrationRegression": { "passed": 2084, "total": 2084, "skipped": 0, "evidence": "full-regression-final.log" },
+  "browserRegression": { "passed": 204, "total": 204, "consecutiveRuns": 2, "skipped": 0, "evidence": "full-browser-regression-final.log" },
+  "liveLanguageRegression": { "passed": 74, "total": 74, "skipped": 0, "evidencePattern": "live-*-final.log" },
+  "nativePostgresql": { "passed": 8, "total": 8, "skipped": 0, "evidence": "full-postgres-regression.log" },
+  "adversarialRuntime": { "passed": 41, "total": 41, "skipped": 0, "evidence": "adversarial-runtime.log" },
+  "workerThroughput": { "completedJobs": 5000, "jobsPerSecond": 601, "minimumJobsPerSecond": 75, "passed": true, "evidence": "worker-throughput.log" },
+  "localHttpSoak": { "durationSeconds": 60, "concurrency": 20, "requests": 488538, "errors": 0, "p95Ms": 5, "passed": true, "evidence": "load-soak-local-60s.log" },
+  "scale": {
+    "products": 50000,
+    "variantSkus": 50000,
+    "largeSkus": 250000,
+    "largeMovements": 1000001,
+    "passed": true,
+    "evidence": ["scale-products-50000.log", "scale-variant-50000.log", "scale-large-250000.log"]
+  },
+  "localRestore": { "passed": true, "hostingPlatformDrill": false, "evidence": "restore-local.log" },
+  "actualThirdPartySandboxEndToEndComplete": false,
+  "productionDeploymentRecoveryComplete": false,
+  "subscriptionsAdded": false,
+  "recommendSubscriptionsNow": false
+}

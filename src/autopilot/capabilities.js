@@ -79,11 +79,11 @@ const CAPABILITIES = {
     domain: 'shipping',
     label: 'Buy shipping labels',
     blurb: 'When a parcel is ready and a shipping rule covers it, StockChief buys the label from the '
-      + 'carrier and the parcel goes.',
+      + 'carrier. The parcel stays packed until its physical handoff is recorded.',
     // Named plainly. Everything else about shipping is free — asking a carrier
     // what something would cost commits nobody — and this one step is the one
     // that takes money out, so it is the one that needs saying yes to.
-    consequence: 'Money is spent with a carrier, and goods leave.',
+    consequence: 'Postage is purchased; inventory moves only when handoff is recorded.',
   },
   shipping_notices: {
     domain: 'sales',

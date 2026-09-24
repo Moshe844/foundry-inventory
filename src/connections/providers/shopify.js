@@ -23,6 +23,10 @@ function normalizeShop(value) {
   return shop;
 }
 
+function validateInput(input) {
+  normalizeShop(input.shop);
+}
+
 function authorizationUrl({ state, input }) {
   if (!config.connections.shopify.configured) throw new ValidationError('Shopify is not configured on this StockChief installation.');
   const shop = normalizeShop(input.shop);
@@ -204,13 +208,42 @@ async function registerWebhooks({ credentials, webhookUrl }) {
   const topics = ['ORDERS_CREATE', 'ORDERS_UPDATED', 'ORDERS_CANCELLED', 'ORDERS_FULFILLED',
     'FULFILLMENTS_CREATE', 'REFUNDS_CREATE',
     'PRODUCTS_CREATE', 'PRODUCTS_UPDATE', 'LOCATIONS_CREATE', 'LOCATIONS_UPDATE', 'APP_UNINSTALLED'];
+  const listed = await graphql(credentials, `query StockChiefWebhooks {
+    webhookSubscriptions(first:250){nodes{id topic uri}}
+  }`);
+  const existing = listed.webhookSubscriptions?.nodes || [];
   const mutation = `mutation AddWebhook($topic:WebhookSubscriptionTopic!,$input:WebhookSubscriptionInput!){webhookSubscriptionCreate(topic:$topic,webhookSubscription:$input){userErrors{message} webhookSubscription{id}}}`;
   const results = [];
   for (const topic of topics) {
+    const current = existing.find((hook) => hook.topic === topic && hook.uri === webhookUrl);
+    if (current) {
+      results.push({ topic, id: current.id, existing: true });
+      continue;
+    }
     const data = await graphql(credentials, mutation, { topic, input: { uri: webhookUrl, format: 'JSON' } });
     const errors = data.webhookSubscriptionCreate.userErrors || [];
     if (errors.length) results.push({ topic, error: errors.map((e) => e.message).join('; ') });
     else results.push({ topic, id: data.webhookSubscriptionCreate.webhookSubscription?.id });
+  }
+  if (!results.some((row) => row.error)) {
+    const keep = new Set();
+    const stale = existing.filter((hook) => {
+      let managed = false;
+      try { managed = /^\/api\/v1\/connections\/shopify\/webhooks\/[^/]+$/.test(new URL(hook.uri).pathname); }
+      catch (_) { return false; }
+      if (!managed) return false;
+      const key = `${hook.topic}:${hook.uri}`;
+      if (hook.uri === webhookUrl && !keep.has(key)) { keep.add(key); return false; }
+      return true;
+    });
+    const remove = `mutation RemoveWebhook($id:ID!){webhookSubscriptionDelete(id:$id){deletedWebhookSubscriptionId userErrors{message}}}`;
+    for (const hook of stale) {
+      const data = await graphql(credentials, remove, { id: hook.id });
+      const errors = data.webhookSubscriptionDelete.userErrors || [];
+      results.push(errors.length
+        ? { topic: hook.topic, error: errors.map((error) => error.message).join('; ') }
+        : { topic: hook.topic, id: hook.id, removedStale: true });
+    }
   }
   return results;
 }
@@ -283,6 +316,6 @@ function normalizeWebhook({ headers, body }) {
   throw new ValidationError(`Shopify topic ${topic || '(missing)'} is not supported.`);
 }
 
-module.exports = { metadata, normalizeShop, authorizationUrl, tryDirectAuthorization, refreshCredentials,
+module.exports = { metadata, normalizeShop, validateInput, authorizationUrl, tryDirectAuthorization, refreshCredentials,
   verifyOAuthQuery, exchangeAuthorization, discover, bootstrapSnapshot, registerWebhooks, historySummary, verifyWebhook,
   normalizeWebhook, graphql, API_VERSION };

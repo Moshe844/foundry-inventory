@@ -12,6 +12,7 @@ const policyService = require('../../src/purchasing/policy-service');
 const supplierService = require('../../src/purchasing/supplier-service');
 const authService = require('../../src/domain/auth-service');
 const plan = require('../../src/purchasing/replenishment-plan');
+const planningService = require('../../src/forecasting/planning-service');
 
 test.after(cleanupAll);
 
@@ -224,4 +225,46 @@ test('below the point with no supplier is blocked, and says which line', () => {
   assert.equal(result.purchase, null);
   assert.ok(result.belowReorderPoint);
   env.db.close();
+});
+
+test('an evidence-complete optimizer choice replaces the rule-only transfer-versus-buy decision', () => {
+  const env = twoLocations({ warehouseStock: 45, shopStock: 3, shopSales: 20 });
+  const preferred = addSupplier(env);
+  const alternate = supplierService.createSupplier(env.db, env.workspace.ctx, env.membership, {
+    name: 'Faster Supply',
+  });
+  supplierService.linkItem(env.db, env.workspace.ctx, env.membership, {
+    supplierId: alternate.id, skuId: env.item.skuId, purchaseUnit: 'case',
+    unitsPerPurchaseUnit: 12, leadTimeDays: 4, lastUnitCost: 5, isPreferred: false,
+  });
+  setLevels(env, { reorderPoint: 60, targetStock: 84, preferredSupplierId: preferred.id });
+  const original = planningService.forSku;
+  planningService.forSku = () => ({ adaptivePlan: {
+    confidence: 'high',
+    explanation: 'Move what is already owned and buy the remaining shortage from the faster supplier.',
+    constraints: { currency: 'USD', cash: { known: true, availableForNewCommitmentsMinor: 100_000 } },
+    alternatives: [{ type: 'WAIT' }, { type: 'BUY' }, { type: 'TRANSFER_AND_BUY' }],
+    expectedResult: { expectedShortageUnits: 0 },
+    chosen: {
+      type: 'TRANSFER_AND_BUY', transferUnits: 12, purchaseUnits: 24,
+      quantityUnits: 36, quantityPurchaseUnits: 2, purchaseUnit: 'case',
+      requestedUnits: 24, supplierId: alternate.id, supplierName: 'Faster Supply',
+      productCostMinor: 12_000, totalCostMinor: 12_000, arrivalDays: 4,
+      transfers: [{ fromLocationId: env.warehouse.id, fromLocationName: env.warehouse.name,
+        toLocationId: env.shop.id, toLocationName: env.shop.name, units: 12,
+        arrivalDays: 1, costMinor: 500, why: 'Recorded van timing and cost cover the shop sooner.' }],
+    },
+  } });
+  try {
+    const result = plan.buildPlan(env.db, env.workspace.workspaceId, env.signalsFor());
+    assert.equal(result.decisionSource, 'adaptive_optimizer');
+    assert.equal(result.decision, 'transfer_and_purchase');
+    assert.equal(result.transfers[0].quantity, 12);
+    assert.equal(result.purchase.supplierId, alternate.id);
+    assert.equal(result.purchase.quantityUnits, 24);
+    assert.match(result.explanation, /compared 3 evidenced options/i);
+  } finally {
+    planningService.forSku = original;
+    env.db.close();
+  }
 });

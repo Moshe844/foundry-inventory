@@ -37,7 +37,7 @@ const backtest = require('./backtest');
  * months later, the version says which arithmetic produced it — otherwise the
  * only way to explain an old decision is to re-run today's code and hope.
  */
-const FORECAST_VERSION = 'forecast-v1';
+const FORECAST_VERSION = 'forecast-v2';
 
 const CONFIDENCE = {
   LEARNING: 'learning',

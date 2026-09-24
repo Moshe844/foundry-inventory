@@ -72,6 +72,22 @@ function oauthReturnPage(res, input) {
   });
 }
 
+function existingShopifyConnector(db, workspaceId, shop) {
+  const normalizedShop = String(shop || '').trim().toLowerCase();
+  return connections.list(db, workspaceId)
+    .filter((connection) => connection.provider_type === 'shopify'
+      && String(connection.config.shop || '').toLowerCase() === normalizedShop)
+    .sort((left, right) => {
+      const leftMapped = Number(left.productsMapped || 0) + Number(left.locationsMapped || 0);
+      const rightMapped = Number(right.productsMapped || 0) + Number(right.locationsMapped || 0);
+      if (leftMapped !== rightMapped) return rightMapped - leftMapped;
+      const leftBootstrapped = left.config.catalogBootstrap ? 1 : 0;
+      const rightBootstrapped = right.config.catalogBootstrap ? 1 : 0;
+      if (leftBootstrapped !== rightBootstrapped) return rightBootstrapped - leftBootstrapped;
+      return String(left.created_at || '').localeCompare(String(right.created_at || ''));
+    })[0] || null;
+}
+
 function configuredPublicOrigin() {
   if (!process.env.FOUNDRY_PUBLIC_URL) return '';
   try {
@@ -122,10 +138,12 @@ router.get('/settings/connections', (req, res, next) => {
   return next();
 }, asyncRoute(async (req, res) => {
   if (req.query.shop) {
+    const existing = existingShopifyConnector(req.db, req.ctx.workspaceId, req.query.shop);
     const started = await providerService.beginAuthorization(req.db, req.ctx, {
       providerType: 'shopify',
       shop: req.query.shop,
       displayName: 'Shopify',
+      connectorId: existing?.id,
       forceOAuth: true,
     }, `${req.protocol}://${req.get('host')}`);
     return res.redirect(303, started.redirectUrl);
@@ -226,9 +244,11 @@ router.get('/settings/connections/payments/start', requireOwner, (req, res) => {
 /*
  * Connecting without handing over a key.
  *
- * Sends the merchant to Stripe's own page, where they sign in or sign up and
- * approve. Nothing of theirs is typed into StockChief, and what comes back is an
- * account id rather than a credential.
+ * Sends the merchant to Stripe's own page. Installations with legacy Connect
+ * OAuth let them select an existing account; current Stripe platforms create
+ * or finish a Standard connected account owned by that business. Nothing of
+ * theirs is typed into StockChief, and StockChief stores an account id rather
+ * than a merchant credential.
  */
 router.post('/settings/connections/payments/connect', requireOwner, asyncRoute(async (req, res) => {
   const membership = authService.getMembership(req.db, req.ctx.workspaceId, req.ctx.accountId);
@@ -240,17 +260,16 @@ router.post('/settings/connections/payments/connect', requireOwner, asyncRoute(a
       refreshUrl: `${origin}/settings/connections/payments/refresh`,
       businessName: req.workspace ? req.workspace.name : undefined,
     };
-    /*
-     * This button means exactly one thing: sign in to an existing Stripe
-     * account and grant it to StockChief. Hosted onboarding creates/completes a
-     * platform-controlled account and must never be substituted here.
-     */
-    if (grant.preferredFlow() !== 'oauth') {
-      throw new ValidationError('Stripe existing-account sign-in is not configured. Add the '
-        + 'Stripe Connect OAuth client ID for this StockChief installation, then try again.');
+    const flow = grant.preferredFlow();
+    if (!flow) {
+      throw new ValidationError('Stripe account setup is not configured on this StockChief installation.');
     }
-    const begun = grant.authorizeUrl(req.db, req.ctx, membership,
-      { ...where, returnUri: where.returnUrl });
+    const begun = flow === 'oauth'
+      ? grant.authorizeUrl(req.db, req.ctx, membership, { ...where, returnUri: where.returnUrl })
+      : await grant.openOnboarding(req.db, req.ctx, membership, {
+        ...where,
+        email: req.account ? req.account.email : undefined,
+      });
     return res.redirect(303, begun.url);
   } catch (err) {
     if (!err.status || err.status >= 500) throw err;
@@ -332,11 +351,11 @@ router.get('/settings/connections/payments/return', (req, res, next) => (
  * Connections page update without a manual refresh even when a browser drops
  * window.opener somewhere inside the third-party sign-in chain.
  */
-router.get('/settings/connections/payments/state', requireOwner, (req, res) => {
-  const grant = require('../../payments/connect').describe(req.db, req.ctx.workspaceId);
-  return res.json({ connected: Boolean(grant.connected),
+router.get('/settings/connections/payments/state', requireOwner, asyncRoute(async (req, res) => {
+  const grant = await require('../../payments/connect').refresh(req.db, req.ctx.workspaceId);
+  return res.json({ connected: Boolean(grant.connected && !grant.unfinished),
     chargesEnabled: Boolean(grant.chargesEnabled) });
-});
+}));
 
 /*
  * A session for Stripe's form, running inside this page.
@@ -427,7 +446,23 @@ router.post('/settings/connections', requireOwner, asyncRoute(async (req, res) =
 }));
 
 router.post('/settings/connections/connect', requireOwner, asyncRoute(async (req, res) => {
-  const started = await providerService.beginAuthorization(req.db, req.ctx, req.body, `${req.protocol}://${req.get('host')}`);
+  const requestOrigin = `${req.protocol}://${req.get('host')}`;
+  let started;
+  try {
+    started = await providerService.beginAuthorization(req.db, req.ctx, req.body, requestOrigin);
+  } catch (error) {
+    if (String(req.body.popup || '') === '1' && error.status && error.status < 500) {
+      const providerName = providers.get(String(req.body.providerType || '').toLowerCase())?.metadata()?.name
+        || 'Connection';
+      return oauthReturnPage(res, {
+        connected: false,
+        providerName,
+        message: error.message,
+        returnOrigin: requestOrigin,
+      });
+    }
+    throw error;
+  }
   if (started.connected) {
     req.flash('success', `${started.connection.display_name} is connected. StockChief discovered its products and locations.`);
     if (String(req.body.popup || '') === '1') {
@@ -436,7 +471,7 @@ router.post('/settings/connections/connect', requireOwner, asyncRoute(async (req
         providerName: started.connection.display_name,
         message: `${started.connection.display_name} is connected. StockChief is ready to continue setup.`,
         connection: started.connection,
-        returnOrigin: `${req.protocol}://${req.get('host')}`,
+        returnOrigin: requestOrigin,
       });
     }
     return res.redirect(303, `/settings/connections/${started.connection.id}`);
@@ -461,12 +496,12 @@ router.get('/settings/connections/:provider/callback', asyncRoute(async (req, re
         ? `${connection.display_name} is connected read-only. StockChief verified the company; choose what authority it may have.`
         : `${connection.display_name} is connected. StockChief discovered its products and locations.`;
     if (req.session) req.flash('success', message);
-    if (context.popup) return oauthReturnPage(res, {
+    if (context.popup || context.returnOrigin && context.returnOrigin !== `${req.protocol}://${req.get('host')}`) return oauthReturnPage(res, {
       connected: true, providerName, message, connection, returnOrigin: context.returnOrigin,
     });
     return res.redirect(303, `/settings/connections/${connection.id}`);
   } catch (error) {
-    if (!context.popup) throw error;
+    if (!context.popup && (!context.returnOrigin || context.returnOrigin === `${req.protocol}://${req.get('host')}`)) throw error;
     return oauthReturnPage(res, {
       connected: false,
       providerName,
@@ -530,6 +565,7 @@ router.get('/settings/connections/:id', asyncRoute(async (req, res) => {
     ,(SELECT so.status FROM sales_orders so WHERE so.source_email_message_id = m.id AND so.workspace_id = m.workspace_id
       LIMIT 1) AS drafted_order_status
     FROM connection_email_messages m WHERE m.workspace_id = ? AND m.connector_id = ?
+      AND ${require('../../connections/reply-inbox').KNOWN_COUNTERPARTY}
     ORDER BY received_at DESC LIMIT 50`).all(req.ctx.workspaceId, connection.id).map((row) => ({
       ...row,
       supplierDocumentFacts: connections.parseJson(row.supplier_document_facts, {}),
@@ -552,7 +588,9 @@ router.get('/settings/connections/:id', asyncRoute(async (req, res) => {
       SELECT prior.id FROM setup_documents prior
       WHERE prior.workspace_id = a.workspace_id AND prior.content_hash = a.content_hash
         AND prior.status = 'APPLIED' ORDER BY prior.created_at LIMIT 1)
-    WHERE a.workspace_id = ? AND m.connector_id = ? ORDER BY a.created_at, a.rowid`)
+    WHERE a.workspace_id = ? AND m.connector_id = ?
+      AND ${require('../../connections/reply-inbox').KNOWN_COUNTERPARTY}
+    ORDER BY a.created_at, a.rowid`)
     .all(req.ctx.workspaceId, connection.id).map((row) => ({
       ...row, documentResult: connections.parseJson(row.document_result, {}),
     })) : [];
@@ -572,12 +610,29 @@ router.get('/settings/connections/:id', asyncRoute(async (req, res) => {
     .get(req.ctx.workspaceId, req.ctx.workspaceId, req.ctx.workspaceId);
   const canBootstrapShopify = connection.provider_type === 'shopify' && !connection.config.catalogBootstrap
     && !bootstrapCounts.items && !bootstrapCounts.locations && !bootstrapCounts.movements;
-  const provider = providers.get(connection.provider_type)?.metadata() || providers.generic;
+  const providerAdapter = providers.get(connection.provider_type);
+  const provider = providerAdapter?.metadata() || providers.generic;
   const accounting = provider.integrationClass === 'accounting'
     ? accountingSync.state(req.db, req.ctx.workspaceId, connection.id) : null;
+  if (accounting && providerAdapter?.listPostingParties) {
+    const missingTypes = [...new Set(accounting.pendingEntries.flatMap((entry) => entry.missingParties || [])
+      .map((party) => party.partyType))];
+    if (missingTypes.length) {
+      try {
+        const credentials = await providerService.loadProviderCredentials(req.db, connection, providerAdapter);
+        accounting.externalParties = {};
+        for (const partyType of missingTypes) {
+          accounting.externalParties[partyType] = await providerAdapter.listPostingParties({ credentials, partyType });
+        }
+      } catch (error) {
+        accounting.externalPartiesError = error.message;
+      }
+    }
+  }
   const finishedSync = syncRuns.some((run) => run.status === 'COMPLETED');
   const completedEvent = events.some((event) => event.status === 'COMPLETED');
-  const matchedHistory = reconciliations.some((row) => row.status === 'MATCHED');
+  const matchedHistory = completedEvent && reconciliations.some((row) => row.status === 'MATCHED');
+  const hasOpenIssues = issues.some((issue) => issue.status === 'OPEN');
   const testInstruction = connection.provider_type === 'reference_webhook'
     ? 'Send one test event from the business system, then replay that exact event ID. StockChief must show one completed activity, never two.'
     : connection.provider_type === 'shopify'
@@ -592,6 +647,7 @@ router.get('/settings/connections/:id', asyncRoute(async (req, res) => {
     catalog: Boolean(finishedSync),
     event: Boolean(completedEvent),
     history: Boolean(matchedHistory),
+    proven: Boolean(finishedSync && completedEvent && matchedHistory && !hasOpenIssues),
     testInstruction,
   } : null;
   const view = isMailbox ? 'connections/detail-mailbox'
@@ -630,9 +686,40 @@ router.post('/settings/connections/:id/accounting-shadow', requireOwner, asyncRo
 }));
 
 router.post('/settings/connections/:id/accounting-map', requireOwner, asyncRoute(async (req, res) => {
-  accountingSync.mapAccount(req.db, req.ctx, req.params.id, req.body);
-  req.flash('success', 'Exact account mapping saved. Run the shadow comparison again; nothing has been posted.');
+  const result = accountingSync.mapAccount(req.db, req.ctx, req.params.id, req.body);
+  req.flash('success', result.sharedReadIdentity
+    ? 'Posting mapping saved. The imported account and its opening balance remain unchanged; nothing was posted.'
+    : 'Exact posting mapping saved. Nothing has been posted.');
   res.redirect(303, `/settings/connections/${req.params.id}`);
+}));
+
+router.post('/settings/connections/:id/accounting-party-map', requireOwner, asyncRoute(async (req, res) => {
+  const connection = connections.get(req.db, req.ctx.workspaceId, req.params.id);
+  const adapter = providers.get(connection.provider_type);
+  if (!adapter?.listPostingParties) throw new ValidationError('This accounting provider does not expose posting parties.');
+  const partyType = String(req.body.partyType || '').toLowerCase();
+  const credentials = await providerService.loadProviderCredentials(req.db, connection, adapter);
+  const choices = await adapter.listPostingParties({ credentials, partyType });
+  const external = choices.find((row) => String(row.externalId) === String(req.body.externalId));
+  if (!external) throw new ValidationError(`That ${partyType} is not present in the provider's current list.`);
+  accountingSync.mapPostingParty(req.db, req.ctx, connection.id, { ...req.body, partyType, external });
+  req.flash('success', `Exact ${partyType} posting identity saved. Nothing was posted.`);
+  res.redirect(303, `/settings/connections/${connection.id}`);
+}));
+
+router.post('/settings/connections/:id/accounting-party-create', requireOwner, asyncRoute(async (req, res) => {
+  const connection = connections.get(req.db, req.ctx.workspaceId, req.params.id);
+  const adapter = providers.get(connection.provider_type);
+  if (!adapter?.createPostingParty) throw new ValidationError('This accounting provider cannot create posting parties.');
+  const partyType = String(req.body.partyType || '').toLowerCase();
+  const party = accountingSync.postingParty(req.db, req.ctx.workspaceId, partyType, req.body.partyId);
+  const credentials = await providerService.loadProviderCredentials(req.db, connection, adapter);
+  const external = await adapter.createPostingParty({ credentials, partyType, party,
+    idempotencyKey: `foundry-${req.ctx.workspaceId}-${partyType}-${party.id}` });
+  accountingSync.mapPostingParty(req.db, req.ctx, connection.id, { partyType, partyId: party.id,
+    externalId: external.externalId, external, direction: 'WRITE' });
+  req.flash('success', `${party.name} was created in ${connection.display_name} and linked for exact posting. No journal was posted.`);
+  res.redirect(303, `/settings/connections/${connection.id}`);
 }));
 
 router.post('/settings/connections/:id/accounting-import-opening', requireOwner, asyncRoute(async (req, res) => {
@@ -670,7 +757,9 @@ router.post('/settings/connections/:id/accounting-post', requireOwner, asyncRout
   const adapter = providers.get(connection.provider_type);
   if (adapter?.integrationClass !== 'accounting') throw new ValidationError('This is not an accounting connection.');
   const credentials = await providerService.loadProviderCredentials(req.db, connection, adapter);
-  const result = await accountingSync.syncPending(req.db, req.ctx, connection.id, adapter, credentials);
+  const entryIds = (Array.isArray(req.body.entryIds) ? req.body.entryIds : [req.body.entryIds]).filter(Boolean);
+  if (!entryIds.length) throw new ValidationError('Choose the exact verified entries to post from the preview.');
+  const result = await accountingSync.syncPending(req.db, req.ctx, connection.id, adapter, credentials, { entryIds });
   req.flash(result.remaining ? 'warn' : 'success', result.remaining
     ? `${result.posted} verified entr${result.posted === 1 ? 'y was' : 'ies were'} posted; ${result.remaining} stopped before an uncertain mapping.`
     : `${result.posted} verified accounting entr${result.posted === 1 ? 'y was' : 'ies were'} posted. Provider identities were recorded.`);
@@ -709,6 +798,16 @@ router.post('/settings/connections/:id/sync', requireOwner, asyncRoute(async (re
   const result = await providerService.sync(req.db, req.ctx.workspaceId, req.params.id, req.ctx.actorId);
   req.flash('success', `Sync complete: ${result.products} product${result.products === 1 ? '' : 's'}, ${result.locations} location${result.locations === 1 ? '' : 's'}; ${result.needsMapping} need your match.`);
   res.redirect(303, `/settings/connections/${req.params.id}`);
+}));
+
+router.post('/settings/connections/:id/refresh-mailbox-authorization',requireOwner,asyncRoute(async (req,res) => {
+  try {
+    const result = await providerService.refreshMailboxAuthorization(req.db,req.ctx.workspaceId,req.params.id);
+    req.flash('success',`Mailbox authorization refreshed and verified for ${result.accountName}. No inbox messages were read and nothing was sent.`);
+  } catch (error) {
+    req.flash('warn','Mailbox authorization could not be refreshed and verified. No messages were read or sent. Retry if the provider is unavailable, or reconnect if access has expired or been revoked.');
+  }
+  res.redirect(303,`/settings/connections/${req.params.id}`);
 }));
 
 router.post('/settings/connections/:id/sync-mailbox', requireOwner, asyncRoute(async (req, res) => {
@@ -1064,6 +1163,48 @@ router.post('/settings/connections/:id/email-rules', requireOwner, asyncRoute(as
   req.flash('success', found
     ? `StockChief is watching ${senderPattern} and checked the mailbox now. Open Home to review what it found.`
     : `StockChief is watching ${senderPattern}. It will check automatically and put any required review on Home.`);
+  res.redirect(303, `/settings/connections/${req.params.id}`);
+}));
+
+router.post('/settings/connections/:id/email-rules/:ruleId', requireOwner, asyncRoute(async (req, res) => {
+  const rule = req.db.prepare(`SELECT * FROM connection_email_rules
+    WHERE id = ? AND workspace_id = ? AND connector_id = ?`)
+    .get(req.params.ruleId, req.ctx.workspaceId, req.params.id);
+  if (!rule) throw new ValidationError('That watched supplier sender no longer exists.');
+
+  const updated = connections.addEmailRule(req.db, req.ctx, req.params.id, {
+    senderPattern: rule.sender_pattern,
+    supplierId: rule.supplier_id,
+    documentMode: req.body.documentMode,
+  });
+
+  let processed = 0;
+  if (updated.document_mode === 'supplier_documents') {
+    const pattern = String(updated.sender_pattern || '').toLowerCase();
+    const domainRule = pattern.startsWith('@');
+    const rows = req.db.prepare(`SELECT m.id, m.sender FROM connection_email_messages m
+      WHERE m.workspace_id = ? AND m.connector_id = ?
+        AND NOT EXISTS (SELECT 1 FROM supplier_documents d WHERE d.message_id = m.id)
+      ORDER BY m.received_at DESC LIMIT 50`).all(req.ctx.workspaceId, req.params.id)
+      .filter((message) => domainRule
+        ? String(message.sender || '').toLowerCase().endsWith(pattern)
+        : String(message.sender || '').toLowerCase() === pattern);
+    const supplierEvidence = require('../../purchasing/supplier-evidence');
+    for (const message of rows) {
+      req.db.prepare(`UPDATE connection_email_messages SET trust_status = 'TRUSTED', supplier_id = ?
+        WHERE id = ? AND workspace_id = ?`).run(updated.supplier_id, message.id, req.ctx.workspaceId);
+      try {
+        if (await supplierEvidence.interpretAndProcess(req.db, message.id)) processed += 1;
+      } catch {
+        // The original message remains visible and unchanged. A later manual
+        // review can still process it without losing the supplier's evidence.
+      }
+    }
+  }
+
+  req.flash('success', processed
+    ? `Updated how StockChief reads this supplier and processed ${processed} saved message${processed === 1 ? '' : 's'}.`
+    : 'Updated how StockChief reads this supplier.');
   res.redirect(303, `/settings/connections/${req.params.id}`);
 }));
 

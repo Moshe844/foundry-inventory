@@ -48,6 +48,14 @@ function createProvider(name, options = {}) {
   return require('../assistant/calls').observed(factory(options));
 }
 
+function createProviderUnobserved(name, options = {}) {
+  const factory = registry.get(name);
+  if (!factory) {
+    throw new ProviderError(`No AI provider named "${name}" is registered.`, { code: 'ai_provider_unknown' });
+  }
+  return factory(options);
+}
+
 function availableProviders() {
   return [...registry.keys()];
 }
@@ -70,6 +78,7 @@ registerProvider('anthropic', (options) => require('./providers/anthropic').crea
 module.exports = {
   registerProvider,
   createProvider,
+  createProviderUnobserved,
   createProviderForTier,
   availableProviders,
   ProviderError,

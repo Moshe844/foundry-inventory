@@ -1,0 +1,21 @@
+<p class="rm-stamp">Customer commitments from PostgreSQL</p>
+<h1 class="rm-verdict">Orders show what was promised, committed, shipped, invoiced, and paid.</h1>
+<p class="rm-prose">A draft reserves nothing. Confirmation commits available stock. Carrier orders require a real destination and remain in stock until handoff.</p>
+
+<section class="section"><div class="section-head"><h2>Customer orders</h2></div>
+  <% if(!orders.length){ %><div class="quiet-note">No customer orders yet.</div><% } else { %><div class="rm-ledger"><% orders.forEach(function(order){ %><a class="rm-ledger__row" href="/orders/<%= order.id %>"><span class="rm-ledger__k"><%= order.order_number %><small><%= order.customer_name %> · <%= order.delivery_method %></small></span><span class="rm-ledger__v"><%= order.status.replaceAll('_',' ') %></span><span class="rm-ledger__n"><%= order.units_fulfilled %> / <%= order.units_ordered %> fulfilled<% if(order.balance_minor){ %> · <%= helpers.money(order.balance_minor,order.currency) %> due<% } %></span></a><% }) %></div><% } %>
+</section>
+
+<section class="section"><div class="section-head"><h2>Draft one customer order</h2></div>
+  <% if(!customers.length || !catalogue.length){ %><div class="quiet-note">Add at least one customer and product before drafting an order.</div><% } else { %><form method="post" action="/orders" class="stacked-form"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><div class="form-grid">
+    <label for="sales-customer">Customer</label><select id="sales-customer" name="customerId" required><option value="">Choose customer</option><% customers.forEach(function(customer){ %><option value="<%= customer.id %>" data-address="<%= customer.shipping_address || '' %>"><%= customer.name %></option><% }) %></select>
+    <label>Product / SKU<select name="skuId" required><option value="">Choose product</option><% catalogue.forEach(function(sku){ %><option value="<%= sku.id %>"><%= sku.display_name %> · <%= sku.available %> available</option><% }) %></select></label>
+    <label>Quantity<input type="number" name="quantity" min="1" step="1" required></label><label>Selling price<input type="number" name="unitPrice" min="0" step="0.01" required></label>
+    <label>Delivery method<select name="deliveryMethod"><option value="SHIP">Ship by carrier</option><option value="PICKUP">Customer pickup</option></select></label><label>Fulfillment location<select name="fulfillmentLocationId"><option value="">Any location</option><% locations.forEach(function(location){ %><option value="<%= location.id %>"><%= location.name %></option><% }) %></select></label>
+    <label>Shipping destination<textarea name="shipToAddress" placeholder="Required for carrier shipping"></textarea></label><label>Needed by<input type="date" name="neededBy"></label>
+  </div><button class="rm-btn" type="submit">Draft customer order</button></form><% } %>
+</section>
+
+<section class="section"><div class="section-head"><h2>Customers</h2></div><div class="rm-ledger"><% customers.forEach(function(customer){ %><div class="rm-ledger__row"><span class="rm-ledger__k"><%= customer.name %><small><%= customer.email || 'No email on file' %></small></span><span class="rm-ledger__v"><%= customer.order_count %> orders</span><span class="rm-ledger__n"><%= helpers.money(customer.balance_minor,'USD') %> due</span></div><% }) %></div>
+  <details><summary>Add a customer</summary><form method="post" action="/sales/customers" class="stacked-form"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><div class="form-grid"><label>Name<input name="name" required></label><label>Email<input type="email" name="email"></label><label>Phone<input name="phone"></label><label>Shipping address<textarea name="shippingAddress"></textarea></label></div><button class="rm-btn" type="submit">Add customer</button></form></details>
+</section>

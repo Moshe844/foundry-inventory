@@ -44,7 +44,10 @@
    */
   var decisions = (typeof operatingDecisions !== 'undefined' && operatingDecisions) ? operatingDecisions : [];
   var needing = decisions.length;
-  var verdict = isEmpty_
+  var coverageErrors = decisions.coverageErrors || [];
+  var verdict = coverageErrors.length
+    ? 'Operations review is incomplete'
+    : isEmpty_
     ? 'This inventory is empty'
     : needing === 0
       ? 'Everything is under control'
@@ -54,7 +57,8 @@
   var configured = foundryConfig && foundryConfig.configuredAt && foundryConfig.configurationVersion > 0;
 %>
 
-<header class="briefing <%= needing ? 'briefing--attention' : 'briefing--clear' %>">
+<%- include('manager/coverage-warning', { inbox: decisions }) %>
+<header class="briefing <%= needing || coverageErrors.length ? 'briefing--attention' : 'briefing--clear' %>">
   <div class="briefing__copy">
     <p class="briefing__greeting"><%= greeting %><%= firstName ? ', ' + firstName : '' %></p>
     <h1 class="briefing__verdict"><%= verdict %></h1>
@@ -70,7 +74,9 @@
     </p>
   </div>
   <div class="briefing__state">
-    <% if (attentionSummary && attentionSummary.critical > 0) { %>
+    <% if (coverageErrors.length) { %>
+      <span class="badge badge--warn">Review incomplete</span>
+    <% } else if (attentionSummary && attentionSummary.critical > 0) { %>
       <span class="badge badge--danger"><%= attentionSummary.critical %> urgent</span>
     <% } else if (isEmpty_) { %>
       <span class="badge badge--muted">Not set up yet</span>

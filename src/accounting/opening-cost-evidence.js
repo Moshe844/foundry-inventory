@@ -10,6 +10,7 @@
 const crypto = require('crypto');
 const { inTransaction } = require('../db');
 const { nowIso } = require('../lib/util');
+const { ValidationError } = require('../domain/errors');
 const ledger = require('./ledger');
 
 function parse(value, fallback = []) {
@@ -202,4 +203,65 @@ function apply(db, ctx, inference) {
   });
 }
 
-module.exports = { infer, apply };
+function applyManual(db, ctx, inference, supplied, options = {}) {
+  const costs = new Map((supplied || []).map((row) => [
+    `${row.skuId}:${row.locationId}`, Number(row.unitCostMinor),
+  ]));
+  const rows = inference.unknown.map((row) => {
+    const unitCostMinor = costs.get(`${row.sku_id}:${row.location_id}`);
+    if (!Number.isSafeInteger(unitCostMinor) || unitCostMinor <= 0) {
+      throw new ValidationError(`Enter the historical unit cost for ${row.item_name}${row.variant_label ? ` / ${row.variant_label}` : ''} at ${row.location_name}.`);
+    }
+    const quantityUnits = Number(row.physicalUnits || row.quantityUnits || 0);
+    if (!Number.isFinite(quantityUnits) || quantityUnits <= 0) {
+      throw new ValidationError(`StockChief cannot establish the pre-sale quantity for ${row.item_name}. Nothing was posted.`);
+    }
+    return { ...row, quantityUnits, unitCostMinor,
+      totalCostMinor: Math.round(quantityUnits * unitCostMinor) };
+  });
+  if (!rows.length) throw new ValidationError('No missing historical inventory cost remains on this accounting review.');
+  for (const row of rows) {
+    if (db.prepare(`SELECT 1 FROM accounting_inventory_cost_balances
+      WHERE workspace_id = ? AND sku_id = ? AND location_id = ?`)
+      .get(ctx.workspaceId, row.sku_id, row.location_id)) {
+      throw new ValidationError(`Inventory cost for ${row.item_name} at ${row.location_name} is already recorded. Refresh the review before continuing.`);
+    }
+  }
+  return inTransaction(db, () => {
+    const total = rows.reduce((sum, row) => sum + row.totalCostMinor, 0);
+    const signature = crypto.createHash('sha256').update(rows
+      .map((row) => `${row.sku_id}:${row.location_id}:${row.quantityUnits}:${row.unitCostMinor}`)
+      .sort().join('|')).digest('hex').slice(0, 24);
+    const sourceId = options.reviewId || signature;
+    const posted = ledger.post(db, ctx, {
+      postingDate: inference.startDate,
+      description: 'Historical inventory cost approved during sale review',
+      sourceType: 'approved_historical_inventory_cost',
+      sourceRecordType: 'accounting_review',
+      sourceRecordId: sourceId,
+      sourceKey: `approved-historical-inventory-cost:${sourceId}:${signature}`,
+      createdByType: 'USER', approvedByUserId: ctx.actorId,
+      metadata: { method: 'owner_supplied_historical_unit_cost', evidenceBoundary: inference.boundary,
+        reviewId: options.reviewId || null,
+        positions: rows.map((row) => ({ skuId: row.sku_id, locationId: row.location_id,
+          quantityUnits: row.quantityUnits, unitCostMinor: row.unitCostMinor,
+          totalCostMinor: row.totalCostMinor })) },
+      lines: [
+        ...rows.map((row) => ({ accountKey: 'INVENTORY_ASSET', debitMinor: row.totalCostMinor,
+          skuId: row.sku_id, locationId: row.location_id,
+          memo: `${row.quantityUnits} units at owner-approved historical cost` })),
+        { accountKey: 'OPENING_BALANCE_EQUITY', creditMinor: total,
+          memo: 'Owner-approved historical inventory cost' },
+      ],
+    });
+    const now = nowIso();
+    const insert = db.prepare(`INSERT INTO accounting_inventory_cost_balances
+      (workspace_id, sku_id, location_id, quantity_units, total_cost_minor, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)`);
+    for (const row of rows) insert.run(ctx.workspaceId, row.sku_id, row.location_id,
+      row.quantityUnits, row.totalCostMinor, now);
+    return { applied: rows, journalEntryId: posted.entry.id, replayed: posted.replayed };
+  });
+}
+
+module.exports = { infer, apply, applyManual };

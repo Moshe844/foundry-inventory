@@ -1,0 +1,27 @@
+<section class="rm-head"><div><p class="rm-eyebrow">Release evidence</p><h1>Production operations</h1>
+  <p class="rm-lede">This page reads the shared PostgreSQL runtime. Missing deployed evidence stays blocked; recording a run never turns a missing check green.</p></div></section>
+
+<section class="rm-card" id="certification"><div class="rm-card__head"><div><h2><%= readiness.ok ? 'Production gate passed' : 'Production gate is blocked' %></h2>
+  <p><%= readiness.checks.filter(function(check){ return check.status === 'PASS'; }).length %> of <%= readiness.checks.length %> checks pass.</p></div></div>
+  <div class="rm-stack"><% readiness.checks.forEach(function(check){ %><div class="rm-row"><span><strong><%= check.key.replaceAll('_',' ') %></strong>
+    <small><%= check.message %></small></span><span class="rm-badge"><%= check.status %></span></div><% }) %></div>
+  <form method="post" action="/settings/operations/certify"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <button class="rm-btn" type="submit">Record this certification result</button></form></section>
+
+<section class="rm-card" id="dead-letters"><div class="rm-card__head"><div><h2>Dead-letter review</h2><p>Only jobs belonging to this inventory appear here.</p></div></div>
+  <% if (!deadJobs.length) { %><div class="rm-empty"><h3>No failed jobs need review</h3></div><% } %>
+  <div class="rm-stack"><% deadJobs.forEach(function(job){ %><div class="rm-row"><span><strong><%= job.kind %></strong>
+    <small><%= job.lastError && job.lastError.message %></small></span><form method="post" action="/settings/operations/jobs/<%= job.id %>/retry">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost" type="submit">Retry safely</button></form></div><% }) %></div></section>
+
+<section class="rm-card" id="alerts"><div class="rm-card__head"><div><h2>Operational alerts</h2><p>Alerts are isolated to this inventory. Resolving one preserves its history.</p></div></div>
+  <% if (!alerts.length) { %><div class="rm-empty"><h3>No open alerts</h3></div><% } %>
+  <div class="rm-stack"><% alerts.forEach(function(alert){ %><div class="rm-row"><span><strong><%= alert.title %></strong><small><%= alert.detail %></small></span>
+    <span class="rm-badge"><%= alert.status %></span><form method="post" action="/settings/operations/alerts/<%= alert.id %>/resolve">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost" type="submit">Mark resolved</button></form></div><% }) %></div>
+  <form method="post" action="/settings/operations/alerts/test"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <button class="rm-btn rm-btn--quiet" type="submit">Inject a test alert</button></form></section>
+
+<% if (runs.length) { %><section class="rm-card"><h2>Certification history</h2><div class="rm-stack">
+  <% runs.forEach(function(run){ %><div class="rm-row"><span><strong><%= run.application_ref %></strong><small><%= run.started_at %></small></span>
+    <span class="rm-badge"><%= run.status %></span></div><% }) %></div></section><% } %>

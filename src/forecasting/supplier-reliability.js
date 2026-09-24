@@ -44,8 +44,10 @@ function forSupplier(db, workspaceId, supplierId, options = {}) {
     FROM suppliers WHERE workspace_id = ? AND id = ?`).get(workspaceId, supplierId);
   if (!supplier) return null;
 
-  const orders = leadTime.deliveries(db, workspaceId, supplierId, { now, lookbackDays: options.lookbackDays });
-  const recent = orders.slice(-options.sampleSize || -12);
+  const lookbackDays = options.lookbackDays || 365;
+  const orders = performanceOrders(db,workspaceId,supplierId,{now,lookbackDays,period:options.period});
+  const sampleSize = Number(options.sampleSize);
+  const recent = Number.isInteger(sampleSize) && sampleSize > 0 ? orders.slice(-sampleSize) : orders;
 
   const rated = recent.filter((row) => row.onTime !== null);
   const onTimeCount = rated.filter((row) => row.onTime).length;
@@ -58,13 +60,19 @@ function forSupplier(db, workspaceId, supplierId, options = {}) {
   const timing = leadTime.forSupplier(db, workspaceId, supplierId, { now });
   const prices = priceMovement(db, workspaceId, supplierId, { now, withinDays: options.priceWindowDays || 180 });
 
-  const enough = recent.length >= MINIMUM_ORDERS;
+  const enough = rated.length >= MINIMUM_ORDERS;
 
   return {
     supplierId,
     supplierName: supplier.name,
     currency: supplier.currency || 'USD',
     orderCount: recent.length,
+    deliveredOrderCount: recent.filter((row) => row.receivedUnits > 0).length,
+    completedOrderCount: recent.filter((row) => row.complete).length,
+    overdueOrderCount: recent.filter((row) => row.overdue).length,
+    undeliveredOrderCount: recent.filter((row) => row.receivedUnits === 0).length,
+    lookbackDays,
+    periodLabel:options.period ? options.period.label : `the last ${lookbackDays} days`,
     enoughEvidence: enough,
 
     // Did it turn up when they said it would?
@@ -89,6 +97,34 @@ function forSupplier(db, workspaceId, supplierId, options = {}) {
     prices,
     summary: summarise({ supplier, recent, rated, onTimeCount, timing, prices, enough }),
   };
+}
+
+function performanceOrders(db,workspaceId,supplierId,{now,lookbackDays,period}) {
+  const from = period ? `${period.from}T00:00:00.000Z` : new Date(now - lookbackDays * DAY_MS).toISOString();
+  const to = period ? new Date(Math.min(now,Date.parse(`${period.to}T23:59:59.999Z`))).toISOString() : new Date(now).toISOString();
+  return db.prepare(`SELECT po.po_number, po.expected_date,
+      COALESCE(po.ordered_at,po.approved_at,po.order_date) AS sent_at,
+      (SELECT MAX(r.received_at) FROM purchase_order_receipts r WHERE r.purchase_order_id=po.id) AS last_receipt_at,
+      (SELECT COUNT(*) FROM purchase_order_receipts r WHERE r.purchase_order_id=po.id) AS receipt_count,
+      (SELECT COALESCE(SUM(pol.quantity_units),0) FROM purchase_order_lines pol WHERE pol.purchase_order_id=po.id) AS ordered_units,
+      (SELECT COALESCE(SUM(pol.quantity_received_units),0) FROM purchase_order_lines pol WHERE pol.purchase_order_id=po.id) AS received_units
+    FROM purchase_orders po WHERE po.workspace_id=? AND po.supplier_id=?
+      AND po.status NOT IN ('DRAFT','CANCELLED')
+      AND COALESCE(po.ordered_at,po.approved_at,po.order_date) >= ?
+      AND COALESCE(po.ordered_at,po.approved_at,po.order_date) <= ?
+    ORDER BY sent_at,po.id`).all(workspaceId,supplierId,from,to).map((row) => {
+      const orderedUnits = Number(row.ordered_units);
+      const receivedUnits = Number(row.received_units);
+      const complete = orderedUnits > 0 && receivedUnits >= orderedUnits;
+      const due = row.expected_date ? Date.parse(`${row.expected_date}T23:59:59.999Z`) : NaN;
+      const completionAt = complete && row.last_receipt_at ? Date.parse(row.last_receipt_at) : NaN;
+      const overdue = Number.isFinite(due) && !complete && now > due;
+      const onTime = Number.isFinite(due) && Number.isFinite(completionAt) ? completionAt <= due : overdue ? false : null;
+      return {poNumber:row.po_number,orderedUnits,receivedUnits,complete,overdue,onTime,
+        partial:Number(row.receipt_count)>1 || (receivedUnits>0 && !complete),
+        shortUnits:Math.max(0,orderedUnits-receivedUnits),
+        lateByDays:onTime === false ? round(((complete ? completionAt : now)-due)/DAY_MS,1) : null};
+    });
 }
 
 /**
@@ -135,17 +171,17 @@ function priceMovement(db, workspaceId, supplierId, { now = Date.now(), withinDa
 }
 
 function summarise({ supplier, recent, rated, onTimeCount, timing, prices, enough }) {
-  if (!recent.length) return `No delivered orders are recorded for ${supplier.name} yet.`;
+  if (!recent.length) return `No committed orders are recorded for ${supplier.name} in this review window.`;
   if (!enough) {
-    return `${supplier.name} has ${recent.length} delivered order${recent.length === 1 ? '' : 's'} on record, `
-      + 'which is not yet enough to describe how they usually perform.';
+    return `${supplier.name} has ${recent.length} committed order${recent.length === 1 ? '' : 's'} in this review window, `
+      + `${rated.length} with measurable completion timing${recent.some((row) => row.overdue) ? ', including overdue unfinished orders' : ''}. Not enough timing evidence to describe a reliable pattern.`;
   }
   const parts = [];
   if (rated.length) {
     const late = rated.length - onTimeCount;
     parts.push(late === 0
-      ? `${supplier.name} has met the promised date on all ${rated.length} of the last orders`
-      : `${supplier.name} has delivered late on ${late} of the last ${rated.length} orders`);
+      ? `${supplier.name} completed all ${rated.length} rated orders by the promised date`
+      : `${supplier.name} missed full completion by the promised date on ${late} of ${rated.length} rated orders`);
   }
   if (timing.measured) parts.push(`taking about ${timing.measured.meanDays} days`);
   const bigMove = prices.changes[0];

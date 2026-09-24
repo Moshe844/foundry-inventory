@@ -46,7 +46,7 @@
     <div class="rm-rule">
       <p class="rm-rule__k">Waiting for you · not in force yet</p>
       <p class="rm-rule__t"><%= rule.summary || rule.statedAs %></p>
-      <p class="rm-rule__m"><a href="/operating-instructions/<%= rule.id %>">Check it and turn it on</a></p>
+      <p class="rm-rule__m"><a href="<%= rule.href || ('/operating-instructions/' + rule.id) %>">Check it and turn it on</a></p>
     </div>
   <% }) %>
 <% } %>
@@ -63,8 +63,8 @@
         </span>
         <span class="rm-told__m is-ok">
           <%= helpers.shortDate(rule.approvedAt || rule.createdAt) %>
-          · acted <%= (rule.appliedRecords || []).length %>×
-          <a href="/operating-instructions/<%= rule.id %>">Change</a>
+          · active
+          <a href="<%= rule.href || ('/operating-instructions/' + rule.id) %>">Change</a>
         </span>
       </div>
     <% }) %>
@@ -93,7 +93,7 @@
         </span>
         <span class="rm-told__m <%= policy.enabled && policy.isApproved ? 'is-ok' : 'is-paused' %>">
           <%= !policy.isApproved ? 'not approved' : policy.enabled ? 'in force' : 'paused' %>
-          <a href="/autopilot/policies/<%= policy.id %>">Change</a>
+          <a href="<%= policy.href || ('/autopilot/policies/' + policy.id) %>">Change</a>
         </span>
       </div>
     <% }) %>

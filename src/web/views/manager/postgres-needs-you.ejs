@@ -1,0 +1,6 @@
+<% if(!items.length){ %><p class="rm-stamp">Nothing on the desk</p><h1 class="rm-verdict">Nothing is waiting for you.</h1>
+  <p class="rm-prose">StockChief found no unresolved approval, operational exception, failed import, disputed bill, or broken connection.</p>
+  <p class="rm-choices"><a class="rm-btn" href="/">Back to the brief</a><a class="rm-btn rm-btn--ghost" href="/ask">Ask StockChief</a></p>
+<% } else { %><p class="rm-stamp"><%= items.length %> genuine exception<%= items.length===1?'':'s' %></p><h1 class="rm-verdict">These are the decisions StockChief cannot safely make alone.</h1>
+  <div class="rm-feed"><% items.forEach(function(item,index){ %><article class="rm-feed__row"><span class="rm-feed__ic"><%= index+1 %></span><span class="rm-feed__t"><strong><%= item.title %></strong><small><%= item.happened %> <%= item.why %></small><small><b>Recommended:</b> <%= item.recommendation %></small></span><span class="rm-feed__m"><span class="badge <%= item.importance==='Urgent'?'badge--danger':'badge--warn' %>"><%= item.importance %></span> <a class="rm-btn rm-btn--sm" href="<%= item.href %>"><%= item.actionLabel %></a></span></article><% }) %></div>
+<% } %>

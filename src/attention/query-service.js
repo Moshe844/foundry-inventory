@@ -265,6 +265,7 @@ const PURCHASING_EXECUTORS = {
     const result = replenishment.evaluateWorkspace(db, workspaceId, {
       skuIds: scoped ? scoped.map((s) => s.id) : null,
     });
+    const coverage = replenishment.summarizeDecisionCoverage(result);
 
     const rows = result.recommendations.slice(0, plan.limit).map((line) => ({
       label: line.displayName,
@@ -279,12 +280,13 @@ const PURCHASING_EXECUTORS = {
     }));
 
     if (rows.length === 0) {
-      const covered = result.covered.length;
+      const covered = coverage.covered;
       // Short and stuck is a fact; no history at all is an absence of facts.
       // Reporting the second as "needs ordering" would invent the demand figure
       // StockChief is deliberately refusing to guess.
-      const stuck = result.blocked.filter((line) => line.reason === 'no_supplier');
-      const unknown = result.blocked.filter((line) => line.reason !== 'no_supplier');
+      const stuck = coverage.missingSupplier;
+      const unknown = coverage.insufficientEvidence;
+      const timingRisk = coverage.timingRisk;
 
       // A line below its reorder point that StockChief cannot act on still needs
       // ordering. Answering "nothing needs ordering" and appending a bare count
@@ -327,6 +329,20 @@ const PURCHASING_EXECUTORS = {
         };
       }
 
+      if (timingRisk.length) {
+        return {
+          totalMatches: timingRisk.length,
+          rows: timingRisk.slice(0, plan.limit).map((line) => ({
+            label: line.displayName,
+            onHand: line.onHand,
+            onOrder: line.onOrder,
+            why: line.explanation,
+          })),
+          columns: ['label', 'onHand', 'onOrder', 'why'],
+          answer: coverage.unresolvedText,
+        };
+      }
+
       return {
         rows: [],
         answer:
@@ -342,7 +358,8 @@ const PURCHASING_EXECUTORS = {
       answer:
         `${rows.length} line(s) need ordering` +
         (suppliers > 1 ? ` across ${suppliers} suppliers` : suppliers === 1 ? ` from ${result.bySupplier[0].supplierName}` : '') +
-        `. Starting with ${rows[0].label}: ${rows[0].recommended} recommended.`,
+        `. Starting with ${rows[0].label}: ${rows[0].recommended} recommended.` +
+        (coverage.unresolvedText ? ` ${coverage.unresolvedText}` : ''),
     };
   },
 
@@ -623,7 +640,66 @@ const EXECUTORS = {
   foundry_activity: foundryActivity,
   foundry_why: foundryWhy,
   stop_automation: stopAutomation,
-  inventory_summary(db, workspaceId) {
+  inventory_summary(db, workspaceId, plan) {
+    const sourceTerms = searchTerms(plan && plan.entityQuery);
+    if (sourceTerms.length) {
+      const source = db.prepare(`SELECT id, display_name, provider_type, provider_account_name
+        FROM workspace_connectors WHERE workspace_id = ? AND status <> 'disconnected'
+        ORDER BY updated_at DESC`).all(workspaceId).find((row) => {
+        const text = `${row.display_name} ${row.provider_type} ${row.provider_account_name || ''}`.toLowerCase();
+        return sourceTerms.every((term) => text.includes(term));
+      });
+      if (!source) return {
+        rows: [], columns: [], totalMatches: 0,
+        handoff: { href: '/settings/connections', label: 'Open Connections' },
+        answer: `No connected source matches “${plan.entityQuery}”.`,
+      };
+      const products = db.prepare(`SELECT COUNT(DISTINCT s.item_id) AS n
+        FROM connection_mappings m JOIN skus s ON s.id = m.foundry_record_id
+        JOIN items i ON i.id = s.item_id
+        WHERE m.workspace_id = ? AND m.connector_id = ? AND m.entity_type = 'sku'
+          AND s.is_active = 1 AND i.is_active = 1`).get(workspaceId, source.id).n;
+      const variants = db.prepare(`SELECT COUNT(DISTINCT s.id) AS n
+        FROM connection_mappings m JOIN skus s ON s.id = m.foundry_record_id
+        JOIN items i ON i.id = s.item_id
+        WHERE m.workspace_id = ? AND m.connector_id = ? AND m.entity_type = 'sku'
+          AND s.is_active = 1 AND i.is_active = 1`).get(workspaceId, source.id).n;
+      const locations = db.prepare(`SELECT COUNT(DISTINCT l.id) AS n
+        FROM connection_mappings m JOIN locations l ON l.id = m.foundry_record_id
+        WHERE m.workspace_id = ? AND m.connector_id = ? AND m.entity_type = 'location'
+          AND l.is_active = 1`).get(workspaceId, source.id).n;
+      const units = db.prepare(`SELECT COALESCE(SUM(b.on_hand), 0) AS n FROM balances b
+        WHERE b.workspace_id = ?
+          AND EXISTS (SELECT 1 FROM connection_mappings sm WHERE sm.workspace_id = b.workspace_id
+            AND sm.connector_id = ? AND sm.entity_type = 'sku' AND sm.foundry_record_id = b.sku_id)
+          AND EXISTS (SELECT 1 FROM connection_mappings lm WHERE lm.workspace_id = b.workspace_id
+            AND lm.connector_id = ? AND lm.entity_type = 'location' AND lm.foundry_record_id = b.location_id)`)
+        .get(workspaceId, source.id, source.id).n;
+      const rows = db.prepare(`SELECT i.id, i.name AS product, i.base_code AS code,
+          COUNT(DISTINCT s.id) AS variants, COALESCE(SUM(b.on_hand), 0) AS onHand
+        FROM connection_mappings m
+        JOIN skus s ON s.id = m.foundry_record_id
+        JOIN items i ON i.id = s.item_id
+        LEFT JOIN balances b ON b.sku_id = s.id AND b.workspace_id = m.workspace_id
+          AND EXISTS (SELECT 1 FROM connection_mappings lm WHERE lm.workspace_id = m.workspace_id
+            AND lm.connector_id = m.connector_id AND lm.entity_type = 'location'
+            AND lm.foundry_record_id = b.location_id)
+        WHERE m.workspace_id = ? AND m.connector_id = ? AND m.entity_type = 'sku'
+          AND s.is_active = 1 AND i.is_active = 1
+        GROUP BY i.id, i.name, i.base_code ORDER BY i.name COLLATE NOCASE, i.id LIMIT 200`)
+        .all(workspaceId, source.id).map((row) => ({ ...row, href: `/inventory/${row.id}` }));
+      const n = (value) => new Intl.NumberFormat('en-US').format(Number(value || 0));
+      const sourceName = source.provider_account_name
+        ? `${source.display_name} (${source.provider_account_name})` : source.display_name;
+      return {
+        rows, rowCount: Number(products), totalMatches: Number(products),
+        handoff: { href: `/settings/connections/${source.id}`, label: `Open ${source.display_name}` },
+        answer: `${sourceName} maps to ${n(products)} active product${Number(products) === 1 ? '' : 's'}, `
+          + `${n(variants)} tracked variant${Number(variants) === 1 ? '' : 's'}, and ${n(units)} unit${Number(units) === 1 ? '' : 's'} `
+          + `on hand across ${n(locations)} active location${Number(locations) === 1 ? '' : 's'}.`,
+        columns: ['product', 'code', 'variants', 'onHand'],
+      };
+    }
     const products = db.prepare(
       'SELECT COUNT(*) AS n FROM items WHERE workspace_id = ? AND is_active = 1'
     ).get(workspaceId).n;
@@ -937,11 +1013,10 @@ const EXECUTORS = {
       answer: rows.length ? `${brain.attention[0].title}. ${brain.attention[0].because}` : 'Nothing in the recorded cross-business state is likely to require attention next.' };
   },
 
-  profit_and_loss(db, workspaceId, plan) {
+  profit_and_loss(db, workspaceId, plan, options = {}) {
     const accounting = require('../accounting/ledger').settings(db, workspaceId);
     if (!accounting.enabled) return EXECUTORS.financial_summary(db, workspaceId, plan);
-    const to = new Date().toISOString().slice(0, 10);
-    const from = new Date(Date.now() - (plan.windowDays - 1) * 86400000).toISOString().slice(0, 10);
+    const {from,to} = require('./report-period').reportPeriod(options.question,plan.windowDays);
     const pnl = require('../accounting/reports').profitAndLoss(db, workspaceId, { from, to });
     const money = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: accounting.currency }).format(n / 100);
     const rows = [
@@ -1031,7 +1106,7 @@ const EXECUTORS = {
             summary: `${money(Math.abs(pnl.netIncomeMinor))} ${pnl.netIncomeMinor > 0 ? 'so far' : pnl.netIncomeMinor < 0 ? 'lost so far' : 'exactly break-even'}, on ${money(pnl.revenueMinor)} of sales.` },
       answer: noActivity
         ? quiet.answer
-        : `${from} to ${to}: ${money(pnl.revenueMinor)} revenue, ${money(pnl.cogsMinor)} cost of goods sold, ${money(pnl.operatingExpenseMinor)} operating expenses — ${money(Math.abs(pnl.netIncomeMinor))} net ${pnl.netIncomeMinor >= 0 ? 'profit' : 'loss'}. Gross profit (sales minus the cost of what was sold) is ${money(pnl.grossProfitMinor)}; it is not the same as net profit.${pnl.operatingExpenseMinor === 0 ? ' No rent, wages or other running costs are recorded in StockChief yet, so the real net figure is lower.' : ''}` };
+        : `${from} to ${to}: ${money(pnl.revenueMinor)} revenue, ${money(pnl.cogsMinor)} cost of goods sold, ${money(pnl.operatingExpenseMinor)} operating expenses — ${money(Math.abs(pnl.netIncomeMinor))} net ${pnl.netIncomeMinor >= 0 ? 'profit' : 'loss'}. Gross profit (sales minus the cost of what was sold) is ${money(pnl.grossProfitMinor)}; it is not the same as net profit.${pnl.operatingExpenseMinor === 0 ? ' No operating expenses are recorded for this period. Unrecorded costs, if any, are excluded; StockChief cannot verify that this is complete business profit.' : ''}` };
   },
 
   /**
@@ -1284,22 +1359,22 @@ const EXECUTORS = {
       columns: ['supplier', 'supplier_invoice_number', 'due_date', 'balance_minor'] };
   },
 
-  customer_payments(db, workspaceId, plan) {
+  customer_payments(db, workspaceId, plan, options = {}) {
     const accounting = require('../accounting/ledger').settings(db, workspaceId);
     if (!accounting.enabled) return EXECUTORS.financial_summary(db, workspaceId, plan);
-    const from = new Date(Date.now() - (plan.windowDays - 1) * 86400000).toISOString().slice(0, 10);
+    const period = require('./report-period').reportPeriod(options.question,plan.windowDays);
     const terms = searchTerms(plan.entityQuery);
-    const rows = db.prepare(`SELECT p.payment_date, p.amount_minor, p.reference, c.name AS customer
+    const matching = db.prepare(`SELECT p.payment_date, p.amount_minor, p.reference, c.name AS customer
       FROM accounting_payments p JOIN customers c ON c.id = p.customer_id
       WHERE p.workspace_id = ? AND p.direction = 'CUSTOMER_RECEIPT' AND p.status = 'POSTED'
-        AND p.payment_date >= ? ORDER BY p.payment_date DESC`).all(workspaceId, from)
-      .filter((row) => !terms.length || terms.every((term) => row.customer.toLowerCase().includes(term)))
-      .slice(0, plan.limit);
-    const total = rows.reduce((sum, row) => sum + Number(row.amount_minor), 0);
+        AND p.payment_date >= ? AND p.payment_date <= ? ORDER BY p.payment_date DESC,p.id`).all(workspaceId, period.from,period.to)
+      .filter((row) => !terms.length || terms.every((term) => row.customer.toLowerCase().includes(term)));
+    const rows = matching.slice(0,plan.limit);
+    const total = matching.reduce((sum, row) => sum + Number(row.amount_minor), 0);
     const money = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: accounting.currency }).format(n / 100);
-    return { rows, handoff: { href: '/accounting/receivables', label: 'Open receivables' },
-      answer: rows.length ? `${plan.entityQuery || 'Customers'} paid ${money(total)} in ${rows.length} recorded payment${rows.length === 1 ? '' : 's'} during the last ${plan.windowDays} days.`
-        : `No matching customer payments were recorded in the last ${plan.windowDays} days.` };
+    return { rows,totalMatches:matching.length, handoff: { href: '/accounting/receivables', label: 'Open receivables' },
+      answer: rows.length ? `${plan.entityQuery || 'Customers'} paid ${money(total)} in ${matching.length} recorded payment${matching.length === 1 ? '' : 's'} during ${period.label}. This total includes all matching payments, not just the displayed rows.`
+        : `No matching customer payments were recorded during ${period.label}.` };
   },
 
   /*
@@ -1311,11 +1386,10 @@ const EXECUTORS = {
    * the owner can open the exact sale instead of accepting an aggregate on
    * trust.
    */
-  period_profit_and_customer_cash(db, workspaceId, plan) {
+  period_profit_and_customer_cash(db, workspaceId, plan, options = {}) {
     const accounting = require('../accounting/ledger').settings(db, workspaceId);
     if (!accounting.enabled) return EXECUTORS.financial_summary(db, workspaceId, plan);
-    const to = new Date().toISOString().slice(0, 10);
-    const from = new Date(Date.now() - (plan.windowDays - 1) * 86400000).toISOString().slice(0, 10);
+    const {from,to} = require('./report-period').reportPeriod(options.question,plan.windowDays);
     const reports = require('../accounting/reports');
     const pnl = reports.profitAndLoss(db, workspaceId, { from, to });
     const paidMinor = Number(db.prepare(`SELECT COALESCE(SUM(amount_minor), 0) AS amount
@@ -1438,39 +1512,57 @@ const EXECUTORS = {
     };
   },
 
-  supplier_spend(db, workspaceId, plan) {
+  supplier_spend(db, workspaceId, plan, options = {}) {
     const accounting = require('../accounting/ledger').settings(db, workspaceId);
     if (!accounting.enabled) return EXECUTORS.financial_summary(db, workspaceId, plan);
-    const from = new Date(Date.now() - (plan.windowDays - 1) * 86400000).toISOString().slice(0, 10);
+    const period = require('./report-period').reportPeriod(options.question,plan.windowDays);
     const terms = searchTerms(plan.entityQuery);
-    const rows = db.prepare(`SELECT s.id, s.name AS supplier,
-        COALESCE(SUM(CASE WHEN a.system_key = 'ACCOUNTS_PAYABLE' THEN l.credit_minor - l.debit_minor ELSE 0 END),0) AS purchases_minor
+    const matching = db.prepare(`WITH purchases AS (SELECT l.supplier_id,
+        SUM(CASE WHEN a.system_key = 'ACCOUNTS_PAYABLE' THEN l.credit_minor - l.debit_minor ELSE 0 END) AS purchases_minor
       FROM accounting_journal_lines l JOIN accounting_journal_entries e ON e.id = l.entry_id
-      JOIN accounting_accounts a ON a.id = l.account_id JOIN suppliers s ON s.id = l.supplier_id
-      WHERE l.workspace_id = ? AND e.status = 'POSTED' AND e.posting_date >= ?
+      JOIN accounting_accounts a ON a.id = l.account_id
+      WHERE l.workspace_id = ? AND e.status = 'POSTED' AND e.posting_date >= ? AND e.posting_date <= ?
         AND e.source_type IN ('purchase_receipt','supplier_bill','supplier_invoice_variance')
-      GROUP BY s.id ORDER BY purchases_minor DESC`).all(workspaceId, from)
-      .filter((row) => !terms.length || terms.every((term) => row.supplier.toLowerCase().includes(term)))
-      .slice(0, plan.limit).map((row) => ({ ...row,
-        paymentsMinor: Number(db.prepare(`SELECT COALESCE(SUM(amount_minor),0) AS n FROM accounting_payments
-          WHERE workspace_id = ? AND supplier_id = ? AND direction = 'SUPPLIER_PAYMENT'
-            AND status = 'POSTED' AND payment_date >= ?`).get(workspaceId, row.id, from).n) }));
-    const purchases = rows.reduce((sum, row) => sum + Number(row.purchases_minor), 0);
-    const paid = rows.reduce((sum, row) => sum + row.paymentsMinor, 0);
+      GROUP BY l.supplier_id), paid AS (SELECT supplier_id,SUM(amount_minor) AS amount
+        FROM accounting_payments WHERE workspace_id=? AND direction='SUPPLIER_PAYMENT' AND status='POSTED'
+          AND payment_date >= ? AND payment_date <= ? GROUP BY supplier_id)
+      SELECT s.id,s.name AS supplier,COALESCE(p.purchases_minor,0) AS purchases_minor,COALESCE(c.amount,0) AS paymentsMinor
+      FROM suppliers s LEFT JOIN purchases p ON p.supplier_id=s.id LEFT JOIN paid c ON c.supplier_id=s.id
+      WHERE s.workspace_id=? AND (p.supplier_id IS NOT NULL OR c.supplier_id IS NOT NULL)
+      ORDER BY purchases_minor DESC,s.name,s.id`).all(workspaceId,period.from,period.to,workspaceId,period.from,period.to,workspaceId)
+      .filter((row) => !terms.length || terms.every((term) => row.supplier.toLowerCase().includes(term)));
+    const rows = matching.slice(0,plan.limit);
+    const purchases = matching.reduce((sum, row) => sum + Number(row.purchases_minor), 0);
+    const paid = matching.reduce((sum, row) => sum + Number(row.paymentsMinor), 0);
     const money = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: accounting.currency }).format(n / 100);
-    return { rows, answer: rows.length ? `Recorded purchases from ${plan.entityQuery || 'suppliers'} are ${money(purchases)} in the last ${plan.windowDays} days; recorded cash payments are ${money(paid)}. Purchases and payments are intentionally separate.`
-      : `No matching supplier purchases were posted in the last ${plan.windowDays} days.` };
+    return { rows,totalMatches:matching.length, answer: rows.length ? `Recorded purchases from ${plan.entityQuery || 'suppliers'} are ${money(purchases)} during ${period.label}; recorded cash payments are ${money(paid)}. Purchases and payments are intentionally separate. These totals include all matching suppliers, not just the displayed rows.`
+      : `No matching supplier purchases or payments were posted during ${period.label}.` };
   },
 
   product_profitability(db, workspaceId, plan, options = {}) {
     const accounting = require('../accounting/ledger').settings(db, workspaceId);
     if (!accounting.enabled) return EXECUTORS.financial_summary(db, workspaceId, plan);
-    const to = new Date().toISOString().slice(0, 10);
-    const from = new Date(Date.now() - (plan.windowDays - 1) * 86400000).toISOString().slice(0, 10);
-    const all = require('../accounting/reports').profitability(db, workspaceId, { from, to, dimension: 'product' }).rows
-      .filter((row) => row.id);
+    const dates = require('./report-period').reportPeriod(options.question, plan.windowDays);
+    const scoped = plan.entityQuery ? resolveSkus(db, workspaceId, plan.entityQuery, 100000) : null;
+    if (scoped && !scoped.length) return { rows: [], answer: `No recorded product matches “${plan.entityQuery}”. No margin was calculated.` };
+    const places = plan.locationQuery ? db.prepare(`SELECT id, name FROM locations WHERE workspace_id = ? AND is_active = 1 AND name LIKE ? ESCAPE '\\' ORDER BY name`).all(workspaceId, like(plan.locationQuery)) : [];
+    const exactPlace = places.find((row) => row.name.toLowerCase() === plan.locationQuery.toLowerCase());
+    if (!exactPlace && places.length > 1) return { rows: [], answer: `Which location do you mean? I found ${places.map((row) => row.name).join(', ')}. No margin was calculated.` };
+    const place = exactPlace || places[0];
+    if (plan.locationQuery && !place) return { rows: [], answer: `No recorded location matches “${plan.locationQuery}”. No margin was calculated.` };
+    const skuIds = scoped && new Set(scoped.map((row) => row.id));
+    const all = require('../accounting/reports').profitability(db, workspaceId, { from: dates.from, to: dates.to, dimension: 'product', locationId: place?.id }).rows
+      .filter((row) => row.id && (!skuIds || skuIds.has(row.id)));
     const money = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: accounting.currency }).format(n / 100);
-    const period = `the last ${plan.windowDays} days`;
+    const period = dates.label;
+    if (scoped) {
+      if (!all.length) return { rows: [], answer: `No product-level revenue and COGS are posted for ${plan.entityQuery} in ${period}. Stock movements alone do not establish realized revenue or margin.` };
+      const revenue = all.reduce((sum, row) => sum + row.revenueMinor, 0);
+      const cost = all.reduce((sum, row) => sum + row.cogsMinor, 0);
+      const profit = revenue - cost;
+      const margin = revenue > 0 ? `Recorded gross margin is ${(profit / revenue * 100).toFixed(2)}%.` : 'Gross margin percentage is undefined because recorded revenue is not positive.';
+      return { rows: all.slice(0, plan.limit), answer: `For ${plan.entityQuery}${place ? ` at ${place.name}` : ''} in ${period}, posted revenue is ${money(revenue)}, posted product cost is ${money(cost)}, and recorded gross profit is ${money(profit)}. ${margin} These are posted ledger figures, not evidence that all sales and costs have been recorded; operating expenses are excluded.` };
+    }
     // "Which products are we losing money on?" reads from the bottom of the
     // list, not the top: what sold for less than it cost, or the thinnest
     // margin when nothing did.
@@ -1490,16 +1582,15 @@ const EXECUTORS = {
       : 'No product-level revenue and COGS are posted for this period.' };
   },
 
-  location_profitability(db, workspaceId, plan) {
+  location_profitability(db, workspaceId, plan, options = {}) {
     const accounting = require('../accounting/ledger').settings(db, workspaceId);
     if (!accounting.enabled) return EXECUTORS.financial_summary(db, workspaceId, plan);
-    const to = new Date().toISOString().slice(0, 10);
-    const from = new Date(Date.now() - (plan.windowDays - 1) * 86400000).toISOString().slice(0, 10);
+    const {from,to,label} = require('./report-period').reportPeriod(options.question,plan.windowDays);
     const rows = require('../accounting/reports').profitability(db, workspaceId, { from, to, dimension: 'location' }).rows
       .filter((row) => row.id).slice(0, plan.limit);
     const money = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: accounting.currency }).format(n / 100);
-    return { rows, answer: rows.length ? `${rows[0].label} has the highest recorded gross profit for this period at ${money(rows[0].grossProfitMinor)}. Location-level operating expenses are not allocated, so this is not net location profit.`
-      : 'No location-level revenue and COGS are posted for this period.' };
+    return { rows, answer: rows.length ? `${rows[0].label} has the highest recorded gross profit during ${label} at ${money(rows[0].grossProfitMinor)}. Location-level operating expenses are not allocated, so this is not net location profit.`
+      : `No location-level revenue and COGS are posted during ${label}.` };
   },
 
   financial_comparison(db, workspaceId, plan) {
@@ -1563,7 +1654,16 @@ const EXECUTORS = {
           AND d.purchase_order_id = po.id ORDER BY d.processed_at DESC, d.rowid DESC LIMIT 1) AS latestEvidenceAt,
         EXISTS(SELECT 1 FROM supplier_documents d WHERE d.workspace_id = po.workspace_id
           AND d.purchase_order_id = po.id AND d.document_type = 'order_acknowledgement'
-          AND d.status IN ('MATCHED','RECORDED')) AS confirmed
+          AND d.status IN ('MATCHED','RECORDED')) AS confirmed,
+        (SELECT c.status FROM supplier_communications c WHERE c.workspace_id = po.workspace_id
+          AND c.purchase_order_id = po.id AND c.message_kind = 'purchase_order'
+          ORDER BY c.created_at DESC, c.rowid DESC LIMIT 1) AS communicationStatus,
+        (SELECT c.recipient FROM supplier_communications c WHERE c.workspace_id = po.workspace_id
+          AND c.purchase_order_id = po.id AND c.message_kind = 'purchase_order'
+          ORDER BY c.created_at DESC, c.rowid DESC LIMIT 1) AS communicationRecipient,
+        (SELECT c.sent_at FROM supplier_communications c WHERE c.workspace_id = po.workspace_id
+          AND c.purchase_order_id = po.id AND c.message_kind = 'purchase_order'
+          ORDER BY c.created_at DESC, c.rowid DESC LIMIT 1) AS communicationSentAt
       FROM purchase_orders po JOIN suppliers s ON s.id = po.supplier_id
       WHERE ${clauses.join(' AND ')} ORDER BY po.created_at DESC LIMIT ?`)
       .all(...params, plan.limit).map((row) => ({ ...row, confirmed: Boolean(row.confirmed) }));
@@ -1571,8 +1671,17 @@ const EXECUTORS = {
       ? `StockChief has no purchase orders recorded for ${supplier.name}.`
       : 'StockChief has no purchase orders recorded yet.' };
     const first = rows[0];
-    const confirmation = first.confirmed ? `${first.supplier} has confirmed ${first.label}.`
-      : `${first.supplier} has not yet confirmed ${first.label}.`;
+    const confirmation = first.confirmed
+      ? `${first.supplier} has confirmed ${first.label}.`
+      : first.communicationStatus === 'SENT'
+        ? `${first.label} was accepted by the connected mailbox${first.communicationSentAt ? ` on ${first.communicationSentAt}` : ''}, but ${first.supplier} has not acknowledged it.`
+        : first.communicationStatus === 'FAILED'
+          ? `${first.label} is approved internally, but the attempt to send it failed. It is not confirmed as sent to ${first.supplier}.`
+          : first.communicationStatus === 'SENDING' || first.communicationStatus === 'QUEUED'
+            ? `${first.label} is ${first.communicationStatus.toLowerCase()}, not confirmed as sent to ${first.supplier}${first.communicationRecipient ? '' : '; no supplier email is on file'}.`
+            : first.status === 'DRAFT'
+              ? `${first.label} is still a draft. It has not been approved or sent to ${first.supplier}.`
+              : `${first.label} is approved internally but has not been sent to ${first.supplier}${first.communicationRecipient ? '' : '; no supplier email is on file'}.`;
     const timing = first.expected && first.expected < new Date().toISOString().slice(0, 10) && first.outstanding > 0
       ? ` It is past its expected date with ${first.outstanding} unit${first.outstanding === 1 ? '' : 's'} still to come${first.latestEvidence ? `; the latest word from the supplier is ${first.latestEvidence.replaceAll('_', ' ')}` : ' and nothing newer from the supplier'}.`
       : ` ${first.outstanding} unit${first.outstanding === 1 ? '' : 's'} still to come${first.expected ? `, expected ${first.expected}` : ''}.`;

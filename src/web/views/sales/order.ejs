@@ -48,6 +48,22 @@
 <div class="breadcrumb"><a href="/orders">Orders</a> <%- helpers.icon('chevron', { size: 13 }) %> <span><%= order.order_number %></span></div>
 <div class="page-head"><div class="titles"><p class="eyebrow">Customer order</p><h1><%= order.order_number %> · <%= order.customer.name %></h1><p>Created <%= order.order_date %><%= order.needed_by ? ' · customer needs it by ' + order.needed_by : '' %></p></div><span class="badge <%= setupRequired || order.status === 'BACKORDERED' ? 'badge--warn' : order.status === 'FULFILLED' ? 'badge--success' : 'badge--muted' %>"><%= setupRequired ? 'Waiting for customer details' : (statusLabels[order.status] || order.status) %></span></div>
 
+<% if (!locals.room) { %><%- include('allocation-settings') %><% } %>
+
+<% if (locals.money && Number(money.totalMinor || 0) > 0 && Number(money.outstandingMinor || 0) === 0
+    && !['FULFILLED','CANCELLED'].includes(order.status)) { %>
+  <div class="notice notice--ok section">
+    <div>
+      <strong>Paid in full — <%= order.totals.allocated > 0 ? 'ready to pick' : 'waiting for stock' %>.</strong><br>
+      The customer paid <%= helpers.money(money.paidMinor, money.currency) %> and now owes <%= helpers.money(money.outstandingMinor, money.currency) %>.
+      <% if (order.totals.allocated > 0) { %>
+        <%= order.totals.allocated %> <%= order.totals.allocated === 1 ? 'unit is' : 'units are' %> held for this customer, but the goods have not left yet. This is cash received, not earned revenue or profit yet.
+      <% } %>
+    </div>
+    <a class="btn btn--sm" href="/orders/<%= order.id %>/detail?open=fulfilment#fulfilment">Show order history</a>
+  </div>
+<% } %>
+
 <% if (money.invoiced && (money.heldReason.pick || money.heldReason.ship)) { %>
   <div class="notice notice--<%= money.override ? 'info' : 'warn' %>" id="payment-hold">
     <div>
@@ -409,7 +425,7 @@
         <span class="spacer"></span><span class="fold-note">nothing for you to do</span>
       </summary>
       <div class="card-body">
-        <p>The sale, what the customer owes, the exact product cost, and the lower inventory value were recorded from this shipment.</p>
+        <p>It went on the books automatically: revenue, the customer receivable, product cost, and inventory value. The exact amounts were recorded from this fulfilment.</p>
         <a class="btn btn--sm" href="/accounting/entries/<%= accounting.journal_entry_id %>">Show the exact sale and product cost</a>
       </div>
     </details>
@@ -623,7 +639,7 @@
       </span>
     </summary>
     <div class="card-body">
-      <div class="stat-strip">
+      <div class="stat-strip sales-money-summary">
         <div>
           <span class="stat-value"><%= helpers.money(money.totalMinor, money.currency) %></span>
           <%#

@@ -28,58 +28,7 @@
   <% }) %>
 </div>
 
-<% if (drawer.state === 'SET_ASIDE') { %>
-  <%
-    /*
-     * Mail StockChief looked at and left alone.
-     *
-     * Shown as an envelope and a reason, because that is genuinely all that
-     * was kept. StockChief does not store the contents of mail that is not the
-     * business's — that restraint is the feature, and the empty preview line
-     * is what it looks like from here.
-     */
-  %>
-  <% if (!setAside.length) { %>
-    <div class="empty-state">
-      <%- helpers.icon('send', { size: 32 }) %>
-      <h2>Nothing has been set aside</h2>
-      <p>
-        Every message that arrived was about the business. When a newsletter, a bank alert
-        or somebody's personal mail turns up in the shop mailbox, StockChief leaves it where it
-        is and notes here what it was and why.
-      </p>
-    </div>
-  <% } else { %>
-    <section class="section">
-      <div class="panel">
-        <ul class="mail-list">
-          <% setAside.forEach(function (row) { %>
-            <li class="mail-row">
-              <div class="mail-row-main">
-                <div class="mail-row-top">
-                  <strong><%= row.sender %></strong>
-                  <span class="t-xs t-muted"><%= helpers.shortDate(row.received_at) %></span>
-                </div>
-                <div class="mail-row-subject"><%= row.subject || 'No subject' %></div>
-                <div class="mail-row-why t-xs t-muted"><%= row.reason %></div>
-              </div>
-              <form class="mail-row-action" method="post"
-                    action="/mail/set-aside/<%= row.id %>/bring-in" data-busy>
-                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                <button class="btn btn--sm" type="submit">This is business</button>
-              </form>
-            </li>
-          <% }) %>
-        </ul>
-      </div>
-      <p class="section-foot t-muted">
-        None of this was read, stored or acted on — StockChief kept who it was from, what it was
-        called and why it was left. Bring one in and StockChief fetches it from the mailbox again
-        and treats it like any other message.
-      </p>
-    </section>
-  <% } %>
-<% } else if (!messages.length) { %>
+<% if (!messages.length) { %>
   <div class="empty-state">
     <%- helpers.icon('send', { size: 32 }) %>
     <h2>
@@ -111,7 +60,7 @@
           <li class="mail-row">
             <a class="mail-row-main" href="/mail/<%= message.id %>">
               <div class="mail-row-top">
-                <strong><%= message.supplier_name || message.sender %></strong>
+                <strong><%= message.counterpartyName %></strong>
                 <span class="t-xs t-muted"><%= helpers.shortDate(message.received_at) %></span>
               </div>
               <div class="mail-row-subject">
@@ -134,6 +83,7 @@
               <input type="hidden" name="_csrf" value="<%= csrfToken %>">
               <input type="hidden" name="returnTo" value="/mail?show=<%= drawer.key %>">
               <% if (drawer.state === 'NEEDS_REPLY') { %>
+                <a class="btn btn--sm btn--primary" href="/mail/<%= message.id %>#reply">Reply</a>
                 <button class="btn btn--sm" type="submit" name="state" value="WAITING">
                   I answered
                 </button>

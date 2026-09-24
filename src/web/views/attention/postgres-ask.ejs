@@ -1,0 +1,41 @@
+<div class="rm-chat">
+  <% if (!interactions.length) { %>
+    <header class="rm-chat__intro">
+      <span class="rm-chat__mark" aria-hidden="true"><%- helpers.icon('spark', { size: 18 }) %></span>
+      <div><p class="rm-stamp">Ask StockChief</p><h1 class="rm-verdict">What can I help you run?</h1>
+        <p class="rm-prose">Ask what is true across inventory, orders, suppliers, customers, shipping, payments, accounting or connections. Tell me what should change, and I will prepare it for approval without changing anything silently.</p></div>
+    </header>
+  <% } %>
+
+  <% interactions.forEach(function (turn,index) { var evidence=turn.evidence || []; var isLatest=index===interactions.length-1; %>
+    <div class="rm-turn rm-turn--you<%= isLatest ? ' rm-turn--latest' : ' rm-turn--past' %>"><p class="rm-turn__who">You</p><p class="rm-turn__said"><%= turn.message %></p></div>
+    <div class="rm-turn rm-turn--foundry<%= isLatest ? ' rm-turn--latest' : ' rm-turn--past' %>" <%= isLatest ? 'id="latest"' : '' %>>
+      <p class="rm-turn__who">StockChief</p><div class="rm-said<%= turn.status === 'FAILED' ? ' rm-said--problem' : '' %>
+        <p class="rm-said__text"><%= helpers.figures(turn.answer) %></p>
+        <p class="rm-said__meta"><span class="rm-pill rm-pill--<%= turn.status === 'ANSWERED' || turn.status === 'PREPARED' ? 'ok' : 'warn' %>"><%= turn.status === 'PREPARED' ? 'Prepared — approval required' : turn.status === 'CLARIFY' ? 'Needs an answer' : turn.status.toLowerCase() %></span><span>Read from this inventory at <%= helpers.dateTime(turn.created_at) %>.</span></p>
+        <% if (turn.status === 'CLARIFY' && turn.intent && turn.intent.proposalHref) { %><p><a class="rm-btn rm-btn--ghost" href="<%= turn.intent.proposalHref %>">Answer this standing rule</a></p><% } %>
+        <% if (evidence.length) { var columns=Object.keys(evidence[0]).filter(function(key){return key!=='href';}); %>
+          <details class="rm-chat-evidence"><summary><span><%- helpers.icon('layers', { size: 15 }) %> Records behind this</span><small><%= helpers.qty(evidence.length) %> matches</small></summary>
+            <div class="rm-chat-evidence__rows"><% evidence.slice(0,60).forEach(function(row){ %><div class="rm-chat-evidence__row"><span><% if(row.href){ %><a href="<%= row.href %>"><%= row[columns[0]] %></a><% } else { %><%= row[columns[0]] %><% } %></span><small><%= columns.slice(1).map(function(key){return helpers.columnLabel(key)+' '+row[key];}).join(' · ') %></small></div><% }) %></div>
+          </details>
+        <% } %>
+        <% if (turn.status === 'PREPARED') { var proposalId=(/pgprop_[a-z0-9]+/i.exec(turn.answer) || [])[0]; %><% } %>
+      </div>
+    </div>
+  <% }) %>
+
+  <form method="post" action="/ask" class="rm-composer" data-busy>
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <label class="visually-hidden" for="ask-message">Ask StockChief</label>
+    <textarea id="ask-message" name="message" rows="3" required placeholder="Ask about the business or tell StockChief what should happen"><%= prefill %></textarea>
+    <button class="rm-btn" type="submit">Continue</button>
+  </form>
+
+  <% var prepared=interactions.filter(function(turn){return turn.status==='PREPARED';}); %>
+  <% if (prepared.length) { %>
+    <p class="rm-stamp" style="margin-top:24px">Prepared changes</p>
+    <% prepared.slice(-5).forEach(function(turn){ var proposal=(turn.intent && turn.intent.proposalId) || null; %>
+      <% if (proposal) { %><p><a class="rm-btn rm-btn--ghost" href="<%= (turn.intent && turn.intent.proposalHref) || ('/actions/' + proposal) %>">Review prepared change</a></p><% } %>
+    <% }) %>
+  <% } %>
+</div>

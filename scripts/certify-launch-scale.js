@@ -74,34 +74,26 @@ try {
   const skuRows = db.prepare('SELECT id FROM skus WHERE workspace_id = ? ORDER BY position').all(ctx.workspaceId);
   assert(skuRows.length === skuCount, `Expected ${skuCount} SKUs, found ${skuRows.length}.`);
 
-  timed('millionMovementSeedMs', () => {
-    const insertMovement = db.prepare(`INSERT INTO movements
-      (id, workspace_id, group_id, operation, item_id, sku_id, location_id,
-       quantity_delta, balance_after, notes, reference, actor_user_id, occurred_at)
-      VALUES (?, ?, ?, 'receive', ?, ?, ?, 1, ?, 'Scale certification fixture', ?, ?, ?)`);
-    const insertBalance = db.prepare(`INSERT INTO balances
-      (workspace_id, sku_id, location_id, on_hand, updated_at) VALUES (?, ?, ?, ?, ?)`);
-    const now = new Date().toISOString();
+  timed('millionMovementReplayMs', () => {
     const base = Math.floor(movementCount / skuCount);
     const extra = movementCount % skuCount;
-    const tx = db.transaction((start, end) => {
-      for (let n = start; n < end; n += 1) {
-        const skuIndex = n % skuCount;
-        const pass = Math.floor(n / skuCount) + 1;
-        const sku = skuRows[skuIndex];
-        const location = locations[skuIndex % locations.length];
-        insertMovement.run(`scale-mv-${n}`, ctx.workspaceId, `scale-grp-${n}`,
-          product.itemId, sku.id, location.id, pass, `scale:${n}`, ctx.actorId, now);
+    const migrationCtx = { ...ctx, verifiedMigration: true };
+    for (let start = 0; start < skuCount; start += 1250) {
+      const entries = [];
+      for (let skuIndex = start; skuIndex < Math.min(start + 1250, skuCount); skuIndex += 1) {
+        const eventsForSku = base + (skuIndex < extra ? 1 : 0);
+        for (let pass = 0; pass < eventsForSku; pass += 1) {
+          entries.push({ externalKey: `movement-${skuIndex}-${pass}`, skuId: skuRows[skuIndex].id,
+            locationId: locations[skuIndex % locations.length].id, quantity: 1,
+            reference: `scale:${skuIndex}:${pass}` });
+        }
       }
-    });
-    for (let start = 0; start < movementCount; start += 25000) tx.immediate(start, Math.min(start + 25000, movementCount));
-    const balances = db.transaction(() => {
-      skuRows.forEach((sku, index) => insertBalance.run(ctx.workspaceId, sku.id,
-        locations[index % locations.length].id, base + (index < extra ? 1 : 0), now));
-    });
-    balances.immediate();
+      inventory.receiveVerifiedHistoryBatch(db, migrationCtx, {
+        sourceNamespace: 'scale-certification', entries,
+      });
+    }
   });
-  process.stdout.write(`ledger ready: ${movementCount} movements in ${metrics.millionMovementSeedMs}ms\n`);
+  process.stdout.write(`ledger ready through inventory engine: ${movementCount} movements in ${metrics.millionMovementReplayMs}ms\n`);
 
   const exact = timed('exactSearchMs', () => search.search(db, ctx.workspaceId,
     `SCALE-${String(skuCount - 1).padStart(7, '0')}`));

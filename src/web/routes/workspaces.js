@@ -26,10 +26,19 @@ function safeNext(value) {
   return value;
 }
 
+function openFirstInventory(req, res) {
+  const created = workspaceService.ensureFirstWorkspace(req.db, req.account.id);
+  if (!created) return false;
+  req.session.workspaceId = created.workspaceId;
+  req.session.save(() => res.redirect(303, '/onboarding'));
+  return true;
+}
+
 /** The list of inventories: the home above the console. */
 router.get(
   '/inventories',
   asyncRoute(async (req, res) => {
+    if (openFirstInventory(req, res)) return;
     // Inventory cards are navigation, not a business audit. Their cached badge
     // count is updated when that inventory's Needs You inbox is opened.
     const workspaces = workspaceService.listForAccount(req.db, req.account.id, { includeAttention:false });
@@ -41,6 +50,7 @@ router.get(
       allowance: entitlements.usage(req.db, { accountId: req.account.id }, 'workspaces'),
       error: null,
       form: {},
+      suppressBack: true,
     });
   })
 );
@@ -48,6 +58,7 @@ router.get(
 router.get(
   '/inventories/new',
   asyncRoute(async (req, res) => {
+    if (openFirstInventory(req, res)) return;
     res.page('workspaces/new', {
       title: 'New inventory',
       nav: 'inventories',
@@ -68,9 +79,7 @@ router.post(
     const name = trimOrNull(req.body.name) || '';
     let created;
     try {
-      created = workspaceService.createWorkspace(req.db, req.account.id, name, {
-        dataMode: req.body.dataMode,
-      });
+      created = workspaceService.createWorkspace(req.db, req.account.id, name);
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
       return res.status(err.status).page('workspaces/new', {

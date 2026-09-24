@@ -226,7 +226,8 @@ test('Mission 8 end to end: StockChief runs the operation, investigates, and sto
   await t.test('0. the home page is what StockChief is doing, not a table of counts', async () => {
     await signIn(page);
     const text = await page.locator('body').innerText();
-    assert.match(text, /StockChief is working/i);
+    assert.match(text, /StockChief is ready/i);
+    assert.match(text, /Ready for the first operations check\. No all-clear has been issued yet\./i);
     assert.match(text, /Do this next/i);
     assert.match(text, /The business/i);
     await shot(page, 'operator-home');

@@ -15,6 +15,8 @@ const inbox = require('../../src/connections/reply-inbox');
 const connections = require('../../src/connections/service');
 const ingestion = require('../../src/connections/email-ingestion');
 const authService = require('../../src/domain/auth-service');
+const sales = require('../../src/sales/sales-order-service');
+const suppliers = require('../../src/purchasing/supplier-service');
 const { makeDatabase, cleanupAll, seedWorkspace } = require('../helpers');
 
 test.after(cleanupAll);
@@ -23,6 +25,10 @@ function setup() {
   const { db } = makeDatabase();
   const workspace = seedWorkspace(db, { workspaceName: 'Riverside Supply' });
   const membership = authService.getMembership(db, workspace.workspaceId, workspace.accountId);
+  sales.createCustomer(db, workspace.ctx, { name: 'Jo at ABC School', email: 'jo@abcschool.test' });
+  suppliers.createSupplier(db, workspace.ctx, membership, {
+    name: 'UPS Notifications', email: 'no-reply@ups.com',
+  });
   const created = connections.create(db, workspace.ctx, membership, {
     providerType: 'supplier_email', displayName: 'Shop Mailbox',
   });

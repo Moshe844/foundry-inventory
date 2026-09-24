@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS autonomous_operation_authority (
   enabled               INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0,1)),
   maximum_quantity      REAL,
   maximum_value_minor   INTEGER,
+  currency              TEXT,
   maximum_daily_count   INTEGER,
   maximum_daily_value_minor INTEGER,
   supplier_ids          TEXT NOT NULL DEFAULT '[]',

@@ -20,11 +20,11 @@
       design system loads last and owns everything shared — the tokens they all
       read, and the components every screen is assembled out of — so both
       vocabularies in the views produce one product rather than two. %>
-  <link rel="stylesheet" href="/app.css">
-  <link rel="stylesheet" href="/product-clarity.css">
-  <link rel="stylesheet" href="/foundry.css">
-  <link rel="stylesheet" href="/room.css">
-  <link rel="stylesheet" href="/design.css">
+  <link rel="stylesheet" href="/app.css?v=<%= assetVersion %>">
+  <link rel="stylesheet" href="/product-clarity.css?v=<%= assetVersion %>">
+  <link rel="stylesheet" href="/foundry.css?v=<%= assetVersion %>">
+  <link rel="stylesheet" href="/room.css?v=<%= assetVersion %>">
+  <link rel="stylesheet" href="/design.css?v=<%= assetVersion %>">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%235B4BE8'/%3E%3Cpath d='M6 8.5 12 5.8l6 2.7v6L12 17.2 6 14.5z' fill='none' stroke='white' stroke-width='1.5' stroke-linejoin='round'/%3E%3C/svg%3E">
 </head>
 <body class="page-<%= nav || 'plain' %>">
@@ -147,6 +147,9 @@
   </header>
 
   <main class="rm-canvas <%= isRoom ? 'rm' : 'rm rm-legacy' %>" id="main">
+    <% if (locals.onboardingEntry) { %>
+      <%- include('partials/inventory-entry', { entry: onboardingEntry, entryPage: currentHref.split('?')[0] }) %>
+    <% } %>
     <% if (workspace && workspace.data_mode === 'synthetic') { %>
       <p class="rm-stamp" role="status" style="color:var(--copper)">Test environment · generated records, kept separate from your real inventories</p>
     <% } %>
@@ -197,6 +200,6 @@
     <%- body %>
   </main>
 </div>
-<script src="/app.js" defer></script>
+<script src="/app.js?v=<%= assetVersion %>" defer></script>
 </body>
 </html>

@@ -433,7 +433,7 @@ test('StockChief prepares purchase orders but never sends them', () => {
   assert.match(note.body, /Nothing has been sent/);
 });
 
-test('an approved routine-purchasing policy lets StockChief approve a supported replenishment', () => {
+test('routine purchasing without a verified supplier-delivery path stops before calling the PO ordered', () => {
   const env = tights({ allStockAtBrooklyn: true });
   const suppliers = require('../../src/purchasing/supplier-service');
   const policies = require('../../src/purchasing/policy-service');
@@ -456,10 +456,118 @@ test('an approved routine-purchasing policy lets StockChief approve a supported 
   runner.run(env.db, env.ctx, env.membership, { trigger: 'manager-purchasing' });
   const [prepared] = workItems.list(env.db, env.workspace.workspaceId, { category: 'purchase_preparation' });
   const order = poService.get(env.db, env.workspace.workspaceId, prepared.purchaseOrderId);
-  assert.equal(order.status, 'ORDERED', JSON.stringify({ outcome: prepared.outcome,
+  assert.equal(order.status, 'DRAFT', JSON.stringify({ outcome: prepared.outcome,
     approvals: workItems.list(env.db, env.workspace.workspaceId, { category: 'purchase_approval' }) }));
-  assert.equal(prepared.outcome.autoApproved, true);
+  assert.equal(prepared.outcome.autoApproved, false);
+  assert.equal(workItems.list(env.db, env.workspace.workspaceId, { category: 'purchase_approval' }).length, 1);
   assert.equal(prepared.verificationStatus, 'VERIFIED');
+});
+
+test('an authorised optimizer plan prepares both legs and becomes ordered only after verified supplier delivery', async () => {
+  const env = tights();
+  const suppliers = require('../../src/purchasing/supplier-service');
+  const poService = require('../../src/purchasing/po-service');
+  const connections = require('../../src/connections/service');
+  const credentials = require('../../src/connections/credentials');
+  const communications = require('../../src/purchasing/supplier-communications');
+  const autonomous = require('../../src/autonomous/service');
+  const jobs = require('../../src/operations/job-queue');
+  const capabilities = require('../../src/autopilot/capabilities');
+  const replPlan = require('../../src/purchasing/replenishment-plan');
+  const gmail = require('../../src/connections/providers/gmail');
+  const signalEngine = require('../../src/signals/signal-engine');
+  const supplier = suppliers.createSupplier(env.db, env.ctx, env.membership, {
+    name: 'Verified Supply Co', email: 'orders@verified.test', defaultLeadTimeDays: 4,
+  });
+  suppliers.linkItem(env.db, env.ctx, env.membership, { supplierId: supplier.id,
+    skuId: env.black5.id, purchaseUnit: 'unit', unitsPerPurchaseUnit: 1,
+    lastUnitCost: 3.5, leadTimeDays: 4, isPreferred: true });
+  require('../../src/purchasing/policy-service').setPolicy(env.db, env.ctx, env.membership,
+    env.black5.id, { reorderPoint: 100, targetStock: 110 });
+  const mailbox = connections.create(env.db, env.ctx, env.membership, {
+    providerType: 'supplier_email', displayName: 'Purchasing Gmail',
+  }).connection;
+  env.db.prepare(`UPDATE workspace_connectors SET provider_type='gmail', status='connected',
+    setup_status='CONNECTED', paused_at=NULL,
+    capabilities='["MAIL_READ","MAIL_SEND"]' WHERE id=?`).run(mailbox.id);
+  credentials.put(env.db, env.workspace.workspaceId, mailbox.id, 'provider', {
+    accessToken: 'test-token', refreshToken: 'test-refresh', mailbox: 'buyer@example.test',
+    expiresAt: Date.now() + 3_600_000,
+  });
+  suppliers.updateSupplier(env.db, env.ctx, env.membership, supplier.id, {
+    watchedConnectorId: mailbox.id, prepareCommunications: true,
+    autoSendEnabled: true, autoSendLimit: 500,
+  });
+  const transferPolicy = policyService.propose(env.db, env.ctx, env.membership, {
+    name: 'Optimizer transfers', allowedActionTypes: ['transfer'],
+    locationScope: [env.brooklyn.id, env.jersey.id], maximumQuantity: 12,
+    conditions: [policyService.CONDITIONS.DESTINATION_STOCKOUT_RISK,
+      policyService.CONDITIONS.SOURCE_ABOVE_SAFETY,
+      policyService.CONDITIONS.SUFFICIENT_HISTORY,
+      policyService.CONDITIONS.NO_CONFLICTING_TRANSFER],
+  });
+  policyService.approve(env.db, env.ctx, env.membership, transferPolicy.id);
+  const purchasePolicy = policyService.propose(env.db, env.ctx, env.membership, {
+    name: 'Optimizer purchasing', allowedActionTypes: ['approve_purchase_order'],
+    supplierScope: [supplier.id], maximumValue: 500,
+    thresholds: { maxUnitPriceChangePercent: 5 },
+    conditions: [policyService.CONDITIONS.REPLENISHMENT_EVIDENCE,
+      policyService.CONDITIONS.MOQ_ORDER_MULTIPLE_COMPLIANT,
+      policyService.CONDITIONS.NO_DUPLICATE_INCOMING_DEMAND,
+      policyService.CONDITIONS.PRICE_WITHIN_POLICY],
+  });
+  policyService.approve(env.db, env.ctx, env.membership, purchasePolicy.id);
+  capabilities.apply(env.db, env.ctx, env.membership, {
+    inventory_transfers: true, replenishment: true, supplier_emails: true,
+  });
+  autonomous.grant(env.db, env.ctx, env.membership, 'supplier.communicate', {
+    supplierIds: [supplier.id], currency: 'USD', maximumValueMinor: 50_000,
+    minimumConfidence: 'high', maximumRisk: 'high',
+  });
+  modes.setMode(env.db, env.ctx, env.membership, 'POLICY_AUTOMATED');
+
+  const sku = signalEngine.skuSignals(env.db, env.workspace.workspaceId, { skuIds: [env.black5.id] })[0];
+  const base = replPlan.buildPlan(env.db, env.workspace.workspaceId, sku, { useAdaptiveOptimizer: false });
+  const optimized = { ...base, configured: true, decision: 'transfer_and_purchase',
+    decisionSource: 'adaptive_optimizer', explanation: 'Transfer 5 and buy 10 after comparing evidenced cost and timing.',
+    headline: 'Transfer 5 and buy 10', transfers: [{ fromLocationId: env.jersey.id,
+      fromLocationName: 'Downtown Store', toLocationId: env.brooklyn.id,
+      toLocationName: 'Main Warehouse', quantity: 5, arrivalDays: 1, costMinor: 500,
+      why: 'The transfer arrives before the shortage and preserves the source floor.' }],
+    purchase: { supplierId: supplier.id, supplierName: supplier.name, quantityUnits: 10,
+      quantityPurchaseUnits: 10, purchaseUnit: 'unit', unitsPerPurchaseUnit: 1,
+      unitCost: 3.5, estimatedCost: 35, leadTimeDays: 4, shortfall: 10 },
+    adaptivePlan: { confidence: 'high', constraints: { currency: 'USD', cash: { known: true } },
+      alternatives: [{ type: 'TRANSFER' }, { type: 'BUY' }, { type: 'TRANSFER_AND_BUY' }],
+      expectedResult: { expectedShortageUnits: 0 } } };
+  const originalWorkspace = replPlan.planWorkspace;
+  const originalBuild = replPlan.buildPlan;
+  const originalSend = gmail.send;
+  replPlan.planWorkspace = () => ({ plans: [optimized], governed: [optimized],
+    governedSkuIds: new Set([env.black5.id]), actionable: [optimized], combined: [optimized],
+    combinedSkuIds: new Set([env.black5.id]) });
+  replPlan.buildPlan = () => optimized;
+  gmail.send = async () => ({ externalMessageId: 'optimizer-po-message', externalThreadId: 'optimizer-po-thread' });
+  try {
+    runner.run(env.db, env.ctx, env.membership, { trigger: 'optimizer-test' });
+    const item = workItems.list(env.db, env.workspace.workspaceId, { category: 'replenishment_plan' })[0];
+    assert.equal(item.executionStatus, 'COMPLETED', JSON.stringify(item.policyEvaluation));
+    assert.equal(item.approvalRequirement, 'NONE');
+    const beforeSend = poService.get(env.db, env.workspace.workspaceId, item.purchaseOrderId);
+    assert.equal(beforeSend.status, 'APPROVED');
+    const job = await jobs.processOne(env.db, {
+      'supplier.purchase-order.dispatch': communications.dispatchJobHandler(env.db),
+    }, { owner: 'optimizer-supplier-test', leaseMs: 30_000 });
+    assert.equal(job.status, 'COMPLETED');
+    assert.equal(poService.get(env.db, env.workspace.workspaceId, item.purchaseOrderId).status, 'ORDERED');
+    assert.equal(communications.forOrder(env.db, env.workspace.workspaceId, item.purchaseOrderId)[0].externalMessageId,
+      'optimizer-po-message');
+  } finally {
+    replPlan.planWorkspace = originalWorkspace;
+    replPlan.buildPlan = originalBuild;
+    gmail.send = originalSend;
+    env.db.close();
+  }
 });
 
 test('a 17 percent supplier price increase stops routine purchasing in Needs you', () => {

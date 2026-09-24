@@ -75,8 +75,45 @@ function chooseAuthority(db, ctx, connectorId, input = {}) {
 function localSnapshot(db, workspaceId, asOf) {
   const trial = reports.trialBalance(db, workspaceId, { to: asOf, includeZero: true });
   return { asOf, currency: trial.currency, balanced: trial.balanced,
-    accounts: trial.accounts.map((row) => ({ code: row.code, name: row.name,
+    accounts: trial.accounts.map((row) => ({ id: row.id, code: row.code, name: row.name,
       balanceMinor: Number(row.ending_debit_minor) - Number(row.ending_credit_minor) })) };
+}
+
+function comparisonSnapshots(db, workspaceId, connectorId, local, external) {
+  const mappings = db.prepare(`SELECT a.id AS account_id,
+      COALESCE(pm.external_id, x.external_id) AS external_id
+    FROM accounting_accounts a
+    LEFT JOIN accounting_posting_account_mappings pm ON pm.workspace_id = a.workspace_id
+      AND pm.connector_id = ? AND pm.foundry_account_id = a.id
+    LEFT JOIN accounting_external_identities x ON x.workspace_id = a.workspace_id
+      AND x.connector_id = ? AND x.entity_type = 'account' AND x.foundry_record_id = a.id
+    WHERE a.workspace_id = ? AND COALESCE(pm.external_id, x.external_id) IS NOT NULL`)
+    .all(connectorId, connectorId, workspaceId);
+  const externalById = new Map((external.accounts || []).filter((row) => row.externalId != null)
+    .map((row) => [String(row.externalId), row]));
+  const externalIdByAccount = new Map(mappings.map((row) => [String(row.account_id), String(row.external_id)]));
+  const grouped = new Map();
+  const unmapped = [];
+  for (const account of local.accounts || []) {
+    const externalId = externalIdByAccount.get(String(account.id));
+    if (!externalId || !externalById.has(externalId)) {
+      unmapped.push(account);
+      continue;
+    }
+    const providerAccount = externalById.get(externalId);
+    const current = grouped.get(externalId) || { id: `external:${externalId}`,
+      code: providerAccount.code || `external:${externalId}`, name: providerAccount.name || account.name,
+      balanceMinor: 0, externalId };
+    current.balanceMinor += Number(account.balanceMinor || 0);
+    grouped.set(externalId, current);
+  }
+  const normalizedExternal = { ...external, accounts: (external.accounts || []).map((account) => {
+    const externalId = account.externalId == null ? null : String(account.externalId);
+    return grouped.has(externalId)
+      ? { ...account, code: account.code || `external:${externalId}` }
+      : account;
+  }) };
+  return { local: { ...local, accounts: [...unmapped, ...grouped.values()] }, external: normalizedExternal };
 }
 
 function conflict(db, workspaceId, connectorId, input) {
@@ -279,14 +316,8 @@ async function shadow(db, ctx, connectorId, adapter, credentials, input = {}) {
         detail: `The provider returned an accounting snapshot from ${external.asOf}, older than the accepted checkpoint ${checkpoint.watermark_at}. StockChief ignored it.` });
       throw new ValidationError('The provider returned an out-of-order accounting snapshot. Nothing was changed.');
     }
-    const approved = db.prepare(`SELECT x.external_id, a.code FROM accounting_external_identities x
-      JOIN accounting_accounts a ON a.id = x.foundry_record_id
-      WHERE x.workspace_id = ? AND x.connector_id = ? AND x.entity_type = 'account'`)
-      .all(ctx.workspaceId, connectorId);
-    const approvedCodes = new Map(approved.map((row) => [String(row.external_id), row.code]));
-    const normalizedExternal = { ...external, accounts: (external.accounts || []).map((row) => ({ ...row,
-      code: approvedCodes.get(String(row.externalId)) || row.code })) };
-    const differences = compare(local, normalizedExternal);
+    const comparable = comparisonSnapshots(db, ctx.workspaceId, connectorId, local, external);
+    const differences = compare(comparable.local, comparable.external);
     const status = differences.length ? 'MISMATCH' : 'MATCHED'; const done = nowIso();
     inTransaction(db, () => {
       rememberExactAccounts(db, connection, external);
@@ -345,20 +376,152 @@ function mapAccount(db, ctx, connectorId, input = {}) {
   const occupied = db.prepare(`SELECT foundry_record_id FROM accounting_external_identities
     WHERE workspace_id = ? AND connector_id = ? AND entity_type = 'account' AND external_id = ?`)
     .get(ctx.workspaceId, connectorId, externalId);
-  if (occupied && occupied.foundry_record_id !== account.id) {
-    throw new ValidationError('That external account is already mapped to a different StockChief account.');
+  const now = nowIso();
+  return inTransaction(db, () => {
+    db.prepare(`INSERT INTO accounting_posting_account_mappings
+      (id, workspace_id, connector_id, foundry_account_id, external_id,
+       approved_by_user_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(workspace_id, connector_id, foundry_account_id) DO UPDATE SET
+        external_id = excluded.external_id, approved_by_user_id = excluded.approved_by_user_id,
+        updated_at = excluded.updated_at`)
+      .run(newId('acmap'), ctx.workspaceId, connectorId, account.id, externalId,
+        ctx.actorId || null, now, now);
+
+    const assigned = db.prepare(`SELECT external_id FROM accounting_external_identities
+      WHERE workspace_id = ? AND connector_id = ? AND entity_type = 'account' AND foundry_record_id = ?`)
+      .get(ctx.workspaceId, connectorId, account.id);
+    if (!occupied && !assigned) {
+      db.prepare(`INSERT INTO accounting_external_identities
+        (id, workspace_id, connector_id, entity_type, foundry_record_id, external_id,
+         external_version, payload_hash, last_direction, last_seen_at, created_at, updated_at)
+        VALUES (?, ?, ?, 'account', ?, ?, ?, ?, 'READ', ?, ?, ?)`)
+        .run(newId('acident'), ctx.workspaceId, connectorId, account.id, externalId,
+          external.version == null ? null : String(external.version), hash(external), now, now, now);
+    }
+    resolvePostingConflicts(db, ctx.workspaceId, connectorId);
+    return { account, external, sharedReadIdentity: Boolean(occupied && occupied.foundry_record_id !== account.id) };
+  });
+}
+
+function entryLines(db, workspaceId, connectorId, entryId) {
+  return db.prepare(`SELECT l.*, a.code AS account_code, a.name AS account_name,
+      COALESCE(pm.external_id, x.external_id) AS external_account_id,
+      c.name AS customer_name, c.company AS customer_company, c.email AS customer_email,
+      s.name AS supplier_name, s.email AS supplier_email,
+      cx.external_id AS external_customer_id, sx.external_id AS external_supplier_id
+    FROM accounting_journal_lines l
+    JOIN accounting_accounts a ON a.id = l.account_id
+    LEFT JOIN customers c ON c.id = l.customer_id AND c.workspace_id = l.workspace_id
+    LEFT JOIN suppliers s ON s.id = l.supplier_id AND s.workspace_id = l.workspace_id
+    LEFT JOIN accounting_posting_account_mappings pm ON pm.workspace_id = l.workspace_id
+      AND pm.connector_id = ? AND pm.foundry_account_id = l.account_id
+    LEFT JOIN accounting_external_identities x ON x.workspace_id = l.workspace_id
+      AND x.connector_id = ? AND x.entity_type = 'account' AND x.foundry_record_id = l.account_id
+    LEFT JOIN accounting_external_identities cx ON cx.workspace_id = l.workspace_id
+      AND cx.connector_id = ? AND cx.entity_type = 'customer' AND cx.foundry_record_id = l.customer_id
+    LEFT JOIN accounting_external_identities sx ON sx.workspace_id = l.workspace_id
+      AND sx.connector_id = ? AND sx.entity_type = 'supplier' AND sx.foundry_record_id = l.supplier_id
+    WHERE l.workspace_id = ? AND l.entry_id = ? ORDER BY l.line_number`)
+    .all(connectorId, connectorId, connectorId, connectorId, workspaceId, entryId);
+}
+
+function resolvePostingConflicts(db, workspaceId, connectorId) {
+  const open = db.prepare(`SELECT * FROM accounting_sync_conflicts
+    WHERE workspace_id = ? AND connector_id = ?
+      AND conflict_type IN ('UNCERTAIN_ACCOUNT_IDENTITY','UNCERTAIN_PARTY_IDENTITY')
+      AND status = 'OPEN'`).all(workspaceId, connectorId);
+  const now = nowIso();
+  for (const row of open) {
+    if (!row.foundry_record_id) continue;
+    const lines = entryLines(db, workspaceId, connectorId, row.foundry_record_id);
+    if (lines.length && lines.every((line) => line.external_account_id
+        && (!line.customer_id || line.external_customer_id)
+        && (!line.supplier_id || line.external_supplier_id))) {
+      db.prepare(`UPDATE accounting_sync_conflicts SET status = 'RESOLVED',
+        resolution = 'Owner-approved posting mappings now cover every journal line and counterparty.', resolved_at = ?
+        WHERE id = ? AND workspace_id = ?`).run(now, row.id, workspaceId);
+    }
+  }
+  const remaining = db.prepare(`SELECT COUNT(*) AS n FROM accounting_sync_conflicts
+    WHERE workspace_id = ? AND connector_id = ? AND status = 'OPEN'`).get(workspaceId, connectorId).n;
+  if (!remaining) {
+    connections.resolveIssues(db, workspaceId, connectorId, 'ACCOUNTING_SYNC_CONFLICT');
+    const current = db.prepare(`SELECT * FROM accounting_sync_policies
+      WHERE workspace_id = ? AND connector_id = ?`).get(workspaceId, connectorId);
+    if (current?.write_enabled_at && current.requested_authority === 'POST'
+        && current.posting_direction === 'FOUNDRY_TO_EXTERNAL') {
+      db.prepare(`UPDATE accounting_sync_policies SET stage = 'WRITE_ENABLED', updated_at = ?
+        WHERE workspace_id = ? AND connector_id = ?`).run(now, workspaceId, connectorId);
+      db.prepare(`UPDATE workspace_connectors SET setup_status = 'ACCOUNTING_WRITE_ENABLED', updated_at = ?
+        WHERE workspace_id = ? AND id = ?`).run(now, workspaceId, connectorId);
+    }
+  }
+  return remaining;
+}
+
+function postingParty(db, workspaceId, partyType, partyId) {
+  if (!['customer', 'supplier'].includes(partyType)) throw new ValidationError('Choose customer or supplier identity.');
+  const table = partyType === 'customer' ? 'customers' : 'suppliers';
+  const party = db.prepare(`SELECT * FROM ${table} WHERE workspace_id = ? AND id = ?`).get(workspaceId, partyId);
+  if (!party) throw new ValidationError(`That ${partyType} is not available in this inventory.`);
+  return party;
+}
+
+function mapPostingParty(db, ctx, connectorId, input = {}) {
+  const partyType = String(input.partyType || '').toLowerCase();
+  const party = postingParty(db, ctx.workspaceId, partyType, input.partyId);
+  const externalId = String(input.externalId || '').trim();
+  if (!externalId) throw new ValidationError(`Choose the exact external ${partyType}.`);
+  const external = input.external;
+  if (!external || String(external.externalId) !== externalId) {
+    throw new ValidationError(`That external ${partyType} was not verified from the provider.`);
+  }
+  const occupied = db.prepare(`SELECT foundry_record_id FROM accounting_external_identities
+    WHERE workspace_id = ? AND connector_id = ? AND entity_type = ? AND external_id = ?`)
+    .get(ctx.workspaceId, connectorId, partyType, externalId);
+  if (occupied && occupied.foundry_record_id !== party.id) {
+    throw new ValidationError(`That external ${partyType} is already linked to a different StockChief ${partyType}.`);
   }
   const now = nowIso();
   db.prepare(`INSERT INTO accounting_external_identities
     (id, workspace_id, connector_id, entity_type, foundry_record_id, external_id,
      external_version, payload_hash, last_direction, last_seen_at, created_at, updated_at)
-    VALUES (?, ?, ?, 'account', ?, ?, ?, ?, 'READ', ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(workspace_id, connector_id, entity_type, foundry_record_id) DO UPDATE SET
       external_id = excluded.external_id, external_version = excluded.external_version,
-      payload_hash = excluded.payload_hash, last_seen_at = excluded.last_seen_at, updated_at = excluded.updated_at`)
-    .run(newId('acident'), ctx.workspaceId, connectorId, account.id, externalId,
-      external.version == null ? null : String(external.version), hash(external), now, now, now);
-  return { account, external };
+      payload_hash = excluded.payload_hash, last_direction = excluded.last_direction,
+      last_seen_at = excluded.last_seen_at, updated_at = excluded.updated_at`)
+    .run(newId('acident'), ctx.workspaceId, connectorId, partyType, party.id, externalId,
+      external.version == null ? null : String(external.version), hash(external),
+      input.direction === 'WRITE' ? 'WRITE' : 'READ', now, now, now);
+  resolvePostingConflicts(db, ctx.workspaceId, connectorId);
+  return { party, external };
+}
+
+function pendingEntries(db, workspaceId, connectorId) {
+  const entries = db.prepare(`SELECT e.* FROM accounting_journal_entries e
+    WHERE e.workspace_id = ? AND e.status = 'POSTED'
+      AND (e.source_record_type IS NULL OR e.source_record_type <> 'accounting_connection_opening')
+      AND NOT EXISTS (SELECT 1 FROM accounting_external_identities x
+        WHERE x.workspace_id = e.workspace_id AND x.connector_id = ?
+          AND x.entity_type = 'journal_entry' AND x.foundry_record_id = e.id)
+    ORDER BY e.entry_number LIMIT 100`).all(workspaceId, connectorId);
+  return entries.map((entry) => {
+    const lines = entryLines(db, workspaceId, connectorId, entry.id);
+    return { ...entry, lines,
+      debitMinor: lines.reduce((sum, line) => sum + Number(line.debit_minor || 0), 0),
+      creditMinor: lines.reduce((sum, line) => sum + Number(line.credit_minor || 0), 0),
+      missingAccounts: lines.filter((line) => !line.external_account_id)
+        .map((line) => ({ code: line.account_code, name: line.account_name })),
+      missingParties: [...new Map(lines.flatMap((line) => [
+        line.customer_id && !line.external_customer_id ? { partyType: 'customer', partyId: line.customer_id,
+          name: line.customer_name, company: line.customer_company, email: line.customer_email } : null,
+        line.supplier_id && !line.external_supplier_id ? { partyType: 'supplier', partyId: line.supplier_id,
+          name: line.supplier_name, email: line.supplier_email } : null,
+      ].filter(Boolean)).map((party) => [`${party.partyType}:${party.partyId}`, party])).values()],
+    };
+  });
 }
 
 function enableWrites(db, ctx, connectorId) {
@@ -386,33 +549,33 @@ async function syncPending(db, ctx, connectorId, adapter, credentials, options =
   const current = policy(db, ctx.workspaceId, connectorId);
   if (current.stage !== 'WRITE_ENABLED') throw new ValidationError('Posting is not enabled for this accounting connection.');
   if (!adapter?.postJournalEntry) throw new ValidationError('This provider does not support governed journal posting.');
-  let entries = db.prepare(`SELECT e.* FROM accounting_journal_entries e
-    WHERE e.workspace_id = ? AND e.status = 'POSTED'
-      AND (e.source_record_type IS NULL OR e.source_record_type <> 'accounting_connection_opening')
-      AND NOT EXISTS (SELECT 1 FROM accounting_external_identities x
-        WHERE x.workspace_id = e.workspace_id AND x.connector_id = ?
-          AND x.entity_type = 'journal_entry' AND x.foundry_record_id = e.id)
-    ORDER BY e.entry_number LIMIT 100`).all(ctx.workspaceId, connectorId);
+  let entries = pendingEntries(db, ctx.workspaceId, connectorId);
   if (Array.isArray(options.entryIds)) {
     const selected = new Set(options.entryIds.map(String));
     entries = entries.filter((entry) => selected.has(String(entry.id)));
   }
+  const unready = entries.filter((entry) => entry.missingAccounts.length || entry.missingParties.length);
+  if (unready.length) {
+    const connection = connections.get(db, ctx.workspaceId, connectorId);
+    for (const entry of unready) {
+      if (entry.missingAccounts.length) conflict(db, ctx.workspaceId, connectorId, {
+        key: `entry-account:${entry.id}`, type: 'UNCERTAIN_ACCOUNT_IDENTITY', entityType: 'journal_entry',
+        foundryRecordId: entry.id, foundryVersion: String(entry.entry_number),
+        foundryPayload: { entry, missingAccounts: entry.missingAccounts },
+        detail: `Journal ${entry.entry_number} uses ${entry.missingAccounts.length} account${entry.missingAccounts.length === 1 ? '' : 's'} without an exact external posting mapping. No journal in this batch was posted.`,
+      });
+      if (entry.missingParties.length) conflict(db, ctx.workspaceId, connectorId, {
+        key: `entry-party:${entry.id}`, type: 'UNCERTAIN_PARTY_IDENTITY', entityType: 'journal_entry',
+        foundryRecordId: entry.id, foundryVersion: String(entry.entry_number),
+        foundryPayload: { entry, missingParties: entry.missingParties },
+        detail: `Journal ${entry.entry_number} uses ${entry.missingParties.length} customer or supplier identit${entry.missingParties.length === 1 ? 'y' : 'ies'} that ${connection.display_name} requires. No journal in this batch was posted.`,
+      });
+    }
+    return { posted: 0, remaining: entries.length };
+  }
   let posted = 0;
   for (const entry of entries) {
-    const lines = db.prepare(`SELECT l.*, a.code AS account_code, a.name AS account_name,
-      x.external_id AS external_account_id FROM accounting_journal_lines l
-      JOIN accounting_accounts a ON a.id = l.account_id
-      LEFT JOIN accounting_external_identities x ON x.workspace_id = l.workspace_id
-        AND x.connector_id = ? AND x.entity_type = 'account' AND x.foundry_record_id = l.account_id
-      WHERE l.entry_id = ? ORDER BY l.line_number`).all(connectorId, entry.id);
-    const missing = lines.filter((line) => !line.external_account_id);
-    if (missing.length) {
-      conflict(db, ctx.workspaceId, connectorId, { key: `entry-account:${entry.id}`, type: 'UNCERTAIN_ACCOUNT_IDENTITY',
-        entityType: 'journal_entry', foundryRecordId: entry.id, foundryVersion: String(entry.entry_number),
-        foundryPayload: { entry, missingAccounts: missing.map((line) => ({ code: line.account_code, name: line.account_name })) },
-        detail: `Journal ${entry.entry_number} uses ${missing.length} account${missing.length === 1 ? '' : 's'} without an exact external identity. StockChief did not post it.` });
-      break;
-    }
+    const lines = entry.lines;
     const result = await adapter.postJournalEntry({ credentials, entry: { ...entry, lines },
       idempotencyKey: `foundry-${ctx.workspaceId}-${entry.id}` });
     if (!result?.externalId) throw new ValidationError('The accounting provider did not confirm an external journal identity.');
@@ -442,10 +605,14 @@ function createSandboxProof(db, ctx, connectorId) {
   if (current.stage !== 'WRITE_ENABLED') {
     throw new ValidationError('Enable verified posting before running the sandbox proof.');
   }
-  const mapped = db.prepare(`SELECT a.*, x.external_id FROM accounting_accounts a
-    JOIN accounting_external_identities x ON x.workspace_id = a.workspace_id
+  const mapped = db.prepare(`SELECT a.*, COALESCE(pm.external_id, x.external_id) AS external_id
+    FROM accounting_accounts a
+    LEFT JOIN accounting_posting_account_mappings pm ON pm.workspace_id = a.workspace_id
+      AND pm.connector_id = ? AND pm.foundry_account_id = a.id
+    LEFT JOIN accounting_external_identities x ON x.workspace_id = a.workspace_id
       AND x.connector_id = ? AND x.entity_type = 'account' AND x.foundry_record_id = a.id
-    WHERE a.workspace_id = ? AND a.active = 1 ORDER BY a.code`).all(connectorId, ctx.workspaceId);
+    WHERE a.workspace_id = ? AND a.active = 1 AND COALESCE(pm.external_id, x.external_id) IS NOT NULL
+    ORDER BY a.code`).all(connectorId, connectorId, ctx.workspaceId);
   const cash = mapped.find((row) => row.account_type === 'ASSET' && /checking|cash|bank/i.test(row.name))
     || mapped.find((row) => row.account_type === 'ASSET');
   const expense = mapped.find((row) => row.account_type === 'EXPENSE' && /misc|other business|office/i.test(row.name))
@@ -498,6 +665,21 @@ function state(db, workspaceId, connectorId) {
       ORDER BY created_at DESC LIMIT 20`).all(workspaceId, connectorId),
     identities: db.prepare(`SELECT * FROM accounting_external_identities WHERE workspace_id = ? AND connector_id = ?
       ORDER BY entity_type, foundry_record_id`).all(workspaceId, connectorId),
+    postingMappings: db.prepare(`SELECT pm.*, a.code AS account_code, a.name AS account_name
+      FROM accounting_posting_account_mappings pm
+      JOIN accounting_accounts a ON a.id = pm.foundry_account_id
+      WHERE pm.workspace_id = ? AND pm.connector_id = ? ORDER BY a.code`)
+      .all(workspaceId, connectorId),
+    postedEntries: db.prepare(`SELECT e.id, e.entry_number, e.posting_date, e.description,
+        x.external_id, x.external_version, x.last_seen_at
+      FROM accounting_journal_entries e
+      JOIN accounting_external_identities x ON x.workspace_id = e.workspace_id
+        AND x.connector_id = ? AND x.entity_type = 'journal_entry' AND x.foundry_record_id = e.id
+      WHERE e.workspace_id = ?
+        AND (e.source_record_type IS NULL OR e.source_record_type NOT IN
+          ('accounting_connection_test','accounting_connection_opening'))
+      ORDER BY e.entry_number DESC LIMIT 20`).all(connectorId, workspaceId),
+    pendingEntries: pendingEntries(db, workspaceId, connectorId),
     openingBooks: openingBooksPreview(db, workspaceId, connectorId),
     sandboxProof,
   };
@@ -505,4 +687,5 @@ function state(db, workspaceId, connectorId) {
 
 module.exports = { policy, initialize, chooseAuthority, localSnapshot, compare, shadow, mapAccount, enableWrites, syncPending,
   createSandboxProof, conflict, state, rememberExactAccounts, openingBooksPreview, importOpeningBooks,
-  importedAccountShape, hash, stable };
+  importedAccountShape, comparisonSnapshots, pendingEntries, resolvePostingConflicts, postingParty, mapPostingParty,
+  hash, stable };

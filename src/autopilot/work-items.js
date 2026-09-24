@@ -279,7 +279,7 @@ function list(db, workspaceId, { status = null, category = null, limit = 100, si
 
 /** Work waiting on a person. */
 function awaitingApproval(db, workspaceId) {
-  return list(db, workspaceId, { status: STATUS.WAITING_FOR_APPROVAL });
+  return list(db, workspaceId, { status: STATUS.WAITING_FOR_APPROVAL, limit: -1 });
 }
 
 /**

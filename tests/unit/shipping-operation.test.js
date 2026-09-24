@@ -37,12 +37,13 @@ function setup(options = {}) {
   const item = makeQuantityItem(db, workspace.ctx, { name: 'moc toe slip in', baseCode: '7L665-3-36' });
   prices.setPrice(db, workspace.ctx, { skuId: item.skuId, amount: '80.00', currency: 'USD' });
   db.prepare('UPDATE skus SET weight_grams = 900 WHERE id = ?').run(item.skuId);
-  db.prepare('UPDATE locations SET address = ? WHERE id = ?')
-    .run('12 Depot Road, Monroe, NY 10950', workspace.main.id);
+  db.prepare('UPDATE locations SET address = ?, phone = ? WHERE id = ?')
+    .run('12 Depot Road, Monroe, NY 10950', options.locationPhone === null ? null : '845-555-0147', workspace.main.id);
   inventory.receive(db, workspace.ctx, { skuId: item.skuId, locationId: workspace.main.id, quantity: 40 });
 
   const customer = sales.createCustomer(db, workspace.ctx, {
     name: 'Moshe Ekstein', email: 'motty@example.test',
+    phone: options.customerPhone === null ? null : '845-555-0148',
     shippingAddress: options.address === null ? null : (options.address || '13 Austra Pkwy, Monroe, NY 10950'),
   });
   const order = sales.confirm(db, workspace.ctx, sales.createOrder(db, workspace.ctx, {
@@ -51,7 +52,7 @@ function setup(options = {}) {
   }).id);
 
   const box = shipments.startPicking(db, workspace.ctx, order.id, {});
-  shipments.markPacked(db, workspace.ctx, box.id, {});
+  shipments.markPacked(db, workspace.ctx, box.id, options.pack || {});
   return { db, workspace, ctx: workspace.ctx, membership, item, customer, order, box };
 }
 
@@ -74,6 +75,26 @@ test('a parcel weighs what is in it, and says when that was worked out rather th
   const measured = shipping.service.packagesFor(env.db, env.workspace.workspaceId, env.box.id);
   assert.equal(measured[0].weightGrams, 2100);
   assert.equal(measured[0].estimated, false, 'what somebody put on the scales wins');
+  env.db.close();
+});
+
+test('a measured weight entered while packing is used for a one-package carrier quote', () => {
+  const env = setup({ pack: { packageCount: 1, weightGrams: 2150 } });
+  const boxes = shipping.service.packagesFor(env.db, env.workspace.workspaceId, env.box.id);
+  assert.equal(boxes.length, 1);
+  assert.equal(boxes[0].weightGrams, 2150);
+  assert.equal(boxes[0].estimated, false);
+  env.db.close();
+});
+
+test('multiple packages require one measured weight per package instead of splitting a total guess', () => {
+  const env = setup({ pack: { packageCount: 2, weightGrams: 3400 } });
+  const boxes = shipping.service.packagesFor(env.db, env.workspace.workspaceId, env.box.id);
+  assert.equal(boxes.length, 2);
+  assert.ok(boxes.every((box) => box.weightGrams === null));
+  const state = shipping.service.readiness(env.db, env.workspace.workspaceId, env.box.id);
+  assert.match(state.blocked.find((problem) => problem.key === 'weight').what,
+    /measured weight for each of the 2 packages/i);
   env.db.close();
 });
 
@@ -352,6 +373,7 @@ test('within authority StockChief buys the label itself, and outside it does not
   const capabilities = require('../../src/autopilot/capabilities');
 
   const env = setup();
+  ledger.configure(env.db, env.ctx, env.membership, { startDate: '2026-01-01', currency: 'USD' });
   const carrier = fakeCarrier();
   const undo = withCarrier(carrier);
   try {
@@ -386,6 +408,62 @@ test('within authority StockChief buys the label itself, and outside it does not
   } finally { undo(); env.db.close(); }
 });
 
+test('the owner sees the cheapest explainable offer for one carrier service while audit keeps every quote', async () => {
+  const env = setup();
+  const sameService = { rateId: 'rate_ups_expensive', carrier: 'ups', service: 'Ground',
+    amountMinor: 2142, currency: 'USD', deliveryDays: 3,
+    deliveryDate: '2026-09-14', guaranteed: false };
+  const carrier = fakeCarrier({ rates: [
+    sameService,
+    { ...sameService, rateId: 'rate_ups_cheapest', amountMinor: 1842 },
+    { rateId: 'rate_usps', carrier: 'usps', service: 'Priority Mail', amountMinor: 1680,
+      currency: 'USD', deliveryDays: 4, deliveryDate: '2026-09-15', guaranteed: false },
+  ] });
+  const undo = withCarrier(carrier);
+  try {
+    const quoted = await shipping.service.quote(env.db, env.ctx, env.box.id);
+    assert.equal(quoted.rates.length, 2);
+    assert.equal(quoted.rates.find((rate) => rate.carrier === 'ups').amountMinor, 1842);
+    assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM shipment_rates WHERE shipment_id = ?')
+      .get(env.box.id).n, 3, 'the audit keeps every provider offer even though the owner sees the useful choice');
+  } finally { undo(); env.db.close(); }
+});
+
+test('identical carrier offers are shown once even when two connected accounts quote them', async () => {
+  const env = setup();
+  const duplicate = { rateId: 'rate_ups_second_account', carrier: 'ups', service: 'Ground',
+    amountMinor: 1842, currency: 'USD', deliveryDays: 3,
+    deliveryDate: '2026-09-14', guaranteed: false };
+  const carrier = fakeCarrier({ rates: [
+    { ...duplicate, rateId: 'rate_ups_first_account' }, duplicate,
+    { rateId: 'rate_usps', carrier: 'usps', service: 'Priority Mail', amountMinor: 1680,
+      currency: 'USD', deliveryDays: 4, deliveryDate: '2026-09-15', guaranteed: false },
+  ] });
+  const undo = withCarrier(carrier);
+  try {
+    const quoted = await shipping.service.quote(env.db, env.ctx, env.box.id);
+    assert.equal(quoted.rates.length, 2);
+    assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM shipment_rates WHERE shipment_id = ?')
+      .get(env.box.id).n, 3, 'the audit keeps every provider offer even though the owner sees one');
+  } finally { undo(); env.db.close(); }
+});
+
+test('missing carrier contact phones are reported before ShipEngine is called', async () => {
+  const env = setup({ customerPhone: null, locationPhone: null });
+  const carrier = fakeCarrier();
+  const undo = withCarrier(carrier);
+  try {
+    const quoted = await shipping.service.quote(env.db, env.ctx, env.box.id);
+    assert.equal(quoted.rates.length, 0);
+    assert.equal(carrier.state.quoted, 0);
+    const byKey = Object.fromEntries(quoted.blocked.map((problem) => [problem.key, problem]));
+    assert.match(byKey.to_phone.what, /customer has no shipping phone number/i);
+    assert.equal(byKey.to_phone.href, `/sales/customers/${env.customer.id}`);
+    assert.match(byKey.from_phone.what, /no shipping contact phone/i);
+    assert.equal(byKey.from_phone.href, '/locations');
+  } finally { undo(); env.db.close(); }
+});
+
 test('a parcel no rule covers is left alone, with the reason, and nothing is spent', async () => {
   const modes = require('../../src/autopilot/modes');
   const capabilities = require('../../src/autopilot/capabilities');
@@ -408,4 +486,82 @@ test('a parcel no rule covers is left alone, with the reason, and nothing is spe
     assert.equal(env.db.prepare('SELECT status FROM sales_shipments WHERE id = ?')
       .get(env.box.id).status, 'PACKED', 'the parcel waits for a person');
   } finally { undo(); env.db.close(); }
+});
+
+test('autonomous label execution rejects changed quotes, revoked rules and expired rates before contacting the carrier', async () => {
+  const env = setup();
+  const carrier = fakeCarrier();
+  const undo = withCarrier(carrier);
+  try {
+    require('../../src/autopilot/modes').setMode(env.db, env.ctx, env.membership, 'POLICY_AUTOMATED');
+    require('../../src/autopilot/capabilities').set(env.db, env.ctx, env.membership, 'shipping_labels', true);
+    const rule = shipping.rules.save(env.db, env.ctx, { carrier: 'ups', service: 'Ground', maxCostMinor: 2500 });
+    const quote = await shipping.service.quote(env.db, env.ctx, env.box.id);
+    const rate = quote.rates.find((current) => current.carrier === 'ups');
+    const operations = require('../../src/autonomous/service');
+    const prepare = (key) => operations.create(env.db, env.ctx, { operationType: 'shipping.purchase_label', idempotencyKey: key,
+      decision: { shipmentId: env.box.id, rateId: rate.id, ruleId: rule.id },
+      authorityDimensions: { valueMinor: rate.amountMinor, currency: rate.currency } });
+    env.db.prepare('UPDATE shipment_rates SET amount_minor = amount_minor + 1 WHERE id = ?').run(rate.id);
+    const changed = await operations.run(env.db, env.ctx, env.membership, prepare('changed-quote').id);
+    assert.equal(changed.operation.status, 'NEEDS_HUMAN');
+    assert.equal(changed.authority.checks.find((check) => check.name === 'currentRate').passed, false);
+    env.db.prepare('UPDATE shipment_rates SET amount_minor = ? WHERE id = ?').run(rate.amountMinor, rate.id);
+    shipping.rules.remove(env.db, env.ctx, rule.id);
+    const revoked = await operations.run(env.db, env.ctx, env.membership, prepare('revoked-rule').id);
+    assert.equal(revoked.operation.status, 'NEEDS_HUMAN');
+    assert.equal(revoked.authority.checks.find((check) => check.name === 'shippingRule').passed, false);
+    env.db.prepare('UPDATE shipping_rules SET is_active = 1 WHERE id = ?').run(rule.id);
+    env.db.prepare('UPDATE shipment_rates SET quoted_at = ? WHERE id = ?').run('2000-01-01T00:00:00.000Z', rate.id);
+    const stale = await operations.run(env.db, env.ctx, env.membership, prepare('expired-quote').id);
+    assert.equal(stale.operation.status, 'NEEDS_HUMAN');
+    assert.equal(carrier.state.bought.length, 0);
+  } finally { undo(); env.db.close(); }
+});
+
+test('a carrier charge differing from the authorised quote becomes an exception, not a verified completion or second purchase', async () => {
+  const env = setup();
+  const carrier = fakeCarrier();
+  const buy = carrier.buy;
+  carrier.buy = async (...args) => ({ ...(await buy(...args)), amountMinor: 1843 });
+  const undo = withCarrier(carrier);
+  try {
+    require('../../src/autopilot/modes').setMode(env.db, env.ctx, env.membership, 'POLICY_AUTOMATED');
+    require('../../src/autopilot/capabilities').set(env.db, env.ctx, env.membership, 'shipping_labels', true);
+    shipping.operationPolicy.set(env.db, env.ctx, 'AUTOMATIC');
+    shipping.rules.save(env.db, env.ctx, { carrier: 'ups', service: 'Ground', maxCostMinor: 2500 });
+    const result = await shipping.service.shipWithinAuthority(env.db, env.ctx, env.box.id);
+    assert.equal(result.bought, false);
+    assert.equal(result.operation.status, 'NEEDS_HUMAN');
+    assert.equal(result.operation.verification.passed, false);
+    assert.equal(env.db.prepare('SELECT shipping_cost_minor FROM sales_shipments WHERE id = ?').get(env.box.id).shipping_cost_minor, 1843);
+    await shipping.service.shipWithinAuthority(env.db, env.ctx, env.box.id);
+    assert.equal(carrier.state.bought.length, 1);
+  } finally { undo(); env.db.close(); }
+});
+
+test('automatic postage fails closed on incompatible books and reports missing postage entries without repurchasing', async (context) => {
+  for (const currency of ['EUR', 'USD']) await context.test(currency, async () => {
+    const env = setup();
+    const carrier = fakeCarrier();
+    const undo = withCarrier(carrier);
+    try {
+      ledger.configure(env.db, env.ctx, env.membership, { startDate: '2026-01-01', currency });
+      if (currency === 'USD') {
+        const period = ledger.ensurePeriod(env.db, env.workspace.workspaceId, new Date().toISOString().slice(0, 10));
+        ledger.closePeriod(env.db, env.ctx, env.membership, period.id, 'Disposable closed-period failure test');
+      }
+      require('../../src/autopilot/modes').setMode(env.db, env.ctx, env.membership, 'POLICY_AUTOMATED');
+      require('../../src/autopilot/capabilities').set(env.db, env.ctx, env.membership, 'shipping_labels', true);
+      shipping.operationPolicy.set(env.db, env.ctx, 'AUTOMATIC');
+      shipping.rules.save(env.db, env.ctx, { carrier: 'ups', service: 'Ground', maxCostMinor: 2500 });
+      const result = await shipping.service.shipWithinAuthority(env.db, env.ctx, env.box.id);
+      assert.equal(result.bought, false);
+      assert.equal(result.operation.status, 'NEEDS_HUMAN');
+      assert.equal(carrier.state.bought.length, currency === 'EUR' ? 0 : 1);
+      assert.equal(env.db.prepare("SELECT COUNT(*) AS total FROM accounting_journal_entries WHERE workspace_id = ? AND source_type = 'shipment_postage'").get(env.workspace.workspaceId).total, 0);
+      await shipping.service.shipWithinAuthority(env.db, env.ctx, env.box.id);
+      assert.equal(carrier.state.bought.length, currency === 'EUR' ? 0 : 1);
+    } finally { undo(); env.db.close(); }
+  });
 });

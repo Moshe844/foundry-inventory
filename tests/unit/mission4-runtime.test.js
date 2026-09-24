@@ -74,6 +74,16 @@ test('a crash-mid-action retry cannot duplicate an idempotent domain effect', as
   assert.equal(jobs.get(db, queued.id).attemptCount, 2);
 });
 
+test('an expired SQLite job holder cannot revive or settle a lease before recovery', () => {
+  const { db } = makeDatabase();
+  const queued = jobs.enqueue(db, { kind: 'lease.boundary', idempotencyKey: 'expiry', now: 1000 }).job;
+  jobs.claim(db, { owner: 'expired-worker', now: 1000, leaseMs: 1000 });
+  assert.equal(jobs.heartbeat(db, queued.id, 'expired-worker', { now: 2000 }), false);
+  assert.equal(jobs.complete(db, queued.id, 'expired-worker', {}, { now: 2000 }), false);
+  assert.equal(jobs.fail(db, queued.id, 'expired-worker', new Error('Expired'), { now: 2000 }), null);
+  assert.equal(jobs.get(db, queued.id).status, 'RUNNING');
+});
+
 test('inbox processes a provider event exactly once and detects payload conflicts', () => {
   const { db } = makeDatabase();
   assert.equal(inbox.receive(db, 'stripe', 'evt_1', { amount: 25 }).duplicate, false);

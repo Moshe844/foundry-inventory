@@ -9,6 +9,7 @@ const operatingInstructions = require('../../manager/operating-instructions');
 const operatingGuards = require('../../domain/operating-guards');
 const workspaceExport = require('../../domain/workspace-export');
 const config = require('../../config');
+const workspaceService = require('../../domain/workspace-service');
 const emailAlerts = require('../../notifications/email-alerts');
 const { requireAuth, requireOwner, asyncRoute } = require('../middleware');
 
@@ -158,7 +159,7 @@ router.get('/everything', requireAuth, asyncRoute(async (req, res) => res.page('
       why: 'Authority is two choices: ask me first, or handle routine work inside limits you approve. The exact limits are here.',
       links: [
         { href: '/autopilot', label: 'Standing authority' },
-        { href: '/autopilot/settings', label: 'Limits and preferences' },
+        { href: '/autopilot', label: 'Limits and preferences' },
         { href: '/autopilot/history', label: 'Everything it did on its own' },
         { href: '/actions', label: 'Changes prepared for approval' },
       ],
@@ -311,6 +312,13 @@ router.post(
     res.redirect(303, '/settings');
   })
 );
+
+router.post('/settings/test-inventory', requireOwner, asyncRoute(async (req, res) => {
+  const created = workspaceService.createWorkspace(req.db, req.account.id,
+    String(req.body.name || 'Test inventory').trim(), { dataMode: 'synthetic' });
+  req.session.workspaceId = created.workspaceId;
+  return req.session.save(() => res.redirect(303, '/foundry/describe'));
+}));
 
 router.post(
   '/settings/people',

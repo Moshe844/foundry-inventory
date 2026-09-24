@@ -12,7 +12,6 @@ const poService = require('../../src/purchasing/po-service');
 const connections = require('../../src/connections/service');
 const ingestion = require('../../src/connections/event-ingestion');
 const needsYou = require('../../src/manager/needs-you-inbox');
-const setAside = require('../../src/connections/mail-set-aside');
 const gmail = require('../../src/connections/providers/gmail');
 const microsoft365 = require('../../src/connections/providers/microsoft365');
 const operatingInstructions = require('../../src/manager/operating-instructions');
@@ -33,6 +32,9 @@ const ledger = require('../../src/accounting/ledger');
 const reports = require('../../src/accounting/reports');
 const landedCosts = require('../../src/accounting/landed-costs');
 const reactions = require('../../src/manager/reactions');
+const autonomous = require('../../src/autonomous/service');
+const jobs = require('../../src/operations/job-queue');
+const autopilotPresenter = require('../../src/autopilot/presenter');
 const { makeDatabase, cleanupAll, seedWorkspace, makeQuantityItem, signIn, csrfFrom, plain } = require('../helpers');
 
 test.after(cleanupAll);
@@ -420,7 +422,7 @@ test('delivery confirmation asks for physical receiving instead of increasing in
   env.db.close();
 });
 
-test('an approved plain message is visible history but creates no inventory or Needs You work', () => {
+test('an approved human supplier message creates reply work but no inventory change', () => {
   const env = setup();
   const before = repo.getBalance(env.db, env.workspace.workspaceId, env.item.skuId, env.workspace.store.id);
   message(env, 'plain-1', '', {}, 'testing');
@@ -431,8 +433,10 @@ test('an approved plain message is visible history but creates no inventory or N
   assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM connection_email_attachments WHERE message_id = ?')
     .get(captured.id).n, 0);
   assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.item.skuId, env.workspace.store.id), before);
-  assert.ok(!needsYou.inbox(env.db, env.workspace.workspaceId)
-    .some((entry) => entry.id.includes(captured.id) || /testing/i.test(entry.title)));
+  const reply = needsYou.inbox(env.db, env.workspace.workspaceId)
+    .find((entry) => entry.id === `unanswered-mail:${captured.id}`);
+  assert.ok(reply, 'StockChief must not silently decide that a supplier message needs no response');
+  assert.equal(reply.actionLabel, 'Reply to message');
   env.db.close();
 });
 
@@ -467,7 +471,74 @@ test('a review-each attachment can be explicitly processed as purchasing evidenc
   env.db.close();
 });
 
-test('mail that is not the business is not taken, and a stranger who is trading still gets in', async () => {
+test('a mailbox replay does not become a conflict when only StockChief extraction facts changed', () => {
+  const env = setup();
+  message(env, 'derived-facts-replay', `Order confirmation ${env.order.poNumber}`, {
+    documentType: 'order_acknowledgement', poNumber: env.order.poNumber,
+    lines: [{ supplierSku: 'ABC-BLK-S', confirmedQuantity: 24, unitPrice: 6.5 }],
+  }, 'We confirm the order.');
+  message(env, 'derived-facts-replay', `Order confirmation ${env.order.poNumber}`, {
+    documentType: 'supplier_message', poNumber: '', lines: [],
+  }, 'We confirm the order.');
+  assert.equal(env.db.prepare(`SELECT COUNT(*) AS n FROM supplier_documents
+    WHERE workspace_id = ?`).get(env.workspace.workspaceId).n, 1);
+  assert.equal(env.db.prepare(`SELECT COUNT(*) AS n FROM connection_issues
+    WHERE workspace_id = ? AND issue_type = 'CONFLICTING_EVENT'`).get(env.workspace.workspaceId).n, 0);
+  env.db.close();
+});
+
+test('a later stable mailbox replay clears an earlier conflicting-replay warning', () => {
+  const env = setup();
+  message(env, 'resolved-replay-warning', `Order confirmation ${env.order.poNumber}`, {
+    poNumber: env.order.poNumber, lines: [],
+  }, 'We confirm the order.');
+  message(env, 'resolved-replay-warning', `Changed subject ${env.order.poNumber}`, {
+    poNumber: env.order.poNumber, lines: [],
+  }, 'Changed provider content.');
+  assert.equal(env.db.prepare(`SELECT COUNT(*) AS n FROM connection_issues
+    WHERE workspace_id = ? AND issue_type = 'CONFLICTING_EVENT' AND status = 'OPEN'`)
+    .get(env.workspace.workspaceId).n, 1);
+  message(env, 'resolved-replay-warning', `Order confirmation ${env.order.poNumber}`, {
+    documentType: 'order_acknowledgement', poNumber: env.order.poNumber, lines: [],
+  }, 'We confirm the order.');
+  assert.equal(env.db.prepare(`SELECT COUNT(*) AS n FROM connection_issues
+    WHERE workspace_id = ? AND issue_type = 'CONFLICTING_EVENT' AND status = 'OPEN'`)
+    .get(env.workspace.workspaceId).n, 0);
+  env.db.close();
+});
+
+test('changing a watched supplier to purchasing updates processes already-saved PO mail', async () => {
+  const env = setup();
+  env.db.prepare(`UPDATE connection_email_rules SET document_mode = 'review_each'
+    WHERE workspace_id = ? AND connector_id = ?`).run(env.workspace.workspaceId, env.email.connection.id);
+  message(env, 'saved-po-confirmation', `Order confirmation ${env.order.poNumber}`, {},
+    `We confirm ${env.order.poNumber}. Expected delivery is September 8, 2026.`);
+  const captured = env.db.prepare(`SELECT * FROM connection_email_messages
+    WHERE workspace_id = ? AND external_message_id = 'saved-po-confirmation'`)
+    .get(env.workspace.workspaceId);
+  assert.equal(captured.processing_status, 'CAPTURED');
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM supplier_documents WHERE message_id = ?')
+    .get(captured.id).n, 0);
+
+  const rule = env.db.prepare(`SELECT id FROM connection_email_rules
+    WHERE workspace_id = ? AND connector_id = ?`).get(env.workspace.workspaceId, env.email.connection.id);
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  const page = await agent.get(`/settings/connections/${env.email.connection.id}`);
+  const response = await agent.post(`/settings/connections/${env.email.connection.id}/email-rules/${rule.id}`)
+    .type('form').send({ _csrf: csrfFrom(page.text), documentMode: 'supplier_documents' });
+  assert.equal(response.status, 303);
+
+  const document = env.db.prepare('SELECT * FROM supplier_documents WHERE message_id = ?').get(captured.id);
+  assert.ok(document);
+  assert.equal(document.purchase_order_id, env.order.id);
+  assert.equal(document.status, 'MATCHED');
+  assert.equal(env.db.prepare('SELECT processing_status FROM connection_email_messages WHERE id = ?')
+    .get(captured.id).processing_status, 'MATCHED');
+  env.db.close();
+});
+
+test('mailbox sync imports only mapped customers and suppliers', async () => {
   /*
    * This assertion has now moved twice, and the second move is the owner's.
    *
@@ -497,30 +568,35 @@ test('mail that is not the business is not taken, and a stranger who is trading 
     WHERE workspace_id = ? AND external_message_id = ?`).get(env.workspace.workspaceId, 'unrelated-1').n, 0,
   'a newsletter does not become a record in StockChief');
 
-  // But it is not silently dropped either: the envelope and the reason stay.
-  const aside = setAside.list(env.db, env.workspace.workspaceId);
-  assert.equal(aside.length, 1);
-  assert.equal(aside[0].sender, 'newsletter@example.test');
-  assert.match(aside[0].reason, /nothing in it mentions an order/i,
-    'and the reason is written for the owner, not for a log');
-  assert.equal(aside[0].subject, 'Weekly news');
-  assert.ok(!('body_text' in aside[0]), 'the contents of mail that is not ours are not kept');
+  assert.equal(env.db.prepare(`SELECT COUNT(*) AS n FROM connection_email_set_aside
+    WHERE workspace_id = ?`).get(env.workspace.workspaceId).n, 0,
+  'unrelated mailbox metadata is not exposed in StockChief either');
   assert.ok(!needsYou.inbox(env.db, env.workspace.workspaceId).some((entry) => /newsletter/i.test(entry.title)),
     'and a newsletter is not somebody the owner has to answer for');
 
-  // A stranger with no rule, no account and no history, who is plainly trading.
+  // Even obvious trading language is ignored until the address is on a real
+  // customer or supplier record.
   await providerService.syncMailbox(env.db, env.workspace.workspaceId, connectorId, { adapter: {
     refreshCredentials: async (current) => ({ credentials: current, refreshed: false }),
     poll: async () => ({ messages: [{ messageId: 'buyer-1', sender: 'chavy@example.test',
       subject: 'Question', bodyText: 'Do you have the black ones in stock? We would like to order 20.',
       receivedAt: new Date().toISOString(), attachments: [] }] }),
   } });
-  const buyer = env.db.prepare(`SELECT * FROM connection_email_messages
+  let buyer = env.db.prepare(`SELECT * FROM connection_email_messages
     WHERE workspace_id = ? AND external_message_id = ?`).get(env.workspace.workspaceId, 'buyer-1');
-  assert.ok(buyer, 'somebody trying to buy is the business, whoever they are');
-  assert.equal(buyer.trust_status, 'UNTRUSTED', 'and is still filed as a stranger');
-  assert.equal(env.db.prepare(`SELECT COUNT(*) AS n FROM supplier_documents WHERE message_id = ?`)
-    .get(buyer.id).n, 0, 'no purchasing evidence is extracted from an unapproved sender');
+  assert.equal(buyer, undefined);
+
+  sales.createCustomer(env.db, env.workspace.ctx, { name: 'Chavy', email: 'chavy@example.test' });
+  await providerService.syncMailbox(env.db, env.workspace.workspaceId, connectorId, { adapter: {
+    refreshCredentials: async (current) => ({ credentials: current, refreshed: false }),
+    poll: async () => ({ messages: [{ messageId: 'buyer-2', sender: 'chavy@example.test',
+      subject: 'Question', bodyText: 'Do you have the black ones in stock? We would like to order 20.',
+      receivedAt: new Date().toISOString(), attachments: [] }] }),
+  } });
+  buyer = env.db.prepare(`SELECT * FROM connection_email_messages
+    WHERE workspace_id = ? AND external_message_id = ?`).get(env.workspace.workspaceId, 'buyer-2');
+  assert.ok(buyer, 'the same address enters StockChief as soon as it belongs to a customer');
+  assert.equal(buyer.trust_status, 'TRUSTED');
 
   // An owner who wants the older behaviour can still have it.
   env.db.prepare(`UPDATE workspace_connectors SET config = ? WHERE id = ?`)
@@ -536,13 +612,7 @@ test('mail that is not the business is not taken, and a stranger who is trading 
   env.db.close();
 });
 
-test('the owner can overrule the gate, and StockChief fetches the message it did not keep', async () => {
-  /*
-   * A filter nobody can overrule is a filter nobody can trust. StockChief kept
-   * the envelope and the reason and nothing else, so bringing one in means
-   * going back to Gmail for the message rather than to a copy it deliberately
-   * did not make.
-   */
+test('unrelated mailbox mail has no drawer or bring-in action in the UI', async () => {
   const env = setup();
   const connectorId = connectTestGmail(env);
   const arrived = { messageId: 'aside-1', sender: 'accountant@example.test', subject: 'Hello again',
@@ -552,22 +622,12 @@ test('the owner can overrule the gate, and StockChief fetches the message it did
     poll: async () => ({ messages: [arrived] }),
   } });
 
-  const [row] = setAside.list(env.db, env.workspace.workspaceId);
-  assert.ok(row, 'it was set aside rather than dropped');
-
-  let askedFor = null;
-  const result = await providerService.bringInSetAside(env.db, env.workspace.ctx, row.id, { adapter: {
-    refreshCredentials: async (current) => ({ credentials: current, refreshed: false }),
-    fetchMessage: async ({ messageId }) => { askedFor = messageId; return arrived; },
-  } });
-  assert.equal(askedFor, 'aside-1', 'the provider is asked for that one message by its own id');
-  assert.ok(result.messageId, 'and it becomes an ordinary message');
-
-  const captured = env.db.prepare(`SELECT * FROM connection_email_messages WHERE id = ?`).get(result.messageId);
-  assert.equal(captured.body_text, 'Just checking in about lunch.');
-  assert.equal(setAside.count(env.db, env.workspace.workspaceId), 0, 'and it leaves the set-aside drawer');
-  assert.equal(setAside.get(env.db, env.workspace.workspaceId, row.id).brought_in_message_id, result.messageId,
-    'while the record that it was once turned away, and by whom, stays');
+  assert.equal(env.db.prepare(`SELECT COUNT(*) AS n FROM connection_email_messages
+    WHERE workspace_id = ? AND external_message_id = ?`).get(env.workspace.workspaceId, 'aside-1').n, 0);
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  const page = await agent.get('/mail');
+  assert.doesNotMatch(plain(page.text), /Not for StockChief|This is business|accountant@example\.test/);
   env.db.close();
 });
 
@@ -676,6 +736,12 @@ test('a late PO prepares one restrained follow-up and never duplicates it that d
 
 test('supplier and PO questions are answered from purchasing evidence, not model prose', () => {
   const env = setup();
+  poService.approve(env.db, env.workspace.ctx, env.membership, env.order.id);
+  const unsent = queryService.execute(env.db, env.workspace.workspaceId,
+    { intent: 'supplier_order_status', entityQuery: env.order.poNumber });
+  assert.match(unsent.answer, /not (?:confirmed as )?sent/i);
+  assert.notEqual(unsent.rows[0].communicationStatus, 'SENT');
+
   message(env, 'query-ack-1', 'Reference response', {
     documentType: 'order_acknowledgement', poNumber: env.order.poNumber,
     lines: [{ supplierSku: 'ABC-BLK-S', confirmedQuantity: 24, unitPrice: 6.5 }],
@@ -891,7 +957,8 @@ test('Tell StockChief proposes and applies supplier sending authority through th
 function connectTestGmail(env, supplierChanges = {}) {
   const connectorId = env.email.connection.id;
   env.db.prepare(`UPDATE workspace_connectors SET provider_type = 'gmail', display_name = 'Purchasing Gmail',
-    status = 'connected', setup_status = 'CONNECTED', paused_at = NULL WHERE id = ?`).run(connectorId);
+    status = 'connected', setup_status = 'CONNECTED', paused_at = NULL,
+    capabilities = '["MAIL_READ","MAIL_SEND"]' WHERE id = ?`).run(connectorId);
   credentials.put(env.db, env.workspace.workspaceId, connectorId, 'provider', {
     accessToken: 'test-token', refreshToken: 'test-refresh', mailbox: 'buyer@example.test',
     expiresAt: Date.now() + 60 * 60_000,
@@ -1028,6 +1095,106 @@ test('the unattended mailbox scheduler renews an expiring push watch', async () 
     else process.env.FOUNDRY_PUBLIC_URL = originalOrigin;
     env.db.close();
   }
+});
+
+test('a mailbox replay of StockChief own sent PO is not supplier evidence', async () => {
+  const env = setup();
+  const connectorId = connectTestGmail(env);
+  const originalSend = gmail.send;
+  gmail.send = async () => ({ externalMessageId: 'gmail-own-po-1', externalThreadId: 'gmail-own-thread-1' });
+  try {
+    const communication = supplierCommunications.prepareForOrder(
+      env.db, env.workspace.workspaceId, poService.get(env.db, env.workspace.workspaceId, env.order.id));
+    await supplierCommunications.sendThroughMailbox(
+      env.db, env.workspace.workspaceId, communication.id, env.workspace.ownerId);
+    const adapter = {
+      refreshCredentials: async (current) => ({ credentials: current, refreshed: false }),
+      poll: async () => ({ messages: [{
+        messageId: 'gmail-own-po-1', threadId: 'gmail-own-thread-1',
+        stockChiefMessageId: communication.id, sender: 'orders@abc.test',
+        subject: `Purchase order ${env.order.poNumber}`, bodyText: communication.body,
+        receivedAt: new Date().toISOString(), attachments: [], facts: {
+          documentType: 'order_acknowledgement', poNumber: env.order.poNumber,
+          lines: [{ supplierSku: 'ABC-BLK-S', confirmedQuantity: 24, unitPrice: 6.5 }],
+        },
+      }] }),
+    };
+
+    const result = await providerService.syncMailbox(
+      env.db, env.workspace.workspaceId, connectorId, { adapter });
+    assert.equal(result.messages, 0);
+    assert.equal(env.db.prepare(`SELECT COUNT(*) AS n FROM connection_email_messages
+      WHERE workspace_id = ? AND external_message_id = ?`)
+      .get(env.workspace.workspaceId, 'gmail-own-po-1').n, 0);
+    assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM supplier_documents WHERE workspace_id = ?')
+      .get(env.workspace.workspaceId).n, 0);
+  } finally { gmail.send = originalSend; env.db.close(); }
+});
+
+test('a later mailbox check neutralizes own sent PO evidence captured before the send result was saved', async () => {
+  const env = setup();
+  const connectorId = connectTestGmail(env);
+  const communication = supplierCommunications.prepareForOrder(
+    env.db, env.workspace.workspaceId, poService.get(env.db, env.workspace.workspaceId, env.order.id));
+  message(env, 'gmail-own-race-1', `Order confirmation ${env.order.poNumber}`, {
+    documentType: 'order_acknowledgement', poNumber: env.order.poNumber,
+    lines: [{ supplierSku: 'ABC-BLK-S', confirmedQuantity: 24, unitPrice: 6.5 }],
+  });
+  env.db.prepare(`UPDATE supplier_communications SET status = 'SENT', connector_id = ?,
+    external_message_id = ?, sent_at = ?, updated_at = ? WHERE id = ?`)
+    .run(connectorId, 'gmail-own-race-1', new Date().toISOString(), new Date().toISOString(), communication.id);
+
+  await providerService.syncMailbox(env.db, env.workspace.workspaceId, connectorId, { adapter: {
+    refreshCredentials: async (current) => ({ credentials: current, refreshed: false }),
+    poll: async () => ({ messages: [{ messageId: 'gmail-own-race-1', stockChiefMessageId: communication.id,
+      sender: 'orders@abc.test', subject: `Purchase order ${env.order.poNumber}`,
+      bodyText: communication.body, receivedAt: new Date().toISOString(), attachments: [] }] }),
+  } });
+
+  const captured = env.db.prepare(`SELECT classification, processing_status FROM connection_email_messages
+    WHERE workspace_id = ? AND external_message_id = ?`)
+    .get(env.workspace.workspaceId, 'gmail-own-race-1');
+  assert.deepEqual(captured, { classification: 'outbound_copy', processing_status: 'IGNORED' });
+  assert.equal(env.db.prepare(`SELECT COUNT(*) AS n FROM supplier_documents
+    WHERE workspace_id = ? AND status = 'IGNORED'`).get(env.workspace.workspaceId).n, 1);
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM purchase_order_line_expectations WHERE workspace_id = ?')
+    .get(env.workspace.workspaceId).n, 0);
+  assert.equal(env.db.prepare(`SELECT COUNT(*) AS n FROM purchase_order_events
+    WHERE workspace_id = ? AND event = 'supplier_message_ignored'`).get(env.workspace.workspaceId).n, 1);
+  env.db.close();
+});
+
+test('automatic purchase delivery becomes ordered only after the mailbox returns provider evidence', async () => {
+  const env = setup();
+  connectTestGmail(env);
+  autonomous.grant(env.db, env.workspace.ctx, env.membership, 'supplier.communicate', {
+    supplierIds: [env.supplier.id], currency: 'USD', maximumValueMinor: 50_000,
+    minimumConfidence: 'high', maximumRisk: 'high',
+  });
+  const originalSend = gmail.send;
+  gmail.send = async () => ({ externalMessageId: 'gmail-verified-po', externalThreadId: 'gmail-thread-po' });
+  try {
+    const approved = poService.approve(env.db, env.workspace.ctx, env.membership, env.order.id,
+      { expectedHash: env.order.integrityHash, markOrdered: false });
+    assert.equal(approved.status, 'APPROVED');
+    assert.match(autopilotPresenter.orderStateCopy(approved), /approved.*waiting for verification/i);
+    assert.doesNotMatch(autopilotPresenter.orderStateCopy(approved), /placed/i);
+    supplierCommunications.queueForOrder(env.db, env.workspace.workspaceId, approved.id);
+    const queued = supplierCommunications.enqueueAutomaticDispatch(env.db, env.workspace.workspaceId, approved.id);
+    const completed = await jobs.processOne(env.db, {
+      'supplier.purchase-order.dispatch': supplierCommunications.dispatchJobHandler(env.db),
+    }, { owner: 'supplier-verification-test', leaseMs: 30_000 });
+    assert.equal(completed.id, queued.job.id);
+    assert.equal(completed.status, 'COMPLETED');
+    assert.equal(poService.get(env.db, env.workspace.workspaceId, approved.id).status, 'ORDERED');
+    assert.match(autopilotPresenter.orderStateCopy(
+      poService.get(env.db, env.workspace.workspaceId, approved.id)), /placed/i);
+    const message = supplierCommunications.forOrder(env.db, env.workspace.workspaceId, approved.id)[0];
+    assert.equal(message.status, 'SENT');
+    assert.equal(message.externalMessageId, 'gmail-verified-po');
+    assert.ok(poService.eventsFor(env.db, env.workspace.workspaceId, approved.id)
+      .some((event) => event.event === 'ordered_via_supplier_message'));
+  } finally { gmail.send = originalSend; env.db.close(); }
 });
 
 test('Mission 12 turns a partial confirmation into one exact consequence and no stock or money mutation', () => {

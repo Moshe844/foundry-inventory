@@ -321,6 +321,7 @@ function importGroup(db, ctx, plan, group, executionId) {
   for (const row of group.rows) {
     const parsed = row.parsed || {};
     try {
+      inTransaction(db, () => {
       const sku = parsed.existingSkuId
         ? db.prepare(`SELECT * FROM skus WHERE id = ? AND workspace_id = ? AND item_id = ? AND is_active = 1`)
           .get(parsed.existingSkuId, ctx.workspaceId, itemId)
@@ -482,7 +483,9 @@ function importGroup(db, ctx, plan, group, executionId) {
       // The version this row claimed, so the ones nothing claimed can be told
       // apart from the ones the file actually describes.
       results.push({ rowId: row.id, ok: true, skuId: sku.id });
+      });
     } catch (error) {
+      if (!(error instanceof ValidationError)) throw error;
       const problems = [
         ...(row.problems || []),
         { code: 'failed', message: error.message || 'That row could not be imported.' },
@@ -587,18 +590,32 @@ function execute(db, ctx, membership, importId, options = {}) {
   stage(db, execution.id, 'creating products');
   let cancelled = false;
 
-  for (let index = 0; index < groups.length; index += 1) {
-    // Cancellation is honoured between products, never mid-product: stopping
-    // after an item exists but before its stock arrives would leave a record
-    // nobody asked for.
-    if (index % 5 === 0 && isCancelled(db, execution.id)) {
-      cancelled = true;
-      break;
-    }
-    importGroup(db, ctx, plan, groups[index], execution.id);
-    if ((index + 1) % BATCH_SIZE === 0) {
-      stage(db, execution.id, `${index + 1} of ${groups.length} products`);
-    }
+  try {
+    // Unexpected failure is different from an owner-requested stop. A crash or
+    // programming error must leave zero imported business truth, even if it
+    // happens after earlier products completed. Cancellation still commits at
+    // a product boundary and remains resumable by design.
+    inTransaction(db, () => {
+      for (let index = 0; index < groups.length; index += 1) {
+        // Cancellation is honoured between products, never mid-product: stopping
+        // after an item exists but before its stock arrives would leave a record
+        // nobody asked for.
+        if (index % 5 === 0 && isCancelled(db, execution.id)) {
+          cancelled = true;
+          break;
+        }
+        importGroup(db, ctx, plan, groups[index], execution.id);
+        if ((index + 1) % BATCH_SIZE === 0) {
+          stage(db, execution.id, `${index + 1} of ${groups.length} products`);
+        }
+      }
+    });
+  } catch (error) {
+    db.prepare(
+      `UPDATE import_executions SET status = 'FAILED', error_message = ?, finished_at = ? WHERE id = ?`
+    ).run(error.message || 'The import stopped unexpectedly.', nowIso(), execution.id);
+    db.prepare("UPDATE import_plans SET status = 'READY' WHERE id = ?").run(importId);
+    throw error;
   }
 
   if (cancelled) {

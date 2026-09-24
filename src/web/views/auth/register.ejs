@@ -42,7 +42,7 @@
 
     <div class="auth-title">
       <h1>Create your account</h1>
-      <p>Create your account, then give StockChief an inventory to manage.</p>
+      <p>Create your account and bring your inventory records. Your first inventory is created for you.</p>
     </div>
 
     <% if (flash && flash.length) { %>
@@ -58,8 +58,12 @@
         <form method="post" action="/register">
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
           <div class="field">
+            <label class="label" for="businessName">Business name</label>
+            <input class="input" id="businessName" name="businessName" value="<%= form.businessName || '' %>" required maxlength="120" autocomplete="organization" placeholder="e.g. Harbour Clothing" autofocus>
+          </div>
+          <div class="field">
             <label class="label" for="name">Your name</label>
-            <input class="input" id="name" name="name" value="<%= form.name || '' %>" required autofocus autocomplete="name">
+            <input class="input" id="name" name="name" value="<%= form.name || '' %>" required autocomplete="name">
           </div>
           <div class="field">
             <label class="label" for="email">Work email</label>

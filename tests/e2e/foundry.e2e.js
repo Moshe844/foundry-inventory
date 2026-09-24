@@ -87,6 +87,7 @@ async function stopServer(child) {
 }
 
 async function createLocation(page, name, kind) {
+  if (await page.getByText(name, { exact: true }).count()) return;
   await page.locator('button[data-modal-open="modal-location"]').first().click();
   await page.fill('#location-name', name);
   await page.selectOption('#location-kind', kind);
@@ -140,22 +141,22 @@ test(
     await t.test('1-2. a new workspace lands on StockChief, not an empty dashboard', async () => {
       await page.goto(`${BASE}/register`);
       await page.fill('#name', ACCOUNT.name);
+      await page.fill('#businessName', ACCOUNT.workspaceName);
       await page.fill('#email', ACCOUNT.email);
       await page.fill('#password', ACCOUNT.password);
       await page.click('button[type=submit]');
-      await page.waitForURL(`${BASE}/inventories`);
-      await page.click('a[href="/inventories/new"]');
-      await page.waitForURL(`${BASE}/inventories/new`);
-      await page.fill('#name', ACCOUNT.workspaceName);
-      await page.click('form[action="/inventories"] button[type=submit]');
+      await page.waitForURL(`${BASE}/onboarding`);
+      await page.fill('#inventory-name', ACCOUNT.workspaceName);
+      await Promise.all([page.waitForNavigation(), page.getByRole('button', { name: 'Save name', exact: true }).click()]);
       await page.waitForURL(`${BASE}/onboarding`);
       // A new inventory is asked how it is managed today. These customers are
       // starting from nothing, so they take the Starting Fresh path — which is
       // the Mission 2 experience, unchanged.
       await Promise.all([
-        page.waitForURL(`${BASE}/foundry/describe`),
-        page.click('button:has-text("Enter it in StockChief")'),
+        page.waitForURL(`${BASE}/inventory/new`),
+        page.click('button:has-text("Enter it manually")'),
       ]);
+      await page.goto(`${BASE}/foundry/describe`);
 
       await page.locator('text=Give StockChief what you already have').first().waitFor();
       await page.locator('text=Understand my inventory').first().waitFor();
@@ -192,8 +193,6 @@ test(
     });
 
     await t.test('5-6. the proposal shows variant and multi-location understanding', async () => {
-      const body = await page.locator('main').innerText();
-
       const dbCheck = openDatabase(databasePath);
       const stored = dbCheck
         .prepare('SELECT payload FROM foundry_understandings ORDER BY created_at DESC LIMIT 1')
@@ -202,11 +201,15 @@ test(
       state.understanding = understanding;
       dbCheck.close();
 
+      const closedDetails = page.locator('main details:not([open]) > summary');
+      while (await closedDetails.count()) await closedDetails.first().click();
+      const reviewed = await page.locator('main').innerText();
+
       // Variants, with the axes the description implied.
-      assert.match(body, /Variants/i, `expected variant tracking, got:\n${body}`);
-      assert.match(body, /Colou?r/i);
-      assert.match(body, /Size/i);
-      assert.match(body, /multiple-location inventory support/i);
+      assert.match(reviewed, /Variants/i, `expected variant tracking, got:\n${reviewed}`);
+      assert.match(reviewed, /Colou?r/i);
+      assert.match(reviewed, /Size/i);
+      assert.match(reviewed, /Brooklyn[\s\S]*New Jersey/i);
 
       await shot(page, 'proposal');
       assert.equal(understanding.recommendedConfiguration.usesVariants, true);
@@ -237,7 +240,7 @@ test(
       assert.equal(await page.locator('button:has-text("Enter records in StockChief")').count(), 1);
       assert.equal(await page.locator('button:has-text("Upload inventory files")').count(), 1);
       assert.equal(await page.locator('button:has-text("Connect a business system")').count(), 1);
-      assert.equal(await page.locator('button:has-text("Use email attachments")').count(), 1);
+      assert.equal(await page.locator('button:has-text("Use email attachments")').count(), 0);
       await shot(page, 'evidence-first-next-step');
     });
 
@@ -249,8 +252,8 @@ test(
       await page.goto(`${BASE}/locations`);
 
       const suppliedLocations = [
-        ['Brooklyn Warehouse', 'warehouse'],
-        ['New Jersey Warehouse', 'warehouse'],
+        ['Brooklyn', 'warehouse'],
+        ['New Jersey', 'warehouse'],
       ];
       for (const [name, kind] of suppliedLocations) await createLocation(page, name, kind);
       await shot(page, 'real-locations-entered');
@@ -264,7 +267,7 @@ test(
 
       const configuration = db.prepare('SELECT * FROM workspace_configuration WHERE workspace_id = ?').get(workspace.id);
       assert.ok(configuration.configured_at);
-      assert.equal(configuration.configuration_version, 0);
+      assert.ok(configuration.configuration_version >= 1);
 
       const counts = db
         .prepare(

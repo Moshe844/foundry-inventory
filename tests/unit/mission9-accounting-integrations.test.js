@@ -184,6 +184,97 @@ test('governed posting uses exact account identities and provider idempotency on
   assert.match(adapter.calls[0].idempotencyKey, /^foundry-/);
 });
 
+test('owner-approved posting aliases preserve imported account identities and restore governed posting', async () => {
+  const env = fixture();
+  const adapter = { readAccountingSnapshot: async () => exactSnapshot(env), calls: [],
+    async postJournalEntry(input) { this.calls.push(input); return { externalId: `journal-${input.entry.id}`, version: '1' }; } };
+  sync.chooseAuthority(env.db, env.workspace.ctx, env.connection.id, { authority: 'POST', accountingSource: 'FOUNDRY' });
+  await sync.shadow(env.db, env.workspace.ctx, env.connection.id, adapter, {});
+  sync.enableWrites(env.db, env.workspace.ctx, env.connection.id);
+
+  const accounts = ledger.listAccounts(env.db, env.workspace.workspaceId);
+  const canonical = accounts[0];
+  const balancing = accounts[1];
+  const canonicalIdentity = env.db.prepare(`SELECT * FROM accounting_external_identities
+    WHERE workspace_id = ? AND connector_id = ? AND entity_type = 'account' AND foundry_record_id = ?`)
+    .get(env.workspace.workspaceId, env.connection.id, canonical.id);
+  const mirror = ledger.createAccount(env.db, env.workspace.ctx, env.membership, {
+    code: 'QB-MIRROR', name: `Imported ${canonical.name}`, type: canonical.account_type,
+    normalBalance: canonical.normal_balance,
+  });
+  env.db.prepare(`UPDATE accounting_external_identities SET foundry_record_id = ? WHERE id = ?`)
+    .run(mirror.id, canonicalIdentity.id);
+
+  const journal = ledger.post(env.db, env.workspace.ctx, { postingDate: '2026-09-10', sourceKey: 'posting-alias-proof',
+    description: 'Canonical account posts through imported provider account', lines: [
+      { accountId: canonical.id, debitMinor: 1000 }, { accountId: balancing.id, creditMinor: 1000 },
+    ] }).entry;
+  const stopped = await sync.syncPending(env.db, env.workspace.ctx, env.connection.id, adapter, {});
+  assert.equal(stopped.posted, 0);
+  assert.equal(sync.policy(env.db, env.workspace.workspaceId, env.connection.id).stage, 'CONFLICT');
+
+  const mapped = sync.mapAccount(env.db, env.workspace.ctx, env.connection.id,
+    { accountId: canonical.id, externalId: canonicalIdentity.external_id });
+  assert.equal(mapped.sharedReadIdentity, true);
+  assert.equal(env.db.prepare(`SELECT foundry_record_id FROM accounting_external_identities WHERE id = ?`)
+    .get(canonicalIdentity.id).foundry_record_id, mirror.id);
+  assert.equal(env.db.prepare(`SELECT external_id FROM accounting_posting_account_mappings
+    WHERE workspace_id = ? AND connector_id = ? AND foundry_account_id = ?`)
+    .get(env.workspace.workspaceId, env.connection.id, canonical.id).external_id, canonicalIdentity.external_id);
+  assert.equal(sync.policy(env.db, env.workspace.workspaceId, env.connection.id).stage, 'WRITE_ENABLED');
+  assert.equal(sync.state(env.db, env.workspace.workspaceId, env.connection.id).conflicts
+    .filter((row) => row.conflict_type === 'UNCERTAIN_ACCOUNT_IDENTITY').every((row) => row.status === 'RESOLVED'), true);
+
+  const preview = sync.pendingEntries(env.db, env.workspace.workspaceId, env.connection.id);
+  assert.equal(preview.length, 1);
+  assert.equal(preview[0].id, journal.id);
+  assert.deepEqual(preview[0].missingAccounts, []);
+  const first = await sync.syncPending(env.db, env.workspace.ctx, env.connection.id, adapter, {}, { entryIds: [journal.id] });
+  const retry = await sync.syncPending(env.db, env.workspace.ctx, env.connection.id, adapter, {}, { entryIds: [journal.id] });
+  assert.equal(first.posted, 1);
+  assert.equal(retry.posted, 0);
+  assert.equal(adapter.calls.length, 1);
+  assert.equal(adapter.calls[0].entry.lines.find((line) => line.account_id === canonical.id).external_account_id,
+    canonicalIdentity.external_id);
+});
+
+test('a missing QuickBooks customer identity preflights the entire batch before any journal write', async () => {
+  const env = fixture();
+  const adapter = { readAccountingSnapshot: async () => exactSnapshot(env), calls: [],
+    async postJournalEntry(input) { this.calls.push(input); return { externalId: `journal-${input.entry.id}`, version: '1' }; } };
+  sync.chooseAuthority(env.db, env.workspace.ctx, env.connection.id, { authority: 'POST', accountingSource: 'FOUNDRY' });
+  await sync.shadow(env.db, env.workspace.ctx, env.connection.id, adapter, {});
+  sync.enableWrites(env.db, env.workspace.ctx, env.connection.id);
+  const accounts = ledger.listAccounts(env.db, env.workspace.workspaceId);
+  const customerId = 'customer_posting_preflight'; const now = new Date().toISOString();
+  env.db.prepare(`INSERT INTO customers
+    (id, workspace_id, name, email, record_state, created_by_user_id, created_at, updated_at)
+    VALUES (?, ?, 'Posting Test Customer', 'posting@example.test', 'ACTIVE', ?, ?, ?)`)
+    .run(customerId, env.workspace.workspaceId, env.workspace.ownerId, now, now);
+  const entry = ledger.post(env.db, env.workspace.ctx, { postingDate: '2026-09-10', sourceKey: 'party-preflight',
+    description: 'Receivable needs exact customer', lines: [
+      { accountId: accounts[0].id, debitMinor: 2500, customerId },
+      { accountId: accounts[1].id, creditMinor: 2500, customerId },
+    ] }).entry;
+
+  const stopped = await sync.syncPending(env.db, env.workspace.ctx, env.connection.id, adapter, {}, { entryIds: [entry.id] });
+  assert.deepEqual(stopped, { posted: 0, remaining: 1 });
+  assert.equal(adapter.calls.length, 0);
+  assert.equal(sync.policy(env.db, env.workspace.workspaceId, env.connection.id).stage, 'CONFLICT');
+  const preview = sync.pendingEntries(env.db, env.workspace.workspaceId, env.connection.id)
+    .find((candidate) => candidate.id === entry.id);
+  assert.deepEqual(preview.missingParties.map((party) => [party.partyType, party.name]),
+    [['customer', 'Posting Test Customer']]);
+
+  sync.mapPostingParty(env.db, env.workspace.ctx, env.connection.id, { partyType: 'customer', partyId: customerId,
+    externalId: 'qb-customer-7', external: { externalId: 'qb-customer-7', name: 'Posting Test Customer', version: '1' } });
+  assert.equal(sync.policy(env.db, env.workspace.workspaceId, env.connection.id).stage, 'WRITE_ENABLED');
+  const posted = await sync.syncPending(env.db, env.workspace.ctx, env.connection.id, adapter, {}, { entryIds: [entry.id] });
+  assert.equal(posted.posted, 1);
+  assert.equal(adapter.calls.length, 1);
+  assert.equal(adapter.calls[0].entry.lines.every((line) => line.external_customer_id === 'qb-customer-7'), true);
+});
+
 test('scoped API tokens enforce authority and revocation immediately', () => {
   const env = fixture(); const client = publicApi.create(env.db, env.workspace.ctx,
     { name: 'Read-only BI', scopes: ['inventory:read'] });

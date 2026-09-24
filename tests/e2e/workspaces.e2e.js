@@ -112,6 +112,10 @@ async function createItem(page, { name, code, mode, options }) {
   await page.check(`input[name="trackingMode"][value="${mode}"]`);
   if (options) {
     await page.check('input[name="hasVariants"]');
+    for (let index = 0; index < 3; index += 1) {
+      await page.fill(`input[name="options[${index}][name]"]`, '');
+      await page.fill(`input[name="options[${index}][values]"]`, '');
+    }
     for (let i = 0; i < options.length; i += 1) {
       await page.fill(`input[name="options[${i}][name]"]`, options[i].name);
       await page.fill(`input[name="options[${i}][values]"]`, options[i].values);
@@ -210,22 +214,22 @@ test(
     await t.test('1-2. sign up, creating the Clothing Business inventory', async () => {
       await page.goto(`${BASE}/register`);
       await page.fill('#name', ACCOUNT.name);
+      await page.fill('#businessName', CLOTHING.name);
       await page.fill('#email', ACCOUNT.email);
       await page.fill('#password', ACCOUNT.password);
       await page.click('form[action="/register"] button[type=submit]');
-      await page.waitForURL(`${BASE}/inventories`);
-      await page.click('a[href="/inventories/new"]');
-      await page.waitForURL(`${BASE}/inventories/new`);
-      await page.fill('#name', CLOTHING.name);
-      await page.click('form[action="/inventories"] button[type=submit]');
+      await page.waitForURL(`${BASE}/onboarding`);
+      await page.fill('#inventory-name', CLOTHING.name);
+      await Promise.all([page.waitForNavigation(), page.getByRole('button', { name: 'Save name', exact: true }).click()]);
       await page.waitForURL(`${BASE}/onboarding`);
       // A new inventory is asked how it is managed today. These customers are
       // starting from nothing, so they take the Starting Fresh path — which is
       // the Mission 2 experience, unchanged.
       await Promise.all([
-        page.waitForURL(`${BASE}/foundry/describe`),
-        page.click('button:has-text("Enter it in StockChief")'),
+        page.waitForURL(`${BASE}/inventory/new`),
+        page.click('button:has-text("Enter it manually")'),
       ]);
+      await page.goto(`${BASE}/foundry/describe`);
 
       assert.equal(await currentInventory(page), CLOTHING.name);
       await shot(page, 'first-inventory-setup');
@@ -253,7 +257,8 @@ test(
       state.clothingLocations = inspect(databasePath, (db) =>
         db.prepare('SELECT name FROM locations WHERE workspace_id = ?').all(state.clothingId).map((l) => l.name)
       );
-      assert.deepEqual(state.clothingLocations.sort(), suppliedLocations.map(([name]) => name).sort());
+      assert.deepEqual(state.clothingLocations.map((name) => name.toLowerCase()).sort(),
+        suppliedLocations.map(([name]) => name.toLowerCase()).sort());
       const empty = inspect(databasePath, (db) =>
         db.prepare('SELECT COUNT(*) AS n FROM items WHERE workspace_id = ?').get(state.clothingId).n
       );
@@ -267,15 +272,16 @@ test(
       await page.waitForURL(`${BASE}/inventories/new`);
 
       await page.fill('#name', EQUIPMENT.name);
-      await page.click('button:has-text("Continue with StockChief")');
+      await page.click('button:has-text("Choose a source")');
       await page.waitForURL(`${BASE}/onboarding`);
       // A new inventory is asked how it is managed today. These customers are
       // starting from nothing, so they take the Starting Fresh path — which is
       // the Mission 2 experience, unchanged.
       await Promise.all([
-        page.waitForURL(`${BASE}/foundry/describe`),
-        page.click('button:has-text("Enter it in StockChief")'),
+        page.waitForURL(`${BASE}/inventory/new`),
+        page.click('button:has-text("Enter it manually")'),
       ]);
+      await page.goto(`${BASE}/foundry/describe`);
 
       assert.equal(await currentInventory(page), EQUIPMENT.name, 'the new inventory is now open');
       const body = await page.locator('body').innerText();

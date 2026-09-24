@@ -23,6 +23,7 @@ const workItems = require('./work-items');
 const policyService = require('./policy-service');
 const position = require('../purchasing/position');
 const poService = require('../purchasing/po-service');
+const supplierCommunications = require('../purchasing/supplier-communications');
 const replenishment = require('../purchasing/replenishment');
 const replenishmentPlan = require('../purchasing/replenishment-plan');
 const salesOrders = require('../sales/sales-order-service');
@@ -69,7 +70,11 @@ function orderStateCopy(order) {
   if (['DRAFT', 'AWAITING_APPROVAL'].includes(order.status)) {
     return `${order.poNumber} is a draft — ${plural(order.outstandingUnits, 'unit')} prepared, nothing on order.`;
   }
-  if (['APPROVED', 'ORDERED'].includes(order.status)) {
+  if (order.status === 'APPROVED') {
+    return `${order.poNumber} is approved — supplier delivery is queued or waiting for verification; ` +
+      `${plural(order.outstandingUnits, 'unit')} are committed incoming.`;
+  }
+  if (order.status === 'ORDERED') {
     return `${order.poNumber} placed — ${plural(order.outstandingUnits, 'unit')} outstanding.`;
   }
   if (order.status === 'PARTIALLY_RECEIVED') {
@@ -185,7 +190,7 @@ function describeCompleted(item, ownedByPlan = new Set(), currentOrder = null) {
             : ownedByPlan.has(item.purchaseOrderId)
               ? 'It is part of a replenishment plan, and is approved there.'
               : 'The purchase order record is no longer available.'),
-      verified: true,
+      verified: item.verificationStatus === 'VERIFIED',
       link: item.purchaseOrderId ? `/purchasing/orders/${item.purchaseOrderId}` : `/autopilot/work/${item.id}`,
     };
   }
@@ -691,7 +696,7 @@ function whatStockChiefPrepared(db, workspaceId, { limit = 8 } = {}) {
     .prepare(
       `SELECT po.id, po.po_number, s.name AS supplier, po.status FROM purchase_orders po
          JOIN suppliers s ON s.id = po.supplier_id
-        WHERE po.workspace_id = ? AND po.status = 'DRAFT' ORDER BY po.created_at DESC LIMIT 5`
+        WHERE po.workspace_id = ? AND po.status = 'DRAFT' ORDER BY po.created_at DESC`
     )
     .all(workspaceId)
     .filter((row) => !waitingOrderIds.has(row.id))
@@ -772,7 +777,7 @@ function recentEvaluations(db, workspaceId, { since = null, limit = 20, readines
 
 /** "StockChief needs you." Genuine exceptions, most consequential first. */
 function whatNeedsYou(db, workspaceId, { limit = 8 } = {}) {
-  const activeWork = workItems.list(db, workspaceId, { limit: 200 })
+  const activeWork = workItems.list(db, workspaceId, { limit: -1 })
     .filter((item) => !item.isTerminal || item.category === 'purchase_preparation');
   const workCoveredSkus = new Set(activeWork.flatMap((item) => [
     item.affectedEntities && item.affectedEntities.skuId,
@@ -792,7 +797,7 @@ function whatNeedsYou(db, workspaceId, { limit = 8 } = {}) {
     'replenishment_needed', 'stock_protection_boundary', 'low_stock', 'stockout_risk',
     'unusual_adjustment', 'data_integrity', 'supplier_price_change',
   ];
-  const candidateLimit = Math.max(20, Number(limit || 8) * 3);
+  const candidateLimit = limit === null ? -1 : Math.max(20, Number(limit || 8) * 3);
   const candidates = db.prepare(`SELECT * FROM attention_items
     WHERE workspace_id=? AND status IN ('OPEN','ACKNOWLEDGED')
       AND severity IN ('critical','important')
@@ -839,7 +844,7 @@ function whatNeedsYou(db, workspaceId, { limit = 8 } = {}) {
       action: needsSupplier ? 'Add supplier' : 'Review',
     }); })
     .sort((a, b) => b.priority - a.priority)
-    .slice(0, limit);
+    .slice(0, limit === null ? undefined : limit);
 }
 
 /**
@@ -1054,17 +1059,29 @@ function replenishmentCurrentState(db, workspaceId, item) {
   if (!skuId) return null;
   const current = position.positionForSku(db, workspaceId, skuId);
   const order = currentOrderForWork(db, workspaceId, item);
+  const communication = order
+    ? supplierCommunications.forOrder(db, workspaceId, order.id)
+      .find((message) => message.messageKind === 'purchase_order') || null
+    : null;
   const waiting = salesOrders.backorderedBySku(db, workspaceId, { skuIds: [skuId] })[0];
   const backordered = Number(waiting ? waiting.backordered : 0);
   const afterCustomerDemand = current.available + current.onOrder - backordered;
   const orderSentence = order && ['DRAFT', 'AWAITING_APPROVAL'].includes(order.status)
     ? `${order.poNumber} is a draft for ${plural(order.outstandingUnits, 'unit')}; it is not on order yet.`
-    : `${plural(current.onOrder, 'unit')} are on order.`;
+    : order && order.status === 'APPROVED'
+      ? `${order.poNumber} is approved for ${plural(order.outstandingUnits, 'unit')}; supplier delivery is not provider-verified yet.`
+      : order && order.status === 'ORDERED'
+        ? `${order.poNumber} is ordered for ${plural(order.outstandingUnits, 'unit')}` +
+          (communication?.status === 'SENT' && communication.externalMessageId
+            ? '; the mailbox returned a provider delivery ID.'
+            : '.')
+        : `${plural(current.onOrder, 'unit')} are on order.`;
   return {
     ...current,
     backordered,
     afterCustomerDemand,
     order,
+    communication,
     summary:
       `${plural(current.onHand, 'unit')} physically on hand; ` +
       `${plural(current.committed, 'unit')} reserved, leaving ${plural(current.available, 'unit')} available. ` +
@@ -1099,8 +1116,14 @@ function verificationFor(item, currentResult) {
       const state = ['DRAFT', 'AWAITING_APPROVAL'].includes(order.status)
         ? `${order.poNumber} is a draft; ${plural(order.outstandingUnits, 'unit')} are prepared; ` +
           'nothing is on order'
-        : ['APPROVED', 'ORDERED'].includes(order.status)
-          ? `${order.poNumber} is placed; ${plural(order.outstandingUnits, 'unit')} are on order`
+        : order.status === 'APPROVED'
+          ? `${order.poNumber} is approved; supplier delivery is not provider-verified yet; ` +
+            `${plural(order.outstandingUnits, 'unit')} are committed incoming`
+          : order.status === 'ORDERED'
+            ? `${order.poNumber} is placed; ${plural(order.outstandingUnits, 'unit')} are on order` +
+              (currentResult.communication?.status === 'SENT' && currentResult.communication.externalMessageId
+                ? '; supplier delivery is provider-confirmed'
+                : '')
           : order.status === 'PARTIALLY_RECEIVED'
             ? `${order.poNumber} is partially received; ${plural(order.receivedUnits, 'unit')} received and ` +
               `${plural(order.outstandingUnits, 'unit')} remain on order`
@@ -1394,8 +1417,11 @@ function explain(db, workspaceId, workItemId) {
     } else {
       paragraphs.push(
         `Replenishment showed ${plural((action.lines || []).length, 'line')} below their reorder point for ` +
-          `${action.supplierName}, so I prepared ${outcome.poNumber || 'a draft order'}. ` +
-          (currentOrder ? `Current state: ${orderStateCopy(currentOrder)}` : 'The order record is no longer available.')
+          `${action.supplierName}. ` +
+          (item.executionStatus === workItems.STATUS.COMPLETED
+            ? `I prepared ${outcome.poNumber || 'a draft order'}. ` +
+              (currentOrder ? `Current state: ${orderStateCopy(currentOrder)}` : 'The order record is no longer available.')
+            : currentOrder ? `Current state: ${orderStateCopy(currentOrder)}` : 'No purchase order has been prepared yet.')
       );
     }
   }

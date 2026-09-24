@@ -105,6 +105,8 @@ function createWorkspaceFor(db, accountId, workspaceName, options = {}) {
   db.prepare(
     'INSERT INTO workspaces (id, name, owner_account_id, created_at) VALUES (?, ?, ?, ?)'
   ).run(workspaceId, clean, accountId, now);
+  db.prepare('INSERT INTO account_inventory_onboarding(account_id, first_inventory_created_at) VALUES (?, ?) ON CONFLICT DO NOTHING')
+    .run(accountId, now);
 
   const userId = newId('usr');
   db.prepare(

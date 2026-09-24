@@ -385,10 +385,11 @@ function profitability(db, workspaceId, input = {}) {
     JOIN accounting_accounts a ON a.id = l.account_id ${joins}
     WHERE l.workspace_id = ? AND e.status = 'POSTED' AND e.posting_date BETWEEN ? AND ?
       AND a.account_type IN ('INCOME','COGS')
+      ${input.locationId ? 'AND l.location_id = ?' : ''}
     GROUP BY ${dimension === 'location' ? 'l.location_id' : 'l.sku_id'}
     ORDER BY (SUM(CASE WHEN a.account_type = 'INCOME' THEN l.credit_minor - l.debit_minor ELSE 0 END)
       - SUM(CASE WHEN a.account_type = 'COGS' THEN l.debit_minor - l.credit_minor ELSE 0 END)) DESC`)
-    .all(workspaceId, dates.from, dates.to).map((row) => ({ ...row,
+    .all(workspaceId, dates.from, dates.to, ...(input.locationId ? [input.locationId] : [])).map((row) => ({ ...row,
       revenueMinor: Number(row.revenue_minor), cogsMinor: Number(row.cogs_minor),
       grossProfitMinor: Number(row.revenue_minor) - Number(row.cogs_minor) }));
   return { ...dates, dimension, rows };

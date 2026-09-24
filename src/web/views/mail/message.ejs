@@ -24,6 +24,9 @@
       · arrived in <%= m.connector_name %>
     </p>
   </div>
+  <% if (m.reply_state === 'NEEDS_REPLY' && !(draft && draft.sentAt)) { %>
+    <a class="btn btn--primary" href="#reply">Reply now</a>
+  <% } %>
 </div>
 
 <div class="notice notice--<%= m.reply_state === 'NEEDS_REPLY' ? 'warn' : 'info' %>">
@@ -116,7 +119,7 @@
   </section>
 <% } %>
 
-<section class="section">
+<section class="section" id="reply">
   <div class="panel">
     <div class="panel-head">
       <div>

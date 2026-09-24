@@ -23,10 +23,20 @@ const WORDS = {
   HANDLED: 'Handled',
 };
 
+const KNOWN_COUNTERPARTY = `(EXISTS (SELECT 1 FROM customers known_customer
+      WHERE known_customer.workspace_id = m.workspace_id
+        AND LOWER(known_customer.email) = LOWER(m.sender))
+    OR EXISTS (SELECT 1 FROM suppliers known_supplier
+      WHERE known_supplier.workspace_id = m.workspace_id
+        AND (known_supplier.id = m.supplier_id
+          OR LOWER(known_supplier.email) = LOWER(m.sender))))`;
+
 const SELECT = `SELECT m.id, m.connector_id, m.sender, m.subject, m.body_text, m.received_at,
     m.classification, m.trust_status, m.processing_status, m.reply_state, m.reply_reason,
     m.reply_state_by_user_id, m.reply_state_at, m.external_thread_id,
     c.display_name AS connector_name, s.name AS supplier_name,
+    (SELECT cu.name FROM customers cu WHERE cu.workspace_id = m.workspace_id
+      AND LOWER(cu.email) = LOWER(m.sender) LIMIT 1) AS customer_name,
     (SELECT COUNT(*) FROM connection_email_attachments a
       WHERE a.message_id = m.id AND a.workspace_id = m.workspace_id) AS attachment_count
   FROM connection_email_messages m
@@ -38,6 +48,7 @@ function hydrate(row) {
   return {
     ...row,
     stateWords: WORDS[row.reply_state] || row.reply_state,
+    counterpartyName: row.customer_name || row.supplier_name || row.sender,
     // The first readable lines, for a list that has to be skimmed.
     preview: triage.prose(row.body_text).split(/\n+/).filter(Boolean).slice(0, 2).join(' ').slice(0, 220),
     decidedByPerson: Boolean(row.reply_state_by_user_id),
@@ -45,7 +56,8 @@ function hydrate(row) {
 }
 
 function get(db, workspaceId, messageId) {
-  const row = db.prepare(`${SELECT} WHERE m.id = ? AND m.workspace_id = ?`).get(messageId, workspaceId);
+  const row = db.prepare(`${SELECT} WHERE m.id = ? AND m.workspace_id = ?
+    AND ${KNOWN_COUNTERPARTY}`).get(messageId, workspaceId);
   if (!row) throw new NotFoundError('That message is not in this inventory.');
   return hydrate(row);
 }
@@ -57,13 +69,14 @@ function list(db, workspaceId, state, options = {}) {
   if (!STATES.includes(state)) throw new ValidationError('That is not one of the three drawers.');
   const limit = Math.min(Number(options.limit) || 100, 500);
   return db.prepare(`${SELECT} WHERE m.workspace_id = ? AND m.reply_state = ?
+      AND ${KNOWN_COUNTERPARTY}
     ORDER BY m.received_at DESC, m.rowid DESC LIMIT ?`)
     .all(workspaceId, state, limit).map(hydrate);
 }
 
 function counts(db, workspaceId) {
-  const rows = db.prepare(`SELECT reply_state, COUNT(*) AS n FROM connection_email_messages
-    WHERE workspace_id = ? GROUP BY reply_state`).all(workspaceId);
+  const rows = db.prepare(`SELECT m.reply_state, COUNT(*) AS n FROM connection_email_messages m
+    WHERE m.workspace_id = ? AND ${KNOWN_COUNTERPARTY} GROUP BY m.reply_state`).all(workspaceId);
   const found = (state) => Number((rows.find((row) => row.reply_state === state) || {}).n || 0);
   return { NEEDS_REPLY: found('NEEDS_REPLY'), WAITING: found('WAITING'), HANDLED: found('HANDLED') };
 }
@@ -80,6 +93,7 @@ function setState(db, ctx, messageId, state, reason = null) {
     reply_state_by_user_id = ?, reply_state_at = ? WHERE id = ? AND workspace_id = ?`)
     .run(state, trimOrNull(reason) || `Moved to ${WORDS[state].toLowerCase()} by hand.`,
       ctx.actorId || null, now, messageId, ctx.workspaceId);
+  require('../attention/needs-you-count').invalidateNeedsYou(db, ctx.workspaceId);
   return get(db, ctx.workspaceId, messageId);
 }
 
@@ -100,10 +114,12 @@ function rejudge(db, ctx, messageId) {
     attachmentCount: Number(current.attachment_count || 0),
     processingStatus: current.processing_status,
     classification: current.classification,
+    knownCounterparty: Boolean(current.customer_name || current.supplier_name),
   });
   db.prepare(`UPDATE connection_email_messages SET reply_state = ?, reply_reason = ?, reply_state_at = ?
     WHERE id = ? AND workspace_id = ?`)
     .run(verdict.state, verdict.reason, nowIso(), messageId, ctx.workspaceId);
+  require('../attention/needs-you-count').invalidateNeedsYou(db, ctx.workspaceId);
   return get(db, ctx.workspaceId, messageId);
 }
 
@@ -119,9 +135,9 @@ function oldestUnanswered(db, workspaceId, limit = 5) {
   // sitting in. Sending moves it to waiting by itself; this is the guard that
   // makes the decision queue independent of that having happened.
   return db.prepare(`${SELECT} WHERE m.workspace_id = ? AND m.reply_state = 'NEEDS_REPLY'
-      AND m.reply_sent_at IS NULL
+      AND m.reply_sent_at IS NULL AND ${KNOWN_COUNTERPARTY}
     ORDER BY m.received_at ASC, m.rowid ASC LIMIT ?`)
-    .all(workspaceId, Math.min(Number(limit) || 5, 50)).map(hydrate);
+    .all(workspaceId, Math.min(Number(limit) || 5, 500)).map(hydrate);
 }
 
-module.exports = { STATES, WORDS, get, list, counts, setState, rejudge, oldestUnanswered };
+module.exports = { STATES, WORDS, KNOWN_COUNTERPARTY, get, list, counts, setState, rejudge, oldestUnanswered };

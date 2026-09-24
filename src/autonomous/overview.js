@@ -3,6 +3,9 @@
 const operations = require('./service');
 
 const ACTIVE = ['PLANNED', 'AUTHORIZED', 'RUNNING', 'VERIFYING', 'RECOVERING', 'COMPENSATING'];
+const PHASE_COPY = { OBSERVE:'observing',UNDERSTAND:'reviewing',DECIDE:'deciding',PLAN:'planning',
+  SIMULATE:'checking',AUTHORIZE:'checking authority for',EXECUTE:'executing',VERIFY:'verifying',
+  RECOVER:'recovering',COMPENSATE:'reconciling',LEARN:'learning from',ESCALATE:'escalating' };
 
 /**
  * One customer-facing view over every durable kind of work. Domain engines
@@ -11,7 +14,7 @@ const ACTIVE = ['PLANNED', 'AUTHORIZED', 'RUNNING', 'VERIFYING', 'RECOVERING', '
  */
 function inProgress(db, workspaceId, { limit = 25 } = {}) {
   const result = operations.list(db, workspaceId, { statuses: ACTIVE, limit }).map((op) => ({
-    id: `operation:${op.id}`, title: op.title, because: op.summary || `StockChief is ${op.phase.toLowerCase()}ing this now.`,
+    id: `operation:${op.id}`, title: op.title, because: op.summary || `StockChief is ${PHASE_COPY[op.phase] || 'reviewing'} this now.`,
     link: op.link || `/autopilot/history#operation-${op.id}`, action: 'See work', status: op.status,
   }));
   const known = new Set(operations.list(db, workspaceId, { statuses: ACTIVE, limit: 200 })

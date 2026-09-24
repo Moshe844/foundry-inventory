@@ -299,6 +299,7 @@ function resolveLine(db, ctx, membership, line, options = {}) {
     })[0];
     const chosen = replenishment.chooseSupplier(options_, {
       daysOfStockRemaining: signals ? signals.estimated.daysOfStockRemaining : null,
+      neededUnits: !line.purchaseUnit || /^(?:unit|units|item|items|each)$/i.test(line.purchaseUnit) ? Number(line.quantity) : null,
     });
     supplier = supplierService.getSupplier(db, ctx.workspaceId, chosen.supplierItem.supplierId);
     assumptions.push(`${chosen.because}.`);

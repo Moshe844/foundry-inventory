@@ -49,7 +49,7 @@
   <section class="setup-journey section">
     <div class="setup-journey__head"><div class="setup-journey__head-copy">
       <span class="setup-journey__eyebrow">Is it working?</span>
-      <h2><%= certification.history ? 'This connection is proven' : 'Four checks before you rely on it' %></h2>
+      <h2><%= certification.proven ? 'This connection is proven' : 'Four checks before you rely on it' %></h2>
       <p>Connected is not the same as working. Each step below is ticked only when StockChief has real evidence from this connection.</p>
     </div></div>
     <div class="setup-steps">
@@ -124,28 +124,41 @@
           <% if (shadow.differences.length) { %><details><summary>See exact differences and map uncertain accounts</summary><div class="grid" style="margin-top:12px"><% shadow.differences.forEach(function(diff) { %><div class="list-row"><div style="flex:1"><strong><%= diff.code || diff.externalName || diff.kind %></strong><p><%= diff.kind.replaceAll('_', ' ').toLowerCase() %><%= diff.foundryMinor != null ? ' · StockChief ' + helpers.money(diff.foundryMinor) : '' %><%= diff.externalMinor != null ? ' · ' + provider.name + ' ' + helpers.money(diff.externalMinor) : '' %></p><% if (diff.kind === 'UNMAPPED_EXTERNAL_ACCOUNT' && diff.externalId) { %><form method="post" action="/settings/connections/<%= connection.id %>/accounting-map" class="form-actions" style="margin-top:10px"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="externalId" value="<%= diff.externalId %>"><select class="select" name="accountId" required><option value="">Choose the exact StockChief account</option><% accountingAccounts.forEach(function(account) { %><option value="<%= account.id %>"><%= account.code %> · <%= account.name %></option><% }) %></select><button class="btn btn--sm" type="submit">Save exact mapping</button></form><% } %></div><span class="badge badge--warn">Stopped</span></div><% }) %></div></details><% } %>
         <% } %>
         <% if (shadow && policy.requested_authority === 'POST' && (shadow.externalSnapshot.accounts || []).length) {
-          var accountIdentities = accounting.identities.filter(function(row) { return row.entity_type === 'account'; });
+          var postingMappings = accounting.postingMappings || [];
           var externalAccountsForMapping = (shadow.externalSnapshot.accounts || []).slice().sort(function(a, b) {
             return String(a.code || a.name || '').localeCompare(String(b.code || b.name || ''));
           }); %>
-          <details class="disclose"><summary>Posting account mappings · <%= accountIdentities.length %> saved</summary><div class="disclose__body grid">
-            <p>Map only the StockChief accounts used by entries you intend to post. A zero-balance account omitted by the provider is not a financial discrepancy, but StockChief still requires an exact provider identity before writing to it.</p>
+          <details class="disclose"><summary>Posting account mappings · <%= postingMappings.length %> owner-approved</summary><div class="disclose__body grid">
+            <p>Choose where each StockChief journal account posts. Imported provider accounts and their opening balances stay unchanged, even when two StockChief accounts post to the same provider account.</p>
             <form method="post" action="/settings/connections/<%= connection.id %>/accounting-map" class="grid grid--2">
               <input type="hidden" name="_csrf" value="<%= csrfToken %>">
               <label class="field"><span class="field-label">StockChief account</span><select class="select" name="accountId" required><option value="">Choose the account used by the journal</option><% accountingAccounts.forEach(function(account) { %><option value="<%= account.id %>"><%= account.code %> · <%= account.name %></option><% }) %></select></label>
               <label class="field"><span class="field-label"><%= provider.name %> account</span><select class="select" name="externalId" required><option value="">Choose its exact provider account</option><% externalAccountsForMapping.forEach(function(account) { %><option value="<%= account.externalId %>"><%= account.code ? account.code + ' · ' : '' %><%= account.name %></option><% }) %></select></label>
               <div class="form-actions"><button class="btn btn--primary" type="submit">Save exact posting mapping</button></div>
             </form>
-            <% if (accountIdentities.length) { %><div class="grid"><% accountIdentities.forEach(function(identity) {
-              var localAccount = accountingAccounts.find(function(account) { return account.id === identity.foundry_record_id; });
-              var externalAccount = externalAccountsForMapping.find(function(account) { return String(account.externalId) === String(identity.external_id); }); %>
-              <div class="list-row"><span><%= localAccount ? localAccount.code + ' · ' + localAccount.name : identity.foundry_record_id %></span><strong><%= externalAccount ? externalAccount.name : identity.external_id %></strong></div>
+            <% if (postingMappings.length) { %><div class="grid"><% postingMappings.forEach(function(mapping) {
+              var externalAccount = externalAccountsForMapping.find(function(account) { return String(account.externalId) === String(mapping.external_id); }); %>
+              <div class="list-row"><span><%= mapping.account_code %> · <%= mapping.account_name %></span><strong><%= externalAccount ? externalAccount.name : mapping.external_id %></strong></div>
             <% }) %></div><% } %>
           </div></details>
         <% } %>
         <% if (policy.stage === 'WRITE_READY') { %><form method="post" action="/settings/connections/<%= connection.id %>/accounting-enable" data-confirm="Enable StockChief to post verified accounting entries to <%= provider.name %>? StockChief remains the source of truth."><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Enable verified posting</button></form><% } %>
         <% if (policy.stage === 'WRITE_ENABLED' && provider.environment === 'sandbox' && !(accounting.sandboxProof && accounting.sandboxProof.passed)) { %><div class="notice notice--info"><div><strong>Ready for the real sandbox proof.</strong><p>StockChief will post a $1 expense journal, post its exact reversal, and reread both trial balances. The net balance change is $0, and both provider journal IDs are saved as evidence.</p><form method="post" action="/settings/connections/<%= connection.id %>/accounting-sandbox-proof" data-confirm="Post a $1 journal and its exact reversal to this provider sandbox? This creates two real sandbox journal entries with a net $0 balance effect."><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Post and reverse $1 sandbox proof</button></form></div></div><% } %>
-        <% if (policy.stage === 'WRITE_ENABLED') { %><form method="post" action="/settings/connections/<%= connection.id %>/accounting-post"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Post new verified entries now</button></form><p class="hint">Each journal has a provider idempotency key and exact external account identities. Retries cannot create duplicate books.</p><% } %>
+        <% if (policy.stage === 'WRITE_ENABLED' && accounting.pendingEntries.length) {
+          var missingParties = Array.from(new Map(accounting.pendingEntries.flatMap(function(entry) { return entry.missingParties || []; })
+            .map(function(party) { return [party.partyType + ':' + party.partyId, party]; })).values()); %>
+          <div class="notice notice--info"><div style="width:100%"><strong><%= accounting.pendingEntries.length %> StockChief entr<%= accounting.pendingEntries.length === 1 ? 'y is' : 'ies are' %> awaiting <%= provider.name %></strong>
+            <% if (missingParties.length) { %><div class="notice notice--warn" style="margin-top:12px"><div style="width:100%"><strong><%= provider.name %> requires an exact customer or supplier on controlled accounts.</strong><p>Choose an existing provider record, or explicitly create the matching business record. StockChief will not guess.</p>
+              <% if (accounting.externalPartiesError) { %><p class="text-warn"><%= accounting.externalPartiesError %></p><% } %>
+              <div class="grid" style="margin-top:12px"><% missingParties.forEach(function(party) { var choices = (accounting.externalParties && accounting.externalParties[party.partyType]) || []; %><div class="list-row" style="align-items:flex-start"><div style="flex:1"><strong><%= party.name %></strong><p>StockChief <%= party.partyType %><%= party.email ? ' · ' + party.email : '' %></p>
+                <% if (choices.length) { %><form method="post" action="/settings/connections/<%= connection.id %>/accounting-party-map" class="form-actions" style="margin-top:10px"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="partyType" value="<%= party.partyType %>"><input type="hidden" name="partyId" value="<%= party.partyId %>"><select class="select" name="externalId" required><option value="">Choose the exact existing <%= provider.name %> <%= party.partyType %></option><% choices.forEach(function(choice) { %><option value="<%= choice.externalId %>"><%= choice.name %><%= choice.email ? ' · ' + choice.email : '' %></option><% }) %></select><button class="btn btn--sm" type="submit">Use existing <%= party.partyType %></button></form><% } %>
+                <form method="post" action="/settings/connections/<%= connection.id %>/accounting-party-create" style="margin-top:10px" data-confirm="Create <%= party.name %><%= party.email ? ' (' + party.email + ')' : '' %> as a new <%= provider.name %> <%= party.partyType %>? This changes the provider account, but does not post a journal."><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="partyType" value="<%= party.partyType %>"><input type="hidden" name="partyId" value="<%= party.partyId %>"><button class="btn btn--primary btn--sm" type="submit">Create matching <%= party.partyType %> in <%= provider.name %></button></form>
+              </div><span class="badge badge--warn">Required</span></div><% }) %></div>
+            </div></div><% } %>
+            <div class="grid" style="margin-top:12px"><% accounting.pendingEntries.forEach(function(entry) { var entryReady = !entry.missingAccounts.length && !(entry.missingParties || []).length; %><div class="list-row" style="align-items:flex-start"><div><strong>Journal <%= entry.entry_number %> · <%= entry.description %></strong><p><%= entry.posting_date %> · <%= entry.lines.length %> lines</p><div class="grid" style="gap:4px; margin-top:8px"><% entry.lines.forEach(function(line) { %><small><%= line.account_code %> · <%= line.account_name %> — <%= Number(line.debit_minor || 0) ? 'debit ' + helpers.money(line.debit_minor) : 'credit ' + helpers.money(line.credit_minor) %><%= line.customer_name ? ' · customer ' + line.customer_name : line.supplier_name ? ' · supplier ' + line.supplier_name : '' %></small><% }) %></div><% if (entry.missingAccounts.length) { %><p class="text-warn">Missing account mapping: <%= entry.missingAccounts.map(function(account) { return account.code + ' · ' + account.name; }).join(', ') %></p><% } %><% if ((entry.missingParties || []).length) { %><p class="text-warn">Missing provider identity: <%= entry.missingParties.map(function(party) { return party.name; }).join(', ') %></p><% } %></div><span class="badge <%= entryReady ? 'badge--ok' : 'badge--warn' %>"><%= entryReady ? 'Verified' : 'Needs mapping' %></span></div><% }) %></div>
+            <% if (accounting.pendingEntries.every(function(entry) { return !entry.missingAccounts.length && !(entry.missingParties || []).length; })) { %><form method="post" action="/settings/connections/<%= connection.id %>/accounting-post" data-confirm="Post exactly these <%= accounting.pendingEntries.length %> verified entries to <%= provider.name %>? No later or newly created entry will be included."><input type="hidden" name="_csrf" value="<%= csrfToken %>"><% accounting.pendingEntries.forEach(function(entry) { %><input type="hidden" name="entryIds" value="<%= entry.id %>"><% }) %><button class="btn btn--primary" type="submit">Post these <%= accounting.pendingEntries.length %> verified entr<%= accounting.pendingEntries.length === 1 ? 'y' : 'ies' %></button></form><% } %><p class="hint">The confirmed list is fixed at approval time. Every selected journal is preflighted before the first provider write, and each has an idempotency key.</p>
+          </div></div>
+        <% } else if (policy.stage === 'WRITE_ENABLED') { %><div class="notice notice--success"><div style="width:100%"><strong>No unposted StockChief journals.</strong><p>Every eligible entry already has a confirmed provider identity.</p><% if (accounting.postedEntries.length) { %><div class="grid" style="margin-top:12px"><% accounting.postedEntries.forEach(function(entry) { %><div class="list-row"><div><strong>Journal <%= entry.entry_number %> · <%= entry.description %></strong><p><%= entry.posting_date %> · <%= provider.name %> ID <%= entry.external_id %></p></div><span class="badge badge--ok">Confirmed</span></div><% }) %></div><% } %></div></div><% } %>
       </div></section><% } %>
     <% } else { %>
     <% if (canBootstrapShopify) { %>
@@ -206,6 +219,16 @@
                   <button class="btn btn--sm" type="submit" name="decision" value="keep_original">Keep original purchase order</button>
                 </form>
               <% } %>
+              <% if (issue.issue_type === 'CONNECTION_WEBHOOK_SETUP_FAILED' && connection.provider_type === 'shopify') { %>
+                <form method="post" action="/settings/connections/connect" class="form-actions" style="margin-top:10px" data-provider-reauthorize data-provider-name="Shopify">
+                  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                  <input type="hidden" name="providerType" value="shopify">
+                  <input type="hidden" name="connectorId" value="<%= connection.id %>">
+                  <input type="hidden" name="shop" value="<%= connection.config.shop || '' %>">
+                  <input type="hidden" name="forceOAuth" value="1">
+                  <button class="btn btn--primary btn--sm" type="submit">Reconnect Shopify and retry webhooks</button>
+                </form>
+              <% } %>
             </div><span class="badge badge--warn"><%= issue.issue_type.replaceAll('_', ' ').toLowerCase() %></span></div>
           <% }) %>
         </div>
@@ -220,7 +243,7 @@
             <input type="hidden" name="_csrf" value="<%= csrfToken %>">
             <label class="field"><span class="field-label">Which email address should StockChief use?</span><input class="input" name="senderPattern" value="<%= pendingEmailRule ? pendingEmailRule.sender_pattern : '' %>" placeholder="orders@abcapparel.com" required><span class="field-help">Everything from other senders remains ignored.</span></label>
             <label class="field"><span class="field-label">What should StockChief call this source? <span class="muted">optional</span></span><input class="input" name="supplierName" list="supplier-name-options" placeholder="ABC Apparel"><span class="field-help">Type any useful name. There is no separate supplier setup required.</span></label>
-            <label class="field"><span class="field-label">What do its attached files contain?</span><select class="select" name="documentMode"><option value="review_each">I will choose for each file</option><option value="inventory_list">Products or inventory quantities</option><option value="supplier_documents">Purchase orders, invoices or shipment updates</option></select><span class="field-help">PDF, Excel, CSV, Word, and text work the same way. StockChief prepares a review; it does not silently change stock.</span></label>
+            <label class="field"><span class="field-label">What does this supplier normally send?</span><select class="select" name="documentMode"><option value="supplier_documents">Purchase orders, invoices or shipment updates</option><option value="review_each">I will choose for each attachment</option><option value="inventory_list">Products or inventory quantities</option></select><span class="field-help">StockChief compares purchasing updates with the matching PO. Inventory changes only after receiving is confirmed.</span></label>
             <datalist id="supplier-name-options"><% suppliers.forEach(function(s) { %><option value="<%= s.name %>"><% }) %></datalist>
             <div class="form-actions"><button class="btn btn--primary" type="submit"><%= watchedRules.length ? 'Watch another sender' : 'Start watching this sender' %></button></div>
           </form>
@@ -308,3 +331,34 @@
     <details class="card"><summary class="card-head"><h2>Advanced diagnostics</h2></summary><div class="card-body"><p class="mono">Connection <%= connection.id %></p><p>Provider: <%= connection.provider_type %></p><% if (connection.provider_type === 'clover') { %><p>Webhook URL: <span class="mono"><%= origin %>/api/v1/connections/clover/webhooks</span></p><% } %><p>Setup: <%= connection.setup_status %></p><p>Mappings: <%= mappings.length %></p><p>Last event: <%= connection.last_activity_at || 'none' %></p><p>Last successful sync: <%= connection.last_synced_at || 'none' %></p><p>Last sync problem: <%= connection.last_error || 'none' %></p><% syncRuns.forEach(function(run) { %><p><%= run.sync_kind %> · <%= run.status %> · <%= run.started_at %><%= run.error_message ? ' · ' + run.error_message : '' %></p><% }) %><% if (currentUser.role === 'owner' && mappings.some(function(row) { return row.entity_type === 'sku'; })) { %><p><a href="/repairs/report?connectorId=<%= connection.id %>">Report an incorrect product match</a></p><% } %></div></details>
   </aside>
 </div>
+
+<script>
+(function () {
+  document.querySelectorAll('form[data-provider-reauthorize]').forEach(function (form) {
+    form.addEventListener('submit', function (event) {
+      var providerName = form.dataset.providerName || 'connection';
+      var popupName = 'stockchief-' + providerName.toLowerCase() + '-reauthorize';
+      var popup = window.open('', popupName,
+        'popup=yes,width=680,height=780,resizable=yes,scrollbars=yes');
+      if (!popup) return;
+      event.preventDefault();
+      var popupField = form.querySelector('input[name="popup"]');
+      if (!popupField) {
+        popupField = document.createElement('input');
+        popupField.type = 'hidden';
+        popupField.name = 'popup';
+        form.appendChild(popupField);
+      }
+      popupField.value = '1';
+      form.target = popupName;
+      HTMLFormElement.prototype.submit.call(form);
+      popup.focus();
+      var poll = window.setInterval(function () {
+        if (!popup.closed) return;
+        window.clearInterval(poll);
+        window.location.reload();
+      }, 1000);
+    });
+  });
+}());
+</script>

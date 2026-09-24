@@ -13,6 +13,10 @@ const { openDatabase } = require('../../src/db');
 const modes = require('../../src/autopilot/modes');
 const policyService = require('../../src/autopilot/policy-service');
 const workItems = require('../../src/autopilot/work-items');
+const suppliers = require('../../src/purchasing/supplier-service');
+const poService = require('../../src/purchasing/po-service');
+const supplierCommunications = require('../../src/purchasing/supplier-communications');
+const connections = require('../../src/connections/service');
 const {
   seedAuthorityWorkspace,
   approveTransferPolicy,
@@ -93,6 +97,91 @@ function setupDatabase(databasePath, { requiredQuantity, paused = false, policyV
 function inspect(databasePath, callback) {
   const db = openDatabase(databasePath);
   try { return callback(db); } finally { db.close(); }
+}
+
+function setupCompletedOptimizerReport(databasePath) {
+  const db = openDatabase(databasePath);
+  try {
+    const env = seedAuthorityWorkspace(db, { requiredQuantity: 5, workspaceName: 'Optimizer Browser' });
+    db.prepare(
+      `INSERT INTO workspace_configuration (workspace_id, configured_at, configuration_version, terminology,
+         operational_defaults, inventory_model, updated_at)
+       VALUES (?, datetime('now'), 1, '{}', '{}', '{}', datetime('now'))`
+    ).run(env.workspace.workspaceId);
+    const supplier = suppliers.createSupplier(db, env.ctx, env.membership, {
+      name: 'Verified Supply', email: 'orders@verified.test', defaultLeadTimeDays: 4,
+    });
+    suppliers.linkItem(db, env.ctx, env.membership, {
+      supplierId: supplier.id, skuId: env.sku.id, purchaseUnit: 'unit',
+      unitsPerPurchaseUnit: 1, lastUnitCost: 3.5, leadTimeDays: 4, isPreferred: true,
+    });
+    const mailbox = connections.create(db, env.ctx, env.membership, {
+      providerType: 'supplier_email', displayName: 'Purchasing Gmail',
+    }).connection;
+    db.prepare(`UPDATE workspace_connectors SET provider_type='gmail', status='connected',
+      setup_status='CONNECTED', paused_at=NULL, capabilities='["MAIL_READ","MAIL_SEND"]'
+      WHERE id=?`).run(mailbox.id);
+    suppliers.updateSupplier(db, env.ctx, env.membership, supplier.id, {
+      watchedConnectorId: mailbox.id, prepareCommunications: true,
+      autoSendEnabled: true, autoSendLimit: 500,
+    });
+    let order = poService.createOrder(db, env.ctx, env.membership, {
+      supplierId: supplier.id, source: 'foundry_recommendation',
+      lines: [{ skuId: env.sku.id, quantityUnits: 10, unitCost: 3.5,
+        destinationLocationId: env.destination.id }],
+    });
+    order = poService.approve(db, env.ctx, env.membership, order.id, {
+      expectedHash: order.integrityHash, markOrdered: false,
+    });
+    const [queued] = supplierCommunications.queueForOrder(db, env.workspace.workspaceId, order.id);
+    db.prepare(`UPDATE supplier_communications SET status='SENT', transport='gmail',
+      external_message_id='browser-provider-message', external_thread_id='browser-provider-thread',
+      sent_at=datetime('now'), updated_at=datetime('now') WHERE id=?`).run(queued.id);
+    const sent = supplierCommunications.get(db, env.workspace.workspaceId, queued.id);
+    order = poService.markOrderedFromSupplierSend(db, env.ctx, order.id, sent);
+
+    const action = {
+      decision: 'transfer_and_purchase', decisionSource: 'adaptive_optimizer',
+      explanation: 'Transfer 5 and buy 10 after comparing evidenced stock, timing, cost and cash.',
+      displayName: 'Dated Demand Fixture', skuId: env.sku.id, itemId: env.itemId,
+      unitLabel: 'units', onHandTotal: 64, committed: 0, backordered: 0,
+      onOrder: 0, networkPosition: 64, reorderPoint: 70, target: 79,
+      byLocation: [
+        { locationId: env.destination.id, locationName: env.destination.name, onHand: 4, need: 9, available: 4 },
+        { locationId: env.source.id, locationName: env.source.name, onHand: 60, need: 0, available: 60 },
+      ],
+      transfers: [{ fromLocationId: env.source.id, fromLocationName: env.source.name,
+        toLocationId: env.destination.id, toLocationName: env.destination.name, quantity: 5 }],
+      purchase: { supplierId: supplier.id, supplierName: supplier.name, quantityUnits: 10,
+        quantityPurchaseUnits: 10, purchaseUnit: 'unit', unitsPerPurchaseUnit: 1,
+        unitCost: 3.5, estimatedCost: 35, leadTimeDays: 4 },
+      after: { onHandAfterMoves: 64, byLocation: [
+        { locationId: env.destination.id, locationName: env.destination.name, before: 4, after: 9 },
+        { locationId: env.source.id, locationName: env.source.name, before: 60, after: 55 },
+      ] },
+    };
+    const created = workItems.upsert(db, env.workspace.workspaceId, {
+      category: 'replenishment_plan', source: 'adaptive_optimizer',
+      sourceEvidence: [{ label: 'Decision engine', value: 'Transfer versus buy optimizer' }],
+      affectedEntities: { skuId: env.sku.id, displayName: action.displayName },
+      recommendedAction: action, priority: 80, urgency: 'soon', confidence: 'high',
+      approvalRequirement: 'NONE', executionStatus: workItems.STATUS.AUTHORIZED,
+      verificationStatus: 'PENDING', idempotencyKey: 'optimizer-browser-report',
+    }).item;
+    const completed = workItems.transition(db, env.workspace.workspaceId, created.id,
+      workItems.STATUS.COMPLETED, {
+        purchaseOrderId: order.id, verificationStatus: 'VERIFIED',
+        outcome: { purchaseOrderId: order.id, checks: [
+          { kind: 'transfer', from: env.source.name, to: env.destination.name, quantity: 5,
+            transferId: 'tr_browser', transferNumber: 'TR-1001', status: 'APPROVED', ok: true,
+            sourceBefore: 60, sourceAfter: 60, destinationBefore: 4, destinationAfter: 4 },
+          { kind: 'purchase', poNumber: order.poNumber, status: order.status, ok: true },
+        ] },
+      });
+    return { workspaceId: env.workspace.workspaceId, email: env.workspace.account.email,
+      password: env.workspace.account.password, workItemId: completed.id, orderId: order.id,
+      poNumber: order.poNumber };
+  } finally { db.close(); }
 }
 
 /**
@@ -200,4 +289,37 @@ test('authority browser E2E: real policy boundaries, audit wording, Pause and Re
           .get(state.workspaceId, state.skuId, state.destinationId).on_hand), 9);
     });
   });
+});
+
+test('optimizer browser report proves transfer, supplier execution and provider verification', { timeout: 60000 }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foundry-optimizer-report-e2e-'));
+  const databasePath = path.join(dir, 'optimizer.db');
+  const state = setupCompletedOptimizerReport(databasePath);
+  const server = startServer(databasePath);
+  server.stderr.on('data', (chunk) => process.stderr.write(`[optimizer-report-server] ${chunk}`));
+  await waitForServer();
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 1400, height: 950 } });
+  page.setDefaultTimeout(60000);
+  try {
+    await page.goto(`${BASE}/login`);
+    await page.fill('#email', state.email);
+    await page.fill('#password', state.password);
+    await page.click('form[action="/login"] button[type=submit]');
+    await page.waitForURL(`${BASE}/`);
+    await page.goto(`${BASE}/autopilot/work/${state.workItemId}`);
+    const work = await page.locator('body').innerText();
+    assert.match(work, /Transfer 5 and buy 10 after comparing evidenced stock, timing, cost and cash/);
+    assert.match(work, /Verified transfer prepared: TR-1001 for 5 units/);
+    assert.match(work, new RegExp(`${state.poNumber} is placed; 10 units are on order; supplier delivery is provider-confirmed`));
+    await page.getByRole('link', { name: new RegExp(`Open ${state.poNumber}`) }).click();
+    await page.goto(`${BASE}/purchasing/orders/${state.orderId}/detail`);
+    const order = await page.locator('body').innerText();
+    assert.match(order, /Sent successfully through Gmail from Purchasing Gmail to orders@verified\.test/);
+    assert.match(order, /Ordered/);
+  } finally {
+    await browser.close();
+    await stopServer(server);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

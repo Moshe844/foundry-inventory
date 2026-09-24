@@ -1,0 +1,23 @@
+<section class="rm-head"><div><p class="rm-eyebrow">This inventory</p><h1>Inventory settings</h1>
+  <p class="rm-lede">Identity, access and connected operating systems for <%= workspace.name %>.</p></div></section>
+
+<section class="rm-card"><h2>Name</h2><form method="post" action="/settings/workspace" class="rm-form-grid">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <label>Inventory name<input name="name" required maxlength="120" value="<%= workspace.name %>"></label>
+  <div><button class="rm-btn" type="submit">Save name</button></div></form></section>
+
+<section class="rm-grid rm-grid--4">
+  <div class="rm-card"><strong><%= summary.products.toLocaleString('en-US') %></strong><small>products</small></div>
+  <div class="rm-card"><strong><%= summary.skus.toLocaleString('en-US') %></strong><small>active SKUs</small></div>
+  <div class="rm-card"><strong><%= summary.locations.toLocaleString('en-US') %></strong><small>locations</small></div>
+  <div class="rm-card"><strong><%= summary.connections.toLocaleString('en-US') %></strong><small>active connections</small></div>
+</section>
+
+<section class="rm-card"><h2>Operating setup</h2><div class="rm-actions">
+  <a class="rm-btn" href="/what-you-told-me">What you've told StockChief</a>
+  <a class="rm-btn rm-btn--quiet" href="/autopilot">Authority</a>
+  <a class="rm-btn rm-btn--quiet" href="/settings/connections">Connections</a>
+  <a class="rm-btn rm-btn--quiet" href="/settings/shipping">Shipping</a>
+  <a class="rm-btn rm-btn--quiet" href="/settings/operations">Production operations</a>
+  <a class="rm-btn rm-btn--quiet" href="/inventories">Inventories</a>
+</div><p class="rm-note">This server uses shared PostgreSQL storage. Credentials remain encrypted and belong to this inventory.</p></section>

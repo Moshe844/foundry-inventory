@@ -11,6 +11,12 @@
 </div>
 
 <div class="card">
+  <% if (locals.resumeInstruction) { %>
+    <div class="notice" style="margin:16px;">
+      <%- helpers.icon('sparkles', { size: 16 }) %>
+      <span>After you add this location, StockChief will continue: “<%= resumeInstruction %>”</span>
+    </div>
+  <% } %>
   <% if (locations.length === 0) { %>
     <div class="empty">
       <div class="icon-wrap"><%- helpers.icon('locations', { size: 22 }) %></div>
@@ -76,6 +82,7 @@
   <dialog class="modal" id="modal-location">
     <form method="post" action="/locations">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <% if (locals.resumeInstruction) { %><input type="hidden" name="resumeInstruction" value="<%= resumeInstruction %>"><% } %>
       <div class="modal-head">
         <h2>Add a location</h2>
         <button class="btn btn--ghost btn--sm close" type="button" data-modal-close aria-label="Close"><%- helpers.icon('close', { size: 16 }) %></button>
@@ -114,6 +121,11 @@
             Where parcels leave from. Needed only to buy a shipping label, and StockChief asks for it
             once rather than filling it in on your behalf.
           </p>
+        </div>
+        <div class="field">
+          <label class="label" for="location-phone">Shipping contact phone <span class="optional">optional</span></label>
+          <input class="input" id="location-phone" name="phone" type="tel" autocomplete="tel" placeholder="512-555-0147">
+          <p class="field-hint">Required only when this location buys carrier labels.</p>
         </div>
         <div class="field">
           <label class="label" for="location-note">Note <span class="optional">optional</span></label>
@@ -156,6 +168,12 @@
             <textarea class="input textarea" id="edit-address-<%= location.id %>" name="address" rows="3"
               placeholder="12 Depot Road&#10;Monroe, NY 10950"><%= location.address || '' %></textarea>
             <p class="field-hint">Where parcels leave from, for buying a shipping label.</p>
+          </div>
+          <div class="field">
+            <label class="label" for="edit-phone-<%= location.id %>">Shipping contact phone</label>
+            <input class="input" id="edit-phone-<%= location.id %>" name="phone" type="tel" autocomplete="tel"
+              value="<%= location.phone || '' %>" placeholder="512-555-0147">
+            <p class="field-hint">The carrier contact for parcels leaving this location.</p>
           </div>
           <div class="field">
             <label class="label" for="edit-note-<%= location.id %>">Note</label>

@@ -3,6 +3,9 @@
 <% var openIssues = issues.filter(function(issue) { return issue.status === 'OPEN'; }); %>
 <% var pendingFileChoices = messages.filter(function(message) { return message.trust_status === 'TRUSTED' && message.processing_status === 'CAPTURED' && messageAttachments.some(function(attachment) { return attachment.message_id === message.id; }); }); %>
 <% var needsCount = openIssues.length + pendingFileChoices.length; %>
+<% var mailboxAuthorized = Boolean(connection.credential_ref && connection.provider_account_id); %>
+<% var mailboxNeedsReconnect = connection.setup_status === 'REAUTHORIZATION_REQUIRED'; %>
+<% var mailboxReady = mailboxAuthorized && connection.status === 'connected' && !connection.paused_at; %>
 <div data-live-mailbox data-connector-id="<%= connection.id %>" data-signature="<%= mailboxSignature %>" hidden></div>
 
 <header class="page-head">
@@ -16,23 +19,36 @@
 
 <section class="card section">
   <div class="card-head"><div>
-    <h2><%= needsCount
+    <h2><%= !mailboxReady ? connection.paused_at ? 'Mailbox checks are paused' : 'Mailbox is not ready'
+      : needsCount
       ? `${needsCount} supplier email decision${needsCount === 1 ? '' : 's'} ${needsCount === 1 ? 'needs' : 'need'} you`
       : watchedRules.length ? 'Your supplier inbox is ready' : 'One more step: choose a supplier' %></h2>
-    <p class="muted"><%= needsCount
+    <p class="muted"><%= !mailboxReady
+      ? connection.paused_at ? 'No automatic mailbox checks run until you resume this connection.'
+        : connection.last_error || 'Finish authorizing this mailbox before StockChief can read or send messages.'
+      : needsCount
       ? 'The emails are saved. StockChief has not guessed or changed physical stock.'
       : watchedRules.length
         ? `Nothing needs you. StockChief checks ${connection.provider_account_name || 'this mailbox'} automatically every ${connection.config.mailboxCheckMinutes || 5} minute${Number(connection.config.mailboxCheckMinutes || 5) === 1 ? '' : 's'}.`
-        : 'Choose one supplier sender below. Emails from everyone else remain ignored.' %></p>
+        : 'Choose an approved supplier sender for purchasing evidence. Other senders are untrusted or ignored according to your mailbox settings.' %></p>
   </div></div>
   <div class="card-body">
     <dl class="kv">
-      <dt>Connected mailbox</dt><dd><%= connection.provider_account_name || connection.display_name %></dd>
+      <dt>Mailbox authorization</dt><dd><%= mailboxAuthorized ? connection.provider_account_name || connection.display_name : 'Not completed — no mailbox authorized' %></dd>
       <dt>Supplier senders watched</dt><dd><%= watchedRules.length %></dd>
       <dt>Last successful check</dt><dd><%= connection.last_synced_at ? helpers.timeAgo(connection.last_synced_at) : 'Not checked yet' %></dd>
       <dt>Inventory receiving</dt><dd>Never automatic from an email. StockChief asks you to confirm what physically arrived.</dd>
     </dl>
-    <% if (!needsCount && watchedRules.length) { %>
+    <% if (!mailboxReady && !connection.paused_at && currentUser.role === 'owner') { %>
+      <form method="post" action="/settings/connections/connect" class="form-actions">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="providerType" value="<%= connection.provider_type %>">
+        <input type="hidden" name="connectorId" value="<%= connection.id %>">
+        <input type="hidden" name="forceOAuth" value="1">
+        <button class="btn btn--primary" type="submit"><%= mailboxAuthorized ? 'Reconnect mailbox' : 'Try mailbox authorization again' %></button>
+      </form>
+    <% } %>
+    <% if (mailboxReady && !needsCount && watchedRules.length) { %>
       <div class="notice notice--info" style="margin-top:16px">
         <div style="width:100%"><strong>Test it now</strong><p>Send an email <strong>from <%= watchedRules[0].sender_pattern %></strong> <strong>to <%= connection.provider_account_name || connection.display_name %></strong>. It must arrive in that mailbox’s Inbox. StockChief checks automatically every <%= connection.config.mailboxCheckMinutes || 5 %> minutes.</p>
           <% if (currentUser.role === 'owner' && ['gmail','microsoft365'].includes(connection.provider_type)) { %><form method="post" action="/settings/connections/<%= connection.id %>/sync-mailbox"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--sm" type="submit">Check <%= connection.provider_type === 'microsoft365' ? 'Microsoft' : 'Gmail' %> now</button></form><% } %>
@@ -44,7 +60,7 @@
 
 <% if (needsCount) { %>
   <section class="card section" id="needs-you">
-    <div class="card-head"><div><h2>Do this next</h2><p class="muted">Resolve only the business question. The mailbox connection itself is working.</p></div></div>
+    <div class="card-head"><div><h2>Do this next</h2><p class="muted">Saved messages can be reviewed here. Mailbox authorization and checking status are shown above.</p></div></div>
     <div class="card-body grid">
       <% pendingFileChoices.forEach(function(message) { var choiceAttachments = messageAttachments.filter(function(attachment) { return attachment.message_id === message.id; }); %>
         <article class="notice notice--warn"><div style="width:100%"><strong>Choose what StockChief should do with <%= choiceAttachments.length === 1 ? choiceAttachments[0].filename : choiceAttachments.length + ' attachments' %></strong><p>This sender is set to “Ask me for each attachment.” Nothing has been imported or changed.</p><a class="btn btn--primary btn--sm" href="#message-<%= message.id %>">Choose what this file is</a></div></article>
@@ -112,7 +128,7 @@
 <details class="card section mailbox-disclosure">
   <summary class="card-head mailbox-disclosure__summary"><div><h2>Watched suppliers · <%= watchedRules.length %></h2><p class="muted">Open to add or change an approved supplier sender.</p></div><span class="mailbox-disclosure__label" aria-hidden="true"></span></summary>
   <div class="card-body grid">
-    <% watchedRules.forEach(function(rule) { %><div class="list-row"><div><strong><%= rule.supplier_name %></strong><p>Supplier sends from <%= rule.sender_pattern %></p></div><div class="form-actions"><a class="btn btn--sm" href="/suppliers/<%= rule.supplier_id %>#communication">Supplier settings</a><span class="badge badge--ok">Watching</span></div></div><% }) %>
+    <% watchedRules.forEach(function(rule) { %><div class="list-row"><div><strong><%= rule.supplier_name %></strong><p>Supplier sends from <%= rule.sender_pattern %></p></div><div class="form-actions"><% if (currentUser.role === 'owner') { %><form method="post" action="/settings/connections/<%= connection.id %>/email-rules/<%= rule.id %>" class="form-actions"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label class="sr-only" for="document-mode-<%= rule.id %>">How StockChief reads <%= rule.supplier_name %> email</label><select class="select select--compact" id="document-mode-<%= rule.id %>" name="documentMode"><option value="supplier_documents" <%= rule.document_mode === 'supplier_documents' ? 'selected' : '' %>>Process PO, invoice and shipment updates</option><option value="review_each" <%= rule.document_mode === 'review_each' ? 'selected' : '' %>>Ask me about each attachment</option><option value="inventory_list" <%= rule.document_mode === 'inventory_list' ? 'selected' : '' %>>Prepare inventory-file reviews</option></select><button class="btn btn--sm" type="submit">Save</button></form><% } %><a class="btn btn--sm" href="/suppliers/<%= rule.supplier_id %>#communication">Supplier settings</a><span class="badge badge--ok">Watching</span></div></div><% }) %>
     <% if (currentUser.role === 'owner') { %>
       <% if (watchedRules.length) { %><details><summary class="btn">Watch another supplier sender</summary><div style="margin-top:12px"><strong>Add another supplier StockChief should watch</strong><p class="muted">This does not connect another Gmail account. It adds an approved supplier address inside this mailbox.</p><% } %>
       <form method="post" action="/settings/connections/<%= connection.id %>/email-rules" class="grid" style="margin-top:12px">
@@ -130,7 +146,7 @@
             <button class="btn" type="submit" name="supplierChoice" value="new">Create supplier and watch this address</button>
           </div>
         </div>
-        <label class="field"><span class="field-label">Normally contains</span><select class="select" name="documentMode"><option value="review_each">Ask me for each attachment</option><option value="inventory_list">Product or inventory lists</option><option value="supplier_documents">PO confirmations, invoices and shipment updates</option></select></label>
+        <label class="field"><span class="field-label">Normally contains</span><select class="select" name="documentMode"><option value="supplier_documents">PO confirmations, invoices and shipment updates</option><option value="review_each">Ask me for each attachment</option><option value="inventory_list">Product or inventory lists</option></select></label>
       </form>
       <% if (watchedRules.length) { %></div></details><% } %>
     <% } %>
@@ -160,6 +176,7 @@
                : 'Order ' + message.drafted_order_number + ' ' + String(message.drafted_order_status || '').toLowerCase().replace(/_/g, ' '))
            : message.classification === 'customer_order_request' && message.order_draft_reason
              ? (/^Same request as /.test(message.order_draft_reason) ? 'Same request as an earlier email' : 'Order not drafted · Needs you')
+           : message.classification === 'outbound_copy' ? 'Sent by StockChief—not a reply'
            : message.trust_status !== 'TRUSTED' ? 'Unapproved sender'
            : message.processing_status === 'INVENTORY_RESTORED' ? 'Removed import restored'
            : message.processing_status === 'DUPLICATE_IGNORED' && duplicateWasRemoved ? 'Previously imported — later removed'
@@ -190,7 +207,11 @@
     %>
       <details class="message-history-entry" id="message-<%= message.id %>" <%= (message.processing_status === 'CAPTURED' && attachmentsForMessage.length) || duplicateWasRemoved ? 'open' : '' %>><summary class="list-row" style="align-items:flex-start"><div style="flex:1"><strong><%= messageTitle %></strong><p><%= message.supplier_name || message.sender %> · received <%= helpers.dateTime(message.received_at) %></p></div><div class="message-history-entry__actions"><span class="badge <%= /Needs/.test(outcome) ? 'badge--warn' : /Matched|imported|restored/.test(outcome) ? 'badge--ok' : 'badge--muted' %>"><%= outcome %></span><span class="message-history-entry__label" aria-hidden="true"></span></div></summary>
         <div style="padding:12px 16px 18px">
-          <% if (message.processing_status === 'INVENTORY_RESTORED') { %>
+          <% if (message.classification === 'outbound_copy') { %>
+            <div class="notice notice--info"><strong>This is StockChief’s sent copy, not a supplier reply.</strong>
+              <p>It is kept in mailbox history for traceability. It did not confirm the order or change purchasing, inventory, or money.</p>
+            </div>
+          <% } else if (message.processing_status === 'INVENTORY_RESTORED') { %>
             <div class="notice notice--success"><strong>The removed import was restored.</strong>
               <p>StockChief reused the original products and variants and recorded <%= message.restorationResult.unitsRestored || duplicateResult.restoredUnits || 0 %> <%= message.restorationResult.unitLabel || duplicateResult.unitLabel || 'unit' %><%= (message.restorationResult.unitsRestored || duplicateResult.restoredUnits) === 1 ? '' : 's' %> through the inventory ledger. No duplicate products were created.</p>
               <div class="form-actions"><a class="btn btn--sm" href="/inventory">See restored inventory</a><% if (duplicateAttachment && duplicateAttachment.understanding_id) { %><a class="btn btn--sm" href="/foundry/proposal/<%= duplicateAttachment.understanding_id %>">View original import</a><% } %></div>
@@ -270,7 +291,7 @@
   <summary class="card-head mailbox-disclosure__summary"><div><h2>Mailbox settings</h2><p class="muted">Checking frequency, pause, reconnect and diagnostics.</p></div><span class="mailbox-disclosure__label" aria-hidden="true"></span></summary>
   <div class="card-body grid">
     <% if (currentUser.role === 'owner' && ['gmail','microsoft365'].includes(connection.provider_type)) { %>
-      <form method="post" action="/settings/connections/<%= connection.id %>/sync-mailbox"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Check <%= connection.provider_type === 'microsoft365' ? 'Microsoft' : 'Gmail' %> now</button></form>
+      <form method="post" action="/settings/connections/<%= connection.id %>/sync-mailbox"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit" <%= !mailboxAuthorized || mailboxNeedsReconnect || connection.paused_at ? 'disabled' : '' %>>Check <%= connection.provider_type === 'microsoft365' ? 'Microsoft' : 'Gmail' %> now</button></form>
       <form method="post" action="/settings/connections/<%= connection.id %>/mailbox-cadence" class="form-actions"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label class="field"><span class="field-label">Check automatically</span><select class="select" name="minutes"><% [1,5,10,15,30].forEach(function(n) { %><option value="<%= n %>" <%= Number(connection.config.mailboxCheckMinutes || 5) === n ? 'selected' : '' %>>Every <%= n %> minute<%= n === 1 ? '' : 's' %></option><% }) %></select></label><button class="btn btn--sm" type="submit">Save timing</button></form>
       <form method="post" action="/settings/connections/<%= connection.id %>/unknown-senders" class="form-actions">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -293,6 +314,11 @@
       <% if (connection.paused_at) { %><form method="post" action="/settings/connections/<%= connection.id %>/resume"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Resume mailbox</button></form><% } else { %><form method="post" action="/settings/connections/<%= connection.id %>/pause"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit">Pause mailbox</button></form><% } %>
       <form method="post" action="/settings/connections/<%= connection.id %>/disconnect" data-confirm="Disconnect this mailbox? Message history will be kept."><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--danger" type="submit">Disconnect</button></form>
     <% } %></div>
-    <details><summary>Advanced diagnostics</summary><p class="mono">Connection <%= connection.id %></p><p>Last successful check: <%= connection.last_synced_at || 'none' %></p><p>Last problem: <%= connection.last_error || 'none' %></p></details>
+    <details><summary>Advanced diagnostics</summary><p class="mono">Connection <%= connection.id %></p><p>Last successful check: <%= connection.last_synced_at || 'none' %></p><p>Last problem: <%= connection.last_error || 'none' %></p>
+      <% if (currentUser.role === 'owner' && ['gmail','microsoft365'].includes(connection.provider_type)) { %>
+        <form method="post" action="/settings/connections/<%= connection.id %>/refresh-mailbox-authorization"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit" <%= !mailboxAuthorized || mailboxNeedsReconnect || connection.paused_at ? 'disabled' : '' %>>Refresh mailbox authorization</button></form>
+        <p class="muted">Refreshes the existing permission and verifies the same mailbox identity. It does not change access, check the inbox or send mail.</p>
+      <% } %>
+    </details>
   </div>
 </details>

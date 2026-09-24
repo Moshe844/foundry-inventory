@@ -517,6 +517,91 @@ function issue(db, ctx, input) {
 }
 
 /**
+ * Replays a bounded page of verified quantity history through the inventory
+ * domain.  Canonical migrations use this instead of writing ledger or balance
+ * tables directly.  Every page is atomic and every source identity is durable,
+ * so a restart produces exactly one movement for each external event.
+ */
+function receiveVerifiedHistoryBatch(db, ctx, input) {
+  requireContext(ctx);
+  if (ctx.verifiedMigration !== true) {
+    throw new ValidationError('Only a verified migration may replay inventory history.');
+  }
+  const sourceNamespace = requireText(input && input.sourceNamespace, 'Source namespace', { max: 160 });
+  const entries = Array.isArray(input && input.entries) ? input.entries : [];
+  if (entries.length === 0 || entries.length > 5000) {
+    throw new ValidationError('Replay between 1 and 5,000 inventory events at a time.', { field: 'entries' });
+  }
+
+  return inTransaction(db, () => {
+    const recordedAt = nowIso();
+    const insertReplay = db.prepare(`INSERT OR IGNORE INTO inventory_history_replay_events
+      (workspace_id,source_namespace,external_key,movement_id,created_at) VALUES (?,?,?,?,?)`);
+    const finishReplay = db.prepare(`UPDATE inventory_history_replay_events SET movement_id=?
+      WHERE workspace_id=? AND source_namespace=? AND external_key=? AND movement_id IS NULL`);
+    const skuCache = new Map();
+    const locationCache = new Map();
+    let applied = 0;
+    let replayed = 0;
+
+    for (const entry of entries) {
+      const externalKey = requireText(entry && entry.externalKey, 'External inventory event key', { max: 200 });
+      const quantity = requirePositiveInt(entry.quantity, 'Quantity');
+      const occurredAt = operationOccurredAt(entry, recordedAt);
+      const meta = commonMeta(entry);
+      let sku = skuCache.get(entry.skuId);
+      if (!sku) {
+        sku = repo.requireSku(db, ctx.workspaceId, entry.skuId);
+        if (!sku.is_active) throw new ValidationError('That item variant is archived.');
+        if (sku.tracking_mode !== 'quantity') {
+          throw new ValidationError('Verified history batches support quantity-tracked SKUs only.');
+        }
+        skuCache.set(entry.skuId, sku);
+      }
+      let location = locationCache.get(entry.locationId);
+      if (!location) {
+        location = repo.requireLocation(db, ctx.workspaceId, entry.locationId, 'location');
+        if (!location.is_active) throw new ValidationError(`${location.name} is archived and cannot be used.`);
+        locationCache.set(entry.locationId, location);
+      }
+
+      const replay = insertReplay.run(ctx.workspaceId, sourceNamespace, externalKey, null, recordedAt);
+      if (replay.changes === 0) {
+        replayed += 1;
+        continue;
+      }
+      const balanceAfter = applyBalanceDelta(db, {
+        workspaceId: ctx.workspaceId,
+        skuId: sku.id,
+        locationId: location.id,
+        delta: quantity,
+        allowNegative: false,
+        now: recordedAt,
+        label: location.name,
+      });
+      const movementId = recordMovement(db, {
+        workspaceId: ctx.workspaceId,
+        groupId: newId('grp'),
+        operation: 'receive',
+        itemId: sku.item_id,
+        skuId: sku.id,
+        locationId: location.id,
+        quantityDelta: quantity,
+        balanceAfter,
+        reasonCode: meta.reasonCode || 'migration_history',
+        notes: meta.notes || 'Verified historical inventory replay',
+        reference: meta.reference || `${sourceNamespace}:${externalKey}`,
+        actorUserId: ctx.actorId,
+        occurredAt,
+      });
+      finishReplay.run(movementId, ctx.workspaceId, sourceNamespace, externalKey);
+      applied += 1;
+    }
+    return { applied, replayed };
+  });
+}
+
+/**
  * Physical dispatch leg for a durable transfer.
  *
  * This is intentionally lower-level than `transfer`: the transfer domain owns
@@ -1032,6 +1117,7 @@ function verifyIntegrity(db, workspaceId) {
 
 module.exports = {
   receive,
+  receiveVerifiedHistoryBatch,
   issue,
   transfer,
   dispatchTransfer,

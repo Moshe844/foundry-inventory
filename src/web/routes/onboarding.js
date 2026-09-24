@@ -23,6 +23,7 @@ const providerRegistry = require('../../connections/providers/registry');
 const connections = require('../../connections/service');
 const permissions = require('../../actions/permissions');
 const config = require('../../config');
+const exploration = require('../../onboarding/exploration');
 const { requireAuth, requirePermission, asyncRoute } = require('../middleware');
 const { trimOrNull } = require('../../lib/util');
 
@@ -33,7 +34,41 @@ router.use('/onboarding/migrations', requirePermission(permissions.ADMIN, 'manag
 router.use('/onboarding/migration-mappings', requirePermission(permissions.ADMIN, 'approve source meanings'));
 router.use('/onboarding/migration-datasets', requirePermission(permissions.ADMIN, 'classify source datasets'));
 
-/** The four paths. */
+router.post('/onboarding/name', requirePermission(permissions.ADMIN, 'rename this inventory'), asyncRoute(async (req, res) => {
+  require('../../domain/auth-service').renameWorkspace(req.db, req.ctx, req.user, req.body.name);
+  return res.redirect(303, '/onboarding');
+}));
+
+router.post('/onboarding/skip', asyncRoute(async (req, res) => {
+  exploration.skip(req.db, req.ctx.workspaceId);
+  return res.redirect(303, '/');
+}));
+
+router.post('/onboarding/sample/dismiss', requirePermission(permissions.ADMIN, 'dismiss sample exploration'), asyncRoute(async (req, res) => {
+  exploration.dismiss(req.db, req.ctx.workspaceId);
+  const destination = String(req.body.returnTo || '/');
+  return res.redirect(303, /^\/(?!\/)[^\\\u0000-\u0020\u007f]*$/.test(destination) ? destination : '/');
+}));
+
+router.post('/onboarding/sample/load', requirePermission(permissions.ADMIN, 'load isolated sample data'), asyncRoute(async (req, res) => {
+  try {
+    req.session.workspaceId = exploration.load(req.db, req.ctx, req.user, req.account.id);
+    return req.session.save(() => res.redirect(303, '/inventory'));
+  } catch (error) {
+    if (!error.status || error.status >= 500) throw error;
+    req.flash('error', error.message);
+    return res.redirect(303, '/onboarding');
+  }
+}));
+
+router.post('/onboarding/sample/clear', requirePermission(permissions.ADMIN, 'clear disposable sample data'), asyncRoute(async (req, res) => {
+  const originId = exploration.clear(req.db, req.ctx, req.user, req.account.id);
+  if (originId) req.session.workspaceId = originId;
+  else delete req.session.workspaceId;
+  req.flash('success', 'Sample inventory cleared. Your real inventory is unchanged.');
+  return req.session.save(() => res.redirect(303, originId ? '/' : '/inventories'));
+}));
+
 router.get(
   '/onboarding',
   asyncRoute(async (req, res) => {
@@ -44,7 +79,7 @@ router.get(
     // A model can understand the kind of business without receiving a single
     // real product record. Do not call that onboarding complete and trap the
     // owner on a Home page that points only to manual item entry.
-    if (state.isComplete && hasProducts) return res.redirect(303, '/');
+    if (state.isComplete && hasProducts && req.query.add !== '1') return res.redirect(303, '/');
 
     return res.page('onboarding/start', {
       title: 'Get your inventory into StockChief',
@@ -57,6 +92,7 @@ router.get(
       sourcePrompt: null,
       description: '',
       canOperate: permissions.can(req.user, permissions.OPERATE),
+      suppressBack: true,
     });
   })
 );
@@ -338,7 +374,10 @@ router.post(
   '/onboarding/describe',
   asyncRoute(async (req, res) => {
     const description = trimOrNull(req.body.description) || '';
-    const recommendationResult = paths.recommendFromDescription(description);
+    const inferred = paths.recommendFromDescription(description);
+    const recommendationResult = inferred && ['messy', 'mailbox'].includes(inferred.path)
+      ? { ...inferred, path: 'spreadsheet', reason: 'you can start with an exported file and add ongoing sources later' }
+      : inferred;
     const recommendedOption = recommendationResult
       ? paths.SOURCE_OPTIONS.find((option) => option.id === recommendationResult.path) || null
       : null;
@@ -364,6 +403,7 @@ router.post(
           : null),
       description,
       canOperate: permissions.can(req.user, permissions.OPERATE),
+      suppressBack: true,
     });
   })
 );
@@ -372,7 +412,8 @@ router.post(
 // connected systems and manual entry. It belongs in onboarding, not somewhere
 // a new owner has to discover in Settings.
 router.get(
-  '/onboarding/mailbox',
+  ['/onboarding/mailbox', '/settings/ingestion'],
+  requireAuth,
   asyncRoute(async (req, res) => {
     const connected = connections.list(req.db, req.ctx.workspaceId)
       .filter((row) => ['gmail', 'microsoft365'].includes(row.provider_type));

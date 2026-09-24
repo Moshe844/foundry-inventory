@@ -280,6 +280,15 @@ function createOrder(db, ctx, input) {
       customer = requireCustomer(db, ctx.workspaceId, customer.id);
     }
     const destination = destinationFor(customer, input);
+    if (input.requireCompleteDelivery && destination.method === 'SHIP') {
+      if (!destination.address) {
+        throw new ValidationError('Enter the complete delivery address before creating a shipping order, or choose customer pickup.');
+      }
+      const parsedAddress = require('../shipping/address').parse(destination.address);
+      if (!parsedAddress.complete) {
+        throw new ValidationError(`The delivery address still needs ${parsedAddress.missing.join(', ')}.`);
+      }
+    }
     ensureLocation(db, ctx.workspaceId, input.fulfillmentLocationId);
     const lines = Array.isArray(input.lines) ? input.lines : [];
     if (!lines.length) throw new ValidationError('Add at least one product to the sales order.');
@@ -324,14 +333,14 @@ function createOrder(db, ctx, input) {
        discount_minor, tax_minor, allocation_priority, status, created_by_user_id, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, ?)`)
       .run(id, ctx.workspaceId, customer.id, orderNumber, trimOrNull(input.orderDate) || now.slice(0, 10),
-        trimOrNull(input.neededBy), input.fulfillmentLocationId || null,
+        neededByDate(input.neededBy), input.fulfillmentLocationId || null,
         destination.method, destination.address, destination.source,
         input.customerDecisionRequired ? 1 : 0,
         (input.deliveryDecisionRequired
           || (input.requireDeliveryDecision && destination.method === 'SHIP' && !destination.address)) ? 1 : 0,
         trimOrNull(input.notes),
         trimOrNull(input.reference), currency, discountMinor, taxMinor,
-        Number.isSafeInteger(Number(input.allocationPriority)) ? Number(input.allocationPriority) : 100,
+        allocationPriority(input.allocationPriority, 100),
         ctx.actorId, now, now);
     for (const line of pricedLines) {
       const lineId = newId('sol');
@@ -1215,10 +1224,32 @@ function commitmentsForSku(db, workspaceId, skuId) {
  * the newest promises there are released first and then every waiting order is
  * offered the remaining network availability in confirmation order.
  */
+function allocationSnapshot(db, workspaceId) {
+  const rows = db.prepare(`SELECT sol.sales_order_id AS order_id, 'line' AS kind,
+      soa.sales_order_line_id AS line_id, soa.location_id, soa.quantity
+    FROM sales_order_allocations soa JOIN sales_order_lines sol ON sol.id = soa.sales_order_line_id
+    WHERE soa.workspace_id = ?
+    UNION ALL
+    SELECT sol.sales_order_id, 'component', ka.kit_component_id, ka.location_id, ka.quantity
+    FROM sales_order_kit_allocations ka
+    JOIN sales_order_kit_components kc ON kc.id = ka.kit_component_id
+    JOIN sales_order_lines sol ON sol.id = kc.sales_order_line_id
+    WHERE ka.workspace_id = ? ORDER BY order_id, kind, line_id, location_id`)
+    .all(workspaceId, workspaceId);
+  const signatures = new Map();
+  for (const row of rows) {
+    const entries = signatures.get(row.order_id) || [];
+    entries.push([row.kind, row.line_id, row.location_id, row.quantity]);
+    signatures.set(row.order_id, entries);
+  }
+  return new Map([...signatures].map(([orderId, entries]) => [orderId, JSON.stringify(entries)]));
+}
+
 function reconcileForSkus(db, ctx, skuIds, options = {}) {
   const wanted = [...new Set((skuIds || []).filter(Boolean))];
   if (!wanted.length) return [];
   return inTransaction(db, () => {
+    const before = allocationSnapshot(db, ctx.workspaceId);
     const changedOrders = new Map();
     for (const skuId of wanted) {
       ensureSku(db, ctx.workspaceId, skuId);
@@ -1232,7 +1263,9 @@ function reconcileForSkus(db, ctx, skuIds, options = {}) {
         JOIN sales_order_lines sol ON sol.id = soa.sales_order_line_id
         JOIN sales_orders so ON so.id = sol.sales_order_id
         WHERE soa.workspace_id = ? AND sol.sku_id = ?
-          AND so.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')`)
+          AND so.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')
+          AND NOT EXISTS (SELECT 1 FROM sales_shipments ss WHERE ss.workspace_id = so.workspace_id
+            AND ss.sales_order_id = so.id AND ss.status IN ('PICKING','PACKED'))`)
         .all(ctx.workspaceId, skuId);
       for (const allocation of existingAllocations) {
         db.prepare('DELETE FROM sales_order_allocations WHERE id = ?').run(allocation.id);
@@ -1244,7 +1277,9 @@ function reconcileForSkus(db, ctx, skuIds, options = {}) {
         JOIN sales_order_lines sol ON sol.id = kc.sales_order_line_id
         JOIN sales_orders so ON so.id = sol.sales_order_id
         WHERE ka.workspace_id = ? AND kc.component_sku_id = ?
-          AND so.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')`)
+          AND so.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')
+          AND NOT EXISTS (SELECT 1 FROM sales_shipments ss WHERE ss.workspace_id = so.workspace_id
+            AND ss.sales_order_id = so.id AND ss.status IN ('PICKING','PACKED'))`)
         .all(ctx.workspaceId, skuId);
       for (const allocation of existingKitAllocations) {
         db.prepare('DELETE FROM sales_order_kit_allocations WHERE id = ?').run(allocation.id);
@@ -1255,42 +1290,58 @@ function reconcileForSkus(db, ctx, skuIds, options = {}) {
             JOIN sales_order_lines sol ON sol.id = soa.sales_order_line_id
             JOIN sales_orders so ON so.id = sol.sales_order_id
             WHERE soa.location_id = l.id AND sol.sku_id = ?
+              AND so.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')), 0)
+          + COALESCE((SELECT SUM(ka.quantity) FROM sales_order_kit_allocations ka
+            JOIN sales_order_kit_components kc ON kc.id = ka.kit_component_id
+            JOIN sales_order_lines sol ON sol.id = kc.sales_order_line_id
+            JOIN sales_orders so ON so.id = sol.sales_order_id
+            WHERE ka.location_id = l.id AND kc.component_sku_id = ?
               AND so.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')), 0) AS committed
         FROM locations l LEFT JOIN balances b ON b.location_id = l.id AND b.sku_id = ?
-        WHERE l.workspace_id = ? AND l.is_active = 1`).all(skuId, skuId, ctx.workspaceId);
+        WHERE l.workspace_id = ? AND l.is_active = 1`).all(skuId, skuId, skuId, ctx.workspaceId);
 
       for (const position of positions) {
         let excess = Math.max(0, Number(position.committed) - Number(position.on_hand));
         if (!excess) continue;
-        const newestFirst = db.prepare(`SELECT soa.*, sol.sales_order_id
+        const newestFirst = db.prepare(`SELECT soa.id, soa.quantity, sol.sales_order_id, 'line' AS kind,
+            so.allocation_priority, so.confirmed_at, so.created_at AS order_created_at, soa.created_at
           FROM sales_order_allocations soa
           JOIN sales_order_lines sol ON sol.id = soa.sales_order_line_id
           JOIN sales_orders so ON so.id = sol.sales_order_id
           WHERE soa.workspace_id = ? AND soa.location_id = ? AND sol.sku_id = ?
             AND so.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')
-          ORDER BY so.allocation_priority DESC, so.confirmed_at DESC, so.created_at DESC,
-            soa.created_at DESC, soa.id DESC`)
-          .all(ctx.workspaceId, position.location_id, skuId);
+          UNION ALL
+          SELECT ka.id, ka.quantity, sol.sales_order_id, 'component',
+            so.allocation_priority, so.confirmed_at, so.created_at, ka.created_at
+          FROM sales_order_kit_allocations ka
+          JOIN sales_order_kit_components kc ON kc.id = ka.kit_component_id
+          JOIN sales_order_lines sol ON sol.id = kc.sales_order_line_id
+          JOIN sales_orders so ON so.id = sol.sales_order_id
+          WHERE ka.workspace_id = ? AND ka.location_id = ? AND kc.component_sku_id = ?
+            AND so.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')
+          ORDER BY allocation_priority DESC, confirmed_at DESC, order_created_at DESC, created_at DESC, id DESC`)
+          .all(ctx.workspaceId, position.location_id, skuId, ctx.workspaceId, position.location_id, skuId);
         for (const allocation of newestFirst) {
           if (!excess) break;
           const released = Math.min(excess, Number(allocation.quantity));
           const left = Number(allocation.quantity) - released;
-          if (left) db.prepare('UPDATE sales_order_allocations SET quantity = ?, updated_at = ? WHERE id = ?')
+          const table = allocation.kind === 'component' ? 'sales_order_kit_allocations' : 'sales_order_allocations';
+          if (left) db.prepare(`UPDATE ${table} SET quantity = ?, updated_at = ? WHERE id = ?`)
             .run(left, nowIso(), allocation.id);
-          else db.prepare('DELETE FROM sales_order_allocations WHERE id = ?').run(allocation.id);
+          else db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(allocation.id);
           excess -= released;
           changedOrders.set(allocation.sales_order_id, { released: true, allocated: false });
         }
       }
 
       const waitingLines = db.prepare(`SELECT sol.*, so.fulfillment_location_id, so.confirmed_at,
-          so.allocation_priority, so.created_at AS order_created_at
+          so.allocation_priority, so.needed_by, so.created_at AS order_created_at
         FROM sales_order_lines sol JOIN sales_orders so ON so.id = sol.sales_order_id
         WHERE sol.workspace_id = ? AND sol.sku_id = ?
           AND so.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')
         ORDER BY so.allocation_priority, so.confirmed_at, so.created_at, sol.created_at, sol.id`).all(ctx.workspaceId, skuId);
       const waitingComponents = db.prepare(`SELECT kc.*, sol.sales_order_id,
-          so.fulfillment_location_id, so.confirmed_at, so.allocation_priority,
+          so.fulfillment_location_id, so.confirmed_at, so.allocation_priority, so.needed_by,
           so.created_at AS order_created_at, sol.created_at AS line_created_at
         FROM sales_order_kit_components kc
         JOIN sales_order_lines sol ON sol.id = kc.sales_order_line_id
@@ -1304,6 +1355,7 @@ function reconcileForSkus(db, ctx, skuIds, options = {}) {
           created_at: component.line_created_at })),
       ].sort((left, right) =>
         Number(left.row.allocation_priority) - Number(right.row.allocation_priority)
+        || String(left.row.needed_by || '9999-12-31').localeCompare(String(right.row.needed_by || '9999-12-31'))
         || String(left.row.confirmed_at || '').localeCompare(String(right.row.confirmed_at || ''))
         || String(left.row.order_created_at || '').localeCompare(String(right.row.order_created_at || ''))
         || String(left.created_at || '').localeCompare(String(right.created_at || ''))
@@ -1322,7 +1374,9 @@ function reconcileForSkus(db, ctx, skuIds, options = {}) {
     }
 
     const results = [];
+    const after = allocationSnapshot(db, ctx.workspaceId);
     for (const [orderId, change] of changedOrders) {
+      if ((before.get(orderId) || '[]') === (after.get(orderId) || '[]')) continue;
       const status = currentStatus(db, orderId);
       db.prepare('UPDATE sales_orders SET status = ?, updated_at = ?, version = version + 1 WHERE id = ? AND workspace_id = ?')
         .run(status, nowIso(), orderId, ctx.workspaceId);
@@ -1359,18 +1413,50 @@ function react(db, workspaceId, salesEvent, type, order) {
     ] });
 }
 
-function setAllocationPriority(db, ctx, orderId, priority) {
+function allocationPriority(priority, fallback = null) {
+  if (priority === undefined || priority === null || String(priority).trim() === '') {
+    if (fallback !== null) return fallback;
+    throw new ValidationError('Enter a customer allocation priority.');
+  }
   const value = Number(priority);
   if (!Number.isSafeInteger(value) || value < 0 || value > 1000) {
     throw new ValidationError('Customer allocation priority must be a whole number from 0 to 1000. Lower numbers are served first.');
   }
-  const order = getOrder(db, ctx.workspaceId, orderId);
-  db.prepare(`UPDATE sales_orders SET allocation_priority = ?, updated_at = ?, version = version + 1
-    WHERE id = ? AND workspace_id = ?`).run(value, nowIso(), order.id, ctx.workspaceId);
-  reconcileForSkus(db, ctx, order.lines.flatMap((line) => line.isKit
-    ? line.kitComponents.map((component) => component.component_sku_id)
-    : [line.sku_id]));
-  return getOrder(db, ctx.workspaceId, order.id);
+  return value;
+}
+
+function neededByDate(value) {
+  const date = trimOrNull(value);
+  if (date && (!/^\d{4}-\d{2}-\d{2}$/.test(date)
+      || !Number.isFinite(Date.parse(`${date}T00:00:00.000Z`))
+      || new Date(`${date}T00:00:00.000Z`).toISOString().slice(0, 10) !== date)) {
+    throw new ValidationError('Needed by must be a real calendar date.');
+  }
+  return date;
+}
+
+function setAllocationPriority(db, ctx, orderId, priority, options = {}) {
+  const value = allocationPriority(priority);
+  const result = inTransaction(db, () => {
+    const order = getOrder(db, ctx.workspaceId, orderId);
+    if (['FULFILLED', 'CANCELLED'].includes(order.status)) {
+      throw new ValidationError('A completed or cancelled order cannot change allocation priority.');
+    }
+    const neededBy = Object.hasOwn(options, 'neededBy') ? neededByDate(options.neededBy) : order.needed_by;
+    if (order.allocation_priority === value && order.needed_by === neededBy) return { order };
+    db.prepare(`UPDATE sales_orders SET allocation_priority = ?, needed_by = ?, updated_at = ?, version = version + 1
+      WHERE id = ? AND workspace_id = ?`).run(value, neededBy, nowIso(), order.id, ctx.workspaceId);
+    reconcileForSkus(db, ctx, order.lines.flatMap((line) => line.isKit
+      ? line.kitComponents.map((component) => component.component_sku_id)
+      : [line.sku_id]));
+    const event = recordEvent(db, ctx, order.id, 'ALLOCATION_SETTINGS_CHANGED', {
+      previousPriority: order.allocation_priority, priority: value,
+      previousNeededBy: order.needed_by, neededBy,
+    });
+    return { order: getOrder(db, ctx.workspaceId, order.id), event };
+  });
+  if (result.event) react(db, ctx.workspaceId, result.event, managerEvents.TYPES.SALES_ORDER_CHANGED, result.order);
+  return result.order;
 }
 
 /** Confirmed customer demand which could not yet be reserved from on-hand stock. */

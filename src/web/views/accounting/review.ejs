@@ -39,8 +39,16 @@
         <p class="hint">This records revenue, customer receivable, product cost, and the inventory asset reduction. It does not ship the order or change on-hand again.</p>
       <% } else { %>
         <div class="notice notice--warning"><div><strong>StockChief still cannot prove the earlier product cost.</strong><br>No current supplier price was substituted for historical evidence.</div></div>
-        <% review.inference.unknown.forEach(function(row){ %><p><strong><%= row.item_name %><%= row.variant_label ? ' / ' + row.variant_label : '' %></strong> at <%= row.location_name %>: <%= row.reason %></p><% }) %>
-        <a class="btn" href="/accounting">Return to Accounting</a>
+        <form method="post" action="/accounting/review/<%= review.id %>/use-manual-costs" class="stack">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <% review.inference.unknown.forEach(function(row){ %>
+            <input type="hidden" name="skuId" value="<%= row.sku_id %>">
+            <input type="hidden" name="locationId" value="<%= row.location_id %>">
+            <label class="field"><span><strong><%= row.item_name %><%= row.variant_label ? ' / ' + row.variant_label : '' %></strong> at <%= row.location_name %></span><small><%= row.reason %></small><span>Historical purchase cost per unit</span><span class="input-prefix"><span>$</span><input class="input" name="unitCost" inputmode="decimal" required placeholder="0.00" aria-label="Historical unit cost for <%= row.item_name %> at <%= row.location_name %>"></span></label>
+          <% }) %>
+          <p class="hint">Use a supplier invoice, old purchase record, or accountant-approved value. StockChief will post the cost layer, retry this sale, and verify the result. Physical inventory will not move again.</p>
+          <div class="form-actions"><button class="btn btn--primary" type="submit">Use these costs and finish accounting</button><a class="btn btn--ghost" href="/accounting">Leave unresolved</a></div>
+        </form>
       <% } %>
     </div>
   </section>

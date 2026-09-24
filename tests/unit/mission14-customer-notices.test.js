@@ -107,6 +107,27 @@ test('a pickup confirmation never tells the customer their order shipped', () =>
   assert.doesNotMatch(collected.customerNotice.body, /shipped|on its way|carrier|tracking/i);
 });
 
+test('our own delivery never reuses a carrier label or tracking number', () => {
+  const env = setup();
+  inventory.receive(env.db, env.ctx, {
+    skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 10,
+  });
+  const { order } = orderFor(env, 2);
+  const box = shipments.startPicking(env.db, env.ctx, order.id);
+  env.db.prepare(`UPDATE sales_shipments SET carrier = 'usps', service = 'Ground',
+    tracking_number = '9400111899223856928499', tracking_url = 'https://example.test/track',
+    shipping_cost_minor = 513, expected_delivery_date = '2026-09-30' WHERE id = ?`).run(box.id);
+
+  const delivered = shipments.ship(env.db, env.ctx, box.id, { handover: 'DELIVERED_BY_US' });
+
+  assert.equal(delivered.carrier, null);
+  assert.equal(delivered.tracking_number, null);
+  assert.equal(delivered.shipping_cost_minor, null);
+  assert.equal(delivered.customerNotice.subject, `Your order ${order.order_number} is out for delivery`);
+  assert.match(delivered.customerNotice.body, /is out for delivery with us/);
+  assert.doesNotMatch(delivered.customerNotice.body, /USPS|Ground|9400111899223856928499|example\.test|Expected delivery/i);
+});
+
 test('a part shipment tells the customer what is still coming', () => {
   const env = setup();
   inventory.receive(env.db, env.ctx, { skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 30 });

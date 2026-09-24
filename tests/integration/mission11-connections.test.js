@@ -250,7 +250,12 @@ test('supplier email captures configured sender and attachments exactly once wit
   const email = connections.create(env.db, env.workspace.ctx, env.membership, {
     providerType: 'supplier_email', displayName: 'Supplier Inbox', expectedIntervalMinutes: 1440,
   });
-  connections.addEmailRule(env.db, env.workspace.ctx, email.connection.id, { senderPattern: 'orders@supplier.test' });
+  const supplier = require('../../src/purchasing/supplier-service').createSupplier(
+    env.db, env.workspace.ctx, env.membership,
+    { name: 'Configured Supplier', email: 'orders@supplier.test' });
+  connections.addEmailRule(env.db, env.workspace.ctx, email.connection.id, {
+    senderPattern: 'orders@supplier.test', supplierId: supplier.id,
+  });
   const before = repo.getBalance(env.db, env.workspace.workspaceId, env.item.skuId, env.workspace.store.id);
   const payload = { messageId: 'msg-100', sender: 'orders@supplier.test', subject: 'Invoice 884',
     bodyText: 'Invoice for 50 units', receivedAt: '2026-08-27T09:00:00Z',
@@ -279,7 +284,8 @@ test('supplier email captures configured sender and attachments exactly once wit
   assert.match(text, /Use as supplier purchasing document/);
   assert.match(text, /Review invoice-884\.pdf as inventory\/product list/);
   assert.match(text, /Keep in email history only/);
-  assert.match(text, /1 supplier email decision needs you/);
+  assert.match(text, /Mailbox is not ready/);
+  assert.match(text, /Saved messages can be reviewed here/);
   assert.match(text, /Needs your choice/);
   assert.match(page.text, /message-history-entry__label/,
     'the rendered email row includes an explicit open/close interaction cue');
@@ -299,8 +305,11 @@ test('an exact inventory-file resend is visibly ignored instead of reopening an 
   const mailbox = connections.create(env.db, env.workspace.ctx, env.membership, {
     providerType: 'supplier_email', displayName: 'Inventory Inbox',
   });
+  const supplier = require('../../src/purchasing/supplier-service').createSupplier(
+    env.db, env.workspace.ctx, env.membership,
+    { name: 'Inventory Records Supplier', email: 'records@supplier.test' });
   connections.addEmailRule(env.db, env.workspace.ctx, mailbox.connection.id, {
-    senderPattern: 'records@supplier.test', documentMode: 'inventory_list',
+    senderPattern: 'records@supplier.test', supplierId: supplier.id, documentMode: 'inventory_list',
   });
   const bytes = Buffer.from('the exact same inventory file');
   const hash = crypto.createHash('sha256').update(bytes).digest('hex');
@@ -368,6 +377,9 @@ test('an exact resend after removal offers a complete review and restores origin
   const mailbox = connections.create(env.db, env.workspace.ctx, env.membership, {
     providerType: 'supplier_email', displayName: 'Microsoft 365 Test Mailbox',
   });
+  require('../../src/purchasing/supplier-service').createSupplier(
+    env.db, env.workspace.ctx, env.membership,
+    { name: 'Restoration Supplier', email: 'supplier@example.test' });
   const restoredItem = makeQuantityItem(env.db, env.workspace.ctx, {
     name: 'Archived Test Shoe - Black', baseCode: 'RESTORE-SHOE',
   });
@@ -527,7 +539,11 @@ test('mailbox setup never guesses a supplier and creates one only after an expli
     providerType: 'supplier_email', displayName: 'Purchasing Gmail',
   });
   env.db.prepare(`UPDATE workspace_connectors SET provider_type = 'gmail',
-    provider_account_name = 'buyer@example.test' WHERE id = ?`).run(mailbox.connection.id);
+    provider_account_id = 'buyer@example.test',provider_account_name = 'buyer@example.test',
+    credential_ref=?,setup_status='CONNECTED' WHERE id = ?`)
+    .run(`connection_credentials:${mailbox.connection.id}`,mailbox.connection.id);
+  require('../../src/connections/credentials').put(env.db,env.workspace.workspaceId,mailbox.connection.id,'provider',{
+    accessToken:'fixture-authorized-mailbox',refreshToken:'fixture-refresh',expiresAt:Date.now()+86400000});
   const agent = request.agent(env.app);
   await signIn(agent, env.workspace.account.email, env.workspace.account.password);
   const page = await agent.get(`/settings/connections/${mailbox.connection.id}`);

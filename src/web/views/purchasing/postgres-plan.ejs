@@ -1,0 +1,34 @@
+<p class="rm-stamp">Purchasing truth from PostgreSQL</p>
+<h1 class="rm-verdict">Buy what the operation needs, without pretending it already arrived.</h1>
+<p class="rm-prose">A draft changes no stock. Approval authorizes the commitment, placement makes it incoming, and only a physical receipt changes on-hand inventory.</p>
+
+<section class="section"><div class="section-head"><h2>Purchase orders</h2></div>
+  <% if(!orders.length){ %><div class="quiet-note">No purchase orders yet.</div><% } else { %>
+    <div class="rm-ledger"><% orders.forEach(function(order){ %><a class="rm-ledger__row" href="/purchasing/orders/<%= order.id %>">
+      <span class="rm-ledger__k"><%= order.po_number %><small><%= order.supplier_name %> · <%= order.line_count %> line<%= order.line_count===1?'':'s' %></small></span>
+      <span class="rm-ledger__v"><%= order.status.replaceAll('_',' ') %></span>
+      <span class="rm-ledger__n"><%= order.units_outstanding %> units outstanding<% if(order.balance_minor){ %> · <%= helpers.money(order.balance_minor,order.currency) %> owed<% } %></span>
+    </a><% }) %></div>
+  <% } %>
+</section>
+
+<section class="section"><div class="section-head"><h2>Prepare one purchase order</h2></div>
+  <% if(!suppliers.length || !catalogue.length || !locations.length){ %><div class="quiet-note">Add at least one supplier, product and location before preparing an order.</div><% } else { %>
+  <form method="post" action="/purchasing/orders" class="stacked-form">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <div class="form-grid"><label>Supplier<select name="supplierId" required><option value="">Choose supplier</option><% suppliers.forEach(function(s){ %><option value="<%= s.id %>"><%= s.name %></option><% }) %></select></label>
+    <label>Product / SKU<select name="skuId" required><option value="">Choose product</option><% catalogue.forEach(function(sku){ %><option value="<%= sku.id %>"><%= sku.display_name %> · <%= sku.code %></option><% }) %></select></label>
+    <label>Destination<select name="destinationLocationId" required><option value="">Choose location</option><% locations.forEach(function(location){ %><option value="<%= location.id %>"><%= location.name %></option><% }) %></select></label>
+    <label>Units<input type="number" name="quantity" min="1" step="1" required></label>
+    <label>Cost per inventory unit<input type="number" name="unitCost" min="0" step="0.01" required></label>
+    <label>Expected date<input type="date" name="expectedDate"></label></div>
+    <button class="rm-btn" type="submit">Prepare purchase order</button>
+  </form><% } %>
+</section>
+
+<section class="section"><div class="section-head"><h2>Suppliers</h2></div>
+  <div class="rm-ledger"><% suppliers.forEach(function(supplier){ %><div class="rm-ledger__row"><span class="rm-ledger__k"><%= supplier.name %><small><%= supplier.email || 'No email on file' %></small></span><span class="rm-ledger__v"><%= supplier.order_count %> orders</span><span class="rm-ledger__n"><%= helpers.money(supplier.balance_minor,supplier.currency) %> open</span></div><% }) %></div>
+  <details class="section"><summary>Add a supplier</summary><form method="post" action="/purchasing/suppliers" class="stacked-form">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>"><div class="form-grid"><label>Name<input name="name" required></label><label>Email<input type="email" name="email"></label><label>Lead time (days)<input type="number" min="1" step="1" name="defaultLeadTimeDays"></label><label>Currency<input name="currency" value="USD" maxlength="3"></label></div><button class="rm-btn" type="submit">Add supplier</button>
+  </form></details>
+</section>

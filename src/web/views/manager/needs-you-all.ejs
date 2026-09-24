@@ -23,11 +23,12 @@
 %>
 
 <p class="rm-stamp"><a href="/needs-you">← The desk</a></p>
+<%- include('coverage-warning') %>
 <h1 class="rm-h"><%= items.length %> decision<%= items.length === 1 ? '' : 's' %><% if (groups.length < items.length) { %>, <%= groups.length %> distinct fix<%= groups.length === 1 ? '' : 'es' %><% } %>, in the order StockChief would take them.</h1>
 <% if (urgent) { %><p class="rm-sub"><%= urgent %> <%= urgent === 1 ? 'is' : 'are' %> urgent. The rest can wait for a quiet moment.</p><% } %>
 
 <% if (!items.length) { %>
-  <p class="rm-prose">Nothing is waiting.</p>
+  <p class="rm-prose"><%= (locals.inbox && inbox.coverageErrors || []).length ? 'No known decisions; StockChief has not completed the operations review.' : 'Nothing is waiting.' %></p>
 <% } else { %>
   <div class="rm-told">
     <% groups.forEach(function (group) { var entry = group.lead; var i = group.index; var n = group.members.length + 1; %>

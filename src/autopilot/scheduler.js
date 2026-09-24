@@ -156,6 +156,7 @@ function activeWorkspaces(db) {
  * did nothing. "Skipped" with no reason is how a scheduler becomes a mystery.
  */
 function runWorkspace(db, workspaceId, { now = Date.now(), trigger = 'scheduled', intervalMs = DEFAULT_INTERVAL_MS } = {}) {
+  require('./daily').generate(db, workspaceId, { now });
   const state = modes.ensure(db, workspaceId);
   const nextAt = new Date(now + intervalMs).toISOString();
   const bucket = new Date(Math.floor(now / intervalMs) * intervalMs).toISOString();
@@ -203,7 +204,7 @@ function runWorkspace(db, workspaceId, { now = Date.now(), trigger = 'scheduled'
   // each typed operation checks that exact scope at authorization time.
   const globallySuspended = state.suspended && !state.suspendedScope;
   if (state.paused || globallySuspended || state.mode === modes.MODES.OBSERVE) {
-    const refreshed = reevaluate.refresh(db, workspaceId, trigger);
+    const refreshed = reevaluate.refresh(db, workspaceId, trigger, { now });
     modes.recordEvaluation(db, workspaceId, { nextAt });
     return complete({
       workspaceId,

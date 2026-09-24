@@ -27,6 +27,7 @@
 
 <a class="rm-head__back" href="/orders"><span aria-hidden="true">←</span> Orders</a>
 <%- include('../partials/spine', { story: story, collapseHistory: true }) %>
+<%- include('allocation-settings') %>
 
 <section class="rm-panel" style="margin-top:22px">
   <div class="rm-panel__head">
@@ -69,13 +70,13 @@
         Ships to <%= order.ship_to_address %>.
       <% } else if (noAddress) { %>
         <span class="is-warn">No delivery address yet</span> — it can be picked, but nothing can leave until there is one.
-        <a href="/orders/<%= order.id %>/detail?open=fulfilment#fulfilment">Add the address or switch to collection</a>.
+        <a href="/orders/<%= order.id %>?open=fulfilment#fulfilment">Add the address or switch to collection</a>.
       <% } %>
     </p>
     <% if (next.action || (Number(pay.remainingMinor || 0) > 0 && order.status !== 'CANCELLED')) { %>
       <div class="rm-choices" style="margin-top:16px">
-        <% if (next.action) { %><a class="rm-btn" href="/orders/<%= order.id %>/detail?open=<%= nextSection %>#<%= nextSection %>"><%= next.action %></a><% } %>
-        <% if (Number(pay.remainingMinor || 0) > 0 && order.status !== 'CANCELLED') { %><a class="rm-btn rm-btn--wash" href="/orders/<%= order.id %>/detail?open=money#money">Record or request payment</a><% } %>
+        <% if (next.action) { %><a class="rm-btn" href="/orders/<%= order.id %>?open=<%= nextSection %>#<%= nextSection %>"><%= next.action %></a><% } %>
+        <% if (Number(pay.remainingMinor || 0) > 0 && order.status !== 'CANCELLED') { %><a class="rm-btn rm-btn--wash" href="/orders/<%= order.id %>?open=money#money">Record or request payment</a><% } %>
       </div>
       <% if (Number(pay.remainingMinor || 0) > 0 && order.status !== 'CANCELLED') { %>
         <p class="rm-sub" style="margin:10px 0 0">Picking and packing do not reduce on-hand stock; dispatch does. Dispatch never marks the order paid.</p>

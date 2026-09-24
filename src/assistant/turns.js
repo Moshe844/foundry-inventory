@@ -73,13 +73,14 @@ async function begin(req, res, message, options = {}) {
   const channel = options.channel || 'tell';
   let goal;
   let turn;
+  const submittedMessage = message;
   const continuing = req.body && req.body.assistantGoal ? ledger.getGoal(req.db, req.ctx.workspaceId, String(req.body.assistantGoal)) : null;
-  if (continuing && continuing.status === 'pending') {
+  if (continuing && ['pending', 'clarify'].includes(continuing.status)) {
     // A queued goal, submitted by the person from the "continue" offer.
     goal = continuing;
     turn = ledger.getTurn(req.db, req.ctx.workspaceId, goal.turnId);
     dequeue(req, goal.id);
-    message = goal.text;
+    message = continuing.status === 'clarify' ? submittedMessage : goal.text;
     const subject = sharedSubject(req.db, req.ctx.workspaceId, turn.goals.map((g) => g.text));
     if (subject && !mentionsProduct(req.db, req.ctx.workspaceId, message)) {
       message = `${message} (the product is ${subject})`;

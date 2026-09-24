@@ -326,9 +326,11 @@ test('preparing, approving and receiving an order, end to end', async () => {
   const onOrder = position.positionForSku(env.db, env.workspace.workspaceId, env.item.skuId).onOrder;
   assert.ok(onOrder > 0);
 
-  // Asking again now recommends nothing for this line.
+  // Asking again never prepares a duplicate just because the committed delivery is late.
   const again = plain((await agent.get('/purchasing')).text);
-  assert.match(again, /Nothing is below its reorder point/);
+  assert.match(again, /Incoming stock is not proven coverage/);
+  assert.match(again, /No duplicate order was prepared/);
+  assert.match(again, /Review PO-1001/);
 
   // Receive part of it.
   const receivePage = await agent.get(`${orderPath}/receive`);
@@ -706,9 +708,14 @@ test('a line blocked for want of a supplier leads to setting one up, and then be
   const afterText = plain(after.text);
   assert.doesNotMatch(afterText, /no supplier on file/i, 'the blocker is gone');
   assert.match(afterText, /Cotton Mills/);
-  assert.match(afterText, /case/i, "the supplier's pack size is in the recommendation");
-  assert.match(after.text, /\/purchasing\/prepare\//,
-    'and the order can now actually be prepared');
+  assert.match(afterText, /purchase order is waiting on you/i);
+  const prepared = env.db.prepare(`SELECT id FROM purchase_orders WHERE workspace_id=? AND status='DRAFT'`)
+    .all(env.workspace.workspaceId);
+  assert.equal(prepared.length,1,'the supported order is already prepared, not duplicated in the recommendations');
+  const draft = await agent.get(`/purchasing/orders/${prepared[0].id}`);
+  assert.match(plain(draft.text),/Black T-shirt/);
+  assert.match(plain(draft.text),/case/i,"the supplier's pack size is in the real draft");
+  assert.match(plain(draft.text),/Approve order/i,'the prepared order still requires a human decision');
   env.db.close();
 });
 

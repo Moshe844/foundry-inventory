@@ -16,6 +16,7 @@
 <% } else { %>
 <form method="post" action="/transfers" class="card form-card" data-step-form>
   <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <input type="hidden" name="idempotencyKey" value="transfer-request-<%= Date.now() %>">
 
   <section class="rm-step-panel">
     <div class="rm-step-panel__h"><span class="rm-step-panel__n">1</span><h2>Where is it moving?</h2></div>

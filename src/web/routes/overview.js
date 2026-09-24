@@ -55,6 +55,8 @@ router.get(
   requireAuth,
   asyncRoute(async (req, res) => {
     const wantsClassic = req.path === '/overview';
+    const retry = req.session.readerRetry;
+    res.locals.composerPrefill = retry && retry.workspaceId === req.ctx.workspaceId ? retry.message : '';
     const stats = inventoryQuery.overview(req.db, req.ctx.workspaceId);
     // Recover onboarding automatically once real ledger evidence exists. The
     // customer has already supplied inventory truth; asking them to confirm
@@ -88,6 +90,7 @@ router.get(
       const home = autopilotPresenter.operatorHome(req.db, req.ctx.workspaceId, {
         preparedInbox: homeInbox,
       });
+      home.coverageErrors = homeInbox.coverageErrors || [];
       const homeNeedsCount = Number.isInteger(homeInbox.totalCount)
         ? homeInbox.totalCount : homeInbox.length;
       // When a real decision already occupies Home, the setup guide's exact
@@ -199,7 +202,10 @@ router.get(
          * a calm morning briefing about an empty database is the friendliest
          * possible way to leave them stuck.
          */
-        isEmpty: stats.itemCount === 0 && (stats.locationCount === 0 || Boolean(activeMigration)),
+        isEmpty: stats.itemCount === 0,
+        routineProposal: permissions.can(req.user, permissions.ADMIN)
+          ? require('../../autopilot/authority-proposal').propose(req.db, req.ctx.workspaceId) : null,
+        suppressBack: stats.itemCount === 0,
         activeMigration,
         foundryConfigured: Boolean(configuration && configuration.configuredAt),
         /*

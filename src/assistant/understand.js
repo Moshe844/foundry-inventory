@@ -72,19 +72,25 @@ const STOCK_OBJECT = /\b\d+\s*(?:x\s*)?(?:units?|cases?|boxes?|pallets?|pcs|piec
 
 function guessKind(text) {
   const t = String(text || '').trim();
-  if (/^(?:go to|open|take me to|show me the page|where is the)\b/i.test(t)) return 'navigate';
+  const command = t.replace(/^(?:(?:please|kindly)[,\s]+|(?:can|could|would|will)\s+you\s+|i(?:'d|\s+would)\s+like\s+you\s+to\s+)/i, '');
+  if (/^(?:go to|open|take me to|show me the page|where is the)\b/i.test(command)) return 'navigate';
+  if (/\b(?:wants?|would like|needs?)\s+(?:to\s+)?(?:order|buy|purchase)\b/i.test(t)
+      || /\b(?:create|place|make|start|open|raise|set up|new)\b[^.?!]*\b(?:customer|sales)\s+order\b/i.test(t)
+      || /\b(?:customer|sales)\s+order\b[^.?!]*\bfor\b/i.test(t)) return 'change';
+  if (!/^\s*(?:i|we|our\s+(?:business|company))\b/i.test(t)
+      && /^\s*(?:please[,\s]+)?[^.?!]+?\s+(?:ordered|bought|purchased|placed\s+an?\s+order\s+for)\s+(?:\d+\s+)?[^.?!]+/i.test(t)) return 'report';
   if (COMMUNICATION.test(t) && !STOCK_OBJECT.test(t)) {
-    if (/^(?:draft|write|compose|email|e-mail|send|message|reply|text|forward)\b/i.test(t)) return 'send';
+    if (/^(?:draft|write|compose|email|e-mail|send|message|reply|text|forward|contact|chase|remind)\b/i.test(command)) return 'send';
     if (/^(?:how|what|which|who|where|when|why|is|are|do|does|did|can|could|should|show|list|find|any)\b/i.test(t) || /\?\s*$/.test(t)) return 'lookup';
     // "I received an email about pricing": a communication, not stock.
     return 'communication';
   }
-  if (/^send\b/i.test(t) && STOCK_OBJECT.test(t)) return 'change';
-  if (/^(?:draft|write|compose|email|e-mail|send|message|reply|text)\b/i.test(t)) return 'send';
-  if (/^(?:always|never|from now on|whenever|every time|only ever|do not ever|don't ever)\b/i.test(t) || /\b(?:policy|standing rule)\b/i.test(t)) return 'instruction';
+  if (/^send\b/i.test(command) && STOCK_OBJECT.test(t)) return 'change';
+  if (/^(?:draft|write|compose|email|e-mail|send|message|reply|text|contact|chase|remind)\b/i.test(command)) return 'send';
+  if (/^(?:always|never|from now on|in future|remember(?: that)?|whenever|every time|only ever|do not ever|don't ever|our (?:policy|rule) is|i prefer)\b/i.test(t) || /\b(?:policy|standing rule)\b/i.test(t)) return 'instruction';
   if (/^(?:we|i|they|the customer|a customer|the supplier)\s+(?:sold|received|got|counted|found|paid|returned|shipped|delivered)\b/i.test(t)
     || /\b(?:arrived|came in|has been delivered|was delivered)\b/i.test(t)) return 'report';
-  if (/^(?:please\s+)?(?:move|transfer|receive|issue|adjust|correct|set|change|update|create|add|order|buy|purchase|archive|delete|remove|make|configure|record|rename|approve|cancel|ship|pick|pay|book|raise|prepare|write a purchase order)\b/i.test(t)) return 'change';
+  if (/^(?:move|transfer|receive|issue|adjust|correct|set|change|update|create|add|order|buy|purchase|archive|delete|remove|make|configure|record|rename|approve|cancel|ship|pick|pay|book|raise|prepare|write a purchase order)\b/i.test(command)) return 'change';
   if (/^(?:how|what|which|who|where|when|why|is|are|do|does|did|can|could|should|show|list|find|look up|tell me|give me|count|any|anything)\b/i.test(t) || /\?\s*$/.test(t)) return 'lookup';
   return 'unclear';
 }

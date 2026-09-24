@@ -315,6 +315,126 @@ ON movements(workspace_id, sku_id, occurred_at, seq);
 -- repeats a full ledger scan for every valued opening position.
 CREATE INDEX IF NOT EXISTS idx_movements_workspace_reference
 ON movements(workspace_id, reference) WHERE reference IS NOT NULL;
+
+/*
+ * A verified historical replay is still a business mutation.  This receipt
+ * records the external identity before inventory changes so a restarted
+ * migration can prove whether the event was already applied.  The row and its
+ * movement are committed atomically by the inventory engine.
+ */
+CREATE TABLE IF NOT EXISTS inventory_history_replay_events (
+  workspace_id      TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  source_namespace  TEXT NOT NULL,
+  external_key      TEXT NOT NULL,
+  movement_id       TEXT REFERENCES movements(id) ON DELETE RESTRICT,
+  created_at        TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, source_namespace, external_key)
+);
+CREATE INDEX IF NOT EXISTS idx_inventory_history_replay_movement
+  ON inventory_history_replay_events(movement_id);
+
+/* Inventory list summaries are transactionally maintained from canonical
+ * SKU and balance truth. A catalogue page therefore reads one row per
+ * product/location instead of rescanning every variant and balance. */
+CREATE TABLE IF NOT EXISTS item_catalog_rollups (
+  workspace_id       TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  item_id            TEXT PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+  sku_count          INTEGER NOT NULL DEFAULT 0,
+  first_sku_id       TEXT,
+  first_sku_code     TEXT,
+  first_sku_position INTEGER,
+  updated_at         TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS item_location_balances (
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  item_id      TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  location_id  TEXT NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+  on_hand      INTEGER NOT NULL DEFAULT 0,
+  updated_at   TEXT NOT NULL,
+  PRIMARY KEY (item_id, location_id)
+);
+CREATE INDEX IF NOT EXISTS idx_item_location_balances_workspace
+  ON item_location_balances(workspace_id, item_id, location_id);
+
+CREATE TRIGGER IF NOT EXISTS item_catalog_rollup_sku_ai AFTER INSERT ON skus BEGIN
+  INSERT INTO item_catalog_rollups
+    (workspace_id,item_id,sku_count,first_sku_id,first_sku_code,first_sku_position,updated_at)
+  VALUES (new.workspace_id,new.item_id,1,new.id,new.code,new.position,new.created_at)
+  ON CONFLICT(item_id) DO UPDATE SET
+    sku_count=item_catalog_rollups.sku_count+1,
+    first_sku_id=CASE WHEN new.position<item_catalog_rollups.first_sku_position THEN new.id ELSE item_catalog_rollups.first_sku_id END,
+    first_sku_code=CASE WHEN new.position<item_catalog_rollups.first_sku_position THEN new.code ELSE item_catalog_rollups.first_sku_code END,
+    first_sku_position=MIN(item_catalog_rollups.first_sku_position,new.position),
+    updated_at=new.created_at;
+END;
+CREATE TRIGGER IF NOT EXISTS item_catalog_rollup_sku_ad AFTER DELETE ON skus BEGIN
+  UPDATE item_catalog_rollups SET
+    sku_count=(SELECT COUNT(*) FROM skus WHERE item_id=old.item_id),
+    first_sku_id=(SELECT id FROM skus WHERE item_id=old.item_id ORDER BY position,id LIMIT 1),
+    first_sku_code=(SELECT code FROM skus WHERE item_id=old.item_id ORDER BY position,id LIMIT 1),
+    first_sku_position=(SELECT position FROM skus WHERE item_id=old.item_id ORDER BY position,id LIMIT 1),
+    updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+  WHERE item_id=old.item_id;
+END;
+CREATE TRIGGER IF NOT EXISTS item_catalog_rollup_sku_au
+AFTER UPDATE OF item_id,code,position ON skus BEGIN
+  INSERT INTO item_catalog_rollups
+    (workspace_id,item_id,sku_count,first_sku_id,first_sku_code,first_sku_position,updated_at)
+  SELECT i.workspace_id,i.id,COUNT(s.id),
+    (SELECT id FROM skus WHERE item_id=i.id ORDER BY position,id LIMIT 1),
+    (SELECT code FROM skus WHERE item_id=i.id ORDER BY position,id LIMIT 1),
+    (SELECT position FROM skus WHERE item_id=i.id ORDER BY position,id LIMIT 1),
+    strftime('%Y-%m-%dT%H:%M:%fZ','now')
+  FROM items i LEFT JOIN skus s ON s.item_id=i.id WHERE i.id IN (old.item_id,new.item_id) GROUP BY i.id
+  ON CONFLICT(item_id) DO UPDATE SET sku_count=excluded.sku_count,first_sku_id=excluded.first_sku_id,
+    first_sku_code=excluded.first_sku_code,first_sku_position=excluded.first_sku_position,updated_at=excluded.updated_at;
+END;
+
+CREATE TRIGGER IF NOT EXISTS item_location_rollup_balance_ai AFTER INSERT ON balances BEGIN
+  INSERT INTO item_location_balances(workspace_id,item_id,location_id,on_hand,updated_at)
+  SELECT new.workspace_id,s.item_id,new.location_id,new.on_hand,new.updated_at FROM skus s WHERE s.id=new.sku_id
+  ON CONFLICT(item_id,location_id) DO UPDATE SET
+    on_hand=item_location_balances.on_hand+excluded.on_hand,updated_at=excluded.updated_at;
+END;
+CREATE TRIGGER IF NOT EXISTS item_location_rollup_balance_au_same
+AFTER UPDATE OF on_hand ON balances
+WHEN old.sku_id=new.sku_id AND old.location_id=new.location_id BEGIN
+  INSERT INTO item_location_balances(workspace_id,item_id,location_id,on_hand,updated_at)
+  SELECT new.workspace_id,s.item_id,new.location_id,new.on_hand-old.on_hand,new.updated_at FROM skus s WHERE s.id=new.sku_id
+  ON CONFLICT(item_id,location_id) DO UPDATE SET
+    on_hand=item_location_balances.on_hand+excluded.on_hand,updated_at=excluded.updated_at;
+END;
+CREATE TRIGGER IF NOT EXISTS item_location_rollup_balance_au_move
+AFTER UPDATE OF sku_id,location_id ON balances
+WHEN old.sku_id<>new.sku_id OR old.location_id<>new.location_id BEGIN
+  UPDATE item_location_balances SET on_hand=on_hand-old.on_hand,updated_at=new.updated_at
+  WHERE item_id=(SELECT item_id FROM skus WHERE id=old.sku_id) AND location_id=old.location_id;
+  INSERT INTO item_location_balances(workspace_id,item_id,location_id,on_hand,updated_at)
+  SELECT new.workspace_id,s.item_id,new.location_id,new.on_hand,new.updated_at FROM skus s WHERE s.id=new.sku_id
+  ON CONFLICT(item_id,location_id) DO UPDATE SET
+    on_hand=item_location_balances.on_hand+excluded.on_hand,updated_at=excluded.updated_at;
+END;
+CREATE TRIGGER IF NOT EXISTS item_location_rollup_balance_ad AFTER DELETE ON balances BEGIN
+  UPDATE item_location_balances SET on_hand=on_hand-old.on_hand,
+    updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+  WHERE item_id=(SELECT item_id FROM skus WHERE id=old.sku_id) AND location_id=old.location_id;
+END;
+
+INSERT INTO item_catalog_rollups
+  (workspace_id,item_id,sku_count,first_sku_id,first_sku_code,first_sku_position,updated_at)
+SELECT i.workspace_id,i.id,COUNT(s.id),
+  (SELECT id FROM skus WHERE item_id=i.id ORDER BY position,id LIMIT 1),
+  (SELECT code FROM skus WHERE item_id=i.id ORDER BY position,id LIMIT 1),
+  (SELECT position FROM skus WHERE item_id=i.id ORDER BY position,id LIMIT 1),
+  i.updated_at
+FROM items i LEFT JOIN skus s ON s.item_id=i.id GROUP BY i.id
+ON CONFLICT(item_id) DO UPDATE SET sku_count=excluded.sku_count,first_sku_id=excluded.first_sku_id,
+  first_sku_code=excluded.first_sku_code,first_sku_position=excluded.first_sku_position,updated_at=excluded.updated_at;
+INSERT INTO item_location_balances(workspace_id,item_id,location_id,on_hand,updated_at)
+SELECT b.workspace_id,s.item_id,b.location_id,SUM(b.on_hand),MAX(b.updated_at)
+FROM balances b JOIN skus s ON s.id=b.sku_id GROUP BY b.workspace_id,s.item_id,b.location_id
+ON CONFLICT(item_id,location_id) DO UPDATE SET on_hand=excluded.on_hand,updated_at=excluded.updated_at;
+
 CREATE INDEX IF NOT EXISTS idx_po_workspace_status_date
   ON purchase_orders(workspace_id, status, order_date DESC, id);
 CREATE INDEX IF NOT EXISTS idx_so_workspace_status_date

@@ -1,0 +1,28 @@
+<% if (entry.sample) { %>
+  <section class="rm-entry-banner" aria-label="Sample exploration">
+    <div><strong>Sample inventory</strong><span>Disposable data, separate from your business. It cannot be converted to real data; anything added here is also disposable.</span></div>
+    <% if (currentUser && currentUser.role === 'owner' && entry.canClear) { %>
+      <form method="post" action="/onboarding/sample/clear">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">Clear sample data</button>
+      </form>
+    <% } %>
+    <a class="rm-btn rm-btn--ghost rm-btn--sm" href="/inventories">Your real inventories</a>
+  </section>
+<% } else if (entry.empty && entryPage !== '/onboarding' && entryPage !== '/') { %>
+  <section class="rm-entry-banner" aria-label="Add inventory data">
+    <div><strong>No products yet</strong><span>Import a spreadsheet, connect your system, or add products manually.</span></div>
+    <a class="rm-btn rm-btn--sm" href="/onboarding">Add a source</a>
+    <% if (currentUser && currentUser.role === 'owner' && !entry.dismissed) { %>
+      <form method="post" action="/onboarding/sample/load">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">Load sample data to explore</button>
+      </form>
+      <form method="post" action="/onboarding/sample/dismiss">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="returnTo" value="<%= entryPage %>">
+        <button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit" aria-label="Dismiss sample suggestion">Dismiss</button>
+      </form>
+    <% } %>
+  </section>
+<% } %>

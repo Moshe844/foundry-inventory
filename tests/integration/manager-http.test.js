@@ -699,16 +699,18 @@ test('Home confirms a selected attachment and a file-only Tell StockChief reques
      VALUES (?, datetime('now'), 1, '{}', '{}', '{"primaryArchetype":"quantity"}', datetime('now'))`
   ).run(env.workspace.workspaceId);
   const home = await env.agent.get('/');
-  assert.match(home.text, /data-operator-attachment/);
-  assert.match(home.text, /data-operator-attachment-status/);
-  assert.match(plain(home.text), /Attach/);
+  assert.match(plain(home.text), /Add a source/);
+  const ask = await env.agent.get('/ask');
+  assert.match(ask.text, /data-operator-attachment/);
+  assert.match(ask.text, /data-operator-attachment-status/);
+  assert.match(plain(ask.text), /Attach/);
 
   const csv = [
     'Item Name,SKU,Warehouse,Qty On Hand',
     'Copper Elbow,CE-050,Main Warehouse,140',
   ].join('\n');
   const response = await env.agent.post('/foundry/tell')
-    .field('_csrf', csrfFrom(home.text))
+    .field('_csrf', csrfFrom(ask.text))
     .attach('file', Buffer.from(csv, 'utf8'), { filename: 'opening-stock.csv', contentType: 'text/csv' });
 
   assert.equal(response.status, 303);

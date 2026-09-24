@@ -90,6 +90,7 @@ function activeGrant(db, workspaceId, operationType) {
     ORDER BY version DESC LIMIT 1`).get(workspaceId, operationType);
   if (!row) return null;
   return { id: row.id, version: row.version, maximumQuantity: row.maximum_quantity,
+    currency: row.currency || null, grantedAt: row.granted_at,
     maximumValueMinor: row.maximum_value_minor, maximumDailyCount: row.maximum_daily_count,
     maximumDailyValueMinor: row.maximum_daily_value_minor, supplierIds: parse(row.supplier_ids, []),
     customerIds: parse(row.customer_ids, []), locationIds: parse(row.location_ids, []),
@@ -107,6 +108,8 @@ function grant(db, ctx, membership, operationType, bounds = {}) {
     }
   }
   const previous = activeGrant(db, ctx.workspaceId, operationType);
+  const currency = bounds.currency === undefined ? previous?.currency || null : bounds.currency;
+  if (currency !== null && !/^[A-Z]{3}$/.test(String(currency))) throw new ValidationError('Use a three-letter uppercase currency code.');
   const now = nowIso();
   if (previous) db.prepare(`UPDATE autonomous_operation_authority SET enabled = 0,
     revoked_by_user_id = ?, revoked_at = ? WHERE id = ?`).run(ctx.actorId, now, previous.id);
@@ -114,14 +117,14 @@ function grant(db, ctx, membership, operationType, bounds = {}) {
     (id, workspace_id, operation_type, enabled, maximum_quantity, maximum_value_minor,
      maximum_daily_count, maximum_daily_value_minor, supplier_ids, customer_ids, location_ids,
      allowed_roles, minimum_confidence, maximum_risk, allowed_time_windows, version,
-     supersedes_id, granted_by_user_id, granted_at, created_at)
-    VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+     supersedes_id, granted_by_user_id, granted_at, created_at, currency)
+    VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     newId('aog'), ctx.workspaceId, operationType, bounds.maximumQuantity ?? null,
     bounds.maximumValueMinor ?? null, bounds.maximumDailyCount ?? null,
     bounds.maximumDailyValueMinor ?? null, encode(bounds.supplierIds, []),
     encode(bounds.customerIds, []), encode(bounds.locationIds, []), encode(bounds.allowedRoles, []),
     bounds.minimumConfidence || null, bounds.maximumRisk || null, encode(bounds.allowedTimeWindows, []),
-    (previous?.version || 0) + 1, previous?.id || null, ctx.actorId, now, now);
+    (previous?.version || 0) + 1, previous?.id || null, ctx.actorId, now, now, currency);
   return activeGrant(db, ctx.workspaceId, operationType);
 }
 
@@ -156,9 +159,10 @@ function evaluateAuthority(db, workspaceId, operation, { membership = null, now 
   check('explicitGrant', Boolean(grantRow), grantRow ? 'This operation has an explicit grant.' : 'This operation is off until an owner grants it.');
   if (membership) check('permission', permissions.can(membership, definition.permission), `Requires ${definition.permission}.`);
   if (grantRow) {
-    const limited = (value, maximum) => maximum == null || (Number.isFinite(Number(value)) && Number(value) <= maximum);
+    const limited = (value, maximum) => maximum == null || (value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value)) && Number(value) >= 0 && Number(value) <= maximum);
     check('quantity', limited(d.quantity, grantRow.maximumQuantity), 'Quantity must be within the grant.');
     check('value', limited(d.valueMinor, grantRow.maximumValueMinor), 'Value must be within the grant.');
+    check('currency', !grantRow.currency || d.currency === grantRow.currency, 'Currency must match the approved monetary limits.');
     for (const [name, value, allowed] of [['supplier', d.supplierId, grantRow.supplierIds],
       ['customer', d.customerId, grantRow.customerIds], ['location', d.locationId, grantRow.locationIds]])
       check(name, !allowed.length || (value && allowed.includes(value)), `${name} must be inside the grant.`);
@@ -215,11 +219,18 @@ function authorityFor(db, ctx, membership, operation, adapter) {
       ] } };
   }
   if (typeof adapter.authorize === 'function') {
+    const combineAuthority = (answer) => {
+      const domain = normalizeAuthority(answer, definition);
+      const hasGrantHistory = db.prepare('SELECT 1 FROM autonomous_operation_authority WHERE workspace_id = ? AND operation_type = ? LIMIT 1')
+        .get(ctx.workspaceId, operation.operationType);
+      if (!hasGrantHistory) return { manuallyAuthorized: false, authority: domain };
+      const bounded = evaluateAuthority(db, ctx.workspaceId, operation, { membership });
+      return { manuallyAuthorized: false, authority: { ...bounded, allowed: domain.allowed && bounded.allowed,
+        checks: [...domain.checks, ...bounded.checks] } };
+    };
     const answer = adapter.authorize({ db, ctx, membership, operation, definition, execution });
-    if (answer && typeof answer.then === 'function') return answer.then((value) => ({
-      manuallyAuthorized:false, authority:normalizeAuthority(value, definition),
-    }));
-    return { manuallyAuthorized:false, authority:normalizeAuthority(answer, definition) };
+    if (answer && typeof answer.then === 'function') return answer.then(combineAuthority);
+    return combineAuthority(answer);
   }
   return { manuallyAuthorized:false,
     authority:evaluateAuthority(db, ctx.workspaceId, operation, { membership }) };

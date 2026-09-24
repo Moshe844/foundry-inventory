@@ -88,6 +88,30 @@ test('Accounting starts with automatic posting and keeps opening amounts in a se
   assert.match(text, /No completed customer sale is recorded yet.*Cost of products still in stock.*0 units you still own/i);
 });
 
+test('a supplier bill rejected by ledger validation leaves no partial draft behind', async () => {
+  const env = await setup();
+  ledger.configure(env.db, env.workspace.ctx, env.membership, {
+    startDate: '2026-09-20', currency: 'USD', costingMethod: 'WEIGHTED_AVERAGE',
+  });
+  const supplier = supplierService.createSupplier(env.db, env.workspace.ctx, env.membership, {
+    name: 'Atomic Bill Supply', currency: 'USD',
+  });
+  const form = await env.agent.get('/accounting/payables/new?kind=expense').expect(200);
+  const response = await env.agent.post('/accounting/payables').type('form').send({
+    _csrf: csrfFrom(form.text), counterpartyId: supplier.id,
+    documentNumber: 'ATOMIC-REJECT-1', issueDate: '2026-09-19',
+    description: 'Pre-start expense', quantity: '1', unitAmount: '25.00',
+    paymentStatus: 'unpaid',
+  });
+  assert.equal(response.status, 303);
+  const landing = await env.agent.get(response.headers.location).expect(200);
+  assert.match(plain(landing.text), /before the accounting start date of 2026-09-20/i);
+  assert.equal(env.db.prepare(`SELECT COUNT(*) AS count FROM accounting_supplier_bills
+    WHERE workspace_id = ? AND supplier_invoice_number = 'ATOMIC-REJECT-1'`)
+    .get(env.workspace.workspaceId).count, 0,
+  'a rejected post must roll back the draft, its lines and provenance');
+});
+
 test('Home shows money on a confirmed unpaid order before it becomes earned revenue', async () => {
   const env = await setup();
   const product = makeQuantityItem(env.db, env.workspace.ctx, { name: 'Customer Order Shoe' });
@@ -285,6 +309,60 @@ test('a legacy workspace automatically recovers exact PO cost evidence and never
   assert.equal(entry.metadata.cogsMinor, 4_550);
   assert.equal(env.db.prepare(`SELECT COUNT(*) AS n FROM movements
     WHERE workspace_id = ? AND operation = 'issue'`).get(env.workspace.workspaceId).n, issueCount);
+});
+
+test('an owner can supply missing historical cost from the sale review and accounting finishes without moving stock again', async () => {
+  const env = await setup();
+  const product = makeQuantityItem(env.db, env.workspace.ctx, { name: 'Uncosted Sample Mug' });
+  prices.setPrice(env.db, env.workspace.ctx, {
+    skuId: product.skuId, amount: '10.00', currency: 'USD',
+  });
+  inventory.receive(env.db, env.workspace.ctx, {
+    skuId: product.skuId, locationId: env.workspace.main.id, quantity: 24,
+    reasonCode: 'opening', occurredAt: '2026-09-01T09:00:00.000Z',
+  });
+  let order = sales.createOrder(env.db, env.workspace.ctx, {
+    customerName: 'Historical Cost Customer', deliveryMethod: 'PICKUP',
+    fulfillmentLocationId: env.workspace.main.id,
+    lines: [{ skuId: product.skuId, quantity: 2 }],
+  });
+  order = sales.confirm(env.db, env.workspace.ctx, order.id);
+  order = sales.fulfill(env.db, env.workspace.ctx, order.id, {}, {
+    idempotencyKey: 'manual-historical-cost-sale',
+  });
+
+  const review = env.db.prepare(`SELECT * FROM accounting_event_inbox
+    WHERE workspace_id = ? AND event_type = 'sales_order.fulfilled' ORDER BY created_at DESC LIMIT 1`)
+    .get(env.workspace.workspaceId);
+  assert.equal(review.status, 'NEEDS_REVIEW');
+  const issueCount = env.db.prepare(`SELECT COUNT(*) AS n FROM movements
+    WHERE workspace_id = ? AND operation = 'issue'`).get(env.workspace.workspaceId).n;
+  assert.equal(issueCount, 1);
+
+  const reviewPage = await env.agent.get(`/accounting/review/${review.id}`).expect(200);
+  const reviewText = plain(reviewPage.text);
+  assert.match(reviewText, /Uncosted Sample Mug at Main Warehouse.*Historical purchase cost per unit.*Use these costs and finish accounting/i);
+  assert.match(reviewText, /Physical inventory will not move again/i);
+  await env.agent.post(`/accounting/review/${review.id}/use-manual-costs`).type('form').send({
+    _csrf: csrfFrom(reviewPage.text), skuId: product.skuId,
+    locationId: env.workspace.main.id, unitCost: '4.00',
+  }).expect(303).expect('location', `/sales/orders/${order.id}`);
+
+  const posted = env.db.prepare('SELECT * FROM accounting_event_inbox WHERE id = ?').get(review.id);
+  assert.equal(posted.status, 'POSTED', posted.error_message || posted.outcome);
+  const entry = ledger.getEntry(env.db, env.workspace.workspaceId, posted.journal_entry_id);
+  assert.equal(entry.metadata.revenueMinor, 2_000);
+  assert.equal(entry.metadata.cogsMinor, 800);
+  assert.deepEqual(env.db.prepare(`SELECT quantity_units, total_cost_minor
+    FROM accounting_inventory_cost_balances
+    WHERE workspace_id = ? AND sku_id = ? AND location_id = ?`)
+    .get(env.workspace.workspaceId, product.skuId, env.workspace.main.id),
+  { quantity_units: 22, total_cost_minor: 8_800 });
+  assert.equal(env.db.prepare(`SELECT COUNT(*) AS n FROM movements
+    WHERE workspace_id = ? AND operation = 'issue'`).get(env.workspace.workspaceId).n, issueCount);
+
+  const orderPage = plain((await env.agent.get(`/sales/orders/${order.id}`).expect(200)).text);
+  assert.match(orderPage, /now posted.*revenue \$20\.00.*product cost \$8\.00.*Inventory was not moved again/i);
 });
 
 test('same-day verified receipt cost survives earlier legacy issues and the next sale posts automatically', async () => {

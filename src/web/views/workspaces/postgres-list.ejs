@@ -1,0 +1,17 @@
+<section class="rm-head"><div><p class="rm-eyebrow">Account</p><h1>Your inventories</h1>
+  <p class="rm-lede">Each inventory is separate: its own products, locations, history, connections, authority, and books.</p></div>
+  <a class="rm-btn" href="/inventories/new">New inventory</a></section>
+
+<section class="rm-card">
+  <% if(!inventories.length){ %><div class="rm-empty"><h2>No inventories yet</h2><p>Create one, then choose its source.</p>
+    <a class="rm-btn" href="/inventories/new">Create inventory</a></div><% } %>
+  <div class="rm-stack"><% inventories.forEach(function(inventory){ %>
+    <div class="rm-row"><span><strong><%= inventory.name %></strong>
+      <small><%= inventory.itemCount %> products · <%= inventory.locationCount %> locations · <%= inventory.unitsOnHand %> units</small></span>
+      <% if(inventory.workspaceId===currentWorkspaceId){ %><span class="rm-badge">Open now</span><% }else{ %>
+        <form method="post" action="/inventories/switch"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="workspaceId" value="<%= inventory.workspaceId %>"><input type="hidden" name="next" value="/">
+          <button class="rm-btn rm-btn--quiet" type="submit">Open</button></form><% } %>
+    </div>
+  <% }) %></div>
+</section>

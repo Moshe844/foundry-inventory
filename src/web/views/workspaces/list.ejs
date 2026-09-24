@@ -2,7 +2,7 @@
   <div class="titles">
     <h1>Your inventories</h1>
     <div class="page-sub">
-      Each one is completely separate — its own items, locations, history and StockChief setup.
+      <% if (workspaces.length) { %>Each one is completely separate — its own items, locations, history and StockChief setup.<% } else { %>Add an inventory to start with your own records.<% } %>
     </div>
   </div>
   <div class="page-actions">

@@ -556,6 +556,62 @@ function updateDraftCosts(db, ctx, membership, poId, costs = {}) {
  * Approval. Committing to spend money, so it checks that what is being
  * approved is still what was on the screen.
  */
+function increaseRecommendationDraft(db, ctx, membership, input) {
+  permissions.assertCan(membership, permissions.CREATE_PO, 'refresh a replenishment draft');
+  if (!Array.isArray(input.lines) || input.lines.length === 0) return null;
+  return inTransaction(db, () => {
+    const candidates = list(db, ctx.workspaceId, { status: STATUS.DRAFT, supplierId: input.supplierId })
+      .filter((order) => order.source === 'foundry_recommendation' && order.sourceDetail.workItemId);
+    for (const candidate of candidates) {
+      const before = get(db, ctx.workspaceId, candidate.id);
+      if (eventsFor(db, ctx.workspaceId, before.id).some((entry) =>
+        entry.event === 'replenishment_refreshed' && entry.detail.workItemId === input.workItemId)) return before;
+      if (before.status !== STATUS.DRAFT || supplierCommunications.forOrder(db, ctx.workspaceId, before.id)
+        .some((message) => message.status !== 'PREPARED')) continue;
+      const changes = [];
+      for (const requested of input.lines) {
+        const matches = before.lines.filter((line) => line.skuId === requested.skuId);
+        const supplierItem = db.prepare(`SELECT * FROM supplier_items
+          WHERE workspace_id=? AND supplier_id=? AND sku_id=?`)
+          .get(ctx.workspaceId, input.supplierId, requested.skuId);
+        if (matches.length !== 1 || !supplierItem
+          || Number(supplierItem.units_per_purchase_unit) !== Number(matches[0].unitsPerPurchaseUnit)) break;
+        const line = matches[0];
+        const additional = Number(requested.quantityPurchaseUnits);
+        const purchaseUnits = Number(line.quantityPurchaseUnits) + additional;
+        const units = purchaseUnits * Number(line.unitsPerPurchaseUnit);
+        if (!Number.isSafeInteger(additional) || additional <= 0 || !Number.isSafeInteger(units)
+          || purchaseUnits < Number(supplierItem.minimum_order_quantity || 0)
+          || purchaseUnits % Number(supplierItem.order_multiple || 1) !== 0) {
+          throw new ValidationError('The revised replenishment quantity must respect the supplier pack rules.');
+        }
+        changes.push({ line, purchaseUnits, units });
+      }
+      if (changes.length !== input.lines.length) continue;
+      for (const change of changes) {
+        const total = change.line.unitCost === null ? null : Math.round(change.line.unitCost * change.units * 100) / 100;
+        db.prepare(`UPDATE purchase_order_lines SET quantity_purchase_units=?,quantity_units=?,line_total=?
+          WHERE workspace_id=? AND purchase_order_id=? AND id=?`)
+          .run(change.purchaseUnits, change.units, total, ctx.workspaceId, before.id, change.line.id);
+      }
+      const current = get(db, ctx.workspaceId, before.id);
+      db.prepare('UPDATE purchase_orders SET integrity_hash=?,updated_at=? WHERE workspace_id=? AND id=?')
+        .run(computeIntegrityHash(current), nowIso(), ctx.workspaceId, before.id);
+      recordEvent(db, ctx.workspaceId, before.id, 'replenishment_refreshed', {
+        workItemId: input.workItemId,
+        changes: changes.map((change) => ({ skuId: change.line.skuId,
+          before: change.line.quantityUnits, after: change.units })),
+      }, ctx.actorId);
+      const updated = get(db, ctx.workspaceId, before.id);
+      supplierCommunications.prepareForOrder(db, ctx.workspaceId, updated);
+      require('../provenance/service').record(db, ctx.workspaceId, { type: 'DECIDED_BY',
+        from: { type: 'purchase_order', id: updated.id }, to: { type: 'work_item', id: input.workItemId } });
+      return updated;
+    }
+    return null;
+  });
+}
+
 function approve(db, ctx, membership, poId, { expectedHash = null, markOrdered = true } = {}) {
   permissions.assertCan(membership, permissions.APPROVE_PO, 'approve purchase orders');
   const before = get(db, ctx.workspaceId, poId);
@@ -582,18 +638,60 @@ function approve(db, ctx, membership, poId, { expectedHash = null, markOrdered =
   );
   recordEvent(db, ctx.workspaceId, poId, 'approved', { subtotal: before.subtotal, status }, ctx.actorId);
   const approved = get(db, ctx.workspaceId, poId);
-  if (markOrdered) supplierCommunications.queueForOrder(db, ctx.workspaceId, approved.id);
-  managerEvents.publish(db, ctx.workspaceId, managerEvents.TYPES.PURCHASE_ORDER_PLACED, {
-    purchaseOrderId: approved.id,
-    poNumber: approved.poNumber,
-    skuIds: approved.lines.map((line) => line.skuId),
-    outstandingUnits: approved.outstandingUnits,
-  }, {
-    source: 'purchasing',
-    sourceRecordType: 'purchase_order',
-    sourceRecordId: `${approved.id}:${approved.updatedAt}`,
-  });
+  if (markOrdered) {
+    supplierCommunications.queueForOrder(db, ctx.workspaceId, approved.id);
+    const readiness = supplierCommunications.automaticReadiness(db, ctx.workspaceId,
+      approved.supplierId, Math.round(Number(approved.subtotal || 0) * 100));
+    if (readiness.allowed) supplierCommunications.enqueueAutomaticDispatch(db, ctx.workspaceId, approved.id);
+  }
+  if (markOrdered) {
+    managerEvents.publish(db, ctx.workspaceId, managerEvents.TYPES.PURCHASE_ORDER_PLACED, {
+      purchaseOrderId: approved.id,
+      poNumber: approved.poNumber,
+      skuIds: approved.lines.map((line) => line.skuId),
+      outstandingUnits: approved.outstandingUnits,
+    }, {
+      source: 'purchasing',
+      sourceRecordType: 'purchase_order',
+      sourceRecordId: `${approved.id}:${approved.updatedAt}`,
+    });
+  }
   return approved;
+}
+
+function markOrderedFromSupplierSend(db, ctx, poId, communication) {
+  const before = get(db, ctx.workspaceId, poId);
+  if (before.status === STATUS.ORDERED) return before;
+  if (before.status !== STATUS.APPROVED) {
+    throw new ValidationError('Only an approved purchase order can be marked ordered by supplier delivery.');
+  }
+  if (!communication || communication.purchaseOrderId !== poId || communication.status !== 'SENT'
+      || !communication.externalMessageId) {
+    throw new ValidationError('The connected mailbox has not provided verified delivery evidence for this purchase order.');
+  }
+  const now = nowIso();
+  db.prepare(`UPDATE purchase_orders SET status = ?, ordered_at = ?, updated_at = ?
+    WHERE id = ? AND workspace_id = ? AND status = ?`)
+    .run(STATUS.ORDERED, now, now, poId, ctx.workspaceId, STATUS.APPROVED);
+  recordEvent(db, ctx.workspaceId, poId, 'ordered_via_supplier_message', {
+    communicationId: communication.id,
+    externalMessageId: communication.externalMessageId,
+    recipient: communication.recipient,
+  }, ctx.actorId || null);
+  const ordered = get(db, ctx.workspaceId, poId);
+  managerEvents.publish(db, ctx.workspaceId, managerEvents.TYPES.PURCHASE_ORDER_PLACED, {
+    purchaseOrderId: ordered.id,
+    poNumber: ordered.poNumber,
+    skuIds: ordered.lines.map((line) => line.skuId),
+    outstandingUnits: ordered.outstandingUnits,
+    communicationId: communication.id,
+    externalMessageId: communication.externalMessageId,
+  }, {
+    source: 'supplier_communication',
+    sourceRecordType: 'supplier_communication',
+    sourceRecordId: communication.id,
+  });
+  return ordered;
 }
 
 /**
@@ -775,7 +873,9 @@ module.exports = {
   destinationForSku,
   submitForApproval,
   updateDraftCosts,
+  increaseRecommendationDraft,
   approve,
+  markOrderedFromSupplierSend,
   cancel,
   deleteDraft,
   correctMigrationQuantities,

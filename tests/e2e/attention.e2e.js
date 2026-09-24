@@ -166,23 +166,23 @@ test(
     await t.test('1. a new workspace is configured through StockChief', async () => {
       await page.goto(`${BASE}/register`);
       await page.fill('#name', ACCOUNT.name);
+      await page.fill('#businessName', ACCOUNT.workspaceName);
       await page.fill('#email', ACCOUNT.email);
       await page.fill('#password', ACCOUNT.password);
       // The register page has no sidebar, so this is unambiguous.
       await page.click('form[action="/register"] button[type=submit]');
-      await page.waitForURL(`${BASE}/inventories`);
-      await page.click('a[href="/inventories/new"]');
-      await page.waitForURL(`${BASE}/inventories/new`);
-      await page.fill('#name', ACCOUNT.workspaceName);
-      await page.click('form[action="/inventories"] button[type=submit]');
+      await page.waitForURL(`${BASE}/onboarding`);
+      await page.fill('#inventory-name', ACCOUNT.workspaceName);
+      await Promise.all([page.waitForNavigation(), page.getByRole('button', { name: 'Save name', exact: true }).click()]);
       await page.waitForURL(`${BASE}/onboarding`);
       // A new inventory is asked how it is managed today. These customers are
       // starting from nothing, so they take the Starting Fresh path — which is
       // the Mission 2 experience, unchanged.
       await Promise.all([
-        page.waitForURL(`${BASE}/foundry/describe`),
-        page.click('button:has-text("Enter it in StockChief")'),
+        page.waitForURL(`${BASE}/inventory/new`),
+        page.click('button:has-text("Enter it manually")'),
       ]);
+      await page.goto(`${BASE}/foundry/describe`);
 
       await page.fill(
         '#description',
@@ -453,9 +453,13 @@ test(
       await shot(page, 'ask-unsupported');
 
       const body = await page.locator('body').innerText();
-      assert.match(body, /does not have a realized margin to report yet/i);
-      assert.match(body, /Open profit and loss/);
-      assert.match(body, /Revenue\s+(?:Display\s+)?\$0\.00/);
+      assert.match(body, /No product-level revenue and COGS are posted for valves in/i);
+      const today = new Date();
+      const quarterMonth = Math.floor(today.getUTCMonth() / 3) * 3;
+      const from = new Date(Date.UTC(today.getUTCFullYear(),quarterMonth - 3,1)).toISOString().slice(0,10);
+      const to = new Date(Date.UTC(today.getUTCFullYear(),quarterMonth,0)).toISOString().slice(0,10);
+      assert.ok(body.includes(`${from} through ${to}`), 'the last calendar quarter is not replaced by a rolling window');
+      assert.doesNotMatch(body, /gross margin[^\n]*\d+(?:\.\d+)?\s*%/i);
       assert.ok(!/\bI (?:ordered|switched|moved)\b/i.test(body), 'no invented action');
     });
 

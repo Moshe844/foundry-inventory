@@ -70,7 +70,7 @@ test('the same Ask submission reaches PO, sales and movement review without anot
  let kind='purchase';
  const provider={async complete(r){
   if(r.schemaName==='stockchief_semantic_query')return {data:{decision:'action',interpretation:'Prepare the requested work',clarification:'',parts:[]}};
-  if(r.schemaName==='sales_order_intent')return {data:{operation:'create',customerText:'Buyer Sigma',orderText:'',itemText:'Composite Bush',variantText:'',locationText:'',quantity:4,neededBy:'',reason:''}};
+  if(r.schemaName==='sales_order_intent')return {data:{operation:'create',customerText:'Buyer Sigma',orderText:'',itemText:'Composite Bush',variantText:'',locationText:'',quantity:4,neededBy:'',reason:'',deliveryMethod:'PICKUP',deliverySource:'customer pickup'}};
   if(r.schemaName==='inventory_action_intent')throw new Error('Fixture expects a grounded transaction grammar');
   return {data:{intentClass:kind==='sales'?'SALES_ORDER':'INVENTORY_ACTION',confidence:'high',reason:'Prepare the requested work',resolvedReference:'',clarifyingQuestion:''}};
  }};
@@ -85,7 +85,7 @@ test('the same Ask submission reaches PO, sales and movement review without anot
  const post=message=>agent.post('/foundry/tell').type('form').send({_csrf:csrfFrom(page.text),queryConversation:'1',message});
  const po=await post('Order 4 Composite Bush from Vendor Lambda');assert.equal(po.status,303);assert.match(po.headers.location,/^\/purchasing\/orders\/po_/);
  assert.equal(db.prepare('SELECT status FROM purchase_orders WHERE workspace_id=?').get(w.workspaceId).status,'DRAFT');
- kind='sales';const so=await post('Create a sales order for Buyer Sigma for 4 Composite Bush');assert.equal(so.status,303);assert.match(so.headers.location,/^\/sales\/orders\//);
+ kind='sales';const so=await post('Create a sales order for Buyer Sigma for 4 Composite Bush, customer pickup');assert.equal(so.status,303);assert.match(so.headers.location,/^\/sales\/orders\//);
  assert.equal(db.prepare('SELECT status FROM sales_orders WHERE workspace_id=?').get(w.workspaceId).status,'DRAFT');
  assert.equal(db.prepare('SELECT COUNT(*) n FROM sales_order_allocations').get().n,0);
  kind='movement';const move=await post(`Receive 3 Composite Bush into ${w.main.name}`);assert.equal(move.status,303);assert.match(move.headers.location,/^\/actions\//);

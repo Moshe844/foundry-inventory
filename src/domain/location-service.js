@@ -21,6 +21,7 @@ function createLocation(db, ctx, input) {
    * invent one.
    */
   const address = trimOrNull(input.address);
+  const phone = trimOrNull(input.phone);
   const parent = input.parentLocationId
     ? repo.requireLocation(db, ctx.workspaceId, input.parentLocationId, 'parent location')
     : null;
@@ -38,10 +39,10 @@ function createLocation(db, ctx, input) {
   const id = newId('loc');
   db.prepare(
     `INSERT INTO locations (id, workspace_id, name, kind, parent_location_id, barcode,
-       pick_sequence, note, address, is_active, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`
+       pick_sequence, note, address, phone, is_active, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`
   ).run(id, ctx.workspaceId, name, kind, parent ? parent.id : null, barcode,
-    pickSequence, note, address, nowIso());
+    pickSequence, note, address, phone, nowIso());
   return repo.requireLocation(db, ctx.workspaceId, id);
 }
 
@@ -58,6 +59,7 @@ function updateLocation(db, ctx, locationId, input) {
    * without saying anything.
    */
   const address = input.address === undefined ? location.address : trimOrNull(input.address);
+  const phone = input.phone === undefined ? location.phone : trimOrNull(input.phone);
   const parentId = input.parentLocationId === undefined
     ? location.parent_location_id
     : trimOrNull(input.parentLocationId);
@@ -80,7 +82,7 @@ function updateLocation(db, ctx, locationId, input) {
   if (clash) throw new ValidationError(`A location called "${name}" already exists.`, { field: 'name' });
 
   db.prepare(`UPDATE locations SET name = ?, kind = ?, parent_location_id = ?, barcode = ?,
-    pick_sequence = ?, note = ?, address = ?
+    pick_sequence = ?, note = ?, address = ?, phone = ?
     WHERE id = ? AND workspace_id = ?`).run(
     name,
     kind,
@@ -89,6 +91,7 @@ function updateLocation(db, ctx, locationId, input) {
     pickSequence,
     note,
     address,
+    phone,
     locationId,
     ctx.workspaceId
   );

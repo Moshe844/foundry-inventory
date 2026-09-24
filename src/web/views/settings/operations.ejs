@@ -4,6 +4,8 @@
   <p class="lede">A release passes only when every required check has recorded evidence. Missing external proof stays blocked.</p>
 </div></div>
 
+<% if (postgresRetryNotice) { %><div class="notice" role="alert"><%= postgresRetryNotice %></div><% } %>
+
 <section class="card section" id="certification">
   <div class="card-head"><div><h2><%= readiness.ok ? 'Production gate passed' : 'Production gate is blocked' %></h2>
     <p class="hint"><%= readiness.checks.filter(function (c) { return c.status === 'PASS'; }).length %> of <%= readiness.checks.length %> checks pass.</p></div></div>
@@ -56,6 +58,13 @@
   </div>
 </section>
 
+<% if (postgresDeadJobs !== null) { %>
+<section class="card section" id="postgres-jobs"><div class="card-head"><h2>PostgreSQL migration queue</h2></div><div class="card-body stack">
+  <p>This is the native PostgreSQL queue. Business services and their legacy jobs have not all been migrated. This view does not clear the shared-storage release gate.</p>
+  <% if (!postgresDeadJobs.length) { %><p>No PostgreSQL jobs need retry review in this workspace. This is not proof that a worker completed them.</p><% } %>
+  <% postgresDeadJobs.forEach(function(job) { %><div class="planning-item"><strong>Job: <%= job.kind %></strong><p><%= job.lastError && job.lastError.message %></p><form method="post" action="/settings/operations/postgres-jobs/<%= job.id %>/retry"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--sm" type="submit">Retry PostgreSQL job</button></form></div><% }) %>
+</div></section>
+<% } %>
 <section class="card section" id="human-gates">
   <div class="card-head"><div><h2>Human and support gates</h2>
     <p class="hint">These cannot be truthfully certified by an automated test.</p></div></div>

@@ -371,6 +371,29 @@ function setup(overrides = {}) {
   return { db, workspace, membership, ctx: workspace.ctx };
 }
 
+test('receiving stock with no locations explains the setup requirement instead of asking an impossible question', async () => {
+  const env = setup();
+  makeQuantityItem(env.db, env.ctx, { name: 'Shoes', baseCode: 'SHOE-1' });
+  env.db.prepare('DELETE FROM locations WHERE workspace_id = ?').run(env.workspace.workspaceId);
+  const line = intent({
+    actionType: 'receive', item: 'Shoes', variant: '', quantity: 50,
+    sourceLocation: '', destinationLocation: '', adjustmentTarget: -1,
+  });
+
+  const result = await actionService.interpret(
+    env.db, env.ctx, env.membership, 'I received 50 shoes',
+    { parsedIntent: { lines: [intentService.normaliseLine(line)], clarifyingQuestion: '', unsupportedReason: '' } }
+  );
+
+  assert.equal(result.kind, 'unsupported');
+  assert.match(result.message, /no locations yet/i);
+  assert.match(result.message, /nothing has changed/i);
+  assert.deepEqual(result.where, {
+    label: 'Add your first location',
+    href: '/locations?resume=I%20received%2050%20shoes',
+  });
+});
+
 /** A variant workspace at the mission's starting numbers. */
 function clothing() {
   const base = setup({ workspaceName: 'Clothing Business' });

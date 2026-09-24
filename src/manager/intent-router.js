@@ -39,8 +39,10 @@ IMPORT asks to load data from a file or another system.
 PHYSICAL_EVENT reports something that happened in the physical world: a count, delivery, damage, return or found stock.
 PURCHASING_REQUEST asks to buy, reorder or manage a purchase order.
 POLICY_CHANGE changes what StockChief may do automatically or its limits.
-OPERATING_INSTRUCTION teaches a lasting inventory rule: reorder/target/safety levels, location floors,
-supplier assignment or terms, transfer-before-buying, lead time, MOQ, packs, cooldowns, or approval requirements.
+OPERATING_INSTRUCTION teaches a lasting rule or preference for any supported workflow: inventory, purchasing,
+suppliers, customer orders, email, shipping, payments, accounting or reporting. This includes reorder/target/safety
+levels, location floors, supplier terms, authority limits, and phrases such as "remember", "from now on", "always",
+"whenever", "our policy is", or "I prefer" when they describe how future work should be handled.
 INVESTIGATION_REQUEST asks why records differ or asks StockChief to investigate.
 CONFIGURATION_CHANGE changes terminology or inventory configuration, including mapping a vendor's product code to the customer's own internal code.
 EXPLANATION asks why StockChief did, did not do, or recommends something.
@@ -55,7 +57,8 @@ that asks for work to be done — ordering, moving, counting, receiving — is n
 urgent it sounds.
 SALES_ORDER also covers a request to create, place, start or raise a customer order, even when it is
 phrased as a question — "Can you create a customer order for Marlow?" is SALES_ORDER, not QUESTION,
-because the person wants an order to exist, not an explanation.
+because the person wants an order to exist, not an explanation. "Moshe wants to order 2 shoes and
+have them shipped" is also a new SALES_ORDER; it is not a command to complete an older order.
 UNKNOWN only when none fits.
 
 Use the supplied durable context to understand short follow-ups such as "approve it" or "what about that one".
@@ -69,6 +72,9 @@ function fallbackClassify(message) {
   const clean = message.trim();
   const result = (intentClass, reason) => ({ intentClass, confidence: 'high', reason,
     resolvedReference: '', clarifyingQuestion: '' });
+  if (require('../actions/intent-service').deterministicOutboundMessage(clean)) {
+    return result('INVENTORY_ACTION', 'This explicitly asks for a reviewable outbound message, not a stock or policy change.');
+  }
   // "Stop." is the one instruction that must never be misread, deferred or
   // quietly dropped. It is checked before anything else, and matched on the
   // plain words people actually use rather than on the word "policy".
@@ -99,7 +105,8 @@ function fallbackClassify(message) {
   if (/\b(handle everything|automatically|autopilot|may (?:approve|move|order)|never (?:approve|move|order)|policy|authority|limit)\b/i.test(clean)) {
     return result('POLICY_CHANGE', 'This explicitly changes what StockChief may do or its limits.');
   }
-  if (/(?:\breorder\b.*\b(?:at|below|when|to)\b)|\b(restock(?:ing)?|replenish(?:ment|ing)?|stock (?:level|reaches)|order[- ]?up[- ]?to|safety stock|keep(?: at least)?|never let|days? of stock|lead time|minimum order|moq|purchase unit|order multiple|preferred supplier|use .+ for|transfer before (?:buying|purchasing)|cooldown)\b/i.test(clean)) {
+  if (/(?:\breorder\b.*\b(?:at|below|when|to)\b)|\b(restock(?:ing)?|replenish(?:ment|ing)?|stock (?:level|reaches)|order[- ]?up[- ]?to|safety stock|keep(?: at least)?|never let|days? of stock|lead time|minimum order|moq|purchase unit|order multiple|preferred supplier|use .+ for|transfer before (?:buying|purchasing)|cooldown)\b/i.test(clean)
+      || /^(?:please\s+)?(?:remember(?:\s+that)?|from\s+now\s+on|in\s+future|always|whenever|every\s+time|our\s+(?:rule|policy)\s+is|i\s+prefer)\b/i.test(clean)) {
     return result('OPERATING_INSTRUCTION', 'This teaches a lasting inventory operating rule.');
   }
   /*
@@ -119,6 +126,11 @@ function fallbackClassify(message) {
   if (/\b(archive|remove|delete|deactivate|retire|drop|get rid of|no longer use|don'?t use)\b/i.test(clean)
       && new RegExp(`\\b(${removals.nounPattern()})\\b`, 'i').test(clean)) {
     return result('CATALOG_CHANGE', 'This retires a record StockChief keeps.');
+  }
+  const namedCustomerPurchase = !/^\s*(?:i|we|our\s+(?:business|company))\b/i.test(clean)
+    && /^\s*(?:please[,\s]+)?[^.?!]+?\s+(?:wants?|would like|needs?)\s+(?:to\s+)?(?:order|buy|purchase)\b/i.test(clean);
+  if (namedCustomerPurchase) {
+    return result('SALES_ORDER', 'A named customer wants to buy stock from this business.');
   }
   if (/^\s*order\b|\b(order what|what should (?:i|we) order|buy|purchase|reorder|purchase order|supplier order)\b/i.test(clean)) {
     return result('PURCHASING_REQUEST', 'This explicitly asks about purchasing or replenishment.');
@@ -157,8 +169,11 @@ function fallbackClassify(message) {
   // Marlow?" — is work, not a question, however it is punctuated. It has to be
   // decided here, before the question rule reads the question mark and sends
   // somebody who wanted an order to a page that only explains things.
-  if (/\b(?:create|place|make|start|open|raise|set up|new)\b[^.?!]*\b(?:customer|sales)\s+order\b/i.test(clean)
-      || /\b(?:customer|sales)\s+order\b[^.?!]*\bfor\b/i.test(clean)) {
+  if (/\b(?:wants?|would like|needs?)\s+(?:to\s+)?(?:order|buy|purchase)\b/i.test(clean)
+      || /\b(?:create|place|make|start|open|raise|set up|new)\b[^.?!]*\b(?:customer|sales)\s+order\b/i.test(clean)
+      || /\b(?:customer|sales)\s+order\b[^.?!]*\bfor\b/i.test(clean)
+      || (!/^\s*(?:i|we|our\s+(?:business|company)|customers?|clients?)\b/i.test(clean)
+        && /^\s*(?:please[,\s]+)?[^.?!]+?\s+(?:ordered|bought|purchased|placed\s+an?\s+order\s+for)\s+(?:\d+\s+)?[^.?!]+/i.test(clean))) {
     return result('SALES_ORDER', 'This asks for a customer order to be created.');
   }
   if (/\b(add|create|rename|archive|remove|delete)\b.*\b(product|item|sku|variant|location|warehouse|inventory)\b/i.test(clean)) {
@@ -213,7 +228,9 @@ async function classify(db, ctx, message, options = {}) {
   // has a guess. That is what prevents a new phrasing from needing a new route
   // patch. The keyword classifier remains an offline fallback, not the product
   // intelligence layer.
-  const wholeSalesOrderCompletion = deterministic.intentClass === 'SALES_ORDER'
+  const newCustomerOrder = /\b(?:wants?|would like|needs?)\s+(?:to\s+)?(?:order|buy|purchase)\b/i.test(clean)
+    || /\b(?:ordered|placed an order for)\b/i.test(clean);
+  const wholeSalesOrderCompletion = deterministic.intentClass === 'SALES_ORDER' && !newCustomerOrder
     && (/\b(?:complete|finish|fulfill|ship)\b[^.?!]*\b(?:(?:sales|customer)\s+)?order\b/i.test(clean)
       || /\b(?:(?:sales|customer)\s+)?order\b[^.?!]*\b(?:complete|finished|fulfilled|shipped)\b/i.test(clean));
   /*
@@ -235,8 +252,11 @@ async function classify(db, ctx, message, options = {}) {
   };
   const goalKind = options.goalKind || null;
   const understoodOtherwise = goalKind && agreeing[deterministic.intentClass] && !agreeing[deterministic.intentClass].includes(goalKind);
-  const safeFastPath = (['INVENTORY_ACTION', 'PHYSICAL_EVENT', 'PURCHASING_REQUEST', 'STOP', 'PAYMENT_REPORT'].includes(deterministic.intentClass) && !understoodOtherwise)
-    || wholeSalesOrderCompletion;
+  const explicitOutboundMessage = Boolean(require('../actions/intent-service').deterministicOutboundMessage(clean));
+  const explicitTeaching = deterministic.intentClass === 'OPERATING_INSTRUCTION'
+    && /^(?:please\s+)?(?:remember(?:\s+that)?|from\s+now\s+on|in\s+future|always|whenever|every\s+time|our\s+(?:rule|policy)\s+is|i\s+prefer)\b/i.test(clean);
+  const safeFastPath = explicitOutboundMessage || (['INVENTORY_ACTION', 'PHYSICAL_EVENT', 'PURCHASING_REQUEST', 'STOP', 'PAYMENT_REPORT'].includes(deterministic.intentClass) && !understoodOtherwise)
+    || explicitTeaching || wholeSalesOrderCompletion || (deterministic.intentClass === 'SALES_ORDER' && newCustomerOrder);
   // A lasting rule in one of its closed forms — a reorder point, a block on
   // outgoing stock — is read by the rule compilers; the planner adds nothing.
   const closedRule = (() => {

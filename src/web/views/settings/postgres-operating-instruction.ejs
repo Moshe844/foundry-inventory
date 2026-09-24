@@ -1,0 +1,25 @@
+<section class="rm-head"><div><p class="rm-eyebrow">Standing instruction</p><h1><%= proposal.summary %></h1>
+  <p class="rm-lede">You said: “<%= proposal.statedAs %>”</p></div><span class="rm-badge"><%= proposal.status %></span></section>
+
+<section class="rm-card"><h2>Exact effect</h2>
+  <% descriptions.forEach(function(description){ %><div class="rm-row"><span><strong><%= description %></strong></span></div><% }) %>
+  <p class="rm-note">Nothing here is authority merely because a model understood it. Only this saved, tenant-scoped snapshot can be approved.</p>
+</section>
+
+<% if (proposal.status === 'PENDING' && proposal.questions.length) { %>
+  <section class="rm-card"><h2>One detail is still needed</h2><p><%= proposal.questions[0] %></p>
+    <form method="post" action="/operating-instructions/<%= proposal.id %>/answer" class="rm-form-grid">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><label>Your answer<input name="answer" required maxlength="500" autofocus></label>
+      <div><button class="rm-btn" type="submit">Continue this instruction</button></div>
+    </form></section>
+<% } else if (proposal.status === 'PENDING') { %>
+  <section class="rm-card"><h2>Turn this on?</h2><p>Approval applies only the exact records and limits shown above.</p>
+    <div class="rm-actions"><form method="post" action="/operating-instructions/<%= proposal.id %>/approve">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= proposal.integrityHash %>">
+      <button class="rm-btn" type="submit">Approve standing rule</button></form>
+      <form method="post" action="/operating-instructions/<%= proposal.id %>/cancel"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <button class="rm-btn rm-btn--quiet" type="submit">Discard</button></form></div>
+  </section>
+<% } else if (proposal.status === 'APPROVED') { %>
+  <section class="rm-card"><h2>In force</h2><p>This exact instruction was approved <%= helpers.dateTime(proposal.approvedAt) %>. Later work still rechecks current facts and every hard limit.</p></section>
+<% } else { %><section class="rm-card"><p>This instruction is no longer in force.</p></section><% } %>

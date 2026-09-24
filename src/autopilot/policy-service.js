@@ -203,7 +203,13 @@ function validate(db, workspaceId, input) {
     supplierScope,
     exclusions: (Array.isArray(input.exclusions) ? input.exclusions : []).filter(Boolean),
     conditions,
-    thresholds: input.thresholds && typeof input.thresholds === 'object' ? input.thresholds : {},
+    thresholds: (() => {
+      const thresholds = input.thresholds && typeof input.thresholds === 'object' ? { ...input.thresholds } : {};
+      if (thresholds.maxValuePerWeek !== undefined && (!Number.isFinite(Number(thresholds.maxValuePerWeek)) || Number(thresholds.maxValuePerWeek) <= 0)) {
+        throw new ValidationError('The rolling seven-day purchase budget must be a positive amount.');
+      }
+      return thresholds;
+    })(),
     maximumQuantity,
     maximumValue,
     dailyLimit:
@@ -375,6 +381,8 @@ function routineSetup(db, workspaceId) {
       enabled: Boolean(purchasing),
       maximumValue: purchasing?.maximumValue || 500,
       supplierIds: purchasing?.supplierScope || [],
+      itemScope: purchasing?.itemScope || [],
+      maximumValuePerWeek: purchasing?.thresholds.maxValuePerWeek || null,
       policyId: purchasing?.id || null,
     },
     otherActivePolicies: active.filter((policy) => !isRoutineSetupPolicy(policy)),
@@ -430,6 +438,7 @@ function configureRoutine(db, ctx, membership, input) {
       description: 'Approved in the guided Handle routine work setup.',
       allowedActionTypes: ['approve_purchase_order'],
       scope: { managedBy: ROUTINE_SETUP, capability: 'purchasing' },
+      itemScope: input.itemScope || before.purchasing.itemScope,
       supplierScope: supplierIds,
       conditions: [
         CONDITIONS.REPLENISHMENT_EVIDENCE,
@@ -437,7 +446,9 @@ function configureRoutine(db, ctx, membership, input) {
         CONDITIONS.NO_DUPLICATE_INCOMING_DEMAND,
         CONDITIONS.PRICE_WITHIN_POLICY,
       ],
-      thresholds: { maxUnitPriceChangePercent: 0 },
+      thresholds: { maxUnitPriceChangePercent: 0, ...((input.maximumValuePerWeek === undefined ? before.purchasing.maximumValuePerWeek : input.maximumValuePerWeek) ? {
+        maxValuePerWeek: Number(input.maximumValuePerWeek === undefined ? before.purchasing.maximumValuePerWeek : input.maximumValuePerWeek), currency: 'USD',
+      } : {}) },
       maximumValue: input.maximumValue,
     });
   }
@@ -495,6 +506,7 @@ function describe(policy) {
   lines.push(`StockChief may ${(policy.allowedActionTypes || []).join(' and ') || 'do nothing'} without asking.`);
   if (policy.maximumQuantity) lines.push(`Never more than ${policy.maximumQuantity} units in one go.`);
   if (policy.maximumValue) lines.push(`Never commit more than ${policy.maximumValue} on one action.`);
+  if (policy.thresholds?.maxValuePerWeek) lines.push(`Never commit more than ${policy.thresholds.maxValuePerWeek} USD in any rolling seven days.`);
   if ((policy.supplierScope || []).length) lines.push(`Only for ${policy.supplierScope.length} approved supplier${policy.supplierScope.length === 1 ? '' : 's'}.`);
   if (policy.thresholds && Number.isFinite(Number(policy.thresholds.maxUnitPriceChangePercent))) {
     lines.push(`A known unit-price increase above ${Number(policy.thresholds.maxUnitPriceChangePercent)}% needs a person.`);

@@ -19,12 +19,31 @@ const STATES = new Set(['AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'G
   'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD', 'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV',
   'NH', 'NJ', 'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT',
   'VT', 'VA', 'WA', 'WV', 'WI', 'WY', 'DC', 'PR', 'VI', 'GU', 'AS', 'MP']);
+const STATE_NAMES = new Map([
+  ['alabama', 'AL'], ['alaska', 'AK'], ['arizona', 'AZ'], ['arkansas', 'AR'], ['california', 'CA'],
+  ['colorado', 'CO'], ['connecticut', 'CT'], ['delaware', 'DE'], ['florida', 'FL'], ['georgia', 'GA'],
+  ['hawaii', 'HI'], ['idaho', 'ID'], ['illinois', 'IL'], ['indiana', 'IN'], ['iowa', 'IA'],
+  ['kansas', 'KS'], ['kentucky', 'KY'], ['louisiana', 'LA'], ['maine', 'ME'], ['maryland', 'MD'],
+  ['massachusetts', 'MA'], ['michigan', 'MI'], ['minnesota', 'MN'], ['mississippi', 'MS'], ['missouri', 'MO'],
+  ['montana', 'MT'], ['nebraska', 'NE'], ['nevada', 'NV'], ['new hampshire', 'NH'], ['new jersey', 'NJ'],
+  ['new mexico', 'NM'], ['new york', 'NY'], ['north carolina', 'NC'], ['north dakota', 'ND'], ['ohio', 'OH'],
+  ['oklahoma', 'OK'], ['oregon', 'OR'], ['pennsylvania', 'PA'], ['rhode island', 'RI'],
+  ['south carolina', 'SC'], ['south dakota', 'SD'], ['tennessee', 'TN'], ['texas', 'TX'], ['utah', 'UT'],
+  ['vermont', 'VT'], ['virginia', 'VA'], ['washington', 'WA'], ['west virginia', 'WV'],
+  ['wisconsin', 'WI'], ['wyoming', 'WY'], ['district of columbia', 'DC'],
+]);
 
 const ZIP = /\b(\d{5})(?:-(\d{4}))?\b/;
 /* A line that is only a street when it starts with a number or a PO box. */
 const STREET = /^(\d+\s+\S|p\.?\s?o\.?\s+box\b|box\s+\d|unit\s+\d|apt\b|suite\b|ste\b)/i;
 
 const clean = (value) => String(value || '').replace(/\r/g, '').trim();
+const stateCode = (value) => {
+  const cleaned = String(value || '').trim().replace(/[.,]/g, '');
+  const upper = cleaned.toUpperCase();
+  if (STATES.has(upper)) return upper;
+  return STATE_NAMES.get(cleaned.toLowerCase()) || null;
+};
 
 /**
  * What the text says, field by field.
@@ -37,6 +56,7 @@ const clean = (value) => String(value || '').replace(/\r/g, '').trim();
  */
 function parse(text) {
   const raw = clean(text);
+  let stateAt = -1;
   const found = {
     raw, name: null, line1: null, line2: null, city: null,
     state: null, postalCode: null, country: 'US', complete: false, missing: [],
@@ -52,17 +72,24 @@ function parse(text) {
     found.postalCode = match[2] ? `${match[1]}-${match[2]}` : match[1];
     // "NY 10950" and "Monroe NY 10950" both put the state next to the postcode.
     const beside = parts[zipAt].replace(ZIP, ' ').trim().split(/\s+/).filter(Boolean);
-    const state = beside.find((word) => STATES.has(word.toUpperCase().replace(/\./g, '')));
-    if (state) found.state = state.toUpperCase().replace(/\./g, '');
-    const rest = beside.filter((word) => word !== state).join(' ').trim();
+    const region = stateCode(beside.join(' '));
+    const state = region ? null : beside.find((word) => STATES.has(word.toUpperCase().replace(/\./g, '')));
+    if (region || state) {
+      found.state = region || state.toUpperCase().replace(/\./g, '');
+      stateAt = zipAt;
+    }
+    const rest = region ? '' : beside.filter((word) => word !== state).join(' ').trim();
     if (rest && rest.length > 1) found.city = rest;
   }
 
   if (!found.state) {
-    for (const line of parts) {
+    for (let index = parts.length - 1; index >= 0; index -= 1) {
+      const line = parts[index];
+      const wholeLine = stateCode(line);
+      if (wholeLine) { found.state = wholeLine; stateAt = index; break; }
       const words = line.split(/\s+/);
-      const state = words.find((word) => STATES.has(word.toUpperCase().replace(/[.,]/g, '')));
-      if (state) { found.state = state.toUpperCase().replace(/[.,]/g, ''); break; }
+      const state = words.map(stateCode).find(Boolean);
+      if (state) { found.state = state; stateAt = index; break; }
     }
   }
 
@@ -79,9 +106,8 @@ function parse(text) {
      * the first, because a name and a company both sit above the address and
      * the town never does.
      */
-    const candidates = parts.filter((line) =>
-      line !== found.line1 && line !== found.line2 && !ZIP.test(line)
-      && !STATES.has(line.toUpperCase().replace(/[.,]/g, '')));
+    const candidates = parts.filter((line, index) =>
+      line !== found.line1 && line !== found.line2 && !ZIP.test(line) && index !== stateAt);
     const streetAt = parts.indexOf(found.line1);
     const after = streetAt >= 0 ? candidates.filter((line) => parts.indexOf(line) > streetAt) : candidates;
     if (after.length) found.city = after[0];

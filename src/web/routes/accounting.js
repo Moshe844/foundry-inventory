@@ -24,6 +24,7 @@ const tax = require('../../accounting/tax');
 const pricing = require('../../pricing/price-service');
 const { ValidationError } = require('../../domain/errors');
 const { trimOrNull, newId, nowIso } = require('../../lib/util');
+const { inTransaction } = require('../../db');
 
 /*
  * Two addresses, one page, on purpose.
@@ -38,9 +39,7 @@ const router = express.Router();
 router.use(['/accounting', '/money'], requireAuth);
 
 function today() {
-  const date = new Date();
-  const part = (value) => String(value).padStart(2, '0');
-  return `${date.getFullYear()}-${part(date.getMonth() + 1)}-${part(date.getDate())}`;
+  return new Date().toISOString().slice(0, 10);
 }
 function monthStart() { return `${today().slice(0, 7)}-01`; }
 function utcDate(value) { return new Date(`${value}T00:00:00.000Z`); }
@@ -430,6 +429,28 @@ router.post('/accounting/review/:id/use-verified-costs', permit(permissions.MANA
   return res.redirect(303, `/sales/orders/${review.order.id}`);
 }));
 
+router.post('/accounting/review/:id/use-manual-costs', permit(permissions.MANAGE_ACCOUNTING, 'resolve accounting exceptions'), asyncRoute(async (req, res) => {
+  const review = accountingReview(req.db, req.ctx.workspaceId, req.params.id);
+  if (!review) throw new (require('../../domain/errors').NotFoundError)('That accounting review could not be found.');
+  if (!review.order || review.canUseVerifiedCosts || !review.inference?.unknown?.length) {
+    throw new ValidationError('This review no longer needs manually supplied historical cost. Refresh it before continuing.');
+  }
+  const skuIds = Array.isArray(req.body.skuId) ? req.body.skuId : [req.body.skuId];
+  const locationIds = Array.isArray(req.body.locationId) ? req.body.locationId : [req.body.locationId];
+  const unitCosts = Array.isArray(req.body.unitCost) ? req.body.unitCost : [req.body.unitCost];
+  const supplied = skuIds.map((skuId, index) => ({ skuId, locationId: locationIds[index],
+    unitCostMinor: pricing.toMinor(unitCosts[index], 'Historical unit cost') }));
+  openingCostEvidence.applyManual(req.db, req.ctx, review.inference, supplied, { reviewId: review.id });
+  const processed = operationalAccounting.retry(req.db, req.ctx.workspaceId, review.domain_event_id);
+  if (processed.status !== 'POSTED') {
+    req.flash('warn', processed.outcome?.message || processed.error_message || 'The sale still needs a specific accounting decision.');
+    return res.redirect(303, `/accounting/review/${review.id}`);
+  }
+  const outcome = processed.outcome || {};
+  req.flash('success', `${review.order.order_number} is now posted: revenue ${pricing.formatMinor(Number(outcome.revenueMinor || review.revenueMinor), review.order.currency)}, product cost ${pricing.formatMinor(Number(outcome.cogsMinor || 0), review.order.currency)}. Inventory was not moved again.`);
+  return res.redirect(303, `/sales/orders/${review.order.id}`);
+}));
+
 router.post('/accounting/setup/review', permit(permissions.MANAGE_ACCOUNTING, 'set up accounting'), asyncRoute(async (req, res) => {
   const skuIds = Array.isArray(req.body.skuId) ? req.body.skuId : req.body.skuId ? [req.body.skuId] : [];
   const locationIds = Array.isArray(req.body.locationId) ? req.body.locationId : req.body.locationId ? [req.body.locationId] : [];
@@ -618,8 +639,44 @@ router.get('/accounting/receivables', permit(permissions.VIEW_ACCOUNTING, 'view 
 
 router.get('/accounting/payables', permit(permissions.VIEW_ACCOUNTING, 'view payables'), asyncRoute(async (req, res) => {
   res.page('accounting/subledger', { title: 'Bills to pay', nav: 'accounting', kind: 'payables',
+    canReview: permissions.can(req.user, permissions.MANAGE_ACCOUNTING),
     rows: payables.list(req.db, req.ctx.workspaceId), aging: reports.apAging(req.db, req.ctx.workspaceId),
     counterparties: req.db.prepare("SELECT id, name FROM suppliers WHERE workspace_id = ? AND status = 'active' ORDER BY name").all(req.ctx.workspaceId) });
+}));
+
+router.get('/accounting/payables/:id/review', permit(permissions.VIEW_ACCOUNTING, 'view supplier bill evidence'), asyncRoute(async (req, res) => {
+  const bill = payables.requireBill(req.db, req.ctx.workspaceId, req.params.id);
+  res.page('accounting/bill-review', { title: `Review ${bill.supplier_invoice_number || bill.bill_number}`,
+    nav: 'accounting', bill, revision: payables.reviewRevision(bill),
+    canReview: permissions.can(req.user, permissions.MANAGE_ACCOUNTING),
+    match: payables.threeWayMatch(req.db, req.ctx.workspaceId, bill) });
+}));
+
+router.post('/accounting/payables/:id/review', permit(permissions.MANAGE_ACCOUNTING, 'resolve supplier bill exceptions'), asyncRoute(async (req, res) => {
+  const action = String(req.body.action || '');
+  try {
+    const lineIds = formArray(req.body.lineId);
+    const quantities = formArray(req.body.quantity);
+    const amounts = formArray(req.body.unitAmount);
+    const bill = payables.review(req.db, req.ctx, req.user, req.params.id, {
+      action, revision: req.body.revision, reason: req.body.reason,
+      issueDate: req.body.issueDate, dueDate: trimOrNull(req.body.dueDate),
+      taxMinor: action === 'correct' ? pricing.toMinor(req.body.tax, 'Exact invoice tax') : undefined,
+      lines: action === 'correct' ? lineIds.map((id, index) => ({ id,
+        quantity: quantities[index], unitCostMinor: pricing.toMinor(amounts[index], `Line ${index + 1} unit cost`) })) : undefined,
+    });
+    if (bill.status === 'DISPUTED') {
+      req.flash('warn', 'Review recorded. The invoice still does not match; no payable or payment was posted. Inventory did not change.');
+    } else if (bill.status === 'VOID') {
+      req.flash('success', 'Unposted invoice dismissed with its evidence and review history preserved. No payment was recorded and inventory did not change.');
+    } else {
+      req.flash('success', 'Invoice matched and approved once. The supplier payable is posted; no payment was recorded and inventory did not change.');
+    }
+  } catch (error) {
+    if (!(error instanceof ValidationError)) throw error;
+    req.flash('warn', error.message);
+  }
+  res.redirect(303, `/accounting/payables/${req.params.id}/review`);
 }));
 
 router.get('/accounting/receivables/new', permit(permissions.MANAGE_ACCOUNTING, 'create customer invoices'), asyncRoute(async (req, res) => {
@@ -677,27 +734,36 @@ router.post('/accounting/payables', permit(permissions.MANAGE_ACCOUNTING, 'creat
       .get(skuIds[index], req.ctx.workspaceId)?.item_id || null : null,
   }));
   const subtotalMinor = lines.reduce((sum, line) => sum + Math.round(line.quantity * line.unitCostMinor), 0);
-  const draft = payables.createDraft(req.db, req.ctx, req.user, {
-    supplierId: req.body.counterpartyId, supplierInvoiceNumber: trimOrNull(req.body.documentNumber),
-    purchaseOrderId: trimOrNull(req.body.purchaseOrderId),
-    issueDate: req.body.issueDate, dueDate: trimOrNull(req.body.dueDate),
-    taxMinor: documentTaxMinor(req, subtotalMinor, 'PURCHASES'),
-    sourceKey: `manual-bill:${newId('form')}`, notes: trimOrNull(req.body.notes),
-    lines,
+  const transactionResult = inTransaction(req.db, () => {
+    const draft = payables.createDraft(req.db, req.ctx, req.user, {
+      supplierId: req.body.counterpartyId, supplierInvoiceNumber: trimOrNull(req.body.documentNumber),
+      purchaseOrderId: trimOrNull(req.body.purchaseOrderId),
+      issueDate: req.body.issueDate, dueDate: trimOrNull(req.body.dueDate),
+      taxMinor: documentTaxMinor(req, subtotalMinor, 'PURCHASES'),
+      sourceKey: `manual-bill:${newId('form')}`, notes: trimOrNull(req.body.notes),
+      lines,
+    });
+    const bill = payables.open(req.db, req.ctx, req.user, draft.bill.id);
+    if (bill.status === 'DISPUTED') return { bill, paidNowMinor: 0 };
+    const paymentStatus = String(req.body.paymentStatus || 'unpaid');
+    let paidNowMinor = 0;
+    if (bill.status === 'OPEN' && ['paid', 'partially_paid'].includes(paymentStatus)) {
+      const amountMinor = paymentStatus === 'paid' ? Number(bill.balance_minor)
+        : pricing.toMinor(req.body.paymentAmount, 'Amount paid');
+      payments.record(req.db, req.ctx, req.user, { direction: 'SUPPLIER_PAYMENT',
+        supplierId: bill.supplier_id, paymentDate: req.body.paymentDate || req.body.issueDate,
+        amountMinor, method: trimOrNull(req.body.paymentMethod),
+        reference: trimOrNull(req.body.paymentReference),
+        sourceKey: `bill-form-payment:${newId('form')}`,
+        allocations: [{ billId: bill.id, amountMinor }] });
+      paidNowMinor = amountMinor;
+    }
+    return { bill, paidNowMinor };
   });
-  const bill = payables.open(req.db, req.ctx, req.user, draft.bill.id);
-  const paymentStatus = String(req.body.paymentStatus || 'unpaid');
-  let paidNowMinor = 0;
-  if (bill.status === 'OPEN' && ['paid', 'partially_paid'].includes(paymentStatus)) {
-    const amountMinor = paymentStatus === 'paid' ? Number(bill.balance_minor)
-      : pricing.toMinor(req.body.paymentAmount, 'Amount paid');
-    payments.record(req.db, req.ctx, req.user, { direction: 'SUPPLIER_PAYMENT',
-      supplierId: bill.supplier_id, paymentDate: req.body.paymentDate || req.body.issueDate,
-      amountMinor, method: trimOrNull(req.body.paymentMethod),
-      reference: trimOrNull(req.body.paymentReference),
-      sourceKey: `bill-form-payment:${newId('form')}`,
-      allocations: [{ billId: bill.id, amountMinor }] });
-    paidNowMinor = amountMinor;
+  const { bill, paidNowMinor } = transactionResult;
+  if (bill.status === 'DISPUTED') {
+    req.flash('warn', `${bill.supplier_invoice_number || bill.bill_number} is saved for review because the supplier invoice differs from its purchase order or receipts. It was not posted as a payable and no payment was recorded. Inventory did not change.`);
+    return res.redirect(303, '/accounting/payables');
   }
   const stillOwedMinor = Math.max(0, Number(bill.balance_minor) - paidNowMinor);
   const currency = bill.currency || ledger.settings(req.db, req.ctx.workspaceId).currency;

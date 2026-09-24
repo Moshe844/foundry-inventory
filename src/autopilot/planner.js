@@ -270,6 +270,15 @@ function plan(db, workspaceId, options = {}) {
   // move drained the warehouse to zero on the assumption the order was not
   // happening, and the order was sized on the assumption the move was not.
   const replenishmentPlans = safePlans(db, workspaceId, skus, now);
+  for (const plan of replenishmentPlans.plans || []) {
+    if (plan.decisionSource !== 'adaptive_optimizer' || !plan.adaptivePlan) continue;
+    try {
+      plan.adaptivePlanRecordId = require('../forecasting/adaptive-brain')
+        .record(db, workspaceId, plan.skuId, plan.adaptivePlan, { operational: true }).id;
+    } catch {
+      plan.adaptivePlanRecordId = null;
+    }
+  }
   // A configured line's replenishment is one decision, and the plan is it.
   //
   // Moves were already the planner's: the older balance heuristic reasons only
@@ -289,6 +298,8 @@ function plan(db, workspaceId, options = {}) {
   // is no decision to fragment there, and routing it through a plan would take
   // away authority the customer explicitly granted.
   const handledByPolicy = (plan) =>
+    plan.decisionSource !== 'adaptive_optimizer'
+    &&
     plan.transfers.length === 0
     && Boolean(plan.purchase)
     && state.mode === 'POLICY_AUTOMATED'

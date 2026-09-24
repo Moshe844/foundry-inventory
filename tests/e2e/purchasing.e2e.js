@@ -305,7 +305,7 @@ test(
       assert.match(await page.locator('body').innerText(), /OX-NV-08/);
     });
 
-    await t.test('4. approving makes it incoming, and the plan goes quiet', async () => {
+    await t.test('4. approving makes it incoming without hiding its late arrival', async () => {
       await Promise.all([
         page.waitForLoadState('networkidle'),
         page.click('button:has-text("Approve order")'),
@@ -317,8 +317,12 @@ test(
 
       await page.goto(`${BASE}/purchasing`);
       const text = await page.locator('body').innerText();
-      assert.match(text, /Nothing is below its reorder point/);
-      await shot(page, 'nothing-more-to-order');
+      assert.match(text, /Incoming stock is not proven coverage/);
+      assert.match(text, /projected short before/);
+      assert.match(text, /No duplicate order was prepared/);
+      assert.doesNotMatch(text, /Nothing is below its reorder point/);
+      assert.equal(await page.getByRole('button', { name: 'Prepare ABC Footwear order', exact: true }).count(), 0);
+      await shot(page, 'incoming-arrival-needs-review');
     });
 
     await t.test('5. the printable order is a document, not a transmission', async () => {

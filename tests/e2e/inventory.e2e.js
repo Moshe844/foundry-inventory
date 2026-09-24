@@ -218,14 +218,13 @@ test('Mission 1 end to end, from a clean database', { timeout: 240000 }, async (
   await t.test('a new workspace can be created and signed into', async () => {
     await page.goto(`${BASE}/register`);
     await page.fill('#name', ACCOUNT.name);
+    await page.fill('#businessName', ACCOUNT.workspaceName);
     await page.fill('#email', ACCOUNT.email);
     await page.fill('#password', ACCOUNT.password);
     await page.click('button[type=submit]');
-    await page.waitForURL(`${BASE}/inventories`);
-    await page.click('a[href="/inventories/new"]');
-    await page.waitForURL(`${BASE}/inventories/new`);
-    await page.fill('#name', ACCOUNT.workspaceName);
-    await page.click('form[action="/inventories"] button[type=submit]');
+    await page.waitForURL(`${BASE}/onboarding`);
+      await page.fill('#inventory-name', ACCOUNT.workspaceName);
+      await Promise.all([page.waitForNavigation(), page.getByRole('button', { name: 'Save name', exact: true }).click()]);
 
     // Mission 2 puts StockChief first. This run is about the Mission 1 console, so
     // take the documented manual path — which exercises that route too.
@@ -233,10 +232,11 @@ test('Mission 1 end to end, from a clean database', { timeout: 240000 }, async (
     // A new inventory is asked how it is managed today. These customers are
     // starting from nothing, so they take the Starting Fresh path — which is
     // the Mission 2 experience, unchanged.
-    await Promise.all([
-      page.waitForURL(`${BASE}/foundry/describe`),
-      page.click('button:has-text("Enter it in StockChief")'),
-    ]);
+await Promise.all([
+        page.waitForURL(`${BASE}/inventory/new`),
+        page.click('button:has-text("Enter it manually")'),
+      ]);
+      await page.goto(`${BASE}/foundry/describe`);
     await assertVisibleText(page, 'Give StockChief what you already have');
     await Promise.all([
       page.waitForURL(`${BASE}/locations`),
@@ -277,6 +277,40 @@ test('Mission 1 end to end, from a clean database', { timeout: 240000 }, async (
     assert.equal(await itemTotal(page), 100);
     assert.equal(await locationTotal(page, 'Main Warehouse'), 100);
     await shot(page, 'quantity-received');
+  });
+
+  await t.test('an insufficient transfer fails visibly and leaves every balance unchanged', async () => {
+    await page.goto(state.elbowUrl);
+    const dialog = await openAction(page, 'transfer');
+    await dialog.locator('#transfer-from').selectOption({ label: 'Main Warehouse' });
+    await dialog.locator('#transfer-to').selectOption({ label: 'Downtown Store' });
+    await dialog.locator('#transfer-quantity').fill('101');
+    await submitAction(page, dialog);
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'domcontentloaded' }),
+      page.getByRole('button', { name: /Approve (?:and reserve|this move)/i }).click({ noWaitAfter:true }),
+    ]);
+    assert.match(await page.locator('main').innerText(), /Not enough|available|insufficient/i);
+    await page.goto(state.elbowUrl);
+    assert.equal(await locationTotal(page, 'Main Warehouse'), 100);
+    assert.equal(await locationTotal(page, 'Downtown Store'), 0);
+    assert.equal(await itemTotal(page), 100);
+  });
+
+  await t.test('an issue that would create negative stock fails without a partial mutation', async () => {
+    await page.goto(state.elbowUrl);
+    const dialog = await openAction(page, 'issue');
+    await dialog.locator('#issue-location').selectOption({ label: 'Main Warehouse' });
+    await dialog.locator('#issue-quantity').fill('101');
+    await dialog.locator('#issue-reason').selectOption('sold');
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'domcontentloaded' }),
+      dialog.locator('button[type=submit]').click({ noWaitAfter:true }),
+    ]);
+    assert.match(await page.locator('main').innerText(), /Not enough stock/i);
+    await page.goto(state.elbowUrl);
+    assert.equal(await locationTotal(page, 'Main Warehouse'), 100);
+    assert.equal(await itemTotal(page), 100);
   });
 
   await t.test('quantity item: transfer 25 follows request through receipt', async () => {

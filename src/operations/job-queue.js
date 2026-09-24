@@ -116,8 +116,8 @@ function heartbeat(db, id, owner, options = {}) {
   const now = Number(options.now || Date.now());
   const leaseMs = Math.max(1000, Number(options.leaseMs || 60_000));
   const changed = db.prepare(`UPDATE runtime_jobs SET lease_expires_at = ?, updated_at = ?
-    WHERE id = ? AND status = 'RUNNING' AND lease_owner = ?`)
-    .run(now + leaseMs, new Date(now).toISOString(), id, owner);
+    WHERE id = ? AND status = 'RUNNING' AND lease_owner = ? AND lease_expires_at > ?`)
+    .run(now + leaseMs, new Date(now).toISOString(), id, owner, now);
   return changed.changes === 1;
 }
 
@@ -126,8 +126,8 @@ function complete(db, id, owner, result = {}, options = {}) {
     const now = Number(options.now || Date.now());
     const changed = db.prepare(`UPDATE runtime_jobs SET status = 'COMPLETED', result = ?, last_error = NULL,
       lease_owner = NULL, lease_expires_at = NULL, completed_at = ?, updated_at = ?
-      WHERE id = ? AND status = 'RUNNING' AND lease_owner = ?`)
-      .run(JSON.stringify(result || {}), new Date(now).toISOString(), new Date(now).toISOString(), id, owner);
+      WHERE id = ? AND status = 'RUNNING' AND lease_owner = ? AND lease_expires_at > ?`)
+      .run(JSON.stringify(result || {}), new Date(now).toISOString(), new Date(now).toISOString(), id, owner, now);
     if (changed.changes) event(db, id, 'COMPLETED', { result });
     return changed.changes === 1;
   });
@@ -139,10 +139,10 @@ function backoffMs(attempt) {
 
 function fail(db, id, owner, error, options = {}) {
   return inTransaction(db, () => {
-    const row = db.prepare(`SELECT * FROM runtime_jobs
-      WHERE id = ? AND status = 'RUNNING' AND lease_owner = ?`).get(id, owner);
-    if (!row) return null;
     const now = Number(options.now || Date.now());
+    const row = db.prepare(`SELECT * FROM runtime_jobs
+      WHERE id = ? AND status = 'RUNNING' AND lease_owner = ? AND lease_expires_at > ?`).get(id, owner, now);
+    if (!row) return null;
     const retryable = options.retryable !== false;
     const dead = !retryable || row.attempt_count >= row.max_attempts;
     const status = dead ? 'DEAD' : 'RETRY';

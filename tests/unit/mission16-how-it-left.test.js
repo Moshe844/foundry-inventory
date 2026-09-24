@@ -74,8 +74,14 @@ test('we took it round ourselves, and the order says so', () => {
   const env = setup();
   const order = confirmedOrder(env);
   const box = shipments.startPicking(env.db, env.ctx, order.id);
+  env.db.prepare(`UPDATE sales_shipments SET carrier = 'ups', service = 'Ground',
+    tracking_number = '1Z999AA10123456784', shipping_cost_minor = 1200 WHERE id = ?`).run(box.id);
   const gone = shipments.ship(env.db, env.ctx, box.id, { handover: 'DELIVERED_BY_US' });
   assert.equal(gone.wentBy, 'Delivered by us');
+  assert.equal(gone.carrier, null);
+  assert.equal(gone.service, null);
+  assert.equal(gone.tracking_number, null);
+  assert.equal(gone.shipping_cost_minor, null);
   assert.equal(shipments.wordForOrder(env.db, env.workspace.workspaceId, order.id), 'delivered');
 });
 

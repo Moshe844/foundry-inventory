@@ -59,11 +59,52 @@ test('shipping settings require a business-owned provider account instead of usi
     const words = plain(page.text);
     assert.equal(page.status, 200);
     assert.match(words, /No carrier account is connected/);
-    assert.match(words, /UPS Rates, labels and tracking/);
-    assert.match(words, /Guided carrier setup is not enabled on this installation yet/);
-    assert.match(words, /Connect my existing carrier accounts/);
+    assert.match(words, /Step 1 — connect a ShipEngine sandbox/);
+    assert.match(words, /key beginning with TEST/);
+    assert.doesNotMatch(words, /UPS Rates, labels and tracking/);
+    assert.match(words, /Production guided setup is not enabled on this installation yet/);
+    assert.match(words, /Connect with a shipping-platform key/);
+    assert.match(words, /Verify and connect/);
+    assert.match(words, /developer key must never pay customer postage/i);
+    assert.match(words, /One setup, based on how the business ships today/);
+    assert.match(words, /Who pays what/);
+    assert.match(words, /None in the current product/);
+    assert.match(words, /What StockChief does after the handoff/);
+    assert.match(words, /Choose customer notification timing/);
     assert.match(page.text, /<details[^>]+id="existing-carrier-connection"/);
+    assert.doesNotMatch(words, /Later — choose how StockChief handles labels/);
+    assert.doesNotMatch(words, /Rules you have set/);
+    assert.doesNotMatch(words, /Add a rule/);
     assert.doesNotMatch(words, /Set up shipping Keeper will not be charged/);
+    store.db.close();
+  });
+});
+
+test('sample inventory presents one direct ShipEngine sandbox connection step', async () => {
+  await withEnvironment({
+    SHIPENGINE_PLATFORM_API_KEY: null,
+    SHIPENGINE_PARTNER_ID: null,
+    SHIPENGINE_PLATFORM_PRIVATE_KEY: null,
+  }, async () => {
+    const store = makeDatabase();
+    const workspace = seedWorkspace(store.db, { workspaceName: 'Disposable shipping qualification' });
+    store.db.prepare("UPDATE workspaces SET data_mode = 'synthetic' WHERE id = ?").run(workspace.workspaceId);
+    const app = createApp({ db: store.db, env: 'test', sessionSecret: 'shipengine-sandbox-ui' });
+    const agent = request.agent(app);
+    await signIn(agent, workspace.account.email, workspace.account.password);
+
+    const page = await agent.get('/settings/shipping');
+    const words = plain(page.text);
+    assert.equal(page.status, 200);
+    assert.match(words, /Connect ShipEngine sandbox/);
+    assert.match(words, /ShipEngine sandbox API key/);
+    assert.match(words, /Handling mode and automation rules appear only after this connection passes/);
+    assert.match(page.text, /name="provider" value="shipengine"/);
+    assert.doesNotMatch(page.text, /<select[^>]+name="provider"/);
+    assert.doesNotMatch(page.text, /<details[^>]+id="existing-carrier-connection"/);
+    assert.doesNotMatch(words, /Production guided setup is not enabled/);
+    assert.doesNotMatch(words, /Later — choose how StockChief handles labels/);
+    assert.doesNotMatch(words, /Rules you have set/);
     store.db.close();
   });
 });
@@ -133,6 +174,9 @@ test('workspace seller opens embedded onboarding, mints a scoped token, and beco
     const ready = plain((await agent.get('/settings/shipping')).text);
     assert.match(ready, /ready to buy labels/);
     assert.match(ready, /Manage carriers and payment/);
+    assert.match(ready, /Later — choose how StockChief handles labels/);
+    assert.match(ready, /Rules you have set/);
+    assert.match(ready, /Add a rule/);
     store.db.close();
   });
 });

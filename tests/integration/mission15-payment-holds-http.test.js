@@ -676,7 +676,7 @@ test('a new customer keeps the email and address entered with their first order'
   const created = await agent.post('/sales/orders').type('form').send({
     _csrf: csrfFrom(form.text), customerName: 'Hendel',
     customerEmail: 'hendel@example.test',
-    customerShippingAddress: '2 Bridge Street, Riverside',
+    customerShippingAddress: '2 Bridge Street, Riverside, NY 10001, US',
     skuId: env.item.skuId, quantity: '7', currency: 'USD',
   });
   assert.equal(created.status, 303);
@@ -764,7 +764,7 @@ test('an email typed for a customer already on file is kept, not thrown away', a
     _csrf: csrfFrom(form.text),
     customerId: existing.id,
     customerEmail: 'chavy@example.test',
-    customerShippingAddress: '9 Harbour Road',
+    customerShippingAddress: '9 Harbour Road, Albany, NY 12207, US',
     skuId: env.item.skuId, quantity: '2', currency: 'USD',
   });
 

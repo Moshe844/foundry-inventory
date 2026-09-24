@@ -39,7 +39,7 @@ function countNeedsYou(db, workspaceId, membership = null, options = {}) {
   // connection and migration check. The full Needs You page refreshes this
   // value from its authoritative inbox; ordinary pages only read the latest
   // known count in O(1).
-  if (options.fresh === true) {
+  if (options.fresh === true || !cacheFor(db).has(workspaceId)) {
     const result = require('../manager/needs-you-inbox').inbox(db, workspaceId, membership, options);
     return rememberNeedsYou(db,workspaceId,
       Number.isInteger(result.totalCount) ? result.totalCount : result.length);

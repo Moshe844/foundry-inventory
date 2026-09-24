@@ -1,0 +1,4 @@
+<div class="page-head"><div class="titles"><h1>Inventory activity</h1><div class="page-sub">Immutable ledger movements, newest first.</div></div></div>
+<div class="card"><table class="table"><thead><tr><th>When</th><th>Product</th><th>Operation</th><th>Location</th><th>Reference</th><th class="num">Change</th></tr></thead><tbody>
+  <% activity.forEach(function(row){ %><tr><td><%= new Date(row.occurred_at).toLocaleString() %></td><td><%= row.item_name %><br><span class="muted"><%= row.code %></span></td><td><%= row.operation %></td><td><%= row.location_name %></td><td><%= row.reference || '—' %></td><td class="num"><%= row.quantityDelta>0?'+':'' %><%= row.quantityDelta %></td></tr><% }) %>
+</tbody></table><% if(!activity.length){ %><div class="empty"><strong>No movements yet.</strong></div><% } %></div>

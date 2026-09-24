@@ -146,13 +146,11 @@ test('chat carries explicitly stated delivery details into a draft and refuses i
   assert.equal(result.order.status, 'DRAFT'); assert.equal(result.order.ship_to_address, address);
   assert.equal(result.order.customer.email, 'buyer@example.test'); assert.equal(result.order.totals.allocated, 0);
   const invented = salesIntent.apply(e.db, e.w.ctx, { ...read, customerText: 'Other Fixture Buyer', shippingAddress: '999 Made Up Street' }, { previewOnly: true });
-  assert.equal(invented.order.ship_to_address, null); assert.equal(invented.order.delivery_decision_required, 1);
-  const agent = request.agent(createApp({ db: e.db, env: 'test', sessionSecret: 'delivery-target' }));
-  await signIn(agent, e.w.account.email, e.w.account.password);
-  const blockedStory = await agent.get(`/orders/${invented.order.id}`).expect(200);
-  assert.match(blockedStory.text, /detail\?open=delivery-decision#delivery-decision/);
-  assert.match(plain(blockedStory.text), /Delivery details needed/);
-  assert.match(blockedStory.text, /Record or request payment/);
+  assert.equal(invented.kind, 'question');
+  assert.equal(invented.continuation.field, 'shippingAddress');
+  assert.match(invented.question, /delivery address/i);
+  assert.equal(e.db.prepare('SELECT COUNT(*) AS count FROM sales_orders').get().count, 1,
+    'an incomplete or invented destination must not create another order');
   const pickup = salesIntent.apply(e.db, e.w.ctx, { ...read, customerText: 'Pickup Fixture Buyer', statedAs: 'Prepare 2 Existing fixture part for customer pickup', deliveryMethod: 'PICKUP', deliverySource: 'customer pickup', shippingAddress: '', customerEmail: '' }, { previewOnly: true });
   assert.equal(pickup.order.delivery_method, 'PICKUP'); assert.equal(pickup.order.delivery_decision_required, 0);
 });

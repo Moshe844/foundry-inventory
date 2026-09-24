@@ -64,6 +64,7 @@ function createApp(options = {}) {
   const productBrain = new ProductBrain();
   app.locals.db = db;
   app.locals.productBrain = productBrain;
+  app.locals.assetVersion = options.assetVersion || process.env.FOUNDRY_ASSET_VERSION || Date.now().toString(36);
   const registered = (name, router, mountPath = '') =>
     productBrain.registerRouter(name, router, { mountPath });
   // Explicit provider override. Undefined means the configured provider is
@@ -171,8 +172,13 @@ function createApp(options = {}) {
   // Refuse abusive login traffic before it can allocate a CSRF/browser session.
   app.use('/login', middleware.rateLimit({ windowMs: 15 * 60_000, max: 30 }));
 
-  const store = createSessionStore(db, { anonymousMaxAgeMs: config.sessions.anonymousMaxAgeMs });
+  const sessionOptions = { anonymousMaxAgeMs: config.sessions.anonymousMaxAgeMs };
+  const store = options.sessionStore || (process.env.FOUNDRY_SESSION_DATABASE_URL
+    ? require('./web/postgres-session-store').createPostgresSessionStore(process.env.FOUNDRY_SESSION_DATABASE_URL, sessionOptions)
+    : createSessionStore(db, sessionOptions));
   app.locals.sessionStore = store;
+  app.locals.operationalReviewDatabase = options.operationalReviewDatabase || null;
+  app.locals.runtimeJobDatabase = options.runtimeJobDatabase || null;
   app.use(
     session({
       name: 'foundry.sid',
@@ -197,6 +203,7 @@ function createApp(options = {}) {
     res.locals.origin = `${req.protocol}://${req.get('host')}`;
     res.locals.currentPath = req.path;
     res.locals.query = req.query || {};
+    res.locals.assetVersion = app.locals.assetVersion;
     next();
   });
   app.use(middleware.flash);

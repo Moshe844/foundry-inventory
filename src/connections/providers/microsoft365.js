@@ -46,8 +46,8 @@ async function exchangeAuthorization({ query, metadata: auth = {} }) {
     capabilities: ['MAIL_READ', 'MAIL_SEND', 'MAILBOX_WATCH'], expiresAt: new Date(credentials.expiresAt).toISOString() };
 }
 
-async function refreshCredentials(credentials) {
-  if (Number(credentials.expiresAt || 0) > Date.now() + 5 * 60_000) return { credentials, refreshed: false,
+async function refreshCredentials(credentials, options = {}) {
+  if (!options.force && Number(credentials.expiresAt || 0) > Date.now() + 5 * 60_000) return { credentials, refreshed: false,
     expiresAt: new Date(credentials.expiresAt).toISOString() };
   if (!credentials.refreshToken) throw new ValidationError('Microsoft 365 access expired. Reconnect this mailbox.');
   const result = await token({ client_id: config.connections.microsoft365.clientId,
@@ -95,7 +95,7 @@ async function renewWebhooks({ credentials, webhookUrl }) {
   }
 }
 
-const SELECT_FIELDS = 'id,conversationId,internetMessageId,subject,from,toRecipients,receivedDateTime,body,hasAttachments';
+const SELECT_FIELDS = 'id,conversationId,internetMessageId,internetMessageHeaders,subject,from,toRecipients,receivedDateTime,body,hasAttachments';
 const TEXT_BODY = { Prefer: 'outlook.body-content-type="text"' };
 
 async function mapMessage(credentials, row) {
@@ -107,6 +107,8 @@ async function mapMessage(credentials, row) {
     // without turning a valid webhook into an HTTP 400.
     `/me/messages/${encodeURIComponent(row.id)}/attachments`)).body.value || []) : [];
   return { messageId: row.id, threadId: row.conversationId, internetMessageId: row.internetMessageId,
+    stockChiefMessageId: (row.internetMessageHeaders || [])
+      .find((entry) => String(entry.name || '').toLowerCase() === 'x-stockchief-message')?.value || null,
     sender: row.from?.emailAddress?.address, recipients: (row.toRecipients || []).map((entry) => entry.emailAddress?.address).filter(Boolean),
     subject: row.subject, bodyText: row.body?.content, receivedAt: row.receivedDateTime,
     attachments: attachments.filter((entry) => entry.contentBytes).map((entry) => ({ id: entry.id,
@@ -114,11 +116,31 @@ async function mapMessage(credentials, row) {
 }
 
 async function poll({ credentials, since }) {
-  const filter = since ? `&$filter=receivedDateTime ge ${new Date(since).toISOString()}` : '';
-  const path = `/me/mailFolders/inbox/messages?$top=50&$orderby=receivedDateTime desc&$select=${SELECT_FIELDS}${filter}`;
-  const rows = (await graph(credentials, path, { headers: TEXT_BODY })).body.value || [];
+  const from = new Date(new Date(since || Date.now() - 86400000).getTime() - 15 * 60_000).toISOString();
+  let path = `/me/mailFolders/inbox/messages?$top=50&$orderby=receivedDateTime desc&$select=${SELECT_FIELDS}&$filter=receivedDateTime ge ${from}`;
   const messages = [];
-  for (const row of rows) messages.push(await mapMessage(credentials, row));
+  const visited = new Set();
+  const seenMessages = new Set();
+  while (path) {
+    if (visited.has(path) || visited.size >= 100) {
+      throw new ValidationError('Microsoft did not finish listing this mailbox. The check remains incomplete; no messages will be skipped on retry.');
+    }
+    visited.add(path);
+    const page = (await graph(credentials, path, { headers: TEXT_BODY })).body;
+    for (const row of page.value || []) {
+      if (seenMessages.has(row.id)) continue;
+      seenMessages.add(row.id);
+      messages.push(await mapMessage(credentials, row));
+    }
+    path = null;
+    if (page['@odata.nextLink']) {
+      const next = new URL(page['@odata.nextLink']);
+      if (next.origin !== 'https://graph.microsoft.com' || !next.pathname.startsWith('/v1.0/me/mailFolders/inbox/messages')) {
+        throw new ValidationError('Microsoft returned an unexpected mailbox page. The check was stopped safely.');
+      }
+      path = next.pathname.slice('/v1.0'.length) + next.search;
+    }
+  }
   return { messages, cursor: messages[0]?.messageId || null };
 }
 
@@ -136,7 +158,9 @@ async function fetchMessage({ credentials, messageId }) {
 async function send({ credentials, message }) {
   await graph(credentials, '/me/sendMail', { method: 'POST', body: JSON.stringify({ message: {
     subject: message.subject, body: { contentType: 'Text', content: message.body },
-    toRecipients: [{ emailAddress: { address: message.recipient } }] }, saveToSentItems: true }) });
+    toRecipients: [{ emailAddress: { address: message.recipient } }],
+    internetMessageHeaders: message.id
+      ? [{ name: 'X-StockChief-Message', value: String(message.id) }] : undefined }, saveToSentItems: true }) });
   return { externalMessageId: `m365:${message.id}` };
 }
 

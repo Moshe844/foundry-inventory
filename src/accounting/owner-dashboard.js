@@ -111,7 +111,9 @@ function confirmedOrderBalances(db, workspaceId, asOf) {
   const allRows = db.prepare(`SELECT so.id, so.order_number, so.status, so.currency,
       so.discount_minor, so.tax_minor, so.created_at, c.id AS customer_id,
       c.name AS customer_name,
-      COALESCE(SUM(sol.quantity_ordered * COALESCE(sol.unit_price_minor, 0)), 0) AS subtotal_minor,
+      COALESCE(SUM((CASE WHEN so.status = 'CANCELLED' THEN sol.quantity_fulfilled
+        ELSE sol.quantity_ordered END) * COALESCE(sol.unit_price_minor, 0)), 0) AS subtotal_minor,
+      COALESCE(SUM(sol.quantity_ordered * COALESCE(sol.unit_price_minor, 0)), 0) AS ordered_subtotal_minor,
       COALESCE((SELECT SUM(p.amount_minor) FROM accounting_payments p
         WHERE p.workspace_id = so.workspace_id AND p.status = 'POSTED'
           AND p.direction = 'CUSTOMER_RECEIPT' AND p.payment_date <= ?
@@ -119,7 +121,10 @@ function confirmedOrderBalances(db, workspaceId, asOf) {
     FROM sales_orders so
     JOIN customers c ON c.id = so.customer_id
     JOIN sales_order_lines sol ON sol.sales_order_id = so.id AND sol.workspace_id = so.workspace_id
-    WHERE so.workspace_id = ? AND so.status NOT IN ('DRAFT', 'CANCELLED')
+    WHERE so.workspace_id = ? AND so.status <> 'DRAFT'
+      AND (so.status <> 'CANCELLED' OR EXISTS (SELECT 1 FROM sales_order_lines fulfilled_line
+        WHERE fulfilled_line.workspace_id = so.workspace_id
+          AND fulfilled_line.sales_order_id = so.id AND fulfilled_line.quantity_fulfilled > 0))
       AND date(so.created_at) <= ?
       AND NOT EXISTS (SELECT 1 FROM accounting_customer_invoices i
         WHERE i.workspace_id = so.workspace_id AND i.sales_order_id = so.id AND i.status <> 'VOID')
@@ -127,15 +132,21 @@ function confirmedOrderBalances(db, workspaceId, asOf) {
     ORDER BY so.created_at, so.id`).all(asOf, workspaceId, asOf)
     .map((row) => {
       const subtotalMinor = number(row.subtotal_minor);
-      const totalMinor = subtotalMinor - Math.min(subtotalMinor, number(row.discount_minor))
-        + number(row.tax_minor);
+      const orderedSubtotalMinor = number(row.ordered_subtotal_minor);
+      const partialRatio = row.status === 'CANCELLED' && orderedSubtotalMinor > 0
+        ? subtotalMinor / orderedSubtotalMinor : 1;
+      const discountMinor = Math.min(subtotalMinor, Math.round(number(row.discount_minor) * partialRatio));
+      const taxMinor = Math.round(number(row.tax_minor) * partialRatio);
+      const totalMinor = subtotalMinor - discountMinor + taxMinor;
       const paidMinor = Math.min(totalMinor, number(row.paid_minor));
-      const lines = db.prepare(`SELECT sol.id, sol.quantity_ordered AS quantity,
+      const lines = db.prepare(`SELECT sol.id,
+          CASE WHEN ? = 'CANCELLED' THEN sol.quantity_fulfilled ELSE sol.quantity_ordered END AS quantity,
           sol.unit_price_minor, i.name AS item_name, s.code, s.variant_label
         FROM sales_order_lines sol
         JOIN skus s ON s.id = sol.sku_id JOIN items i ON i.id = s.item_id
         WHERE sol.workspace_id = ? AND sol.sales_order_id = ?
-        ORDER BY sol.created_at, sol.id`).all(workspaceId, row.id)
+        ORDER BY sol.created_at, sol.id`).all(row.status, workspaceId, row.id)
+        .filter((line) => number(line.quantity) > 0)
         .map((line) => ({ ...line, quantity: number(line.quantity),
           lineTotalMinor: number(line.quantity) * number(line.unit_price_minor) }));
       const payments = db.prepare(`SELECT id, payment_number, payment_date, amount_minor,
@@ -147,7 +158,7 @@ function confirmedOrderBalances(db, workspaceId, asOf) {
         ORDER BY payment_date, created_at, id`)
         .all(workspaceId, asOf, row.id, `order-payment:${row.id}:%`)
         .map((payment) => ({ ...payment, amount_minor: number(payment.amount_minor) }));
-      return { ...row, subtotalMinor, totalMinor, paidMinor, lines, payments,
+      return { ...row, subtotalMinor, discountMinor, taxMinor, totalMinor, paidMinor, lines, payments,
         balanceMinor: Math.max(0, totalMinor - paidMinor) };
     });
   const rows = allRows.filter((row) => row.balanceMinor > 0);

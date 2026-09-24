@@ -11,6 +11,10 @@ function metadata() {
   };
 }
 
+function validateInput(input) {
+  normalizeStoreUrl(input.storeUrl);
+}
+
 function authorizationUrl({ state, input }) {
   const storeUrl = normalizeStoreUrl(input.storeUrl);
   const url = new URL(`${storeUrl}/wc-auth/v1/authorize`);
@@ -84,6 +88,7 @@ async function registerWebhooks({ credentials, webhookUrl }) {
     if (page >= Number(response.headers.get('x-wp-totalpages') || 1)) break;
   }
   const results = [];
+  const used = new Set();
   for (const topic of topics) {
     const current = existing.find((hook) => hook.topic === topic && hook.delivery_url === webhookUrl);
     const payload = { name: `StockChief ${topic}`, topic, delivery_url: webhookUrl,
@@ -91,7 +96,18 @@ async function registerWebhooks({ credentials, webhookUrl }) {
     const { body } = current
       ? await api(credentials, `/webhooks/${current.id}`, { method: 'PUT', body: JSON.stringify(payload) })
       : await api(credentials, '/webhooks', { method: 'POST', body: JSON.stringify(payload) });
+    if (current) used.add(current.id);
     results.push({ topic, id: body.id });
+  }
+  const stale = existing.filter((hook) => {
+    let managed = false;
+    try { managed = /^\/api\/v1\/connections\/woocommerce\/webhooks\/[^/]+$/.test(new URL(hook.delivery_url).pathname); }
+    catch (_) { return false; }
+    return managed && !used.has(hook.id);
+  });
+  for (const hook of stale) {
+    await api(credentials, `/webhooks/${hook.id}?force=true`, { method: 'DELETE' });
+    results.push({ topic: hook.topic, id: hook.id, removedStale: true });
   }
   return results;
 }
@@ -159,5 +175,5 @@ function normalizeWebhook({ headers, body, connection }) {
   throw new ValidationError(`WooCommerce topic ${topic || '(missing)'} is not supported.`);
 }
 
-module.exports = { metadata, authorizationUrl, credentialsFromCallback, discover, registerWebhooks,
+module.exports = { metadata, validateInput, authorizationUrl, credentialsFromCallback, discover, registerWebhooks,
   historySummary, verifyWebhook, normalizeWebhook, api };

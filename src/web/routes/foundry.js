@@ -366,7 +366,7 @@ router.post(
     const destinations = {
       spreadsheet: '/onboarding/migrations/new',
       software: '/onboarding/system',
-      mailbox: '/onboarding/mailbox',
+      mailbox: '/settings/ingestion',
     };
     const destination = destinations[choice];
     if (!destination) {

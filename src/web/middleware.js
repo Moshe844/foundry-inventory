@@ -145,8 +145,8 @@ function loadUser(db) {
  */
 /** The session keys that carry unfinished assistant work; all scoped to one inventory. */
 const PENDING_KEYS = ['askConversation', 'askTurns', 'assistantConversationId', 'assistantHandoff', 'assistantOpenGoal', 'assistantQueue', 'assistantTranscript',
-  'pendingActionContinuation', 'pendingActionQuestion', 'pendingAskResult', 'pendingLocationTransfer', 'pendingPriceBatch',
-  'pendingPriceContinuation', 'pendingPurchaseCostBatch', 'pendingRestrictionFlow', 'pendingSalesContinuation', 'pendingSupplierPayment', 'askTranscript'];
+  'pendingActionContinuation', 'pendingActionQuestion', 'pendingAskActionContinuation', 'pendingAskResult', 'pendingLocationTransfer', 'pendingPriceBatch',
+  'pendingAskContactSetup', 'pendingAskPrerequisite', 'pendingPriceContinuation', 'pendingPurchaseCostBatch', 'pendingRestrictionFlow', 'pendingSalesContinuation', 'pendingSupplierPayment', 'askTranscript'];
 
 function clearPendingWork(session) {
   for (const key of PENDING_KEYS) delete session[key];
@@ -456,12 +456,13 @@ function pageRenderer(req, res, next) {
         // database must not make the underlying business screen unavailable.
       }
     }
-    res.render(view, { ...data }, (err, html) => {
+    const onboardingEntry = req.ctx ? require('../onboarding/exploration').state(req.db, req.ctx.workspaceId, req.account.id) : null;
+    res.render(view, { ...data, onboardingEntry }, (err, html) => {
       if (err) return next(err);
       // A page may opt out of the application chrome — a purchase order printed
       // for a supplier should be the document and nothing else.
       if (data.layout === false) return res.send(html);
-      const resolvedBackTo = (navigationArrival && navigationArrival.backTo)
+      const resolvedBackTo = data.suppressBack ? null : (navigationArrival && navigationArrival.backTo)
         || cameFrom(req) || data.backTo || data.backToFallback || null;
       if (req.session && data.title) {
         const currentHref = (() => {
@@ -492,6 +493,7 @@ function pageRenderer(req, res, next) {
          * somewhere may name that somewhere as its fallback.
          */
         backTo: resolvedBackTo,
+        onboardingEntry,
         navigationArrival,
         workspaceGuidance,
         // The rest of a message with several parts in it, offered on every
@@ -535,12 +537,18 @@ function errorHandler(isProduction) {
       // Record and enqueue external delivery without including request bodies,
       // cookies, tokens or stack traces in the alert payload.
       try {
-        require('../operations/monitoring').raise(req.db, {
+        const monitor = req.db && typeof req.db.query === 'function' && typeof req.db.prepare !== 'function'
+          ? require('../operations/postgres-monitoring') : require('../operations/monitoring');
+        const recording = monitor.raise(req.db, {
+          workspaceId: req.ctx?.workspaceId || null,
           severity: 'ERROR',
           kind: 'http.unexpected_error',
           title: 'StockChief returned an unexpected server error',
           detail: `${req.method} ${req.path} · ${err && err.code ? err.code : err && err.name ? err.name : 'Error'}`,
           fingerprint: `http.unexpected_error:${req.method}:${req.route && req.route.path || req.path}:${err && err.code || err && err.name || 'Error'}`,
+        });
+        if (recording && typeof recording.catch === 'function') recording.catch((monitoringError) => {
+          console.error('[foundry] could not record operational alert', monitoringError);
         });
       } catch (monitoringError) {
         console.error('[foundry] could not record operational alert', monitoringError);

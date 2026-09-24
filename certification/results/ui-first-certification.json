@@ -1,0 +1,1399 @@
+{
+  "generatedAt": "2026-09-23T04:03:59.601Z",
+  "browserCommandPassed": true,
+  "passed": 89,
+  "required": 89,
+  "rows": [
+    {
+      "id": 1,
+      "name": "Completely empty workspace",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/onboarding-entry.e2e.js",
+          "title": "skip opens a usable empty app with a durable source prompt and no fake back link",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 2,
+      "name": "Small inventory setup",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/imports.e2e.js",
+          "title": "4. the stock is real, and every unit has a movement",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 4,
+      "name": "Opening inventory PDF",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/import-safety.e2e.js",
+          "title": "an opening-inventory PDF is recognized and applied as opening stock, never purchasing activity",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 5,
+      "name": "Opening spreadsheet",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/imports.e2e.js",
+          "title": "2. StockChief says what it read, and has created nothing",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        },
+        {
+          "file": "tests/e2e/imports.e2e.js",
+          "title": "4. the stock is real, and every unit has a movement",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 7,
+      "name": "Ambiguous import",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/onboarding.e2e.js",
+          "title": "2. StockChief surfaces the real conflicts and settles the rest itself",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 8,
+      "name": "Duplicate import",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/onboarding.e2e.js",
+          "title": "7. it survives a refresh, and re-running the migration changes nothing",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 9,
+      "name": "Failed import",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/import-safety.e2e.js",
+          "title": "an unexpected import failure halfway leaves no products, movements, or balances behind",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 10,
+      "name": "Connection and state-driven onboarding guidance",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/onboarding-entry.e2e.js",
+          "title": "skip opens a usable empty app with a durable source prompt and no fake back link",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 11,
+      "name": "Receive inventory",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/inventory.e2e.js",
+          "title": "quantity item: receive 100",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 12,
+      "name": "Issue or sell inventory",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/inventory.e2e.js",
+          "title": "quantity item: issue 5 from Downtown leaves 95",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 13,
+      "name": "Transfer inventory",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/inventory.e2e.js",
+          "title": "quantity item: transfer 25 follows request through receipt",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 14,
+      "name": "Insufficient transfer",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/inventory.e2e.js",
+          "title": "an insufficient transfer fails visibly and leaves every balance unchanged",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 15,
+      "name": "Negative stock",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/inventory.e2e.js",
+          "title": "an issue that would create negative stock fails without a partial mutation",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 16,
+      "name": "Physical count",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/seasoned-business.e2e.js",
+          "title": "A disputed physical count stays visible through recount and changes stock only after approval",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 17,
+      "name": "Duplicate receipt",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/purchasing.e2e.js",
+          "title": "8. a retried receipt does not duplicate the stock",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 19,
+      "name": "Multi-location balance",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/inventory.e2e.js",
+          "title": "the inventory position reports the same numbers",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 20,
+      "name": "Ledger reconstruction",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/inventory.e2e.js",
+          "title": "the activity ledger explains everything that happened",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        },
+        {
+          "file": "tests/e2e/inventory.e2e.js",
+          "title": "the inventory position reports the same numbers",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 26,
+      "name": "Search by SKU",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/inventory.e2e.js",
+          "title": "search finds items, serials and lots and leads to the record",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 27,
+      "name": "Search by product or attribute",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/inventory.e2e.js",
+          "title": "search finds items, serials and lots and leads to the record",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 28,
+      "name": "Bulk rule",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/catalog-rules.e2e.js",
+          "title": "an owner applies replenishment rules to a selected product group in one browser action",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 29,
+      "name": "Supplier-specific SKU",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/purchasing.e2e.js",
+          "title": "5. the printable order is a document, not a transmission",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 31,
+      "name": "Replenishment trigger",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/seasoned-business.e2e.js",
+          "title": "Backdated daily sales are entered through the UI and trigger replenishment of the consumed product",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 32,
+      "name": "Pack size",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/weekly-operations.e2e.js",
+          "title": "replenishment chooses a 24-dollar packed order over a thousand-dollar low-unit-price minimum",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 33,
+      "name": "Minimum order quantity",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/weekly-operations.e2e.js",
+          "title": "replenishment chooses a 24-dollar packed order over a thousand-dollar low-unit-price minimum",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 34,
+      "name": "Existing incoming stock",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/purchasing.e2e.js",
+          "title": "1. what should I order? — nothing, with the reason",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 35,
+      "name": "Purchase order lifecycle",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/purchasing.e2e.js",
+          "title": "3. StockChief prepares the order; nothing is committed yet",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        },
+        {
+          "file": "tests/e2e/purchasing.e2e.js",
+          "title": "4. approving makes it incoming without hiding its late arrival",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        },
+        {
+          "file": "tests/e2e/purchasing.e2e.js",
+          "title": "6. part of the shipment arrives",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        },
+        {
+          "file": "tests/e2e/purchasing.e2e.js",
+          "title": "7. the rest arrives and the order closes",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 36,
+      "name": "Partial receipt",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/purchasing.e2e.js",
+          "title": "6. part of the shipment arrives",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 37,
+      "name": "Over-receipt",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/purchasing-evidence.e2e.js",
+          "title": "an over-receipt asks before changing stock and records the approved excess",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 38,
+      "name": "Supplier price change",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/purchasing-evidence.e2e.js",
+          "title": "a supplier price change outside tolerance becomes one explicit browser decision",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 39,
+      "name": "Supplier cancellation or backorder",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/weekly-operations.e2e.js",
+          "title": "overdue, unknown and too-late incoming orders are exceptions, not proven coverage",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 40,
+      "name": "Duplicate PO execution",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/seasoned-business.e2e.js",
+          "title": "Calendar ticks and page refreshes do not duplicate supplier orders",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 41,
+      "name": "Supplier invoice with PO",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/weekly-operations.e2e.js",
+          "title": "verified invoice correction posts one payable, preserves original history and clears its exception",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 42,
+      "name": "Supplier invoice without PO",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/purchasing-evidence.e2e.js",
+          "title": "a supplier invoice without a purchase order asks for the missing match and creates no stock",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 43,
+      "name": "Invoice versus receipt",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/weekly-operations.e2e.js",
+          "title": "the actual supplier invoice can differ from its PO without posting or paying a disputed bill",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 44,
+      "name": "Shipment notice",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/purchasing-evidence.e2e.js",
+          "title": "a shipment notice updates incoming evidence and ETA but never on-hand stock",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 45,
+      "name": "Packing slip",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/weekly-operations.e2e.js",
+          "title": "a real UI purchase receipt automatically fills the remaining customer shortages",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 46,
+      "name": "Supplier question",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/mail-replies.e2e.js",
+          "title": "a supplier question gets a reply grounded in the real purchase order",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 47,
+      "name": "Customer question",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/mail-replies.e2e.js",
+          "title": "a customer delivery question gets a reply grounded in the actual order and commitment",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 48,
+      "name": "Edit prepared response",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/mail-replies.e2e.js",
+          "title": "the exact edited reply is the only version sent and the message moves to waiting",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 49,
+      "name": "Duplicate email notification",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/operational-safety.e2e.js",
+          "title": "operational safety and mailbox pagination are verified through screens",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 50,
+      "name": "Malicious document instructions",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/mail-replies.e2e.js",
+          "title": "malicious inbound instructions change no authority and create no business action",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 51,
+      "name": "Create Sales Order",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/sales-shipping-money.e2e.js",
+          "title": "the UI creates, reserves, partially fulfils and cancels one order without losing its story",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 52,
+      "name": "Commit inventory",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/seasoned-business.e2e.js",
+          "title": "Approving commits an order but does not prematurely receive stock",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 53,
+      "name": "Shortage",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/weekly-operations.e2e.js",
+          "title": "150 open orders reserve only 100 physical units, not the 50 incoming units",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 54,
+      "name": "Partial fulfillment",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/sales-shipping-money.e2e.js",
+          "title": "the UI creates, reserves, partially fulfils and cancels one order without losing its story",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 55,
+      "name": "Cancellation",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/sales-shipping-money.e2e.js",
+          "title": "the UI creates, reserves, partially fulfils and cancels one order without losing its story",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 56,
+      "name": "Return",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/returns-shipping.e2e.js",
+          "title": "a customer return is authorized, quarantined, inspected, restocked and refunded in the UI",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 57,
+      "name": "Shipping address from communication",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/sales-shipping-money.e2e.js",
+          "title": "a carrier order cannot be created without its own destination",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 58,
+      "name": "Real shipment creation abstraction",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/returns-shipping.e2e.js",
+          "title": "a carrier label is bought through the provider abstraction before stock leaves",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 59,
+      "name": "Tracking progression",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/sales-shipping-money.e2e.js",
+          "title": "picking and packing move no stock; carrier handoff moves it once and tracking reaches delivered",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 60,
+      "name": "Shipping exception",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/returns-shipping.e2e.js",
+          "title": "a verified carrier exception appears on the shipment and in Needs you",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 61,
+      "name": "Customer payment link",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/payment-window.e2e.js",
+          "title": "a successful Stripe popup closes and returns to a visibly paid order",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 62,
+      "name": "Direct card payment",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/payment-window.e2e.js",
+          "title": "a successful Stripe popup closes and returns to a visibly paid order",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 63,
+      "name": "Partial customer payment",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/money-lifecycle.e2e.js",
+          "title": "a customer partial payment leaves exactly one hundred fifty receivable",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 64,
+      "name": "Final customer payment",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/money-lifecycle.e2e.js",
+          "title": "the final customer payment clears the receivable",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 65,
+      "name": "Payment hold",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/sales-shipping-money.e2e.js",
+          "title": "a required deposit visibly blocks picking until the exact payment is recorded",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 66,
+      "name": "Offline payment",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/money-lifecycle.e2e.js",
+          "title": "a customer partial payment leaves exactly one hundred fifty receivable",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 67,
+      "name": "Supplier partial payment",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/money-lifecycle.e2e.js",
+          "title": "a supplier partial payment leaves exactly six hundred payable",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 68,
+      "name": "Supplier final payment",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/money-lifecycle.e2e.js",
+          "title": "the final supplier payment clears the payable without moving stock",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 69,
+      "name": "Duplicate processor webhook",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/connector-webhooks.e2e.js",
+          "title": "two Stripe lifecycle webhooks for one cumulative payment record money once",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 70,
+      "name": "Refund",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/money-lifecycle.e2e.js",
+          "title": "a cash refund is visible, traceable and never changes physical inventory",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 71,
+      "name": "Purchase order accounting",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/purchasing.e2e.js",
+          "title": "4. approving makes it incoming without hiding its late arrival",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 72,
+      "name": "Supplier invoice accounting",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/weekly-operations.e2e.js",
+          "title": "verified invoice correction posts one payable, preserves original history and clears its exception",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 73,
+      "name": "Receiving accounting",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/seasoned-business.e2e.js",
+          "title": "A real receipt updates visible stock, verifies the delivery and resolves the need",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 74,
+      "name": "Supplier payment accounting",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/money-lifecycle.e2e.js",
+          "title": "the final supplier payment clears the payable without moving stock",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 75,
+      "name": "Sale accounting",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/sales-shipping-money.e2e.js",
+          "title": "picking and packing move no stock; carrier handoff moves it once and tracking reaches delivered",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 76,
+      "name": "Partial customer payment accounting",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/money-lifecycle.e2e.js",
+          "title": "a customer partial payment leaves exactly one hundred fifty receivable",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 77,
+      "name": "Return and refund accounting",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/money-lifecycle.e2e.js",
+          "title": "a cash refund is visible, traceable and never changes physical inventory",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 78,
+      "name": "Inventory and accounting reconciliation",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/money-lifecycle.e2e.js",
+          "title": "inventory valuation visibly reconciles the cost subledger to inventory control",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 79,
+      "name": "Accountant explanation",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/weekly-operations.e2e.js",
+          "title": "Ask profit and loss honors the calendar quarter and includes records beyond the display limit",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 80,
+      "name": "Books reconstruction",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/money-lifecycle.e2e.js",
+          "title": "the browser proves balanced books and traces a ledger row to its immutable source entry",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 81,
+      "name": "Ask-me-first",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/actions.e2e.js",
+          "title": "3. StockChief proposes a specific transfer, and nothing has moved",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 82,
+      "name": "Authorized automatic transfer",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/autopilot-authority.e2e.js",
+          "title": "qualifying work runs and displays the exact policy version and dated evidence",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 83,
+      "name": "Transfer outside limit",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/autopilot-authority.e2e.js",
+          "title": "work above the policy boundary remains full-sized in Needs you",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 84,
+      "name": "Independent authority domains",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/autonomy-entry.e2e.js",
+          "title": "authorising customer payment requests never authorises supplier purchasing",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 85,
+      "name": "Automatic payment-request communication",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/payment-automation.e2e.js",
+          "title": "explicit authority creates one provider request and sends one grounded email",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        },
+        {
+          "file": "tests/e2e/payment-automation.e2e.js",
+          "title": "without job authority the same routine request is prepared and visibly waits",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 86,
+      "name": "Pause",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/autopilot-authority.e2e.js",
+          "title": "Pause blocks the run and Resume lets the same eligible work continue",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 87,
+      "name": "Resume",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/autopilot-authority.e2e.js",
+          "title": "Pause blocks the run and Resume lets the same eligible work continue",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 88,
+      "name": "Explain decision",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/autopilot.e2e.js",
+          "title": "7. \"why did you do that\" answers from the record, not from memory",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 89,
+      "name": "One business story",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/complete-business-day.e2e.js",
+          "title": "one complete business day stays linked from customer demand through books and owner reporting",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 90,
+      "name": "Needs You prioritization",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/weekly-operations.e2e.js",
+          "title": "a failed exception source produces an incomplete-review warning instead of an all-clear",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 91,
+      "name": "Shopify event",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/connector-webhooks.e2e.js",
+          "title": "a signed Shopify order is committed once and appears as a real customer order",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 92,
+      "name": "Square event",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/connector-webhooks.e2e.js",
+          "title": "Square payment lifecycle events issue stock once and the completed sale is visible",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 93,
+      "name": "Connector outage",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/operational-safety.e2e.js",
+          "title": "authorization failures are visible and cannot masquerade as an operational mailbox",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 94,
+      "name": "Retry after outage",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/operational-safety.e2e.js",
+          "title": "a temporary refresh outage preserves consent and a retry works without reconnecting",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 96,
+      "name": "Credential security",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/operational-safety.e2e.js",
+          "title": "a different identity after refresh quarantines the mailbox rather than reading or sending as another account",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 98,
+      "name": "Migration",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/migration-scale.e2e.js",
+          "title": "an owner starts and completes a migration entirely in the browser with their own export",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 99,
+      "name": "Migration reconciliation",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/migration-scale.e2e.js",
+          "title": "a real browser reviews an unfamiliar mapping and proves a frozen live-source cutover",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    },
+    {
+      "id": 100,
+      "name": "Complete business day",
+      "pass": true,
+      "evidence": [
+        {
+          "file": "tests/e2e/connector-webhooks.e2e.js",
+          "title": "a signed Shopify order is committed once and appears as a real customer order",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        },
+        {
+          "file": "tests/e2e/connector-webhooks.e2e.js",
+          "title": "Square payment lifecycle events issue stock once and the completed sale is visible",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        },
+        {
+          "file": "tests/e2e/complete-business-day.e2e.js",
+          "title": "one complete business day stays linked from customer demand through books and owner reporting",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true
+        }
+      ],
+      "missing": false
+    }
+  ]
+}

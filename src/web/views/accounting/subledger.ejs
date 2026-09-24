@@ -44,8 +44,10 @@
         <%= helpers.money(aging.totalMinor) %> open · <strong><%= lateCount %> <%= isAP ? 'bill' : 'invoice' %><%= lateCount === 1 ? ' is' : 's are' %> past due</strong>.
       <% } else if (open.length) { %>
         <%= helpers.money(aging.totalMinor) %> open across <%= open.length %> <%= isAP ? 'bill' : 'invoice' %><%= open.length === 1 ? '' : 's' %>, none past due.
+      <% } else if (attention.length) { %>
+        <%= attention.length %> <%= isAP ? 'bill' : 'invoice' %><%= attention.length === 1 ? ' needs' : 's need' %> review before posting. No open payable or receivable is recognized for these records; they are not marked paid.
       <% } else { %>
-        Nothing is open. <%= isAP ? 'Every bill is paid.' : 'Every invoice is paid.' %>
+        Nothing is open. All remaining records are settled, voided or cancelled.
       <% } %>
     </p>
   </div>
@@ -106,8 +108,8 @@
                 <p class="hint">Reduces what is owed; nothing else moves. If the money arrived through a connected bank, match it there instead of entering it twice.</p>
               </form>
             </details>
-          <% } else if (isAP && ['DISPUTED', 'DRAFT'].includes(row.status) && row.purchase_order_id) { %>
-            <div class="bill-row__do"><a class="btn btn--sm" href="/purchasing/orders/<%= row.purchase_order_id %>/detail#bills">Look at it</a></div>
+          <% } else if (isAP && ['DISPUTED', 'DRAFT'].includes(row.status)) { %>
+            <div class="bill-row__do"><a class="btn btn--sm" href="/accounting/payables/<%= row.id %>/review"><%= locals.canReview ? 'Resolve invoice' : 'Review invoice' %></a></div>
           <% } else { %><div class="bill-row__do"></div><% } %>
       </div>
 <%  });

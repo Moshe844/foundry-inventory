@@ -20,7 +20,8 @@ const { ValidationError } = require('../domain/errors');
 const PATHS = [
   {
     id: 'fresh',
-    label: 'Enter it in StockChief',
+    label: 'Enter it manually',
+    prerequisite: 'Your product names, SKUs and opening quantities.',
     blurb: 'I am starting fresh or want to add products myself.',
     detail: 'Describe the inventory structure, or add products and opening quantities manually.',
     icon: 'foundry',
@@ -28,6 +29,7 @@ const PATHS = [
   {
     id: 'spreadsheet',
     label: 'Move from files',
+    prerequisite: 'A CSV, TSV or Excel export with SKU, name and quantity.',
     blurb: 'My real product or quantity details are in files.',
     detail: 'Upload Excel, CSV or TSV exports. StockChief maps and reconciles them before cutover.',
     icon: 'import',
@@ -35,6 +37,7 @@ const PATHS = [
   {
     id: 'software',
     label: 'Connect another system',
+    prerequisite: 'An admin account and API access to a supported system.',
     blurb: 'Connect Shopify, Square, Clover, WooCommerce, or your own system.',
     detail: 'StockChief imports the catalogue, remembers mappings, and receives future sales automatically.',
     providers: ['Shopify', 'Square', 'Clover', 'WooCommerce', 'Custom API'],
@@ -49,31 +52,17 @@ const PATHS = [
   },
 ];
 
-// A mailbox is an inventory source, but it is not a durable source-of-truth
-// mode. Keep it out of workspace_onboarding.path and route it directly to its
-// own setup. This avoids pretending that Gmail and a spreadsheet migration are
-// the same thing merely to fit a database enum.
 const SOURCE_OPTIONS = [
-  PATHS[0],
   PATHS[1],
-  {
-    id: 'mailbox',
-    label: 'Use email attachments',
-    blurb: 'Suppliers or staff send the files to Gmail or Microsoft 365.',
-    detail: 'Connect the mailbox, choose the sender and file purpose, and StockChief checks automatically.',
-    providers: ['Gmail', 'Microsoft 365'],
-    icon: 'link',
-    href: '/onboarding/mailbox',
-  },
   PATHS[2],
-  PATHS[3],
+  PATHS[0],
 ];
 
 const PATH_IDS = PATHS.map((path) => path.id);
 
 /** Where each path sends someone once chosen. */
 const NEXT_STEP = {
-  fresh: '/foundry/describe',
+  fresh: '/inventory/new',
   spreadsheet: '/onboarding/migrations/new',
   software: '/onboarding/system',
   messy: '/onboarding/migrations/new',

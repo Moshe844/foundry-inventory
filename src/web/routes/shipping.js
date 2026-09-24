@@ -211,8 +211,9 @@ router.post('/settings/shipping/account', requirePermission(permissions.ADMIN, '
         apiKey: req.body.apiKey,
         webhookSecret: req.body.webhookSecret,
       });
-      req.flash('success', `Connected. This inventory now ships on its own ${account.provider} account`
-        + `${account.testMode ? ', in test mode' : ''}, and its labels are billed to it.`);
+      req.flash('success', account.testMode
+        ? `Connected to the ${account.provider} sandbox. Rates and labels are test-only; no parcel can ship and no real postage is charged.`
+        : `Connected. This inventory now ships on its own ${account.provider} account, and its labels are billed to that business.`);
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
       req.flash('warn', err.message);

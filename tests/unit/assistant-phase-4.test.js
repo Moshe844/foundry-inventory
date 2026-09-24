@@ -70,6 +70,32 @@ test('the facts are the recipient\'s own records, and a draft that uses anything
   assert.match(draft.factsUsed[1].text, /Purchase order/);
 });
 
+test('approved email teachings shape future drafts without becoming facts or send authority', async () => {
+  const { db, w, lakeside } = setup();
+  const instruction = 'Supplier emails should be concise and put the requested decision first.';
+  const change = { domain: 'workflow_preference', operation: 'set', workflowScope: 'email', preferenceText: instruction };
+  db.prepare(`INSERT INTO operating_instruction_proposals
+    (id, workspace_id, created_by_user_id, stated_as, summary, changes, resolved_changes,
+     questions, status, integrity_hash, applied_records, approved_by_user_id, approved_at, created_at, updated_at)
+    VALUES ('oin_email_style', ?, ?, ?, 'Supplier email style', ?, ?, '[]', 'APPROVED', 'test', '[]', ?, datetime('now'), datetime('now'), datetime('now'))`)
+    .run(w.workspaceId, w.ctx.actorId, instruction, JSON.stringify([change]), JSON.stringify([change]), w.ctx.actorId);
+  let prompt = '';
+  const provider = { async complete(request) {
+    prompt = request.prompt;
+    return { data: { subject: 'Decision needed', body: 'Please confirm the delivery date.\nThanks,\nOlive Owner', factsUsed: [1, 2], couldNotWrite: '' } };
+  } };
+  const recipient = { kind: 'supplier', id: lakeside.id, name: lakeside.name, email: 'orders@lakeside.test' };
+
+  const draft = await mailDraft.compose(db, w.ctx, {
+    recipient, purpose: 'ask for a delivery decision', instruction: 'ask Lakeside to confirm the delivery date',
+  }, { provider });
+
+  assert.equal(draft.ok, true);
+  assert.match(prompt, /Owner-approved writing and workflow preferences/);
+  assert.match(prompt, /requested decision first/i);
+  assert.match(prompt, /not facts and never authorize sending/i);
+});
+
 test('a composed draft is written to the message record, shown with its facts, and never sent', async () => {
   const { db, w, lakeside, po } = setup();
   const provider = { async complete(r) {

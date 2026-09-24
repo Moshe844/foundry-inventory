@@ -17,6 +17,8 @@ const ingestion = require('../../src/connections/email-ingestion');
 const inbox = require('../../src/connections/reply-inbox');
 const needsYou = require('../../src/manager/needs-you-inbox');
 const authService = require('../../src/domain/auth-service');
+const sales = require('../../src/sales/sales-order-service');
+const suppliers = require('../../src/purchasing/supplier-service');
 const { makeDatabase, cleanupAll, seedWorkspace, signIn, csrfFrom, plain } = require('../helpers');
 
 test.after(cleanupAll);
@@ -27,11 +29,15 @@ function setup() {
   const { db } = makeDatabase();
   const workspace = seedWorkspace(db, { workspaceName: 'Riverside Supply' });
   const membership = authService.getMembership(db, workspace.workspaceId, workspace.accountId);
+  sales.createCustomer(db, workspace.ctx, { name: 'Jo at ABC School', email: 'jo@abcschool.test' });
+  suppliers.createSupplier(db, workspace.ctx, membership, {
+    name: 'UPS Notifications', email: 'no-reply@ups.com',
+  });
   const created = connections.create(db, workspace.ctx, membership, {
     providerType: 'supplier_email', displayName: 'Shop Mailbox',
   });
   const app = createApp({ db, env: 'test', sessionSecret: 'reply-inbox' });
-  return { db, workspace, app, connectorId: created.connection.id };
+  return { db, workspace, membership, app, connectorId: created.connection.id };
 }
 
 function arrive(env, { sender = 'jo@abcschool.test', subject = null, body = null, attachments = [] } = {}) {
@@ -55,13 +61,13 @@ test('the three drawers work, and every message says why it is in one', async ()
   assert.equal(needsReply.status, 200);
   let text = plain(needsReply.text);
   assert.match(text, /Needs a reply/);
-  assert.match(text, /jo@abcschool\.test/);
+  assert.match(text, /Jo at ABC School/);
   assert.match(text, /can you.*waiting on an answer/i, 'the list shows the reason it was sorted here');
   assert.doesNotMatch(text, /no-reply@ups\.com/, 'a robot is not in the reply drawer');
 
   const handled = await agent.get('/mail?show=handled');
   text = plain(handled.text);
-  assert.match(text, /no-reply@ups\.com/);
+  assert.match(text, /UPS Notifications/);
   assert.match(text, /automatic address/);
 
   const waiting = await agent.get('/mail?show=waiting');
@@ -113,7 +119,7 @@ test('a message page shows what arrived and offers only the three drawers', asyn
   assert.match(plain((await agent.get(`/mail/${id}`)).text), /Phoned them — replacements are on the way/);
 });
 
-test('unanswered mail reaches Needs You, oldest first, and leaves when answered', async () => {
+test('every unanswered customer or supplier message reaches Needs You, oldest first, and leaves when answered', async () => {
   const env = setup();
   const older = arrive(env, { subject: 'Older question', body: 'Can you confirm?' });
   arrive(env, { subject: 'Newer question', body: 'Can you confirm?' });
@@ -124,11 +130,11 @@ test('unanswered mail reaches Needs You, oldest first, and leaves when answered'
 
   let entries = needsYou.inbox(env.db, env.workspace.workspaceId)
     .filter((entry) => entry.id.startsWith('unanswered-mail:'));
-  assert.equal(entries.length, 3, 'four are waiting; Needs You shows three and points at the rest');
+  assert.equal(entries.length, 4, 'every unanswered business message is visible in Needs You');
   assert.ok(entries.some((entry) => entry.id === `unanswered-mail:${older}`),
     'the one that has waited longest is always among them');
-  assert.ok(!entries.some((entry) => entry.id === `unanswered-mail:${spare[1]}`),
-    'the newest is the one left off');
+  assert.ok(entries.some((entry) => entry.id === `unanswered-mail:${spare[1]}`),
+    'the newest is visible too');
 
   const oldest = entries.find((entry) => entry.id === `unanswered-mail:${older}`);
   const fresh = entries.find((entry) => entry.id !== `unanswered-mail:${older}`);
@@ -136,7 +142,8 @@ test('unanswered mail reaches Needs You, oldest first, and leaves when answered'
   assert.ok(oldest.priority < 90, 'but a late reply never outranks something urgent');
   assert.match(oldest.href, /^\/mail\//);
   assert.match(oldest.why, /waiting on an answer/);
-  assert.match(oldest.recommendation, /4 messages are waiting/);
+  assert.equal(oldest.actionLabel, 'Reply to message');
+  assert.match(oldest.href, /#reply$/);
 
   const agent = request.agent(env.app);
   await signIn(agent, env.workspace.account.email, env.workspace.account.password);
@@ -146,7 +153,7 @@ test('unanswered mail reaches Needs You, oldest first, and leaves when answered'
 
   entries = needsYou.inbox(env.db, env.workspace.workspaceId)
     .filter((entry) => entry.id.startsWith('unanswered-mail:'));
-  assert.equal(entries.length, 3, 'answering the oldest lets the one it was hiding through');
+  assert.equal(entries.length, 3, 'answering the oldest removes only that message');
   assert.ok(!entries.some((entry) => entry.id === `unanswered-mail:${older}`));
 });
 
@@ -183,6 +190,31 @@ test('unanswered mail is counted by Needs you, not by a mail badge of its own', 
   const badge = chromeOnHome.slice(chromeOnHome.indexOf('href="/needs-you"'));
   assert.match(badge.slice(0, 600), new RegExp(`aria-label="${needsYou.length} waiting"`),
     'the Needs you badge is the one number, and it counts the mail too');
+});
+
+test('a short known-contact email is actionable, while unrelated mailbox mail never enters StockChief', async () => {
+  const env = setup();
+  const id = arrive(env, { subject: 'Checking in', body: 'Waiting to hear back from you.' });
+  assert.equal(inbox.get(env.db, env.workspace.workspaceId, id).reply_state, 'NEEDS_REPLY',
+    'StockChief does not silently file a human customer message because its wording missed a phrase list');
+
+  arrive(env, {
+    sender: 'newsletter@unrelated.test', subject: 'Weekly offers', body: 'Save ten percent today.',
+  });
+  assert.equal(inbox.counts(env.db, env.workspace.workspaceId).NEEDS_REPLY, 1,
+    'unrelated connector evidence cannot enter the visible mail queue');
+
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  const desk = await agent.get('/needs-you');
+  assert.match(plain(desk.text), /Reply to Jo at ABC School/);
+  assert.match(plain(desk.text), /Reply to message/);
+  assert.doesNotMatch(plain(desk.text), /newsletter@unrelated\.test/);
+
+  const message = await agent.get(`/mail/${id}`);
+  assert.match(message.text, /href="#reply"[^>]*>Reply now</);
+  assert.match(message.text, /id="reply"/);
+  assert.doesNotMatch(plain((await agent.get('/mail')).text), /Not for StockChief/);
 });
 
 test('a reply is drafted, read, and sent from the message page', async () => {

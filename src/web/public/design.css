@@ -2064,6 +2064,49 @@ a.rm-stat:hover, a.stat:hover, .card--link.stat:hover { background: var(--surfac
 .stat-value--warn { color: var(--flag-2); }
 .stat-value--danger { color: var(--bad); }
 
+/* An order balance is one compact fact, not three dashboard cards. */
+#money .sales-money-summary {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  box-shadow: none;
+  margin-bottom: var(--s3);
+}
+#money .sales-money-summary > * {
+  min-height: 0;
+  padding: 11px 14px;
+  border: 0;
+  border-right: 1px solid var(--line);
+  border-radius: 0;
+  box-shadow: none;
+}
+#money .sales-money-summary > *:last-child { border-right: 0; }
+#money .sales-money-summary .stat-value { font-size: 20px; letter-spacing: -.03em; }
+#money .sales-money-summary .stat-label { font-size: 10px; }
+
+.sales-order-lines { display: grid; gap: 10px; margin-bottom: 10px; }
+.sales-order-line {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(90px, .24fr) minmax(150px, .36fr) auto;
+  gap: 10px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+.sales-order-line .rm-field { margin: 0; }
+.sales-order-line [data-remove-order-line] { margin-bottom: 1px; }
+
+@media (max-width: 640px) {
+  #money .sales-money-summary { grid-template-columns: 1fr; }
+  #money .sales-money-summary > * { border-right: 0; border-bottom: 1px solid var(--line); }
+  #money .sales-money-summary > *:last-child { border-bottom: 0; }
+  .sales-order-line { grid-template-columns: 1fr; }
+}
+
 /* One cell of the instrument is amber, and only when a person is needed. */
 .rm-stat--flag { background: var(--flag-wash); }
 .rm-stat--flag .rm-stat__top, .rm-stat--flag .rm-stat__n { color: var(--flag-2); }

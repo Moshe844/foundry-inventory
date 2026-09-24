@@ -15,6 +15,7 @@ const reorderPolicies = require('../../src/purchasing/policy-service');
 const supplierService = require('../../src/purchasing/supplier-service');
 const poService = require('../../src/purchasing/po-service');
 const reevaluate = require('../../src/attention/reevaluate');
+const ownerDashboard = require('../../src/accounting/owner-dashboard');
 const { makeDatabase, cleanupAll, seedWorkspace, makeQuantityItem } = require('../helpers');
 
 test.after(cleanupAll);
@@ -181,6 +182,11 @@ test('Mission 10 commitments preserve on-hand, fulfillment consumes both, and ca
   position = sales.availabilityForSku(env.db, env.workspace.workspaceId, env.item.skuId);
   assert.deepEqual({ onHand: position.onHand, committed: position.committed, available: position.available },
     { onHand: 40, committed: 0, available: 40 });
+  const money = ownerDashboard.confirmedOrderBalances(env.db, env.workspace.workspaceId,
+    new Date().toISOString().slice(0, 10));
+  assert.equal(money.rows.length, 1, 'the fulfilled part remains visible after the remainder is cancelled');
+  assert.equal(money.rows[0].balanceMinor, 25_000);
+  assert.equal(money.rows[0].lines[0].quantity, 10);
 });
 
 test('Mission 10 allocates what exists and records the rest as an honest backorder', () => {

@@ -7,6 +7,8 @@ const { fakeProvider } = require('../helpers/fake-provider');
 const registry = require('../../src/manager/capability-registry');
 const planner = require('../../src/manager/capability-planner');
 const intentRouter = require('../../src/manager/intent-router');
+const authService = require('../../src/domain/auth-service');
+const operating = require('../../src/manager/operating-instructions');
 
 test.after(cleanupAll);
 
@@ -71,3 +73,59 @@ test('an unfamiliar paraphrase is planned by capability instead of needing anoth
   db.close();
 });
 
+test('the capability planner receives approved teachings but no unapproved preview', async () => {
+  const { db } = makeDatabase();
+  const workspace = seedWorkspace(db, { workspaceName: 'Teaching Context Co' });
+  const membership = authService.getMembership(db, workspace.workspaceId, workspace.accountId);
+  const change = {
+    domain: 'workflow_preference', operation: 'set', itemText: '', variantText: '', locationText: '',
+    sourceLocationText: '', supplierText: '', reorderPoint: -1, targetStock: -1, safetyStock: -1,
+    locationMinimum: -1, locationTarget: -1, leadTimeDays: -1, unitsPerPurchaseUnit: -1,
+    minimumOrderQuantity: -1, orderMultiple: -1, maximumQuantity: -1, maximumValue: -1,
+    cooldownHours: -1, daysOfStock: -1, purchaseUnit: '', contactName: '', email: '', orderingMethod: '',
+    preferTransferBeforePurchasing: false, approvalRequired: true, guardAction: '', guardMode: '',
+    guardMetric: '', guardComparator: '', guardThreshold: -1, guardReleaseCondition: '',
+    guardReleaseThreshold: -1, workflowScope: 'reporting',
+    preferenceText: 'Lead weekly reports with exceptions, then supporting detail.',
+  };
+  const ruleProvider = fakeProvider({ understood: true, summary: 'Reporting order', changes: [change], clarifyingQuestion: '', unsupportedReason: '' });
+  const proposal = await operating.interpret(db, workspace.ctx, membership,
+    'Lead weekly reports with exceptions, then supporting detail.', { provider: ruleProvider });
+
+  const before = planner.workspaceSnapshot(db, workspace.ctx);
+  assert.deepEqual(before.approvedTeachings, []);
+  operating.approve(db, workspace.ctx, membership, proposal.id, proposal.integrityHash);
+
+  const after = planner.workspaceSnapshot(db, workspace.ctx);
+  assert.equal(after.approvedTeachings.length, 1);
+  assert.match(after.approvedTeachings[0].effect, /exceptions, then supporting detail/i);
+  assert.equal(after.approvedTeachings[0].grantsAuthority, false);
+  db.close();
+});
+
+test('lasting-preference wording routes to the teach-once capability offline', () => {
+  for (const wording of [
+    'Remember that customer orders should show pickup first.',
+    'From now on, lead weekly reports with exceptions.',
+    'I prefer supplier emails to be concise.',
+  ]) {
+    assert.equal(intentRouter.fallbackClassify(wording).intentClass, 'OPERATING_INSTRUCTION', wording);
+  }
+});
+
+test('explicit teaching language cannot be overridden by a wrong capability plan', async () => {
+  const { db } = makeDatabase();
+  const workspace = seedWorkspace(db, { workspaceName: 'Teaching Route Co' });
+  const wrongPlan = fakeProvider(planResponse({
+    capabilityId: 'inventory.record-movement', intentClass: 'INVENTORY_ACTION',
+    goal: 'Change inventory', reason: 'wrong on purpose',
+  }));
+
+  const result = await intentRouter.classify(db, workspace.ctx,
+    'Remember that supplier emails should be concise.', { provider: wrongPlan });
+
+  assert.equal(result.intentClass, 'OPERATING_INSTRUCTION');
+  assert.equal(result.handler, 'operating_instruction');
+  assert.equal(wrongPlan.calls.length, 0, 'the explicit teach-once boundary is deterministic');
+  db.close();
+});

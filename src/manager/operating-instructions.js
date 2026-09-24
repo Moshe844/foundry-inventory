@@ -30,7 +30,12 @@ const reactions = require('./reactions');
 const DOMAINS = [
   'replenishment', 'location_stock', 'supplier_assignment', 'supplier_terms',
   'transfer_authority', 'purchase_authority', 'operating_preference', 'hard_limits',
-  'stock_protection', 'supplier_communication',
+  'stock_protection', 'supplier_communication', 'workflow_preference',
+];
+
+const WORKFLOW_SCOPES = [
+  '', 'inventory', 'purchasing', 'suppliers', 'sales', 'email', 'shipping',
+  'payments', 'accounting', 'reporting', 'all',
 ];
 
 // All fields are required because providers are more reliable with a closed,
@@ -72,6 +77,8 @@ const CHANGE_SCHEMA = {
     guardThreshold: { type: 'integer' },
     guardReleaseCondition: { type: 'string', enum: ['', 'on_order', 'stock_recovered', 'manual'] },
     guardReleaseThreshold: { type: 'integer' },
+    workflowScope: { type: 'string', enum: WORKFLOW_SCOPES },
+    preferenceText: { type: 'string' },
   },
 };
 
@@ -106,6 +113,14 @@ Use transfer_authority only when the owner explicitly permits automatic transfer
 Use purchase_authority only when the owner explicitly permits automatic purchase-order approval; maximumValue and supplier must be stated.
 Use operating_preference for transfer-before-buying or target days of stock.
 Use hard_limits for a workspace cooldown.
+Use workflow_preference for a lasting way the owner wants a supported workflow handled when none of the
+more specific domains above fits. Set workflowScope to inventory, purchasing, suppliers, sales, email,
+shipping, payments, accounting, reporting, or all. Copy the owner's operational direction faithfully into
+preferenceText; do not turn it into a broader rule. A workflow preference may guide preparation, wording,
+prioritisation, or defaults, but it never grants permission to send, pay, purchase, ship, approve, move stock,
+or post accounting entries. Any request for automatic consequential work must use a specific authority domain
+with its required limit, or be left for clarification. Do not use workflow_preference to pretend an unsupported
+capability exists.
 Use stock_protection when the owner wants to block outgoing sales/issues or receive a warning at a stock threshold.
 The guardAction is issue. Use network_on_hand unless a location was named. "Below" is below; "at or below"
 is inclusive. Set guardMode to block for a hard stop and warn when the owner says to only warn or notify them.
@@ -143,6 +158,7 @@ function emptyChange() {
     preferTransferBeforePurchasing: false, approvalRequired: true,
     guardAction: '', guardMode: '', guardMetric: '', guardComparator: '', guardThreshold: -1,
     guardReleaseCondition: '', guardReleaseThreshold: -1,
+    workflowScope: '', preferenceText: '',
   };
 }
 
@@ -360,6 +376,19 @@ function resolveChange(db, workspaceId, raw, instruction) {
     if (nonnegative(raw.guardThreshold) === null) questions.push('At what on-hand quantity should StockChief warn or block outgoing stock?');
     if (guardMode === 'block' && !raw.guardReleaseCondition) questions.push('What should release the block: a placed supplier order, received stock, or an owner changing the rule?');
   }
+  if (raw.domain === 'workflow_preference' && raw.operation === 'set') {
+    const scope = WORKFLOW_SCOPES.includes(raw.workflowScope) ? raw.workflowScope : '';
+    const preferenceText = String(raw.preferenceText || '').trim();
+    out.workflowScope = scope;
+    out.preferenceText = preferenceText;
+    if (!scope) questions.push('Which part of the operation should remember this: inventory, purchasing, suppliers, sales, email, shipping, payments, accounting, reporting, or all?');
+    if (!preferenceText) questions.push('What lasting preference should StockChief remember?');
+    const consequentialAuthority = /\b(?:automatically|without\s+(?:asking|approval)|on\s+(?:its|your)\s+own|may\s+(?:send|pay|buy|purchase|approve|ship|move|transfer|post))\b/i.test(preferenceText)
+      && /\b(?:send|email|message|pay|payment|buy|purchase|order|approve|ship|label|move|transfer|post|journal|stock)\b/i.test(preferenceText);
+    if (consequentialAuthority) {
+      questions.push('That changes what StockChief may do without approval. State the exact action and a numeric limit so it can be saved as bounded authority instead of a preference.');
+    }
+  }
   return { change: out, questions };
 }
 
@@ -394,9 +423,10 @@ function describe(change) {
       return `${change.supplierName}: ${parts.join('; ')}.`;
     }
     case 'transfer_authority': return `StockChief may automatically transfer no more than ${change.maximumQuantity} units per action${change.locationName ? ` involving ${change.locationName}` : ''}; all safety checks still apply.`;
-    case 'purchase_authority': return `StockChief may automatically approve routine replenishment orders from ${change.supplierName} up to $${change.maximumValue}; anything else still needs approval.`;
+    case 'purchase_authority': return `StockChief may automatically approve routine replenishment orders from ${change.supplierName} up to $${change.maximumValue}${change.currency ? ` ${change.currency}` : ''}${change.itemScope?.length ? ` for the ${change.itemScope.length} previously approved products` : ''}; anything else still needs approval.`;
     case 'operating_preference': return change.preferTransferBeforePurchasing ? 'Try an internal transfer before buying more.' : `Aim for ${change.daysOfStock} days of stock.`;
     case 'hard_limits': return `Wait at least ${change.cooldownHours} hours before repeating automatic work on the same item.`;
+    case 'workflow_preference': return `${change.workflowScope === 'all' ? 'Across the operation' : `For ${change.workflowScope}`}: ${change.preferenceText}`;
     case 'stock_protection': {
       const scope = change.locationName ? ` at ${change.locationName}` : ' across this inventory';
       const boundary = operatingGuards.describeBoundary({
@@ -489,6 +519,38 @@ function list(db, workspaceId, { status = null } = {}) {
   const clause = status ? ' AND status = ?' : '';
   return db.prepare(`SELECT * FROM operating_instruction_proposals WHERE workspace_id = ?${clause} ORDER BY created_at DESC, rowid DESC`)
     .all(workspaceId, ...(status ? [status] : [])).map(hydrate);
+}
+
+/**
+ * The approved operating handbook supplied to every language reader.
+ *
+ * These are owner-approved directions, not transaction facts or authority.
+ * Deterministic services still own identity resolution, required fields,
+ * permission checks, approval gates and execution.
+ */
+function activeTeachings(db, workspaceId, { scopes = [], limit = 50 } = {}) {
+  const wanted = new Set((scopes || []).filter(Boolean));
+  const rows = list(db, workspaceId, { status: 'APPROVED' });
+  const teachings = [];
+  for (const proposal of rows) {
+    for (const change of proposal.resolvedChanges) {
+      const scope = change.domain === 'workflow_preference'
+        ? (change.workflowScope || 'all')
+        : change.domain;
+      if (wanted.size && change.domain === 'workflow_preference'
+          && scope !== 'all' && !wanted.has(scope)) continue;
+      teachings.push({
+        id: proposal.id,
+        scope,
+        domain: change.domain,
+        instruction: proposal.statedAs,
+        effect: describe(change),
+        grantsAuthority: ['purchase_authority', 'transfer_authority'].includes(change.domain),
+      });
+      if (teachings.length >= limit) return teachings;
+    }
+  }
+  return teachings;
 }
 
 async function interpret(db, ctx, membership, instruction, options = {}) {
@@ -725,12 +787,12 @@ function applyChange(db, ctx, membership, change) {
       description: 'Approved through Tell StockChief.',
       allowedActionTypes: [transfer ? 'transfer' : 'approve_purchase_order'],
       scope: { managedBy: 'tell_foundry' },
-      itemScope: change.itemId ? [change.itemId] : [],
+      itemScope: change.itemScope || (change.itemId ? [change.itemId] : []),
       locationScope: [change.sourceLocationId, change.locationId].filter(Boolean),
       supplierScope: change.supplierId ? [change.supplierId] : [], conditions,
       maximumQuantity: transfer ? change.maximumQuantity : null,
       maximumValue: transfer ? null : change.maximumValue,
-      thresholds: transfer ? {} : { maxUnitPriceChangePercent: 0 },
+      thresholds: transfer ? {} : { maxUnitPriceChangePercent: 0, ...(change.currency ? { currency: change.currency } : {}) },
     };
     const previous = automationPolicies.list(db, ctx.workspaceId, { activeOnly: true })
       .find((policy) => policy.scope?.managedBy === 'tell_foundry' && matchesScope(policy));
@@ -759,6 +821,12 @@ function applyChange(db, ctx, membership, change) {
     const current = modes.limits(db, ctx.workspaceId);
     modes.setLimits(db, ctx, membership, { ...current, cooldownHours: change.cooldownHours });
     return { kind: 'hard_limits', cooldownHours: change.cooldownHours };
+  }
+  if (change.domain === 'workflow_preference') {
+    return {
+      kind: 'workflow_preference', scope: change.workflowScope,
+      preferenceText: change.preferenceText,
+    };
   }
   if (change.domain === 'stock_protection') {
     if (change.operation === 'remove') {
@@ -800,6 +868,10 @@ function approve(db, ctx, membership, id, expectedHash) {
       if (change.domain === 'transfer_authority') return `transfer-authority:${change.sourceLocationId || '*'}:${change.locationId || '*'}`;
       if (change.domain === 'operating_preference') return `preference:${change.daysOfStock >= 0 ? 'days' : 'transfer-first'}`;
       if (change.domain === 'hard_limits') return 'hard-limits:cooldown';
+      // More than one preference may apply to the same workflow. They are
+      // removed individually from the transcript instead of silently
+      // replacing an unrelated teaching in that workflow.
+      if (change.domain === 'workflow_preference') return null;
       if (change.domain === 'stock_protection') return `stock-guard:${change.skuId}:${change.locationId || '*'}:${change.guardAction}`;
       return null;
     };
@@ -949,6 +1021,8 @@ function remove(db, ctx, membership, id) {
     else if (record.kind === 'supplier_item' && record.id) suppliers.unlinkItem(db, ctx, membership, record.id);
     else if (record.kind === 'preference' && record.key) preferences.clear(db, ctx, membership, record.key);
     else if (record.kind === 'stock_guard' && record.id) operatingGuards.disable(db, ctx, membership, record.id);
+    // A workflow preference is represented by this approved instruction row.
+    // Marking it removed below is the complete revocation.
   }
   const now = nowIso();
   db.prepare("UPDATE operating_instruction_proposals SET status = 'REMOVED', removed_by_user_id = ?, removed_at = ?, updated_at = ? WHERE id = ? AND workspace_id = ?")
@@ -964,19 +1038,32 @@ function remove(db, ctx, membership, id) {
 function suggestFromRepeatedApproval(db, ctx, item) {
   if (!item || !item.approvedByUserId) return null;
   const action = item.recommendedAction || {};
-  const purchasing = ['purchase_preparation', 'replenishment_plan'].includes(item.category)
+  const purchasing = ['purchase_preparation', 'replenishment_plan', 'purchase_approval'].includes(item.category)
     && action.supplierId && Number(action.value || action.subtotal) > 0;
   const transfer = item.category === 'balance_transfer' && Number(action.quantity) > 0;
   if (!purchasing && !transfer) return null;
   const rows = db.prepare(
-    `SELECT recommended_action FROM work_items
-      WHERE workspace_id = ? AND category = ? AND approved_by_user_id IS NOT NULL
-      ORDER BY approved_at DESC LIMIT 20`
-  ).all(ctx.workspaceId, item.category).map((row) => json(row.recommended_action, {}));
+    `SELECT recommended_action, purchase_order_id FROM work_items
+      WHERE workspace_id = ? AND category = ? AND approved_by_user_id = ?
+        AND execution_status IN ('AUTHORIZED','EXECUTING','VERIFYING','COMPLETED')
+      ORDER BY approved_at DESC LIMIT 100`
+  ).all(ctx.workspaceId, item.category, ctx.actorId).map((row) => {
+    const entry = json(row.recommended_action, {});
+    if (!purchasing) return entry;
+    const orderId = row.purchase_order_id || entry.purchaseOrderId;
+    if (!orderId) return null;
+    const order = db.prepare('SELECT supplier_id, currency, status FROM purchase_orders WHERE workspace_id = ? AND id = ?')
+      .get(ctx.workspaceId, orderId);
+    if (!order || order.currency !== 'USD' || order.supplier_id !== action.supplierId || order.status === 'CANCELLED') return null;
+    const current = require('../purchasing/po-service').get(db, ctx.workspaceId, orderId);
+    if (!current.hasCosts || !Number.isFinite(current.subtotal) || current.subtotal !== Number(entry.value || entry.subtotal)
+        || db.prepare('SELECT 1 FROM purchase_order_charges WHERE workspace_id = ? AND purchase_order_id = ? LIMIT 1').get(ctx.workspaceId, orderId)) return null;
+    return { ...entry, skuIds: current.lines.map((line) => line.skuId) };
+  }).filter(Boolean);
   const comparable = rows.filter((entry) => purchasing
     ? entry.supplierId === action.supplierId && Number(entry.value || entry.subtotal) > 0
     : entry.fromLocationId === action.fromLocationId && entry.toLocationId === action.toLocationId && Number(entry.quantity) > 0);
-  if (comparable.length < 3) return null;
+  if (comparable.length < 5) return null;
   const signature = purchasing ? `purchase:${action.supplierId}` : `transfer:${action.fromLocationId}:${action.toLocationId}`;
   const existing = db.prepare(
     `SELECT id FROM operating_instruction_proposals WHERE workspace_id = ? AND source = 'repeated_approval_suggestion'
@@ -1001,7 +1088,8 @@ function suggestFromRepeatedApproval(db, ctx, item) {
     try { supplier = suppliers.getSupplier(db, ctx.workspaceId, action.supplierId); } catch { /* stale supplier */ }
     const maximumValue = Math.max(...comparable.map((entry) => Number(entry.value || entry.subtotal)));
     change = { ...base, domain: 'purchase_authority', supplierId: action.supplierId,
-      supplierName: supplier?.name || action.supplierName || 'this supplier', maximumValue };
+      supplierName: supplier?.name || action.supplierName || 'this supplier', maximumValue, currency: 'USD',
+      itemScope: [...new Set(comparable.flatMap((entry) => entry.skuIds))].sort() };
     summary = `Suggestion: handle similar ${change.supplierName} orders up to $${maximumValue} automatically?`;
   } else {
     const maximumQuantity = Math.max(...comparable.map((entry) => Number(entry.quantity)));
@@ -1021,4 +1109,4 @@ function suggestFromRepeatedApproval(db, ctx, item) {
   return get(db, ctx.workspaceId, id);
 }
 
-module.exports = { DOMAINS, CHANGE_SCHEMA, SCHEMA, SYSTEM, interpret, __compileReorderRule: compileReorderRule, __compileStockProtection: compileStockProtection, proposeStockProtectionAnswer, proposeStockProtectionProduct, resolveChange, describe, clarificationFor, get, list, approve, cancel, answer, selectProduct, remove, suggestFromRepeatedApproval };
+module.exports = { DOMAINS, WORKFLOW_SCOPES, CHANGE_SCHEMA, SCHEMA, SYSTEM, interpret, __compileReorderRule: compileReorderRule, __compileStockProtection: compileStockProtection, proposeStockProtectionAnswer, proposeStockProtectionProduct, resolveChange, describe, clarificationFor, get, list, activeTeachings, approve, cancel, answer, selectProduct, remove, suggestFromRepeatedApproval };

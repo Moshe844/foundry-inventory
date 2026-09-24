@@ -114,12 +114,12 @@ function csvFile(file, lines) {
 async function register(page, account) {
   await page.goto(`${BASE}/register`);
   await page.fill('#name', account.name);
+  await page.fill('#businessName', account.workspaceName);
   await page.fill('#email', account.email);
   await page.fill('#password', account.password);
-  await Promise.all([page.waitForURL(`${BASE}/inventories`), page.click('form[action="/register"] button[type=submit]')]);
-  await Promise.all([page.waitForURL(`${BASE}/inventories/new`), page.click('a[href="/inventories/new"]')]);
-  await page.fill('#name', account.workspaceName);
-  await Promise.all([page.waitForURL(`${BASE}/onboarding`), page.click('form[action="/inventories"] button[type=submit]')]);
+  await Promise.all([page.waitForURL(`${BASE}/onboarding`), page.click('form[action="/register"] button[type=submit]')]);
+  await page.fill('#inventory-name', account.workspaceName);
+  await Promise.all([page.waitForNavigation(), page.getByRole('button', { name: 'Save name', exact: true }).click()]);
 }
 
 const workspaceIdFor = (databasePath, name) =>
@@ -180,8 +180,8 @@ test('Onboarding end to end: the Excel customer', { timeout: 600000 }, async (t)
     await register(page, ACCOUNT);
     const text = await page.locator('body').innerText();
 
-    assert.match(text, /Where should StockChief get your inventory from/);
-    for (const label of ['Enter it in StockChief', 'Move from files', 'Use email attachments', 'Connect another system', 'Use several sources']) {
+    assert.match(text, /Add your inventory/);
+    for (const label of ['Move from files', 'Connect another system', 'Enter it manually']) {
       assert.ok(text.includes(label), `the chooser is missing "${label}"`);
     }
     assert.match(text, /Not sure/);
@@ -191,7 +191,7 @@ test('Onboarding end to end: the Excel customer', { timeout: 600000 }, async (t)
   await t.test('2. choosing spreadsheets asks for the file, not for a description', async () => {
     await Promise.all([
       page.waitForURL(`${BASE}/onboarding/migrations/new`),
-      page.click('button:has-text("Move from files")'),
+      page.getByRole('link', { name: 'Paste data or see upload options', exact: true }).click(),
     ]);
     const text = await page.locator('body').innerText();
     assert.match(text, /Bring the records you already trust/);
@@ -370,7 +370,7 @@ test('Onboarding end to end: the messy customer', { timeout: 600000 }, async (t)
     await register(page, account);
     await Promise.all([
       page.waitForURL(/\/onboarding\/migrations\/new/),
-      page.click('button:has-text("Use several sources")'),
+      page.getByRole('link', { name: 'Paste data or see upload options', exact: true }).click(),
     ]);
     assert.match(await page.locator('body').innerText(), /Bring the records you already trust/);
     // Existing multi-source sessions keep the older reconciliation workflow

@@ -1,0 +1,17 @@
+<details class="card advanced-settings sales-secondary-actions" id="allocation-settings">
+  <summary>
+    <strong>Change customer allocation</strong>
+    <span class="hint">Priority <%= order.allocation_priority %> · <%= order.needed_by ? 'needed ' + order.needed_by : 'no needed date' %></span>
+  </summary>
+  <% if (locals.canSetAllocation && !['FULFILLED','CANCELLED'].includes(order.status)) { %>
+    <div class="card-body">
+      <p class="hint">Lower numbers are served first, then earlier needed dates. Change this only when this customer should move ahead of or behind other orders.</p>
+      <form method="post" action="/sales/orders/<%= order.id %>/allocation-settings" class="form-grid" style="margin-top:12px">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <label>Allocation priority<input type="number" name="allocationPriority" min="0" max="1000" step="1" required value="<%= order.allocation_priority %>"></label>
+        <label>Customer needed date<input type="date" name="neededBy" value="<%= order.needed_by || '' %>"></label>
+        <button class="btn" type="submit">Save allocation settings</button>
+      </form>
+    </div>
+  <% } %>
+</details>

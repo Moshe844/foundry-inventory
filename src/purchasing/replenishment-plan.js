@@ -216,6 +216,70 @@ function projectAfter(needs, moves, purchase, draftedUnits = 0) {
   };
 }
 
+function operationalAdaptiveChoice(db, workspaceId, sku, now) {
+  let view;
+  try {
+    view = require('../forecasting/planning-service').forSku(db, workspaceId, sku.skuId, { now });
+  } catch {
+    return null;
+  }
+  const plan = view && view.adaptivePlan;
+  const chosen = plan && plan.chosen;
+  if (!chosen || !['TRANSFER', 'BUY', 'BUY_ALTERNATE', 'EXPEDITE', 'TRANSFER_AND_BUY'].includes(chosen.type)) {
+    return null;
+  }
+  if (!['high', 'moderate'].includes(String(plan.confidence || '').toLowerCase())) return null;
+
+  const needsPurchase = ['BUY', 'BUY_ALTERNATE', 'EXPEDITE', 'TRANSFER_AND_BUY'].includes(chosen.type);
+  const needsTransfer = ['TRANSFER', 'TRANSFER_AND_BUY'].includes(chosen.type);
+  const transfers = Array.isArray(chosen.transfers) ? chosen.transfers : [];
+  if (needsPurchase && (!plan.constraints?.cash?.known || !chosen.supplierId
+      || !Number.isFinite(Number(chosen.totalCostMinor))
+      || !Number.isFinite(Number(chosen.quantityPurchaseUnits))
+      || Number(chosen.quantityPurchaseUnits) <= 0)) return null;
+  if (needsTransfer && (!transfers.length || transfers.some((move) =>
+    !move.fromLocationId || !move.toLocationId || !Number.isFinite(Number(move.arrivalDays))
+      || !Number.isFinite(Number(move.costMinor))))) return null;
+
+  let remaining = Number(chosen.transferUnits || (chosen.type === 'TRANSFER' ? chosen.quantityUnits : 0) || 0);
+  const moves = [];
+  for (const move of transfers) {
+    if (remaining <= 0) break;
+    const quantity = Math.min(remaining, Number(move.units || move.quantity || 0));
+    if (quantity <= 0) continue;
+    moves.push({
+      fromLocationId: move.fromLocationId,
+      fromLocationName: move.fromLocationName,
+      toLocationId: move.toLocationId,
+      toLocationName: move.toLocationName,
+      quantity,
+      arrivalDays: Number(move.arrivalDays),
+      costMinor: Number(move.costMinor),
+      why: move.why || plan.explanation,
+    });
+    remaining -= quantity;
+  }
+  if (needsTransfer && (remaining > 0 || !moves.length)) return null;
+
+  const quantityUnits = Number(chosen.purchaseUnits || chosen.quantityUnits || 0);
+  const purchase = needsPurchase ? {
+    supplierId: chosen.supplierId,
+    supplierName: chosen.supplierName,
+    quantityUnits,
+    quantityPurchaseUnits: Number(chosen.quantityPurchaseUnits),
+    purchaseUnit: chosen.purchaseUnit || 'unit',
+    unitsPerPurchaseUnit: quantityUnits / Number(chosen.quantityPurchaseUnits),
+    unitCost: Number(chosen.productCostMinor || chosen.totalCostMinor) / Math.max(quantityUnits, 1) / 100,
+    estimatedCost: Number(chosen.totalCostMinor) / 100,
+    leadTimeDays: Number(chosen.arrivalDays),
+    leadTimeAssumed: false,
+    shortfall: Number(chosen.requestedUnits || quantityUnits),
+    optimizerType: chosen.type,
+  } : null;
+
+  return { view, plan, chosen, moves, purchase };
+}
+
 /**
  * The whole answer for one product.
  *
@@ -408,7 +472,7 @@ function buildPlan(db, workspaceId, sku, options = {}) {
     );
   }
 
-  const decision =
+  let decision =
     moves.length && purchase
       ? 'transfer_and_purchase'
       : moves.length
@@ -417,15 +481,30 @@ function buildPlan(db, workspaceId, sku, options = {}) {
           ? 'purchase'
           : 'none';
 
-  const after = projectAfter(needs, moves, purchase, prepared ? prepared.units : 0);
-  const moved = sum(moves, (m) => m.quantity);
+  let selectedMoves = moves;
+  let selectedPurchase = purchase;
+  const optimized = options.useAdaptiveOptimizer === false
+    ? null : operationalAdaptiveChoice(db, workspaceId, sku, now);
+  if (optimized) {
+    selectedMoves = optimized.moves;
+    selectedPurchase = optimized.purchase;
+    decision = selectedMoves.length && selectedPurchase
+      ? 'transfer_and_purchase'
+      : selectedMoves.length ? 'transfer' : selectedPurchase ? 'purchase' : 'none';
+  }
+
+  const after = projectAfter(needs, selectedMoves, selectedPurchase, prepared ? prepared.units : 0);
+  const moved = sum(selectedMoves, (m) => m.quantity);
 
   // Built by branch rather than by lookup: a lookup table evaluates every arm,
   // and three of these read a purchase that is null whenever none is proposed.
   let headline;
   let explanation;
-  if (decision === 'transfer_and_purchase') {
-    headline = `Move ${counted(moved, unitLabel)} and order ${purchase.quantityUnits}`;
+  if (optimized) {
+    headline = optimized.plan.explanation;
+    explanation = `${optimized.plan.explanation} StockChief compared ${optimized.plan.alternatives.length} evidenced options before selecting this plan.`;
+  } else if (decision === 'transfer_and_purchase') {
+    headline = `Move ${counted(moved, unitLabel)} and order ${selectedPurchase.quantityUnits}`;
     explanation =
       `${onHandTotal} on hand${onOrder ? ` and ${onOrder} on order` : ''} comes to ${networkPosition}, at or below ` +
       `the reorder point of ${reorderPoint} — so this is both in the wrong place and short overall. The transfer ` +
@@ -475,13 +554,22 @@ function buildPlan(db, workspaceId, sku, options = {}) {
     safetyStock: buy.safetyStock ?? null,
     policySource: policy.source || 'manual',
     byLocation: needs,
-    transfers: moves,
-    purchase,
-    blocked: !purchase && belowPoint && buy.reason === 'no_supplier' ? 'no_supplier' : null,
+    transfers: selectedMoves,
+    purchase: selectedPurchase,
+    blocked: !selectedPurchase && belowPoint && buy.reason === 'no_supplier' ? 'no_supplier' : null,
     prepared,
     after,
     calculation: steps,
-    evidence: buy.evidence || [],
+    evidence: optimized
+      ? [
+          ...(buy.evidence || []),
+          { label: 'Optimizer decision', value: optimized.chosen.type },
+          { label: 'Options compared', value: optimized.plan.alternatives.length },
+          { label: 'Expected shortage after plan', value: optimized.plan.expectedResult.expectedShortageUnits },
+        ]
+      : (buy.evidence || []),
+    decisionSource: optimized ? 'adaptive_optimizer' : 'replenishment_rules',
+    adaptivePlan: optimized ? optimized.plan : null,
     now,
   };
 }
@@ -530,7 +618,7 @@ function plannedActions(plan) {
         `Prepare a draft order for ${plan.purchase.quantityPurchaseUnits} ` +
         `${Number(plan.purchase.quantityPurchaseUnits) === 1 ? String(plan.purchase.purchaseUnit).replace(/\(s\)$/i, '') : pluralUnit(plan.purchase.purchaseUnit)} — ${counted(plan.purchase.quantityUnits, plan.unitLabel)} — ` +
         `from ${plan.purchase.supplierName}`,
-      detail: 'Nothing is sent. Placing it with the supplier is a separate decision on the order.',
+      detail: 'The order is priced and checked first. Supplier delivery runs only under separate approved sending authority.',
       units: plan.purchase.quantityUnits,
       supplierId: plan.purchase.supplierId,
     });
@@ -538,7 +626,7 @@ function plannedActions(plan) {
       when: 'after',
       kind: 'place_order',
       text: `Place that order with ${plan.purchase.supplierName} when you are ready`,
-      detail: 'StockChief never tells a supplier anything by itself.',
+      detail: 'Without supplier-email authority this waits for you; with bounded authority, delivery is sent and provider-verified automatically.',
     });
   }
 

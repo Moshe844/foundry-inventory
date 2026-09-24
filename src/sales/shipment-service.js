@@ -129,13 +129,23 @@ function wordForOrder(db, workspaceId, orderId) {
 
 function decorate(db, workspaceId, row) {
   const lines = shipmentLines(db, workspaceId, row.id);
+  const carrierHandover = row.handover === 'CARRIER';
+  const carrierEvidence = carrierHandover || Boolean(row.label_url || row.tracking_number);
   return {
     ...row,
+    carrier: carrierEvidence ? row.carrier : null,
+    service: carrierEvidence ? row.service : null,
+    tracking_number: carrierEvidence ? row.tracking_number : null,
+    tracking_url: carrierEvidence ? row.tracking_url : null,
+    shipping_cost_minor: carrierEvidence ? row.shipping_cost_minor : null,
+    expected_delivery_date: carrierEvidence ? row.expected_delivery_date : null,
     lines,
     units: lines.reduce((sum, line) => sum + Number(line.quantity), 0),
-    carrierName: carriers.displayName(row.carrier),
+    carrierName: carrierEvidence ? carriers.displayName(row.carrier) : null,
     wentBy: wentBy(row),
-    trackingUrl: row.tracking_url || carriers.trackingUrlFor(row.carrier, row.tracking_number),
+    trackingUrl: carrierEvidence
+      ? row.tracking_url || carriers.trackingUrlFor(row.carrier, row.tracking_number)
+      : null,
   };
 }
 
@@ -495,12 +505,24 @@ function ship(db, ctx, shipmentId, input = {}) {
   if (HANDOVER[handover].needsAddress && !trimOrNull(shipment.ship_to_address)) {
     throw new ValidationError('This box has no delivery address. Enter its destination before recording a carrier handover or delivery. Nothing has left stock.');
   }
-  const trackingNumber = trimOrNull(input.trackingNumber) || trimOrNull(shipment.tracking_number);
+  const carrierHandover = handover === 'CARRIER';
+  const trackingNumber = carrierHandover
+    ? trimOrNull(input.trackingNumber) || trimOrNull(shipment.tracking_number)
+    : null;
   const detected = trackingNumber ? carriers.detect(trackingNumber) : null;
-  const carrierCode = trimOrNull(input.carrier) || trimOrNull(shipment.carrier)
-    || (detected ? detected.code : null);
-  const cost = input.shippingCostMinor === undefined || input.shippingCostMinor === null
-    || input.shippingCostMinor === '' ? shipment.shipping_cost_minor : Math.round(Number(input.shippingCostMinor));
+  const carrierCode = carrierHandover
+    ? trimOrNull(input.carrier) || trimOrNull(shipment.carrier) || (detected ? detected.code : null)
+    : null;
+  const service = carrierHandover
+    ? trimOrNull(input.service) || trimOrNull(shipment.service)
+    : null;
+  const cost = carrierHandover
+    ? (input.shippingCostMinor === undefined || input.shippingCostMinor === null
+      || input.shippingCostMinor === '' ? shipment.shipping_cost_minor : Math.round(Number(input.shippingCostMinor)))
+    : null;
+  const expectedDeliveryDate = carrierHandover
+    ? trimOrNull(input.expectedDeliveryDate) || trimOrNull(shipment.expected_delivery_date)
+    : null;
 
   const fulfillmentLines=[];
   for(const line of lines){
@@ -533,10 +555,10 @@ function ship(db, ctx, shipmentId, input = {}) {
       expected_delivery_date = ?, shipped_at = ?, packed_at = COALESCE(packed_at, ?),
       package_count = COALESCE(package_count, 1), notes = COALESCE(?, notes), updated_at = ?
       WHERE id = ?`)
-      .run(handover, carrierCode, trimOrNull(input.service) || trimOrNull(shipment.service), trackingNumber,
+      .run(handover, carrierCode, service, trackingNumber,
         trackingUrl, cost,
         trimOrNull(input.currency) || trimOrNull(shipment.currency) || 'USD',
-        trimOrNull(input.expectedDeliveryDate) || trimOrNull(shipment.expected_delivery_date),
+        expectedDeliveryDate,
         trimOrNull(input.shippedAt) || now, now, trimOrNull(input.notes), now, shipmentId);
     return decorate(db, ctx.workspaceId, requireShipment(db, ctx.workspaceId, shipmentId));
   });

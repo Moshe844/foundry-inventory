@@ -22,7 +22,8 @@ router.use('/messages', requireAuth);
 
 function mailboxes(req) {
   return connections.list(req.db, req.ctx.workspaceId)
-    .filter((row) => ['gmail', 'microsoft365'].includes(row.provider_type));
+    .filter((row) => ['gmail', 'microsoft365'].includes(row.provider_type)
+      && row.status === 'connected' && !row.paused_at);
 }
 
 router.get('/messages/:id', requirePermission(permissions.VIEW, 'read messages'), asyncRoute(async (req, res) => {

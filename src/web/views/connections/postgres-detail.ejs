@@ -1,0 +1,70 @@
+<section class="rm-head">
+  <div><p class="rm-eyebrow">Connection</p><h1><%= connection.display_name %></h1>
+    <p class="rm-lede"><%= connection.provider_account_name || 'This provider has not returned an account identity yet.' %></p></div>
+  <span class="rm-badge"><%= connection.publicStatus %></span>
+</section>
+
+<section class="rm-card">
+  <dl class="rm-kpis">
+    <div><dt>Provider</dt><dd><%= connection.provider_type %></dd></div>
+    <div><dt>Setup</dt><dd><%= connection.setup_status %></dd></div>
+    <div><dt>Open issues</dt><dd><%= connection.openIssues %></dd></div>
+    <div><dt>Last activity</dt><dd><%= connection.last_activity_at || connection.last_synced_at || 'Not yet' %></dd></div>
+  </dl>
+  <% if (connection.last_error) { %><div class="flash flash--warn" role="alert"><span><%= connection.last_error %></span></div><% } %>
+  <% if (newConnectionToken) { %>
+    <label>Copy this token now<input readonly value="<%= newConnectionToken %>" aria-label="Connection token"></label>
+  <% } %>
+</section>
+
+<% if(connection.accounting){ const accounting=connection.accounting; const externalAccounts=accounting.latestShadow?.externalSnapshot?.accounts||[]; %>
+<section class="rm-card">
+  <div class="rm-head"><div><p class="rm-eyebrow">Accounting control</p><h2><%= accounting.policy.stage.replaceAll('_',' ').toLowerCase() %></h2>
+    <p>StockChief remains the source of operational truth. Provider posting is unavailable until exact identities and a zero-difference shadow comparison are approved.</p></div></div>
+  <dl class="rm-kpis"><div><dt>Authority</dt><dd><%= accounting.policy.requested_authority %></dd></div><div><dt>Mapped accounts</dt><dd><%= accounting.mappings.length %></dd></div><div><dt>Pending journals</dt><dd><%= accounting.pendingEntries.length %></dd></div><div><dt>Confirmed exports</dt><dd><%= accounting.postedEntries.length %></dd></div></dl>
+  <% if(accounting.policy.requested_authority!=='POST'){ %><form method="post" action="/settings/connections/<%= connection.id %>/accounting/authority"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="authority" value="POST"><button class="rm-btn" type="submit">Request governed posting</button></form>
+  <% } else { %><form method="post" action="/settings/connections/<%= connection.id %>/accounting/authority"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="authority" value="OBSERVE"><button class="rm-btn rm-btn--quiet" type="submit">Return to read-only</button></form><% } %>
+
+  <% if(accounting.policy.requested_authority==='POST'){ %>
+    <% if(accounting.latestShadow){ const differenceCount=accounting.latestShadow.differences.length; %><div class="quiet-note"><strong>Latest shadow: <%= accounting.latestShadow.status %></strong><br><%= differenceCount %> accounting difference<%= differenceCount===1?'':'s' %>, as of <%= accounting.latestShadow.as_of %>.</div><% } %>
+    <% if(externalAccounts.length){ %><details class="rm-disclosure" open><summary>Map exact posting accounts</summary><form method="post" action="/settings/connections/<%= connection.id %>/accounting/map-account" class="inline-form"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label>StockChief account<select name="accountId" required><option value="">Choose account</option><% accounting.accounts.forEach(function(account){ %><option value="<%= account.id %>"><%= account.code %> · <%= account.name %></option><% }) %></select></label><label>Provider account<select name="externalId" required><option value="">Choose verified provider account</option><% externalAccounts.forEach(function(account){ %><option value="<%= account.externalId %>"><%= account.code||account.externalId %> · <%= account.name %></option><% }) %></select></label><button class="rm-btn" type="submit">Save exact mapping</button></form></details><% } %>
+    <form method="post" action="/settings/connections/<%= connection.id %>/accounting/shadow" class="inline-form"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label>Compare through<input type="date" name="asOf" value="<%= new Date().toISOString().slice(0,10) %>"></label><button class="rm-btn rm-btn--quiet" type="submit">Run read-only shadow comparison</button></form>
+    <% if(accounting.policy.stage==='WRITE_READY'){ %><form method="post" action="/settings/connections/<%= connection.id %>/accounting/enable"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn" type="submit">Enable verified posting</button></form><% } %>
+    <% if(accounting.policy.stage==='WRITE_ENABLED'){ %><form method="post" action="/settings/connections/<%= connection.id %>/accounting/export"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn" type="submit">Queue ready journals</button></form><p>The browser makes no accounting-provider write. A durable worker posts each journal once and stores the provider identity only after confirmation.</p><% } %>
+    <% const blocked=accounting.pendingEntries.filter((entry)=>entry.missingAccounts.length||entry.missingParties.length); if(blocked.length){ %><div class="flash flash--warn"><span><%= blocked.length %> journal(s) are blocked by missing exact account or customer/supplier mappings. Nothing in those journals can be queued.</span></div><% } %>
+    <% if(accounting.externalParties){ const missingPartyLines=accounting.pendingEntries.flatMap((entry)=>entry.missingParties); const partyKeys=new Set(); missingPartyLines.forEach(function(line){ if(line.customer_id)partyKeys.add('customer:'+line.customer_id); if(line.supplier_id)partyKeys.add('supplier:'+line.supplier_id); }); %>
+      <details class="rm-disclosure" open><summary>Map QuickBooks customers and suppliers</summary><% [...partyKeys].forEach(function(key){ const parts=key.split(':'); const partyType=parts[0]; const partyId=parts.slice(1).join(':'); const choices=accounting.externalParties[partyType]||[]; %><form method="post" action="/settings/connections/<%= connection.id %>/accounting/map-party" class="inline-form"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="partyType" value="<%= partyType %>"><input type="hidden" name="partyId" value="<%= partyId %>"><label><%= partyType %><select name="externalId" required><option value="">Choose verified QuickBooks identity</option><% choices.forEach(function(choice){ %><option value="<%= choice.externalId %>"><%= choice.name %><%= choice.email?' · '+choice.email:'' %></option><% }) %></select></label><button class="rm-btn rm-btn--quiet" type="submit">Save exact identity</button></form><% }) %></details>
+    <% } else if(accounting.externalPartiesError){ %><div class="flash flash--warn"><span><%= accounting.externalPartiesError %></span></div><% } %>
+    <% if(accounting.pendingEntries.length){ %><div class="rm-ledger"><% accounting.pendingEntries.slice(0,20).forEach(function(entry){ %><div class="rm-ledger__row"><span class="rm-ledger__k">Journal <%= entry.entry_number %><small><%= entry.description %></small></span><span class="rm-ledger__v"><%= entry.effect_status||'not queued' %></span><span class="rm-ledger__n"><%= entry.missingAccounts.length %> account · <%= entry.missingParties.length %> party gaps</span></div><% }) %></div><% } %>
+  <% } %>
+</section>
+<% } %>
+
+<% if (canDiscover) { %>
+<section class="rm-card">
+  <% if (query && query.refresh === 'queued') { %><div class="flash flash--success" role="status"><span>Catalogue refresh queued. StockChief will exact-match safe records and show only records that need you.</span></div><% } %>
+  <div class="rm-head"><div><p class="rm-eyebrow">Provider catalogue</p><h2>Products and locations</h2>
+    <p>StockChief exact-matches safe records automatically. Anything ambiguous stays unchanged and appears in Needs You.</p></div>
+    <% if (connection.status === 'connected' && !connection.paused_at) { %>
+      <form method="post" action="/settings/connections/<%= connection.id %>/refresh">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--quiet" type="submit">Refresh now</button>
+      </form>
+    <% } %>
+  </div>
+  <dl class="rm-kpis">
+    <div><dt>Products mapped</dt><dd><%= connection.productsMapped %></dd></div>
+    <div><dt>Locations mapped</dt><dd><%= connection.locationsMapped %></dd></div>
+    <div><dt>Need your match</dt><dd><%= connection.itemsNeedingMapping %></dd></div>
+    <div><dt>Last refresh</dt><dd><%= connection.last_synced_at || 'Not yet' %></dd></div>
+  </dl>
+</section>
+<% } %>
+
+<section class="rm-card">
+  <h2>Control</h2><p>Pausing is reversible. Disconnecting deletes the encrypted provider credential and revokes event tokens.</p>
+  <div class="rm-actions">
+    <% if (connection.paused_at) { %><form method="post" action="/settings/connections/<%= connection.id %>/resume"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn" type="submit">Resume</button></form>
+    <% } else if (connection.status === 'connected') { %><form method="post" action="/settings/connections/<%= connection.id %>/pause"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--quiet" type="submit">Pause</button></form><% } %>
+    <% if (connection.status !== 'disconnected') { %><form method="post" action="/settings/connections/<%= connection.id %>/disconnect"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--quiet" type="submit">Disconnect and remove credentials</button></form><% } %>
+  </div>
+</section>

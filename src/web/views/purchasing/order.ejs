@@ -85,6 +85,7 @@
         <% supplierBills.forEach(function(bill) { var openBill = ['OPEN','PARTIALLY_PAID'].includes(bill.status); var paid = Number(bill.total_minor) - Number(bill.balance_minor); %>
           <div class="list-row">
             <div><strong><%= bill.supplier_invoice_number ? 'Supplier invoice ' + bill.supplier_invoice_number : bill.bill_number %></strong><p><%= helpers.money(bill.total_minor, bill.currency) %> invoice · <%= helpers.money(paid, bill.currency) %> paid · <%= helpers.money(bill.balance_minor, bill.currency) %> still owed</p><small><%= bill.status.replaceAll('_',' ').toLowerCase() %> · <%= bill.match_status.replaceAll('_',' ').toLowerCase() %><%= bill.due_date ? ' · due ' + bill.due_date : '' %></small></div>
+            <% if (['DRAFT', 'DISPUTED'].includes(bill.status)) { %><a class="btn btn--sm" href="/accounting/payables/<%= bill.id %>/review">Resolve invoice</a><% } %>
             <% if (openBill && permissions.payments) { %><details class="advanced-settings"><summary class="btn btn--sm">Record payment</summary><form method="post" action="/accounting/payables/<%= bill.id %>/payment" class="form-inline"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="<%= bill.id %>-<%= Date.now() %>"><input type="hidden" name="returnTo" value="/purchasing/orders/<%= order.id %>"><label class="field"><span class="field-label">Amount actually paid</span><input class="input input--sm" name="amount" inputmode="decimal" value="<%= (bill.balance_minor / 100).toFixed(2) %>" required></label><label class="field"><span class="field-label">Payment date</span><input class="input input--sm" type="date" name="paymentDate" value="<%= new Date().toISOString().slice(0,10) %>" required></label><label class="field"><span class="field-label">Reference</span><input class="input input--sm" name="reference" placeholder="Check, transfer, card…"></label><button class="btn btn--primary btn--sm" type="submit">Record payment</button></form></details><% } %>
           </div>
         <% }) %>
@@ -292,7 +293,7 @@
   <div class="card-head"><h2>What has happened to this order</h2></div>
   <div class="card-body">
     <ul class="plain-list">
-      <% supplierDocuments.forEach(function(document) { %><li><strong><%= document.document_type.replaceAll('_', ' ') %> from <%= document.sender %></strong><span class="muted"><%= document.status === 'NEEDS_REVIEW' ? 'Needs your decision' : 'Matched to this order' %> · <%= helpers.dateTime(document.received_at) %></span></li><% }) %>
+      <% supplierDocuments.forEach(function(document) { %><li><strong><%= document.document_type.replaceAll('_', ' ') %> from <%= document.sender %></strong><span class="muted"><%= document.status === 'NEEDS_REVIEW' ? 'Needs your decision' : document.status === 'IGNORED' ? 'Ignored—no effect' : 'Matched to this order' %> · <%= helpers.dateTime(document.received_at) %></span></li><% }) %>
       <% events.forEach(function (event) { %>
         <li>
           <strong><%= event.event %></strong>

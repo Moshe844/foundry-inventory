@@ -70,9 +70,15 @@
         <% } else { %>
           <h3>Your setup is ready. Now add your products.</h3>
           <p>StockChief knows how this inventory should work, but no product or stock records have been added yet.</p>
-          <a class="btn btn--primary" href="/inventory/describe"><%- helpers.icon('spark', { size: 15 }) %> Tell StockChief what you sell</a>
-          <a class="btn" href="/inventory/new">Add one manually</a>
-          <p class="hint">Already have records? <a href="/onboarding/migrations/new">Import a file</a>, <a href="/onboarding/system">connect a business system</a>, or <a href="/onboarding/mailbox">use email attachments</a>.</p>
+          <% if (typeof postgresNative !== 'undefined' && postgresNative) { %>
+            <a class="btn btn--primary" href="/onboarding">Choose where your records are</a>
+            <a class="btn" href="/inventory/new">Add one manually</a>
+            <p class="hint">Already have records? <a href="/imports">Import a file</a> or <a href="/settings/connections">connect a business system</a>. Email attachments can be added later from Connections.</p>
+          <% } else { %>
+            <a class="btn btn--primary" href="/inventory/describe"><%- helpers.icon('spark', { size: 15 }) %> Tell StockChief what you sell</a>
+            <a class="btn" href="/inventory/new">Add one manually</a>
+            <p class="hint">Already have records? <a href="/onboarding/migrations/new">Import a file</a>, <a href="/onboarding/system">connect a business system</a>, or <a href="/onboarding/mailbox">use email attachments</a>.</p>
+          <% } %>
         <% } %>
       <% } %>
     </div>

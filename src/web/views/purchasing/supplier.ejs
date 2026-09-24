@@ -96,11 +96,12 @@
       <p class="muted"><%= reliability.summary %></p></div></div>
     <div class="card-body">
       <div class="accounting-equation">
-        <p><span>Delivered orders on record</span><strong><%= reliability.orderCount %></strong></p>
-        <p><span>Arrived when promised</span><strong>
+        <p><span>Committed orders in last <%= reliability.lookbackDays %> days</span><strong><%= reliability.orderCount %></strong></p>
+        <p><span>Overdue unfinished orders</span><strong><%= reliability.overdueOrderCount %></strong></p>
+        <p><span>Completed when promised</span><strong>
           <%= reliability.onTimeRate === null ? 'not stated on the orders' : reliability.onTimeRate + '%' %>
         </strong></p>
-        <p><span>Usually takes</span><strong>
+        <p><span>Time to first receipt (recent deliveries)</span><strong>
           <%= reliability.timing.measured ? reliability.timing.measured.meanDays + ' days' : '—' %>
         </strong></p>
         <p><span>All of it arrived</span><strong>
@@ -111,7 +112,7 @@
         <p class="muted"><%= reliability.timing.explanation %></p>
       <% } %>
       <% if (!reliability.enoughEvidence) { %>
-        <p class="muted">Too few delivered orders for StockChief to call this a pattern yet.</p>
+        <p class="muted">Too few rated orders for StockChief to call this a pattern yet. Future undelivered orders are not counted as on-time deliveries.</p>
       <% } %>
     </div>
   </div>

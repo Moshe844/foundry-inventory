@@ -338,6 +338,31 @@ function evaluateAgainstPolicy(db, workspaceId, plan, policy, limits, now) {
   if (plan.supplierId) checks.push(check('Supplier is in scope', true, null));
 
   // --- limits ---------------------------------------------------------------
+  if (plan.actionType === 'approve_purchase_order' && (!Number.isFinite(Number(plan.value)) || plan.value === null || plan.value === undefined || Number(plan.value) <= 0)) {
+    return refuse('The complete purchase value is unknown. A person must review it.');
+  }
+  if (plan.actionType === 'approve_purchase_order' && policy.thresholds.currency && plan.currency !== policy.thresholds.currency) {
+    return refuse('The order currency does not match the approved purchase currency.');
+  }
+  if (policy.thresholds.maxValuePerWeek !== undefined && plan.actionType === 'approve_purchase_order') {
+    if (plan.currency !== policy.thresholds.currency || plan.currency !== 'USD') return refuse('The order currency does not match the approved USD budget.');
+    const since = new Date(now - 7 * DAY_MS).toISOString();
+    const committed = db.prepare(`SELECT w.outcome, p.currency FROM work_items w
+      LEFT JOIN purchase_orders p ON p.id = w.purchase_order_id AND p.workspace_id = w.workspace_id
+      WHERE w.workspace_id = ? AND w.execution_status = 'COMPLETED' AND w.completed_at >= ? AND w.completed_at <= ?
+      AND json_extract(w.outcome, '$.autoApproved') = 1`)
+      .all(workspaceId, since, new Date(now).toISOString());
+    let spentMinor = 0;
+    for (const row of committed) {
+      const outcome = JSON.parse(row.outcome);
+      if (row.currency !== 'USD') return refuse('A previous automatic purchase has a different or unknown currency. Review the budget ledger.');
+      if (!Number.isFinite(Number(outcome.value)) || outcome.value === null) return refuse('A previous automatic purchase has an unknown value. Review the budget ledger.');
+      spentMinor += Math.round(Number(outcome.value) * 100);
+    }
+    const passed = spentMinor + Math.round(Number(plan.value) * 100) <= Math.round(Number(policy.thresholds.maxValuePerWeek) * 100);
+    checks.push(check('Within the rolling seven-day purchase budget', passed, `${spentMinor / 100} USD committed; limit ${policy.thresholds.maxValuePerWeek} USD`));
+    if (!passed) return refuse('This purchase exceeds the approved rolling seven-day budget.');
+  }
   const quantity = Number(plan.quantity) || 0;
   if (policy.maximumQuantity && quantity > policy.maximumQuantity) {
     checks.push(check('Within the policy quantity limit', false, `${quantity} > ${policy.maximumQuantity}`));

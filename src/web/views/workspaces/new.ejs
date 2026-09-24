@@ -1,6 +1,5 @@
 <div class="page-head">
   <div class="titles">
-    <a class="back-link" href="/inventories"><%- helpers.icon('chevron', { size: 14 }) %> Your inventories</a>
     <h1>New inventory</h1>
     <div class="page-sub">
       Give this operation a name. Next, StockChief will ask how you manage its inventory today.
@@ -19,30 +18,18 @@
       <div class="field">
         <label class="label" for="name">What do you want to call it?</label>
         <input class="input" id="name" name="name" type="text" maxlength="120" required autofocus
-               value="<%= form.name || '' %>" placeholder="Clothing Business">
+               value="<%= form.name || '' %>" placeholder="e.g. Clothing Business">
         <p class="hint">
           The name of the business, site or programme this inventory is for —
           not a location inside it. You can add locations once it exists.
         </p>
       </div>
 
-      <fieldset class="field">
-        <legend class="label">What will this inventory contain?</legend>
-        <label class="choice">
-          <input type="radio" name="dataMode" value="production" <%= form.dataMode !== 'synthetic' ? 'checked' : '' %>>
-          <span><strong>My real business</strong><small>StockChief uses only records backed by your business evidence.</small></span>
-        </label>
-        <label class="choice">
-          <input type="radio" name="dataMode" value="synthetic" <%= form.dataMode === 'synthetic' ? 'checked' : '' %>>
-          <span><strong>Test environment</strong><small>StockChief may generate realistic synthetic products, stock, suppliers, transactions and history here.</small></span>
-        </label>
-      </fieldset>
-
       <div class="form-actions">
         <a class="btn" href="/inventories">Cancel</a>
         <span class="spacer"></span>
         <button class="btn btn--primary" type="submit" <%= allowance.exceeded ? 'disabled' : '' %>>
-          Continue with StockChief
+          Choose a source
         </button>
       </div>
     </form>

@@ -5,16 +5,23 @@ const config = require('../../config');
 const readiness = require('../../operations/readiness');
 const certification = require('../../operations/certification');
 const jobs = require('../../operations/job-queue');
+const postgresJobs = require('../../operations/postgres-job-queue');
 const outbox = require('../../operations/outbox');
 const monitoring = require('../../operations/monitoring');
 const checkpoints = require('../../operations/checkpoints');
-const { requirePermission } = require('../middleware');
+const { requirePermission, asyncRoute } = require('../middleware');
 const permissions = require('../../actions/permissions');
 
 const router = express.Router();
 router.use('/settings/operations', requirePermission(permissions.ADMIN, 'manage production operations'));
 
-router.get('/settings/operations', (req, res) => {
+router.get('/settings/operations', asyncRoute(async (req, res) => {
+  const postgresDatabase = req.app.locals.runtimeJobDatabase;
+  const postgresRetryNotice = req.query.postgresRetry === 'queued'
+    ? 'The PostgreSQL job is queued for a controlled retry.'
+    : req.query.postgresRetry === 'missing'
+      ? 'No dead-lettered PostgreSQL job is available in this workspace.'
+      : null;
   res.page('settings/operations', {
     title: 'Production operations', nav: 'settings',
     // This screen certifies the production target even when an engineer opens
@@ -22,14 +29,23 @@ router.get('/settings/operations', (req, res) => {
     // is still missing external alert, email, backup or browser evidence.
     readiness: readiness.snapshot(req.db, { env: 'production' }),
     deadJobs: jobs.listDead(req.db),
+    postgresDeadJobs: postgresDatabase ? await postgresJobs.listDead(postgresDatabase, req.ctx.workspaceId) : null,
     deadMessages: outbox.listDead(req.db),
     alerts: req.db.prepare(`SELECT * FROM operational_alerts
       WHERE status != 'RESOLVED' ORDER BY last_seen_at DESC LIMIT 100`).all(),
     runs: req.db.prepare(`SELECT * FROM production_certification_runs
       ORDER BY started_at DESC LIMIT 20`).all(),
+    postgresRetryNotice,
     backTo: { href: '/settings', label: 'Settings' },
   });
-});
+}));
+
+router.post('/settings/operations/postgres-jobs/:id/retry', asyncRoute(async (req, res) => {
+  const database = req.app.locals.runtimeJobDatabase;
+  const job = database ? await postgresJobs.retryDead(database, req.params.id, req.ctx.workspaceId, { by: req.user.id }) : null;
+  req.flash(job ? 'success' : 'warn', job ? 'The PostgreSQL job is queued for a controlled retry.' : 'No dead-lettered PostgreSQL job is available in this workspace.');
+  res.redirect(303, `/settings/operations?postgresRetry=${job ? 'queued' : 'missing'}#postgres-jobs`);
+}));
 
 router.post('/settings/operations/jobs/:id/retry', (req, res) => {
   const job = jobs.retryDead(req.db, req.params.id, { by: req.user.id });

@@ -9,7 +9,7 @@
           ? 'Done'
           : helpers.columnLabel(item.executionStatus.toLowerCase().replace(/_/g, ' ')) %>
       <% if (item.verificationStatus === 'VERIFIED') { %> · verified against your records<% } %>
-      <% if (item.isAutomatic) { %> · carried out automatically<% } %>
+      <% if (item.isAutomatic && item.executionStatus === 'COMPLETED') { %> · carried out automatically<% } %>
     </div>
   </div>
 </div>

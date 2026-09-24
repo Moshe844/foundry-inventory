@@ -13,6 +13,22 @@ function stamp(now = Date.now()) {
   return new Date(now).toISOString().slice(0, 19).replaceAll(':', '-');
 }
 
+function sha256FileSync(filePath) {
+  const hash = crypto.createHash('sha256');
+  const buffer = Buffer.allocUnsafe(8 * 1024 * 1024);
+  const descriptor = fs.openSync(filePath, 'r');
+  try {
+    let bytesRead;
+    do {
+      bytesRead = fs.readSync(descriptor, buffer, 0, buffer.length, null);
+      if (bytesRead > 0) hash.update(buffer.subarray(0, bytesRead));
+    } while (bytesRead > 0);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+  return hash.digest('hex');
+}
+
 function verify(backupPath) {
   const resolved = path.resolve(backupPath);
   const db = new Database(resolved, { readonly: true, fileMustExist: true });
@@ -26,7 +42,7 @@ function verify(backupPath) {
     const journalCount = db.prepare("SELECT COUNT(*) AS n FROM accounting_journal_entries").get().n;
     return { ok, integrity, tableCount, workspaceCount, movementCount, journalCount,
       bytes: fs.statSync(resolved).size,
-      sha256: crypto.createHash('sha256').update(fs.readFileSync(resolved)).digest('hex'),
+      sha256: sha256FileSync(resolved),
       path: resolved };
   } finally {
     db.close();

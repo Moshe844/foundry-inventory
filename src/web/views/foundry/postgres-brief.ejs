@@ -1,0 +1,19 @@
+<% if(isEmpty){ %>
+  <p class="rm-stamp">Ready for your records</p><h1 class="rm-verdict">Your inventory is ready for its first source.</h1>
+  <p class="rm-prose">Bring a spreadsheet, connect another system, or enter products manually. Nothing is ordered, sent, or paid without the authority you set.</p>
+  <p class="rm-choices"><a class="rm-btn" href="/imports">Move from files</a><a class="rm-btn rm-btn--ghost" href="/settings/connections">Connect another system</a><a class="rm-btn rm-btn--ghost" href="/inventory/new">Enter it manually</a></p>
+<% } else { %>
+  <p class="rm-stamp">Current operating position</p>
+  <h1 class="rm-verdict"><%= needs.length ? needs.length + ' exception' + (needs.length===1?' needs':'s need') + ' you.' : 'Your operation is under control.' %></h1>
+  <p class="rm-prose"><%= stats.available %> units are available, <%= stats.committed %> committed to orders, and <%= stats.incoming %> incoming from purchasing.</p>
+  <% if(needs.length){ %><div class="rm-decision"><span class="rm-decision__arrow">→</span><span class="rm-decision__txt"><%= needs[0].title %><small><%= needs[0].happened %></small></span><span class="rm-decision__go"><a class="rm-btn" href="/needs-you">Open Needs you</a></span></div><% } %>
+  <div class="stat-strip section"><div><span class="stat-value"><%= stats.itemCount %></span><span class="stat-label">products</span></div><div><span class="stat-value"><%= stats.skuCount %></span><span class="stat-label">SKUs</span></div><div><span class="stat-value"><%= stats.unitsOnHand %></span><span class="stat-label">units on hand</span></div><div><span class="stat-value"><%= stats.zeroCount %></span><span class="stat-label">SKUs at zero</span></div></div>
+  <section class="section"><div class="section-head"><h2>Business flow</h2></div><div class="rm-ledger">
+    <div class="rm-ledger__row"><span class="rm-ledger__k">Customer orders open</span><span class="rm-ledger__v"><%= stats.openOrders %></span><span class="rm-ledger__n"><%= stats.committed %> units committed</span></div>
+    <div class="rm-ledger__row"><span class="rm-ledger__k">Purchases open</span><span class="rm-ledger__v"><%= stats.openPurchases %></span><span class="rm-ledger__n"><%= stats.incoming %> units incoming</span></div>
+    <div class="rm-ledger__row"><span class="rm-ledger__k">Available now</span><span class="rm-ledger__v"><%= stats.available %></span><span class="rm-ledger__n">on hand less commitments</span></div>
+  </div></section>
+  <section class="section"><div class="section-head"><h2>Recent verified movements</h2><a class="section-more" href="/activity">See all</a></div>
+    <% if(!activity.length){ %><div class="quiet-note">No inventory movements yet.</div><% } else { %><div class="rm-feed"><% activity.slice(0,6).forEach(function(row){ %><div class="rm-feed__row"><span class="rm-feed__ic"><%= row.quantityDelta>0?'+':'−' %></span><span class="rm-feed__t"><%= row.item_name %> · <%= row.code %><small><%= row.operation %> at <%= row.location_name %><%= row.reference?' · '+row.reference:'' %></small></span><span class="rm-feed__m"><%= row.quantityDelta>0?'+':'' %><%= row.quantityDelta %></span></div><% }) %></div><% } %>
+  </section>
+<% } %>

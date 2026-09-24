@@ -130,8 +130,8 @@ test('a new account is handed to StockChief, not an empty dashboard', async () =
   // points at StockChief, rather than silently sending you there.
   const home = await agent.get('/');
   assert.equal(home.status, 200);
-  assert.match(plain(home.text), /This inventory is empty/);
-  assert.match(plain(home.text), /Set it up with StockChief/);
+  assert.match(plain(home.text), /first records/);
+  assert.match(plain(home.text), /Add a source/);
 
   // The first decision is now how they manage inventory today. Sending someone
   // with a spreadsheet straight to "describe your business" was asking them to
@@ -141,12 +141,12 @@ test('a new account is handed to StockChief, not an empty dashboard', async () =
   assert.equal(front.headers.location, '/onboarding');
 
   const chooser = plain((await agent.get('/onboarding')).text);
-  assert.match(chooser, /Where should StockChief get your inventory from/);
-  assert.match(chooser, /Enter it in StockChief/);
+  assert.match(chooser, /Add your inventory/);
+  assert.match(chooser, /Enter it manually/);
   assert.match(chooser, /Move from files/);
-  assert.match(chooser, /maps and reconciles them before cutover/);
+  assert.match(chooser, /review imported records before they become live/i);
   assert.match(chooser, /Connect another system/);
-  assert.match(chooser, /Use several sources/);
+  assert.doesNotMatch(chooser, /Use several sources|Use email attachments/);
 
   // Starting Fresh is the Mission 2 experience, reached deliberately and
   // otherwise unchanged.
@@ -181,7 +181,7 @@ test('the whole approval flow works end to end over HTTP', async () => {
   assert.match(proposal, /Enter records in StockChief/);
   assert.match(proposal, /Upload inventory files/);
   assert.match(proposal, /Connect a business system/);
-  assert.match(proposal, /Use email attachments/);
+  assert.doesNotMatch(proposal, /Use email attachments/);
   assert.doesNotMatch(proposal, /Choose where my records are/);
   assert.match(proposal, /What StockChief knows \/ Why StockChief decided this/);
   assert.doesNotMatch(proposal, /What starts working after this setup|Save the safe structure/);
@@ -233,7 +233,7 @@ test('a reviewed proposal continues directly to every chosen record source witho
   const cases = [
     ['spreadsheet', '/onboarding/migrations/new', 'spreadsheet'],
     ['software', '/onboarding/system', 'software'],
-    ['mailbox', '/onboarding/mailbox', 'undecided'],
+    ['mailbox', '/settings/ingestion', 'undecided'],
   ];
 
   for (const [choice, destination, storedPath] of cases) {
@@ -390,7 +390,9 @@ test('a first stock report is read, previewed, and becomes configured inventory 
   assert.match(ready, /This file called the vendor identifier Supplier Code/);
   assert.match(ready, /StockChief will call it Style #/);
   assert.match(ready, /recognize alternate headings on future documents/);
-  assert.match(ready, /Purchase order INV-2026-0816 recorded, approved, and fully received/);
+  assert.match(ready, /Recorded as approved opening inventory\. No purchase order, supplier bill, or payment was created\./);
+  assert.doesNotMatch(ready, /See the order|Purchase order .* recorded/);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM purchase_orders WHERE workspace_id = ?').get(workspace.workspaceId).n, 0);
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM items WHERE workspace_id = ?').get(workspace.workspaceId).n, 2);
   assert.equal(db.prepare('SELECT COALESCE(SUM(on_hand), 0) AS n FROM balances WHERE workspace_id = ?').get(workspace.workspaceId).n, 30);
   const savedSupplier = db.prepare('SELECT item_code_label, item_code_aliases FROM suppliers WHERE workspace_id = ?').get(workspace.workspaceId);
@@ -420,7 +422,7 @@ test('after configuring, the console uses the customer terminology', async () =>
   // products yet. Customer terminology belongs to the traditional overview, so
   // that is where it is checked.
   const home = plain((await agent.get('/')).text);
-  assert.match(home, /Getting StockChief ready/);
+  assert.match(home, /first records/);
 
   const overview = plain((await agent.get('/overview')).text);
   assert.match(overview, /Ask StockChief about your inventory/);

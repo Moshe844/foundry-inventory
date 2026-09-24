@@ -31,6 +31,30 @@ test('financial wording routes deterministically without hard-coded products or 
   for (const [question, intent] of cases) assert.equal((await planner.plan(question)).intent, intent);
 });
 
+test('company margin wording cannot drift into product profitability', async () => {
+  const { db } = makeDatabase();
+  const workspace = seedWorkspace(db);
+  const result = await planner.ask(db, workspace.workspaceId,
+    'What was our gross margin last quarter?', {
+      provider: { complete: async () => { throw new Error('company margin must not require a model'); } },
+    });
+  assert.equal(result.plan.intent, 'profit_and_loss');
+  assert.equal(result.plan.windowDays, 90);
+});
+
+test('margin on a named product remains product-scoped', async () => {
+  const { db } = makeDatabase();
+  const workspace = seedWorkspace(db);
+  const result = await planner.ask(db, workspace.workspaceId,
+    'What was our gross margin on valves last quarter?', {
+      provider: { complete: async () => ({ data: { decision: 'answer', interpretation: 'Gross margin on valves',
+        clarification: '', continuesPrevious: false, unsupportedReason: '', nearest: '',
+        parts: [{ intent: 'product_profitability', entityQuery: 'valves', locationQuery: '', windowDays: 90,
+          limit: 10, unsupportedReason: '', question: 'gross margin on valves last quarter', recordQuery: null }] } }) },
+    });
+  assert.equal(result.plan.intent, 'product_profitability');
+});
+
 test('financial answers come from posted ledger numbers and explain gross versus net profit', () => {
   const { db } = makeDatabase();
   const workspace = seedWorkspace(db);

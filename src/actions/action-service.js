@@ -28,6 +28,7 @@ const signalEngine = require('../signals/signal-engine');
 const { newId, nowIso } = require('../lib/util');
 const { ValidationError, NotFoundError } = require('../domain/errors');
 const catalogueReconciliation = require('./catalogue-reconciliation');
+const operatingInstructions = require('../manager/operating-instructions');
 
 /** Everything the model needs to read an instruction in this workspace's terms. */
 function instructionContext(db, workspaceId) {
@@ -49,6 +50,13 @@ function instructionContext(db, workspaceId) {
     stockNoun: terminology.item ? guard.recordValue(terminology.item, { max: 40 }) : null,
     pendingAction: pending.length === 1 ? guard.recordValue(presenter.oneLine(db, workspaceId, pending[0]), { max: 240 }) : null,
     pendingCount: pending.length,
+    approvedTeachings: operatingInstructions.activeTeachings(db, workspaceId, {
+      scopes: ['inventory', 'purchasing', 'suppliers', 'sales', 'email', 'shipping', 'payments', 'accounting'],
+    }).map((teaching) => ({
+      scope: guard.recordValue(teaching.scope, { max: 40 }),
+      effect: guard.recordValue(teaching.effect, { max: 500 }),
+      grantsAuthority: teaching.grantsAuthority,
+    })),
   };
 }
 
@@ -707,7 +715,15 @@ async function interpretInner(db, ctx, membership, instruction, options = {}) {
           continue;
         }
         if (result.unsupported) {
-          return { kind: 'unsupported', message: result.unsupported, blocked: result.blocked || null };
+          const where = result.where && result.where.href === '/locations'
+            ? { ...result.where, href: `/locations?resume=${encodeURIComponent(text)}` }
+            : result.where || null;
+          return {
+            kind: 'unsupported',
+            message: result.unsupported,
+            blocked: result.blocked || null,
+            where,
+          };
         }
         return {
           kind: 'question',

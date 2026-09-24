@@ -458,13 +458,20 @@ function hydrate(row) {
     idempotencyKey:row.idempotency_key, createdAt:row.created_at, scoredAt:row.scored_at };
 }
 
-function record(db, workspaceId, skuId, plan) {
+function record(db, workspaceId, skuId, plan, options = {}) {
   const digest = crypto.createHash('sha256').update(json({ skuId, asOf:plan.asOf,
     chosen:plan.chosen, constraints:plan.constraints })).digest('hex').slice(0, 24);
   const key = `adaptive:${skuId}:${plan.asOf}:${digest}`;
   const existing = db.prepare(`SELECT * FROM inventory_decision_plans
     WHERE workspace_id=? AND idempotency_key=?`).get(workspaceId, key);
-  if (existing) return hydrate(existing);
+  if (existing) {
+    if (options.operational && (existing.shadow || existing.status === 'SHADOW')) {
+      db.prepare(`UPDATE inventory_decision_plans SET shadow = 0, status = 'ACTIVE'
+        WHERE workspace_id = ? AND id = ?`).run(workspaceId, existing.id);
+      return hydrate(db.prepare('SELECT * FROM inventory_decision_plans WHERE id = ?').get(existing.id));
+    }
+    return hydrate(existing);
+  }
   const id = newId('iplan'); const now = nowIso();
   db.prepare(`INSERT INTO inventory_decision_plans
     (id,workspace_id,sku_id,as_of,horizon_end,objective,constraints,alternatives,chosen_plan,
@@ -472,7 +479,7 @@ function record(db, workspaceId, skuId, plan) {
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id, workspaceId, skuId, plan.asOf,
     plan.horizonEnd, json(plan.objective), json(plan.constraints), json(plan.alternatives),
     json(plan.chosen), json(plan.expectedResult), '{}', plan.confidence, json(plan.uncertainty),
-    plan.status, 1, key, now);
+    options.operational ? 'ACTIVE' : plan.status, options.operational ? 0 : 1, key, now);
   return hydrate(db.prepare('SELECT * FROM inventory_decision_plans WHERE id=?').get(id));
 }
 
@@ -489,7 +496,7 @@ function recordOutcome(db, workspaceId, planId, actual, { scoredAt = nowIso() } 
 function scoreDue(db, workspaceId, { now = Date.now() } = {}) {
   const today = day(new Date(now).toISOString());
   const rows = db.prepare(`SELECT * FROM inventory_decision_plans
-    WHERE workspace_id=? AND status IN ('SHADOW','INFEASIBLE') AND horizon_end < ?`)
+    WHERE workspace_id=? AND status IN ('SHADOW','INFEASIBLE','ACTIVE') AND horizon_end < ?`)
     .all(workspaceId, today);
   return rows.map((row) => {
     const expected = parse(row.expected_result, {});

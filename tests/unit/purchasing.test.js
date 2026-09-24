@@ -20,6 +20,7 @@ const suppliers = require('../../src/purchasing/supplier-service');
 const policies = require('../../src/purchasing/policy-service');
 const replenishment = require('../../src/purchasing/replenishment');
 const queryService = require('../../src/attention/query-service');
+const forecastingQuestions = require('../../src/forecasting/questions');
 const policyService = require('../../src/purchasing/policy-service');
 const position = require('../../src/purchasing/position');
 const poService = require('../../src/purchasing/po-service');
@@ -307,7 +308,9 @@ test('asking again and again does not create more demand', () => {
   for (let i = 0; i < 3; i += 1) {
     const again = replenishment.evaluateWorkspace(env.db, env.workspace.workspaceId);
     assert.equal(again.recommendations.length, 0, 'the open order already covers it');
-    assert.equal(again.covered.length, 1);
+    assert.equal(again.blocked.filter((entry) => entry.reason === 'incoming_timing_risk').length, 1,
+      'the open order prevents another purchase but remains visible until its arrival is verified');
+    assert.equal(env.db.prepare('SELECT COUNT(*) AS count FROM purchase_orders WHERE workspace_id = ?').get(env.workspace.workspaceId).count, 1);
   }
 });
 
@@ -1172,10 +1175,12 @@ test('no history is reported as not knowing, never as needing ordering', () => {
   assert.equal(plan.blocked[0].reason, 'no_usage_evidence');
 
   const answer = queryService.execute(db, workspace.workspaceId, { intent: 'replenishment' });
-  assert.match(answer.answer, /cannot tell yet/i);
-  // It may say it cannot tell *whether* they need ordering; it may not assert that they do.
-  assert.doesNotMatch(answer.answer, /line\(s\) need ordering/i, 'it has no basis for claiming that');
-  assert.match(answer.answer, /will not guess/i);
+  const planningAnswer = forecastingQuestions.EXECUTORS.what_to_order(db, workspace.workspaceId);
+  for (const surface of [answer, planningAnswer]) {
+    assert.match(surface.answer, /cannot (?:tell|be judged)/i);
+    assert.doesNotMatch(surface.answer, /line\(s\) need ordering/i, 'it has no basis for claiming that');
+    assert.match(surface.answer, /will not guess/i);
+  }
 });
 
 test('a known shortfall with no supplier is still reported as needing ordering', () => {

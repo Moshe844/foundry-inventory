@@ -46,6 +46,24 @@ function ledgerTotal(db, workspaceId, skuId, locationId) {
   return row.total;
 }
 
+test('concurrent process startup serializes a pending schema migration', async () => {
+  const { db, databasePath } = makeDatabase();
+  const workspace = seedWorkspace(db);
+  db.prepare('DELETE FROM database_releases').run();
+  db.close();
+
+  const results = await Promise.all(Array.from({ length: 4 }, () => runWorker(databasePath, {
+    operation: 'receive', workspaceId: workspace.workspaceId, actorId: workspace.ownerId,
+    skuId: 'unused', locationId: 'unused', quantity: 1, iterations: 0,
+  })));
+  assert.deepEqual(results.map((result) => result.unexpected), [null, null, null, null]);
+
+  const { openDatabase } = require('../../src/db');
+  const check = openDatabase(databasePath);
+  assert.equal(check.prepare('SELECT COUNT(*) AS n FROM database_releases').get().n, 1);
+  check.close();
+});
+
 test('concurrent issues from four processes never oversell or corrupt the balance', async (t) => {
   t.diagnostic('4 processes × 60 attempts against 200 units');
   const { db, databasePath } = makeDatabase();

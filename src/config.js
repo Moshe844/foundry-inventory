@@ -228,7 +228,12 @@ const config = {
     get alertWebhookUrl() { return process.env.FOUNDRY_ALERT_WEBHOOK_URL || null; },
     get alertWebhookToken() { return process.env.FOUNDRY_ALERT_WEBHOOK_TOKEN || null; },
     get alertAckToken() { return process.env.FOUNDRY_ALERT_ACK_TOKEN || null; },
-    get releaseRef() { return process.env.FOUNDRY_RELEASE_REF || process.env.GIT_COMMIT || 'development'; },
+    get releaseRef() {
+      return process.env.FOUNDRY_RELEASE_REF
+        || process.env.RENDER_GIT_COMMIT
+        || process.env.GIT_COMMIT
+        || 'development';
+    },
     get backupFreshHours() {
       const value = Number(process.env.FOUNDRY_BACKUP_FRESH_HOURS || 30);
       return Number.isFinite(value) && value > 0 ? value : 30;

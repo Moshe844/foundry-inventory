@@ -1,0 +1,52 @@
+<div class="page-head">
+  <div class="titles">
+    <h1>Bring your inventory records in</h1>
+    <div class="page-sub">Read the source, review every row, then approve it. Nothing becomes inventory before that approval.</div>
+  </div>
+</div>
+<div class="grid grid--2 section">
+  <div class="card">
+    <div class="card-head"><h2>Move from a file</h2><span class="badge badge--muted">Fastest</span></div>
+    <form method="post" action="/imports" enctype="multipart/form-data" data-busy>
+      <div class="card-body">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <label class="field"><span class="field-label">CSV, TSV or Excel export</span>
+          <input class="input" type="file" name="file" accept=".csv,.tsv,.txt,.xlsx" required>
+          <span class="field-help">Use a source with a product name or SKU. Quantity and location are needed only for opening stock.</span>
+        </label>
+        <label class="field"><span class="field-label">If rows do not name a location</span>
+          <select class="input" name="defaultLocationId"><option value="">Create products only</option>
+            <% locations.forEach(function(location){ %><option value="<%= location.id %>"><%= location.name %></option><% }) %>
+          </select>
+        </label>
+      </div>
+      <div class="card-foot"><button class="btn btn--primary" type="submit">Read and preview the file</button></div>
+    </form>
+  </div>
+  <div class="card">
+    <div class="card-head"><h2>Paste spreadsheet rows</h2></div>
+    <form method="post" action="/imports" data-busy>
+      <div class="card-body">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <label class="field"><span class="field-label">Rows with their header</span>
+          <textarea class="input" name="pasted" rows="9" placeholder="Product,SKU,Location,Quantity&#10;Copper Elbow,CE-050,Main Warehouse,140"></textarea>
+        </label>
+        <label class="field"><span class="field-label">If rows do not name a location</span>
+          <select class="input" name="defaultLocationId"><option value="">Create products only</option>
+            <% locations.forEach(function(location){ %><option value="<%= location.id %>"><%= location.name %></option><% }) %>
+          </select>
+        </label>
+      </div>
+      <div class="card-foot"><button class="btn" type="submit">Read what I pasted</button></div>
+    </form>
+  </div>
+</div>
+<% if(recent.length){ %>
+  <div class="card section"><div class="card-head"><h2>Recent imports</h2></div>
+    <table class="table"><thead><tr><th>Source</th><th>Rows</th><th>Status</th><th>Created</th></tr></thead><tbody>
+      <% recent.forEach(function(plan){ %><tr><td><a href="/imports/<%= plan.id %>"><%= plan.sourceName %></a></td>
+        <td><%= plan.recordsDetected %></td><td><span class="badge badge--muted"><%= plan.status %></span></td>
+        <td><%= helpers.timeAgo(plan.createdAt) %></td></tr><% }) %>
+    </tbody></table>
+  </div>
+<% } %>

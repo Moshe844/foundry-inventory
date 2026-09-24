@@ -1,0 +1,64 @@
+previews:
+  generation: off
+
+projects:
+  - name: My project
+    environments:
+      - name: Staging
+        envVarGroups:
+          - name: stockchief-staging-runtime
+            envVars:
+              - key: NODE_ENV
+                value: production
+              - key: FOUNDRY_PUBLIC_URL
+                value: https://qualify.stockchiefhq.com
+              - key: SESSION_SECRET
+                generateValue: true
+              - key: FOUNDRY_CONNECTION_ENCRYPTION_KEY
+                generateValue: true
+              - key: FOUNDRY_ALERT_ACK_TOKEN
+                generateValue: true
+        databases:
+          - name: stockchief-staging
+        services:
+          - type: web
+            name: stockchief-staging-web
+            runtime: node
+            repo: https://github.com/Moshe844/foundry-inventory
+            region: virginia
+            plan: 1c-2g
+            branch: main
+            autoDeployTrigger: off
+            buildCommand: npm ci --omit=dev
+            preDeployCommand: npm run db:apply:postgres
+            startCommand: npm run start:postgres-web
+            healthCheckPath: /readyz
+            maxShutdownDelaySeconds: 120
+            envVars:
+              - fromGroup: stockchief-staging-runtime
+              - key: FOUNDRY_DATABASE_URL
+                fromDatabase:
+                  name: stockchief-staging
+                  property: connectionString
+              - key: FOUNDRY_PROCESS_ROLE
+                value: web
+          - type: worker
+            name: stockchief-staging-worker
+            runtime: node
+            repo: https://github.com/Moshe844/foundry-inventory
+            region: virginia
+            plan: 1c-2g
+            branch: main
+            autoDeployTrigger: off
+            buildCommand: npm ci --omit=dev
+            preDeployCommand: npm run db:apply:postgres
+            startCommand: npm run start:postgres-worker
+            maxShutdownDelaySeconds: 120
+            envVars:
+              - fromGroup: stockchief-staging-runtime
+              - key: FOUNDRY_DATABASE_URL
+                fromDatabase:
+                  name: stockchief-staging
+                  property: connectionString
+              - key: FOUNDRY_PROCESS_ROLE
+                value: worker

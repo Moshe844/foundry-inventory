@@ -208,6 +208,10 @@ test('the inventory list searches across serials and lots too', () => {
   const atLocation = inventoryQuery.listItems(db, workspace.workspaceId, { locationId: workspace.store.id }).items;
   assert.ok(atLocation.every((row) => row.on_hand > 0));
   assert.ok(atLocation.some((row) => row.name === 'Copper Elbow'));
+  const copper = atLocation.find((row) => row.name === 'Copper Elbow');
+  assert.equal(copper.sku_count, 1);
+  assert.equal(copper.location_count, 2);
+  assert.equal(copper.first_sku_code, 'CE-100');
 });
 
 test('the overview counts what it says it counts', () => {

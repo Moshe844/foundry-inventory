@@ -463,6 +463,8 @@ function rollout(db, ctx, membership, proposalId, options = {}) {
   if (!adapter) throw new ValidationError('No deterministic adapter owns that learning change.');
   let authoritySnapshot;
   if (options.automatic) {
+    const execution = require('../autopilot/modes').executionState(db, ctx.workspaceId, { scope:'purchasing' });
+    if (!execution.allowed) return { proposal:item, applied:false, blocked:true, because:execution.because };
     const judged = authorityFor(db, item);
     if (!judged.allowed) return { proposal:item, applied:false, needsApproval:true, because:judged.reason };
     permissions.assertCan(membership, adapter.permission, 'apply this learned policy change');
@@ -600,6 +602,7 @@ function measurements(db, workspaceId, options = {}) {
 }
 
 function applyAuthorized(db, workspaceId) {
+  if (!require('../autopilot/modes').executionState(db, workspaceId, { scope:'purchasing' }).allowed) return [];
   const results = [];
   for (const item of listProposals(db, workspaceId, { statuses:['PROPOSED'] })) {
     const judged = authorityFor(db, item);

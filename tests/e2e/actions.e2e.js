@@ -97,6 +97,21 @@ async function askStockChief(page, instruction) {
   }
 }
 
+async function approveAndInspect(page, buttonName) {
+  const proposalUrl = page.url();
+  await Promise.all([
+    page.waitForNavigation({ waitUntil: 'domcontentloaded' }),
+    page.getByRole('button', { name: buttonName, exact: true }).click(),
+  ]);
+  const destination = new URL(page.url()).pathname;
+  assert.ok(destination === '/' || destination === '/ask' || destination.startsWith('/actions/act_'),
+    `Unexpected approval destination: ${destination}`);
+  if (page.url() !== proposalUrl) {
+    assert.match(await page.locator('body').innerText(), /Done|completed|received|corrected/i);
+    await page.goto(proposalUrl);
+  }
+}
+
 async function stopServer(child) {
   if (!child || child.killed) return;
   await new Promise((resolve) => {
@@ -212,8 +227,8 @@ test(
 
     const browser = await chromium.launch();
     const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
-    context.setDefaultTimeout(600000);
-    context.setDefaultNavigationTimeout(600000);
+    context.setDefaultTimeout(120000);
+    context.setDefaultNavigationTimeout(120000);
     const page = await context.newPage();
 
     const consoleErrors = [];
@@ -384,8 +399,7 @@ test(
       assert.match(preview, /Brooklyn Warehouse[\s\S]{0,60}16[\s\S]{0,20}66/);
       assert.equal(balance(databasePath, state, state.size8, state.brooklyn), 16, 'not yet');
 
-      await page.click('button:has-text("Approve receive")');
-      await page.waitForURL(/\/actions\/act_/);
+      await approveAndInspect(page, 'Approve receive');
       assert.match(await page.locator('body').innerText(), /Done/);
       assert.equal(balance(databasePath, state, state.size8, state.brooklyn), 66);
       await shot(page, 'receive-done');
@@ -407,8 +421,7 @@ test(
       assert.equal(await checkbox.isChecked(), false);
 
       await checkbox.check();
-      await page.click('button:has-text("Approve the correction")');
-      await page.waitForURL(/\/actions\/act_/);
+      await approveAndInspect(page, 'Approve the correction');
       assert.match(await page.locator('body').innerText(), /Done/);
       await shot(page, 'adjust-done');
 

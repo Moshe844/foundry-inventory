@@ -91,7 +91,8 @@ test('"from now on reorder gloves whenever we drop below 20" is a reorder point,
 test('"what\'s on order from Lakeside?" names a supplier, not a product', () => {
   const { db, w, po2 } = setup();
   const result = queryService.execute(db, w.workspaceId, queryService.normalisePlan({ intent: 'on_order', entityQuery: 'Lakeside' }), { question: 'whats on order from Lakeside?' });
-  assert.match(result.answer, /Lakeside Textiles has not (?:yet )?confirmed PO-\d+/);
+  assert.match(result.answer, /not (?:confirmed as )?sent to Lakeside Textiles/i);
+  assert.notEqual(result.rows[0].communicationStatus, 'SENT');
   assert.match(result.answer, /12 units still to come/);
   assert.equal(result.rows[0].label, po2.poNumber);
 });
@@ -116,7 +117,11 @@ test('"send Acme an email" finds Acme Trade Supply, and says where to add the mi
   assert.equal(prepared.where.href, `/suppliers/${acme.id}`);
   supplierService.createSupplier(db, w.ctx, membership, { name: 'Acme Fasteners' });
   const two = outbound.prepare(db, w.ctx, { recipientText: 'Acme', body: 'x', instruction: 'x' });
-  assert.match(two.question, /“Acme” could be Acme (?:Trade Supply|Fasteners) or Acme (?:Trade Supply|Fasteners)\. Which one\?/);
+  assert.match(two.question, /“Acme” matches more than one business contact\. Which one:/);
+  assert.match(two.question, /Acme Fasteners \(supplier\)/);
+  assert.match(two.question, /Acme Trade Supply \(supplier\)/);
+  assert.deepEqual(two.choices.map((choice) => choice.label).sort(),
+    ['Acme Fasteners (supplier)', 'Acme Trade Supply (supplier)']);
 });
 
 // 27. Before: "What would you like to know about copper elbow?"
@@ -229,7 +234,9 @@ test('"how much did we sell last week?" is a window and a sum of money; a named 
   const week = queryService.execute(db, w.workspaceId, queryService.normalisePlan({ intent: 'sales_summary', windowDays: 7 }), { question: 'how much did we sell last week in dollars?' });
   assert.match(week.answer, /In the last 7 days, customers ordered \$10\.00 across 1 order \(4 units\)/);
   const supplier = queryService.execute(db, w.workspaceId, queryService.normalisePlan({ intent: 'most_reliable_supplier', entityQuery: 'acme' }), { question: 'how long does acme take to deliver?' });
-  assert.match(supplier.answer, /^Acme Trade Supply has not delivered an order yet/);
+  assert.match(supplier.answer, /^Acme Trade Supply: 1 committed order in/);
+  assert.match(supplier.answer, /0 complete, 0 overdue unfinished/);
+  assert.match(supplier.answer, /Too few rated orders to call that a pattern/);
   assert.doesNotMatch(supplier.answer, /Lakeside/);
   void acme;
   const list = queryService.execute(db, w.workspaceId, queryService.normalisePlan({ intent: 'selling_price', entityQuery: '' }), { question: 'give me a list of all products with their prices' });

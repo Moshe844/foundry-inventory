@@ -115,6 +115,9 @@ async function sendThroughMailbox(db, workspaceId, id, actorId = null) {
     WHERE id = ? AND workspace_id = ?`).run(message.connectorId, actorId, actorId ? now : null, now, id, workspaceId);
   try {
     const result = await require('../connections/provider-service').sendMailboxMessage(db, workspaceId, message.connectorId, message);
+    if (!result?.externalMessageId) {
+      throw new Error('The mailbox did not return a provider message ID, so delivery could not be verified.');
+    }
     const sentAt = nowIso();
     db.prepare(`UPDATE supplier_communications SET status = 'SENT', external_message_id = ?, external_thread_id = ?,
       error_message = NULL, sent_at = ?, updated_at = ? WHERE id = ? AND workspace_id = ?`)
@@ -148,12 +151,13 @@ async function dispatchAutomaticForOrder(db, workspaceId, purchaseOrderId) {
   }
   const amountMinor = Math.round(Number(order.subtotal || 0) * 100);
   const connection = require('../connections/service').get(db, workspaceId, supplier.watchedConnectorId);
-  if (!order.hasCosts) {
+  if (!order.hasCosts || db.prepare('SELECT 1 FROM purchase_order_charges WHERE workspace_id = ? AND purchase_order_id = ? LIMIT 1').get(workspaceId, order.id)) {
     require('../connections/service').issue(db, { workspaceId, connectorId: connection.id,
       issueType: 'SUPPLIER_ORDER_PRICE_MISSING', fingerprint: `supplier-price:${purchaseOrderId}`,
-      title: `${order.poNumber} needs a price before StockChief can send it automatically`,
-      detail: `At least one line for ${supplier.name} has no known unit cost. Nothing was sent.`,
-      resolutionHint: 'Review the purchase order and supplier price, then approve the message yourself.' });
+      title: `${order.poNumber} needs a cost review before StockChief can send it automatically`,
+      detail: !order.hasCosts ? `At least one line for ${supplier.name} has no known unit cost. Nothing was sent.`
+        : 'This purchase order has additional charges that are not covered by automatic subtotal limits. Nothing was sent.',
+      resolutionHint: 'Review the purchase order, prices and charges, then approve the message yourself.' });
     return forOrder(db, workspaceId, purchaseOrderId);
   }
   if (supplier.minimumOrderAmount !== null && Number(order.subtotal) < Number(supplier.minimumOrderAmount)) {
@@ -188,12 +192,76 @@ async function dispatchAutomaticForOrder(db, workspaceId, purchaseOrderId) {
       decision:{ communicationId:message.id, purchaseOrderId, supplierId:supplier.id },
       affectedEntities:{ communicationId:message.id, purchaseOrderId, supplierId:supplier.id },
       authorityDimensions:{ supplierId:supplier.id, valueMinor:amountMinor,
-        confidence:'high', risk:'high' },
+        currency: order.currency, confidence:'high', risk:'high' },
       expectedOutcome:{ communicationStatus:'SENT' },
     });
     await autonomous.run(db, { workspaceId, actorId:null }, null, operation.id);
   }
   return forOrder(db, workspaceId, purchaseOrderId);
+}
+
+function automaticReadiness(db, workspaceId, supplierId, valueMinor = null) {
+  let supplier;
+  try { supplier = supplierService.getSupplier(db, workspaceId, supplierId); }
+  catch { supplier = null; }
+  const connector = supplier?.watchedConnectorId
+    ? db.prepare(`SELECT * FROM workspace_connectors WHERE workspace_id = ? AND id = ?`).get(workspaceId, supplier.watchedConnectorId)
+    : null;
+  const connectorCapabilities = (() => {
+    try { return JSON.parse(connector?.capabilities || '[]'); } catch { return []; }
+  })();
+  const hasCredentials = Boolean(connector && db.prepare(`SELECT 1 FROM connection_credentials
+    WHERE workspace_id = ? AND connector_id = ? AND credential_kind = 'provider'`).get(workspaceId, connector.id));
+  const capability = require('../autopilot/capabilities').may(db, workspaceId, 'supplier_emails');
+  const grant = require('../autonomous/service').activeGrant(db, workspaceId, 'supplier.communicate');
+  const amount = valueMinor === null || valueMinor === undefined ? null : Number(valueMinor);
+  const checks = [
+    { name: 'supplier', passed: Boolean(supplier), reason: 'The chosen supplier must still exist.' },
+    { name: 'supplierEmail', passed: Boolean(supplier && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(supplier.email || '')), reason: 'The supplier needs a valid order email address.' },
+    { name: 'supplierPermission', passed: Boolean(supplier?.autoSendEnabled), reason: 'Automatic sending must be enabled for this supplier.' },
+    { name: 'mailbox', passed: Boolean(connector && connector.status === 'connected' && !connector.paused_at), reason: 'A connected, unpaused mailbox must be selected for this supplier.' },
+    { name: 'mailSend', passed: connectorCapabilities.includes('MAIL_SEND'), reason: 'The selected mailbox must allow sending mail.' },
+    { name: 'mailboxCredentials', passed: hasCredentials, reason: 'The selected mailbox must have usable provider credentials.' },
+    { name: 'supplierEmailCapability', passed: capability.allowed, reason: capability.because || 'Supplier email automation must be enabled.' },
+    { name: 'supplierCommunicationGrant', passed: Boolean(grant), reason: 'Supplier communication needs an explicit autonomous grant.' },
+    { name: 'grantSupplierScope', passed: Boolean(grant && (!grant.supplierIds.length || grant.supplierIds.includes(supplierId))), reason: 'The supplier must be inside the communication grant.' },
+    { name: 'supplierSendLimit', passed: Boolean(supplier && amount !== null && supplier.autoSendLimitMinor !== null && amount <= Number(supplier.autoSendLimitMinor)), reason: 'The complete order value must be inside this supplier’s automatic-send limit.' },
+    { name: 'grantValueLimit', passed: Boolean(grant && amount !== null && (grant.maximumValueMinor === null || amount <= Number(grant.maximumValueMinor))), reason: 'The complete order value must be inside the communication grant.' },
+  ];
+  const failed = checks.filter((entry) => !entry.passed);
+  return { allowed: failed.length === 0, checks,
+    reason: failed.length ? failed.map((entry) => entry.reason).join(' ') : null,
+    supplier, connector, grant };
+}
+
+function enqueueAutomaticDispatch(db, workspaceId, purchaseOrderId) {
+  return require('../operations/job-queue').enqueue(db, {
+    workspaceId,
+    kind: 'supplier.purchase-order.dispatch',
+    payload: { purchaseOrderId },
+    idempotencyKey: `supplier-purchase-order:${purchaseOrderId}`,
+    priority: 30,
+    maxAttempts: 5,
+  });
+}
+
+function dispatchJobHandler(db) {
+  return async (job) => {
+    const purchaseOrderId = job.payload && job.payload.purchaseOrderId;
+    if (!purchaseOrderId) throw Object.assign(new Error('The supplier dispatch job has no purchase order.'), { retryable: false });
+    const messages = await dispatchAutomaticForOrder(db, job.workspaceId, purchaseOrderId);
+    const initial = messages.find((message) => message.messageKind === 'purchase_order') || messages[0] || null;
+    if (initial?.status === 'FAILED') throw new Error(initial.errorMessage || 'The supplier message failed.');
+    if (initial?.status === 'SENT' && !initial.externalMessageId) {
+      throw new Error('The supplier message has no provider delivery ID.');
+    }
+    return {
+      purchaseOrderId,
+      communicationId: initial?.id || null,
+      communicationStatus: initial?.status || 'NOT_PREPARED',
+      externalMessageId: initial?.externalMessageId || null,
+    };
+  };
 }
 
 require('../autonomous/service').registerAdapter('supplier.communicate', {
@@ -204,7 +272,23 @@ require('../autonomous/service').registerAdapter('supplier.communicate', {
     const capability = require('../autopilot/capabilities').may(db, ctx.workspaceId,
       'supplier_emails');
     const valueMinor = Number(operation.authorityDimensions.valueMinor || 0);
+    const message = get(db, ctx.workspaceId, operation.decision.communicationId);
+    const order = require('./po-service').get(db, ctx.workspaceId, operation.decision.purchaseOrderId);
+    const sendingGrant = require('../autonomous/service').activeGrant(db, ctx.workspaceId, 'supplier.communicate');
     const checks = [
+      { name: 'currentOrderValue', passed: order.hasCosts && Number.isFinite(order.subtotal)
+          && Math.round(order.subtotal * 100) === valueMinor
+          && (!sendingGrant?.currency || order.currency === sendingGrant.currency)
+          && !db.prepare('SELECT 1 FROM purchase_order_charges WHERE workspace_id = ? AND purchase_order_id = ? LIMIT 1').get(ctx.workspaceId, order.id),
+        reason: 'The current priced PO must still match the authorised value and currency; additional charges need review.' },
+      { name: 'currentRecipient', passed: Boolean(message && message.recipient === supplier.email && message.connectorId === supplier.watchedConnectorId),
+        reason: 'The message recipient and sending mailbox must still match this supplier.' },
+      { name: 'confirmedOriginalForFollowUp', passed: message?.messageKind === 'purchase_order'
+          || forOrder(db, ctx.workspaceId, order.id).some((prior) => prior.messageKind === 'purchase_order' && prior.status === 'SENT' && prior.externalMessageId),
+        reason: 'Automatic follow-ups require a provider-confirmed original PO; unconfirmed orders need individual review.' },
+      { name: 'initialOrderAge', passed: !sendingGrant?.grantedAt || message?.messageKind !== 'purchase_order'
+          || Boolean(order.approvedAt && order.approvedAt >= sendingGrant.grantedAt),
+        reason: 'An initial PO that predates this sending authority needs individual review; old orders are never silently resent.' },
       { name:'executionState', passed:execution.allowed,
         reason:execution.because || 'Supplier communication automation is active.' },
       { name:'supplierPermission', passed:Boolean(supplier.autoSendEnabled),
@@ -219,16 +303,25 @@ require('../autonomous/service').registerAdapter('supplier.communicate', {
     ];
     return { allowed:checks.every((check) => check.passed), checks };
   },
-  execute:({ db, ctx, operation }) => sendThroughMailbox(db, ctx.workspaceId,
-    operation.decision.communicationId, null),
+  execute:async ({ db, ctx, operation }) => {
+    const message = await sendThroughMailbox(db, ctx.workspaceId,
+      operation.decision.communicationId, null);
+    const order = require('./po-service').markOrderedFromSupplierSend(db, {
+      workspaceId: ctx.workspaceId, actorId: null,
+    }, operation.decision.purchaseOrderId, message);
+    return { communicationId: message.id, externalMessageId: message.externalMessageId,
+      purchaseOrderId: order.id, poNumber: order.poNumber, orderStatus: order.status };
+  },
   verify:({ db, ctx, operation }) => {
     const message = get(db, ctx.workspaceId, operation.decision.communicationId);
-    const passed = message?.status === 'SENT';
+    const order = require('./po-service').get(db, ctx.workspaceId, operation.decision.purchaseOrderId);
+    const passed = message?.status === 'SENT' && Boolean(message.externalMessageId)
+      && order.status === 'ORDERED';
     return { passed, reason:passed
-      ? 'The connected mailbox returned a sent message and StockChief reread it as sent.'
-      : (message?.errorMessage || 'The supplier message is not confirmed as sent.'),
+      ? 'The mailbox returned a provider message ID, StockChief reread it as sent, and only then marked the purchase order ordered.'
+      : (message?.errorMessage || 'The supplier message or ordered purchase-order state is not independently confirmed.'),
     communicationId:message?.id || operation.decision.communicationId,
-    externalMessageId:message?.externalMessageId || null };
+    externalMessageId:message?.externalMessageId || null, orderStatus:order.status };
   },
 });
 
@@ -288,5 +381,6 @@ function prepareDueFollowups(db, workspaceId, options = {}) {
   return prepared;
 }
 
-module.exports = { hydrate, get, forOrder, prepareForOrder, queueForOrder, registerTransport, send,
+module.exports = { hydrate, get, forOrder, prepareForOrder, queueForOrder, automaticReadiness,
+  enqueueAutomaticDispatch, dispatchJobHandler, registerTransport, send,
   sendThroughMailbox, dispatchAutomaticForOrder, prepareDueFollowups, _transports: transports };

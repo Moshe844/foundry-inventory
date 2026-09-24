@@ -1,0 +1,132 @@
+<div class="rm-head">
+  <a class="rm-head__back" href="/inventory"><span aria-hidden="true">←</span> Inventory</a>
+  <div class="rm-title">
+    <div>
+      <h1><%= item.name %><% if (!item.is_active) { %> <span class="rm-pillbadge">Archived</span><% } %></h1>
+      <p><span class="mono"><%= item.base_code || skus[0].code %></span> · <%= helpers.trackingLabel(item.tracking_mode) %><% if (item.has_variants) { %> · <%= variantTotal %> variants<% } %><% if (item.description) { %> · <%= item.description %><% } %></p>
+    </div>
+    <div class="rm-title__do">
+      <% if (item.is_active) { %><button class="rm-btn rm-btn--ghost rm-btn--sm" type="button" data-modal-open="modal-edit">Edit details</button><% } %>
+      <% if (item.is_active && item.has_variants) { %><button class="rm-btn rm-btn--ghost rm-btn--sm" type="button" data-modal-open="modal-variant">Add variant</button><% } %>
+      <% if (locations.length && item.is_active) { %>
+        <button class="rm-btn rm-btn--sm" type="button" data-modal-open="modal-receive"><%- helpers.icon('receive', { size: 15 }) %> Some came in</button>
+        <button class="rm-btn rm-btn--wash rm-btn--sm" type="button" data-modal-open="modal-issue"><%- helpers.icon('issue', { size: 15 }) %> Sold or used</button>
+        <button class="rm-btn rm-btn--wash rm-btn--sm" type="button" data-modal-open="modal-transfer" <%= locations.length < 2 ? 'disabled' : '' %>><%- helpers.icon('transfer', { size: 15 }) %> Request a move</button>
+        <% if (item.tracking_mode === 'quantity') { %><button class="rm-btn rm-btn--wash rm-btn--sm" type="button" data-modal-open="modal-adjust"><%- helpers.icon('adjust', { size: 15 }) %> Fix the count</button><% } %>
+      <% } %>
+      <% if (currentUser.role === 'owner') { %>
+        <form method="post" action="/inventory/<%= item.id %>/archive">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <% if (!item.is_active) { %><input type="hidden" name="restore" value="1"><% } %>
+          <button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit"><%= item.is_active ? 'Archive' : 'Restore' %></button>
+        </form>
+      <% } %>
+    </div>
+  </div>
+</div>
+
+<% if (!locations.length) { %>
+  <div class="rm-note rm-note--warn"><%- helpers.icon('alert', { size: 16 }) %><div>Add a real location before recording stock. <a href="/locations">Add your first location</a>.</div></div>
+<% } %>
+
+<div class="rm-pulse">
+  <div class="rm-stat"><span class="rm-stat__n"><%= helpers.qty(total) %></span><span class="rm-stat__d"><%= helpers.plural(total, item.unit_label) %> on hand</span></div>
+  <div class="rm-stat<%= committed ? ' rm-stat--brand' : '' %>"><span class="rm-stat__n"><%= helpers.qty(committed) %></span><span class="rm-stat__d">committed to customer orders</span></div>
+  <div class="rm-stat<%= available ? '' : ' rm-stat--flag' %>"><span class="rm-stat__n"><%= helpers.qty(available) %></span><span class="rm-stat__d"><%= helpers.plural(available, item.unit_label) %> available</span></div>
+  <div class="rm-stat"><span class="rm-stat__n"><%= helpers.qty(onOrder) %></span><span class="rm-stat__d">on order from suppliers</span></div>
+</div>
+
+<section class="rm-panel">
+  <div class="rm-panel__head"><%- helpers.icon('layers', { size: 15, className: 'rm-quiet' }) %><h2><%= item.has_variants ? 'Variants' : 'This product' %></h2><span class="right"><%= variantTotal %> tracked separately</span></div>
+  <div class="rm-scroll">
+    <table class="rm-vtable">
+      <thead><tr><th>Product</th><th class="num">On hand</th><th class="num">Committed</th><th class="num">Available</th><th class="num">On order</th><th>Selling price</th><th>Purchase cost</th><th>Where it is</th></tr></thead>
+      <tbody>
+        <% skus.forEach(function (sku) { %>
+          <tr>
+            <td class="vt-id"><strong><%= sku.variant_label || item.name %></strong><small class="mono"><%= sku.code %></small></td>
+            <td class="num"><strong><%= helpers.qty(sku.total) %></strong></td>
+            <td class="num"><%= helpers.qty(sku.committed) %></td>
+            <td class="num"><%= helpers.qty(sku.available) %></td>
+            <td class="num"><%= helpers.qty(sku.onOrder) %></td>
+            <td><strong><%= sku.sellingPrice.formatted %></strong><% if (currentUser.role === 'owner') { %><small><a href="/pricing/new?skuId=<%= sku.id %>">Change</a></small><% } %></td>
+            <td><strong><%= sku.purchaseCost ? sku.purchaseCost.formatted : 'Not set' %></strong><% if (currentUser.role === 'owner') { %><small><a href="/pricing/purchase-costs/new?skuId=<%= sku.id %>">Change</a></small><% } %></td>
+            <td><% if (!sku.perLocation.length) { %><span class="t-muted">No stock yet</span><% } else { sku.perLocation.forEach(function (row, index) { %><%= index ? ' · ' : '' %><%= row.locationName %> <strong><%= helpers.qty(row.onHand) %></strong><% }); } %></td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  </div>
+  <% if (variantPageCount > 1) { %>
+    <div class="rm-panel__foot"><span>Page <%= variantPage %> of <%= variantPageCount %></span>
+      <% if (variantPage > 1) { %><a class="rm-btn rm-btn--ghost rm-btn--sm" href="/inventory/<%= item.id %>?page=<%= variantPage - 1 %>">Previous</a><% } %>
+      <% if (variantPage < variantPageCount) { %><a class="rm-btn rm-btn--ghost rm-btn--sm" href="/inventory/<%= item.id %>?page=<%= variantPage + 1 %>">Next</a><% } %>
+    </div>
+  <% } %>
+</section>
+
+<section class="rm-panel" style="margin-top:18px">
+  <div class="rm-panel__head"><%- helpers.icon('activity', { size: 15, className: 'rm-quiet' }) %><h2>Recent activity</h2></div>
+  <% if (!recent.length) { %><div class="empty"><h3>No stock activity yet</h3><p>Receive opening stock when you are ready.</p></div><% } else { %>
+    <div class="table-wrap"><table class="table"><thead><tr><th>When</th><th>What happened</th><th>Location</th><th class="num">Change</th><th>Reference</th></tr></thead><tbody>
+      <% recent.forEach(function (row) { %><tr><td><%= helpers.dateTime(row.occurred_at) %></td><td><%= helpers.operationLabel(row.operation) %> <%= row.variant_label || row.code %></td><td><%= row.location_name %></td><td class="num"><strong><%= Number(row.quantity_delta) > 0 ? '+' : '' %><%= helpers.qty(row.quantity_delta) %></strong></td><td><%= row.reference || '—' %></td></tr><% }) %>
+    </tbody></table></div>
+  <% } %>
+</section>
+
+<% if (locations.length && item.is_active) { %>
+  <% function skuOptions(selected) { skus.forEach(function (sku) { %><option value="<%= sku.id %>" <%= selected === sku.id ? 'selected' : '' %>><%= sku.variant_label || item.name %> · <%= sku.code %></option><% }); } %>
+  <dialog class="modal" id="modal-receive"><form method="post" action="/inventory/<%= item.id %>/receive"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="receive-<%= Date.now() %>">
+    <div class="modal-head"><h2>Some came in</h2><button class="btn btn--ghost btn--sm close" type="button" data-modal-close>Close</button></div><div class="modal-body">
+      <label class="field"><span class="label">Product</span><select class="select" name="skuId" required><% skuOptions(); %></select></label>
+      <label class="field"><span class="label">Location</span><select class="select" name="locationId" required><% locations.forEach(function (location) { %><option value="<%= location.id %>"><%= location.name %></option><% }) %></select></label>
+      <% if (item.tracking_mode !== 'serial') { %><label class="field"><span class="label">Quantity</span><input class="input" name="quantity" type="number" min="1" step="1" required></label><% } %>
+      <% if (item.tracking_mode === 'serial') { %><label class="field"><span class="label">Serial numbers, one per line</span><textarea class="textarea" name="serials" rows="5" required></textarea><span class="hint">The number of unique serials is the received quantity.</span></label><% } %>
+      <% if (item.tracking_mode === 'lot') { %><label class="field"><span class="label">Lot or batch number</span><input class="input" name="lotCode" required></label><label class="field"><span class="label">Expiry date</span><input class="input" name="expiresAt" type="date"></label><% } %>
+      <label class="field"><span class="label">Reference</span><input class="input" name="reference" placeholder="Opening stock or delivery note"></label><label class="field"><span class="label">Notes</span><input class="input" name="notes"></label>
+    </div><div class="modal-foot"><button class="btn" type="button" data-modal-close>Cancel</button><button class="btn btn--primary" type="submit">Record receipt</button></div>
+  </form></dialog>
+
+  <dialog class="modal" id="modal-issue"><form method="post" action="/inventory/<%= item.id %>/issue"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="issue-<%= Date.now() %>">
+    <div class="modal-head"><h2>Sold or used</h2><button class="btn btn--ghost btn--sm close" type="button" data-modal-close>Close</button></div><div class="modal-body">
+      <% if (item.tracking_mode === 'serial') { %>
+        <label class="field"><span class="label">Exact serial units</span><select class="select" name="serialUnitIds" multiple size="6" required><% units.forEach(function(unit){ %><option value="<%= unit.id %>"><%= unit.serial %> · <%= unit.location_name %></option><% }) %></select><span class="hint">Use Ctrl or Cmd to choose several units from one product and location.</span></label>
+      <% } else { %>
+        <label class="field"><span class="label">Product</span><select class="select" name="skuId" required><% skuOptions(); %></select></label><label class="field"><span class="label">From</span><select class="select" name="locationId" required><% locations.forEach(function (location) { %><option value="<%= location.id %>"><%= location.name %></option><% }) %></select></label>
+        <% if (item.tracking_mode === 'lot') { %><label class="field"><span class="label">Exact lot</span><select class="select" name="lotId" required><% lots.forEach(function(lot){ %><option value="<%= lot.id %>"><%= lot.code %> · <%= lot.location_name %> (<%= lot.quantity %>)</option><% }) %></select></label><% } %>
+        <label class="field"><span class="label">Quantity</span><input class="input" name="quantity" type="number" min="1" step="1" required></label>
+      <% } %>
+      <label class="field"><span class="label">Reason</span><select class="select" name="reasonCode" required><% helpers.ISSUE_REASONS.forEach(function (reason) { %><option value="<%= reason.id %>"><%= reason.label %></option><% }) %></select></label><label class="field"><span class="label">When did it leave?</span><input class="input" name="occurredAt" type="date"></label><label class="field"><span class="label">Reference</span><input class="input" name="reference"></label>
+    </div><div class="modal-foot"><button class="btn" type="button" data-modal-close>Cancel</button><button class="btn btn--primary" type="submit">Record issue</button></div>
+  </form></dialog>
+
+  <dialog class="modal" id="modal-transfer"><form method="post" action="/inventory/<%= item.id %>/transfer"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="transfer-<%= Date.now() %>">
+    <div class="modal-head"><h2>Request a stock move</h2><button class="btn btn--ghost btn--sm close" type="button" data-modal-close>Close</button></div><div class="modal-body">
+      <div class="notice">This reserves work after approval. Stock stays at the source until dispatch is confirmed, then remains in transit until the destination records what arrived.</div>
+      <% if (item.tracking_mode === 'serial') { %><label class="field"><span class="label">Exact serial units</span><select class="select" name="serialUnitIds" multiple size="6" required><% units.forEach(function(unit){ %><option value="<%= unit.id %>"><%= unit.serial %> · <%= unit.location_name %></option><% }) %></select></label><% } else { %><label class="field"><span class="label">Product</span><select class="select" name="skuId" required><% skuOptions(); %></select></label><label class="field"><span class="label">From</span><select class="select" name="fromLocationId" required><% locations.forEach(function (location) { %><option value="<%= location.id %>"><%= location.name %></option><% }) %></select></label><% if (item.tracking_mode === 'lot') { %><label class="field"><span class="label">Exact lot</span><select class="select" name="lotId" required><% lots.forEach(function(lot){ %><option value="<%= lot.id %>"><%= lot.code %> · <%= lot.location_name %> (<%= lot.quantity %>)</option><% }) %></select></label><% } %><label class="field"><span class="label">Quantity</span><input class="input" name="quantity" type="number" min="1" step="1" required></label><% } %><label class="field"><span class="label">To</span><select class="select" name="toLocationId" required><% locations.forEach(function (location) { %><option value="<%= location.id %>"><%= location.name %></option><% }) %></select></label>
+    </div><div class="modal-foot"><button class="btn" type="button" data-modal-close>Cancel</button><button class="btn btn--primary" type="submit">Create transfer request</button></div>
+  </form></dialog>
+
+  <% if (item.tracking_mode === 'quantity') { %><dialog class="modal" id="modal-adjust"><form method="post" action="/inventory/<%= item.id %>/adjust"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="adjust-<%= Date.now() %>">
+    <div class="modal-head"><h2>Fix the count</h2><button class="btn btn--ghost btn--sm close" type="button" data-modal-close>Close</button></div><div class="modal-body">
+      <label class="field"><span class="label">Product</span><select class="select" name="skuId" required><% skuOptions(); %></select></label><label class="field"><span class="label">Location</span><select class="select" name="locationId" required><% locations.forEach(function (location) { %><option value="<%= location.id %>"><%= location.name %></option><% }) %></select></label><label class="field"><span class="label">Physical count</span><input class="input" name="countedQty" type="number" min="0" step="1" required></label><label class="field"><span class="label">Reason</span><select class="select" name="reasonCode" required><% helpers.ADJUSTMENT_REASONS.forEach(function (reason) { %><option value="<%= reason.id %>"><%= reason.label %></option><% }) %></select></label><label class="field"><span class="label">Notes</span><input class="input" name="notes" required></label>
+    </div><div class="modal-foot"><button class="btn" type="button" data-modal-close>Cancel</button><button class="btn btn--primary" type="submit">Save corrected count</button></div>
+  </form></dialog><% } %>
+<% } %>
+
+<dialog class="modal" id="modal-edit"><form method="post" action="/inventory/<%= item.id %>/details"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <div class="modal-head"><h2>Edit product details</h2><button class="btn btn--ghost btn--sm close" type="button" data-modal-close>Close</button></div><div class="modal-body">
+    <label class="field"><span class="label">Name</span><input class="input" name="name" value="<%= item.name %>" required></label>
+    <label class="field"><span class="label">Item code</span><input class="input mono" name="baseCode" value="<%= item.base_code || '' %>"></label>
+    <label class="field"><span class="label">Counted in</span><input class="input" name="unitLabel" value="<%= item.unit_label %>"></label>
+    <label class="field"><span class="label">Description</span><textarea class="textarea" name="description"><%= item.description || '' %></textarea></label>
+    <% if (item.tracking_mode === 'quantity') { %><label class="checkbox"><input type="checkbox" name="allowNegative" value="1" <%= item.allow_negative ? 'checked' : '' %>><span class="checkbox-text"><strong>Allow negative stock</strong><small>Off by default. Use only when issues may legitimately be recorded before receipts.</small></span></label><% } %>
+    <div class="notice">Tracking remains <%= helpers.trackingLabel(item.tracking_mode).toLowerCase() %> so history cannot be reinterpreted.</div>
+  </div><div class="modal-foot"><button class="btn" type="button" data-modal-close>Cancel</button><button class="btn btn--primary" type="submit">Save details</button></div>
+</form></dialog>
+
+<% if (item.has_variants && options.length) { %><dialog class="modal" id="modal-variant"><form method="post" action="/inventory/<%= item.id %>/variants"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <div class="modal-head"><h2>Add a variant</h2><button class="btn btn--ghost btn--sm close" type="button" data-modal-close>Close</button></div><div class="modal-body">
+    <% options.forEach(function(option){ %><label class="field"><span class="label"><%= option.name %></span><input class="input" name="optionValues[<%= option.id %>]" list="values-<%= option.id %>" required><datalist id="values-<%= option.id %>"><% option.values.forEach(function(value){ %><option value="<%= value %>"><% }) %></datalist></label><% }) %>
+  </div><div class="modal-foot"><button class="btn" type="button" data-modal-close>Cancel</button><button class="btn btn--primary" type="submit">Add variant</button></div>
+</form></dialog><% } %>

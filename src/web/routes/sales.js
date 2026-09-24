@@ -8,6 +8,7 @@ const carriers = require('../../sales/carriers');
 const notices = require('../../sales/customer-communications');
 const paymentTerms = require('../../sales/payment-terms');
 const orderStatus = require('../../sales/order-status');
+const assistantTurns = require('../../assistant/turns');
 const connections = require('../../connections/service');
 const repo = require('../../domain/repository');
 const permissions = require('../../actions/permissions');
@@ -151,7 +152,7 @@ router.get(['/orders/new', '/sales/new'], requirePermission(permissions.OPERATE,
     unpricedCount: skus.filter((sku) => !sku.price.isSet).length,
     // A focused form explains its own missing fields in context. A global
     // setup task above it creates two unrelated "next" actions.
-    screenGuide: null,
+    screenGuide: null, suppressBack: true,
   });
 }));
 
@@ -170,6 +171,13 @@ router.post('/sales/customers', requirePermission(permissions.OPERATE, 'create c
       phone: req.body.phone, shippingAddress: req.body.shippingAddress, notes: req.body.notes,
     });
     req.flash('success', `${customer.name} is ready. You can create an order now or leave the customer with no order.`);
+    const pending = req.session.pendingAskPrerequisite;
+    if (pending && pending.workspaceId === req.ctx.workspaceId && pending.contactKind === 'customer'
+        && String(pending.contactName || '').localeCompare(customer.name, undefined, { sensitivity: 'accent' }) === 0) {
+      pending.contactId = customer.id;
+      pending.contactName = customer.name;
+      return res.redirect(303, '/foundry/resume-prerequisite');
+    }
     return res.redirect(303, `/sales/customers/${customer.id}`);
   } catch (err) {
     if (!err.status || err.status >= 500) throw err;
@@ -211,6 +219,11 @@ router.post('/sales/customers/:id', requirePermission(permissions.OPERATE, 'chan
     shippingAddress: req.body.shippingAddress, notes: req.body.notes,
   });
   req.flash('success', `${customer.name} was updated.`);
+  const pending = req.session.pendingAskPrerequisite;
+  if (pending && pending.workspaceId === req.ctx.workspaceId && pending.contactKind === 'customer'
+      && pending.contactId === customer.id && customer.email) {
+    return res.redirect(303, '/foundry/resume-prerequisite');
+  }
   res.redirect(303, `/sales/customers/${customer.id}`);
 }));
 
@@ -247,23 +260,25 @@ router.post('/sales/customers/:id/archive', requirePermission(permissions.OPERAT
 router.post('/sales/orders', requirePermission(permissions.OPERATE, 'create sales orders'), asyncRoute(async (req, res) => {
   const skuIds = Array.isArray(req.body.skuId) ? req.body.skuId : [req.body.skuId];
   const quantities = Array.isArray(req.body.quantity) ? req.body.quantity : [req.body.quantity];
+  const unitPrices = Array.isArray(req.body.unitPrice) ? req.body.unitPrice : [req.body.unitPrice];
   let order;
   try {
-    const enteredPrice = prices.toMinor(trimOrNull(req.body.unitPrice), 'Selling price');
     order = sales.createOrder(req.db, req.ctx, {
       customerId: trimOrNull(req.body.customerId), customerName: trimOrNull(req.body.customerName),
       customerEmail: trimOrNull(req.body.customerEmail),
       customerShippingAddress: trimOrNull(req.body.customerShippingAddress),
       saveCustomerAddress: req.body.saveCustomerAddress === '1',
       deliveryMethod: trimOrNull(req.body.deliveryMethod) || 'SHIP',
-      requireDeliveryDecision: true,
+      requireCompleteDelivery: true,
       orderNumber: trimOrNull(req.body.orderNumber), orderDate: trimOrNull(req.body.orderDate),
       neededBy: trimOrNull(req.body.neededBy), fulfillmentLocationId: trimOrNull(req.body.fulfillmentLocationId),
+      allocationPriority: req.body.allocationPriority,
       notes: trimOrNull(req.body.notes), reference: trimOrNull(req.body.reference),
       currency: trimOrNull(req.body.currency), discount: trimOrNull(req.body.discount), tax: trimOrNull(req.body.tax),
       requirePrices: true,
       lines: skuIds.map((skuId, index) => ({ skuId, quantity: quantities[index],
-        unitPriceMinor: enteredPrice })).filter((line) => line.skuId),
+        unitPriceMinor: prices.toMinor(trimOrNull(unitPrices[index]), 'Selling price') }))
+        .filter((line) => line.skuId),
     });
   } catch (err) {
     if (!err.status || err.status >= 500) throw err;
@@ -272,14 +287,22 @@ router.post('/sales/orders', requirePermission(permissions.OPERATE, 'create sale
       title: 'New sales order', nav: 'sales', customers: sales.listCustomers(req.db, req.ctx.workspaceId),
       skus, locations: repo.listLocations(req.db, req.ctx.workspaceId), form: req.body,
       formError: err.message, unpricedCount: skus.filter((sku) => !sku.price.isSet).length,
+      screenGuide: null, suppressBack: true,
     });
   }
-  const nextStep = ['confirm', 'fulfill'].includes(req.body.nextStep) ? req.body.nextStep : 'draft';
+  const requestedNextStep = ['confirm', 'fulfill'].includes(req.body.nextStep) ? req.body.nextStep : 'draft';
+  const nextStep = requestedNextStep === 'fulfill' && order.delivery_method !== 'PICKUP'
+    ? 'confirm'
+    : requestedNextStep;
   if (nextStep !== 'draft' && !order.delivery_decision_required) {
     order = sales.confirm(req.db, req.ctx, order.id, { idempotencyKey: `web-create-confirm:${order.id}` });
   }
+  const chased = nextStep !== 'draft' && !order.delivery_decision_required
+    ? await moneyChased(req, order.id, order.customer.name)
+    : '';
   if (nextStep === 'fulfill' && !order.totals.backordered) {
-    order = sales.fulfill(req.db, req.ctx, order.id, {}, { idempotencyKey: `web-create-fulfill:${order.id}` });
+    shipments.shipInOneStep(req.db, req.ctx, order.id, { handover: 'COLLECTED' });
+    order = sales.getOrder(req.db, req.ctx.workspaceId, order.id);
   }
   if (nextStep === 'fulfill' && order.status === 'FULFILLED') {
     const financial = accountingForOrder(req.db, req.ctx.workspaceId, order.id);
@@ -291,9 +314,9 @@ router.post('/sales/orders', requirePermission(permissions.OPERATE, 'create sale
   } else if (order.delivery_decision_required) {
     req.flash('warn', `${order.order_number} is saved, but nothing is reserved or shipped yet. Choose customer pickup or enter the full delivery address.`);
   } else if (nextStep === 'confirm') {
-    req.flash(order.totals.backordered ? 'warn' : 'success', order.totals.backordered
+    req.flash(order.totals.backordered ? 'warn' : 'success', (order.totals.backordered
       ? `${order.order_number} is confirmed. ${order.totals.allocated} held; ${order.totals.backordered} waiting for stock.`
-      : `${order.order_number} is confirmed and ${order.totals.allocated} unit(s) are held for the customer.`);
+      : `${order.order_number} is confirmed and ${order.totals.allocated} unit(s) are held for the customer.`) + chased);
   } else {
     req.flash('success', `${order.order_number} was saved as a draft. No stock is held yet.`);
   }
@@ -333,13 +356,6 @@ router.post('/sales/orders/:id/resolve-delivery',
 
 router.get(['/orders/:id', '/sales/orders/:id', '/orders/:id/detail', '/sales/orders/:id/detail'],
   requirePermission(permissions.VIEW, 'view sales orders'), asyncRoute(async (req, res) => {
-  /*
-   * One address tells the story; the same address with /detail on the end is
-   * the working page it was before. Nothing was removed — the operational
-   * forms are where somebody who wants to work on the order will look, and the
-   * story is what everybody else opens.
-   */
-  const wantsDetail = req.path.endsWith('/detail');
   const order = sales.getOrder(req.db, req.ctx.workspaceId, req.params.id);
 
   /*
@@ -401,7 +417,7 @@ router.get(['/orders/:id', '/sales/orders/:id', '/orders/:id/detail', '/sales/or
     payment: orderMoney,
     fulfilment: orderFulfilment,
   });
-  const openSection = wantsDetail && ['fulfilment', 'money'].includes(String(req.query.open || ''))
+  const openSection = ['fulfilment', 'money'].includes(String(req.query.open || ''))
     ? String(req.query.open) : null;
   const orderReceipts = req.db.prepare(`SELECT DISTINCT p.id, p.payment_number, p.amount_minor,
         p.payment_date, p.method,
@@ -418,33 +434,13 @@ router.get(['/orders/:id', '/sales/orders/:id', '/orders/:id/detail', '/sales/or
           WHERE apa.workspace_id = p.workspace_id AND apa.payment_id = p.id
             AND aci.sales_order_id = ?))
       ORDER BY p.payment_date, p.created_at`).all(order.id, req.ctx.workspaceId, order.id, order.id);
-  res.page(wantsDetail ? 'sales/order' : 'sales/story', {
-    title: wantsDetail ? 'Order' : `${(order.customer && order.customer.name) || order.order_number}`,
-    nav: 'sales', order,
-    room: !wantsDetail,
-    /*
-     * The order as one story: what was promised, what StockChief committed, what
-     * the customer was told, what shipped, what is owed, and what happens
-     * next. Composed here from what this page already gathered rather than
-     * from a second set of queries, so the story and the detail can never
-     * disagree about the same order.
-     */
-    story: wantsDetail ? null : require('../story').salesOrder(req.db, req.ctx.workspaceId, order, {
-      shipments: orderShipments,
-      customerNotices: orderNotices,
-      customerReceipts: orderReceipts,
-      money: orderMoney,
-      shortageDetails,
-      accounting: accountingForOrder(req.db, req.ctx.workspaceId, order.id),
-      fulfilment: orderFulfilment,
-    }),
-    evidenceTrace: wantsDetail ? null : require('../../provenance/presenter').salesOrderStory(
-      req.db, req.ctx.workspaceId, order, {
-        shipments: orderShipments,
-        customerReceipts: orderReceipts,
-        money: orderMoney,
-        accounting: accountingForOrder(req.db, req.ctx.workspaceId, order.id),
-      }, { membership: req.user }),
+  res.page('sales/order', {
+    title: `${order.order_number} · ${(order.customer && order.customer.name) || 'Customer order'}`,
+    nav: 'sales', order, canSetAllocation: permissions.can(req.user, permissions.OPERATE),
+    suppressBack: true,
+    room: false,
+    story: null,
+    evidenceTrace: null,
     // A focused order already has one state-derived next action. The generic
     // Sales strip can point at an unrelated product price or connector and
     // make the page appear to have two competing instructions.
@@ -678,6 +674,17 @@ router.post('/sales/orders/:id/confirm', requirePermission(permissions.OPERATE, 
  * Deliberately a person's decision rather than something StockChief does on its
  * own: holding stock for one customer takes it from the next one who asks.
  */
+router.post('/sales/orders/:id/allocation-settings', requirePermission(permissions.OPERATE, 'change customer allocation priorities'), asyncRoute(async (req, res) => {
+  try {
+    sales.setAllocationPriority(req.db, req.ctx, req.params.id, req.body.allocationPriority, { neededBy: req.body.neededBy });
+    req.flash('success', 'Allocation settings saved. Lower priorities are served first, then earliest needed dates. Active picks keep their reservations unless physical stock is unavailable. No stock was moved.');
+  } catch (err) {
+    if (!err.status || err.status >= 500) throw err;
+    req.flash('warn', err.message);
+  }
+  res.redirect(303, `/orders/${req.params.id}`);
+}));
+
 router.post('/sales/orders/:id/allocate', requirePermission(permissions.OPERATE, 'commit stock to sales orders'), asyncRoute(async (req, res) => {
   let result;
   try {
@@ -711,6 +718,7 @@ router.post('/sales/orders/:id/lines', requirePermission(permissions.OPERATE, 'c
 }));
 
 router.post('/sales/clarify', requirePermission(permissions.OPERATE, 'create or change sales orders'), asyncRoute(async (req, res) => {
+  assistantTurns.resume(req, res);
   const continuation = req.session.pendingSalesContinuation;
   if (!continuation) {
     req.flash('info', 'That customer-order question is no longer waiting. Please send the order again.');
@@ -738,11 +746,24 @@ router.post('/sales/clarify', requirePermission(permissions.OPERATE, 'create or 
     return res.redirect(303, '/actions');
   }
   delete req.session.pendingSalesContinuation;
-  if (result.kind === 'list') return res.redirect(303, '/sales?status=BACKORDERED');
-  req.flash(result.order.totals.backordered ? 'warn' : 'success',
-    result.message || `${result.order.order_number} is ${result.order.status.toLowerCase().replace(/_/g, ' ')}. `
-    + `${result.order.totals.allocated} committed and ${result.order.totals.backordered} waiting for stock.`);
-  return res.redirect(303, `/sales/orders/${result.order.id}`);
+  delete req.session.pendingActionQuestion;
+  if (result.kind === 'list') {
+    assistantTurns.settleNow(req, {
+      status: 'answered', said: 'Opened the customer orders waiting for stock.',
+      resultHref: '/sales?status=BACKORDERED', resultLabel: 'See waiting orders',
+    });
+    return res.redirect(303, '/sales?status=BACKORDERED');
+  }
+  const href = `/sales/orders/${result.order.id}`;
+  const summary = result.message || `${result.order.order_number} is ${result.order.status.toLowerCase().replace(/_/g, ' ')}. `
+    + `${result.order.totals.allocated} committed and ${result.order.totals.backordered} waiting for stock.`;
+  const isDraft = result.kind === 'created' && result.order.status === 'DRAFT';
+  assistantTurns.settleNow(req, {
+    status: isDraft ? 'drafted' : 'done', said: summary, resultHref: href,
+    resultLabel: isDraft ? `Review ${result.order.order_number}` : `Open ${result.order.order_number}`,
+  });
+  req.flash(result.order.totals.backordered ? 'warn' : 'success', summary);
+  return res.redirect(303, href);
 }));
 
 router.post('/sales/orders/:id/fulfill', requirePermission(permissions.OPERATE, 'fulfill sales orders'), asyncRoute(async (req, res) => {
@@ -1071,7 +1092,7 @@ router.post('/fulfilment/:id/ship', requirePermission(permissions.OPERATE, 'fulf
    */
   const chasedBox = await moneyChased(req, shipment.sales_order_id, shipment.customer_name || 'the customer');
   const completedAs = shipment.handover === 'COLLECTED' ? 'collected by the customer'
-    : shipment.handover === 'DELIVERED_BY_US' ? 'delivered by you' : 'handed to the carrier';
+    : shipment.handover === 'DELIVERED_BY_US' ? 'out for delivery with you' : 'handed to the carrier';
   req.flash('success', `${shipment.shipment_number} is recorded as ${completedAs}. ${shipment.units} left stock, and the sale is now in Accounting.${told}${chasedBox}`);
   res.redirect(303, `/fulfilment/${shipment.id}`);
 }));

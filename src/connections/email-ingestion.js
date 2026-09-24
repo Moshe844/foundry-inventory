@@ -100,6 +100,13 @@ function knownCustomer(db, workspaceId, sender) {
     .get(workspaceId, String(sender || '').toLowerCase()) || null;
 }
 
+/** A supplier address explicitly held on the supplier record. */
+function knownSupplier(db, workspaceId, sender) {
+  return db.prepare(`SELECT id, name FROM suppliers
+    WHERE workspace_id = ? AND LOWER(email) = ?`)
+    .get(workspaceId, String(sender || '').toLowerCase()) || null;
+}
+
 function capture(db, auth, event) {
   const data = event.data || {};
   const messageId = requireText(data.messageId || data.externalMessageId, 'Message id', { max: 240 });
@@ -113,12 +120,17 @@ function capture(db, auth, event) {
   const rule = matchingRule(db, auth, sender);
   const attachments = Array.isArray(data.attachments) ? data.attachments : [];
   const customer = knownCustomer(db, auth.workspaceId, sender);
+  const supplier = knownSupplier(db, auth.workspaceId, sender)
+    || (rule?.supplier_id
+      ? db.prepare('SELECT id, name FROM suppliers WHERE workspace_id = ? AND id = ?')
+        .get(auth.workspaceId, rule.supplier_id)
+      : null);
   const threadId = trimOrNull(data.threadId || data.externalThreadId);
   let classification = rule?.document_mode === 'inventory_list' && attachments.length
     ? 'inventory_document'
     : classify(data.subject, data.bodyText || data.body, attachments,
-      { knownSupplier: Boolean(rule), knownCustomer: Boolean(customer) });
-  if (classification !== 'customer_order_request' && !rule
+      { knownSupplier: Boolean(supplier || rule), knownCustomer: Boolean(customer) });
+  if (classification !== 'customer_order_request' && !supplier
     && continuesAnOrder(db, auth.workspaceId, threadId, sender)) {
     classification = 'customer_order_request';
   }
@@ -133,7 +145,8 @@ function capture(db, auth, event) {
    * document came out of this, so it is judged separately and says why.
    */
   const triage = replyTriage.judge({ sender, subject: data.subject,
-    bodyText: data.bodyText || data.body, attachmentCount: attachments.length, classification });
+    bodyText: data.bodyText || data.body, attachmentCount: attachments.length, classification,
+    knownCounterparty: Boolean(customer || supplier) });
   db.prepare(`INSERT INTO connection_email_messages
     (id, workspace_id, connector_id, external_message_id, sender, recipients, subject, body_text,
      received_at, supplier_id, trust_status, classification, external_thread_id, internet_message_id,
@@ -141,7 +154,7 @@ function capture(db, auth, event) {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(id, auth.workspaceId, auth.connectorId, messageId, sender, JSON.stringify(data.recipients || data.to || []),
       trimOrNull(data.subject), trimOrNull(data.bodyText || data.body), event.occurredAt || now,
-      rule && rule.supplier_id, rule ? 'TRUSTED' : 'UNTRUSTED', classification,
+      supplier?.id || null, customer || supplier || rule ? 'TRUSTED' : 'UNTRUSTED', classification,
       threadId, trimOrNull(data.internetMessageId), messageContentHash,
       triage.state, triage.reason, now, now);
 
@@ -166,10 +179,12 @@ function capture(db, auth, event) {
     evidence = require('../purchasing/supplier-evidence').process(db, id, data.facts || {});
   }
 
+  require('../attention/needs-you-count').invalidateNeedsYou(db, auth.workspaceId);
+
   // Purchasing evidence may change a PO expectation, cost history, or create a
   // decision. It never becomes a physical receipt here.
   return { actionType: evidence ? `supplier.${evidence.document_type}_processed` : `email.${classification}_captured`,
     actionRecordId: evidence?.id || id, movementIds: [], skuIds: [] };
 }
 
-module.exports = { matchingRule, classify, capture, looksLikeAnOrderRequest, knownCustomer };
+module.exports = { matchingRule, classify, capture, looksLikeAnOrderRequest, knownCustomer, knownSupplier };

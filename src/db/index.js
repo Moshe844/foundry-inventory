@@ -35,6 +35,7 @@ const MIGRATION_SCALE_SCHEMA_PATH = path.join(__dirname, 'schema-migration-scale
 const KITS_SCHEMA_PATH = path.join(__dirname, 'schema-kits.sql');
 const CATALOGUE_FACTS_SCHEMA_PATH = path.join(__dirname, 'schema-catalogue-facts.sql');
 const ASSISTANT_SCHEMA_PATH = path.join(__dirname, 'schema-assistant.sql');
+const SCHEMA_VERSION = 28;
 const SCHEMA_PATHS = [SCHEMA_PATH, FOUNDRY_SCHEMA_PATH, ATTENTION_SCHEMA_PATH,
   ACTIONS_SCHEMA_PATH, IMPORTS_SCHEMA_PATH, PURCHASING_SCHEMA_PATH,
   ONBOARDING_SCHEMA_PATH, AUTOPILOT_SCHEMA_PATH, MANAGER_SCHEMA_PATH,
@@ -87,13 +88,39 @@ function openDatabase(databasePath, options = {}) {
    * a bounded cost for the one time a burst has to outlive it.
    */
   db.pragma('journal_size_limit = 67108864');
-  migrate(db);
+  migrateSerialized(db, databasePath);
   // Historical links are added only when an existing foreign key or immutable
   // event payload proves them. This is idempotent and never manufactures a
   // relationship merely because timestamps or amounts happen to resemble one
   // another.
   require('../provenance/backfill').backfillAll(db);
   return db;
+}
+
+function expectedSchemaFingerprint() {
+  const fingerprint = crypto.createHash('sha256');
+  for (const schemaPath of SCHEMA_PATHS) fingerprint.update(fs.readFileSync(schemaPath));
+  return fingerprint.digest('hex');
+}
+
+function migrateSerialized(db, databasePath) {
+  if (databasePath === ':memory:') {
+    migrate(db);
+    return;
+  }
+  const lock = new Database(`${databasePath}.schema-lock`);
+  lock.pragma('busy_timeout = 120000');
+  try {
+    lock.exec('CREATE TABLE IF NOT EXISTS migration_lock (id INTEGER PRIMARY KEY CHECK (id=1))');
+    lock.exec('BEGIN EXCLUSIVE');
+    migrate(db);
+    lock.exec('COMMIT');
+  } catch (error) {
+    if (lock.inTransaction) lock.exec('ROLLBACK');
+    throw error;
+  } finally {
+    lock.close();
+  }
 }
 
 /**
@@ -106,6 +133,16 @@ const ADDED_COLUMNS = [
   {
     table: 'workspaces',
     column: 'deletion_requested_at',
+    definition: 'TEXT',
+  },
+  {
+    table: 'workspaces',
+    column: 'synthetic_activated_at',
+    definition: 'TEXT',
+  },
+  {
+    table: 'workspaces',
+    column: 'synthetic_origin_request',
     definition: 'TEXT',
   },
   {
@@ -177,6 +214,7 @@ const ADDED_COLUMNS = [
   { table: 'workspace_connectors', column: 'provider_type', definition: "TEXT NOT NULL DEFAULT 'reference_webhook'" },
   { table: 'workspace_connectors', column: 'provides', definition: "TEXT NOT NULL DEFAULT '[]'" },
   { table: 'workspace_connectors', column: 'config', definition: "TEXT NOT NULL DEFAULT '{}'" },
+  { table: 'autonomous_operation_authority', column: 'currency', definition: 'TEXT' },
   { table: 'workspace_connectors', column: 'last_activity_at', definition: 'TEXT' },
   { table: 'workspace_connectors', column: 'expected_interval_minutes', definition: 'INTEGER NOT NULL DEFAULT 360' },
   { table: 'workspace_connectors', column: 'paused_at', definition: 'TEXT' },
@@ -322,6 +360,7 @@ const ADDED_COLUMNS = [
   // Where a parcel leaves from. A carrier cannot quote a rate without it, and
   // StockChief cannot invent it — so it is asked for once, per location.
   { table: 'locations', column: 'address', definition: 'TEXT' },
+  { table: 'locations', column: 'phone', definition: 'TEXT' },
 
   // Live cutovers use durable source cursors. Existing migrations remain
   // immutable STATIC snapshots; no historical package is silently reclassified.
@@ -970,15 +1009,13 @@ function migrate(db) {
   migrateLandedCostPermission(db);
   dropLegacyUserLogin(db);
   db.prepare(
-    `INSERT INTO schema_meta (key, value) VALUES ('version', '27')
+    `INSERT INTO schema_meta (key, value) VALUES ('version', ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`
-  ).run();
-  const schemaFingerprint = crypto.createHash('sha256');
-  for (const schemaPath of SCHEMA_PATHS) schemaFingerprint.update(fs.readFileSync(schemaPath));
+  ).run(String(SCHEMA_VERSION));
   db.prepare(`INSERT OR IGNORE INTO database_releases
-    (release_ref, schema_version, schema_fingerprint, applied_at) VALUES (?, 27, ?, ?)`)
+    (release_ref, schema_version, schema_fingerprint, applied_at) VALUES (?, ?, ?, ?)`)
     .run(process.env.FOUNDRY_RELEASE_REF || process.env.GIT_COMMIT || 'development',
-      schemaFingerprint.digest('hex'), new Date().toISOString());
+      SCHEMA_VERSION, expectedSchemaFingerprint(), new Date().toISOString());
 }
 
 /**

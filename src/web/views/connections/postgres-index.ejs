@@ -1,0 +1,88 @@
+<section class="rm-head">
+  <div><p class="rm-eyebrow">Settings</p><h1>Connections</h1>
+    <p class="rm-lede">Each inventory connects to its own accounts. Credentials, records, and authority are never shared with another inventory.</p></div>
+</section>
+
+<section class="rm-card" aria-labelledby="connected-heading">
+  <div class="rm-card__head"><div><h2 id="connected-heading">Connected to this inventory</h2>
+    <p>Pause stops new work. Disconnect removes the saved authorization while preserving the audit trail.</p></div></div>
+  <% if (!connections.length) { %><div class="rm-empty"><h3>No accounts connected yet</h3><p>Choose one account below. You will sign in directly with that provider.</p></div><% } %>
+  <div class="rm-stack">
+    <% connections.forEach(function(connection){ %>
+      <a class="rm-row" href="/settings/connections/<%= connection.id %>">
+        <span><strong><%= connection.display_name %></strong><small><%= connection.provider_account_name || connection.provider_type %></small></span>
+        <span class="rm-badge"><%= connection.publicStatus %></span>
+      </a>
+    <% }) %>
+  </div>
+</section>
+
+<section class="rm-card" aria-labelledby="add-heading">
+  <div class="rm-card__head"><div><h2 id="add-heading">Connect an account</h2>
+    <p>A separate sign-in window keeps your place here. StockChief never asks for the provider password.</p></div></div>
+  <div class="rm-source-grid">
+    <% providerCatalog.filter(function(provider){ return provider.authMode === 'oauth'; }).forEach(function(provider){ %>
+      <article class="rm-source-card">
+        <span class="rm-eyebrow"><%= provider.mark || '↗' %></span><h3><%= provider.name %></h3>
+        <p><%= provider.description %></p>
+        <% if (provider.available) { %>
+          <a class="rm-btn" href="/settings/connections/<%= provider.type %>/launch?ticket=<%= encodeURIComponent(launchTicket) %>" target="_blank" rel="opener" data-provider-connect>Connect <%= provider.name %></a>
+        <% } else { %><p class="rm-note"><%= provider.unavailableReason || 'Not configured on this installation.' %></p><% } %>
+      </article>
+    <% }) %>
+  </div>
+</section>
+
+<section class="rm-card" aria-labelledby="custom-heading">
+  <div class="rm-card__head"><div><h2 id="custom-heading">Your own system</h2>
+    <p>Create a scoped event feed for an ERP, warehouse, or in-house system. The bearer token appears once.</p></div></div>
+  <form method="post" action="/settings/connections/custom" class="rm-form-grid">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <label>Connection name<input name="displayName" required maxlength="100" placeholder="Warehouse ERP"></label>
+    <div><button class="rm-btn" type="submit">Create event connection</button></div>
+  </form>
+</section>
+
+<section class="rm-card" id="developer-api" aria-labelledby="developer-api-heading">
+  <div class="rm-card__head"><div><p class="rm-eyebrow">Advanced</p><h2 id="developer-api-heading">Scoped inventory API</h2>
+    <p>Give custom software only the inventory access it needs. Tokens belong to this inventory, appear once, and can be revoked immediately.</p></div></div>
+  <% if (apiToken) { %><div class="rm-note rm-note--warn"><strong>Copy this token now</strong>
+    <input aria-label="New API token" value="<%= apiToken.token %>" readonly onclick="this.select()">
+    <small>Scopes: <%= apiToken.scopes.join(', ') %>. StockChief stores only its one-way digest.</small></div><% } %>
+  <div class="rm-stack">
+    <% apiClients.forEach(function(client){ %><div class="rm-row"><span><strong><%= client.name %></strong>
+      <small><%= client.scopes.join(', ') %> · <%= client.token_prefix %>…</small></span>
+      <span class="rm-badge"><%= client.revoked_at ? 'Revoked' : 'Active' %></span>
+      <% if (!client.revoked_at && currentUser.role === 'owner') { %><form method="post" action="/settings/connections/api-clients/<%= client.id %>/revoke" data-confirm="Revoke this token immediately?">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost" type="submit">Revoke</button></form><% } %>
+    </div><% }) %>
+  </div>
+  <% if (currentUser.role === 'owner') { %><form method="post" action="/settings/connections/api-clients" class="rm-form-grid">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <label>Client name<input name="name" required maxlength="100" placeholder="Warehouse automation"></label>
+    <fieldset><legend>Allowed work</legend><label><input type="checkbox" name="scopes" value="inventory:read"> Read inventory</label>
+      <label><input type="checkbox" name="scopes" value="inventory:write"> Receive or correct inventory through the canonical engine</label></fieldset>
+    <div><button class="rm-btn" type="submit">Create scoped token</button></div>
+  </form><% } %>
+  <details class="rm-more"><summary>Endpoints and safety</summary><div>
+    <p><code>GET /api/v1/public/inventory</code> is cursor-paginated. Writes use <code>POST /api/v1/public/commands/inventory/receive</code> or <code>/adjust</code>.</p>
+    <p>Every write requires an <code>Idempotency-Key</code>. Repeating the same command returns its recorded result; reusing the key for different data is refused.</p>
+  </div></details>
+</section>
+
+<script>
+document.querySelectorAll('[data-provider-connect]').forEach(function(link){
+  link.addEventListener('click',function(event){
+    event.preventDefault();
+    var popup=window.open(link.href,'stockchief-provider-connect',
+      'popup=yes,width=720,height=780,resizable=yes,scrollbars=yes');
+    if(!popup){window.location.assign(link.href);return;}
+    popup.focus();
+  });
+});
+window.addEventListener('message',function(event){
+  if(!event.data||event.data.type!=='foundry:connection-return')return;
+  if(event.origin!==window.location.origin)return;
+  window.location.assign(event.data.returnPath||'/settings/connections');
+});
+</script>

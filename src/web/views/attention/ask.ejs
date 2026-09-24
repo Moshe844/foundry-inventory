@@ -174,8 +174,15 @@
               <form method="post" action="/foundry/tell" data-busy>
                 <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                 <input type="hidden" name="queryConversation" value="1">
-                <input type="hidden" name="message" value="<%= choice %>">
-                <button type="submit"><%= choice %></button>
+                <% if (result.actionClarification) { %>
+                  <input type="hidden" name="original" value="<%= result.actionClarification.original %>">
+                  <input type="hidden" name="answer" value="<%= choice.value %>">
+                  <input type="hidden" name="answerAction" value="1">
+                  <% if (result.actionClarification.goalId) { %><input type="hidden" name="assistantGoal" value="<%= result.actionClarification.goalId %>"><% } %>
+                <% } else { %>
+                  <input type="hidden" name="message" value="<%= choice.value || choice %>">
+                <% } %>
+                <button type="submit"><%= choice.label || choice %></button>
               </form>
             <% }) %>
           </div>
@@ -254,7 +261,7 @@
           </details>
         <% } %>
 
-        <% const conversational = result.plan && ['small_talk', 'conversation_recap', 'general_knowledge', 'undo'].includes(result.plan.intent); %>
+        <% const conversational = result.plan && ['small_talk', 'conversation_recap', 'general_knowledge', 'undo', 'action_clarification'].includes(result.plan.intent); %>
         <% if ((result.supported || result.isAction) && !conversational) { %>
           <%#
             The working, folded. A native disclosure says what it is, opens
@@ -330,6 +337,8 @@
   <%- include('../partials/composer', {
     queryConversation: true,
     composerPrefill: error ? question : about ? 'About ' + about + ': ' : '',
+    composerPlaceholder: result && result.actionClarification ? 'Answer the question above…' : '',
+    actionClarification: result && result.actionClarification ? result.actionClarification : null,
   }) %>
 
   <% if (!aiConfigured) { %>
@@ -359,3 +368,4 @@
   <% } %>
 
 </div>
+<% if (currentUser && ['owner','manager','staff'].includes(currentUser.role)) { %><p class="rm-disclose"><a href="/autopilot/misses">Report a wrong answer or missing requirement</a></p><% } %>

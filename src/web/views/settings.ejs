@@ -26,6 +26,28 @@
   </p>
 </div>
 
+<section class="rm-panel" aria-label="Sample and test data">
+  <div class="rm-panel__body">
+    <h2>Sample and test data</h2>
+    <p>Sample data lives in a separate test inventory. It cannot be converted to a real inventory. Clear it and import your own records to start operating.</p>
+    <% if (isOwner) { %>
+      <form method="post" action="/onboarding/sample/load">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <button class="rm-btn rm-btn--ghost" type="submit">Load sample data to explore</button>
+      </form>
+      <details class="rm-disclosure">
+        <summary>Create a separate empty test inventory</summary>
+        <form method="post" action="/settings/test-inventory">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <label class="rm-field"><span>Test inventory name</span><input name="name" maxlength="120" required value="Test inventory" placeholder="e.g. Training inventory"></label>
+          <button class="rm-btn rm-btn--ghost" type="submit">Create a test inventory</button>
+        </form>
+      </details>
+    <% } %>
+    <p><a href="/onboarding?add=1">Add another inventory source</a> · <a href="/settings/ingestion">Set up ongoing email-attachment ingestion</a></p>
+  </div>
+</section>
+
 <div class="rm-next">
   <p class="rm-stamp"><%- helpers.icon('chat', { size: 13 }) %> Most things are set by saying them</p>
   <p class="rm-next__t">StockChief is taught by talking to it, not by filling in this page.</p>

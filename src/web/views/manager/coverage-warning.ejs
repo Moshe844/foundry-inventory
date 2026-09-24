@@ -1,0 +1,7 @@
+<% if ((locals.inbox && inbox.coverageErrors || []).length) { %>
+  <div class="notice notice--warn" role="alert">
+    <strong>Operations review is incomplete.</strong>
+    <p>StockChief could not check <%= inbox.coverageErrors.length %> exception sources. The known decisions below are not a complete all-clear.</p>
+    <a href="/settings/operations">Review operational health</a>
+  </div>
+<% } %>

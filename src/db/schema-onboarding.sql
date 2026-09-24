@@ -245,8 +245,62 @@ CREATE TABLE IF NOT EXISTS connector_feed_tokens (
   last_used_at        TEXT,
   revoked_at          TEXT
 );
+
+CREATE TABLE IF NOT EXISTS account_inventory_onboarding (
+  account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+  first_inventory_created_at TEXT NOT NULL
+);
+
+INSERT INTO account_inventory_onboarding(account_id, first_inventory_created_at)
+SELECT owner_account_id, MIN(created_at) FROM workspaces
+WHERE owner_account_id IS NOT NULL GROUP BY owner_account_id
+ON CONFLICT DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS workspace_entry_preferences (
+  workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
+  sample_workspace_id TEXT UNIQUE REFERENCES workspaces(id) ON DELETE SET NULL,
+  sample_dismissed_at TEXT,
+  skipped_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS workspace_sample_explorations (
+  workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
+  origin_workspace_id TEXT REFERENCES workspaces(id) ON DELETE SET NULL,
+  created_by_account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  UNIQUE(origin_workspace_id, created_by_account_id)
+);
+
+INSERT INTO workspace_sample_explorations(workspace_id, origin_workspace_id, created_by_account_id)
+SELECT preferences.sample_workspace_id, preferences.workspace_id, workspace.owner_account_id
+FROM workspace_entry_preferences preferences JOIN workspaces workspace ON workspace.id = preferences.sample_workspace_id
+WHERE preferences.sample_workspace_id IS NOT NULL
+ON CONFLICT DO NOTHING;
 CREATE INDEX IF NOT EXISTS idx_connector_feed_tokens_workspace
   ON connector_feed_tokens(workspace_id, revoked_at);
+
+CREATE TABLE IF NOT EXISTS operator_misses (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  reported_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  intent_id TEXT REFERENCES manager_intents(id) ON DELETE SET NULL,
+  question TEXT NOT NULL,
+  expected_behavior TEXT NOT NULL,
+  actual_behavior TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN','REVIEWED')),
+  review_note TEXT,
+  reviewed_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL,
+  reviewed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_operator_misses_workspace ON operator_misses(workspace_id, created_at);
+
+CREATE TABLE IF NOT EXISTS workspace_daily_digests (
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  report_date TEXT NOT NULL,
+  generated_at TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, report_date)
+);
 
 -- Every external event is claimed before it reaches the inventory engine and
 -- committed in the same transaction as its movement. The unique external id

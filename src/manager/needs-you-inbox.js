@@ -130,7 +130,7 @@ function fromPhysicalEvents(db, workspaceId) {
 
 function fromInvestigations(db, workspaceId) {
   return investigations
-    .list(db, workspaceId, { statuses: ['NEEDS_HUMAN', 'INCONCLUSIVE'], limit: 100 })
+    .list(db, workspaceId, { statuses: ['NEEDS_HUMAN', 'INCONCLUSIVE'], limit: -1 })
     // Older versions incorrectly opened a record disagreement when the only
     // missing fact was historical purchase cost. The stock quantities do not
     // disagree in that case, so never present that legacy record as a
@@ -174,11 +174,11 @@ function fromRepairCases(db, workspaceId) {
       json_extract(simulation,'$.summary') AS simulation_summary
     FROM repair_cases
     WHERE workspace_id=? AND status IN ('NEEDS_AUTHORITY','FAILED','INCONCLUSIVE')
-    ORDER BY updated_at DESC,rowid DESC LIMIT 100`).all(workspaceId).map((repairCase) => ({
+    ORDER BY updated_at DESC,rowid DESC`).all(workspaceId).map((repairCase) => ({
     id: `repair:${repairCase.id}`,
     kind: 'repair',
     title: repairCase.symptom,
-    happened: `StockChief found that ${repairCase.failedInvariant}.`,
+    happened: `StockChief found that ${repairCase.failed_invariant}.`,
     why: repairCase.status === 'FAILED'
       ? 'The domain repair ran or resumed, but its post-repair checks did not all pass. StockChief has not called it fixed.'
       : repairCase.status === 'INCONCLUSIVE'
@@ -271,7 +271,7 @@ function fromUnverifiedExecutions(db, workspaceId) {
       FROM action_verifications v
       JOIN action_proposals p ON p.id = v.proposal_id AND p.workspace_id = v.workspace_id
      WHERE v.workspace_id = ? AND v.verified = 0 AND v.created_at >= datetime('now', '-90 days')
-     ORDER BY v.created_at DESC LIMIT 20`).all(workspaceId);
+     ORDER BY v.created_at DESC`).all(workspaceId);
   return rows.map((row) => {
     const proposal = proposals.get(db, workspaceId, row.proposal_id);
     if (!proposal) return null;
@@ -296,7 +296,7 @@ function fromUnverifiedExecutions(db, workspaceId) {
 
 function fromCorrections(db, workspaceId) {
   return proposals
-    .listOpen(db, workspaceId, { limit: 20 })
+    .listOpen(db, workspaceId, { limit: -1 })
     .filter((proposal) => proposal.status === 'AWAITING_APPROVAL')
     .map((proposal) => ({
       id: `proposal:${proposal.proposalId}`,
@@ -445,7 +445,7 @@ function fromWorkItems(db, workspaceId, { now = Date.now() } = {}) {
   // A draft without a separate work item is still a real purchasing decision.
   // Home already showed it; omitting it here made the Home total, sidebar badge
   // and Check-now result disagree with the page named “Needs you”.
-  const drafts = autopilotPresenter.whatStockChiefPrepared(db, workspaceId, { limit: 100 })
+  const drafts = autopilotPresenter.whatStockChiefPrepared(db, workspaceId, { limit: Number.MAX_SAFE_INTEGER })
     .filter((entry) => entry.kind === 'purchase')
     .map((entry) => {
       const customerImpact = customerImpactForPurchase(db, workspaceId, entry.id);
@@ -468,7 +468,7 @@ function fromWorkItems(db, workspaceId, { now = Date.now() } = {}) {
 }
 
 function fromFindings(db, workspaceId) {
-  return autopilotPresenter.whatNeedsYou(db, workspaceId).map((finding) => {
+  return autopilotPresenter.whatNeedsYou(db, workspaceId, { limit: null }).map((finding) => {
     const isProtectedLimit = finding.category === 'stock_protection_boundary';
     const approachingProtectedLimit = isProtectedLimit
       && Number((finding.metrics || {}).onHand) > Number((finding.metrics || {}).threshold);
@@ -617,7 +617,7 @@ function fromMailboxInventory(db, workspaceId) {
  */
 function fromUnansweredMail(db, workspaceId) {
   const replyInbox = require('../connections/reply-inbox');
-  const waiting = replyInbox.oldestUnanswered(db, workspaceId, 3);
+  const waiting = replyInbox.oldestUnanswered(db, workspaceId, 500);
   if (!waiting.length) return [];
   /*
    * Not the mail that is already here as an order.
@@ -639,7 +639,7 @@ function fromUnansweredMail(db, workspaceId) {
   return waiting.filter((message) => !alreadyAnOrder.has(message.id)).map((message, index) => ({
     id: `unanswered-mail:${message.id}`,
     kind: 'decision',
-    title: `Reply to ${message.supplier_name || message.sender}`,
+    title: `Reply to ${message.counterpartyName}`,
     happened: `${message.sender} wrote ${message.subject ? `"${message.subject}"` : 'without a subject'}`
       + ` on ${String(message.received_at).slice(0, 10)}. Nobody has answered it.`,
     why: message.reply_reason || 'StockChief could not tell that this was finished with.',
@@ -647,8 +647,8 @@ function fromUnansweredMail(db, workspaceId) {
       ? `Answer it, or move it out of the way. ${total} messages are waiting.`
       : 'Answer it, or move it to handled if it needs nothing.',
     missing: 'An answer to the person who wrote.',
-    actionLabel: 'Read it',
-    href: `/mail/${message.id}`,
+    actionLabel: 'Reply to message',
+    href: `/mail/${message.id}#reply`,
     at: message.received_at,
     /*
      * Age is the urgency here.
@@ -910,7 +910,7 @@ function fromPredictedTrouble(db, workspaceId) {
     LEFT JOIN items i ON i.id = s.item_id
     WHERE r.workspace_id = ? AND r.status = 'OPEN'
       AND (r.authority_verdict IS NULL OR r.authority_verdict <> 'authorized')
-    ORDER BY r.created_at DESC LIMIT 40`).all(workspaceId);
+    ORDER BY r.created_at DESC`).all(workspaceId);
 
   return rows.map((row) => {
     const evidence = (() => {
@@ -1207,7 +1207,7 @@ function fromAutomationSuggestions(db, workspaceId) {
     .map((proposal) => ({
       id: `automation-suggestion:${proposal.id}`,
       kind: 'authority', title: proposal.summary,
-      happened: 'StockChief noticed that you approved the same kind of bounded routine work at least three times.',
+      happened: 'You approved the same kind of bounded routine work at least five times. This suggestion does not grant authority until you confirm it.',
       why: 'Nothing has changed. StockChief needs explicit permission before it may stop asking about similar work.',
       recommendation: 'Review the proposed scope and ceiling. Approve only if you want this to become lasting authority.',
       missing: 'Your explicit decision about whether StockChief may handle this pattern automatically.',
@@ -1432,7 +1432,16 @@ function fromPendingSupplierCommunications(db, workspaceId) {
 }
 
 function fromAccounting(db, workspaceId) {
-  const rows = db.prepare(`SELECT aei.*, so.id AS sales_order_id, so.order_number
+  const rows = db.prepare(`SELECT aei.*, so.id AS sales_order_id, so.order_number,
+    (SELECT CASE
+      WHEN COUNT(*) = 0 THEN 'was fulfilled'
+      WHEN COUNT(*) = SUM(CASE WHEN ss.handover = 'COLLECTED' THEN 1 ELSE 0 END) THEN 'was collected'
+      WHEN COUNT(*) = SUM(CASE WHEN ss.handover = 'DELIVERED_BY_US' THEN 1 ELSE 0 END) THEN 'was delivered'
+      WHEN COUNT(*) = SUM(CASE WHEN ss.handover = 'CARRIER' THEN 1 ELSE 0 END) THEN 'was handed to a carrier'
+      ELSE 'was fulfilled'
+    END FROM sales_shipments ss
+      WHERE ss.workspace_id = aei.workspace_id AND ss.sales_order_id = so.id
+        AND ss.status IN ('SHIPPED','DELIVERED')) AS completion_phrase
     FROM accounting_event_inbox aei
     LEFT JOIN domain_events de ON de.id = aei.domain_event_id
     LEFT JOIN sales_order_events soe ON de.source_record_type = 'sales_order_event'
@@ -1447,7 +1456,7 @@ function fromAccounting(db, workspaceId) {
     return {
       id: `accounting:${row.id}`,
       kind: 'decision',
-      title: row.order_number ? `${row.order_number} shipped, but its accounting is not finished`
+      title: row.order_number ? `${row.order_number} ${row.completion_phrase}, but its accounting is not finished`
         : 'An accounting consequence needs review',
       happened: outcome.message || row.error_message || `StockChief recorded ${row.event_type.replaceAll('.', ' · ')} operationally.`,
       why: 'StockChief kept the business event but did not invent a missing cost, price, match, or posting date.',
@@ -1481,7 +1490,7 @@ function fromAccounting(db, workspaceId) {
       why: 'StockChief saved the bill but posted no guessed inventory, expense, or payable.',
       recommendation: 'Resolve the receipt, price, quantity, or PO match before approving this bill.',
       missing: 'A complete PO ↔ receipt ↔ supplier invoice match, or your explicit correction.',
-      actionLabel: 'Resolve supplier bill', href: '/accounting/payables',
+      actionLabel: 'Resolve supplier bill', href: `/accounting/payables/${bill.id}/review`,
       at: bill.updated_at, priority: 92,
     };
   });
@@ -1536,7 +1545,7 @@ function fromBusinessConsistency(db, workspaceId) {
 function fromMigrations(db,workspaceId) {
   const packages = db.prepare(`SELECT * FROM migration_packages
     WHERE workspace_id=? AND status IN ('STAGING','NEEDS_ATTENTION','READY','FAILED')
-    ORDER BY updated_at DESC,id DESC LIMIT 10`).all(workspaceId);
+    ORDER BY updated_at DESC,id DESC`).all(workspaceId);
   const entries = [];
   for (const pkg of packages) {
     // Work in progress is not a decision. Showing it in Needs You creates the
@@ -1663,9 +1672,12 @@ function fromMigrations(db,workspaceId) {
  * attention. Keeping this boundary explicit lets Home, Ask and Needs You share
  * one source for actual waiting work without copying its classification logic.
  */
-function operationalEntries(db, workspaceId) {
+function operationalEntries(db, workspaceId, options = {}) {
   const safely = (fn) => {
-    try { return fn(db, workspaceId) || []; } catch { return []; }
+    try { return fn(db, workspaceId) || []; } catch {
+      if (options.coverageErrors) options.coverageErrors.push(fn.name);
+      return [];
+    }
   };
   return [
     ...safely(fromMigrations),
@@ -1684,6 +1696,7 @@ function operationalEntries(db, workspaceId) {
     ...safely(fromMoneyHeldOnCancelledOrders),
     ...safely(fromSupplierMoneyNotOnAnyBill),
     ...safely(fromPredictedTrouble),
+    ...safely(fromIncomingTiming),
     ...safely(fromLateShipments),
     ...safely(fromEmailOrders),
     ...safely(fromUnansweredMail),
@@ -1698,6 +1711,22 @@ function operationalEntries(db, workspaceId) {
     ...safely(fromCountsReturnsAndWaves),
     ...safely(fromFindings),
   ];
+}
+
+function fromIncomingTiming(db, workspaceId) {
+  const rows = db.prepare(`SELECT DISTINCT line.sku_id FROM purchase_order_lines line
+    JOIN purchase_orders purchase ON purchase.id = line.purchase_order_id AND purchase.workspace_id = line.workspace_id
+    WHERE line.workspace_id = ? AND purchase.status IN ('APPROVED','ORDERED','PARTIALLY_RECEIVED')
+      AND line.quantity_units > line.quantity_received_units`).all(workspaceId);
+  if (!rows.length) return [];
+  const evaluation = require('../purchasing/replenishment').evaluateWorkspace(db, workspaceId, { skuIds: rows.map((row) => row.sku_id) });
+  return evaluation.blocked.filter((line) => line.reason === 'incoming_timing_risk').map((line) => ({
+    id: `incoming-timing:${line.skuId}`, kind: 'purchasing', title: `${line.displayName} needs an arrival decision`,
+    happened: line.explanation, why: 'Committed order quantity is not proof that stock will arrive before it is needed.',
+    recommendation: 'Confirm or expedite the existing supply, or explicitly decide on an alternative. Do not duplicate the outstanding order silently.',
+    missing: 'Reliable arrival evidence or an authorized exception plan.', actionLabel: 'Confirm the arrival plan',
+    href: `/purchasing/why/${line.skuId}`, at: null, priority: 91, requiredPermission: permissions.VIEW_PURCHASING,
+  }));
 }
 
 /** Governed learning changes are one decision, never a stream of metrics. */
@@ -1723,10 +1752,28 @@ function fromLearning(db, workspaceId) {
 /** Mission 8 exceptions, compressed to one exact decision per workflow. */
 function fromCountsReturnsAndWaves(db, workspaceId) {
   const entries = [];
+  for (const plan of require('../operations/counts').duePlans(db,workspaceId)) {
+    entries.push({id:`count-plan:${plan.id}`,kind:'count',title:`${plan.name} is due for a physical count`,
+      happened:`The recurring count at ${plan.location_name} was due on ${plan.next_due_date}.`,
+      why:'The calendar moved, but no physical count has been supplied. StockChief will not invent a count or change stock.',
+      recommendation:'Start the scheduled blind count and record the physical quantities.',missing:'Physical count evidence.',
+      actionLabel:'Start scheduled count',href:'/warehouse/operations#counts',at:`${plan.next_due_date}T00:00:00.000Z`,
+      priority:86,requiredPermission:permissions.COUNT_STOCK});
+  }
   for (const row of db.prepare(`SELECT s.id,s.status,s.created_at,c.name FROM inventory_count_sessions s
     JOIN inventory_count_campaigns c ON c.id=s.campaign_id WHERE s.workspace_id=?
-      AND s.status IN ('RECOUNT_REQUIRED','AWAITING_APPROVAL')`).all(workspaceId)) {
+      AND (s.status IN ('RECOUNT_REQUIRED','AWAITING_APPROVAL') OR (s.status='OPEN' AND (c.plan_id IS NOT NULL OR s.parent_session_id IS NOT NULL)))
+      AND NOT EXISTS (SELECT 1 FROM inventory_count_sessions child WHERE child.parent_session_id=s.id)`).all(workspaceId)) {
     const recount = row.status === 'RECOUNT_REQUIRED';
+    const open = row.status === 'OPEN';
+    if (open) {
+      entries.push({id:`count:${row.id}`,kind:'count',title:`${row.name} needs physical quantities`,
+        happened:'The blind count is open. No stock has changed.',
+        why:'StockChief cannot observe shelves without physical evidence.',recommendation:'Record every listed physical quantity and submit the count.',
+        missing:'Physical count evidence.',actionLabel:'Continue count',href:`/warehouse/counts/${row.id}`,at:row.created_at,
+        priority:86,requiredPermission:permissions.COUNT_STOCK});
+      continue;
+    }
     entries.push({ id:`count:${row.id}`,kind:'count',title:`${row.name} ${recount?'needs a blind recount':'has a variance to approve'}`,
       happened: recount?'The first blind count disagreed with the recorded stock.':'Two count passes produced a recorded variance.',
       why: recount?'StockChief cannot change stock from one disputed count.':'Counting and approving a stock correction are separate authorities.',
@@ -1814,8 +1861,9 @@ function inbox(db, workspaceId, membership = null, options = {}) {
     // The defensive filter in fromInvestigations still prevents stale UI if a
     // read-only or partially migrated database cannot record the cleanup.
   }
+  const coverageErrors = [];
   const rawEntries = compressLargeQueues([
-    ...operationalEntries(db, workspaceId),
+    ...operationalEntries(db, workspaceId, { coverageErrors }),
     ...fromBusinessConsistency(db, workspaceId),
     // Learning demand is not a decision. Home teaches the user to record real
     // sales in context; Needs You remains reserved for something StockChief is
@@ -1890,6 +1938,7 @@ function inbox(db, workspaceId, membership = null, options = {}) {
   // bounded caller display the truthful queue count without serialising a
   // second payload or accidentally rendering every decision.
   Object.defineProperty(result, 'totalCount', { value: ordered.length, enumerable: false });
+  Object.defineProperty(result, 'coverageErrors', { value: coverageErrors, enumerable: false });
   return result;
 }
 

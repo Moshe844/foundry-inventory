@@ -372,13 +372,13 @@ test('an account that belongs to a workspace is still swept', () => asPartner(as
     const item = makeQuantityItem(env.db, env.ctx, { name: 'moc toe slip in', baseCode: '7L665-3-36' });
     prices.setPrice(env.db, env.ctx, { skuId: item.skuId, amount: '80.00', currency: 'USD' });
     env.db.prepare('UPDATE skus SET weight_grams = 900 WHERE id = ?').run(item.skuId);
-    env.db.prepare('UPDATE locations SET address = ? WHERE id = ?')
-      .run('12 Depot Road, Monroe, NY 10950', env.workspace.main.id);
+    env.db.prepare('UPDATE locations SET address = ?, phone = ? WHERE id = ?')
+      .run('12 Depot Road, Monroe, NY 10950', '845-555-0147', env.workspace.main.id);
     inventory.receive(env.db, env.ctx,
       { skuId: item.skuId, locationId: env.workspace.main.id, quantity: 40 });
 
     const customer = sales.createCustomer(env.db, env.ctx, {
-      name: 'Moshe Ekstein', email: 'motty@example.test',
+      name: 'Moshe Ekstein', email: 'motty@example.test', phone: '845-555-0148',
       shippingAddress: '13 Austra Pkwy, Monroe, NY 10950',
     });
     const order = sales.confirm(env.db, env.ctx, sales.createOrder(env.db, env.ctx, {

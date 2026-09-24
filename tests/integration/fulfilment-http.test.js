@@ -73,8 +73,11 @@ test('the fulfilment queue, a pick list, packing and shipping all work from the 
   // The one button that moves stock says so on its face.
   const readyToShip = await agent.get(shipmentUrl);
   const shipText = plain(readyToShip.text);
-  assert.match(shipText, /Mark shipped\s*—\s*12 leaves stock/i);
-  assert.match(shipText, /This is the step that moves stock/i);
+  assert.match(shipText, /Confirm carrier handoff\s*—\s*12 leaves stock/i);
+  assert.match(shipText, /This is the only step that removes stock/i);
+  assert.match(shipText, /Use a different handoff method/i);
+  assert.match(shipText, /Carrier postage paid/i);
+  assert.doesNotMatch(shipText, /Change how the goods actually left/i);
 
   const shipped = await agent.post(`${shipmentUrl}/ship`).type('form').send({
     _csrf: csrfFrom(readyToShip.text), trackingNumber: '1Z999AA10123456784', service: 'Ground',
@@ -235,6 +238,7 @@ test('one customer order is one page: the whole story without leaving it', async
   assert.match(story, /1Z999AA10123456784/, 'how it is travelling');
   assert.match(story, /Written, not sent|Sent /, 'whether the customer was told');
   assert.match(story, /Order activity/, 'and everything that happened to it');
-  assert.match(story, /recorded path from the customer order to stock, Accounting, and payment/i);
-  assert.match(story, /SHP-1001 moved 12 units from Main Warehouse out of on-hand stock/i);
+  assert.match(story, /12 units left stock/i, 'the inventory effect');
+  assert.match(story, /Accounting still needs one decision/i, 'the accounting result');
+  assert.match(story, /Money — \$300\.00 still owed/i, 'the payment position');
 });

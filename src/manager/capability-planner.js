@@ -5,6 +5,7 @@ const { validate } = require('../foundry/validator');
 const { toWireSchema } = require('../foundry/schema-tools');
 const managerContext = require('./context');
 const capabilities = require('./capability-registry');
+const operatingInstructions = require('./operating-instructions');
 
 const INTENT_CLASSES = [
   'QUESTION', 'INVENTORY_ACTION', 'CATALOG_CHANGE', 'IMPORT', 'PHYSICAL_EVENT',
@@ -68,6 +69,10 @@ ${capabilities.publicPrompt()}
 
 Rules:
 - Never invent records, quantities, identifiers, authority or facts.
+- approvedTeachings in the workspace are owner-approved operating context.
+  Use them when choosing and preparing the relevant capability, but never as
+  transaction evidence and never as permission beyond a bounded authority
+  entry whose deterministic policy checks still pass.
 - Do not design a new mutation. The selected deterministic handler owns all
   lookup, validation, preview, approval, execution and audit work.
 - Ask one concrete clarifying question only when a fact needed to choose the
@@ -114,6 +119,11 @@ function workspaceSnapshot(db, ctx) {
       WHERE so.workspace_id = ? ORDER BY so.created_at DESC LIMIT 30`, [workspaceId]),
     appliedDocuments: safeRows(db, `SELECT source_name AS sourceName, applied_at AS appliedAt FROM setup_documents
       WHERE workspace_id = ? AND status = 'APPLIED' ORDER BY applied_at DESC, created_at DESC LIMIT 20`, [workspaceId]),
+    approvedTeachings: operatingInstructions.activeTeachings(db, workspaceId).map((teaching) => ({
+      scope: teaching.scope,
+      effect: teaching.effect,
+      grantsAuthority: teaching.grantsAuthority,
+    })),
   };
 }
 

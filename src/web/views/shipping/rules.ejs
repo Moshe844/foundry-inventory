@@ -11,24 +11,84 @@
    */
   const money = function (minor) { return '$' + (Number(minor || 0) / 100).toFixed(2); };
   const se = typeof shipengine === 'undefined' ? { opened: false, available: false } : shipengine;
+  const sandboxQualification = !account.connected && workspace && workspace.data_mode === 'synthetic';
 %>
 
 <div class="page-head">
   <div>
-    <p class="eyebrow">StockChief</p>
-    <h1>Shipping rules</h1>
+    <p class="eyebrow">Shipping</p>
+    <h1>Connect shipping, then test one label</h1>
     <p class="lede">
-      When a parcel is ready, StockChief gets live rates from the carriers. A rule here says which of
-      them it may buy on its own. Anything a rule does not cover becomes a question rather than a
-      guess.
+      Start with a sandbox connection. Once StockChief can get a rate and create a test label,
+      choose how much of the real workflow it may handle. Nothing on this page ships a parcel by itself.
     </p>
   </div>
 </div>
 
+<section class="card section" aria-label="Shipping qualification status">
+  <div class="card-head"><div>
+    <h2><%= account.connected ? (account.testMode ? 'Sandbox connected' : 'Shipping account connected') : 'Step 1 — connect a ShipEngine sandbox' %></h2>
+    <p class="hint"><%= account.connected
+      ? (account.testMode
+        ? 'This connection can quote rates and create test labels. Test labels cannot ship real parcels and do not charge real postage.'
+        : 'This connection can quote and buy real labels on this business’s own account.')
+      : 'For qualification, use a ShipEngine TEST key. This is a shipping-platform key, not a UPS, FedEx, USPS or DHL login.' %></p>
+  </div></div>
+  <div class="card-body stack">
+    <% if (!account.connected) { %>
+      <ol class="stack">
+        <li>Sign in to ShipEngine and switch the dashboard to <strong>Sandbox</strong>.</li>
+        <li>Open <strong>API Keys</strong>, create a key, and copy the key beginning with <code>TEST</code>.</li>
+        <li>Paste it under <strong>Connect with a shipping-platform key</strong> below. StockChief verifies it before storing it encrypted for this inventory only.</li>
+      </ol>
+      <% if (workspace && workspace.data_mode === 'synthetic') { %>
+        <div class="notice notice--ok"><div><strong>This sample inventory is the right place to qualify it.</strong><br>Do not use a production key here. Test labels and qualification records remain disposable.</div></div>
+      <% } %>
+      <p class="hint">Handling mode and automation rules appear only after this connection passes.</p>
+    <% } else if (account.testMode) { %>
+      <p><strong>Next:</strong> use a complete test customer order to request rates, purchase one test label, verify its tracking record, then void it.</p>
+    <% } else { %>
+      <p><strong>Next:</strong> verify one low-value label manually before enabling recommendation or automatic purchasing.</p>
+    <% } %>
+    <p class="hint"><strong>Production ownership:</strong> every StockChief business must use its own shipping account or its own isolated ShipEngine seller. A developer key must never pay customer postage.</p>
+  </div>
+</section>
+
+<section class="card section" aria-label="How businesses set up shipping">
+  <div class="card-head"><div>
+    <h2>One setup, based on how the business ships today</h2>
+    <p class="hint">Customers should not need to understand ShipEngine. It is the infrastructure behind the secure setup.</p>
+  </div></div>
+  <div class="card-body stack">
+    <div class="planning-item"><strong>Already has UPS, FedEx, USPS or DHL accounts</strong><br><span class="t-muted">Connect those carrier accounts in the secure setup window. Existing negotiated rates and carrier billing stay with that business.</span></div>
+    <div class="planning-item"><strong>Does not have carrier accounts yet</strong><br><span class="t-muted">Use the same setup window to activate shipping rates and add the payment method that pays that business’s postage.</span></div>
+    <div class="planning-item"><strong>Buys labels somewhere else</strong><br><span class="t-muted">Skip the connection. When a parcel leaves, record its carrier, tracking number and postage; inventory and accounting still update.</span></div>
+    <details class="disclose"><summary><span>Already uses a shipping platform</span><span class="disclose__cue">Show</span></summary>
+      <div class="disclose__body stack t-sm">
+        <p>An existing ShipEngine, ShipStation, EasyPost or Shippo account can be connected as an advanced path. Its credentials belong only to that business.</p>
+        <p><a class="btn" href="#account">Use this business's existing shipping platform</a></p>
+      </div>
+    </details>
+  </div>
+</section>
+
+<section class="card section" aria-label="Shipping pricing">
+  <div class="card-head"><div>
+    <h2>Who pays what</h2>
+    <p class="hint">Three different amounts stay separate so margin and accounting remain truthful.</p>
+  </div></div>
+  <div class="card-body stack">
+    <div class="planning-item"><strong>Carrier postage</strong><br><span class="t-muted">Charged directly to this business’s connected shipping account and recorded as its shipping expense.</span></div>
+    <div class="planning-item"><strong>What the customer pays for delivery</strong><br><span class="t-muted">Optional and set on the order. It is recorded separately as customer revenue, never silently netted against postage.</span></div>
+    <div class="planning-item"><strong>StockChief shipping markup</strong><br><span class="t-muted">None in the current product. Subscription pricing is separate and is not implemented yet.</span></div>
+  </div>
+</section>
+
+<% if (account.connected) { %>
 <section class="card section" id="handling">
   <div class="card-head"><div>
-    <h2>How StockChief handles each parcel</h2>
-    <p class="hint">Rate shopping is always read-only. Only Automatic can purchase, and only inside a saved rule and explicit authority.</p>
+    <h2>Later — choose how StockChief handles labels</h2>
+    <p class="hint">Leave this on Recommend during qualification. Rate shopping is read-only; only Automatic can purchase, and only inside a saved rule and explicit authority.</p>
   </div></div>
   <form method="post" action="/settings/shipping/operation-mode" data-busy>
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -48,6 +108,7 @@
     <div class="card-foot"><button class="btn btn--primary" type="submit">Save handling</button></div>
   </form>
 </section>
+<% } %>
 
 <%
   /*
@@ -61,18 +122,31 @@
 %>
 <section class="card section" id="account">
   <div class="card-head"><div>
-    <h2>Your shipping</h2>
-    <p class="hint">Your carrier rates, your payment method, and one StockChief workflow.</p>
+    <h2><%= sandboxQualification ? 'Connect ShipEngine sandbox' : 'The account StockChief will use' %></h2>
+    <p class="hint"><%= sandboxQualification
+      ? 'Enter one ShipEngine TEST key. StockChief verifies it before anything else appears.'
+      : 'One inventory, one encrypted shipping-platform credential, and no shared customer postage.' %></p>
   </div></div>
 
+  <% if (account.connected) { %>
   <div class="card-body stack">
-    <div class="choice-grid" aria-label="Supported carriers">
-      <% ['UPS', 'FedEx', 'USPS', 'DHL'].forEach(function (carrier) { %>
-        <div class="choice"><span class="choice-body"><strong><%= carrier %></strong><span class="t-xs t-muted">Rates, labels and tracking</span></span></div>
-      <% }) %>
-    </div>
-    <p class="hint">StockChief compares eligible services against the customer promise. It never changes the carrier charge or delivery evidence.</p>
+    <div class="notice notice--ok"><div>
+      <strong>Connected shipping platform: <%= account.provider === 'shipengine' ? 'ShipEngine'
+        : account.provider === 'shipstation' ? 'ShipStation'
+          : account.provider === 'easypost' ? 'EasyPost' : 'Shippo' %></strong><br>
+      Carrier choices come from this business's account. StockChief shows a carrier only when that
+      account actually returns a rate; the names UPS, FedEx, USPS and DHL are not setup buttons.
+    </div></div>
+    <details class="disclose">
+      <summary><span>Use a different Shippo, ShipStation, EasyPost or ShipEngine account</span><span class="disclose__cue">Show</span></summary>
+      <div class="disclose__body t-sm">
+        Disconnect the current platform below, then choose the platform this business already uses
+        and verify that business's API key. Disconnecting does not delete the external account or
+        StockChief's existing labels and tracking history.
+      </div>
+    </details>
   </div>
+  <% } %>
 
   <%# ------------------------------------- a workspace ShipEngine seller %>
   <% if (account.connected && account.source === 'platform') { %>
@@ -208,7 +282,7 @@
           <%= account.because %>
         </div></div>
       </div>
-    <% } else { %>
+    <% } else if (!sandboxQualification) { %>
       <div class="card-body">
         <p class="lede">No carrier account is connected.</p>
         <p class="hint">
@@ -250,14 +324,14 @@
           <button class="btn btn--primary" type="submit">Set up shipping for me</button>
         </div>
       </form>
-    <% } else if (!se.available && !se.opened && !account.connected) { %>
+    <% } else if (!se.available && !se.opened && !account.connected && !sandboxQualification) { %>
       <div class="card-body stack">
         <div class="notice notice--warn"><div>
-          <strong>Guided carrier setup is not enabled on this installation yet.</strong><br>
-          StockChief needs its shipping-partner credential before it can open the secure UPS, FedEx,
-          USPS and DHL connection window. No carrier or payment information has been guessed.
+          <strong>Production guided setup is not enabled on this installation yet.</strong><br>
+          That production path requires StockChief’s ShipEngine partner credentials and creates an isolated
+          seller for each customer. For qualification now, connect a ShipEngine sandbox TEST key below.
         </div></div>
-        <a class="btn" href="#existing-carrier-connection">Connect an existing shipping account</a>
+        <a class="btn btn--primary" href="#existing-carrier-connection">Connect ShipEngine sandbox</a>
       </div>
     <% } %>
 
@@ -297,12 +371,12 @@
     <%
       // Provider keys are an advanced escape hatch, never the ordinary owner flow.
       // The carrier-first choices above remain primary even when guided setup is unavailable.
-    var offerOpen = true;
+    var offerOpen = !sandboxQualification;
     %>
     <% if (offerOpen) { %>
       <details class="disclose" id="existing-carrier-connection">
         <summary>
-          <span>Connect my existing carrier accounts</span>
+          <span>Connect with a shipping-platform key</span>
           <span class="disclose__cue">Show</span>
         </summary>
         <div class="disclose__body">
@@ -310,10 +384,13 @@
     <form method="post" action="/settings/shipping/account" data-busy id="advanced-shipping-connection">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <div class="card-body stack">
-        <% if (!offerOpen) { %><h3 id="existing-carrier-connection">Connect this business's shipping account</h3><% } %>
-        <p class="hint">Use the secure key from the shipping account that already holds this business's negotiated carrier accounts.</p>
+        <% if (!offerOpen) { %><h3 id="existing-carrier-connection">ShipEngine sandbox API key</h3><% } %>
+        <p class="hint">For qualification choose ShipEngine and paste a sandbox key beginning with TEST. In production, this key must belong to this business—not to the StockChief developer account.</p>
+        <% if (sandboxQualification) { %>
+          <input type="hidden" name="provider" value="shipengine">
+        <% } else { %>
         <label class="field">
-          <span class="field-label">Provider</span>
+          <span class="field-label">Shipping platform <span class="t-muted">(not the carrier)</span></span>
           <select class="select" name="provider">
             <% providers.forEach(function (name) { %>
               <option value="<%= name %>"><%= name === 'shipengine' ? 'ShipEngine API'
@@ -322,13 +399,13 @@
             <% }) %>
           </select>
         </label>
+        <% } %>
         <label class="field">
           <span class="field-label">API key</span>
           <input class="input" type="password" name="apiKey" autocomplete="off" required>
           <span class="field-hint">
-            Where the account offers a sandbox, start with its test key. ShipStation platform
-            accounts do not provide a sandbox, so use a dedicated test store and void its test
-            labels immediately. The key is stored encrypted and never shown back to you.
+            ShipEngine sandbox keys begin with TEST. StockChief checks the key before saving it,
+            stores it encrypted for this inventory, and never shows it back to you.
           </span>
         </label>
         <label class="field">
@@ -342,7 +419,7 @@
       </div>
       <div class="card-foot">
         <button class="btn <%= offerOpen ? '' : 'btn--primary' %>"
-          type="submit">Connect my shipping account</button>
+          type="submit">Verify and connect</button>
       </div>
     </form>
     <% if (offerOpen) { %>
@@ -352,11 +429,37 @@
   <% } %>
 </section>
 
+<section class="card section" aria-label="What happens after a parcel leaves">
+  <div class="card-head"><div>
+    <h2>What StockChief does after the handoff</h2>
+    <p class="hint">The shipping connection is not only for buying labels.</p>
+  </div></div>
+  <div class="card-body stack">
+    <div class="planning-item"><strong>1. Records the real handoff</strong><br><span class="t-muted">Inventory leaves only when the carrier handoff, customer collection or delivery by your team is confirmed.</span></div>
+    <div class="planning-item"><strong>2. Follows the tracking number</strong><br><span class="t-muted">Carrier webhooks update it immediately when configured. A scheduled carrier check recovers missed updates and manually entered tracking numbers.</span></div>
+    <div class="planning-item"><strong>3. Updates the order</strong><br><span class="t-muted">In transit, out for delivery, delivered, returned and failed scans are recorded without allowing an older scan to move the parcel backward.</span></div>
+    <div class="planning-item"><strong>4. Tells the customer according to your policy</strong><br><span class="t-muted">Choose separately whether shipped, out-for-delivery, delivered and exception emails are prepared for review, sent automatically or turned off.</span></div>
+    <div class="planning-item"><strong>5. Escalates exceptions</strong><br><span class="t-muted">A failed or returned parcel remains visible for a person instead of being silently treated as complete.</span></div>
+  </div>
+  <div class="card-foot">
+    <a class="btn" href="/fulfilment#customer-notices">Choose customer notification timing</a>
+  </div>
+</section>
+
 <script>
   (function () {
     if (window.location.hash !== '#existing-carrier-connection') return;
     var advanced = document.getElementById('existing-carrier-connection');
     if (advanced && advanced.tagName === 'DETAILS') advanced.open = true;
+  }());
+  (function () {
+    document.querySelectorAll('details.disclose').forEach(function (details) {
+      var cue = details.querySelector(':scope > summary .disclose__cue');
+      if (!cue) return;
+      function updateCue() { cue.textContent = details.open ? 'Hide' : 'Show'; }
+      details.addEventListener('toggle', updateCue);
+      updateCue();
+    });
   }());
 </script>
 
@@ -479,6 +582,7 @@
   </script>
 <% } %>
 
+<% if (account.connected) { %>
 <section class="card section">
   <div class="card-head"><div>
     <h2>Rules you have set</h2>
@@ -561,6 +665,7 @@
   it. A rule cannot make it buy something nobody offered, and a rate with no delivery date never
   counts as arriving on time — a carrier that declines to say is not a carrier promising.
 </p>
+<% } %>
 
 <% if (account.connected && account.source === 'referral' && !referral.billingReady) { %>
 <script>

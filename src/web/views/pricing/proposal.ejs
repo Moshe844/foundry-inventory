@@ -1,5 +1,6 @@
 <div class="breadcrumb"><a href="/inventory/<%= proposal.item_id %>"><%= proposal.item_name %></a> <%- helpers.icon('chevron', { size: 13 }) %> <span>Review price</span></div>
 <div class="page-head"><div class="titles"><h1>Review the selling price</h1><p>Nothing changes until you approve.</p></div><span class="badge badge--warn"><%= proposal.status.toLowerCase() %></span></div>
+<% if(typeof error !== 'undefined' && error){ %><div class="flash flash--error" role="alert"><span><%= error %></span></div><% } %>
 <div class="card form-card">
   <h2><%= proposal.displayName %></h2><p class="muted"><%= proposal.code %></p>
   <div class="stats-row"><div class="stat"><strong><%= proposal.currentFormatted %></strong><span>Current selling price</span></div><div class="stat"><strong><%= proposal.proposedFormatted %></strong><span>New selling price</span></div></div>

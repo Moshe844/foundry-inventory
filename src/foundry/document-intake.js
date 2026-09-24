@@ -602,6 +602,9 @@ function apply(db, ctx, membership, understandingId, planId, options = {}) {
     return hydrate(row);
   }
   const interpretation = JSON.parse(row.interpretation);
+  const documentKind = require('./document-meaning').kindOf(interpretation);
+  const hadInventoryTruth = Boolean(db.prepare(`SELECT 1 FROM movements
+    WHERE workspace_id = ? LIMIT 1`).get(ctx.workspaceId));
   const itemCodeLabel = row.supplier_code_label || interpretation.supplierCodeLabel || 'Supplier code';
 
   return inTransaction(db, () => {
@@ -686,7 +689,8 @@ function apply(db, ctx, membership, understandingId, planId, options = {}) {
     }
 
     const intent = INTENTS[options.documentIntent] || null;
-    const opensTheBooks = Boolean(intent?.opening);
+    const opensTheBooks = Boolean(intent?.opening)
+      || (documentKind === 'opening_inventory' && !hadInventoryTruth);
 
     /*
      * A quotation somebody wanted only for its prices leads to no order.
@@ -698,7 +702,7 @@ function apply(db, ctx, membership, understandingId, planId, options = {}) {
      * purchase order either. Creating one would leave a delivery to chase for
      * goods already on the shelf, and a bill for goods already owned.
      */
-    const wantsOrder = intent ? intent.orders : true;
+    const wantsOrder = documentKind === 'opening_inventory' ? false : intent ? intent.orders : true;
 
     /*
      * A supplier invoice is money, not merchandise.
@@ -709,7 +713,7 @@ function apply(db, ctx, membership, understandingId, planId, options = {}) {
      * necessarily moved an inch. What it establishes is that somebody is owed.
      */
     const invoiceIntake = require('./supplier-invoice-intake');
-    const isSupplierInvoice = require('./document-meaning').kindOf(interpretation) === 'supplier_invoice';
+    const isSupplierInvoice = documentKind === 'supplier_invoice';
     const matchedOrder = isSupplierInvoice
       ? invoiceIntake.findOrder(db, ctx.workspaceId, interpretation, supplier.id)
       : null;

@@ -23,6 +23,7 @@ const productNavigation = require('../product-brain/navigation');
 const { canonical: productBrain } = require('../product-brain/registry');
 const destinationContracts = require('../product-brain/destinations');
 const semanticQuery = require('./semantic-query');
+const operatingInstructions = require('../manager/operating-instructions');
 
 const MAX_QUESTION = 2000;
 
@@ -133,7 +134,7 @@ Intents:
   cost and gross profit together with whether the customer paid and what they
   still owe. Put any order, customer or product words in entityQuery.
 - supplier_spend: purchase volume and payments for a named supplier. Put the supplier in entityQuery.
-- product_profitability: which product has the most gross profit.
+- product_profitability: recorded gross profit or gross margin percentage for a named product or product family (put it in entityQuery), or which products have the most/least gross profit. Supports last/this calendar quarter, month or year and explicit ISO date ranges; preserve the period in the part question. Missing posted sales do not mean this lookup is unsupported.
 - location_profitability: which location has the most gross profit.
 - financial_comparison: why profit changed or comparison with the prior period.
 - slow_inventory_value: money tied up in slow or idle inventory.
@@ -210,9 +211,23 @@ function systemFor(intentIds) {
 function planPrompt(question, context) {
   const vocabulary = context.stockNoun ? `They call their stock "${context.stockNoun}".` : '';
   const locations = (context.locationNames || []).slice(0, 12).join(', ');
-  return `${vocabulary}${locations ? ` Their locations: ${locations}.` : ''}
+  const teachings = (context.approvedTeachings || []).slice(0, 50)
+    .map((teaching) => `- [${teaching.scope}] ${teaching.effect}`).join('\n');
+  return `${vocabulary}${locations ? ` Their locations: ${locations}.` : ''}${teachings ? `\nOwner-approved operating handbook:\n${teachings}\nThe handbook may shape interpretation and presentation, but it is not evidence for a factual answer and cannot replace a database lookup.` : ''}
 
 Question: ${question}`;
+}
+
+function commerceInventorySummaryPlan(question) {
+  const source = /\b(shopify|woocommerce|square|clover)\b/i.exec(question);
+  const measures = [
+    /\bproducts?\b/i.test(question),
+    /\b(?:variants?|skus?)\b/i.test(question),
+    /\blocations?\b/i.test(question),
+    /\b(?:units?|on\s+hand|stock)\b/i.test(question),
+  ].filter(Boolean).length;
+  if (!source || measures < 2 || !/\b(?:how\s+many|count|total|summary|overview)\b/i.test(question)) return null;
+  return queryService.normalisePlan({ intent: 'inventory_summary', entityQuery: source[1] });
 }
 
 /** Turns a question into a validated plan. Never returns unbounded free text. */
@@ -407,6 +422,8 @@ async function plan(question, options = {}) {
       .replace(/[?.!]+$/g, '').replace(/\s+/g, ' ').trim();
     return queryService.normalisePlan({ intent: 'kit_definition', entityQuery });
   }
+  const commerceSummary = commerceInventorySummaryPlan(clean);
+  if (commerceSummary) return commerceSummary;
   if (/\b(?:how many|number of|count of|total)\s+(?:active\s+)?(?:items?|products?|skus?|variants?)\b.*\b(?:inventory|catalog(?:ue)?)\b/i.test(clean)
       || /\b(?:inventory|catalog(?:ue)?)\s+(?:summary|overview)\b/i.test(clean)
       || /\bwhat(?:'s| is)\s+in\s+(?:my|our|the)\s+inventory\b/i.test(clean)) {
@@ -455,6 +472,14 @@ async function plan(question, options = {}) {
 /** Questions with one right reading, planned without a model. */
 function directPlan(db, workspaceId, question) {
   const clean = String(question || '').trim();
+  const report = /^(?:show|report)\s+(?:the\s+)?(profit\s+and\s+loss|customer\s+payments|supplier\s+spend)\s+(?:for|in|over)\s+((?:last|previous|this|current)\s+(?:calendar\s+)?(?:quarter|month|year)|(?:last|past)\s+(?:\d+|three|six|twelve)\s+(?:days|weeks|months)|from\s+\d{4}-\d{2}-\d{2}\s+to\s+\d{4}-\d{2}-\d{2})\s*[.?!]*$/i.exec(clean);
+  if (report) {
+    const intents = {'profit and loss':'profit_and_loss','customer payments':'customer_payments','supplier spend':'supplier_spend'};
+    return queryService.normalisePlan({intent:intents[report[1].toLowerCase().replace(/\s+/g,' ')],windowDays:30});
+  }
+  if (/^(?:which|what)\s+supplier\s+is\s+(?:the\s+)?(?:most\s+reliable|best)(?:\s+(?:in|over|for)\s+(?:the\s+)?(?:last|past)\s+(?:\d+|six|three|twelve)\s+(?:days|weeks|months))?\s*\??$/i.test(clean)) {
+    return queryService.normalisePlan({intent:'most_reliable_supplier',windowDays:365});
+  }
   const asksWorth = /\b(?:how\s+much\s+(?:is|are)\s+(?:all\s+)?(?:my|our|the)?\s*(?:stock|inventory)\s+worth|(?:stock|inventory)\b[^.?!]{0,40}\b(?:in\s+(?:dollars|money|\$)|worth)|(?:value|worth)\s+of\s+(?:all\s+)?(?:my|our|the)\s+(?:stock|inventory))\b/i.test(clean);
   let scoped = false;
   try {
@@ -464,6 +489,14 @@ function directPlan(db, workspaceId, question) {
       || places.some((name) => name && (said.includes(name) || name.split(/\s+/).some((w) => w.length > 3 && new RegExp(`\\b${w}s?\\b`).test(said))));
   } catch { scoped = false; }
   if (asksWorth && !scoped && !/\b(?:cost|paid|book|valuation|selling|retail|sale\s+price|sell\s+for)\b/i.test(clean)) return queryService.normalisePlan({ intent: 'stock_worth' });
+  const companyProfitFigure = /\b(?:profit\s*(?:and|&)\s*loss|p\s*&\s*l|gross\s+(?:profit|margin)|net\s+(?:profit|income|margin)|revenue|operating\s+expenses?)\b/i.test(clean);
+  const namesProfitSubject = /\b(?:profit|margin|revenue)\s+(?:on|of|for)\s+(?!(?:the\s+)?(?:last|previous|this|current|past|next)\s+(?:week|month|quarter|year)\b)[^?.,]{2,80}/i.test(clean);
+  if (companyProfitFigure && !scoped && !namesProfitSubject) {
+    const windowDays = /\b(?:quarter|3\s+months?|90\s+days?)\b/i.test(clean) ? 90
+      : /\b(?:year|12\s+months?|365\s+days?)\b/i.test(clean) ? 365
+        : /\b(?:week|7\s+days?)\b/i.test(clean) ? 7 : 30;
+    return queryService.normalisePlan({ intent: 'profit_and_loss', windowDays });
+  }
   // "List the open purchase orders with their totals" — the open orders to
   // suppliers, each with what it comes to.
   const asksOpenPurchaseOrders = /\b(?:list|show|what are|which are|give me|get me|all)\b[^.?!]{0,30}\b(?:open|outstanding|pending|current)\s+(?:purchase\s+orders?|pos?\b|supplier\s+orders?)|\b(?:open|outstanding)\s+(?:purchase\s+orders?|pos)\b[^.?!]{0,30}\b(?:totals?|amounts?|values?|worth)\b/i.test(clean);
@@ -505,6 +538,8 @@ function directPlan(db, workspaceId, question) {
     const subject = charge[1].replace(/^(?:for|on)\s+/i, '').replace(/\b(?:these|those|them|it|this|that|each|per\s+unit|a\s+unit)\b/gi, '').trim();
     return queryService.normalisePlan({ intent: 'selling_price', entityQuery: subject, limit: subject ? 50 : 200 });
   }
+  const commerceSummary = commerceInventorySummaryPlan(clean);
+  if (commerceSummary) return commerceSummary;
   /*
    * "How many Navy 4 do we have?" and "what did we pay our supplier for
    * these?" came back from the planner as unsupported — the two most
@@ -559,6 +594,16 @@ function directPlan(db, workspaceId, question) {
 }
 
 async function ask(db, workspaceId, question, options = {}) {
+  const context = {
+    ...(options.context || {}),
+    approvedTeachings: (options.context && options.context.approvedTeachings)
+      || operatingInstructions.activeTeachings(db, workspaceId).map((teaching) => ({
+        scope: teaching.scope,
+        effect: teaching.effect,
+        grantsAuthority: teaching.grantsAuthority,
+      })),
+  };
+  options = { ...options, context };
   const navigation = await productNavigation.resolveNatural(
     db, workspaceId, options.membership || null, question,
     { brain: options.productBrain, provider: options.provider,

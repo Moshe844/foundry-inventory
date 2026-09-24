@@ -1,0 +1,10 @@
+<div class="breadcrumb"><a href="/inventory/<%= proposal.item_id %>"><%= proposal.item_name %></a> <%- helpers.icon('chevron', { size: 13 }) %> <span>Review purchase cost</span></div>
+<div class="page-head"><div class="titles"><h1>Review the purchase cost</h1><p>Nothing changes until you approve.</p></div><span class="badge badge--warn"><%= proposal.status.toLowerCase() %></span></div>
+<% if(typeof error !== 'undefined' && error){ %><div class="flash flash--error" role="alert"><span><%= error %></span></div><% } %>
+<div class="card form-card">
+  <h2><%= proposal.displayName %></h2><p class="muted"><%= proposal.code %><% if (proposal.supplier_name) { %> · <%= proposal.supplier_name %><% } %></p>
+  <div class="stats-row"><div class="stat"><strong><%= proposal.currentFormatted %></strong><span>Current purchase cost</span></div><div class="stat"><strong><%= proposal.proposedFormatted %></strong><span>New purchase cost</span></div><div class="stat"><strong><%= proposal.sellingPrice.formatted %></strong><span>Selling price</span></div></div>
+  <% if (proposal.belowCost) { %><div class="notice notice--warn"><strong>This product would sell below its current purchase cost.</strong><p>Approve only if that is intentional.</p></div><% } %>
+  <div class="notice"><strong>What this affects</strong><p>Future purchasing and margin decisions use this cost. Historical inventory value and COGS do not change.</p></div>
+  <% if (proposal.status === 'PENDING') { %><div class="form-actions"><form method="post" action="/pricing/purchase-costs/proposals/<%= proposal.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= proposal.integrity_hash %>"><button class="btn btn--primary" type="submit">Approve purchase cost</button></form><form method="post" action="/pricing/purchase-costs/proposals/<%= proposal.id %>/cancel"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost" type="submit">Not now</button></form></div><% } %>
+</div>

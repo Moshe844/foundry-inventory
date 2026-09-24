@@ -1,6 +1,7 @@
 <%
   var gone = message.status === 'SENT';
   var over = gone || message.status === 'CANCELLED';
+  var senderUnavailable = message.connectorId && !(mailboxes || []).some(function (box) { return box.id === message.connectorId; });
   var label = { PREPARED: 'Written, not sent', QUEUED: 'Waiting', SENDING: 'Sending',
                 SENT: 'Sent', FAILED: 'Did not send', CANCELLED: 'Not sent' }[message.status];
 %>
@@ -85,13 +86,15 @@
           <% if (mailboxes && mailboxes.length) { %>
             <label class="field">
               <span class="field-label">Send from</span>
-              <select class="input" name="connectorId">
+              <select class="input" name="connectorId" required>
+                <% if (senderUnavailable || (!message.connectorId && mailboxes.length > 1)) { %><option value="" selected disabled>Choose the sending mailbox</option><% } %>
                 <% mailboxes.forEach(function (box) { %>
                   <option value="<%= box.id %>" <%= message.connectorId === box.id ? 'selected' : '' %>>
-                    <%= box.display_name %>
+                    <%= box.display_name %><%= box.provider_account_name ? ' · ' + box.provider_account_name : '' %>
                   </option>
                 <% }) %>
               </select>
+              <% if (senderUnavailable) { %><span class="field-hint">The originally chosen mailbox is unavailable. Reconnect or resume it, or explicitly choose a different sender. Nothing was substituted.</span><% } %>
             </label>
           <% } else { %>
             <p class="hint">
@@ -107,8 +110,8 @@
               Send to <%= message.recipient %>
             </button>
           <% } %>
-          <button class="btn" type="submit" name="action" value="save">Save for later</button>
-          <button class="btn btn--ghost" type="submit" name="action" value="cancel">Do not send</button>
+          <button class="btn" type="submit" name="action" value="save" formnovalidate>Save for later</button>
+          <button class="btn btn--ghost" type="submit" name="action" value="cancel" formnovalidate>Do not send</button>
         </div>
       </form>
     <% } %>

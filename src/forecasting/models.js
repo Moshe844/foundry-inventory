@@ -138,7 +138,7 @@ function weekdaySeasonal({ minimumPerWeekday = 3, minimumRatio = 1.6 } = {}) {
       const within = mean(buckets.map((bucket) => stdev(bucket)));
       // Not a real F-test, and not presented as one. It is a ratio with a
       // threshold, which is all the evidence a series this short can carry.
-      if (!(within > 0) || between / within < minimumRatio) return null;
+      if (!(between > 0) || (within > 0 && between / within < minimumRatio)) return null;
 
       const factors = weekdayMeans.map((value) => (overall > 0 ? value / overall : 1));
       return {

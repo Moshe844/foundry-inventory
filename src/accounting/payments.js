@@ -182,6 +182,18 @@ function record(db, ctx, membership, input) {
           receivables.requireInvoice(db, ctx.workspaceId, row.id));
       }
     }
+    if (direction === 'CUSTOMER_RECEIPT' && input.salesOrderId) {
+      const remaining = db.prepare(`SELECT COALESCE(SUM(balance_minor), 0) AS amount
+        FROM accounting_customer_invoices
+        WHERE workspace_id = ? AND sales_order_id = ? AND status <> 'VOID'`)
+        .get(ctx.workspaceId, input.salesOrderId).amount;
+      if (Number(remaining) === 0) {
+        db.prepare(`UPDATE payment_requests
+          SET status = 'VOID', last_error = 'Order was paid another way.', updated_at = ?
+          WHERE workspace_id = ? AND sales_order_id = ? AND status = 'OPEN'`)
+          .run(now, ctx.workspaceId, input.salesOrderId);
+      }
+    }
     return { payment: requirePayment(db, ctx.workspaceId, id), replayed: false };
   });
 }

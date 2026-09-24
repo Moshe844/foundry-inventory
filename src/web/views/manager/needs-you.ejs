@@ -35,10 +35,12 @@
   var pipEnd = Math.min(total, pipStart + 12);
 %>
 
+<%- include('coverage-warning') %>
+
 <% if (!total) { %>
 
   <p class="rm-stamp">Nothing on the desk</p>
-  <h1 class="rm-verdict">Nothing is waiting for you.</h1>
+  <h1 class="rm-verdict"><%= (locals.inbox && inbox.coverageErrors || []).length ? 'No known decisions; review is incomplete.' : 'Nothing is waiting for you.' %></h1>
   <p class="rm-prose">
     You do not have to watch StockChief. Only what it cannot settle by itself reaches you — a number
     it cannot know, a difference it cannot explain, or permission it does not have — and when that

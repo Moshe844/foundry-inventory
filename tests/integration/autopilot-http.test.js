@@ -267,7 +267,7 @@ test('guided purchasing requires an explicit limit and selected supplier in the 
 
   const page = plain((await agent.get('/autopilot')).text);
   assert.match(page, /Approve routine purchase orders/);
-  assert.match(page, /does not email, upload or transmit the PO to the supplier/);
+  assert.match(page, /internal purchase approval, not supplier delivery/);
   assert.match(page, /Automatic purchases: never more than/);
   assert.match(page, /Approved Supply Co/);
 

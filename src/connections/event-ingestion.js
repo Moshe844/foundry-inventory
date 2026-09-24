@@ -34,6 +34,22 @@ const TYPES = Object.freeze({
 const hashPayload = (value) => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const json = (value, fallback) => { try { return JSON.parse(value) ?? fallback; } catch { return fallback; } };
 
+function payloadForReplayHash(raw, eventType) {
+  if (eventType !== 'supplier_document.received') return raw;
+  const copy = JSON.parse(JSON.stringify(raw));
+  const data = copy && copy.data && typeof copy.data === 'object' ? copy.data : copy;
+  if (!data || typeof data !== 'object') return copy;
+  delete data.facts;
+  if (Array.isArray(data.attachments)) {
+    data.attachments = data.attachments.map((attachment) => {
+      const clean = { ...attachment };
+      delete clean.extractedText;
+      return clean;
+    });
+  }
+  return copy;
+}
+
 function normalize(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new ValidationError('Each event must be an object.');
   const eventId = requireText(input.eventId || input.id, 'Event id', { max: 160 });
@@ -407,9 +423,23 @@ function eventResult(row, replayed = false) {
     actionType: row.action_type, actionRecordId: row.action_record_id };
 }
 
+function resolveEventIssues(db, auth, eventId, now = nowIso()) {
+  db.prepare(`UPDATE connection_issues SET status = 'RESOLVED', resolved_at = ?, updated_at = ?
+    WHERE workspace_id = ? AND connector_id = ? AND external_event_id = ? AND status = 'OPEN'
+      AND (issue_type = 'EVENT_FAILED' OR issue_type LIKE 'UNKNOWN_%')`)
+    .run(now, now, auth.workspaceId, auth.connectorId, eventId);
+}
+
+function resolveConflictingReplayIssue(db, auth, eventId, now = nowIso()) {
+  db.prepare(`UPDATE connection_issues SET status = 'RESOLVED', resolved_at = ?, updated_at = ?
+    WHERE workspace_id = ? AND connector_id = ? AND external_event_id = ?
+      AND status = 'OPEN' AND issue_type = 'CONFLICTING_EVENT'`)
+    .run(now, now, auth.workspaceId, auth.connectorId, eventId);
+}
+
 function ingestDomainEvent(db, auth, raw) {
   const event = normalize(raw);
-  const payloadHash = hashPayload(raw);
+  const payloadHash = hashPayload(payloadForReplayHash(raw, event.type));
   let existing = db.prepare(`SELECT * FROM connector_feed_events
     WHERE workspace_id = ? AND connector_id = ? AND external_event_id = ?`)
     .get(auth.workspaceId, auth.connectorId, event.eventId);
@@ -421,7 +451,8 @@ function ingestDomainEvent(db, auth, raw) {
         title: `Conflicting replay from ${auth.displayName}`,
         detail: `External event ${event.eventId} was replayed with different content. The first completed action remains authoritative.`,
         resolutionHint: 'Inspect the provider event history; StockChief did not apply the changed replay.' });
-    }
+    } else resolveConflictingReplayIssue(db, auth, event.eventId);
+    resolveEventIssues(db, auth, event.eventId);
     return eventResult(existing, true);
   }
 
@@ -475,10 +506,7 @@ function ingestDomainEvent(db, auth, raw) {
       db.prepare(`UPDATE workspace_connectors SET last_synced_at = ?, last_activity_at = ?, last_error = NULL,
         status = 'connected', updated_at = ? WHERE workspace_id = ? AND id = ?`)
         .run(now, now, now, auth.workspaceId, auth.connectorId);
-      db.prepare(`UPDATE connection_issues SET status = 'RESOLVED', resolved_at = ?, updated_at = ?
-        WHERE workspace_id = ? AND connector_id = ? AND external_event_id = ?
-          AND status = 'OPEN' AND issue_type = 'EVENT_FAILED'`)
-        .run(now, now, auth.workspaceId, auth.connectorId, event.eventId);
+      resolveEventIssues(db, auth, event.eventId, now);
       db.prepare(`UPDATE connection_issues SET status = 'RESOLVED', resolved_at = ?, updated_at = ?
         WHERE workspace_id = ? AND connector_id = ? AND status = 'OPEN' AND issue_type = 'CONNECTION_STALE'`)
         .run(now, now, auth.workspaceId, auth.connectorId);

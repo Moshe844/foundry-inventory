@@ -36,6 +36,8 @@ CREATE TABLE IF NOT EXISTS workspaces (
   name             TEXT NOT NULL,
   owner_account_id TEXT REFERENCES accounts(id) ON DELETE SET NULL,
   data_mode        TEXT NOT NULL DEFAULT 'production' CHECK (data_mode IN ('production','synthetic')),
+  synthetic_activated_at TEXT,
+  synthetic_origin_request TEXT,
   deletion_requested_at TEXT,
   created_at       TEXT NOT NULL
 );
@@ -60,6 +62,38 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_users_membership ON users(workspace_id, acc
 CREATE INDEX IF NOT EXISTS idx_users_workspace ON users(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_users_account ON users(account_id);
 
+-- Legacy synthetic-environment evidence remains part of migrated business
+-- history even though new onboarding no longer exposes a test-mode choice.
+CREATE TABLE IF NOT EXISTS synthetic_generation_runs (
+  id                    TEXT PRIMARY KEY,
+  workspace_id          TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  requested_by_user_id  TEXT REFERENCES users(id) ON DELETE SET NULL,
+  originating_request   TEXT NOT NULL,
+  idempotency_key       TEXT NOT NULL,
+  seed                  TEXT NOT NULL,
+  scope                 TEXT NOT NULL DEFAULT '{}',
+  progress              TEXT NOT NULL DEFAULT '{}',
+  status                TEXT NOT NULL DEFAULT 'PENDING'
+                        CHECK (status IN ('PENDING','RUNNING','COMPLETED','FAILED')),
+  error_message         TEXT,
+  created_at            TEXT NOT NULL,
+  started_at            TEXT,
+  completed_at          TEXT,
+  updated_at            TEXT NOT NULL,
+  UNIQUE (workspace_id, idempotency_key)
+);
+
+CREATE TABLE IF NOT EXISTS synthetic_record_provenance (
+  id            TEXT PRIMARY KEY,
+  workspace_id  TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  run_id        TEXT NOT NULL REFERENCES synthetic_generation_runs(id) ON DELETE CASCADE,
+  record_type   TEXT NOT NULL,
+  record_id     TEXT NOT NULL,
+  generated_by  TEXT NOT NULL DEFAULT 'Foundry',
+  created_at    TEXT NOT NULL,
+  UNIQUE (workspace_id, record_type, record_id)
+);
+
 CREATE TABLE IF NOT EXISTS locations (
   id         TEXT PRIMARY KEY,
   workspace_id     TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -68,6 +102,8 @@ CREATE TABLE IF NOT EXISTS locations (
   parent_location_id TEXT REFERENCES locations(id) ON DELETE RESTRICT,
   barcode    TEXT,
   pick_sequence INTEGER NOT NULL DEFAULT 0,
+  address    TEXT,
+  phone      TEXT,
   note       TEXT,
   is_active  INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,

@@ -259,9 +259,17 @@ function openAndAssess(db, ctx, input) {
   return { repairCase, created: opened.created };
 }
 
-function recover(db, ctx, membership) {
+function recover(db, ctx, membership, options = {}) {
   const recovered = [];
   for (const repairCase of list(db, ctx.workspaceId, { statuses: ['EXECUTING', 'VERIFYING'], limit: 100 })) {
+    const execution = require('../autopilot/modes').executionState(db, ctx.workspaceId, { scope: 'repairs' });
+    if (options.readOnly || !execution.allowed) {
+      try {
+        const checked = adapters.get(repairCase.kind).verify({ db, repairCase });
+        if (checked.passed) recovered.push(finalizeVerification(db, repairCase, checked, ctx.actorId));
+      } catch { recovered.push(get(db, ctx.workspaceId, repairCase.id)); }
+      continue;
+    }
     try { recovered.push(execute(db, ctx, membership, repairCase.id).repairCase); }
     catch { recovered.push(get(db, ctx.workspaceId, repairCase.id)); }
   }

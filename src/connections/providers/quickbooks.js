@@ -120,12 +120,44 @@ async function readAccountingSnapshot({ credentials, asOf }) {
     version: String(response.body.Header?.Time || asOf), accounts: rows };
 }
 
+async function listPostingParties({ credentials, partyType }) {
+  const entity = partyType === 'customer' ? 'Customer' : partyType === 'supplier' ? 'Vendor' : null;
+  if (!entity) throw new ValidationError('QuickBooks can list customers or suppliers for posting.');
+  const query = encodeURIComponent(`select * from ${entity} maxresults 1000`);
+  const response = await api(credentials,
+    `/v3/company/${encodeURIComponent(credentials.realmId)}/query?query=${query}&minorversion=75`);
+  return (response.body.QueryResponse?.[entity] || []).filter((row) => row.Active !== false).map((row) => ({
+    externalId: String(row.Id), version: row.SyncToken == null ? null : String(row.SyncToken),
+    name: row.DisplayName || row.CompanyName || row.GivenName || `${entity} ${row.Id}`,
+    company: row.CompanyName || null, email: row.PrimaryEmailAddr?.Address || null,
+  }));
+}
+
+async function createPostingParty({ credentials, partyType, party, idempotencyKey }) {
+  const entity = partyType === 'customer' ? 'customer' : partyType === 'supplier' ? 'vendor' : null;
+  if (!entity) throw new ValidationError('QuickBooks can create a customer or supplier posting identity.');
+  const body = { DisplayName: party.name, ...(party.company ? { CompanyName: party.company } : {}),
+    ...(party.email ? { PrimaryEmailAddr: { Address: party.email } } : {}) };
+  const requestId = `foundry-${crypto.createHash('sha256').update(String(idempotencyKey)).digest('hex').slice(0, 32)}`;
+  const response = await api(credentials,
+    `/v3/company/${encodeURIComponent(credentials.realmId)}/${entity}?requestid=${encodeURIComponent(requestId)}&minorversion=75`,
+    { method: 'POST', body: JSON.stringify(body) });
+  const created = response.body[entity === 'customer' ? 'Customer' : 'Vendor'];
+  if (!created?.Id) throw new ValidationError(`QuickBooks did not confirm the new ${partyType} identity.`);
+  return { externalId: String(created.Id), version: created.SyncToken == null ? null : String(created.SyncToken),
+    name: created.DisplayName || party.name, company: created.CompanyName || party.company || null,
+    email: created.PrimaryEmailAddr?.Address || party.email || null };
+}
+
 async function postJournalEntry({ credentials, entry, idempotencyKey }) {
   const body = { TxnDate: entry.posting_date, PrivateNote: `StockChief journal ${entry.entry_number}: ${entry.description}`,
     Line: entry.lines.map((line) => ({ Amount: Number(line.debit_minor || line.credit_minor) / 100,
       Description: line.memo || entry.description, DetailType: 'JournalEntryLineDetail',
       JournalEntryLineDetail: { PostingType: line.debit_minor ? 'Debit' : 'Credit',
-        AccountRef: { value: line.external_account_id } } })) };
+        AccountRef: { value: line.external_account_id },
+        ...(line.external_customer_id ? { Entity: { Type: 'Customer', EntityRef: { value: line.external_customer_id } } } : {}),
+        ...(line.external_supplier_id ? { Entity: { Type: 'Vendor', EntityRef: { value: line.external_supplier_id } } } : {}),
+      } })) };
   // Intuit limits requestid to 50 characters. StockChief's canonical idempotency
   // key includes workspace and journal IDs and is intentionally longer, so use
   // a stable digest rather than truncating (which could create collisions).
@@ -137,4 +169,5 @@ async function postJournalEntry({ credentials, entry, idempotencyKey }) {
 }
 
 module.exports = { integrationClass: 'accounting', metadata, authorizationUrl, exchangeAuthorization,
-  refresh, refreshCredentials, verifyReadOnly, readAccountingSnapshot, postJournalEntry };
+  refresh, refreshCredentials, verifyReadOnly, readAccountingSnapshot, listPostingParties, createPostingParty,
+  postJournalEntry };

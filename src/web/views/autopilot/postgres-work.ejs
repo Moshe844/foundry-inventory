@@ -1,0 +1,15 @@
+<div class="rm-head"><div class="rm-title"><div><p class="rm-stamp"><%= item.approval_requirement==='NONE'?'Automatic decision':'Needs your approval' %></p>
+  <h1><%= item.recommendedAction.type==='transfer'?'Transfer instead of buying':'Prepare a supplier order' %></h1><p class="rm-prose"><%= item.recommendedAction.displayName %></p></div></div></div>
+<section class="card"><div class="card-head"><h2>Exact proposed work</h2><span class="badge <%= item.execution_status==='COMPLETED'?'badge--ok':'badge--warn' %>"><%= String(item.execution_status).replaceAll('_',' ') %></span></div>
+  <div class="card-body"><% const action=item.recommendedAction; %>
+    <% if(action.type==='transfer'){ %><p><strong>Move <%= action.quantity %> units</strong> from <%= action.sourceLocationName %> to <%= action.destinationLocationName %>.</p>
+      <p>The destination has <%= action.destinationAvailable %> available against a reorder point of <%= action.reorderPoint %>. The source has <%= action.sourceAvailable %> available and keeps <%= action.sourceSafety %> protected.</p>
+    <% } else { %><p><strong>Buy <%= action.quantity %> units</strong> from <%= action.supplierName %> for <%= action.currency %> <%= action.value===null?'an unconfirmed price':action.value.toFixed(2) %>.</p>
+      <p><%= action.purchaseUnits %> purchase units × <%= action.unitsPerPurchaseUnit %> inventory units, delivered to <%= action.destinationLocationName %>. Existing incoming: <%= action.incoming %>.</p><% } %>
+    <div class="notice"><div><strong>Why this authority result?</strong><p><%= item.policyEvaluation.reason %></p></div></div>
+    <h3>Evidence used</h3><dl class="summary-list"><% item.sourceEvidence.forEach(function(entry){ %><div><dt><%= helpers.columnLabel(entry.fact) %></dt><dd><%= entry.value %></dd></div><% }) %></dl>
+    <% if(item.outcome?.verified){ %><div class="notice notice--success"><div><strong><%= item.outcome.kind==='transfer'?'Prepared, authorized, and reserved.':'Executed and verified.' %></strong><p><%= item.outcome.kind==='transfer'?'The stock remains at the source until the warehouse confirms physical dispatch.':`${item.outcome.poNumber} is approved and traceable to this decision.` %></p><% if(item.outcome.transferId){ %><p><a class="btn btn--primary" href="/transfers/<%= item.outcome.transferId %>">Continue <%= item.outcome.transferNumber %></a></p><% } %></div></div><% } %>
+  </div>
+  <% if(item.execution_status==='WAITING_FOR_APPROVAL'){ %><div class="card-foot" style="display:flex;gap:10px;justify-content:flex-end"><form method="post" action="/autopilot/work/<%= item.id %>/cancel"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn">Discard</button></form>
+    <form method="post" action="/autopilot/work/<%= item.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary">Approve and execute</button></form></div><% } %>
+</section>

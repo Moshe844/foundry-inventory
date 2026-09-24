@@ -239,11 +239,11 @@ test('one broken workspace does not stop the sweep', () => {
   const [otherSku] = repo.listSkusForItem(env.db, other.workspaceId, otherItem.itemId);
   inventory.receive(env.db, other.ctx, { skuId: otherSku.id, locationId: other.main.id, quantity: 5 });
 
-  const runner = require('../../src/autopilot/runner');
-  const realPlanWork = runner.planWork;
-  runner.planWork = (db, ctx, membership, options) => {
+  const managerLoop = require('../../src/manager/loop');
+  const realRun = managerLoop.run;
+  managerLoop.run = (db, ctx, membership, options) => {
     if (ctx.workspaceId === other.workspaceId) throw new Error('this inventory is broken');
-    return realPlanWork(db, ctx, membership, options);
+    return realRun(db, ctx, membership, options);
   };
 
   try {
@@ -254,7 +254,7 @@ test('one broken workspace does not stop the sweep', () => {
     assert.equal(result.executed, 1, 'and the healthy one still had its work done');
     assert.match(result.results.find((r) => r.failed).error, /broken/);
   } finally {
-    runner.planWork = realPlanWork;
+    managerLoop.run = realRun;
   }
 });
 

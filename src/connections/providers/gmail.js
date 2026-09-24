@@ -51,8 +51,8 @@ async function exchangeAuthorization({ query, metadata: auth = {} }) {
     capabilities: ['MAIL_READ', 'MAIL_SEND', 'MAILBOX_WATCH'], expiresAt: new Date(credentials.expiresAt).toISOString() };
 }
 
-async function refreshCredentials(credentials) {
-  if (Number(credentials.expiresAt || 0) > Date.now() + 5 * 60_000) return { credentials, refreshed: false,
+async function refreshCredentials(credentials, options = {}) {
+  if (!options.force && Number(credentials.expiresAt || 0) > Date.now() + 5 * 60_000) return { credentials, refreshed: false,
     expiresAt: new Date(credentials.expiresAt).toISOString() };
   if (!credentials.refreshToken) throw new ValidationError('Gmail access expired. Reconnect this mailbox.');
   const result = await token({ refresh_token: credentials.refreshToken, client_id: config.connections.gmail.clientId,
@@ -112,6 +112,7 @@ async function message(credentials, id) {
   const from = header(row.payload, 'From') || '';
   const address = (from.match(/<([^>]+)>/) || [null, from])[1].trim().toLowerCase();
   return { messageId: row.id, threadId: row.threadId, internetMessageId: header(row.payload, 'Message-ID'),
+    stockChiefMessageId: header(row.payload, 'X-StockChief-Message'),
     sender: address, recipients: (header(row.payload, 'To') || '').split(',').map((entry) => entry.trim()).filter(Boolean),
     subject: header(row.payload, 'Subject'), bodyText: bodyText(row.payload),
     receivedAt: row.internalDate ? new Date(Number(row.internalDate)).toISOString() : null, attachments };
@@ -145,9 +146,24 @@ async function poll({ credentials, since }) {
     maxResults: '50',
     q: `(in:inbox OR in:spam) after:${Math.floor(from / 1000)}`,
   });
-  const list = (await api(credentials, `/gmail/v1/users/me/messages?${query}`)).body.messages || [];
   const messages = [];
-  for (const row of list) messages.push(await message(credentials, row.id));
+  const visited = new Set();
+  const seenMessages = new Set();
+  let pageToken = '';
+  do {
+    if (visited.has(pageToken) || visited.size >= 100) {
+      throw new ValidationError('Gmail did not finish listing this mailbox. The check remains incomplete; no messages will be skipped on retry.');
+    }
+    visited.add(pageToken);
+    if (pageToken) query.set('pageToken', pageToken);
+    const page = (await api(credentials, `/gmail/v1/users/me/messages?${query}`)).body;
+    for (const row of page.messages || []) {
+      if (seenMessages.has(row.id)) continue;
+      seenMessages.add(row.id);
+      messages.push(await message(credentials, row.id));
+    }
+    pageToken = page.nextPageToken || '';
+  } while (pageToken);
   return { messages, cursor: messages[0]?.messageId || null };
 }
 
@@ -162,7 +178,8 @@ async function fetchMessage({ credentials, messageId }) {
 }
 
 async function send({ credentials, message: outgoing }) {
-  const raw = [`To: ${outgoing.recipient}`, `Subject: ${outgoing.subject}`, 'Content-Type: text/plain; charset="UTF-8"',
+  const raw = [`To: ${outgoing.recipient}`, `Subject: ${outgoing.subject}`,
+    ...(outgoing.id ? [`X-StockChief-Message: ${outgoing.id}`] : []), 'Content-Type: text/plain; charset="UTF-8"',
     '', outgoing.body].join('\r\n');
   const encoded = Buffer.from(raw).toString('base64url');
   const result = (await api(credentials, '/gmail/v1/users/me/messages/send', { method: 'POST',

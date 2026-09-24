@@ -109,8 +109,8 @@ function onOrderByItem(db,workspaceId,itemIds) {
 }
 
 /** The same figure for one SKU, or zero. */
-function onOrderForSku(db, workspaceId, skuId) {
-  const map = onOrderBySku(db, workspaceId, { skuIds: [skuId] });
+function onOrderForSku(db, workspaceId, skuId, options = {}) {
+  const map = onOrderBySku(db, workspaceId, { ...options, skuIds: [skuId] });
   return map.get(skuId) || { onOrder: 0, lines: [], orders: [], nextExpectedDate: null, overdueUnits: 0 };
 }
 

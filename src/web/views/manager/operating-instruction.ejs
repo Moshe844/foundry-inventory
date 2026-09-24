@@ -2,7 +2,7 @@
   <div class="titles">
     <div class="eyebrow">Tell StockChief · lasting instruction</div>
     <h1>Review what StockChief should remember</h1>
-    <div class="page-sub">This writes to the same stock, supplier and automatic-work settings you can inspect later. Nothing changes until you approve.</div>
+    <div class="page-sub">This becomes part of the operating handbook Ask uses across the relevant workflow. Structured rules also update their real stock, supplier or authority settings. Nothing changes until you approve.</div>
   </div>
   <span class="badge <%= proposal.status === 'APPROVED' ? 'badge--ok' : proposal.status === 'PENDING' ? 'badge--warn' : 'badge--muted' %>"><%= proposal.status === 'APPROVED' ? 'Active' : proposal.status.toLowerCase() %></span>
 </div>
@@ -17,7 +17,7 @@
     <div class="card-head"><h2>What happens now</h2></div>
     <div class="card-body grid">
       <% if (proposal.status === 'PENDING' && proposal.questions.length === 0) { %>
-        <p class="muted" style="margin:0;">Approve once to teach StockChief. Future activity is reevaluated automatically; you do not need to repeat this instruction or press Check now.</p>
+        <p class="muted" style="margin:0;">Approve once to teach StockChief. Ask will use it whenever that workflow is relevant; structured rules also reevaluate future activity automatically.</p>
         <form method="post" action="/operating-instructions/<%= proposal.id %>/approve" data-loading-text="Remembering rule…">
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
           <input type="hidden" name="integrityHash" value="<%= proposal.integrityHash %>">
@@ -144,7 +144,8 @@
               supplier_assignment: 'Product supplier settings', supplier_terms: 'Supplier purchasing terms',
               transfer_authority: 'Versioned automatic-transfer policy', purchase_authority: 'Versioned automatic-purchasing policy',
               operating_preference: 'Operating preferences', hard_limits: 'Automatic-work hard limits',
-              stock_protection: 'Stock protection settings'
+              stock_protection: 'Stock protection settings', supplier_communication: 'Supplier communication settings',
+              workflow_preference: 'Shared Ask operating handbook'
             }[change.domain] || 'Operating settings' %>
           </p>
         </div>

@@ -212,6 +212,10 @@ test('connected but not taking charges is said, not hidden behind a tick', () =>
   assert.match(done.because, /not accepting charges/i);
   assert.match(accounts.describe(env.db, env.workspace.workspaceId).because, /not accepting charges/i);
 
+  const resumed = connect.authorizeUrl(env.db, env.ctx, env.membership,
+    { returnUri: 'https://foundry.test/settings/connections/payments/return' });
+  assert.match(resumed.url, /^https:\/\/connect\.stripe\.com\/oauth\/authorize/);
+
   // And it stops saying so once Stripe is satisfied.
   const settled = await connect.refresh(env.db, env.workspace.workspaceId,
     { readAccount: stripeStub().readAccount });
@@ -326,11 +330,11 @@ test('a merchant who declines is told, not shown the form again', () => asPlatfo
   env.db.close();
 }));
 
-test('without an OAuth registration, StockChief reports that account sign-in is not configured', () => asPlatform(() => {
+test('without Stripe platform credentials, StockChief reports that account setup is not configured', () => asPlatform(() => {
   const env = setup();
   const said = connect.describe(env.db, env.workspace.workspaceId);
   assert.equal(said.available, false);
-  assert.match(said.because, /existing-account sign-in is not configured/);
+  assert.match(said.because, /account setup is not configured/);
   assert.throws(() => connect.authorizeUrl(env.db, env.ctx, env.membership, {}),
     /existing-account sign-in is not configured/);
   env.db.close();
@@ -339,7 +343,9 @@ test('without an OAuth registration, StockChief reports that account sign-in is 
 test('normal Stripe account sign-in wins when OAuth and hosted onboarding are both configured',
   () => asPlatform(() => {
     const held = process.env.STRIPE_CONNECT_ENABLED;
+    const heldFlow = process.env.STRIPE_CONNECT_FLOW;
     process.env.STRIPE_CONNECT_ENABLED = 'true';
+    delete process.env.STRIPE_CONNECT_FLOW;
     try {
       assert.equal(connect.usesOauth(), true);
       assert.equal(connect.usesHostedOnboarding(), true);
@@ -347,8 +353,27 @@ test('normal Stripe account sign-in wins when OAuth and hosted onboarding are bo
     } finally {
       if (held === undefined) delete process.env.STRIPE_CONNECT_ENABLED;
       else process.env.STRIPE_CONNECT_ENABLED = held;
+      if (heldFlow === undefined) delete process.env.STRIPE_CONNECT_FLOW;
+      else process.env.STRIPE_CONNECT_FLOW = heldFlow;
     }
   }));
+
+test('an installation can explicitly select hosted Stripe onboarding', () => asPlatform(() => {
+  const held = { enabled: process.env.STRIPE_CONNECT_ENABLED, flow: process.env.STRIPE_CONNECT_FLOW };
+  process.env.STRIPE_CONNECT_ENABLED = 'true';
+  process.env.STRIPE_CONNECT_FLOW = 'hosted';
+  try {
+    assert.equal(connect.usesOauth(), true);
+    assert.equal(connect.usesHostedOnboarding(), true);
+    assert.equal(connect.preferredFlow(), 'hosted');
+    assert.equal(connect.available(), true);
+  } finally {
+    if (held.enabled === undefined) delete process.env.STRIPE_CONNECT_ENABLED;
+    else process.env.STRIPE_CONNECT_ENABLED = held.enabled;
+    if (held.flow === undefined) delete process.env.STRIPE_CONNECT_FLOW;
+    else process.env.STRIPE_CONNECT_FLOW = held.flow;
+  }
+}));
 
 /* ------------------------------------------------ the road without a client id */
 
@@ -368,13 +393,15 @@ test('normal Stripe account sign-in wins when OAuth and hosted onboarding are bo
  */
 function asHostedPlatform(run) {
   const held = { id: process.env.STRIPE_CONNECT_CLIENT_ID, key: process.env.STRIPE_SECRET_KEY,
-    on: process.env.STRIPE_CONNECT_ENABLED };
+    on: process.env.STRIPE_CONNECT_ENABLED, flow: process.env.STRIPE_CONNECT_FLOW };
   delete process.env.STRIPE_CONNECT_CLIENT_ID;      // the whole point: there is none
   process.env.STRIPE_SECRET_KEY = PLATFORM_KEY;
   process.env.STRIPE_CONNECT_ENABLED = 'true';
+  process.env.STRIPE_CONNECT_FLOW = 'hosted';
   const restore = () => {
     for (const [name, value] of [['STRIPE_CONNECT_CLIENT_ID', held.id],
-      ['STRIPE_SECRET_KEY', held.key], ['STRIPE_CONNECT_ENABLED', held.on]]) {
+      ['STRIPE_SECRET_KEY', held.key], ['STRIPE_CONNECT_ENABLED', held.on],
+      ['STRIPE_CONNECT_FLOW', held.flow]]) {
       if (value === undefined) delete process.env[name];
       else process.env[name] = value;
     }
@@ -406,15 +433,15 @@ function hostedStripe(options = {}) {
   };
 }
 
-test('hosted onboarding remains an internal capability but is not substituted for account sign-in',
+test('hosted onboarding is the preferred flow when OAuth is unavailable',
   () => asHostedPlatform(async () => {
   const env = setup();
   const stripe = hostedStripe();
 
   assert.equal(connect.usesOauth(), false, 'there is no client id, which is the situation');
   assert.equal(connect.usesHostedOnboarding(), true);
-  assert.equal(connect.preferredFlow(), null);
-  assert.equal(connect.available(), false, 'the existing-account button is not falsely offered');
+  assert.equal(connect.preferredFlow(), 'hosted');
+  assert.equal(connect.available(), true);
 
   const begun = await connect.openOnboarding(env.db, env.ctx, env.membership, {
     businessName: 'HalFi Shoes', email: 'owner@halfi.test',

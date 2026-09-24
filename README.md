@@ -43,7 +43,19 @@ npm start
 ```
 
 Then open <http://localhost:4000> and create an account. Signing up creates
-your first inventory; add more from the switcher at any time.
+your first real inventory using the business name entered at signup, and opens
+source selection with that name editable inline.
+Drop a CSV, TSV or Excel export there, connect a supported system, or enter
+products manually. File imports remain staged until you approve them. Skip
+opens the usable empty app with a persistent add-source prompt; add further
+inventories from the switcher at any time.
+
+Empty screens offer a dismissible sample exploration. It creates a separate,
+labeled test inventory, never fills the real business inventory, and has a
+one-click clear action. Everything added to that disposable inventory is
+cleared too; it cannot be converted to real business data. Sample inventories
+currently count toward the existing inventory allowance. Settings also contains
+empty test-inventory creation and ongoing email-attachment ingestion.
 
 To click around a realistic dataset covering every archetype, with two months
 of trading history so the operator has something real to reason about:
@@ -66,6 +78,7 @@ until you approve what StockChief shows you.
 | `npm test` | Unit and integration tests (`node --test`) |
 | `npm run test:live` | The tests that call a real model (skipped without a key) |
 | `npm run test:e2e` | Full browser runs in Chromium, each from an empty database |
+| `npm run test:onboarding-ui` | Signup, sources, skip, sample isolation/clear and direct file import through the UI |
 | `npm run test:all` | All three |
 | `npm run seed:demo` | Adds the demo inventory |
 | `npm run seed:foundry` | Adds an inventory configured by a real StockChief run |
@@ -576,6 +589,14 @@ through the same inventory engine as every human operation, and wake the durable
 manager loop immediately. A first sync may send up to 500 timestamped events so
 StockChief can establish genuine demand history without fabricating it.
 
+The native PostgreSQL process preserves this endpoint and accepts credentials
+migrated from the SQLite application. Accepted events execute inside the same
+serializable PostgreSQL transaction as their immutable movement evidence;
+retries do not move stock twice, rejected events leave balances unchanged, and
+connection health remains visible in the browser. New integrations may use the
+normalized `POST /api/v1/events` contract while existing feed clients continue
+without a synchronous SQLite compatibility layer.
+
 Capabilities are discovered from the connector, never assumed, and Mission 4
 asks before it proposes. A read-only system gets a recommendation and a plain
 statement — "this connected system is read-only; complete the transfer in your
@@ -738,6 +759,31 @@ Chromium through each mission's acceptance script. Screenshots are written to
 `artifacts/screenshots/`.
 
 ## Product boundaries
+
+### PostgreSQL migration acceptance
+
+Production now selects the native asynchronous PostgreSQL web and worker
+processes. Authentication, shared sessions, onboarding, catalogue, inventory,
+global search, selling-price and purchase-cost approvals, forward planning,
+Ask StockChief, including review-only customer and supplier order preparation, governed mapping repairs, imports, connections and mail, transfers, purchasing, receiving,
+sales, payments, returns, shipping, autonomy, projections, accounting and
+operations readiness use PostgreSQL services rather than a synchronous query
+compatibility adapter. Local development may still use the explicitly separate
+SQLite server. `FOUNDRY_SESSION_DATABASE_URL` only selects an alternate shared
+session database; it is not a business-storage migration switch. Remote
+connections require certificate-verified TLS.
+
+`npm run test:review-ui` exercises signed-in browser forms, date ranges and source
+failure disclosure. `npm run test:postgres` runs native PostgreSQL engine,
+transaction, worker, migration, backup/restore and real Chromium UI journeys,
+including tenant-scoped operations/dead-letter recovery, authenticated responder acknowledgement, worker-owned
+outbound email and the scoped inventory API. Both require PostgreSQL 15 or newer command-line binaries;
+Windows defaults to the installed PostgreSQL 17 directory. Set
+`STOCKCHIEF_POSTGRES_BIN` for another installation; Unix can use the executable
+search path. The expanded full browser pack also includes this fixture. These
+tests use isolated local PostgreSQL clusters, not managed staging or production.
+They do not clear the deployed restore, rollback, failure-recovery, capacity or
+third-party live-account gates.
 
 StockChief includes Sales Orders, supplier purchasing and communication, inventory
 valuation, double-entry accounting, receivables, payables, payments, bank

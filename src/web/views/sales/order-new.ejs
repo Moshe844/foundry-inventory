@@ -77,7 +77,7 @@
           <input type="radio" name="deliveryMethod" value="SHIP" <%= form.deliveryMethod !== 'PICKUP' ? 'checked' : '' %>>
           <span class="rm-pick__box" aria-hidden="true"></span>
           <span><span class="rm-pick__t">Send by carrier</span>
-            <span class="rm-pick__d">This records the delivery plan. Nothing is shipped yet; StockChief asks for a destination and can buy the label later.</span></span>
+            <span class="rm-pick__d">A complete delivery address is required before the order is created. Nothing ships until handover is confirmed later.</span></span>
         </label>
         <label class="rm-pick">
           <input type="radio" name="deliveryMethod" value="PICKUP" <%= form.deliveryMethod === 'PICKUP' ? 'checked' : '' %>>
@@ -104,32 +104,51 @@
   <section class="rm-step-panel">
     <div class="rm-step-panel__h"><span class="rm-step-panel__n">3</span><h2>What did they order?</h2></div>
     <div class="rm-step-panel__b">
-      <div class="form-grid">
-        <label class="rm-field">
-          <span>Product or variant</span>
-          <select id="order-sku" name="skuId" required>
-            <option value="">Choose a product</option>
-            <% skus.forEach(function (s) { %>
-              <option value="<%= s.id %>" <%= form.skuId === s.id ? 'selected' : '' %>><%= s.display_name %> · <%= s.code %> · <%= s.price.isSet ? s.price.formatted : 'Price not set' %> · <%= s.stock.available %> available now</option>
-            <% }) %>
-          </select>
-          <small>“Available now” excludes stock already reserved for other customers.</small>
-        </label>
-        <label class="rm-field">
-          <span>Quantity</span>
-          <input id="order-quantity" type="number" name="quantity" min="1" step="1" value="<%= form.quantity || '' %>" required>
-        </label>
+      <%
+        var formSkuIds = Array.isArray(form.skuId) ? form.skuId : [form.skuId || ''];
+        var formQuantities = Array.isArray(form.quantity) ? form.quantity : [form.quantity || ''];
+        var formPrices = Array.isArray(form.unitPrice) ? form.unitPrice : [form.unitPrice || ''];
+        var formLineCount = Math.max(1, formSkuIds.length, formQuantities.length, formPrices.length);
+      %>
+      <div class="sales-order-lines" id="order-lines">
+        <% for (var lineIndex = 0; lineIndex < formLineCount; lineIndex += 1) { %>
+          <div class="sales-order-line" data-order-line>
+            <label class="rm-field">
+              <span>Product or variant</span>
+              <select <%= lineIndex === 0 ? 'id="order-sku"' : '' %> name="skuId" required>
+                <option value="">Choose a product</option>
+                <% skus.forEach(function (s) { %>
+                  <option value="<%= s.id %>" <%= formSkuIds[lineIndex] === s.id ? 'selected' : '' %>><%= s.display_name %> · <%= s.code %> · <%= s.price.isSet ? s.price.formatted : 'Price not set' %> · <%= s.stock.available %> available now</option>
+                <% }) %>
+              </select>
+            </label>
+            <label class="rm-field">
+              <span>Quantity</span>
+              <input <%= lineIndex === 0 ? 'id="order-quantity"' : '' %> type="number" name="quantity" min="1" step="1" value="<%= formQuantities[lineIndex] || '' %>" required>
+            </label>
+            <label class="rm-field">
+              <span>Price <small>if not set</small></span>
+              <input name="unitPrice" inputmode="decimal" value="<%= formPrices[lineIndex] || '' %>" placeholder="Use inventory price">
+            </label>
+            <button class="btn btn--ghost btn--sm" type="button" data-remove-order-line <%= formLineCount === 1 ? 'hidden' : '' %>>Remove</button>
+          </div>
+        <% } %>
       </div>
+      <button class="btn btn--ghost btn--sm" id="add-order-line" type="button">+ Add another product</button>
+      <p class="hint">Available stock excludes units already reserved for other customers.</p>
+
+      <template id="order-line-template">
+        <div class="sales-order-line" data-order-line>
+          <label class="rm-field"><span>Product or variant</span><select name="skuId" required><option value="">Choose a product</option><% skus.forEach(function (s) { %><option value="<%= s.id %>"><%= s.display_name %> · <%= s.code %> · <%= s.price.isSet ? s.price.formatted : 'Price not set' %> · <%= s.stock.available %> available now</option><% }) %></select></label>
+          <label class="rm-field"><span>Quantity</span><input type="number" name="quantity" min="1" step="1" required></label>
+          <label class="rm-field"><span>Price <small>if not set</small></span><input name="unitPrice" inputmode="decimal" placeholder="Use inventory price"></label>
+          <button class="btn btn--ghost btn--sm" type="button" data-remove-order-line>Remove</button>
+        </div>
+      </template>
 
       <div id="order-stock-check" class="notice notice--info" aria-live="polite">
-        <div><strong>Choose a product and quantity.</strong><br>StockChief will show what can be reserved before you create the order.</div>
+        <div><strong>Choose products and quantities.</strong><br>StockChief will show what can be reserved before you create the order.</div>
       </div>
-
-      <label class="rm-field">
-        <span>Order price <small>only if the product has no selling price</small></span>
-        <input name="unitPrice" inputmode="decimal" value="<%= form.unitPrice || '' %>" placeholder="Leave blank to use the inventory price">
-        <small>Blank never means free. Enter 0 only when intentionally free.</small>
-      </label>
     </div>
   </section>
 
@@ -140,6 +159,7 @@
         <label class="rm-field"><span>Order number <small>optional</small></span><input name="orderNumber" value="<%= form.orderNumber || '' %>" placeholder="StockChief will assign one"></label>
         <label class="rm-field"><span>Order date</span><input type="date" name="orderDate" value="<%= form.orderDate || new Date().toISOString().slice(0,10) %>"></label>
         <label class="rm-field"><span>Needed by <small>optional</small></span><input type="date" name="neededBy" value="<%= form.neededBy || '' %>"></label>
+        <label class="rm-field"><span>Allocation priority <small>lower numbers first</small></span><input type="number" name="allocationPriority" min="0" max="1000" step="1" value="<%= form.allocationPriority ?? 100 %>"></label>
         <label class="rm-field">
           <span>Ship from <small>optional</small></span>
           <select id="order-location" name="fulfillmentLocationId">
@@ -168,12 +188,13 @@
 
   <div class="rm-confirm">
     <span class="rm-confirm__t">
-      <strong>Nothing leaves inventory yet</strong>
-      <span>Create order and continue reserves available stock. Nothing leaves inventory until the
-        order page says it was shipped, delivered, or collected.</span>
+      <strong>Choose what is true now</strong>
+      <span>Create and reserve holds available stock. If a pickup customer already has the goods,
+        complete it now and StockChief records the shipment, stock change, sale, and amount owed together.</span>
     </span>
     <span class="rm-choices">
       <button class="rm-btn" id="order-confirm-button" type="submit" name="nextStep" value="confirm">Create order and continue</button>
+      <button class="rm-btn rm-btn--wash" id="order-complete-button" type="submit" name="nextStep" value="fulfill" hidden>Customer has it now — complete pickup</button>
       <button class="rm-btn rm-btn--ghost" type="submit" name="nextStep" value="draft">Save draft</button>
       <a class="rm-btn rm-btn--ghost" href="/sales">Cancel</a>
     </span>
@@ -188,11 +209,13 @@
   var destination = document.getElementById('order-destination');
   var newCustomer = document.getElementById('order-new-customer');
   var methods = Array.prototype.slice.call(document.querySelectorAll('input[name="deliveryMethod"]'));
-  var sku = document.getElementById('order-sku');
-  var quantity = document.getElementById('order-quantity');
+  var lines = document.getElementById('order-lines');
+  var addLine = document.getElementById('add-order-line');
+  var lineTemplate = document.getElementById('order-line-template');
   var location = document.getElementById('order-location');
   var stockCheck = document.getElementById('order-stock-check');
   var confirmButton = document.getElementById('order-confirm-button');
+  var completeButton = document.getElementById('order-complete-button');
   var stock = <%- JSON.stringify(Object.fromEntries(skus.map(function (entry) { return [entry.id, entry.stock]; }))).replace(/</g, '\\u003c') %>;
 
   function useCustomerDefaults() {
@@ -208,45 +231,84 @@
     var ships = !method || method.value === 'SHIP';
     destination.hidden = !ships;
     address.disabled = !ships;
+    address.required = ships;
   }
 
   function showStockPromise() {
     if (!stockCheck) return;
-    var selected = sku && sku.value ? stock[sku.value] : null;
-    var requested = quantity ? Number(quantity.value) : 0;
-    if (!selected || !Number.isFinite(requested) || requested < 1) {
+    var requestedBySku = {};
+    Array.prototype.slice.call(lines.querySelectorAll('[data-order-line]')).forEach(function (row) {
+      var skuInput = row.querySelector('select[name="skuId"]');
+      var quantityInput = row.querySelector('input[name="quantity"]');
+      var requested = quantityInput ? Number(quantityInput.value) : 0;
+      if (!skuInput || !skuInput.value || !Number.isFinite(requested) || requested < 1) return;
+      requestedBySku[skuInput.value] = (requestedBySku[skuInput.value] || 0) + requested;
+    });
+    var skuIds = Object.keys(requestedBySku);
+    if (!skuIds.length) {
       stockCheck.className = 'notice notice--info';
-      stockCheck.innerHTML = '<div><strong>Choose a product and quantity.</strong><br>StockChief will show what can be reserved before you create the order.</div>';
+      stockCheck.innerHTML = '<div><strong>Choose products and quantities.</strong><br>StockChief will show what can be reserved before you create the order.</div>';
       if (confirmButton) confirmButton.textContent = 'Create order and continue';
+      if (completeButton) completeButton.hidden = true;
       return;
     }
-    var available = Number(selected.available || 0);
+    var totalRequested = 0;
+    var totalAvailable = 0;
+    var totalShort = 0;
     var locationName = 'all locations';
-    if (location && location.value) {
-      var position = (selected.positions || []).filter(function (entry) { return entry.location_id === location.value; })[0];
-      available = position ? Number(position.available || 0) : 0;
-      locationName = location.options[location.selectedIndex].text;
-    }
-    var reserved = Math.min(requested, Math.max(0, available));
-    var short = Math.max(0, requested - reserved);
-    if (short) {
+    skuIds.forEach(function (skuId) {
+      var selected = stock[skuId];
+      var requested = requestedBySku[skuId];
+      var available = Number(selected && selected.available || 0);
+      if (location && location.value) {
+        var position = (selected.positions || []).filter(function (entry) { return entry.location_id === location.value; })[0];
+        available = position ? Number(position.available || 0) : 0;
+        locationName = location.options[location.selectedIndex].text;
+      }
+      totalRequested += requested;
+      totalAvailable += available;
+      totalShort += Math.max(0, requested - Math.max(0, available));
+    });
+    if (totalShort) {
       stockCheck.className = 'notice notice--warn';
-      stockCheck.innerHTML = '<div><strong>This order is ' + short + ' unit' + (short === 1 ? '' : 's') + ' over the available stock.</strong><br>'
-        + requested + ' requested · ' + available + ' available now at ' + locationName + ' · ' + reserved + ' can be reserved · '
-        + short + ' will wait for stock. You may continue, but StockChief cannot promise the full order immediately.</div>';
-      if (confirmButton) confirmButton.textContent = 'Create order — ' + short + ' will wait for stock';
+      stockCheck.innerHTML = '<div><strong>This order is ' + totalShort + ' unit' + (totalShort === 1 ? '' : 's') + ' over the available stock.</strong><br>'
+        + totalRequested + ' requested · ' + totalAvailable + ' available now at ' + locationName + ' · '
+        + totalShort + ' will wait for stock. You may continue, but StockChief cannot promise the full order immediately.</div>';
+      if (confirmButton) confirmButton.textContent = 'Create order — ' + totalShort + ' will wait for stock';
+      if (completeButton) completeButton.hidden = true;
       return;
     }
     stockCheck.className = 'notice notice--success';
-    stockCheck.innerHTML = '<div><strong>All ' + requested + ' can be reserved now.</strong><br>'
-      + available + ' available at ' + locationName + ' before this order.</div>';
-    if (confirmButton) confirmButton.textContent = 'Create order and reserve ' + requested;
+    stockCheck.innerHTML = '<div><strong>All ' + totalRequested + ' can be reserved now.</strong><br>'
+      + skuIds.length + ' product' + (skuIds.length === 1 ? '' : 's') + ' checked at ' + locationName + '.</div>';
+    if (confirmButton) confirmButton.textContent = 'Create order and reserve ' + totalRequested;
+    var method = methods.filter(function (entry) { return entry.checked; })[0];
+    if (completeButton) completeButton.hidden = !method || method.value !== 'PICKUP';
   }
 
   if (customer) customer.addEventListener('change', useCustomerDefaults);
-  methods.forEach(function (entry) { entry.addEventListener('change', showDestination); });
-  if (sku) sku.addEventListener('change', showStockPromise);
-  if (quantity) quantity.addEventListener('input', showStockPromise);
+  methods.forEach(function (entry) { entry.addEventListener('change', function () { showDestination(); showStockPromise(); }); });
+  if (lines) {
+    lines.addEventListener('change', showStockPromise);
+    lines.addEventListener('input', showStockPromise);
+    lines.addEventListener('click', function (event) {
+      var remove = event.target.closest('[data-remove-order-line]');
+      if (!remove) return;
+      var rows = lines.querySelectorAll('[data-order-line]');
+      if (rows.length <= 1) return;
+      remove.closest('[data-order-line]').remove();
+      if (lines.querySelectorAll('[data-order-line]').length === 1) {
+        lines.querySelector('[data-remove-order-line]').hidden = true;
+      }
+      showStockPromise();
+    });
+  }
+  if (addLine && lineTemplate) addLine.addEventListener('click', function () {
+    lines.appendChild(lineTemplate.content.cloneNode(true));
+    Array.prototype.slice.call(lines.querySelectorAll('[data-remove-order-line]')).forEach(function (button) { button.hidden = false; });
+    lines.querySelector('[data-order-line]:last-child select').focus();
+    showStockPromise();
+  });
   if (location) location.addEventListener('change', showStockPromise);
   useCustomerDefaults();
   showDestination();

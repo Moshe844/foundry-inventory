@@ -212,6 +212,20 @@ function judge(message = {}) {
     return { state: 'HANDLED', reason: 'This is a file with no question around it.' };
   }
 
+  /*
+   * A real customer or supplier gets the safe default.
+   *
+   * Natural language has no finite list of ways to imply that a response is
+   * expected. Filing a short human message as handled is the dangerous error;
+   * asking the owner to dismiss a genuine FYI costs one click. Automatic mail
+   * and filed documents were already removed above, so anything left from a
+   * known counterparty stays visible until a person answers or closes it.
+   */
+  if (message.knownCounterparty) {
+    return { state: 'NEEDS_REPLY',
+      reason: 'This came from a customer or supplier, so StockChief has not assumed that no response is needed.' };
+  }
+
   if (body.length >= 140) {
     return {
       state: 'NEEDS_REPLY',

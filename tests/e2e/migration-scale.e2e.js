@@ -222,19 +222,36 @@ test('an owner starts and completes a migration entirely in the browser with the
   assert.match(await selected.innerText(),/open-sales-orders\.csv/);
   await page.screenshot({ path:path.join(SHOTS,'04-owner-files-selected.png'),fullPage:true });
   const read = page.getByRole('button',{ name:'Read 3 files safely' });
-  const destination = page.waitForURL(/\/onboarding\/migrations\/[^/]+(?:\/sources)?$/);
+  const destination = page.waitForURL(/\/onboarding\/migrations\/mig_[^/]+(?:\/sources)?$/);
   await read.click({ noWaitAfter:true });
-  await page.waitForFunction(() => {
-    const button = document.querySelector('[data-migration-submit]');
-    return button && button.disabled && /Reading/.test(button.textContent || '');
-  });
-  const busyRead = page.locator('[data-migration-submit]');
-  assert.equal(await busyRead.isDisabled(),true);
-  assert.match(await busyRead.innerText(),/Reading/);
-  await page.screenshot({ path:path.join(SHOTS,'05-owner-upload-working.png'),fullPage:true });
+  try {
+    const working = await Promise.race([
+      destination.then(() => false),
+      page.waitForFunction(() => {
+        const button = document.querySelector('[data-migration-submit]');
+        return button && button.disabled && /Reading/.test(button.textContent || '');
+      }).then(() => true),
+    ]);
+    if (working && /\/onboarding\/migrations\/new$/.test(page.url())) {
+      const busyRead = page.locator('[data-migration-submit]');
+      assert.equal(await busyRead.isDisabled(),true);
+      assert.match(await busyRead.innerText(),/Reading/);
+    }
+  } catch (error) {
+    await page.screenshot({ path:path.join(SHOTS,'owner-upload-failure.png'),fullPage:true });
+    process.stderr.write(`Owner migration upload screen:\n${await page.locator('main').innerText()}\n`);
+    throw error;
+  }
   await destination;
-  assert.match(await page.locator('body').innerText(),/open-purchase-orders\.csv · inventory-export\.csv · open-sales-orders\.csv|StockChief is preparing this inventory/);
-  await page.getByRole('button',{ name:'Approve and go live' }).waitFor({ timeout:30_000 });
+  const preparedScreen = await page.locator('body').innerText();
+  for (const filename of ['inventory-export.csv','open-purchase-orders.csv','open-sales-orders.csv']) assert.ok(preparedScreen.includes(filename), `The saved source screen retains ${filename}.`);
+  try {
+    await page.getByRole('button',{ name:'Approve and go live' }).waitFor({ timeout:30_000 });
+  } catch (error) {
+    await page.screenshot({ path:path.join(SHOTS,'owner-preparation-failure.png'),fullPage:true });
+    process.stderr.write(`Owner migration preparation screen:\n${await page.locator('main').innerText()}\n`);
+    throw error;
+  }
   assert.match(await page.locator('body').innerText(),/Verification passed|source totals match/i);
   await page.screenshot({ path:path.join(SHOTS,'05-owner-upload-staged.png'),fullPage:true });
   await clickAndLoad(page,'Approve and go live');

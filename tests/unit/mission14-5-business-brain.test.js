@@ -202,6 +202,18 @@ test('backup is actually restored and critical record counts match', async () =>
     locationId: workspace.main.id, quantity: 9, reasonCode: 'opening' });
   const backupDir = path.join(store.dir, 'backups');
   const created = await backups.create(store.db, { directory: backupDir, retentionDays: 7 });
+  const readFileSync = fs.readFileSync;
+  fs.readFileSync = function guardedReadFileSync(file, ...args) {
+    if (path.resolve(file) === path.resolve(created.path)) {
+      throw new Error('Backup verification must not load the whole database into one Buffer.');
+    }
+    return readFileSync.call(fs, file, ...args);
+  };
+  try {
+    assert.equal(backups.verify(created.path).ok, true);
+  } finally {
+    fs.readFileSync = readFileSync;
+  }
   const restoredPath = path.join(store.dir, 'restored', 'keeper.sqlite');
   const restored = backups.restoreTo(created.path, restoredPath);
   assert.equal(created.verification.ok, true);

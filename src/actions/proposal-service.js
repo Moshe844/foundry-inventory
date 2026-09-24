@@ -949,6 +949,14 @@ function shapeOperation(db, workspaceId, intent, draft) {
   };
 
   if (actionType === 'receive') {
+    if (repo.listLocations(db, workspaceId).length === 0) {
+      return {
+        ok: false,
+        question: null,
+        unsupported: 'This inventory has no locations yet. Add the first place where stock is kept, then try this receipt again. Nothing has changed.',
+        where: { label: 'Add your first location', href: '/locations' },
+      };
+    }
     const into = noteFrom(draft, resolver.resolveLocation(db, workspaceId, intent.destinationLocation, { role: 'location' }));
     if (!into.ok) return unresolved(into);
     draft.destinationLocationId = into.value.id;

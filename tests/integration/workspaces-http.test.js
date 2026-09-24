@@ -56,7 +56,7 @@ test('a person can create a second inventory and is handed to StockChief', async
   const front = await agent.get('/foundry');
   assert.equal(front.headers.location, '/onboarding');
   const chooser = plain((await agent.get('/onboarding')).text);
-  assert.match(chooser, /Where should StockChief get your inventory from/);
+  assert.match(chooser, /Add your inventory/);
 
   const describe = plain((await agent.get('/foundry/describe')).text);
   assert.match(describe, /Give StockChief what you already have/);

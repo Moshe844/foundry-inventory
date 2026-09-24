@@ -5,6 +5,28 @@ const { ValidationError, NotFoundError } = require('../domain/errors');
 const permissions = require('../actions/permissions');
 const { newId, nowIso, requireText } = require('../lib/util');
 const ledger = require('./ledger');
+const { createHash } = require('node:crypto');
+
+function reviewRevision(bill) {
+  return createHash('sha256').update(JSON.stringify({ status: bill.status,
+    updatedAt: bill.updated_at, issueDate: bill.issue_date, dueDate: bill.due_date,
+    taxMinor: bill.tax_minor, detail: bill.exception_detail,
+    lines: bill.lines.map((line) => ({ id: line.id, quantity: line.quantity,
+      unitCostMinor: line.unit_cost_minor })) })).digest('hex');
+}
+
+function recordReview(db, ctx, bill, action, reason, before) {
+  const detail = bill.exception_detail;
+  const reviews = [...(detail.reviews || []), { id: newId('billreview'), action,
+    reason, actorId: ctx.actorId, at: nowIso(), before,
+    after: { status: bill.status, issueDate: bill.issue_date, dueDate: bill.due_date,
+      taxMinor: bill.tax_minor, totalMinor: bill.total_minor,
+      lines: bill.lines.map((line) => ({ id: line.id, quantity: line.quantity,
+        unitCostMinor: line.unit_cost_minor })) } }];
+  db.prepare(`UPDATE accounting_supplier_bills SET exception_detail = ?, updated_at = ?
+    WHERE id = ? AND workspace_id = ?`).run(JSON.stringify({ ...detail, reviews }),
+    nowIso(), bill.id, ctx.workspaceId);
+}
 
 function nextNumber(db, workspaceId) {
   let highest = 1000;
@@ -106,6 +128,11 @@ function createDraft(db, ctx, membership, input) {
 
 function threeWayMatch(db, workspaceId, bill) {
   if (!bill.purchase_order_id) return { status: 'NOT_MATCHED', differences: [] };
+  const order = db.prepare('SELECT supplier_id FROM purchase_orders WHERE id = ? AND workspace_id = ?')
+    .get(bill.purchase_order_id, workspaceId);
+  if (!order || order.supplier_id !== bill.supplier_id) {
+    return { status: 'EXCEPTION', differences: [{ kind: 'po_supplier_mismatch' }] };
+  }
   const supplier = db.prepare('SELECT price_tolerance_percent FROM suppliers WHERE id = ? AND workspace_id = ?')
     .get(bill.supplier_id, workspaceId);
   const tolerance = Number(supplier ? supplier.price_tolerance_percent : 0);
@@ -129,14 +156,19 @@ function threeWayMatch(db, workspaceId, bill) {
   // duty, insurance or handling. Only merchandise is subject to the PO's
   // quantity/price match; treating a freight line as a missing item would
   // wrongly dispute a valid supplier invoice.
-  const merchandiseLines = bill.lines.filter((line) => line.purchase_order_line_id);
+  const merchandiseLines = bill.lines.filter((line) => line.purchase_order_line_id || line.sku_id);
+  const currentBilled = new Map();
   for (const line of merchandiseLines) {
     const po = poLines.get(line.purchase_order_line_id);
     if (!po) { differences.push({ lineId: line.id, kind: 'missing_po_line' }); continue; }
+    if (line.sku_id && line.sku_id !== po.sku_id) {
+      differences.push({ lineId: line.id, kind: 'missing_po_line' }); continue;
+    }
     const ordered = Number(po.quantity_units);
     const receivedQty = Number(received.get(po.id) || 0);
     const priorBilledQty = Number(previouslyBilled.get(po.id) || 0);
-    const billed = Number(line.quantity);
+    const billed = Number(line.quantity) + Number(currentBilled.get(po.id) || 0);
+    currentBilled.set(po.id, billed);
     if (priorBilledQty + billed > ordered) differences.push({ lineId: line.id,
       kind: 'quantity_above_ordered', ordered, previouslyBilled: priorBilledQty, billed });
     else if (priorBilledQty + billed > receivedQty) differences.push({ lineId: line.id,
@@ -154,7 +186,7 @@ function threeWayMatch(db, workspaceId, bill) {
   const exact = merchandiseLines.length > 0 && merchandiseLines.every((line) => {
     const po = poLines.get(line.purchase_order_line_id);
     return po && Math.round(Number(po.unit_cost) * 100) === Number(line.unit_cost_minor)
-      && Number(previouslyBilled.get(po.id) || 0) + Number(line.quantity)
+      && Number(previouslyBilled.get(po.id) || 0) + Number(currentBilled.get(po.id) || 0)
         <= Number(received.get(po.id) || 0);
   });
   return { status: exact ? 'MATCHED' : 'WITHIN_TOLERANCE', differences, tolerancePercent: tolerance };
@@ -162,13 +194,18 @@ function threeWayMatch(db, workspaceId, bill) {
 
 function open(db, ctx, membership, id) {
   permissions.assertCan(membership, permissions.MANAGE_ACCOUNTING, 'approve supplier bills');
+  return inTransaction(db, () => openWithinTransaction(db, ctx, id));
+}
+
+function openWithinTransaction(db, ctx, id) {
   const bill = requireBill(db, ctx.workspaceId, id);
   if (bill.status !== 'DRAFT') return bill;
+  require('../attention/needs-you-count').invalidateNeedsYou(db, ctx.workspaceId);
   const match = threeWayMatch(db, ctx.workspaceId, bill);
   if (match.status === 'EXCEPTION') {
     db.prepare(`UPDATE accounting_supplier_bills SET status = 'DISPUTED', match_status = 'EXCEPTION',
       exception_detail = ?, updated_at = ? WHERE id = ? AND workspace_id = ?`)
-      .run(JSON.stringify(match), nowIso(), id, ctx.workspaceId);
+      .run(JSON.stringify({ ...match, reviews: bill.exception_detail.reviews || [] }), nowIso(), id, ctx.workspaceId);
     return requireBill(db, ctx.workspaceId, id);
   }
   const journalLines = [];
@@ -190,6 +227,7 @@ function open(db, ctx, membership, id) {
       .get(ctx.workspaceId, bill.purchase_order_id, bill.id).n);
     let legacyApAvailableMinor = Math.max(0, legacyReceiptApMinor - priorBillApMinor);
     let legacyApReusedMinor = 0;
+    const currentBilled = new Map();
     for (const line of bill.lines) {
       // Freight, duty, insurance and handling on a supplier invoice are real
       // billable amounts but are not a quantity on the purchase order. Keep
@@ -220,7 +258,8 @@ function open(db, ctx, membership, id) {
         FROM purchase_order_receipt_lines WHERE workspace_id = ? AND purchase_order_line_id = ?`)
         .get(ctx.workspaceId, po.id).n);
       const quantity = Number(line.quantity);
-      const receivedUnbilled = Math.max(0, received - previouslyBilled);
+      const receivedUnbilled = Math.max(0, received - previouslyBilled - Number(currentBilled.get(po.id) || 0));
+      currentBilled.set(po.id, Number(currentBilled.get(po.id) || 0) + quantity);
       const receivedQuantity = Math.min(quantity, receivedUnbilled);
       const inTransitQuantity = quantity - receivedQuantity;
       const orderedUnitCostMinor = Math.round(Number(po.unit_cost) * 100);
@@ -259,7 +298,8 @@ function open(db, ctx, membership, id) {
     if (legacyApReusedMinor > 0 && journalLines.length === 0 && Number(bill.tax_minor) === 0) {
       db.prepare(`UPDATE accounting_supplier_bills SET status = 'OPEN', match_status = ?,
         opened_at = ?, updated_at = ?, exception_detail = ? WHERE id = ? AND workspace_id = ?`)
-        .run(match.status, nowIso(), nowIso(), JSON.stringify({ ...match, legacyApReusedMinor }),
+        .run(match.status, nowIso(), nowIso(), JSON.stringify({ ...match, legacyApReusedMinor,
+          reviews: bill.exception_detail.reviews || [] }),
           id, ctx.workspaceId);
       return requireBill(db, ctx.workspaceId, id);
     }
@@ -286,9 +326,83 @@ function open(db, ctx, membership, id) {
   });
   const journalEntryId = posted.entry.id;
   db.prepare(`UPDATE accounting_supplier_bills SET status = 'OPEN', match_status = ?,
-    journal_entry_id = ?, opened_at = ?, updated_at = ? WHERE id = ? AND workspace_id = ?`)
-    .run(match.status, journalEntryId, nowIso(), nowIso(), id, ctx.workspaceId);
+    journal_entry_id = ?, opened_at = ?, updated_at = ?, exception_detail = ?
+    WHERE id = ? AND workspace_id = ?`)
+    .run(match.status, journalEntryId, nowIso(), nowIso(), JSON.stringify({ ...match,
+      reviews: bill.exception_detail.reviews || [] }), id, ctx.workspaceId);
   return requireBill(db, ctx.workspaceId, id);
+}
+
+function review(db, ctx, membership, id, input) {
+  permissions.assertCan(membership, permissions.MANAGE_ACCOUNTING, 'resolve supplier bills');
+  const reason = requireText(input.reason, 'Review reason', { max: 1000 });
+  if (!['correct', 'recheck', 'void'].includes(input.action)) {
+    throw new ValidationError('Choose correction, recheck or dismissal.');
+  }
+  return inTransaction(db, () => {
+    const bill = requireBill(db, ctx.workspaceId, id);
+    if (input.revision !== reviewRevision(bill)) {
+      throw new ValidationError('This bill changed since you opened it. Reload and review the current evidence before submitting again.');
+    }
+    if (!['DRAFT', 'DISPUTED'].includes(bill.status) || bill.journal_entry_id || bill.opened_at) {
+      throw new ValidationError('Only unposted bills can be corrected or dismissed here. Posted bills require a traceable accounting correction.');
+    }
+    const allocated = db.prepare(`SELECT id FROM accounting_payment_allocations
+      WHERE workspace_id = ? AND supplier_bill_id = ? LIMIT 1`).get(ctx.workspaceId, id);
+    if (allocated) throw new ValidationError('This bill has payment history and cannot be changed through exception review.');
+    const before = { status: bill.status, issueDate: bill.issue_date, dueDate: bill.due_date,
+      taxMinor: bill.tax_minor, totalMinor: bill.total_minor, differences: bill.exception_detail.differences || [],
+      lines: bill.lines.map((line) => ({ id: line.id, quantity: line.quantity,
+        unitCostMinor: line.unit_cost_minor })) };
+    if (input.action === 'void') {
+      db.prepare(`UPDATE accounting_supplier_bills SET status = 'VOID', balance_minor = 0,
+        voided_at = ?, updated_at = ? WHERE id = ? AND workspace_id = ?`)
+        .run(nowIso(), nowIso(), id, ctx.workspaceId);
+    } else {
+      if (input.action === 'correct') {
+        if (!Array.isArray(input.lines) || input.lines.length !== bill.lines.length
+          || new Set(input.lines.map((line) => line.id)).size !== bill.lines.length) {
+          throw new ValidationError('Provide every original invoice line exactly once.');
+        }
+        const originals = new Map(bill.lines.map((line) => [line.id, line]));
+        const corrected = input.lines.map((line) => {
+          if (!originals.has(line.id)) throw new ValidationError('That line does not belong to this bill.');
+          const quantity = Number(line.quantity);
+          const unitCostMinor = Number(line.unitCostMinor);
+          const lineTotalMinor = Math.round(quantity * unitCostMinor);
+          if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isSafeInteger(unitCostMinor)
+            || unitCostMinor < 0 || !Number.isSafeInteger(lineTotalMinor)) {
+            throw new ValidationError('Invoice quantities must be positive and costs must be non-negative, safely representable minor-currency amounts.');
+          }
+          return { id: line.id, quantity, unitCostMinor, lineTotalMinor };
+        });
+        const issueDate = ledger.dateOnly(input.issueDate, 'Bill date');
+        const dueDate = input.dueDate ? ledger.dateOnly(input.dueDate, 'Bill due date') : null;
+        if (dueDate && dueDate < issueDate) throw new ValidationError('Bill due date cannot be before its issue date.');
+        const taxMinor = Number(input.taxMinor);
+        const subtotal = corrected.reduce((sum, line) => sum + line.lineTotalMinor, 0);
+        const total = subtotal + taxMinor;
+        if (!Number.isSafeInteger(taxMinor) || taxMinor < 0 || !Number.isSafeInteger(total) || total <= 0) {
+          throw new ValidationError('The corrected invoice must have a positive, safely representable total and non-negative tax.');
+        }
+        for (const line of corrected) {
+          db.prepare(`UPDATE accounting_supplier_bill_lines SET quantity = ?, unit_cost_minor = ?,
+            line_total_minor = ? WHERE id = ? AND workspace_id = ? AND bill_id = ?`)
+            .run(line.quantity, line.unitCostMinor, line.lineTotalMinor, line.id, ctx.workspaceId, id);
+        }
+        db.prepare(`UPDATE accounting_supplier_bills SET issue_date = ?, due_date = ?,
+          subtotal_minor = ?, tax_minor = ?, total_minor = ?, balance_minor = ?
+          WHERE id = ? AND workspace_id = ?`)
+          .run(issueDate, dueDate, subtotal, taxMinor, total, total, id, ctx.workspaceId);
+      }
+      db.prepare(`UPDATE accounting_supplier_bills SET status = 'DRAFT' WHERE id = ? AND workspace_id = ?`)
+        .run(id, ctx.workspaceId);
+      openWithinTransaction(db, ctx, id);
+    }
+    recordReview(db, ctx, requireBill(db, ctx.workspaceId, id), input.action, reason, before);
+    require('../attention/needs-you-count').invalidateNeedsYou(db, ctx.workspaceId);
+    return requireBill(db, ctx.workspaceId, id);
+  });
 }
 
 function list(db, workspaceId, { status = null, supplierId = null } = {}) {
@@ -299,4 +413,4 @@ function list(db, workspaceId, { status = null, supplierId = null } = {}) {
     ORDER BY issue_date DESC, bill_number DESC`).all(...params).map((row) => hydrate(db, workspaceId, row.id));
 }
 
-module.exports = { nextNumber, hydrate, requireBill, createDraft, threeWayMatch, open, list };
+module.exports = { nextNumber, hydrate, requireBill, createDraft, threeWayMatch, open, review, reviewRevision, list };

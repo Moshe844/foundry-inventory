@@ -1,117 +1,75 @@
-<%
-  /*
-   * The inventory-source chooser.
-   *
-   * The same five cards the first-run brief offers, because they are the same
-   * decision — somebody arriving here from "Not sure, help me choose" should
-   * not meet a different-looking screen asking the same question.
-   *
-   * What this page adds is the other way in: describe the business in a
-   * sentence and let StockChief pick the source for you.
-   */
-  var options = locals.sourceOptions || [];
-  var chosen = state && state.path;
-%>
-
-<%- include('../partials/setup-steps', { step: 0 }) %>
-
-<div class="rm-head">
-  <p class="rm-head__eyebrow"><%- helpers.icon('layers', { size: 14 }) %> Getting set up</p>
-  <h1>Where should StockChief get your inventory from?</h1>
-  <p>
-    Pick the one that is closest to the truth today. You are not locked in — StockChief can take a
-    second source later and reconcile the two.
-  </p>
+<div class="rm-head rm-source-head">
+  <span class="rm-stamp">Get started</span>
+  <h1>Add your inventory</h1>
+  <p>Bring the records you already have. Start with one source; add others later.</p>
+  <% if (currentUser.role === 'owner') { %>
+    <form method="post" action="/onboarding/name" class="rm-inline-name">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <label for="inventory-name">Inventory name</label>
+      <input class="input" id="inventory-name" name="name" maxlength="120" required value="<%= workspace.name %>" placeholder="e.g. Clothing Business">
+      <button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">Save name</button>
+    </form>
+  <% } %>
 </div>
-
-<%
-  /*
-   * A description that names the kind of business but carries no real records
-   * is not a failure — it just is not a source. It gets its own answer, since
-   * there is no recommendation to attach it to.
-   */
-%>
-<% if (locals.sourcePrompt && !locals.recommendation) { %>
-  <div class="rm-note" id="source-recommendation">
-    <%- helpers.icon('question', { size: 16 }) %>
-    <span><%= sourcePrompt %></span>
-  </div>
-<% } %>
-
-<% if (locals.recommendation) { %>
-  <div class="rm-next" id="source-recommendation">
-    <p class="rm-stamp"><%- helpers.icon('spark', { size: 13 }) %> From what you described</p>
-    <p class="rm-next__t"><%= recommendation.label %></p>
-    <% if (locals.sourcePrompt) { %><p class="rm-next__d"><%= sourcePrompt %></p><% } %>
-    <% if (locals.recommendedOption && recommendedOption.href) { %>
-      <p class="rm-choices" style="margin-top:11px"><a class="rm-btn rm-btn--sm" href="<%= recommendedOption.href %>">Use that source</a></p>
-    <% } else { %>
-      <form method="post" action="/onboarding/choose" style="margin-top:11px">
-        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-        <input type="hidden" name="path" value="<%= recommendation.id %>">
-        <input type="hidden" name="chosenBy" value="foundry">
-        <button class="rm-btn rm-btn--sm" type="submit">Use that source</button>
-      </form>
-    <% } %>
-  </div>
-<% } %>
-
-<div class="rm-choices-grid">
-  <% options.forEach(function (source) { %>
-    <% if (source.href) { %>
-      <a class="rm-choice" href="<%= source.href %>">
-        <span class="rm-choice__ic"><%- helpers.icon(source.icon || 'box', { size: 19 }) %></span>
+<p class="rm-source-options-note">Three ways to start — choose the one that suits you.</p>
+<div class="rm-source-grid">
+  <form class="rm-source-files rm-choice" method="post" action="<%= locals.importAction || '/onboarding/migrations/new' %>" enctype="multipart/form-data" data-migration-upload data-direct-upload>
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <h2>Move from files <span class="badge badge--muted">Fastest</span></h2>
+    <p>A CSV, TSV or Excel export with SKU, name and quantity.</p>
+    <label class="rm-drop" data-file-drop>
+      <span>Drop your spreadsheet here, or <strong>browse files</strong></span>
+      <input type="file" name="<%= locals.importFieldName || 'files' %>" aria-label="Inventory spreadsheets" accept=".csv,.tsv,.txt,.xlsx" <%= locals.importMultiple === false ? '' : 'multiple' %> data-migration-files>
+    </label>
+    <div data-migration-selection hidden aria-live="polite"></div>
+    <div data-migration-progress hidden aria-live="polite">
+      <strong data-migration-progress-title>Uploading…</strong><span data-migration-progress-detail></span>
+      <progress max="100" value="0" data-migration-progress-bar></progress>
+    </div>
+    <p data-migration-error hidden role="alert"></p>
+    <button class="rm-btn rm-btn--ghost rm-btn--sm rm-upload-retry" type="submit" data-migration-submit hidden>Retry upload</button>
+    <a href="<%= locals.importOptionsHref || '/onboarding/migrations/new' %>">Paste data or see upload options</a>
+  </form>
+  <% sourceOptions.filter(function (source) { return source.id !== 'spreadsheet'; }).forEach(function (source) { %>
+    <form class="rm-choice__form" method="post" action="/onboarding/choose">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="hidden" name="path" value="<%= source.id %>">
+      <button class="rm-choice" type="submit">
+        <span class="rm-choice__ic"><%- helpers.icon(source.icon, { size: 19 }) %></span>
         <span class="rm-choice__t"><%= source.label %></span>
-        <span class="rm-choice__b"><%= source.blurb %></span>
-        <span class="rm-choice__d"><%= source.detail %></span>
-        <% if (source.providers) { %>
-          <span class="rm-choice__tags"><% source.providers.forEach(function (name) { %><span><%= name %></span><% }) %></span>
-        <% } %>
-        <span class="rm-choice__go"><%= chosen === source.id ? 'Carry on with this' : 'Choose this' %> <%- helpers.icon('arrowRight', { size: 14 }) %></span>
-      </a>
-    <% } else { %>
-      <form class="rm-choice__form" method="post" action="/onboarding/choose">
-        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-        <input type="hidden" name="path" value="<%= source.id %>">
-        <input type="hidden" name="chosenBy" value="customer">
-        <button class="rm-choice" type="submit">
-          <span class="rm-choice__ic"><%- helpers.icon(source.icon || 'box', { size: 19 }) %></span>
-          <span class="rm-choice__t"><%= source.label %></span>
-          <span class="rm-choice__b"><%= source.blurb %></span>
-          <span class="rm-choice__d"><%= source.detail %></span>
-          <% if (source.providers) { %>
-            <span class="rm-choice__tags"><% source.providers.forEach(function (name) { %><span><%= name %></span><% }) %></span>
-          <% } %>
-          <span class="rm-choice__go"><%= chosen === source.id ? 'Carry on with this' : 'Choose this' %> <%- helpers.icon('arrowRight', { size: 14 }) %></span>
-        </button>
-      </form>
-    <% } %>
+        <span class="rm-choice__b"><%= source.prerequisite %></span>
+        <span class="rm-choice__d"><%= source.id === 'software' ? 'Shopify, Square, Clover, WooCommerce or Custom API.' : 'Add products and opening quantities yourself.' %></span>
+        <span class="rm-choice__go">Choose this →</span>
+      </button>
+    </form>
   <% }) %>
 </div>
-
-<section class="rm-panel" style="margin-bottom:16px">
-  <div class="rm-panel__head">
-    <%- helpers.icon('chat', { size: 15, className: 'rm-quiet' }) %>
-    <h2>Not sure which source fits?</h2>
-  </div>
-  <form method="post" action="/onboarding/describe#source-recommendation" style="padding:16px">
+<div class="rm-choices">
+  <form method="post" action="/onboarding/skip">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-    <label class="rm-field">
-      <span>Describe where your inventory records are now. This recommends a starting source; it does not create or analyze inventory.</span>
-      <textarea name="description" rows="3"
-        placeholder="We keep everything in one spreadsheet, but our supplier emails us a stock report every Monday." required><%= locals.description || '' %></textarea>
-    </label>
-    <button class="rm-btn rm-btn--ghost" type="submit" <%= canOperate ? '' : 'disabled' %>>
-      <%- helpers.icon('spark', { size: 15 }) %> Recommend my starting source
-    </button>
+    <button class="rm-btn rm-btn--ghost" type="submit">Skip for now</button>
   </form>
-</section>
-
-<div class="rm-note">
-  <%- helpers.icon('shield', { size: 16 }) %>
-  <span>
-    <strong>Nothing is created until you approve it.</strong>
-    Whichever source you choose, StockChief reads it, shows you every product and quantity it would
-    create, and waits for you.
-  </span>
+  <span>You’ll review imported records before they become live.</span>
 </div>
+<% if (currentUser.role === 'owner' && !onboardingEntry.dismissed) { %>
+  <div class="rm-sample-prompt" aria-label="Explore with samples">
+    <span>Just looking around? Sample data is separate from your business.</span>
+    <form method="post" action="/onboarding/sample/load"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">Load sample data to explore</button></form>
+    <form method="post" action="/onboarding/sample/dismiss"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="returnTo" value="/onboarding"><button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit" aria-label="Dismiss sample suggestion">Dismiss</button></form>
+  </div>
+<% } %>
+<details class="rm-disclosure">
+  <summary>Not sure which source fits?</summary>
+  <form method="post" action="/onboarding/describe#source-recommendation">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <label class="rm-field"><span>Where are your inventory records now?</span>
+      <textarea name="description" rows="2" required placeholder="e.g. We keep quantities in an Excel workbook."><%= locals.description || '' %></textarea>
+    </label>
+    <button class="rm-btn rm-btn--ghost" type="submit">Recommend my starting source</button>
+  </form>
+</details>
+<% if (locals.recommendation || locals.sourcePrompt) { %>
+  <div class="rm-note" id="source-recommendation" role="status">
+    <span><%= locals.recommendation ? recommendation.label + ': ' : '' %><%= locals.sourcePrompt || '' %></span>
+  </div>
+<% } %>

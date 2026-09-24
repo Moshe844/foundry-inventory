@@ -835,6 +835,7 @@
 
     const paint = () => {
       const files = [...(input.files || [])];
+      if (form.hasAttribute('data-direct-upload')) submit.disabled = files.length === 0;
       selected.hidden = files.length === 0;
       if (!files.length) { selected.replaceChildren(); return; }
       const total = files.reduce((sum,file) => sum + file.size,0);
@@ -854,6 +855,21 @@
       errorBox.hidden = true;
     };
     input.addEventListener('change',paint);
+    if (form.hasAttribute('data-direct-upload')) {
+      input.addEventListener('change', () => { if (input.files.length) form.requestSubmit(); });
+    }
+    const drop = form.querySelector('[data-file-drop]');
+    if (drop) {
+      drop.addEventListener('dragover', (event) => { event.preventDefault(); drop.classList.add('is-dragging'); });
+      drop.addEventListener('dragleave', () => drop.classList.remove('is-dragging'));
+      drop.addEventListener('drop', (event) => {
+        event.preventDefault();
+        drop.classList.remove('is-dragging');
+        if (input.disabled || !event.dataTransfer || !event.dataTransfer.files.length) return;
+        input.files = event.dataTransfer.files;
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+    }
 
     form.addEventListener('submit',(event) => {
       if (event.defaultPrevented) return;
@@ -900,6 +916,8 @@
         input.disabled = false;
         submit.classList.remove('is-busy','is-working-label');
         submit.removeAttribute('aria-busy');
+        submit.textContent = 'Retry reading files';
+        submit.hidden = false;
         errorBox.textContent = result && result.message
           ? result.message
           : 'StockChief could not read that upload. The selected filenames remain above so you can correct the exact file.';
@@ -911,6 +929,8 @@
         input.disabled = false;
         submit.classList.remove('is-busy','is-working-label');
         submit.removeAttribute('aria-busy');
+        submit.textContent = 'Retry reading files';
+        submit.hidden = false;
         errorBox.textContent = 'The upload was interrupted. Your source files were not activated; choose Retry when the connection is stable.';
         errorBox.hidden = false;
       });

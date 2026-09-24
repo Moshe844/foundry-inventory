@@ -38,7 +38,7 @@ const landedCosts = require('../../accounting/landed-costs');
 const { requireAuth, asyncRoute } = require('../middleware');
 const { unitCount } = require('../../lib/units');
 const { localDateKey } = require('../../lib/calendar');
-const { trimOrNull } = require('../../lib/util');
+const { trimOrNull, newId } = require('../../lib/util');
 const { ValidationError } = require('../../domain/errors');
 const workItems = require('../../autopilot/work-items');
 
@@ -882,6 +882,7 @@ router.get(
       // only exists on the over-receipt re-render.
       overReceipt: null,
       submitted,
+      receiptIdempotencyKey: newId('uireceipt'),
       sourceEvent: eventMatchesOrder ? sourceEvent : null,
       permissions: can(req),
     });
@@ -913,7 +914,7 @@ router.post(
         // same delivery and a genuinely separate one is not.
         idempotencyKey:
           trimOrNull(req.body.idempotencyKey) ||
-          `po-receipt:${order.id}:${lines.map((l) => `${l.lineId}=${l.quantityUnits}`).join('|')}`,
+          `po-receipt:${order.id}:${trimOrNull(req.body.reference) || 'no-reference'}:${lines.map((l) => `${l.lineId}=${l.quantityUnits}`).join('|')}`,
         approveOverReceipt: req.body.approveOverReceipt === '1',
         reference: trimOrNull(req.body.reference),
         note: trimOrNull(req.body.note),
@@ -963,6 +964,7 @@ router.post(
         warnings: [error.message],
         overReceipt: error.overReceipt,
         submitted: req.body,
+        receiptIdempotencyKey: trimOrNull(req.body.idempotencyKey) || newId('uireceipt'),
         sourceEvent: trimOrNull(req.body.physicalEventId)
           ? physicalEvents.get(req.db, req.ctx.workspaceId, trimOrNull(req.body.physicalEventId)) : null,
         permissions: can(req),
@@ -1002,6 +1004,13 @@ router.post(
     const supplier = supplierService.createSupplier(req.db, req.ctx, req.user, req.body);
     react(req, managerEvents.TYPES.SUPPLIER_UPDATED, { supplierId: supplier.id, change: 'created' });
     req.flash('success', `${supplier.name} added.`);
+    const pending = req.session.pendingAskPrerequisite;
+    if (pending && pending.workspaceId === req.ctx.workspaceId && pending.contactKind === 'supplier'
+        && String(pending.contactName || '').localeCompare(supplier.name, undefined, { sensitivity: 'accent' }) === 0) {
+      pending.contactId = supplier.id;
+      pending.contactName = supplier.name;
+      return res.redirect(303, '/foundry/resume-prerequisite');
+    }
     return res.redirect(`/suppliers/${supplier.id}`);
   })
 );
@@ -1057,9 +1066,14 @@ router.post(
   '/suppliers/:id',
   asyncRoute(async (req, res) => {
     guard(req, permissions.MANAGE_SUPPLIERS, 'manage suppliers');
-    supplierService.updateSupplier(req.db, req.ctx, req.user, req.params.id, req.body);
+    const supplier = supplierService.updateSupplier(req.db, req.ctx, req.user, req.params.id, req.body);
     react(req, managerEvents.TYPES.SUPPLIER_UPDATED, { supplierId: req.params.id, change: 'terms_updated' });
     req.flash('success', 'Saved.');
+    const pending = req.session.pendingAskPrerequisite;
+    if (pending && pending.workspaceId === req.ctx.workspaceId && pending.contactKind === 'supplier'
+        && pending.contactId === supplier.id && supplier.email) {
+      return res.redirect(303, '/foundry/resume-prerequisite');
+    }
     return res.redirect(`/suppliers/${req.params.id}`);
   })
 );

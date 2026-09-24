@@ -37,6 +37,33 @@ test('receive puts quantity into a location and writes a movement', () => {
   assert.ok(movement.occurred_at);
 });
 
+test('verified history replay is atomic, workspace-scoped, and idempotent', () => {
+  const { db, workspace, item } = setup();
+  const input = {
+    sourceNamespace: 'legacy-system:inventory',
+    entries: [
+      { externalKey: 'movement-1', skuId: item.skuId, locationId: workspace.main.id, quantity: 3 },
+      { externalKey: 'movement-2', skuId: item.skuId, locationId: workspace.main.id, quantity: 4 },
+    ],
+  };
+  assert.throws(() => engine.receiveVerifiedHistoryBatch(db, workspace.ctx, input), /verified migration/i);
+  const migrationCtx = { ...workspace.ctx, verifiedMigration: true };
+  assert.deepEqual(engine.receiveVerifiedHistoryBatch(db, migrationCtx, input), { applied: 2, replayed: 0 });
+  assert.deepEqual(engine.receiveVerifiedHistoryBatch(db, migrationCtx, input), { applied: 0, replayed: 2 });
+  assert.equal(repo.getBalance(db, workspace.workspaceId, item.skuId, workspace.main.id), 7);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM movements WHERE workspace_id=?').get(workspace.workspaceId).n, 2);
+
+  assert.throws(() => engine.receiveVerifiedHistoryBatch(db, migrationCtx, {
+    sourceNamespace: 'legacy-system:inventory',
+    entries: [
+      { externalKey: 'movement-3', skuId: item.skuId, locationId: workspace.main.id, quantity: 2 },
+      { externalKey: 'movement-4', skuId: 'sku-from-another-workspace', locationId: workspace.main.id, quantity: 1 },
+    ],
+  }), /could not be found/i);
+  assert.equal(repo.getBalance(db, workspace.workspaceId, item.skuId, workspace.main.id), 7);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM inventory_history_replay_events WHERE external_key='movement-3'").get().n, 0);
+});
+
 test('issue removes quantity and records the reason', () => {
   const { db, workspace, item } = setup();
   engine.receive(db, workspace.ctx, { skuId: item.skuId, locationId: workspace.main.id, quantity: 40 });

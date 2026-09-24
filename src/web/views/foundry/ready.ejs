@@ -54,7 +54,9 @@
     <div class="rm-panel__head">
       <%- helpers.icon('check', { size: 15 }) %>
       <h2><%= setupDocument.sourceName %> is now inventory truth</h2>
-      <span class="right"><a href="/purchasing/orders/<%= imported.purchaseOrderId %>">See the order</a></span>
+      <% if (imported.purchaseOrderId) { %>
+        <span class="right"><a href="/purchasing/orders/<%= imported.purchaseOrderId %>">See the order</a></span>
+      <% } %>
     </div>
     <ul class="rm-checks">
       <li><span class="rm-checks__ic"><%- helpers.icon('check', { size: 13 }) %></span>
@@ -67,8 +69,13 @@
         <span>This file called the vendor identifier <strong><%= imported.detectedSupplierCodeLabel || setupDocument.detectedSupplierCodeLabel %></strong>.
           StockChief will call it <strong><%= imported.itemCodeLabel || setupDocument.supplierCodeLabel %></strong> for <%= imported.supplier %>
           and recognize alternate headings on future documents.</span></li>
-      <li><span class="rm-checks__ic"><%- helpers.icon('check', { size: 13 }) %></span>
-        <span>Purchase order <strong><%= imported.poNumber %></strong> recorded, approved, and fully received</span></li>
+      <% if (imported.purchaseOrderId) { %>
+        <li><span class="rm-checks__ic"><%- helpers.icon('check', { size: 13 }) %></span>
+          <span>Purchase order <strong><%= imported.poNumber %></strong> recorded, approved, and fully received</span></li>
+      <% } else if (imported.openingStock) { %>
+        <li><span class="rm-checks__ic"><%- helpers.icon('check', { size: 13 }) %></span>
+          <span>Recorded as approved opening inventory. No purchase order, supplier bill, or payment was created.</span></li>
+      <% } %>
       <% if (imported.landedCostProposal && imported.landedCostProposal.proposed) { %>
         <li><span class="rm-checks__ic"><%- helpers.icon('spark', { size: 13 }) %></span>
           <span>StockChief prepared the supplier invoice's landed-cost split from the posted bill and received goods.
@@ -79,7 +86,7 @@
       <% } %>
     </ul>
     <div style="padding:12px 16px;border-top:1px solid var(--line-2);display:flex;flex-wrap:wrap;gap:10px;align-items:center">
-      <span class="rm-quiet" style="font-size:12.5px">Every quantity is backed by a receipt and an inventory movement.</span>
+      <span class="rm-quiet" style="font-size:12.5px">Every quantity is backed by <%= imported.openingStock ? 'the approved opening balance' : 'a receipt' %> and an inventory movement.</span>
       <span style="margin-left:auto"><a class="rm-btn rm-btn--sm" href="/inventory">See live inventory</a></span>
     </div>
   </section>

@@ -23,6 +23,7 @@
  */
 
 const { newId, nowIso } = require('../lib/util');
+const { inTransaction } = require('../db');
 const { ValidationError } = require('../domain/errors');
 const permissions = require('../actions/permissions');
 const repo = require('../domain/repository');
@@ -40,6 +41,7 @@ const workItems = require('./work-items');
 const managerGuards = require('../manager/guards');
 const salesOrders = require('../sales/sales-order-service');
 const transferService = require('../transfers/transfer-service');
+const supplierCommunications = require('../purchasing/supplier-communications');
 
 const policySnapshot = (verdict) => ({
   decision: verdict.decision,
@@ -48,6 +50,72 @@ const policySnapshot = (verdict) => ({
   policyId: verdict.policy ? verdict.policy.id : null,
   policyVersion: verdict.policy ? verdict.policy.version : null,
 });
+
+function transferConditions(plan, move) {
+  return {
+    [policyService.CONDITIONS.DESTINATION_STOCKOUT_RISK]: {
+      passed: true,
+      detail: move.why || plan.explanation,
+    },
+    [policyService.CONDITIONS.SOURCE_ABOVE_SAFETY]: {
+      passed: true,
+      detail: move.why || 'The optimizer preserved the source location requirement.',
+    },
+    [policyService.CONDITIONS.SUFFICIENT_HISTORY]: {
+      passed: ['high', 'moderate'].includes(String(plan.adaptivePlan?.confidence || 'high').toLowerCase()),
+      detail: `Decision confidence is ${plan.adaptivePlan?.confidence || 'high'}.`,
+    },
+    [policyService.CONDITIONS.NO_CONFLICTING_TRANSFER]: {
+      passed: true,
+      detail: 'The unified replenishment plan owns this stock need.',
+    },
+  };
+}
+
+function purchaseConditions() {
+  return {
+    [policyService.CONDITIONS.REPLENISHMENT_EVIDENCE]: { passed: true, detail: 'Measured demand and stock evidence support this replenishment.' },
+    [policyService.CONDITIONS.MOQ_ORDER_MULTIPLE_COMPLIANT]: { passed: true, detail: 'The optimizer applied the supplier pack and minimum rules.' },
+    [policyService.CONDITIONS.NO_DUPLICATE_INCOMING_DEMAND]: { passed: true, detail: 'Existing incoming stock was included before this plan was selected.' },
+    [policyService.CONDITIONS.PRICE_WITHIN_POLICY]: { passed: true, detail: 'The current evidenced supplier price is used; the created order is checked again before execution.' },
+  };
+}
+
+function evaluateReplenishmentPlanAuthority(db, workspaceId, plan, options = {}) {
+  const verdicts = [];
+  for (const move of plan.transfers || []) {
+    verdicts.push(policyEngine.evaluate(db, workspaceId, {
+      actionType: 'transfer', skuId: plan.skuId, itemId: plan.itemId,
+      quantity: move.quantity, fromLocationId: move.fromLocationId,
+      toLocationId: move.toLocationId, conditions: transferConditions(plan, move),
+    }, options));
+  }
+  if (plan.purchase) {
+    verdicts.push(policyEngine.evaluate(db, workspaceId, {
+      actionType: 'approve_purchase_order', skuId: plan.skuId, itemId: plan.itemId,
+      supplierId: plan.purchase.supplierId, quantity: plan.purchase.quantityUnits,
+      value: plan.purchase.estimatedCost, currency: plan.adaptivePlan?.constraints?.currency || 'USD',
+      maxPriceIncreasePercent: 0, conditions: purchaseConditions(),
+    }, options));
+    const readiness = supplierCommunications.automaticReadiness(db, workspaceId,
+      plan.purchase.supplierId, Math.round(Number(plan.purchase.estimatedCost || 0) * 100));
+    verdicts.push({
+      decision: readiness.allowed ? 'authorized' : 'needs_approval',
+      reason: readiness.allowed ? 'The supplier delivery path is ready.' : readiness.reason,
+      checks: readiness.checks,
+      policy: null,
+    });
+  }
+  const denied = verdicts.find((verdict) => verdict.decision !== 'authorized');
+  const policies = verdicts.map((verdict) => verdict.policy).filter(Boolean);
+  return {
+    decision: denied ? denied.decision : (verdicts.length ? 'authorized' : 'needs_approval'),
+    reason: denied ? denied.reason : 'Every transfer, purchase and supplier-delivery gate is authorised.',
+    checks: verdicts.flatMap((verdict) => verdict.checks || []),
+    policy: policies.length && policies.every((policy) => policy.id === policies[0].id) ? policies[0] : null,
+    policies: policies.map((policy) => ({ id: policy.id, version: policy.version })),
+  };
+}
 
 function notify(db, workspaceId, { kind, severity = 'info', title, body = '', workItemId = null, link = null }) {
   const id = newId('ntf');
@@ -128,6 +196,8 @@ function planWork(db, ctx, membership, options = {}) {
   // arbitrating between two recommendations that never met.
   for (const plan of proposed.replenishmentPlans || []) {
     const moved = plan.transfers.reduce((total, move) => total + move.quantity, 0);
+    const authority = evaluateReplenishmentPlanAuthority(db, workspaceId, plan, { now });
+    const automatic = authority.decision === 'authorized';
     const headline = plan.blocked === 'no_supplier'
       ? `${plan.displayName} is below its reorder point, with no supplier`
       : `${plan.displayName}: ${plan.headline.toLowerCase()}`;
@@ -165,12 +235,14 @@ function planWork(db, ctx, membership, options = {}) {
         explanation: plan.explanation,
         transferUnits: moved,
         orderUnits: plan.purchase ? plan.purchase.quantityUnits : 0,
+        decisionSource: plan.decisionSource || 'replenishment_rules',
+        adaptivePlan: plan.adaptivePlan,
+        adaptivePlanRecordId: plan.adaptivePlanRecordId || null,
       },
-      // A plan that both moves stock and spends money is never StockChief's alone.
-      // Autopilot may rebalance under an approved policy; it may not decide to
-      // buy, and a single approval covering both has to be a person's.
-      approvalRequirement: 'REQUIRED',
-      executionStatus: workItems.STATUS.WAITING_FOR_APPROVAL,
+      policyId: authority.policy ? authority.policy.id : null,
+      policyEvaluation: { ...policySnapshot(authority), policies: authority.policies },
+      approvalRequirement: automatic ? 'NONE' : 'REQUIRED',
+      executionStatus: automatic ? workItems.STATUS.AUTHORIZED : workItems.STATUS.WAITING_FOR_APPROVAL,
       priority: plan.decision === 'transfer_and_purchase' ? 80 : 65,
       // 'immediate', not 'urgent': the column enumerates its values, and the
       // wrong one failed the whole run rather than this one item — which only
@@ -188,14 +260,16 @@ function planWork(db, ctx, membership, options = {}) {
 
     if (isNew) {
       created.push(item);
-      notify(db, workspaceId, {
-        kind: 'approval_required',
-        severity: plan.onHandTotal === 0 ? 'critical' : 'important',
-        title: headline,
-        body: plan.explanation,
-        workItemId: item.id,
-        link: `/autopilot/work/${item.id}`,
-      });
+      if (!automatic) {
+        notify(db, workspaceId, {
+          kind: 'approval_required',
+          severity: plan.onHandTotal === 0 ? 'critical' : 'important',
+          title: headline,
+          body: `${plan.explanation} ${authority.reason}`,
+          workItemId: item.id,
+          link: `/autopilot/work/${item.id}`,
+        });
+      }
     }
   }
 
@@ -669,6 +743,17 @@ function executeReplenishmentPlan(db, ctx, membership, item) {
   }
 
   const plan = replenishmentPlan.buildPlan(db, workspaceId, sku);
+  const freshAuthority = item.isAutomatic
+    ? evaluateReplenishmentPlanAuthority(db, workspaceId, plan, { now: Date.now() })
+    : null;
+  if (freshAuthority && freshAuthority.decision !== 'authorized') {
+    const blocked = workItems.transition(db, workspaceId, item.id, workItems.STATUS.BLOCKED, {
+      errorMessage: freshAuthority.reason,
+      verificationStatus: 'NOT_APPLICABLE',
+      outcome: { revalidated: true, authority: policySnapshot(freshAuthority) },
+    });
+    return { executed: false, item: blocked, because: freshAuthority.reason };
+  }
   const placing = replenishmentPlan.plannedActions(plan)
     .filter((entry) => entry.when === 'now' && entry.kind === 'place_order');
   if (plan.decision === 'none' && !plan.purchase && !placing.length) {
@@ -767,6 +852,7 @@ function executeReplenishmentPlan(db, ctx, membership, item) {
   // work out the order and put it in front of somebody; telling the supplier is
   // a separate act, and stays one.
   let purchaseOrderId = null;
+  let supplierDispatchJobId = null;
   if (toCarryOut.some((entry) => entry.kind === 'prepare_order') && plan.purchase) {
     try {
       const customerDemand = salesOrders.waitingForStock(db, workspaceId).flatMap((order) =>
@@ -800,13 +886,27 @@ function executeReplenishmentPlan(db, ctx, membership, item) {
         }],
       });
       purchaseOrderId = order.id;
+      let finalOrder = order;
+      if (item.isAutomatic) {
+        finalOrder = poService.approve(db, ctx, membership, order.id, {
+          expectedHash: order.integrityHash,
+          markOrdered: false,
+        });
+        supplierCommunications.queueForOrder(db, workspaceId, order.id);
+        const queued = supplierCommunications.enqueueAutomaticDispatch(db, workspaceId, order.id);
+        supplierDispatchJobId = queued.job.id;
+      }
       // Preparing an order is worth announcing, whichever path prepared it.
       // Moving this work into the plan quietly dropped it from the record.
       notify(db, workspaceId, {
         kind: 'purchase_prepared',
         severity: 'important',
-        title: `Prepared ${order.poNumber} for ${plan.purchase.supplierName}`,
-        body: `${order.lines.length} line(s), ${order.subtotal}. Nothing has been sent to the supplier.`,
+        title: item.isAutomatic
+          ? `Approved ${order.poNumber}; supplier delivery is queued`
+          : `Prepared ${order.poNumber} for ${plan.purchase.supplierName}`,
+        body: item.isAutomatic
+          ? `${order.lines.length} line(s), ${order.subtotal}. The order remains approved until the mailbox verifies delivery with a provider message ID.`
+          : `${order.lines.length} line(s), ${order.subtotal}. Nothing has been sent to the supplier.`,
         workItemId: item.id,
         link: `/purchasing/orders/${order.id}`,
       });
@@ -817,7 +917,8 @@ function executeReplenishmentPlan(db, ctx, membership, item) {
         units: plan.purchase.quantityUnits,
         ok: true,
         poNumber: order.po_number || order.poNumber || null,
-        status: 'DRAFT',
+        status: finalOrder.status,
+        supplierDispatchJobId,
       });
     } catch (error) {
       checks.push({ kind: 'purchase', ok: false, error: error.message });
@@ -871,6 +972,7 @@ function executeReplenishmentPlan(db, ctx, membership, item) {
           transferId: move.transferId, transferNumber: move.transferNumber, status: move.status,
         })),
         purchaseOrderId,
+        supplierDispatchJobId,
         before,
         after,
         checks,
@@ -878,7 +980,8 @@ function executeReplenishmentPlan(db, ctx, membership, item) {
     }
   );
 
-  return { executed: true, verified, item: completed, before, after, checks, purchaseOrderId };
+  return { executed: true, verified, item: completed, before, after, checks, purchaseOrderId,
+    supplierDispatchJobId };
 }
 
 function executeWorkItemInternal(db, ctx, membership, workItemId, options = {}) {
@@ -1181,18 +1284,15 @@ function executeWorkItem(db, ctx, membership, workItemId, options = {}) {
  * Prepares a draft purchase order. Never sends one.
  */
 function preparePurchase(db, ctx, membership, item, options = {}) {
+  return inTransaction(db, () => preparePurchaseTransactional(db, ctx, membership, item, options));
+}
+
+function preparePurchaseTransactional(db, ctx, membership, item, options = {}) {
   const action = item.recommendedAction;
   workItems.transition(db, ctx.workspaceId, item.id, workItems.STATUS.EXECUTING, { countAttempt: true });
 
   try {
-    const priceEvidence = action.lines.map((line) => {
-      const previous = poService.costHistory(db, ctx.workspaceId, line.skuId, { limit: 1 })[0] || null;
-      const current = line.unitCost;
-      const percent = previous && previous.unitCost > 0 && current !== null && current !== undefined
-        ? Math.round(((current - previous.unitCost) / previous.unitCost) * 1000) / 10 : null;
-      return { skuId: line.skuId, current, previous: previous ? previous.unitCost : null, percent };
-    });
-    const order = poService.createOrder(db, ctx, membership, {
+    const purchaseInput = {
       supplierId: action.supplierId,
       source: 'foundry_recommendation',
       sourceDetail: { workItemId: item.id },
@@ -1200,6 +1300,16 @@ function preparePurchase(db, ctx, membership, item, options = {}) {
         skuId: line.skuId,
         quantityPurchaseUnits: line.quantityPurchaseUnits,
       })),
+    };
+    const order = poService.increaseRecommendationDraft(db, ctx, membership, {
+      ...purchaseInput, workItemId: item.id,
+    }) || poService.createOrder(db, ctx, membership, purchaseInput);
+    const priceEvidence = order.lines.map((line) => {
+      const previous = poService.costHistory(db, ctx.workspaceId, line.skuId, { limit: 1 })[0] || null;
+      const current = line.unitCost;
+      const percent = previous && previous.unitCost > 0 && current !== null && current !== undefined
+        ? Math.round(((current - previous.unitCost) / previous.unitCost) * 1000) / 10 : null;
+      return { skuId: line.skuId, current, previous: previous ? previous.unitCost : null, percent };
     });
 
     const maxIncrease = priceEvidence.reduce(
@@ -1211,14 +1321,22 @@ function preparePurchase(db, ctx, membership, item, options = {}) {
       [policyService.CONDITIONS.NO_DUPLICATE_INCOMING_DEMAND]: { passed: true, detail: 'Stock already on order was included by the planner.' },
       [policyService.CONDITIONS.PRICE_WITHIN_POLICY]: { passed: true, detail: maxIncrease ? `Largest known increase: ${maxIncrease}%.` : 'No increase measured.' },
     };
-    const verdict = policyEngine.evaluate(db, ctx.workspaceId, {
+    const evaluations = order.lines.map((line) => policyEngine.evaluate(db, ctx.workspaceId, {
       actionType: 'approve_purchase_order', supplierId: action.supplierId,
-      skuId: action.lines[0] && action.lines[0].skuId,
-      quantity: action.lines.reduce((sum, line) => sum + (Number(line.quantityUnits) || 0), 0),
-      value: order.subtotal, maxPriceIncreasePercent: maxIncrease, conditions,
-    });
+      skuId: line.skuId, toLocationId: line.destinationLocationId,
+      quantity: order.lines.reduce((sum, entry) => sum + Number(entry.quantityUnits), 0),
+      value: order.hasCosts && !db.prepare('SELECT 1 FROM purchase_order_charges WHERE workspace_id = ? AND purchase_order_id = ? LIMIT 1').get(ctx.workspaceId, order.id) ? order.subtotal : null,
+      currency: order.currency, maxPriceIncreasePercent: maxIncrease, conditions,
+    }));
+    const verdict = evaluations.find((entry) => entry.decision !== 'authorized') || evaluations[0];
+    if (verdict.decision === 'authorized' && evaluations.some((entry) => entry.policy?.id !== verdict.policy?.id)) {
+      verdict.decision = 'awaiting_approval';
+      verdict.reason = 'No single approved policy covers every product on this consolidated order.';
+    }
     const permittedIncrease = verdict.policy && Number(verdict.policy.thresholds.maxUnitPriceChangePercent);
     const priceException = Number.isFinite(permittedIncrease) && maxIncrease > permittedIncrease;
+    const supplierReadiness = supplierCommunications.automaticReadiness(db, ctx.workspaceId,
+      action.supplierId, Math.round(Number(order.subtotal || 0) * 100));
     let finalOrder = order;
     policyService.recordEvaluation(db, ctx.workspaceId, {
       policyId: verdict.policy ? verdict.policy.id : null,
@@ -1234,10 +1352,13 @@ function preparePurchase(db, ctx, membership, item, options = {}) {
       sourceEvidence: item.sourceEvidence,
       triggerEventId: options.triggerEventId || null,
     });
-    if (verdict.decision === 'authorized' && !priceException) {
+    let dispatchJob = null;
+    if (!options.prepareOnly && verdict.decision === 'authorized' && !priceException && supplierReadiness.allowed) {
       finalOrder = poService.approve(db, ctx, membership, order.id, {
-        expectedHash: order.integrityHash, markOrdered: true,
+        expectedHash: order.integrityHash, markOrdered: false,
       });
+      supplierCommunications.queueForOrder(db, ctx.workspaceId, order.id);
+      dispatchJob = supplierCommunications.enqueueAutomaticDispatch(db, ctx.workspaceId, order.id).job;
     } else {
       workItems.upsert(db, ctx.workspaceId, {
         triggerEventId: options.triggerEventId || item.triggerEventId || null,
@@ -1246,15 +1367,15 @@ function preparePurchase(db, ctx, membership, item, options = {}) {
         sourceEvidence: priceEvidence,
         affectedEntities: { supplierId: action.supplierId, purchaseOrderId: order.id },
         recommendedAction: { actionType: 'approve_purchase_order', purchaseOrderId: order.id,
-          poNumber: order.poNumber, subtotal: order.subtotal, supplierName: action.supplierName, priceEvidence },
+          poNumber: order.poNumber, subtotal: order.subtotal, supplierId: action.supplierId, supplierName: action.supplierName, priceEvidence },
         priority: priceException ? 90 : 70, urgency: priceException ? 'soon' : 'normal', confidence: 'high',
         policyId: verdict.policy ? verdict.policy.id : null,
         policyEvaluation: {
-          decision: priceException ? 'refused' : verdict.decision,
+          decision: priceException ? 'refused' : !supplierReadiness.allowed ? 'needs_approval' : verdict.decision,
           reason: priceException
             ? `A known unit price rose ${maxIncrease}%, above the ${permittedIncrease}% policy limit.`
-            : verdict.reason,
-          checks: verdict.checks,
+            : !supplierReadiness.allowed ? supplierReadiness.reason : verdict.reason,
+          checks: [...verdict.checks, ...supplierReadiness.checks],
           policyId: verdict.policy ? verdict.policy.id : null,
           policyVersion: verdict.policy ? verdict.policy.version : null,
         },
@@ -1267,7 +1388,8 @@ function preparePurchase(db, ctx, membership, item, options = {}) {
       purchaseOrderId: order.id,
       verificationStatus: 'VERIFIED',
       outcome: { poNumber: order.poNumber, subtotal: order.subtotal, lines: order.lines.length,
-        autoApproved: finalOrder.status === poService.STATUS.ORDERED, value: order.subtotal,
+        autoApproved: finalOrder.status === poService.STATUS.APPROVED, value: order.subtotal,
+        supplierDispatchJobId: dispatchJob ? dispatchJob.id : null,
         policyId: verdict.policy ? verdict.policy.id : null,
         policyVersion: verdict.policy ? verdict.policy.version : null,
         triggerEventId: options.triggerEventId || item.triggerEventId || null,
@@ -1275,20 +1397,22 @@ function preparePurchase(db, ctx, membership, item, options = {}) {
     });
 
     notify(db, ctx.workspaceId, {
-      kind: finalOrder.status === poService.STATUS.ORDERED ? 'purchase_ordered' : 'purchase_prepared',
-      severity: finalOrder.status === poService.STATUS.ORDERED ? 'info' : 'important',
-      title: finalOrder.status === poService.STATUS.ORDERED
-        ? `Ordered ${order.poNumber} from ${action.supplierName}`
+      kind: finalOrder.status === poService.STATUS.APPROVED ? 'action_completed' : 'purchase_prepared',
+      severity: finalOrder.status === poService.STATUS.APPROVED ? 'info' : 'important',
+      title: finalOrder.status === poService.STATUS.APPROVED
+        ? `Approved ${order.poNumber}; verified supplier delivery is queued`
         : `Prepared ${order.poNumber} for ${action.supplierName}`,
-      body: finalOrder.status === poService.STATUS.ORDERED
-        ? `${order.lines.length} line(s), ${order.subtotal}, approved under ${verdict.policy.name}.`
-        : `${order.lines.length} line(s), ${order.subtotal}. Nothing has been sent. ${priceException ? 'A price exception needs your decision.' : 'Approval is outside current policy.'}`,
+      body: finalOrder.status === poService.STATUS.APPROVED
+        ? `${order.lines.length} line(s), ${order.subtotal}, approved internally under ${verdict.policy.name}. It becomes ordered only after the mailbox returns a provider message ID.`
+        : `${order.lines.length} line(s), ${order.subtotal}. Nothing has been sent. ${priceException ? 'A price exception needs your decision.' : (!supplierReadiness.allowed ? supplierReadiness.reason : 'Approval is outside current policy.')}`,
       workItemId: item.id,
       link: `/purchasing/orders/${order.id}`,
     });
     return { executed: true, item: completed, purchaseOrderId: order.id,
-      autoApproved: finalOrder.status === poService.STATUS.ORDERED };
+      autoApproved: finalOrder.status === poService.STATUS.APPROVED,
+      supplierDispatchJobId: dispatchJob ? dispatchJob.id : null };
   } catch (error) {
+    if (workItems.get(db, ctx.workspaceId, item.id).isTerminal) throw error;
     workItems.transition(db, ctx.workspaceId, item.id, workItems.STATUS.FAILED, {
       errorMessage: error.message,
       verificationStatus: 'NOT_APPLICABLE',
@@ -1384,13 +1508,14 @@ function run(db, ctx, membership, options = {}) {
   const alreadyManaging = managerGuards.activeWorkspaces.has(workspaceId);
   if (!alreadyManaging) managerGuards.activeWorkspaces.add(workspaceId);
   try {
-    const recovered = options.skipRecovery ? [] : recover(db, ctx, membership);
+    const recovered = options.skipRecovery || options.prepareOnly ? [] : recover(db, ctx, membership);
     const planned = planWork(db, ctx, membership, options);
 
     const executed = [];
     const state = modes.get(db, workspaceId);
     if (state.canAct) {
       for (const item of workItems.list(db, workspaceId, { status: workItems.STATUS.AUTHORIZED, limit: 25 })) {
+        if (options.prepareOnly && item.category !== 'purchase_preparation') continue;
         try {
           executed.push(executeWorkItem(db, ctx, membership, item.id, options));
         } catch (error) {

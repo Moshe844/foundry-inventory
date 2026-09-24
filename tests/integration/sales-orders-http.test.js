@@ -7,6 +7,7 @@ const { createApp } = require('../../src/app');
 const authService = require('../../src/domain/auth-service');
 const inventory = require('../../src/domain/inventory-engine');
 const sales = require('../../src/sales/sales-order-service');
+const salesIntent = require('../../src/sales/sales-intent');
 const shipments = require('../../src/sales/shipment-service');
 const prices = require('../../src/pricing/price-service');
 const needsYouInbox = require('../../src/manager/needs-you-inbox');
@@ -52,13 +53,17 @@ test('a pickup order stays pickup on the visible pick list', async () => {
 
   shipments.ship(env.db, env.workspace.ctx, box.id, { handover: 'COLLECTED' });
   const story = plain((await agent.get(`/sales/orders/${order.id}`)).text);
-  assert.match(story, /Collected — \$[\d,.]+ still owed/i);
-  assert.match(story, /The customer collected everything on this order/i);
+  assert.match(story, /Collected.*Money — \$[\d,.]+ still owed/is);
+  assert.match(story, /Fulfilment.*Collected.*Collected by the customer/is);
   assert.doesNotMatch(story, /Shipped — \$[\d,.]+ still owed/i);
   const list = plain((await agent.get('/orders')).text);
-  assert.match(list, /0 need you.*1 unpaid.*Collected/is);
+  assert.match(list, /0 fulfilment exceptions.*1 unpaid.*Collected/is);
+  assert.match(list, /1 completed order is still unpaid/i);
   assert.match(list, /2 units.*Collected/is);
-  assert.doesNotMatch(list, /1 shipped|2 units shipped/i);
+  assert.doesNotMatch(list, /on their way|1 shipped|2 units shipped/i);
+  const needsYou = plain((await agent.get('/needs-you')).text);
+  assert.match(needsYou, /SO-1001 was collected, but its accounting is not finished/i);
+  assert.doesNotMatch(needsYou, /SO-1001 shipped/i);
   env.db.close();
 });
 
@@ -89,10 +94,9 @@ test('Sales UI covers draft → confirm/commit → partial fulfillment → cance
 
   let page = await agent.get(created.headers.location);
   const createdOrderId = created.headers.location.split('/').pop();
-  assert.match(page.text, new RegExp(`href="/orders/${createdOrderId}/detail\\?open=fulfilment#fulfilment"`),
-    'Open the working detail goes to the dedicated operational page');
-  assert.match(plain(page.text), /Show order history/i,
-    'the transaction timeline is available without overwhelming the primary order state');
+  assert.match(plain(page.text), /Customer order.*SO-1001.*ABC School/i);
+  assert.doesNotMatch(plain(page.text), /Money, shipping, documents and the full working record/i,
+    'the order must not contain a second complete order page inside itself');
   const workingDetail = await agent.get(`/orders/${createdOrderId}/detail`);
   assert.equal(workingDetail.status, 200);
   assert.match(plain(workingDetail.text), /Customer order.*SO-1001.*ABC School/i);
@@ -203,6 +207,11 @@ test('the short manual flow can reserve an order or complete an in-stock sale in
   assert.equal(order.totals.fulfilled, 3);
   assert.equal(env.db.prepare("SELECT SUM(-quantity_delta) AS n FROM movements WHERE workspace_id = ? AND operation = 'issue'")
     .get(env.workspace.workspaceId).n, 3, 'the completed-sale choice removes stock exactly once');
+  const pickup = env.db.prepare(
+    "SELECT status, handover FROM sales_shipments WHERE workspace_id = ? AND sales_order_id = ?"
+  ).get(env.workspace.workspaceId, order.id);
+  assert.deepEqual(pickup, { status: 'SHIPPED', handover: 'COLLECTED' },
+    'the one-click pickup still leaves a shipment record proving where the goods went');
   assert.match(plain((await agent.get(completed.headers.location)).text), /(Shipped|Gone|Collected|Delivered).*Accounting/i);
   env.db.close();
 });
@@ -244,6 +253,12 @@ test('Tell StockChief creates, changes, fulfills and cancels the same structured
   }
   let response = await tell('ABC School ordered 10 Black Small Shirt.');
   assert.equal(response.status, 303);
+  assert.equal(response.headers.location, '/actions');
+  let question = await agent.get('/actions');
+  assert.match(plain(question.text), /How will ABC School receive this order\?/);
+  response = await agent.post('/sales/clarify').type('form').send({
+    _csrf: csrfFrom(question.text), original: 'ABC School ordered 10 Black Small Shirt.', answer: 'SHIP',
+  });
   assert.match(response.headers.location, /^\/sales\/orders\/so_/);
   let [order] = sales.listOrders(env.db, env.workspace.workspaceId);
   assert.equal(order.totals.allocated, 10);
@@ -365,10 +380,17 @@ test('Tell StockChief shows sales-order variant choices instead of flattening th
     _csrf: csrfFrom(choices.text), original: 'ABC School ordered 2 Zip Hoodie - Navy.', answer: 'Small',
   });
   assert.equal(continued.status, 303);
-  assert.match(continued.headers.location, /^\/sales\/orders\/so_/);
+  assert.equal(continued.headers.location, '/actions');
+  const delivery = await agent.get('/actions');
+  assert.match(plain(delivery.text), /How will ABC School receive this order\?/);
+  const created = await agent.post('/sales/clarify').type('form').send({
+    _csrf: csrfFrom(delivery.text), original: 'ABC School ordered 2 Zip Hoodie - Navy.', answer: 'PICKUP',
+  });
+  assert.match(created.headers.location, /^\/sales\/orders\/so_/);
   const order = sales.listOrders(env.db, env.workspace.workspaceId)[0];
-  assert.equal(order.status, 'DRAFT');
-  assert.equal(order.delivery_decision_required, 1, 'choosing a variant does not answer the missing delivery decision');
+  assert.equal(order.status, 'BACKORDERED');
+  assert.equal(order.delivery_method, 'PICKUP');
+  assert.equal(order.delivery_decision_required, 0);
   assert.match(order.lines[0].displayName, /Small/);
   assert.equal(order.lines[0].unit_price_minor, 4200);
   env.db.close();
@@ -405,10 +427,17 @@ test('a missing selling price becomes an answerable step and cannot create an in
   const priced = await agent.post('/sales/clarify').type('form').send({
     _csrf: csrfFrom(question.text), original: 'North School ordered 3 Unpriced Cap.', answer: '32.50',
   });
-  assert.match(priced.headers.location, /^\/sales\/orders\/so_/);
+  assert.equal(priced.headers.location, '/actions');
+  const delivery = await agent.get('/actions');
+  assert.match(plain(delivery.text), /How will North School receive this order\?/);
+  const created = await agent.post('/sales/clarify').type('form').send({
+    _csrf: csrfFrom(delivery.text), original: 'North School ordered 3 Unpriced Cap.', answer: 'PICKUP',
+  });
+  assert.match(created.headers.location, /^\/sales\/orders\/so_/);
   const [order] = sales.listOrders(env.db, env.workspace.workspaceId);
-  assert.equal(order.status, 'DRAFT');
-  assert.equal(order.delivery_decision_required, 1, 'a price answer is not a delivery address or pickup decision');
+  assert.equal(order.status, 'BACKORDERED');
+  assert.equal(order.delivery_method, 'PICKUP');
+  assert.equal(order.delivery_decision_required, 0);
   assert.equal(order.lines[0].unit_price_minor, 3250);
   assert.equal(prices.currentForSku(env.db, env.workspace.workspaceId, cap.skuId).isSet, false,
     'an order-specific answer must not silently rewrite the inventory catalogue price');
@@ -422,7 +451,7 @@ test('the manual Sales Order form refuses a blank price and explains the correct
   await signIn(agent, env.workspace.account.email, env.workspace.account.password);
   const form = await agent.get('/sales/new');
   assert.match(plain(form.text), /Every customer order needs a price/i);
-  assert.match(plain(form.text), /Order price.*only if the product has no selling price/i,
+  assert.match(plain(form.text), /Price.*if not set/i,
     'the correction is in the order flow instead of a competing setup banner');
   assert.doesNotMatch(plain(form.text), /Do now:.*Set the selling price/i);
   assert.match(plain(form.text), /Unpriced Scarf.*Price not set/i);
@@ -433,6 +462,72 @@ test('the manual Sales Order form refuses a blank price and explains the correct
   assert.equal(rejected.status, 400);
   assert.match(plain(rejected.text), /This order is not ready.*does not have a selling price/i);
   assert.equal(sales.listOrders(env.db, env.workspace.workspaceId).length, 0);
+  env.db.close();
+});
+
+test('a manual order accepts multiple products in one submission', async () => {
+  const env = setup();
+  const socks = makeQuantityItem(env.db, env.workspace.ctx, { name: 'School Socks', baseCode: 'SOCK-1' });
+  prices.setPrice(env.db, env.workspace.ctx, { skuId: socks.skuId, amount: '8.00', currency: 'USD' });
+  inventory.receive(env.db, env.workspace.ctx, {
+    skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 10,
+  });
+  inventory.receive(env.db, env.workspace.ctx, {
+    skuId: socks.skuId, locationId: env.workspace.main.id, quantity: 10,
+  });
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  const form = await agent.get('/orders/new').expect(200);
+
+  const created = await agent.post('/sales/orders').type('form').send({
+    _csrf: csrfFrom(form.text), customerName: 'Multi-line School', deliveryMethod: 'PICKUP',
+    skuId: [env.item.skuId, socks.skuId], quantity: [2, 3], unitPrice: ['', ''], nextStep: 'confirm',
+  }).expect(303);
+
+  const order = sales.getOrder(env.db, env.workspace.workspaceId, created.headers.location.split('/').pop());
+  assert.equal(order.lines.length, 2);
+  assert.deepEqual(new Map(order.lines.map((line) => [line.sku_id, line.quantity_ordered])), new Map([
+    [env.item.skuId, 2],
+    [socks.skuId, 3],
+  ]));
+  assert.equal(order.totals.ordered, 5);
+  assert.equal(order.totals.allocated, 5);
+  env.db.close();
+});
+
+test('manual shipping orders require a complete destination before anything is created', async () => {
+  const env = setup();
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  let form = await agent.get('/orders/new').expect(200);
+
+  let rejected = await agent.post('/sales/orders').type('form').send({
+    _csrf: csrfFrom(form.text), customerName: 'Destination Required Co', deliveryMethod: 'SHIP',
+    customerShippingAddress: '', skuId: env.item.skuId, quantity: 2,
+  }).expect(400);
+  assert.match(plain(rejected.text), /complete delivery address before creating a shipping order/i);
+  assert.equal(sales.listOrders(env.db, env.workspace.workspaceId).length, 0);
+  assert.equal(sales.listCustomers(env.db, env.workspace.workspaceId).length, 0,
+    'the rejected order must not leave a partial customer behind');
+
+  form = rejected;
+  rejected = await agent.post('/sales/orders').type('form').send({
+    _csrf: csrfFrom(form.text), customerName: 'Destination Required Co', deliveryMethod: 'SHIP',
+    customerShippingAddress: 'Albany', skuId: env.item.skuId, quantity: 2,
+  }).expect(400);
+  assert.match(plain(rejected.text), /delivery address still needs/i);
+  assert.doesNotMatch(plain(rejected.text), /Back to New sales order|Connect where sales happen/i);
+  assert.equal(sales.listOrders(env.db, env.workspace.workspaceId).length, 0);
+
+  const created = await agent.post('/sales/orders').type('form').send({
+    _csrf: csrfFrom(rejected.text), customerName: 'Destination Required Co', deliveryMethod: 'SHIP',
+    customerShippingAddress: '123 Main Street, Albany, NY 12207, US',
+    skuId: env.item.skuId, quantity: 2,
+  }).expect(303);
+  const order = sales.getOrder(env.db, env.workspace.workspaceId, created.headers.location.split('/').pop());
+  assert.equal(order.delivery_method, 'SHIP');
+  assert.equal(order.ship_to_address, '123 Main Street, Albany, NY 12207, US');
+  assert.equal(order.delivery_decision_required, 0);
   env.db.close();
 });
 
@@ -735,14 +830,181 @@ test('asking for a customer order walks through customer, product and quantity f
 
   response = await agent.post('/sales/clarify').type('form')
     .send({ _csrf: csrfFrom(page.text), original, answer: '4' });
+  assert.equal(response.headers.location, '/actions');
+  page = await agent.get('/actions');
+  assert.match(plain(page.text), /How will Marlow receive this order\?/);
+  assert.match(page.text, /name="answer" value="SHIP"/);
+  assert.match(page.text, /name="answer" value="PICKUP"/);
+
+  response = await agent.post('/sales/clarify').type('form')
+    .send({ _csrf: csrfFrom(page.text), original, answer: 'PICKUP' });
   assert.match(response.headers.location, /^\/sales\/orders\/so_/);
   const [order] = sales.listOrders(env.db, env.workspace.workspaceId);
   assert.equal(order.customer.name, 'Marlow');
   assert.equal(order.status, 'DRAFT');
-  assert.equal(order.delivery_decision_required, 1, 'the next step collects a delivery address or explicit pickup choice');
+  assert.equal(order.delivery_method, 'PICKUP');
+  assert.equal(order.delivery_decision_required, 0);
   assert.equal(order.totals.ordered, 4);
   assert.equal(order.totals.allocated, 0);
   assert.equal(sales.listCustomers(env.db, env.workspace.workspaceId).length, 1, 'the customer was created once');
+  env.db.close();
+});
+
+test('Ask does not invent a customer when an order request omits one', async () => {
+  const env = setup({ complete: async () => { throw new Error('offline'); } });
+  sales.createCustomer(env.db, env.workspace.ctx, { name: 'Moshe' });
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  const ask = await agent.get('/ask');
+  const response = await agent.post('/foundry/tell').type('form').send({
+    _csrf: csrfFrom(ask.text), queryConversation: '1', message: 'Create a customer order',
+  });
+  assert.equal(response.headers.location, '/actions');
+  const question = plain((await agent.get('/actions')).text);
+  assert.match(question, /which customer is this order for/i);
+  assert.equal(sales.listOrders(env.db, env.workspace.workspaceId).length, 0);
+  env.db.close();
+});
+
+test('Ask reads a customer purchase request and asks only for the missing shipping destination', async () => {
+  const env = setup({ complete: async () => { throw new Error('offline'); } });
+  inventory.receive(env.db, env.workspace.ctx, { skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 12 });
+  sales.createCustomer(env.db, env.workspace.ctx, { name: 'Moshe', email: 'moshe@example.test' });
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  const original = 'Moshe wants to order 2 Black Small Shirts and have them shipped';
+
+  const home = await agent.get('/');
+  let response = await agent.post('/foundry/tell').type('form')
+    .send({ _csrf: csrfFrom(home.text), message: original });
+  assert.equal(response.headers.location, '/actions');
+  let page = await agent.get('/actions');
+  assert.match(plain(page.text), /What delivery address should Moshe's order ship to\?/i);
+  assert.equal(sales.listOrders(env.db, env.workspace.workspaceId).length, 0,
+    'Ask must not create a shipping draft before it knows the destination');
+
+  response = await agent.post('/sales/clarify').type('form').send({
+    _csrf: csrfFrom(page.text), original, answer: '123 Main Street, Albany, NY 12207, US',
+  });
+  assert.match(response.headers.location, /^\/sales\/orders\/so_/);
+  const [order] = sales.listOrders(env.db, env.workspace.workspaceId);
+  assert.equal(order.customer.name, 'Moshe');
+  assert.equal(order.totals.ordered, 2);
+  assert.equal(order.lines[0].displayName, 'Black Small Shirt');
+  assert.equal(order.delivery_method, 'SHIP');
+  assert.equal(order.ship_to_address, '123 Main Street, Albany, NY 12207, US');
+  assert.equal(order.delivery_decision_required, 0);
+  const ask = plain((await agent.get('/ask')).text);
+  assert.match(ask, /SO-1001 is prepared for Moshe: 2 unit\(s\), shipping to 123 Main Street, Albany, NY 12207, US/i);
+  assert.match(ask, /Drafted — not sent/i);
+  assert.doesNotMatch(ask, /Needs an answer from you/i,
+    'a completed continuation must not remain presented as an unanswered question');
+  assert.doesNotMatch(ask, /Answer the question/i);
+  env.db.close();
+});
+
+test('Ask understands varied customer-order wording and leaves each result as an unapproved draft', async (t) => {
+  const requests = [
+    'Moshe would like to buy 2 Black Small Shirts for customer pickup',
+    'Moshe needs to purchase 2 Black Small Shirts and have them collected',
+    'Please create a sales order for Moshe: 2 Black Small Shirts, customer pickup',
+    'Moshe ordered 2 Black Small Shirts for pickup',
+  ];
+  for (const original of requests) await t.test(original, async () => {
+    assert.equal(salesIntent.isCreateMessage(original), true);
+    const parsed = salesIntent.fallback(original);
+    assert.equal(parsed.operation, 'create');
+    assert.equal(parsed.customerText, 'Moshe');
+    assert.equal(parsed.itemText, 'Black Small Shirts');
+    assert.equal(parsed.quantity, 2);
+    assert.equal(parsed.deliveryMethod, 'PICKUP');
+    const env = setup({ complete: async () => { throw new Error('offline'); } });
+    inventory.receive(env.db, env.workspace.ctx, {
+      skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 12,
+    });
+    sales.createCustomer(env.db, env.workspace.ctx, { name: 'Moshe' });
+    const agent = request.agent(env.app);
+    await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+    const ask = await agent.get('/ask');
+    const response = await agent.post('/foundry/tell').type('form').send({
+      _csrf: csrfFrom(ask.text), queryConversation: '1', message: original,
+    });
+    const unexpected = /^\/sales\/orders\/so_/.test(response.headers.location)
+      ? '' : plain((await agent.get(response.headers.location)).text);
+    assert.match(response.headers.location, /^\/sales\/orders\/so_/, unexpected);
+    const [order] = sales.listOrders(env.db, env.workspace.workspaceId);
+    assert.equal(order.customer.name, 'Moshe');
+    assert.equal(order.lines[0].displayName, 'Black Small Shirt');
+    assert.equal(order.totals.ordered, 2);
+    assert.equal(order.status, 'DRAFT');
+    assert.equal(order.totals.allocated, 0, 'Ask prepares the order but does not reserve stock before approval');
+    assert.equal(order.delivery_method, 'PICKUP');
+    const transcript = plain((await agent.get('/ask')).text);
+    assert.match(transcript, /Drafted — not sent/i);
+    assert.doesNotMatch(transcript, /Not done — failed|Needs an answer from you/i);
+    env.db.close();
+  });
+});
+
+test('Ask retains stated facts while asking for missing quantity and destination', async () => {
+  const env = setup({ complete: async () => { throw new Error('offline'); } });
+  inventory.receive(env.db, env.workspace.ctx, {
+    skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 12,
+  });
+  sales.createCustomer(env.db, env.workspace.ctx, { name: 'Moshe' });
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  const original = 'Moshe needs to purchase Black Small Shirts and have them delivered';
+  assert.equal(salesIntent.isCreateMessage(original), true);
+  const ask = await agent.get('/ask');
+  let response = await agent.post('/foundry/tell').type('form').send({
+    _csrf: csrfFrom(ask.text), queryConversation: '1', message: original,
+  });
+  assert.equal(response.headers.location, '/actions');
+  let page = await agent.get('/actions');
+  assert.match(plain(page.text), /How many Black Small Shirt for Moshe\?/i);
+  assert.equal(sales.listOrders(env.db, env.workspace.workspaceId).length, 0);
+
+  response = await agent.post('/sales/clarify').type('form').send({
+    _csrf: csrfFrom(page.text), original, answer: '3',
+  });
+  assert.equal(response.headers.location, '/actions');
+  page = await agent.get('/actions');
+  assert.match(plain(page.text), /What delivery address should Moshe's order ship to\?/i);
+  assert.equal(sales.listOrders(env.db, env.workspace.workspaceId).length, 0);
+
+  response = await agent.post('/sales/clarify').type('form').send({
+    _csrf: csrfFrom(page.text), original, answer: '123 Main Street, Albany, NY 12207, US',
+  });
+  assert.match(response.headers.location, /^\/sales\/orders\/so_/);
+  const [order] = sales.listOrders(env.db, env.workspace.workspaceId);
+  assert.equal(order.totals.ordered, 3);
+  assert.equal(order.status, 'DRAFT');
+  assert.equal(order.ship_to_address, '123 Main Street, Albany, NY 12207, US');
+  env.db.close();
+});
+
+test('the sales reader removes model-invented order facts before any action can use them', async () => {
+  const env = setup();
+  const message = 'Create a customer order';
+  const interpreted = await salesIntent.interpret(env.db, env.workspace.ctx, message, { provider: {
+    complete: async () => ({ data: {
+      operation: 'create', customerText: 'Invented Customer', orderText: '',
+      itemText: 'Black Small Shirt', variantText: '', locationText: '', quantity: 9,
+      neededBy: '', reason: 'guessed', deliveryMethod: 'SHIP', deliverySource: 'shipping',
+      shippingAddress: '999 Invented Road, Albany, NY 12207, US', customerEmail: 'invented@example.test',
+    } }),
+  } });
+  assert.equal(interpreted.customerText, '');
+  assert.equal(interpreted.itemText, '');
+  assert.equal(interpreted.quantity, -1);
+  assert.equal(interpreted.deliveryMethod, '');
+  assert.equal(interpreted.shippingAddress, '');
+  assert.equal(interpreted.customerEmail, '');
+  const result = salesIntent.apply(env.db, env.workspace.ctx, interpreted, { previewOnly: true });
+  assert.equal(result.kind, 'question');
+  assert.match(result.question, /which customer/i);
+  assert.equal(sales.listOrders(env.db, env.workspace.workspaceId).length, 0);
   env.db.close();
 });
 

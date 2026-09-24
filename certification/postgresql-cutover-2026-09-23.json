@@ -1,0 +1,56 @@
+{
+  "scope": "isolated full-data local PostgreSQL 17 cutover rehearsal",
+  "sourceBytes": 4608888832,
+  "elapsedSeconds": 736,
+  "migrationsApplied": [
+    "000-business-schema.js",
+    "001-runtime.sql",
+    "002-business-operations.sql",
+    "003-runtime-sessions.sql",
+    "004-legacy-synthetic-evidence.sql",
+    "005-complete-search-projections.sql"
+  ],
+  "currentNativeSchemaMigrations": [
+    "000-business-schema.js",
+    "001-runtime.sql",
+    "002-business-operations.sql",
+    "003-runtime-sessions.sql",
+    "004-legacy-synthetic-evidence.sql",
+    "005-complete-search-projections.sql",
+    "006-assistant-runtime.sql",
+    "007-job-event-order.sql",
+    "008-email-reply-outbox.sql",
+    "009-customer-return-evidence.sql",
+    "010-supplier-return-account.sql"
+  ],
+  "tableCount": 271,
+  "mismatchedTables": [],
+  "reconciliationMatches": true,
+  "balancedJournal": true,
+  "business": {
+    "workspaces": 22,
+    "items": 233,
+    "skus": 80269,
+    "locations": 157,
+    "movements": 40183,
+    "movementQuantity": 4994265,
+    "onHand": 4994265,
+    "purchaseOrders": 464,
+    "salesOrders": 18,
+    "journalEntries": 36,
+    "journalDebitsMinor": 12625611,
+    "journalCreditsMinor": 12625611
+  },
+  "targetBytes": 4245736595,
+  "postgresTests": {
+    "passed": 33,
+    "failed": 0,
+    "skipped": 0
+  },
+  "existingRegressionTests": {
+    "passed": 2084,
+    "failed": 0,
+    "skipped": 0
+  },
+  "limitation": "This proves the PostgreSQL schema, cutover, native critical workflows including customer and supplier returns and bounded transfer-versus-buy autonomy, shared sessions, workers, normalized connector events, business-mail outbox safety, Gmail/Microsoft polling and authenticated webhook wake-ups, and real Chromium journeys locally. The established production entrypoint still uses SQLite; remaining SQLite-only free-form operating instructions and autonomy action families, warehouse waves, commerce-provider webhook/export paths, mailbox subscription renewal and deployed PostgreSQL recovery/load qualification must be completed before cutover."
+}

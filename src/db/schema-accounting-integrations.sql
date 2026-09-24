@@ -46,6 +46,20 @@ CREATE TABLE IF NOT EXISTS accounting_external_identities (
   UNIQUE (workspace_id, connector_id, entity_type, external_id)
 );
 
+CREATE TABLE IF NOT EXISTS accounting_posting_account_mappings (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  connector_id TEXT NOT NULL REFERENCES workspace_connectors(id) ON DELETE CASCADE,
+  foundry_account_id TEXT NOT NULL REFERENCES accounting_accounts(id) ON DELETE CASCADE,
+  external_id TEXT NOT NULL,
+  approved_by_user_id TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (workspace_id, connector_id, foundry_account_id)
+);
+CREATE INDEX IF NOT EXISTS idx_accounting_posting_mappings_external
+  ON accounting_posting_account_mappings(workspace_id, connector_id, external_id);
+
 CREATE TABLE IF NOT EXISTS accounting_sync_checkpoints (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,

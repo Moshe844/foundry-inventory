@@ -36,7 +36,7 @@
         <%= helpers.unitCount(line.quantityUnits, line.unitLabel) %>
       </span>
     <% } else { %>
-      <span class="badge badge--ok">No order</span>
+      <span class="badge badge--<%= line.reason === 'incoming_timing_risk' ? 'warn' : 'ok' %>"><%= line.reason === 'incoming_timing_risk' ? 'Timing needs review' : 'No order' %></span>
     <% } %>
   </div>
   <div class="card-body">

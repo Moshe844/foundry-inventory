@@ -1,0 +1,58 @@
+<% const money = minor => minor === null || minor === undefined ? 'Unknown' : new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Number(minor)/100); %>
+<section class="page-head">
+  <div><p class="eyebrow">Evidence-based planning</p><h1>What happens next</h1>
+    <p>StockChief compares stock, committed customer demand, incoming purchases, recent issues and your approved policies. Predictions never move stock or place an order by themselves.</p></div>
+  <span class="badge"><%= scanned %> SKU<%= scanned === 1 ? '' : 's' %> reviewed</span>
+</section>
+
+<section class="section"><div class="accounting-equation">
+  <p><span>Heading for shortage</span><strong><%= shortages.length %></strong></p>
+  <p><span>Transfer opportunities</span><strong><%= transfers.length %></strong></p>
+  <p><span>Inventory at evidenced cost</span><strong><%= money(heldMinor) %></strong></p>
+</div></section>
+
+<section class="card" id="shortages"><div class="card-head"><div><h2>Heading for shortage</h2>
+  <p class="hint">Available means on hand minus committed customer demand. Incoming approved or placed purchases are shown separately.</p></div></div>
+  <% if (!shortages.length) { %><div class="card-body"><p class="empty">No measurable shortage is inside the current lead-time window.</p></div><% } else { %>
+  <div class="table-wrap"><table class="table table--stack"><thead><tr><th>SKU</th><th>Location</th><th>Available</th><th>Incoming</th><th>Recent demand</th><th>Evidence</th></tr></thead><tbody>
+  <% shortages.forEach(row => { %><tr><td><a href="/inventory/<%= row.item_id %>"><%= row.displayName %></a></td><td><%= row.location_name %></td>
+    <td><%= row.available %></td><td><%= row.incoming %></td><td><%= row.sold90 %> issued / 90 days</td>
+    <td><%= row.reorderPoint === null ? 'Derived threshold ' + row.inferredReorder : 'Approved reorder point ' + row.reorderPoint %> · lead time <%= row.leadTimeDays %> days</td></tr><% }) %>
+  </tbody></table></div><% } %>
+</section>
+
+<section class="card" id="transfers"><div class="card-head"><div><h2>Transfer before buying</h2><p class="hint">These are recommendations only. The source retains its own shortage buffer.</p></div></div>
+  <div class="card-body stack"><% if (!transfers.length) { %><p>No safe transfer opportunity is visible.</p><% } %>
+  <% transfers.forEach(move => { %><article class="planning-item"><strong>Move <%= move.units %> <%= move.displayName %> from <%= move.fromLocationName %> to <%= move.toLocationName %></strong><p><%= move.why %></p></article><% }) %></div>
+</section>
+
+<section class="card" id="recommendations"><div class="card-head"><div><h2>Policy changes awaiting a decision</h2>
+  <p class="hint">Approving changes the replenishment threshold only. It does not authorize a purchase, transfer or message.</p></div></div>
+  <div class="card-body stack"><% if (!recommendations.length) { %><p>No policy change needs approval.</p><% } %>
+  <% recommendations.forEach(row => { %><article class="planning-item"><span class="badge"><%= row.confidence || 'learning' %> confidence</span>
+    <h3><%= row.headline %></h3><p><%= row.why %></p><p>Current: <strong><%= row.currentValue === null ? 'not set' : row.currentValue %></strong> · proposed: <strong><%= row.recommendedValue %></strong></p>
+    <% if (canOperate) { %><div class="button-row"><form method="post" action="/planning/recommendations/<%= row.id %>/accept"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Use <%= row.recommendedValue %></button></form>
+      <form method="post" action="/planning/recommendations/<%= row.id %>/decline"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost" type="submit">Keep current policy</button></form></div><% } %>
+  </article><% }) %></div>
+</section>
+
+<section class="card" id="excess"><div class="card-head"><div><h2>Money asleep on a shelf</h2><p class="hint">Uses approved targets or your maximum days of supply. Unknown costs remain visibly unknown.</p></div></div>
+  <% if (!excess.length) { %><div class="card-body"><p>No measurable excess exceeds the current planning limit.</p></div><% } else { %><div class="table-wrap"><table class="table table--stack"><thead><tr><th>SKU</th><th>Location</th><th>On hand</th><th>Days</th><th>Excess</th><th>Value</th></tr></thead><tbody>
+  <% excess.forEach(row => { %><tr><td><a href="/inventory/<%= row.item_id %>"><%= row.displayName %></a></td><td><%= row.location_name %></td><td><%= row.onHand %></td><td><%= row.daysOfSupply === null ? 'No measured demand' : Math.round(row.daysOfSupply) %></td><td><%= row.excessUnits %></td><td><%= money(row.excessValueMinor) %></td></tr><% }) %>
+  </tbody></table></div><% } %>
+</section>
+
+<section class="card" id="goals"><div class="card-head"><div><h2>Planning goals</h2><p class="hint">Goals rank safe options; they never widen StockChief's authority.</p></div></div>
+  <% if (canAdmin) { %><form method="post" action="/planning/goals"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><div class="card-body grid">
+    <label class="field"><span class="field-label">Availability preference</span><select class="select" name="serviceLevel"><option value="lean" <%= goals.serviceLevel === 'lean' ? 'selected' : '' %>>Keep stock lean</option><option value="balanced" <%= goals.serviceLevel === 'balanced' ? 'selected' : '' %>>Balanced</option><option value="protective" <%= goals.serviceLevel === 'protective' ? 'selected' : '' %>>Protect availability</option></select></label>
+    <label class="field"><span class="field-label">Maximum days of supply</span><input class="input" type="number" name="maxDaysOfSupply" min="7" max="730" value="<%= goals.maxDaysOfSupply ?? '' %>" placeholder="90"></label>
+    <label class="field"><span class="field-label">Inventory investment limit</span><input class="input" name="inventoryCap" value="<%= goals.inventoryCapMinor === null ? '' : (goals.inventoryCapMinor/100).toFixed(2) %>" placeholder="No limit"></label>
+    <label class="field"><span class="field-label">Cash reserve</span><input class="input" name="cashReserve" value="<%= goals.cashReserveMinor === null ? '' : (goals.cashReserveMinor/100).toFixed(2) %>" placeholder="No reserve"></label>
+    <label class="field field--check"><input type="checkbox" name="prioritiseCoreProducts" <%= goals.prioritiseCoreProducts ? 'checked' : '' %>><span>Protect reliable core products first</span></label>
+    <label class="field field--check"><input type="checkbox" name="conservativeSeasonal" <%= goals.conservativeSeasonal ? 'checked' : '' %>><span>Treat seasonal spikes conservatively</span></label>
+  </div><div class="card-foot"><button class="btn btn--primary" type="submit">Save planning goals</button></div></form><% } %>
+</section>
+
+<section class="card" id="accuracy"><div class="card-head"><div><h2>Has StockChief been right?</h2><p class="hint"><%= accuracy.summary %></p></div></div>
+  <div class="card-body"><p>Comparable forecasts: <strong><%= accuracy.comparable %></strong><% if (accuracy.comparable) { %> · average absolute error: <strong><%= accuracy.meanAbsoluteError %> units</strong> · average bias: <strong><%= accuracy.bias %></strong><% } %></p></div>
+</section>

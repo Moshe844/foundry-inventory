@@ -171,11 +171,19 @@ function salesOrder(db, workspaceId, order, extras = {}) {
           : 'I confirmed the order.',
         { now,
           sub: order.totals.backordered
-            ? [{ text: `${plural(order.totals.backordered, 'unit is', 'units are')} short. Stock is never taken from the next customer to cover this one, so the shortage is a decision rather than something I do quietly.` }]
+            ? [{ text: `${plural(order.totals.backordered, 'unit is', 'units are')} short. Unpicked stock is allocated by customer priority and needed date. Incoming purchases cannot cover this shortage until physically received.` }]
             : [] }));
       continue;
     }
-    if (event.event_type === 'ALLOCATED_FROM_STOCK' || event.event_type === 'ALLOCATION_CHANGED') {
+    if (event.event_type === 'ALLOCATION_SETTINGS_CHANGED') {
+      past.push(mark(event.created_at, `Customer allocation changed to priority ${detail.priority}${detail.neededBy ? `, needed by ${detail.neededBy}` : ', with no needed date'}. No physical stock moved.`, { now }));
+      continue;
+    }
+    if (event.event_type === 'ALLOCATION_CHANGED') {
+      past.push(mark(event.created_at, 'I recalculated stock reservations using physical availability, customer priorities and needed dates. No physical stock moved.', { now }));
+      continue;
+    }
+    if (event.event_type === 'ALLOCATED_FROM_STOCK') {
       past.push(mark(event.created_at, 'I committed more stock to this order as it arrived.', { now }));
       continue;
     }

@@ -167,7 +167,7 @@
 <% } %>
 
 <section class="section">
-  <details class="disclosure">
+  <details class="disclosure" id="customer-notices">
     <summary>What customers are told when an order ships</summary>
     <form method="post" action="/fulfilment/settings/notices" data-busy>
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -191,7 +191,7 @@
             <span class="choice-body">
               <strong>StockChief sends it for me</strong>
               <span class="t-xs t-muted">
-                Sent as soon as the box is marked shipped. Needs a connected mailbox, and
+                Sent as soon as the physical carrier handoff is confirmed. Needs a connected mailbox, and
                 nothing goes out while StockChief is paused.
               </span>
             </span>

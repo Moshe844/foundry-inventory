@@ -1,0 +1,39 @@
+<div class="page-head"><div><a class="back-link" href="/accounting/payables">‹ Supplier bills</a><p class="eyebrow">Supplier invoice exception</p><h1><%= title %></h1><p class="lede"><%= bill.supplier_name %> · <%= bill.bill_number %> · <%= bill.status.replaceAll('_', ' ').toLowerCase() %>. Invoice evidence, physical receipts and payments remain separate.</p></div></div>
+
+<section class="card"><div class="card-head"><h2>Recorded evidence</h2></div><div class="card-body">
+  <p>Invoice total: <strong><%= helpers.money(bill.total_minor, bill.currency) %></strong>. <%= ['DRAFT', 'DISPUTED', 'VOID'].includes(bill.status) ? 'This record is not an approved payable or a payment.' : 'This invoice has already been approved. Its posted amounts cannot be edited here.' %></p>
+  <% if (bill.purchase_order_id) { %><p>Compare with <a href="/purchasing/orders/<%= bill.purchase_order_id %>/detail"><%= bill.po_number %> and its receipts</a>.</p><% } %>
+  <% if (bill.journal_entry_id) { %><p><a href="/accounting/entries/<%= bill.journal_entry_id %>">Open the posted accounting entry</a>.</p><% } %>
+  <% if (match.differences.length && ['DRAFT', 'DISPUTED'].includes(bill.status)) { %>
+    <div class="notice notice--warning"><div><strong>The current evidence needs review.</strong><ul>
+      <% match.differences.forEach(function(difference) { var line = bill.lines.find(function(candidate) { return candidate.id === difference.lineId; }); %>
+        <li><strong><%= line ? line.description : 'Invoice match' %>:</strong>
+        <% if (difference.kind === 'quantity_above_ordered') { %>This invoice plus previously approved invoices bills <%= difference.previouslyBilled + difference.billed %> units against <%= difference.ordered %> ordered.
+        <% } else if (difference.kind === 'invoice_ahead_of_receipt') { %>This invoice plus previously approved invoices bills <%= difference.previouslyBilled + difference.billed %> units; <%= difference.received %> have arrived. Any approved unreceived quantity is accounted for in transit, not as physically available stock.
+        <% } else if (difference.kind === 'price_outside_tolerance') { %>Billed unit cost <%= helpers.money(difference.billedUnitCostMinor, bill.currency) %> differs from PO unit cost <%= helpers.money(difference.orderedUnitCostMinor, bill.currency) %>, outside the <%= difference.tolerancePercent %>% supplier tolerance.
+        <% } else if (difference.kind === 'po_supplier_mismatch') { %>The purchase order is missing from this workspace or belongs to a different supplier. Correct the source association through Purchasing; changing amounts here cannot bypass this check.
+        <% } else { %>This product does not have a valid line match to this purchase order.
+        <% } %></li>
+      <% }) %>
+    </ul></div></div>
+  <% } %>
+</div></section>
+
+<% if (canReview && ['DRAFT', 'DISPUTED'].includes(bill.status)) { %>
+<form class="stack-xl" method="post" action="/accounting/payables/<%= bill.id %>/review" data-busy>
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="revision" value="<%= revision %>">
+  <section class="card"><div class="card-head"><h2>Resolve from actual evidence</h2></div><div class="card-body stack">
+    <p class="hint">Correct only transcription errors or amounts supported by a corrected supplier invoice. Do not change amounts just to clear an exception. Original values and your reason remain in the review history. There is no tolerance override here.</p>
+    <div class="grid grid--3"><label class="field"><span class="field-label">Invoice issue date</span><input class="input" type="date" name="issueDate" value="<%= bill.issue_date %>" required></label><label class="field"><span class="field-label">Invoice due date</span><input class="input" type="date" name="dueDate" value="<%= bill.due_date || '' %>"></label><label class="field"><span class="field-label">Exact invoice tax</span><input class="input" name="tax" inputmode="decimal" value="<%= (bill.tax_minor / 100).toFixed(2) %>" required></label></div>
+    <% bill.lines.forEach(function(line) { %><div class="accounting-line"><strong><%= line.description %></strong><input type="hidden" name="lineId" value="<%= line.id %>"><label class="field"><span class="field-label">Corrected quantity — <%= line.description %></span><input class="input" name="quantity" type="number" step="any" min="0.000001" value="<%= line.quantity %>" required></label><label class="field"><span class="field-label">Corrected unit cost — <%= line.description %></span><input class="input" name="unitAmount" inputmode="decimal" value="<%= (line.unit_cost_minor / 100).toFixed(2) %>" required></label></div><% }) %>
+    <label class="field"><span class="field-label">Evidence and reason for this review</span><textarea class="input" name="reason" maxlength="1000" required placeholder="Identify the corrected invoice, verified receipt or reason for dismissal."></textarea></label>
+    <div class="form-actions"><button class="btn btn--primary" name="action" value="correct" type="submit">Save corrected invoice and approve if matched</button><button class="btn" name="action" value="recheck" type="submit">Recheck existing invoice evidence</button><button class="btn btn--ghost" name="action" value="void" type="submit">Dismiss unposted invoice</button></div>
+    <p class="hint">Recheck ignores edited fields and reads current PO/receipt evidence. Dismissal retains the record, creates no credit and changes no posted entry. None of these actions sends money or moves stock.</p>
+  </div></section>
+</form>
+<% } else if (!canReview && ['DRAFT', 'DISPUTED'].includes(bill.status)) { %><p class="hint">An authorized accounting operator must resolve this invoice.</p><% } %>
+
+<section class="card"><div class="card-head"><h2>Review history</h2></div><div class="card-body">
+  <% if (!(bill.exception_detail.reviews || []).length) { %><p>No exception reviews recorded yet.</p><% } %>
+  <% (bill.exception_detail.reviews || []).forEach(function(review) { %><article class="fold-note"><strong><%= review.action %> · <%= review.at %></strong><p><%= review.reason %></p><p class="hint">Actor: <%= review.actorId %>. Status: <%= review.before.status %> → <%= review.after.status %>. Invoice total: <%= helpers.money(review.before.totalMinor, bill.currency) %> → <%= helpers.money(review.after.totalMinor, bill.currency) %>.</p><% review.before.lines.forEach(function(line) { var after = review.after.lines.find(function(candidate) { return candidate.id === line.id; }); var current = bill.lines.find(function(candidate) { return candidate.id === line.id; }); %><p><%= current ? current.description : line.id %>: <%= line.quantity %> × <%= helpers.money(line.unitCostMinor, bill.currency) %> → <%= after.quantity %> × <%= helpers.money(after.unitCostMinor, bill.currency) %>.</p><% }) %></article><% }) %>
+</div></section>

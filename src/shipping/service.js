@@ -61,6 +61,21 @@ function packagesFor(db, workspaceId, shipmentId) {
     }));
   }
 
+  const shipment = db.prepare(`SELECT package_count, weight_grams FROM sales_shipments
+    WHERE id = ? AND workspace_id = ?`).get(shipmentId, workspaceId);
+  const packageCount = Math.max(1, Number(shipment && shipment.package_count || 1));
+  const measuredWeight = Number(shipment && shipment.weight_grams || 0);
+  if (packageCount === 1 && measuredWeight > 0) {
+    return [{ id: null, position: 1, weightGrams: measuredWeight, lengthMm: null, widthMm: null,
+      heightMm: null, estimated: false, unweighedUnits: 0 }];
+  }
+  if (packageCount > 1) {
+    return Array.from({ length: packageCount }, (_, index) => ({
+      id: null, position: index + 1, weightGrams: null, lengthMm: null, widthMm: null,
+      heightMm: null, estimated: false, unweighedUnits: 0,
+    }));
+  }
+
   const lines = db.prepare(`SELECT sku_id, quantity FROM sales_shipment_lines
     WHERE workspace_id = ? AND shipment_id = ?`).all(workspaceId, shipmentId);
   let grams = 0;
@@ -115,11 +130,24 @@ function requireShipment(db, workspaceId, shipmentId) {
 function endpoints(db, workspaceId, shipment) {
   const to = addresses.parse(shipment.ship_to_address);
   const location = shipment.ship_from_location_id
-    ? db.prepare('SELECT name, address FROM locations WHERE id = ? AND workspace_id = ?')
+    ? db.prepare('SELECT name, address, phone FROM locations WHERE id = ? AND workspace_id = ?')
       .get(shipment.ship_from_location_id, workspaceId)
     : null;
   const from = addresses.parse(location ? location.address : null);
   if (!from.name && location) from.name = location.name;
+  if (location) from.phone = trimOrNull(location.phone);
+  const customer = shipment.sales_order_id
+    ? db.prepare(`SELECT c.id, c.name, c.company, c.email, c.phone
+        FROM sales_orders o LEFT JOIN customers c ON c.id = o.customer_id AND c.workspace_id = o.workspace_id
+        WHERE o.id = ? AND o.workspace_id = ?`).get(shipment.sales_order_id, workspaceId)
+    : null;
+  if (customer) {
+    to.customerId = customer.id;
+    to.name = trimOrNull(customer.name) || to.name;
+    to.company = trimOrNull(customer.company);
+    to.email = trimOrNull(customer.email);
+    to.phone = trimOrNull(customer.phone);
+  }
   return { to, from, locationName: location ? location.name : null };
 }
 
@@ -143,10 +171,23 @@ function readiness(db, workspaceId, shipmentId) {
         + 'and a carrier will not quote without one.',
       href: '/locations' });
   }
+  if (!to.phone) {
+    blocked.push({ key: 'to_phone',
+      what: 'The customer has no shipping phone number. The carrier requires a real contact number and StockChief will not invent one.',
+      href: to.customerId ? `/sales/customers/${to.customerId}` : null });
+  }
+  if (!from.phone) {
+    blocked.push({ key: 'from_phone',
+      what: `${locationName || 'The ship-from location'} has no shipping contact phone. The carrier requires one before quoting.`,
+      href: '/locations' });
+  }
   const unweighed = boxes.reduce((sum, box) => sum + Number(box.unweighedUnits || 0), 0);
-  if (!boxes.some((box) => Number(box.weightGrams) > 0)) {
+  const missingPackageWeights = boxes.filter((box) => !(Number(box.weightGrams) > 0)).length;
+  if (missingPackageWeights) {
     blocked.push({ key: 'weight',
-      what: unweighed
+      what: boxes.length > 1
+        ? `Enter a measured weight for each of the ${boxes.length} packages before asking a carrier for rates.`
+        : unweighed
         ? `${unweighed} of the items in this box have no weight recorded, so StockChief cannot say what `
           + 'the parcel weighs. Weigh it and enter the figure, or set the product weights once.'
         : 'Nobody has said what this parcel weighs.',
@@ -274,7 +315,7 @@ async function quote(db, ctx, shipmentId, options = {}) {
 }
 
 function ratesFor(db, workspaceId, shipmentId) {
-  return db.prepare(`SELECT * FROM shipment_rates WHERE workspace_id = ? AND shipment_id = ?
+  const rates = db.prepare(`SELECT * FROM shipment_rates WHERE workspace_id = ? AND shipment_id = ?
     ORDER BY amount_minor, delivery_days`).all(workspaceId, shipmentId)
     .map((row) => ({
       id: row.id,
@@ -290,6 +331,23 @@ function ratesFor(db, workspaceId, shipmentId) {
       guaranteed: Boolean(row.delivery_guaranteed),
       quotedAt: row.quoted_at,
     }));
+  /*
+   * Providers can return several rate IDs for the same carrier service, often
+   * because multiple package or account variants exist behind the scenes. If
+   * StockChief cannot explain that distinction on screen, showing five rows
+   * all called "USPS Priority Mail" is not a useful choice. The query is
+   * cheapest-first, so keep the cheapest visible offer for each service and
+   * delivery commitment. Every raw provider row remains in shipment_rates for
+   * audit and purchase verification.
+   */
+  const seen = new Set();
+  return rates.filter((rate) => {
+    const signature = [rate.carrier, rate.service, rate.currency,
+      rate.deliveryDate || rate.deliveryDays, rate.guaranteed].join('|');
+    if (seen.has(signature)) return false;
+    seen.add(signature);
+    return true;
+  });
 }
 
 /* ---------------------------------------------------------------- buying */
@@ -423,6 +481,9 @@ async function buyLabel(db, ctx, shipmentId, rateId, options = {}) {
     try {
       const ledger = require('../accounting/ledger');
       if (ledger.settings(db, ctx.workspaceId).enabled) {
+        if (ledger.settings(db, ctx.workspaceId).currency !== bought.currency) {
+          throw new ValidationError('The carrier charge currency differs from the accounting base currency. No invented exchange rate or postage entry was posted.');
+        }
         ledger.post(db, ctx, {
           postingDate: now.slice(0, 10),
           description: `Postage for ${shipment.shipment_number} — ${bought.carrier || 'carrier'}`
@@ -641,7 +702,9 @@ async function shipWithinAuthority(db, ctx, shipmentId, options = {}) {
     return { bought: false, because: 'No carrier quoted a rate for this parcel.' };
   }
 
-  const decision = rules.decide(db, ctx.workspaceId, quoted.rates,
+  const labelGrant = require('../autonomous/service').activeGrant(db, ctx.workspaceId, 'shipping.purchase_label');
+  const eligibleRates = labelGrant?.currency ? quoted.rates.filter((rate) => rate.currency === labelGrant.currency) : quoted.rates;
+  const decision = rules.decide(db, ctx.workspaceId, eligibleRates,
     { promisedDate: quoted.promisedDate });
   if (!decision.rate) return { bought: false, because: decision.because, rates: quoted.rates };
 
@@ -662,11 +725,13 @@ async function shipWithinAuthority(db, ctx, shipmentId, options = {}) {
       ruleReason:decision.because },
     affectedEntities:{ shipmentId, salesOrderId:shipment.sales_order_id },
     authorityDimensions:{ valueMinor:decision.rate.amountMinor,
+      currency: decision.rate.currency,
       customerId:shipment.customer_id || undefined,
       locationId:shipment.ship_from_location_id || undefined,
       confidence:'high', risk:'high' },
     expectedOutcome:{ labelPurchased:true, trackingNumberRecorded:true,
-      quotedAmountMinor:decision.rate.amountMinor },
+      quotedAmountMinor:decision.rate.amountMinor, currency: decision.rate.currency,
+      carrier: decision.rate.carrier, service: decision.rate.service },
   });
   const governed = await autonomous.run(db, ctx, null, operation.id,
     { ...options, rule:decision.rule, rate:decision.rate });
@@ -711,13 +776,29 @@ require('../autonomous/service').registerAdapter('shipping.purchase_label', {
   owner:'shipping.service',
   authorize:({ db, ctx, operation, execution }) => {
     const capability = require('../autopilot/capabilities').may(db, ctx.workspaceId, 'shipping_labels');
+    const shipment = requireShipment(db, ctx.workspaceId, operation.decision.shipmentId);
+    const rate = ratesFor(db, ctx.workspaceId, shipment.id).find((current) => current.id === operation.decision.rateId);
+    const rule = require('./rules').list(db, ctx.workspaceId).find((current) => current.id === operation.decision.ruleId);
+    const decision = rate && rule ? require('./rules').decide(db, ctx.workspaceId, [rate],
+      { rules: [rule], promisedDate: promisedDate(db, ctx.workspaceId, shipment) }) : null;
+    const quoteAge = rate ? Date.now() - Date.parse(rate.quotedAt) : Infinity;
+    const accounting = require('../accounting/ledger').settings(db, ctx.workspaceId);
     const checks = [
       { name:'executionState', passed:execution.allowed,
         reason:execution.because || 'Shipping automation is active.' },
       { name:'shippingGrant', passed:capability.allowed,
         reason:capability.because || 'Buying shipping labels is explicitly enabled.' },
-      { name:'shippingRule', passed:Boolean(operation.decision.ruleId),
-        reason:'A saved shipping rule must select this exact rate.' },
+      { name:'shippingRule', passed:Boolean(decision?.rate),
+        reason:'The current active shipping rule must still allow this exact rate and promised date.' },
+      { name:'currentRate', passed:Boolean(rate && rate.amountMinor > 0
+          && rate.amountMinor === operation.authorityDimensions.valueMinor
+          && rate.currency === operation.authorityDimensions.currency && quoteAge >= 0 && quoteAge <= 15 * 60000),
+        reason:'The saved quote must be recent and match the authorised price and currency. Requote stale or changed rates.' },
+      { name:'parcelReady', passed:shipment.status === 'PACKED' && !shipment.tracking_number
+          && readiness(db, ctx.workspaceId, shipment.id).ready,
+        reason:'The parcel must still be packed, eligible and without an existing label.' },
+      { name:'accountingCurrency', passed:!accounting.enabled || accounting.currency === rate?.currency,
+        reason:'Automatic postage requires a charge in the accounting base currency; currency conversion needs individual review.' },
     ];
     return { allowed:checks.every((check) => check.passed), checks };
   },
@@ -726,11 +807,28 @@ require('../autonomous/service').registerAdapter('shipping.purchase_label', {
     { ...runtime, ruleId:operation.decision.ruleId }),
   verify:({ db, ctx, operation, actualOutcome }) => {
     const shipment = requireShipment(db, ctx.workspaceId, operation.decision.shipmentId);
+    const accounting = require('../accounting/ledger').settings(db, ctx.workspaceId);
+    const transaction = accounting.enabled ? db.prepare(`SELECT id FROM shipping_label_transactions
+      WHERE workspace_id = ? AND shipment_id = ? AND operation = 'PURCHASE' AND status = 'SUCCEEDED'
+      ORDER BY requested_at DESC, id DESC LIMIT 1`).get(ctx.workspaceId, shipment.id) : null;
+    const postage = transaction ? db.prepare(`SELECT SUM(l.debit_minor) AS debit, SUM(l.credit_minor) AS credit,
+      SUM(CASE WHEN l.currency = ? THEN 0 ELSE 1 END) AS wrong_currency
+      FROM accounting_journal_entries e JOIN accounting_journal_lines l ON l.entry_id = e.id AND l.workspace_id = e.workspace_id
+      WHERE e.workspace_id = ? AND e.source_key = ? AND e.status = 'POSTED'
+        AND ${require('../accounting/ledger').notCancelled('e')}`)
+      .get(shipment.currency, ctx.workspaceId, `shipment-postage:${shipment.id}:${transaction.id}`) : null;
+    const accountingMatches = !accounting.enabled || Boolean(postage && postage.wrong_currency === 0
+      && postage.debit === Number(shipment.shipping_cost_minor) && postage.credit === Number(shipment.shipping_cost_minor));
     const passed = Boolean(shipment.label_url && shipment.tracking_number)
-      && Number(shipment.shipping_cost_minor || 0) === Number(actualOutcome.amountMinor || 0);
+      && accountingMatches
+      && Number(shipment.shipping_cost_minor || 0) === Number(actualOutcome.amountMinor || 0)
+      && Number(shipment.shipping_cost_minor) === operation.authorityDimensions.valueMinor
+      && shipment.currency === operation.authorityDimensions.currency
+      && (!operation.expectedOutcome.carrier || shipment.carrier === operation.expectedOutcome.carrier)
+      && (!operation.expectedOutcome.service || shipment.service === operation.expectedOutcome.service);
     return { passed, reason:passed
-      ? 'The carrier label, tracking number, and charged amount were read back from the shipment.'
-      : 'The purchased label could not be reconciled to the shipment.',
+      ? 'The carrier label, tracking number, service, currency and charged amount match the authorised quote, including required postage bookkeeping.'
+      : 'The purchased label, charge or required postage entry does not reconcile. Review the recorded effect; no second label was bought.',
     shipmentId:shipment.id, trackingNumber:shipment.tracking_number || null };
   },
 });

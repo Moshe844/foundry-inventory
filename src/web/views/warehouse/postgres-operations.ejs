@@ -1,0 +1,25 @@
+<section class="rm-head">
+  <div><p class="rm-eyebrow">Warehouse operations</p><h1>Pick several customer orders as one verified wave.</h1>
+    <p class="rm-lede">Scanning proves what was picked. Packing does not reduce inventory; only the shipment handoff records goods leaving.</p></div>
+</section>
+
+<section class="rm-card" id="waves">
+  <div class="rm-head"><div><p class="rm-eyebrow">Active and completed waves</p><h2>Fulfillment waves</h2></div></div>
+  <% if (waves.length) { %><div class="rm-list"><% waves.forEach(function(wave){ %>
+    <a class="rm-row" href="/warehouse/waves/<%= wave.id %>"><span><strong>Wave #<%= wave.wave_number %> · <%= wave.title %></strong>
+      <small><%= wave.shipment_count %> shipments · <%= wave.units %> units</small></span><span class="rm-badge"><%= wave.status %></span></a>
+  <% }) %></div><% } else { %><div class="rm-empty"><p>No fulfillment waves yet.</p></div><% } %>
+</section>
+
+<section class="rm-card">
+  <div class="rm-head"><div><p class="rm-eyebrow">Release work</p><h2>Orders with committed stock</h2>
+    <p>One release creates pick cartons and scan lines. It does not issue stock or mark an order fulfilled.</p></div></div>
+  <% if (readyOrders.length) { %><form method="post" action="/warehouse/waves" class="rm-form-grid">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="<%= releaseKey %>">
+    <label>Strategy<select name="strategy"><option>WAVE</option><option>BATCH</option><option>CLUSTER</option></select></label>
+    <label>Name <span class="optional">optional</span><input name="title" placeholder="Morning carrier pickup"></label>
+    <fieldset class="rm-span-2"><legend>Ready orders</legend><% readyOrders.forEach(function(order){ %>
+      <label><input type="checkbox" name="orderIds" value="<%= order.id %>"> <%= order.order_number %> · <%= order.customer_name %> · <%= order.units %> units</label>
+    <% }) %></fieldset><div class="rm-span-2"><button class="rm-btn" type="submit">Release wave</button></div>
+  </form><% } else { %><div class="rm-empty"><p>No allocated customer orders are ready to pick.</p><a href="/orders">Open customer orders</a></div><% } %>
+</section>

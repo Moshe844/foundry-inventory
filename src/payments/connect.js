@@ -150,7 +150,11 @@ function platformModeEnabled() {
  * unavailable. Never silently replace that promise with account onboarding.
  */
 function preferredFlow() {
+  const requested = String(process.env.STRIPE_CONNECT_FLOW || '').trim().toLowerCase();
+  if (requested === 'hosted') return usesHostedOnboarding() ? 'hosted' : null;
+  if (requested === 'oauth') return usesOauth() ? 'oauth' : null;
   if (usesOauth()) return 'oauth';
+  if (usesHostedOnboarding()) return 'hosted';
   return null;
 }
 
@@ -235,7 +239,7 @@ function authorizeUrl(db, ctx, membership, options = {}) {
   const held = requirePlatform();
 
   const existing = rowFor(db, ctx.workspaceId);
-  if (existing && !isUnfinished(db, existing)) {
+  if (existing && existing.charges_enabled === 1) {
     throw new ValidationError('This inventory already has a Stripe account connected. '
       + 'Disconnect it first if you mean to connect a different one.');
   }
@@ -670,6 +674,7 @@ function describe(db, workspaceId) {
     return {
       connected: false,
       available: available(),
+      flow: preferredFlow(),
       embedded: usesEmbedded(),
       testMode: /^sk_test_/.test(platform().secretKey || ''),
       lastAttemptStatus: attempt ? attempt.setup_status : null,
@@ -678,12 +683,13 @@ function describe(db, workspaceId) {
       lastAttemptAt: attempt ? attempt.updated_at : null,
       because: available()
         ? 'This business can connect its own Stripe account without giving StockChief a key.'
-        : 'Stripe existing-account sign-in is not configured on this StockChief installation yet.',
+        : 'Stripe account setup is not configured on this StockChief installation yet.',
     };
   }
   return {
     connected: true,
     available: available(),
+    flow: preferredFlow(),
     unfinished: isUnfinished(db, row),
     embedded: usesEmbedded(),
     testMode: /^sk_test_/.test(platform().secretKey || ''),

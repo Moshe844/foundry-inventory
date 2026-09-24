@@ -19,9 +19,11 @@
     : s.status === 'SHIPPED' && s.handover === 'DELIVERED_BY_US' ? 'Delivered by us'
     : { PICKING: 'Being picked', PACKED: 'Packed', SHIPPED: 'Shipped',
       DELIVERED: 'Delivered', CANCELLED: 'Cancelled' }[s.status];
-  var plannedHandover = s.delivery_method === 'PICKUP' ? 'COLLECTED' : 'CARRIER';
+  var plannedHandover = s.delivery_method === 'PICKUP' ? 'COLLECTED'
+    : s.delivery_method === 'DELIVER' ? 'DELIVERED_BY_US' : 'CARRIER';
   var plannedHandoverLabel = plannedHandover === 'COLLECTED'
-    ? 'Collected by the customer' : 'Sent by carrier';
+    ? 'Collected by the customer' : plannedHandover === 'DELIVERED_BY_US'
+      ? 'Delivered by us' : 'Sent by carrier';
 %>
 <div class="breadcrumb">
   <a href="/fulfilment">Fulfilment</a>
@@ -39,7 +41,7 @@
     <% if (paymentPosition.terms.source === 'nothing agreed') { %><p class="notice notice--warn">No payment terms have been configured. The current default allows unpaid orders to leave. Agree customer terms before relying on a payment hold.</p><% } %>
     <% if (paymentPosition.blocksShipping) { %><p class="notice notice--warn">This order cannot leave until its payment hold is resolved. <%= paymentPosition.heldReason.ship %></p>
     <% } else if (paymentPosition.remainingMinor > 0) { %><p class="hint">The recorded terms allow fulfilment with this balance still owed. Shipping does not mark it paid.</p><% } %>
-    <a class="btn btn--primary" href="/orders/<%= s.sales_order_id %>/detail?open=money#money">Payment options: request payment or record money received</a>
+    <a class="btn btn--primary" href="/orders/<%= s.sales_order_id %>?open=money#money">Payment options: request payment or record money received</a>
     <p class="field-hint">Online payment links require a connected payment provider. Recording a payment is only for money actually received.</p>
   </div>
 </div></section>
@@ -126,8 +128,7 @@
 <% if (isOpen) { %>
   <p class="lede">
     Nothing in this box has left stock yet. StockChief still counts every one of these
-    <%= s.units %> as on the shelf, and will until you
-    <%= s.delivery_method === 'PICKUP' ? 'confirm the customer collected it' : 'mark it shipped' %>.
+    <%= s.units %> as on the shelf, and will until you confirm the customer collected it.
   </p>
 <% } %>
 
@@ -261,6 +262,7 @@
    */
   var ship = typeof shipping === 'undefined' ? null : shipping;
   var lbs = function (grams) { return (Number(grams || 0) / 453.59237).toFixed(1); };
+  var canSetPackageWeights = ship && ship.blocked.every(function (problem) { return problem.key === 'weight'; });
 %>
 <% if (ship && s.status === 'PACKED' && (!s.tracking_number || s.label_status === 'VOIDED')) { %>
   <section class="section" id="carrier">
@@ -326,25 +328,29 @@
         </div>
       <% } %>
 
-      <% if (!ship.blocked.length) { %>
+      <% if (canSetPackageWeights) { %>
         <div class="card-body">
           <form method="post" action="/fulfilment/<%= s.id %>/packages" class="inline-form" data-busy>
             <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <% ship.boxes.forEach(function (box, index) { %>
             <label class="field">
-              <span class="field-label">Weight of this parcel (grams)</span>
+              <span class="field-label"><%= ship.boxes.length > 1 ? `Weight of package ${index + 1} (grams)` : 'Weight of this parcel (grams)' %></span>
               <input class="input" type="number" name="weightGrams" min="1"
-                value="<%= ship.boxes[0] && ship.boxes[0].weightGrams ? ship.boxes[0].weightGrams : '' %>">
+                value="<%= box.weightGrams || '' %>">
               <span class="field-hint">
-                <% if (ship.boxes[0] && ship.boxes[0].estimated) { %>
+                <% if (box.estimated) { %>
                   Added up from the product weights StockChief has. Weigh the box and correct it if that is wrong —
                   a rate quoted on a guess gets corrected at the counter.
                 <% } else { %>What you measured.<% } %>
               </span>
             </label>
-            <button class="btn btn--sm" type="submit">Save weight</button>
+            <% }) %>
+            <button class="btn btn--sm" type="submit"><%= ship.boxes.length > 1 ? 'Save package weights' : 'Save weight' %></button>
           </form>
         </div>
+      <% } %>
 
+      <% if (!ship.blocked.length) { %>
         <div class="card-foot">
           <form method="post" action="/fulfilment/<%= s.id %>/rates" data-busy>
             <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -372,15 +378,18 @@
 
           <form method="post" action="/fulfilment/<%= s.id %>/label" data-busy>
             <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <%
+              var preferredRate = ship.ruled && ship.ruled.rate ? ship.ruled.rate
+                : ship.recommended && ship.recommended.rate ? ship.recommended.rate : ship.rates[0];
+              var otherRates = ship.rates.filter(function (rate) {
+                return !preferredRate || rate.id !== preferredRate.id;
+              });
+            %>
             <ul class="rate-list">
-              <% ship.rates.forEach(function (rate, index) { %>
-                <%
-                  var isPick = ship.ruled && ship.ruled.rate ? ship.ruled.rate.id === rate.id
-                    : (ship.recommended && ship.recommended.rate.id === rate.id);
-                %>
-                <li class="rate-row <%= isPick ? 'is-pick' : '' %>">
+              <% if (preferredRate) { var rate = preferredRate; %>
+                <li class="rate-row is-pick">
                   <label class="choice">
-                    <input type="radio" name="rateId" value="<%= rate.id %>" <%= isPick ? 'checked' : '' %> required>
+                    <input type="radio" name="rateId" value="<%= rate.id %>" checked required>
                     <span>
                       <strong><%= rate.carrierName %> <%= rate.service %></strong>
                       — <%= helpers.money(rate.amountMinor, rate.currency) %>
@@ -397,8 +406,33 @@
                     </span>
                   </label>
                 </li>
-              <% }) %>
+              <% } %>
             </ul>
+            <% if (otherRates.length) { %>
+              <details class="disclosure">
+                <summary>Compare <%= otherRates.length %> other rate<%= otherRates.length === 1 ? '' : 's' %></summary>
+                <ul class="rate-list">
+                  <% otherRates.forEach(function (rate) { %>
+                    <li class="rate-row">
+                      <label class="choice">
+                        <input type="radio" name="rateId" value="<%= rate.id %>" <%= preferredRate ? '' : 'required' %>>
+                        <span>
+                          <strong><%= rate.carrierName %> <%= rate.service %></strong>
+                          — <%= helpers.money(rate.amountMinor, rate.currency) %>
+                          <% if (rate.deliveryDate) { %>
+                            · expected <%= rate.deliveryDate %><% if (rate.guaranteed) { %> (guaranteed)<% } %>
+                          <% } else if (rate.deliveryDays) { %>
+                            · <%= rate.deliveryDays %> days
+                          <% } else { %>
+                            · no date given
+                          <% } %>
+                        </span>
+                      </label>
+                    </li>
+                  <% }) %>
+                </ul>
+              </details>
+            <% } %>
             <p class="t-xs t-muted">
               Quoted <%= ship.rates[0].quotedAt.slice(0, 16).replace('T', ' ') %>. Rates go stale;
               get fresh ones if this has been sitting.
@@ -486,8 +520,8 @@
     <div class="panel">
       <div class="panel-head">
         <div>
-          <h2>Record what physically left</h2>
-          <span class="t-xs t-muted">This is the step that moves stock</span>
+          <h2>Confirm the handoff</h2>
+          <span class="t-xs t-muted">This is the only step that removes stock</span>
         </div>
       </div>
       <% if (s.label_url && s.tracking_number && s.label_status !== 'VOIDED' && s.label_status !== 'VOID_PENDING') { %>
@@ -507,20 +541,21 @@
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <div class="card-body">
           <div class="notice notice--info">
-            <div><strong>Planned: <%= plannedHandoverLabel %></strong><br>This came from the delivery choice on <%= s.order_number %>.</div>
+            <div><strong>This order is set to: <%= plannedHandoverLabel %></strong><br>Confirm it only after the goods physically leave. If the real handoff changed, choose the correct method below first.</div>
           </div>
           <details class="advanced-settings">
-            <summary>Change how the goods actually left</summary>
+            <summary>Use a different handoff method</summary>
             <fieldset class="ship-method">
               <legend class="visually-hidden">How did these goods leave?</legend>
               <% [['CARRIER','Sent by carrier'],['COLLECTED','Collected by the customer'],['DELIVERED_BY_US','Delivered by us']].forEach(function (choice) { %>
                 <label class="choice">
-                  <input type="radio" name="handover" value="<%= choice[0] %>" required <%= plannedHandover === choice[0] ? 'checked' : '' %>>
+                  <input type="radio" name="handover" value="<%= choice[0] %>" required <%= plannedHandover === choice[0] ? 'checked' : '' %> data-handover-choice>
                   <span><%= choice[1] %></span>
                 </label>
               <% }) %>
             </fieldset>
           </details>
+          <div data-carrier-handoff-fields <%= plannedHandover === 'CARRIER' ? '' : 'hidden' %>>
           <div class="field-row">
             <label class="field">
               <span class="field-label">Carrier <span class="t-muted">(optional)</span></span>
@@ -548,18 +583,21 @@
               <input class="input" type="date" name="expectedDeliveryDate">
             </label>
             <label class="field">
-              <span class="field-label">What shipping cost you <span class="t-muted">(optional)</span></span>
+              <span class="field-label">Carrier postage paid <span class="t-muted">(optional)</span></span>
               <input class="input" type="number" step="0.01" min="0" name="shippingCost" placeholder="12.50">
+              <span class="field-hint">What this business paid the carrier. Any delivery charge paid by the customer is recorded separately.</span>
             </label>
+          </div>
           </div>
         </div>
         <div class="card-foot">
-          <button class="btn btn--primary" type="submit">
-            Mark shipped — <%= s.units %> leaves stock
+          <button class="btn btn--primary" type="submit" data-handover-confirm data-units="<%= s.units %>">
+            <%= plannedHandover === 'COLLECTED' ? 'Customer collected it'
+              : plannedHandover === 'DELIVERED_BY_US' ? 'Delivered by us' : 'Confirm carrier handoff' %>
+            — <%= s.units %> leaves stock
           </button>
-          <span class="hint">
-            This issues the stock, records the sale against <%= s.order_number %>,
-            and posts the cost of what went. There is no separate bookkeeping step.
+          <span class="hint" data-handover-explanation>
+            Stock leaves only after this confirmation. StockChief records the sale, product cost, and handoff against <%= s.order_number %> together.
           </span>
         </div>
       </form>
@@ -567,6 +605,26 @@
     </div>
   </section>
 <% } %>
+
+<script>
+(function () {
+  var choices = document.querySelectorAll('[data-handover-choice]');
+  var carrierFields = document.querySelector('[data-carrier-handoff-fields]');
+  var confirm = document.querySelector('[data-handover-confirm]');
+  if (!choices.length || !carrierFields || !confirm) return;
+  function refresh() {
+    var selected = document.querySelector('[data-handover-choice]:checked');
+    var method = selected ? selected.value : 'CARRIER';
+    var units = confirm.getAttribute('data-units');
+    carrierFields.hidden = method !== 'CARRIER';
+    confirm.textContent = (method === 'COLLECTED' ? 'Customer collected it'
+      : method === 'DELIVERED_BY_US' ? 'Delivered by us' : 'Confirm carrier handoff')
+      + ' — ' + units + ' leaves stock';
+  }
+  choices.forEach(function (choice) { choice.addEventListener('change', refresh); });
+  refresh();
+}());
+</script>
 
 <% if (notices && notices.length) { %>
   <%
@@ -674,7 +732,7 @@
 <% if (s.status === 'SHIPPED' || s.status === 'DELIVERED') { %>
   <section class="section">
     <div class="panel">
-      <div class="panel-head"><div><h2><%= s.handover === 'COLLECTED' ? 'Collected by the customer' : s.status === 'DELIVERED' ? 'Delivered' : 'On its way' %></h2></div></div>
+      <div class="panel-head"><div><h2><%= s.handover === 'COLLECTED' ? 'Collected by the customer' : s.status === 'DELIVERED' ? 'Delivered' : s.handover === 'DELIVERED_BY_US' ? 'Out for delivery with us' : 'On its way' %></h2></div></div>
       <div class="card-body">
         <dl class="detail-list">
           <div><dt><%= s.handover === 'COLLECTED' ? 'Collected' : 'Left' %></dt><dd><%= helpers.shortDate(s.shipped_at) %></dd></div>

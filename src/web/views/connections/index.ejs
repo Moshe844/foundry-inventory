@@ -27,12 +27,14 @@
   // "Working now" merely because Stripe had once supplied an account id.
   var separatelyManagedProviderTypes = shippingProviderTypes.concat(['stripe']);
   var activeConnections = connections.filter(function (connection) {
-    return !separatelyManagedProviderTypes.includes(connection.provider_type) && (
+    return connection.status !== 'disconnected'
+      && !separatelyManagedProviderTypes.includes(connection.provider_type) && (
       connection.credential_ref || connection.provider_account_id
       || !['AUTHORIZING', 'AUTHORIZATION_FAILED'].includes(connection.setup_status));
   });
   var setupAttempts = connections.filter(function (connection) {
     return !separatelyManagedProviderTypes.includes(connection.provider_type)
+      && connection.status !== 'disconnected'
       && !activeConnections.includes(connection);
   });
 
@@ -244,7 +246,7 @@
           </form>
         <% } else { %>
           <form method="post" action="/settings/connections/connect"
-            data-oauth-connect="<%= provider.authMode === 'oauth' ? provider.type : '' %>"
+            data-oauth-connect="<%= ['oauth', 'application_auth'].includes(provider.authMode) ? provider.type : '' %>"
             data-provider-name="<%= provider.name %>">
             <input type="hidden" name="_csrf" value="<%= csrfToken %>">
             <input type="hidden" name="providerType" value="<%= provider.type %>">
@@ -384,7 +386,13 @@
         <div class="rm-choices">
           <% if (unfinishedStripe && grant.available) { %>
             <a class="rm-btn" href="/settings/connections/payments/start"
-              target="_blank" data-stripe-connect>Connect existing Stripe account</a>
+              target="_blank" data-stripe-connect><%= grant.flow === 'hosted'
+                ? 'Continue Stripe setup' : 'Connect existing Stripe account' %></a>
+          <% } else if (!pay.chargesEnabled && grant.available) { %>
+            <a class="rm-btn"
+              href="https://dashboard.stripe.com/<%= encodeURIComponent(pay.accountId) %>/<%= pay.liveMode ? '' : 'test/' %>account/status"
+              target="_blank" data-stripe-connect data-stripe-require-charges><%= grant.testMode
+                ? 'Finish Stripe sandbox setup' : 'Finish Stripe setup' %></a>
           <% } %>
           <form method="post" action="/settings/connections/payments/remove" data-busy data-confirm="Disconnect the payment account? New payment links stop working until one is connected again. Payments already recorded are kept.">
             <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -424,23 +432,30 @@
         <% } %>
         <% if (grant && grant.available && !grant.connected) { %>
           <p class="quiet">
-            Stripe opens in its own window. Sign in, choose the account this business already uses,
-            and StockChief shows it here as connected. You never paste a key into StockChief.
+            <% if (grant.flow === 'hosted') { %>
+              Stripe opens its secure setup for this business. The account belongs to the business,
+              pays out to its bank, and has its own Stripe dashboard. You never paste a key into StockChief.
+            <% } else { %>
+              Stripe opens in its own window. Sign in, choose the account this business already uses,
+              and StockChief shows it here as connected. You never paste a key into StockChief.
+            <% } %>
           </p>
           <% if (grant.testMode) { %>
             <details class="rm-more"><summary>Stripe is in test mode on this installation</summary>
-              <p class="quiet">StockChief is using Stripe test credentials, so Stripe may ask you to create or finish a sandbox account even if the same email owns a live one. Connecting a live account needs the live Stripe client ID and secret on the server.</p>
+              <p class="quiet">StockChief is using Stripe test credentials, so this setup creates or finishes a sandbox account and cannot move real money. Going live requires the platform’s live Stripe keys on the server.</p>
             </details>
           <% } %>
           <div class="rm-choices">
             <a class="rm-btn rm-btn--wash" href="/settings/connections/payments/start"
-              target="_blank" data-stripe-connect>Connect Stripe</a>
+              target="_blank" data-stripe-connect><%= grant.flow === 'hosted'
+                ? grant.testMode ? 'Create sandbox merchant account' : 'Set up Stripe for this business'
+                : 'Connect Stripe' %></a>
           </div>
         <% } else if (grant && !grant.connected) { %>
           <p class="quiet">
-            <strong>Stripe account sign-in is not ready on this installation.</strong>
-            StockChief’s administrator must finish the Stripe Connect OAuth setup. StockChief will not
-            replace account sign-in with a new-account application or ask you to paste an API key.
+            <strong>Stripe account setup is not ready on this installation.</strong>
+            StockChief’s administrator must finish the Stripe Connect platform setup. StockChief will not
+            ask the business to paste an API key.
           </p>
         <% } %>
       <% } %>
@@ -503,6 +518,20 @@
 
 <script>
 (function () {
+  function showPopupBlocked(control, providerName) {
+    var card = control.closest('.rm-provider') || control.parentElement;
+    if (!card) return;
+    var message = card.querySelector('[data-connection-popup-blocked]');
+    if (!message) {
+      message = document.createElement('p');
+      message.className = 'quiet';
+      message.setAttribute('data-connection-popup-blocked', '');
+      card.appendChild(message);
+    }
+    message.textContent = 'Your browser blocked the ' + providerName
+      + ' connection window. Allow pop-ups for this site and try again. This page will stay open.';
+  }
+
   /*
    * Every provider authorization opens from the owner's click in its own
    * window. StockChief stays put, shows what it is waiting for, and refreshes the
@@ -516,7 +545,11 @@
         var popupName = 'foundry-' + providerType + '-connect';
         var popup = window.open('', popupName,
           'popup=yes,width=680,height=780,resizable=yes,scrollbars=yes');
-        if (!popup) return;
+        if (!popup) {
+          event.preventDefault();
+          showPopupBlocked(form, providerName);
+          return;
+        }
         event.preventDefault();
 
         try {
@@ -569,10 +602,11 @@
   document.querySelectorAll('[data-stripe-connect]').forEach(function (link) {
     link.addEventListener('click', function (event) {
       event.preventDefault();
+      var requireCharges = link.hasAttribute('data-stripe-require-charges');
       var popup = window.open(link.href, 'foundry-stripe-connect',
         'popup=yes,width=620,height=760,resizable=yes,scrollbars=yes');
       if (!popup) {
-        window.location.assign(link.href);
+        showPopupBlocked(link, 'Stripe');
         return;
       }
       popup.focus();
@@ -586,15 +620,15 @@
           if (!response.ok) throw new Error('Stripe status could not be checked.');
           return response.json();
         }).then(function (status) {
-          if (!status.connected) return;
+          if (requireCharges ? !status.chargesEnabled : !status.connected) return;
           window.clearInterval(poll);
           try { popup.close(); } catch (_) { /* The parent still updates. */ }
           window.location.replace('/settings/connections#payments');
         }).catch(function () {
           /* A temporary network failure is not a failed Stripe connection. */
         });
-        if (checks >= 600) window.clearInterval(poll);
-      }, 1000);
+        if (checks >= 200) window.clearInterval(poll);
+      }, 3000);
     });
   });
 

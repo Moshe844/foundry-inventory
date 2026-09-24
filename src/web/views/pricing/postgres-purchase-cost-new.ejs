@@ -1,0 +1,8 @@
+<div class="breadcrumb"><a href="/inventory/<%= sku.item_id %>"><%= sku.item_name %></a> <%- helpers.icon('chevron', { size: 13 }) %> <span>Purchase cost</span></div>
+<div class="page-head"><div class="titles"><h1>Set the current purchase cost</h1><p><%= sku.display_name %> · <%= sku.code %></p></div></div>
+<form class="card form-card" method="post" action="/pricing/purchase-costs/proposals">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="skuId" value="<%= sku.id %>">
+  <div class="notice"><strong>Current purchase cost: <%= current ? current.formatted : 'Not set' %></strong><p>Current selling price: <%= sellingPrice.formatted %>. This changes future purchasing and margin decisions; it does not rewrite historical inventory value or COGS.</p></div>
+  <div class="form-grid"><label class="field"><span>Purchase cost per <%= sku.unit_label || 'unit' %></span><input name="amount" inputmode="decimal" placeholder="8.50" required></label><label class="field"><span>Currency</span><select name="currency"><option value="USD">USD</option><option value="GBP">GBP</option><option value="EUR">EUR</option><option value="CAD">CAD</option></select></label></div>
+  <div class="form-actions"><button class="btn btn--primary" type="submit">Review cost change</button><a class="btn btn--ghost" href="/inventory/<%= sku.item_id %>#pricing">Cancel</a></div>
+</form>

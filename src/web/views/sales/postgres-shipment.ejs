@@ -1,0 +1,50 @@
+<% var shipment=state.shipment; var labelBusy=state.labelOperation && state.labelOperation.status==='PENDING'; %>
+<section class="rm-head"><div><p class="rm-eyebrow"><%= shipment.shipment_number %> · <%= shipment.order_number %></p>
+  <h1>Ship to <%= shipment.customer_name %></h1><p class="rm-lede"><%= state.to.raw || 'No destination recorded' %></p></div>
+  <span class="rm-badge"><%= shipment.status %></span></section>
+
+<% if (state.blocked.length) { %><section class="rm-card"><h2>Needed before live rates</h2><ul>
+  <% state.blocked.forEach(function(problem){ %><li><%= problem %></li><% }) %></ul></section><% } %>
+
+<section class="rm-card"><h2>Package</h2><p>Measured values are used for quotes. StockChief does not guess missing weight.</p>
+  <form method="post" action="/fulfilment/<%= shipment.id %>/packages" class="rm-form-grid">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <label>Weight in grams<input type="number" name="weightGrams" min="1" required value="<%= state.boxes[0] && state.boxes[0].weightGrams || '' %>"></label>
+    <label>Length mm<input type="number" name="lengthMm" min="1" value="<%= state.boxes[0] && state.boxes[0].lengthMm || '' %>"></label>
+    <label>Width mm<input type="number" name="widthMm" min="1" value="<%= state.boxes[0] && state.boxes[0].widthMm || '' %>"></label>
+    <label>Height mm<input type="number" name="heightMm" min="1" value="<%= state.boxes[0] && state.boxes[0].heightMm || '' %>"></label>
+    <div><button class="rm-btn rm-btn--quiet" type="submit">Save measured package</button></div>
+  </form>
+</section>
+
+<section class="rm-card" id="rates"><div class="rm-card__head"><div><h2>Carrier rates</h2><p>Refreshing rates spends nothing.</p></div>
+  <form method="post" action="/fulfilment/<%= shipment.id %>/quote"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <button class="rm-btn" type="submit" <%= state.ready ? '' : 'disabled' %>>Get live rates</button></form></div>
+  <% if (!state.rates.length) { %><p>No current rates.</p><% } %>
+  <% state.rates.forEach(function(rate){ %><div class="rm-row"><span><strong><%= rate.carrier %> · <%= rate.service %></strong>
+    <small><%= rate.delivery_date || (rate.deliveryDays !== null ? rate.deliveryDays + ' days' : 'Carrier did not promise a date') %></small></span>
+    <span><strong><%= (rate.amountMinor/100).toLocaleString('en-US',{style:'currency',currency:rate.currency}) %></strong>
+      <% if (shipment.label_status !== 'PURCHASED' && !labelBusy) { %><form method="post" action="/fulfilment/<%= shipment.id %>/buy">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="rateId" value="<%= rate.id %>">
+        <input type="hidden" name="idempotencyKey" value="label:<%= shipment.id %>:<%= rate.id %>">
+        <button class="rm-btn rm-btn--sm" type="submit">Buy this label</button></form><% } %></span></div><% }) %>
+</section>
+
+<section class="rm-card" id="label"><h2>Label and handoff</h2>
+  <% if (shipment.label_status === 'PURCHASED') { %><p><strong><%= shipment.carrier %> <%= shipment.service %></strong> · Tracking <%= shipment.tracking_number %></p>
+    <p><a class="rm-btn rm-btn--quiet" href="<%= shipment.label_url %>" target="_blank" rel="noopener">Open carrier label</a></p>
+    <% if (shipment.status === 'PACKED') { %><p>The label is ready, but the parcel is still packed until handoff is recorded. Inventory has not changed.</p><form method="post" action="/fulfilment/<%= shipment.id %>/handoff">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="handoff:<%= shipment.id %>">
+      <button class="rm-btn" type="submit">Confirm parcel was handed to carrier</button></form><% } %>
+  <% } else if (state.labelOperation && state.labelOperation.status === 'PENDING') { %><p><strong>Carrier confirmation pending.</strong> The durable worker is verifying the purchase. StockChief will not submit the same postage charge twice, and inventory remains unchanged.</p>
+  <% } else if (state.labelOperation && state.labelOperation.status === 'REVIEW') { %><p><strong>Carrier outcome needs review.</strong> <%= state.labelOperation.error_message || state.labelOperation.effect_error_message || 'The carrier may have accepted the charge before confirmation was saved.' %> StockChief has stopped and will not buy another label automatically.</p>
+  <% } else if (state.labelOperation && state.labelOperation.status === 'FAILED') { %><p><strong>The carrier refused the purchase.</strong> <%= state.labelOperation.error_message || 'Refresh rates after correcting the shipping account.' %></p>
+  <% } else { %><p>No label has been purchased. The parcel remains packed and inventory has not changed.</p><% } %>
+</section>
+
+<section class="rm-card" id="tracking"><h2>Tracking</h2><p>Current carrier status: <strong><%= shipment.tracking_status || 'Not tracking yet' %></strong></p>
+  <% if (shipment.tracking_number) { %><form method="post" action="/fulfilment/<%= shipment.id %>/tracking/refresh">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--quiet" type="submit">Check carrier now</button></form><% } %>
+  <% if (!state.events.length) { %><p>No carrier scans yet.</p><% } %>
+  <% state.events.forEach(function(event){ %><div class="rm-row"><span><strong><%= event.status %></strong><small><%= event.detail || '' %></small></span><time><%= event.occurred_at %></time></div><% }) %>
+</section>

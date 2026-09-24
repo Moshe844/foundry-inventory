@@ -5,6 +5,8 @@ const authService = require('../../domain/auth-service');
 const workspaceService = require('../../domain/workspace-service');
 const passwordRecovery = require('../../domain/password-recovery');
 const config = require('../../config');
+const { inTransaction } = require('../../db');
+const { requireText } = require('../../lib/util');
 const { asyncRoute } = require('../middleware');
 
 const router = express.Router();
@@ -70,10 +72,15 @@ router.post(
   asyncRoute(async (req, res) => {
     let created;
     try {
-      created = authService.createAccount(req.db, {
-        name: req.body.name,
-        email: req.body.email,
-        password: req.body.password,
+      created = inTransaction(req.db, () => {
+        const businessName = requireText(req.body.businessName, 'Business name', { max: 120 });
+        const account = authService.createAccount(req.db, {
+          name: req.body.name,
+          email: req.body.email,
+          password: req.body.password,
+        });
+        const inventory = workspaceService.createWorkspace(req.db, account.accountId, businessName);
+        return { ...account, ...inventory };
       });
     } catch (err) {
       return res.status(err.status || 400).render('auth/register', {
@@ -88,13 +95,14 @@ router.post(
     req.session.regenerate((err) => {
       if (err) throw err;
       req.session.accountId = created.accountId;
+      req.session.workspaceId = created.workspaceId;
       req.session.flash = [
         {
           type: 'success',
-          message: `Welcome to StockChief, ${created.name.split(' ')[0]}. Create your first inventory to begin.`,
+          message: 'Your first inventory is ready. Add your records or explore first.',
         },
       ];
-      req.session.save(() => res.redirect('/inventories'));
+      req.session.save(() => res.redirect('/onboarding'));
     });
     return undefined;
   })

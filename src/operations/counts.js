@@ -67,6 +67,15 @@ function nextDue(fromDate, frequencyDays) {
   return value.toISOString().slice(0,10);
 }
 
+function duePlans(db, workspaceId, { now = Date.now() } = {}) {
+  return db.prepare(`SELECT p.*,l.name AS location_name FROM inventory_count_plans p
+    JOIN locations l ON l.id=p.location_id
+    WHERE p.workspace_id=? AND p.active=1 AND p.next_due_date<=?
+      AND NOT EXISTS (SELECT 1 FROM inventory_count_campaigns c WHERE c.workspace_id=p.workspace_id
+        AND c.plan_id=p.id AND c.status NOT IN ('COMPLETED','CANCELLED'))
+    ORDER BY p.next_due_date,p.name`).all(workspaceId,new Date(now).toISOString().slice(0,10));
+}
+
 function createPlan(db,ctx,membership,input){
   permissions.assertCan(membership,permissions.APPROVE_COUNT_VARIANCE,'schedule inventory counts');
   return inTransaction(db,()=>{
@@ -78,10 +87,15 @@ function createPlan(db,ctx,membership,input){
     if(kind==='CYCLE'&&!skuIds.length)throw new ValidationError('Choose at least one product for a cycle-count plan.');
     skuIds.forEach((id)=>repo.requireSku(db,ctx.workspaceId,id));
     const id=newId('cntp'),at=nowIso();
+    const dueDate=trimOrNull(input.nextDueDate)||at.slice(0,10);
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(dueDate)||!Number.isFinite(Date.parse(`${dueDate}T00:00:00.000Z`))
+      ||new Date(`${dueDate}T00:00:00.000Z`).toISOString().slice(0,10)!==dueDate){
+      throw new ValidationError('Choose a valid first due date for the count plan.');
+    }
     db.prepare(`INSERT INTO inventory_count_plans
       (id,workspace_id,name,count_kind,location_id,frequency_days,next_due_date,blind_count,active,created_by_user_id,created_at,updated_at)
       VALUES (?,?,?,?,?,?,?,?,1,?,?,?)`).run(id,ctx.workspaceId,requireText(input.name,'Plan name'),kind,location.id,frequency,
-        trimOrNull(input.nextDueDate)||at.slice(0,10),input.blindCount===false||input.blindCount==='0'?0:1,ctx.actorId,at,at);
+        dueDate,input.blindCount===false||input.blindCount==='0'?0:1,ctx.actorId,at,at);
     const add=db.prepare('INSERT INTO inventory_count_plan_skus (plan_id,workspace_id,sku_id) VALUES (?,?,?)');
     skuIds.forEach((skuId)=>add.run(id,ctx.workspaceId,skuId));
     return requirePlan(db,ctx.workspaceId,id);
@@ -227,4 +241,4 @@ function analytics(db,workspaceId){return db.prepare(`SELECT s.code AS sku_code,
   JOIN inventory_count_campaigns c ON c.id=se.campaign_id JOIN skus s ON s.id=l.sku_id JOIN items i ON i.id=s.item_id
   WHERE l.workspace_id=? AND se.status='COMPLETED' AND l.variance IS NOT NULL AND l.variance<>0 ORDER BY c.completed_at DESC LIMIT 100`).all(workspaceId);}
 
-module.exports={createPlan,requirePlan,launchPlan,listPlans,createCampaign,recordCount,submit,startRecount,approve,requireSession,requireCampaign,list,analytics};
+module.exports={createPlan,requirePlan,launchPlan,listPlans,duePlans,createCampaign,recordCount,submit,startRecount,approve,requireSession,requireCampaign,list,analytics};

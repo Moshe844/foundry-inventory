@@ -342,6 +342,7 @@ async function send(db, ctx, messageId) {
   }
 
   const result = await require('./provider-service').sendMailboxMessage(db, ctx.workspaceId, message.connector_id, {
+    id: message.id,
     recipient: message.sender,
     subject: message.draft_subject,
     body: message.draft_body,
@@ -354,6 +355,7 @@ async function send(db, ctx, messageId) {
     WHERE id = ? AND workspace_id = ?`)
     .run(now, result?.externalMessageId || null, 'You replied, so the ball is with them.',
       ctx.actorId || null, now, messageId, ctx.workspaceId);
+  require('../attention/needs-you-count').invalidateNeedsYou(db, ctx.workspaceId);
   return getDraft(db, ctx.workspaceId, messageId);
 }
 

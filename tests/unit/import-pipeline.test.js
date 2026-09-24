@@ -515,6 +515,37 @@ test('a bad row fails on its own and the rest still import', async () => {
   assert.match(report.headline, /1 row skipped/);
 });
 
+test('an unexpected row failure rolls back every mutation made by that row', async () => {
+  const env = setup({ primaryArchetype: 'quantity', usesVariants: false });
+  const created = itemService.createItem(env.db, env.ctx, {
+    name: 'Safety Glove', baseCode: 'SAFE-GLOVE', trackingMode: 'quantity', hasVariants: false,
+  });
+  const { plan } = await analyse(env, [
+    'Item,SKU,Barcode,Qty,Location',
+    'Safety Glove,SAFE-GLOVE,009988776655,5,Main Warehouse',
+  ].join('\n'));
+  planService.approve(env.db, env.ctx, env.membership, plan.id);
+
+  const inventoryEngine = require('../../src/domain/inventory-engine');
+  const originalReceive = inventoryEngine.receive;
+  inventoryEngine.receive = () => { throw new Error('simulated process failure after row mutation began'); };
+  try {
+    assert.throws(
+      () => executor.execute(env.db, env.ctx, env.membership, plan.id),
+      /simulated process failure/
+    );
+  } finally {
+    inventoryEngine.receive = originalReceive;
+  }
+
+  const sku = env.db.prepare('SELECT barcode FROM skus WHERE id = ?').get(created.skuIds[0]);
+  assert.equal(sku.barcode, null, 'the barcode written earlier in the row must roll back');
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM movements WHERE workspace_id = ?').get(env.ctx.workspaceId).n, 0);
+  assert.equal(planService.get(env.db, env.ctx.workspaceId, plan.id).status, 'READY');
+  const execution = executor.latestExecution(env.db, env.ctx.workspaceId, plan.id);
+  assert.equal(execution.status, 'FAILED');
+});
+
 test('verification counts the inventory itself, not the import', async () => {
   const env = setup();
   const { plan, run } = await approveAndRun(env, CSV);

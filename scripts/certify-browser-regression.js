@@ -5,15 +5,36 @@ const config = require('../src/config');
 const { openDatabase } = require('../src/db');
 const checkpoints = require('../src/operations/checkpoints');
 
+if (!config.ai.configured) {
+  console.error('Browser certification requires a configured AI provider. Skipped live-AI suites cannot certify a release.');
+  process.exit(1);
+}
+
 const runs = Math.max(2, Number(process.argv[2] || 2));
 const files = [
   'tests/e2e/inventory.e2e.js', 'tests/e2e/foundry.e2e.js',
   'tests/e2e/attention.e2e.js', 'tests/e2e/workspaces.e2e.js',
   'tests/e2e/actions.e2e.js', 'tests/e2e/imports.e2e.js',
+  'tests/e2e/import-safety.e2e.js',
+  'tests/e2e/catalog-rules.e2e.js',
   'tests/e2e/purchasing.e2e.js', 'tests/e2e/onboarding.e2e.js',
+  'tests/e2e/purchasing-evidence.e2e.js',
+  'tests/e2e/onboarding-entry.e2e.js',
   'tests/e2e/autopilot.e2e.js', 'tests/e2e/autopilot-authority.e2e.js',
   'tests/e2e/payment-window.e2e.js',
+  'tests/e2e/payment-automation.e2e.js',
+  'tests/e2e/sales-shipping-money.e2e.js',
+  'tests/e2e/returns-shipping.e2e.js',
+  'tests/e2e/money-lifecycle.e2e.js',
+  'tests/e2e/connector-webhooks.e2e.js',
+  'tests/e2e/mail-replies.e2e.js',
   'tests/e2e/warehouse.e2e.js',
+  'tests/e2e/migration-scale.e2e.js',
+  'tests/e2e/seasoned-business.e2e.js',
+  'tests/e2e/operational-safety.e2e.js',
+  'tests/e2e/weekly-operations.e2e.js',
+  'tests/e2e/operations-review.e2e.js',
+  'tests/e2e/complete-business-day.e2e.js',
 ];
 let passed = 0;
 for (let index = 1; index <= runs; index += 1) {

@@ -44,8 +44,8 @@ test('ShipEngine translates carrier rates and labels without leaking provider sh
   try {
     const ctx = { shipengineApiKey: 'TEST_seller-only' };
     const quoted = await shipengine.quote(ctx, {
-      from: { name: 'Shop', line1: '1 Main St', city: 'Monroe', state: 'NY', postalCode: '10950' },
-      to: { name: 'Customer', line1: '2 Oak St', city: 'Austin', state: 'TX', postalCode: '78701' },
+      from: { name: 'Shop', phone: '845-555-0147', line1: '1 Main St', city: 'Monroe', state: 'NY', postalCode: '10950' },
+      to: { name: 'Customer', phone: '512-555-0148', line1: '2 Oak St', city: 'Austin', state: 'TX', postalCode: '78701' },
       packages: [{ weightGrams: 500 }],
     });
     assert.deepEqual(quoted, { providerShipmentIds: ['se-shipment'], rates: [{
@@ -56,6 +56,8 @@ test('ShipEngine translates carrier rates and labels without leaking provider sh
     const rateRequest = JSON.parse(calls[1].options.body);
     assert.deepEqual(rateRequest.rate_options.carrier_ids, ['se-carrier']);
     assert.equal(rateRequest.shipment.packages[0].weight.unit, 'gram');
+    assert.equal(rateRequest.shipment.ship_from.phone, '845-555-0147');
+    assert.equal(rateRequest.shipment.ship_to.phone, '512-555-0148');
 
     const bought = await shipengine.buy(ctx, { rateId: 'se-rate' });
     assert.equal(bought.labelUrl, 'https://labels.example/label.pdf');

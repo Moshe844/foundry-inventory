@@ -61,6 +61,29 @@ test('a message to a supplier or customer is understood as a message, whoever it
   assert.equal(intentService.deterministicInstruction('tell me what we have in the warehouse', context)?.lines?.[0]?.actionType === 'send_message', false);
 });
 
+test('ordinary incomplete email wording keeps the recipient and asks only for the missing words', () => {
+  for (const sentence of [
+    'Email Acme',
+    'Email to Acme',
+    'Send an email to Acme',
+    'Send Acme an email',
+    'Write an email to Acme',
+    'Draft an email to Acme',
+    'Compose a message to Acme',
+    'Contact Acme',
+    'Send an email to a supplier',
+  ]) {
+    const intent = read(sentence);
+    assert.equal(intent.lines.length, 1, sentence);
+    assert.equal(intent.lines[0].actionType, 'send_message', sentence);
+    assert.equal(intent.lines[0].messageBody, '', sentence);
+    assert.ok(intent.lines[0].recipient, sentence);
+  }
+  assert.equal(read('Send an email to Acme').lines[0].recipient, 'Acme');
+  assert.equal(read('Send Acme an email').lines[0].recipient, 'Acme');
+  assert.equal(read('Email to Acme').lines[0].recipient, 'Acme');
+});
+
 test('"the supplier" with one supplier on file is that supplier; with several it is a question with choices', () => {
   const { db } = makeDatabase();
   const w = seedWorkspace(db);
@@ -89,12 +112,13 @@ test('a plain movement that names a variant, not a product, is read in code and 
     'Move 15 Navy 4 from Main Warehouse to Downtown Store',
     'transfer 15 navy 4 from the main warehouse to the downtown store',
     'please move 15 Navy / 4 from Main Warehouse into Downtown Store',
+    'pls shift 15 Copper Elbow Main Warehouse to Downtown Store',
     'Take 3 Navy 4 out of Downtown Store',
   ]) {
     const intent = read(sentence);
     assert.equal(intent.lines.length, 1, sentence);
     assert.ok(['transfer', 'issue'].includes(intent.lines[0].actionType), sentence);
-    assert.match(intent.lines[0].item, /navy/i, sentence);
+    assert.match(intent.lines[0].item, /navy|copper elbow/i, sentence);
     assert.equal(intent.lines[0].quantity, intent.lines[0].actionType === 'transfer' ? 15 : 3, sentence);
   }
   // Still not read in code: a place StockChief does not have, or "all of them".
@@ -240,6 +264,9 @@ test('"how many X do we have" and "what did we pay for X" are the two plainest q
   assert.notEqual((plan('how many orders do we have') || {}).intent, 'stock_level');
   assert.notEqual((plan('how many products do we have') || {}).intent, 'stock_level');
   assert.notEqual((plan('what did we pay in total last month') || {}).intent, 'last_cost');
+  const shopifySummary = plan('How many Shopify products, variants, locations, and units on hand do we have right now?');
+  assert.equal(shopifySummary.intent, 'inventory_summary');
+  assert.equal(shopifySummary.entityQuery.toLowerCase(), 'shopify');
 });
 
 // Live flake: "What has been selling most this month?" → action, once.

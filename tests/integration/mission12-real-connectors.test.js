@@ -63,8 +63,35 @@ test('Connections UI offers real business providers and does not instruct owners
   assert.equal(page.status, 200);
   assert.match(text, /Selling/); assert.match(text, /Business systems/); assert.match(text, /Supplier communication/);
   assert.match(text, /Shopify/); assert.match(text, /Square/); assert.match(text, /Clover/); assert.match(text, /WooCommerce/);
+  assert.match(page.text, /data-oauth-connect="woocommerce"/);
   assert.match(text, /Your own software/); assert.match(text, /only asks you when something cannot be matched/);
   assert.doesNotMatch(text, /PowerShell|curl/i);
+  env.db.close();
+});
+
+test('invalid commerce store details fail in the popup without leaving false setup attempts', async () => {
+  const env = setup(); const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  const page = await agent.get('/settings/connections');
+  const csrf = csrfFrom(page.text);
+
+  const invalidShopify = await agent.post('/settings/connections/connect').type('form').send({
+    _csrf: csrf, providerType: 'shopify', shop: 'not a valid store!', popup: '1',
+  });
+  assert.equal(invalidShopify.status, 400);
+  assert.match(plain(invalidShopify.text), /Shopify was not connected/);
+  assert.match(plain(invalidShopify.text), /Enter your Shopify store name/);
+
+  const invalidWoo = await agent.post('/settings/connections/connect').type('form').send({
+    _csrf: csrf, providerType: 'woocommerce', storeUrl: 'not a URL', popup: '1',
+  });
+  assert.equal(invalidWoo.status, 400);
+  assert.match(plain(invalidWoo.text), /WooCommerce was not connected/);
+  assert.match(plain(invalidWoo.text), /Enter a valid store URL/);
+
+  assert.equal(env.db.prepare(`SELECT COUNT(*) AS n FROM workspace_connectors
+    WHERE workspace_id = ? AND provider_type IN ('shopify', 'woocommerce')`)
+    .get(env.workspace.workspaceId).n, 0);
   env.db.close();
 });
 
@@ -83,6 +110,20 @@ test('an abandoned OAuth placeholder never becomes a confusing connection card',
   await signIn(agent, env.workspace.account.email, env.workspace.account.password);
   const page = await agent.get('/settings/connections');
   assert.doesNotMatch(page.text, /con_abandoned_oauth/);
+  env.db.close();
+});
+
+test('a disconnected duplicate with preserved credentials is not presented as working now', async () => {
+  const env = setup();
+  const duplicate = addProvider(env, 'shopify', { shop: 'duplicate.myshopify.com' });
+  env.db.prepare(`UPDATE workspace_connectors SET status = 'disconnected', setup_status = 'DUPLICATE_CONNECTION',
+    credential_ref = 'connection_credentials:preserved', provider_account_id = 'duplicate.myshopify.com'
+    WHERE id = ?`).run(duplicate.id);
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  const page = await agent.get('/settings/connections');
+  assert.doesNotMatch(page.text, new RegExp(duplicate.id));
+  assert.doesNotMatch(plain(page.text), /Shopify Store.*Disconnected/);
   env.db.close();
 });
 
@@ -516,6 +557,31 @@ test('a partial Shopify webhook setup failure is visible instead of claiming a h
   }
 });
 
+test('successful Shopify webhook retry closes the earlier setup issue', async () => {
+  const env = setup(); const adapter = providers.get('shopify');
+  const originals = { direct: adapter.tryDirectAuthorization, register: adapter.registerWebhooks,
+    discover: adapter.discover };
+  try {
+    adapter.tryDirectAuthorization = async () => ({ credentials: { shop: 'scope-test.myshopify.com',
+      accessToken: 'encrypted-token' }, accountId: 'scope-test.myshopify.com', accountName: 'Scope Test',
+    capabilities: ['read_orders', 'read_fulfillments'] });
+    adapter.registerWebhooks = async () => [{ topic: 'FULFILLMENTS_CREATE', error: 'Missing scope.' }];
+    adapter.discover = async () => ({ products: [], locations: [] });
+    const first = await providerService.beginAuthorization(env.db, env.workspace.ctx,
+      { providerType: 'shopify', shop: 'scope-test' }, 'https://foundry.example.test');
+    adapter.registerWebhooks = async () => [{ topic: 'FULFILLMENTS_CREATE', id: 'webhook-1' }];
+    await providerService.beginAuthorization(env.db, env.workspace.ctx,
+      { providerType: 'shopify', shop: 'scope-test', connectorId: first.connectorId },
+      'https://foundry.example.test');
+    const issue = env.db.prepare(`SELECT status FROM connection_issues WHERE connector_id = ?
+      AND issue_type = 'CONNECTION_WEBHOOK_SETUP_FAILED'`).get(first.connectorId);
+    assert.equal(issue.status, 'RESOLVED');
+  } finally {
+    adapter.tryDirectAuthorization = originals.direct; adapter.registerWebhooks = originals.register;
+    adapter.discover = originals.discover; env.db.close();
+  }
+});
+
 test('connection lifecycle completes same-organization Shopify directly and redirects external stores to OAuth', async () => {
   const env = setup(); const adapter = providers.get('shopify');
   const originalDirect = adapter.tryDirectAuthorization; const originalDiscover = adapter.discover;
@@ -662,6 +728,48 @@ test('Shopify absolute order updates increase and release commitments without re
   assert.equal(final.status, 'CANCELLED'); assert.equal(final.totals.allocated, 0);
   assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.item.skuId, env.workspace.store.id), 30,
     'order snapshots change demand, not physical stock');
+  env.db.close();
+});
+
+test('Shopify out-of-order order updates retry and clear their false mapping exception', async () => {
+  const env = setup(); const connection = addProvider(env, 'shopify');
+  credentials.put(env.db, env.workspace.workspaceId, connection.id, 'provider', {
+    shop: 'mission12.myshopify.com', accessToken: 'encrypted-token',
+  });
+  connections.mapExternal(env.db, env.workspace.ctx, connection.id, {
+    entityType: 'sku', externalId: 'gid://shopify/ProductVariant/481729', foundryRecordId: env.item.skuId,
+  });
+  const endpoint = `/api/v1/connections/shopify/webhooks/${connection.id}`;
+  const send = (topic, delivery, payload) => {
+    const raw = JSON.stringify(payload);
+    return request(env.app).post(endpoint).set('X-Shopify-Topic', topic)
+      .set('X-Shopify-Webhook-Id', delivery)
+      .set('X-Shopify-Hmac-Sha256', hmac(process.env.SHOPIFY_CLIENT_SECRET, raw))
+      .set('Content-Type', 'application/json').send(raw);
+  };
+  const order = { id: 9200, name: '#1200', currency: 'USD', created_at: '2026-08-27T10:00:00Z',
+    updated_at: '2026-08-27T11:00:00Z', line_items: [{ variant_id: 481729, sku: 'TS-BLK-S', quantity: 4, price: '12.00' }] };
+
+  const updateFirst = await send('orders/updated', 'shop-out-of-order-update', order);
+  assert.equal(updateFirst.body.needsMapping, 1);
+  assert.equal(env.db.prepare(`SELECT status FROM connection_issues WHERE connector_id = ?
+    AND issue_type = 'UNKNOWN_SALES_ORDER'`).get(connection.id).status, 'OPEN');
+
+  const created = await send('orders/create', 'shop-out-of-order-create', {
+    ...order, updated_at: '2026-08-27T10:00:00Z', line_items: [{ ...order.line_items[0], quantity: 2 }],
+  });
+  assert.equal(created.body.accepted, 1);
+  assert.equal(created.body.retried, 1);
+  assert.equal(env.db.prepare(`SELECT status FROM connector_feed_events WHERE connector_id = ?
+    AND external_event_id = 'shop-out-of-order-update'`).get(connection.id).status, 'COMPLETED');
+  assert.equal(env.db.prepare(`SELECT status FROM connection_issues WHERE connector_id = ?
+    AND issue_type = 'UNKNOWN_SALES_ORDER'`).get(connection.id).status, 'RESOLVED');
+  env.db.prepare(`UPDATE connection_issues SET status = 'OPEN', resolved_at = NULL WHERE connector_id = ?
+    AND issue_type = 'UNKNOWN_SALES_ORDER'`).run(connection.id);
+  assert.equal(connections.get(env.db, env.workspace.workspaceId, connection.id).openIssues, 0,
+    'opening the connection heals a stale exception whose event is already completed');
+  const mapping = connections.mapping(env.db, env.workspace.workspaceId, connection.id, 'sales_order', '9200');
+  assert.equal(sales.getOrder(env.db, env.workspace.workspaceId, mapping.foundry_record_id).totals.allocated, 4);
   env.db.close();
 });
 
@@ -1135,4 +1243,171 @@ test('provider history reconciliation reports drift without rewriting inventory'
     assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.item.skuId, env.workspace.store.id), before);
     assert.ok(env.db.prepare("SELECT 1 FROM connection_issues WHERE connector_id = ? AND issue_type = 'RECONCILIATION_MISMATCH'").get(connection.id));
   } finally { adapter.historySummary = original; env.db.close(); }
+});
+
+test('Shopify webhook setup reuses current subscriptions and removes stale StockChief endpoints', async () => {
+  const adapter = providers.get('shopify'); const originalFetch = global.fetch;
+  const created = []; const deleted = [];
+  try {
+    global.fetch = async (_url, options) => {
+      const requestBody = JSON.parse(options.body);
+      if (requestBody.query.includes('StockChiefWebhooks')) return new Response(JSON.stringify({ data: {
+        webhookSubscriptions: { nodes: [
+          { id: 'hook-current', topic: 'ORDERS_CREATE', uri: 'https://current.test/api/v1/connections/shopify/webhooks/con_current' },
+          { id: 'hook-stale', topic: 'ORDERS_CANCELLED', uri: 'https://old.test/api/v1/connections/shopify/webhooks/con_old' },
+        ] },
+      } }), { status: 200, headers: { 'content-type': 'application/json' } });
+      if (requestBody.query.includes('AddWebhook')) {
+        created.push(requestBody.variables.topic);
+        return new Response(JSON.stringify({ data: { webhookSubscriptionCreate: {
+          userErrors: [], webhookSubscription: { id: `hook-${requestBody.variables.topic}` },
+        } } }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      if (requestBody.query.includes('RemoveWebhook')) {
+        deleted.push(requestBody.variables.id);
+        return new Response(JSON.stringify({ data: { webhookSubscriptionDelete: {
+          userErrors: [], deletedWebhookSubscriptionId: requestBody.variables.id,
+        } } }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      throw new Error('Unexpected Shopify GraphQL request.');
+    };
+    const result = await adapter.registerWebhooks({
+      credentials: { shop: 'test.myshopify.com', accessToken: 'token' },
+      webhookUrl: 'https://current.test/api/v1/connections/shopify/webhooks/con_current',
+    });
+    assert.ok(!created.includes('ORDERS_CREATE'));
+    assert.ok(created.includes('FULFILLMENTS_CREATE'));
+    assert.deepEqual(deleted, ['hook-stale']);
+    assert.ok(result.some((row) => row.id === 'hook-current' && row.existing));
+    assert.ok(result.some((row) => row.id === 'hook-stale' && row.removedStale));
+  } finally { global.fetch = originalFetch; }
+});
+
+test('WooCommerce webhook setup updates the current endpoint and removes stale StockChief endpoints', async () => {
+  const adapter = providers.get('woocommerce'); const originalFetch = global.fetch;
+  const calls = []; let created = 10;
+  try {
+    global.fetch = async (url, options = {}) => {
+      const target = String(url); calls.push({ target, method: options.method || 'GET' });
+      if (target.includes('/webhooks?per_page=100&page=1')) return new Response(JSON.stringify([
+        { id: 1, topic: 'order.created', delivery_url: 'https://current.test/api/v1/connections/woocommerce/webhooks/con_current' },
+        { id: 2, topic: 'order.updated', delivery_url: 'https://old.test/api/v1/connections/woocommerce/webhooks/con_old' },
+      ]), { status: 200, headers: { 'content-type': 'application/json', 'x-wp-totalpages': '1' } });
+      if (options.method === 'DELETE' && target.includes('/webhooks/2?force=true')) {
+        return new Response(JSON.stringify({ id: 2 }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      if (options.method === 'PUT' || options.method === 'POST') {
+        return new Response(JSON.stringify({ id: options.method === 'PUT' ? 1 : ++created }),
+          { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      throw new Error(`Unexpected WooCommerce request: ${target}`);
+    };
+    const result = await adapter.registerWebhooks({
+      credentials: { storeUrl: 'https://shop.test', consumerKey: 'key', consumerSecret: 'secret', webhookSecret: 'hook-secret' },
+      webhookUrl: 'https://current.test/api/v1/connections/woocommerce/webhooks/con_current',
+    });
+    assert.ok(calls.some((call) => call.method === 'PUT' && call.target.endsWith('/webhooks/1')));
+    assert.ok(calls.some((call) => call.method === 'DELETE' && call.target.endsWith('/webhooks/2?force=true')));
+    assert.ok(result.some((row) => row.id === 2 && row.removedStale));
+  } finally { global.fetch = originalFetch; }
+});
+
+test('a zero-event history match never claims a commerce connection is proven', async () => {
+  const env = setup(); const connection = addProvider(env, 'shopify');
+  credentials.put(env.db, env.workspace.workspaceId, connection.id, 'provider', { accessToken: 'secret' });
+  const now = new Date().toISOString();
+  env.db.prepare(`INSERT INTO connection_sync_runs
+    (id, workspace_id, connector_id, sync_kind, status, started_at, completed_at)
+    VALUES ('csync_zero_event', ?, ?, 'CATALOG_AND_LOCATIONS', 'COMPLETED', ?, ?)`)
+    .run(env.workspace.workspaceId, connection.id, now, now);
+  const adapter = providers.get('shopify'); const original = adapter.historySummary;
+  adapter.historySummary = async () => ({ operationalRecords: 0, periodStart: connection.created_at });
+  try {
+    const matched = await providerService.reviewHistory(env.db, env.workspace.workspaceId, connection.id);
+    assert.equal(matched.status, 'MATCHED');
+    const agent = request.agent(env.app);
+    await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+    const page = await agent.get(`/settings/connections/${connection.id}`);
+    const text = plain(page.text);
+    assert.doesNotMatch(text, /This connection is proven/);
+    assert.match(text, /Send one real event.*Run test/);
+    assert.match(text, /Check the history agrees.*Compare below/);
+  } finally { adapter.historySummary = original; env.db.close(); }
+});
+
+test('a Shopify webhook permission failure offers reauthorization on the same connection', async () => {
+  const env = setup(); const connection = addProvider(env, 'shopify', { shop: 'scope-test.myshopify.com' });
+  connections.issue(env.db, { workspaceId: env.workspace.workspaceId, connectorId: connection.id,
+    issueType: 'CONNECTION_WEBHOOK_SETUP_FAILED', fingerprint: `webhook-setup:${connection.id}`,
+    title: 'Shopify could not subscribe to every required event', detail: 'Missing read_fulfillments.',
+    resolutionHint: 'Approve the required provider permissions, then reconnect this account.' });
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  const page = await agent.get(`/settings/connections/${connection.id}`);
+  assert.match(page.text, /Reconnect Shopify and retry webhooks/);
+  assert.match(page.text, new RegExp(`name="connectorId" value="${connection.id}"`));
+  assert.match(page.text, /name="shop" value="scope-test\.myshopify\.com"/);
+  assert.match(page.text, /name="forceOAuth" value="1"/);
+  assert.match(page.text, /data-provider-reauthorize/);
+  env.db.close();
+});
+
+test('Shopify Dev Dashboard launch reuses the mapped connection for that store', async () => {
+  const env = setup();
+  const connection = addProvider(env, 'shopify', { shop: 'dashboard-launch.myshopify.com',
+    catalogBootstrap: { completedAt: new Date().toISOString() } });
+  const before = env.db.prepare("SELECT COUNT(*) AS n FROM workspace_connectors WHERE provider_type = 'shopify'").get().n;
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  const response = await agent.get('/settings/connections?shop=dashboard-launch.myshopify.com&host=signed-host');
+  assert.equal(response.status, 303);
+  const state = env.db.prepare(`SELECT connector_id FROM connection_authorization_states
+    WHERE workspace_id = ? AND provider_type = 'shopify' ORDER BY created_at DESC LIMIT 1`)
+    .get(env.workspace.workspaceId);
+  assert.equal(state.connector_id, connection.id);
+  const after = env.db.prepare("SELECT COUNT(*) AS n FROM workspace_connectors WHERE provider_type = 'shopify'").get().n;
+  assert.equal(after, before);
+  env.db.close();
+});
+
+test('duplicate provider accounts preserve history without leaving owner exceptions open', () => {
+  const env = setup();
+  const canonical = addProvider(env, 'shopify', { shop: 'same-store.myshopify.com' });
+  const duplicate = addProvider(env, 'shopify', { shop: 'same-store.myshopify.com' });
+  env.db.prepare(`UPDATE workspace_connectors SET provider_account_id = 'same-store.myshopify.com'
+    WHERE id IN (?, ?)`).run(canonical.id, duplicate.id);
+  connections.issue(env.db, { workspaceId: env.workspace.workspaceId, connectorId: duplicate.id,
+    issueType: 'UNKNOWN_SKU', fingerprint: `unknown-sku:${duplicate.id}:provider-variant`,
+    title: 'Old duplicate mapping request', detail: 'This belongs to the duplicate connector.',
+    resolutionHint: 'Use the active connection.' });
+
+  assert.equal(providerService.deactivateDuplicateProviderAccounts(env.db, env.workspace.workspaceId,
+    canonical.id, 'shopify', 'same-store.myshopify.com'), 1);
+  const duplicateRow = env.db.prepare('SELECT status, setup_status FROM workspace_connectors WHERE id = ?')
+    .get(duplicate.id);
+  assert.deepEqual(duplicateRow, { status: 'disconnected', setup_status: 'DUPLICATE_CONNECTION' });
+  assert.equal(env.db.prepare('SELECT status FROM connection_issues WHERE connector_id = ?').get(duplicate.id).status,
+    'RESOLVED');
+
+  env.db.prepare(`UPDATE connection_issues SET status = 'OPEN', resolved_at = NULL WHERE connector_id = ?`)
+    .run(duplicate.id);
+  connections.refreshHealth(env.db, env.workspace.workspaceId);
+  assert.equal(env.db.prepare('SELECT status FROM connection_issues WHERE connector_id = ?').get(duplicate.id).status,
+    'RESOLVED', 'health refresh heals duplicate issues created by older versions');
+  env.db.close();
+});
+
+test('Ask answers a connected commerce inventory summary from mapped business records', async () => {
+  const env = setup(); const connection = addProvider(env, 'shopify', { shop: 'mapped-store.myshopify.com' });
+  connections.mapExternal(env.db, env.workspace.ctx, connection.id, {
+    entityType: 'sku', externalId: 'gid://shopify/ProductVariant/1', foundryRecordId: env.item.skuId,
+  });
+  connections.mapExternal(env.db, env.workspace.ctx, connection.id, {
+    entityType: 'location', externalId: 'gid://shopify/Location/1', foundryRecordId: env.workspace.store.id,
+  });
+  const result = await queryPlanner.ask(env.db, env.workspace.workspaceId,
+    'How many Shopify products, variants, locations, and units on hand do we have right now?');
+  assert.equal(result.plan.intent, 'inventory_summary');
+  assert.match(result.answer, /Shopify Store.*1 active product.*1 tracked variant.*30 units on hand across 1 active location/i);
+  env.db.close();
 });

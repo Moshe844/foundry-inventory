@@ -54,7 +54,7 @@ test('sign in fails for a wrong password and succeeds for the right one', async 
   assert.match(home.text, /class="rm-tab is-on" href="\/"/);
 });
 
-test('registration creates an account, then the customer creates an inventory', async () => {
+test('registration creates an account and its first real inventory before source selection', async () => {
   const store = makeApp();
   const agent = request.agent(store.app);
   const page = await agent.get('/register');
@@ -63,26 +63,21 @@ test('registration creates an account, then the customer creates an inventory', 
   const res = await agent.post('/register').type('form').send({
     _csrf: token,
     name: 'Robin Field',
+    businessName: 'Fresh Co',
     email: 'robin@fresh.test',
     password: 'password123',
   });
   assert.equal(res.status, 302);
-  assert.equal(res.headers.location, '/inventories');
-  assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM workspaces').get().n, 0);
-
-  const inventories = await agent.get('/inventories');
-  assert.match(inventories.text, /New Inventory/);
-  const created = await agent.post('/inventories').type('form').send({
-    _csrf: csrfFrom(inventories.text),
-    name: 'Fresh Co',
-  });
-  assert.equal(created.status, 303);
-  assert.equal(created.headers.location, '/onboarding');
+  assert.equal(res.headers.location, '/onboarding');
+  assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM workspaces').get().n, 1);
+  const inventory = store.db.prepare('SELECT name, data_mode FROM workspaces').get();
+  assert.equal(inventory.name, 'Fresh Co');
+  assert.equal(inventory.data_mode, 'production');
 
   const chooser = await agent.get('/onboarding');
   assert.equal(chooser.status, 200);
-  assert.match(chooser.text, /Where should StockChief get your inventory from/);
-  assert.match(chooser.text, /Enter it in StockChief/);
+  assert.match(chooser.text, /Add your inventory/);
+  assert.match(chooser.text, /Enter it manually/);
 
   // The Mission 1 console is still there underneath, and still empty.
   const locations = await agent.get('/locations');
@@ -95,11 +90,59 @@ test('registration creates an account, then the customer creates an inventory', 
   const res2 = await other.post('/register').type('form').send({
     _csrf: csrfFrom(page2.text),
     name: 'Someone',
+    businessName: 'Another Co',
     email: 'robin@fresh.test',
     password: 'password123',
   });
   assert.equal(res2.status, 400);
   assert.match(res2.text, /already uses that email/);
+});
+
+test('adding the first location resumes the blocked stock receipt and opens its review', async () => {
+  const store = makeApp();
+  const workspace = seedWorkspace(store.db);
+  const shoes = makeQuantityItem(store.db, workspace.ctx, { name: 'Shoes', baseCode: 'SHOE-1' });
+  store.db.prepare('DELETE FROM locations WHERE workspace_id = ?').run(workspace.workspaceId);
+  const agent = request.agent(store.app);
+  await signIn(agent, workspace.account.email, workspace.account.password);
+  const instruction = 'I received 50 shoes';
+  const page = await agent.get(`/locations?resume=${encodeURIComponent(instruction)}`);
+
+  assert.match(page.text, /After you add this location, StockChief will continue/);
+  assert.match(page.text, /I received 50 shoes/);
+
+  const created = await agent.post('/locations').type('form').send({
+    _csrf: csrfFrom(page.text),
+    name: 'Main Warehouse',
+    kind: 'warehouse',
+    resumeInstruction: instruction,
+  });
+
+  assert.equal(created.status, 303);
+  assert.match(created.headers.location, /^\/actions\//);
+  const proposal = store.db.prepare(
+    "SELECT action_type, status FROM action_proposals WHERE workspace_id = ? ORDER BY created_at DESC LIMIT 1"
+  ).get(workspace.workspaceId);
+  assert.deepEqual(proposal, { action_type: 'receive', status: 'AWAITING_APPROVAL' });
+  assert.equal(repo.getSkuTotal(store.db, workspace.workspaceId, shoes.skuId), 0,
+    'resuming prepares the receipt for review; it does not execute it');
+  assert.match((await agent.get(created.headers.location)).text, /50/);
+});
+
+test('signup requires a valid business name without leaving a partial account or inventory', async () => {
+  const store = makeApp();
+  const agent = request.agent(store.app);
+  for (const businessName of [undefined, '   ', 'x'.repeat(121)]) {
+    const form = await agent.get('/register');
+    const response = await agent.post('/register').type('form').send({
+      _csrf: csrfFrom(form.text), businessName, name: 'Robin Field',
+      email: 'incomplete@fresh.test', password: 'password123',
+    });
+    assert.equal(response.status, 400);
+    assert.match(plain(response.text), /Business name (is required|must be 120 characters or fewer)/);
+    assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM accounts').get().n, 0);
+    assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM workspaces').get().n, 0);
+  }
 });
 
 test('state-changing requests without a valid CSRF token are refused', async () => {
@@ -270,8 +313,8 @@ test('every main nav destination renders where it says, even when empty', async 
 
   // And Overview says what is actually true about this inventory.
   const overview = plain((await agent.get('/')).text);
-  assert.match(overview, /This inventory is empty/);
-  assert.match(overview, /Set it up with StockChief/);
+  assert.match(overview, /first records/);
+  assert.match(overview, /Add a source/);
   assert.ok(!overview.includes("Today's briefing"), 'no briefing about nothing');
 });
 

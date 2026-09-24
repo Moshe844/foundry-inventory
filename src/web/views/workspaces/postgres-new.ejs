@@ -1,0 +1,7 @@
+<section class="rm-head"><div><p class="rm-eyebrow">New inventory</p><h1>Name this operation</h1>
+  <p class="rm-lede">Use the business, site, or programme name—not a warehouse inside it. You can add locations next.</p></div></section>
+<section class="rm-card"><% if(typeof error!=='undefined'&&error){ %><p class="rm-note rm-note--warn"><%= error %></p><% } %>
+  <form method="post" action="/inventories" class="rm-form-grid"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <label>Inventory name<input name="name" required maxlength="120" value="<%= form.name||'' %>" placeholder="e.g. Northeast operation"></label>
+    <div><button class="rm-btn" type="submit">Choose a source</button></div>
+  </form></section>

@@ -98,8 +98,8 @@ function afterMovement(db, workspaceId, skuIds, trigger = 'movement', options = 
 }
 
 /** Full re-evaluation for one workspace. */
-function refresh(db, workspaceId, trigger = 'manual') {
-  return attention.evaluate(db, workspaceId, { trigger });
+function refresh(db, workspaceId, trigger = 'manual', options = {}) {
+  return attention.evaluate(db, workspaceId, { ...options, trigger });
 }
 
 /**

@@ -7,11 +7,11 @@ const ejs = require('ejs');
 
 const views = path.join(__dirname, '..', '..', 'src', 'web', 'views', 'connections');
 
-test('Connections presents Stripe as one top-level sign-in flow, without nested or embedded setup', async () => {
+test('Connections presents Stripe as one top-level OAuth flow when configured', async () => {
   const html = await ejs.renderFile(path.join(views, 'index.ejs'), {
     connections: [],
     paymentAccount: { connected: false, source: null, because: 'No payment account is connected.' },
-    paymentConnect: { connected: false, available: true, embedded: true, testMode: true },
+    paymentConnect: { connected: false, available: true, flow: 'oauth', embedded: true, testMode: true },
     paymentWebhookUrl: 'https://foundry.example.test/webhooks/payments/stripe/workspace',
     paymentReturnOrigin: 'https://foundry.example.test',
     currentWorkspaceId: 'wsp_example',
@@ -29,6 +29,9 @@ test('Connections presents Stripe as one top-level sign-in flow, without nested 
   assert.match(html, /data-stripe-connect/);
   assert.match(html, /window\.open\(link\.href, 'foundry-stripe-connect'/);
   assert.match(html, /popup=yes,width=620,height=760/);
+  assert.match(html, /showPopupBlocked\(link, 'Stripe'\)/);
+  assert.match(html, /Allow pop-ups for this site and try again/);
+  assert.doesNotMatch(html, /window\.location\.assign\(link\.href\)/);
   assert.match(html, /Stripe is in test mode on this installation/);
   assert.match(html, /fetch\('\/settings\/connections\/payments\/state'/);
   assert.match(html, /window\.setInterval/);
@@ -42,11 +45,11 @@ test('Connections presents Stripe as one top-level sign-in flow, without nested 
   assert.doesNotMatch(html, /Paste a secret key instead/);
 });
 
-test('Connections never replaces missing OAuth with onboarding or API-key entry', async () => {
+test('Connections presents hosted onboarding as business-owned Stripe setup', async () => {
   const html = await ejs.renderFile(path.join(views, 'index.ejs'), {
     connections: [],
     paymentAccount: { connected: false, source: null, because: 'No payment account is connected.' },
-    paymentConnect: { connected: false, available: false, embedded: true },
+    paymentConnect: { connected: false, available: true, flow: 'hosted', embedded: true, testMode: true },
     paymentWebhookUrl: 'https://foundry.example.test/webhooks/payments/stripe/workspace',
     paymentReturnOrigin: 'https://foundry.example.test',
     currentWorkspaceId: 'wsp_example',
@@ -55,9 +58,10 @@ test('Connections never replaces missing OAuth with onboarding or API-key entry'
     helpers: { icon() { return ''; }, timeAgo() { return ''; } },
   });
 
-  assert.match(html, /Stripe account sign-in is not ready/);
-  assert.match(html, /will not[\s\S]*new-account application/);
-  assert.doesNotMatch(html, /href="\/settings\/connections\/payments\/start"/);
+  assert.match(html, /Create sandbox merchant account/);
+  assert.match(html, /account belongs to the business/);
+  assert.match(html, /pays out to its bank/);
+  assert.match(html, /href="\/settings\/connections\/payments\/start"/);
   assert.doesNotMatch(html, /name="secretKey"/);
 });
 
@@ -67,7 +71,7 @@ test('an unfinished hosted attempt is not presented as a connected Stripe accoun
     paymentAccount: { connected: true, source: 'connect', chargesEnabled: false,
       liveMode: false, displayName: 'Example', accountId: 'acct_example',
       because: 'Stripe is not accepting charges.' },
-    paymentConnect: { connected: true, available: true, embedded: false, unfinished: true },
+    paymentConnect: { connected: true, available: true, flow: 'hosted', embedded: false, unfinished: true },
     paymentWebhookUrl: '', paymentReturnOrigin: '', workspaceName: 'Example Inventory',
     currentWorkspaceId: 'wsp_example',
     providerCatalog: [], newConnectionToken: null, currentUser: { role: 'owner' },
@@ -77,8 +81,30 @@ test('an unfinished hosted attempt is not presented as a connected Stripe accoun
   assert.match(html, /Unfinished Stripe setup/);
   assert.match(html, /new-account onboarding/);
   assert.match(html, /Discard unfinished setup/);
-  assert.match(html, /Connect existing Stripe account/);
+  assert.match(html, /Continue Stripe setup/);
   assert.doesNotMatch(html, /Connected to Example/);
+});
+
+test('a connected test account that cannot take charges can resume Stripe setup', async () => {
+  const html = await ejs.renderFile(path.join(views, 'index.ejs'), {
+    connections: [],
+    paymentAccount: { connected: true, source: 'connect', chargesEnabled: false,
+      liveMode: false, displayName: 'Example', accountId: 'acct_example',
+      because: 'Stripe is not accepting charges.' },
+    paymentConnect: { connected: true, available: true, flow: 'oauth', embedded: false,
+      unfinished: false, testMode: true },
+    paymentWebhookUrl: '', paymentReturnOrigin: '', workspaceName: 'Example Inventory',
+    currentWorkspaceId: 'wsp_example',
+    providerCatalog: [], newConnectionToken: null, currentUser: { role: 'owner' },
+    csrfToken: 'test-csrf', helpers: { icon() { return ''; }, timeAgo() { return ''; } },
+  });
+
+  assert.match(html, /Connected to Example/);
+  assert.match(html, /Finish Stripe sandbox setup/);
+  assert.match(html, /href="https:\/\/dashboard\.stripe\.com\/acct_example\/test\/account\/status"/);
+  assert.match(html, /data-stripe-require-charges/);
+  assert.match(html, /requireCharges \? !status\.chargesEnabled : !status\.connected/);
+  assert.doesNotMatch(html, /Discard unfinished setup/);
 });
 
 test('Stripe tab paints a useful loading state before StockChief asks Stripe for the URL', async () => {

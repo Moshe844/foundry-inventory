@@ -27,6 +27,7 @@ test.after(cleanupAll);
 
 // The books open the day the test runs; a date before that is refused, so fixtures are dated today.
 const TODAY = new Date().toISOString().slice(0, 10);
+const LIFECYCLE_DATE = '2026-09-12';
 
 test('a confirmed unpaid order is visible as customer money without becoming earned revenue', () => {
   const { db } = makeDatabase();
@@ -102,7 +103,7 @@ test('Mission 14 owner accounting proves all twenty required lifecycle scenarios
   });
   await t.test('05 supplier invoice entered but unpaid', () => {
     const draft = payables.createDraft(db, workspace.ctx, membership, { supplierId: supplier.id,
-      purchaseOrderId: po.id, supplierInvoiceNumber: 'LIFE-INV-1', issueDate: TODAY,
+      purchaseOrderId: po.id, supplierInvoiceNumber: 'LIFE-INV-1', issueDate: LIFECYCLE_DATE,
       dueDate: '2026-09-20', sourceKey: 'life-bill-1', lines: [{ description: '100 Lifecycle Shirts',
         quantity: 100, unitCostMinor: 1000, itemId: product.itemId, skuId: product.skuId,
         purchaseOrderLineId: po.lines[0].id }] });
@@ -111,14 +112,14 @@ test('Mission 14 owner accounting proves all twenty required lifecycle scenarios
   });
   await t.test('06 supplier invoice partially paid', () => {
     payments.record(db, workspace.ctx, membership, { direction: 'SUPPLIER_PAYMENT',
-      supplierId: supplier.id, paymentDate: TODAY, amountMinor: 40_000,
+      supplierId: supplier.id, paymentDate: LIFECYCLE_DATE, amountMinor: 40_000,
       sourceKey: 'life-supplier-pay-1', allocations: [{ billId: bill.id, amountMinor: 40_000 }] });
     bill = payables.requireBill(db, workspace.workspaceId, bill.id);
     assert.equal(bill.status, 'PARTIALLY_PAID'); assert.equal(bill.balance_minor, 60_000);
   });
   await t.test('07 supplier invoice fully paid', () => {
     payments.record(db, workspace.ctx, membership, { direction: 'SUPPLIER_PAYMENT',
-      supplierId: supplier.id, paymentDate: TODAY, amountMinor: 60_000,
+      supplierId: supplier.id, paymentDate: LIFECYCLE_DATE, amountMinor: 60_000,
       sourceKey: 'life-supplier-pay-2', allocations: [{ billId: bill.id, amountMinor: 60_000 }] });
     bill = payables.requireBill(db, workspace.workspaceId, bill.id);
     assert.equal(bill.status, 'PAID'); assert.equal(bill.balance_minor, 0);
@@ -135,14 +136,14 @@ test('Mission 14 owner accounting proves all twenty required lifecycle scenarios
   });
   await t.test('09 customer partially pays', () => {
     payments.record(db, workspace.ctx, membership, { direction: 'CUSTOMER_RECEIPT',
-      customerId: invoice.customer_id, paymentDate: TODAY, amountMinor: 5_000,
+      customerId: invoice.customer_id, paymentDate: LIFECYCLE_DATE, amountMinor: 5_000,
       sourceKey: 'life-customer-pay-1', allocations: [{ invoiceId: invoice.id, amountMinor: 5_000 }] });
     invoice = db.prepare('SELECT * FROM accounting_customer_invoices WHERE id = ?').get(invoice.id);
     assert.equal(invoice.status, 'PARTIALLY_PAID'); assert.equal(invoice.balance_minor, 15_000);
   });
   await t.test('10 customer fully pays', () => {
     payments.record(db, workspace.ctx, membership, { direction: 'CUSTOMER_RECEIPT',
-      customerId: invoice.customer_id, paymentDate: TODAY, amountMinor: 15_000,
+      customerId: invoice.customer_id, paymentDate: LIFECYCLE_DATE, amountMinor: 15_000,
       sourceKey: 'life-customer-pay-2', allocations: [{ invoiceId: invoice.id, amountMinor: 15_000 }] });
     invoice = db.prepare('SELECT * FROM accounting_customer_invoices WHERE id = ?').get(invoice.id);
     assert.equal(invoice.status, 'PAID'); assert.equal(invoice.balance_minor, 0);

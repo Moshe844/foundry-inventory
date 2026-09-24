@@ -76,7 +76,24 @@ function list(db, workspaceId, options = {}) {
   ).all(workspaceId).map((row) => hydrate(db, row, options.now));
 }
 
+function resolveCompletedEventIssues(db, workspaceId, connectorId = null) {
+  const now = nowIso();
+  const connectorFilter = connectorId ? ' AND connector_id = ?' : '';
+  const params = connectorId ? [now, now, workspaceId, connectorId] : [now, now, workspaceId];
+  db.prepare(`UPDATE connection_issues SET status = 'RESOLVED', resolved_at = ?, updated_at = ?
+    WHERE workspace_id = ?${connectorFilter} AND status = 'OPEN'
+      AND (issue_type = 'EVENT_FAILED' OR issue_type LIKE 'UNKNOWN_%')
+      AND EXISTS (
+        SELECT 1 FROM connector_feed_events event
+        WHERE event.workspace_id = connection_issues.workspace_id
+          AND event.connector_id = connection_issues.connector_id
+          AND event.external_event_id = connection_issues.external_event_id
+          AND event.status = 'COMPLETED'
+      )`).run(...params);
+}
+
 function get(db, workspaceId, connectorId) {
+  resolveCompletedEventIssues(db, workspaceId, connectorId);
   const row = db.prepare('SELECT * FROM workspace_connectors WHERE workspace_id = ? AND id = ?')
     .get(workspaceId, connectorId);
   if (!row) throw new NotFoundError('Connection not found.');
@@ -200,6 +217,9 @@ function disconnect(db, workspaceId, connectorId) {
       .run(now, workspaceId, connectorId);
     db.prepare('DELETE FROM connection_credentials WHERE workspace_id = ? AND connector_id = ?')
       .run(workspaceId, connectorId);
+    db.prepare(`UPDATE connection_issues SET status = 'RESOLVED', resolved_at = ?, updated_at = ?
+      WHERE workspace_id = ? AND connector_id = ? AND status = 'OPEN'`)
+      .run(now, now, workspaceId, connectorId);
   });
   return get(db, workspaceId, connectorId);
 }
@@ -305,6 +325,13 @@ function addEmailRule(db, ctx, connectorId, input) {
 
 function refreshHealth(db, workspaceId, options = {}) {
   const at = Number(options.now || Date.now());
+  resolveCompletedEventIssues(db, workspaceId);
+  const now = nowIso();
+  db.prepare(`UPDATE connection_issues SET status = 'RESOLVED', resolved_at = ?, updated_at = ?
+    WHERE workspace_id = ? AND status = 'OPEN' AND connector_id IN (
+      SELECT id FROM workspace_connectors
+      WHERE workspace_id = ? AND status = 'disconnected' AND setup_status = 'DUPLICATE_CONNECTION'
+    )`).run(now, now, workspaceId, workspaceId);
   for (const connection of list(db, workspaceId, { now: at })) {
     if (connection.status !== 'connected' || connection.expected_interval_minutes <= 0) continue;
     const baseline = latestConnectionEvidence(connection);

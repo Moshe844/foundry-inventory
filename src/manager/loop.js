@@ -13,9 +13,11 @@ const outcomeLearning = require('../learning/service');
 
 function run(db, ctx, membership, options = {}) {
   const workspaceId = ctx.workspaceId;
+  const state = modes.ensure(db, workspaceId);
+  const canExecute = state.canAct && !options.planOnly && !options.prepareOnly;
   const recoveredTriggers = triggers.recover(db);
   const recoveredInvestigations = investigations.recover(db, workspaceId);
-  const recoveredRepairs = repairs.recover(db, ctx, membership);
+  const recoveredRepairs = repairs.recover(db, ctx, membership, { readOnly: !canExecute });
   // Interrupted work becomes a durable repair case before anything decides
   // what to do with it. A prior successful execution can be reconciled and
   // verified automatically; an unknown outcome remains one owner decision.
@@ -27,7 +29,7 @@ function run(db, ctx, membership, options = {}) {
       affectedRecords: { workItemId: item.id },
       idempotencyKey: `repair:work-item:${item.id}`,
     }).repairCase;
-    if (assessed.status === 'SIMULATED') {
+    if (canExecute && assessed.status === 'SIMULATED') {
       try {
         const governed = repairs.executeAutonomously(db, ctx, membership, assessed.id);
         recoveredRepairs.push(repairs.get(db, workspaceId,
@@ -36,16 +38,14 @@ function run(db, ctx, membership, options = {}) {
       catch { /* The failed case itself is now the durable Needs You item. */ }
     }
   }
-  const state = modes.ensure(db, workspaceId);
   let work;
   const globallySuspended = state.suspended && !state.suspendedScope;
   if (state.paused || globallySuspended || state.mode === modes.MODES.OBSERVE) {
-    const refreshed = reevaluate.refresh(db, workspaceId, options.trigger || 'manager');
+    const refreshed = reevaluate.refresh(db, workspaceId, options.trigger || 'manager', { now: options.now });
     work = { readOnly: true, opened: refreshed.opened, resolved: refreshed.resolved, executed: 0, planned: 0 };
   } else {
-    work = options.planOnly
-      ? (() => { const planned = runner.planWork(db, ctx, membership, options); return { planned: (planned.created || []).length, executed: 0, planId: planned.planId }; })()
-      : runner.run(db, ctx, membership, { ...options, skipRecovery: true });
+    work = runner.run(db, ctx, membership, { ...options, skipRecovery: true,
+      prepareOnly: Boolean(options.planOnly || options.prepareOnly) });
   }
 
   const investigated = [];
@@ -57,7 +57,7 @@ function run(db, ctx, membership, options = {}) {
   // grant can promote a proposal here; every actual write still goes through
   // the deterministic domain adapter owned by the affected setting.
   let learning = null;
-  try { learning = outcomeLearning.run(db, workspaceId, { ...options, applyAuthorized:true }); }
+  try { learning = outcomeLearning.run(db, workspaceId, { ...options, applyAuthorized:canExecute }); }
   catch { learning = null; }
   const dailyBrief = brief.build(db, workspaceId, { now: options.now || Date.now() });
   return { ...work, recoveredTriggers, recoveredInvestigations, recoveredRepairs: recoveredRepairs.length,

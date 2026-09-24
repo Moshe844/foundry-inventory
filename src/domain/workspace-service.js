@@ -21,6 +21,15 @@ const { nowIso } = require('../lib/util');
  * Creates an inventory for this account and makes them its owner.
  * Checked against the account's plan before anything is written.
  */
+function ensureFirstWorkspace(db, accountId) {
+  return inTransaction(db, () => {
+    if (db.prepare('SELECT 1 FROM account_inventory_onboarding WHERE account_id = ?').get(accountId)) return null;
+    if (db.prepare('SELECT 1 FROM users WHERE account_id = ? LIMIT 1').get(accountId)) return null;
+    if (db.prepare('SELECT 1 FROM workspaces WHERE owner_account_id = ? LIMIT 1').get(accountId)) return null;
+    return createWorkspace(db, accountId, 'My inventory');
+  });
+}
+
 function createWorkspace(db, accountId, name, options = {}) {
   return inTransaction(db, () => {
     entitlements.assertWithin(db, { accountId }, 'workspaces');
@@ -173,6 +182,7 @@ function leaveWorkspace(db, workspaceId, accountId) {
 }
 
 module.exports = {
+  ensureFirstWorkspace,
   createWorkspace,
   listForAccount,
   resolveForAccount,

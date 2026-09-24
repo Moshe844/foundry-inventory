@@ -1,0 +1,2276 @@
+{
+  "generatedAt": "2026-09-22T22:07:55.175Z",
+  "runs": {
+    "engine": {
+      "ok": true,
+      "files": [
+        "tests/integration/accounting-controls.test.js",
+        "tests/integration/accounting-mission14-acceptance.test.js",
+        "tests/integration/accounting-operational-events.test.js",
+        "tests/integration/accounting-owner-lifecycles.test.js",
+        "tests/integration/autopilot-authority.test.js",
+        "tests/integration/autopilot-loop.test.js",
+        "tests/integration/concurrency.test.js",
+        "tests/integration/continuous-manager.test.js",
+        "tests/integration/guidance-http.test.js",
+        "tests/integration/mission11-connections.test.js",
+        "tests/integration/mission12-real-connectors.test.js",
+        "tests/integration/mission12-supplier-communication.test.js",
+        "tests/integration/mission16-document-meaning.test.js",
+        "tests/integration/mission16-supplier-invoice.test.js",
+        "tests/integration/navigation-http.test.js",
+        "tests/integration/purchasing-http.test.js",
+        "tests/integration/sales-orders-http.test.js",
+        "tests/integration/search-http.test.js",
+        "tests/unit/accounting-ledger.test.js",
+        "tests/unit/accounting-opening-balances.test.js",
+        "tests/unit/accounting-queries.test.js",
+        "tests/unit/accounting-subledgers.test.js",
+        "tests/unit/attention-detection.test.js",
+        "tests/unit/document-intake.test.js",
+        "tests/unit/import-pipeline.test.js",
+        "tests/unit/launch-migration-scale.test.js",
+        "tests/unit/manager.test.js",
+        "tests/unit/mission10-sales-orders.test.js",
+        "tests/unit/mission14-customer-notices.test.js",
+        "tests/unit/mission14-prepared-replies.test.js",
+        "tests/unit/mission15-payment-collection.test.js",
+        "tests/unit/mission15-payment-terms.test.js",
+        "tests/unit/mission16-order-from-email.test.js",
+        "tests/unit/mission16-payment-automation.test.js",
+        "tests/unit/mission2-provenance.test.js",
+        "tests/unit/mission4-runtime.test.js",
+        "tests/unit/mission5-warehouse.test.js",
+        "tests/unit/mission8-operations.test.js",
+        "tests/unit/order-payment-link.test.js",
+        "tests/unit/payment-intent.test.js",
+        "tests/unit/purchasing.test.js",
+        "tests/unit/quantity.test.js",
+        "tests/unit/shipping-manager-completion.test.js",
+        "tests/unit/shipping-rules-and-notices.test.js",
+        "tests/unit/tenancy.test.js"
+      ],
+      "status": 0,
+      "error": null
+    },
+    "browser": {
+      "ok": true,
+      "files": [
+        "tests/e2e/imports.e2e.js",
+        "tests/e2e/inventory.e2e.js",
+        "tests/e2e/onboarding-entry.e2e.js",
+        "tests/e2e/payment-window.e2e.js",
+        "tests/e2e/purchasing.e2e.js"
+      ],
+      "status": 0,
+      "error": null
+    }
+  },
+  "results": [
+    {
+      "id": 1,
+      "name": "Completely empty workspace",
+      "setup": "Register a new business with no products, locations, or history.",
+      "expected": "The UI explains the next useful step without outside instructions.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/e2e/onboarding-entry.e2e.js",
+          "title": "skip opens a usable empty app with a durable source prompt and no fake back link",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "browser/local-deterministic: “skip opens a usable empty app with a durable source prompt and no fake back link” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "browser/local-deterministic: “skip opens a usable empty app with a durable source prompt and no fake back link” passed."
+      ]
+    },
+    {
+      "id": 2,
+      "name": "Small inventory setup",
+      "setup": "Import a small one-location catalogue with opening quantities.",
+      "expected": "Balances and opening movements agree.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/e2e/imports.e2e.js",
+          "title": "4. the stock is real, and every unit has a movement",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "browser/local-deterministic: “4. the stock is real, and every unit has a movement” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "browser/local-deterministic: “4. the stock is real, and every unit has a movement” passed."
+      ]
+    },
+    {
+      "id": 3,
+      "name": "Variant-heavy product",
+      "setup": "Create and stock multiple variants under one product.",
+      "expected": "Each SKU remains independently stockable.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/e2e/inventory.e2e.js",
+          "title": "variant item: two variants are received and stay independent",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "browser/local-deterministic: “variant item: two variants are received and stay independent” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "browser/local-deterministic: “variant item: two variants are received and stay independent” passed."
+      ]
+    },
+    {
+      "id": 4,
+      "name": "Opening inventory PDF",
+      "setup": "Read an image-only PDF and treat stated opening stock as opening equity.",
+      "expected": "Products and positions are recognized without inventing purchasing activity.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/document-intake.test.js",
+          "title": "an image-only scanned PDF is rendered and read with local OCR",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “an image-only scanned PDF is rendered and read with local OCR” passed."
+        },
+        {
+          "kind": "test",
+          "file": "tests/integration/mission16-document-meaning.test.js",
+          "title": "opening stock is equity, never a debt to the supplier",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “opening stock is equity, never a debt to the supplier” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “an image-only scanned PDF is rendered and read with local OCR” passed.",
+        "integration/local-deterministic: “opening stock is equity, never a debt to the supplier” passed."
+      ]
+    },
+    {
+      "id": 5,
+      "name": "Opening spreadsheet",
+      "setup": "Upload CSV/XLSX opening inventory.",
+      "expected": "A preview creates nothing; approval creates exact stock and totals.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/e2e/imports.e2e.js",
+          "title": "2. StockChief says what it read, and has created nothing",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "browser/local-deterministic: “2. StockChief says what it read, and has created nothing” passed."
+        },
+        {
+          "kind": "test",
+          "file": "tests/e2e/imports.e2e.js",
+          "title": "4. the stock is real, and every unit has a movement",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "browser/local-deterministic: “4. the stock is real, and every unit has a movement” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "browser/local-deterministic: “2. StockChief says what it read, and has created nothing” passed.",
+        "browser/local-deterministic: “4. the stock is real, and every unit has a movement” passed."
+      ]
+    },
+    {
+      "id": 6,
+      "name": "Historical movements plus current balances",
+      "setup": "Provide current balances with already-reflected history.",
+      "expected": "Opening balances are reviewed and history is not replayed.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/accounting-opening-balances.test.js",
+          "title": "opening balances require full review, match physical quantity, and do not replay old operations",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “opening balances require full review, match physical quantity, and do not replay old operations” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “opening balances require full review, match physical quantity, and do not replay old operations” passed."
+      ]
+    },
+    {
+      "id": 7,
+      "name": "Ambiguous import",
+      "setup": "Import rows that could match more than one real record.",
+      "expected": "StockChief asks instead of merging or guessing.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/import-pipeline.test.js",
+          "title": "two products that merely look alike are flagged, never merged",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “two products that merely look alike are flagged, never merged” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “two products that merely look alike are flagged, never merged” passed."
+      ]
+    },
+    {
+      "id": 8,
+      "name": "Duplicate import",
+      "setup": "Run the same approved import twice.",
+      "expected": "Products, stock, and movements are created once.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/import-pipeline.test.js",
+          "title": "running the same approved import twice imports it once",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “running the same approved import twice imports it once” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “running the same approved import twice imports it once” passed."
+      ]
+    },
+    {
+      "id": 9,
+      "name": "Failed import",
+      "setup": "Force an unexpected failure after a row has begun mutating state.",
+      "expected": "No partial row truth remains and the import remains recoverable.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/import-pipeline.test.js",
+          "title": "an unexpected row failure rolls back every mutation made by that row",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “an unexpected row failure rolls back every mutation made by that row” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “an unexpected row failure rolls back every mutation made by that row” passed."
+      ]
+    },
+    {
+      "id": 10,
+      "name": "Connection and state-driven onboarding guidance",
+      "setup": "Connect a source or leave setup incomplete, then revisit Home.",
+      "expected": "Guidance follows actual workspace and connection state, not a fixed tutorial.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/guidance-http.test.js",
+          "title": "the operating checklist completes from real records and becomes a next-best action",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “the operating checklist completes from real records and becomes a next-best action” passed."
+        },
+        {
+          "kind": "test",
+          "file": "tests/integration/mission11-connections.test.js",
+          "title": "Connections UI is simple by default and advanced diagnostics are opt-in",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “Connections UI is simple by default and advanced diagnostics are opt-in” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “the operating checklist completes from real records and becomes a next-best action” passed.",
+        "integration/local-deterministic: “Connections UI is simple by default and advanced diagnostics are opt-in” passed."
+      ]
+    },
+    {
+      "id": 11,
+      "name": "Receive inventory",
+      "setup": "Receive 50 units into a location.",
+      "expected": "Balance increases by 50 and one movement records the receipt.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/quantity.test.js",
+          "title": "receive puts quantity into a location and writes a movement",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “receive puts quantity into a location and writes a movement” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “receive puts quantity into a location and writes a movement” passed."
+      ]
+    },
+    {
+      "id": 12,
+      "name": "Issue or sell inventory",
+      "setup": "Issue seven units from available stock.",
+      "expected": "Balance decreases by exactly seven with an audited reason.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/quantity.test.js",
+          "title": "issue removes quantity and records the reason",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “issue removes quantity and records the reason” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “issue removes quantity and records the reason” passed."
+      ]
+    },
+    {
+      "id": 13,
+      "name": "Transfer inventory",
+      "setup": "Transfer 12 units from A to B.",
+      "expected": "Location balances change atomically and company total is conserved.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/quantity.test.js",
+          "title": "transfer moves stock atomically and never changes the total",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “transfer moves stock atomically and never changes the total” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “transfer moves stock atomically and never changes the total” passed."
+      ]
+    },
+    {
+      "id": 14,
+      "name": "Insufficient transfer",
+      "setup": "Transfer more than the source holds.",
+      "expected": "Both locations remain untouched.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/quantity.test.js",
+          "title": "a transfer that cannot be covered leaves both locations untouched",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “a transfer that cannot be covered leaves both locations untouched” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “a transfer that cannot be covered leaves both locations untouched” passed."
+      ]
+    },
+    {
+      "id": 15,
+      "name": "Negative stock",
+      "setup": "Issue more than available from a SKU that forbids negatives.",
+      "expected": "The operation fails without partial mutation.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/quantity.test.js",
+          "title": "stock cannot go negative by default",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “stock cannot go negative by default” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “stock cannot go negative by default” passed."
+      ]
+    },
+    {
+      "id": 16,
+      "name": "Physical count",
+      "setup": "Count 37 where 40 is recorded.",
+      "expected": "A controlled negative-three adjustment records expected, counted, and reason.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/quantity.test.js",
+          "title": "adjustment records expected, counted and reason",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “adjustment records expected, counted and reason” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “adjustment records expected, counted and reason” passed."
+      ]
+    },
+    {
+      "id": 17,
+      "name": "Duplicate receipt",
+      "setup": "Replay one warehouse receipt event.",
+      "expected": "Stock changes once.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/mission5-warehouse.test.js",
+          "title": "offline replay and duplicate scans cannot post a receipt twice",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “offline replay and duplicate scans cannot post a receipt twice” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “offline replay and duplicate scans cannot post a receipt twice” passed."
+      ]
+    },
+    {
+      "id": 18,
+      "name": "Concurrent issue",
+      "setup": "Race multiple processes against the same limited stock.",
+      "expected": "No oversell or corrupted balance occurs.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/concurrency.test.js",
+          "title": "concurrent issues from four processes never oversell or corrupt the balance",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “concurrent issues from four processes never oversell or corrupt the balance” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “concurrent issues from four processes never oversell or corrupt the balance” passed."
+      ]
+    },
+    {
+      "id": 19,
+      "name": "Multi-location balance",
+      "setup": "Hold and move stock across locations.",
+      "expected": "Network total equals the location balances.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/quantity.test.js",
+          "title": "the ledger explains the balance at every location",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “the ledger explains the balance at every location” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “the ledger explains the balance at every location” passed."
+      ]
+    },
+    {
+      "id": 20,
+      "name": "Ledger reconstruction",
+      "setup": "Reconcile stored positions from movements, lots, and serials.",
+      "expected": "The reconstructed inventory agrees with current truth.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/manager.test.js",
+          "title": "manager reconciliation includes whole-inventory ledger, lot and serial integrity",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “manager reconciliation includes whole-inventory ledger, lot and serial integrity” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “manager reconciliation includes whole-inventory ledger, lot and serial integrity” passed."
+      ]
+    },
+    {
+      "id": 21,
+      "name": "Twenty products and fifty SKUs",
+      "setup": "Operate a representative small catalogue through real screens.",
+      "expected": "Core inventory journeys remain simple, correct, and browser-clean.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/e2e/inventory.e2e.js",
+          "title": "inventory integrity holds at the end of the run",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "browser/local-deterministic: “inventory integrity holds at the end of the run” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "browser/local-deterministic: “inventory integrity holds at the end of the run” passed."
+      ]
+    },
+    {
+      "id": 22,
+      "name": "Twenty products and fifty-thousand SKUs",
+      "setup": "Build a variant-heavy 50,000-SKU dataset through the certified scale loader.",
+      "expected": "Exact lookup, paging, planning, and canonical writes stay viable.",
+      "evidence": [
+        {
+          "kind": "gate",
+          "name": "variant-50000",
+          "level": "scale",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "variant-50000 completed within its asserted budgets."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "variant-50000 completed within its asserted budgets."
+      ]
+    },
+    {
+      "id": 23,
+      "name": "Fifty-thousand products",
+      "setup": "Build 50,000 one-SKU products through the canonical item domain.",
+      "expected": "Search, filtering, and pagination do not load the entire catalogue.",
+      "evidence": [
+        {
+          "kind": "gate",
+          "name": "products-50000",
+          "level": "scale",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "products-50000 completed within its asserted budgets."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "products-50000 completed within its asserted budgets."
+      ]
+    },
+    {
+      "id": 24,
+      "name": "Two-hundred-fifty-thousand SKU stress dataset",
+      "setup": "Build a 250,000-SKU multi-location dataset.",
+      "expected": "Critical inventory operations meet the launch budgets.",
+      "evidence": [
+        {
+          "kind": "gate",
+          "name": "large-250000",
+          "level": "scale",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "large-250000 completed within its asserted budgets."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "large-250000 completed within its asserted budgets."
+      ]
+    },
+    {
+      "id": 25,
+      "name": "Millions of movements",
+      "setup": "Build and query one million audited movements.",
+      "expected": "Ledger history remains queryable and a canonical write still succeeds.",
+      "evidence": [
+        {
+          "kind": "gate",
+          "name": "million-movements",
+          "level": "scale",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "million-movements completed within its asserted budgets."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "million-movements completed within its asserted budgets."
+      ]
+    },
+    {
+      "id": 26,
+      "name": "Search by SKU",
+      "setup": "Search an exact SKU code.",
+      "expected": "The exact variant resolves first.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/search-http.test.js",
+          "title": "a SKU code finds that exact variant",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “a SKU code finds that exact variant” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “a SKU code finds that exact variant” passed."
+      ]
+    },
+    {
+      "id": 27,
+      "name": "Search by product or attribute",
+      "setup": "Search product and variant dimensions together.",
+      "expected": "The intended variant ranks above siblings.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/search-http.test.js",
+          "title": "naming both dimensions returns that variant, not its siblings",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “naming both dimensions returns that variant, not its siblings” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “naming both dimensions returns that variant, not its siblings” passed."
+      ]
+    },
+    {
+      "id": 28,
+      "name": "Bulk rule",
+      "setup": "Apply supplier and replenishment settings to a product family.",
+      "expected": "Every variant receives the policy without per-SKU editing.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/purchasing-http.test.js",
+          "title": "one clear setup action can apply supplier and reorder settings to every product variant",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “one clear setup action can apply supplier and reorder settings to every product variant” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “one clear setup action can apply supplier and reorder settings to every product variant” passed."
+      ]
+    },
+    {
+      "id": 29,
+      "name": "Supplier-specific SKU",
+      "setup": "Map supplier wording to an internal SKU.",
+      "expected": "The mapping is approved once and reused.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/mission12-supplier-communication.test.js",
+          "title": "unknown supplier SKU offers one-step matching and future documents reuse it",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “unknown supplier SKU offers one-step matching and future documents reuse it” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “unknown supplier SKU offers one-step matching and future documents reuse it” passed."
+      ]
+    },
+    {
+      "id": 30,
+      "name": "No N+1 catastrophe",
+      "setup": "Profile catalogue, search, and detail operations at launch scale.",
+      "expected": "Query counts and latency remain bounded.",
+      "evidence": [
+        {
+          "kind": "gate",
+          "name": "large-query-shape",
+          "level": "scale",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "large-query-shape completed within its asserted budgets."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "large-query-shape completed within its asserted budgets."
+      ]
+    },
+    {
+      "id": 31,
+      "name": "Replenishment trigger",
+      "setup": "Cross a configured reorder point.",
+      "expected": "One explained replenishment decision appears automatically.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/continuous-manager.test.js",
+          "title": "Mission 9.1 sale below reorder point creates replenishment without Check now",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “Mission 9.1 sale below reorder point creates replenishment without Check now” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “Mission 9.1 sale below reorder point creates replenishment without Check now” passed."
+      ]
+    },
+    {
+      "id": 32,
+      "name": "Pack size",
+      "setup": "Require 17 units from a supplier selling cases of 12.",
+      "expected": "The recommendation uses a compliant purchase quantity.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/purchasing.test.js",
+          "title": "inventory units become whole purchase units, minimum and multiple applied in order",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “inventory units become whole purchase units, minimum and multiple applied in order” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “inventory units become whole purchase units, minimum and multiple applied in order” passed."
+      ]
+    },
+    {
+      "id": 33,
+      "name": "Minimum order quantity",
+      "setup": "Create demand below a supplier MOQ.",
+      "expected": "The order respects MOQ before pack multiples.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/purchasing.test.js",
+          "title": "inventory units become whole purchase units, minimum and multiple applied in order",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “inventory units become whole purchase units, minimum and multiple applied in order” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “inventory units become whole purchase units, minimum and multiple applied in order” passed."
+      ]
+    },
+    {
+      "id": 34,
+      "name": "Existing incoming stock",
+      "setup": "Create a shortage already covered by an open PO.",
+      "expected": "No duplicate order is recommended.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/purchasing.test.js",
+          "title": "stock already on order counts, and can turn a purchase into no purchase",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “stock already on order counts, and can turn a purchase into no purchase” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “stock already on order counts, and can turn a purchase into no purchase” passed."
+      ]
+    },
+    {
+      "id": 35,
+      "name": "Purchase order lifecycle",
+      "setup": "Take a PO through draft, approval, placement, partial receipt, and completion.",
+      "expected": "Each state and quantity is visible and correct.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/e2e/purchasing.e2e.js",
+          "title": "6. part of the shipment arrives",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "browser/local-deterministic: “6. part of the shipment arrives” passed."
+        },
+        {
+          "kind": "test",
+          "file": "tests/e2e/purchasing.e2e.js",
+          "title": "7. the rest arrives and the order closes",
+          "level": "browser",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "browser/local-deterministic: “7. the rest arrives and the order closes” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "browser/local-deterministic: “6. part of the shipment arrives” passed.",
+        "browser/local-deterministic: “7. the rest arrives and the order closes” passed."
+      ]
+    },
+    {
+      "id": 36,
+      "name": "Partial receipt",
+      "setup": "Receive 60 of 100 ordered units.",
+      "expected": "Sixty is on hand and forty remains outstanding.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/purchasing.test.js",
+          "title": "receiving part of an order leaves the rest outstanding",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “receiving part of an order leaves the rest outstanding” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “receiving part of an order leaves the rest outstanding” passed."
+      ]
+    },
+    {
+      "id": 37,
+      "name": "Over-receipt",
+      "setup": "Receive 105 against 100 ordered.",
+      "expected": "A discrepancy is surfaced and nothing is silently capped.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/purchasing-http.test.js",
+          "title": "an over-receipt comes back as a question, not a silent acceptance",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “an over-receipt comes back as a question, not a silent acceptance” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “an over-receipt comes back as a question, not a silent acceptance” passed."
+      ]
+    },
+    {
+      "id": 38,
+      "name": "Supplier price change",
+      "setup": "Receive a supplier price beyond tolerance.",
+      "expected": "One understandable Needs You decision appears.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/mission12-supplier-communication.test.js",
+          "title": "price outside tolerance creates one clear Needs You and replay cannot duplicate evidence",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “price outside tolerance creates one clear Needs You and replay cannot duplicate evidence” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “price outside tolerance creates one clear Needs You and replay cannot duplicate evidence” passed."
+      ]
+    },
+    {
+      "id": 39,
+      "name": "Supplier cancellation or backorder",
+      "setup": "Change or partially confirm incoming supply.",
+      "expected": "Incoming availability and customer consequences are recalculated without moving on-hand.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/mission12-supplier-communication.test.js",
+          "title": "partial shipment updates incoming expectations and ETA without changing on-hand",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “partial shipment updates incoming expectations and ETA without changing on-hand” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “partial shipment updates incoming expectations and ETA without changing on-hand” passed."
+      ]
+    },
+    {
+      "id": 40,
+      "name": "Duplicate PO execution",
+      "setup": "Retry placement after provider evidence.",
+      "expected": "One supplier order exists and replay creates no duplicate purchasing.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/continuous-manager.test.js",
+          "title": "Mission 9.4 placing a PO updates position and replay cannot duplicate purchasing",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “Mission 9.4 placing a PO updates position and replay cannot duplicate purchasing” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “Mission 9.4 placing a PO updates position and replay cannot duplicate purchasing” passed."
+      ]
+    },
+    {
+      "id": 41,
+      "name": "Supplier invoice with PO",
+      "setup": "Import an invoice matching an existing PO.",
+      "expected": "A payable is recorded and on-hand does not change.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/mission16-supplier-invoice.test.js",
+          "title": "Test B: an invoice matching an existing order bills it and moves no stock",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “Test B: an invoice matching an existing order bills it and moves no stock” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “Test B: an invoice matching an existing order bills it and moves no stock” passed."
+      ]
+    },
+    {
+      "id": 42,
+      "name": "Supplier invoice without PO",
+      "setup": "Import a supplier invoice with no matching PO.",
+      "expected": "Money is recorded and only the minimum purchasing question is asked.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/mission16-supplier-invoice.test.js",
+          "title": "Test C: an invoice with no order records the money and asks one question",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “Test C: an invoice with no order records the money and asks one question” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “Test C: an invoice with no order records the money and asks one question” passed."
+      ]
+    },
+    {
+      "id": 43,
+      "name": "Invoice versus receipt",
+      "setup": "Process invoice evidence without physical delivery evidence.",
+      "expected": "The bill never becomes a receipt.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/mission16-document-meaning.test.js",
+          "title": "an invoice is money owed and says nothing about delivery",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “an invoice is money owed and says nothing about delivery” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “an invoice is money owed and says nothing about delivery” passed."
+      ]
+    },
+    {
+      "id": 44,
+      "name": "Shipment notice",
+      "setup": "Process a supplier partial-shipment notice.",
+      "expected": "Incoming quantity and ETA change; on-hand does not.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/mission12-supplier-communication.test.js",
+          "title": "partial shipment updates incoming expectations and ETA without changing on-hand",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “partial shipment updates incoming expectations and ETA without changing on-hand” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “partial shipment updates incoming expectations and ETA without changing on-hand” passed."
+      ]
+    },
+    {
+      "id": 45,
+      "name": "Packing slip",
+      "setup": "Process delivery evidence under the configured receiving policy.",
+      "expected": "Stock moves only through physical receiving, not document interpretation alone.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/mission12-supplier-communication.test.js",
+          "title": "delivery evidence becomes stock only after physical receiving uses the existing engine",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “delivery evidence becomes stock only after physical receiving uses the existing engine” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “delivery evidence becomes stock only after physical receiving uses the existing engine” passed."
+      ]
+    },
+    {
+      "id": 46,
+      "name": "Supplier question",
+      "setup": "A supplier asks about a partial shipment.",
+      "expected": "StockChief evaluates real demand and prepares a grounded response without mutating stock or money.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/mission12-supplier-communication.test.js",
+          "title": "Mission 12 turns a partial confirmation into one exact consequence and no stock or money mutation",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “Mission 12 turns a partial confirmation into one exact consequence and no stock or money mutation” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “Mission 12 turns a partial confirmation into one exact consequence and no stock or money mutation” passed."
+      ]
+    },
+    {
+      "id": 47,
+      "name": "Customer question",
+      "setup": "A customer asks whether delivery by a named date is possible.",
+      "expected": "The draft uses only recorded stock, fulfillment, and date evidence.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/mission14-prepared-replies.test.js",
+          "title": "a draft that names a date nobody committed to is refused",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “a draft that names a date nobody committed to is refused” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “a draft that names a date nobody committed to is refused” passed."
+      ]
+    },
+    {
+      "id": 48,
+      "name": "Edit prepared response",
+      "setup": "Edit an unsent customer message and approve sending.",
+      "expected": "The provider receives exactly the edited text.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/mission14-customer-notices.test.js",
+          "title": "when the workspace says send, the customer receives exactly what the page showed",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “when the workspace says send, the customer receives exactly what the page showed” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “when the workspace says send, the customer receives exactly what the page showed” passed."
+      ]
+    },
+    {
+      "id": 49,
+      "name": "Duplicate email notification",
+      "setup": "Redeliver the same provider message and attachment.",
+      "expected": "One business consequence is created.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/mission12-supplier-communication.test.js",
+          "title": "the same supplier attachment is idempotent across redelivery wording and classification",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “the same supplier attachment is idempotent across redelivery wording and classification” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “the same supplier attachment is idempotent across redelivery wording and classification” passed."
+      ]
+    },
+    {
+      "id": 50,
+      "name": "Malicious document instructions",
+      "setup": "Embed authority-changing text in supplier evidence.",
+      "expected": "The text remains untrusted evidence and grants no authority.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/mission12-supplier-communication.test.js",
+          "title": "malicious supplier text remains evidence and cannot grant authority or mutate stock",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “malicious supplier text remains evidence and cannot grant authority or mutate stock” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “malicious supplier text remains evidence and cannot grant authority or mutate stock” passed."
+      ]
+    },
+    {
+      "id": 51,
+      "name": "Create Sales Order",
+      "setup": "Create an order with customer, products, quantities, prices, and requested date.",
+      "expected": "The structured order contains only supplied and catalog-grounded facts.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/sales-orders-http.test.js",
+          "title": "Tell StockChief creates, changes, fulfills and cancels the same structured Sales Order",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “Tell StockChief creates, changes, fulfills and cancels the same structured Sales Order” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “Tell StockChief creates, changes, fulfills and cancels the same structured Sales Order” passed."
+      ]
+    },
+    {
+      "id": 52,
+      "name": "Commit inventory",
+      "setup": "Confirm an in-stock Sales Order.",
+      "expected": "Commitments reduce availability without reducing on-hand.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/mission10-sales-orders.test.js",
+          "title": "Mission 10 commitments preserve on-hand, fulfillment consumes both, and cancellation releases the remainder",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “Mission 10 commitments preserve on-hand, fulfillment consumes both, and cancellation releases the remainder” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “Mission 10 commitments preserve on-hand, fulfillment consumes both, and cancellation releases the remainder” passed."
+      ]
+    },
+    {
+      "id": 53,
+      "name": "Shortage",
+      "setup": "Confirm demand above available inventory.",
+      "expected": "Backorder and transfer-or-buy reasoning are explicit.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/mission10-sales-orders.test.js",
+          "title": "Mission 10 allocates what exists and records the rest as an honest backorder",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “Mission 10 allocates what exists and records the rest as an honest backorder” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “Mission 10 allocates what exists and records the rest as an honest backorder” passed."
+      ]
+    },
+    {
+      "id": 54,
+      "name": "Partial fulfillment",
+      "setup": "Fulfill part of an order.",
+      "expected": "Fulfilled quantity leaves stock and the remainder stays open.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/sales-orders-http.test.js",
+          "title": "Sales UI covers draft → confirm/commit → partial fulfillment → cancellation and Activity",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “Sales UI covers draft → confirm/commit → partial fulfillment → cancellation and Activity” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “Sales UI covers draft → confirm/commit → partial fulfillment → cancellation and Activity” passed."
+      ]
+    },
+    {
+      "id": 55,
+      "name": "Cancellation",
+      "setup": "Cancel an order remainder.",
+      "expected": "Unshipped commitments release and the activity story remains.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/mission10-sales-orders.test.js",
+          "title": "Mission 10 cancellation releases demand and automatically clears replenishment raised only for that order",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “Mission 10 cancellation releases demand and automatically clears replenishment raised only for that order” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “Mission 10 cancellation releases demand and automatically clears replenishment raised only for that order” passed."
+      ]
+    },
+    {
+      "id": 56,
+      "name": "Return",
+      "setup": "Receive and inspect a customer return.",
+      "expected": "Inventory, refund, exchange, and accounting consequences remain separate and correct.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/mission8-operations.test.js",
+          "title": "a partial customer return posts an exact refund and a separate exchange creates the replacement order",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “a partial customer return posts an exact refund and a separate exchange creates the replacement order” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “a partial customer return posts an exact refund and a separate exchange creates the replacement order” passed."
+      ]
+    },
+    {
+      "id": 57,
+      "name": "Shipping address from communication",
+      "setup": "Use an explicitly stated order address and test ambiguity.",
+      "expected": "The order owns the exact destination; no old default or invented address replaces it.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/mission16-order-from-email.test.js",
+          "title": "an emailed delivery address belongs to that order and never gets replaced by an old default",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “an emailed delivery address belongs to that order and never gets replaced by an old default” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “an emailed delivery address belongs to that order and never gets replaced by an old default” passed."
+      ]
+    },
+    {
+      "id": 58,
+      "name": "Real shipment creation abstraction",
+      "setup": "Buy a label through a configured workspace shipping-provider adapter.",
+      "expected": "The label and tracking are durable and idempotent; no shared postage account is used.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/shipping-manager-completion.test.js",
+          "title": "label purchase and void are durable, idempotent, and reverse unused postage without moving stock",
+          "level": "provider-contract",
+          "qualification": "provider-contract",
+          "pass": true,
+          "actual": "provider-contract/provider-contract: “label purchase and void are durable, idempotent, and reverse unused postage without moving stock” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "provider-contract/provider-contract: “label purchase and void are durable, idempotent, and reverse unused postage without moving stock” passed."
+      ]
+    },
+    {
+      "id": 59,
+      "name": "Tracking progression",
+      "setup": "Replay signed carrier stages through delivery.",
+      "expected": "Status moves forward idempotently and duplicate events prepare no duplicate notice.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/shipping-manager-completion.test.js",
+          "title": "carrier stages prepare one factual message each and duplicate events prepare nothing twice",
+          "level": "provider-contract",
+          "qualification": "provider-contract",
+          "pass": true,
+          "actual": "provider-contract/provider-contract: “carrier stages prepare one factual message each and duplicate events prepare nothing twice” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "provider-contract/provider-contract: “carrier stages prepare one factual message each and duplicate events prepare nothing twice” passed."
+      ]
+    },
+    {
+      "id": 60,
+      "name": "Shipping exception",
+      "setup": "Report a carrier delay that threatens the promise.",
+      "expected": "Needs You and a factual customer draft explain the consequence.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/shipping-rules-and-notices.test.js",
+          "title": "a late parcel has the message already written, and unsent",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “a late parcel has the message already written, and unsent” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “a late parcel has the message already written, and unsent” passed."
+      ]
+    },
+    {
+      "id": 61,
+      "name": "Customer payment link",
+      "setup": "Request payment for an exact order amount.",
+      "expected": "A provider-hosted payment request is stored against the order.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/mission15-payment-collection.test.js",
+          "title": "a deposit is requested for what the terms said, and the link is kept",
+          "level": "provider-contract",
+          "qualification": "provider-contract",
+          "pass": true,
+          "actual": "provider-contract/provider-contract: “a deposit is requested for what the terms said, and the link is kept” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "provider-contract/provider-contract: “a deposit is requested for what the terms said, and the link is kept” passed."
+      ]
+    },
+    {
+      "id": 62,
+      "name": "Direct card payment",
+      "setup": "Take a card payment through the provider-owned secure payment page opened from the order.",
+      "expected": "PAN and CVC never enter StockChief and provider confirmation uses the normal payment engine.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/order-payment-link.test.js",
+          "title": "the payment window opens the carrier of the money, not a StockChief page",
+          "level": "provider-contract",
+          "qualification": "provider-contract",
+          "pass": true,
+          "actual": "provider-contract/provider-contract: “the payment window opens the carrier of the money, not a StockChief page” passed."
+        },
+        {
+          "kind": "test",
+          "file": "tests/e2e/payment-window.e2e.js",
+          "title": "a successful Stripe popup closes and returns to a visibly paid order",
+          "level": "browser",
+          "qualification": "provider-contract",
+          "pass": true,
+          "actual": "browser/provider-contract: “a successful Stripe popup closes and returns to a visibly paid order” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "provider-contract/provider-contract: “the payment window opens the carrier of the money, not a StockChief page” passed.",
+        "browser/provider-contract: “a successful Stripe popup closes and returns to a visibly paid order” passed."
+      ]
+    },
+    {
+      "id": 63,
+      "name": "Partial customer payment",
+      "setup": "Apply 500 to a 1,500 receivable.",
+      "expected": "The order remains 1,000 outstanding.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/accounting-subledgers.test.js",
+          "title": "AR invoice supports partial and full receipts while control account and aging agree",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “AR invoice supports partial and full receipts while control account and aging agree” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “AR invoice supports partial and full receipts while control account and aging agree” passed."
+      ]
+    },
+    {
+      "id": 64,
+      "name": "Final customer payment",
+      "setup": "Apply the remaining customer balance.",
+      "expected": "The receivable becomes paid once.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/accounting-owner-lifecycles.test.js",
+          "title": "10 customer fully pays",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “10 customer fully pays” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “10 customer fully pays” passed."
+      ]
+    },
+    {
+      "id": 65,
+      "name": "Payment hold",
+      "setup": "Confirm an order with deposit terms and insufficient payment.",
+      "expected": "Fulfillment remains held until the exact condition is satisfied.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/mission15-payment-terms.test.js",
+          "title": "a deposit releases picking and the balance holds the shipping",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “a deposit releases picking and the balance holds the shipping” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “a deposit releases picking and the balance holds the shipping” passed."
+      ]
+    },
+    {
+      "id": 66,
+      "name": "Offline payment",
+      "setup": "Report a check or cash receipt in ordinary language.",
+      "expected": "The same payment engine posts and allocates it after approval.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/payment-intent.test.js",
+          "title": "a reported payment becomes an approvable proposal, then a posted payment",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “a reported payment becomes an approvable proposal, then a posted payment” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “a reported payment becomes an approvable proposal, then a posted payment” passed."
+      ]
+    },
+    {
+      "id": 67,
+      "name": "Supplier partial payment",
+      "setup": "Pay 400 against a 1,000 supplier bill.",
+      "expected": "Six hundred remains payable and stock is unchanged.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/accounting-owner-lifecycles.test.js",
+          "title": "06 supplier invoice partially paid",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “06 supplier invoice partially paid” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “06 supplier invoice partially paid” passed."
+      ]
+    },
+    {
+      "id": 68,
+      "name": "Supplier final payment",
+      "setup": "Pay the remaining supplier balance.",
+      "expected": "The payable clears without physical inventory mutation.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/accounting-owner-lifecycles.test.js",
+          "title": "07 supplier invoice fully paid",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “07 supplier invoice fully paid” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “07 supplier invoice fully paid” passed."
+      ]
+    },
+    {
+      "id": 69,
+      "name": "Duplicate processor webhook",
+      "setup": "Deliver one signed processor event repeatedly.",
+      "expected": "The payment and books change once.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/mission15-payment-collection.test.js",
+          "title": "a webhook delivered five times charges the books once",
+          "level": "provider-contract",
+          "qualification": "provider-contract",
+          "pass": true,
+          "actual": "provider-contract/provider-contract: “a webhook delivered five times charges the books once” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "provider-contract/provider-contract: “a webhook delivered five times charges the books once” passed."
+      ]
+    },
+    {
+      "id": 70,
+      "name": "Refund",
+      "setup": "Issue a financial refund with and without physical return evidence.",
+      "expected": "Revenue and cash reverse once; COGS and stock reverse only with physical evidence.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/accounting-controls.test.js",
+          "title": "a refund reverses revenue/tax once and restores COGS only with physical-return evidence",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “a refund reverses revenue/tax once and restores COGS only with physical-return evidence” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “a refund reverses revenue/tax once and restores COGS only with physical-return evidence” passed."
+      ]
+    },
+    {
+      "id": 71,
+      "name": "Purchase order accounting",
+      "setup": "Create a PO without receipt or bill.",
+      "expected": "No physical inventory, payable, or payment is invented.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/accounting-owner-lifecycles.test.js",
+          "title": "01 PO created but nothing received",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “01 PO created but nothing received” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “01 PO created but nothing received” passed."
+      ]
+    },
+    {
+      "id": 72,
+      "name": "Supplier invoice accounting",
+      "setup": "Record a supplier bill.",
+      "expected": "The payable is correct and traceable.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/accounting-owner-lifecycles.test.js",
+          "title": "05 supplier invoice entered but unpaid",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “05 supplier invoice entered but unpaid” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “05 supplier invoice entered but unpaid” passed."
+      ]
+    },
+    {
+      "id": 73,
+      "name": "Receiving accounting",
+      "setup": "Receive purchased inventory.",
+      "expected": "Inventory valuation updates once without duplicating the bill.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/accounting-operational-events.test.js",
+          "title": "an approved PO receipt posts inventory/AP and its physical movement is costed once",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “an approved PO receipt posts inventory/AP and its physical movement is costed once” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “an approved PO receipt posts inventory/AP and its physical movement is costed once” passed."
+      ]
+    },
+    {
+      "id": 74,
+      "name": "Supplier payment accounting",
+      "setup": "Pay a supplier bill.",
+      "expected": "Payable and cash change correctly; inventory does not.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/accounting-owner-lifecycles.test.js",
+          "title": "07 supplier invoice fully paid",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “07 supplier invoice fully paid” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “07 supplier invoice fully paid” passed."
+      ]
+    },
+    {
+      "id": 75,
+      "name": "Sale accounting",
+      "setup": "Fulfill a priced, costed Sales Order.",
+      "expected": "Revenue, receivable, inventory reduction, and COGS post exactly once.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/accounting-operational-events.test.js",
+          "title": "fulfillment posts AR/revenue/tax and exact weighted-average COGS without changing stock twice",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “fulfillment posts AR/revenue/tax and exact weighted-average COGS without changing stock twice” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “fulfillment posts AR/revenue/tax and exact weighted-average COGS without changing stock twice” passed."
+      ]
+    },
+    {
+      "id": 76,
+      "name": "Partial customer payment accounting",
+      "setup": "Apply part of an invoice.",
+      "expected": "AR, payment state, and control account agree.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/accounting-subledgers.test.js",
+          "title": "AR invoice supports partial and full receipts while control account and aging agree",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “AR invoice supports partial and full receipts while control account and aging agree” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “AR invoice supports partial and full receipts while control account and aging agree” passed."
+      ]
+    },
+    {
+      "id": 77,
+      "name": "Return and refund accounting",
+      "setup": "Refund with explicit physical-return evidence.",
+      "expected": "Financial and inventory reversals follow evidence and stay idempotent.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/accounting-controls.test.js",
+          "title": "a refund reverses revenue/tax once and restores COGS only with physical-return evidence",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “a refund reverses revenue/tax once and restores COGS only with physical-return evidence” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “a refund reverses revenue/tax once and restores COGS only with physical-return evidence” passed."
+      ]
+    },
+    {
+      "id": 78,
+      "name": "Inventory and accounting reconciliation",
+      "setup": "Reconcile operational inventory value to the ledger.",
+      "expected": "Inventory, AP, cash, statements, and trial balance agree.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/accounting-ledger.test.js",
+          "title": "acceptance company reconciles P&L, balance sheet, cash, inventory, AP, and trial balance",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “acceptance company reconciles P&L, balance sheet, cash, inventory, AP, and trial balance” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “acceptance company reconciles P&L, balance sheet, cash, inventory, AP, and trial balance” passed."
+      ]
+    },
+    {
+      "id": 79,
+      "name": "Accountant explanation",
+      "setup": "Ask why profit fell for a real period.",
+      "expected": "The answer is computed from posted numbers and evidence.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/accounting-queries.test.js",
+          "title": "financial answers come from posted ledger numbers and explain gross versus net profit",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “financial answers come from posted ledger numbers and explain gross versus net profit” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “financial answers come from posted ledger numbers and explain gross versus net profit” passed."
+      ]
+    },
+    {
+      "id": 80,
+      "name": "Books reconstruction",
+      "setup": "Trace journals to source events and verify balances.",
+      "expected": "The ledger remains balanced, immutable, idempotent, and traceable.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/accounting-ledger.test.js",
+          "title": "posting is balanced, immutable, traceable, and idempotent",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “posting is balanced, immutable, traceable, and idempotent” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “posting is balanced, immutable, traceable, and idempotent” passed."
+      ]
+    },
+    {
+      "id": 81,
+      "name": "Ask-me-first",
+      "setup": "Prepare consequential work without matching authority.",
+      "expected": "StockChief waits for explicit approval and moves nothing.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/autopilot-loop.test.js",
+          "title": "supervised: StockChief prepares the transfer and waits",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “supervised: StockChief prepares the transfer and waits” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “supervised: StockChief prepares the transfer and waits” passed."
+      ]
+    },
+    {
+      "id": 82,
+      "name": "Authorized automatic transfer",
+      "setup": "Create a qualifying transfer under an approved policy.",
+      "expected": "StockChief prepares, verifies, and records the governing evidence automatically.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/autopilot-loop.test.js",
+          "title": "on autopilot: StockChief prepares the governed transfer, verifies it, and records why",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “on autopilot: StockChief prepares the governed transfer, verifies it, and records why” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “on autopilot: StockChief prepares the governed transfer, verifies it, and records why” passed."
+      ]
+    },
+    {
+      "id": 83,
+      "name": "Transfer outside limit",
+      "setup": "Create a need above the approved transfer boundary.",
+      "expected": "The full need goes to Needs You without being shrunk.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/autopilot-authority.test.js",
+          "title": "authority E2E 2: a real eight-unit need is not shrunk to a five-unit policy and goes to Needs you",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “authority E2E 2: a real eight-unit need is not shrunk to a five-unit policy and goes to Needs you” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “authority E2E 2: a real eight-unit need is not shrunk to a five-unit policy and goes to Needs you” passed."
+      ]
+    },
+    {
+      "id": 84,
+      "name": "Independent authority domains",
+      "setup": "Enable automatic customer communication but no purchasing authority.",
+      "expected": "Email permission cannot authorize purchasing.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/mission12-supplier-communication.test.js",
+          "title": "Mission 12 keeps communication approval separate from purchase authority",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “Mission 12 keeps communication approval separate from purchase authority” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “Mission 12 keeps communication approval separate from purchase authority” passed."
+      ]
+    },
+    {
+      "id": 85,
+      "name": "Automatic payment-request communication",
+      "setup": "Authorize a bounded routine payment request.",
+      "expected": "The exact authorized request sends once; unauthorized requests wait.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/mission16-payment-automation.test.js",
+          "title": "when the customer terms, workspace mode, job authority, and mailbox agree, StockChief asks and sends",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “when the customer terms, workspace mode, job authority, and mailbox agree, StockChief asks and sends” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “when the customer terms, workspace mode, job authority, and mailbox agree, StockChief asks and sends” passed."
+      ]
+    },
+    {
+      "id": 86,
+      "name": "Pause",
+      "setup": "Pause StockChief with consequential work eligible.",
+      "expected": "No automatic consequential action occurs.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/continuous-manager.test.js",
+          "title": "Mission 9.11 Pause stops automatic consequential reactions",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “Mission 9.11 Pause stops automatic consequential reactions” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “Mission 9.11 Pause stops automatic consequential reactions” passed."
+      ]
+    },
+    {
+      "id": 87,
+      "name": "Resume",
+      "setup": "Resume after eligible work was paused.",
+      "expected": "Eligible work continues without replaying old effects.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/continuous-manager.test.js",
+          "title": "Mission 9.12 Resume immediately resumes eligible management",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “Mission 9.12 Resume immediately resumes eligible management” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “Mission 9.12 Resume immediately resumes eligible management” passed."
+      ]
+    },
+    {
+      "id": 88,
+      "name": "Explain decision",
+      "setup": "Ask why StockChief moved or ordered stock.",
+      "expected": "The answer cites the actual policy version and measured evidence.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/autopilot-authority.test.js",
+          "title": "authority E2E 7: an automatic action records the exact policy version and fresh dated evidence used",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “authority E2E 7: an automatic action records the exact policy version and fresh dated evidence used” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “authority E2E 7: an automatic action records the exact policy version and fresh dated evidence used” passed."
+      ]
+    },
+    {
+      "id": 89,
+      "name": "One business story",
+      "setup": "Trace demand through supply, receipt, fulfillment, payment, and cost.",
+      "expected": "Every record remains linked as one immutable evidence graph.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/mission2-provenance.test.js",
+          "title": "purchase, receipt, supplier bill and payment reconcile as one immutable evidence chain",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “purchase, receipt, supplier bill and payment reconcile as one immutable evidence chain” passed."
+        },
+        {
+          "kind": "test",
+          "file": "tests/unit/mission2-provenance.test.js",
+          "title": "customer demand, fulfillment, invoice, payment, revenue and exact inventory cost reconcile",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “customer demand, fulfillment, invoice, payment, revenue and exact inventory cost reconcile” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “purchase, receipt, supplier bill and payment reconcile as one immutable evidence chain” passed.",
+        "engine/local-deterministic: “customer demand, fulfillment, invoice, payment, revenue and exact inventory cost reconcile” passed."
+      ]
+    },
+    {
+      "id": 90,
+      "name": "Needs You prioritization",
+      "setup": "Create genuine risk, informational events, and duplicate stimuli.",
+      "expected": "Risk ranks first and one issue creates one decision with a specific action label.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/attention-detection.test.js",
+          "title": "priority puts the most urgent first",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “priority puts the most urgent first” passed."
+        },
+        {
+          "kind": "test",
+          "file": "tests/integration/navigation-http.test.js",
+          "title": "every Needs you action names the decision rather than inviting a look",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “every Needs you action names the decision rather than inviting a look” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “priority puts the most urgent first” passed.",
+        "integration/local-deterministic: “every Needs you action names the decision rather than inviting a look” passed."
+      ]
+    },
+    {
+      "id": 91,
+      "name": "Shopify event",
+      "setup": "Deliver signed order and fulfillment webhooks through the normalized connector.",
+      "expected": "The Sales Order and inventory engine change exactly once.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/mission12-real-connectors.test.js",
+          "title": "Shopify signed order and fulfillment use Mission 10 exactly once",
+          "level": "provider-contract",
+          "qualification": "provider-contract",
+          "pass": true,
+          "actual": "provider-contract/provider-contract: “Shopify signed order and fulfillment use Mission 10 exactly once” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "provider-contract/provider-contract: “Shopify signed order and fulfillment use Mission 10 exactly once” passed."
+      ]
+    },
+    {
+      "id": 92,
+      "name": "Square event",
+      "setup": "Deliver a signed completed Square payment event.",
+      "expected": "The mapped inventory issue occurs exactly once.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/mission12-real-connectors.test.js",
+          "title": "Square signed completed payment becomes one existing inventory issue",
+          "level": "provider-contract",
+          "qualification": "provider-contract",
+          "pass": true,
+          "actual": "provider-contract/provider-contract: “Square signed completed payment becomes one existing inventory issue” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "provider-contract/provider-contract: “Square signed completed payment becomes one existing inventory issue” passed."
+      ]
+    },
+    {
+      "id": 93,
+      "name": "Connector outage",
+      "setup": "Make a connected provider stale or fail setup.",
+      "expected": "The outage is visible and StockChief does not claim current truth.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/mission11-connections.test.js",
+          "title": "connection staleness covers a missing first event and resolves automatically when activity resumes",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “connection staleness covers a missing first event and resolves automatically when activity resumes” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “connection staleness covers a missing first event and resolves automatically when activity resumes” passed."
+      ]
+    },
+    {
+      "id": 94,
+      "name": "Retry after outage",
+      "setup": "Retry missed or out-of-order provider events.",
+      "expected": "Events recover without duplicate business effects.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/mission12-real-connectors.test.js",
+          "title": "Shopify out-of-order order updates retry and clear their false mapping exception",
+          "level": "provider-contract",
+          "qualification": "provider-contract",
+          "pass": true,
+          "actual": "provider-contract/provider-contract: “Shopify out-of-order order updates retry and clear their false mapping exception” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "provider-contract/provider-contract: “Shopify out-of-order order updates retry and clear their false mapping exception” passed."
+      ]
+    },
+    {
+      "id": 95,
+      "name": "Workspace isolation",
+      "setup": "Attempt cross-workspace reads and stock operations.",
+      "expected": "Products, locations, credentials, events, and mutations stay isolated.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/tenancy.test.js",
+          "title": "items, SKUs and locations cannot be read across workspaces",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “items, SKUs and locations cannot be read across workspaces” passed."
+        },
+        {
+          "kind": "test",
+          "file": "tests/integration/mission11-connections.test.js",
+          "title": "connection tokens and mappings stay isolated between workspaces",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “connection tokens and mappings stay isolated between workspaces” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “items, SKUs and locations cannot be read across workspaces” passed.",
+        "integration/local-deterministic: “connection tokens and mappings stay isolated between workspaces” passed."
+      ]
+    },
+    {
+      "id": 96,
+      "name": "Credential security",
+      "setup": "Store connector credentials and render connection UI.",
+      "expected": "Secrets are encrypted at rest and absent from config, logs, and UI.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/integration/mission12-real-connectors.test.js",
+          "title": "provider credentials are encrypted at rest and never placed in connection config",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “provider credentials are encrypted at rest and never placed in connection config” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "integration/local-deterministic: “provider credentials are encrypted at rest and never placed in connection config” passed."
+      ]
+    },
+    {
+      "id": 97,
+      "name": "Crash mid-action",
+      "setup": "Crash after an external or domain effect but before completion is recorded.",
+      "expected": "Recovery produces zero or one completed effect, never half-state or duplicate state.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/mission4-runtime.test.js",
+          "title": "a crash-mid-action retry cannot duplicate an idempotent domain effect",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “a crash-mid-action retry cannot duplicate an idempotent domain effect” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “a crash-mid-action retry cannot duplicate an idempotent domain effect” passed."
+      ]
+    },
+    {
+      "id": 98,
+      "name": "Migration",
+      "setup": "Stage realistic legacy products, SKUs, locations, counterparties, POs, and Sales Orders.",
+      "expected": "Owner-reviewed canonical records exist before cutover.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/launch-migration-scale.test.js",
+          "title": "a provider-neutral cutover stages, applies, reconciles and activates exact operational truth",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “a provider-neutral cutover stages, applies, reconciles and activates exact operational truth” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “a provider-neutral cutover stages, applies, reconciles and activates exact operational truth” passed."
+      ]
+    },
+    {
+      "id": 99,
+      "name": "Migration reconciliation",
+      "setup": "Compare source totals and identities to staged StockChief truth.",
+      "expected": "Contradictions block activation and unresolved records cannot disappear.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/launch-migration-scale.test.js",
+          "title": "unknown source identities block before any operational mutation and cutover cannot be forced",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “unknown source identities block before any operational mutation and cutover cannot be forced” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “unknown source identities block before any operational mutation and cutover cannot be forced” passed."
+      ]
+    },
+    {
+      "id": 100,
+      "name": "Complete business day",
+      "setup": "Run demand, shortage, supply, communication, receiving, fulfillment, shipping, payment, supplier payment, and accounting as one story.",
+      "expected": "Inventory, availability, orders, POs, shipments, balances, books, activity, and explanations all agree.",
+      "evidence": [
+        {
+          "kind": "test",
+          "file": "tests/unit/mission2-provenance.test.js",
+          "title": "a real customer shortage connects through StockChief supply work to receipt and fulfillment",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “a real customer shortage connects through StockChief supply work to receipt and fulfillment” passed."
+        },
+        {
+          "kind": "test",
+          "file": "tests/unit/mission2-provenance.test.js",
+          "title": "purchase, receipt, supplier bill and payment reconcile as one immutable evidence chain",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “purchase, receipt, supplier bill and payment reconcile as one immutable evidence chain” passed."
+        },
+        {
+          "kind": "test",
+          "file": "tests/unit/shipping-manager-completion.test.js",
+          "title": "Ask StockChief and the order story read the complete carrier and accounting evidence",
+          "level": "engine",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "engine/local-deterministic: “Ask StockChief and the order story read the complete carrier and accounting evidence” passed."
+        },
+        {
+          "kind": "test",
+          "file": "tests/integration/accounting-mission14-acceptance.test.js",
+          "title": "Mission 14 deterministic company reconciles operations, subledgers, statements, and cash",
+          "level": "integration",
+          "qualification": "local-deterministic",
+          "pass": true,
+          "actual": "integration/local-deterministic: “Mission 14 deterministic company reconciles operations, subledgers, statements, and cash” passed."
+        }
+      ],
+      "pass": true,
+      "actual": [
+        "engine/local-deterministic: “a real customer shortage connects through StockChief supply work to receipt and fulfillment” passed.",
+        "engine/local-deterministic: “purchase, receipt, supplier bill and payment reconcile as one immutable evidence chain” passed.",
+        "engine/local-deterministic: “Ask StockChief and the order story read the complete carrier and accounting evidence” passed.",
+        "integration/local-deterministic: “Mission 14 deterministic company reconciles operations, subledgers, statements, and cash” passed."
+      ]
+    }
+  ]
+}

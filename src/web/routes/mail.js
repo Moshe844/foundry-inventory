@@ -12,7 +12,6 @@
 const express = require('express');
 const inbox = require('../../connections/reply-inbox');
 const drafting = require('../../connections/reply-drafting');
-const setAside = require('../../connections/mail-set-aside');
 const providerService = require('../../connections/provider-service');
 const permissions = require('../../actions/permissions');
 const { requireAuth, requirePermission, asyncRoute } = require('../middleware');
@@ -30,20 +29,16 @@ const DRAWERS = [
   { key: 'needs-reply', state: 'NEEDS_REPLY', label: 'Needs a reply' },
   { key: 'waiting', state: 'WAITING', label: 'Waiting on them' },
   { key: 'handled', state: 'HANDLED', label: 'Handled' },
-  { key: 'not-foundry', state: 'SET_ASIDE', label: 'Not for StockChief' },
 ];
 
 router.get('/mail', requirePermission(permissions.VIEW, 'read the mailbox'), asyncRoute(async (req, res) => {
   const drawer = DRAWERS.find((entry) => entry.key === trimOrNull(req.query.show)) || DRAWERS[0];
-  const aside = drawer.state === 'SET_ASIDE';
   res.page('mail/inbox', {
     title: 'Mail', nav: 'mail',
     drawers: DRAWERS,
     drawer,
-    counts: { ...inbox.counts(req.db, req.ctx.workspaceId),
-      SET_ASIDE: setAside.count(req.db, req.ctx.workspaceId) },
-    messages: aside ? [] : inbox.list(req.db, req.ctx.workspaceId, drawer.state),
-    setAside: aside ? setAside.list(req.db, req.ctx.workspaceId) : [],
+    counts: inbox.counts(req.db, req.ctx.workspaceId),
+    messages: inbox.list(req.db, req.ctx.workspaceId, drawer.state),
   });
 }));
 

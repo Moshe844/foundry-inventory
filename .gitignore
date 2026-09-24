@@ -1,9 +1,21 @@
 node_modules/
 data/
 artifacts/
+.tmp/
 *.log
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite.*
 .env
 .DS_Store
+
+# Generated certification databases can contain synthetic or copied business
+# records. Keep the reports and scenarios, never the database files.
+certification/results/backups/
 
 # A stray SQLite database left by a mistyped command — real business data, and
 # version control is not where a copy of the books belongs.

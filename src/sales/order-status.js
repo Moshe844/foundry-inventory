@@ -190,17 +190,21 @@ function decorate(db, workspaceId, orders, options = {}) {
  * a count of what is stuck is the reason you opened the page.
  */
 function summarise(decorated) {
-  const open = decorated.filter((order) => order.next.rank > RANK.SETTLED);
-  const stuck = decorated.filter((order) => order.next.rank >= RANK.BLOCKED);
-  const short = decorated.filter((order) => order.next.rank === RANK.WAITING_ON_STOCK);
-  const ready = decorated.filter((order) => order.next.rank === RANK.READY);
+  const active = decorated.filter((order) => !['FULFILLED', 'CANCELLED'].includes(order.status));
+  const completedUnpaid = decorated.filter((order) => order.status === 'FULFILLED' && order.next.rank > RANK.SETTLED);
+  const stuck = active.filter((order) => order.next.rank >= RANK.BLOCKED);
+  const short = active.filter((order) => order.next.rank === RANK.WAITING_ON_STOCK);
+  const ready = active.filter((order) => order.next.rank === RANK.READY);
 
-  if (!open.length) return 'Nothing is waiting on you.';
+  if (!active.length && !completedUnpaid.length) return 'Nothing is waiting on you.';
   const parts = [];
   if (stuck.length) parts.push(`${stuck.length} ${stuck.length === 1 ? 'order needs' : 'orders need'} you`);
   if (short.length) parts.push(`${short.length} short of stock`);
   if (ready.length) parts.push(`${ready.length} ready to pick`);
-  if (!parts.length) return `${open.length} ${open.length === 1 ? 'order is' : 'orders are'} on their way.`;
+  if (!parts.length && active.length) parts.push(`${active.length} active ${active.length === 1 ? 'order is' : 'orders are'} moving`);
+  if (completedUnpaid.length) {
+    parts.push(`${completedUnpaid.length} completed ${completedUnpaid.length === 1 ? 'order is' : 'orders are'} still unpaid`);
+  }
   return `${parts.join(', ')}.`;
 }
 

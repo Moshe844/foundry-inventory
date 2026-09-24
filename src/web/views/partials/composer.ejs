@@ -20,8 +20,13 @@
       enctype="multipart/form-data" data-busy data-ask-form data-operator-command-form>
   <input type="hidden" name="_csrf" value="<%= csrfToken %>">
   <% if (locals.queryConversation) { %><input type="hidden" name="queryConversation" value="1"><% } %>
+  <% if (locals.actionClarification) { %>
+    <input type="hidden" name="original" value="<%= locals.actionClarification.original %>">
+    <input type="hidden" name="answerAction" value="1">
+    <% if (locals.actionClarification.goalId) { %><input type="hidden" name="assistantGoal" value="<%= locals.actionClarification.goalId %>"><% } %>
+  <% } %>
   <label class="visually-hidden" for="ask-question">Tell StockChief what happened, or ask it something</label>
-  <textarea class="rm-composer__input" id="ask-question" data-ask-input name="message" rows="2"
+  <textarea class="rm-composer__input" id="ask-question" data-ask-input name="<%= locals.actionClarification ? 'answer' : 'message' %>" rows="2"
     maxlength="2000" placeholder="<%= prompt %>"><%= prefill %></textarea>
   <div class="rm-composer__foot">
     <label class="rm-composer__attach" title="Attach a file or a photo of a document">

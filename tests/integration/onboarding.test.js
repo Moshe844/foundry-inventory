@@ -76,8 +76,7 @@ test('choosing a path routes to the right place and is remembered', () => {
   assert.equal(paths.choose(env.db, env.workspace.workspaceId, 'spreadsheet').step, '/onboarding/migrations/new');
   assert.equal(paths.get(env.db, env.workspace.workspaceId).status, 'collecting');
 
-  // Starting fresh goes straight to the Mission 2 experience, unchanged.
-  assert.equal(paths.choose(env.db, env.workspace.workspaceId, 'fresh').step, '/foundry/describe');
+  assert.equal(paths.choose(env.db, env.workspace.workspaceId, 'fresh').step, '/inventory/new');
   assert.equal(paths.get(env.db, env.workspace.workspaceId).status, 'understanding');
 });
 

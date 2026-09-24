@@ -7,6 +7,8 @@ const { ValidationError } = require('../domain/errors');
 const resolver = require('../actions/resolver');
 const sales = require('./sales-order-service');
 const prices = require('../pricing/price-service');
+const shippingAddress = require('../shipping/address');
+const operatingInstructions = require('../manager/operating-instructions');
 
 const SCHEMA = {
   type: 'object', additionalProperties: false,
@@ -39,8 +41,53 @@ Marlow?" — is also create: customerText is who the order is for, itemText is e
 named, and quantity is -1. StockChief will ask for what is missing; do not fill it in.
 Never invent missing records or quantities. Use -1 when quantity was not stated. Return only the schema.`;
 
+function looksLikeNewPurchaseRequest(message) {
+  const text = String(message || '');
+  return /\b(?:wants?|would like|needs?)\s+(?:to\s+)?(?:order|buy|purchase)\b/i.test(text);
+}
+
+function singularWord(word) {
+  const value = String(word || '').toLowerCase();
+  if (value.length > 4 && value.endsWith('ies')) return `${value.slice(0, -3)}y`;
+  if (value.length > 4 && /(?:ches|shes|xes|zes|ses)$/.test(value)) return value.slice(0, -2);
+  if (value.length > 3 && value.endsWith('s') && !value.endsWith('ss')) return value.slice(0, -1);
+  return value;
+}
+
+function evidenceWords(value) {
+  return String(value || '').toLowerCase().match(/[a-z0-9]+/g)?.map(singularWord)
+    .filter((word) => word.length > 1 && !NOISE.has(word)) || [];
+}
+
+function statedInMessage(message, value) {
+  const wanted = evidenceWords(value);
+  if (!wanted.length) return false;
+  const source = new Set(evidenceWords(message));
+  return wanted.every((word) => source.has(word));
+}
+
+function groundCreateFields(message, data) {
+  if (!data || data.operation !== 'create') return data;
+  const grounded = { ...data };
+  if (grounded.customerText && !statedInMessage(message, grounded.customerText)) grounded.customerText = '';
+  if (grounded.itemText && !statedInMessage(message, grounded.itemText)) grounded.itemText = '';
+  if (grounded.variantText && !statedInMessage(message, grounded.variantText)) grounded.variantText = '';
+  if (Number(grounded.quantity) > 0
+      && !new RegExp(`(^|\\D)${Number(grounded.quantity)}(?:\\D|$)`).test(String(message || ''))) {
+    grounded.quantity = -1;
+  }
+  if (grounded.customerEmail && !String(message || '').includes(grounded.customerEmail)) grounded.customerEmail = '';
+  if (grounded.shippingAddress && !String(message || '').includes(grounded.shippingAddress)) grounded.shippingAddress = '';
+  if (grounded.deliverySource && !String(message || '').includes(grounded.deliverySource)) {
+    grounded.deliveryMethod = '';
+    grounded.deliverySource = '';
+  }
+  return grounded;
+}
+
 function asksToCompleteWholeOrder(message) {
   const text = String(message || '').trim();
+  if (looksLikeNewPurchaseRequest(text) || /\b(?:ordered|placed an order for)\b/i.test(text)) return false;
   return /\b(?:complete|finish|fulfill|ship)\b[^.?!]*\b(?:(?:sales|customer)\s+)?order\b/i.test(text)
     || /\b(?:(?:sales|customer)\s+)?order\b[^.?!]*\b(?:complete|finished|fulfilled|shipped)\b/i.test(text);
 }
@@ -83,12 +130,48 @@ function snapshot(db, workspaceId) {
     products: db.prepare(`SELECT i.name, s.variant_label AS variant, s.code FROM skus s JOIN items i ON i.id = s.item_id
       WHERE s.workspace_id = ? AND s.is_active = 1 AND i.is_active = 1 ORDER BY i.name, s.position LIMIT 300`).all(workspaceId),
     locations: db.prepare('SELECT name FROM locations WHERE workspace_id = ? AND is_active = 1 ORDER BY name').all(workspaceId),
+    approvedTeachings: operatingInstructions.activeTeachings(db, workspaceId, {
+      scopes: ['sales', 'shipping', 'payments', 'email'],
+    }).map((teaching) => ({
+      scope: teaching.scope,
+      effect: teaching.effect,
+      grantsAuthority: teaching.grantsAuthority,
+    })),
   };
+}
+
+function trimItem(value) {
+  return String(value || '')
+    .replace(/\s+(?:and\s+)?(?:for\s+)?(?:have\s+)?(?:them|it|the\s+order)?\s*(?:customer\s+)?(?:ship(?:ped|ping)?|deliver(?:ed|y)?|collect(?:ed|ion)?|pick(?:ed)?\s*up)\b.*$/i, '')
+    .replace(/(?:[,;]|\s+for)\s*(?:customer\s+)?(?:pickup|pick\s*up|collection)\b.*$/i, '')
+    .replace(/^\s*(?:some|a|an)\s+/i, '')
+    .replace(/[\s,;:.-]+$/, '').trim();
+}
+
+function parseCreateRequest(text) {
+  const personFirst = text.match(/^\s*(?:please[,\s]+)?(.+?)\s+(?:wants?|would like|needs?)\s+(?:to\s+)?(?:order|buy|purchase)\s+(?:(\d+)\s+)?(.+?)(?=\s+(?:and\s+)?(?:for\s+)?(?:have\s+)?(?:them|it|the\s+order)?\s*(?:customer\s+)?(?:ship(?:ped|ping)?|deliver(?:ed|y)?|collect(?:ed|ion)?|pick(?:ed)?\s*up)\b|[.?!]|$)/i);
+  if (personFirst) return {
+    customerText: personFirst[1].trim(), quantity: Number(personFirst[2] || -1), itemText: trimItem(personFirst[3]),
+  };
+  const reported = text.match(/^\s*(.+?)\s+(?:ordered|bought|purchased|placed\s+an?\s+order\s+for)\s+(?:(\d+)\s+)?(.+?)(?=\s+(?:and\s+)?(?:for\s+)?(?:have\s+)?(?:them|it|the\s+order)?\s*(?:customer\s+)?(?:ship(?:ped|ping)?|deliver(?:ed|y)?|collect(?:ed|ion)?|pick(?:ed)?\s*up)\b|[.?!]|$)/i);
+  if (reported) return {
+    customerText: reported[1].trim(), quantity: Number(reported[2] || -1), itemText: trimItem(reported[3]),
+  };
+  const forCustomer = text.match(/\b(?:customer|sales)?\s*order\s+for\s+(.+)$/i);
+  if (!forCustomer) return null;
+  const remainder = forCustomer[1].replace(/[.?!]+$/, '').trim();
+  const divided = remainder.match(/^(.+?)\s*(?::|,|\s+for)\s*(\d+)\s+(.+)$/i)
+    || remainder.match(/^(.+?)\s+(\d+)\s+(.+)$/i);
+  if (divided) return {
+    customerText: divided[1].trim(), quantity: Number(divided[2]), itemText: trimItem(divided[3]),
+  };
+  return { customerText: remainder, quantity: -1, itemText: '' };
 }
 
 function fallback(message) {
   const text = String(message || '').trim();
-  const quantity = Number((text.match(/\b(\d+)\b/) || [])[1] || -1);
+  const purchase = parseCreateRequest(text);
+  const quantity = Number(purchase?.quantity || (text.match(/\b(\d+)\b/) || [])[1] || -1);
   if (/waiting for stock|backorder/i.test(text) && /what|which|show|customer order/i.test(text)) {
     return { operation: 'list_waiting', customerText: '', orderText: '', itemText: '', variantText: '', locationText: '', quantity: -1, neededBy: '', reason: 'Read waiting customer orders.' };
   }
@@ -101,15 +184,22 @@ function fallback(message) {
   // "Create a customer order for Marlow" names a customer and nothing else.
   // Handing the whole sentence over as the product name would send the
   // resolver looking for a product called "customer order for Marlow".
-  const requestedCustomer = requested
-    ? (text.match(/\bfor\s+(.+?)(?:\s*[.?!]|$)/i) || [, ''])[1].trim() : '';
+  const customerFromPurchase = String(purchase?.customerText || '').trim();
+  const requestedCustomer = customerFromPurchase && !/^a?\s*customer$/i.test(customerFromPurchase)
+    ? customerFromPurchase
+    : requested ? (text.match(/\bfor\s+(.+?)(?:\s*[.?!]|$)/i) || [, ''])[1].trim() : '';
+  const pickupSource = (text.match(/\b(?:customer\s+)?(?:pickup|pick\s*up|collect(?:ed|ion)?)\b/i) || [''])[0];
+  const shippingSource = (text.match(/\b(?:ship(?:ped|ping)?|deliver(?:ed|y)?)\b/i) || [''])[0];
+  const deliveryMethod = pickupSource ? 'PICKUP' : shippingSource ? 'SHIP' : '';
   return {
     operation: cancel ? (/whole|entire|order\s+(?:was\s+)?cancel/i.test(text) ? 'cancel_order' : 'cancel_line')
-      : completeOrder ? 'complete_order' : fulfill ? 'fulfill' : add ? 'add' : create ? 'create' : 'list_waiting',
+      : completeOrder ? 'complete_order' : create ? 'create' : fulfill ? 'fulfill' : add ? 'add' : 'list_waiting',
     customerText: requestedCustomer, orderText: (text.match(/\bSO-\d+\b/i) || [''])[0],
-    itemText: completeOrder || requested ? '' : text, variantText: '',
-    locationText: (text.match(/\bfrom\s+(.+?)(?:\.|$)/i) || [,''])[1], quantity: requested ? -1 : quantity,
-    neededBy: '', reason: 'Deterministic fallback.',
+    itemText: completeOrder ? '' : String(purchase?.itemText || (requested ? '' : text)).trim(), variantText: '',
+    locationText: (text.match(/\bfrom\s+(.+?)(?:\.|$)/i) || [,''])[1], quantity: purchase ? quantity : requested ? -1 : quantity,
+    neededBy: '', reason: 'Deterministic fallback.', deliveryMethod,
+    deliverySource: pickupSource || shippingSource,
+    shippingAddress: '', customerEmail: '',
   };
 }
 
@@ -123,10 +213,18 @@ function fallback(message) {
  */
 function asksToCreateOrder(message) {
   const text = String(message || '');
-  if (asksToCompleteWholeOrder(text) || /\b(?:cancel|ship|fulfil|dispatch)/i.test(text)) return false;
+  if (looksLikeNewPurchaseRequest(text)) return true;
+  if (asksToCompleteWholeOrder(text) || /\b(?:cancel|fulfil|dispatch)/i.test(text)) return false;
   return /\b(?:create|place|make|start|open|raise|set up|new)\b[^.?!]*\b(?:customer|sales)\s+order\b/i.test(text)
     || /\b(?:customer|sales)\s+order\b[^.?!]*\bfor\b/i.test(text)
     || /^\s*(?:can|could|would|will|please)\b[^.?!]*\border\b/i.test(text);
+}
+
+function isCreateMessage(message) {
+  const text = String(message || '').trim();
+  if (asksToCreateOrder(text)) return true;
+  return !/^\s*(?:i|we|our\s+(?:business|company))\b/i.test(text)
+    && /^\s*(?:please[,\s]+)?[^.?!]+?\s+(?:ordered|bought|purchased|placed\s+an?\s+order\s+for)\s+(?:\d+\s+)?[^.?!]+/i.test(text);
 }
 
 /*
@@ -190,7 +288,7 @@ async function interpret(db, ctx, message, options = {}) {
       schema: SCHEMA, schemaName: 'sales_order_intent' });
     const result = validate(toWireSchema(SCHEMA), response.data, { key: 'sales-order-intent-wire' });
     if (!result.ok) throw new Error('invalid sales intent');
-    data = result.data;
+    data = groundCreateFields(message, result.data);
   } catch { data = fallback(message); }
   // Carried on the intent so the create path knows whether it is recording a
   // fact or holding a conversation. Only the conversation checks the customer
@@ -315,18 +413,40 @@ function apply(db, ctx, intent, options = {}) {
       return question({ ...intent, resolvedSkuId: sku.id }, 'unitPriceMinor',
         `${displayName} does not have a selling price. What price should this customer order use?`, { skuId: sku.id });
     }
+    const stated = String(intent.statedAs || '');
+    const trustedMethod = intent.deliveryMethodConfirmed
+      || (intent.deliverySource && stated.includes(intent.deliverySource))
+      ? intent.deliveryMethod : '';
+    if (!['SHIP', 'PICKUP'].includes(trustedMethod)) {
+      return question(intent, 'deliveryMethod', `How will ${intent.customerText} receive this order?`, { choices: [
+        { label: 'Ship it to an address', value: 'SHIP' },
+        { label: 'Customer pickup', value: 'PICKUP' },
+      ] });
+    }
+    const matchedCustomer = matchCustomer(db, ctx.workspaceId, intent.customerText).exact;
+    const statedAddress = intent.shippingAddressConfirmed
+      || (intent.shippingAddress && stated.includes(intent.shippingAddress)) ? String(intent.shippingAddress || '').trim() : '';
+    const destination = statedAddress || String(matchedCustomer?.shipping_address || '').trim();
+    if (trustedMethod === 'SHIP' && !destination) {
+      return question({ ...intent, deliveryMethod: 'SHIP', deliveryMethodConfirmed: true }, 'shippingAddress',
+        `What delivery address should ${intent.customerText}'s order ship to?`);
+    }
+    if (trustedMethod === 'SHIP') {
+      const parsedAddress = shippingAddress.parse(destination);
+      if (!parsedAddress.complete) {
+        return question({ ...intent, deliveryMethod: 'SHIP', deliveryMethodConfirmed: true }, 'shippingAddress',
+          `That destination still needs ${parsedAddress.missing.join(', ')}. Enter the complete delivery address for ${intent.customerText}.`);
+      }
+    }
     const draft = sales.createOrder(db, ctx, { customerName: intent.customerText, neededBy: intent.neededBy || null,
-      requireDeliveryDecision: true,
-      ...(intent.deliverySource && String(intent.statedAs || '').includes(intent.deliverySource)
-        && ['SHIP', 'PICKUP'].includes(intent.deliveryMethod) ? { deliveryMethod: intent.deliveryMethod } : {}),
-      ...(intent.shippingAddress && String(intent.statedAs || '').includes(intent.shippingAddress)
-        ? { shipToAddress: intent.shippingAddress } : {}),
+      deliveryMethod: trustedMethod, requireCompleteDelivery: true,
+      ...(trustedMethod === 'SHIP' && statedAddress ? { shipToAddress: statedAddress } : {}),
       ...(intent.customerEmail && String(intent.statedAs || '').includes(intent.customerEmail)
         ? { customerEmail: intent.customerEmail } : {}),
       lines: [{ skuId: sku.id, quantity: intent.quantity, unitPriceMinor }], notes: intent.statedAs,
       requirePrices: true });
-    if (options.previewOnly || draft.delivery_decision_required) return {kind:'created',order:draft,
-      message:`${draft.order_number} is a draft for review. No stock is reserved or shipped and no customer has been contacted. Confirm the order only after reviewing its details.`};
+    if (options.previewOnly || intent.guided) return {kind:'created',order:draft,
+      message:`${draft.order_number} is prepared for ${draft.customer.name}: ${draft.totals.ordered} unit(s), ${draft.delivery_method === 'PICKUP' ? 'customer pickup' : `shipping to ${draft.ship_to_address}`}. No stock is reserved, nothing has shipped, and no customer has been contacted.`};
     return { kind: 'created', order: sales.confirm(db, ctx, draft.id, { idempotencyKey: `tell-confirm:${draft.id}` }) };
   }
   const order = findOrder(db, ctx.workspaceId, intent);
@@ -439,10 +559,20 @@ function continueApply(db, ctx, continuation, answer, options = {}) {
   } else if (continuation.field === 'variantText') {
     intent.variantText = String(answer || '').trim();
     intent.statedAs = `${intent.statedAs || ''} — ${intent.variantText}`;
+  } else if (continuation.field === 'deliveryMethod') {
+    const method = String(answer || '').trim().toUpperCase();
+    if (!['SHIP', 'PICKUP'].includes(method)) throw new ValidationError('Choose shipping or customer pickup.');
+    intent.deliveryMethod = method;
+    intent.deliveryMethodConfirmed = true;
+  } else if (continuation.field === 'shippingAddress') {
+    const address = String(answer || '').trim();
+    if (!address) throw new ValidationError('Enter the complete delivery address.');
+    intent.shippingAddress = address;
+    intent.shippingAddressConfirmed = true;
   } else {
     throw new ValidationError('That customer-order question can no longer be continued safely.');
   }
   return apply(db, ctx, intent, options);
 }
 
-module.exports = { SCHEMA, SYSTEM, snapshot, fallback, interpret, apply, continueApply };
+module.exports = { SCHEMA, SYSTEM, snapshot, fallback, interpret, apply, continueApply, isCreateMessage };

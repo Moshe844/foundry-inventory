@@ -32,6 +32,7 @@ const position = require('./position');
 const supplierService = require('./supplier-service');
 const policyService = require('./policy-service');
 const { pluralUnit } = require('../lib/util');
+const { localDateKey, daysBetween } = require('../lib/calendar');
 
 const counted = (quantity, unit) => {
   const singular = String(unit || 'unit').replace(/\(s\)$/i, '').trim() || 'unit';
@@ -74,7 +75,7 @@ function fact(label, value, note) {
 function evaluateSku(db, workspaceId, sku, options = {}) {
   const now = options.now || Date.now();
   const policy = options.policy || policyService.effectivePolicy(db, workspaceId, sku.skuId);
-  const incoming = options.incoming || position.onOrderForSku(db, workspaceId, sku.skuId);
+  const incoming = options.incoming || position.onOrderForSku(db, workspaceId, sku.skuId, { now });
   const candidates = options.suppliers || supplierService.suppliersForSku(db, workspaceId, sku.skuId);
 
   const onHand = sku.measured.onHand;
@@ -94,10 +95,12 @@ function evaluateSku(db, workspaceId, sku, options = {}) {
   const usage = sku.estimated.hasUsageEvidence ? sku.estimated.averageDailyUsage : null;
   const usageWindow = sku.measured.windowDays;
   const issued = sku.measured.issuedInWindow;
+  const drafted = options.drafted || position.draftedForSku(db, workspaceId, sku.skuId);
 
   const chosen = chooseSupplier(candidates, {
     daysOfStockRemaining: sku.estimated.daysOfStockRemaining,
     preferredSupplierId: policy.preferredSupplierId,
+    neededUnits: policy.targetStock === null ? null : Math.max(0,Math.max(policy.targetStock-inventoryPosition,policy.defaultOrderQuantity || 0)-drafted.units),
   });
   const supplierItem = chosen.supplierItem;
 
@@ -229,6 +232,16 @@ function evaluateSku(db, workspaceId, sku, options = {}) {
   });
 
   if (inventoryPosition > reorderPoint) {
+    const timing = incomingTiming(incoming, { now, available: available - backordered, usagePerDay });
+    if (onOrder > 0 && available - backordered <= reorderPoint && timing.risk) {
+      return {
+        ...base, recommend: false, reason: 'incoming_timing_risk', reorderPoint, target, safetyStock,
+        headline: 'Incoming stock needs a timing decision',
+        explanation: `${availableWords}${demandWords}. The ${onOrder} committed incoming units cover the aggregate requirement, `
+          + `but not proven availability when needed. ${timing.explanation} Confirm or expedite the existing orders before buying the same requirement again. No duplicate order was prepared.`,
+        incomingTiming: timing, evidence: evidenceFor(base, { reorderPoint, target, safetyStock, usagePerDay }), calculation: steps,
+      };
+    }
     const coverDays = usagePerDay > 0 ? round(inventoryPosition / usagePerDay, 1) : null;
     return {
       ...base,
@@ -280,7 +293,6 @@ function evaluateSku(db, workspaceId, sku, options = {}) {
   // anything and the stock is not coming. But recommending it again is how the
   // same shortfall gets ordered twice — once from the Purchasing page and once
   // from wherever else the recommendation is shown.
-  const drafted = options.drafted || position.draftedForSku(db, workspaceId, sku.skuId);
   if (drafted.units >= shortfall) {
     steps.push({
       step: 'already_prepared',
@@ -326,14 +338,19 @@ function evaluateSku(db, workspaceId, sku, options = {}) {
   }
 
   // The supplier's own rules decide the final quantity.
-  const converted = supplierService.toPurchaseUnits(shortfall, supplierItem);
+  const remainingShortfall = Math.max(0, shortfall - drafted.units);
+  if (drafted.units > 0) {
+    steps.push({ step: 'prepared_credit', value: remainingShortfall,
+      detail: `${shortfall} needed minus ${drafted.units} already drafted = ${remainingShortfall} additional units.` });
+  }
+  const converted = supplierService.toPurchaseUnits(remainingShortfall, supplierItem);
   for (const step of converted.steps) steps.push(step);
 
   const defaultQuantity = policy.defaultOrderQuantity;
   let finalUnits = converted.units;
   let finalPurchaseUnits = converted.purchaseUnits;
-  if (defaultQuantity && defaultQuantity > 0) {
-    const asPacks = supplierService.toPurchaseUnits(defaultQuantity, supplierItem);
+  if (defaultQuantity && defaultQuantity > drafted.units) {
+    const asPacks = supplierService.toPurchaseUnits(defaultQuantity - drafted.units, supplierItem);
     if (asPacks.units > finalUnits) {
       steps.push({
         step: 'default_quantity',
@@ -467,7 +484,7 @@ function evidenceFor(base, extra) {
  * Speed only outranks price when stock would otherwise run out first, and when
  * it does, the trade is stated in money rather than asserted.
  */
-function chooseSupplier(candidates, { daysOfStockRemaining = null, preferredSupplierId = null } = {}) {
+function chooseSupplier(candidates, { daysOfStockRemaining = null, preferredSupplierId = null, neededUnits = null } = {}) {
   const usable = candidates.filter((c) => c.isActive !== false);
   if (usable.length === 0) return { supplierItem: null, because: 'no supplier is linked to this product' };
   if (usable.length === 1) {
@@ -480,6 +497,30 @@ function chooseSupplier(candidates, { daysOfStockRemaining = null, preferredSupp
   }
 
   const flagged = usable.find((c) => c.isPreferred);
+  const priced = usable.filter((candidate) => candidate.lastUnitCost !== null && candidate.lastUnitCost !== undefined);
+  const currencies = new Set(priced.map((candidate) => candidate.currency || 'USD'));
+  if (currencies.size > 1) {
+    const selected = flagged || usable[0];
+    return {supplierItem:selected,because:`${selected.supplierName} is retained; supplier prices use different currencies and no exchange-rate comparison was made`};
+  }
+  if (!flagged && Number.isFinite(neededUnits) && neededUnits > 0 && priced.length) {
+    const pricedOrders = priced.map((candidate) => {
+      const converted = supplierService.toPurchaseUnits(neededUnits,candidate);
+      return {candidate,quantityUnits:converted.units,total:round(converted.units*candidate.lastUnitCost,2)};
+    });
+    const timely = daysOfStockRemaining === null ? pricedOrders : pricedOrders.filter((order) =>
+      order.candidate.effectiveLeadTimeDays !== null && order.candidate.effectiveLeadTimeDays !== undefined
+      && order.candidate.effectiveLeadTimeDays <= daysOfStockRemaining);
+    const comparable = timely.length ? timely : pricedOrders;
+    comparable.sort((first,second) => first.total-second.total || first.quantityUnits-second.quantityUnits
+      || String(first.candidate.id).localeCompare(String(second.candidate.id)));
+    const best = comparable[0];
+    return {supplierItem:best.candidate,because:`${best.candidate.supplierName} has the lowest known order total for ${neededUnits} needed: ${best.quantityUnits} units cost ${best.total} ${best.candidate.currency || 'USD'} after case packs, minimums and multiples`
+      + (daysOfStockRemaining !== null ? timely.length ? ', among suppliers with a recorded lead time that fits current stock cover' : '; no priced supplier is proven to arrive before stock runs out' : '')
+      + (priced.length < usable.length ? '; unpriced alternatives were not assumed cheaper' : '')
+      + '. Freight, tax and supplier-wide minimum spend are not included.',
+      orderComparison:pricedOrders.map((order) => ({supplierId:order.candidate.supplierId,quantityUnits:order.quantityUnits,total:order.total}))};
+  }
   const cheapest = [...usable]
     .filter((c) => c.lastUnitCost !== null && c.lastUnitCost !== undefined)
     .sort((a, b) => a.lastUnitCost - b.lastUnitCost)[0];
@@ -597,7 +638,7 @@ function evaluateWorkspace(db, workspaceId, options = {}) {
     evaluatedAt: new Date(now).toISOString(),
     recommendations,
     covered: results.filter((r) => !r.recommend && ['covered_by_incoming', 'above_reorder_point', 'nothing_needed'].includes(r.reason)),
-    blocked: results.filter((r) => !r.recommend && ['no_supplier', 'no_usage_evidence'].includes(r.reason)),
+    blocked: results.filter((r) => !r.recommend && ['no_supplier', 'no_usage_evidence', 'incoming_timing_risk'].includes(r.reason)),
     all: results,
     bySupplier: [...bySupplier.values()].sort((a, b) => b.lines.length - a.lines.length),
     method: DEFAULTS,
@@ -616,6 +657,33 @@ function evaluateOne(db, workspaceId, skuId, options = {}) {
   return evaluateSku(db, workspaceId, sku, { now });
 }
 
+function summarizeDecisionCoverage(result) {
+  const missingSupplier = result.blocked.filter((line) => line.reason === 'no_supplier');
+  const insufficientEvidence = result.blocked.filter((line) => line.reason === 'no_usage_evidence');
+  const timingRisk = result.blocked.filter((line) => line.reason === 'incoming_timing_risk');
+  const parts = [];
+
+  if (missingSupplier.length) {
+    parts.push(`${missingSupplier.length} additional product${missingSupplier.length === 1 ? '' : 's'} need${missingSupplier.length === 1 ? 's' : ''} ordering but ${missingSupplier.length === 1 ? 'has' : 'have'} no linked supplier. ${missingSupplier[0].displayName}: ${missingSupplier[0].headline}.`);
+  }
+  if (insufficientEvidence.length) {
+    parts.push(`${insufficientEvidence.length} product${insufficientEvidence.length === 1 ? '' : 's'} cannot be judged because ${insufficientEvidence.length === 1 ? 'it has' : 'they have'} no usable outbound history or a configured reorder point. StockChief will not guess demand.`);
+  }
+  if (timingRisk.length) {
+    parts.push(`${timingRisk.length} product${timingRisk.length === 1 ? ' is' : 's are'} covered only by incoming stock whose arrival is late, missing, or not verified. No duplicate order was prepared.`);
+  }
+
+  return {
+    recommendations: result.recommendations.length,
+    covered: result.covered.length,
+    missingSupplier,
+    insufficientEvidence,
+    timingRisk,
+    unresolved: result.blocked.length,
+    unresolvedText: parts.join(' '),
+  };
+}
+
 module.exports = {
   DEFAULTS,
   evaluateSku,
@@ -624,4 +692,30 @@ module.exports = {
   chooseSupplier,
   evidenceFor,
   round,
+  incomingTiming,
+  summarizeDecisionCoverage,
 };
+
+function incomingTiming(incoming, { now, available, usagePerDay }) {
+  const today = localDateKey(now);
+  const uncertain = incoming.lines.filter((line) => !line.expectedDate || line.expectedDate < today
+    || line.expectedDateSource === 'unknown');
+  const known = incoming.lines.filter((line) => !uncertain.includes(line))
+    .sort((first, second) => first.expectedDate.localeCompare(second.expectedDate));
+  let remaining = available;
+  let previous = today;
+  let shortageBefore = null;
+  for (const line of known) {
+    remaining -= Math.max(0, daysBetween(previous, line.expectedDate)) * usagePerDay;
+    if (remaining < 0) { shortageBefore = line.expectedDate; break; }
+    remaining += line.outstanding;
+    previous = line.expectedDate;
+  }
+  const uncertainUnits = uncertain.reduce((total, line) => total + line.outstanding, 0);
+  const risk = uncertainUnits > 0 || shortageBefore !== null || available < 0;
+  const reasons = [];
+  if (uncertainUnits > 0) reasons.push(`${uncertainUnits} incoming units have overdue or unverified arrival dates.`);
+  if (shortageBefore) reasons.push(`At recent usage, available stock is projected short before ${shortageBefore}; arrival is not guaranteed.`);
+  if (available < 0) reasons.push('Confirmed customer demand already exceeds currently available stock.');
+  return { risk, uncertainUnits, shortageBefore, explanation: reasons.join(' ') };
+}

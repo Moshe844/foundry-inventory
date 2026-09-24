@@ -229,30 +229,37 @@ function composeShippingNotice(db, workspaceId, shipmentId) {
     .get(shipment.order_id, workspaceId);
   const outstanding = Number(totals.ordered) - Number(totals.fulfilled);
   const collected = shipment.handover === 'COLLECTED';
+  const deliveredByUs = shipment.handover === 'DELIVERED_BY_US';
+  const sentByCarrier = shipment.handover === 'CARRIER';
 
   const body = [
     `Hello${shipment.customer_name ? ` ${shipment.customer_name}` : ''},`,
     '',
     collected
       ? `Your order ${shipment.order_number} was collected.`
-      : `Your order ${shipment.order_number} is on its way.`,
+      : deliveredByUs
+        ? `Your order ${shipment.order_number} is out for delivery with us.`
+        : `Your order ${shipment.order_number} is on its way.`,
     '',
-    collected ? 'Items collected:' : 'In this shipment:',
+    collected ? 'Items collected:' : deliveredByUs ? 'Items out for delivery:' : 'In this shipment:',
     ...lines.map((line) => {
       const name = line.variant_label ? `${line.item_name} / ${line.variant_label}` : line.item_name;
       return `- ${name}${line.sku_code ? ` (${line.sku_code})` : ''}: ${line.quantity}`;
     }),
     '',
     ...[
-      LINE('Carrier', carrierName ? [carrierName, trimOrNull(shipment.service)].filter(Boolean).join(' ') : null),
-      LINE('Tracking number', shipment.tracking_number),
-      trackingUrl ? `Track it here: ${trackingUrl}` : null,
-      LINE('Expected delivery', shipment.expected_delivery_date),
+      LINE('Carrier', sentByCarrier && carrierName
+        ? [carrierName, trimOrNull(shipment.service)].filter(Boolean).join(' ') : null),
+      LINE('Tracking number', sentByCarrier ? shipment.tracking_number : null),
+      sentByCarrier && trackingUrl ? `Track it here: ${trackingUrl}` : null,
+      LINE('Expected delivery', sentByCarrier ? shipment.expected_delivery_date : null),
       shipment.package_count && Number(shipment.package_count) > 1
         ? `This order is travelling in ${shipment.package_count} packages.` : null,
     ].filter(Boolean),
     outstanding > 0
-      ? ['', `${outstanding} ${outstanding === 1 ? 'item' : 'items'} on this order ${collected ? 'have not been collected' : 'have not shipped'} yet. We will let you know when they do.`].join('\n')
+      ? ['', `${outstanding} ${outstanding === 1 ? 'item' : 'items'} on this order ${collected
+        ? 'have not been collected'
+        : deliveredByUs ? 'are not out for delivery' : 'have not shipped'} yet. We will let you know when they do.`].join('\n')
       : null,
     '',
     'Thank you.',
@@ -265,7 +272,9 @@ function composeShippingNotice(db, workspaceId, shipmentId) {
     recipient: trimOrNull(shipment.customer_email),
     subject: collected
       ? `Your order ${shipment.order_number} was collected`
-      : `Your order ${shipment.order_number} has shipped`,
+      : deliveredByUs
+        ? `Your order ${shipment.order_number} is out for delivery`
+        : `Your order ${shipment.order_number} has shipped`,
     body,
   };
 }

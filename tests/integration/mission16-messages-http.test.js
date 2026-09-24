@@ -78,6 +78,13 @@ async function tell(env, message) {
   return env.agent.post('/foundry/tell').type('form').send({ _csrf: csrfFrom(home.text), message });
 }
 
+async function ask(env, message, fields = {}) {
+  const page = await env.agent.get('/ask');
+  return env.agent.post('/foundry/tell').type('form').send({
+    _csrf: csrfFrom(page.text), queryConversation: '1', message, ...fields,
+  });
+}
+
 const SAID = 'Please email motty6700@gmail.com that we received is order and processing it now';
 
 test('an emailed instruction lands on a page with the words and a Send button', async () => {
@@ -104,6 +111,216 @@ test('an emailed instruction lands on a page with the words and a Send button', 
   assert.equal(row.recipient, 'motty6700@gmail.com');
   assert.equal(row.body, 'we received is order and processing it now');
   assert.equal(row.connector_id, connectorId, 'the connected mailbox is the one it will leave from');
+  env.db.close();
+});
+
+test('Ask resolves a supplier by name without requiring the word supplier', async () => {
+  const env = await setup([]);
+  connectMailbox(env);
+  const supplier = suppliers.createSupplier(env.db, env.ctx, env.membership, {
+    name: 'Gmail Qualification', email: 'qualification@example.test', currency: 'USD',
+  });
+
+  const response = await ask(env, 'Email Gmail Qualification saying: Please confirm the dispatch date.');
+  assert.equal(response.status, 303);
+  assert.match(response.headers.location, /^\/messages\//, 'a supplier message goes to its review, not a customer form');
+  const page = await env.agent.get(response.headers.location);
+  assert.match(plain(page.text), /qualification@example\.test/);
+  assert.match(plain(page.text), /Please confirm the dispatch date/);
+  const message = env.db.prepare('SELECT customer_id, recipient, body FROM customer_communications ORDER BY created_at DESC').get();
+  assert.equal(message.customer_id, null, 'the supplier was not silently converted into a customer');
+  assert.equal(message.recipient, supplier.email);
+  env.db.close();
+});
+
+test('Ask creates a missing supplier as a prerequisite and resumes the original email', async () => {
+  const env = await setup([]);
+  connectMailbox(env);
+
+  let response = await ask(env, 'Email Solomon');
+  assert.equal(response.status, 303);
+  let page = await env.agent.get(response.headers.location);
+  let text = plain(page.text);
+  assert.match(text, /no customer or supplier called “Solomon”/);
+  assert.match(text, /Create Solomon as a supplier/);
+  assert.match(text, /Create Solomon as a customer/);
+  assert.doesNotMatch(text, /Which supplier is this for, and up to what order value/i);
+  const goalId = (/name="assistantGoal" value="([^"]+)"/.exec(page.text) || [])[1];
+  assert.ok(goalId, 'the original email goal remains attached to the clarification');
+
+  response = await env.agent.post('/foundry/tell').type('form').send({
+    _csrf: csrfFrom(page.text), queryConversation: '1', original: 'Email Solomon',
+    answer: 'Create supplier named Solomon', answerAction: '1', assistantGoal: goalId,
+  });
+  assert.equal(response.status, 303);
+  assert.match(response.headers.location, /^\/suppliers\?name=Solomon#add-supplier$/);
+
+  page = await env.agent.get(response.headers.location);
+  assert.match(page.text, /name="name"[^>]*value="Solomon"/);
+  response = await env.agent.post('/suppliers').type('form').send({
+    _csrf: csrfFrom(page.text), name: 'Solomon', email: 'solomon@example.test',
+  });
+  assert.equal(response.status, 303);
+  assert.equal(response.headers.location, '/foundry/resume-prerequisite');
+
+  response = await env.agent.get(response.headers.location);
+  assert.equal(response.status, 303);
+  assert.match(response.headers.location, /^\/ask\?/);
+  page = await env.agent.get(response.headers.location);
+  text = plain(page.text);
+  assert.match(text, /What should StockChief say to Solomon\?/);
+  assert.doesNotMatch(text, /Clarification: Create supplier/i);
+  const resumedGoalId = (/name="assistantGoal" value="([^"]+)"/.exec(page.text) || [])[1];
+  assert.equal(resumedGoalId, goalId, 'the email request resumes instead of becoming a supplier-policy request');
+
+  response = await env.agent.post('/foundry/tell').type('form').send({
+    _csrf: csrfFrom(page.text), queryConversation: '1', original: 'Email Solomon',
+    answer: 'Please confirm tomorrow’s delivery date.', answerAction: '1', assistantGoal: resumedGoalId,
+  });
+  assert.equal(response.status, 303);
+  assert.match(response.headers.location, /^\/messages\//);
+  page = await env.agent.get(response.headers.location);
+  text = plain(page.text);
+  assert.match(text, /solomon@example\.test/);
+  assert.match(text, /Please confirm tomorrow’s delivery date\./);
+  assert.doesNotMatch(text, /Which supplier is this for, and up to what order value/i);
+  const saved = env.db.prepare(`SELECT recipient, body, status FROM customer_communications
+    WHERE workspace_id = ? ORDER BY created_at DESC`).get(env.workspace.workspaceId);
+  assert.deepEqual(saved, {
+    recipient: 'solomon@example.test', body: 'Please confirm tomorrow’s delivery date.', status: 'PREPARED',
+  });
+  env.db.close();
+});
+
+test('Ask resumes an email after adding a missing address to an existing supplier', async () => {
+  const env = await setup([]);
+  connectMailbox(env);
+  const supplier = suppliers.createSupplier(env.db, env.ctx, env.membership, {
+    name: 'No Mail Supply', currency: 'USD',
+  });
+
+  let response = await ask(env, 'Email No Mail Supply saying the delivery arrived damaged.');
+  assert.equal(response.status, 303);
+  let page = await env.agent.get(response.headers.location);
+  let text = plain(page.text);
+  assert.match(text, /There is no email address on file for No Mail Supply/);
+  assert.match(page.text, new RegExp(`href="/suppliers/${supplier.id}"`));
+
+  page = await env.agent.get(`/suppliers/${supplier.id}`);
+  response = await env.agent.post(`/suppliers/${supplier.id}`).type('form').send({
+    _csrf: csrfFrom(page.text), name: 'No Mail Supply', email: 'nomail@example.test',
+  });
+  assert.equal(response.status, 303);
+  assert.equal(response.headers.location, '/foundry/resume-prerequisite');
+
+  response = await env.agent.get(response.headers.location);
+  assert.equal(response.status, 303);
+  assert.match(response.headers.location, /^\/messages\//);
+  page = await env.agent.get(response.headers.location);
+  text = plain(page.text);
+  assert.match(text, /nomail@example\.test/);
+  assert.match(text, /the delivery arrived damaged/);
+  assert.doesNotMatch(text, /say this again/i);
+  env.db.close();
+});
+
+test('Ask keeps a missing email body in the conversation and continues the same supplier request', async () => {
+  const env = await setup([]);
+  connectMailbox(env);
+  suppliers.createSupplier(env.db, env.ctx, env.membership, {
+    name: 'Gmail Qualification Supplier', email: 'qualification@example.test', currency: 'USD',
+  });
+
+  const asked = await ask(env, 'Send an email to Gmail Qualification');
+  assert.equal(asked.status, 303);
+  assert.match(asked.headers.location, /^\/ask\?/, 'the clarification stays in Ask StockChief');
+  const clarification = await env.agent.get(asked.headers.location);
+  const clarificationText = plain(clarification.text);
+  assert.match(clarificationText, /What should StockChief say to Gmail Qualification Supplier\?/);
+  assert.doesNotMatch(clarificationText, /create a customer/i);
+  assert.match(clarification.text, /name="original" value="Send an email to Gmail Qualification"/);
+  assert.match(clarification.text, /name="answer"/);
+  const goalId = /name="assistantGoal" value="([^"]+)"/.exec(clarification.text);
+  assert.ok(goalId, 'the reply continues the same Ask goal');
+
+  const continued = await env.agent.post('/foundry/tell').type('form').send({
+    _csrf: csrfFrom(clarification.text), queryConversation: '1', answerAction: '1',
+    assistantGoal: goalId[1],
+    original: 'Send an email to Gmail Qualification',
+    answer: 'Please confirm when PO-1001 will ship.',
+  });
+  assert.equal(continued.status, 303);
+  assert.match(continued.headers.location, /^\/messages\//);
+  const draft = await env.agent.get(continued.headers.location);
+  assert.match(plain(draft.text), /Please confirm when PO-1001 will ship\./);
+  assert.match(plain(draft.text), /qualification@example\.test/);
+  const oldTurn = await env.agent.get(asked.headers.location);
+  assert.equal(oldTurn.status, 303);
+  assert.equal(oldTurn.headers.location, '/ask', 'returning to the original turn does not reinterpret it');
+  const conversation = plain((await env.agent.get('/ask')).text);
+  assert.match(conversation, /Drafted, not sent|Drafted — not sent/);
+  assert.doesNotMatch(conversation, /Needs an answer from you/,
+    'the completed request is not left marked unanswered');
+  env.db.close();
+});
+
+test('an identical customer and supplier name is clarified by role instead of defaulting to customer', async () => {
+  const env = await setup([]);
+  suppliers.createSupplier(env.db, env.ctx, env.membership, {
+    name: 'Northstar', email: 'supplier@northstar.test', currency: 'USD',
+  });
+  require('../../src/sales/sales-order-service').createCustomer(env.db, env.ctx, {
+    name: 'Northstar', email: 'customer@northstar.test',
+  });
+
+  const asked = await ask(env, 'Email Northstar saying: Please call me.');
+  assert.equal(asked.status, 303);
+  assert.match(asked.headers.location, /^\/ask\?/);
+  const page = await env.agent.get(asked.headers.location);
+  const text = plain(page.text);
+  assert.match(text, /matches more than one business contact/);
+  assert.match(text, /Northstar \(customer\)/);
+  assert.match(text, /Northstar \(supplier\)/);
+  assert.equal(env.db.prepare('SELECT COUNT(*) count FROM customer_communications').get().count, 0);
+  env.db.close();
+});
+
+test('a polite email command accepts role and body together without creating queued work', async () => {
+  const env = await setup([]);
+  connectMailbox(env);
+  suppliers.createSupplier(env.db, env.ctx, env.membership, {
+    name: 'Chavy', email: 'supplier-chavy@example.test', currency: 'USD',
+  });
+  require('../../src/sales/sales-order-service').createCustomer(env.db, env.ctx, {
+    name: 'Chavy', email: 'customer-chavy@example.test',
+  });
+
+  const asked = await ask(env, 'Please email chavy');
+  assert.equal(asked.status, 303);
+  const clarification = await env.agent.get(asked.headers.location);
+  const clarificationText = plain(clarification.text);
+  assert.match(clarificationText, /matches more than one business contact/i);
+  assert.match(clarificationText, /Chavy \(supplier\)/);
+  assert.match(clarificationText, /Chavy \(customer\)/);
+  assert.doesNotMatch(clarificationText, /What would you like the email.*and can you confirm/i,
+    'the command reaches grounded action routing instead of the lookup model');
+  const goalId = (/name="assistantGoal" value="([^"]+)"/.exec(clarification.text) || [])[1];
+  assert.ok(goalId);
+
+  const continued = await env.agent.post('/foundry/tell').type('form').send({
+    _csrf: csrfFrom(clarification.text), queryConversation: '1', answerAction: '1',
+    assistantGoal: goalId, original: 'Please email chavy',
+    answer: 'supplier, the email should say, waiting to hear back from you',
+  });
+  assert.equal(continued.status, 303);
+  assert.match(continued.headers.location, /^\/messages\//);
+  const draft = await env.agent.get(continued.headers.location);
+  const draftText = plain(draft.text);
+  assert.match(draftText, /supplier-chavy@example\.test/);
+  assert.match(draftText, /waiting to hear back from you/);
+  assert.doesNotMatch(draftText, /Follow-up answer|That lists 2 things|Not started yet/i);
+  assert.equal(env.db.prepare(`SELECT COUNT(*) count FROM assistant_goals
+    WHERE workspace_id = ? AND status = 'pending'`).get(env.workspace.workspaceId).count, 0);
   env.db.close();
 });
 

@@ -26,10 +26,10 @@ function setup() {
   const item = makeQuantityItem(db, workspace.ctx, { name: 'Acrylic sign', baseCode: 'SIGN-1' });
   prices.setPrice(db, workspace.ctx, { skuId: item.skuId, amount: '45.00', currency: 'USD' });
   db.prepare('UPDATE skus SET weight_grams = 600 WHERE id = ?').run(item.skuId);
-  db.prepare('UPDATE locations SET address = ? WHERE id = ?')
-    .run('12 Depot Road, Monroe, NY 10950', workspace.main.id);
+  db.prepare('UPDATE locations SET address = ?, phone = ? WHERE id = ?')
+    .run('12 Depot Road, Monroe, NY 10950', '845-555-0147', workspace.main.id);
   inventory.receive(db, workspace.ctx, { skuId: item.skuId, locationId: workspace.main.id, quantity: 10 });
-  const customer = sales.createCustomer(db, workspace.ctx, { name: 'A Customer', email: 'customer@example.test',
+  const customer = sales.createCustomer(db, workspace.ctx, { name: 'A Customer', email: 'customer@example.test', phone: '845-555-0148',
     shippingAddress: '13 Austra Pkwy, Monroe, NY 10950' });
   const order = sales.confirm(db, workspace.ctx, sales.createOrder(db, workspace.ctx, {
     customerId: customer.id, neededBy: '2026-09-20', lines: [{ skuId: item.skuId, quantity: 2 }],

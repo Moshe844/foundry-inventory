@@ -327,7 +327,7 @@ test(
       await page.fill('#name', 'Meridian Coffee');
       await Promise.all([
         page.waitForURL(`${BASE}/onboarding`),
-        page.click('button[type=submit]:has-text("Continue with StockChief")'),
+        page.click('button[type=submit]:has-text("Choose a source")'),
       ]);
 
       await page.goto(`${BASE}/inventory`);

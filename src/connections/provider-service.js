@@ -81,6 +81,7 @@ async function beginAuthorization(db, ctx, input, requestOrigin) {
   if (!adapter) throw new ValidationError('Choose a supported connection provider.');
   const meta = adapter.metadata();
   if (!meta.available) throw new ValidationError(meta.unavailableReason);
+  if (adapter.validateInput) adapter.validateInput(input);
   const now = nowIso();
   const connectorId = input.connectorId || newId('con');
   const origin = authorizationOrigin(providerType, requestOrigin);
@@ -148,15 +149,21 @@ function callbackContext(db, stateValue, providerType) {
   };
 }
 
-async function loadProviderCredentials(db, connection, adapter) {
+async function loadProviderCredentials(db, connection, adapter, options = {}) {
+  if (connection.setup_status === 'REAUTHORIZATION_REQUIRED') throw new AuthenticationError('Reconnect this provider before using its authorization again.');
   let providerCredentials = credentialsStore.get(db, connection.workspace_id, connection.id, 'provider');
   if (!providerCredentials) throw new AuthenticationError('Reconnect this provider before syncing.');
   if (adapter?.refreshCredentials) {
     let refreshed;
     try {
-      refreshed = await adapter.refreshCredentials(providerCredentials);
+      refreshed = await adapter.refreshCredentials(providerCredentials,{force:Boolean(options.forceRefresh)});
     } catch (error) {
       const now = nowIso();
+      if (error.transient || error.status === 429 || error.status >= 500) {
+        db.prepare(`UPDATE workspace_connectors SET last_error=?,updated_at=? WHERE workspace_id=? AND id=?`)
+          .run('Mailbox authorization could not be checked because the provider is temporarily unavailable. Retry safely; no authorization was discarded.',now,connection.workspace_id,connection.id);
+        throw error;
+      }
       db.prepare(`UPDATE workspace_connectors SET status = 'error', setup_status = 'REAUTHORIZATION_REQUIRED',
         last_error = ?, updated_at = ? WHERE workspace_id = ? AND id = ?`)
         .run(String(error.message).slice(0, 500), now, connection.workspace_id, connection.id);
@@ -283,6 +290,9 @@ async function finishAuthorization(db, connection, actorId, result, requestOrigi
           issueType: 'CONNECTION_WEBHOOK_SETUP_FAILED', fingerprint: `webhook-setup:${connection.id}`,
           title: `${connection.display_name} could not subscribe to every required event`, detail,
           resolutionHint: 'Approve the required provider permissions, then reconnect this account.' });
+      } else {
+        connections.resolveIssues(db, connection.workspace_id, connection.id,
+          'CONNECTION_WEBHOOK_SETUP_FAILED');
       }
     }
     catch (error) {
@@ -290,7 +300,12 @@ async function finishAuthorization(db, connection, actorId, result, requestOrigi
         .run(`Webhook setup: ${error.message}`, nowIso(), connection.id);
     }
   }
-  await sync(db, current.workspace_id, current.id, actorId, { adapter, bootstrapEmpty: true });
+  if (['gmail', 'microsoft365'].includes(current.provider_type)) {
+    db.prepare("UPDATE workspace_connectors SET setup_status = 'CONNECTED', updated_at = ? WHERE workspace_id = ? AND id = ?")
+      .run(nowIso(), current.workspace_id, current.id);
+  } else {
+    await sync(db, current.workspace_id, current.id, actorId, { adapter, bootstrapEmpty: true });
+  }
   return connections.get(db, current.workspace_id, current.id);
 }
 
@@ -304,6 +319,12 @@ function deactivateDuplicateProviderAccounts(db, workspaceId, connectorId, provi
     WHERE workspace_id = ? AND provider_type = ? AND provider_account_id = ? AND id <> ?
       AND status <> 'disconnected'`)
     .run(now, now, workspaceId, providerType, providerAccountId, connectorId);
+  db.prepare(`UPDATE connection_issues SET status = 'RESOLVED', resolved_at = ?, updated_at = ?
+    WHERE workspace_id = ? AND status = 'OPEN' AND connector_id IN (
+      SELECT id FROM workspace_connectors
+      WHERE workspace_id = ? AND provider_type = ? AND provider_account_id = ? AND id <> ?
+        AND status = 'disconnected' AND setup_status = 'DUPLICATE_CONNECTION'
+    )`).run(now, now, workspaceId, workspaceId, providerType, providerAccountId, connectorId);
   return result.changes;
 }
 
@@ -509,12 +530,112 @@ async function bringInSetAside(db, ctx, setAsideId, options = {}) {
   return { messageId: captured?.id || null, replayed: false };
 }
 
+async function refreshMailboxAuthorization(db,workspaceId,connectorId) {
+  const connection = connections.get(db,workspaceId,connectorId);
+  if (!['gmail','microsoft365'].includes(connection.provider_type) || !connection.credential_ref
+      || !connection.provider_account_id || connection.paused_at || connection.status === 'disconnected') {
+    throw new ValidationError('Resume or reconnect an authorized mailbox before refreshing its authorization.');
+  }
+  const adapter = providers.get(connection.provider_type);
+  const credentials = await loadProviderCredentials(db,connection,adapter,{forceRefresh:true});
+  const profile = connection.provider_type === 'gmail'
+    ? (await adapter.api(credentials,'/gmail/v1/users/me/profile')).body
+    : (await adapter.graph(credentials,'/me?$select=id,mail,userPrincipalName')).body;
+  const accountId = connection.provider_type === 'gmail' ? profile.emailAddress : profile.id;
+  if (!accountId || String(accountId).toLowerCase() !== String(connection.provider_account_id).toLowerCase()) {
+    db.prepare(`UPDATE workspace_connectors SET status='error',setup_status='REAUTHORIZATION_REQUIRED',last_error=?,updated_at=?
+      WHERE workspace_id=? AND id=?`).run('Refreshed authorization returned a different mailbox identity. Reconnect the correct account before any mailbox operation.',
+        nowIso(),workspaceId,connectorId);
+    throw new ValidationError('The refreshed authorization does not match this mailbox. Nothing was read or sent; reconnect the correct account.');
+  }
+  return {accountName:connection.provider_account_name,refreshed:true};
+}
+
+function ownOutboundMessage(db, workspaceId, connectorId, message) {
+  const providerMessageId = String(message.messageId || message.externalMessageId || '');
+  const stockChiefMessageId = String(message.stockChiefMessageId || '');
+  const supplier = db.prepare(`SELECT id FROM supplier_communications
+    WHERE workspace_id = ? AND connector_id = ?
+      AND ((? <> '' AND external_message_id = ?) OR (? <> '' AND id = ?)) LIMIT 1`)
+    .get(workspaceId, connectorId, providerMessageId, providerMessageId,
+      stockChiefMessageId, stockChiefMessageId);
+  if (supplier) return { kind: 'supplier', id: supplier.id };
+  const customer = db.prepare(`SELECT id FROM customer_communications
+    WHERE workspace_id = ? AND connector_id = ?
+      AND ((? <> '' AND external_message_id = ?) OR (? <> '' AND id = ?)) LIMIT 1`)
+    .get(workspaceId, connectorId, providerMessageId, providerMessageId,
+      stockChiefMessageId, stockChiefMessageId);
+  if (customer) return { kind: 'customer', id: customer.id };
+  const reply = db.prepare(`SELECT id FROM connection_email_messages
+    WHERE workspace_id = ? AND connector_id = ?
+      AND ((? <> '' AND reply_external_message_id = ?)
+        OR (? <> '' AND id = ? AND reply_sent_at IS NOT NULL)) LIMIT 1`)
+    .get(workspaceId, connectorId, providerMessageId, providerMessageId,
+      stockChiefMessageId, stockChiefMessageId);
+  return reply ? { kind: 'reply', id: reply.id } : null;
+}
+
+function neutralizeCapturedOutbound(db, workspaceId, connectorId, message) {
+  const providerMessageId = String(message.messageId || message.externalMessageId || '');
+  if (!providerMessageId) return;
+  const captured = db.prepare(`SELECT id FROM connection_email_messages
+    WHERE workspace_id = ? AND connector_id = ? AND external_message_id = ?`)
+    .get(workspaceId, connectorId, providerMessageId);
+  if (!captured) return;
+  const now = nowIso();
+  inTransaction(db, () => {
+    const documents = db.prepare(`SELECT id FROM supplier_documents
+      WHERE workspace_id = ? AND message_id = ?`).all(workspaceId, captured.id);
+    for (const document of documents) {
+      db.prepare(`DELETE FROM purchase_order_line_expectations
+        WHERE workspace_id = ? AND source_document_id = ?`).run(workspaceId, document.id);
+      db.prepare('DELETE FROM supplier_price_history WHERE workspace_id = ? AND source_document_id = ?')
+        .run(workspaceId, document.id);
+      db.prepare('DELETE FROM supplier_operational_facts WHERE workspace_id = ? AND source_document_id = ?')
+        .run(workspaceId, document.id);
+      db.prepare('DELETE FROM supplier_response_plans WHERE workspace_id = ? AND source_document_id = ?')
+        .run(workspaceId, document.id);
+      db.prepare(`UPDATE domain_events SET status = 'PROCESSED', result = ?, error_message = NULL,
+        processed_at = COALESCE(processed_at, ?) WHERE workspace_id = ?
+          AND source_record_type = 'supplier_document' AND source_record_id = ?`)
+        .run(JSON.stringify({ ignored: true, reason: 'own_outbound_copy' }), now, workspaceId, document.id);
+      const purchaseEvents = db.prepare(`SELECT id, detail FROM purchase_order_events
+        WHERE workspace_id = ?`).all(workspaceId);
+      for (const event of purchaseEvents) {
+        let detail = {};
+        try { detail = JSON.parse(event.detail || '{}'); } catch { /* Keep unrelated malformed audit data. */ }
+        if (detail.documentId === document.id) {
+          db.prepare(`UPDATE purchase_order_events SET event = 'supplier_message_ignored', detail = ?
+            WHERE id = ? AND workspace_id = ?`)
+            .run(JSON.stringify({ documentId: document.id, reason: 'own_outbound_copy' }),
+              event.id, workspaceId);
+        }
+      }
+      db.prepare(`UPDATE connection_issues SET status = 'RESOLVED', resolved_at = ?, updated_at = ?
+        WHERE workspace_id = ? AND status = 'OPEN'
+          AND (external_event_id = ? OR candidate_matches LIKE ?)`)
+        .run(now, now, workspaceId, providerMessageId, `%${document.id}%`);
+      db.prepare(`UPDATE supplier_documents SET status = 'IGNORED', discrepancies = '[]', processed_at = ?
+        WHERE workspace_id = ? AND id = ?`).run(now, workspaceId, document.id);
+    }
+    db.prepare(`UPDATE connection_email_messages SET supplier_id = NULL,
+      classification = 'outbound_copy', processing_status = 'IGNORED', processed_at = ?,
+      reply_state = 'HANDLED', reply_reason = 'Sent by StockChief; this is not an incoming reply.',
+      reply_state_at = ? WHERE workspace_id = ? AND id = ?`)
+      .run(now, now, workspaceId, captured.id);
+  });
+}
+
 async function syncMailbox(db, workspaceId, connectorId, options = {}) {
   const connection = connections.get(db, workspaceId, connectorId);
   const adapter = options.adapter || providers.get(connection.provider_type);
   if (!adapter?.poll || !['gmail', 'microsoft365'].includes(connection.provider_type)) {
     throw new ValidationError('This connection is not a supplier mailbox.');
   }
+  if (connection.paused_at || connection.status === 'disconnected') {
+    throw new ValidationError('Resume or reconnect this mailbox before checking it.');
+  }
+  const checkStartedAt = nowIso();
   const providerCredentials = await loadProviderCredentials(db, connection, adapter);
   const found = await adapter.poll({ credentials: providerCredentials,
     since: options.since || connection.last_synced_at || new Date(Date.now() - 24 * 60 * 60_000).toISOString(),
@@ -541,6 +662,10 @@ async function syncMailbox(db, workspaceId, connectorId, options = {}) {
   } catch { /* Unreadable config is not consent to change behaviour; the default stands. */ }
   const results = [];
   for (const message of found.messages || []) {
+    if (ownOutboundMessage(db, workspaceId, connectorId, message)) {
+      neutralizeCapturedOutbound(db, workspaceId, connectorId, message);
+      continue;
+    }
     const rule = require('./email-ingestion').matchingRule(db, auth, message.sender || message.from || '');
     if (!rule && !openToStrangers) continue;
     /*
@@ -554,9 +679,10 @@ async function syncMailbox(db, workspaceId, connectorId, options = {}) {
      * can find it and overrule the decision.
      */
     const verdict = mailRelevance.judge(db, workspaceId, connectorId, message);
-    const overruled = setAside.alreadySeen(db, workspaceId, connectorId, message.messageId);
-    if (!verdict.keep && !overruled) {
-      setAside.record(db, workspaceId, connectorId, message, verdict.reason);
+    const mappedCounterparty = verdict.counterparty
+      && ['customer', 'supplier'].includes(verdict.relationship)
+      && verdict.counterparty.id;
+    if (!mappedCounterparty) {
       continue;
     }
     // Capturing an approved sender and interpreting a document are separate
@@ -652,7 +778,7 @@ async function syncMailbox(db, workspaceId, connectorId, options = {}) {
   db.prepare(`UPDATE workspace_connectors SET status = 'connected', setup_status = 'CONNECTED',
     last_synced_at = ?, last_activity_at = CASE WHEN ? > 0 THEN ? ELSE last_activity_at END,
     last_error = NULL, updated_at = ? WHERE workspace_id = ? AND id = ?`)
-    .run(now, results.length, now, now, workspaceId, connectorId);
+    .run(checkStartedAt, results.length, now, now, workspaceId, connectorId);
   connections.resolveIssues(db, workspaceId, connectorId, 'CONNECTION_STALE');
   connections.resolveIssues(db, workspaceId, connectorId, 'MAILBOX_SYNC_FAILED');
   connections.resolveIssues(db, workspaceId, connectorId, 'MAILBOX_AUTH_REQUIRED');
@@ -811,7 +937,7 @@ async function createSandboxCheckout(db, workspaceId, connectorId, input, option
   return adapter.createSandboxCheckout({ credentials: providerCredentials, externalSku, externalLocationId, quantity });
 }
 
-module.exports = { beginAuthorization, completeOAuth, completeWooCallback, sync, syncMailbox,
+module.exports = { beginAuthorization, completeOAuth, completeWooCallback, sync, syncMailbox,refreshMailboxAuthorization,
   bringInSetAside, prepareReply, maintainMailboxWatch, sendMailboxMessage,
   reviewHistory, setSelectedLocations,
   createSandboxCheckout, ignoreExternal, webhookContext, createState, readState, stateConnection,

@@ -37,13 +37,16 @@ test('QuickBooks sandbox contract verifies identity, reads a dated trial balance
     accountType: null, accountSubType: null, classification: null, balanceMinor: 1234 });
   const posted = await quickbooks.postJournalEntry({ credentials: connected.credentials, idempotencyKey: 'foundry-entry-9',
     entry: { entry_number: 9, posting_date: '2026-09-10', description: 'Test', lines: [
-      { debit_minor: 1234, credit_minor: 0, external_account_id: '10' },
+      { debit_minor: 1234, credit_minor: 0, external_account_id: '10', external_customer_id: 'customer-7' },
       { debit_minor: 0, credit_minor: 1234, external_account_id: '20' }] } });
   assert.equal(posted.externalId, 'je-9');
   const postingCall = calls.find((call) => call.url.includes('/journalentry?'));
   const requestId = new URL(postingCall.url).searchParams.get('requestid');
   assert.match(requestId, /^foundry-[a-f0-9]{32}$/);
   assert.ok(requestId.length <= 50);
+  const postedBody = JSON.parse(postingCall.options.body);
+  assert.deepEqual(postedBody.Line[0].JournalEntryLineDetail.Entity,
+    { Type: 'Customer', EntityRef: { value: 'customer-7' } });
 });
 
 test('QuickBooks keeps zero-balance chart accounts when the Trial Balance omits them', async () => {
@@ -65,6 +68,31 @@ test('QuickBooks keeps zero-balance chart accounts when the Trial Balance omits 
     { externalId: '20', code: '2000', name: 'Payables', version: '2', accountType: null,
       accountSubType: null, classification: null, balanceMinor: 0 },
   ]);
+});
+
+test('QuickBooks lists and idempotently creates exact posting customers', async () => {
+  process.env.QUICKBOOKS_CLIENT_ID = 'qb-client'; process.env.QUICKBOOKS_CLIENT_SECRET = 'qb-secret';
+  process.env.QUICKBOOKS_ENVIRONMENT = 'sandbox'; const calls = [];
+  global.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    if (String(url).includes('/query?')) return json({ QueryResponse: { Customer: [
+      { Id: '7', SyncToken: '2', DisplayName: 'Exact Customer', PrimaryEmailAddr: { Address: 'exact@example.test' } },
+    ] } });
+    if (String(url).includes('/customer?')) return json({ Customer: { Id: '8', SyncToken: '0',
+      DisplayName: 'New Customer', PrimaryEmailAddr: { Address: 'new@example.test' } } });
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  const credentials = { accessToken: 'access', realmId: 'realm-1' };
+  const listed = await quickbooks.listPostingParties({ credentials, partyType: 'customer' });
+  assert.deepEqual(listed, [{ externalId: '7', version: '2', name: 'Exact Customer', company: null,
+    email: 'exact@example.test' }]);
+  const created = await quickbooks.createPostingParty({ credentials, partyType: 'customer',
+    party: { name: 'New Customer', email: 'new@example.test' }, idempotencyKey: 'customer-8' });
+  assert.equal(created.externalId, '8');
+  const createCall = calls.find((call) => call.url.includes('/customer?'));
+  assert.match(new URL(createCall.url).searchParams.get('requestid'), /^foundry-[a-f0-9]{32}$/);
+  assert.deepEqual(JSON.parse(createCall.options.body),
+    { DisplayName: 'New Customer', PrimaryEmailAddr: { Address: 'new@example.test' } });
 });
 
 test('Xero requests read-only scopes by default and write scope only when explicitly requested', async () => {

@@ -23,6 +23,7 @@ const ledger = require('../../assistant/ledger');
 const calls = require('../../assistant/calls');
 const tools = require('../../assistant/tools');
 const assistantTurns = require('../../assistant/turns');
+const operatingInstructions = require('../../manager/operating-instructions');
 
 const router = express.Router();
 router.use('/attention', requireAuth);
@@ -40,6 +41,11 @@ function briefingContext(db, workspaceId) {
     stockNoun: terminology.item || terminology.stock || null,
     vocabulary: terminology.item || null,
     locationNames: repo.listLocations(db, workspaceId).map((l) => l.name),
+    approvedTeachings: operatingInstructions.activeTeachings(db, workspaceId).map((teaching) => ({
+      scope: teaching.scope,
+      effect: teaching.effect,
+      grantsAuthority: teaching.grantsAuthority,
+    })),
   };
 }
 
@@ -347,11 +353,14 @@ function askOutcome(question, result, error, { unavailable = false } = {}) {
   const smallTalk = /^\s*(?:thanks|thank you|thx|cheers|hi|hello|hey|ok|okay|great|cool|nice|good morning|good afternoon|bye)\b/i.test(question);
   const status = result.isAction ? 'clarify' : result.needsClarification && !smallTalk ? 'clarify' : result.supported === false && !smallTalk ? 'refused' : 'answered';
   // A reply in StockChief's own words read no records; it carries no "read … · 0 rows" line.
-  const conversational = result.plan && ['small_talk', 'conversation_recap', 'undo'].includes(result.plan.intent);
+  const conversational = result.plan && ['small_talk', 'conversation_recap', 'undo', 'action_clarification'].includes(result.plan.intent);
   if (conversational) {
     // An undo settles as what it did — done, or refused — not as an answer.
     const settled = result.settledAs && ledger.GOAL_STATUSES.includes(result.settledAs) ? result.settledAs : status;
-    return { status: settled, said: String(said || ''), resultHref: result.handoff ? result.handoff.href : null, resultLabel: result.handoff ? result.handoff.label : null, provenance: { intent: result.plan.intent, interpretation: result.interpretation || null, reads: [], rowCount: null, asOf: null } };
+    const clarificationReason = settled === 'clarify'
+      ? (result.clarificationReason || ((Array.isArray(result.choices) && result.choices.length >= 2) || /\bwhich (?:one|of th)|\bcould be\b|\bmore than one\b|\bseveral\b|\bor\b.*\?$/i.test(String(said || '')) ? 'ambiguous' : 'missing'))
+      : undefined;
+    return { status: settled, said: String(said || ''), resultHref: result.handoff ? result.handoff.href : null, resultLabel: result.handoff ? result.handoff.label : null, provenance: { intent: result.plan.intent, interpretation: result.interpretation || null, reads: [], rowCount: null, asOf: null, reason: clarificationReason } };
   }
   // General knowledge read nothing; the page says so, in those words.
   if (result.general) {
@@ -451,9 +460,27 @@ router.get(
       try {
         const pending = req.session.pendingAskResult;
         const reusable = pending && pending.token === req.query.turn && pending.workspaceId === req.ctx.workspaceId && pending.question === question;
+        const submittedGoal = submittedTurn && submittedTurn.goalId
+          ? ledger.getGoal(req.db, req.ctx.workspaceId, submittedTurn.goalId) : null;
+        if (!reusable && submittedTurn && submittedTurn.displayResult
+            && submittedTurn.displayResult.actionClarification
+            && submittedGoal && !['pending', 'clarify'].includes(submittedGoal.status)) {
+          return res.redirect(303, '/ask');
+        }
         if (reusable) delete req.session.pendingAskResult;
         if (reusable && pending.error) { error = pending.error; req.askUnavailable = Boolean(pending.unavailable); }
-        result = reusable ? pending.result : await tools.use(req.db, req.ctx, req.user, 'question.ask', { question }, {
+        if (reusable) {
+          result = pending.result;
+          if (submittedTurn && pending.result && pending.result.actionClarification) {
+            submittedTurn.displayResult = pending.result;
+            submittedTurn.displayError = pending.error || null;
+            submittedTurn.unavailable = Boolean(pending.unavailable);
+          }
+        } else if (submittedTurn && submittedTurn.displayResult && submittedTurn.displayResult.actionClarification) {
+          result = submittedTurn.displayResult || null;
+          error = submittedTurn.displayError || null;
+          req.askUnavailable = Boolean(submittedTurn.unavailable);
+        } else result = await tools.use(req.db, req.ctx, req.user, 'question.ask', { question }, {
           provider: req.app.locals.aiProvider || undefined,
           context: briefingContext(req.db, req.ctx.workspaceId),
           productBrain: req.app.locals.productBrain,
@@ -461,6 +488,7 @@ router.get(
           conversation,
           timezone: 'America/New_York',
         });
+        if (submittedTurn && !submittedTurn.goalId) submittedTurn.goalId = req.currentGoalId;
         /*
          * An instruction typed into the question box.
          *

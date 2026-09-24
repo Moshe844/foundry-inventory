@@ -3,6 +3,8 @@
 const config = require('../src/config');
 const { openDatabase } = require('../src/db');
 const checkpoints = require('../src/operations/checkpoints');
+const { openPostgres } = require('../src/db/postgres');
+const postgresCheckpoints = require('../src/operations/postgres-checkpoints');
 
 function argument(name, fallback) {
   const index = process.argv.indexOf(`--${name}`);
@@ -66,8 +68,15 @@ async function client(offset) {
   };
   detail.budgetsPassed = detail.p95Ms <= p95BudgetMs && errorRate <= errorBudget;
   console.log(JSON.stringify(detail, null, 2));
-  const db = openDatabase(config.databasePath);
-  try { checkpoints.record(db, 'load.soak', detail.budgetsPassed ? 'PASS' : 'FAIL', detail); }
-  finally { db.close(); }
+  const connectionString=process.env.FOUNDRY_DATABASE_URL||process.env.DATABASE_URL;
+  if(connectionString){
+    const database=openPostgres(connectionString,{applicationName:'stockchief-load-soak-evidence',max:2});
+    try{await postgresCheckpoints.record(database,'load.soak',detail.budgetsPassed?'PASS':'FAIL',detail);}
+    finally{await database.close();}
+  }else{
+    const db = openDatabase(config.databasePath);
+    try { checkpoints.record(db, 'load.soak', detail.budgetsPassed ? 'PASS' : 'FAIL', detail); }
+    finally { db.close(); }
+  }
   if (!detail.budgetsPassed) process.exitCode = 1;
 })().catch((error) => { console.error(error); process.exitCode = 1; });

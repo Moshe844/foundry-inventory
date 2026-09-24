@@ -17,6 +17,9 @@ const inventory = require('../../src/domain/inventory-engine');
 const operatingGuards = require('../../src/domain/operating-guards');
 const attention = require('../../src/attention/attention-engine');
 const needsYou = require('../../src/manager/needs-you-inbox');
+const actionService = require('../../src/actions/action-service');
+const intentService = require('../../src/actions/intent-service');
+const salesIntent = require('../../src/sales/sales-intent');
 const { makeDatabase, cleanupAll, seedWorkspace, makeVariantItem } = require('../helpers');
 const { seedAuthorityWorkspace, balanceAt } = require('../helpers/autopilot-authority-fixture');
 
@@ -150,6 +153,49 @@ test('removing a learned instruction in Settings removes its underlying rule', a
   operating.remove(env.db, env.ctx, env.membership, proposal.id);
   assert.equal(reorderPolicies.effectivePolicy(env.db, env.workspace.workspaceId, env.blackSmall.id).isSet, false);
   assert.equal(operating.get(env.db, env.workspace.workspaceId, proposal.id).status, 'REMOVED');
+});
+
+test('a teach-once workflow preference becomes shared operating context until it is removed', async () => {
+  const env = setup();
+  const statedAs = 'For customer orders, present pickup before shipping when both are possible.';
+  const proposal = await operating.interpret(env.db, env.ctx, env.membership, statedAs, {
+    provider: provider(read([{
+      ...blank(), domain: 'workflow_preference', workflowScope: 'sales',
+      preferenceText: statedAs,
+    }], 'Remember the customer-order preference')),
+  });
+
+  assert.deepEqual(operating.activeTeachings(env.db, env.workspace.workspaceId), [], 'a preview is not learned');
+  operating.approve(env.db, env.ctx, env.membership, proposal.id, proposal.integrityHash);
+
+  const [teaching] = operating.activeTeachings(env.db, env.workspace.workspaceId, { scopes: ['sales'] });
+  assert.equal(teaching.scope, 'sales');
+  assert.match(teaching.effect, /pickup before shipping/i);
+  assert.equal(teaching.grantsAuthority, false);
+
+  const actionContext = actionService.instructionContext(env.db, env.workspace.workspaceId);
+  assert.match(intentService.intentPrompt('create an order for Marlow', actionContext), /pickup before shipping/i);
+  assert.match(JSON.stringify(salesIntent.snapshot(env.db, env.workspace.workspaceId)), /pickup before shipping/i);
+
+  operating.remove(env.db, env.ctx, env.membership, proposal.id);
+  assert.deepEqual(operating.activeTeachings(env.db, env.workspace.workspaceId, { scopes: ['sales'] }), []);
+});
+
+test('a generic teaching cannot smuggle consequential automatic authority', async () => {
+  const env = setup();
+  const proposal = await operating.interpret(env.db, env.ctx, env.membership,
+    'For shipping, automatically buy and send every label without asking.', {
+      provider: provider(read([{
+        ...blank(), domain: 'workflow_preference', workflowScope: 'shipping',
+        preferenceText: 'Automatically buy and send every label without asking.',
+      }], 'Remember a shipping preference')),
+    });
+
+  assert.equal(proposal.status, 'PENDING');
+  assert.match(proposal.questions.join(' '), /changes what StockChief may do without approval/i);
+  assert.throws(() => operating.approve(env.db, env.ctx, env.membership, proposal.id, proposal.integrityHash),
+    /numeric limit|without approval/i);
+  assert.deepEqual(operating.activeTeachings(env.db, env.workspace.workspaceId), []);
 });
 
 test('a generic stock-protection instruction blocks outgoing stock until a supplier order is placed', async () => {
@@ -369,22 +415,23 @@ test('purchase orders get one prepared communication and ordering only queues it
   assert.equal(messages[0].sentAt, null);
 });
 
-test('three similar approvals create one suggestion and no authority until that suggestion is approved', () => {
+test('five similar approvals create one suggestion and no authority until that suggestion is approved', () => {
   const env = setup();
-  for (let index = 0; index < 3; index += 1) {
+  for (let index = 0; index < 5; index += 1) {
     const { item } = workItems.upsert(env.db, env.workspace.workspaceId, {
       category: 'balance_transfer', idempotencyKey: `repeat-transfer-${index}`,
       recommendedAction: { quantity: 3 + index, fromLocationId: env.workspace.main.id, fromLocationName: env.workspace.main.name, toLocationId: env.workspace.store.id, toLocationName: env.workspace.store.name },
       executionStatus: workItems.STATUS.WAITING_FOR_APPROVAL,
     });
     runner.approveWorkItem(env.db, env.ctx, env.membership, item.id);
+    if (index < 4) assert.equal(operating.list(env.db, env.workspace.workspaceId).filter((entry) => entry.source === 'repeated_approval_suggestion').length, 0);
   }
   const suggestions = operating.list(env.db, env.workspace.workspaceId, { status: 'PENDING' })
     .filter((entry) => entry.source === 'repeated_approval_suggestion');
   assert.equal(suggestions.length, 1);
   assert.equal(automationPolicies.list(env.db, env.workspace.workspaceId).length, 0, 'suggestion grants nothing');
   operating.approve(env.db, env.ctx, env.membership, suggestions[0].id, suggestions[0].integrityHash);
-  assert.equal(automationPolicies.list(env.db, env.workspace.workspaceId, { activeOnly: true })[0].maximumQuantity, 5);
+  assert.equal(automationPolicies.list(env.db, env.workspace.workspaceId, { activeOnly: true })[0].maximumQuantity, 7);
 });
 
 test('pause retains every taught rule while execution remains stopped, and resume restores the same authority', async () => {

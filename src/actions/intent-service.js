@@ -432,6 +432,13 @@ function intentPrompt(instruction, context) {
         'quantity, return that same action with the new number.'
     );
   }
+  if (context.approvedTeachings && context.approvedTeachings.length) {
+    lines.push('Owner-approved operating handbook:');
+    for (const teaching of context.approvedTeachings.slice(0, 50)) {
+      lines.push(`- [${teaching.scope}] ${teaching.effect}${teaching.grantsAuthority ? ' (bounded authority exists; deterministic policy checks still decide execution)' : ''}`);
+    }
+    lines.push('Use the handbook only to interpret or prepare the requested work. It never supplies a missing product, customer, supplier, quantity, location, destination, price, payment, or approval, and it never overrides the current instruction.');
+  }
   return `${lines.join('\n')}
 
 Instruction: ${instruction}`;
@@ -677,6 +684,29 @@ function deterministicCatalogueList(instruction) {
  */
 function deterministicOutboundMessage(instruction) {
   const source = String(instruction || '').trim();
+  const continued = /^(.*?)\s+(?:—|-)\s+Clarification:\s+([\s\S]+)$/i.exec(source);
+  if (continued) {
+    const first = deterministicOutboundMessage(continued[1]);
+    if (first && first.lines.length === 1 && first.lines[0].actionType === 'send_message'
+        && !first.lines[0].messageBody && continued[2].trim()) {
+      const clarification = continued[2].trim().replace(/^(?:body|message|say|saying)\s*:\s*/i, '');
+      return {
+        lines: [normaliseLine({
+          ...first.lines[0],
+          messageBody: clarification,
+          sourceText: source,
+        })],
+        clarifyingQuestion: '',
+        unsupportedReason: '',
+      };
+    }
+  }
+  const explicit = /^(?:please\s+)?(?:draft|prepare|write|send|email|e-mail)\b[\s\S]*?\bto\s+([^\s@]+@[^\s@]+\.[^\s@.,;]+)[.\s]+subject\s*:\s*([\s\S]*?)\s+body\s*:\s*([\s\S]+)$/i.exec(source);
+  if (explicit && explicit[2].trim() && explicit[3].trim()) {
+    return { lines:[normaliseLine({ actionType:'send_message', recipient:explicit[1],
+      messageBody:explicit[3].trim(), sourceText:source, quantity:-1, adjustmentTarget:-1 })],
+    clarifyingQuestion:'', unsupportedReason:'' };
+  }
   const match = /^(?:please\s+)?(?:email|e-mail|message|write\s+to|send\s+(?:an?\s+)?(?:email|message)\s+to)\s+([^\s@]+@[^\s@]+\.[^\s@]+)\s+(?:that|saying|to\s+say)\s+(.+?)\s*[.!]?$/i.exec(source);
   if (match && match[2].trim()) {
     return {
@@ -701,11 +731,29 @@ function deterministicOutboundMessage(instruction) {
    * the reader as no lines and a question, which reads as if writing to a
    * supplier were not something StockChief does.
    */
-  const spoken = /^(?:please\s+)?(?:email|e-mail|message|write\s+to|contact|chase|remind|ask|tell|send\s+(?:an?\s+)?(?:email|message|note)\s+to)\s+(.+?)\s+(about|regarding|re:?|concerning|that|saying|to\s+say|asking|to\s+ask|and\s+ask|and\s+chase|and\s+tell)\s+(.+?)\s*[.!]?$/i.exec(source);
-  if (!spoken) return null;
-  const who = spoken[1].replace(/^(?:the|our|my)\s+/i, '').trim();
+  const spoken = /^(?:please\s+)?(?:email|e-mail|message|write\s+to|contact|chase|remind|ask|tell|(?:draft|prepare|compose|write|send)\s+(?:an?\s+)?(?:email|message|note)\s+to)\s+(?:to\s+)?(.+?)\s+(about|regarding|re:?|concerning|that|saying:?|to\s+say:?|asking|to\s+ask|and\s+ask|and\s+chase|and\s+tell)\s+(.+?)\s*[.!]?$/i.exec(source);
+  if (!spoken) {
+    const incomplete = /^(?:please\s+)?(?:email|e-mail|message|write\s+to|contact|(?:draft|prepare|compose|write|send)\s+(?:an?\s+)?(?:email|message|note)\s+to)\s+(?:to\s+)?(.+?)\s*[.!]?$/i.exec(source)
+      || /^(?:please\s+)?(?:send|write|draft|prepare)\s+(.+?)\s+(?:an?\s+)?(?:email|message|note)\s*[.!]?$/i.exec(source);
+    if (!incomplete) return null;
+    const who = incomplete[1].replace(/^(?:the|our|my)\s+/i, '').trim().replace(/[.!]+$/, '');
+    if (!who || /\s(?:from|to|into|at)\s/i.test(who) || who.split(/\s+/).length > 8) return null;
+    return {
+      lines: [normaliseLine({
+        actionType: 'send_message',
+        recipient: who,
+        messageBody: '',
+        sourceText: source,
+        quantity: -1,
+        adjustmentTarget: -1,
+      })],
+      clarifyingQuestion: '',
+      unsupportedReason: '',
+    };
+  }
+  const who = spoken[1].replace(/^(?:the|our|my)\s+/i, '').trim().replace(/[.!]+$/, '');
   if (!who || /\s(?:from|to|into|at)\s/i.test(who) || who.split(/\s+/).length > 6) return null;
-  const literal = /^(?:that|saying|to\s+say)$/i.test(spoken[2]);
+  const literal = /^(?:that|saying:?|to\s+say:?)$/i.test(spoken[2]);
   const body = literal ? spoken[3].trim() : '';
   return {
     lines: [normaliseLine({
@@ -803,12 +851,23 @@ function movementClause(clause, context = {}) {
   // the filler words people put around them.
   const cleaned = text.replace(/\b(?:over|across|round|down|up)\s+(?=to\b|into\b)/i, '').replace(/^(?:please\s+|pls\s+|can\s+you\s+|could\s+you\s+)+/i, '');
   const transfer = /^(?:please\s+)?(?:move|transfer|send|shift)\s+(\d+)\s+(?:units?\s+of\s+|x\s+)?(.+?)\s+from\s+(?:the\s+)?(.+?)\s+(?:to|into)\s+(?:the\s+)?(.+?)\s*$/i.exec(cleaned)
-    || (() => { const m = /^(?:please\s+)?(?:move|transfer|send|shift)\s+(\d+)\s+(?:units?\s+of\s+|x\s+)?(.+?)\s+(?:to|into)\s+(?:the\s+)?(.+?)\s+from\s+(?:the\s+)?(.+?)\s*$/i.exec(cleaned); return m ? [m[0], m[1], m[2], m[4], m[3]] : null; })();
+    || (() => { const m = /^(?:please\s+)?(?:move|transfer|send|shift)\s+(\d+)\s+(?:units?\s+of\s+|x\s+)?(.+?)\s+(?:to|into)\s+(?:the\s+)?(.+?)\s+from\s+(?:the\s+)?(.+?)\s*$/i.exec(cleaned); return m ? [m[0], m[1], m[2], m[4], m[3]] : null; })()
+    || (() => {
+      const m = /^(?:please\s+)?(?:move|transfer|send|shift)\s+(\d+)\s+(?:units?\s+of\s+|x\s+)?(.+?)\s+(?:to|into)\s+(?:the\s+)?(.+?)\s*$/i.exec(cleaned);
+      if (!m) return null;
+      const source = [...(context.locationNames || [])]
+        .sort((first, second) => String(second).length - String(first).length)
+        .find((name) => m[2].toLowerCase().endsWith(String(name).toLowerCase()));
+      if (!source) return null;
+      const item = m[2].slice(0, m[2].length - String(source).length).trim();
+      return item ? [m[0], m[1], item, source, m[3]] : null;
+    })();
   // "move 3 bannana to monroe": no source named. The builder finds where
   // the stock is and asks only when it is in more than one place.
   const toOnly = !transfer && (() => { const m = /^(?:please\s+)?(?:move|transfer|send|shift)\s+(\d+)\s+(?:units?\s+of\s+|x\s+)?(.+?)\s+(?:to|into)\s+(?:the\s+)?(.+?)\s*$/i.exec(cleaned); return m && !/\bfrom\b/i.test(m[2]) ? [m[0], m[1], m[2], '', m[3]] : null; })();
   const issue = /^(?:please\s+)?(?:issue|take|remove|book\s+out)\s+(\d+)\s+(?:units?\s+of\s+|x\s+)?(.+?)\s+(?:from|out\s+of|at)\s+(?:the\s+)?(.+?)(?:\s+as\s+(.+?))?\s*$/i.exec(text);
-  const match = transfer || toOnly || issue;
+  const receive = /^(?:receive|book\s+in|we\s+received|i\s+received)\s+(\d+)\s+(?:more\s+)?(?:units?\s+of\s+|x\s+)?(.+?)\s+(?:into|at|in|to)\s+(?:the\s+)?(.+?)\s*$/i.exec(cleaned);
+  const match = transfer || toOnly || issue || receive;
   if (!match) return null;
   // A place is the inventory's own by its name, or by a name one or two
   // letters off it ("monroe" for Mornoe) when only one is that close.
@@ -839,6 +898,11 @@ function movementClause(clause, context = {}) {
   if (!named && !plainWords) return null;
   const item = named || said;
   const variant = named ? removeNamed(said, named) : '';
+  if(receive) {
+    if(!named || /\b(?:and|plus|then|cases?|boxes?|pallets?|packs?|kg|lbs?)\b|[,;]/i.test(variant))return null;
+    return normaliseLine({actionType:'receive',item,variant,sourceText:text,destinationLocation:sourceLocation,
+      sourceLocation:'',quantity:Number(match[1]),adjustmentTarget:-1,reasonCode:''});
+  }
   if (transfer || toOnly) {
     const destinationLocation = placeNamed(match[4]);
     if (!destinationLocation) return null;
@@ -1069,10 +1133,10 @@ async function readOne(text, provider, options = {}) {
   const clock = new AbortController();
   const timer = setTimeout(() => clock.abort(new Error('read_timeout')), options.readTimeoutMs || READ_TIMEOUT_MS);
   try {
-    const response = await provider.complete({
+    const response = await require('../ai/deadline').completeWithin(provider,{
       system: SYSTEM, prompt: intentPrompt(text, options.context || {}), schema: INTENT_SCHEMA,
       schemaName: 'inventory_action_intent', signal: options.signal || clock.signal,
-    });
+    },options.readTimeoutMs || READ_TIMEOUT_MS);
     const result = validate(toWireSchema(ACCEPTED_INTENT_SCHEMA), response.data, { key: 'action-intent-wire' });
     return result.ok ? normalise(result.data) : null;
   } finally { clearTimeout(timer); }
@@ -1113,7 +1177,7 @@ async function readInstruction(instruction, options = {}) {
   };
   let response;
   try {
-    response = await provider.complete(request);
+    response = await require('../ai/deadline').completeWithin(provider,request,options.readTimeoutMs || READ_TIMEOUT_MS);
   } catch (err) {
     throw plainReadingError(err, clock);
   } finally {

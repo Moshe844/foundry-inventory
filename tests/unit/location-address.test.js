@@ -74,3 +74,11 @@ test('the address a person types is the one a carrier is asked to collect from',
   assert.equal(parsed.postalCode, '10950');
   env.db.close();
 });
+
+test('provider addresses using full state names remain carrier-ready', () => {
+  const parsed = shipping.address.parse('123 Test Street, New York, New York, 10001, US');
+  assert.equal(parsed.complete, true);
+  assert.equal(parsed.city, 'New York');
+  assert.equal(parsed.state, 'NY');
+  assert.equal(parsed.postalCode, '10001');
+});

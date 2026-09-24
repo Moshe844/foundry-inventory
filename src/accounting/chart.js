@@ -15,6 +15,7 @@ const DEFAULT_ACCOUNTS = Object.freeze([
   { code: '2200', name: 'Credit cards payable', type: 'LIABILITY', subtype: 'CREDIT_CARD', normal: 'CREDIT', systemKey: 'CREDIT_CARD_PAYABLE', control: true },
   { code: '2300', name: 'Customer deposits', type: 'LIABILITY', subtype: 'CUSTOMER_DEPOSITS', normal: 'CREDIT', systemKey: 'CUSTOMER_DEPOSITS', control: true },
   { code: '1400', name: 'Supplier advances', type: 'ASSET', subtype: 'SUPPLIER_ADVANCES', normal: 'DEBIT', systemKey: 'SUPPLIER_ADVANCES', control: true },
+  { code: '1410', name: 'Supplier returns receivable', type: 'ASSET', subtype: 'SUPPLIER_RETURNS', normal: 'DEBIT', systemKey: 'SUPPLIER_CREDITS_RECEIVABLE', control: true },
   { code: '3000', name: "Owner's equity", type: 'EQUITY', subtype: 'OWNER_EQUITY', normal: 'CREDIT', systemKey: 'OWNERS_EQUITY', control: false },
   { code: '3100', name: 'Retained earnings', type: 'EQUITY', subtype: 'RETAINED_EARNINGS', normal: 'CREDIT', systemKey: 'RETAINED_EARNINGS', control: true },
   { code: '4000', name: 'Sales revenue', type: 'INCOME', subtype: 'OPERATING_REVENUE', normal: 'CREDIT', systemKey: 'SALES_REVENUE', control: false },

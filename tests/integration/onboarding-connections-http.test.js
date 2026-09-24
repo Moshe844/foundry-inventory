@@ -27,16 +27,14 @@ test('new-inventory onboarding exposes real connection choices before sending ow
   const start = await agent.get('/onboarding');
   const startText = plain(start.text);
   assert.equal(start.status, 200);
-  assert.match(startText, /Where should StockChief get your inventory from/);
-  for (const source of ['Enter it in StockChief', 'Move from files', 'Use email attachments', 'Connect another system', 'Use several sources']) {
+  assert.match(startText, /Add your inventory/);
+  for (const source of ['Move from files', 'Connect another system', 'Enter it manually']) {
     assert.match(startText, new RegExp(source));
   }
-  assert.match(startText, /Excel, CSV or TSV exports/);
-  assert.match(startText, /Gmail/);
-  assert.match(startText, /Microsoft 365/);
-  assert.match(startText, /Connect Shopify, Square, Clover, WooCommerce, or your own system/);
+  assert.match(startText, /CSV, TSV or Excel export with SKU, name and quantity/);
+  assert.doesNotMatch(startText, /Use email attachments|Use several sources|Gmail|Microsoft 365/);
+  assert.match(startText, /An admin account and API access/);
   assert.match(startText, /Not sure which source fits/);
-  assert.match(startText, /This recommends a starting source; it does not create or analyze inventory/);
   assert.match(startText, /Recommend my starting source/);
   for (const provider of ['Shopify', 'Square', 'Clover', 'WooCommerce', 'Custom API']) {
     assert.match(startText, new RegExp(provider));
@@ -71,10 +69,10 @@ test('new-inventory onboarding exposes real connection choices before sending ow
       description: 'We keep everything in one spreadsheet, but our supplier emails us a stock report every Monday.',
     });
   assert.equal(mixed.status, 200);
-  assert.match(plain(mixed.text), /Use several sources/);
-  assert.match(plain(mixed.text), /more than one current source/);
+  assert.match(plain(mixed.text), /Move from files/);
+  assert.match(plain(mixed.text), /start with an exported file/);
 
-  const mailbox = await agent.get('/onboarding/mailbox');
+  const mailbox = await agent.get('/settings/ingestion');
   assert.equal(mailbox.status, 200);
   assert.match(plain(mailbox.text), /Use files that arrive by email/);
   assert.match(plain(mailbox.text), /StockChief ignores every sender you do not approve/);

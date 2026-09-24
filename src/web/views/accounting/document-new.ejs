@@ -14,7 +14,21 @@
   </div></section>
 
   <section class="card"><div class="card-head"><div><h2><%= prefill ? 'What the supplier billed' : expenseMode ? 'What the expense was' : 'What this document is for' %></h2><p class="hint"><%= prefill ? 'These lines come from the approved Purchase Order.' : 'Use the amount shown by the source document. StockChief never guesses it.' %></p></div></div><div class="card-body">
-    <% if (kind === 'bill' && prefill) { %><div class="accounting-record-list"><% prefill.lines.forEach(function(line) { %><div class="accounting-line"><div><strong><%= line.description %></strong><span><%= line.quantity %> units × <%= line.unitAmount %></span></div><strong><%= helpers.money(Math.round(line.quantity * Number(line.unitAmount) * 100)) %></strong><input type="hidden" name="description" value="<%= line.description %>"><input type="hidden" name="quantity" value="<%= line.quantity %>"><input type="hidden" name="unitAmount" value="<%= line.unitAmount %>"><input type="hidden" name="skuId" value="<%= line.skuId %>"><input type="hidden" name="purchaseOrderLineId" value="<%= line.purchaseOrderLineId %>"></div><% }) %></div><% } else { %>
+    <% if (kind === 'bill' && prefill) { %>
+      <p class="hint">The PO values are a starting point, not evidence of what was billed. Enter the actual invoice quantities and costs. Differences outside supplier tolerance are held for review, not silently posted or paid.</p>
+      <div class="accounting-record-list">
+        <% prefill.lines.forEach(function(line) { %>
+          <div class="accounting-line">
+            <div><strong><%= line.description %></strong><span>PO: <%= line.quantity %> units × <%= line.unitAmount %></span></div>
+            <label class="field"><span class="field-label">Billed quantity — <%= line.description %></span><input class="input" type="number" name="quantity" min="0.01" step="0.01" required value="<%= line.quantity %>"></label>
+            <label class="field"><span class="field-label">Billed unit cost — <%= line.description %></span><input class="input" name="unitAmount" inputmode="decimal" required value="<%= line.unitAmount %>"></label>
+            <input type="hidden" name="description" value="<%= line.description %>">
+            <input type="hidden" name="skuId" value="<%= line.skuId %>">
+            <input type="hidden" name="purchaseOrderLineId" value="<%= line.purchaseOrderLineId %>">
+          </div>
+        <% }) %>
+      </div>
+    <% } else { %>
       <div class="grid grid--3"><label class="field field--wide"><span class="field-label"><%= expenseMode ? 'Plain description' : 'Description' %></span><input class="input" name="description" required maxlength="250" placeholder="<%= expenseMode ? 'Example: September warehouse rent' : '' %>"></label><label class="field"><span class="field-label">Quantity</span><input class="input" type="number" name="quantity" min="0.01" step="0.01" value="1" required></label><label class="field"><span class="field-label"><%= expenseMode ? 'Amount' : 'Unit ' + (kind === 'invoice' ? 'price' : 'cost') %></span><input class="input" name="unitAmount" inputmode="decimal" required placeholder="0.00"></label>
       <% if (kind === 'bill') { %><label class="field"><span class="field-label">Expense category</span><select class="select" name="accountId" required><% accounts.forEach(function(account) { %><option value="<%= account.id %>"><%= account.name %></option><% }) %></select></label><% } %></div>
     <% } %>

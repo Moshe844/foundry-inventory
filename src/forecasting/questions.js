@@ -275,6 +275,7 @@ const EXECUTORS = {
     // forecasts and risk, but must not quote a different buy quantity from the
     // one the Purchasing page will actually prepare.
     const result = require('../purchasing/replenishment').evaluateWorkspace(db, workspaceId);
+    const coverage = require('../purchasing/replenishment').summarizeDecisionCoverage(result);
     const rows = result.recommendations.slice(0, 10).map((row) => ({
       product: row.displayName,
       quantity: row.quantityUnits,
@@ -283,7 +284,6 @@ const EXECUTORS = {
       cost: row.estimatedCost === null || row.estimatedCost === undefined
         ? '—' : money(Math.round(row.estimatedCost * 100), row.supplier && row.supplier.currency),
     }));
-    const blocked = result.blocked.filter((row) => row.reason === 'no_supplier');
     return {
       rows,
       columns: ['product', 'quantity', 'supplier', 'orderBy', 'cost'],
@@ -291,10 +291,12 @@ const EXECUTORS = {
       // "Nothing" is a real answer here and gets a real explanation, because an
       // assistant that only ever speaks up to spend money is not advising you.
       answer: rows.length
-        ? `${rows.length} line${rows.length === 1 ? '' : 's'} need ordering. ${result.recommendations[0].explanation}`
-        : blocked.length
-          ? `${blocked.length} product${blocked.length === 1 ? ' needs' : 's need'} ordering, but StockChief does not know who to buy ${blocked.length === 1 ? 'it' : 'them'} from yet. ${blocked[0].headline}. Link a supplier and it will write the order for you to check.`
-          : 'Nothing needs ordering right now. Every product StockChief has enough sales history for is covered, either by what is on the shelf or by an order already on its way.',
+        ? `${rows.length} line${rows.length === 1 ? '' : 's'} need ordering. ${result.recommendations[0].explanation}${coverage.unresolvedText ? ` ${coverage.unresolvedText}` : ''}`
+        : coverage.unresolvedText
+          ? coverage.unresolvedText
+          : coverage.covered
+            ? `Nothing needs ordering among the ${coverage.covered} product${coverage.covered === 1 ? '' : 's'} StockChief could judge. ${coverage.covered === 1 ? 'It is' : 'They are'} above the reorder point or covered by stock on order.`
+            : 'There are no active products to evaluate for replenishment.',
     };
   },
 
@@ -344,7 +346,7 @@ const EXECUTORS = {
   },
 
   /** Which supplier is most reliable? */
-  most_reliable_supplier(db, workspaceId, plan = {}) {
+  most_reliable_supplier(db, workspaceId, plan = {}, options = {}) {
     /*
      * "How long does Acme usually take to deliver?" names one supplier; the
      * whole table, led by whoever is most reliable, answered about Lakeside.
@@ -358,23 +360,25 @@ const EXECUTORS = {
     if (named && !suppliers.length) {
       return { rows: [], columns: ['supplier', 'deliveredOrders', 'onTime', 'averageDays', 'allArrived'], answer: `StockChief has no supplier matching “${named}”.` };
     }
+    if (named && suppliers.length > 1) return {rows:[],answer:`More than one supplier matches “${named}”. Specify the exact supplier name; I did not choose one.`};
+    const period = require('../attention/report-period').reportPeriod(options.question,plan.windowDays || 365);
     const scored = suppliers
-      .map((row) => planning().supplierView(db, workspaceId, row.id))
+      .map((row) => planning().supplierView(db, workspaceId, row.id,{lookbackDays:plan.windowDays || 365,period}))
       .filter(Boolean);
     if (named && scored.length) {
       const one = scored[0];
       const days = one.timing && one.timing.measured ? one.timing.measured.meanDays : null;
       const answer = !one.orderCount
-        ? `${one.supplierName} has not delivered an order yet, so there is nothing to measure.`
-        : `${one.supplierName}: ${one.orderCount} delivered order${one.orderCount === 1 ? '' : 's'}${days !== null ? `, about ${days} days from order to delivery` : ''}${one.onTimeRate !== null ? `, ${one.onTimeRate}% on time` : ''}${one.orderCount < 3 ? ' — too few deliveries yet to call that a pattern' : ''}.`;
-      return { rows: [{ supplier: one.supplierName, deliveredOrders: one.orderCount, onTime: one.onTimeRate === null ? '—' : `${one.onTimeRate}%`,
+        ? `${one.supplierName} has no committed orders in ${one.periodLabel}.`
+        : `${one.supplierName}: ${one.orderCount} committed order${one.orderCount === 1 ? '' : 's'} in ${one.periodLabel}, ${one.completedOrderCount} complete, ${one.overdueOrderCount} overdue unfinished${days !== null ? `, about ${days} days to first receipt on recent delivered orders` : ''}${one.onTimeRate !== null ? `, ${one.onTimeRate}% completed on time across ${one.ratedOrders} rated orders` : ''}. ${!one.enoughEvidence ? 'Too few rated orders to call that a pattern.' : ''}`;
+      return { rows: [{ supplier: one.supplierName, deliveredOrders: one.deliveredOrderCount, onTime: one.onTimeRate === null ? '—' : `${one.onTimeRate}%`,
         averageDays: days === null ? '—' : days, allArrived: one.fillRate === null ? '—' : `${one.fillRate}%` }],
         columns: ['supplier', 'deliveredOrders', 'onTime', 'averageDays', 'allArrived'], answer };
     }
 
     const rows = scored.map((row) => ({
       supplier: row.supplierName,
-      deliveredOrders: row.orderCount,
+      deliveredOrders: row.deliveredOrderCount,
       onTime: row.onTimeRate === null ? '—' : `${row.onTimeRate}%`,
       averageDays: row.timing.measured ? row.timing.measured.meanDays : '—',
       allArrived: row.fillRate === null ? '—' : `${row.fillRate}%`,
@@ -386,7 +390,7 @@ const EXECUTORS = {
       rows,
       columns: ['supplier', 'deliveredOrders', 'onTime', 'averageDays', 'allArrived'],
       answer: rated.length
-        ? rated[0].summary
+        ? `For orders committed ${period.label}: ${rated[0].summary} ${rated[0].orderCount} committed orders, ${rated[0].completedOrderCount} complete and ${rated[0].overdueOrderCount} overdue unfinished; ${rated[0].onTimeRate}% completed on time across ${rated[0].ratedOrders} rated orders.`
         : 'Not enough deliveries yet to say. StockChief needs a few completed orders from each supplier before it will rank them — one or two deliveries is not a pattern.',
     };
   },

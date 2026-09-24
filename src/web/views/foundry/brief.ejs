@@ -22,6 +22,7 @@
   var counts = (home.did && home.did.counts) || {};
   var handling = home.handling || [];
   var paused = home.status.paused || home.status.suspended;
+  var neverChecked = !home.status.lastLookedAt;
   var isEmpty = !!locals.isEmpty;
   var activeMigration = locals.activeMigration || null;
   var isSettingUp = !!home.setup || !!(home.guidance && !home.guidance.operationalReady);
@@ -37,7 +38,14 @@
     ? handling[0].link
     : (handling.length ? '/#foundry-handled' : null);
 
-  var verdict = paused
+  var coverageErrors = home.coverageErrors || [];
+  var gaps = (home.readiness && home.readiness.evidenceGaps) || [];
+  var gapCount = home.readiness && Number.isInteger(home.readiness.evidenceGapCount)
+    ? home.readiness.evidenceGapCount : gaps.length;
+  var isFreshEmpty = isEmpty && !needsCount && !handling.length && !handled.length && !coverageErrors.length && !paused;
+  var verdict = coverageErrors.length
+    ? 'Operations review is incomplete.'
+    : paused
     ? 'StockChief is paused.'
     : isEmpty && activeMigration
       ? 'Your inventory is being prepared.'
@@ -49,6 +57,8 @@
           ? needsCount + ' things need your attention.'
           : isSettingUp
             ? 'Getting StockChief ready.'
+            : neverChecked
+              ? 'Ready for the first operations check.'
             : home.status.checkStale
               /* "Under control" is only as good as the last look. A check
                  older than a day is said with the verdict, not left to the
@@ -57,10 +67,10 @@
               : 'Everything is under control.';
   var verdictAside = paused || isEmpty
     ? null
-    : (!isSettingUp && needsCount === 0 && home.status.checkStale)
+    : (!isSettingUp && needsCount === 0 && (neverChecked || home.status.checkStale))
       ? (home.status.lastLookedAt
           ? 'StockChief last checked this inventory ' + home.status.lastEvaluatedText + '; the automatic check has not run since.'
-          : 'StockChief has not checked this inventory yet; the automatic check has not run.')
+          : 'No all-clear has been issued yet.')
       : null;
 
   /* A line's icon comes from what it is about, so the feed can be read down
@@ -74,6 +84,8 @@
     return 'clock';
   }
 %>
+
+<% if (!isEmpty && currentUser && currentUser.role === 'owner') { %><p class="rm-choices"><a href="/foundry/briefing">Since-Friday operations briefing</a></p><% } %>
 
 <% if (isEmpty && activeMigration) { %>
 <section class="rm-hero rm-hero--migration">
@@ -101,74 +113,24 @@
   <a class="rm-btn rm-btn--ghost" href="/inventories">See my other inventories</a>
 </p>
 
-<% } else if (isEmpty) { %>
-<%
-  /*
-   * The first run.
-   *
-   * Nothing that follows a working inventory belongs here — no setup
-   * checklist, no command box, no "what StockChief handled", no decision card.
-   * There is exactly one thing to decide on a first morning, and every option
-   * on this screen is a real path that starts it. The three buttons this
-   * replaced went to a generic import screen and to the connections page,
-   * where the first thing an owner met was Stripe.
-   */
-  var sources = locals.sourceOptions || [];
-%>
-<section class="rm-hero">
-  <span class="rm-hero__badge"><span class="rm-dot" aria-hidden="true"></span> StockChief is ready</span>
-  <h1>This inventory is empty. Let's fill it.</h1>
-  <p>
-    Set it up with StockChief: tell me where your inventory lives and I will read it, work out how it
-    should be tracked, and show you exactly what I would create before anything is created.
-    After that I watch it, prepare the ordering and the supplier email, keep the books, and bring
-    you only what I cannot settle myself.
-  </p>
-  <div class="rm-hero__foot">
-    <span><%- helpers.icon('shield', { size: 15 }) %> Nothing is created until you approve it</span>
-    <span><%- helpers.icon('clock', { size: 15 }) %> Most of this takes a few minutes</span>
+<% } else if (isFreshEmpty) { %>
+<section class="rm-empty-welcome" aria-label="Getting started">
+  <span class="rm-stamp">Your workspace is ready</span>
+  <h1>Welcome, <%= firstName || 'there' %>.</h1>
+  <p>No products yet. You can explore the app now, or add your first records whenever you’re ready.</p>
+  <div class="rm-choices">
+    <a class="rm-btn" href="/onboarding">Add a source</a>
+    <a class="rm-btn rm-btn--ghost" href="/inventory/new">Add a product manually</a>
   </div>
+  <% if (currentUser.role === 'owner' && !onboardingEntry.dismissed) { %>
+    <div class="rm-sample-prompt">
+      <span>Want to see how it works first? Sample data is separate from your business.</span>
+      <form method="post" action="/onboarding/sample/load"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">Load sample data to explore</button></form>
+      <form method="post" action="/onboarding/sample/dismiss"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit" aria-label="Dismiss sample suggestion">Dismiss</button></form>
+    </div>
+  <% } %>
+  <p class="rm-empty-assurance">Nothing is ordered, emailed or paid automatically until you approve its limits.</p>
 </section>
-
-<p class="rm-stamp"><%- helpers.icon('layers', { size: 14 }) %> Where should I get your inventory from?</p>
-<div class="rm-choices-grid">
-  <% sources.forEach(function (source) { %>
-    <% if (source.href) { %>
-      <a class="rm-choice" href="<%= source.href %>">
-        <span class="rm-choice__ic"><%- helpers.icon(source.icon || 'box', { size: 19 }) %></span>
-        <span class="rm-choice__t"><%= source.label %></span>
-        <span class="rm-choice__b"><%= source.blurb %></span>
-        <span class="rm-choice__d"><%= source.detail %></span>
-        <% if (source.providers) { %>
-          <span class="rm-choice__tags"><% source.providers.forEach(function (name) { %><span><%= name %></span><% }) %></span>
-        <% } %>
-        <span class="rm-choice__go">Choose this <%- helpers.icon('arrowRight', { size: 14 }) %></span>
-      </a>
-    <% } else { %>
-      <form class="rm-choice__form" method="post" action="/onboarding/choose">
-        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-        <input type="hidden" name="path" value="<%= source.id %>">
-        <input type="hidden" name="chosenBy" value="customer">
-        <button class="rm-choice" type="submit">
-          <span class="rm-choice__ic"><%- helpers.icon(source.icon || 'box', { size: 19 }) %></span>
-          <span class="rm-choice__t"><%= source.label %></span>
-          <span class="rm-choice__b"><%= source.blurb %></span>
-          <span class="rm-choice__d"><%= source.detail %></span>
-          <% if (source.providers) { %>
-            <span class="rm-choice__tags"><% source.providers.forEach(function (name) { %><span><%= name %></span><% }) %></span>
-          <% } %>
-          <span class="rm-choice__go">Choose this <%- helpers.icon('arrowRight', { size: 14 }) %></span>
-        </button>
-      </form>
-    <% } %>
-  <% }) %>
-</div>
-
-<p class="rm-disclose">
-  <a href="/onboarding">Not sure — help me choose</a>
-  <a href="/guide">What StockChief does once it has this</a>
-  <a href="/everything">Everything else</a>
-</p>
 
 <% } else { %>
 
@@ -176,10 +138,10 @@
 <p class="rm-stamp">
   <span class="rm-live <%= paused ? 'rm-live--paused' : '' %>">
     <span class="rm-dot" aria-hidden="true"></span>
-    <%= paused ? 'StockChief is paused' : 'StockChief is working' %>
+    <%= paused ? 'StockChief is paused' : neverChecked ? 'StockChief is ready' : 'StockChief is working' %>
   </span>
   <span><%= greeting %><%= firstName ? ', ' + firstName : '' %> · <%= today %></span>
-  <span<%= home.status.checkStale ? ' class="rm-stale"' : '' %>>· checked <%= home.status.lastEvaluatedText %></span>
+  <span<%= (neverChecked || home.status.checkStale) ? ' class="rm-stale"' : '' %>>· checked <%= home.status.lastEvaluatedText %></span>
   <% if (!paused && canOperate) { %>
     <form method="post" action="/autopilot/pause" data-confirm="Pause StockChief? Nothing will happen automatically until you resume it." style="margin:0">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -192,6 +154,24 @@
 <h1 class="rm-verdict">
   <%= verdict %><% if (verdictAside) { %> <span class="q"><%= verdictAside %></span><% } %>
 </h1>
+<% if (currentUser.role === 'owner') { %><p class="rm-prose"><a href="/autopilot">Review suggested routine-work limits</a> · <a href="/autopilot/daily">Daily digest and batch approvals</a> · <a href="/autopilot/misses">Report an Ask miss</a></p><% } %>
+<% if (!paused && canOperate && (neverChecked || home.status.checkStale)) { %>
+  <form method="post" action="/autopilot/run" class="rm-prose">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <button class="rm-btn" type="submit">Check now</button>
+  </form>
+<% } %>
+<% if (locals.routineProposal && routineProposal.available && !routineProposal.alreadyConfigured) { %>
+<section class="card section" aria-label="Suggested routine-work limits"><div class="card-head"><h2>Your records support routine-work limits</h2></div><div class="card-body">
+  <% if (routineProposal.suppliers.length) { %><p>For <%= routineProposal.suppliers.map(function (supplier) { return supplier.name; }).join(', ') %>: previously purchased products, up to <strong>$<%= routineProposal.maximumValue.toFixed(2) %> USD per purchase order</strong> and <strong>$<%= routineProposal.maximumValuePerWeek.toFixed(2) %> USD in any rolling seven days</strong>.</p><% } %>
+  <% routineProposal.email.forEach(function (email) { %><p>Routine supplier email to <%= email.recipient %> from <%= email.mailboxName %>, for orders up to $<%= (email.maximumValueMinor / 100).toFixed(2) %> USD.</p><% }) %>
+  <% routineProposal.shipping.forEach(function (shipping) { %><p><%= shipping.carrier %> <%= shipping.service %> labels up to $<%= (shipping.maximumValueMinor / 100).toFixed(2) %> USD each, based on recorded purchases.</p><% }) %>
+  <p>Nothing is enabled yet. Review the evidence and confirm once; anything outside the approved limits still asks first. Payments are not included.</p><a class="btn btn--primary" href="/autopilot">Review and confirm limits</a>
+</div></section>
+<% } %>
+<% if (coverageErrors.length) { %>
+  <div class="notice notice--warn" role="alert">StockChief could not check <%= coverageErrors.length %> exception sources. Known decisions are not a complete all-clear. <a href="/settings/operations">Review operational health</a></div>
+<% } %>
 
 <% if (paused) { %>
   <p class="rm-prose">
@@ -204,7 +184,7 @@
     </form>
   <% } %>
 
-<% } else if (isEmpty) { %>
+<% } else if (isFreshEmpty) { %>
 <% } else { %>
 
   <%# ----------------------------------------------------------- the pulse %>
@@ -469,9 +449,6 @@
       // The older stock-only daily brief can contain a smaller count, so do
       // not repeat it here beside a broader authoritative count.
       var noticedLine = !needsCount && locals.observedBrief ? String(locals.observedBrief).trim() : '';
-      var gaps = (home.readiness && home.readiness.evidenceGaps) || [];
-      var gapCount = home.readiness && Number.isInteger(home.readiness.evidenceGapCount)
-        ? home.readiness.evidenceGapCount : gaps.length;
       var notes = (home.readiness && home.readiness.notes) || [];
     %>
     <% if (noticedLine || gapCount || notes.length) { %>

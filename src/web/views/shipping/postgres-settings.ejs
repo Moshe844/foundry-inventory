@@ -1,0 +1,31 @@
+<section class="rm-head"><div><p class="rm-eyebrow">Settings</p><h1>Shipping</h1>
+  <p class="rm-lede">Every inventory uses its own postage account. StockChief never shares one business’s carrier billing with another.</p></div></section>
+
+<section class="rm-card">
+  <h2>Postage account</h2>
+  <% if (account.connected) { %>
+    <div class="rm-row"><span><strong><%= account.providerName %></strong><small><%= account.because %></small></span>
+      <span class="rm-badge"><%= account.testMode ? 'Sandbox' : 'Live' %></span></div>
+    <p>Credential ending <code>…<%= account.keyEnding %></code>. The usable key is encrypted and never rendered.</p>
+    <p>Register this inventory-specific tracking callback with <%= account.providerName %>:</p>
+    <p><code><%= webhookUrl %></code></p>
+    <form method="post" action="/settings/shipping/account/disconnect"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <button class="rm-btn rm-btn--quiet" type="submit">Disconnect and remove credential</button></form>
+  <% } else { %>
+    <p><%= account.because %></p>
+    <form method="post" action="/settings/shipping/account" class="rm-form-grid">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <label>Shipping platform<select name="provider" required><% providers.forEach(function(provider){ %><option value="<%= provider %>"><%= provider %></option><% }) %></select></label>
+      <label>API key<input type="password" name="apiKey" required autocomplete="off" placeholder="Paste the business account key"></label>
+      <label>Webhook secret <span>(when the provider gives one)</span><input type="password" name="webhookSecret" autocomplete="off"></label>
+      <div><button class="rm-btn" type="submit">Verify and connect</button></div>
+    </form>
+  <% } %>
+</section>
+
+<section class="rm-card"><h2>What happens next</h2>
+  <ol><li>StockChief checks destination, origin, phone numbers, and measured weight.</li>
+    <li>It requests live rates without spending money.</li><li>An authorized owner buys the selected label.</li>
+    <li>Inventory changes only when someone records the carrier handoff.</li>
+    <li>Signed carrier events update tracking; duplicate scans apply once.</li></ol>
+</section>

@@ -25,9 +25,44 @@ const { requireAuth, asyncRoute } = require('../middleware');
 const { trimOrNull } = require('../../lib/util');
 const autonomousOperations = require('../../autonomous/service');
 const operationCatalog = require('../../autonomous/catalog');
+const authorityProposal = require('../../autopilot/authority-proposal');
+const daily = require('../../autopilot/daily');
+const misses = require('../../manager/misses');
 
 const router = express.Router();
 router.use('/autopilot', requireAuth);
+
+router.get('/autopilot/daily', asyncRoute(async (req, res) => {
+  permissions.assertCan(req.user, permissions.ADMIN, 'view the daily operations digest');
+  res.page('autopilot/daily', { title: 'Daily digest', nav: 'autopilot',
+    digest: daily.report(req.db, req.ctx.workspaceId, req.query.date), digestHistory: daily.history(req.db, req.ctx.workspaceId), batchResults: req.session.dailyBatchResults || [],
+    backTo: { href: '/', label: 'Brief' } });
+  delete req.session.dailyBatchResults;
+}));
+
+router.post('/autopilot/daily/approve', asyncRoute(async (req, res) => {
+  const selected = Array.isArray(req.body.selected) ? req.body.selected : req.body.selected ? [req.body.selected] : [];
+  const selections = selected.map((value) => { const [id, hash] = String(value).split(':'); return { id, hash }; });
+  req.session.dailyBatchResults = daily.approveBatch(req.db, req.ctx, req.user, selections);
+  return res.redirect(303, '/autopilot/daily');
+}));
+
+router.get('/autopilot/misses', asyncRoute(async (req, res) => {
+  permissions.assertCan(req.user, permissions.OPERATE, 'view Ask miss reports');
+  res.page('autopilot/misses', { title: 'Ask miss reports', nav: 'autopilot', reports: misses.list(req.db, req.ctx, req.user),
+    canReview: permissions.can(req.user, permissions.ADMIN), backTo: { href: '/autopilot', label: 'Automatic work' } });
+}));
+
+router.post('/autopilot/misses', asyncRoute(async (req, res) => {
+  misses.report(req.db, req.ctx, req.user, req.body);
+  req.flash('success', 'Saved the exact question and expected behavior. Reporting a miss does not change execution rules or grant authority.');
+  return res.redirect(303, '/autopilot/misses');
+}));
+
+router.post('/autopilot/misses/:id/review', asyncRoute(async (req, res) => {
+  misses.review(req.db, req.ctx, req.user, req.params.id, req.body.note);
+  return res.redirect(303, '/autopilot/misses');
+}));
 
 const react = (req, payload, options = {}) => reactions.publishAndReact(
   req.db, req.ctx.workspaceId, managerEvents.TYPES.AUTHORITY_UPDATED, payload, options
@@ -47,6 +82,7 @@ router.get(
       limits: modes.limits(req.db, workspaceId),
       policies: policyService.list(req.db, workspaceId),
       routine: policyService.routineSetup(req.db, workspaceId),
+      authorityProposal: authorityProposal.propose(req.db, workspaceId),
       describe: policyService.describe,
       locations: repo.listLocations(req.db, workspaceId).filter((location) => location.is_active),
       suppliers: req.db.prepare("SELECT id, name FROM suppliers WHERE workspace_id = ? AND status = 'active' ORDER BY name").all(workspaceId),
@@ -293,7 +329,7 @@ router.post(
       if (!err.status || err.status >= 500) throw err;
       req.flash('warn', err.message);
     }
-    res.redirect(303, '/autopilot/settings#jobs');
+    res.redirect(303, '/autopilot#jobs');
   })
 );
 
@@ -369,6 +405,13 @@ router.post(
     return res.redirect(303, '/autopilot');
   })
 );
+
+router.post('/autopilot/authority-proposal/approve', asyncRoute(async (req, res) => {
+  authorityProposal.approve(req.db, req.ctx, req.user, req.body.expectedHash);
+  react(req, { change: 'data_backed_authority' });
+  req.flash('success', 'Approved only the displayed suppliers, products, purchase budget, mailboxes and label limits. Anything not included still asks first; payments are not authorised.');
+  return res.redirect(303, '/autopilot');
+}));
 
 router.post(
   '/autopilot/pause',

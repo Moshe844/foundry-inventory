@@ -15,6 +15,7 @@ const importRemovals = require('../../manager/import-removals');
 const catalogCodeChanges = require('../../manager/catalog-code-changes');
 const managerReadiness = require('../../manager/readiness');
 const actionService = require('../../actions/action-service');
+const outboundMessage = require('../../actions/outbound-message');
 const proposals = require('../../actions/proposal-service');
 const actionPresenter = require('../../actions/presenter');
 const assistantTurns = require('../../assistant/turns');
@@ -42,10 +43,16 @@ const jobRunner = require('../../foundry/job-runner');
 const structuredCatalogue = require('../../actions/structured-catalogue');
 const catalogueIntelligence = require('../../actions/catalogue-intelligence');
 const queryPlanner = require('../../attention/query-planner');
+const operationalReview = require('../../manager/operational-review');
 
 const router = express.Router();
+router.get('/foundry/briefing', requireAuth, requireOwner, asyncRoute(async (req, res) => {
+  const review = await operationalReview.build(req.db, req.ctx.workspaceId, req.query,
+    { database: req.app.locals.operationalReviewDatabase });
+  res.page('manager/operational-review', { title: 'Operations briefing', nav: 'overview', review });
+}));
 const MAX_PRODUCT_DESCRIPTION = 12_000;
-router.use(['/foundry/tell', '/foundry/navigate', '/inventory/describe', '/inventory/catalogue-review', '/needs-you', '/investigations', '/document-removals', '/import-removals', '/catalog-code-changes'], requireAuth);
+router.use(['/foundry/tell', '/foundry/navigate', '/foundry/resume-prerequisite', '/inventory/describe', '/inventory/catalogue-review', '/needs-you', '/investigations', '/document-removals', '/import-removals', '/catalog-code-changes'], requireAuth);
 
 /** One validated gateway for every destination StockChief offers in conversation. */
 router.get('/foundry/navigate', (req, res) => {
@@ -74,6 +81,134 @@ function plainAnswer(req, res, question, answer, handoff = null, settledAs = nul
   } };
   return res.redirect(303, `/ask?q=${encodeURIComponent(question)}&followup=1&turn=${token}`);
 }
+
+function askActionQuestion(req, res, instruction, result) {
+  const token = crypto.randomUUID();
+  const choices = (result.choices || []).map((choice) => typeof choice === 'string'
+    ? { label: choice, value: choice }
+    : { label: choice.label || choice.value, value: choice.value || choice.label });
+  req.session.askTurns = [...(req.session.askTurns || []).slice(-7), {
+    token, workspaceId: req.ctx.workspaceId, question: instruction, conversation: null,
+    goalId: req.assistantGoal ? req.assistantGoal.id : null,
+  }];
+  req.session.pendingAskResult = {
+    token,
+    workspaceId: req.ctx.workspaceId,
+    question: instruction,
+    result: {
+      question: instruction,
+      answer: result.question,
+      rows: [],
+      columns: [],
+      rowCount: 0,
+      supported: true,
+      isAction: false,
+      needsClarification: true,
+      choices,
+      clarificationReason: result.reason || null,
+      actionClarification: { original: instruction, goalId: req.assistantGoal ? req.assistantGoal.id : '' },
+      handoff: result.where || null,
+      plan: { intent: 'action_clarification', entityQuery: '', locationQuery: '' },
+      interpretation: 'a missing detail for the requested action',
+      spoken: null,
+    },
+  };
+  if (result.contactSetup) {
+    req.session.pendingAskContactSetup = {
+      workspaceId: req.ctx.workspaceId,
+      goalId: req.assistantGoal ? req.assistantGoal.id : '',
+      instruction,
+      name: result.contactSetup.name,
+      kinds: result.contactSetup.kinds,
+      at: Date.now(),
+    };
+  } else {
+    delete req.session.pendingAskContactSetup;
+  }
+  if (result.prerequisite) {
+    req.session.pendingAskPrerequisite = {
+      workspaceId: req.ctx.workspaceId,
+      goalId: req.assistantGoal ? req.assistantGoal.id : '',
+      instruction,
+      ...result.prerequisite,
+      at: Date.now(),
+    };
+    delete req.session.pendingAskActionContinuation;
+  }
+  if (result.continuation && result.continuation.type === 'outbound_message') {
+    req.session.pendingAskActionContinuation = {
+      workspaceId: req.ctx.workspaceId,
+      goalId: req.assistantGoal ? req.assistantGoal.id : '',
+      instruction,
+      value: result.continuation,
+      at: Date.now(),
+    };
+  } else {
+    delete req.session.pendingAskActionContinuation;
+  }
+  return res.redirect(303, `/ask?q=${encodeURIComponent(instruction)}&followup=1&turn=${token}`);
+}
+
+function contactCreation(text) {
+  const source = String(text || '').trim();
+  let match = /^(?:please\s+)?(?:add|create|set\s+up|register)\s+(?:a\s+|an\s+)?(?:new\s+)?(supplier|vendor|customer|client)\b\s*(?:named|called|name\s*:?)?\s*["“']?(.+?)["”']?\s*[.!]?$/i.exec(source);
+  let kind;
+  let name;
+  if (match) {
+    kind = /supplier|vendor/i.test(match[1]) ? 'supplier' : 'customer';
+    name = match[2];
+  } else {
+    match = /^(?:please\s+)?(?:add|create|set\s+up|register)\s+["“']?(.+?)["”']?\s+as\s+(?:a\s+|an\s+)?(?:new\s+)?(supplier|vendor|customer|client)\s*[.!]?$/i.exec(source);
+    if (!match) return null;
+    kind = /supplier|vendor/i.test(match[2]) ? 'supplier' : 'customer';
+    name = match[1];
+  }
+  name = String(name || '').replace(/^\s*[:=-]\s*/, '').trim();
+  return name ? { kind, name } : null;
+}
+
+function rootInstruction(text) {
+  return String(text || '').split(/\s+—\s+Clarification\s*:/i)[0].trim();
+}
+
+router.get('/foundry/resume-prerequisite', asyncRoute(async (req, res) => {
+  const pending = req.session.pendingAskPrerequisite;
+  if (!pending || pending.workspaceId !== req.ctx.workspaceId) {
+    delete req.session.pendingAskPrerequisite;
+    req.flash('info', 'That setup step is no longer waiting. Tell StockChief what you want to do.');
+    return res.redirect(303, '/ask');
+  }
+  const goal = pending.goalId ? ledger.getGoal(req.db, req.ctx.workspaceId, pending.goalId) : null;
+  req.assistantGoal = goal || null;
+  const actionOptions = { provider: req.app.locals.aiProvider || undefined };
+  const result = pending.actionContinuation
+    ? await outboundMessage.resumePreparation(req.db, req.ctx, pending.actionContinuation, actionOptions)
+    : await tools.use(req.db, req.ctx, req.user, 'action.prepare', {
+      instruction: pending.instruction,
+    }, actionOptions);
+  if (result.kind === 'question' && result.question) {
+    if (result.reason !== 'missing_email') delete req.session.pendingAskPrerequisite;
+    return askActionQuestion(req, res, pending.instruction, result);
+  }
+  const handed = actionHandoff.handOff(req, result);
+  if (handed) {
+    delete req.session.pendingAskPrerequisite;
+    delete req.session.pendingAskActionContinuation;
+    if (goal && ['pending', 'clarify'].includes(goal.status)) {
+      const drafted = handed.routedTo === 'message';
+      ledger.settle(req.db, req.ctx, goal.id, {
+        status: drafted ? 'drafted' : 'handed',
+        said: drafted ? 'Drafted, not sent. Nothing goes out until you send it.' : 'The original request is ready to continue.',
+        resultHref: handed.target,
+        resultLabel: drafted ? 'Open the draft' : 'Continue',
+      });
+    }
+    return res.redirect(303, handed.target);
+  }
+  delete req.session.pendingAskPrerequisite;
+  req.flash('error', 'The contact was saved, but StockChief could not safely resume the original request. Nothing was sent.');
+  return res.redirect(303, '/ask');
+}));
 
 /** Whether the sentence names one of this inventory's products. */
 function productNavigationMentions(req, text) {
@@ -435,30 +570,91 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
       req.session.pendingAskResult = { token, workspaceId: req.ctx.workspaceId, question: message, error: said, result: null, unavailable: true };
       return res.redirect(303, `/ask?q=${encodeURIComponent(message)}&followup=1&turn=${token}`);
     }
+    req.session.readerRetry = { workspaceId: req.ctx.workspaceId, message };
     req.flash('warn', said);
     return res.redirect(303, '/#tell-foundry');
   }
 }));
 
 async function tellStockChief(req, res) {
+  delete req.session.readerRetry;
   const attached = (req.files || []).find((entry) => entry.field === 'file' && entry.size > 0);
   // A clarification answer must continue the original manager request. The
   // action surface carries these two fields back rather than making someone
   // retype the sentence; recombining them here lets the manager classify the
   // completed thought again instead of forcing every answer through the stock
   // movement parser.
-  const original = trimOrNull(req.body.original) || '';
+  const submittedOriginal = trimOrNull(req.body.original) || '';
+  const original = rootInstruction(submittedOriginal);
   const answer = trimOrNull(req.body.answer) || '';
   const workflow = trimOrNull(req.body.workflow) || '';
   const workflowStep = trimOrNull(req.body.workflowStep) || '';
   const workflowKind = trimOrNull(req.body.workflowKind) || '';
-  let message = answer
+  const creation = answer ? contactCreation(answer) : null;
+  const offered = req.session.pendingAskContactSetup;
+  const offeredContinuation = req.session.pendingAskActionContinuation;
+  if (creation && original && offered
+      && offered.workspaceId === req.ctx.workspaceId
+      && offered.instruction === original
+      && (!offered.goalId || offered.goalId === String(req.body.assistantGoal || ''))
+      && Array.isArray(offered.kinds) && offered.kinds.includes(creation.kind)) {
+    delete req.session.pendingAskContactSetup;
+    req.session.pendingAskPrerequisite = {
+      workspaceId: req.ctx.workspaceId,
+      goalId: String(req.body.assistantGoal || offered.goalId || ''),
+      instruction: original,
+      contactKind: creation.kind,
+      contactName: creation.name,
+      actionContinuation: offeredContinuation && offeredContinuation.workspaceId === req.ctx.workspaceId
+        && offeredContinuation.instruction === original ? offeredContinuation.value : null,
+      at: Date.now(),
+    };
+    delete req.session.pendingAskActionContinuation;
+    const query = new URLSearchParams({ name: creation.name });
+    req.flash('info', `Add ${creation.name} as a ${creation.kind}. After you save, StockChief will continue “${original}” automatically.`);
+    return res.redirect(303, creation.kind === 'supplier'
+      ? `/suppliers?${query.toString()}#add-supplier`
+      : `/sales/customers/new?${query.toString()}`);
+  }
+  const askActionContinuation = answer && req.session.pendingAskActionContinuation
+    && req.session.pendingAskActionContinuation.workspaceId === req.ctx.workspaceId
+    && req.session.pendingAskActionContinuation.instruction === original
+    && (!req.session.pendingAskActionContinuation.goalId
+      || req.session.pendingAskActionContinuation.goalId === String(req.body.assistantGoal || ''))
+    ? req.session.pendingAskActionContinuation : null;
+  let message = askActionContinuation ? original : answer
     ? `${original}${original ? ' — Clarification: ' : ''}${answer}`
     : trimOrNull(req.body.message) || (attached ? `Import ${attached.filename}` : '');
+  const briefing = !attached && !answer && operationalReview.briefingRequest(message);
+  if (briefing) {
+    await assistantTurns.begin(req, res, message, { channel: 'ask', noSplit: true });
+    if (req.user.role !== 'owner') {
+      const said = 'The cross-domain briefing contains restricted financial and operational evidence. An inventory owner must open it. Nothing was executed.';
+      assistantTurns.settleNow(req, { status: 'refused', said });
+      return plainAnswer(req, res, message, said, null, 'refused');
+    }
+    const review = await operationalReview.build(req.db, req.ctx.workspaceId, {}, { database: req.app.locals.operationalReviewDatabase });
+    const counts = review.sources.filter((source) => source.count > 0).map((source) => `${source.name}: ${source.count} records`).join('; ');
+    const evidence = `Recorded history for ${review.window.from} through ${review.window.to}: ${counts || 'no events from successfully checked sources'}. `
+      + `${review.pending.length} pending work items and ${review.exceptions.length} current exceptions. `
+      + (review.coverageErrors.length ? `Review incomplete: ${review.coverageErrors.join(', ')} could not be checked. ` : '')
+      + 'Source counts are evidence records, not additional actions or proof of external settlement. ';
+    const said = evidence + (briefing.actionsRequested
+        ? 'I can show the since-Friday evidence, current pending work and exceptions. This briefing does not execute, prepare, approve, send or pay anything. Your requested actions have not been completed; open the individual governed workflows to authorize them.'
+        : 'Open the since-Friday briefing for recorded business events, independently verified StockChief work, current pending work and exceptions. It does not execute any new action.');
+    const handoff = { href: '/foundry/briefing', label: 'Open since-Friday operations briefing' };
+    const status = briefing.actionsRequested ? 'refused' : 'handed';
+    assistantTurns.settleNow(req, { status, said, resultHref: handoff.href, resultLabel: handoff.label,
+      provenance: { reason: briefing.actionsRequested ? 'cross_domain_execution_not_implemented' : 'read_only_briefing' } });
+    return plainAnswer(req, res, message, said, handoff, status);
+  }
   // The same semantic boundary handles every Ask submission. Reads remain
   // reads; instructions continue directly into the registered manager handler
   // in this POST, rather than displaying a second 'work out' button.
   let chatAction = req.body.prepareOnly === '1';
+  if (!attached && req.body.queryConversation && salesIntent.isCreateMessage(message)) {
+    chatAction = true;
+  }
   /*
    * One understanding, one ledger row per goal, before anything runs.
    *
@@ -477,6 +673,20 @@ async function tellStockChief(req, res) {
       previousQuestion: earlier ? earlier.question : null,
       noSplit: Boolean(answer),
     });
+  }
+  if (!attached && answer && askActionContinuation) {
+    delete req.session.pendingAskActionContinuation;
+    const result = await outboundMessage.continuePreparation(
+      req.db, req.ctx, askActionContinuation.value, answer,
+      { provider: req.app.locals.aiProvider || undefined, referentNote: req.assistantReferentNote || '' }
+    );
+    if (result.kind === 'question' && result.question) {
+      return askActionQuestion(req, res, original, result);
+    }
+    const handed = actionHandoff.handOff(req, result);
+    if (handed) return res.redirect(303, handed.target);
+    req.flash('error', 'StockChief could not safely continue that email request. Nothing was sent.');
+    return res.redirect(303, '/ask');
   }
   /*
    * "What did I just do?" is answered from the ledger, not by a model asking
@@ -554,7 +764,15 @@ async function tellStockChief(req, res) {
       && ['instruction', 'change', 'send'].includes(req.assistantGoal.kind) && !req.assistantCorrection) {
     chatAction = true;
   }
-  if (!attached && req.body.queryConversation === '1' && message && (req.assistantCorrection || chatAction)) {
+  if (!attached && req.body.queryConversation === '1' && message) {
+    const directCustomerForm = /^\s*(?:please\s+|can\s+you\s+|could\s+you\s+|i\s+want\s+to\s+|i'?d\s+like\s+to\s+)?(?:add|create|set\s+up|register|make|new)\s+(?:a\s+|an\s+)?(?:new\s+)?(?:customer|client)\b/i.test(message)
+      && !/\b(?:customer|client)\s+(?:order|invoice|return|payment)\b/i.test(message);
+    const directSupplierForm = /^\s*(?:please\s+|can\s+you\s+|could\s+you\s+)?(?:add|create|set\s+up|register)\s+(?:a\s+)?(?:new\s+)?(?:supplier|vendor)\b/i.test(message)
+      && !/\b(?:supplier|vendor)\s+(?:order|invoice|return|payment)\b/i.test(message);
+    if (directCustomerForm || directSupplierForm) chatAction = true;
+  }
+  if (!attached && req.body.queryConversation && message
+      && (req.assistantCorrection || chatAction || salesIntent.isCreateMessage(message))) {
     // What is being corrected, in full: the proposal on the table when there
     // is one (with the place and batch it settled on), otherwise the question
     // still open, otherwise the sentence as the ledger holds it.
@@ -575,7 +793,7 @@ async function tellStockChief(req, res) {
     }
     if (earlier && !/ — Clarification: /.test(earlier)) message = `${earlier} — Clarification: ${message}`;
     chatAction = true;
-  } else if (!attached && req.body.queryConversation === '1' && message) {
+  } else if (!attached && req.body.queryConversation && message) {
     const token = crypto.randomUUID();
     const previous = req.session.askConversation?.workspaceId === req.ctx.workspaceId
       ? req.session.askConversation : null;
@@ -962,7 +1180,8 @@ async function tellStockChief(req, res) {
   // classifies the isolated word differently.
   const structuredRestriction = workflow === 'restriction_setup';
   const continuingRestriction = answer && (structuredRestriction || activeRestrictionFlow(req)
-    || /\bClarification\s*:/i.test(original) && /\b(?:restriction|stock protection|purchase|transfer|supplier)\b/i.test(original));
+    || /\bClarification\s*:/i.test(submittedOriginal)
+      && /\b(?:restriction|stock protection|purchase|transfer|supplier)\b/i.test(submittedOriginal));
   if (continuingRestriction) {
     intent.handler = 'operating_instruction';
     intent.intentClass = 'OPERATING_INSTRUCTION';
@@ -975,7 +1194,7 @@ async function tellStockChief(req, res) {
     // Compatibility for a form that was already open before this deployment:
     // the original text names the chosen category, so a server restart must
     // not make the next product answer disappear.
-    || /\bClarification\s*:\s*Set up stock protection\b/i.test(original)
+    || /\bClarification\s*:\s*Set up stock protection\b/i.test(submittedOriginal)
   );
   if ((restrictionFlow || structuredRestriction) && (workflowKind === 'stock_protection' || /\bset up stock protection\b/i.test(answer))) {
     const flow = restrictionFlow || (req.session.pendingRestrictionFlow = {
@@ -1110,9 +1329,16 @@ async function tellStockChief(req, res) {
       const summary = result.message || `${result.order.order_number} is ${result.order.status.toLowerCase().replace(/_/g, ' ')}. `
         + `${result.order.totals.allocated} committed, ${result.order.totals.backordered} waiting for stock, `
         + `${result.order.totals.fulfilled} fulfilled.`;
-      req.flash(result.kind === 'blocked' || result.order.totals.backordered ? 'warn'
+      const href = `/sales/orders/${result.order.id}`;
+      const isDraft = result.kind === 'created' && result.order.status === 'DRAFT';
+      assistantTurns.settleNow(req, {
+        status: isDraft ? 'drafted' : result.kind === 'blocked' ? 'refused' : 'done',
+        said: summary, resultHref: href,
+        resultLabel: isDraft ? `Review ${result.order.order_number}` : `Open ${result.order.order_number}`,
+      });
+      req.flash(result.kind === 'blocked' ? 'warn'
         : result.kind === 'already_completed' ? 'info' : 'success', summary);
-      return res.redirect(303, `/sales/orders/${result.order.id}`);
+      return res.redirect(303, href);
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
       intentRouter.markRouted(req.db, req.ctx, intent.id, 'sales_order', null, 'NEEDS_CLARIFICATION');
@@ -1194,7 +1420,8 @@ async function tellStockChief(req, res) {
     // and the real answer, that nobody is on file to buy it from, was never
     // given. The specific path already exists and answers or asks properly; it
     // just had no caller.
-    const specific = await tools.use(req.db, req.ctx, req.user, 'action.prepare', { instruction: message, previewOnly: Boolean(chatAction) }, {
+    const asksForThePlan = /\b(?:what|which|anything)\s+(?:should|do|to)\s+(?:i|we)\s+(?:order|buy|reorder|restock)|\b(?:order|buy|reorder|restock|replenish)\s+(?:what|whatever|everything|anything|all)\b[^.!?]*(?:need|needed|low|short)|\b(?:run|do|make|prepare|plan)\s+(?:the\s+)?(?:replenishment|restock|reorder|purchasing)\b|\bwhat(?:'s|\s+is)\s+(?:running\s+)?low\b/i.test(message);
+    const specific = asksForThePlan && !namesAProduct ? {kind:'general_replenishment'} : await tools.use(req.db, req.ctx, req.user, 'action.prepare', { instruction: message, previewOnly: Boolean(chatAction) }, {
       provider: req.app.locals.aiProvider || undefined,
     });
     if (specific.kind === 'purchase_order' && specific.order) {
@@ -1246,7 +1473,6 @@ async function tellStockChief(req, res) {
      * the whole planner and report the work it had prepared, as if that were
      * an answer to what was said.
      */
-    const asksForThePlan = /\b(?:what|which|anything)\s+(?:should|do|to)\s+(?:i|we)\s+(?:order|buy|reorder|restock)|\b(?:order|buy|restock|replenish)\s+(?:what|whatever|everything)\s+(?:we|is|i)\s+(?:need|needed|are\s+low|am\s+low|running\s+low)|\b(?:run|do|make|prepare|plan)\s+(?:the\s+)?(?:replenishment|restock|reorder|purchasing)\b|\bwhat(?:'s|\s+is)\s+(?:running\s+)?low\b/i.test(message);
     if (!asksForThePlan) {
       req.session.pendingActionQuestion = {
         question: 'StockChief read that as being about purchasing, but not what to do. Do you want a purchase order for a product (say which and how many), the reorder plan (“what should I order?”), or something about a supplier?',
@@ -1255,11 +1481,15 @@ async function tellStockChief(req, res) {
       intentRouter.markRouted(req.db, req.ctx, intent.id, 'actions', null, 'NEEDS_CLARIFICATION');
       return res.redirect(303, '/actions');
     }
-    const result = managerRunner.run(req.db, req.ctx, req.user, { trigger: 'tell-foundry-purchasing' });
+    const result = managerRunner.run(req.db, req.ctx, req.user, { trigger: 'tell-foundry-purchasing',prepareOnly:true });
+    const purchaseCoverage = require('../../purchasing/replenishment')
+      .summarizeDecisionCoverage(require('../../purchasing/replenishment').evaluateWorkspace(req.db, req.ctx.workspaceId));
     intentRouter.markRouted(req.db, req.ctx, intent.id, 'manager_purchasing');
     req.flash('success', result.nothingToDo
-      ? 'StockChief checked stock, incoming orders, usage, lead times and supplier rules. No purchase is currently supported.'
-      : `${result.planned} piece${result.planned === 1 ? '' : 's'} of inventory work prepared; ${result.awaiting} need your decision.`);
+      ? purchaseCoverage.unresolvedText
+        ? `No purchase was prepared. ${purchaseCoverage.unresolvedText}`
+        : 'StockChief checked stock, incoming orders, usage, lead times and supplier rules. No purchase is currently supported.'
+      : `${result.planned} piece${result.planned === 1 ? '' : 's'} of inventory work prepared; ${result.awaiting} need your decision. This request did not approve orders, send messages or move stock.`);
     return res.redirect(303, '/');
   }
   if (intent.handler === 'supplier_code_mapping' || intent.intentClass === 'CONFIGURATION_CHANGE') {
@@ -1341,6 +1571,10 @@ async function tellStockChief(req, res) {
     // A question goes where it can be answered. Only a flat refusal — something
     // StockChief cannot do at all — belongs in a message you dismiss.
     if (result.kind === 'question' && result.question) {
+      if (req.body.queryConversation === '1') {
+        intentRouter.markRouted(req.db, req.ctx, intent.id, 'ask', null, 'NEEDS_CLARIFICATION');
+        return askActionQuestion(req, res, message, result);
+      }
       let continuationId = null;
       if (result.continuation) {
         continuationId = crypto.randomUUID();
@@ -1463,6 +1697,7 @@ async function tellStockChief(req, res) {
         req.session.pendingActionQuestion = {
           unsupported: asAction.message,
           blocked: asAction.blocked || null,
+          where: asAction.where || null,
           instruction: message,
         };
         intentRouter.markRouted(req.db, req.ctx, intent.id, 'actions', null, 'REFUSED');
@@ -1708,7 +1943,9 @@ router.post('/catalog-code-changes/:id/cancel', asyncRoute(async (req, res) => {
 router.post('/operating-instructions/:id/approve', asyncRoute(async (req, res) => {
   try {
     const proposal = operatingInstructions.approve(req.db, req.ctx, req.user, req.params.id, req.body.integrityHash);
-    const said = `Remembered. ${proposal.resolvedChanges.length === 1 ? 'This rule is' : 'These rules are'} now active and future events will use them.`;
+    const said = proposal.resolvedChanges.length === 1
+      ? 'Remembered. This rule is now active and future relevant work will use it.'
+      : 'Remembered. These rules are now active and future relevant work will use them.';
     req.flash('success', said);
     // The conversation that asked for this rule now reads it as done, and
     // the person goes back to it — with the next part of their message, if
@@ -1840,6 +2077,7 @@ router.get(
       req.session.pendingActionQuestion = {
         unsupported: result.message,
         blocked: result.blocked || null,
+        where: result.where || null,
         instruction: event.statedAs,
       };
       return res.redirect(303, '/actions');

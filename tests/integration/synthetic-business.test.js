@@ -74,7 +74,7 @@ test('an explicitly created Test environment keeps realistic synthetic intent th
   const agent = request.agent(app);
   await signIn(agent, first.account.email, first.account.password);
 
-  const created = await post(agent, '/inventories', { name: 'Scale Rehearsal', dataMode: 'synthetic' }, '/inventories/new');
+  const created = await post(agent, '/settings/test-inventory', { name: 'Scale Rehearsal' }, '/settings');
   assert.equal(created.status, 303);
   const workspace = store.db.prepare("SELECT * FROM workspaces WHERE name = 'Scale Rehearsal'").get();
   assert.equal(workspace.data_mode, 'synthetic', 'the workspace row, not request wording, owns the mode');
@@ -141,7 +141,7 @@ test('real-business onboarding grounds facts and asks for source records before 
   assert.match(text, /Enter records in StockChief/i);
   assert.match(text, /Upload inventory files/i);
   assert.match(text, /Connect a business system/i);
-  assert.match(text, /Use email attachments/i);
+  assert.doesNotMatch(text, /Use email attachments/i);
   assert.doesNotMatch(text, /Choose where my records are/i);
   assert.match(proposal.text, /<summary>What StockChief knows \/ Why StockChief decided this<\/summary>/i);
   assert.doesNotMatch(proposal.text, /<details[^>]*open[^>]*>[^]*What StockChief knows \/ Why StockChief decided this/i);
@@ -190,7 +190,7 @@ test('a contradictory model flag cannot turn a business description into owner i
   assert.match(text, /Enter records in StockChief/i);
   assert.match(text, /Upload inventory files/i);
   assert.match(text, /Connect a business system/i);
-  assert.match(text, /Use email attachments/i);
+  assert.doesNotMatch(text, /Use email attachments/i);
   assert.doesNotMatch(text, /Choose where my records are/i);
   assert.doesNotMatch(text, /You entered inventory records here|Create these exact inventory records/i);
   assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM items WHERE workspace_id = ?').get(seeded.workspaceId).n, 0);
