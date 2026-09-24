@@ -79,7 +79,19 @@ function createPostgresInventoryRouter(database) {
     const detail=await catalog.getItem(database,req.ctx.workspaceId,req.params.id,{page:req.query.page});
     const priceState=await pricing.listForSkus(database,req.ctx.workspaceId,detail.skus.map((sku)=>sku.id));
     detail.skus=detail.skus.map((sku)=>({...sku,...priceState.get(sku.id)}));
-    return res.page('inventory/postgres-item',{title:detail.item.name,nav:'inventory',...detail});
+    const purchasingRows=detail.skus.length?(await database.query(`SELECT sku.id AS sku_id,policy.reorder_point,
+      policy.target_stock,policy.safety_stock,policy.preferred_supplier_id,supplier.name AS supplier_name
+      FROM skus sku LEFT JOIN reorder_policies policy ON policy.workspace_id=sku.workspace_id AND policy.sku_id=sku.id
+      LEFT JOIN suppliers supplier ON supplier.id=policy.preferred_supplier_id
+      WHERE sku.workspace_id=$1 AND sku.id=ANY($2::text[])`,[req.ctx.workspaceId,detail.skus.map((sku)=>sku.id)])).rows:[];
+    const policyBySku=new Map(purchasingRows.map((row)=>[row.sku_id,row]));
+    const purchasingLines=detail.skus.map((sku)=>{const row=policyBySku.get(sku.id);return {skuId:sku.id,
+      label:sku.variant_label||detail.item.name,total:sku.total,policy:row&&row.reorder_point!==null?{
+        reorderPoint:Number(row.reorder_point),targetStock:Number(row.target_stock),safetyStock:Number(row.safety_stock),
+        preferredSupplierId:row.preferred_supplier_id,supplierName:row.supplier_name}:null,suppliers:[]};});
+    return res.page('inventory/item',{title:detail.item.name,nav:'inventory',room:true,...detail,attention:[],findingTotal:0,
+      purchasingLines,commitments:[],outlook:[],canOperate:permissions.can(req.user,permissions.OPERATE),
+      kitDefinitions:Object.fromEntries(detail.skus.map((sku)=>[sku.id,{isKit:false,components:[]}]))});
   }));
   router.post('/inventory/:id/details',requirePermission(permissions.OPERATE,'edit products'),asyncRoute(async(req,res)=>{
     await catalog.updateItem(database,req.ctx,req.params.id,req.body);

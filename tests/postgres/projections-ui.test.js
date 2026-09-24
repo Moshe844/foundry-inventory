@@ -58,6 +58,11 @@ test('real Chromium renders PostgreSQL Brief, proactive Needs You count, activit
     await page.locator('.rm-rail__nav a[href="/needs-you"]').click();
     assert.match(await page.locator('main').innerText(),/Store feed stopped updating/);
     assert.match(await page.locator('main').innerText(),/Reconnect the store feed/);
+    await page.goto(`${base}/activity`);const activity=await page.locator('main').innerText();
+    assert.match(activity,/Activity/);assert.match(activity,/Received 12 × Projection Widget into Main Warehouse/);
+    assert.match(activity,/raw movement ledger/i);await page.getByLabel('Search activity').fill('OPENING-PROJECTION');
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Search'}).click()]);
+    assert.match(await page.locator('main').innerText(),/OPENING-PROJECTION/);
     await page.goto(`${base}/money`);const money=await page.locator('main').innerText();
     assert.match(money,/\$50\.00 net income this period/);assert.match(money,/\$100\.00 revenue/);
     await page.goto(`${base}/accounting/reports/profit-and-loss?from=2026-09-01&to=2026-09-30`);
@@ -68,5 +73,27 @@ test('real Chromium renders PostgreSQL Brief, proactive Needs You count, activit
     assert.match(await page.locator('main').innerText(),/Debits equal credits/);
     await page.goto(`${base}/accounting/reports/general-ledger?from=2026-09-01&to=2026-09-30`);
     assert.match(await page.locator('main').innerText(),/Verified sale/);assert.match(await page.locator('main').innerText(),/Rent paid/);
+    const accounts=(await database.query(`SELECT id,system_key FROM accounting_accounts WHERE workspace_id=$1
+      AND system_key IN ('RENT_EXPENSE','CASH')`,[ctx.workspaceId])).rows;
+    const accountIds=Object.fromEntries(accounts.map((account)=>[account.system_key,account.id]));
+    await page.goto(`${base}/accounting/adjustments/new`);
+    await page.getByLabel('Posting date').fill('2026-09-20');await page.getByLabel('Amount').fill('25.00');
+    await page.getByLabel('What is this entry for?').fill('Accountant-directed correction');
+    await page.getByLabel('Debit account').selectOption(accountIds.RENT_EXPENSE);
+    await page.getByLabel('Credit account').selectOption(accountIds.CASH);
+    await page.getByLabel('Reason / supporting reference (optional)').fill('Certification adjustment');
+    await Promise.all([page.waitForURL(/\/accounting\/entries\/je_/),page.getByRole('button',{name:'Post adjustment'}).click()]);
+    assert.match(await page.locator('main').innerText(),/Accountant-directed correction/);
+    await page.getByText('Advanced accounting details',{exact:true}).click();
+    assert.match(await page.locator('main').innerText(),/\$25\.00/);
+    await page.getByText('Correct this entry',{exact:true}).click();
+    await page.getByLabel('Correction date').fill('2026-09-21');await page.getByLabel('Why').fill('Entered for certification only');
+    await Promise.all([page.waitForURL(/\/accounting\/entries\/je_/),page.getByRole('button',{name:'Post reversal'}).click()]);
+    assert.match(await page.locator('main').innerText(),/Reversal of entry/);
+    await page.getByText('Advanced accounting details',{exact:true}).click();
+    assert.match(await page.locator('main').innerText(),/Reverses an earlier posted entry/);
+    const unbalanced=await database.query(`SELECT e.id FROM accounting_journal_entries e JOIN accounting_journal_lines l ON l.entry_id=e.id
+      WHERE e.workspace_id=$1 GROUP BY e.id HAVING SUM(l.debit_minor)<>SUM(l.credit_minor)`,[ctx.workspaceId]);
+    assert.equal(unbalanced.rows.length,0);
     assert.deepEqual(errors,[]);
   });

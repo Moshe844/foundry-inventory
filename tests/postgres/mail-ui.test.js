@@ -87,15 +87,16 @@ test('real Chromium qualifies PostgreSQL business-mail filtering, exact replies 
     assert.match(needsText,/customer@example\.test is waiting for a response/);
     await page.goto(`${base}/mail/${supplierMessage.messageId}`);
     assert.match(await page.locator('main').innerText(),/Please confirm whether Friday works/);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Draft a reply'}).click()]);
     await page.getByLabel('Subject').fill('Re: Friday shipment');
     await page.locator('textarea[name="body"]').fill('Friday works. Please send the remaining units and share tracking.');
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Save draft'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Save for later'}).click()]);
     let stored=(await database.query('SELECT * FROM connection_email_messages WHERE id=$1',[supplierMessage.messageId])).rows[0];
     assert.equal(stored.draft_subject,'Re: Friday shipment');
     assert.equal(stored.draft_body,'Friday works. Please send the remaining units and share tracking.');
     assert.equal(stored.reply_sent_at,null);assert.equal(providerCalls,0);
     await page.locator('textarea[name="body"]').fill('Friday works. Send the remaining units and email the tracking number.');
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Send exact reply'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Send to supplier@example.test'}).click()]);
     assert.equal(providerCalls,0);assert.match(await page.locator('main').innerText(),/Reply queued securely/);
     assert.equal((await database.query(`SELECT status FROM stockchief_runtime.email_reply_outbox
       WHERE message_id=$1`,[supplierMessage.messageId])).rows[0].status,'PENDING');
@@ -115,9 +116,10 @@ test('real Chromium qualifies PostgreSQL business-mail filtering, exact replies 
       sender:'supplier@example.test',recipients:['business@example.test'],subject:'Second shipment question',
       bodyText:'Should we send the second carton?',receivedAt:'2026-09-23T13:03:00.000Z'});
     await page.goto(`${base}/mail/${uncertainMessage.messageId}`);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Draft a reply'}).click()]);
     await page.getByLabel('Subject').fill('Ambiguous provider outcome');
     await page.locator('textarea[name="body"]').fill('Please send the second carton.');
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Send exact reply'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Send to supplier@example.test'}).click()]);
     assert.equal(providerCalls,1);assert.match(await page.locator('main').innerText(),/Reply queued securely/);
     await jobs.processOne(database,runtimeHandlers.create(providers),{owner:'mail-provider-worker'});await page.reload();
     assert.match(await page.locator('body').innerText(),/delivery could not be verified.*did not retry/is);

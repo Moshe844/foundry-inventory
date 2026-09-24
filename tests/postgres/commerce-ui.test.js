@@ -33,11 +33,21 @@ test('real Chromium runs PostgreSQL purchasing, receiving, supplier money, custo
     const location=await locations.createLocation(database,ctx,{name:'Commerce Warehouse',kind:'warehouse'});
     const item=await catalog.createItem(database,ctx,{name:'Commerce Boot',baseCode:'BOOT',trackingMode:'quantity',unitLabel:'pair'});
 
-    await page.goto(`${base}/purchasing`);
-    await page.getByText('Add a supplier',{exact:true}).click();
+    await page.goto(`${base}/suppliers`);
+    await page.getByText('Add a supplier',{exact:true}).first().click();
     const supplierForm=page.locator('details').filter({hasText:'Add a supplier'});
     await supplierForm.getByLabel('Name').fill('Boot Supply');await supplierForm.getByLabel('Email').fill('orders@boots.test');
-    await Promise.all([page.waitForNavigation(),supplierForm.getByRole('button',{name:'Add supplier'}).click()]);
+    await Promise.all([page.waitForNavigation(),supplierForm.getByRole('button',{name:'Create supplier and continue'}).click()]);
+    assert.match(page.url(),/\/suppliers\/sup_/);
+    const supplierPageText=await page.locator('main').innerText();
+    assert.match(supplierPageText,/Boot Supply/);assert.match(supplierPageText,/Supplier setup/i);
+    await page.locator('select[name="skuId"]').selectOption(item.skuIds[0]);
+    await page.getByLabel('Supplier code').fill('SUP-BOOT-1');
+    await page.getByLabel('How many per pack').fill('2');
+    await page.getByLabel('Cost per unit').fill('8.00');
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Link product'}).click()]);
+    assert.match(await page.locator('main').innerText(),/SUP-BOOT-1/);
+    await page.goto(`${base}/purchasing`);
     await page.getByLabel('Supplier').selectOption({label:'Boot Supply'});
     await page.getByLabel('Product / SKU').selectOption(item.skuIds[0]);
     await page.getByLabel('Destination').selectOption(location.id);await page.getByLabel('Units').fill('10');
@@ -45,13 +55,21 @@ test('real Chromium runs PostgreSQL purchasing, receiving, supplier money, custo
     await Promise.all([page.waitForURL(/\/purchasing\/orders\/po_/),page.getByRole('button',{name:'Prepare purchase order'}).click()]);
     const purchaseOrderId=page.url().split('/').pop();
     assert.match(await page.locator('main').innerText(),/Nothing was sent to the supplier/);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve this purchase'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve order'}).click()]);
     assert.match(await page.locator('main').innerText(),/has not been sent yet/);
-    await page.getByLabel('Supplier reference').fill('SUP-PO-1');
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Record as placed'}).click()]);
+    await page.getByLabel('Supplier confirmation').fill('SUP-PO-1');
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Record as sent to supplier'}).click()]);
     assert.match(await page.locator('main').innerText(),/on-hand stock did not/i);
-    await page.getByLabel('Commerce Boot quantity').fill('10');await page.getByLabel('Receipt reference').fill('DOCK-1');
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Record physical receipt'}).click()]);
+    await page.goto(`${base}/purchasing/orders`);
+    assert.match(await page.locator('main').innerText(),/Boot Supply/);
+    assert.match(await page.locator('main').innerText(),/PO-00001/);
+    await page.goto(`${base}/purchasing/receive`);
+    assert.match(await page.locator('main').innerText(),/Book in a delivery/);
+    await Promise.all([page.waitForURL(new RegExp(`/purchasing/orders/${purchaseOrderId}/receive$`)),
+      page.getByRole('link',{name:'Receive'}).click()]);
+    assert.match(await page.locator('main').innerText(),/Arrived \(pairs\)/);
+    await page.getByLabel('Arrived (pairs)').fill('10');await page.getByLabel('Delivery note or reference').fill('DOCK-1');
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Book it in'}).click()]);
     assert.match(await page.locator('main').innerText(),/Physical receipt recorded through the inventory ledger/);
     assert.equal(Number((await database.query('SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3',
       [ctx.workspaceId,item.skuIds[0],location.id])).rows[0].on_hand),10);
@@ -62,9 +80,16 @@ test('real Chromium runs PostgreSQL purchasing, receiving, supplier money, custo
     assert.match(await page.locator('main').innerText(),/without receiving stock again/);
     assert.equal(Number((await database.query('SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3',
       [ctx.workspaceId,item.skuIds[0],location.id])).rows[0].on_hand),10);
-    await page.getByLabel('Amount').fill('30.00');await page.getByLabel('Method').fill('ACH');
+    await page.locator('summary').filter({hasText:'Record payment'}).click();
+    await page.getByLabel('Amount actually paid').fill('30.00');await page.getByLabel('Reference').fill('ACH');
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Record payment'}).click()]);
-    assert.match(await page.locator('main').innerText(),/physical inventory (?:did not|does not) change/i);
+    assert.match(await page.locator('main').innerText(),/payment reduces only the bill/i);
+    assert.equal(Number((await database.query('SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3',
+      [ctx.workspaceId,item.skuIds[0],location.id])).rows[0].on_hand),10);
+
+    await page.goto(`${base}/purchasing/setup`);
+    assert.match(await page.locator('main').innerText(),/Set up purchasing/);
+    assert.match(await page.locator('main').innerText(),/Commerce Boot/);
 
     await page.goto(`${base}/orders`);await page.getByText('Add a customer',{exact:true}).click();
     const customerForm=page.locator('details').filter({hasText:'Add a customer'});
@@ -77,15 +102,17 @@ test('real Chromium runs PostgreSQL purchasing, receiving, supplier money, custo
     await Promise.all([page.waitForURL(/\/orders\/so_/),page.getByRole('button',{name:'Draft customer order'}).click()]);
     const salesOrderId=page.url().split('/').pop();
     assert.match(await page.locator('main').innerText(),/Stock is not committed until confirmation/);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Confirm and commit available stock'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Confirm order and reserve stock'}).click()]);
     assert.equal(Number((await database.query(`SELECT COALESCE(SUM(a.quantity),0) AS quantity FROM sales_order_allocations a
       JOIN sales_order_lines l ON l.id=a.sales_order_line_id WHERE l.sales_order_id=$1`,[salesOrderId])).rows[0].quantity),4);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Record customer collection'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Record these goods as gone'}).click()]);
     assert.match(await page.locator('main').innerText(),/Inventory, revenue, COGS and the customer invoice changed together/);
     assert.equal(Number((await database.query('SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3',
       [ctx.workspaceId,item.skuIds[0],location.id])).rows[0].on_hand),6);
-    await page.getByLabel('Payment amount').fill('60.00');await page.getByLabel('Method').fill('Card');
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Record customer payment'}).click()]);
+    await page.locator('details#money > summary').click();
+    await page.getByText('Record another payment — cash, cheque, transfer, card machine',{exact:true}).click();
+    await page.getByLabel('How much').fill('60.00');await page.locator('select[name="method"]').selectOption('card');
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Record this payment'}).click()]);
     const state=(await database.query(`SELECT so.status AS order_status,i.status AS invoice_status,i.balance_minor,
         b.status AS bill_status,b.balance_minor AS bill_balance
       FROM sales_orders so JOIN accounting_customer_invoices i ON i.sales_order_id=so.id

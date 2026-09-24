@@ -9,6 +9,8 @@ const defaultProviders=require('../../connections/providers/registry');
 const jobs=require('../../operations/postgres-job-queue');
 const accountingSync=require('../../accounting/postgres-integration-sync');
 const publicApi=require('../../connections/postgres-public-api');
+const paymentConnect=require('../../payments/postgres-connect');
+const shippingAccounts=require('../../shipping/postgres-accounts');
 
 function safeOrigin(value,fallback){
   try{return new URL(value).origin;}catch{return fallback;}
@@ -16,12 +18,12 @@ function safeOrigin(value,fallback){
 
 function oauthReturnPage(res,input){
   const returnOrigin=safeOrigin(input.returnOrigin,input.requestOrigin);
-  const returnPath=input.connection?.id
-    ? `/settings/connections/${encodeURIComponent(input.connection.id)}`:'/settings/connections';
+  const returnPath=input.returnPath||(input.connection?.id
+    ? `/settings/connections/${encodeURIComponent(input.connection.id)}`:'/settings/connections');
   return res.status(input.connected?200:400).page('connections/oauth-return',{
     title:`${input.providerName||'Connection'} · StockChief`,layout:false,outcome:{
       connected:Boolean(input.connected),providerName:input.providerName||'Connection',message:input.message,
-      workspaceId:input.connection?.workspace_id||null,returnUrl:`${returnOrigin}${returnPath}`,
+      workspaceId:input.workspaceId||input.connection?.workspace_id||null,returnUrl:`${returnOrigin}${returnPath}`,
       returnOrigin,returnPath,
     },
   });
@@ -35,12 +37,39 @@ function createPostgresConnectionsRouter(database,options={}){
   async function renderConnections(req,res,apiToken=null){
     const launchTicket=crypto.randomBytes(24).toString('base64url');
     req.session.connectionLaunch={ticket:launchTicket,workspaceId:req.ctx.workspaceId,expiresAt:Date.now()+5*60000};
-    return res.page('connections/postgres-index',{
+    const requestOrigin=`${req.protocol}://${req.get('host')}`;
+    const requestPublicOrigin=options.publicOrigin==='request'?requestOrigin:(options.publicOrigin||requestOrigin);
+    const [connectionRows,clients,payment,shipping]=await Promise.all([
+      connections.list(database,req.ctx.workspaceId),publicApi.list(database,req.ctx.workspaceId),
+      paymentConnect.describe(database,req.ctx.workspaceId),shippingAccounts.describe(database,req.ctx.workspaceId),
+    ]);
+    return res.page('connections/index',{
       title:'Connections',nav:'connections',room:true,backTo:{href:'/settings',label:'Settings'},launchTicket,
-      connections:await connections.list(database,req.ctx.workspaceId),providerCatalog:registry.catalog(),
-      apiToken,apiClients:await publicApi.list(database,req.ctx.workspaceId),
+      postgresMode:true,connections:connectionRows,providerCatalog:registry.catalog(),apiToken,apiClients:clients,
+      paymentAccount:{...payment,source:'connect'},paymentConnect:{...payment,flow:'oauth',testMode:payment.connected?!payment.liveMode:true},
+      shippingAccount:{...shipping,billingReady:shipping.connected},shippingPlatform:{available:true},
+      connectionPublicOrigin:requestPublicOrigin,xeroRedirectOrigin:requestPublicOrigin,
+      paymentReturnOrigin:requestOrigin,currentWorkspaceId:req.ctx.workspaceId,
+      workspaceName:req.workspace?.name||'',webhookSecret:null,outboundWebhooks:[],
+      paymentWebhookUrl:`${requestOrigin}/webhooks/payments/stripe`,
     });
   }
+
+  router.get('/settings/connections/payments/return',asyncRoute(async(req,res)=>{
+    const requestOrigin=`${req.protocol}://${req.get('host')}`;
+    let context=null;
+    try{
+      context=await providerService.readState(database,req.query.state,paymentConnect.STATE_PROVIDER);
+      const result=await paymentConnect.complete(database,req.query,options.paymentConnectOptions||{});
+      return oauthReturnPage(res,{connected:result.connected,providerName:'Stripe',returnPath:'/settings/connections#payments',
+        returnOrigin:result.returnOrigin,requestOrigin,workspaceId:result.workspaceId,
+        message:result.connected?'This inventory now uses its own Stripe account for customer payments.':result.message});
+    }catch(error){
+      return oauthReturnPage(res,{connected:false,providerName:'Stripe',returnPath:'/settings/connections#payments',
+        returnOrigin:context?.metadata?.returnOrigin,requestOrigin,workspaceId:context?.workspace_id,
+        message:error.message||'The Stripe connection was not completed.'});
+    }
+  }));
 
   router.get('/settings/connections/:provider/callback',asyncRoute(async(req,res)=>{
     const providerType=String(req.params.provider||'').toLowerCase();
@@ -67,6 +96,35 @@ function createPostgresConnectionsRouter(database,options={}){
     const apiToken=req.session.newPublicApiToken||null;
     delete req.session.newPublicApiToken;
     return renderConnections(req,res,apiToken);
+  }));
+  router.get('/settings/connections/payments/launch',requireOwner,asyncRoute(async(req,res)=>{
+    const launch=req.session.connectionLaunch;
+    delete req.session.connectionLaunch;
+    if(!launch||launch.workspaceId!==req.ctx.workspaceId||launch.expiresAt<Date.now()
+        ||typeof req.query.ticket!=='string'||req.query.ticket.length!==launch.ticket.length
+        ||!crypto.timingSafeEqual(Buffer.from(req.query.ticket),Buffer.from(launch.ticket))){
+      return res.status(403).send('This connection window expired. Return to Connections and try again.');
+    }
+    const requestOrigin=`${req.protocol}://${req.get('host')}`;
+    const started=await paymentConnect.begin(database,req.ctx,{requestOrigin,
+      publicOrigin:options.publicOrigin==='request'?requestOrigin:options.publicOrigin,
+      businessName:req.workspace?.name,email:req.account?.email,
+      authorizeEndpoint:options.paymentConnectOptions?.authorizeEndpoint});
+    return res.redirect(303,started.redirectUrl);
+  }));
+  router.post('/settings/connections/payments/refresh',requireOwner,asyncRoute(async(req,res)=>{
+    const current=await paymentConnect.refresh(database,req.ctx.workspaceId,options.paymentConnectOptions||{});
+    req.flash(current.chargesEnabled?'success':'warn',current.chargesEnabled
+      ?'Stripe confirmed that this business can accept customer payments.'
+      :'Stripe is connected, but it has not approved this business to accept charges yet.');
+    return res.redirect(303,'/settings/connections#payments');
+  }));
+  router.post('/settings/connections/payments/disconnect',requireOwner,asyncRoute(async(req,res)=>{
+    const result=await paymentConnect.disconnect(database,req.ctx,options.paymentConnectOptions||{});
+    req.flash('success',result.releasedAtStripe
+      ?'Stripe was disconnected here and the platform grant was released at Stripe.'
+      :'Stripe was disconnected from this inventory. No payment credential remains in StockChief.');
+    return res.redirect(303,'/settings/connections#payments');
   }));
   router.get('/settings/connections/:provider/launch',requireOwner,asyncRoute(async(req,res)=>{
     const launch=req.session.connectionLaunch;
@@ -105,7 +163,8 @@ function createPostgresConnectionsRouter(database,options={}){
     }
     return res.page('connections/postgres-detail',{
       title:'Connection',nav:'connections',room:true,backTo:{href:'/settings/connections',label:'Connections'},
-      connection,newConnectionToken,canDiscover:Boolean(registry.get(connection.provider_type)?.discover),
+      connection,newConnectionToken,provider:adapter?.metadata?.()||{name:connection.display_name},
+      canDiscover:Boolean(adapter?.discover),
     });
   }));
   router.post('/settings/connections/:id/accounting/authority',requireOwner,asyncRoute(async(req,res)=>{

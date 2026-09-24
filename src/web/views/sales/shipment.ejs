@@ -263,7 +263,16 @@
   var ship = typeof shipping === 'undefined' ? null : shipping;
   var lbs = function (grams) { return (Number(grams || 0) / 453.59237).toFixed(1); };
   var canSetPackageWeights = ship && ship.blocked.every(function (problem) { return problem.key === 'weight'; });
+  var latestLabelTransaction = ship && ship.transactions && ship.transactions.length
+    ? ship.transactions[ship.transactions.length - 1] : null;
 %>
+<% if (latestLabelTransaction && latestLabelTransaction.status === 'PENDING') { %>
+  <div class="notice notice--info section"><div><strong>Carrier confirmation pending.</strong><br>The durable worker is verifying the label purchase. StockChief will not submit the same postage charge twice, and inventory remains unchanged.</div></div>
+<% } else if (latestLabelTransaction && latestLabelTransaction.status === 'REVIEW') { %>
+  <div class="notice notice--warn section"><div><strong>Carrier outcome needs review.</strong><br><%= latestLabelTransaction.error_message || 'The carrier may have accepted the charge before confirmation was saved.' %> StockChief stopped and will not buy another label automatically.</div></div>
+<% } else if (latestLabelTransaction && latestLabelTransaction.status === 'FAILED') { %>
+  <div class="notice notice--warn section"><div><strong>The carrier refused the purchase.</strong><br><%= latestLabelTransaction.error_message || 'Correct the shipping account and request fresh rates.' %></div></div>
+<% } %>
 <% if (ship && s.status === 'PACKED' && (!s.tracking_number || s.label_status === 'VOIDED')) { %>
   <section class="section" id="carrier">
     <div class="panel">
@@ -281,7 +290,7 @@
         </div>
       </div>
 
-      <details class="disclosure">
+      <% if (!locals.postgresPlacement) { %><details class="disclosure">
         <summary>Customer delivery promise</summary>
         <form method="post" action="/fulfilment/<%= s.id %>/promise" data-busy>
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -311,7 +320,7 @@
             <span class="hint">This records what the customer was told. Carrier estimates never rewrite it.</span>
           </div>
         </form>
-      </details>
+      </details><% } %>
 
       <% if (ship.blocked.length) { %>
         <div class="card-body stack">
@@ -328,7 +337,7 @@
         </div>
       <% } %>
 
-      <% if (canSetPackageWeights) { %>
+      <% if (ship.boxes && ship.boxes.length && s.status === 'PACKED') { %>
         <div class="card-body">
           <form method="post" action="/fulfilment/<%= s.id %>/packages" class="inline-form" data-busy>
             <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -369,8 +378,8 @@
             </div></div>
           <% } else if (ship.recommended) { %>
             <p class="lede">
-              StockChief recommends <%= ship.recommended.rate.carrierName %> <%= ship.recommended.rate.service %>
-              — <%= helpers.money(ship.recommended.rate.amountMinor, ship.recommended.rate.currency) %>.
+              StockChief recommends the highlighted rate below —
+              <%= helpers.money(ship.recommended.rate.amountMinor, ship.recommended.rate.currency) %>.
             </p>
             <p class="hint"><%= ship.recommended.because %>
               <% if (ship.ruled) { %> <%= ship.ruled.because %><% } %></p>
@@ -472,7 +481,7 @@
           <% if (s.label_status !== 'VOIDED' && s.label_status !== 'VOID_PENDING') { %>
             <a class="btn btn--primary" href="<%= s.label_url %>" rel="noreferrer noopener" target="_blank">Print label</a>
           <% } %>
-          <% if (s.status === 'PACKED' && s.label_status !== 'VOIDED' && s.label_status !== 'VOID_PENDING' && ship.providerCapabilities.voidLabel) { %>
+          <% if (!locals.postgresPlacement && s.status === 'PACKED' && s.label_status !== 'VOIDED' && s.label_status !== 'VOID_PENDING' && ship.providerCapabilities.voidLabel) { %>
             <form method="post" action="/fulfilment/<%= s.id %>/label/void" data-busy>
               <input type="hidden" name="_csrf" value="<%= csrfToken %>">
               <button class="btn btn--ghost" type="submit">Void unused label</button>

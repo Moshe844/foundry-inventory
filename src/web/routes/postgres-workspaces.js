@@ -9,14 +9,16 @@ function safeNext(value){return typeof value==='string'&&value.startsWith('/')&&
 
 function createPostgresWorkspacesRouter(database){
   const router=express.Router();
+  const allowance={unlimited:true,exceeded:false,used:0,limit:null,planId:null};
   router.use('/inventories',requireAccount);
-  router.get('/inventories',asyncRoute(async(req,res)=>res.page('workspaces/postgres-list',{
-    title:'Your inventories',nav:'inventories',suppressBack:true,inventories:res.locals.workspaces,
+  router.get('/inventories',asyncRoute(async(req,res)=>res.page('workspaces/list',{
+    title:'Your inventories',nav:'inventories',suppressBack:true,workspaces:res.locals.workspaces,
     currentWorkspaceId:req.workspace?.id||null,layoutOnboardingEntry:null,
+    allowance:{...allowance,used:res.locals.workspaces.length},
   })));
-  router.get('/inventories/new',(req,res)=>res.page('workspaces/postgres-new',{
+  router.get('/inventories/new',(req,res)=>res.page('workspaces/new',{
     title:'New inventory',nav:'inventories',backTo:{href:'/inventories',label:'Your inventories'},form:{},
-    layoutOnboardingEntry:null,
+    layoutOnboardingEntry:null,allowance,error:null,
   }));
   router.post('/inventories',asyncRoute(async(req,res)=>{
     try{
@@ -25,9 +27,9 @@ function createPostgresWorkspacesRouter(database){
       req.session.flash=[{type:'success',message:'This inventory is ready. Choose where its records come from.'}];
       await sessionCall(req,'save');return res.redirect(303,'/onboarding');
     }catch(error){
-      if(error.status&&error.status<500)return res.status(error.status).page('workspaces/postgres-new',{
+      if(error.status&&error.status<500)return res.status(error.status).page('workspaces/new',{
         title:'New inventory',nav:'inventories',backTo:{href:'/inventories',label:'Your inventories'},form:req.body,
-        error:error.message,layoutOnboardingEntry:null,
+        error:error.message,layoutOnboardingEntry:null,allowance,
       });
       throw error;
     }

@@ -94,28 +94,35 @@ test('real Chromium qualifies PostgreSQL rates, label, handoff and idempotent de
       lines:[{lineId:order.lineIds[0],locationId:location.id,quantity:2}]});
 
     await page.goto(`${base}/settings/shipping`);
+    await page.locator('details#existing-carrier-connection > summary').click();
     await page.getByLabel('Shipping platform').selectOption('shipengine');
     await page.getByLabel('API key').fill('TEST_shipping_fixture_1234');
     await page.getByLabel(/Webhook secret/).fill('shipping-webhook-fixture-secret');
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Verify and connect'}).click()]);
     const connectedShipping=await page.locator('main').innerText();
-    assert.match(connectedShipping,/ShipEngineSandbox account: rates and labels are test-only/);
-    assert.match(connectedShipping,/Credential ending …1234/);
-    assert.match(connectedShipping,new RegExp(`/webhooks/shipping/shipengine/${ctx.workspaceId}`));
+    assert.match(connectedShipping,/Sandbox connected/);
+    assert.match(connectedShipping,/ShipEngine/);
     assert.doesNotMatch(connectedShipping,/TEST_shipping_fixture/);
     assert.doesNotMatch(connectedShipping,/shipping-webhook-fixture-secret/);
+    await page.getByText('Advanced connection details',{exact:true}).click();
+    const connectionDetails=await page.locator('main').innerText();
+    assert.match(connectionDetails,/key ending 1234/);
+    assert.match(connectionDetails,new RegExp(`/webhooks/shipping/shipengine/${ctx.workspaceId}`));
+    await page.getByLabel('Recommend').check();
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Save handling'}).click()]);
+    await page.getByLabel('Carrier (optional)').selectOption('ups');await page.getByLabel('Service (optional)').fill('Ground');
+    await page.getByLabel('Only when it costs less than').fill('25.00');
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Save this rule'}).click()]);
+    assert.match(await page.locator('main').innerText(),/UPS Ground · under \$25\.00/);
 
     await page.goto(`${base}/fulfilment/${parcel.shipmentId}`);
     assert.match(await page.locator('main').innerText(),/Enter a measured package weight/);
-    await page.getByLabel('Weight in grams').fill('850');
-    await page.getByLabel('Length mm').fill('300');
-    await page.getByLabel('Width mm').fill('200');
-    await page.getByLabel('Height mm').fill('120');
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Save measured package'}).click()]);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Get live rates'}).click()]);
-    assert.equal(await page.getByText(/ups · Ground/i).count(),1);
-    assert.equal(await page.getByText(/fedex · Two Day/i).count(),1);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Buy this label'}).first().click()]);
+    await page.getByLabel('Weight of this parcel (grams)').fill('850');
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Save weight'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Get carrier rates'}).click()]);
+    assert.equal(await page.getByText(/UPS Ground/i).count(),1);
+    assert.equal(await page.getByText(/FedEx Two Day/i).count(),1);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Buy label'}).click()]);
     assert.match(await page.locator('main').innerText(),/Carrier confirmation pending/);
     assert.equal(buyCalls,0);
     assert.equal((await database.query(`SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3`,
@@ -128,8 +135,8 @@ test('real Chromium qualifies PostgreSQL rates, label, handoff and idempotent de
       {owner:'shipping-ui-worker',leaseMs:30000}),null);
     assert.equal(buyCalls,1);
     await page.reload();
-    assert.match(await page.locator('main').innerText(),/parcel is still packed until handoff is recorded/i);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Confirm parcel was handed to carrier'}).click()]);
+    assert.match(await page.locator('main').innerText(),/still counts these goods in inventory/i);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:/Handed to carrier/}).click()]);
     assert.equal((await database.query(`SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3`,
       [ctx.workspaceId,item.skuIds[0],location.id])).rows[0].on_hand,'8');
 
@@ -163,7 +170,7 @@ test('real Chromium qualifies PostgreSQL rates, label, handoff and idempotent de
     assert.equal(replayResponse.status(),200);
     assert.equal((await replayResponse.json()).replayed,true);
     await page.goto(`${base}/fulfilment/${parcel.shipmentId}`);
-    assert.match(await page.locator('main').innerText(),/Current carrier status:\s*DELIVERED/);
+    assert.match(await page.locator('main').innerText(),/Delivered at front desk|delivered/i);
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM shipment_tracking_events
       WHERE workspace_id=$1 AND shipment_id=$2`,[ctx.workspaceId,parcel.shipmentId])).rows[0].count,'2');
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM shipping_provider_events
@@ -180,7 +187,7 @@ test('real Chromium qualifies PostgreSQL rates, label, handoff and idempotent de
     await shipping.quote(database,ctx,uncertainParcel.shipmentId,{provider:fakeCarrier});
     buyMode='ambiguous';
     await page.goto(`${base}/fulfilment/${uncertainParcel.shipmentId}`);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Buy this label'}).first().click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Buy label'}).click()]);
     assert.match(await page.locator('main').innerText(),/Carrier confirmation pending/);
     const stopped=await jobs.processOne(database,runtimeHandlers.create(undefined,{shippingProviderResolver:()=>fakeCarrier}),
       {owner:'shipping-ui-worker',leaseMs:30000});

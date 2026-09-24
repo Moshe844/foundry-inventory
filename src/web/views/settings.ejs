@@ -125,7 +125,7 @@
 <section class="rm-panel" style="margin-bottom:16px" id="email-alerts">
   <div class="rm-panel__head">
     <%- helpers.icon('mail', { size: 15, className: 'rm-quiet' }) %>
-    <h2>Automatic email alerts</h2>
+    <h2>Automatic email alerts<%= emailAlerts.enabled ? ' are on' : '' %></h2>
     <span class="right"><span class="rm-pillbadge <%= emailAlerts.enabled && emailAlerts.deliveryConfigured ? 'is-ok' : emailAlerts.enabled ? 'is-warn' : '' %>">
       <%= emailAlerts.enabled && emailAlerts.deliveryConfigured ? 'on'
         : emailAlerts.enabled ? 'waiting for sender' : 'off' %>

@@ -47,6 +47,7 @@
   var webhookSecret = typeof webhookSecret === 'undefined' ? null : webhookSecret;
   var apiClients = typeof apiClients === 'undefined' ? [] : apiClients;
   var outboundWebhooks = typeof outboundWebhooks === 'undefined' ? [] : outboundWebhooks;
+  var postgresMode = typeof postgresMode !== 'undefined' && postgresMode;
 
   // An account Stripe created but never finished is not a connection. It is
   // said once, here, and every branch below reads it rather than deciding again.
@@ -147,7 +148,7 @@
   <p class="rm-head__eyebrow"><%- helpers.icon('link', { size: 15 }) %> Connections</p>
   <h1>Where your business already happens</h1>
   <p>
-    Connect your shop, till, mailbox, books, payments and carriers. Once connected, StockChief keeps
+    Each inventory connects to its own accounts. Connect your shop, till, mailbox, books, payments and carriers. Once connected, StockChief keeps
     itself up to date and only asks you when something cannot be matched.
   </p>
 </header>
@@ -237,15 +238,20 @@
         <% } else if (!provider.available) { %>
           <p class="quiet"><%= provider.unavailableReason %></p>
         <% } else if (provider.type === 'reference_webhook' || provider.integrationMode === 'custom_contract') { %>
-          <form method="post" action="/settings/connections">
+          <form method="post" action="<%= postgresMode ? '/settings/connections/custom' : '/settings/connections' %>">
             <input type="hidden" name="_csrf" value="<%= csrfToken %>">
             <input type="hidden" name="providerType" value="reference_webhook">
             <label class="visually-hidden" for="ref-name-<%= provider.type %>">Connection name</label>
             <input class="input" id="ref-name-<%= provider.type %>" name="displayName" placeholder="<%= provider.integrationMode === 'custom_contract' ? 'Name this ERP or business system' : 'Warehouse ERP' %>" required>
             <button class="rm-btn rm-btn--wash" type="submit"><%= provider.integrationMode === 'custom_contract' ? 'Start verified ERP connection' : 'Create connection' %></button>
           </form>
+        <% } else if (postgresMode && ['oauth', 'application_auth'].includes(provider.authMode)
+            && !['shopify', 'woocommerce'].includes(provider.type)) { %>
+          <a class="rm-btn <%= alreadyConnected ? 'rm-btn--ghost' : 'rm-btn--wash' %>"
+            href="/settings/connections/<%= provider.type %>/launch?ticket=<%= encodeURIComponent(launchTicket) %>"
+            target="_blank" rel="opener" data-provider-connect><%= alreadyConnected ? 'Connect another ' : 'Connect ' %><%= provider.name %></a>
         <% } else { %>
-          <form method="post" action="/settings/connections/connect"
+          <form method="post" action="<%= postgresMode ? '/settings/connections/' + provider.type + '/authorize' : '/settings/connections/connect' %>"
             data-oauth-connect="<%= ['oauth', 'application_auth'].includes(provider.authMode) ? provider.type : '' %>"
             data-provider-name="<%= provider.name %>">
             <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -312,7 +318,7 @@
   </div>
 <% }) %>
 
-<details class="rm-work" id="developer-api" <%= apiToken || webhookSecret ? 'open' : '' %>>
+<details class="rm-work" id="developer-api" <%= postgresMode || apiToken || webhookSecret ? 'open' : '' %>>
   <summary>Advanced: connect custom software with APIs and webhooks</summary>
   <div class="rm-work__body">
     <p class="quiet"><strong>Most business owners do not need this.</strong> Use it only when your ERP, warehouse system, developer, or reporting tool needs to exchange data directly with StockChief.</p>
@@ -320,9 +326,24 @@
   <section class="rm-provider">
     <div class="rm-provider__top"><span class="rm-provider__mark is-word">API</span><span class="rm-provider__n">Scoped API clients</span></div>
     <p>Read inventory/events or submit canonical inventory commands. No client can write balance tables directly.</p>
-    <% if (apiToken) { %><div class="rm-note rm-note--warn"><div><strong>Copy this token now</strong><input class="input mono" value="<%= apiToken.token %>" readonly onclick="this.select()"><small>Shown once. Scopes: <%= apiToken.scopes.join(', ') %></small></div></div><% } %>
+    <% if (apiToken) { %><div class="rm-note rm-note--warn"><div><strong>Copy this token now</strong><input class="input mono" aria-label="New API token" value="<%= apiToken.token %>" readonly onclick="this.select()"><small>Shown once. Scopes: <%= apiToken.scopes.join(', ') %></small></div></div><% } %>
     <% apiClients.forEach(function(client) { %><div class="rm-told__row"><span class="rm-told__t"><%= client.name %><small><%= client.scopes.join(', ') %> · <%= client.token_prefix %>…</small></span><span class="rm-told__m <%= client.revoked_at ? '' : 'is-ok' %>"><%= client.revoked_at ? 'Revoked' : 'Active' %></span><% if (!client.revoked_at && currentUser.role === 'owner') { %><form method="post" action="/settings/connections/api-clients/<%= client.id %>/revoke" data-confirm="Revoke this API token immediately?"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost" type="submit">Revoke</button></form><% } %></div><% }) %>
-    <% if (currentUser.role === 'owner') { %><form method="post" action="/settings/connections/api-clients" class="grid" style="margin-top:16px"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label class="field"><span class="field-label">Client name</span><input class="input" name="name" placeholder="Warehouse automation" required></label><div class="choice-grid"><label class="choice"><input type="checkbox" name="scopes" value="inventory:read"><span><strong>Read inventory</strong></span></label><label class="choice"><input type="checkbox" name="scopes" value="events:read"><span><strong>Read events</strong></span></label><label class="choice"><input type="checkbox" name="scopes" value="inventory:write"><span><strong>Submit inventory commands</strong></span></label><label class="choice"><input type="checkbox" name="scopes" value="migration:read"><span><strong>Read migration checks</strong></span></label><label class="choice"><input type="checkbox" name="scopes" value="migration:write"><span><strong>Stage migration evidence</strong><small>Cannot approve or activate cutover</small></span></label></div><button class="rm-btn rm-btn--wash" type="submit">Create scoped token</button></form><% } %>
+    <% if (currentUser.role === 'owner') { %>
+      <form method="post" action="/settings/connections/api-clients" class="grid" style="margin-top:16px">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <label class="field"><span class="field-label">Client name</span><input class="input" name="name" placeholder="Warehouse automation" required></label>
+        <div class="choice-grid">
+          <label class="choice"><input type="checkbox" name="scopes" value="inventory:read"><span><strong>Read inventory</strong></span></label>
+          <label class="choice"><input type="checkbox" name="scopes" value="inventory:write"><span><strong><%= postgresMode ? 'Receive or correct inventory' : 'Submit inventory commands' %></strong></span></label>
+          <% if (!postgresMode) { %>
+            <label class="choice"><input type="checkbox" name="scopes" value="events:read"><span><strong>Read events</strong></span></label>
+            <label class="choice"><input type="checkbox" name="scopes" value="migration:read"><span><strong>Read migration checks</strong></span></label>
+            <label class="choice"><input type="checkbox" name="scopes" value="migration:write"><span><strong>Stage migration evidence</strong><small>Cannot approve or activate cutover</small></span></label>
+          <% } %>
+        </div>
+        <button class="rm-btn rm-btn--wash" type="submit">Create scoped token</button>
+      </form>
+    <% } %>
     <details class="rm-more"><summary>How to prove this API works</summary><div><p>Start with a token that has only <strong>Read inventory</strong>. Give it to the test client for this one inventory and request <code>GET /api/v1/public/inventory</code>. The response must identify StockChief as the source of truth and must contain only this inventory’s records.</p><p>Then create a separate write-enabled test token. Send one receive command with an <code>Idempotency-Key</code>, resend the exact same command, and confirm stock changes once. Revoke the token and confirm the next request is refused.</p></div></details>
     <details class="rm-more"><summary>Endpoints and contract</summary><div><p><code>GET /api/v1/public/inventory</code></p><p><code>GET /api/v1/public/events</code></p><p><code>POST /api/v1/public/commands/inventory/receive</code></p><p><code>POST /api/v1/public/commands/inventory/adjust</code></p><p>Every write requires a stable <code>Idempotency-Key</code>; retrying the same command returns its original result without posting twice.</p></div></details>
   </section>
@@ -351,7 +372,7 @@
 <% if (pay) { %>
   <div class="rm-sect" id="payments">
     <h2>Taking payment</h2>
-    <p>Payment links are made on this account, and the money arrives in its bank.</p>
+    <p>Each inventory uses the business’s own Stripe account. Payment links are made on this account, and the money arrives in its bank.</p>
   </div>
   <div class="rm-grid2">
     <div class="rm-provider">
@@ -360,13 +381,22 @@
         <span class="rm-provider__n">Stripe</span>
         <span class="rm-provider__s">
           <% if (unfinishedStripe) { %><span class="rm-pillbadge is-warn">not connected</span>
-          <% } else if (pay.connected && !pay.chargesEnabled) { %><span class="rm-pillbadge is-warn">not taking charges</span>
-          <% } else if (pay.connected) { %><span class="rm-pillbadge is-ok">live</span><% } %>
+          <% } else if (pay.connected && !pay.chargesEnabled) { %><span class="rm-pillbadge is-warn"><%= postgresMode ? 'Stripe review pending' : 'not taking charges' %></span>
+          <% } else if (pay.connected) { %><span class="rm-pillbadge is-ok"><%= postgresMode ? 'ready to take payments' : 'live' %></span><% } %>
           <% if (pay.connected && !pay.liveMode) { %><span class="rm-pillbadge is-warn">test mode</span><% } %>
         </span>
       </div>
 
-      <% if (pay.connected && pay.source === 'connect') { %>
+      <% if (postgresMode && pay.connected) { %>
+        <p>Connected to <strong><%= pay.displayName || 'Stripe' %></strong></p>
+        <p class="quiet">This business granted StockChief permission on Stripe’s own page. Customer money goes to this business’s Stripe account, never a shared StockChief account.</p>
+        <p class="quiet">Stripe account <code><%= pay.accountId %></code><%= pay.liveMode ? '' : ' · test mode' %><%= pay.checkedAt ? ' · checked ' + helpers.timeAgo(pay.checkedAt) : '' %></p>
+        <% if (!pay.chargesEnabled) { %><p class="quiet"><%= pay.because %></p><% } %>
+        <div class="rm-choices">
+          <form method="post" action="/settings/connections/payments/refresh"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--wash" type="submit">Check Stripe status</button></form>
+          <form method="post" action="/settings/connections/payments/disconnect" data-confirm="Disconnect this inventory from its Stripe account?"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost" type="submit">Disconnect Stripe</button></form>
+        </div>
+      <% } else if (pay.connected && pay.source === 'connect') { %>
         <p><%= unfinishedStripe ? 'Unfinished Stripe setup' : 'Connected to ' + (pay.displayName || 'Stripe') %></p>
         <p class="quiet">
           <% if (unfinishedStripe) { %>
@@ -446,10 +476,10 @@
             </details>
           <% } %>
           <div class="rm-choices">
-            <a class="rm-btn rm-btn--wash" href="/settings/connections/payments/start"
-              target="_blank" data-stripe-connect><%= grant.flow === 'hosted'
+            <a class="rm-btn rm-btn--wash" href="<%= postgresMode ? '/settings/connections/payments/launch?ticket=' + encodeURIComponent(launchTicket) : '/settings/connections/payments/start' %>"
+              target="_blank" <%- postgresMode ? 'data-provider-connect rel="opener"' : 'data-stripe-connect' %>><%= grant.flow === 'hosted'
                 ? grant.testMode ? 'Create sandbox merchant account' : 'Set up Stripe for this business'
-                : 'Connect Stripe' %></a>
+                : postgresMode ? 'Connect existing Stripe account' : 'Connect Stripe' %></a>
           </div>
         <% } else if (grant && !grant.connected) { %>
           <p class="quiet">
@@ -518,6 +548,22 @@
 
 <script>
 (function () {
+  <% if (postgresMode) { %>
+  document.querySelectorAll('[data-provider-connect]').forEach(function (link) {
+    link.addEventListener('click', function (event) {
+      event.preventDefault();
+      var popup = window.open(link.href, 'stockchief-provider-connect',
+        'popup=yes,width=720,height=780,resizable=yes,scrollbars=yes');
+      if (!popup) { window.location.assign(link.href); return; }
+      popup.focus();
+      var closePoll = window.setInterval(function () {
+        if (!popup.closed) return;
+        window.clearInterval(closePoll);
+        window.location.reload();
+      }, 500);
+    });
+  });
+  <% } %>
   function showPopupBlocked(control, providerName) {
     var card = control.closest('.rm-provider') || control.parentElement;
     if (!card) return;

@@ -39,10 +39,24 @@ test('PostgreSQL account menu pages render truthful native settings and rename t
       '/settings/connections','/settings/shipping','/search','/settings','/foundry','/inventories','/guide','/support'];
     for(const route of establishedRoutes){await page.goto(`${base}${route}`);const main=await page.locator('main').innerText();
       assert.doesNotMatch(main,/We could not find that|Internal Server Error/i,route);assert.notEqual(await page.title(),'Error',route);}
-    await page.goto(`${base}/settings`);assert.match(await page.locator('main').innerText(),/shared PostgreSQL storage/i);
-    await page.getByLabel('Inventory name').fill('Renamed Operation');
-    await Promise.all([page.waitForURL(`${base}/settings`),page.getByRole('button',{name:'Save name'}).click()]);
-    assert.match(await page.locator('main').innerText(),/Renamed Operation/);
+    await page.goto(`${base}/settings`);assert.match(await page.locator('main').innerText(),/technical side of this inventory/i);
+    assert.match(await page.locator('main').innerText(),/Pre-subscription · unlimited/);
+    await page.locator('#workspace-name').fill('Renamed Operation');
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Save',exact:true}).click()]);
+    assert.equal(await page.locator('#workspace-name').inputValue(),'Renamed Operation');
+    await page.getByRole('button',{name:'Add person'}).click();const person=page.locator('#modal-person');
+    await person.getByLabel('Name').fill('Settings Accountant');await person.getByLabel('Email').fill('accountant@example.test');
+    await person.getByLabel('Temporary password').fill('accountant-password');await person.getByLabel('Role').selectOption('accountant');
+    await Promise.all([page.waitForNavigation(),person.getByRole('button',{name:'Add person'}).click()]);
+    assert.match(await page.locator('main').innerText(),/Settings Accountant[\s\S]*Accountant/);
+    const alerts=page.locator('form[action="/settings/email-alerts"]');await alerts.getByRole('checkbox').check();
+    await alerts.getByLabel('Recipients').fill('owner-alerts@example.test');
+    await Promise.all([page.waitForNavigation(),alerts.getByRole('button',{name:'Save email alerts'}).click()]);
+    assert.match(await page.locator('main').innerText(),/Automatic email alerts are on|preferences are saved/i);
+    await page.locator('#live-event-feed > summary').click();
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Connect live feed'}).click()]);
+    assert.match(await page.locator('main').innerText(),/Copy this token now/);
+    assert.match(await page.getByLabel('New event feed token').inputValue(),/^fnd_live_/);
     const row=(await database.query(`SELECT w.name FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id
       WHERE a.email='settings@example.test'`)).rows[0];assert.equal(row.name,'Renamed Operation');assert.deepEqual(errors,[]);
   });

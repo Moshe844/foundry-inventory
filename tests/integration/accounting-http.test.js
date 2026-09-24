@@ -174,7 +174,7 @@ test('Home shows money on a confirmed unpaid order before it becomes earned reve
   assert.match(paidOrderText, /customer paid \$2,500\.00.*owes \$0\.00/i);
   assert.match(paidOrderText, /goods have not left yet.*cash received, not earned revenue or profit yet/i);
   assert.match(paidOrderText, /Show order history/i);
-  assert.match(paidOrder.text, new RegExp(`/orders/${order.id}/detail\\?open=fulfilment#fulfilment`));
+  assert.match(paidOrder.text, new RegExp(`/orders/${order.id}\\?open=fulfilment#fulfilment`));
 });
 
 test('the missing-cost action opens a focused product-cost screen instead of the full migration form', async () => {

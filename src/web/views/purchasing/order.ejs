@@ -42,7 +42,7 @@
       <% } %>
       <dl class="kv"><dt>To</dt><dd><%= communication.recipient || 'No supplier email on file' %></dd><dt>Subject</dt><dd><%= communication.subject %></dd></dl>
       <details><summary>Preview message</summary><pre style="white-space:pre-wrap; font-family:inherit;"><%= communication.body %></pre></details>
-      <% if (permissions.approve && communication.status !== 'SENT' && communication.connectorId && communication.recipient && !order.isEditable) { %><form method="post" action="/purchasing/orders/<%= order.id %>/send"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Send to supplier</button></form><% } %>
+      <% if (!locals.postgresPlacement && permissions.approve && communication.status !== 'SENT' && communication.connectorId && communication.recipient && !order.isEditable) { %><form method="post" action="/purchasing/orders/<%= order.id %>/send"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Send to supplier</button></form><% } %>
     </div>
   </div>
 <% } %>
@@ -54,6 +54,12 @@
       The <%= order.receivedUnits %> unit<%= order.receivedUnits === 1 ? '' : 's' %> that had already arrived
       stayed in your inventory — cancelling an order never removes stock that physically exists.
     <% } %>
+  </div>
+<% } %>
+
+<% if (locals.postgresPlacement && order.status === 'APPROVED') { %>
+  <div class="notice notice--info section">
+    This purchase is approved, but it has not been sent to the supplier yet. Record the supplier placement only after it was actually sent or accepted.
   </div>
 <% } %>
 
@@ -85,7 +91,7 @@
         <% supplierBills.forEach(function(bill) { var openBill = ['OPEN','PARTIALLY_PAID'].includes(bill.status); var paid = Number(bill.total_minor) - Number(bill.balance_minor); %>
           <div class="list-row">
             <div><strong><%= bill.supplier_invoice_number ? 'Supplier invoice ' + bill.supplier_invoice_number : bill.bill_number %></strong><p><%= helpers.money(bill.total_minor, bill.currency) %> invoice · <%= helpers.money(paid, bill.currency) %> paid · <%= helpers.money(bill.balance_minor, bill.currency) %> still owed</p><small><%= bill.status.replaceAll('_',' ').toLowerCase() %> · <%= bill.match_status.replaceAll('_',' ').toLowerCase() %><%= bill.due_date ? ' · due ' + bill.due_date : '' %></small></div>
-            <% if (['DRAFT', 'DISPUTED'].includes(bill.status)) { %><a class="btn btn--sm" href="/accounting/payables/<%= bill.id %>/review">Resolve invoice</a><% } %>
+            <% if (!locals.postgresPlacement && ['DRAFT', 'DISPUTED'].includes(bill.status)) { %><a class="btn btn--sm" href="/accounting/payables/<%= bill.id %>/review">Resolve invoice</a><% } %>
             <% if (openBill && permissions.payments) { %><details class="advanced-settings"><summary class="btn btn--sm">Record payment</summary><form method="post" action="/accounting/payables/<%= bill.id %>/payment" class="form-inline"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="<%= bill.id %>-<%= Date.now() %>"><input type="hidden" name="returnTo" value="/purchasing/orders/<%= order.id %>"><label class="field"><span class="field-label">Amount actually paid</span><input class="input input--sm" name="amount" inputmode="decimal" value="<%= (bill.balance_minor / 100).toFixed(2) %>" required></label><label class="field"><span class="field-label">Payment date</span><input class="input input--sm" type="date" name="paymentDate" value="<%= new Date().toISOString().slice(0,10) %>" required></label><label class="field"><span class="field-label">Reference</span><input class="input input--sm" name="reference" placeholder="Check, transfer, card…"></label><button class="btn btn--primary btn--sm" type="submit">Record payment</button></form></details><% } %>
           </div>
         <% }) %>
@@ -184,7 +190,7 @@
   </div>
   <div class="card-foot">
     <div class="btn-row">
-      <% if ((locals.receipts || []).length && permissions.landedCosts) { %>
+      <% if (!locals.postgresPlacement && (locals.receipts || []).length && permissions.landedCosts) { %>
         <a class="btn btn--secondary" href="/purchasing/orders/<%= order.id %>/landed-costs">Allocate freight, duty or handling</a>
       <% } %>
       <% if (['DRAFT', 'AWAITING_APPROVAL'].includes(order.status) && order.hasCosts && permissions.approve) { %>
@@ -192,6 +198,13 @@
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
           <input type="hidden" name="integrityHash" value="<%= order.integrityHash %>">
           <button class="btn btn--primary" type="submit">Approve order</button>
+        </form>
+      <% } %>
+      <% if (locals.postgresPlacement && order.status === 'APPROVED' && permissions.approve) { %>
+        <form method="post" action="/purchasing/orders/<%= order.id %>/place" class="form-inline" data-busy>
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input class="input input--sm" name="externalReference" placeholder="Supplier confirmation (optional)" aria-label="Supplier confirmation">
+          <button class="btn btn--primary" type="submit">Record as sent to supplier</button>
         </form>
       <% } %>
       <% if (order.isOpen && permissions.receive) { %>
@@ -245,6 +258,80 @@
     <% } %>
   </div>
 </div>
+
+<% if ((locals.supplierReturns || []).length) { %>
+  <div class="card section">
+    <div class="card-head"><h2>Supplier returns</h2></div>
+    <div class="card-body stack">
+      <% supplierReturns.forEach(function (supplierReturn) { %>
+        <a class="list-row" href="/supplier-returns/<%= supplierReturn.id %>">
+          <div><strong><%= supplierReturn.return_number %></strong><p><%= supplierReturn.status.replaceAll('_', ' ').toLowerCase() %></p></div>
+          <span>Review →</span>
+        </a>
+      <% }) %>
+    </div>
+  </div>
+<% } %>
+
+<% if (locals.postgresPlacement) { %>
+  <%
+    var supplierReturnLines = order.lines.filter(function (line) { return line.quantityReceivedUnits > 0; });
+    var supplierReturnBills = (supplierBills || []).filter(function (bill) { return ['OPEN', 'PARTIALLY_PAID'].includes(bill.status); });
+  %>
+  <div class="card section">
+    <div class="card-head"><div><h2>Return goods to supplier</h2><p class="muted">A request and authorization do not alter stock. Stock changes only when the goods actually leave; the later supplier credit changes money only.</p></div></div>
+    <div class="card-body">
+      <% if (supplierReturnLines.length && supplierReturnBills.length) { %>
+        <details class="advanced-settings">
+          <summary class="btn btn--secondary">Start a controlled supplier return</summary>
+          <form method="post" action="/purchasing/orders/<%= order.id %>/returns" class="grid" style="margin-top:16px;">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <input type="hidden" name="idempotencyKey" value="<%= returnFormKey %>">
+            <label class="field"><span class="field-label">Bill the supplier credit will reduce</span><select class="input" name="supplierBillId" required><option value="">Choose open bill</option><% supplierReturnBills.forEach(function (bill) { %><option value="<%= bill.id %>"><%= bill.supplier_invoice_number || bill.bill_number %> · <%= helpers.money(bill.balance_minor, bill.currency) %> open</option><% }) %></select></label>
+            <label class="field"><span class="field-label">Expected supplier credit</span><input class="input" type="number" name="expectedCredit" min="0.01" step="0.01" required></label>
+            <% supplierReturnLines.forEach(function (line) { %>
+              <fieldset class="field"><legend><%= line.displayName %><%= line.destinationLocationName ? ' · ' + line.destinationLocationName : '' %></legend>
+                <label><span class="field-label">Quantity to return</span><input class="input" aria-label="Return <%= line.displayName %> to supplier quantity" type="number" name="quantity_<%= line.id %>" min="0" max="<%= line.quantityReceivedUnits %>" value="0"></label>
+                <% if (line.trackingMode === 'lot') { %><label><span class="field-label">Lot / batch</span><input class="input" name="lot_<%= line.id %>"></label><% } %>
+                <% if (line.trackingMode === 'serial') { %><label><span class="field-label">Serial numbers</span><input class="input" name="serials_<%= line.id %>" placeholder="Comma-separated, one per unit"></label><% } %>
+              </fieldset>
+            <% }) %>
+            <label class="field"><span class="field-label">Reason</span><textarea class="input" name="reason" rows="2" placeholder="Damage, wrong item, supplier authorization"></textarea></label>
+            <div><button class="btn btn--primary" type="submit">Request supplier return</button></div>
+            <p class="muted">Nothing leaves until a separate authorization and shipment step.</p>
+          </form>
+        </details>
+      <% } else if (supplierReturnLines.length) { %>
+        <div class="notice notice--info">Record or reopen the supplier bill before starting a return that expects a credit.</div>
+      <% } else { %>
+        <p class="muted">A supplier return becomes available after goods have physically been received.</p>
+      <% } %>
+    </div>
+  </div>
+<% } %>
+
+<% if (locals.postgresPlacement && order.lines.some(function (line) { return line.quantityReceivedUnits > 0; })) { %>
+  <div class="card section">
+    <div class="card-head"><div><h2>Record supplier invoice</h2><p class="muted">This records what is owed. It does not receive the products again.</p></div></div>
+    <div class="card-body">
+      <% var invoiceLine = order.lines.find(function (line) { return line.quantityReceivedUnits > 0; }); %>
+      <details class="advanced-settings">
+        <summary class="btn btn--secondary">Record a supplier invoice</summary>
+        <form method="post" action="/purchasing/orders/<%= order.id %>/invoices" class="grid" style="margin-top:16px;">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="lineId" value="<%= invoiceLine.id %>">
+          <label class="field"><span class="field-label">Supplier invoice number</span><input class="input" name="supplierInvoiceNumber" required></label>
+          <label class="field"><span class="field-label">Invoice date</span><input class="input" type="date" name="issueDate" value="<%= locals.today %>" required></label>
+          <label class="field"><span class="field-label">Due date</span><input class="input" type="date" name="dueDate"></label>
+          <label class="field"><span class="field-label">Quantity billed</span><input class="input" type="number" name="quantity" min="1" max="<%= invoiceLine.quantityReceivedUnits %>" value="<%= invoiceLine.quantityReceivedUnits %>" required></label>
+          <label class="field"><span class="field-label">Cost per unit</span><input class="input" type="number" name="unitCost" min="0" step="0.01" value="<%= Number(invoiceLine.unitCost || 0).toFixed(2) %>" required></label>
+          <label class="field"><span class="field-label">Tax</span><input class="input" type="number" name="tax" min="0" step="0.01" value="0.00"></label>
+          <div><button class="btn btn--primary" type="submit">Record invoice, not receipt</button></div>
+        </form>
+      </details>
+    </div>
+  </div>
+<% } %>
 
 <% if (order.sourceDetail && order.sourceDetail.assumptions && order.sourceDetail.assumptions.length) { %>
   <div class="card section">

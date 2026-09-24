@@ -39,6 +39,13 @@ function createPostgresAutopilotRouter(database){
     await autonomy.setMode(database,req.ctx,req.user,req.body.mode);req.flash('success','StockChief authority was updated.');
     return res.redirect(303,'/autopilot');
   }));
+  router.post('/autopilot/capability',requireAuth,asyncRoute(async(req,res)=>{
+    await autonomy.setCapability(database,req.ctx,req.user,String(req.body.capability||''),req.body.granted==='1');
+    req.flash('success',req.body.granted==='1'
+      ?'That one job is authorised. No other authority changed.'
+      :'That authority was removed immediately. No other authority changed.');
+    return res.redirect(303,'/autopilot#jobs');
+  }));
   router.post('/autopilot/routine-authority',requireAuth,asyncRoute(async(req,res)=>{
     await autonomy.configureRoutine(database,req.ctx,req.user,req.body);
     req.flash('success','Saved versioned routine-work authority. Anything outside these exact limits still asks first.');

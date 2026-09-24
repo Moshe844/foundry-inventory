@@ -94,7 +94,8 @@ async function describe(database,workspaceId){
   const account=await forWorkspace(database,workspaceId);
   if(!account)return {connected:false,provider:null,because:'No postage account is connected. Live rates and labels are unavailable.'};
   return {connected:true,provider:account.provider,providerName:DISPLAY[account.provider],source:account.source,
-    testMode:account.testMode,keyEnding:String(account.apiKey).slice(-4),connectorId:account.connectorId,
+    testMode:account.testMode,keyEnding:String(account.apiKey).slice(-4),keyEndsWith:String(account.apiKey).slice(-4),
+    hasWebhookSecret:Boolean(account.webhookSecret),connectorId:account.connectorId,
     because:account.testMode?'Sandbox account: rates and labels are test-only.':'This inventory uses its own postage account.'};
 }
 

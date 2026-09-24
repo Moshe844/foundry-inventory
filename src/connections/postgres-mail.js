@@ -64,8 +64,12 @@ async function counts(database,workspaceId){
 }
 
 async function list(database,workspaceId,state='NEEDS_REPLY'){
-  return (await database.query(`SELECT message.*,connector.display_name,connector.provider_type
+  return (await database.query(`SELECT message.*,connector.display_name,connector.provider_type,
+      supplier.name AS supplier_name,
+      COALESCE((SELECT COUNT(*) FROM connection_email_attachments attachment
+        WHERE attachment.workspace_id=message.workspace_id AND attachment.message_id=message.id),0)::integer AS attachment_count
     FROM connection_email_messages message JOIN workspace_connectors connector ON connector.id=message.connector_id
+    LEFT JOIN suppliers supplier ON supplier.id=message.supplier_id AND supplier.workspace_id=message.workspace_id
     WHERE message.workspace_id=$1 AND message.reply_state=$2 ORDER BY message.received_at ASC,message.id ASC`,
   [workspaceId,state])).rows;
 }

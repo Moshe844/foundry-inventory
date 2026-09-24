@@ -4,6 +4,7 @@ const express=require('express');
 const config=require('../../config');
 const assistant=require('../../assistant/postgres-service');
 const ledger=require('../../assistant/ledger');
+const permissions=require('../../actions/permissions');
 const { requireAuth,asyncRoute }=require('../middleware');
 
 const STATUS={ANSWERED:'answered',PREPARED:'needs_approval',CLARIFY:'clarify',FAILED:'failed'};
@@ -100,7 +101,19 @@ function createPostgresAskRouter(database,options={}){
       ?req.body.back:'/ask';
     return res.redirect(303,back);
   }));
-  router.get('/actions',requireAuth,(req,res)=>res.redirect(302,'/ask'));
+  router.get('/actions',requireAuth,asyncRoute(async(req,res)=>{
+    const rows=(await database.query(`SELECT * FROM stockchief_runtime.assistant_action_proposals
+      WHERE workspace_id=$1 ORDER BY created_at DESC,id DESC LIMIT 50`,[req.ctx.workspaceId])).rows;
+    const present=(proposal)=>({proposalId:proposal.id,oneLine:proposal.summary,
+      safetyLevel:/payment|purchase|send_email/.test(proposal.action_type)?'HIGH':'MEDIUM',sourceType:'ASK',
+      status:proposal.status==='EXECUTED'?'SUCCEEDED':proposal.status,rows:[],warnings:[],
+      createdAt:proposal.created_at,completedAt:proposal.executed_at||proposal.cancelled_at||null,unverified:false});
+    return res.page('actions/list',{title:'StockChief actions',nav:'actions',pending:rows.filter((row)=>row.status==='PENDING').map(present),
+      recent:rows.filter((row)=>row.status!=='PENDING').map(present),canOperate:permissions.can(req.user,permissions.OPERATE),
+      aiConfigured:Boolean(options.provider||config.ai.configured),instruction:String(req.query.q||'').slice(0,500),
+      examples:await askExamples(database,req.ctx.workspaceId),question:null,unsupported:null,assistantGoal:null,where:null,
+      blocked:null,physicalEventId:null,choices:null,continuationId:null,questionTone:null});
+  }));
   router.get('/actions/:id',asyncRoute(async(req,res)=>res.page('attention/postgres-proposal',{
     title:'Review prepared change',nav:'ask',proposal:await assistant.getProposal(database,req.ctx.workspaceId,req.params.id),
   })));
@@ -112,7 +125,7 @@ function createPostgresAskRouter(database,options={}){
   router.post('/actions/:id/cancel',asyncRoute(async(req,res)=>{
     await assistant.cancelProposal(database,req.ctx,req.params.id);
     req.flash('success','The prepared change was discarded. Nothing changed.');
-    return res.redirect(303,'/ask');
+    return res.redirect(303,'/actions');
   }));
   return router;
 }

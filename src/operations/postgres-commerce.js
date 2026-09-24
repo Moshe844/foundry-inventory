@@ -122,14 +122,17 @@ async function purchaseOrders(database, workspaceId) {
   const result=await database.query(`SELECT po.*,s.name AS supplier_name,
       COUNT(pol.id)::integer AS line_count,
       COALESCE(SUM(pol.line_total),0) AS total,
+      COALESCE(SUM(pol.quantity_units),0)::bigint AS ordered_units,
       COALESCE(SUM(pol.quantity_units-pol.quantity_received_units),0)::bigint AS units_outstanding,
+      COUNT(pol.id) FILTER (WHERE pol.unit_cost IS NOT NULL)::integer AS priced_line_count,
       COALESCE((SELECT SUM(balance_minor) FROM accounting_supplier_bills b
         WHERE b.workspace_id=po.workspace_id AND b.purchase_order_id=po.id AND b.status<>'VOID'),0)::bigint AS balance_minor
     FROM purchase_orders po JOIN suppliers s ON s.id=po.supplier_id AND s.workspace_id=po.workspace_id
     LEFT JOIN purchase_order_lines pol ON pol.purchase_order_id=po.id AND pol.workspace_id=po.workspace_id
     WHERE po.workspace_id=$1 GROUP BY po.id,s.name ORDER BY po.created_at DESC,po.id DESC`,[workspaceId]);
   return result.rows.map((row)=>({...row,line_count:Number(row.line_count),total:Number(row.total),
-    units_outstanding:Number(row.units_outstanding),balance_minor:Number(row.balance_minor)}));
+    ordered_units:Number(row.ordered_units),units_outstanding:Number(row.units_outstanding),
+    priced_line_count:Number(row.priced_line_count),balance_minor:Number(row.balance_minor)}));
 }
 
 async function purchaseOrder(database, workspaceId, id) {
@@ -138,7 +141,7 @@ async function purchaseOrder(database, workspaceId, id) {
     WHERE po.workspace_id=$1 AND po.id=$2`,[workspaceId,id]);
   if(!header.rows.length)throw new NotFoundError('That purchase order was not found.');
   const [lines,receipts,bills,events]=await Promise.all([
-    database.query(`SELECT pol.*,i.name AS item_name,i.tracking_mode,s.code,s.variant_label,l.name AS location_name
+    database.query(`SELECT pol.*,i.name AS item_name,i.tracking_mode,i.unit_label,s.code,s.variant_label,l.name AS location_name
       FROM purchase_order_lines pol JOIN skus s ON s.id=pol.sku_id JOIN items i ON i.id=s.item_id
       LEFT JOIN locations l ON l.id=pol.destination_location_id
       WHERE pol.workspace_id=$1 AND pol.purchase_order_id=$2 ORDER BY pol.line_number`,[workspaceId,id]),
@@ -173,7 +176,7 @@ async function salesOrder(database, workspaceId, id) {
     WHERE so.workspace_id=$1 AND so.id=$2`,[workspaceId,id]);
   if(!header.rows.length)throw new NotFoundError('That sales order was not found.');
   const [lines,invoices,shipments,events,paymentRequests,paymentTerms,orderReceipts]=await Promise.all([
-    database.query(`SELECT sol.*,i.name AS item_name,i.tracking_mode,s.code,s.variant_label,
+    database.query(`SELECT sol.*,i.id AS item_id,i.name AS item_name,i.tracking_mode,i.unit_label,s.code,s.variant_label,
       COALESCE((SELECT SUM(quantity) FROM sales_order_allocations a WHERE a.sales_order_line_id=sol.id),0)::bigint AS allocated
       ,COALESCE((SELECT SUM(rl.quantity_authorized) FROM customer_return_lines rl
         JOIN customer_returns r ON r.id=rl.customer_return_id

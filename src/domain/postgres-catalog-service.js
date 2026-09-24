@@ -245,8 +245,13 @@ async function getItem(database, workspaceId, itemId, input = {}) {
   const skuIds = skuResult.rows.map((row) => row.id);
   let positions = [];
   if (skuIds.length) {
-    positions = (await database.query(`SELECT b.sku_id,b.location_id,l.name AS location_name,b.on_hand
+    positions = (await database.query(`WITH committed AS (
+      SELECT sol.sku_id,a.location_id,COALESCE(SUM(a.quantity),0) AS quantity
+      FROM sales_order_allocations a JOIN sales_order_lines sol ON sol.id=a.sales_order_line_id
+      WHERE a.workspace_id=$1 AND sol.sku_id=ANY($2::text[]) GROUP BY sol.sku_id,a.location_id
+    ) SELECT b.sku_id,b.location_id,l.name AS location_name,b.on_hand,COALESCE(committed.quantity,0) AS committed
       FROM balances b JOIN locations l ON l.id=b.location_id AND l.workspace_id=b.workspace_id
+      LEFT JOIN committed ON committed.sku_id=b.sku_id AND committed.location_id=b.location_id
       WHERE b.workspace_id=$1 AND b.sku_id=ANY($2::text[]) AND b.on_hand<>0 ORDER BY l.name`,
     [workspaceId, skuIds])).rows;
   }
@@ -257,13 +262,15 @@ async function getItem(database, workspaceId, itemId, input = {}) {
       onOrder: Number(row.on_order || 0), is_active: Number(row.is_active),
       perLocation: positions.filter((position) => position.sku_id === row.id).map((position) => ({
         locationId: position.location_id, locationName: position.location_name, onHand: Number(position.on_hand),
+        committed:Number(position.committed||0),available:Number(position.on_hand)-Number(position.committed||0),
       })) };
   });
   const locations = (await database.query(`SELECT * FROM locations WHERE workspace_id=$1 AND is_active=1
     ORDER BY name,id`, [workspaceId])).rows.map((row) => ({ ...row, is_active: Number(row.is_active) }));
-  const recent = (await database.query(`SELECT m.id,m.operation,m.quantity_delta,m.reason_code,m.reference,m.notes,
-      m.occurred_at,s.code,s.variant_label,l.name AS location_name
+  const recentRows = (await database.query(`SELECT m.id,m.item_id,m.operation,m.quantity_delta,m.reason_code,m.reference,m.notes,
+      m.occurred_at,s.code,s.variant_label,l.name AS location_name,u.name AS actor_name
     FROM movements m JOIN skus s ON s.id=m.sku_id JOIN locations l ON l.id=m.location_id
+    LEFT JOIN users u ON u.id=m.actor_user_id
     WHERE m.workspace_id=$1 AND m.item_id=$2 ORDER BY m.occurred_at DESC,m.seq DESC LIMIT 20`,
   [workspaceId, itemId])).rows;
   const positionTotal = (await database.query(`SELECT
@@ -283,30 +290,49 @@ async function getItem(database, workspaceId, itemId, input = {}) {
   const committedTotal = Number(positionTotal.committed || 0);
   const onOrderTotal = Number(positionTotal.on_order || 0);
   const total = Number(totalResult.rows[0].on_hand || 0);
-  const [optionResult,lotResult,unitResult]=await Promise.all([
+  const [optionResult,lotResult,unitResult,locationTotalResult]=await Promise.all([
     database.query(`SELECT option_row.*,COALESCE(json_agg(DISTINCT value_row.value)
       FILTER (WHERE value_row.value IS NOT NULL),'[]') AS values
       FROM item_options option_row LEFT JOIN sku_option_values value_row ON value_row.option_id=option_row.id
       WHERE option_row.workspace_id=$1 AND option_row.item_id=$2 GROUP BY option_row.id
       ORDER BY option_row.position,option_row.id`,[workspaceId,itemId]),
-    database.query(`SELECT lot.id,lot.sku_id,lot.code,lot.received_at,lot.expires_at,
+    database.query(`SELECT lot.id,lot.sku_id,lot.code,lot.received_at,lot.expires_at,sku.variant_label,
       balance.location_id,location.name AS location_name,balance.quantity
       FROM lots lot JOIN skus sku ON sku.id=lot.sku_id
       JOIN lot_balances balance ON balance.lot_id=lot.id AND balance.workspace_id=lot.workspace_id
       JOIN locations location ON location.id=balance.location_id
       WHERE lot.workspace_id=$1 AND sku.item_id=$2 AND balance.quantity>0
       ORDER BY lot.expires_at NULLS LAST,lot.code,location.name`,[workspaceId,itemId]),
-    database.query(`SELECT unit.id,unit.sku_id,unit.serial,unit.condition,unit.location_id,location.name AS location_name
+    database.query(`SELECT unit.id,unit.sku_id,unit.serial,unit.condition,unit.status,unit.location_id,
+      location.name AS location_name,sku.variant_label
       FROM serial_units unit JOIN skus sku ON sku.id=unit.sku_id
       JOIN locations location ON location.id=unit.location_id
-      WHERE unit.workspace_id=$1 AND sku.item_id=$2 AND unit.status='in_stock'
-      ORDER BY location.name,unit.serial`,[workspaceId,itemId]),
+      WHERE unit.workspace_id=$1 AND sku.item_id=$2 ORDER BY unit.status,location.name,unit.serial`,[workspaceId,itemId]),
+    database.query(`SELECT location.id,location.name,COALESCE(SUM(balance.on_hand),0) AS total
+      FROM balances balance JOIN skus sku ON sku.id=balance.sku_id
+      JOIN locations location ON location.id=balance.location_id
+      WHERE balance.workspace_id=$1 AND sku.item_id=$2 GROUP BY location.id,location.name
+      HAVING COALESCE(SUM(balance.on_hand),0)<>0 ORDER BY location.name`,[workspaceId,itemId]),
   ]);
+  const lotsById=new Map();for(const row of lotResult.rows){let lot=lotsById.get(row.id);if(!lot){lot={id:row.id,
+      sku_id:row.sku_id,code:row.code,received_at:row.received_at,expires_at:row.expires_at,
+      variant_label:row.variant_label,total:0,perLocation:[]};lotsById.set(row.id,lot);}
+    const quantity=Number(row.quantity);lot.total+=quantity;lot.perLocation.push({location_id:row.location_id,
+      location_name:row.location_name,quantity});}
+  const movementSentence=(row)=>{const quantity=Math.abs(Number(row.quantity_delta));const product=row.variant_label||item.name;
+    if(row.operation==='receive')return `Received ${quantity} × ${product} into ${row.location_name}.`;
+    if(row.operation==='issue')return `Issued ${quantity} × ${product} from ${row.location_name}.`;
+    if(row.operation==='adjust')return `Corrected ${product} by ${Number(row.quantity_delta)>0?'+':''}${row.quantity_delta} at ${row.location_name}.`;
+    if(row.operation==='transfer_out')return `Sent ${quantity} × ${product} from ${row.location_name}.`;
+    if(row.operation==='transfer_in')return `Received ${quantity} × ${product} at ${row.location_name} from another location.`;
+    return `${String(row.operation).replaceAll('_',' ')} ${quantity} × ${product} at ${row.location_name}.`;};
+  const recent=recentRows.map((row)=>({...row,itemId:row.item_id,displayName:row.variant_label||item.name,
+    sentence:movementSentence(row),actorName:row.actor_name||'StockChief',occurredAt:row.occurred_at,reasonLabel:null}));
   return { item, skus, locations, recent, total, committed: committedTotal,
     available: Math.max(0, total - committedTotal), onOrder: onOrderTotal,
-    options:optionResult.rows,lots:lotResult.rows.map((row)=>({...row,quantity:Number(row.quantity)})),
-    units:unitResult.rows,variantTotal: skuCount, variantPage: page, variantPageSize: pageSize,
-    variantPageCount: pageCount };
+    options:optionResult.rows,lots:[...lotsById.values()],units:unitResult.rows,
+    locationTotals:locationTotalResult.rows.map((row)=>({...row,total:Number(row.total)})),
+    variantTotal: skuCount, variantPage: page, variantPageSize: pageSize,variantPageCount: pageCount };
 }
 
 async function updateItem(database,ctx,itemId,input){

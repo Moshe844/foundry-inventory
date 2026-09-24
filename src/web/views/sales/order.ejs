@@ -1,11 +1,12 @@
 <%
   var statusLabels = { DRAFT: 'Being prepared', CONFIRMED: 'Confirmed — stock held',
     BACKORDERED: 'Confirmed — waiting for stock', PARTIALLY_FULFILLED: 'Partly gone',
-    FULFILLED: (locals.goneWord === 'shipped' ? 'Shipped'
+    FULFILLED: (locals.goneWord === 'shipped' ? 'Fulfilled — shipped'
       : locals.goneWord === 'collected' ? 'Collected'
       : locals.goneWord === 'delivered' ? 'Delivered' : 'Gone'),
     CANCELLED: 'Cancelled' };
   var setupRequired = Boolean(order.customer_decision_required || order.delivery_decision_required);
+  var money = locals.money || { invoiced: false, heldReason: {} };
 
   /*
    * Two ways to get the goods out, offered at the same weight.
@@ -60,7 +61,7 @@
         <%= order.totals.allocated %> <%= order.totals.allocated === 1 ? 'unit is' : 'units are' %> held for this customer, but the goods have not left yet. This is cash received, not earned revenue or profit yet.
       <% } %>
     </div>
-    <a class="btn btn--sm" href="/orders/<%= order.id %>/detail?open=fulfilment#fulfilment">Show order history</a>
+    <a class="btn btn--sm" href="/orders/<%= order.id %>?open=fulfilment#fulfilment">Show order history</a>
   </div>
 <% } %>
 
@@ -71,15 +72,15 @@
         <strong>You let this one through unpaid.</strong><br>
         <%= money.heldReason.ship || money.heldReason.pick %>
         <% if (money.override.reason) { %><br><em><%= money.override.reason %></em><% } %>
-        <form method="post" action="/sales/orders/<%= order.id %>/payment-hold" class="inline-form" style="margin-top:8px;">
+        <% if (!locals.postgresPlacement) { %><form method="post" action="/sales/orders/<%= order.id %>/payment-hold" class="inline-form" style="margin-top:8px;">
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
           <button class="btn btn--ghost btn--sm" type="submit" name="action" value="restore">Put the hold back</button>
-        </form>
+        </form><% } %>
       <% } else { %>
         <strong><%= money.blocksPicking ? 'This order is on hold until it is paid.' : 'This order cannot ship until it is paid.' %></strong><br>
         <%= money.heldReason.pick || money.heldReason.ship %>
         <span class="t-xs t-muted">(<%= money.termsText %> — <%= money.terms.source %>.)</span>
-        <details class="disclosure" style="margin-top:10px;">
+        <% if (!locals.postgresPlacement) { %><details class="disclosure" style="margin-top:10px;">
           <summary>Let this one order through anyway</summary>
           <div class="card-body">
             <form method="post" action="/sales/orders/<%= order.id %>/payment-hold" data-busy>
@@ -99,6 +100,7 @@
       <% } %>
     </div>
   </div>
+<% } %>
 <% } %>
 
 
@@ -223,7 +225,7 @@
   <form class="card sales-action-card sales-primary-action" id="approve-order" method="post" action="/sales/orders/<%= order.id %>/confirm">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <p class="eyebrow">Do this next</p><h2>Confirm this order and reserve stock</h2>
-    <p>This is the only action needed now. StockChief will hold available stock for <%= order.customer.name %>; physical on-hand and Accounting remain unchanged until shipment.</p>
+    <p>Stock is not committed until confirmation. StockChief will then hold available stock for <%= order.customer.name %>; physical on-hand and Accounting remain unchanged until shipment.</p>
     <button class="btn btn--primary" type="submit">Confirm order and reserve stock</button>
   </form>
 <% } else if (order.status === 'DRAFT') { %>
@@ -286,6 +288,9 @@
       <% } %>
       Ask them to pay from the money panel below, or approve this one order to go without.
     </p>
+    <% if (money.terms && money.terms.kind === 'DEPOSIT') { %>
+      <p><strong>Agreed deposit: <%= helpers.money(money.dueNowMinor, money.currency) %>.</strong> Still due: <%= helpers.money(money.dueNowMinor, money.currency) %>.</p>
+    <% } %>
     <a class="btn btn--primary" href="#payment-hold">Settle the hold</a>
   </div>
 <% } else if (!['FULFILLED','CANCELLED'].includes(order.status) && (locals.shipments || [])
@@ -393,6 +398,37 @@
     <button class="btn <%= pickFirst ? '' : 'btn--primary' %>" type="submit">Record these goods as gone</button>
   </form>
   </details>
+<% } %>
+
+<% if (locals.postgresPlacement && locals.paymentRequests && locals.paymentAccount && locals.paymentAccount.connected) { %>
+  <%
+    var providerRequest = paymentRequests.find(function (request) { return ['PENDING', 'REVIEW', 'OPEN'].includes(request.status); })
+      || paymentRequests.find(function (request) { return request.status === 'PAID'; });
+    var providerPurpose = money.dueNowMinor > 0 && !money.hasInvoice ? 'DEPOSIT' : 'BALANCE';
+  %>
+  <div class="card section">
+    <div class="card-head"><div><h2>Secure customer payment</h2><p class="muted">The connected provider hosts the payment page. StockChief never receives card numbers.</p></div></div>
+    <div class="card-body">
+      <% if (providerRequest && providerRequest.status === 'PENDING') { %>
+        <div class="notice notice--info"><strong>Provider confirmation pending.</strong> The worker is creating this once; the customer has not been told it is ready.</div>
+      <% } else if (providerRequest && providerRequest.status === 'REVIEW') { %>
+        <div class="notice notice--warn"><strong>Provider outcome needs review.</strong> <%= providerRequest.lastError || 'StockChief stopped rather than risk creating a duplicate payment request.' %></div>
+      <% } else if (providerRequest && providerRequest.status === 'OPEN') { %>
+        <div class="notice notice--success"><strong>Ready for customer.</strong> The provider confirmed the secure page.</div>
+        <a class="btn btn--primary" href="<%= providerRequest.hostedUrl %>" target="_blank" rel="noopener noreferrer">Open secure page</a>
+      <% } else if (providerRequest && providerRequest.status === 'PAID') { %>
+        <div class="notice notice--success"><strong>Payment confirmed.</strong> StockChief recorded the signed provider result once.</div>
+      <% } else if ((money.dueNowMinor > 0 || money.outstandingMinor > 0) && !['CANCELLED'].includes(order.status)) { %>
+        <form method="post" action="/orders/<%= order.id %>/payment-requests" class="inline-form" data-busy>
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="provider" value="stripe">
+          <input type="hidden" name="purpose" value="<%= providerPurpose %>">
+          <input type="hidden" name="idempotencyKey" value="<%= paymentRequestFormKey %>-<%= providerPurpose.toLowerCase() %>">
+          <button class="btn btn--primary" type="submit"><%= providerPurpose === 'DEPOSIT' ? 'Prepare secure deposit link' : 'Prepare secure payment link' %></button>
+        </form>
+      <% } %>
+    </div>
+  </div>
 <% } %>
 
 <%#
@@ -597,7 +633,6 @@
    * It appears once there is an invoice. Before that there is nothing owed,
    * and a row of zeroes would only look like a debt of nothing.
    */
-  var money = locals.money || { invoiced: false };
 %>
 <% if (money.invoiced) { %>
   <%
@@ -622,7 +657,7 @@
       </div>
     </div>
   <% } %>
-  <details class="panel section fold" id="money"<% if (locals.paymentCompleted || locals.openSection === 'money') { %> open<% } %>>
+  <details class="panel section fold" id="money"<% if (locals.paymentCompleted || locals.openSection === 'money' || money.dueNowMinor > 0) { %> open<% } %>>
     <summary class="panel-head">
       <div>
         <h2>Money<%= money.outstandingMinor
@@ -908,6 +943,9 @@
     <span class="fold-note">
       <%= order.lines.length %> <%= order.lines.length === 1 ? 'product' : 'products' %>
       · <%= helpers.money(order.pricing.totalMinor, order.currency) %>
+      <% if (order.lines.length === 1 && order.lines[0].unit_price_minor !== null) { %>
+        · <%= helpers.money(order.lines[0].unit_price_minor, order.currency) %> each
+      <% } %>
     </span>
   </summary>
   <%
@@ -935,6 +973,41 @@
   </div>
   <% if (order.pricing.missingPriceLines) { %><div class="notice notice--warn"><strong>Enter the selling price in the confirm box above, or on the product.</strong> <%= order.pricing.missingPriceLines %> line<%= order.pricing.missingPriceLines === 1 ? '' : 's' %> has no selling price. <% order.lines.filter(function(line){ return line.unit_price_minor === null; }).forEach(function(line){ %><a href="/inventory/<%= line.item_id %>#selling-price">Set the price for <%= line.displayName %></a>. <% }) %></div><% } %>
 </details>
+
+<% if (locals.returnFormKey) { %>
+  <%
+    var returnableLines = order.lines.filter(function (line) {
+      return Number(line.quantity_fulfilled) > Number(line.quantity_returned || 0);
+    });
+  %>
+  <div class="card section">
+    <div class="card-head"><div><h2>Customer returns</h2><p class="muted">A request does not alter inventory or money. Returned goods first go to quarantine, then inspection decides what can be restocked.</p></div></div>
+    <div class="card-body stack">
+      <% (locals.returns || []).forEach(function (customerReturn) { %>
+        <a class="list-row" href="/returns/<%= customerReturn.id %>"><div><strong><%= customerReturn.return_number %></strong><p><%= customerReturn.resolution.replaceAll('_', ' ').toLowerCase() %></p></div><span><%= customerReturn.status.replaceAll('_', ' ').toLowerCase() %> →</span></a>
+      <% }) %>
+      <% if (returnableLines.length) { %>
+        <details class="advanced-settings">
+          <summary class="btn btn--secondary">Start a controlled return</summary>
+          <form method="post" action="/orders/<%= order.id %>/returns" class="grid" style="margin-top:16px;">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <input type="hidden" name="idempotencyKey" value="<%= returnFormKey %>">
+            <label class="field"><span class="field-label">Quarantine location</span><select class="input" name="quarantineLocationId" required><option value="">Choose where uninspected goods wait</option><% locations.forEach(function (location) { %><option value="<%= location.id %>"><%= location.name %></option><% }) %></select></label>
+            <label class="field"><span class="field-label">Expected outcome</span><select class="input" name="resolution"><option value="REFUND">Refund after inspection</option><option value="EXCHANGE">Prepare a replacement order after inspection</option><option value="NO_REFUND">No refund; physical return only</option></select></label>
+            <% returnableLines.forEach(function (line) { var maximum = Number(line.quantity_fulfilled) - Number(line.quantity_returned || 0); %>
+              <label class="field"><span class="field-label"><%= line.displayName %> · <%= maximum %> eligible</span><input class="input" aria-label="Return <%= line.displayName %> quantity" type="number" name="quantity_<%= line.id %>" min="0" max="<%= maximum %>" value="0"></label>
+            <% }) %>
+            <label class="field"><span class="field-label">Reason</span><textarea class="input" name="reason" rows="2" placeholder="Why the customer is returning it"></textarea></label>
+            <div><button class="btn btn--primary" type="submit">Request return</button></div>
+            <p class="muted">Nothing moves until authorization and physical receipt.</p>
+          </form>
+        </details><% } %>
+      <% } else if (!(locals.returns || []).length && ['PARTIALLY_FULFILLED', 'FULFILLED'].includes(order.status)) { %>
+        <p class="muted">Every fulfilled unit is already covered by a return.</p>
+      <% } %>
+    </div>
+  </div>
+<% } %>
 
 <% if (!['FULFILLED','CANCELLED'].includes(order.status)) { %>
   <details class="card advanced-settings sales-secondary-actions"><summary><strong>Change or cancel this order</strong><span class="hint">Optional</span></summary><div class="card-body grid grid--2">
@@ -1020,6 +1093,4 @@
       </div>
     </div>
   <% } %>
-<% } %>
-
 <% } %>

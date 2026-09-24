@@ -711,4 +711,5 @@ module.exports = {
   platformModeEnabled, platform,
   authorizeUrl, complete, openOnboarding, relink, embeddedSession, refresh, disconnect,
   describe, rowFor, isUnfinished, forget,
+  post,readAccount,canTakeCharges,
 };

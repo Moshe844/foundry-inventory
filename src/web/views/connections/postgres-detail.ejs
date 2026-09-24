@@ -1,70 +1,71 @@
-<section class="rm-head">
-  <div><p class="rm-eyebrow">Connection</p><h1><%= connection.display_name %></h1>
-    <p class="rm-lede"><%= connection.provider_account_name || 'This provider has not returned an account identity yet.' %></p></div>
-  <span class="rm-badge"><%= connection.publicStatus %></span>
-</section>
+<%
+  const accounting=connection.accounting||null;
+  const providerName=provider?.name||connection.display_name||connection.provider_type;
+  const connected=connection.status==='connected'&&!connection.paused_at;
+  const hasCatalogue=connection.productsMapped+connection.locationsMapped>0;
+  const hasEvent=Boolean(connection.last_activity_at);
+  const proven=connected&&(!canDiscover||hasCatalogue)&&hasEvent&&!connection.openIssues;
+%>
 
-<section class="rm-card">
-  <dl class="rm-kpis">
-    <div><dt>Provider</dt><dd><%= connection.provider_type %></dd></div>
-    <div><dt>Setup</dt><dd><%= connection.setup_status %></dd></div>
-    <div><dt>Open issues</dt><dd><%= connection.openIssues %></dd></div>
-    <div><dt>Last activity</dt><dd><%= connection.last_activity_at || connection.last_synced_at || 'Not yet' %></dd></div>
-  </dl>
-  <% if (connection.last_error) { %><div class="flash flash--warn" role="alert"><span><%= connection.last_error %></span></div><% } %>
-  <% if (newConnectionToken) { %>
-    <label>Copy this token now<input readonly value="<%= newConnectionToken %>" aria-label="Connection token"></label>
-  <% } %>
-</section>
+<header class="page-head">
+  <div class="titles">
+    <div class="breadcrumbs"><a href="/settings/connections">Connections</a><span>›</span><span><%= connection.display_name %></span></div>
+    <h1><%= connection.display_name %></h1>
+    <p class="page-sub"><%= providerName %><%= connection.provider_account_name?' · '+connection.provider_account_name:'' %> · <%= connection.provides.length?connection.provides.join(', '):'no business events proven yet' %></p>
+  </div>
+  <span class="badge <%= connection.publicStatus==='Connected'?'badge--ok':connection.publicStatus==='Needs attention'?'badge--warn':'badge--muted' %>"><%= connection.publicStatus %></span>
+</header>
 
-<% if(connection.accounting){ const accounting=connection.accounting; const externalAccounts=accounting.latestShadow?.externalSnapshot?.accounts||[]; %>
-<section class="rm-card">
-  <div class="rm-head"><div><p class="rm-eyebrow">Accounting control</p><h2><%= accounting.policy.stage.replaceAll('_',' ').toLowerCase() %></h2>
-    <p>StockChief remains the source of operational truth. Provider posting is unavailable until exact identities and a zero-difference shadow comparison are approved.</p></div></div>
-  <dl class="rm-kpis"><div><dt>Authority</dt><dd><%= accounting.policy.requested_authority %></dd></div><div><dt>Mapped accounts</dt><dd><%= accounting.mappings.length %></dd></div><div><dt>Pending journals</dt><dd><%= accounting.pendingEntries.length %></dd></div><div><dt>Confirmed exports</dt><dd><%= accounting.postedEntries.length %></dd></div></dl>
-  <% if(accounting.policy.requested_authority!=='POST'){ %><form method="post" action="/settings/connections/<%= connection.id %>/accounting/authority"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="authority" value="POST"><button class="rm-btn" type="submit">Request governed posting</button></form>
-  <% } else { %><form method="post" action="/settings/connections/<%= connection.id %>/accounting/authority"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="authority" value="OBSERVE"><button class="rm-btn rm-btn--quiet" type="submit">Return to read-only</button></form><% } %>
+<% if(connection.last_error){ %><div class="notice notice--warn section"><div><strong>This connection needs attention.</strong><p><%= connection.last_error %></p></div></div><% } %>
+<% if(newConnectionToken){ %><div class="notice notice--warn section"><div><strong>Copy this secure connection key now. StockChief will not show it again.</strong><input class="input mono" aria-label="Connection token" value="<%= newConnectionToken %>" readonly onclick="this.select()"></div></div><% } %>
 
-  <% if(accounting.policy.requested_authority==='POST'){ %>
-    <% if(accounting.latestShadow){ const differenceCount=accounting.latestShadow.differences.length; %><div class="quiet-note"><strong><%= accounting.latestShadow.status==='MATCHED'?'Shadow comparison matched exactly':'Latest shadow: '+accounting.latestShadow.status %></strong><br><%= differenceCount %> accounting difference<%= differenceCount===1?'':'s' %>, as of <%= accounting.latestShadow.as_of %>.<%= accounting.latestShadow.status==='MATCHED'?' Posting still requires one explicit enable step.':'' %></div><% } %>
-    <% if(externalAccounts.length){ %><details class="rm-disclosure" open><summary>Map exact posting accounts</summary><form method="post" action="/settings/connections/<%= connection.id %>/accounting/map-account" class="inline-form"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label>StockChief account<select name="accountId" required><option value="">Choose account</option><% accounting.accounts.forEach(function(account){ %><option value="<%= account.id %>"><%= account.code %> · <%= account.name %></option><% }) %></select></label><label>Provider account<select name="externalId" required><option value="">Choose verified provider account</option><% externalAccounts.forEach(function(account){ %><option value="<%= account.externalId %>"><%= account.code||account.externalId %> · <%= account.name %></option><% }) %></select></label><button class="rm-btn" type="submit">Save exact mapping</button></form></details><% } %>
-    <form method="post" action="/settings/connections/<%= connection.id %>/accounting/shadow" class="inline-form"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label>Compare through<input type="date" name="asOf" value="<%= new Date().toISOString().slice(0,10) %>"></label><button class="rm-btn rm-btn--quiet" type="submit">Run read-only shadow comparison</button></form>
-    <% if(accounting.policy.stage==='WRITE_READY'){ %><form method="post" action="/settings/connections/<%= connection.id %>/accounting/enable"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn" type="submit">Enable verified posting</button></form><% } %>
-    <% if(accounting.policy.stage==='WRITE_ENABLED'){ %><form method="post" action="/settings/connections/<%= connection.id %>/accounting/export"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn" type="submit">Queue ready journals</button></form><p>The browser makes no accounting-provider write. A durable worker posts each journal once and stores the provider identity only after confirmation.</p><% } %>
-    <% const blocked=accounting.pendingEntries.filter((entry)=>entry.missingAccounts.length||entry.missingParties.length); if(blocked.length){ %><div class="flash flash--warn"><span><%= blocked.length %> journal(s) are blocked by missing exact account or customer/supplier mappings. Nothing in those journals can be queued.</span></div><% } %>
-    <% if(accounting.externalParties){ const missingPartyLines=accounting.pendingEntries.flatMap((entry)=>entry.missingParties); const partyKeys=new Set(); missingPartyLines.forEach(function(line){ if(line.customer_id)partyKeys.add('customer:'+line.customer_id); if(line.supplier_id)partyKeys.add('supplier:'+line.supplier_id); }); %>
-      <details class="rm-disclosure" open><summary>Map QuickBooks customers and suppliers</summary><% [...partyKeys].forEach(function(key){ const parts=key.split(':'); const partyType=parts[0]; const partyId=parts.slice(1).join(':'); const choices=accounting.externalParties[partyType]||[]; %><form method="post" action="/settings/connections/<%= connection.id %>/accounting/map-party" class="inline-form"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="partyType" value="<%= partyType %>"><input type="hidden" name="partyId" value="<%= partyId %>"><label><%= partyType %><select name="externalId" required><option value="">Choose verified QuickBooks identity</option><% choices.forEach(function(choice){ %><option value="<%= choice.externalId %>"><%= choice.name %><%= choice.email?' · '+choice.email:'' %></option><% }) %></select></label><button class="rm-btn rm-btn--quiet" type="submit">Save exact identity</button></form><% }) %></details>
-    <% } else if(accounting.externalPartiesError){ %><div class="flash flash--warn"><span><%= accounting.externalPartiesError %></span></div><% } %>
-    <% if(accounting.pendingEntries.length){ %><div class="rm-ledger"><% accounting.pendingEntries.slice(0,20).forEach(function(entry){ %><div class="rm-ledger__row"><span class="rm-ledger__k">Journal <%= entry.entry_number %><small><%= entry.description %></small></span><span class="rm-ledger__v"><%= entry.effect_status||'not queued' %></span><span class="rm-ledger__n"><%= entry.missingAccounts.length %> account · <%= entry.missingParties.length %> party gaps</span></div><% }) %></div><% } %>
-  <% } %>
+<% if(!accounting){ %>
+<div class="stats-row section">
+  <div class="stat"><strong><%= connection.productsMapped %></strong><span>products mapped</span></div>
+  <div class="stat"><strong><%= connection.locationsMapped %></strong><span>locations mapped</span></div>
+  <div class="stat"><strong><%= connection.itemsNeedingMapping %></strong><span>need matching</span></div>
+  <div class="stat"><strong><%= connection.last_activity_at?helpers.timeAgo(connection.last_activity_at):'None yet' %></strong><span>last event received</span></div>
+</div>
+<p class="rm-sub">Products mapped <strong><%= connection.productsMapped %></strong> · Locations mapped <strong><%= connection.locationsMapped %></strong> · Need your match <strong><%= connection.itemsNeedingMapping %></strong>.</p>
+
+<section class="setup-journey section">
+  <div class="setup-journey__head"><div class="setup-journey__head-copy"><span class="setup-journey__eyebrow">Is it working?</span>
+    <h2><%= proven?'This connection is proven':'Prove the connection before relying on it' %></h2>
+    <p>Connected is not the same as working. StockChief records the account, catalogue and first real event separately.</p></div></div>
+  <div class="setup-steps">
+    <div class="setup-step <%= connected?'setup-step--done':'setup-step--current' %>"><span class="setup-step__number"><%= connected?'✓':'1' %></span><div><strong>Sign in to the right account</strong><p><%= connection.provider_account_name||'The provider has not returned an account identity yet.' %></p></div><span class="setup-step__state"><%= connected?'Verified':'Waiting' %></span></div>
+    <% if(canDiscover){ %><div class="setup-step <%= hasCatalogue?'setup-step--done':connected?'setup-step--current':'' %>"><span class="setup-step__number"><%= hasCatalogue?'✓':'2' %></span><div><strong>Read products and locations</strong><p>Identity records are read first; old sales are never replayed into current stock.</p></div><span class="setup-step__state"><%= hasCatalogue?'Recorded':'Refresh below' %></span></div><% } %>
+    <div class="setup-step <%= hasEvent?'setup-step--done':connected?'setup-step--current':'' %>"><span class="setup-step__number"><%= hasEvent?'✓':canDiscover?'3':'2' %></span><div><strong>Receive one real event</strong><p>StockChief must record a successful exchange before calling this proven.</p></div><span class="setup-step__state"><%= hasEvent?'Received once':'Not yet' %></span></div>
+  </div>
 </section>
 <% } %>
 
-<% if (canDiscover) { %>
-<section class="rm-card">
-  <% if (query && query.refresh === 'queued') { %><div class="flash flash--success" role="status"><span>Catalogue refresh queued. StockChief will exact-match safe records and show only records that need you.</span></div><% } %>
-  <div class="rm-head"><div><p class="rm-eyebrow">Provider catalogue</p><h2>Products and locations</h2>
-    <p>StockChief exact-matches safe records automatically. Anything ambiguous stays unchanged and appears in Needs You.</p></div>
-    <% if (connection.status === 'connected' && !connection.paused_at) { %>
-      <form method="post" action="/settings/connections/<%= connection.id %>/refresh">
-        <input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--quiet" type="submit">Refresh now</button>
-      </form>
-    <% } %>
+<div class="grid grid--sidebar section">
+  <div class="grid">
+  <% if(accounting){ const externalAccounts=accounting.latestShadow?.externalSnapshot?.accounts||[]; %>
+    <p class="page-sub">Accounting control</p>
+    <section class="setup-journey"><div class="setup-journey__head"><div class="setup-journey__head-copy"><span class="setup-journey__eyebrow">Accounting control</span><h2><%= accounting.policy.stage==='WRITE_ENABLED'?'StockChief may post verified entries':'Connected without changing the books' %></h2><p>Operational inventory remains owned by StockChief. Posting stays blocked until exact identities and a zero-difference shadow comparison are approved.</p></div></div>
+      <div class="setup-steps"><div class="setup-step setup-step--done"><span class="setup-step__number">✓</span><div><strong>Connect and verify the company</strong><p><%= connection.provider_account_name||providerName %></p></div><span class="setup-step__state">Done</span></div><div class="setup-step <%= accounting.policy.requested_authority==='OBSERVE'?'setup-step--current':'setup-step--done' %>"><span class="setup-step__number"><%= accounting.policy.requested_authority==='OBSERVE'?'2':'✓' %></span><div><strong>Choose authority</strong><p>Read-only, shadow comparison, or governed posting.</p></div><span class="setup-step__state"><%= accounting.policy.requested_authority==='OBSERVE'?'Choose below':'Done' %></span></div><div class="setup-step <%= accounting.policy.requested_authority!=='OBSERVE'&&accounting.policy.stage!=='WRITE_ENABLED'?'setup-step--current':'' %>"><span class="setup-step__number">3</span><div><strong>Prove exact parity</strong><p>No journal is exported while a mapping or balance differs.</p></div><span class="setup-step__state"><%= accounting.latestShadow?.status==='MATCHED'?'Matched':'Waiting' %></span></div></div>
+    </section>
+    <div class="stats-row"><div class="stat"><strong><%= accounting.policy.stage.replaceAll('_',' ') %></strong><span>Accounting control</span></div><div class="stat"><strong><%= accounting.mappings.length %></strong><span>Mapped accounts</span></div><div class="stat"><strong><%= accounting.pendingEntries.length %></strong><span>Pending journals</span></div><div class="stat"><span>Confirmed exports</span><strong><%= accounting.postedEntries.length %></strong></div></div>
+    <section class="card"><div class="card-head"><div><h2>What may StockChief do?</h2><p class="muted">Authority is explicit. A model cannot widen it.</p></div></div><div class="card-body grid">
+      <% if(accounting.policy.requested_authority==='OBSERVE'){ %><form method="post" action="/settings/connections/<%= connection.id %>/accounting/authority"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="authority" value="POST"><button class="btn btn--primary" type="submit">Request governed posting</button></form><% } %>
+      <form method="post" action="/settings/connections/<%= connection.id %>/accounting/authority" class="choice-grid"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label class="choice"><input type="radio" name="authority" value="OBSERVE" <%= accounting.policy.requested_authority==='OBSERVE'?'checked':'' %>><span><strong>Observe only</strong><small>Read identity and health. Never post.</small></span></label><label class="choice"><input type="radio" name="authority" value="SHADOW" <%= accounting.policy.requested_authority==='SHADOW'?'checked':'' %>><span><strong>Shadow comparison</strong><small>Compare without changing either system.</small></span></label><label class="choice"><input type="radio" name="authority" value="POST" <%= accounting.policy.requested_authority==='POST'?'checked':'' %>><span><strong>Request governed posting</strong><small>Still blocked until exact parity and final enablement.</small></span></label><div class="form-actions"><button class="btn btn--primary" type="submit">Save authority</button></div></form>
+      <% if(accounting.policy.requested_authority!=='OBSERVE'){ %><form method="post" action="/settings/connections/<%= connection.id %>/accounting/shadow" class="form-actions"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label class="field"><span class="field-label">Compare through</span><input class="input" type="date" name="asOf" value="<%= new Date().toISOString().slice(0,10) %>"></label><button class="btn" type="submit">Run read-only shadow comparison</button></form><% } %>
+      <% if(accounting.latestShadow){ %><div class="notice <%= accounting.latestShadow.status==='MATCHED'?'notice--success':'notice--warn' %>"><div><strong><%= accounting.latestShadow.status==='MATCHED'?'Shadow comparison matched exactly':accounting.latestShadow.differences.length+' accounting difference'+(accounting.latestShadow.differences.length===1?'':'s')+' remain. Nothing was posted.' %></strong><p>Compared through <%= accounting.latestShadow.as_of %>.</p></div></div><% } %>
+      <% if(externalAccounts.length&&accounting.policy.requested_authority==='POST'){ %><details open><summary>Map exact posting accounts</summary><form method="post" action="/settings/connections/<%= connection.id %>/accounting/map-account" class="grid grid--2"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label class="field"><span class="field-label">StockChief account</span><select class="select" name="accountId" required><option value="">Choose account</option><% accounting.accounts.forEach(function(account){ %><option value="<%= account.id %>"><%= account.code %> · <%= account.name %></option><% }) %></select></label><label class="field"><span class="field-label">Provider account</span><select class="select" name="externalId" required><option value="">Choose verified <%= providerName %> account</option><% externalAccounts.forEach(function(account){ %><option value="<%= account.externalId %>"><%= account.code||account.externalId %> · <%= account.name %></option><% }) %></select></label><button class="btn" type="submit">Save exact mapping</button></form></details><% } %>
+      <% if(accounting.policy.stage==='WRITE_READY'){ %><form method="post" action="/settings/connections/<%= connection.id %>/accounting/enable"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Enable verified posting</button></form><% } %>
+      <% if(accounting.policy.stage==='WRITE_ENABLED'){ %><form method="post" action="/settings/connections/<%= connection.id %>/accounting/export"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Queue ready journals</button></form><% } %>
+      <% if(accounting.pendingEntries.length){ %><div class="grid"><% accounting.pendingEntries.forEach(function(entry){ %><div class="list-row"><div><strong>Journal <%= entry.entry_number %> · <%= entry.description %></strong><p><%= entry.posting_date %></p></div><span class="badge"><%= entry.effect_status||'not queued' %></span></div><% }) %></div><% } %>
+    </div></section>
+  <% } else { %>
+    <section class="card"><div class="card-head"><div><h2>What this connection is doing</h2><p class="muted">Only successful provider evidence counts.</p></div></div><div class="card-body grid"><div class="list-row"><div><strong>Provider account</strong><p><%= connection.provider_account_name||'Not returned yet' %></p></div><span class="badge <%= connected?'badge--ok':'badge--muted' %>"><%= connected?'Connected':'Not connected' %></span></div><div class="list-row"><div><strong>Last successful exchange</strong><p><%= connection.last_activity_at||connection.last_synced_at||'No successful exchange recorded yet' %></p></div></div></div></section>
+    <% if(canDiscover){ %><section class="card"><div class="card-head"><div><h2>Products and locations</h2><p class="muted">Exact matches happen automatically. Ambiguous records stay unchanged.</p></div></div><div class="card-body"><% if(query&&query.refresh==='queued'){ %><div class="notice notice--success">Catalogue refresh queued.</div><% } %><% if(connected){ %><form method="post" action="/settings/connections/<%= connection.id %>/refresh"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit">Refresh now</button></form><% } %></div></section><% } %>
+  <% } %>
   </div>
-  <dl class="rm-kpis">
-    <div><dt>Products mapped</dt><dd><%= connection.productsMapped %></dd></div>
-    <div><dt>Locations mapped</dt><dd><%= connection.locationsMapped %></dd></div>
-    <div><dt>Need your match</dt><dd><%= connection.itemsNeedingMapping %></dd></div>
-    <div><dt>Last refresh</dt><dd><%= connection.last_synced_at || 'Not yet' %></dd></div>
-  </dl>
-</section>
-<% } %>
 
-<section class="rm-card">
-  <h2>Control</h2><p>Pausing is reversible. Disconnecting deletes the encrypted provider credential and revokes event tokens.</p>
-  <div class="rm-actions">
-    <% if (connection.paused_at) { %><form method="post" action="/settings/connections/<%= connection.id %>/resume"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn" type="submit">Resume</button></form>
-    <% } else if (connection.status === 'connected') { %><form method="post" action="/settings/connections/<%= connection.id %>/pause"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--quiet" type="submit">Pause</button></form><% } %>
-    <% if (connection.status !== 'disconnected') { %><form method="post" action="/settings/connections/<%= connection.id %>/disconnect"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--quiet" type="submit">Disconnect and remove credentials</button></form><% } %>
-  </div>
-</section>
+  <aside class="grid">
+    <section class="card"><div class="card-head"><h2>Connection control</h2></div><div class="card-body"><p class="hint">Pausing is reversible. Disconnecting removes the encrypted credential while keeping mappings and audit history.</p><div class="form-actions"><% if(connection.paused_at){ %><form method="post" action="/settings/connections/<%= connection.id %>/resume"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Resume</button></form><% } else if(connection.status==='connected'){ %><form method="post" action="/settings/connections/<%= connection.id %>/pause"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit">Pause</button></form><% } %><% if(connection.status!=='disconnected'){ %><form method="post" action="/settings/connections/<%= connection.id %>/disconnect"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--danger" type="submit">Disconnect and remove credentials</button></form><% } %></div></div></section>
+    <details class="card"><summary class="card-head"><h2>Advanced diagnostics</h2></summary><div class="card-body"><p class="mono">Connection <%= connection.id %></p><p>Provider: <%= connection.provider_type %></p><p>Setup: <%= connection.setup_status %></p><p>Open issues: <%= connection.openIssues %></p><p>Last event: <%= connection.last_activity_at||'none' %></p><p>Last successful sync: <%= connection.last_synced_at||'none' %></p></div></details>
+  </aside>
+</div>

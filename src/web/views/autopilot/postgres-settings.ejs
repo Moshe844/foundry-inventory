@@ -11,6 +11,19 @@
     <label class="choice"><input type="radio" name="mode" value="POLICY_AUTOMATED" <%= state.mode==='POLICY_AUTOMATED'?'checked':'' %>><span><strong>Handle routine work</strong><small>Execute only inside approved limits below.</small></span></label>
     <div class="form-actions"><button class="btn btn--primary" type="submit">Save control level</button></div></form></div></section>
 
+<section class="card" id="jobs"><div class="card-head"><div><h2>Which jobs StockChief may do on its own</h2>
+  <p class="muted">Every job is separate. Authorising a customer email never authorises purchasing, payments, transfers, or postage.</p></div></div>
+  <div class="card-body"><div class="job-list"><% capabilities.forEach(function(job){ %><div class="job">
+    <div class="job-body"><strong><%= job.label %></strong><span class="t-xs t-muted"><%= job.blurb %></span>
+      <span class="t-xs t-muted"><em><%= job.consequence %></em></span></div>
+    <form method="post" action="/autopilot/capability" class="job-action"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="hidden" name="capability" value="<%= job.capability %>"><input type="hidden" name="granted" value="<%= job.granted?'0':'1' %>">
+      <button class="btn btn--sm <%= job.granted?'':'btn--primary' %>" type="submit"><%= job.granted?'Take this back':'Let StockChief do this' %></button></form>
+    <span class="job-state <%= job.granted?'is-on':'' %>"><%= job.granted?'Authorised':'Asks first' %></span>
+  </div><% }) %></div>
+  <% if(state.mode!=='POLICY_AUTOMATED'){ %><p class="hint"><strong>These grants are stored but inactive while StockChief is set to watch or ask first.</strong> Changing the mode still grants nothing by itself.</p><% } %>
+  </div></section>
+
 <section class="card"><div class="card-head"><div><h2>Routine transfer and purchasing limits</h2><p class="muted">One confirmation creates immutable, versioned authority. Everything else goes to Needs you.</p></div></div>
   <div class="card-body"><form method="post" action="/autopilot/routine-authority" class="grid"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <label class="choice"><input type="checkbox" name="transferEnabled" value="1" <%= transferPolicy?'checked':'' %>><span><strong>Balance stock between locations</strong><small>Prefer a safe internal transfer before buying more.</small></span></label>

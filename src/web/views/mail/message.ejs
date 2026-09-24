@@ -36,6 +36,16 @@
   </div>
 </div>
 
+<% if (m.outbox_status === 'PENDING' || m.outbox_status === 'SENDING') { %>
+  <div class="notice notice--info"><div><strong>Reply queued securely.</strong><br>The mailbox worker is verifying delivery. StockChief will not report it sent before the provider confirms it.</div></div>
+<% } else if (m.outbox_status === 'AMBIGUOUS') { %>
+  <div class="notice notice--warn"><div><strong>Delivery could not be verified.</strong><br>StockChief did not retry and will not send another copy. Check the mailbox Sent folder, then mark the conversation appropriately.</div></div>
+<% } else if (m.outbox_status === 'FAILED') { %>
+  <div class="notice notice--warn"><div><strong>The mailbox provider refused the last send.</strong><br>Nothing was reported as sent. Review the connection before trying again.</div></div>
+<% } else if (m.reply_sent_at) { %>
+  <div class="notice notice--ok"><div><strong>Reply sent and verified.</strong><br>This conversation is waiting on them.</div></div>
+<% } %>
+
 <section class="section">
   <div class="panel">
     <div class="panel-head">

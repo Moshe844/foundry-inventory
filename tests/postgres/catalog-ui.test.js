@@ -78,7 +78,7 @@ test('PostgreSQL rendered UI completes onboarding, catalog, location and stock t
       idempotencyKey:'catalog-ui-opening-one'});
     assert.equal(received.status,303);
     const afterReceipt=await agent.get(`/inventory/${itemId}`);
-    assert.match(afterReceipt.text,/>7<\/span><span class="rm-stat__d">pairs on hand/);
+    assert.match(afterReceipt.text,/>\s*7\s*<\/span>\s*<span class="rm-stat__d">pairs on hand/);
     assert.match(afterReceipt.text,/OPENING-1/);
 
     const issued=await agent.post(`/inventory/${itemId}/issue`).type('form').send({_csrf:csrfFrom(afterReceipt.text),

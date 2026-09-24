@@ -65,7 +65,7 @@
         <%# What a person does to stock, in their words: the four things you can do to a product, in the header where an action is looked for. %>
         <button class="rm-btn rm-btn--sm" type="button" data-modal-open="modal-receive"><%- helpers.icon('receive', { size: 15 }) %> Some came in</button>
         <button class="rm-btn rm-btn--wash rm-btn--sm" type="button" data-modal-open="modal-issue"><%- helpers.icon('issue', { size: 15 }) %> Sold or used</button>
-        <button class="rm-btn rm-btn--wash rm-btn--sm" type="button" data-modal-open="modal-transfer" <%= locations.length < 2 ? 'disabled' : '' %>><%- helpers.icon('transfer', { size: 15 }) %> Move it</button>
+        <button class="rm-btn rm-btn--wash rm-btn--sm" type="button" data-modal-open="modal-transfer" <%= locations.length < 2 ? 'disabled' : '' %>><%- helpers.icon('transfer', { size: 15 }) %> Request a move</button>
         <button class="rm-btn rm-btn--wash rm-btn--sm" type="button" data-modal-open="modal-adjust"><%- helpers.icon('adjust', { size: 15 }) %> Fix the count</button>
       <% } %>
       <a class="rm-btn rm-btn--ghost rm-btn--sm" href="<%= skus.length === 1 ? '/purchasing/why/' + skus[0].id : '#reorder-settings' %>"><%- helpers.icon('purchasing', { size: 15 }) %> Reorder settings</a>
@@ -172,6 +172,7 @@
             <th class="num">Available</th>
             <th class="num">On order</th>
             <th>Selling price</th>
+            <th>Purchase cost</th>
             <th>Reordering</th>
             <% if (canAct) { %><th><span class="visually-hidden">Actions</span></th><% } %>
           </tr>
@@ -203,13 +204,21 @@
                   <strong><%= sku.sellingPrice.formatted %></strong>
                   <a href="/pricing/new?skuId=<%= sku.id %>">Change</a>
                 <% } else { %>
+                  <span class="vt-nil">Not set</span>
                   <a class="vt-do" href="/pricing/new?skuId=<%= sku.id %>">Set price</a>
                 <% } %>
+              </td>
+              <td class="vt-price">
                 <% if (sku.purchaseCost) { %>
-                  <small>purchase cost <strong><%= sku.purchaseCost.formatted %></strong><%= sku.purchaseCost.sourceLabel ? ' · ' + sku.purchaseCost.sourceLabel : '' %></small>
+                  <span class="visually-hidden">Purchase cost </span><strong><%= sku.purchaseCost.formatted %></strong>
+                  <a href="/pricing/purchase-costs/new?skuId=<%= sku.id %>">Change</a>
+                  <% if (sku.purchaseCost.sourceLabel) { %><small><%= sku.purchaseCost.sourceLabel %></small><% } %>
                   <% if (sku.sellingPrice.isSet && sku.sellingPrice.amount_minor < sku.purchaseCost.amount_minor) { %>
                     <small class="is-warn"><strong>Warning:</strong> sells <%= helpers.money(sku.purchaseCost.amount_minor - sku.sellingPrice.amount_minor, sku.purchaseCost.currency) %> below purchase cost</small>
                   <% } %>
+                <% } else { %>
+                  <span class="vt-nil">Not set</span>
+                  <a class="vt-do" href="/pricing/purchase-costs/new?skuId=<%= sku.id %>">Set cost</a>
                 <% } %>
               </td>
               <td class="vt-rule">
@@ -790,7 +799,7 @@
       </div>
       <div class="modal-foot">
         <button class="btn" type="button" data-modal-close>Cancel</button>
-        <button class="btn btn--primary" type="submit">Receive</button>
+        <button class="btn btn--primary" type="submit">Record receipt</button>
       </div>
     </form>
   </dialog>
@@ -936,7 +945,7 @@
       </div>
       <div class="modal-foot">
         <button class="btn" type="button" data-modal-close>Cancel</button>
-        <button class="btn btn--primary" type="submit">Request transfer</button>
+        <button class="btn btn--primary" type="submit">Create transfer request</button>
       </div>
     </form>
   </dialog>

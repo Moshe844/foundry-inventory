@@ -8,5 +8,10 @@
     </select>
   </div>
 <% } else { %>
-  <input type="hidden" name="skuId" value="<%= skus[0].id %>">
+  <div class="field">
+    <label class="label" for="<%= idPrefix %>-sku">Product</label>
+    <select class="select" id="<%= idPrefix %>-sku" name="skuId" required>
+      <option value="<%= skus[0].id %>"><%= item.name %> — <%= skus[0].code %></option>
+    </select>
+  </div>
 <% } %>

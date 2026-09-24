@@ -25,12 +25,12 @@ test('Chromium creates and switches isolated PostgreSQL inventories without a su
       WHERE a.email='workspaces@example.test'`)).rows[0].id;
     await database.query(`INSERT INTO items(id,workspace_id,name,base_code,tracking_mode,unit_label,allow_negative,is_active,created_at,updated_at)
       VALUES('workspace-one-item',$1,'Only In First','FIRST','quantity','unit',0,1,$2,$2)`,[first,'2026-09-23T00:00:00.000Z']);
-    await page.goto(`${base}/inventories`);assert.match(await page.locator('main').innerText(),/First Operation.*1 products/s);
-    await page.getByRole('link',{name:'New inventory'}).first().click();await page.getByLabel('Inventory name').fill('Second Operation');
+    await page.goto(`${base}/inventories`);assert.match(await page.locator('main').innerText(),/First Operation.*1 item/s);
+    await page.getByRole('link',{name:'New inventory'}).first().click();await page.getByLabel('What do you want to call it?').fill('Second Operation');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Choose a source'}).click()]);
     assert.doesNotMatch(await page.locator('body').innerText(),/Only In First/);
-    await page.goto(`${base}/inventories`);assert.match(await page.locator('main').innerText(),/First Operation.*1 products.*Second Operation.*0 products/s);
-    const firstRow=page.locator('.rm-row').filter({hasText:'First Operation'});await Promise.all([page.waitForURL(`${base}/`),
+    await page.goto(`${base}/inventories`);assert.match(await page.locator('main').innerText(),/First Operation.*1 item.*Second Operation.*0 items/s);
+    const firstRow=page.locator('.wsp-card').filter({hasText:'First Operation'});await Promise.all([page.waitForURL(`${base}/`),
       firstRow.getByRole('button',{name:'Open'}).click()]);
     await page.goto(`${base}/inventory`);
     assert.match(await page.locator('main').innerText(),/Only In First/);

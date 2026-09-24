@@ -11,7 +11,7 @@ const providerEffects=require('../operations/postgres-provider-effects');
 const RANK={UNKNOWN:0,PRE_TRANSIT:1,IN_TRANSIT:2,OUT_FOR_DELIVERY:3,FAILURE:3,DELIVERED:4,RETURNED:4,CANCELLED:4};
 
 async function requireShipment(queryable,workspaceId,shipmentId,lock=false){
-  const result=await queryable.query(`SELECT shipment.*,orders.order_number,orders.needed_by,orders.customer_id,
+  const result=await queryable.query(`SELECT shipment.*,orders.order_number,orders.needed_by,orders.customer_id,orders.delivery_method,
       customer.name AS customer_name,customer.email AS customer_email,customer.phone AS customer_phone,
       location.name AS location_name,location.address AS location_address,location.phone AS location_phone
     FROM sales_shipments shipment JOIN sales_orders orders ON orders.id=shipment.sales_order_id
@@ -273,13 +273,26 @@ async function buyLabel(database,ctx,shipmentId,rateId,input={},options={}){cons
 async function handoff(database,ctx,shipmentId,input={}){
   const shipment=await requireShipment(database,ctx.workspaceId,shipmentId);
   if(shipment.status==='SHIPPED'||shipment.status==='DELIVERED')return {shipment,replayed:true};
-  if(shipment.label_status!=='PURCHASED'||!shipment.tracking_number)throw new ValidationError('Buy and verify the carrier label before recording handoff.');
+  if(shipment.status!=='PACKED')throw new ValidationError('Pack this shipment before recording the handoff.');
+  const handover=String(input.handover||shipment.handover||'CARRIER').toUpperCase();
+  if(!['CARRIER','COLLECTED','DELIVERED_BY_US'].includes(handover))throw new ValidationError('Choose how the goods actually left.');
+  const trackingNumber=String(input.trackingNumber||shipment.tracking_number||'').trim()||null;
+  const carrier=String(input.carrier||shipment.carrier||'').trim()||null;
+  if(handover!=='COLLECTED'&&!addresses.parse(shipment.ship_to_address).complete)
+    throw new ValidationError('A complete destination is required before these goods can leave for delivery.');
+  if(handover==='CARRIER'&&shipment.label_status!=='PURCHASED'&&!trackingNumber)
+    throw new ValidationError('Enter the carrier tracking number, or buy and verify a label, before recording carrier handoff.');
   const lines=(await database.query(`SELECT sales_order_line_id AS "lineId",location_id AS "locationId",quantity
     FROM sales_shipment_lines WHERE workspace_id=$1 AND shipment_id=$2 ORDER BY id`,[ctx.workspaceId,shipmentId])).rows;
   const result=await workflows.fulfillSalesOrder(database,ctx,shipment.sales_order_id,{lines,
     idempotencyKey:input.idempotencyKey||`shipment-handoff:${shipmentId}`});
-  await database.query(`UPDATE sales_shipments SET status='SHIPPED',handover='CARRIER',shipped_at=COALESCE(shipped_at,$3),
-    updated_at=$3 WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,shipmentId,nowIso()]);
+  const at=nowIso();
+  await database.query(`UPDATE sales_shipments SET status='SHIPPED',handover=$3,carrier=COALESCE($4,carrier),
+    service=COALESCE($5,service),tracking_number=COALESCE($6,tracking_number),
+    expected_delivery_date=COALESCE($7,expected_delivery_date),shipping_cost_minor=COALESCE($8,shipping_cost_minor),
+    shipped_at=COALESCE(shipped_at,$9),updated_at=$9 WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,shipmentId,
+    handover,carrier,String(input.service||'').trim()||null,trackingNumber,input.expectedDeliveryDate||null,
+    input.shippingCostMinor??null,at]);
   return {shipment:await requireShipment(database,ctx.workspaceId,shipmentId),fulfillment:result,replayed:result.replayed};
 }
 

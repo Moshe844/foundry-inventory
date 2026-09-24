@@ -47,6 +47,20 @@ test('real Chromium proves native PostgreSQL transfer-versus-buy planning, appro
 
     await page.goto(`${base}/autopilot`);
     assert.match(await page.locator('main').innerText(),/Decide what StockChief may handle without you/);
+    assert.equal(await page.locator('.job').count(),8);
+    for(const job of ['Move stock between locations','Reorder and place purchase orders',
+      'Keep replenishment levels up to date','Email suppliers','Answer customers','Ask customers to pay',
+      'Buy shipping labels','Tell customers their order has shipped']){
+      assert.equal(await page.locator('.job').filter({hasText:job}).count(),1,job);
+    }
+    const paymentAuthority=page.locator('.job').filter({hasText:'Ask customers to pay'});
+    await Promise.all([page.waitForNavigation(),paymentAuthority.getByRole('button',{name:'Let StockChief do this'}).click()]);
+    assert.match(await page.locator('.job').filter({hasText:'Ask customers to pay'}).innerText(),/Authorised/);
+    assert.match(await page.locator('.job').filter({hasText:'Email suppliers'}).innerText(),/Asks first/);
+    let grants=(await database.query(`SELECT capability,granted FROM autopilot_capabilities
+      WHERE workspace_id=$1 ORDER BY capability`,[ctx.workspaceId])).rows;
+    assert.deepEqual(grants.map((row)=>({capability:row.capability,granted:Number(row.granted)})),
+      [{capability:'payment_requests',granted:1}]);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Check the operation now'}).click()]);
     assert.match(await page.locator('main').innerText(),/Transfer Widget[\s\S]*waiting for approval/);
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM work_items WHERE workspace_id=$1
@@ -88,6 +102,9 @@ test('real Chromium proves native PostgreSQL transfer-versus-buy planning, appro
     await Promise.all([page.waitForNavigation(),authority.getByRole('button',{name:'Confirm these limits'}).click()]);
     assert.equal(await page.getByLabel('Handle routine work').isChecked(),true);
     assert.equal(await page.getByLabel('Approve routine replenishment').isChecked(),true);
+    grants=(await database.query(`SELECT capability,granted FROM autopilot_capabilities
+      WHERE workspace_id=$1 AND granted=1 ORDER BY capability`,[ctx.workspaceId])).rows;
+    assert.deepEqual(grants.map((row)=>row.capability),['inventory_transfers','payment_requests','replenishment']);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Check the operation now'}).click()]);
     assert.match(await page.locator('main').innerText(),/Purchase Widget[\s\S]*completed/);
     const order=(await database.query(`SELECT po.status,pol.quantity_units,pol.quantity_purchase_units,pol.units_per_purchase_unit,

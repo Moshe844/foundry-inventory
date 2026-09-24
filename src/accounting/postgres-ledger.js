@@ -96,28 +96,32 @@ async function postInTransaction(client, ctx, input) {
     if(!settings.rows.length)throw new ValidationError('Configure accounting before posting entries.');
     if(postingDate<settings.rows[0].accounting_start_date)throw new ValidationError('Posting date is before the accounting start date.');
     const period=await ensurePeriod(client,ctx.workspaceId,postingDate);
-    const keys=[...new Set(normalized.map((line)=>line.accountKey))];
+    const keys=[...new Set(normalized.map((line)=>line.accountKey).filter(Boolean))];
+    const ids=[...new Set(normalized.map((line)=>line.accountId).filter(Boolean))];
     const accounts=await client.query(`SELECT id,system_key FROM accounting_accounts
-      WHERE workspace_id=$1 AND active=1 AND system_key=ANY($2::text[])`,[ctx.workspaceId,keys]);
+      WHERE workspace_id=$1 AND active=1 AND (system_key=ANY($2::text[]) OR id=ANY($3::text[]))`,[ctx.workspaceId,keys,ids]);
     const byKey=new Map(accounts.rows.map((row)=>[row.system_key,row.id]));
-    if(keys.some((key)=>!byKey.has(key)))throw new ValidationError('One or more accounting control accounts are missing.');
+    const byId=new Set(accounts.rows.map((row)=>row.id));
+    if(keys.some((key)=>!byKey.has(key))||ids.some((id)=>!byId.has(id))||normalized.some((line)=>!line.accountKey&&!line.accountId))
+      throw new ValidationError('One or more accounting control accounts are missing or inactive.');
     const at=nowIso(); const id=newId('je');
     await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',[`journal:${ctx.workspaceId}`]);
     const count=await client.query(`SELECT COUNT(*) AS count FROM accounting_journal_entries WHERE workspace_id=$1`,[ctx.workspaceId]);
     const entryNumber=Number(count.rows[0].count)+1;
     await client.query(`INSERT INTO accounting_journal_entries
       (id,workspace_id,entry_number,posting_date,period_id,description,status,source_type,source_record_type,
-       source_record_id,source_event_id,source_key,created_by_type,created_by_user_id,engine_version,metadata,created_at,posted_at)
-      VALUES($1,$2,$3,$4,$5,$6,'POSTED',$7,$8,$9,$10,$11,$12,$13,'accounting-postgres-v1',$14,$15,$15)`,
+       source_record_id,source_event_id,source_key,created_by_type,created_by_user_id,engine_version,metadata,
+       reversal_of_entry_id,created_at,posted_at)
+      VALUES($1,$2,$3,$4,$5,$6,'POSTED',$7,$8,$9,$10,$11,$12,$13,'accounting-postgres-v1',$14,$15,$16,$16)`,
     [id,ctx.workspaceId,entryNumber,postingDate,period.id,String(input.description||'Business event'),
       input.sourceType||'business_event',input.sourceRecordType||null,input.sourceRecordId||null,input.sourceEventId||null,
-      sourceKey,input.createdByType||'SYSTEM',ctx.actorId||null,JSON.stringify(input.metadata||{}),at]);
+      sourceKey,input.createdByType||'SYSTEM',ctx.actorId||null,JSON.stringify(input.metadata||{}),input.reversalOfEntryId||null,at]);
     for(const [index,line] of normalized.entries()){
       await client.query(`INSERT INTO accounting_journal_lines
         (id,workspace_id,entry_id,line_number,account_id,debit_minor,credit_minor,currency,customer_id,supplier_id,
          item_id,sku_id,location_id,memo,metadata,created_at)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
-      [newId('jel'),ctx.workspaceId,id,index+1,byKey.get(line.accountKey),line.debit,line.credit,
+      [newId('jel'),ctx.workspaceId,id,index+1,line.accountId||byKey.get(line.accountKey),line.debit,line.credit,
         input.currency||settings.rows[0].base_currency,line.customerId||null,line.supplierId||null,line.itemId||null,
         line.skuId||null,line.locationId||null,line.memo||null,JSON.stringify(line.metadata||{}),at]);
     }

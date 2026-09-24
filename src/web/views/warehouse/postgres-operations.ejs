@@ -1,18 +1,27 @@
-<section class="rm-head">
-  <div><p class="rm-eyebrow">Warehouse operations</p><h1>Pick several customer orders as one verified wave.</h1>
-    <p class="rm-lede">Scanning proves what was picked. Packing does not reduce inventory; only the shipment handoff records goods leaving.</p></div>
+<div class="rm-operation-page">
+<p class="rm-stamp">Warehouse operations</p>
+<h1 class="rm-figure">Count it, return it, or fulfill it.</h1>
+<p class="rm-sub">Physical changes use the inventory ledger. Packing never reduces inventory; only a verified handoff records goods leaving.</p>
+
+<section class="rm-panel" id="counts"><div class="rm-panel__head"><div><p class="rm-kicker">Physical inventory</p><h2>Record a physical count</h2></div></div>
+  <p>Tell StockChief the exact product, location and quantity you counted. It compares the physical evidence with the ledger and prepares the controlled correction for approval; it never invents a count.</p>
+  <p class="rm-choices"><a class="rm-button rm-button--primary" href="/ask?about=<%= encodeURIComponent('I completed a physical count and need to reconcile it') %>">Report a physical count</a><a class="rm-button rm-button--quiet" href="/activity">Review stock history</a></p>
 </section>
 
-<section class="rm-card" id="waves">
-  <div class="rm-head"><div><p class="rm-eyebrow">Active and completed waves</p><h2>Fulfillment waves</h2></div></div>
+<section class="rm-panel" id="returns"><div class="rm-panel__head"><div><p class="rm-kicker">Returns</p><h2>Keep the return attached to its business story</h2></div></div>
+  <div class="rm-list"><a class="rm-row" href="/orders"><span><strong>Customer returns</strong><small>Open the fulfilled customer order to authorize, receive, inspect and refund the exact line.</small></span><span>Open orders</span></a><a class="rm-row" href="/purchasing/orders"><span><strong>Supplier returns</strong><small>Open the purchase order or supplier return to ship the exact stock and reconcile the credit.</small></span><span>Open purchases</span></a></div>
+</section>
+
+<section class="rm-panel" id="waves">
+  <div class="rm-panel__head"><div><p class="rm-kicker">High-volume fulfillment</p><h2>Pick several orders as one wave</h2><p>Scanning proves what was picked. Packing does not reduce inventory; only the shipment handoff records goods leaving.</p></div></div>
   <% if (waves.length) { %><div class="rm-list"><% waves.forEach(function(wave){ %>
     <a class="rm-row" href="/warehouse/waves/<%= wave.id %>"><span><strong>Wave #<%= wave.wave_number %> · <%= wave.title %></strong>
       <small><%= wave.shipment_count %> shipments · <%= wave.units %> units</small></span><span class="rm-badge"><%= wave.status %></span></a>
   <% }) %></div><% } else { %><div class="rm-empty"><p>No fulfillment waves yet.</p></div><% } %>
 </section>
 
-<section class="rm-card">
-  <div class="rm-head"><div><p class="rm-eyebrow">Release work</p><h2>Orders with committed stock</h2>
+<section class="rm-panel">
+  <div class="rm-panel__head"><div><p class="rm-kicker">Release work</p><h2>Orders with committed stock</h2>
     <p>One release creates pick cartons and scan lines. It does not issue stock or mark an order fulfilled.</p></div></div>
   <% if (readyOrders.length) { %><form method="post" action="/warehouse/waves" class="rm-form-grid">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="<%= releaseKey %>">
@@ -23,3 +32,5 @@
     <% }) %></fieldset><div class="rm-span-2"><button class="rm-btn" type="submit">Release wave</button></div>
   </form><% } else { %><div class="rm-empty"><p>No allocated customer orders are ready to pick.</p><a href="/orders">Open customer orders</a></div><% } %>
 </section>
+<p class="rm-disclose"><a href="/fulfilment">Single-order fulfillment</a><a href="/transfers">Transfers and in-transit stock</a></p>
+</div>

@@ -37,6 +37,24 @@
   <% }) %></div>
 <% }) %>
 
+<div class="rm-sect" id="payments"><h2>Customer payments</h2><p>Each inventory uses the business’s own Stripe account. Customer money goes to that business, never to a shared StockChief account.</p></div>
+<article class="rm-provider">
+  <div class="rm-provider__h"><span class="rm-provider__mark is-word" aria-hidden="true">S</span><span class="rm-provider__n">Stripe</span>
+    <% if(paymentAccount.connected&&paymentAccount.chargesEnabled){ %><span class="rm-pillbadge is-ok">ready to take payments</span>
+    <% }else if(paymentAccount.connected){ %><span class="rm-pillbadge">connected — Stripe review pending</span><% } %>
+  </div>
+  <% if(paymentAccount.connected){ %>
+    <p><strong><%= paymentAccount.displayName||paymentAccount.accountId %></strong> is connected only to this inventory.</p>
+    <p class="quiet"><%= paymentAccount.liveMode?'Live Stripe account':'Stripe test/sandbox account' %> · <%= paymentAccount.accountId %><% if(paymentAccount.checkedAt){ %> · checked <%= helpers.timeAgo(paymentAccount.checkedAt) %><% } %></p>
+    <% if(paymentAccount.because){ %><div class="rm-note rm-note--warn"><strong>Payments are not ready yet</strong><p><%= paymentAccount.because %></p></div><% } %>
+    <% if(currentUser.role==='owner'){ %><div class="actions"><form method="post" action="/settings/connections/payments/refresh"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--wash" type="submit">Check Stripe status</button></form><form method="post" action="/settings/connections/payments/disconnect" data-confirm="Disconnect this inventory from its Stripe account?"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost" type="submit">Disconnect Stripe</button></form></div><% } %>
+  <% }else if(paymentAccount.available){ %>
+    <p>Sign in on Stripe’s page and choose the existing account this business owns. StockChief keeps the account ID, not a Stripe password or merchant access token.</p>
+    <a class="rm-btn rm-btn--wash" href="/settings/connections/payments/launch?ticket=<%= encodeURIComponent(launchTicket) %>" target="_blank" rel="opener" data-provider-connect>Connect existing Stripe account</a>
+  <% }else{ %><p class="quiet"><%= paymentAccount.because %></p><% } %>
+  <details class="rm-work"><summary>Webhook needed for payment confirmation</summary><div class="rm-work__body"><p>Register this endpoint in the StockChief Stripe platform configuration. It is workspace-safe because every event is checked against the Stripe account connected above.</p><input aria-label="Stripe payment webhook URL" value="<%= paymentWebhookUrl %>" readonly onclick="this.select()"></div></details>
+</article>
+
 <div class="rm-sect" id="custom-system"><h2>Your own system</h2><p>Create a scoped event feed for an ERP, warehouse, or in-house system. The bearer token appears once.</p></div>
 <section class="rm-provider"><form method="post" action="/settings/connections/custom" class="grid">
   <input type="hidden" name="_csrf" value="<%= csrfToken %>"><label class="field"><span class="field-label">Connection name</span><input class="input" name="displayName" required maxlength="100" placeholder="Warehouse ERP"></label><button class="rm-btn rm-btn--wash" type="submit">Create event connection</button>
@@ -50,5 +68,5 @@
 
 <script>
 document.querySelectorAll('[data-provider-connect]').forEach(function(link){link.addEventListener('click',function(event){event.preventDefault();var popup=window.open(link.href,'stockchief-provider-connect','popup=yes,width=720,height=780,resizable=yes,scrollbars=yes');if(!popup){window.location.assign(link.href);return;}popup.focus();});});
-window.addEventListener('message',function(event){if(!event.data||event.data.type!=='foundry:connection-return'||event.origin!==window.location.origin)return;window.location.assign(event.data.returnPath||'/settings/connections');});
+window.addEventListener('message',function(event){if(!event.data||event.data.type!=='foundry:connection-return'||event.origin!==window.location.origin)return;var target=event.data.returnPath||'/settings/connections';var current=window.location.pathname+window.location.search+window.location.hash;if(current===target){window.location.reload();return;}window.location.assign(target);});
 </script>

@@ -4,6 +4,7 @@ const crypto = require('node:crypto');
 const { newId, nowIso } = require('../lib/util');
 const { ValidationError, NotFoundError } = require('../domain/errors');
 const permissions = require('../actions/permissions');
+const capabilityDefinitions = require('./capabilities');
 const transfers = require('../transfers/postgres-transfer-service');
 const workflows = require('../operations/postgres-business-workflows');
 
@@ -67,6 +68,32 @@ async function activePolicy(database,workspaceId,action){const rows=(await datab
   WHERE workspace_id=$1 AND enabled=1 AND approved_at IS NOT NULL AND disabled_at IS NULL ORDER BY version DESC,created_at DESC`,[workspaceId])).rows;
   return rows.map(policyFrom).find((policy)=>policy.actions.includes(action))||null;}
 
+async function listCapabilities(database,workspaceId){const rows=(await database.query(
+  'SELECT capability,granted,updated_at FROM autopilot_capabilities WHERE workspace_id=$1',[workspaceId])).rows;
+  const current=new Map(rows.map((row)=>[row.capability,row]));return capabilityDefinitions.NAMES.map((capability)=>({
+    capability,...capabilityDefinitions.CAPABILITIES[capability],granted:Boolean(Number(current.get(capability)?.granted)),
+    updatedAt:current.get(capability)?.updated_at||null}));}
+
+async function setCapability(database,ctx,membership,capability,granted){if(!capabilityDefinitions.CAPABILITIES[capability])
+  throw new ValidationError(`There is no StockChief job called "${capability}".`);
+  if(granted)assertAdmin(membership);else assertOperate(membership);const at=nowIso();
+  await database.query(`INSERT INTO autopilot_capabilities
+    (workspace_id,capability,granted,granted_by_user_id,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$5)
+    ON CONFLICT(workspace_id,capability) DO UPDATE SET granted=EXCLUDED.granted,
+      granted_by_user_id=EXCLUDED.granted_by_user_id,updated_at=EXCLUDED.updated_at`,
+  [ctx.workspaceId,capability,granted?1:0,ctx.actorId,at]);return listCapabilities(database,ctx.workspaceId);}
+
+async function capabilityMay(database,workspaceId,capability){if(!capabilityDefinitions.CAPABILITIES[capability])
+  throw new ValidationError(`There is no StockChief job called "${capability}".`);const state=await getState(database,workspaceId);
+  if(state.paused)return {allowed:false,because:'StockChief is paused.'};
+  if(state.suspended)return {allowed:false,because:'StockChief has stopped itself and is waiting to be looked at.'};
+  if(state.mode==='OBSERVE')return {allowed:false,because:'StockChief is set to watch only.'};
+  if(!state.canAutomate)return {allowed:false,because:'StockChief is set to ask before acting.'};
+  const row=(await database.query(`SELECT granted FROM autopilot_capabilities
+    WHERE workspace_id=$1 AND capability=$2`,[workspaceId,capability])).rows[0];
+  return Number(row?.granted)===1?{allowed:true,because:null}:{allowed:false,
+    because:`Nobody has authorised StockChief to ${capabilityDefinitions.CAPABILITIES[capability].label.toLowerCase()} on its own.`};}
+
 async function replacePolicy(client,ctx,input){await ensure(client,ctx.workspaceId);const prior=(await client.query(`SELECT * FROM automation_policies
   WHERE workspace_id=$1 AND enabled=1 AND approved_at IS NOT NULL AND disabled_at IS NULL ORDER BY version DESC`,[ctx.workspaceId])).rows
   .find((row)=>parse(row.allowed_action_types,[]).includes(input.action));const at=nowIso();
@@ -105,6 +132,12 @@ async function configureRoutine(database,ctx,membership,input){assertAdmin(membe
       description:'Approve supplier orders inside supplier, per-order and rolling seven-day limits.',supplierScope,
       conditions:['replenishment_evidence','moq_order_multiple_compliant','no_duplicate_incoming_demand','price_within_policy'],
       maximumValue,thresholds:{maxValuePerWeek:weeklyValue}});
+    const at=nowIso();for(const [capability,granted] of [['inventory_transfers',transferEnabled],['replenishment',purchaseEnabled]])
+      await client.query(`INSERT INTO autopilot_capabilities
+        (workspace_id,capability,granted,granted_by_user_id,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$5)
+        ON CONFLICT(workspace_id,capability) DO UPDATE SET granted=EXCLUDED.granted,
+          granted_by_user_id=EXCLUDED.granted_by_user_id,updated_at=EXCLUDED.updated_at`,
+      [ctx.workspaceId,capability,granted?1:0,ctx.actorId,at]);
     if(transferEnabled||purchaseEnabled)await client.query(`UPDATE workspace_autopilot SET mode='POLICY_AUTOMATED',updated_at=$2
       WHERE workspace_id=$1`,[ctx.workspaceId,nowIso()]);return {transferId,purchaseId};},{isolation:'SERIALIZABLE'});}
 
@@ -165,6 +198,8 @@ async function evaluate(database,workspaceId,candidate,state){if(state.mode===MO
   if(state.suspended)return {decision:'refused',reason:state.suspendedReason||'Automatic work is suspended.',policy:null};
   if(state.mode!==MODES.POLICY_AUTOMATED)return {decision:'needs_approval',reason:'This inventory is set to ask before consequential work.',policy:null};
   const action=candidate.type==='transfer'?ACTIONS.TRANSFER:ACTIONS.PURCHASE;const policy=await activePolicy(database,workspaceId,action);
+  const capability=await capabilityMay(database,workspaceId,candidate.type==='transfer'?'inventory_transfers':'replenishment');
+  if(!capability.allowed)return {decision:'needs_approval',reason:capability.because,policy:null};
   if(!policy)return {decision:'needs_approval',reason:'No approved standing authority covers this action.',policy:null};
   if(candidate.type==='transfer'){
     if(policy.locationScope.length&&(!policy.locationScope.includes(candidate.sourceLocationId)||!policy.locationScope.includes(candidate.destinationLocationId)))
@@ -313,14 +348,15 @@ async function cancel(database,ctx,membership,id){assertOperate(membership);cons
   await database.query(`UPDATE work_items SET execution_status='CANCELLED',completed_at=$3 WHERE workspace_id=$1 AND id=$2`,
     [ctx.workspaceId,id,nowIso()]);return getWork(database,ctx.workspaceId,id);}
 
-async function dashboard(database,workspaceId){const [state,policies,locations,suppliers,recent]=await Promise.all([
+async function dashboard(database,workspaceId){const [state,policies,capabilities,locations,suppliers,recent]=await Promise.all([
   ensure(database,workspaceId),listPolicies(database,workspaceId),
+  listCapabilities(database,workspaceId),
   database.query(`SELECT id,name FROM locations WHERE workspace_id=$1 AND is_active=1 ORDER BY name`,[workspaceId]),
   database.query(`SELECT id,name FROM suppliers WHERE workspace_id=$1 AND status='active' ORDER BY name`,[workspaceId]),
   database.query(`SELECT * FROM work_items WHERE workspace_id=$1 AND source='postgres_autopilot' ORDER BY created_at DESC,id DESC LIMIT 30`,[workspaceId])]);
-  return {state,policies,locations:locations.rows,suppliers:suppliers.rows,recent:recent.rows.map(workFrom),
+  return {state,policies,capabilities,locations:locations.rows,suppliers:suppliers.rows,recent:recent.rows.map(workFrom),
     transferPolicy:policies.find((policy)=>policy.active&&policy.actions.includes(ACTIONS.TRANSFER))||null,
     purchasePolicy:policies.find((policy)=>policy.active&&policy.actions.includes(ACTIONS.PURCHASE))||null};}
 
 module.exports={MODES,ACTIONS,STATUSES,ensure,getState,setMode,pause,resume,configureRoutine,replacePolicy,listPolicies,dashboard,plan,run,
-  getWork,approve,cancel,execute,evaluate,revalidate};
+  listCapabilities,setCapability,capabilityMay,getWork,approve,cancel,execute,evaluate,revalidate};
