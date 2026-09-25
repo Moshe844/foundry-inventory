@@ -254,9 +254,9 @@
     <% if (['DRAFT', 'AWAITING_APPROVAL'].includes(order.status)) { %>
       <p class="muted" style="margin-top:8px;">
         <% if (order.isEditable && !order.hasCosts) { %>
-          Nothing was sent to the supplier. Add the missing price above before this order can be approved.
+          Nothing has been sent to <%= order.supplierName %>. Add the missing price above before this order can be approved.
         <% } else { %>
-          Nothing was sent to the supplier. Approving records the order and then follows
+          Nothing has been sent to <%= order.supplierName %>. Approving records the order and then follows
           this supplier's communication rule: send within approved authority, or wait for you to approve the message.
         <% } %>
       </p>
