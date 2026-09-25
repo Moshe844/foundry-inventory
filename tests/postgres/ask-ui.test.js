@@ -7,6 +7,7 @@ const { startCluster }=require('../helpers/postgres-cluster');
 const { openPostgres }=require('../../src/db/postgres');
 const { migratePostgres }=require('../../src/db/migrate-postgres');
 const { createPostgresApp }=require('../../src/postgres-app');
+const commerce=require('../../src/operations/postgres-commerce');
 
 function csrfFrom(html){
   const value=/name="_csrf" value="([^"]+)"/.exec(html)?.[1];
@@ -26,6 +27,7 @@ const provider={name:'fixture',model:'fixture',async complete(request){
   if(message.includes('show me locations'))throw new Error('Exercise deterministic multi-lookup fallback');
   if(message.includes('available, and in which warehouse'))return {data:fields({view:'locations'}),usage:{}};
   if(message.includes('how many'))return {data:fields({search:'Trail Shoe'}),usage:{}};
+  if(message==='Show payment history')return {data:fields({view:'payments'}),usage:{}};
   if(message.includes('Receive seven'))return {data:fields({intent:'action',view:null,action:'receive',sku:'SHOE-BLACK-8',
     location:'Main Warehouse',quantity:7,reference:'ASK-RECEIPT'}),usage:{}};
   if(message.includes('Receive five'))return {data:fields({intent:'action',view:null,action:'receive',sku:'SHOE-BLACK-8',
@@ -80,6 +82,56 @@ test('Ask StockChief grounds answers and executes only an approved PostgreSQL pr
     const financialAnswer=await agent.get('/ask');
     assert.match(financialAnswer.text,/broken even so far this month/i);
     assert.match(financialAnswer.text,/Revenue is/);
+
+    const owner=(await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id FROM workspaces w
+      JOIN users u ON u.workspace_id=w.id AND u.role='owner' WHERE w.name='Ask Business'`)).rows[0];
+    const supplier=await commerce.createSupplier(database,{workspaceId:owner.workspace_id,actorId:owner.actor_id},
+      {name:'Balance Supply',currency:'USD'});
+    const customer=await commerce.createCustomer(database,{workspaceId:owner.workspace_id,actorId:owner.actor_id},
+      {name:'Balance Buyer'});
+    const at='2026-09-24T12:00:00.000Z';
+    await database.query(`INSERT INTO accounting_supplier_bills
+      (id,workspace_id,bill_number,supplier_id,issue_date,status,match_status,currency,subtotal_minor,total_minor,
+       balance_minor,source_key,created_by_user_id,created_at,updated_at,opened_at)
+      VALUES('ask-bill',$1,'BILL-ASK', $2,'2026-09-24','PARTIALLY_PAID','MATCHED','USD',8000,8000,5000,
+        'ask-bill-source',$3,$4,$4,$4)`,[owner.workspace_id,supplier.id,owner.actor_id,at]);
+    await database.query(`INSERT INTO accounting_customer_invoices
+      (id,workspace_id,invoice_number,customer_id,issue_date,status,currency,subtotal_minor,total_minor,balance_minor,
+       source_key,created_by_user_id,created_at,updated_at,opened_at)
+      VALUES('ask-invoice',$1,'INV-ASK',$2,'2026-09-24','PARTIALLY_PAID','USD',12000,12000,7000,
+        'ask-invoice-source',$3,$4,$4,$4)`,[owner.workspace_id,customer.id,owner.actor_id,at]);
+    const balances=await agent.post('/foundry/tell').type('form').send({_csrf:csrfFrom(financialAnswer.text),
+      message:'What do we currently owe suppliers, and what customer money is still outstanding?'});
+    assert.equal(balances.status,303);
+    const balanceAnswer=await agent.get('/ask');
+    assert.match(balanceAnswer.text,/StockChief · part 1 of 2/);
+    assert.match(balanceAnswer.text,/StockChief · part 2 of 2/);
+    assert.match(balanceAnswer.text,/We currently owe suppliers \$50\.00 USD across 1 open supplier bill/);
+    assert.match(balanceAnswer.text,/Customers currently owe us \$70\.00 USD across 1 open customer invoice/);
+    assert.match(balanceAnswer.text,/INV-ASK/);
+    assert.doesNotMatch(balanceAnswer.text,/No payment matched that request/);
+    const balanceTurns=(await database.query(`SELECT intent->>'view' AS view,status FROM stockchief_runtime.assistant_interactions
+      WHERE intent->>'sourceMessage'=$1 ORDER BY (intent->>'requestIndex')::integer`,
+    ['What do we currently owe suppliers, and what customer money is still outstanding?'])).rows;
+    assert.deepEqual(balanceTurns,[{view:'payables',status:'ANSWERED'},{view:'receivables',status:'ANSWERED'}]);
+    const balanceEvidence=(await database.query(`SELECT evidence FROM stockchief_runtime.assistant_interactions
+      WHERE intent->>'sourceMessage'=$1 ORDER BY (intent->>'requestIndex')::integer`,
+    ['What do we currently owe suppliers, and what customer money is still outstanding?'])).rows;
+    assert.equal(balanceEvidence[0].evidence[0].document,'BILL-ASK');
+    assert.equal(balanceEvidence[1].evidence[0].document,'INV-ASK');
+    for(const wording of ['Show AP and AR outstanding.','Any unpaid supplier bills and customer invoices?',
+      'How much is due to vendors and due from customers?']){
+      const page=await agent.get('/ask');
+      await agent.post('/ask').type('form').send({_csrf:csrfFrom(page.text),message:wording});
+      const routed=(await database.query(`SELECT intent->>'view' AS view FROM stockchief_runtime.assistant_interactions
+        WHERE intent->>'sourceMessage'=$1 ORDER BY (intent->>'requestIndex')::integer`,[wording])).rows;
+      assert.deepEqual(routed,[{view:'payables'},{view:'receivables'}]);
+    }
+    const paymentPage=await agent.get('/ask');
+    await agent.post('/ask').type('form').send({_csrf:csrfFrom(paymentPage.text),message:'Show payment history'});
+    const paymentTurn=(await database.query(`SELECT intent->>'view' AS view,answer FROM stockchief_runtime.assistant_interactions
+      WHERE message='Show payment history' ORDER BY created_at DESC,id DESC LIMIT 1`)).rows[0];
+    assert.equal(paymentTurn.view,'payments');assert.match(paymentTurn.answer,/No payment matched/);
 
     const prepared=await agent.post('/ask').type('form').send({_csrf:csrfFrom(answer.text),
       message:'Receive seven SHOE-BLACK-8 into Main Warehouse, reference ASK-RECEIPT'});

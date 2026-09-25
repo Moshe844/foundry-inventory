@@ -14,7 +14,8 @@ const accountingReports = require('../accounting/postgres-reports');
 const { ValidationError, NotFoundError, InvariantError } = require('../domain/errors');
 const { newId, trimOrNull } = require('../lib/util');
 
-const VIEWS = ['inventory','locations','purchase_orders','sales_orders','suppliers','customers','shipping','payments','accounting','connections'];
+const VIEWS = ['inventory','locations','purchase_orders','sales_orders','suppliers','customers','shipping','payments',
+  'payables','receivables','accounting','connections'];
 const ACTIONS = ['receive','issue','transfer','adjust','create_item','create_location','set_price','set_purchase_cost',
   'send_email','create_sales_order','create_purchase_order','receive_purchase_order','record_supplier_payment'];
 const PLAN_PART_SCHEMA = {
@@ -55,6 +56,8 @@ Use instruction for a lasting rule, preference, threshold, supplier term, stock 
 that should continue applying in the future. One-time work is action, not instruction.
 Never invent a product, SKU, location, quantity, reason or reference. Missing values are null.
 view is the business dataset needed for a lookup. action is one of the allowed action values.
+Use payables for open supplier/vendor bills and amounts the business owes. Use receivables for open customer invoices
+and amounts customers owe the business. Use payments only for payment transactions or payment history, never for balances owed.
 search is the exact business name, order number, status or phrase they named, without command words.
 For receive, issue, transfer and adjust, sku is the product/SKU wording exactly as stated.
 For receive and issue, location is the stated place. For transfer, use fromLocation and toLocation.
@@ -122,6 +125,24 @@ function financialSummaryLookup(message){
     || /\b(?:profit|profitable|loss|net income|gross profit|money made|money lost|earnings)\b/.test(text);
 }
 
+function financialBalanceViews(message){
+  const text=String(message||'').toLowerCase();
+  const question=/\b(?:what|which|show|list|tell|how much|how many|any|do|does|are|is)\b/.test(text);
+  if(!question)return [];
+  const payables=/\baccounts? payable\b|\ba\/?p\b|\bpayables?\b|\b(?:supplier|vendor)s?\s+(?:balances?|bills?|invoices?)\b|\b(?:unpaid|open|outstanding|due)\s+(?:supplier|vendor)\s+(?:bills?|invoices?)\b|\b(?:owe|owed|owing)\s+(?:to\s+)?(?:our\s+)?(?:supplier|vendor)s?\b|\bdue\s+to\s+(?:our\s+)?(?:supplier|vendor)s?\b/.test(text)
+    || /\bwhat\s+(?:do|does)\s+(?:we|i|the business|our business|my business)\s+owe\b/.test(text);
+  const receivables=/\baccounts? receivable\b|\ba\/?r\b|\breceivables?\b|\bcustomer\s+(?:balances?|invoices?|money)\b|\b(?:unpaid|open|outstanding|due)\s+customer\s+(?:balances?|invoices?|money)\b|\bcustomers?\s+(?:owe|owes|owed|owing)\s+(?:us|me|the business)\b|\bdue\s+from\s+(?:our\s+)?customers?\b/.test(text)
+    || /\bwhat\s+(?:do|does)\s+(?:our\s+)?customers?\s+owe\b/.test(text);
+  return [...(payables?['payables']:[]),...(receivables?['receivables']:[])];
+}
+
+function financialBalancePlans(requestText,intent=null){
+  const views=financialBalanceViews(requestText);
+  if(!views.length)return [];
+  return views.map((view)=>({requestText,intent:{...(intent||cleanPlan(null,requestText)),intent:'lookup',view,
+    action:null,search:views.length===1?trimOrNull(intent?.search):null}}));
+}
+
 function lookupSearchPatterns(value){
   const original=trimOrNull(value);
   if(!original)return [];
@@ -167,6 +188,8 @@ function fallbackPlan(message) {
   let view='inventory';
   if(/\b(purchase order|po\b|buy|supplier order|incoming)\b/.test(lower))view='purchase_orders';
   else if(/\b(sales order|customer order|orders? from customer)\b/.test(lower))view='sales_orders';
+  else if(financialBalanceViews(text).includes('payables'))view='payables';
+  else if(financialBalanceViews(text).includes('receivables'))view='receivables';
   else if(/\bsuppliers?\b/.test(lower))view='suppliers';
   else if(/\bcustomers?\b/.test(lower))view='customers';
   else if(/\b(ship|shipment|tracking|carrier|delivery)\b/.test(lower))view='shipping';
@@ -235,15 +258,18 @@ function cleanPlan(raw,message) {
 
 async function planMany(message,options={}) {
   const provider=options.provider || (config.ai.configured?createProviderUnobserved(config.ai.provider,config.ai.tier('fast')):null);
-  if(!provider)return splitRequestTexts(message).map((requestText)=>({requestText,intent:cleanPlan(null,requestText)}));
+  if(!provider)return splitRequestTexts(message).flatMap((requestText)=>financialBalancePlans(requestText)
+    .concat(financialBalanceViews(requestText).length?[]:[{requestText,intent:cleanPlan(null,requestText)}])).slice(0,8);
   try {
     const response=await provider.complete({system:SYSTEM,prompt:JSON.stringify({message}),schema:PLAN_SCHEMA,
       schemaName:'stockchief_postgres_request'});
     const rawParts=Array.isArray(response.data?.parts)&&response.data.parts.length?response.data.parts:[response.data];
-    return rawParts.slice(0,8).map((raw)=>{const requestText=trimOrNull(raw?.requestText)||message;
-      return {requestText,intent:cleanPlan(raw,requestText)};});
+    return rawParts.slice(0,8).flatMap((raw)=>{const requestText=trimOrNull(raw?.requestText)||message;
+      const intent=cleanPlan(raw,requestText);const balances=intent.intent==='lookup'?financialBalancePlans(requestText,intent):[];
+      return balances.length?balances:[{requestText,intent}];}).slice(0,8);
   } catch {
-    return splitRequestTexts(message).map((requestText)=>({requestText,intent:cleanPlan(null,requestText)}));
+    return splitRequestTexts(message).flatMap((requestText)=>financialBalancePlans(requestText)
+      .concat(financialBalanceViews(requestText).length?[]:[{requestText,intent:cleanPlan(null,requestText)}])).slice(0,8);
   }
 }
 
@@ -355,6 +381,25 @@ async function lookup(database,ctx,request) {
       amount:Number(row.amount_minor),currency:row.currency,date:row.payment_date},`/accounting/payments/${row.id}`));
     return {answer:rows.length?`${rows.length} payment record${rows.length===1?'':'s'} matched.`:'No payment matched that request.',
       rows,columns:['party','direction','status','amount','currency','date']};
+  }
+  if(['payables','receivables'].includes(request.view)){
+    const payable=request.view==='payables';const table=payable?'accounting_supplier_bills':'accounting_customer_invoices';
+    const parties=payable?'suppliers':'customers';const partyKey=payable?'supplier_id':'customer_id';
+    const documentColumn=payable?'bill_number':'invoice_number';const href=payable?'/accounting/payables':'/accounting/receivables';
+    const result=await database.query(`SELECT d.id,d.${documentColumn} AS document,d.status,d.due_date,d.currency,
+      d.balance_minor,p.name AS party FROM ${table} d JOIN ${parties} p ON p.id=d.${partyKey}
+      WHERE d.workspace_id=$1 AND d.status IN ('OPEN','PARTIALLY_PAID') AND d.balance_minor>0
+      AND ($2::text IS NULL OR p.name ILIKE '%'||$2||'%' OR d.${documentColumn} ILIKE '%'||$2||'%')
+      ORDER BY COALESCE(d.due_date,'9999-12-31'),d.created_at DESC LIMIT 100`,[ctx.workspaceId,search]);
+    const rows=result.rows.map((row)=>evidenceRow({party:row.party,document:row.document,status:row.status,
+      due:row.due_date||'Not set',balance:pricing.formatMinor(Number(row.balance_minor),row.currency),currency:row.currency},href));
+    const totals=new Map();for(const row of result.rows)totals.set(row.currency,(totals.get(row.currency)||0)+Number(row.balance_minor));
+    const totalText=[...totals.entries()].map(([currency,amount])=>`${pricing.formatMinor(amount,currency)} ${currency}`).join(' and ');
+    const noun=payable?'open supplier bill':'open customer invoice';
+    const answer=rows.length
+      ?`${payable?'We currently owe suppliers':'Customers currently owe us'} ${totalText} across ${rows.length} ${noun}${rows.length===1?'':'s'}.`
+      :payable?'We currently owe suppliers nothing on open bills.':'Customers currently owe us nothing on open invoices.';
+    return {answer,rows,columns:['party','document','status','due','balance','currency']};
   }
   const rows=(await database.query(`WITH committed AS (
       SELECT sol.sku_id,SUM(a.quantity) AS quantity FROM sales_order_allocations a
