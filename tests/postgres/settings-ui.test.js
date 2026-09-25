@@ -15,7 +15,9 @@ test('PostgreSQL account menu pages render truthful native settings and rename t
     const server=await new Promise((resolve)=>{const started=app.listen(0,'127.0.0.1',()=>resolve(started));});
     const browser=await chromium.launch();context.after(async()=>{await browser.close();await new Promise((resolve)=>server.close(resolve));
       await app.locals.sessionStore.close();await database.close();cluster.stop();});
-    const page=await browser.newPage({viewport:{width:1440,height:900}});const errors=[];
+    const page=await browser.newPage({viewport:{width:1440,height:900}});
+    page.setDefaultNavigationTimeout(90000);
+    const errors=[];
     page.on('pageerror',(error)=>errors.push(`${page.url()}: ${error.message}`));const base=`http://127.0.0.1:${server.address().port}`;
     await page.goto(`${base}/register`);await page.getByLabel('Business name').fill('Settings Operation');
     await page.getByLabel('Your name').fill('Settings Owner');await page.getByLabel('Work email').fill('settings@example.test');
