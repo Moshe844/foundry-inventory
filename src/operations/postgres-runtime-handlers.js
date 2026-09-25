@@ -16,6 +16,9 @@ const accountingSync=require('../accounting/postgres-integration-sync');
 const paymentProviders=require('../payments');
 const providerEffects=require('./postgres-provider-effects');
 const config=require('../config');
+const email=require('./email');
+const monitoring=require('./postgres-monitoring');
+const checkpoints=require('./postgres-checkpoints');
 
 function milliseconds(value){return Number(value || Date.now());}
 function scopedDatabase(client){return {query:(statement,values=[])=>client.query(statement,values),
@@ -107,7 +110,7 @@ async function mailboxPushRenewal(job,client,providers=defaultProviders,options=
     expiresAt:Number.isFinite(renewedExpiration)?renewedExpiration:null};
 }
 
-async function runtimeSweep(job,client){
+async function runtimeSweep(job,client,options={}){
   const now=milliseconds(job.payload?.now);const at=new Date(now).toISOString();
   const staleImportAt=new Date(now-15*60_000).toISOString();
   const staleEmailAt=new Date(now-5*60_000).toISOString();
@@ -217,6 +220,14 @@ async function runtimeSweep(job,client){
       }
     }
   }
+  let scheduledAlertDeliveries=0;
+  const alertWebhookUrl=options.alertWebhookUrl===undefined?config.operations.alertWebhookUrl:options.alertWebhookUrl;
+  if(alertWebhookUrl){const alerts=(await client.query(`SELECT id,workspace_id,occurrence_count FROM operational_alerts
+      WHERE status='OPEN' ORDER BY first_seen_at,id LIMIT 100`)).rows;
+    for(const alert of alerts){const scheduled=await jobs.enqueue(scopedDatabase(client),{workspaceId:alert.workspace_id,
+      kind:'system.alert-delivery',idempotencyKey:`alert-delivery:${alert.id}:${alert.occurrence_count}`,
+      payload:{alertId:alert.id},priority:5,maxAttempts:8,availableAt:now,now});
+      if(scheduled.created)scheduledAlertDeliveries+=1;}}
   const autonomyDue=(await client.query(`SELECT w.id AS workspace_id,u.id AS actor_id
     FROM workspaces w JOIN LATERAL (SELECT id FROM users WHERE workspace_id=w.id AND role='owner' ORDER BY created_at,id LIMIT 1) u ON true
     LEFT JOIN workspace_autopilot a ON a.workspace_id=w.id
@@ -233,7 +244,7 @@ async function runtimeSweep(job,client){
   return {expiredSessions:sessions.rowCount,recoveredImports:staleImports.rowCount,
     ambiguousEmails:uncertainEmails.rowCount,ambiguousProviderEffects:staleProviderEffects.rowCount,
     staleConnectors,recoveredConnectors,scheduledMailboxPolls,
-    scheduledMailboxRenewals,scheduledAutopilotChecks,at};
+    scheduledMailboxRenewals,scheduledAlertDeliveries,scheduledAutopilotChecks,at};
 }
 
 async function autopilotEvaluate(job,client){
@@ -270,7 +281,24 @@ async function providerEffect(job,database,options={},providers=defaultProviders
     {code:'provider_effect_handler_missing',retryable:false});
 }
 
-function create(providers=defaultProviders,options={}){return {'system.runtime-sweep':runtimeSweep,
+async function alertDelivery(job,database,options={}){
+  if(!job.payload?.alertId)throw Object.assign(new Error('An alert delivery needs alert identity.'),
+    {code:'invalid_alert_delivery',retryable:false});
+  return monitoring.deliver(database,job.workspaceId,job.payload.alertId,{url:options.alertWebhookUrl,
+    token:options.alertWebhookToken,publicOrigin:options.publicOrigin,fetch:options.fetch});
+}
+
+async function systemEmail(job,database,options={}){
+  const message=email.unseal(job.payload);const sender=options.emailSender||email.sendResend;
+  const result=await sender(message,options.emailOptions||{});
+  if(job.payload?.messageType==='password_reset')await checkpoints.record(database,'password_recovery.delivery','PASS',{
+    provider:result.provider||'configured',externalId:result.externalId||null,releaseRef:config.operations.releaseRef});
+  return result;
+}
+
+function create(providers=defaultProviders,options={}){return {'system.runtime-sweep':(job,client)=>runtimeSweep(job,client,options),
+  'system.alert-delivery':external((job,database)=>alertDelivery(job,database,options)),
+  'system.email-send':external((job,database)=>systemEmail(job,database,options)),
   'mailbox.poll':(job,client)=>mailboxPoll(job,client,providers),
   'mailbox.renew-push':(job,client)=>mailboxPushRenewal(job,client,providers,options),
   'provider.catalog-sync':(job,client)=>providerSync.sync(job,client,providers),
@@ -278,4 +306,4 @@ function create(providers=defaultProviders,options={}){return {'system.runtime-s
   'autopilot.evaluate':autopilotEvaluate};}
 
 module.exports={create,runtimeSweep,mailboxPoll,mailboxPushRenewal,mailboxWebhookUrl,pushExpiration,autopilotEvaluate,
-  providerEffect};
+  providerEffect,alertDelivery,systemEmail};

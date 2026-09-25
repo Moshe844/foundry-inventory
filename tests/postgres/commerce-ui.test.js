@@ -66,7 +66,9 @@ test('real Chromium runs PostgreSQL purchasing, receiving, supplier money, custo
     await page.getByLabel('Cost per inventory unit').fill('8.00');
     await Promise.all([page.waitForURL(/\/purchasing\/orders\/po_/),page.getByRole('button',{name:'Prepare purchase order'}).click()]);
     const purchaseOrderId=page.url().split('/').pop();
-    assert.match(await page.locator('main').innerText(),/Nothing was sent to the supplier/);
+    assert.match(await page.locator('main').innerText(),/Nothing has been sent to Boot Supply/);
+    assert.equal((await database.query('SELECT status FROM purchase_orders WHERE workspace_id=$1 AND id=$2',
+      [ctx.workspaceId,purchaseOrderId])).rows[0].status,'DRAFT');
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve order'}).click()]);
     assert.match(await page.locator('main').innerText(),/has not been sent yet/);
     await page.getByLabel('Supplier confirmation').fill('SUP-PO-1');
