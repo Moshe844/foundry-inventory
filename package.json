@@ -41,6 +41,7 @@
     "restore:test:postgres": "node scripts/verify-postgres-restore.js",
     "certify:browser": "node scripts/certify-browser-regression.js",
     "certify:adversarial": "node scripts/certify-adversarial.js",
+    "certify:adversarial:postgres": "node scripts/certify-adversarial-postgres.js",
     "certify:load": "node scripts/load-soak.js",
     "certify:worker": "node scripts/worker-throughput.js",
     "certify:worker:postgres": "node scripts/worker-throughput-postgres.js",
