@@ -35,6 +35,22 @@ node scripts/verify-restore.js C:\path\to\downloaded-backup.sqlite --production-
 Do not use those flags for a local-only rehearsal. Production readiness requires
 both `productionLike` and `hostingVerified` evidence.
 
+## PostgreSQL staging and production
+
+Create the dump on the live service, restore it only into a separate empty
+PostgreSQL database, and record provider evidence back in the live database:
+
+```powershell
+npm run backup:postgres
+$env:FOUNDRY_RESTORE_DATABASE_URL='postgresql://...separate-empty-database...'
+node scripts/verify-postgres-restore.js data/postgres-backups/stockchief-postgres-....dump --production-like --hosting-provider Render --hosting-evidence RESTORE_DATABASE_OR_RUN_ID
+```
+
+The verifier rejects the live database as a restore target, requires the target
+to be empty, validates the dump checksum, compares every restored table and
+critical total, and checks that restored journals balance. A local restore may
+omit the three hosting flags, but it does not pass the production restore gate.
+
 ## Recovery
 
 1. Stop StockChief so no process writes the live database.
