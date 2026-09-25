@@ -430,7 +430,10 @@ async function createSalesOrderInTransaction(client, rawContext, input) {
     if (operation.replayed) return { ...operation.result, replayed: true };
     const customer = await requireRow(client, 'SELECT * FROM customers WHERE id=$1 AND workspace_id=$2 AND record_state=$3',
       [input.customerId, ctx.workspaceId, 'ACTIVE'], 'Choose an active customer from this inventory.');
-    if ((input.deliveryMethod || 'SHIP') !== 'PICKUP' && !trimOrNull(input.shipToAddress || customer.shipping_address)) {
+    const deliveryMethod = input.deliveryMethod || 'SHIP';
+    const addressWasSubmitted = input.shipToAddress !== undefined;
+    const shipToAddress = addressWasSubmitted ? trimOrNull(input.shipToAddress) : trimOrNull(customer.shipping_address);
+    if (deliveryMethod !== 'PICKUP' && !shipToAddress) {
       throw new ValidationError('A delivery destination is required before creating a shipped or business-delivered order.');
     }
     const at = nowIso();
@@ -442,8 +445,8 @@ async function createSalesOrderInTransaction(client, rawContext, input) {
        created_by_user_id,created_at,updated_at)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'DRAFT',1,$16,$17,$17)`,
     [id, ctx.workspaceId, customer.id, orderNumber, dateOnly(input.orderDate || at.slice(0, 10), 'Order date'),
-      input.neededBy || null, input.fulfillmentLocationId || null, input.deliveryMethod || 'SHIP',
-      input.shipToAddress || customer.shipping_address || null, input.shipToAddress ? 'order' : 'customer',
+      input.neededBy || null, input.fulfillmentLocationId || null, deliveryMethod,
+      shipToAddress, addressWasSubmitted ? 'order' : 'customer',
       trimOrNull(input.notes), trimOrNull(input.reference), input.currency || 'USD',
       nonNegativeMinor(input.discountMinor || 0, 'Discount'), nonNegativeMinor(input.taxMinor || 0, 'Tax'), ctx.actorId, at]);
     const lineIds = [];

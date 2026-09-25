@@ -33,6 +33,25 @@ test('real Chromium runs PostgreSQL purchasing, receiving, supplier money, custo
     const location=await locations.createLocation(database,ctx,{name:'Commerce Warehouse',kind:'warehouse'});
     const item=await catalog.createItem(database,ctx,{name:'Commerce Boot',baseCode:'BOOT',trackingMode:'quantity',unitLabel:'pair'});
 
+    await page.goto(`${base}/sales/customers/new`);
+    await page.getByLabel('Name',{exact:true}).fill('Address Required Customer');
+    await page.getByLabel('Email for order and shipping messages').fill('address-required@example.test');
+    await page.getByLabel(/Default shipping address/).fill('20 Default Road, Albany, NY 12207, United States');
+    await Promise.all([page.waitForURL(`${base}/orders`),page.getByRole('button',{name:'Create customer'}).click()]);
+    const addressCustomer=(await database.query(`SELECT id FROM customers WHERE workspace_id=$1 AND name=$2`,
+      [ctx.workspaceId,'Address Required Customer'])).rows[0];
+    await page.goto(`${base}/orders/new?customer=${addressCustomer.id}`);
+    const destination=page.getByLabel('Delivery address for this order');
+    assert.match(await destination.inputValue(),/20 Default Road/);
+    await destination.fill('');
+    await page.getByLabel('Product or variant').selectOption(item.skuIds[0]);
+    await page.getByLabel('Quantity').fill('1');
+    await page.getByLabel('Price if not set').fill('15.00');
+    await page.locator('#order-confirm-button').click();
+    assert.equal(page.url(),`${base}/orders/new?customer=${addressCustomer.id}`);
+    assert.equal(await destination.evaluate((element)=>element.validity.valueMissing),true);
+    assert.equal((await database.query('SELECT COUNT(*) AS count FROM sales_orders')).rows[0].count,'0');
+
     await page.goto(`${base}/suppliers`);
     await page.getByText('Add a supplier',{exact:true}).first().click();
     const supplierForm=page.locator('details').filter({hasText:'Add a supplier'});

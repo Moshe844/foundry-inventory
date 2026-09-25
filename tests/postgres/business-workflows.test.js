@@ -133,6 +133,13 @@ test('PostgreSQL purchasing, receiving, sales and payments remain one reconciled
     assert.equal(supplierPartPayment.balanceMinor, 5000);
     assert.equal(supplierPartPayment.status, 'PARTIALLY_PAID');
 
+    await assert.rejects(workflows.createSalesOrder(database, ctx, {
+      customerId: 'customer', deliveryMethod: 'SHIP', shipToAddress: null,
+      idempotencyKey: 'sales:create:cleared-address',
+      lines: [{ skuId: 'sku', quantity: 1, unitPriceMinor: 1500 }],
+    }), /delivery destination is required/i);
+    assert.equal((await database.query('SELECT COUNT(*) AS count FROM sales_orders')).rows[0].count, '0');
+
     const order = await workflows.createSalesOrder(database, ctx, {
       customerId: 'customer', deliveryMethod: 'SHIP', idempotencyKey: 'sales:create:1',
       lines: [{ skuId: 'sku', quantity: 8, unitPriceMinor: 1500 }],
