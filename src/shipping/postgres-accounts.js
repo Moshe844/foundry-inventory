@@ -3,6 +3,8 @@
 const { ValidationError,NotFoundError }=require('../domain/errors');
 const { newId,nowIso,requireText }=require('../lib/util');
 const credentials=require('../connections/postgres-credential-store');
+const entitlements=require('../entitlements/postgres-service');
+const commercial=require('../commercial/service');
 
 const PROVIDERS=['shipengine','shipstation','easypost','shippo'];
 const KEY_FIELD={shipengine:'shipengineApiKey',shipstation:'shipstationApiKey',
@@ -60,6 +62,8 @@ async function connect(database,ctx,input={}){
         setup_status='CONNECTED',last_error=NULL,credential_ref=$3,authorized_by_user_id=$4,updated_at=$5
         WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,id,`connection_credentials:${id}`,ctx.actorId,now]);
     }else{
+      const commercialScope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId);
+      await entitlements.assertMeterCapacity(client,commercialScope,'connections',1);
       await client.query(`INSERT INTO workspace_connectors
         (id,workspace_id,connector_key,display_name,provider_type,provides,config,status,capabilities,
          credential_ref,setup_status,authorized_by_user_id,created_at,updated_at)
@@ -71,6 +75,9 @@ async function connect(database,ctx,input={}){
     await client.query(`UPDATE workspace_connectors SET status='disconnected',paused_at=$3,updated_at=$3
       WHERE workspace_id=$1 AND provider_type=ANY($2::text[]) AND id<>$4 AND status='connected'`,
     [ctx.workspaceId,PROVIDERS,now,id]);
+    const commercialScope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId);
+    await commercial.trackOnce(client,{eventName:'first_integration_connected',accountId:commercialScope.accountId,
+      sourcePath:'shipping_connection',detail:{providerType:provider}});
     return id;
   },{isolation:'SERIALIZABLE',retrySafe:true});
   return describe(database,ctx.workspaceId,connectorId);

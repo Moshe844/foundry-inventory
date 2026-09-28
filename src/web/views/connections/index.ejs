@@ -48,6 +48,14 @@
   var apiClients = typeof apiClients === 'undefined' ? [] : apiClients;
   var outboundWebhooks = typeof outboundWebhooks === 'undefined' ? [] : outboundWebhooks;
   var postgresMode = typeof postgresMode !== 'undefined' && postgresMode;
+  var includedCommercialCapabilities = new Set(typeof commercialCapabilities === 'undefined' ? [] : commercialCapabilities);
+  var commercialPlanUnrestricted = typeof commercialDevelopment === 'undefined' ? true : commercialDevelopment;
+  function providerCommercialCapability(type) {
+    if (['gmail', 'microsoft365'].includes(type)) return 'connection.email';
+    if (['shopify', 'square', 'clover', 'woocommerce'].includes(type)) return 'connection.commerce';
+    if (['quickbooks', 'xero'].includes(type)) return 'connection.accounting';
+    return null;
+  }
 
   // An account Stripe created but never finished is not a connection. It is
   // said once, here, and every branch below reads it rather than deciding again.
@@ -221,13 +229,17 @@
     <% groupProviders.forEach(function (provider) {
          var alreadyConnected = activeConnections.some(function (connection) {
            return connection.provider_type === provider.type && connection.status === 'connected';
-         }); %>
+         });
+         var requiredCommercialCapability = providerCommercialCapability(provider.type);
+         var includedOnPlan = commercialPlanUnrestricted || !requiredCommercialCapability
+           || includedCommercialCapabilities.has(requiredCommercialCapability); %>
       <div class="rm-provider">
         <div class="rm-provider__top">
           <span class="rm-provider__mark <%= String(provider.mark).length > 2 ? 'is-word' : '' %>" aria-hidden="true"><%= provider.mark %></span>
           <span class="rm-provider__n"><%= provider.name %></span>
           <span class="rm-provider__s">
             <% if (alreadyConnected) { %><span class="rm-pillbadge is-ok">Connected</span>
+            <% } else if (!includedOnPlan) { %><span class="rm-pillbadge">Growth</span>
             <% } else if (!provider.available) { %><span class="rm-pillbadge">Not available here</span><% } %>
           </span>
         </div>
@@ -235,6 +247,9 @@
 
         <% if (currentUser.role !== 'owner') { %>
           <p class="quiet">An owner can connect this</p>
+        <% } else if (!includedOnPlan) { %>
+          <p class="quiet">Available on Growth. Let StockChief bring this system into the operation automatically.</p>
+          <a class="rm-btn rm-btn--wash" href="/upgrade?capability=<%= encodeURIComponent(requiredCommercialCapability) %>&return=<%= encodeURIComponent('/settings/connections') %>">See Growth</a>
         <% } else if (!provider.available) { %>
           <p class="quiet"><%= provider.unavailableReason %></p>
         <% } else if (provider.type === 'reference_webhook' || provider.integrationMode === 'custom_contract') { %>

@@ -4,10 +4,11 @@ const express = require('express');
 const permissions = require('../../actions/permissions');
 const planning = require('../../forecasting/postgres-planning-service');
 const { requireAuth, requirePermission, asyncRoute } = require('../middleware');
+const {requireCapability}=require('../commercial-middleware');
 
 function createPostgresPlanningRouter(database) {
   const router = express.Router();
-  router.use('/planning', requireAuth);
+  router.use('/planning', requireAuth,requireCapability(database,'forecasting.basic'));
   router.get('/planning', asyncRoute(async (req, res) => res.page('planning/postgres-index', {
     title:'What happens next',nav:'inventory',room:true,...await planning.overview(database,req.ctx.workspaceId),
     canOperate:permissions.can(req.user,permissions.OPERATE),canAdmin:permissions.can(req.user,permissions.ADMIN),

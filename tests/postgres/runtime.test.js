@@ -25,7 +25,7 @@ test('native PostgreSQL transactions and queue fencing', { timeout: 120000 }, as
     '011-provider-effects.sql','012-email-provider-effects.sql','013-payment-provider-effects.sql',
     '014-payment-deposits-refunds.sql', '015-operational-scope.sql', '016-assistant-pricing-actions.sql',
     '017-assistant-communication-actions.sql', '018-assistant-order-actions.sql',
-    '019-assistant-receiving-payment-actions.sql']);
+    '019-assistant-receiving-payment-actions.sql', '020-commercial-platform.sql', '021-review-commercial-packaging.sql']);
   assert.deepEqual(await migratePostgres(second), []);
   await database.query(`INSERT INTO accounts(id, email, name, password_hash, created_at)
     VALUES ('account-one', 'one@example.test', 'One', 'test', '2026-09-23T00:00:00.000Z'),
@@ -100,6 +100,9 @@ test('native PostgreSQL transactions and queue fencing', { timeout: 120000 }, as
         WHERE sid='shared-session'`)).rows[0].expires_at);
       assert.ok(after > before);
       await database.query(`UPDATE stockchief_runtime.sessions SET expires_at=0 WHERE sid='shared-session'`);
+      await call(secondStore, 'touch', 'shared-session', { accountId: 'account-one', cookie: { maxAge: 120000 } });
+      assert.equal(Number((await database.query(`SELECT expires_at FROM stockchief_runtime.sessions
+        WHERE sid='shared-session'`)).rows[0].expires_at), 0);
       assert.equal(await call(firstStore, 'get', 'shared-session'), null);
       await firstStore.sweep();
       assert.equal((await database.query(`SELECT COUNT(*) AS count FROM stockchief_runtime.sessions

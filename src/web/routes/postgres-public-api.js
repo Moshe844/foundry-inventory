@@ -4,6 +4,7 @@ const express=require('express');
 const publicApi=require('../../connections/postgres-public-api');
 const inventory=require('../../domain/postgres-inventory-engine');
 const {DomainError,ValidationError}=require('../../domain/errors');
+const entitlements=require('../../entitlements/postgres-service');
 
 function decodeCursor(value){
   if(!value)return null;
@@ -28,7 +29,9 @@ function apiError(res,error){
 
 function route(scope,handler){
   return async(req,res)=>{
-    try{return await handler(await publicApi.authenticate(req.app.locals.database,req.get('authorization'),scope),req,res);}
+    try{const auth=await publicApi.authenticate(req.app.locals.database,req.get('authorization'),scope);
+      if(scope.endsWith(':write'))await entitlements.assertWorkspaceOperational(req.app.locals.database,auth.workspaceId);
+      return await handler(auth,req,res);}
     catch(error){return apiError(res,error);}
   };
 }

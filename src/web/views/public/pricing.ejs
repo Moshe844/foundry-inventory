@@ -1,0 +1,39 @@
+<% var capabilityLabels={
+  'inventory.core':'Inventory, products, variants and locations','sales_orders':'Customer orders and commitments',
+  'purchasing':'Purchase orders and receiving','suppliers':'Supplier records and terms','needs_you':'Prioritized exception inbox',
+  'ask_stockchief':'Ask StockChief with live business data','merchant_payments':'Customer payments through your Stripe account',
+  'shipping.workflow':'Shipping preparation and tracking','connection.email':'Connected supplier and customer email',
+  'email.auto_extract':'Automatic business-email and document processing','email.response_generation':'Prepared supplier and customer replies',
+  'connection.commerce':'Shopify, Square, Clover and WooCommerce connections','connection.accounting':'QuickBooks and Xero connections',
+  'shipping.automation':'Automated shipping within your rules','accounting.explanations':'Evidence-backed accounting explanations',
+  'payment_requests.automatic':'Automatic payment requests','forecasting.basic':'Demand and stockout forecasting',
+  'forecasting.advanced':'Advanced demand forecasting','replenishment.adaptive':'Adaptive reorder and transfer optimization',
+  'supplier_intelligence.advanced':'Supplier performance intelligence','authority.advanced':'Advanced authority and automatic-work policies',
+  'multi_location.advanced':'Advanced multi-location optimization','email.auto_send':'Authorized automatic communication',
+  'support.priority':'Priority support','sso.saml':'SAML single sign-on','roles.custom':'Custom roles and access structures',
+  'retention.custom':'Custom data retention','security.advanced':'Advanced security controls','integrations.custom':'Custom integrations','sla':'Contracted SLA'
+}; var highlightOrder=['inventory.core','sales_orders','purchasing','needs_you','ask_stockchief','merchant_payments','shipping.workflow',
+  'connection.email','email.auto_extract','email.response_generation','connection.commerce','connection.accounting','shipping.automation',
+  'accounting.explanations','payment_requests.automatic','forecasting.advanced','replenishment.adaptive','supplier_intelligence.advanced',
+  'authority.advanced','multi_location.advanced','email.auto_send','support.priority','sso.saml','roles.custom','security.advanced','integrations.custom','sla'];
+  function capabilityLabel(key){return capabilityLabels[key]||key.replaceAll('.',' ').replaceAll('_',' ').replace(/\b\w/g,function(letter){return letter.toUpperCase();});}
+%>
+<section class="pub-pricing-head"><span class="pub-eyebrow">PRICING BY OPERATIONAL AUTONOMY</span><h1>Choose how much work StockChief takes off your plate.</h1><p>Every plan includes a serious inventory operating system. Higher plans add communication, intelligence, volume and authority—not basic access to your own records.</p><div class="billing-switch" data-billing-switch><button class="is-active" data-interval="monthly" type="button">Monthly</button><button data-interval="annual" type="button">Annual</button></div></section>
+<% if (checkoutCancelled) { %><div class="pub-notice">Checkout was cancelled. Nothing was charged and your selected plan is still here.</div><% } %>
+<section class="plan-grid">
+  <% plans.forEach(function(plan){ var monthly=Number(plan.monthly_amount_minor||0)/100; var annual=Number(plan.annual_amount_minor||0)/100; %>
+    <article class="plan-card <%= plan.is_recommended ? 'plan-card--featured' : '' %>" id="<%= plan.id %>">
+      <% if(plan.is_recommended){ %><span class="plan-card__flag">Recommended</span><% } %><h2><%= plan.public_name %></h2><p class="plan-card__audience"><%= plan.audience %></p>
+      <% if(plan.sales_only){ %><div class="plan-price"><strong>Custom</strong><span>typically $2,000+/month</span></div><% } else { %><div class="plan-price" data-monthly="$<%= monthly.toLocaleString('en-US') %>" data-annual="$<%= Math.round(annual/12).toLocaleString('en-US') %>" data-annual-note="<%= annual.toLocaleString('en-US',{style:'currency',currency:plan.currency,maximumFractionDigits:0}) %> billed annually"><strong>$<%= monthly.toLocaleString('en-US') %></strong><span>/ month</span><small data-price-note>Billed monthly</small></div><% } %>
+      <p class="plan-outcome"><%= plan.outcome %></p>
+      <ul><% var enabled=new Set(plan.entitlements.filter(function(e){return Number(e.enabled)}).map(function(e){return e.capability;}));
+        highlightOrder.filter(function(key){return enabled.has(key);}).slice(0,7).forEach(function(key){ %><li><%= capabilityLabel(key) %></li><% }); %></ul>
+      <% var processing=plan.meters.find(function(meter){return meter.meter==='processing_units';}); var locations=plan.meters.find(function(meter){return meter.meter==='locations';}); %>
+      <p class="plan-usage"><strong>Included:</strong> <%= processing&&processing.included_units!==null?Number(processing.included_units).toLocaleString('en-US')+' business processing units/month':'custom processing volume' %><%= locations&&locations.hard_limit!==null?' · '+locations.hard_limit+' locations':'' %></p>
+      <% if(plan.sales_only){ %><a class="pub-btn pub-btn--secondary pub-btn--block" href="/contact?plan=enterprise">Contact StockChief directly</a><% } else if(account){ %><form method="post" action="/billing/checkout" data-checkout-form><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="planId" value="<%= plan.id %>"><input type="hidden" name="interval" value="monthly"><button class="pub-btn pub-btn--block" type="submit">Choose <%= plan.public_name %></button></form><% } else { %><a class="pub-btn pub-btn--block" href="/register?plan=<%= plan.id %>&interval=monthly" data-plan-link data-plan="<%= plan.id %>">Choose <%= plan.public_name %></a><% } %>
+    </article>
+  <% }); %>
+</section>
+<section class="pub-section pub-roi"><div><span class="pub-eyebrow">THE BUSINESS CASE</span><h2>Not another tool to manage.</h2><p>At Growth and Pro, the value is the supplier follow-up, replenishment work, shipping preparation, payment chasing and reconciliation that your team no longer has to perform manually.</p></div><div class="pub-roi__math"><span>5 hours/week recovered</span><b>≈ 260 hours/year</b><small>Before counting avoided stockouts, duplicate orders or missed follow-up.</small></div></section>
+<section class="pub-section"><details class="feature-compare"><summary>Compare all proposed plan capabilities <span>Expand</span></summary><div class="compare-table"><div class="compare-row compare-row--head"><b>Capability</b><b>Starter</b><b>Growth</b><b>Pro</b><b>Enterprise</b></div><%
+  var capabilities=[...new Set(plans.flatMap(function(p){return p.entitlements.map(function(e){return e.capability;});}))]; capabilities.sort(function(a,b){return highlightOrder.indexOf(a)-highlightOrder.indexOf(b);}); capabilities.forEach(function(capability){ %><div class="compare-row"><span><%= capabilityLabel(capability) %></span><% plans.forEach(function(plan){var found=plan.entitlements.find(function(e){return e.capability===capability&&Number(e.enabled);});%><b><%= found?'✓':'—' %></b><% }); %></div><% }); %></div></details><p class="pub-fineprint">Launch packaging is centrally configurable. Entitlements, limits, prices, trials and overages can be revised without changing product code.</p></section>

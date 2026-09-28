@@ -7,6 +7,8 @@ const permissions = require('../actions/permissions');
 const capabilityDefinitions = require('./capabilities');
 const transfers = require('../transfers/postgres-transfer-service');
 const workflows = require('../operations/postgres-business-workflows');
+const commercial=require('../commercial/service');
+const entitlements=require('../entitlements/postgres-service');
 
 const MODES = Object.freeze({ OBSERVE:'OBSERVE', SUPERVISED:'SUPERVISED', POLICY_AUTOMATED:'POLICY_AUTOMATED' });
 const ACTIONS = Object.freeze({ TRANSFER:'transfer', PURCHASE:'approve_purchase_order' });
@@ -335,6 +337,9 @@ async function execute(database,ctx,workId,{approvedBy=null}={}){
     [ctx.workspaceId,item.id,JSON.stringify(result.movementIds||[]),result.purchaseOrderId||null,JSON.stringify(result),nowIso()]);
     await client.query(`INSERT INTO work_item_events(id,workspace_id,work_item_id,event,detail,actor_user_id,created_at)
       VALUES($1,$2,$3,'completed',$4,$5,$6)`,[newId('wievt'),ctx.workspaceId,item.id,JSON.stringify(result),ctx.actorId,nowIso()]);
+    const commercialScope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId);
+    await commercial.trackOnce(client,{eventName:'first_meaningful_stockchief_action',accountId:commercialScope.accountId,
+      sourcePath:'autopilot',detail:{workItemId:item.id,actionType:action.type}});
     return getWork(scoped,ctx.workspaceId,item.id);},{isolation:'SERIALIZABLE',retrySafe:true});}
 
 async function run(database,ctx){const planned=await plan(database,ctx.workspaceId);let executed=0;

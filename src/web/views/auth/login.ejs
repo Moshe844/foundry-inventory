@@ -1,79 +1,21 @@
 <!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Sign in · StockChief</title>
-  <meta name="description" content="StockChief manages your inventory operation and brings you the exceptions that need your judgement.">
-  <meta property="og:title" content="StockChief — Your inventory operation, managed.">
-  <meta property="og:description" content="StockChief handles routine inventory work and brings you the exceptions that need your judgement.">
-  <meta property="og:image" content="<%= origin %>/og.png">
-  <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:image" content="<%= origin %>/og.png">
-  <%# The first screen anybody sees is the same product as the rest of it: it
-      loads exactly what the application loads, and keeps no private copy of
-      the design in a style block of its own. %>
-  <link rel="stylesheet" href="/app.css">
-  <link rel="stylesheet" href="/product-clarity.css">
-  <link rel="stylesheet" href="/foundry.css">
-  <link rel="stylesheet" href="/room.css">
-  <link rel="stylesheet" href="/design.css?v=<%= typeof assetVersion === 'undefined' ? 'auth' : assetVersion %>">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%235B4BE8'/%3E%3Cpath d='M6 8.5 12 5.8l6 2.7v6L12 17.2 6 14.5z' fill='none' stroke='white' stroke-width='1.5' stroke-linejoin='round'/%3E%3C/svg%3E">
-</head>
-<body>
-<div class="auth">
-  <div class="auth-card">
-    <div class="auth-brand">
-      <span class="brand-mark">
-        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M4 8.2 12 4.4l8 3.8v7.6L12 19.6l-8-3.8z"/><path d="m4 8.2 8 3.8 8-3.8M12 12v7.6"/></svg>
-      </span>
-      <span class="brand-text"><strong>StockChief</strong></span>
-    </div>
-
-    <%# The first screen a stranger sees. Without this it says only "your
-        inventory, exactly as your team left it" — perfectly good for somebody
-        coming back, and meaningless to somebody deciding whether this is even
-        the right kind of product. %>
-    <div class="auth-pitch">
-      <p><strong>StockChief runs your inventory. You handle the exceptions.</strong></p>
-      <p>It keeps the counts, watches what is moving, prepares the routine work — receiving,
-        transfers, what to reorder — and brings you only what needs a person.</p>
-    </div>
-
-    <div class="auth-title">
-      <h1>Sign in</h1>
-      <p>Your inventory, exactly as your team left it.</p>
-    </div>
-
-    <% if (flash && flash.length) { %>
-      <div class="flash-stack">
-        <% flash.forEach(function (message) { %>
-          <div class="flash flash--<%= message.type %>" role="alert"><span><%= message.message %></span></div>
-        <% }) %>
-      </div>
-    <% } %>
-
-    <div class="card">
-      <div class="card-body">
-        <form method="post" action="/login">
-          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-          <input type="hidden" name="next" value="<%= next %>">
-          <div class="field">
-            <label class="label" for="email">Email</label>
-            <input class="input" id="email" name="email" type="email" value="<%= email %>" required autocomplete="username" autofocus>
-          </div>
-          <div class="field">
-            <label class="label" for="password">Password</label>
-            <input class="input" id="password" name="password" type="password" required autocomplete="current-password">
-          </div>
-          <button class="btn btn--primary btn--block" type="submit">Sign in</button>
-          <p class="auth-foot"><a href="/forgot-password">Forgot your password?</a></p>
-        </form>
-      </div>
-    </div>
-
-    <p class="auth-foot">New to StockChief? <a href="/register">Create a workspace</a></p>
-  </div>
-</div>
-</body>
-</html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sign in · StockChief</title>
+<link rel="stylesheet" href="/design.css?v=<%= typeof assetVersion==='undefined'?'auth':assetVersion %>">
+<link rel="stylesheet" href="/commercial.css?v=<%= typeof assetVersion==='undefined'?'auth':assetVersion %>"></head>
+<body class="commercial-auth"><main class="auth-split"><section class="auth-form">
+<a class="pub-brand" href="/"><span class="pub-brand__mark">◇</span><span>StockChief</span></a>
+<div class="auth-form__body"><span class="pub-eyebrow">WELCOME BACK</span><h1>Sign in to your operation.</h1>
+<p>StockChief runs your inventory operation—from reordering and receiving to transfers and shipping. You handle the exceptions that need your judgement.</p>
+<% if(flash&&flash.length){ %><div class="auth-messages"><% flash.forEach(function(message){ %><div class="auth-message auth-message--<%= message.type %>" role="alert"><%= message.message %></div><% }); %></div><% } %>
+<form method="post" action="/login" data-loading><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="next" value="<%= next %>">
+<label class="auth-field"><span>Work email</span><input id="email" name="email" type="email" value="<%= email %>" required autocomplete="username" autofocus></label>
+<label class="auth-field"><span>Password</span><span class="password-field"><input id="password" name="password" type="password" required autocomplete="current-password"><button type="button" data-password-toggle="password" aria-pressed="false">Show</button></span></label>
+<div class="auth-between"><label><input type="checkbox" name="rememberMe" value="1"> Remember me for 30 days</label><a href="/forgot-password">Forgot password?</a></div>
+<button class="pub-btn pub-btn--block" type="submit" data-loading-label="Signing in…">Sign in</button></form>
+<p class="auth-foot">New to StockChief? <a href="/demo">See it in action</a> or <a href="/pricing">choose a plan</a>.</p></div></section>
+<aside class="auth-visual"><div class="auth-visual__card"><span>STOCKCHIEF TODAY</span><h2>Four routine jobs handled.<br>One decision waiting.</h2>
+<div><b>✓</b><p><strong>2 orders are shipping</strong><small>Labels prepared and tracking queued</small></p></div>
+<div><b>✓</b><p><strong>Supplier delivery confirmed</strong><small>PO-1054 now expected Thursday</small></p></div>
+<div><b>!</b><p><strong>Price change needs you</strong><small>Everything else is under control</small></p></div></div></aside>
+</main><script src="/commercial.js?v=<%= typeof assetVersion==='undefined'?'auth':assetVersion %>" defer></script></body></html>

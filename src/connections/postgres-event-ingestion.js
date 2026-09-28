@@ -7,6 +7,7 @@ const inventory=require('../domain/postgres-inventory-engine');
 const workflows=require('../operations/postgres-business-workflows');
 const commerce=require('../operations/postgres-commerce');
 const jobs=require('../operations/postgres-job-queue');
+const commercialUsage=require('../entitlements/postgres-service');
 
 const MAX_BATCH=100;
 const LEGACY_MAX_BATCH=500;
@@ -332,6 +333,10 @@ async function ingest(database,auth,raw,options={}){
         status:prior.status,eventId:event.eventId,movementIds:[],error:prior.error_message};
       throw new InvariantError('That external event is already being processed.','event_in_progress');
     }
+    const owner=(await client.query('SELECT owner_account_id FROM workspaces WHERE id=$1',[auth.workspaceId])).rows[0];
+    if(owner?.owner_account_id)await commercialUsage.recordUsage(client,{accountId:owner.owner_account_id,workspaceId:auth.workspaceId},
+      {id:newId('usage'),meter:'external_events',units:1,idempotencyKey:`event:${auth.connectorId}:${event.eventId}`,
+        occurredAt:event.occurredAt||receivedAt,detail:{eventType:event.type,connectorId:auth.connectorId}});
     if(event.type==='return.reported'){
       await persistReturnReview(client,auth,event);
       const processedAt=nowIso();

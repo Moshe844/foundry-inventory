@@ -11,6 +11,7 @@ const pricing = require('../pricing/postgres-service');
 const outboundMail = require('../connections/postgres-outbound-mail');
 const workflows = require('../operations/postgres-business-workflows');
 const accountingReports = require('../accounting/postgres-reports');
+const entitlements=require('../entitlements/postgres-service');
 const { ValidationError, NotFoundError, InvariantError } = require('../domain/errors');
 const { newId, trimOrNull } = require('../lib/util');
 
@@ -125,6 +126,11 @@ function financialSummaryLookup(message){
     || /\b(?:profit|profitable|loss|net income|gross profit|money made|money lost|earnings)\b/.test(text);
 }
 
+function financialChangeLookup(message){
+  const text=String(message||'').toLowerCase();
+  return /\bwhy\b[\s\S]*\b(?:profit|margin|earnings|net income)\b|\bwhat (?:changed|hurt|drove)\b[\s\S]*\b(?:profit|margin|earnings)\b/.test(text);
+}
+
 function financialBalanceViews(message){
   const text=String(message||'').toLowerCase();
   const question=/\b(?:what|which|show|list|tell|how much|how many|any|do|does|are|is)\b/.test(text);
@@ -162,6 +168,7 @@ function fallbackPlan(message) {
   const inventorySearch=inventoryLookupSearch(text);
   const wholeInventory=wholeInventoryLookup(text);
   const financialSummary=financialSummaryLookup(text);
+  const financialChange=financialChangeLookup(text);
   const email=/^(?:please\s+)?(?:send\s+(?:an?\s+)?email\s+to|email|e-mail|message|write\s+to|contact)\s+(.+?)(?:\s+(?:that|saying|to\s+say|and\s+(?:say|tell|ask)|about|regarding)\s+|\s*[—:]\s*)([\s\S]+)$/i.exec(text);
   const emailOnly=/^(?:please\s+)?(?:send\s+(?:an?\s+)?email\s+to|email|e-mail|message|write\s+to|contact)\s+(.+?)\s*[.!]?$/i.exec(text);
   if(email||emailOnly){const recipient=String((email||emailOnly)[1]||'').trim();const role=/^(?:the\s+)?(supplier|vendor|customer|client)\s+(?:named\s+|called\s+)?(.+)$/i.exec(recipient);
@@ -198,7 +205,7 @@ function fallbackPlan(message) {
   else if(/\b(connection|connected|sync|connector)\b/.test(lower))view='connections';
   else if(!inventorySearch&&/\b(locations?|warehouses?|stores?|bins?|shelves?)\b/.test(lower))view='locations';
   if(!action)return {intent:'lookup',view,action:null,
-    search:financialSummary?'profit_and_loss':wholeInventory?null:inventorySearch,sku:null,location:null,fromLocation:null,
+    search:financialChange?'profit_change':financialSummary?'profit_and_loss':wholeInventory?null:inventorySearch,sku:null,location:null,fromLocation:null,
     toLocation:null,quantity:null,countedQuantity:null,amount:null,currency:null,reason:null,reference:null};
   const verb=/\b(receive|received|came in)\b/.test(lower)?'receive':/\b(issue|issued|sold|used)\b/.test(lower)?'issue':
     /\b(move|transfer)\b/.test(lower)?'transfer':/\b(count|adjust|correct)\b/.test(lower)?'adjust':
@@ -234,12 +241,13 @@ function cleanPlan(raw,message) {
   const source=deterministicAction?{...raw,...fallback}:raw;
   const wholeInventory=fallback.intent==='lookup'&&wholeInventoryLookup(message);
   const financialSummary=fallback.intent==='lookup'&&financialSummaryLookup(message);
+  const financialChange=fallback.intent==='lookup'&&financialChangeLookup(message);
   const groundedInventoryLookup=source.intent==='lookup'&&fallback.intent==='lookup'
     &&fallback.view==='inventory'&&fallback.search;
   return {intent:source.intent,view:wholeInventory?'inventory':financialSummary?'accounting':
     groundedInventoryLookup?'inventory':VIEWS.includes(source.view)?source.view:fallback.view,
     action:ACTIONS.includes(source.action)?source.action:null,
-    search:wholeInventory?null:financialSummary?'profit_and_loss':groundedInventoryLookup?fallback.search:trimOrNull(source.search),sku:trimOrNull(source.sku),
+    search:wholeInventory?null:financialChange?'profit_change':financialSummary?'profit_and_loss':groundedInventoryLookup?fallback.search:trimOrNull(source.search),sku:trimOrNull(source.sku),
     location:trimOrNull(source.location),fromLocation:trimOrNull(source.fromLocation),toLocation:trimOrNull(source.toLocation),
     quantity:Number.isSafeInteger(source.quantity)?source.quantity:null,
     countedQuantity:Number.isSafeInteger(source.countedQuantity)?source.countedQuantity:null,
@@ -279,6 +287,42 @@ async function plan(message,options={}) {
 
 function evidenceRow(row,href) {
   return {...row,...(href?{href}:{})};
+}
+
+function profitComparisonPeriods(now=new Date()){
+  const year=now.getUTCFullYear();const month=now.getUTCMonth();const day=now.getUTCDate();
+  const previousLastDay=new Date(Date.UTC(year,month,0)).getUTCDate();
+  const iso=(value)=>value.toISOString().slice(0,10);
+  return {current:{from:iso(new Date(Date.UTC(year,month,1))),to:iso(new Date(Date.UTC(year,month,day)))},
+    previous:{from:iso(new Date(Date.UTC(year,month-1,1))),to:iso(new Date(Date.UTC(year,month-1,Math.min(day,previousLastDay))))}};
+}
+
+async function explainProfitChange(database,ctx){
+  const scope=await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId);
+  const access=await entitlements.capabilityState(database,scope,'accounting.explanations');
+  if(!access.enabled)return {status:'CLARIFY',answer:'Period-over-period profit explanations are available on Growth and above. Basic accounting records and reports remain available on Starter.',
+    handoff:{href:'/upgrade?capability=accounting.explanations&return=/ask',label:'Review accounting intelligence plans'},rows:[],columns:[]};
+  const periods=profitComparisonPeriods();const [current,previous]=await Promise.all([
+    accountingReports.profitAndLoss(database,ctx.workspaceId,periods.current),
+    accountingReports.profitAndLoss(database,ctx.workspaceId,periods.previous),
+  ]);const money=(minor)=>pricing.formatMinor(Math.abs(Number(minor||0)),current.currency);
+  const metrics=[
+    {measure:'Revenue',current:current.revenueMinor,previous:previous.revenueMinor,impact:current.revenueMinor-previous.revenueMinor},
+    {measure:'Cost of goods sold',current:current.cogsMinor,previous:previous.cogsMinor,impact:-(current.cogsMinor-previous.cogsMinor)},
+    {measure:'Operating expenses',current:current.operatingExpenseMinor,previous:previous.operatingExpenseMinor,
+      impact:-(current.operatingExpenseMinor-previous.operatingExpenseMinor)},
+  ];const netChange=current.netIncomeMinor-previous.netIncomeMinor;
+  const drivers=metrics.filter((entry)=>entry.impact!==0).sort((left,right)=>Math.abs(right.impact)-Math.abs(left.impact)).slice(0,3)
+    .map((entry)=>`${entry.measure} ${entry.impact>0?'improved':'reduced'} profit by ${money(entry.impact)}`);
+  const direction=netChange<0?`fell by ${money(netChange)}`:netChange>0?`rose by ${money(netChange)}`:'did not change';
+  const answer=`Net income ${direction}: ${pricing.formatMinor(current.netIncomeMinor,current.currency)} for ${current.from} through ${current.to}, `+
+    `versus ${pricing.formatMinor(previous.netIncomeMinor,previous.currency)} for ${previous.from} through ${previous.to}. `+
+    (drivers.length?`Largest recorded drivers: ${drivers.join('; ')}.`:'There is no posted revenue, cost-of-goods or operating-expense difference between those periods.');
+  const rows=metrics.concat([{measure:'Net income',current:current.netIncomeMinor,previous:previous.netIncomeMinor,impact:netChange}])
+    .map((entry)=>({measure:entry.measure,current:pricing.formatMinor(entry.current,current.currency),
+      previous:pricing.formatMinor(entry.previous,current.currency),profitImpact:`${entry.impact>=0?'+':'-'}${money(entry.impact)}`}));
+  return {answer,rows,columns:['measure','current','previous','profitImpact'],
+    handoff:{href:`/accounting/reports/profit-and-loss?from=${current.from}&to=${current.to}`,label:'Open the current profit and loss report'}};
 }
 
 async function lookup(database,ctx,request) {
@@ -347,6 +391,7 @@ async function lookup(database,ctx,request) {
       'No connections are configured.',rows,columns:['name','status','lastSynced','error']};
   }
   if(request.view==='accounting'){
+    if(search==='profit_change')return explainProfitChange(database,ctx);
     if(search==='profit_and_loss'){
       const report=await accountingReports.profitAndLoss(database,ctx.workspaceId);
       const money=(minor)=>pricing.formatMinor(Number(minor||0),report.currency);
@@ -491,6 +536,10 @@ async function resolveParty(database,kind,workspaceId,search){
 async function prepareAction(database,ctx,message,request) {
   if(!request.action)return {status:'CLARIFY',answer:'What would you like StockChief to change?'};
   if(request.action==='send_email'){
+    const commercialScope=await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId);
+    const emailAccess=await entitlements.capabilityState(database,commercialScope,'connection.email');
+    if(!emailAccess.enabled)return {status:'CLARIFY',answer:'Connected supplier and customer email is available on Growth and above. Nothing was prepared or sent.',
+      handoff:{href:'/upgrade?capability=connection.email&return=/ask',label:'Review email automation plans'}};
     const recipient=await outboundMail.resolveRecipient(database,ctx.workspaceId,request.recipient,request.recipientKind);
     if(recipient.missing)return {status:'CLARIFY',answer:'Who should StockChief email? Name an existing customer or supplier, or give the exact email address.'};
     if(recipient.notFound){

@@ -1,0 +1,65 @@
+'use strict';
+
+const config = require('../config');
+const credentials = require('../connections/credentials');
+const jobs = require('../operations/postgres-job-queue');
+
+function origin() {
+  return String(config.connections.publicOrigin || '').replace(/\/$/, '');
+}
+
+async function queueAccountEmail(database, input) {
+  const account = (await database.query('SELECT email,name FROM accounts WHERE id=$1', [input.accountId])).rows[0];
+  if (!account?.email) return { created: false, skipped: 'account_email_missing' };
+  const sealed = credentials.encrypt({
+    to: account.email,
+    subject: input.subject,
+    text: input.text(account),
+    html: input.html(account),
+  });
+  const durableDatabase = typeof database.transaction === 'function' ? database : {
+    query: (statement, values = []) => database.query(statement, values),
+    transaction: (operation) => operation(database),
+  };
+  return jobs.enqueue(durableDatabase, {
+    kind: 'system.email-send',
+    idempotencyKey: input.idempotencyKey,
+    payload: { messageType: input.messageType, sealed },
+    priority: 5,
+    maxAttempts: 8,
+    availableAt: Date.now(),
+  });
+}
+
+function billingUrl() {
+  return origin() ? `${origin()}/billing` : '/billing';
+}
+
+async function queuePaymentFailed(database, input) {
+  const deadline = input.graceEnds ? new Date(input.graceEnds).toLocaleDateString('en-US', {
+    year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC',
+  }) : 'the end of the grace period';
+  const url = billingUrl();
+  return queueAccountEmail(database, {
+    accountId: input.accountId,
+    idempotencyKey: `billing-payment-failed:${input.eventId}`,
+    messageType: 'billing_payment_failed',
+    subject: 'Action required: update your StockChief payment method',
+    text: (account) => `Hi ${account.name || 'there'},\n\nStockChief could not collect your subscription payment. Your operation remains available until ${deadline}. Update your payment method here: ${url}\n\nStockChief will become read-only if payment is not resolved by then.`,
+    html: (account) => `<p>Hi ${account.name || 'there'},</p><p>StockChief could not collect your subscription payment. Your operation remains available until <strong>${deadline}</strong>.</p><p><a href="${url}">Update your payment method</a></p><p>StockChief will become read-only if payment is not resolved by then.</p>`,
+  });
+}
+
+async function queueSubscriptionSuspended(database, input) {
+  const url = billingUrl();
+  return queueAccountEmail(database, {
+    accountId: input.accountId,
+    idempotencyKey: `billing-subscription-suspended:${input.accountId}:${input.expiredAt}`,
+    messageType: 'billing_subscription_suspended',
+    subject: 'StockChief is now read-only',
+    text: (account) => `Hi ${account.name || 'there'},\n\nYour StockChief subscription is now read-only because the trial or payment grace period ended. Your business records remain available and unchanged. Restore operational access here: ${url}`,
+    html: (account) => `<p>Hi ${account.name || 'there'},</p><p>Your StockChief subscription is now read-only because the trial or payment grace period ended.</p><p>Your business records remain available and unchanged.</p><p><a href="${url}">Restore operational access</a></p>`,
+  });
+}
+
+module.exports = { queueAccountEmail, queuePaymentFailed, queueSubscriptionSuspended };

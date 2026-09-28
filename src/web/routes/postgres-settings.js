@@ -6,6 +6,7 @@ const connections=require('../../connections/postgres-service');
 const operatingInstructions=require('../../manager/postgres-operating-instructions');
 const readiness=require('../../operations/postgres-readiness');
 const passwordAuth=require('../../domain/auth-service');
+const accountLifecycle=require('../../domain/postgres-account-lifecycle');
 const {ROLE_IDS}=require('../../domain/constants');
 const config=require('../../config');
 const { requireAuth,requireOwner,asyncRoute }=require('../middleware');
@@ -106,9 +107,11 @@ async function settingsPage(database,req,res){const [counts,users,integrity,inst
     integrity:{ok:integrity.ok,problems},eventFeed:{configured:Boolean(feed),connected:feed?.status==='connected',
       recentEvents:events.rows.map((event)=>({eventId:event.external_event_id,type:event.event_type,status:event.status,
         error:event.error_message,processedAt:event.processed_at}))},newFeedToken,learnedInstructions:instructions.rows.map(instructionFrom),
-    stockGuards:[],emailAlerts,aiUsage:null,entitlements:{plan:{label:'Pre-subscription · unlimited'},limits:[
-      {key:'workspaces',used:res.locals.workspaces.length,unlimited:true},{key:'members',used:counts.people,unlimited:true},
-      {key:'locations',used:counts.locations,unlimited:true},{key:'skus',used:counts.skus,unlimited:true}]}});}
+    stockGuards:[],emailAlerts,aiUsage:null,entitlements:{plan:{label:res.locals.commercial?.subscription?.plan_name||
+      (res.locals.commercial?.access?.mode==='DEVELOPMENT'?'Pre-subscription · unlimited':'No paid plan')},
+      limits:(res.locals.commercial?.meters||[]).filter((meter)=>['workspaces','members','locations','connections'].includes(meter.meter))
+        .map((meter)=>({key:meter.meter,used:meter.used,limit:meter.hardLimit??meter.included,
+          unlimited:meter.hardLimit===null&&meter.included===null}))}});}
 
 function createPostgresSettingsRouter(database,options={}){const router=express.Router();
   router.get('/what-you-told-me',requireAuth,asyncRoute(async(req,res)=>{const [instructionRows,policies,connectorRows]=await Promise.all([
@@ -147,15 +150,8 @@ function createPostgresSettingsRouter(database,options={}){const router=express.
     const email=passwordAuth.normaliseEmail(req.body.email);const role=String(req.body.role||'staff');
     if(!name||name.length>120)throw new ValidationError('Enter a name up to 120 characters.');
     if(!ROLE_IDS.includes(role))throw new ValidationError('Choose a valid role.');
-    const password=passwordAuth.checkPasswordStrength(req.body.password);const at=nowIso();
-    await database.transaction(async(client)=>{let account=(await client.query('SELECT * FROM accounts WHERE email=$1 FOR UPDATE',[email])).rows[0];
-      if(!account){account={id:newId('acc')};await client.query(`INSERT INTO accounts(id,email,name,password_hash,plan,last_workspace_id,created_at)
-        VALUES($1,$2,$3,$4,'free',$5,$6)`,[account.id,email,name,passwordAuth.hashPassword(password),req.ctx.workspaceId,at]);}
-      const existing=await client.query('SELECT 1 FROM users WHERE workspace_id=$1 AND account_id=$2',[req.ctx.workspaceId,account.id]);
-      if(existing.rows.length)throw new ValidationError('That email already belongs to a person in this inventory.');
-      await client.query(`INSERT INTO users(id,workspace_id,account_id,name,role,created_at)
-        VALUES($1,$2,$3,$4,$5,$6)`,[newId('usr'),req.ctx.workspaceId,account.id,name,role,at]);},
-    {isolation:'SERIALIZABLE',retrySafe:true});req.flash('success',`${name} can now use this inventory.`);return res.redirect(303,'/settings');
+    await accountLifecycle.createInvitation(database,req.ctx,{name,email,role},{origin:config.connections.publicOrigin||res.locals.origin});
+    req.flash('success',`Invitation email queued for ${email}. They choose their own password.`);return res.redirect(303,'/settings');
   }));
   router.post('/settings/email-alerts',requireOwner,asyncRoute(async(req,res)=>{const enabled=req.body.enabled==='1';
     const minimum=['critical','important','all'].includes(req.body.minimumSeverity)?req.body.minimumSeverity:'important';

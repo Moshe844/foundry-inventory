@@ -269,6 +269,24 @@ const config = {
     get configured() { return this.provider === 'resend' && Boolean(this.apiKey && this.from); },
   },
 
+  commercial: {
+    get requirePaidWorkspace() {
+      if (process.env.STOCKCHIEF_REQUIRE_PAID_WORKSPACE !== undefined) {
+        return process.env.STOCKCHIEF_REQUIRE_PAID_WORKSPACE === 'true';
+      }
+      return (process.env.NODE_ENV || 'development') === 'production';
+    },
+    get stripeSecretKey() { return process.env.STOCKCHIEF_BILLING_STRIPE_SECRET_KEY || null; },
+    get stripeWebhookSecret() { return process.env.STOCKCHIEF_BILLING_STRIPE_WEBHOOK_SECRET || null; },
+    get stripePublishableKey() { return process.env.STOCKCHIEF_BILLING_STRIPE_PUBLISHABLE_KEY || null; },
+    get configured() { return Boolean(this.stripeSecretKey && this.stripeWebhookSecret); },
+    get analyticsEnabled() { return process.env.STOCKCHIEF_COMMERCIAL_ANALYTICS !== 'false'; },
+    get adminEmails() {
+      return String(process.env.STOCKCHIEF_COMMERCIAL_ADMIN_EMAILS || '').split(',')
+        .map((value) => value.trim().toLowerCase()).filter(Boolean);
+    },
+  },
+
   /**
    * The intelligence layer. Provider and model are environment driven so the
    * engine is never tied to one vendor, and no secret ever reaches the browser.

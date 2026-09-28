@@ -19,6 +19,8 @@ const config=require('../config');
 const email=require('./email');
 const monitoring=require('./postgres-monitoring');
 const checkpoints=require('./postgres-checkpoints');
+const commercialNotifications=require('../commercial/notifications');
+const entitlements=require('../entitlements/postgres-service');
 
 function milliseconds(value){return Number(value || Date.now());}
 function scopedDatabase(client){return {query:(statement,values=[])=>client.query(statement,values),
@@ -115,6 +117,14 @@ async function runtimeSweep(job,client,options={}){
   const staleImportAt=new Date(now-15*60_000).toISOString();
   const staleEmailAt=new Date(now-5*60_000).toISOString();
   const sessions=await client.query('DELETE FROM stockchief_runtime.sessions WHERE expires_at <= $1 RETURNING sid',[now]);
+  const suspendedSubscriptions=await client.query(`UPDATE account_subscriptions SET status='SUSPENDED',updated_at=now()
+    WHERE (status='GRACE' AND grace_ends_at IS NOT NULL AND grace_ends_at<=now())
+      OR (status='TRIALING' AND trial_ends_at IS NOT NULL AND trial_ends_at<=now())
+    RETURNING account_id,COALESCE(grace_ends_at,trial_ends_at) AS expired_at`);
+  for(const subscription of suspendedSubscriptions.rows){
+    await commercialNotifications.queueSubscriptionSuspended(scopedDatabase(client),{accountId:subscription.account_id,
+      expiredAt:new Date(subscription.expired_at).toISOString()});
+  }
   const staleImports=await client.query(`UPDATE import_executions SET status='FAILED',stage='recovered_after_interruption',
     error_message='The process stopped before this import completed. Its inventory transaction did not commit.',finished_at=$2
     WHERE status='EXECUTING' AND started_at<$1 RETURNING workspace_id,import_id,id`,[staleImportAt,at]);
@@ -196,6 +206,8 @@ async function runtimeSweep(job,client,options={}){
       recoveredConnectors+=resolved.rowCount;
     }
     if(['gmail','microsoft365'].includes(connector.provider_type)){
+      if(config.commercial.requirePaidWorkspace){const commercialAccess=await entitlements.operationalAccessForWorkspace(
+        scopedDatabase(client),connector.workspace_id,{now:at});if(!commercialAccess.access.canOperate)continue;}
       const renewalBucket=Math.floor(now/(6*60*60_000));
       const renewalActive=await client.query(`SELECT 1 FROM stockchief_runtime.jobs WHERE workspace_id=$1
         AND kind='mailbox.renew-push' AND payload->>'connectorId'=$2 AND status IN ('PENDING','RUNNING','RETRY') LIMIT 1`,
@@ -228,10 +240,16 @@ async function runtimeSweep(job,client,options={}){
       kind:'system.alert-delivery',idempotencyKey:`alert-delivery:${alert.id}:${alert.occurrence_count}`,
       payload:{alertId:alert.id},priority:5,maxAttempts:8,availableAt:now,now});
       if(scheduled.created)scheduledAlertDeliveries+=1;}}
+  const billingFilter=config.commercial.requirePaidWorkspace?`AND EXISTS(SELECT 1 FROM account_subscriptions subscription
+      WHERE subscription.account_id=w.owner_account_id AND (subscription.status IN ('ACTIVE','COMP')
+        OR (subscription.status='TRIALING' AND (subscription.trial_ends_at IS NULL OR subscription.trial_ends_at>now()))
+        OR (subscription.status='GRACE' AND (subscription.grace_ends_at IS NULL OR subscription.grace_ends_at>now()))
+        OR (subscription.status='CANCELLED' AND subscription.current_period_end>now())))`:'';
   const autonomyDue=(await client.query(`SELECT w.id AS workspace_id,u.id AS actor_id
     FROM workspaces w JOIN LATERAL (SELECT id FROM users WHERE workspace_id=w.id AND role='owner' ORDER BY created_at,id LIMIT 1) u ON true
     LEFT JOIN workspace_autopilot a ON a.workspace_id=w.id
     WHERE COALESCE(a.paused,0)=0 AND COALESCE(a.suspended,0)=0
+      ${billingFilter}
       AND (a.next_evaluation_at IS NULL OR a.next_evaluation_at<=$1)`,[at])).rows;
   let scheduledAutopilotChecks=0;
   for(const due of autonomyDue){
@@ -241,7 +259,7 @@ async function runtimeSweep(job,client,options={}){
       maxAttempts:3,availableAt:now,now});
     if(scheduled.created)scheduledAutopilotChecks+=1;
   }
-  return {expiredSessions:sessions.rowCount,recoveredImports:staleImports.rowCount,
+  return {expiredSessions:sessions.rowCount,suspendedSubscriptions:suspendedSubscriptions.rowCount,recoveredImports:staleImports.rowCount,
     ambiguousEmails:uncertainEmails.rowCount,ambiguousProviderEffects:staleProviderEffects.rowCount,
     staleConnectors,recoveredConnectors,scheduledMailboxPolls,
     scheduledMailboxRenewals,scheduledAlertDeliveries,scheduledAutopilotChecks,at};
@@ -250,6 +268,15 @@ async function runtimeSweep(job,client,options={}){
 async function autopilotEvaluate(job,client){
   if(!job.workspaceId||!job.payload?.actorId)throw Object.assign(new Error('An autopilot evaluation needs workspace and owner identity.'),
     {code:'invalid_autopilot_evaluation',retryable:false});
+  if(config.commercial.requirePaidWorkspace){const access=(await client.query(`SELECT subscription.status,subscription.current_period_end,
+      subscription.trial_ends_at,subscription.grace_ends_at
+      FROM workspaces workspace LEFT JOIN account_subscriptions subscription ON subscription.account_id=workspace.owner_account_id
+      WHERE workspace.id=$1`,[job.workspaceId])).rows[0];
+    const now=new Date();const allowed=access&&(['ACTIVE','COMP'].includes(access.status)
+      ||(access.status==='TRIALING'&&(!access.trial_ends_at||new Date(access.trial_ends_at)>now))
+      ||(access.status==='GRACE'&&(!access.grace_ends_at||new Date(access.grace_ends_at)>now))
+      ||(access.status==='CANCELLED'&&access.current_period_end&&new Date(access.current_period_end)>new Date()));
+    if(!allowed)return {skipped:'subscription_read_only'};}
   return autonomy.run(scopedDatabase(client),{workspaceId:job.workspaceId,actorId:job.payload.actorId});
 }
 

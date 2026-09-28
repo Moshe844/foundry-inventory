@@ -10,6 +10,7 @@ const jobs=require('../../operations/postgres-job-queue');
 const config=require('../../config');
 const {safeEqual}=require('../../connections/providers/common');
 const {DomainError}=require('../../domain/errors');
+const entitlements=require('../../entitlements/postgres-service');
 
 function digest(value){return crypto.createHash('sha256').update(String(value)).digest('hex');}
 
@@ -41,6 +42,7 @@ function createPostgresConnectionsApi(database,options={}){
   router.post('/events',async(req,res)=>{
     try{
       const auth=await connections.authenticate(database,req.get('authorization'));
+      await entitlements.assertWorkspaceOperational(database,auth.workspaceId);
       const result=await ingestion.ingestBatch(database,auth,req.body||{});
       return res.status(result.needsMapping?207:200).json(result);
     }catch(error){
@@ -61,7 +63,8 @@ function createPostgresConnectionsApi(database,options={}){
         AND lower(provider_account_id)=lower($1) AND status='connected' AND paused_at IS NULL ORDER BY id`,[email])).rows;
       const source=String(req.body?.message?.messageId||notice.historyId||digest(JSON.stringify(req.body||{})));
       let scheduled=0;
-      for(const connection of rows)if((await wakeMailbox(database,connection,`gmail:${source}`)).created)scheduled+=1;
+      for(const connection of rows){const access=await entitlements.operationalAccessForWorkspace(database,connection.workspace_id);
+        if(access.access.canOperate&&(await wakeMailbox(database,connection,`gmail:${source}`)).created)scheduled+=1;}
       return res.status(202).json({received:true,mailboxes:rows.length,scheduled});
     }catch(error){return apiError(res,error,'The Gmail notification could not be scheduled.');}
   });
@@ -79,6 +82,8 @@ function createPostgresConnectionsApi(database,options={}){
         AND status='connected' AND paused_at IS NULL ORDER BY id`)).rows;
       let matched=0;let scheduled=0;
       for(const connection of rows){
+        const access=await entitlements.operationalAccessForWorkspace(database,connection.workspace_id);
+        if(!access.access.canOperate)continue;
         const secret=await credentials.get(database,connection.workspace_id,connection.id,'provider');
         if(!secret)continue;
         const relevant=notifications.filter((notice)=>!notice.subscriptionId||notice.subscriptionId===secret.subscriptionId);

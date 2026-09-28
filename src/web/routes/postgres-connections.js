@@ -11,6 +11,8 @@ const accountingSync=require('../../accounting/postgres-integration-sync');
 const publicApi=require('../../connections/postgres-public-api');
 const paymentConnect=require('../../payments/postgres-connect');
 const shippingAccounts=require('../../shipping/postgres-accounts');
+const entitlements=require('../../entitlements/postgres-service');
+const {commercialScope}=require('../commercial-middleware');
 
 function safeOrigin(value,fallback){
   try{return new URL(value).origin;}catch{return fallback;}
@@ -33,6 +35,15 @@ function createPostgresConnectionsRouter(database,options={}){
   const router=express.Router();
   const registry=options.providers||defaultProviders;
   const callbackProviders=new Set((registry.catalog?registry.catalog():[]).map((provider)=>provider.type));
+  async function connectionAllowed(req,res,providerType){
+    const type=String(providerType||'').toLowerCase();const capability={gmail:'connection.email',microsoft365:'connection.email',
+      shopify:'connection.commerce',square:'connection.commerce',clover:'connection.commerce',woocommerce:'connection.commerce',
+      quickbooks:'connection.accounting',xero:'connection.accounting'}[type];
+    if(!capability)return true;
+    const state=await entitlements.capabilityState(database,commercialScope(req),capability);
+    if(state.enabled)return true;
+    res.redirect(303,`/upgrade?capability=${encodeURIComponent(capability)}&return=${encodeURIComponent('/settings/connections')}`);return false;
+  }
 
   async function renderConnections(req,res,apiToken=null){
     const launchTicket=crypto.randomBytes(24).toString('base64url');
@@ -52,6 +63,8 @@ function createPostgresConnectionsRouter(database,options={}){
       paymentReturnOrigin:requestOrigin,currentWorkspaceId:req.ctx.workspaceId,
       workspaceName:req.workspace?.name||'',webhookSecret:null,outboundWebhooks:[],
       paymentWebhookUrl:`${requestOrigin}/webhooks/payments/stripe`,
+      commercialCapabilities:res.locals.commercial?.capabilities||[],
+      commercialDevelopment:res.locals.commercial?.access?.mode==='DEVELOPMENT',
     });
   }
 
@@ -127,6 +140,7 @@ function createPostgresConnectionsRouter(database,options={}){
     return res.redirect(303,'/settings/connections#payments');
   }));
   router.get('/settings/connections/:provider/launch',requireOwner,asyncRoute(async(req,res)=>{
+    if(!await connectionAllowed(req,res,req.params.provider))return;
     const launch=req.session.connectionLaunch;
     delete req.session.connectionLaunch;
     if(!launch||launch.workspaceId!==req.ctx.workspaceId||launch.expiresAt<Date.now()
@@ -215,6 +229,7 @@ function createPostgresConnectionsRouter(database,options={}){
     return res.redirect(303,`/settings/connections/${req.params.id}`);
   }));
   router.post('/settings/connections/:provider/authorize',requireOwner,asyncRoute(async(req,res)=>{
+    if(!await connectionAllowed(req,res,req.params.provider))return;
     const requestOrigin=`${req.protocol}://${req.get('host')}`;
     const started=await providerService.beginAuthorization(database,req.ctx,{...req.body,
       providerType:req.params.provider},requestOrigin,{providers:registry,

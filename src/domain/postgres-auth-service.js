@@ -2,6 +2,7 @@
 
 const auth = require('./auth-service');
 const ledger = require('../accounting/postgres-ledger');
+const entitlements=require('../entitlements/postgres-service');
 const { ValidationError, NotFoundError } = require('./errors');
 const { newId, nowIso, requireText } = require('../lib/util');
 const DUMMY_PASSWORD_HASH = auth.hashPassword('stockchief-timing-password');
@@ -37,8 +38,8 @@ async function createBusiness(database, input) {
   const at = input.now || nowIso();
   try {
     return await database.transaction(async (client) => {
-      await client.query(`INSERT INTO accounts(id,email,name,password_hash,plan,last_workspace_id,created_at)
-        VALUES($1,$2,$3,$4,'free',$5,$6)`,
+      await client.query(`INSERT INTO accounts(id,email,name,password_hash,plan,last_workspace_id,email_verified_at,created_at)
+        VALUES($1,$2,$3,$4,'free',$5,$6::timestamptz,$6::text)`,
       [accountId,email,name,auth.hashPassword(password),workspaceId,at]);
       await client.query(`INSERT INTO workspaces(id,name,owner_account_id,data_mode,created_at)
         VALUES($1,$2,$3,'production',$4)`, [workspaceId,businessName,accountId,at]);
@@ -59,12 +60,36 @@ async function createBusiness(database, input) {
   }
 }
 
+async function createPendingAccount(database,input){
+  const name=requireText(input.name,'Your name',{max:120});
+  const businessName=requireText(input.businessName,'Business name',{max:120});
+  const email=auth.normaliseEmail(input.email);const password=auth.checkPasswordStrength(input.password);
+  const accountId=newId('acc');const at=input.now||nowIso();
+  try{const result=await database.query(`INSERT INTO accounts
+    (id,email,name,password_hash,plan,pending_business_name,pending_commercial_plan_id,pending_billing_interval,pending_promo_code,created_at)
+    VALUES($1,$2,$3,$4,'commercial_pending',$5,$6,$7,NULLIF($8,''),$9) RETURNING *`,[accountId,email,name,auth.hashPassword(password),
+    businessName,input.planId||'growth',input.interval==='annual'?'ANNUAL':'MONTHLY',String(input.promoCode||'').trim().toUpperCase(),at]);
+    return result.rows[0];}
+  catch(error){if(error.code==='23505'&&(error.constraint||'').includes('accounts_email'))
+    throw new ValidationError('An account already uses that email address.',{field:'email'});throw error;}
+}
+
+async function provisionFirstWorkspace(database,accountId,input={}){
+  const account=await getAccount(database,accountId);if(!account)throw new NotFoundError('That account could not be found.');
+  const existing=await defaultWorkspaceFor(database,accountId);if(existing)return {workspaceId:existing,created:false};
+  const created=await createWorkspace(database,accountId,{name:input.businessName||account.pending_business_name||`${account.name}'s inventory`});
+  await database.query(`UPDATE accounts SET pending_business_name=NULL,pending_commercial_plan_id=NULL,
+    pending_billing_interval=NULL,pending_promo_code=NULL,plan='paid',last_workspace_id=$2 WHERE id=$1`,[accountId,created.workspaceId]);
+  return {...created,created:true};
+}
+
 async function createWorkspace(database,accountId,input={}){
   const businessName=requireText(input.name,'Inventory name',{max:120});
   const workspaceId=newId('wsp');const userId=newId('usr');const at=input.now||nowIso();
   return database.transaction(async(client)=>{
     const account=(await client.query('SELECT * FROM accounts WHERE id=$1 FOR UPDATE',[accountId])).rows[0];
     if(!account)throw new NotFoundError('That account could not be found.');
+    await entitlements.assertMeterCapacity(client,{accountId,workspaceId:null},'workspaces',1);
     await client.query(`INSERT INTO workspaces(id,name,owner_account_id,data_mode,created_at)
       VALUES($1,$2,$3,'production',$4)`,[workspaceId,businessName,accountId,at]);
     await client.query(`INSERT INTO users(id,workspace_id,account_id,name,role,created_at)
@@ -141,5 +166,5 @@ async function renameWorkspace(database, ctx, nameInput) {
   return result.rows[0];
 }
 
-module.exports = { authenticate,createBusiness,createWorkspace,getAccount,getMembership,getWorkspace,resolveForAccount,
+module.exports = { authenticate,createBusiness,createPendingAccount,provisionFirstWorkspace,createWorkspace,getAccount,getMembership,getWorkspace,resolveForAccount,
   listWorkspacesForAccount,defaultWorkspaceFor,rememberWorkspace,renameWorkspace };

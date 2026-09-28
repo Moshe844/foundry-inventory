@@ -8,6 +8,8 @@ const credentials=require('./postgres-credential-store');
 const connections=require('./postgres-service');
 const defaultProviders=require('./providers/registry');
 const jobs=require('../operations/postgres-job-queue');
+const entitlements=require('../entitlements/postgres-service');
+const commercial=require('../commercial/service');
 
 const stateHash=(value)=>crypto.createHash('sha256').update(String(value)).digest('hex');
 const parseJson=(value)=>connections.parseJson(value,{});
@@ -34,6 +36,8 @@ async function beginAuthorization(database,ctx,input,requestOrigin,options={}){
       [ctx.workspaceId,connectorId,ctx.actorId,now,providerType]);
       if(!existing.rows.length)throw new NotFoundError('Connection not found.');
     }else{
+      const commercialScope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId);
+      await entitlements.assertMeterCapacity(client,commercialScope,'connections',1);
       await client.query(`INSERT INTO workspace_connectors
         (id,workspace_id,connector_key,display_name,provider_type,status,capabilities,provides,config,
          expected_interval_minutes,setup_status,authorized_by_user_id,created_at,updated_at)
@@ -110,6 +114,9 @@ async function finishAuthorization(database,connection,actorId,result){
         WHERE workspace_id=$1 AND provider_type=$2 AND provider_account_id=$3 AND id<>$4
           AND status<>'disconnected'`,[target.workspace_id,target.provider_type,result.accountId,target.id,now]);
     }
+    const owner=(await client.query('SELECT owner_account_id FROM workspaces WHERE id=$1',[target.workspace_id])).rows[0];
+    if(owner?.owner_account_id)await commercial.trackOnce(client,{eventName:'first_integration_connected',
+      accountId:owner.owner_account_id,sourcePath:'provider_authorization',detail:{providerType:target.provider_type}});
     return target.id;
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }

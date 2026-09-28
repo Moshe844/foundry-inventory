@@ -1,0 +1,181 @@
+'use strict';
+
+const express=require('express');
+const config=require('../../config');
+const commercial=require('../../commercial/service');
+const billingProvider=require('../../commercial/stripe-billing');
+const entitlements=require('../../entitlements/postgres-service');
+const auth=require('../../domain/postgres-auth-service');
+const lifecycle=require('../../domain/postgres-account-lifecycle');
+const {newId}=require('../../lib/util');
+const {requireAccount,asyncRoute}=require('../middleware');
+const {commercialScope}=require('../commercial-middleware');
+const {AuthorizationError,ValidationError}=require('../../domain/errors');
+
+function renderPublic(req,res,view,data={}){return res.render(view,{...data,csrfToken:res.locals.csrfToken,flash:res.locals.flash,
+  account:res.locals.account,origin:res.locals.origin,assetVersion:res.locals.assetVersion},(error,body)=>{
+    if(error)throw error;return res.render('public/layout',{...data,body,account:res.locals.account,origin:res.locals.origin,
+      assetVersion:res.locals.assetVersion,title:data.title||'StockChief',description:data.description||
+      'StockChief runs inventory operations and brings owners only the exceptions that require judgement.'});});}
+
+function commercialAdmin(req,res,next){const configured=config.commercial.adminEmails.includes(String(req.account?.email||'').toLowerCase());
+  if(configured)return next();return req.db.query('SELECT 1 FROM commercial_admin_accounts WHERE account_id=$1',[req.account?.id])
+    .then((result)=>result.rows.length?next():next(new AuthorizationError(
+      'This commercial control is restricted to StockChief administrators.'))).catch(next);}
+function requireBillingOwner(req,res,next){if(req.user&&req.user.role!=='owner')return next(new AuthorizationError(
+  'Only a workspace owner can manage its StockChief subscription.'));return next();}
+function requireVerifiedEmail(req,res,next){if(!req.account?.email_verified_at)return next(new AuthorizationError(
+  'Verify your email before starting subscription billing.'));return next();}
+function safeReturnPath(value){return typeof value==='string'&&value.startsWith('/')&&!value.startsWith('//')?value:'/';}
+function saveSession(req){return new Promise((resolve,reject)=>req.session.save((error)=>error?reject(error):resolve()));}
+function capabilityName(capability){return ({
+  'connection.email':'connected supplier and customer email',
+  'connection.commerce':'commerce connections',
+  'connection.accounting':'accounting connections',
+  'email.auto_extract':'automatic business-email and document processing',
+  'email.response_generation':'prepared supplier and customer replies',
+  'shipping.automation':'shipping automation within your rules',
+  'accounting.explanations':'evidence-backed accounting explanations',
+  'forecasting.basic':'demand and stockout forecasting',
+  'authority.advanced':'advanced authority and automatic-work policies',
+})[capability]||capability.replaceAll('.',' ').replaceAll('_',' ');}
+
+function createPostgresCommercialRouter(database,options={}){const router=express.Router();const provider=options.billingProvider||billingProvider;
+  router.get('/',asyncRoute(async(req,res,next)=>{if(req.account)return next();await commercial.track(database,{eventName:'landing_viewed',
+    anonymousId:req.sessionID,sourcePath:'/'});return renderPublic(req,res,'public/home',{title:'Autonomous inventory operations',nav:'home'});}));
+  router.get('/demo',asyncRoute(async(req,res)=>{await commercial.track(database,{eventName:'demo_opened',anonymousId:req.sessionID,
+    accountId:req.account?.id||null,sourcePath:'/demo'});return renderPublic(req,res,'public/demo',{title:'See StockChief in action',nav:'demo'});}));
+  router.get('/pricing',asyncRoute(async(req,res)=>{const plans=await commercial.listPlans(database);await commercial.track(database,{eventName:'pricing_viewed',
+    anonymousId:req.sessionID,accountId:req.account?.id||null,sourcePath:'/pricing'});return renderPublic(req,res,'public/pricing',{
+    title:'Pricing',nav:'pricing',plans,checkoutCancelled:req.query.checkout==='cancelled'});}));
+  router.get('/trust',asyncRoute(async(req,res)=>renderPublic(req,res,'public/trust',{title:'Trust and control',nav:'trust'})));
+  router.get('/privacy',asyncRoute(async(req,res)=>renderPublic(req,res,'public/legal',{
+    title:'Privacy',heading:'Privacy notice',kind:'privacy',supportEmail:config.supportEmail})));
+  router.get('/terms',asyncRoute(async(req,res)=>renderPublic(req,res,'public/legal',{
+    title:'Terms',heading:'Terms of service',kind:'terms',supportEmail:config.supportEmail})));
+  router.get('/contact',asyncRoute(async(req,res)=>renderPublic(req,res,'public/contact',{title:'Talk to StockChief',nav:'contact',supportEmail:config.supportEmail})));
+  router.post('/commercial/events',asyncRoute(async(req,res)=>{const allowed=new Set(['plan_selected','signup_started','upgrade_viewed']);
+    if(!allowed.has(req.body.eventName))return res.status(204).end();await commercial.track(database,{eventName:req.body.eventName,
+      anonymousId:req.sessionID,accountId:req.account?.id||null,planId:req.body.planId||null,sourcePath:req.body.sourcePath||null});
+    return res.status(204).end();}));
+  router.get('/billing',requireAccount,requireBillingOwner,asyncRoute(async(req,res)=>{const summary=await entitlements.summary(database,commercialScope(req));
+    let invoices=[];if(summary.subscription?.stripe_customer_id&&options.loadInvoices!==false){try{
+      invoices=(await provider.listInvoices(summary.subscription.stripe_customer_id,options.providerOptions||{})).data||[];}catch{invoices=[];}}
+    return res.page('commercial/billing',{title:'Plan and billing',nav:'settings',room:true,summary,invoices,
+      billingConfigured:config.commercial.configured,plans:await commercial.listPlans(database)});}));
+  router.get('/upgrade',requireAccount,requireBillingOwner,asyncRoute(async(req,res)=>{const capability=String(req.query.capability||'').trim();
+    const scope=commercialScope(req);const returnPath=safeReturnPath(req.query.return);const current=await entitlements.subscriptionFor(database,scope.accountId);
+    const currentCapability=await entitlements.capabilityState(database,scope,capability,{subscription:current});
+    if(currentCapability.enabled){req.flash('success','This capability is already active on your current plan.');await saveSession(req);
+      return res.redirect(303,returnPath);}
+    const plans=await commercial.listPlans(database);const currentPlan=plans.find((plan)=>plan.id===current?.plan_id);
+    const candidates=plans.filter((plan)=>Number(plan.display_order)>Number(currentPlan?.display_order||0)
+      &&plan.entitlements.some((entry)=>entry.capability===capability&&Number(entry.enabled)));
+    await commercial.track(database,{eventName:'upgrade_viewed',accountId:req.account.id,planId:current?.plan_id||null,
+      sourcePath:returnPath});return res.page('commercial/upgrade',{title:'Upgrade StockChief',nav:'settings',room:true,
+      capability,capabilityLabel:capabilityName(capability),current,candidates,returnPath});}));
+  router.post('/billing/checkout',requireAccount,requireBillingOwner,requireVerifiedEmail,asyncRoute(async(req,res)=>{
+    const scope=commercialScope(req);const current=await entitlements.subscriptionFor(database,scope.accountId);
+    const origin=options.publicOrigin==='request'?res.locals.origin:(options.publicOrigin||config.connections.publicOrigin||res.locals.origin);
+    if(current?.stripe_customer_id&&current?.stripe_subscription_id){const portal=await provider.createPortal({accountId:scope.accountId,
+      requestId:newId('portal'),customerId:current.stripe_customer_id,subscriptionId:current.stripe_subscription_id,
+      returnUrl:`${origin}/billing`},options.providerOptions||{});return res.redirect(303,portal.url);}
+    const checkout=await commercial.beginCheckout(database,req.account,{planId:req.body.planId,interval:req.body.interval,
+      promoCode:req.body.promoCode,origin,returnPath:req.body.returnPath||'/onboarding'},{provider,providerOptions:options.providerOptions});
+    await commercial.track(database,{eventName:'billing_checkout_started',accountId:req.account.id,planId:req.body.planId,
+      sourcePath:req.get('referer')||'/pricing'});return res.redirect(303,checkout.url);}));
+  router.get('/billing/checkout/complete',requireAccount,asyncRoute(async(req,res)=>{const session=await provider.retrieveCheckout(req.query.session_id,
+    options.providerOptions||{});if(session.metadata?.stockchief_account_id!==req.account.id)throw new AuthorizationError('That checkout belongs to another account.');
+    let subscription=session.subscription;if(typeof subscription==='string')subscription=await provider.retrieveSubscription(subscription,options.providerOptions||{});
+    if(session.status!=='complete'||!subscription)throw new ValidationError('Stripe has not completed this subscription checkout.');
+    await commercial.completeCheckoutAttempt(database,session.id);
+    const saved=await database.transaction((client)=>commercial.upsertSubscription(client,subscription),{isolation:'SERIALIZABLE'});
+    if(!saved||!entitlements.operationalAccess(saved).canOperate)throw new ValidationError('The subscription is not active yet. No workspace was created.');
+    const provisioned=await auth.provisionFirstWorkspace(database,req.account.id);req.session.workspaceId=provisioned.workspaceId;
+    await commercial.track(database,{eventName:'subscription_activated',accountId:req.account.id,
+      planId:session.metadata?.stockchief_plan_id||null,sourcePath:'/billing/checkout/complete'});
+    await commercial.trackOnce(database,{eventName:'first_workspace_setup_completed',accountId:req.account.id,
+      planId:saved.plan_id,sourcePath:'/billing/checkout/complete',detail:{workspaceId:provisioned.workspaceId}});
+    req.flash('success','Your plan is active. Your first inventory is ready to set up.');return req.session.save(()=>res.redirect(303,'/onboarding'));}));
+  router.post('/billing/portal',requireAccount,requireBillingOwner,asyncRoute(async(req,res)=>{const scope=commercialScope(req);
+    const subscription=await entitlements.subscriptionFor(database,scope.accountId);
+    if(!subscription?.stripe_customer_id)throw new ValidationError('A billing account has not been created yet.');
+    const portal=await provider.createPortal({accountId:scope.accountId,requestId:newId('portal'),customerId:subscription.stripe_customer_id,
+      returnUrl:`${options.publicOrigin==='request'?res.locals.origin:(options.publicOrigin||config.connections.publicOrigin||res.locals.origin)}/billing`},options.providerOptions||{});
+    return res.redirect(303,portal.url);}));
+  router.get('/commercial-admin',requireAccount,commercialAdmin,asyncRoute(async(req,res)=>res.page('commercial/admin',{
+    title:'Commercial control',nav:'settings',room:true,plans:await commercial.listPlans(database,{includeDrafts:true,includePrivate:true})})));
+  router.post('/commercial-admin/plans/:id',requireAccount,commercialAdmin,asyncRoute(async(req,res)=>{const monthly=Math.max(0,Math.round(Number(req.body.monthlyAmount||0)*100));
+    const annual=Math.max(0,Math.round(Number(req.body.annualAmount||0)*100));const approved=req.body.packagingApproved==='1';
+    const existing=(await database.query('SELECT * FROM commercial_plans WHERE id=$1',[req.params.id])).rows[0];
+    if(!existing)throw new ValidationError('That commercial plan does not exist.');if(approved&&!Number(existing.sales_only)&&
+      (!monthly||!annual||!String(req.body.stripeMonthlyPriceId||'').trim()||!String(req.body.stripeAnnualPriceId||'').trim()))
+      throw new ValidationError('Before approving real checkout, set both public prices and both Stripe Price IDs.');
+    await database.query(`UPDATE commercial_plans SET
+      public_name=$2,outcome=$3,audience=$4,monthly_amount_minor=NULLIF($5,0),annual_amount_minor=NULLIF($6,0),
+      stripe_monthly_price_id=NULLIF($7,''),stripe_annual_price_id=NULLIF($8,''),trial_days=$9,grace_days=$10,
+      is_public=$11,is_recommended=$12,status=$13,packaging_status=$14,
+      packaging_approved_at=CASE WHEN $14='APPROVED' THEN COALESCE(packaging_approved_at,now()) ELSE NULL END,
+      packaging_approved_by_account_id=CASE WHEN $14='APPROVED' THEN $15 ELSE NULL END,updated_at=now() WHERE id=$1`,[req.params.id,req.body.publicName,
+      req.body.outcome,req.body.audience,monthly,annual,req.body.stripeMonthlyPriceId||'',req.body.stripeAnnualPriceId||'',
+      Math.max(0,Number(req.body.trialDays||0)),Math.max(0,Number(req.body.graceDays||7)),req.body.isPublic==='1'?1:0,
+      req.body.isRecommended==='1'?1:0,['DRAFT','ACTIVE','ARCHIVED'].includes(req.body.status)?req.body.status:'DRAFT',
+      approved?'APPROVED':'PROPOSED',req.account.id]);
+    req.flash('success','Commercial plan updated.');return res.redirect(303,`/commercial-admin#${req.params.id}`);}));
+  router.post('/commercial-admin/plans/:id/entitlements/:capability',requireAccount,commercialAdmin,asyncRoute(async(req,res)=>{
+    await database.query(`INSERT INTO commercial_plan_entitlements(plan_id,capability,enabled) VALUES($1,$2,$3)
+      ON CONFLICT(plan_id,capability) DO UPDATE SET enabled=EXCLUDED.enabled`,[req.params.id,req.params.capability,req.body.enabled==='1'?1:0]);
+    req.flash('success','Plan entitlement updated.');return res.redirect(303,`/commercial-admin#${req.params.id}`);}));
+  router.post('/commercial-admin/plans/:id/meters/:meter',requireAccount,commercialAdmin,asyncRoute(async(req,res)=>{
+    const nullable=(value)=>String(value??'').trim()===''?null:Math.max(0,Math.round(Number(value)));
+    await database.query(`UPDATE commercial_plan_meters SET label=$3,included_units=$4,hard_limit=$5,
+      overage_block_units=$6,overage_amount_minor=$7 WHERE plan_id=$1 AND meter=$2`,[req.params.id,req.params.meter,
+      req.body.label,nullable(req.body.includedUnits),nullable(req.body.hardLimit),nullable(req.body.overageBlockUnits),
+      String(req.body.overageAmount||'').trim()===''?null:Math.max(0,Math.round(Number(req.body.overageAmount)*100))]);
+    req.flash('success','Usage allowance updated.');return res.redirect(303,`/commercial-admin#${req.params.id}`);}));
+  router.post('/commercial-admin/promos',requireAccount,commercialAdmin,asyncRoute(async(req,res)=>{const code=String(req.body.code||'').trim().toUpperCase();
+    if(!/^[A-Z0-9_-]{3,40}$/.test(code))throw new ValidationError('Use 3–40 letters, numbers, dashes or underscores for the promo code.');
+    const discount=Math.max(0,Math.min(100,Number(req.body.discountPercent||0)));
+    if(discount>0&&!String(req.body.stripePromotionCodeId||'').trim())throw new ValidationError(
+      'A discounted promotion needs its Stripe promotion code ID so checkout charges the approved amount.');
+    await database.query(`INSERT INTO commercial_promo_codes(code,active,plan_id,trial_days,discount_percent,stripe_promotion_code_id,
+      redemption_limit,starts_at,ends_at) VALUES($1,$2,NULLIF($3,''),$4,$5,NULLIF($6,''),$7,NULLIF($8,'')::timestamptz,
+      NULLIF($9,'')::timestamptz) ON CONFLICT(code) DO UPDATE SET active=EXCLUDED.active,plan_id=EXCLUDED.plan_id,trial_days=EXCLUDED.trial_days,
+      discount_percent=EXCLUDED.discount_percent,stripe_promotion_code_id=EXCLUDED.stripe_promotion_code_id,
+      redemption_limit=EXCLUDED.redemption_limit,starts_at=EXCLUDED.starts_at,ends_at=EXCLUDED.ends_at`,[code,
+      req.body.active==='1'?1:0,req.body.planId||'',Math.max(0,Number(req.body.trialDays||0)),discount,
+      req.body.stripePromotionCodeId||'',String(req.body.redemptionLimit||'').trim()===''?null:Math.max(1,Number(req.body.redemptionLimit)),
+      req.body.startsAt||'',req.body.endsAt||'']);req.flash('success','Promotion saved.');return res.redirect(303,'/commercial-admin#promotions');}));
+  router.post('/commercial-admin/grants',requireAccount,commercialAdmin,asyncRoute(async(req,res)=>{const account=(await database.query(
+      'SELECT * FROM accounts WHERE email=$1',[String(req.body.email||'').trim().toLowerCase()])).rows[0];
+    if(!account)throw new ValidationError('No StockChief account uses that email.');const plan=await commercial.getPlan(database,req.body.planId);
+    const existing=(await database.query('SELECT stripe_subscription_id FROM account_subscriptions WHERE account_id=$1',[account.id])).rows[0];
+    if(existing?.stripe_subscription_id)throw new ValidationError(
+      'This account has a Stripe subscription. Change or cancel it in Stripe before granting admin-funded access.');
+    const status=req.body.kind==='trial'?'TRIALING':'COMP';const trialEnds=status==='TRIALING'
+      ?new Date(Date.now()+Math.max(1,Number(req.body.days||1))*86400000).toISOString():null;
+    await database.query(`INSERT INTO account_subscriptions(id,account_id,plan_id,status,billing_interval,trial_ends_at,source)
+      VALUES($1,$2,$3,$4,'CUSTOM',$5,'ADMIN') ON CONFLICT(account_id) DO UPDATE SET plan_id=EXCLUDED.plan_id,
+      status=EXCLUDED.status,billing_interval='CUSTOM',trial_ends_at=EXCLUDED.trial_ends_at,source='ADMIN',updated_at=now()`,
+    [newId('sub'),account.id,plan.id,status,trialEnds]);req.flash('success',`${plan.public_name} ${status==='COMP'?'comp access':'trial'} granted.`);
+    return res.redirect(303,'/commercial-admin#grants');}));
+  router.post('/commercial-admin/overrides',requireAccount,commercialAdmin,asyncRoute(async(req,res)=>{const account=(await database.query(
+      'SELECT id FROM accounts WHERE email=$1',[String(req.body.email||'').trim().toLowerCase()])).rows[0];
+    if(!account)throw new ValidationError('No StockChief account uses that email.');const capability=String(req.body.capability||'').trim();
+    await database.query(`INSERT INTO commercial_entitlement_overrides
+      (id,account_id,capability,enabled,ends_at,reason,source) VALUES($1,$2,$3,$4,NULLIF($5,'')::timestamptz,$6,'ADMIN')`,
+    [newId('override'),account.id,capability,req.body.enabled==='1'?1:0,req.body.endsAt||'',req.body.reason||'Commercial override']);
+    req.flash('success','Customer-specific entitlement override saved.');return res.redirect(303,'/commercial-admin#grants');}));
+  router.post('/commercial-admin/meter-overrides',requireAccount,commercialAdmin,asyncRoute(async(req,res)=>{const account=(await database.query(
+      'SELECT id FROM accounts WHERE email=$1',[String(req.body.email||'').trim().toLowerCase()])).rows[0];
+    if(!account)throw new ValidationError('No StockChief account uses that email.');const meter=String(req.body.meter||'').trim();
+    const known=(await database.query('SELECT 1 FROM commercial_plan_meters WHERE meter=$1 LIMIT 1',[meter])).rows[0];
+    if(!known)throw new ValidationError('Choose a known commercial meter.');const limit=Math.round(Number(req.body.limitUnits));
+    if(!Number.isSafeInteger(limit)||limit<0)throw new ValidationError('The customer-specific limit must be zero or a positive whole number.');
+    await database.query(`INSERT INTO commercial_entitlement_overrides
+      (id,account_id,meter,limit_units,ends_at,reason,source) VALUES($1,$2,$3,$4,NULLIF($5,'')::timestamptz,$6,'ADMIN')`,
+    [newId('override'),account.id,meter,limit,req.body.endsAt||'',req.body.reason||'Commercial limit override']);
+    req.flash('success','Customer-specific usage limit saved.');return res.redirect(303,'/commercial-admin#limits');}));
+  return router;}
+
+module.exports={createPostgresCommercialRouter,renderPublic,commercialAdmin};

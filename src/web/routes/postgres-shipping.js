@@ -8,6 +8,7 @@ const commerce=require('../../operations/postgres-commerce');
 const address=require('../../shipping/address');
 const providerRegistry=require('../../shipping/provider');
 const legacyAccounts=require('../../shipping/accounts');
+const {requireCapability}=require('../commercial-middleware');
 const permissions=require('../../actions/permissions');
 const carriers=require('../../sales/carriers');
 const {newId,nowIso,trimOrNull}=require('../../lib/util');
@@ -104,7 +105,7 @@ function createPostgresShippingRouter(database,options={}){
       req.body.requireByPromised!==undefined?1:0,maxDeliveryDays,trimOrNull(req.body.statedText),req.ctx.actorId,at]);
     req.flash('success','Saved. StockChief will use this when a parcel is ready and it fits.');return res.redirect(303,'/settings/shipping');
   }));
-  router.post('/settings/shipping/operation-mode',requirePermission(permissions.ADMIN,'change shipping automation'),asyncRoute(async(req,res)=>{
+  router.post('/settings/shipping/operation-mode',requirePermission(permissions.ADMIN,'change shipping automation'),requireCapability(database,'shipping.automation'),asyncRoute(async(req,res)=>{
     const mode=String(req.body.mode||'');if(!['MANUAL','RECOMMEND','AUTOMATIC'].includes(mode))throw new ValidationError('Choose Manual, Recommend, or Automatic.');
     const at=nowIso();await database.query(`INSERT INTO shipping_operation_policy(workspace_id,mode,updated_by_user_id,created_at,updated_at)
       VALUES($1,$2,$3,$4,$4) ON CONFLICT(workspace_id) DO UPDATE SET mode=EXCLUDED.mode,

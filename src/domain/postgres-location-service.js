@@ -3,6 +3,7 @@
 const { ValidationError,InvariantError,NotFoundError }=require('./errors');
 const { LOCATION_KIND_IDS }=require('./constants');
 const { newId,nowIso,requireText,requireOneOf,trimOrNull }=require('../lib/util');
+const entitlements=require('../entitlements/postgres-service');
 
 function pickSequence(value){
   if(value===undefined || value===null || value==='')return 0;
@@ -35,6 +36,8 @@ async function listHierarchy(database,workspaceId,{includeInactive=false}={}){
 async function createLocationInTransaction(client,ctx,input){
   const name=requireText(input.name,'Location name',{max:120});
   const kind=requireOneOf(input.kind,LOCATION_KIND_IDS,'Location type');
+    const commercialScope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId);
+    await entitlements.assertMeterCapacity(client,commercialScope,'locations',1);
     const parent=input.parentLocationId?await requireLocation(client,ctx.workspaceId,input.parentLocationId,'parent location'):null;
     if(parent && !Number(parent.is_active))throw new ValidationError(`${parent.name} is archived and cannot contain another location.`);
     const barcode=trimOrNull(input.barcode);

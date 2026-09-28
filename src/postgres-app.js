@@ -23,6 +23,9 @@ const { createPostgresShippingRouter } = require('./web/routes/postgres-shipping
 const { createPostgresShippingWebhooks } = require('./web/routes/postgres-shipping-webhooks');
 const { createPostgresProviderWebhooks } = require('./web/routes/postgres-provider-webhooks');
 const { createPostgresPaymentWebhooks } = require('./web/routes/postgres-payment-webhooks');
+const { createPostgresCommercialWebhooks } = require('./web/routes/postgres-commercial-webhooks');
+const { createPostgresCommercialRouter } = require('./web/routes/postgres-commercial');
+const postgresEntitlements = require('./entitlements/postgres-service');
 const { createPostgresImportsRouter } = require('./web/routes/postgres-imports');
 const { createPostgresProjectionsRouter } = require('./web/routes/postgres-projections');
 const { createPostgresCommerceRouter } = require('./web/routes/postgres-commerce');
@@ -42,10 +45,12 @@ const { createPostgresPlanningRouter } = require('./web/routes/postgres-planning
 const { createPostgresRepairsRouter } = require('./web/routes/postgres-repairs');
 const postgresProjections = require('./projections/postgres-service');
 const postgresExploration = require('./onboarding/postgres-exploration');
+const { requireOperationalSubscription } = require('./web/commercial-middleware');
 
 function createPostgresApp({database,sessionStore,sessionSecret=config.sessionSecret,env=config.env,aiProvider=null,
   connectionProviders=null,connectionPublicOrigin=null,shippingOptions=null,paymentOptions=null,
-  probeCacheMs={health:5000,readiness:1000},assetVersion=process.env.FOUNDRY_ASSET_VERSION||config.operations.releaseRef}={}) {
+  commercialOptions=null,probeCacheMs={health:5000,readiness:1000},
+  assetVersion=process.env.FOUNDRY_ASSET_VERSION||config.operations.releaseRef}={}) {
   if(!database?.query)throw new TypeError('A PostgreSQL database is required.');
   const app=express();
   const store=sessionStore || new PostgresSessionStore(database);
@@ -58,6 +63,8 @@ function createPostgresApp({database,sessionStore,sessionSecret=config.sessionSe
   app.set('trust proxy',1);
   app.disable('x-powered-by');
   app.use(express.static(path.join(__dirname,'web','public'),{maxAge:env==='production'?'7d':0}));
+  app.use(createPostgresCommercialWebhooks(database,commercialOptions?.billingProvider?{
+    provider:commercialOptions.billingProvider,providerOptions:commercialOptions.providerOptions||{}}:{}));
   app.use(createPostgresShippingWebhooks(database,shippingOptions || {}));
   app.use(createPostgresPaymentWebhooks(database,paymentOptions || {}));
   app.use(createPostgresProviderWebhooks(database,{providers:connectionProviders || undefined,
@@ -117,6 +124,12 @@ function createPostgresApp({database,sessionStore,sessionSecret=config.sessionSe
   app.use(commonMiddleware.flash);
   app.use(commonMiddleware.csrf);
   app.use(authMiddleware.loadUser(database));
+  app.use(async(req,res,next)=>{try{const commercialAccountId=req.workspace?.owner_account_id||req.account?.id;
+    res.locals.commercial=req.account
+      ?await postgresEntitlements.summary(database,{accountId:commercialAccountId,workspaceId:req.ctx?.workspaceId})
+      :{subscription:null,access:postgresEntitlements.operationalAccess(null),capabilities:[],meters:[]};
+    return next();}catch(error){return next(error);}});
+  app.use(requireOperationalSubscription);
   app.use(async(req,res,next)=>{
     if(!req.ctx)return next();
     try {
@@ -129,6 +142,8 @@ function createPostgresApp({database,sessionStore,sessionSecret=config.sessionSe
     catch(error){return next(error);}
   });
   app.use(postgresPageRenderer);
+  app.use(createPostgresCommercialRouter(database,{publicOrigin:connectionPublicOrigin || config.connections.publicOrigin,
+    ...(commercialOptions||{})}));
   app.use(createPostgresAuthRouter(database));
   app.use(createPostgresWorkspacesRouter(database));
   app.use(createPostgresSettingsRouter(database,{provider:aiProvider}));

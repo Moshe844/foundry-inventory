@@ -5,6 +5,8 @@ const legacy=require('./connect');
 const providerService=require('../connections/postgres-provider-service');
 const {AuthenticationError,NotFoundError,ValidationError}=require('../domain/errors');
 const {newId,nowIso}=require('../lib/util');
+const entitlements=require('../entitlements/postgres-service');
+const commercial=require('../commercial/service');
 
 const PROVIDER='stripe';
 const STATE_PROVIDER='stripe_connect';
@@ -35,12 +37,14 @@ async function begin(database,ctx,input={}){const held=legacy.platform();
   await database.transaction(async(client)=>{if(current?.connector_id)await client.query(`UPDATE workspace_connectors
       SET setup_status='AUTHORIZING',status='disconnected',last_error=NULL,authorized_by_user_id=$3,updated_at=$4
       WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,connectorId,ctx.actorId,at]);
-    else await client.query(`INSERT INTO workspace_connectors
+    else {const commercialScope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId);
+      await entitlements.assertMeterCapacity(client,commercialScope,'connections',1);
+      await client.query(`INSERT INTO workspace_connectors
       (id,workspace_id,connector_key,display_name,provider_type,provides,config,status,capabilities,
        setup_status,authorized_by_user_id,created_at,updated_at)
       VALUES($1,$2,$3,'Stripe','stripe',$4,$5,'disconnected',$6,'AUTHORIZING',$7,$8,$8)`,
     [connectorId,ctx.workspaceId,`stripe:${connectorId}`,JSON.stringify(['payments']),JSON.stringify({connect:true}),
-      JSON.stringify(['invoices','refunds']),ctx.actorId,at]);
+      JSON.stringify(['invoices','refunds']),ctx.actorId,at]);}
     await client.query(`INSERT INTO connection_authorization_states
       (id,state_hash,workspace_id,connector_id,provider_type,actor_id,metadata,expires_at,created_at)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,[newId('cauth'),providerService.stateHash(state),ctx.workspaceId,
@@ -82,7 +86,9 @@ async function complete(database,query={},options={}){const state=await provider
        charges_enabled=EXCLUDED.charges_enabled,livemode=EXCLUDED.livemode,checked_at=EXCLUDED.checked_at,
        connected_by_user_id=EXCLUDED.connected_by_user_id,updated_at=EXCLUDED.updated_at`,
     [newId('paycon'),state.workspace_id,state.connector_id,accountId,displayName,chargesEnabled?1:0,liveMode?1:0,
-      at,state.actor_id]);},{isolation:'SERIALIZABLE',retrySafe:true});
+      at,state.actor_id]);const commercialScope=await entitlements.ownerScopeForWorkspace(client,state.workspace_id);
+    await commercial.trackOnce(client,{eventName:'first_integration_connected',accountId:commercialScope.accountId,
+      sourcePath:'stripe_connect',detail:{providerType:'stripe'}});},{isolation:'SERIALIZABLE',retrySafe:true});
     return {connected:true,workspaceId:state.workspace_id,connectorId:state.connector_id,returnOrigin:state.metadata.returnOrigin,
       ...(await describe(database,state.workspace_id))};
   }catch(error){await database.query(`UPDATE workspace_connectors SET status='error',setup_status='AUTHORIZATION_FAILED',

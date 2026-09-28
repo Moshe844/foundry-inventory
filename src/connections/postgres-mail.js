@@ -7,6 +7,7 @@ const access=require('../actions/permissions');
 const providerService=require('./postgres-provider-service');
 const defaultProviders=require('./providers/registry');
 const providerEffects=require('../operations/postgres-provider-effects');
+const commercialUsage=require('../entitlements/postgres-service');
 
 function contentHash(message){return crypto.createHash('sha256').update(JSON.stringify({sender:message.sender,
   subject:message.subject||'',body:message.bodyText||message.body||'',receivedAt:message.receivedAt||''})).digest('hex');}
@@ -17,6 +18,9 @@ async function capture(database,connection,message){
   const externalId=trimOrNull(message.externalMessageId||message.messageId||message.id);
   if(!externalId)throw new ValidationError('A mailbox message needs a provider message id.');
   return database.transaction(async(client)=>{
+    const owner=(await client.query('SELECT owner_account_id FROM workspaces WHERE id=$1',[connection.workspace_id])).rows[0];
+    if(owner?.owner_account_id)await commercialUsage.assertCapability(client,{accountId:owner.owner_account_id,
+      workspaceId:connection.workspace_id},'email.auto_extract');
     const supplier=(await client.query(`SELECT id,name FROM suppliers WHERE workspace_id=$1 AND status='active'
       AND lower(email)=lower($2) ORDER BY id LIMIT 2`,[connection.workspace_id,sender])).rows;
     const customer=(await client.query(`SELECT id,name FROM customers WHERE workspace_id=$1 AND record_state='ACTIVE'
@@ -53,6 +57,10 @@ async function capture(database,connection,message){
     }
     await client.query('UPDATE workspace_connectors SET last_activity_at=$3,updated_at=$3 WHERE workspace_id=$1 AND id=$2',
       [connection.workspace_id,connection.id,at]);
+    if(owner?.owner_account_id)await commercialUsage.recordUsage(client,{accountId:owner.owner_account_id,
+      workspaceId:connection.workspace_id},{id:newId('usage'),meter:'processing_units',units:1,
+      idempotencyKey:`email:${connection.id}:${externalId}`,occurredAt:message.receivedAt||at,
+      detail:{kind:'business_email',connectorId:connection.id}});
     return {accepted:true,replayed:false,messageId:id};
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }

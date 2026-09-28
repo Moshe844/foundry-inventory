@@ -44,8 +44,8 @@ class PostgresSessionStore extends session.Store {
 
   touch(sid, value, callback = () => {}) {
     this.ready.then(() => this.database.query(`UPDATE stockchief_runtime.sessions
-      SET expires_at = $1 WHERE sid = $2`,
-      [this.expiryFor(value), sid])).then(() => callback(null), callback);
+      SET expires_at = $1 WHERE sid = $2 AND expires_at > $3`,
+      [this.expiryFor(value), sid, Date.now()])).then(() => callback(null), callback);
   }
 
   destroy(sid, callback = () => {}) {

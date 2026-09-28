@@ -48,9 +48,11 @@ test('PostgreSQL account menu pages render truthful native settings and rename t
     assert.equal(await page.locator('#workspace-name').inputValue(),'Renamed Operation');
     await page.getByRole('button',{name:'Add person'}).click();const person=page.locator('#modal-person');
     await person.getByLabel('Name').fill('Settings Accountant');await person.getByLabel('Email').fill('accountant@example.test');
-    await person.getByLabel('Temporary password').fill('accountant-password');await person.getByLabel('Role').selectOption('accountant');
+    assert.match(await person.innerText(),/choose their own password/i);await person.getByLabel('Role').selectOption('accountant');
     await Promise.all([page.waitForNavigation(),person.getByRole('button',{name:'Add person'}).click()]);
-    assert.match(await page.locator('main').innerText(),/Settings Accountant[\s\S]*Accountant/);
+    assert.match(await page.locator('main').innerText(),/Invitation email queued for accountant@example\.test/i);
+    const pending=(await database.query(`SELECT role,status FROM workspace_invitations WHERE email=$1`,['accountant@example.test'])).rows[0];
+    assert.deepEqual(pending,{role:'accountant',status:'PENDING'});
     const alerts=page.locator('form[action="/settings/email-alerts"]');await alerts.getByRole('checkbox').check();
     await alerts.getByLabel('Recipients').fill('owner-alerts@example.test');
     await Promise.all([page.waitForNavigation(),alerts.getByRole('button',{name:'Save email alerts'}).click()]);

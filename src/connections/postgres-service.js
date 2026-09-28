@@ -1,6 +1,8 @@
 'use strict';
 
 const crypto=require('node:crypto');
+const entitlements=require('../entitlements/postgres-service');
+const commercial=require('../commercial/service');
 const { AuthenticationError,NotFoundError,ValidationError }=require('../domain/errors');
 const { newId,nowIso,requireText }=require('../lib/util');
 const credentials=require('./postgres-credential-store');
@@ -96,6 +98,8 @@ async function createFeed(database,ctx,input={}){
   const token=`${TOKEN_PREFIX}${prefix}.${crypto.randomBytes(32).toString('base64url')}`;
   const now=nowIso();
   await database.transaction(async(client)=>{
+    const commercialScope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId);
+    await entitlements.assertMeterCapacity(client,commercialScope,'connections',1);
     await client.query(`INSERT INTO workspace_connectors
       (id,workspace_id,connector_key,display_name,provider_type,status,capabilities,provides,config,
        credential_ref,expected_interval_minutes,setup_status,authorized_by_user_id,created_at,updated_at)
@@ -106,6 +110,8 @@ async function createFeed(database,ctx,input={}){
     await client.query(`INSERT INTO connector_feed_tokens
       (id,workspace_id,connector_id,token_prefix,token_hash,created_by_user_id,created_at)
       VALUES($1,$2,$3,$4,$5,$6,$7)`,[tokenId,ctx.workspaceId,connectorId,prefix,hash(token),ctx.actorId,now]);
+    await commercial.trackOnce(client,{eventName:'first_integration_connected',accountId:commercialScope.accountId,
+      sourcePath:'custom_event_connection',detail:{providerType:'reference_webhook'}});
   },{isolation:'SERIALIZABLE',retrySafe:true});
   return {connection:await get(database,ctx.workspaceId,connectorId),token,tokenPrefix:prefix};
 }

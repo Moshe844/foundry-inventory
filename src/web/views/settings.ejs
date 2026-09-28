@@ -289,6 +289,7 @@
       <p class="rm-quiet" style="font-size:12.5px;padding:12px 16px;border-top:1px solid var(--line-2);margin:0">
         Inventories are counted across your whole account; everything else within this one.
       </p>
+      <div style="padding:0 16px 16px"><a class="rm-btn rm-btn--ghost rm-btn--sm" href="/billing">Manage plan and billing</a></div>
     </section>
 
     <% if (locals.aiUsage) { var ai = aiUsage; var k = function (n) { return n >= 1000000 ? (n / 1000000).toFixed(1) + 'M' : n >= 1000 ? Math.round(n / 1000) + 'k' : String(n); }; %>
@@ -511,11 +512,7 @@
       <div class="modal-body">
         <label class="rm-field"><span>Name</span><input type="text" id="person-name" name="name" required></label>
         <label class="rm-field"><span>Email</span><input type="email" id="person-email" name="email" required></label>
-        <label class="rm-field">
-          <span>Temporary password</span>
-          <input type="text" id="person-password" name="password" minlength="8" required>
-          <small>At least 8 characters. Share it with them directly.</small>
-        </label>
+        <p class="rm-quiet">They receive an expiring invitation and choose their own password. StockChief never asks you to handle another person's credentials.</p>
         <label class="rm-field">
           <span>Role</span>
           <select id="person-role" name="role" required>

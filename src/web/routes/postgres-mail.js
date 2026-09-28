@@ -5,6 +5,8 @@ const mail=require('../../connections/postgres-mail');
 const permissions=require('../../actions/permissions');
 const {requireAuth,requirePermission,asyncRoute}=require('../middleware');
 const {trimOrNull}=require('../../lib/util');
+const entitlements=require('../../entitlements/postgres-service');
+const {commercialScope}=require('../commercial-middleware');
 
 const DRAWERS=[{key:'needs-reply',state:'NEEDS_REPLY',label:'Needs a reply'},
   {key:'waiting',state:'WAITING',label:'Waiting on them'},{key:'handled',state:'HANDLED',label:'Handled'}];
@@ -52,9 +54,11 @@ function createPostgresMailRouter(database,options={}){
   }));
   router.post('/mail/:id/draft',requirePermission(permissions.OPERATE,'write replies'),asyncRoute(async(req,res)=>{
     if(req.body.action==='send'){
+      await entitlements.assertCapability(database,commercialScope(req),'connection.email');
       await mail.queueSend(database,req.ctx,req.params.id,{subject:req.body.subject,body:req.body.body},{providers:options.providers});
       req.flash('success','Reply queued securely. StockChief will show it as sent only after the mailbox provider confirms it.');
     }else if(req.body.action==='write'){
+      await entitlements.assertCapability(database,commercialScope(req),'email.response_generation');
       const message=await mail.get(database,req.ctx.workspaceId,req.params.id);
       const name=message.supplier_name||String(message.sender||'').split('@')[0]||'there';
       await mail.saveDraft(database,req.ctx,req.params.id,{subject:`Re: ${message.subject||'Your message'}`,
