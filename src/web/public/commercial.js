@@ -49,8 +49,6 @@
       if(progress)progress.style.width=String(((index+1)/scenes.length)*100)+'%';
       if(clock)clock.textContent=scenes[index].dataset.clock||'';
       if(counter)counter.textContent=String(index+1)+' / '+String(scenes.length);
-      if(options&&options.updateHash&&index===5)history.replaceState(null,'','#exception');
-      else if(options&&options.updateHash&&location.hash)history.replaceState(null,'',location.pathname+location.search);
       schedule();
     }
 
@@ -81,8 +79,7 @@
         setPlaying(false);
       });
     });
-    var requested=(location.hash||'').replace('#','');
-    render(requested==='exception'?5:0);
+    render(0);
     setPlaying(playing);
   });
 

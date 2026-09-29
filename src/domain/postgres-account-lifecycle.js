@@ -34,6 +34,15 @@ async function requestVerification(database,accountId,options={}){
   },{isolation:'SERIALIZABLE'});
 }
 
+async function inspectVerification(database,token){
+  const row=(await database.query(`SELECT verification.account_id,verification.expires_at,verification.used_at,account.email
+    FROM account_email_verifications verification JOIN accounts account ON account.id=verification.account_id
+    WHERE verification.token_hash=$1`,[hash(token)])).rows[0];
+  if(!row||row.used_at||new Date(row.expires_at)<=new Date())
+    throw new ValidationError('That verification link is invalid or has expired. Request a new link and try again.');
+  return {accountId:row.account_id,email:row.email,expiresAt:row.expires_at};
+}
+
 async function consumeVerification(database,token){return database.transaction(async(client)=>{
   const row=(await client.query(`SELECT verification.* FROM account_email_verifications verification
     WHERE token_hash=$1 FOR UPDATE`,[hash(token)])).rows[0];
@@ -89,4 +98,4 @@ async function acceptInvitation(database,token,input={}){return database.transac
     WHERE id=$1`,[invitation.id,account.id]);
   return {accountId:account.id,workspaceId:invitation.workspace_id};},{isolation:'SERIALIZABLE'});}
 
-module.exports={hash,requestVerification,consumeVerification,createInvitation,inspectInvitation,acceptInvitation};
+module.exports={hash,requestVerification,inspectVerification,consumeVerification,createInvitation,inspectInvitation,acceptInvitation};

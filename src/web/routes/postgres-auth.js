@@ -67,7 +67,7 @@ function createPostgresAuthRouter(database) {
   router.post('/register', async (req,res,next) => {
     try {
       const paidRequired=config.commercial.requirePaidWorkspace;
-      if(paidRequired)await commercial.getSelfServicePlan(database,req.body.planId||'growth',{requireApproved:false});
+      if(paidRequired)await commercial.getSelfServicePlan(database,req.body.planId||'growth');
       if(paidRequired&&String(req.body.promoCode||'').trim())await commercial.validatePromotion(database,req.body.promoCode,
         req.body.planId||'growth');
       const created=paidRequired?await auth.createPendingAccount(database,req.body):await auth.createBusiness(database,req.body);
@@ -102,7 +102,12 @@ function createPostgresAuthRouter(database) {
   router.post('/verify-email/resend',async(req,res,next)=>{try{if(req.account)await accountLifecycle.requestVerification(database,req.account.id,
       {origin:config.connections.publicOrigin||res.locals.origin});req.flash('success','A new verification link is on its way.');return res.redirect(303,'/verify-email/pending');}
     catch(error){return next(error);}});
-  router.get('/verify-email',async(req,res,next)=>{try{const verified=await accountLifecycle.consumeVerification(database,req.query.token||'');
+  router.get('/verify-email',async(req,res,next)=>{try{const verification=await accountLifecycle.inspectVerification(database,req.query.token||'');
+    return res.render('auth/verify-confirm',{title:'Verify your email',csrfToken:res.locals.csrfToken,flash:res.locals.flash,
+      origin:res.locals.origin,token:req.query.token||'',verification});}catch(error){if(error.status&&error.status<500)return res.status(error.status).render('auth/verify-pending',{
+      title:'Verification link expired',csrfToken:res.locals.csrfToken,flash:[{type:'error',message:error.message}],account:req.account,
+      origin:res.locals.origin});return next(error);}});
+  router.post('/verify-email',async(req,res,next)=>{try{const verified=await accountLifecycle.consumeVerification(database,req.body.token||'');
     if(!req.account||req.account.id!==verified.accountId){await sessionCall(req,'regenerate');req.session.accountId=verified.accountId;}
     const account=await auth.getAccount(database,verified.accountId);
     const selection=pendingSelection(account,req.session.commercialSelection);await sessionCall(req,'save');

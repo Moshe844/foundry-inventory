@@ -327,10 +327,11 @@ test('public, auth and invitation journeys work in desktop and mobile Chromium',
     assert.match(landing,/runs the work between the sale and the books/i);assert.match(landing,/routine work you authorize/i);
     assert.equal(await page.locator('[data-flow-node]').count(),6);await page.goto(`${base}/demo`);
     assert.doesNotMatch(landing,/talk to sales|sales team/i);
-    await page.locator('[data-story-step="5"]').click();const decision=await page.locator('[data-story-scene="5"]').innerText();
-    assert.match(decision,/price is 7% above/i);assert.match(decision,/exceeds the 5% automatic tolerance/i);
-    await page.getByRole('button',{name:'Ask supplier'}).click();assert.match(await page.locator('[data-demo-result]').innerText(),
-      /ask ABC Apparel/i);
+    assert.equal(await page.locator('[data-story-scene]').count(),5);
+    assert.equal(await page.locator('.product-capture img').count(),5);
+    await page.locator('[data-story-step="1"]').click();const decision=await page.locator('[data-story-scene="1"]').innerText();
+    assert.match(decision,/checks transfer before buy/i);assert.match(decision,/moving three/i);
+    assert.match(await page.locator('[data-story-scene="1"] img').getAttribute('src'),/planning\.png$/);
     for(const path of ['/how-stockchief-works','/capabilities','/integrations','/control','/switching']){
       await page.goto(`${base}${path}`);assert.equal(await page.locator('h1').count(),1);
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),true);
@@ -433,7 +434,9 @@ test('paid-workspace signup verifies email before checkout and never provisions 
     const browser=await chromium.launch();context.after(async()=>{if(prior===undefined)delete process.env.STOCKCHIEF_REQUIRE_PAID_WORKSPACE;
       else process.env.STOCKCHIEF_REQUIRE_PAID_WORKSPACE=prior;await browser.close();await new Promise((resolve)=>server.close(resolve));
       await app.locals.sessionStore.close();await database.close();cluster.stop();});const base=`http://127.0.0.1:${server.address().port}`;
-    const page=await browser.newPage();await page.goto(`${base}/register?plan=pro&interval=annual`);
+    const page=await browser.newPage();await page.goto(`${base}/login`);
+    assert.equal(await page.getByRole('link',{name:'Create account'}).getAttribute('href'),'/register');
+    await page.goto(`${base}/register?plan=pro&interval=annual`);
     await page.getByLabel('Business name').fill('Paid Workspace');await page.getByLabel('Your name').fill('Paid Owner');
     await page.getByLabel('Work email').fill('paid-owner@example.test');await page.getByLabel('Password').fill('paid-owner-password');
     await Promise.all([page.waitForURL(`${base}/verify-email/pending`),page.getByRole('button',{name:'Create account'}).click()]);
@@ -447,7 +450,12 @@ test('paid-workspace signup verifies email before checkout and never provisions 
     await beforeVerify.getByLabel('Password').fill('paid-owner-password');await beforeVerify.getByLabel('Remember me').check();
     await Promise.all([beforeVerify.waitForURL(`${base}/verify-email/pending`),beforeVerify.getByRole('button',{name:'Sign in'}).click()]);
     const remembered=(await beforeVerify.context().cookies(base)).find((cookie)=>cookie.name==='foundry.sid');assert.ok(remembered.expires>Date.now()/1000+20*86400);
-    await page.goto(`${base}/verify-email?token=${encodeURIComponent(token)}`);assert.match(await page.locator('body').innerText(),/Email verified/i);
+    await page.goto(`${base}/verify-email?token=${encodeURIComponent(token)}`);assert.match(await page.locator('body').innerText(),/Verify your email/i);
+    assert.equal((await database.query('SELECT email_verified_at FROM accounts WHERE id=$1',[account.id])).rows[0].email_verified_at,null,
+      'Opening or scanning the link must not consume it');
+    const scanner=await browser.newPage();await scanner.goto(`${base}/verify-email?token=${encodeURIComponent(token)}`);
+    assert.match(await scanner.locator('body').innerText(),/Verify and continue/i);await scanner.close();
+    await page.getByRole('button',{name:'Verify and continue'}).click();assert.match(await page.locator('body').innerText(),/Email verified/i);
     assert.match(await page.locator('body').innerText(),/pro plan/i);assert.ok((await database.query('SELECT email_verified_at FROM accounts WHERE id=$1',
       [account.id])).rows[0].email_verified_at);
     const returningContext=await browser.newContext();const returning=await returningContext.newPage();await returning.goto(`${base}/login`);
