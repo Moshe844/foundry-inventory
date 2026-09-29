@@ -42,13 +42,24 @@ function capabilityName(capability){return ({
 
 function createPostgresCommercialRouter(database,options={}){const router=express.Router();const provider=options.billingProvider||billingProvider;
   router.get('/',asyncRoute(async(req,res,next)=>{if(req.account)return next();await commercial.track(database,{eventName:'landing_viewed',
-    anonymousId:req.sessionID,sourcePath:'/'});return renderPublic(req,res,'public/home',{title:'Autonomous inventory operations',nav:'home'});}));
+    anonymousId:req.sessionID,sourcePath:'/'});return renderPublic(req,res,'public/home',{title:'The AI inventory operator',nav:'home',
+      description:'StockChief notices, decides and carries out routine inventory operations—then brings owners the exceptions that need judgement.'});}));
   router.get('/demo',asyncRoute(async(req,res)=>{await commercial.track(database,{eventName:'demo_opened',anonymousId:req.sessionID,
-    accountId:req.account?.id||null,sourcePath:'/demo'});return renderPublic(req,res,'public/demo',{title:'See StockChief in action',nav:'demo'});}));
+    accountId:req.account?.id||null,sourcePath:'/demo'});return renderPublic(req,res,'public/demo',{title:'See StockChief in action',nav:'demo',
+      description:'Follow a realistic business day from sale and shortage through supplier, receiving, fulfillment, payment and accounting.'});}));
+  router.get('/how-stockchief-works',asyncRoute(async(req,res)=>renderPublic(req,res,'public/how-it-works',{
+    title:'How StockChief works',nav:'how',description:'See how StockChief turns business signals into governed, verified operational work.'})));
+  router.get('/capabilities',asyncRoute(async(req,res)=>renderPublic(req,res,'public/capabilities',{
+    title:'Capabilities',nav:'capabilities',description:'Explore the inventory, purchasing, order, communication, shipping, payment and accounting work StockChief handles today.'})));
+  router.get('/integrations',asyncRoute(async(req,res)=>renderPublic(req,res,'public/integrations',{
+    title:'Integrations',nav:'integrations',description:'See how StockChief connects commerce, email, shipping, payments, accounting and custom systems—and the qualification status of each.'})));
+  router.get('/switching',asyncRoute(async(req,res)=>renderPublic(req,res,'public/switching',{
+    title:'Switching to StockChief',nav:'switching',description:'Bring inventory records into StockChief through preview, clarification, reconciliation and controlled approval.'})));
   router.get('/pricing',asyncRoute(async(req,res)=>{const plans=await commercial.listPlans(database);await commercial.track(database,{eventName:'pricing_viewed',
     anonymousId:req.sessionID,accountId:req.account?.id||null,sourcePath:'/pricing'});return renderPublic(req,res,'public/pricing',{
     title:'Pricing',nav:'pricing',plans,checkoutCancelled:req.query.checkout==='cancelled'});}));
-  router.get('/trust',asyncRoute(async(req,res)=>renderPublic(req,res,'public/trust',{title:'Trust and control',nav:'trust'})));
+  router.get(['/control','/trust'],asyncRoute(async(req,res)=>renderPublic(req,res,'public/trust',{title:'Control and trust',nav:'control',
+    description:'Understand StockChief authority, approvals, evidence, tenant isolation, credentials and operational recovery.'})));
   router.get('/privacy',asyncRoute(async(req,res)=>renderPublic(req,res,'public/legal',{
     title:'Privacy',heading:'Privacy notice',kind:'privacy',supportEmail:config.supportEmail})));
   router.get('/terms',asyncRoute(async(req,res)=>renderPublic(req,res,'public/legal',{

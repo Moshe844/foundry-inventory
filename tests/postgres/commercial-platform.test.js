@@ -324,12 +324,17 @@ test('public, auth and invitation journeys work in desktop and mobile Chromium',
     await app.locals.sessionStore.close();await database.close();cluster.stop();});const base=`http://127.0.0.1:${server.address().port}`;
   for(const viewport of [{width:1440,height:900},{width:390,height:844}]){const page=await browser.newPage({viewport});const errors=[];
     page.on('pageerror',(error)=>errors.push(error.message));await page.goto(base);const landing=await page.locator('body').innerText();
-    assert.match(landing,/Traditional software gives you tools/i);assert.match(landing,/StockChief does the work/i);await page.goto(`${base}/demo`);
+    assert.match(landing,/runs the work between the sale and the books/i);assert.match(landing,/routine work you authorize/i);
+    assert.equal(await page.locator('[data-flow-node]').count(),6);await page.goto(`${base}/demo`);
     assert.doesNotMatch(landing,/talk to sales|sales team/i);
-    await page.getByRole('button',{name:/Needs you/}).click();const decision=await page.locator('[data-demo-panel="needs"]').innerText();
-    assert.match(decision,/raised Black Tee cost by 7%/i);assert.match(decision,/exceeds your 5% automatic tolerance/i);
+    await page.locator('[data-story-step="5"]').click();const decision=await page.locator('[data-story-scene="5"]').innerText();
+    assert.match(decision,/price is 7% above/i);assert.match(decision,/exceeds the 5% automatic tolerance/i);
     await page.getByRole('button',{name:'Ask supplier'}).click();assert.match(await page.locator('[data-demo-result]').innerText(),
-      /prepare a supplier reply/i);
+      /ask ABC Apparel/i);
+    for(const path of ['/how-stockchief-works','/capabilities','/integrations','/control','/switching']){
+      await page.goto(`${base}${path}`);assert.equal(await page.locator('h1').count(),1);
+      assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),true);
+    }
     await page.goto(`${base}/pricing`);assert.equal(await page.locator('.plan-card').count(),4);await page.getByRole('button',{name:/Annual/}).click();
     assert.match(await page.locator('.plan-card').nth(1).innerText(),/billed annually/i);
     assert.match(await page.getByRole('link',{name:'Choose Growth'}).getAttribute('href'),/plan=growth.*interval=annual/);

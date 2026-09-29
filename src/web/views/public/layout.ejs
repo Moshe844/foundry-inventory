@@ -5,24 +5,34 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <title><%= title %> · StockChief</title>
   <meta name="description" content="<%= description %>">
-  <meta property="og:title" content="StockChief — Your inventory operation, managed.">
+  <meta property="og:title" content="StockChief — The AI inventory operator">
   <meta property="og:description" content="<%= description %>">
   <meta property="og:image" content="<%= origin %>/og.png">
   <meta name="twitter:card" content="summary_large_image">
+  <meta name="theme-color" content="#f3f1ea">
   <link rel="stylesheet" href="/commercial.css?v=<%= assetVersion %>">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%235B4BE8'/%3E%3Cpath d='M6 8.5 12 5.8l6 2.7v6L12 17.2 6 14.5z' fill='none' stroke='white' stroke-width='1.5'/%3E%3C/svg%3E">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%234936d3'/%3E%3Cpath d='M6 8.5 12 5.8l6 2.7v6L12 17.2 6 14.5z' fill='none' stroke='white' stroke-width='1.5'/%3E%3C/svg%3E">
 </head>
 <body class="public-page">
 <a class="pub-skip" href="#content">Skip to content</a>
-<header class="pub-nav">
-  <a class="pub-brand" href="/"><span class="pub-brand__mark">◇</span><span>StockChief</span></a>
-  <nav aria-label="Public navigation">
-    <a href="/demo">Product demo</a><a href="/pricing">Pricing</a><a href="/trust">Trust</a><a href="/contact">Contact StockChief</a>
-  </nav>
-  <div class="pub-nav__actions"><a class="pub-link" href="/login">Sign in</a><a class="pub-btn pub-btn--small" href="/pricing">Start with StockChief</a></div>
+<header class="pub-nav" data-public-nav>
+  <a class="pub-brand" href="/" aria-label="StockChief home"><span class="pub-brand__mark" aria-hidden="true"><i></i></span><span>StockChief</span></a>
+  <button class="pub-nav__toggle" type="button" data-nav-toggle aria-expanded="false" aria-controls="public-navigation"><span></span><span></span><span></span><b class="sr-only">Open navigation</b></button>
+  <div class="pub-nav__menu" id="public-navigation" data-nav-menu>
+    <nav aria-label="Public navigation">
+      <a class="<%= nav==='demo'?'is-active':'' %>" href="/demo">See it work</a>
+      <a class="<%= nav==='capabilities'?'is-active':'' %>" href="/capabilities">Capabilities</a>
+      <a class="<%= nav==='integrations'?'is-active':'' %>" href="/integrations">Integrations</a>
+      <a class="<%= nav==='pricing'?'is-active':'' %>" href="/pricing">Pricing</a>
+    </nav>
+    <div class="pub-nav__actions"><a class="pub-link" href="/login">Sign in</a><a class="pub-btn pub-btn--small" href="/register">Get started</a></div>
+  </div>
 </header>
 <main id="content"><%- body %></main>
-<footer class="pub-footer"><div><a class="pub-brand" href="/"><span class="pub-brand__mark">◇</span><span>StockChief</span></a><p>Your inventory operation, managed.</p></div>
-  <nav aria-label="Footer"><a href="/demo">Demo</a><a href="/pricing">Pricing</a><a href="/trust">Trust</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a></nav></footer>
+<footer class="pub-footer">
+  <div class="pub-footer__lead"><a class="pub-brand" href="/"><span class="pub-brand__mark" aria-hidden="true"><i></i></span><span>StockChief</span></a><p>The AI inventory operator that runs the work and brings you the exceptions.</p></div>
+  <div class="pub-footer__links"><div><b>Explore</b><a href="/demo">See it work</a><a href="/capabilities">Capabilities</a><a href="/integrations">Integrations</a><a href="/pricing">Pricing</a></div><div><b>Operate</b><a href="/how-stockchief-works">How it works</a><a href="/control">Control &amp; trust</a><a href="/switching">Switching</a><a href="/contact">Contact the founder</a></div><div><b>Account</b><a href="/register">Create account</a><a href="/login">Sign in</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a></div></div>
+  <div class="pub-footer__base"><span>© <%= new Date().getFullYear() %> StockChief</span><span>Built for businesses that want the work handled.</span></div>
+</footer>
 <script src="/commercial.js?v=<%= assetVersion %>" defer></script>
 </body></html>
