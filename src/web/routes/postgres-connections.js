@@ -160,6 +160,15 @@ function createPostgresConnectionsRouter(database,options={}){
     delete req.session.newConnectionToken;
     const connection=await connections.get(database,req.ctx.workspaceId,req.params.id);
     const adapter=registry.get(connection.provider_type);
+    const isMailbox=['gmail','microsoft365'].includes(connection.provider_type);
+    let mailboxLastPollAt=null;
+    if(isMailbox){
+      const poll=(await database.query(`SELECT completed_at FROM stockchief_runtime.jobs
+        WHERE workspace_id=$1 AND kind='mailbox.poll' AND payload->>'connectorId'=$2
+          AND status='COMPLETED' ORDER BY completed_at DESC,id DESC LIMIT 1`,
+      [req.ctx.workspaceId,connection.id])).rows[0];
+      mailboxLastPollAt=poll?.completed_at||null;
+    }
     if(adapter?.integrationClass==='accounting'){
       let current=await accountingSync.state(database,req.ctx.workspaceId,connection.id);
       if(!current&&connection.config?.verifiedFact){await accountingSync.initialize(database,connection,req.ctx.actorId,
@@ -179,7 +188,7 @@ function createPostgresConnectionsRouter(database,options={}){
     return res.page('connections/postgres-detail',{
       title:'Connection',nav:'connections',room:true,backTo:{href:'/settings/connections',label:'Connections'},
       connection,newConnectionToken,provider:adapter?.metadata?.()||{name:connection.display_name},
-      canDiscover:Boolean(adapter?.discover),
+      canDiscover:Boolean(adapter?.discover)&&!isMailbox,isMailbox,mailboxLastPollAt,
     });
   }));
   router.post('/settings/connections/:id/accounting/authority',requireOwner,asyncRoute(async(req,res)=>{

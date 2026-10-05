@@ -3,7 +3,7 @@
   const providerName=provider?.name||connection.display_name||connection.provider_type;
   const connected=connection.status==='connected'&&!connection.paused_at;
   const hasCatalogue=connection.productsMapped+connection.locationsMapped>0;
-  const hasEvent=Boolean(connection.last_activity_at);
+  const hasEvent=isMailbox?Boolean(mailboxLastPollAt):Boolean(connection.last_activity_at);
   const proven=connected&&(!canDiscover||hasCatalogue)&&hasEvent&&!connection.openIssues;
 %>
 
@@ -24,18 +24,18 @@
   <div class="stat"><strong><%= connection.productsMapped %></strong><span>products mapped</span></div>
   <div class="stat"><strong><%= connection.locationsMapped %></strong><span>locations mapped</span></div>
   <div class="stat"><strong><%= connection.itemsNeedingMapping %></strong><span>need matching</span></div>
-  <div class="stat"><strong><%= connection.last_activity_at?helpers.timeAgo(connection.last_activity_at):'None yet' %></strong><span>last event received</span></div>
+  <div class="stat"><strong><%= isMailbox?(mailboxLastPollAt?helpers.timeAgo(mailboxLastPollAt):'None yet'):(connection.last_activity_at?helpers.timeAgo(connection.last_activity_at):'None yet') %></strong><span><%= isMailbox?'last mailbox check':'last event received' %></span></div>
 </div>
 <p class="rm-sub">Products mapped <strong><%= connection.productsMapped %></strong> · Locations mapped <strong><%= connection.locationsMapped %></strong> · Need your match <strong><%= connection.itemsNeedingMapping %></strong>.</p>
 
 <section class="setup-journey section">
   <div class="setup-journey__head"><div class="setup-journey__head-copy"><span class="setup-journey__eyebrow">Is it working?</span>
     <h2><%= proven?'This connection is proven':'Prove the connection before relying on it' %></h2>
-    <p>Connected is not the same as working. StockChief records the account, catalogue and first real event separately.</p></div></div>
+    <p><%= isMailbox?'StockChief verifies the connected account and records completed mailbox checks separately.':'Connected is not the same as working. StockChief records the account, catalogue and first real event separately.' %></p></div></div>
   <div class="setup-steps">
     <div class="setup-step <%= connected?'setup-step--done':'setup-step--current' %>"><span class="setup-step__number"><%= connected?'✓':'1' %></span><div><strong>Sign in to the right account</strong><p><%= connection.provider_account_name||'The provider has not returned an account identity yet.' %></p></div><span class="setup-step__state"><%= connected?'Verified':'Waiting' %></span></div>
     <% if(canDiscover){ %><div class="setup-step <%= hasCatalogue?'setup-step--done':connected?'setup-step--current':'' %>"><span class="setup-step__number"><%= hasCatalogue?'✓':'2' %></span><div><strong>Read products and locations</strong><p>Identity records are read first; old sales are never replayed into current stock.</p></div><span class="setup-step__state"><%= hasCatalogue?'Recorded':'Refresh below' %></span></div><% } %>
-    <div class="setup-step <%= hasEvent?'setup-step--done':connected?'setup-step--current':'' %>"><span class="setup-step__number"><%= hasEvent?'✓':canDiscover?'3':'2' %></span><div><strong>Receive one real event</strong><p>StockChief must record a successful exchange before calling this proven.</p></div><span class="setup-step__state"><%= hasEvent?'Received once':'Not yet' %></span></div>
+    <div class="setup-step <%= hasEvent?'setup-step--done':connected?'setup-step--current':'' %>"><span class="setup-step__number"><%= hasEvent?'✓':canDiscover?'3':'2' %></span><div><strong><%= isMailbox?'Complete a mailbox check':'Receive one real event' %></strong><p><%= isMailbox?'A scheduled check must finish successfully before this connection is called proven.':'StockChief must record a successful exchange before calling this proven.' %></p></div><span class="setup-step__state"><%= hasEvent?(isMailbox?'Checked':'Received once'):'Not yet' %></span></div>
   </div>
 </section>
 <% } %>
@@ -59,7 +59,7 @@
       <% if(accounting.pendingEntries.length){ %><div class="grid"><% accounting.pendingEntries.forEach(function(entry){ %><div class="list-row"><div><strong>Journal <%= entry.entry_number %> · <%= entry.description %></strong><p><%= entry.posting_date %></p></div><span class="badge"><%= entry.effect_status||'not queued' %></span></div><% }) %></div><% } %>
     </div></section>
   <% } else { %>
-    <section class="card"><div class="card-head"><div><h2>What this connection is doing</h2><p class="muted">Only successful provider evidence counts.</p></div></div><div class="card-body grid"><div class="list-row"><div><strong>Provider account</strong><p><%= connection.provider_account_name||'Not returned yet' %></p></div><span class="badge <%= connected?'badge--ok':'badge--muted' %>"><%= connected?'Connected':'Not connected' %></span></div><div class="list-row"><div><strong>Last successful exchange</strong><p><%= connection.last_activity_at||connection.last_synced_at||'No successful exchange recorded yet' %></p></div></div></div></section>
+    <section class="card"><div class="card-head"><div><h2>What this connection is doing</h2><p class="muted">Only successful provider evidence counts.</p></div></div><div class="card-body grid"><div class="list-row"><div><strong>Provider account</strong><p><%= connection.provider_account_name||'Not returned yet' %></p></div><span class="badge <%= connected?'badge--ok':'badge--muted' %>"><%= connected?'Connected':'Not connected' %></span></div><div class="list-row"><div><strong><%= isMailbox?'Last completed mailbox check':'Last successful exchange' %></strong><p><%= isMailbox?(mailboxLastPollAt||'No mailbox check has completed yet'):(connection.last_activity_at||connection.last_synced_at||'No successful exchange recorded yet') %></p></div></div></div></section>
     <% if(canDiscover){ %><section class="card"><div class="card-head"><div><h2>Products and locations</h2><p class="muted">Exact matches happen automatically. Ambiguous records stay unchanged.</p></div></div><div class="card-body"><% if(query&&query.refresh==='queued'){ %><div class="notice notice--success">Catalogue refresh queued.</div><% } %><% if(connected){ %><form method="post" action="/settings/connections/<%= connection.id %>/refresh"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit">Refresh now</button></form><% } %></div></section><% } %>
   <% } %>
   </div>

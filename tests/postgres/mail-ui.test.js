@@ -79,6 +79,12 @@ test('real Chromium qualifies PostgreSQL business-mail filtering, exact replies 
     assert.equal(aside.length,1);assert.equal(Object.hasOwn(aside[0],'body_text'),false);
     assert.doesNotMatch(JSON.stringify(aside),/private body|Different replay body/);
 
+    await page.goto(`${base}/settings/connections/${connectorId}`);
+    const connectionText=await page.locator('main').innerText();
+    assert.match(connectionText,/Complete a mailbox check/);
+    assert.match(connectionText,/No mailbox check has completed yet/);
+    assert.doesNotMatch(connectionText,/Read products and locations|Receive one real event/);
+
     await page.goto(`${base}/mail`);
     assert.equal(await page.locator('a[href="/needs-you"] .nav-count').innerText(),'2');
     const inboxText=await page.locator('main').innerText();assert.match(inboxText,/Can we ship the balance Friday/);
