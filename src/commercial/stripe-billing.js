@@ -31,6 +31,7 @@ async function call(path, options = {}) {
 
 async function createCheckout(input, options = {}) {
   const promotion=input.promotionCodeId?{'discounts[0][promotion_code]':input.promotionCodeId}:{};
+  const automaticTax=options.automaticTax??config.commercial.automaticTax;
   return call('/checkout/sessions', {
     ...options,
     idempotencyKey:`stockchief-checkout:${input.attemptId}`,
@@ -50,7 +51,7 @@ async function createCheckout(input, options = {}) {
       allow_promotion_codes:input.promotionCodeId?undefined:'true',
       'subscription_data[trial_period_days]':input.trialDays>0?input.trialDays:undefined,
       billing_address_collection:'auto',
-      'automatic_tax[enabled]':'true',
+      'automatic_tax[enabled]':automaticTax?'true':undefined,
       ...promotion,
     },
   });

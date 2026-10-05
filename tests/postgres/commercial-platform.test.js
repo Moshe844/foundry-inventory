@@ -249,6 +249,14 @@ test('commercial entitlement and subscription lifecycle acceptance', {timeout:18
     assert.equal(submitted.get('subscription_data[trial_period_days]'),'1');
     assert.equal(submitted.get('discounts[0][promotion_code]'),'promo_growth_contract');
     assert.equal(submitted.get('allow_promotion_codes'),null);assert.equal(submitted.get('card'),null);
+    assert.equal(submitted.get('automatic_tax[enabled]'),null,'automatic tax must remain off until the Stripe account is configured');
+    await stripeBilling.createCheckout({attemptId:'checkout_tax_contract',accountId:business.accountId,
+      planId:'growth',email:'commercial@example.test',priceId:'price_growth_contract',trialDays:0,
+      successUrl:'https://stockchief.example/complete',cancelUrl:'https://stockchief.example/pricing'},
+    {secretKey:'sk_test_contract',automaticTax:true,fetch:async(url,options)=>{submitted=options.body;
+      return new Response(JSON.stringify({id:'cs_tax_contract',url:'https://checkout.stripe.test/session'}),
+        {status:200,headers:{'content-type':'application/json'}});}});
+    assert.equal(submitted.get('automatic_tax[enabled]'),'true');
   });
   await context.test('29 customer-specific structural limits change the enforced capacity',async()=>{
     await subscribe(database,business.accountId,'starter','ACTIVE',{start:'2026-09-01T00:00:00Z',end:'2099-10-01T00:00:00Z'});

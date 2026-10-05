@@ -94,6 +94,7 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     if(current?.stripe_customer_id&&current?.stripe_subscription_id){const portal=await provider.createPortal({accountId:scope.accountId,
       requestId:newId('portal'),customerId:current.stripe_customer_id,subscriptionId:current.stripe_subscription_id,
       returnUrl:`${origin}/billing`},options.providerOptions||{});return res.redirect(303,portal.url);}
+    req.session.checkoutSelection={planId:req.body.planId,interval:req.body.interval==='annual'?'annual':'monthly'};await saveSession(req);
     const checkout=await commercial.beginCheckout(database,req.account,{planId:req.body.planId,interval:req.body.interval,
       promoCode:req.body.promoCode,origin,returnPath:req.body.returnPath||'/onboarding'},{provider,providerOptions:options.providerOptions});
     await commercial.track(database,{eventName:'billing_checkout_started',accountId:req.account.id,planId:req.body.planId,

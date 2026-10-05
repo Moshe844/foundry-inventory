@@ -279,6 +279,7 @@ const config = {
     get stripeSecretKey() { return process.env.STOCKCHIEF_BILLING_STRIPE_SECRET_KEY || null; },
     get stripeWebhookSecret() { return process.env.STOCKCHIEF_BILLING_STRIPE_WEBHOOK_SECRET || null; },
     get stripePublishableKey() { return process.env.STOCKCHIEF_BILLING_STRIPE_PUBLISHABLE_KEY || null; },
+    get automaticTax() { return process.env.STOCKCHIEF_BILLING_AUTOMATIC_TAX === 'true'; },
     get configured() { return Boolean(this.stripeSecretKey && this.stripeWebhookSecret); },
     get analyticsEnabled() { return process.env.STOCKCHIEF_COMMERCIAL_ANALYTICS !== 'false'; },
     get adminEmails() {

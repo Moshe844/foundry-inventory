@@ -26,15 +26,15 @@
             <% plans.filter(function(plan){return !plan.sales_only;}).forEach(function(plan){
               const monthly=Number(plan.monthly_amount_minor||0)/100;
             %>
-              <option value="<%= plan.id %>"><%= plan.public_name %> — <%= monthly.toLocaleString('en-US',{style:'currency',currency:plan.currency,maximumFractionDigits:0}) %>/month</option>
+              <option value="<%= plan.id %>" <%= lastSelection&&lastSelection.planId===plan.id?'selected':'' %>><%= plan.public_name %> — <%= monthly.toLocaleString('en-US',{style:'currency',currency:plan.currency,maximumFractionDigits:0}) %>/month</option>
             <% }); %>
           </select>
         </label>
         <label class="auth-field" for="activation-interval">
           <span>Billing</span>
           <select id="activation-interval" name="interval" required>
-            <option value="monthly">Monthly</option>
-            <option value="annual">Annual</option>
+            <option value="monthly" <%= !lastSelection||lastSelection.interval!=='annual'?'selected':'' %>>Monthly</option>
+            <option value="annual" <%= lastSelection&&lastSelection.interval==='annual'?'selected':'' %>>Annual</option>
           </select>
         </label>
         <button class="pub-btn pub-btn--block" type="submit">Continue to secure checkout</button>
