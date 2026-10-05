@@ -14,6 +14,8 @@ Hosted release evidence: backup `dpg-damlkhuk1f9s739h5ga0-a/2026-10-05T18:40Z`; 
 
 The application is published at [StockChief qualification](https://qualify.stockchiefhq.com). This is the existing Render qualification/staging environment, not a newly created production environment or an activated paid checkout.
 
+Initial foundation release evidence:
+
 | Release evidence | Verified result |
 |---|---|
 | Deployed application commit | `ab739c22c02b7959d3b5edbb6cc749d83bfbdd5b` |
@@ -28,6 +30,10 @@ The application is published at [StockChief qualification](https://qualify.stock
 | Pack approval | All six packs remain PROVISIONAL |
 
 Hosted verification produced `COMMERCIAL_PUBLICATION_PASS` at 18:48:41 UTC. The last local pre-publication wallet/Stripe-contract/Chromium run passed 24 checks. The hosted smoke log is `data/commercial-publication-browser.log`; desktop and mobile screenshots are `data/commercial-published-pricing-desktop.png` and `data/commercial-published-pricing-mobile.png`. These publication checks did not create a customer account, submit a payment, or certify the remaining actual Stripe lifecycle tests. No release-time error entries were returned by the service error-log query during this verification window.
+
+The tested follow-up is also published: application commit `9f078d5dbc9bd28211f1abdda1246cbb48c2c6ff`, web deployment `dep-db1vpm8m7kps73d05du0` LIVE at 19:40:01 UTC, and worker deployment `dep-db1vpnbtqb8s73bhjoig` LIVE at 19:39:55 UTC. The normal web pre-deploy step applied two migrations at 19:39:34 UTC; the worker correctly applied zero further migrations. The provider-side backup from 18:40 UTC remained available. The separate rollback-only rehearsal and database inspection job endpoint was network-filter blocked and was not bypassed; normal Render deployment was independently available.
+
+Post-deployment Chromium smoke passed all six public pages, pricing-to-registration, four supported tiers, four usage disclosures, provisional-pricing and closed-checkout notices, no unsupported claims tested, no mobile overflow and no JavaScript errors. `/healthz` and `/readyz` returned HTTP 200 with 28 migrations, the exact new release SHA, and zero dead/stale jobs. Evidence: `data/commercial-followup-published-browser.log`; the pricing screenshots above were refreshed. Neither migration changes release approvals or pricing, and checkout guards passed locally. A new hosted direct database/guard assertion was not claimed because the inspection job API remained blocked.
 
 This report supersedes the earlier subscription certification for this working tree. Historical staging claims in that document are not evidence that this new engine has passed actual Stripe E2E.
 
