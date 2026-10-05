@@ -475,10 +475,13 @@ test('paid-workspace signup verifies email before checkout and never provisions 
     await Promise.all([returning.waitForURL(`${base}/complete-signup`),returning.getByRole('button',{name:'Sign in'}).click()]);
     assert.match(await returning.locator('body').innerText(),/Choose your plan/i);assert.equal(await returning.getByLabel('Plan').inputValue(),'');await returningContext.close();
     await page.getByLabel('Plan').selectOption('pro');await page.getByLabel('Billing').selectOption('annual');
+    await commercial.trackOnce(database,{eventName:'subscription_activated',accountId:account.id,planId:'pro',sourcePath:'stripe_webhook'});
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:/Continue to secure checkout/i}).click()]);
     assert.equal(checkoutInput.planId,'pro');assert.equal(checkoutInput.priceId,'price_pro_annual_test');
     const activated=await entitlements.subscriptionFor(database,account.id);assert.equal(activated.status,'ACTIVE');
     assert.equal(activated.plan_id,'pro');assert.equal(activated.billing_interval,'ANNUAL');
+    assert.equal(Number((await database.query(`SELECT COUNT(*) AS count FROM commercial_funnel_events
+      WHERE account_id=$1 AND event_name='subscription_activated'`,[account.id])).rows[0].count),1);
     assert.equal(Number((await database.query('SELECT COUNT(*) AS count FROM workspaces WHERE owner_account_id=$1',
       [account.id])).rows[0].count),1);
     const replay=await page.goto(`${base}/verify-email?token=${encodeURIComponent(token)}`);assert.equal(replay.status(),400);

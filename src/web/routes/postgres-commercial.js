@@ -107,7 +107,7 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     const saved=await database.transaction((client)=>commercial.upsertSubscription(client,subscription),{isolation:'SERIALIZABLE'});
     if(!saved||!entitlements.operationalAccess(saved).canOperate)throw new ValidationError('The subscription is not active yet. No workspace was created.');
     const provisioned=await auth.provisionFirstWorkspace(database,req.account.id);req.session.workspaceId=provisioned.workspaceId;
-    await commercial.track(database,{eventName:'subscription_activated',accountId:req.account.id,
+    await commercial.trackOnce(database,{eventName:'subscription_activated',accountId:req.account.id,
       planId:session.metadata?.stockchief_plan_id||null,sourcePath:'/billing/checkout/complete'});
     await commercial.trackOnce(database,{eventName:'first_workspace_setup_completed',accountId:req.account.id,
       planId:saved.plan_id,sourcePath:'/billing/checkout/complete',detail:{workspaceId:provisioned.workspaceId}});
