@@ -272,7 +272,7 @@ async function handleBillingEvent(database,event) {
         ['checkout.session.completed','checkout.session.async_payment_succeeded','checkout.session.async_payment_failed',
          'payment_intent.succeeded','payment_intent.payment_failed'].includes(event.type)
         ?await addons.receivePayment(client,event):false;
-      if(['refund.created','refund.updated','charge.succeeded','charge.updated','charge.dispute.created','charge.dispute.updated','charge.dispute.closed'].includes(event.type))
+      if(['refund.created','refund.updated','refund.failed','charge.succeeded','charge.updated','charge.dispute.created','charge.dispute.updated','charge.dispute.closed'].includes(event.type))
         await require('./stripe-financials').handle(client,event);
       if(addonHandled){} else if(event.type==='checkout.session.completed'){
         const attempt=(await client.query(`SELECT * FROM commercial_checkout_attempts WHERE stripe_checkout_session_id=$1 FOR UPDATE`,[object.id])).rows[0];

@@ -28,4 +28,34 @@ test('actual provider invoices allocate every cent once with administrator attes
  assert.equal(costs.allocate(0,[{accountId:first.accountId,weight:1}])[0].amountMinor,0);
  assert.throws(()=>costs.normalize({...input,excludesAlreadyMeteredDirectCosts:false}),/evidence/);
  for(const amountMinor of [null,undefined,'',false])assert.throws(()=>costs.normalize({...input,amountMinor}),/actual amount/);
+ await t.test('resource statements accrue over overlapping service periods without duplicate ledger postings',async()=>{
+  const control=require('../../src/commercial/control-service');
+  await db.query(`INSERT INTO account_subscriptions(id,account_id,plan_id,status,billing_interval,current_period_start,current_period_end,source)
+    VALUES('period-cost-sub',$1,'starter','ACTIVE','MONTHLY','2026-10-01T00:00:00Z','2026-11-01T00:00:00Z','TEST')`,[first.accountId]);
+  const crossPeriod={...input,externalLineId:'cross-period',amountMinor:3000,periodStart:'2026-09-16',periodEnd:'2026-10-16',
+    allocations:[{accountId:first.accountId,weight:1}]};
+  await costs.ingest(db,crossPeriod,first.accountId);
+  await costs.ingest(db,crossPeriod,first.accountId);
+  const october=await control.economics(db,{accountId:first.accountId},{now:'2026-10-05'});
+  assert.equal(october.knownCostSubtotalMinor,1534); // 15/30 days of 3000 + original October share 34
+  assert.equal(october.costEventCount,2);assert.equal(october.estimatedCostMinor,null);
+  assert.equal(october.costCoverage,'MISSING');assert.equal(october.contributionMarginPercent,null);
+  await db.query("UPDATE account_subscriptions SET current_period_start='2026-09-01T00:00:00Z',current_period_end='2026-10-01T00:00:00Z' WHERE id='period-cost-sub'");
+  const september=await control.economics(db,{accountId:first.accountId},{now:'2026-09-20'});
+  assert.equal(september.knownCostSubtotalMinor,1500);assert.equal(september.costEventCount,1);
+  assert.equal(september.knownCostSubtotalMinor+october.knownCostSubtotalMinor,3034);
+  await db.query("UPDATE account_subscriptions SET current_period_start='2026-11-01T00:00:00Z',current_period_end='2026-12-01T00:00:00Z' WHERE id='period-cost-sub'");
+  const november=await control.economics(db,{accountId:first.accountId},{now:'2026-11-05'});
+  assert.equal(november.knownCostSubtotalMinor,0);assert.equal(november.costEventCount,0);
+  assert.equal(Number((await db.query("SELECT count(*) AS n FROM commercial_cost_events WHERE detail->>'statementId' IN (SELECT id FROM commercial_provider_cost_statements WHERE external_line_id='cross-period')")).rows[0].n),1);
+ });
+ await t.test('explicit numeric zero is permitted but missing rate input is rejected',async()=>{
+  const control=require('../../src/commercial/control-service');
+  const rate=await control.saveCostRate(db,{provider:'fixture-free',operation:'request',unit:'request',costPerUnitMinor:'0',source:'Explicit fixture-only free contract'});
+  assert.equal(Number(rate.cost_per_unit_minor),0);
+  const missing=await control.recordCost(db,{accountId:first.accountId},{provider:'fixture-unknown',operation:'request',unit:'request',quantity:1,amountMinor:null,idempotencyKey:'still-unknown'});
+  assert.equal(missing.event.amount_minor,null);
+  const zero=await control.recordCost(db,{accountId:first.accountId},{provider:'fixture-explicit',operation:'request',unit:'request',quantity:1,amountMinor:0,idempotencyKey:'explicit-zero'});
+  assert.equal(Number(zero.event.amount_minor),0);
+ });
 });

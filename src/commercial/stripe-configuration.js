@@ -6,7 +6,7 @@ const REQUIRED_EVENTS=Object.freeze([
  'customer.subscription.created','customer.subscription.updated','customer.subscription.deleted',
  'invoice.paid','invoice.payment_failed',
  'payment_intent.succeeded','payment_intent.payment_failed',
- 'charge.succeeded','charge.updated','refund.created','refund.updated',
+ 'charge.succeeded','charge.updated','refund.created','refund.updated','refund.failed',
  'charge.dispute.created','charge.dispute.updated','charge.dispute.closed',
 ]);
 function inspectEndpoint(endpoint,expectedUrl){

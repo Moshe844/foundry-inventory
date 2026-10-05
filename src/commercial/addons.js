@@ -119,17 +119,13 @@ async function receivePayment(client,event){
  await require('./stripe-financials').reconcileForPayment(client,intent);
  return true;
 }
-async function receiveRefund(client,event){const refund=event.data.object;if(refund.status!=='succeeded')return false;
+async function receiveRefund(client,event){const refund=event.data.object;
  const intent=typeof refund.payment_intent==='string'?refund.payment_intent:refund.payment_intent?.id;
  const purchase=(await client.query('SELECT * FROM commercial_usage_purchases WHERE stripe_payment_intent_id=$1 FOR UPDATE',[intent])).rows[0];
  if(!purchase)return false;await wallet.lock(client,{accountId:purchase.account_id},purchase.category);
- if(String(refund.currency).toUpperCase()!==purchase.currency)throw new ValidationError('Refund currency does not match the usage purchase.');
+ await require('./refunds').reconcile(client,event,purchase.account_id,purchase);
  const grant=(await client.query('SELECT * FROM commercial_usage_grants WHERE purchase_id=$1 FOR UPDATE',[purchase.id])).rows[0];
  if(!grant)return false; // Payment/grant reconciliation will reapply the verified refund later.
- const added=await client.query(`INSERT INTO commercial_revenue_events(id,account_id,source_id,kind,amount_minor,currency,occurred_at,detail)
- VALUES($1,$2,$3,'REFUND',$4,$5,to_timestamp($6),$7::jsonb) ON CONFLICT(source_id) DO NOTHING RETURNING id`,
- [newId('revenue'),purchase.account_id,`refund:${refund.id}`,-Number(refund.amount),String(refund.currency).toUpperCase(),event.created,
- JSON.stringify({purchaseId:purchase.id})]);if(!added.rows.length)return true;
  await reconcileAdjustments(client,purchase,grant);return true;
 }
 async function reconcileAdjustments(client,purchase,grant){
@@ -150,6 +146,7 @@ async function reconcileAdjustments(client,purchase,grant){
  if(requested>Number(grant.units)-consumed)await client.query(`INSERT INTO commercial_critical_warnings(id,account_id,fingerprint,code,detail)
  VALUES($1,$2,$3,'REFUNDED_SPENT_USAGE',$4::jsonb) ON CONFLICT(fingerprint) DO UPDATE SET detail=EXCLUDED.detail,status='OPEN'`,
  [newId('critical'),purchase.account_id,`refund-spent:${purchase.id}`,JSON.stringify({requested,revoke,consumed,lostDisputeMinor:Number(disputes.lost)})]);
+ else await client.query("UPDATE commercial_critical_warnings SET status='RESOLVED' WHERE fingerprint=$1",[`refund-spent:${purchase.id}`]);
 }
 async function receiveDispute(client,event){
  const dispute=event.data.object;const intent=typeof dispute.payment_intent==='string'?dispute.payment_intent:dispute.payment_intent?.id;

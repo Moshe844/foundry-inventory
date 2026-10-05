@@ -30,14 +30,10 @@ async function balance(db,accountId,row,kind){if(!row?.id)return false;
 async function handle(db,event){const object=event.data?.object||{};const accountId=await owner(db,object);
  if(event.type.startsWith('charge.dispute.'))await require('./addons').receiveDispute(db,event);
  if(event.type.startsWith('refund.')){
-  if(object.status!=='succeeded')return false;
   const handled=await require('./addons').receiveRefund(db,event);
   const knownPurchase=(await db.query('SELECT id FROM commercial_usage_purchases WHERE stripe_payment_intent_id=$1',
     [typeof object.payment_intent==='string'?object.payment_intent:object.payment_intent?.id])).rows.length>0;
-  if(!handled&&accountId&&!knownPurchase)await db.query(`INSERT INTO commercial_revenue_events
-   (id,account_id,source_id,kind,amount_minor,currency,occurred_at,detail) VALUES($1,$2,$3,'REFUND',$4,$5,to_timestamp($6),$7::jsonb)
-   ON CONFLICT(source_id) DO NOTHING`,[newId('revenue'),accountId,`refund:${object.id}`,-Number(object.amount),
-   String(object.currency).toUpperCase(),event.created,JSON.stringify({refundId:object.id,paymentIntentId:object.payment_intent,actual:true})]);
+  if(!handled&&accountId&&!knownPurchase)await require('./refunds').reconcile(db,event,accountId);
   if(!handled&&(!accountId||knownPurchase))await warning(db,`stripe-unattributed:${object.id}`,'UNATTRIBUTED_STRIPE_ADJUSTMENT',
    {eventId:event.id,objectId:object.id,paymentIntentId:object.payment_intent});
   else await db.query("UPDATE commercial_critical_warnings SET status='RESOLVED' WHERE fingerprint=$1",[`stripe-unattributed:${object.id}`]);
@@ -45,7 +41,7 @@ async function handle(db,event){const object=event.data?.object||{};const accoun
  if(!accountId){if(event.type.startsWith('charge.'))await warning(db,`stripe-unattributed:${object.id}`,
    'UNATTRIBUTED_STRIPE_ADJUSTMENT',{eventId:event.id,objectId:object.id,charge:object.charge});return false;}
  await db.query("UPDATE commercial_critical_warnings SET status='RESOLVED' WHERE fingerprint=$1",[`stripe-unattributed:${object.id}`]);
- const balances=object.balance_transactions||[object.balance_transaction].filter(Boolean);
+ const balances=object.balance_transactions||[object.balance_transaction,object.failure_balance_transaction].filter(Boolean);
  for(const transaction of balances){const settled=typeof transaction==='object'
    ?await balance(db,accountId,transaction,event.type.startsWith('charge.dispute.')?'DISPUTE':'FEE'):false;
   if(!settled){const transactionId=typeof transaction==='object'?transaction.id:transaction;
@@ -61,7 +57,7 @@ async function handle(db,event){const object=event.data?.object||{};const accoun
   'MISSING_DISPUTE_BALANCE',{eventId:event.id,disputeId:object.id},accountId);
  return true;}
 async function reconcileForPayment(db,intent){const events=(await db.query(`SELECT payload FROM commercial_billing_events
- WHERE event_type IN ('refund.created','refund.updated','charge.succeeded','charge.updated',
+ WHERE event_type IN ('refund.created','refund.updated','refund.failed','charge.succeeded','charge.updated',
    'charge.dispute.created','charge.dispute.updated','charge.dispute.closed')
  AND payload->'data'->'object'->>'payment_intent'=$1 ORDER BY (payload->>'created')::bigint,provider_event_id`,[intent])).rows;
  for(const event of events)await handle(db,event.payload);}

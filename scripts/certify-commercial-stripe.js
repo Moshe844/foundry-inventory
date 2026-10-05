@@ -53,7 +53,7 @@ async function main(){
    for(let i=0;i<4;i++){const failed=deliveries.filter(x=>x.status&&x.status!==200);if(!failed.length)break;await delay(500);for(const entry of failed)await forward(entry);}}
   const events=['checkout.session.completed','checkout.session.expired','checkout.session.async_payment_succeeded','checkout.session.async_payment_failed',
    'customer.subscription.created','customer.subscription.updated','customer.subscription.deleted','invoice.paid','invoice.payment_failed',
-   'payment_intent.succeeded','payment_intent.payment_failed','charge.succeeded','charge.updated','refund.created','refund.updated',
+   'payment_intent.succeeded','payment_intent.payment_failed','charge.succeeded','charge.updated','refund.created','refund.updated','refund.failed',
    'charge.dispute.created','charge.dispute.updated','charge.dispute.closed'];
   const listenerEnv={...process.env};if(cliConfig)delete listenerEnv.STRIPE_API_KEY;else listenerEnv.STRIPE_API_KEY=secret;
   listener=spawn(cli,[...(cliConfig?['--config',cliConfig]:[]),'listen','--latest','--events',events.join(','),'--forward-to',origin+'/stripe-delivery','--skip-update'],{
@@ -255,6 +255,27 @@ async function main(){
      JOIN commercial_usage_disputes d ON d.purchase_id=g.purchase_id WHERE g.id=$1`,[hold.id])).rows[0];
      return row.dispute_status===outcome&&Number(row.dispute_hold_units)===0&&Number(row.revoked_units)===(outcome==='lost'?10:0);},`signed ${outcome} dispute funding adjustment`,90000);
     check(`Real ${outcome} dispute adjusts purchased funding through signed events`,{disputeId:hold.dispute_id});
+   }
+   for(const [outcome,card] of [['failed','4000000000005126'],['succeeded','4000000000007726']]){
+    const asyncPack=await addons.beginPurchase(db,signupScope,{packId:'ai-500-v1',idempotencyKey:`async-refund-${outcome}`,origin},options);
+    await payCheckout(asyncPack.url,card);
+    const funded=await until(async()=>{const row=(await db.query('SELECT * FROM commercial_usage_purchases WHERE id=$1',[asyncPack.purchase.id])).rows[0];
+      return row.status==='PAID'?row:null;},'asynchronous-refund pack funding');
+    const asynchronous=await call('/refunds',{payment_intent:funded.stripe_payment_intent_id});
+    await until(async()=>{const row=(await db.query('SELECT * FROM commercial_stripe_refunds WHERE id=$1',[asynchronous.id])).rows[0];
+      return row?.status===outcome?row:null;},`real asynchronous refund ${outcome}`,360000);
+    await flush();
+    const genuine=deliveries.filter(x=>x.type.startsWith('refund.')&&x.event.data.object.id===asynchronous.id);
+    assert.ok(genuine.length>=2);assert.ok(genuine.every(x=>x.status===200));
+    // Reverse delivery order using the original Stripe-signed payloads, then duplicate concurrently.
+    for(const entry of [...genuine].reverse())await forward(entry);
+    await Promise.all(genuine.flatMap(entry=>[forward(entry),forward(entry)]));
+    const adjusted=(await db.query('SELECT revoked_units FROM commercial_usage_grants WHERE purchase_id=$1',[funded.id])).rows[0];
+    assert.equal(Number(adjusted.revoked_units),outcome==='failed'?0:10);
+    const ledger=(await db.query("SELECT count(*) AS n,COALESCE(SUM(amount_minor),0) AS total FROM commercial_revenue_events WHERE detail->>'refundId'=$1",[asynchronous.id])).rows[0];
+    assert.equal(Number(ledger.total),outcome==='failed'?0:-100);
+    assert.equal(Number(ledger.n),outcome==='failed'?2:1);
+    check(`Real asynchronous refund ${outcome} conserves funding and cash across reversed duplicate signed deliveries`,{refundId:asynchronous.id,ledgerRows:Number(ledger.n)});
    }
    await flush();assert.ok(deliveries.every(x=>x.status===200));
   }

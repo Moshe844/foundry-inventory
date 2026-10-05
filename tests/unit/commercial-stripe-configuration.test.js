@@ -7,6 +7,7 @@ test('readiness rejects missing top-up/refund events and unpinned webhook versio
  const bad=configuration.inspectEndpoint({...good,api_version:null,enabled_events:['invoice.paid']},url);
  assert.equal(bad.ready,false);assert.ok(bad.missingEvents.includes('payment_intent.succeeded'));
  assert.ok(bad.missingEvents.includes('refund.created'));assert.ok(bad.issues.includes('WEBHOOK_API_VERSION_UNPINNED'));
+ assert.ok(bad.missingEvents.includes('refund.failed'));
  assert.equal(configuration.inspectEndpoint(good,url).ready,true);
  assert.ok(configuration.inspectEndpoint({...good,api_version:'2026-08-26.dahlia'},url).issues.includes('WEBHOOK_API_VERSION_MISMATCH'));
 });

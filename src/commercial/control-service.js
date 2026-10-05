@@ -5,6 +5,15 @@ const { ValidationError } = require('../domain/errors');
 const catalog = require('./catalog');
 const entitlements = require('../entitlements/postgres-service');
 
+function nonNegativeNumber(value,label){
+  // Form fields may be numeric strings. Empty strings, booleans and containers
+  // are not rates or measurements: Number(null/''/false/[]) would hide them as 0.
+  if((typeof value!=='number'&&typeof value!=='string')||
+    (typeof value==='string'&&!value.trim())||!Number.isFinite(Number(value))||Number(value)<0)
+    throw new ValidationError(`${label} requires an explicit non-negative number.`);
+  return Number(value);
+}
+
 async function audit(database,input){
   await database.query(`INSERT INTO commercial_change_audit
     (id,actor_account_id,subject_type,subject_id,action,before_state,after_state,reason,source_ip)
@@ -19,14 +28,14 @@ async function recordCost(database,scope,input){
   const provider=String(input.provider||'').trim().toLowerCase();
   const operation=String(input.operation||'').trim().toLowerCase();
   const unit=String(input.unit||'operation').trim().toLowerCase();
-  const quantity=Math.max(0,Number(input.quantity||0));
+  const quantity=nonNegativeNumber(input.quantity,'Cost quantity');
+  const explicit=input.amountMinor===undefined||input.amountMinor===null?null:nonNegativeNumber(input.amountMinor,'Cost amount');
   if(!provider||!operation||!unit||!Number.isFinite(quantity))throw new ValidationError('Cost events need a provider, operation, unit and quantity.');
   const occurredAt=input.occurredAt||new Date().toISOString();
   const model=String(input.model||input.detail?.model||'');const providerVersion=String(input.providerVersion||'');
   const rate=(await database.query(`SELECT * FROM commercial_cost_rates WHERE provider=$1 AND operation=$2 AND unit=$3
     AND effective_from<=$4::timestamptz AND (effective_until IS NULL OR effective_until>$4::timestamptz)
     AND model=$5 AND provider_version=$6 ORDER BY effective_from DESC LIMIT 1`,[provider,operation,unit,occurredAt,model,providerVersion])).rows[0]||null;
-  const explicit=input.amountMinor===undefined||input.amountMinor===null?null:Number(input.amountMinor);
   const amount=explicit===null?(rate?quantity*Number(rate.cost_per_unit_minor):null):explicit;
   if(amount!==null&&(!Number.isFinite(amount)||amount<0))throw new ValidationError('Variable cost must be zero or greater.');
   const result=await database.query(`INSERT INTO commercial_cost_events
@@ -46,7 +55,7 @@ async function saveCostRate(database,input){
   const provider=String(input.provider||'').trim().toLowerCase();
   const operation=String(input.operation||'').trim().toLowerCase();
   const unit=String(input.unit||'').trim().toLowerCase();
-  const costPerUnitMinor=Number(input.costPerUnitMinor);
+  const costPerUnitMinor=nonNegativeNumber(input.costPerUnitMinor,'Cost rate');
   if(!provider||!operation||!unit||!Number.isFinite(costPerUnitMinor)||costPerUnitMinor<0)
     throw new ValidationError('Enter a provider, operation, unit and non-negative cost per unit.');
   const row=(await database.query(`INSERT INTO commercial_cost_rates
@@ -74,9 +83,19 @@ async function economics(database,scope,options={}){
   const overageRevenueMinor=Number((await database.query(`SELECT COALESCE(SUM(amount_minor),0) AS amount
     FROM commercial_overage_charges WHERE account_id=$1 AND period_start=$2 AND period_end=$3 AND status='BILLED'`,
   [scope.accountId,bounds.start.toISOString(),bounds.end.toISOString()])).rows[0].amount);
-  const costs=(await database.query(`SELECT COALESCE(SUM(amount_minor) FILTER(WHERE currency=$4),0) AS amount,COUNT(*) AS events,
-    COUNT(*) FILTER(WHERE amount_minor IS NULL OR currency<>$4) AS missing_rates
-    FROM commercial_cost_events WHERE account_id=$1 AND occurred_at>=$2 AND occurred_at<$3`,
+  // Invoice-backed resource costs cover a service period, not just their ledger
+  // posting date. Accrue the immutable account allocation over its exact overlap
+  // with the usage period; do not add a second copy of the invoice to the ledger.
+  const costs=(await database.query(`SELECT COALESCE(SUM(CASE WHEN statement.id IS NULL THEN cost.amount_minor
+      ELSE cost.amount_minor*EXTRACT(EPOCH FROM (LEAST(statement.period_end,$3::timestamptz)
+        -GREATEST(statement.period_start,$2::timestamptz)))
+        /EXTRACT(EPOCH FROM (statement.period_end-statement.period_start)) END)
+      FILTER(WHERE cost.currency=$4),0) AS amount,COUNT(*) AS events,
+    COUNT(*) FILTER(WHERE cost.amount_minor IS NULL OR cost.currency<>$4) AS missing_rates
+    FROM commercial_cost_events cost LEFT JOIN commercial_provider_cost_statements statement
+      ON cost.provider_version='provider-invoice-v1' AND cost.detail->>'statementId'=statement.id
+    WHERE cost.account_id=$1 AND ((statement.id IS NULL AND cost.occurred_at>=$2 AND cost.occurred_at<$3)
+      OR (statement.id IS NOT NULL AND statement.period_start<$3 AND statement.period_end>$2))`,
   [scope.accountId,bounds.start.toISOString(),bounds.end.toISOString(),plan.currency])).rows[0];
   const criticalWarningCount=Number((await database.query(`SELECT COUNT(*) AS count FROM commercial_critical_warnings
     WHERE status='OPEN' AND (account_id=$1 OR account_id IS NULL)`,[scope.accountId])).rows[0].count);
@@ -87,6 +106,7 @@ async function economics(database,scope,options={}){
     contributionMinor,contributionMarginPercent:totalRevenue&&contributionMinor!==null?Math.round(contributionMinor/totalRevenue*10000)/100:null,
     targetContributionMarginPercent:Number(plan.target_contribution_margin_bps||0)/100,costEventCount:Number(costs.events),
     missingCostRateCount:Number(costs.missing_rates),criticalWarningCount,unsupportedRevenueCurrencyCount,accountingBasis:'STRIPE_CASH_RECEIPTS_NOT_ACCRUAL',
+    knownCostSubtotalMinor:Number(costs.amount),costPeriodBasis:'DIRECT_EVENT_TIME_AND_PROVIDER_STATEMENT_OVERLAP',
     costCoverage:Number(costs.events)>0&&Number(costs.missing_rates)===0&&criticalWarningCount===0&&unsupportedRevenueCurrencyCount===0?'MEASURED':'MISSING'};
 }
 
