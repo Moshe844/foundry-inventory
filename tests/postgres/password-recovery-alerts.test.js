@@ -82,6 +82,11 @@ test('real Chromium completes PostgreSQL password recovery without revealing whe
     const job=(await database.query(`SELECT payload FROM stockchief_runtime.jobs WHERE kind='system.email-send'`)).rows[0];
     const message=email.unseal(job.payload);const token=new URL(message.text.match(/https:\/\/\S+/)[0]).searchParams.get('token');
     await page.goto(`${base}/reset-password?token=${encodeURIComponent(token)}`);
+    await page.getByLabel('New password').evaluate((element)=>element.removeAttribute('minlength'));
+    await page.getByLabel('New password').fill('12345677');
+    await page.getByRole('button',{name:'Change password'}).click();
+    assert.match(await page.locator('body').innerText(),/at least 12 characters/i);
+    assert.ok(await recovery.inspect(database,token));
     await page.getByLabel('New password').fill('new-browser-password');
     await Promise.all([page.waitForURL(`${base}/login`),page.getByRole('button',{name:'Change password'}).click()]);
     assert.match(await page.locator('body').innerText(),/password has been changed/i);

@@ -582,7 +582,7 @@ test('read-only members cannot import', async () => {
     env.db,
     env.ctx,
     { role: 'owner' },
-    { name: 'Vic Viewer', email: `viewer-${Date.now()}@example.test`, password: 'password123', role: 'staff' }
+    { name: 'Vic Viewer', email: `viewer-${Date.now()}@example.test`, password: 'password123!', role: 'staff' }
   );
   env.db.prepare('UPDATE users SET permissions = ? WHERE id = ?').run(JSON.stringify(['VIEW']), viewer.id);
   const membership = env.db.prepare('SELECT * FROM users WHERE id = ?').get(viewer.id);

@@ -434,7 +434,7 @@ test('staff cannot apply a configuration; owners can', async () => {
   const staffEmail = workspace.staffEmail;
 
   const staffAgent = request.agent(app);
-  await signIn(staffAgent, staffEmail, 'password123');
+  await signIn(staffAgent, staffEmail, 'password123!');
   const understood = await understand(staffAgent);
   const understandingId = understood.headers.location.split('/').pop();
 

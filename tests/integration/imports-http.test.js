@@ -295,7 +295,7 @@ test('an import belongs to one inventory and is invisible from another', async (
     workspaceName: 'Someone Else',
     name: 'Ida Outsider',
     email: 'outsider-import@example.test',
-    password: 'password123',
+    password: 'password123!',
   });
   await signIn(outsider, 'outsider-import@example.test');
 
@@ -309,7 +309,7 @@ test('a read-only member cannot reach the import screens', async () => {
     env.db,
     env.workspace.ctx,
     { role: 'owner' },
-    { name: 'Vic Viewer', email: 'viewer-import@example.test', password: 'password123', role: 'staff' }
+    { name: 'Vic Viewer', email: 'viewer-import@example.test', password: 'password123!', role: 'staff' }
   );
   env.db.prepare('UPDATE users SET permissions = ? WHERE id = ?').run(JSON.stringify(['VIEW']), viewer.id);
 

@@ -84,7 +84,7 @@ function seedWorkspace(db, overrides = {}) {
     workspaceName: overrides.workspaceName || `Test Inventory ${suffix}`,
     name: overrides.name || 'Olive Owner',
     email: overrides.email || `owner-${suffix}@example.test`,
-    password: overrides.password || 'password123',
+    password: overrides.password || 'password123!',
   };
   const { workspaceId, userId, accountId } = authService.registerAccount(db, account);
   const ctx = { workspaceId, actorId: userId, accountId };
@@ -93,7 +93,7 @@ function seedWorkspace(db, overrides = {}) {
   const staff = authService.createTeamMember(db, ctx, { role: 'owner' }, {
     name: 'Sid Staff',
     email: staffEmail,
-    password: 'password123',
+    password: 'password123!',
     role: 'staff',
   });
 
@@ -197,7 +197,7 @@ function csrfFrom(html) {
 }
 
 /** Signs a supertest agent in and returns a token getter for form posts. */
-async function signIn(agent, email, password = 'password123') {
+async function signIn(agent, email, password = 'password123!') {
   const page = await agent.get('/login');
   const token = csrfFrom(page.text);
   const res = await agent

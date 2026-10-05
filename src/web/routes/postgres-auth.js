@@ -33,7 +33,7 @@ function createPostgresAuthRouter(database) {
   });
   router.post('/login', async (req,res,next) => {
     try {
-      const account = await auth.authenticate(database,req.body.email,req.body.password);
+      const account = await auth.authenticate(database,req.body.email,req.body.password,{ip:req.ip||req.socket.remoteAddress});
       if (!account) return res.status(401).render('auth/login', {
         title:'Sign in',csrfToken:res.locals.csrfToken,
         flash:[{ type:'error',message:'That email and password do not match an account.' }],
@@ -48,7 +48,13 @@ function createPostgresAuthRouter(database) {
       await sessionCall(req,'save');
       if(account.plan==='commercial_pending')return res.redirect(account.email_verified_at?'/complete-signup':'/verify-email/pending');
       return res.redirect(workspaceId?safeNext(req.body.next):'/inventories');
-    } catch(error) { return next(error); }
+    } catch(error) {
+      if(error.status===429)return res.status(429).render('auth/login', {
+        title:'Sign in',csrfToken:res.locals.csrfToken,flash:[{type:'error',message:error.message}],
+        next:safeNext(req.body.next),email:req.body.email||'',appName:res.locals.appName,origin:res.locals.origin,
+      });
+      return next(error);
+    }
   });
   router.get('/register', async (req,res,next) => {
     try {

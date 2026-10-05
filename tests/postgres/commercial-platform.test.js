@@ -105,6 +105,8 @@ test('commercial entitlement and subscription lifecycle acceptance', {timeout:18
     const invitation=await lifecycle.createInvitation(database,{workspaceId:business.workspaceId,actorId:business.userId},
       {name:'Commercial Staff',email:'commercial-staff@example.test',role:'staff'},
       {origin:'https://stockchief.example',includeToken:true});
+    await assert.rejects(lifecycle.acceptInvitation(database,invitation.token,{password:'12345677'}),/at least 12 characters/i);
+    assert.equal((await lifecycle.inspectInvitation(database,invitation.token)).status,'PENDING');
     const accepted=await lifecycle.acceptInvitation(database,invitation.token,{password:'commercial-staff-password'});
     const scope=commercialScope({account:{id:accepted.accountId},workspace:{owner_account_id:business.accountId},
       ctx:{accountId:accepted.accountId,workspaceId:business.workspaceId}});
@@ -457,7 +459,7 @@ test('paid-workspace signup verifies email before checkout and never provisions 
       ORDER BY created_at DESC LIMIT 1`)).rows[0];const message=systemEmail.unseal(queued.payload);
     const token=new URL(message.text.match(/https:\/\/\S+/)[0]).searchParams.get('token');assert.ok(token);
     const beforeVerify=await browser.newPage();await beforeVerify.goto(`${base}/login`);await beforeVerify.getByLabel('Email').fill(account.email);
-    await beforeVerify.getByLabel('Password').fill('paid-owner-password');await beforeVerify.getByLabel('Remember me').check();
+    await beforeVerify.getByLabel('Password').fill('paid-owner-password');await beforeVerify.getByLabel(/signed in for 30 days/i).check();
     await Promise.all([beforeVerify.waitForURL(`${base}/verify-email/pending`),beforeVerify.getByRole('button',{name:'Sign in'}).click()]);
     const remembered=(await beforeVerify.context().cookies(base)).find((cookie)=>cookie.name==='foundry.sid');assert.ok(remembered.expires>Date.now()/1000+20*86400);
     await page.goto(`${base}/verify-email?token=${encodeURIComponent(token)}`);assert.match(await page.locator('body').innerText(),/Verify your email/i);

@@ -153,7 +153,7 @@ test('a transfer may be cancelled before dispatch but never erases shipped custo
 
 test('transfer permissions separate request, approval, dispatch and receipt', () => {
   const env = setup();
-  const staffAccount = auth.authenticate(env.db, env.workspace.staffEmail, 'password123');
+  const staffAccount = auth.authenticate(env.db, env.workspace.staffEmail, 'password123!');
   const staff = auth.getMembership(env.db, env.workspace.workspaceId, staffAccount.id);
   assert.equal(permissions.can(staff, permissions.REQUEST_TRANSFER), true);
   assert.equal(permissions.can(staff, permissions.APPROVE_TRANSFER), false);
@@ -185,7 +185,7 @@ test('a requested transfer becomes one permission-valid Needs You decision', () 
   assert.equal(ownerEntry.href, `/transfers/${transfer.id}`);
   assert.match(ownerEntry.happened, /No stock has moved/i);
 
-  const staffAccount = auth.authenticate(env.db, env.workspace.staffEmail, 'password123');
+  const staffAccount = auth.authenticate(env.db, env.workspace.staffEmail, 'password123!');
   const staff = auth.getMembership(env.db, env.workspace.workspaceId, staffAccount.id);
   assert.equal(needsYou.inbox(env.db, env.workspace.workspaceId, staff)
     .some((entry) => entry.id === `transfer:${transfer.id}`), false);

@@ -76,7 +76,7 @@ test('a viewer cannot use a hidden URL to approve a learned policy change', asyn
   const staffAccount = env.db.prepare('SELECT a.email FROM accounts a JOIN users u ON u.account_id=a.id WHERE u.id=?')
     .get(env.workspace.staffId);
   const agent = request.agent(env.app);
-  await signIn(agent, staffAccount.email, 'password123');
+  await signIn(agent, staffAccount.email, 'password123!');
   const page = await agent.get('/planning');
   assert.doesNotMatch(plain(page.text), /Approve change/i);
   const response = await agent.post(`/planning/learning/${item.id}/approve`).type('form').send({

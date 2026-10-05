@@ -55,8 +55,26 @@ test('PostgreSQL browser authentication shares a real tenant session across web 
     const agent=request.agent(first.app);
     const registration=await agent.get('/register');
     assert.equal(registration.status,200);
+    const malformed=await agent.post('/register').type('form').send({
+      _csrf:csrfFrom(registration.text),name:'Invalid Owner',businessName:'Invalid Business',
+      email:'not-an-email',password:'12345677',
+    });
+    assert.equal(malformed.status,400);
+    assert.match(malformed.text,/valid email address/i);
+    assert.equal((await firstDatabase.query("SELECT COUNT(*) AS count FROM accounts WHERE name='Invalid Owner'"))
+      .rows[0].count,'0');
+    const passwordPolicyPage=await agent.get('/register');
+    const weakPassword=await agent.post('/register').type('form').send({
+      _csrf:csrfFrom(passwordPolicyPage.text),name:'Weak Owner',businessName:'Weak Business',
+      email:'weak@example.test',password:'12345677',
+    });
+    assert.equal(weakPassword.status,400);
+    assert.match(weakPassword.text,/at least 12 characters/i);
+    assert.equal((await firstDatabase.query("SELECT COUNT(*) AS count FROM accounts WHERE name='Weak Owner'"))
+      .rows[0].count,'0');
+    const registrationAfterError=await agent.get('/register');
     const registered=await agent.post('/register').type('form').send({
-      _csrf:csrfFrom(registration.text),name:'Browser Owner',businessName:'Shared Postgres Inventory',
+      _csrf:csrfFrom(registrationAfterError.text),name:'Browser Owner',businessName:'Shared Postgres Inventory',
       email:'browser@example.test',password:'browser-password',
     });
     assert.equal(registered.status,302);
@@ -78,4 +96,17 @@ test('PostgreSQL browser authentication shares a real tenant session across web 
       email:'browser@example.test',password:'browser-password',next:'/whoami'});
     assert.equal(good.status,302);
     assert.equal(good.headers.location,'/whoami');
+    const sessionCookie=good.headers['set-cookie'].find((value)=>value.startsWith('foundry.sid='));
+    assert.ok(sessionCookie);
+    assert.doesNotMatch(sessionCookie,/Max-Age=|Expires=/i);
+
+    const remembered=request.agent(second.app);
+    const rememberedLogin=await remembered.get('/login');
+    const rememberedResult=await remembered.post('/login').type('form').send({_csrf:csrfFrom(rememberedLogin.text),
+      email:'browser@example.test',password:'browser-password',rememberMe:'1'});
+    assert.equal(rememberedResult.status,302);
+    const persistentCookie=rememberedResult.headers['set-cookie'].find((value)=>value.startsWith('foundry.sid='));
+    const expiry=/Expires=([^;]+)/i.exec(persistentCookie)?.[1];
+    assert.ok(expiry);
+    assert.ok(Date.parse(expiry)>Date.now()+29*86400000);
   });

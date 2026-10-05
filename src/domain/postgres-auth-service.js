@@ -1,11 +1,57 @@
 'use strict';
 
+const crypto = require('node:crypto');
 const auth = require('./auth-service');
 const ledger = require('../accounting/postgres-ledger');
 const entitlements=require('../entitlements/postgres-service');
-const { ValidationError, NotFoundError } = require('./errors');
+const { ValidationError, NotFoundError, RateLimitError } = require('./errors');
 const { newId, nowIso, requireText } = require('../lib/util');
 const DUMMY_PASSWORD_HASH = auth.hashPassword('stockchief-timing-password');
+const LOGIN_WINDOW_MINUTES = 15;
+const LOGIN_BLOCK_MINUTES = 15;
+const LOGIN_LIMITS = { EMAIL:10, IP:40 };
+
+function loginFingerprint(value) {
+  return crypto.createHash('sha256').update(String(value || '').trim().toLowerCase()).digest('hex');
+}
+
+function loginKeys(emailInput, ip) {
+  const keys = [{ scope:'EMAIL', fingerprint:loginFingerprint(emailInput) }];
+  if (ip) keys.push({ scope:'IP', fingerprint:loginFingerprint(ip) });
+  return keys;
+}
+
+async function assertLoginAllowed(database, keys) {
+  const blocked = await database.query(`SELECT 1 FROM stockchief_runtime.authentication_attempts
+    WHERE (scope,fingerprint) IN (SELECT * FROM unnest($1::text[],$2::text[]))
+      AND blocked_until > now() LIMIT 1`, [keys.map((key) => key.scope),keys.map((key) => key.fingerprint)]);
+  if (blocked.rows.length) throw new RateLimitError('Too many sign-in attempts. Wait 15 minutes or reset your password.');
+}
+
+async function recordLoginFailure(database, keys) {
+  for (const key of keys) {
+    await database.query(`INSERT INTO stockchief_runtime.authentication_attempts
+      (scope,fingerprint,failed_count,window_started_at,blocked_until,updated_at)
+      VALUES($1,$2,1,now(),NULL,now())
+      ON CONFLICT(scope,fingerprint) DO UPDATE SET
+        failed_count=CASE WHEN authentication_attempts.window_started_at < now()-interval '${LOGIN_WINDOW_MINUTES} minutes'
+          THEN 1 ELSE authentication_attempts.failed_count+1 END,
+        window_started_at=CASE WHEN authentication_attempts.window_started_at < now()-interval '${LOGIN_WINDOW_MINUTES} minutes'
+          THEN now() ELSE authentication_attempts.window_started_at END,
+        blocked_until=CASE WHEN (CASE WHEN authentication_attempts.window_started_at < now()-interval '${LOGIN_WINDOW_MINUTES} minutes'
+          THEN 1 ELSE authentication_attempts.failed_count+1 END) >= $3
+          THEN now()+interval '${LOGIN_BLOCK_MINUTES} minutes' ELSE authentication_attempts.blocked_until END,
+        updated_at=now()`, [key.scope,key.fingerprint,LOGIN_LIMITS[key.scope]]);
+  }
+  await database.query(`DELETE FROM stockchief_runtime.authentication_attempts
+    WHERE updated_at < now()-interval '7 days'`);
+}
+
+async function recordLoginSuccess(database, keys) {
+  const emailKey = keys.find((key) => key.scope === 'EMAIL');
+  await database.query(`DELETE FROM stockchief_runtime.authentication_attempts
+    WHERE scope='EMAIL' AND fingerprint=$1`, [emailKey.fingerprint]);
+}
 
 function accountView(row) {
   return row || null;
@@ -16,15 +62,23 @@ async function getAccount(database, accountId) {
   return accountView(result.rows[0]);
 }
 
-async function authenticate(database, emailInput, password) {
+async function authenticate(database, emailInput, password, options = {}) {
   const email = String(emailInput || '').trim().toLowerCase();
+  const keys = loginKeys(email, options.ip);
+  await assertLoginAllowed(database, keys);
   const result = await database.query('SELECT * FROM accounts WHERE email=$1', [email]);
   const account = result.rows[0];
   if (!account) {
     auth.verifyPassword(DUMMY_PASSWORD_HASH, String(password || ''));
+    await recordLoginFailure(database, keys);
     return null;
   }
-  return auth.verifyPassword(account.password_hash, String(password || '')) ? accountView(account) : null;
+  if (!auth.verifyPassword(account.password_hash, String(password || ''))) {
+    await recordLoginFailure(database, keys);
+    return null;
+  }
+  await recordLoginSuccess(database, keys);
+  return accountView(account);
 }
 
 async function createBusiness(database, input) {

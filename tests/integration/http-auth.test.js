@@ -65,7 +65,7 @@ test('registration creates an account and its first real inventory before source
     name: 'Robin Field',
     businessName: 'Fresh Co',
     email: 'robin@fresh.test',
-    password: 'password123',
+    password: 'password123!',
   });
   assert.equal(res.status, 302);
   assert.equal(res.headers.location, '/onboarding');
@@ -92,7 +92,7 @@ test('registration creates an account and its first real inventory before source
     name: 'Someone',
     businessName: 'Another Co',
     email: 'robin@fresh.test',
-    password: 'password123',
+    password: 'password123!',
   });
   assert.equal(res2.status, 400);
   assert.match(res2.text, /already uses that email/);
@@ -136,7 +136,7 @@ test('signup requires a valid business name without leaving a partial account or
     const form = await agent.get('/register');
     const response = await agent.post('/register').type('form').send({
       _csrf: csrfFrom(form.text), businessName, name: 'Robin Field',
-      email: 'incomplete@fresh.test', password: 'password123',
+      email: 'incomplete@fresh.test', password: 'password123!',
     });
     assert.equal(response.status, 400);
     assert.match(plain(response.text), /Business name (is required|must be 120 characters or fewer)/);
@@ -181,7 +181,7 @@ test('staff cannot manage locations, people or the workspace', async () => {
   const workspace = seedWorkspace(store.db);
   const agent = request.agent(store.app);
   const staffEmail = workspace.staffEmail;
-  const session = await signIn(agent, staffEmail, 'password123');
+  const session = await signIn(agent, staffEmail, 'password123!');
   const token = await session.token('/locations');
 
   const created = await agent
@@ -208,7 +208,7 @@ test('staff cannot manage locations, people or the workspace', async () => {
   const person = await agent
     .post('/settings/people')
     .type('form')
-    .send({ _csrf: token, name: 'Ghost', email: 'ghost@example.test', password: 'password123', role: 'owner' })
+    .send({ _csrf: token, name: 'Ghost', email: 'ghost@example.test', password: 'password123!', role: 'owner' })
     .set('Accept', 'application/json');
   assert.equal(person.status, 403);
 
@@ -230,7 +230,7 @@ test('staff can still do the day-to-day inventory work', async () => {
   const item = makeQuantityItem(store.db, workspace.ctx);
   const staffEmail = workspace.staffEmail;
   const agent = request.agent(store.app);
-  const session = await signIn(agent, staffEmail, 'password123');
+  const session = await signIn(agent, staffEmail, 'password123!');
   const token = await session.token(`/inventory/${item.itemId}`);
 
   const res = await agent

@@ -492,7 +492,7 @@ test('staff can receive but cannot commit to a purchase', async () => {
     env.db,
     env.workspace.ctx,
     { role: 'owner' },
-    { name: 'Sid Staff', email: 'sid-purchasing@example.test', password: 'password123', role: 'staff' }
+    { name: 'Sid Staff', email: 'sid-purchasing@example.test', password: 'password123!', role: 'staff' }
   );
 
   const order = poService.createOrder(env.db, env.workspace.ctx, env.membership, {
@@ -545,7 +545,7 @@ test('a purchase order from one inventory is invisible from another', async () =
     workspaceName: 'Someone Else',
     name: 'Ida Outsider',
     email: 'outsider-purchasing@example.test',
-    password: 'password123',
+    password: 'password123!',
   });
   const outsider = request.agent(env.app);
   await signIn(outsider, 'outsider-purchasing@example.test');

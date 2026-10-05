@@ -49,6 +49,12 @@ class AuthenticationError extends DomainError {
   }
 }
 
+class RateLimitError extends DomainError {
+  constructor(message = 'Too many attempts. Please wait before trying again.') {
+    super(message, { code: 'rate_limited', status: 429 });
+  }
+}
+
 module.exports = {
   DomainError,
   ValidationError,
@@ -57,4 +63,5 @@ module.exports = {
   InsufficientStockError,
   AuthorizationError,
   AuthenticationError,
+  RateLimitError,
 };

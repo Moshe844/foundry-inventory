@@ -381,7 +381,7 @@ test('permission is enforced on the server, not by hiding a button', async () =>
   const proposal = proposals.persist(env.db, env.workspace.ctx, built.proposal, {});
 
   const agent = request.agent(env.app);
-  await signIn(agent, env.workspace.staffEmail, 'password123');
+  await signIn(agent, env.workspace.staffEmail, 'password123!');
 
   const preview = plain((await agent.get(`/actions/${proposal.proposalId}`)).text);
   assert.match(preview, /do not have permission/);
@@ -409,7 +409,7 @@ test('an operator can request a transfer but cannot approve it or correct stock'
 
   const proposal = makeProposal(env);
   const agent = request.agent(env.app);
-  await signIn(agent, env.workspace.staffEmail, 'password123');
+  await signIn(agent, env.workspace.staffEmail, 'password123!');
 
   await post(agent, `/actions/${proposal.proposalId}/approve`, {}, `/actions/${proposal.proposalId}`);
   await agent.get(`/actions/${proposal.proposalId}/run`);
@@ -930,7 +930,7 @@ test('a question is rendered where it can be answered, not as a message you dism
 test('a staff member can handle stock but cannot correct a count from the item page', async () => {
   const env = setup();
   const agent = request.agent(env.app);
-  await signIn(agent, env.workspace.staffEmail, 'password123');
+  await signIn(agent, env.workspace.staffEmail, 'password123!');
 
   // Handling stock is their job, and still works.
   const issued = await post(agent, `/inventory/${env.item.itemId}/issue`, {

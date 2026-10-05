@@ -49,4 +49,10 @@ test('PostgreSQL authentication creates and resolves one fully configured tenant
     });
     await assert.rejects(auth.rememberWorkspace(database, other.accountId, created.workspaceId), /could not be found/i);
     assert.equal(await auth.rememberWorkspace(database, created.accountId, created.workspaceId), created.workspaceId);
+
+    for (let attempt=0;attempt<9;attempt+=1) {
+      assert.equal(await auth.authenticate(database,'owner@example.test','definitely-wrong',{ip:'203.0.113.5'}),null);
+    }
+    await assert.rejects(auth.authenticate(database,'owner@example.test','strong-password-2026',{ip:'203.0.113.5'}),
+      (error)=>error.status===429&&/wait 15 minutes/i.test(error.message));
   });

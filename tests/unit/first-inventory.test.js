@@ -11,7 +11,7 @@ test.after(cleanupAll);
 
 test('first inventory bootstrap is repeat-safe and never grants automatic operating authority', () => {
   const { db } = makeDatabase();
-  const account = auth.createAccount(db, { name: 'Legacy Owner', email: 'legacy@example.test', password: 'password123' });
+  const account = auth.createAccount(db, { name: 'Legacy Owner', email: 'legacy@example.test', password: 'password123!' });
   const first = workspaces.ensureFirstWorkspace(db, account.accountId);
   assert.equal(first.name, 'My inventory');
   assert.equal(first.dataMode, 'production');

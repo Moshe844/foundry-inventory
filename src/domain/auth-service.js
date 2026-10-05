@@ -36,19 +36,49 @@ function verifyPassword(stored, password) {
 
 function normaliseEmail(value) {
   const email = trimOrNull(value);
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+  if (!email || email.length > 254 || email !== String(value).trim() || /[\s\u0000-\u001f\u007f]/.test(email)) {
     throw new ValidationError('Enter a valid email address.', { field: 'email' });
   }
-  return email.toLowerCase();
+  const parts = email.split('@');
+  if (parts.length !== 2) throw new ValidationError('Enter a valid email address.', { field: 'email' });
+  const [local, domain] = parts;
+  const labels = domain.split('.');
+  const localValid = local.length > 0 && local.length <= 64
+    && !local.startsWith('.') && !local.endsWith('.') && !local.includes('..')
+    && /^[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+$/i.test(local);
+  const domainValid = domain.length <= 253 && labels.length >= 2
+    && labels.every((label) => label.length > 0 && label.length <= 63
+      && /^[A-Z0-9](?:[A-Z0-9-]*[A-Z0-9])?$/i.test(label))
+    && /^[A-Z]{2,63}$/i.test(labels.at(-1));
+  if (!localValid || !domainValid) {
+    throw new ValidationError('Enter a valid email address.', { field: 'email' });
+  }
+  return `${local.toLowerCase()}@${domain.toLowerCase()}`;
 }
 
 function checkPasswordStrength(password) {
   const value = typeof password === 'string' ? password : '';
-  if (value.length < 8) {
-    throw new ValidationError('Passwords must be at least 8 characters.', { field: 'password' });
+  if (value.length < 12) {
+    throw new ValidationError('Use at least 12 characters for your password.', { field: 'password' });
   }
   if (value.length > 200) {
     throw new ValidationError('That password is too long.', { field: 'password' });
+  }
+  if (value !== value.trim()) {
+    throw new ValidationError('Remove spaces from the beginning or end of your password.', { field: 'password' });
+  }
+  const compact = value.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const common = new Set([
+    'password1234', 'password12345', 'qwerty123456', 'letmein123456', 'welcome123456',
+    'admin12345678', 'stockchief123', 'changeme1234', '123456789012', '1234567890123456',
+  ]);
+  const repeated = /^(.)\1+$/u.test(value);
+  const numeric = /^\d+$/u.test(value);
+  const sequential = 'abcdefghijklmnopqrstuvwxyz'.includes(compact)
+    || 'zyxwvutsrqponmlkjihgfedcba'.includes(compact)
+    || '01234567890123456789'.includes(compact);
+  if (common.has(compact) || repeated || numeric || sequential) {
+    throw new ValidationError('Choose a less predictable password or a longer passphrase.', { field: 'password' });
   }
   return value;
 }

@@ -137,7 +137,7 @@ test('separate freight and insurance bills can be capitalised against the same p
 
 test('landed-cost authority is separate from ordinary warehouse staff permissions', () => {
   const env = setup();
-  const staffAccount = auth.authenticate(env.db, env.workspace.staffEmail, 'password123');
+  const staffAccount = auth.authenticate(env.db, env.workspace.staffEmail, 'password123!');
   const staff = auth.getMembership(env.db, env.workspace.workspaceId, staffAccount.id);
   assert.equal(permissions.can(staff, permissions.ALLOCATE_LANDED_COST), false);
   assert.throws(() => landed.createDraft(env.db, env.workspace.ctx, staff, {

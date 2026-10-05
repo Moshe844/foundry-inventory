@@ -182,7 +182,7 @@ test('only an owner can delete, and only their own inventory', () => {
   // Someone with no membership at all is told it does not exist, not that they
   // lack permission — an outsider learns nothing about what does exist.
   const outsider = authService.registerAccount(db, {
-    workspaceName: 'Elsewhere', name: 'Ida', email: 'ida-delete@example.test', password: 'password123',
+    workspaceName: 'Elsewhere', name: 'Ida', email: 'ida-delete@example.test', password: 'password123!',
   });
   assert.throws(
     () => deletion.deleteWorkspace(db, outsider.accountId, workspace.workspaceId, { confirmName: 'Doomed Trading' }),
@@ -331,7 +331,7 @@ test('a member who is not an owner is not offered it and cannot reach it', async
 test("another account's inventory cannot be deleted, or even seen", async () => {
   const env = app();
   authService.registerAccount(env.db, {
-    workspaceName: 'Elsewhere', name: 'Ida', email: 'ida-http-delete@example.test', password: 'password123',
+    workspaceName: 'Elsewhere', name: 'Ida', email: 'ida-http-delete@example.test', password: 'password123!',
   });
   const outsider = request.agent(env.app);
   await signIn(outsider, 'ida-http-delete@example.test');
