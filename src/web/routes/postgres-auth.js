@@ -100,8 +100,11 @@ function createPostgresAuthRouter(database) {
       return next(error);
     }
   });
-  router.get('/verify-email/pending',(req,res)=>res.render('auth/verify-pending',{title:'Verify your email',
-    csrfToken:res.locals.csrfToken,flash:res.locals.flash,account:req.account,origin:res.locals.origin}));
+  router.get('/verify-email/pending',(req,res)=>{
+    if(req.account?.email_verified_at)return res.redirect(req.account.plan==='commercial_pending'?'/complete-signup':req.user?'/':'/inventories');
+    return res.render('auth/verify-pending',{title:'Verify your email',csrfToken:res.locals.csrfToken,
+      flash:res.locals.flash,account:req.account,origin:res.locals.origin});
+  });
   router.get('/complete-signup',async(req,res)=>{if(!req.account)return res.redirect('/login');if(req.user)return res.redirect('/');
     if(!req.account.email_verified_at)return res.redirect('/verify-email/pending');return res.render('auth/verified',{
       title:'Activate your StockChief plan',csrfToken:res.locals.csrfToken,flash:res.locals.flash,origin:res.locals.origin,

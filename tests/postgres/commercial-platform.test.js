@@ -460,6 +460,8 @@ test('paid-workspace signup verifies email before checkout and never provisions 
     await page.getByRole('button',{name:'Verify and continue'}).click();assert.match(await page.locator('body').innerText(),/Email verified/i);
     assert.match(await page.locator('body').innerText(),/pro plan/i);assert.ok((await database.query('SELECT email_verified_at FROM accounts WHERE id=$1',
       [account.id])).rows[0].email_verified_at);
+    await beforeVerify.reload();await beforeVerify.waitForURL(`${base}/complete-signup`);
+    assert.match(await beforeVerify.locator('body').innerText(),/activate the pro plan/i);await beforeVerify.close();
     const returningContext=await browser.newContext();const returning=await returningContext.newPage();await returning.goto(`${base}/login`);
     await returning.getByLabel('Email').fill(account.email);await returning.getByLabel('Password').fill('paid-owner-password');
     await Promise.all([returning.waitForURL(`${base}/complete-signup`),returning.getByRole('button',{name:'Sign in'}).click()]);
