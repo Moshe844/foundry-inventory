@@ -338,15 +338,15 @@ async function handleBillingEvent(database,event) {
         const paymentIntentIds=[...new Set([legacyIntent,...(object.payments?.data||[])
           .filter(payment=>payment.status==='paid'&&payment.payment?.type==='payment_intent')
           .map(payment=>typeof payment.payment.payment_intent==='string'?payment.payment.payment_intent:payment.payment.payment_intent?.id)].filter(Boolean))];
-        if(!owner&&Number(object.amount_paid||0)>0)
+        if(!owner&&(invoiceSubscription||Number(object.amount_paid||0)>0))
           throw new ValidationError('This paid Stripe invoice is awaiting authoritative subscription ownership. Retry reconciliation after its subscription webhook.');
         if(owner)await client.query(`INSERT INTO commercial_revenue_events(id,account_id,source_id,kind,amount_minor,currency,period_start,period_end,occurred_at,detail)
           VALUES($1,$2,$3,'SUBSCRIPTION',$4,$5,to_timestamp($6),to_timestamp($7),to_timestamp($8),$9::jsonb) ON CONFLICT(source_id) DO NOTHING`,
-          [newId('revenue'),owner.account_id,`invoice:${object.id}`,Number(object.amount_paid||0)-Number(object.total_taxes?.reduce((sum,t)=>sum+Number(t.amount||0),0)||object.tax||0),
+          [newId('revenue'),owner.account_id,`invoice:${object.id}`,Math.max(0,Number(object.amount_paid||0)-Number(object.total_taxes?.reduce((sum,t)=>sum+Number(t.amount||0),0)||object.tax||0)),
             String(object.currency||'usd').toUpperCase(),object.period_start||null,object.period_end||null,event.created||Math.floor(Date.now()/1000),
             JSON.stringify({invoiceId:object.id,paymentIntentId:paymentIntentIds[0]||null,paymentIntentIds,
               amountPaid:object.amount_paid,taxes:object.total_taxes||null,discounts:object.total_discount_amounts||[]})]);
-        if(owner&&Number(object.amount_paid)>0){
+        if(owner){
           const durable={query:client.query.bind(client),transaction:fn=>fn(client)};
           await require('../operations/postgres-job-queue').enqueue(durable,{kind:'commercial.stripe-invoice-sync',
             idempotencyKey:`stripe-invoice:${object.id}`,payload:{accountId:owner.account_id,invoiceId:object.id},maxAttempts:8});

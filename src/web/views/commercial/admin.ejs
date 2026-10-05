@@ -14,6 +14,17 @@
   <section class="rm-panel"><div class="rm-panel__head"><h2>Customer contribution</h2></div><div class="rm-told"><% if(!economics.length){ %><div class="rm-empty"><p>No active subscriptions.</p></div><% } %><% economics.forEach(function(row){ %><div class="rm-told__row"><span class="rm-told__t"><%= row.subscription.plan_name %><small><%= row.costCoverage==='MEASURED'?'Measured from '+row.costEventCount+' cost events':'Cost instrumentation missing' %></small></span><span><strong><%= row.contributionMarginPercent===null?'—':row.contributionMarginPercent.toFixed(1)+'%' %></strong><% if(row.contributionMarginPercent!==null&&row.contributionMarginPercent<row.targetContributionMarginPercent){ %> ⚠️<% } %></span></div><% }); %></div></section>
 </div>
 <section class="rm-panel" style="margin-bottom:16px"><div class="rm-panel__head"><h2>Commercial audit</h2></div><div class="rm-told"><% if(!commercialAudit.length){ %><div class="rm-empty"><p>No commercial changes recorded yet.</p></div><% } %><% commercialAudit.forEach(function(entry){ %><div class="rm-told__row"><span class="rm-told__t"><%= entry.action %> · <%= entry.subject_type %><small><%= entry.subject_id %> · <%= entry.reason||'No reason recorded' %></small></span><span><%= new Date(entry.created_at).toLocaleString() %></span></div><% }); %></div></section>
+<section class="rm-panel" id="cost-coverage" style="margin-bottom:16px">
+  <div class="rm-panel__head"><h2>Observed provider and shared-hosting costs</h2></div>
+  <div style="padding:18px"><p>Last 30 days: <strong><%= costCoverage.observedMissingRateEvents %> cost events without verified rates</strong>.
+    <%= costCoverage.resources.reduce((sum,row)=>sum+row.samples,0) %> measured web/worker attempts.
+    Measurements do not certify complete cost coverage or per-tenant CPU/storage attribution.</p>
+    <a href="/commercial-admin/cost-coverage">View exact provider/model/version gaps and resource measurements</a>
+    <% costCoverage.observedOperations.filter(row=>row.missing_rates>0).forEach(function(row){ %>
+    <p><strong>UNKNOWN</strong> · <%= row.provider %> · <%= row.operation %> · <%= row.model||'no model' %> · <%= row.provider_version||'unspecified version' %>: <%= row.missing_rates %> unpriced events</p>
+    <% }); %>
+  </div>
+</section>
 <section class="rm-panel" id="provider-cost-statements" style="margin-bottom:16px">
   <div class="rm-panel__head"><h2>Actual provider invoice costs</h2></div>
   <form method="post" action="/commercial-admin/provider-cost-statements" style="padding:18px">

@@ -1,0 +1,30 @@
+{
+  "source": "data/commercial-1791234799252.json",
+  "runId": "commercial-1791234799252",
+  "startedAt": "2026-10-05T21:13:19.252Z",
+  "finishedAt": "2026-10-05T21:15:09.893Z",
+  "liveMode": false,
+  "sandboxAccountId": "acct_1UNFL0GrrtoE7Y2W",
+  "passed": true,
+  "completeForExecutedScenarios": true,
+  "commercialLaunchCertified": false,
+  "tests": [
+    {"name": "Annual paid activation and monthly included-usage reset", "passed": true, "subscriptionId": "sub_1UNJCWGrrtoE7Y2WgIq2UaCI", "monthlyResetEvaluation": "injected application time"},
+    {"name": "Actual annual test-clock renewal and new paid entitlement", "passed": true, "invoiceId": "in_1UNJCeGrrtoE7Y2WmOwtueWr"},
+    {"name": "Partial customer-balance credit excluded from new cash", "passed": true, "invoiceId": "in_1UNJCyGrrtoE7Y2Wv0cKqkdC", "creditMinor": 300, "cashMinor": 700},
+    {"name": "Full customer-balance credit and zero-cash invoice ownership", "passed": true, "invoiceId": "in_1UNJD7GrrtoE7Y2WXyWW0PIr", "creditMinor": 1000, "cashMinor": 0},
+    {"name": "Discounted exclusive-tax invoice excludes tax from revenue", "passed": true, "invoiceId": "in_1UNJDFGrrtoE7Y2Wh3h2MzJn", "cashMinor": 825, "taxMinor": 75, "netMinor": 750, "taxComplianceCertified": false},
+    {"name": "Two payments plus pre-payment credit reconcile actual cash", "passed": true, "invoiceId": "in_1UNJDOGrrtoE7Y2W8xP5WWPS", "cashMinor": 800, "creditMinor": 200, "partialPaymentScope": "send_invoice test fixture only"},
+    {"name": "Six invoices, actual payment fees and signed retries reconcile", "passed": true, "invoices": 6}
+  ],
+  "genuineSignedDeliveries": 26,
+  "finalDeliveryHttp200": 26,
+  "unresolvedStripeFinancialWarnings": 0,
+  "remainingWarnings": [{"code": "UNVERIFIED_INFRASTRUCTURE_COSTS", "count": 1}],
+  "cleanup": {"testClockDeleted": true, "extraTestCustomersDeleted": 4, "testProductArchived": true},
+  "limitations": [
+    "Complements, not replaces, prior subscription, Buy More, top-up, refund/dispute and browser certification.",
+    "Tax-credit combinations needing line-level allocation remain unverified and visibly blocked.",
+    "Not tax compliance certification, production provider-cost coverage or approved pricing."
+  ]
+}

@@ -3,6 +3,7 @@
 const config = require('../config');
 const credentials = require('../connections/credentials');
 const jobs = require('../operations/postgres-job-queue');
+const escapeHtml=value=>String(value||'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 
 function origin() {
   return String(config.connections.publicOrigin || '').replace(/\/$/, '');
@@ -15,7 +16,7 @@ async function queueAccountEmail(database, input) {
     to: account.email,
     subject: input.subject,
     text: input.text(account),
-    html: input.html(account),
+    html: input.html({...account,name:escapeHtml(account.name)}),
   });
   const durableDatabase = typeof database.transaction === 'function' ? database : {
     query: (statement, values = []) => database.query(statement, values),

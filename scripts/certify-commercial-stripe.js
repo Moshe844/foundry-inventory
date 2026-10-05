@@ -33,7 +33,7 @@ async function main(){
   if(account.id!==process.env.STOCKCHIEF_CERTIFICATION_SANDBOX_ID)throw Error('Authorized CLI account differs from the isolated certification sandbox');
  }
  const cluster=await startCluster();const db=openPostgres(cluster.connectionString,{applicationName:'real-stripe-certification'});
- let server,listener,clock,product,customer,webApp,browser;let held=true;const deliveries=[];const queue=[];const extraCustomers=[];
+ let server,listener,clock,product,customer,webApp,browser;let held=true;const deliveries=[];const queue=[];const extraCustomers=[];const extraClocks=[];
  try{
   await migratePostgres(db);
   const business=await auth.createBusiness(db,{name:'Stripe Certification',businessName:runId,email:`${runId}@example.test`,password:'Certification-only-password!'});
@@ -69,6 +69,22 @@ async function main(){
   }
   const packPrice=await call('/prices',{product:product.id,currency:'usd',unit_amount:100});
   await db.query("UPDATE commercial_usage_packs SET stripe_price_id=$1,amount_minor=100,units=10 WHERE id='ai-500-v1'",[packPrice.id]);
+  if(process.env.STOCKCHIEF_CERTIFICATION_EXTENDED_ONLY==='true'){
+   held=false;
+   await require('./commercial-stripe-extended').run({call,db,product,runId,until,check,deliveries,forward,providerOptions,extraCustomers,extraClocks});
+   await flush();
+   const financials=require('../src/commercial/stripe-financials');
+   const invoices=(await db.query("SELECT payload FROM stockchief_runtime.jobs WHERE kind='commercial.stripe-invoice-sync'")).rows;
+   for(const job of invoices)await financials.syncInvoice(db,job,{providerOptions});
+   for(const job of (await db.query("SELECT payload FROM stockchief_runtime.jobs WHERE kind='commercial.stripe-financial-sync'")).rows)
+    await financials.sync(db,job,{providerOptions});
+   const warnings=(await db.query("SELECT code FROM commercial_critical_warnings WHERE status='OPEN' AND code IN ('MISSING_STRIPE_FEE','MISSING_STRIPE_PAYMENT_BINDING','UNVERIFIED_STRIPE_INVOICE_CASH','BILLING_EVENT_RECONCILIATION_REQUIRED','UNATTRIBUTED_STRIPE_ADJUSTMENT')")).rows;
+   assert.deepEqual(warnings,[]);assert.ok(deliveries.every(e=>e.status===200));
+   check('Extended real invoices, payment fees and genuine signed delivery retries reconcile without Stripe warnings',{invoices:invoices.length});
+   report.deliveries=deliveries.map(x=>({id:x.id,type:x.type,status:x.status}));
+   report.criticalWarnings=(await db.query("SELECT code,count(*) FROM commercial_critical_warnings WHERE status='OPEN' GROUP BY code")).rows;
+   report.passed=true;report.complete=true;return;
+  }
   try{clock=await call('/test_helpers/test_clocks',{frozen_time:Math.floor(Date.now()/1000),name:runId});report.objects.clock=clock.id;}
   catch(error){if(!secret.startsWith('rkcs_test_')||!/limited permissions/.test(error.message))throw error;
    report.blocked.push('Stripe sandbox must be claimed to run test-clock renewal and downgrade execution');console.log('BLOCKED test clocks: sandbox claim required');}
@@ -287,6 +303,8 @@ async function main(){
   assert.equal(Number((await db.query("SELECT count(*) FROM commercial_revenue_events WHERE source_id=$1",[`refund:${refund.id}`])).rows[0].count),1);
   assert.equal((await db.query('SELECT status FROM commercial_usage_purchases WHERE id=$1',[pack.purchase.id])).rows[0].status,'REFUNDED');
   check('Real purchased-pack refund is recorded exactly once and spent funding is flagged');
+  if(process.env.STOCKCHIEF_CERTIFICATION_EXTENDED==='true')await require('./commercial-stripe-extended').run({
+   call,db,product,runId,until,check,deliveries,forward,providerOptions,extraCustomers,extraClocks});
   const pendingFinancialJobs=(await db.query("SELECT payload FROM stockchief_runtime.jobs WHERE kind='commercial.stripe-invoice-sync'")).rows;
   for(const job of pendingFinancialJobs)await require('../src/commercial/stripe-financials').syncInvoice(db,job,{providerOptions});
   const balanceJobs=(await db.query("SELECT payload FROM stockchief_runtime.jobs WHERE kind='commercial.stripe-financial-sync'")).rows;
@@ -312,10 +330,11 @@ async function main(){
  }finally{
   if(listener)listener.kill();
   for(const row of (await db.query('SELECT DISTINCT stripe_customer_id FROM account_subscriptions WHERE stripe_customer_id IS NOT NULL')).rows)
-   if(row.stripe_customer_id!==customer?.id&&!extraCustomers.includes(row.stripe_customer_id))extraCustomers.push(row.stripe_customer_id);
+   if(row.stripe_customer_id!==customer?.id&&!extraClocks.some(clock=>clock.customerId===row.stripe_customer_id)&&!extraCustomers.includes(row.stripe_customer_id))extraCustomers.push(row.stripe_customer_id);
   if(browser)await browser.close();
   if(server)await new Promise(resolve=>server.close(resolve));
   if(webApp)await webApp.locals.sessionStore.close();
+  for(const {id} of extraClocks)try{await call(`/test_helpers/test_clocks/${id}`,undefined,'DELETE');report.cleanup.push({clock:id,deleted:true});}catch(error){report.cleanup.push({clock:id,error:error.message});}
   if(clock)try{await call(`/test_helpers/test_clocks/${clock.id}`,undefined,'DELETE');report.cleanup.push({clock:clock.id,deleted:true});}catch(error){report.cleanup.push({clock:clock.id,error:error.message});}
   if(customer&&!clock)try{await call(`/customers/${customer.id}`,undefined,'DELETE');report.cleanup.push({customer:customer.id,deleted:true});}catch(error){report.cleanup.push({customer:customer.id,error:error.message});}
   for(const id of extraCustomers)try{await call(`/customers/${id}`,undefined,'DELETE');report.cleanup.push({customer:id,deleted:true});}catch(error){report.cleanup.push({customer:id,error:error.message});}

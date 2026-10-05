@@ -4,7 +4,7 @@ const jobs=require('../operations/postgres-job-queue');
 const stripe=require('./stripe-billing');
 async function warning(db,fingerprint,code,detail,accountId=null){await db.query(`INSERT INTO commercial_critical_warnings
  (id,account_id,fingerprint,code,detail) VALUES($1,$2,$3,$4,$5::jsonb)
- ON CONFLICT(fingerprint) DO UPDATE SET status='OPEN',detail=EXCLUDED.detail`,
+ ON CONFLICT(fingerprint) DO UPDATE SET status='OPEN',code=EXCLUDED.code,detail=EXCLUDED.detail`,
  [newId('critical'),accountId,fingerprint,code,JSON.stringify(detail)]);}
 async function owner(db,object){const intent=typeof object.payment_intent==='string'?object.payment_intent:object.payment_intent?.id;
  const purchase=intent?(await db.query('SELECT account_id FROM commercial_usage_purchases WHERE stripe_payment_intent_id=$1',[intent])).rows[0]:null;
@@ -83,15 +83,18 @@ async function syncInvoice(db,job,options={}){
    throw Error('Stripe invoice payment is not verified customer cash');
   cash+=payment.amount_paid;intents.push(intent);
  }
- // Credits and out-of-band settlements need explicit accounting treatment;
- // they are never silently labelled Stripe cash receipts.
- complete=complete&&cash===Number(invoice.amount_paid)&&cash===Number(invoice.total);
+ const settlement=require('./invoice-cash').settlement(invoice,cash);
+ complete=complete&&settlement.verified;
  await db.transaction(async client=>{
   if(!complete){await warning(client,`invoice-payments:${invoice.id}`,'UNVERIFIED_STRIPE_INVOICE_CASH',
-   {invoiceId:invoice.id,cashMinor:cash,amountPaid:invoice.amount_paid,total:invoice.total},job.payload.accountId);return;}
+   {invoiceId:invoice.id,...settlement,amountPaid:invoice.amount_paid,total:invoice.total},job.payload.accountId);return;}
+  const receipt=(await client.query('SELECT * FROM commercial_revenue_events WHERE source_id=$1 AND account_id=$2 FOR UPDATE',
+    [`invoice:${invoice.id}`,job.payload.accountId])).rows[0];
+  if(!receipt)throw Error('Stripe invoice reconciliation needs its signed invoice receipt first.');
+  if(Number(receipt.amount_minor)!==settlement.netCashRevenueMinor)throw Error('Signed invoice receipt differs from verified net cash revenue.');
   await client.query(`UPDATE commercial_revenue_events SET detail=detail||$2::jsonb WHERE source_id=$1 AND account_id=$3`,
    [`invoice:${invoice.id}`,JSON.stringify({paymentIntentIds:[...new Set(intents.map(x=>x.id))],stripeCashVerified:true,
-     paidPaymentIds:payments.filter(x=>x.status==='paid').map(x=>x.id),cashMinor:cash}),job.payload.accountId]);
+     paidPaymentIds:payments.filter(x=>x.status==='paid').map(x=>x.id),...settlement}),job.payload.accountId]);
   await client.query("UPDATE commercial_critical_warnings SET status='RESOLVED' WHERE fingerprint=$1",[`invoice-payments:${invoice.id}`]);
   for(const intent of intents){await reconcileForPayment(client,intent.id);
    const charge=intent.latest_charge;

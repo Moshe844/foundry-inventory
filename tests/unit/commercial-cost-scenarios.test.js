@@ -33,6 +33,9 @@ test('real sample sensitivity never treats projections or partial costs as actua
     assert.equal(row.measuredTenantAllocation, false);
   }
   assert.equal(result.checkoutEnabled, false); assert.equal(result.allowancesApproved, false);
+  const starter=result.profiles.find(row=>row.plan==='starter');
+  assert.equal(starter.modeledMonthlyCommittedCredits,190);
+  assert.ok(starter.modelOnlyUsdPerCommittedCredit>0);assert.equal(starter.fullUsdPerAIWorkCredit,null);
 });
 test('missing model rates propagate unknown instead of silently becoming a zero subtotal', () => {
   const models = structuredClone(modelEvidence); models.profiles[0].measured.ask.costUsdPerAttempt = null;

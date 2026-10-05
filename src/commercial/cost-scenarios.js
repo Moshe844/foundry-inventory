@@ -71,7 +71,7 @@ function build({ modelEvidence, renderEvidence, emailEvidence, portfolios = DEFA
   const hosting = amount(renderEvidence.octoberMonthToDate?.providerProjectedMonthTotalCents, 'Render forecast', true) / 100;
   const profiles = modelEvidence.profiles.map(profile => {
     if (!EMAIL_DEMAND[profile.plan]) throw new ValidationError('Unknown plan in model evidence.');
-    let modelUsd = 0; let missing = false;
+    let modelUsd = 0; let missing = false; let modeledCredits = 0; let creditWeightMissing = false;
     for (const [operation, volume] of Object.entries(profile.monthly)) {
       amount(volume, 'Model workload', true);
       const measurement = profile.measured?.[operation];
@@ -79,9 +79,14 @@ function build({ modelEvidence, renderEvidence, emailEvidence, portfolios = DEFA
         missing = true; continue;
       }
       modelUsd += amount(measurement.costUsdPerAttempt, 'Measured model cost') * volume;
+      if (!Number.isSafeInteger(measurement.committedCredits) || measurement.committedCredits <= 0) creditWeightMissing = true;
+      else modeledCredits += measurement.committedCredits / measurement.sampleCount * volume;
     }
     return { plan: profile.plan, workload: profile.monthly, connectedOperations: amount(profile.connectedOperations, 'Connected workload', true),
       modelSampleCount: profile.samples.length, monthlyModelUsd: missing ? null : modelUsd,
+      modeledMonthlyCommittedCredits: missing || creditWeightMissing ? null : modeledCredits,
+      modelOnlyUsdPerCommittedCredit: missing || creditWeightMissing || !modeledCredits ? null : modelUsd / modeledCredits,
+      fullUsdPerAIWorkCredit: null,
       modeledEmailDemand: EMAIL_DEMAND[profile.plan], costPerConnectedOperationUsd: null,
       actualStripeRevenueUsd: null, totalMonthlyCostUsd: null, marginPercent: null,
       recommendedFinalAllowances: null, recommendedFinalPackPrices: null };

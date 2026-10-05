@@ -345,13 +345,39 @@ async function alertDelivery(job,database,options={}){
 
 async function systemEmail(job,database,options={}){
   const message=email.unseal(job.payload);const sender=options.emailSender||email.sendResend;
-  let result;try{result=await sender(message,options.emailOptions||{});}finally{
-    const accountId=job.payload?.accountId||(await database.query('SELECT id FROM accounts WHERE lower(email)=lower($1)',[message.to])).rows[0]?.id;
-    await require('../commercial/control-service').recordCost(database,{accountId:accountId||null},{provider:'resend',operation:'system_email',
-      unit:'message',quantity:1,idempotencyKey:`${job.id}:attempt:${job.attemptCount||1}`,detail:{messageType:job.payload?.messageType}});}
-  if(job.payload?.messageType==='password_reset')await checkpoints.record(database,'password_recovery.delivery','PASS',{
-    provider:result.provider||'configured',externalId:result.externalId||null,releaseRef:config.operations.releaseRef});
-  return result;
+  const accountId=job.payload?.accountId||(await database.query('SELECT id FROM accounts WHERE lower(email)=lower($1)',[message.to])).rows[0]?.id;
+  const recordAttempt=attempt=>require('../commercial/control-service').recordCost(database,{accountId:accountId||null},{provider:'resend',operation:'system_email',
+    unit:'message',quantity:1,idempotencyKey:`${job.id}:attempt:${attempt}`,detail:{messageType:job.payload?.messageType}});
+  const accepted=async result=>{
+    if(job.payload?.messageType==='password_reset')await checkpoints.record(database,'password_recovery.delivery','PASS',{
+      provider:result.provider||'configured',externalId:result.externalId||null,releaseRef:config.operations.releaseRef});
+    return result;
+  };
+  const digest=require('node:crypto').createHash('sha256').update(JSON.stringify({message,
+    from:options.emailOptions?.from||config.email.from})).digest('hex');
+  await database.query(`INSERT INTO commercial_email_deliveries(job_id,payload_sha256) VALUES($1,$2)
+    ON CONFLICT(job_id) DO NOTHING`,[job.id,digest]);
+  const receipt=(await database.query(`SELECT *,first_attempt_at>now()-interval '23 hours' AS retry_safe
+    FROM commercial_email_deliveries WHERE job_id=$1`,[job.id])).rows[0];
+  if(receipt.payload_sha256!==digest)throw Object.assign(new Error('The durable email payload changed; delivery needs review.'),
+    {code:'email_payload_changed',retryable:false});
+  if(receipt.provider_id){await recordAttempt(receipt.accepted_attempt);return accepted({provider:'resend',externalId:receipt.provider_id,replayed:true});}
+  if(!receipt.retry_safe){
+    await database.query(`INSERT INTO commercial_critical_warnings(id,account_id,fingerprint,code,detail)
+      VALUES($1,$2,$3,'EMAIL_DELIVERY_RECONCILIATION_REQUIRED',$4::jsonb)
+      ON CONFLICT(fingerprint) DO UPDATE SET status='OPEN'`,
+    [require('../lib/util').newId('critical'),accountId||null,`email-delivery:${job.id}`,
+      JSON.stringify({jobId:job.id,reason:'Provider idempotency window expired; no automatic resend.'})]);
+    throw Object.assign(new Error('Email acceptance is uncertain and the retry window expired. Reconcile before resending.'),
+      {code:'email_delivery_uncertain',retryable:false});
+  }
+  let result;try{result=await sender(message,{...options.emailOptions,idempotencyKey:`stockchief-email:${job.id}`});
+    if(!result.externalId)throw Object.assign(new Error('Email provider did not return an acceptance identity.'),{retryable:true});
+    await database.query('UPDATE commercial_email_deliveries SET provider_id=$2,accepted_at=now(),accepted_attempt=$3 WHERE job_id=$1',
+      [job.id,result.externalId,job.attemptCount||1]);
+  }finally{
+    await recordAttempt(job.attemptCount||1);}
+  return accepted(result);
 }
 
 function create(providers=defaultProviders,options={}){return {'system.runtime-sweep':(job,client)=>runtimeSweep(job,client,options),

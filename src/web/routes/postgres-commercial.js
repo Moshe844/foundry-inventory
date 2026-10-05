@@ -163,8 +163,11 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     meters:commercialCatalog.METERS.map((row)=>commercialCatalog.meter(row[0])).filter((row)=>row.customerVisible),
     costRates:(await database.query('SELECT * FROM commercial_cost_rates ORDER BY provider,operation,effective_from DESC')).rows,
     criticalWarnings:(await database.query("SELECT * FROM commercial_critical_warnings WHERE status='OPEN' ORDER BY created_at DESC LIMIT 100")).rows,
+    costCoverage:await require('../../commercial/cost-coverage').report(database),
     commercialAudit:(await database.query('SELECT * FROM commercial_change_audit ORDER BY created_at DESC LIMIT 50')).rows,
     economics:await commercialControl.portfolioEconomics(database)})));
+  router.get('/commercial-admin/cost-coverage',requireAccount,commercialAdmin,asyncRoute(async(req,res)=>
+    res.json(await require('../../commercial/cost-coverage').report(database,{start:req.query.start,end:req.query.end}))));
   router.post('/commercial-admin/plans/:id',requireAccount,commercialAdmin,asyncRoute(async(req,res)=>{const monthly=Math.max(0,Math.round(Number(req.body.monthlyAmount||0)*100));
     const annual=Math.max(0,Math.round(Number(req.body.annualAmount||0)*100));const approved=req.body.packagingApproved==='1';
     const existing=(await database.query('SELECT * FROM commercial_plans WHERE id=$1',[req.params.id])).rows[0];

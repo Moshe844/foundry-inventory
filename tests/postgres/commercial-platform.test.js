@@ -421,6 +421,8 @@ test('public, auth and invitation journeys work in desktop and mobile Chromium',
     headers:{Authorization:`Bearer ${apiClient.token}`,'Idempotency-Key':'suspended-write'},data:{}});
   assert.equal(blockedApiWrite.status(),402);assert.match((await blockedApiWrite.json()).error.message,/read-only/i);
   await database.query("UPDATE account_subscriptions SET status='ACTIVE' WHERE account_id=$1",[gated.accountId]);
+  assert.equal((await gatedContext.request.get(`${base}/commercial-admin/cost-coverage`)).status(),403,
+    'ordinary account cannot inspect platform cost coverage');
   await database.query(`INSERT INTO commercial_admin_accounts(account_id,granted_by) VALUES($1,'browser-test')`,[gated.accountId]);
   await gatedPage.setViewportSize({width:390,height:844});await gatedPage.goto(`${base}/billing`);
   const billingText=await gatedPage.locator('body').innerText();assert.match(billingText,/Plan & Usage/i);
@@ -432,6 +434,11 @@ test('public, auth and invitation journeys work in desktop and mobile Chromium',
   assert.match(upgradeText,/advanced authority/i);assert.match(upgradeText,/Upgrade to Pro/i);
   assert.equal(await gatedPage.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),true);
   await gatedPage.setViewportSize({width:1440,height:900});await gatedPage.goto(`${base}/commercial-admin#starter`);
+  assert.match(await gatedPage.locator('#cost-coverage').innerText(),/cost events without verified rates/);
+  const coverageResponse=await gatedContext.request.get(`${base}/commercial-admin/cost-coverage`);
+  assert.equal(coverageResponse.status(),200);const coverage=await coverageResponse.json();
+  assert.equal(coverage.completeCostCoverage,false);assert.equal(coverage.unmeteredOperationCount,null);
+  assert.ok(coverage.resources.length>0,'actual browser requests produce resource samples');
   const starterForm=gatedPage.locator('section#starter form[action="/commercial-admin/plans/starter"]');
   await starterForm.locator('input[name="monthlyAmount"]').fill('249');
   await Promise.all([gatedPage.waitForURL(/\/commercial-admin#starter$/),starterForm.getByRole('button',{name:'Save Starter'}).click()]);

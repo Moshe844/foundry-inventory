@@ -62,6 +62,7 @@ function createPostgresApp({database,sessionStore,sessionSecret=config.sessionSe
   app.set('views',path.join(__dirname,'web','views'));
   app.set('trust proxy',1);
   app.disable('x-powered-by');
+  app.use(require('./commercial/resource-metrics').middleware(database));
   app.use(express.static(path.join(__dirname,'web','public'),{maxAge:env==='production'?'7d':0}));
   // Webhooks and token APIs run before cookie authentication, but still need a
   // database context so an unscoped external request cannot escape accounting.
@@ -106,7 +107,9 @@ function createPostgresApp({database,sessionStore,sessionSecret=config.sessionSe
         (SELECT COUNT(*) FROM stockchief_runtime.jobs WHERE status IN ('PENDING','RETRY')
           AND available_at<floor(extract(epoch FROM now()-interval '5 minutes')*1000)) AS stale_jobs`));
       const state=result.rows[0];
-      return res.status(Number(state.stale_jobs)>0?503:200).json({ok:Number(state.stale_jobs)===0,
+      const commercialTelemetry=require('./commercial/resource-metrics').status();
+      const ready=Number(state.stale_jobs)===0&&commercialTelemetry.persistenceFailures===0;
+      return res.status(ready?200:503).json({ok:ready,commercialTelemetry,
         database:'postgresql',shared:true,multiWriter:true,migrations:Number(state.migrations),
         deadJobs:Number(state.dead_jobs),staleJobs:Number(state.stale_jobs)});
     }catch{return res.status(503).json({ok:false,database:'unavailable'});}

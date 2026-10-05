@@ -39,7 +39,9 @@ function openPostgres(connectionString, options = {}) {
     if (errors.length > 20) errors.shift();
     if (options.onError) options.onError(error);
   });
-  const query = (statement, values = []) => pool.query(statement, values);
+  const measuredQuery=async(target,statement,values)=>{const start=process.hrtime.bigint();
+    try{return await target.query(statement,values);}finally{require('../commercial/resource-metrics').queryFinished(start);}};
+  const query = (statement, values = []) => measuredQuery(pool,statement,values);
   async function transaction(operation, settings = {}) {
     const isolation = settings.isolation || 'SERIALIZABLE';
     if (!['SERIALIZABLE', 'REPEATABLE READ', 'READ COMMITTED'].includes(isolation)) {
@@ -61,7 +63,7 @@ function openPostgres(connectionString, options = {}) {
         await client.query(`BEGIN ISOLATION LEVEL ${isolation}${settings.readOnly ? ' READ ONLY' : ''}`);
         await client.query("SELECT set_config('statement_timeout', $1, true), set_config('lock_timeout', $2, true)",
           [String(settings.statementTimeoutMs ?? 30000), String(settings.lockTimeoutMs ?? 10000)]);
-        const result = await operation({ query: (statement, values = []) => client.query(statement, values) });
+        const result = await operation({ query: (statement, values = []) => measuredQuery(client,statement,values) });
         await client.query('COMMIT');
         return result;
       } catch (error) {

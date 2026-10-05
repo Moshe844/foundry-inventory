@@ -46,7 +46,7 @@ async function recordCost(database,scope,input){
     rate?.id||null,JSON.stringify({...input.detail,costRateMissing:explicit===null&&!rate}),occurredAt,model,providerVersion]);
   if(amount===null)await database.query(`INSERT INTO commercial_critical_warnings(id,account_id,fingerprint,code,detail)
     VALUES($1,$2,$3,'MISSING_COST_RATE',$4::jsonb) ON CONFLICT(fingerprint) DO UPDATE SET status='OPEN',detail=EXCLUDED.detail`,
-    [newId('critical'),scope.accountId,`cost-rate:${provider}:${operation}:${unit}:${model}:${providerVersion}`,
+    [newId('critical'),scope.accountId||null,`cost-rate:${scope.accountId||'platform'}:${provider}:${operation}:${unit}:${model}:${providerVersion}`,
       JSON.stringify({provider,operation,unit,model,providerVersion,quantity,severity:'CRITICAL'})]);
   return {created:Boolean(result.rows.length),event:result.rows[0]||null,rate};
 }
@@ -118,10 +118,8 @@ async function usageWarnings(database,scope,options={}){
     if(!threshold)continue;
     warnings.push({meter:meter.meter,label:meter.label,percent,threshold,used:meter.used,included:meter.included,
       overageAmountMinor:meter.overageAmountMinor,overageMode:meter.overageMode});
-    if(options.persist!==false&&meter.periodStart)await database.query(`INSERT INTO commercial_usage_notifications
-      (id,account_id,meter,period_start,threshold) VALUES($1,$2,$3,$4,$5)
-      ON CONFLICT(account_id,meter,period_start,threshold) DO NOTHING`,[newId('usagewarn'),scope.accountId,meter.meter,
-      meter.periodStart.toISOString(),threshold]);
+    // Displaying a reservation-inclusive warning must not consume the durable
+    // notification key. Only committed usage queues and records notifications.
   }
   return warnings;
 }

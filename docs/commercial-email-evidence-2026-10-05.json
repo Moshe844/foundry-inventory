@@ -1,0 +1,26 @@
+{
+  "source": "data/commercial-email-certification-2026-10-05.json",
+  "startedAt": "2026-10-05T20:49:59.721Z",
+  "finishedAt": "2026-10-05T20:50:17.255Z",
+  "passed": true,
+  "provider": "resend",
+  "recipient": "delivered@resend.dev",
+  "recipientType": "RESEND_SIMULATED_DELIVERY",
+  "humanInboxDeliveryCertified": false,
+  "liveCheckoutEnabled": false,
+  "uniqueMessages": 8,
+  "messagesReportedDelivered": 8,
+  "costEvents": 8,
+  "thresholds": [80, 95, 100],
+  "categories": ["ai_work_credits", "connected_operations"],
+  "additionalNotifications": ["billing_payment_failed", "billing_subscription_suspended"],
+  "workerReplaySameAcceptanceId": true,
+  "providerDuplicateSameAcceptanceId": true,
+  "planChanged": false,
+  "customerRecipients": 0,
+  "limitations": [
+    "Uses the production Resend transport with disposable PostgreSQL and synthetic billing events.",
+    "A simulated-delivery result does not certify delivery to a human inbox.",
+    "No unlimited zero-cost rate was inserted and this does not certify complete cost coverage."
+  ]
+}

@@ -188,7 +188,9 @@ async function processOne(database, handlers, options = {}) {
   if (handler.externalEffect === true) {
     try {
       const scope=job.workspaceId?await require('../commercial/entitlements').ownerScopeForWorkspace(database,job.workspaceId):null;
-      const outcome = await require('../commercial/context').run({database,scope,requestId:job.id,attemptCount:Number(job.attemptCount)},()=>handler(job, database));
+      const outcome = await require('../commercial/resource-metrics').measure(database,{runtimeKind:'worker',operation:job.kind,
+        id:`${job.id}:${job.attemptCount}:${job.leaseToken}`,scope:scope||{accountId:job.payload?.accountId}},()=>
+        require('../commercial/context').run({database,scope,requestId:job.id,attemptCount:Number(job.attemptCount)},()=>handler(job, database)));
       if (!await complete(database, job.id, job.leaseToken, outcome || {}, options)) {
         throw Object.assign(new Error('The PostgreSQL job expired before its provider result was recorded.'), {
           code: 'lease_lost', retryable: true,
@@ -202,7 +204,8 @@ async function processOne(database, handlers, options = {}) {
     }
   }
   try {
-    await database.transaction(async (client) => {
+    await require('../commercial/resource-metrics').measure(database,{runtimeKind:'worker',operation:job.kind,
+      id:`${job.id}:${job.attemptCount}:${job.leaseToken}`,scope:{accountId:job.payload?.accountId}},()=>database.transaction(async (client) => {
       const now = await databaseTime(client, options);
       const owned = await client.query(`SELECT id FROM stockchief_runtime.jobs WHERE id = $1 AND lease_token = $2
         AND status = 'RUNNING' AND lease_expires_at > $3 FOR UPDATE`, [job.id, job.leaseToken, now]);
@@ -213,7 +216,7 @@ async function processOne(database, handlers, options = {}) {
         throw Object.assign(new Error('The PostgreSQL job expired before its effect could commit.'), { code: 'lease_lost' });
       }
     }, { isolation: options.isolation || 'READ COMMITTED', retrySafe: Boolean(options.retrySafe),
-      statementTimeoutMs: Math.min(30000, lease(options)) });
+      statementTimeoutMs: Math.min(30000, lease(options)) }));
     return get(database, job.id, job.workspaceId);
   } catch (error) {
     return fail(database, job.id, job.leaseToken, error, { ...options, retryable: error.retryable !== false });

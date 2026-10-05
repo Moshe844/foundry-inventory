@@ -22,9 +22,10 @@ async function sendResend(message, options = {}) {
     error.retryable = false;
     throw error;
   }
-  const response = await fetch('https://api.resend.com/emails', {
+  const response = await (options.fetch || fetch)('https://api.resend.com/emails', {
     method: 'POST',
-    headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+    headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json',
+      ...(options.idempotencyKey ? { 'Idempotency-Key': options.idempotencyKey } : {}) },
     body: JSON.stringify({
       from,
       to: [message.to],
