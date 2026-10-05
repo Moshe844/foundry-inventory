@@ -3,7 +3,7 @@
 const express=require('express');
 const mail=require('../../connections/postgres-mail');
 const permissions=require('../../actions/permissions');
-const {requireAuth,requirePermission,asyncRoute}=require('../middleware');
+const {requireAuth,requireOwner,requirePermission,asyncRoute}=require('../middleware');
 const {trimOrNull}=require('../../lib/util');
 const entitlements=require('../../entitlements/postgres-service');
 const {commercialScope}=require('../commercial-middleware');
@@ -24,9 +24,17 @@ function createPostgresMailRouter(database,options={}){
   const router=express.Router();router.use('/mail',requireAuth);
   router.get('/mail',requirePermission(permissions.VIEW,'read the mailbox'),asyncRoute(async(req,res)=>{
     const drawer=DRAWERS.find((entry)=>entry.key===trimOrNull(req.query.show))||DRAWERS[0];
+    const [counts,messages,asideCount]=await Promise.all([mail.counts(database,req.ctx.workspaceId),
+      mail.list(database,req.ctx.workspaceId,drawer.state),
+      req.user.role==='owner'?mail.setAsideCount(database,req.ctx.workspaceId):Promise.resolve(0)]);
     return res.page('mail/inbox',{title:'Mail',nav:'mail',drawers:DRAWERS,drawer,
-      counts:await mail.counts(database,req.ctx.workspaceId),
-      messages:(await mail.list(database,req.ctx.workspaceId,drawer.state)).map(inboxMessage)});
+      counts,messages:messages.map(inboxMessage),asideCount,canReviewAside:req.user.role==='owner'});
+  }));
+  router.get('/mail/set-aside',requireOwner,asyncRoute(async(req,res)=>{
+    const [messages,count]=await Promise.all([mail.listSetAside(database,req.ctx.workspaceId),
+      mail.setAsideCount(database,req.ctx.workspaceId)]);
+    return res.page('mail/postgres-set-aside',{title:'Set-aside mail',nav:'mail',messages,count,
+      backTo:{href:'/mail',label:'Mail'}});
   }));
   router.get('/mail/:id',requirePermission(permissions.VIEW,'read the mailbox'),asyncRoute(async(req,res)=>{
     const raw=await mail.get(database,req.ctx.workspaceId,req.params.id);const message=messageForView(raw);

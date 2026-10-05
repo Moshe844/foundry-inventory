@@ -17,9 +17,10 @@ const hash=(value)=>crypto.createHash('sha256').update(String(value)).digest('he
 function publicStatus(row,now=Date.now()){
   if(row.status==='disconnected')return 'Disconnected';
   if(row.status==='error'||row.paused_at||row.last_error||Number(row.open_issues)>0)return 'Needs attention';
-  const evidence=row.last_activity_at||row.last_synced_at||row.created_at;
-  if(evidence&&Number(row.expected_interval_minutes)>0
-      && Date.parse(evidence)+Number(row.expected_interval_minutes)*60000<now)return 'Needs attention';
+  const evidence=Math.max(...[row.last_activity_at,row.last_synced_at,row.created_at]
+    .map((value)=>Date.parse(value||'')).filter(Number.isFinite));
+  if(Number.isFinite(evidence)&&Number(row.expected_interval_minutes)>0
+      && evidence+Number(row.expected_interval_minutes)*60000<now)return 'Needs attention';
   return 'Connected';
 }
 

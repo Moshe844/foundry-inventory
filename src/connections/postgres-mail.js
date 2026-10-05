@@ -76,6 +76,21 @@ async function counts(database,workspaceId){
   return Object.fromEntries(rows.map((row)=>[row.reply_state,Number(row.count)]));
 }
 
+async function setAsideCount(database,workspaceId){
+  const row=(await database.query(`SELECT COUNT(*)::integer AS count FROM connection_email_set_aside
+    WHERE workspace_id=$1 AND brought_in_at IS NULL`,[workspaceId])).rows[0];
+  return Number(row?.count||0);
+}
+
+async function listSetAside(database,workspaceId){
+  return (await database.query(`SELECT aside.id,aside.sender,aside.subject,aside.received_at,aside.reason,
+      connector.display_name AS connector_name
+    FROM connection_email_set_aside aside JOIN workspace_connectors connector
+      ON connector.workspace_id=aside.workspace_id AND connector.id=aside.connector_id
+    WHERE aside.workspace_id=$1 AND aside.brought_in_at IS NULL
+    ORDER BY aside.received_at DESC,aside.id DESC LIMIT 100`,[workspaceId])).rows;
+}
+
 async function list(database,workspaceId,state='NEEDS_REPLY'){
   return (await database.query(`SELECT message.*,connector.display_name,connector.provider_type,
       supplier.name AS supplier_name,
@@ -202,5 +217,5 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){const
     throw Object.assign(error,{code:ambiguous?'email_send_ambiguous':(error.code||'email_send_failed'),retryable:false});}
 }
 
-module.exports={capture,counts,list,get,setState,saveDraft,queueSend,executeSendEffect};
+module.exports={capture,counts,setAsideCount,listSetAside,list,get,setState,saveDraft,queueSend,executeSendEffect};
 require('../commercial/enforcement').guardExports(module.exports,0,1,{queueSend:'communications.send_approved',executeSendEffect:'communications.send_approved'});

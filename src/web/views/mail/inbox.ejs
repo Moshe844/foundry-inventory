@@ -28,6 +28,10 @@
   <% }) %>
 </div>
 
+<% if (typeof canReviewAside !== 'undefined' && canReviewAside && asideCount) { %>
+  <p class="section"><a href="/mail/set-aside">Review <%= asideCount %> set-aside email<%= asideCount===1?'':'s' %></a></p>
+<% } %>
+
 <% if (!messages.length) { %>
   <div class="empty-state">
     <%- helpers.icon('send', { size: 32 }) %>

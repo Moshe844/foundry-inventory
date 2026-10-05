@@ -1,0 +1,28 @@
+<header class="page-head">
+  <div class="titles">
+    <p><a href="/mail">← Back to Mail</a></p>
+    <h1>Set-aside mail</h1>
+    <p class="page-sub">StockChief kept only the sender, subject, time, and reason. Message bodies and attachments were not saved.</p>
+  </div>
+</header>
+
+<p class="section"><%= count %> email<%= count===1?'':'s' %> set aside<%= count>100?' · showing the newest 100':'' %>.</p>
+
+<% if (!messages.length) { %>
+  <div class="empty-state"><h2>Nothing set aside</h2><p>Mail from known customers and suppliers appears in the business inbox.</p></div>
+<% } else { %>
+  <section class="section" aria-label="Set-aside email envelopes">
+    <div class="rm-feed">
+      <% messages.forEach(function(message){ %>
+        <div class="rm-feed__row">
+          <span class="rm-feed__ic">✉</span>
+          <span class="rm-feed__t"><strong><%= message.subject||'(No subject)' %></strong>
+            <small><%= message.sender %> · <%= message.connector_name %></small>
+            <small><%= message.reason %></small>
+          </span>
+          <span class="rm-feed__m"><%= message.received_at %></span>
+        </div>
+      <% }) %>
+    </div>
+  </section>
+<% } %>

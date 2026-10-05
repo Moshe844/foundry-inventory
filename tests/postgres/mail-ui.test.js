@@ -7,6 +7,7 @@ const {startCluster}=require('../helpers/postgres-cluster');
 const {openPostgres}=require('../../src/db/postgres');
 const {migratePostgres}=require('../../src/db/migrate-postgres');
 const {createPostgresApp}=require('../../src/postgres-app');
+const auth=require('../../src/domain/postgres-auth-service');
 const commerce=require('../../src/operations/postgres-commerce');
 const mail=require('../../src/connections/postgres-mail');
 const credentials=require('../../src/connections/postgres-credential-store');
@@ -82,6 +83,26 @@ test('real Chromium qualifies PostgreSQL business-mail filtering, exact replies 
     assert.equal(await page.locator('a[href="/needs-you"] .nav-count').innerText(),'2');
     const inboxText=await page.locator('main').innerText();assert.match(inboxText,/Can we ship the balance Friday/);
     assert.match(inboxText,/Order delivery question/);assert.doesNotMatch(inboxText,/Weekend newsletter/);
+    await page.getByRole('link',{name:'Review 1 set-aside email'}).click();
+    const asideText=await page.locator('main').innerText();
+    assert.match(asideText,/newsletter@example\.test/);
+    assert.match(asideText,/Weekend newsletter/);
+    assert.match(asideText,/Sender is not a customer or supplier/);
+    assert.doesNotMatch(asideText,/private body|Different replay body/);
+    const other=await auth.createBusiness(database,{businessName:'Other Mail Business',name:'Other Owner',
+      email:'other-mail@example.test',password:'other-mail-password'});
+    const otherConnectorId=newId('con');
+    await database.query(`INSERT INTO workspace_connectors
+      (id,workspace_id,connector_key,display_name,provider_type,status,capabilities,provides,config,
+       expected_interval_minutes,setup_status,authorized_by_user_id,created_at,updated_at)
+      VALUES($1,$2,$3,'Other Gmail','gmail','connected','[]','[]','{}',5,'CONNECTED',$4,$5,$5)`,
+    [otherConnectorId,other.workspaceId,`gmail:${otherConnectorId}`,other.userId,at]);
+    await mail.capture(database,{id:otherConnectorId,workspace_id:other.workspaceId,provider_type:'gmail'},
+      {externalMessageId:'private-other-message',sender:'other@example.test',subject:'Other owner only',
+        bodyText:'Not for this owner',receivedAt:'2026-09-23T13:04:00.000Z'});
+    await page.reload();
+    assert.doesNotMatch(await page.locator('main').innerText(),/Other owner only|other@example\.test/);
+    assert.equal(await mail.setAsideCount(database,other.workspaceId),1);
     await page.goto(`${base}/needs-you`);const needsText=await page.locator('main').innerText();
     assert.match(needsText,/supplier@example\.test is waiting for a response/);
     assert.match(needsText,/customer@example\.test is waiting for a response/);
