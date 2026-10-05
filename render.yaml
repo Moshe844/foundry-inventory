@@ -20,6 +20,14 @@ projects:
                 generateValue: true
               - key: FOUNDRY_ALERT_ACK_TOKEN
                 generateValue: true
+              - key: STOCKCHIEF_BILLING_STRIPE_SECRET_KEY
+                sync: false
+              - key: STOCKCHIEF_BILLING_STRIPE_WEBHOOK_SECRET
+                sync: false
+              - key: STOCKCHIEF_BILLING_STRIPE_PUBLISHABLE_KEY
+                sync: false
+              - key: STOCKCHIEF_COMMERCIAL_ADMIN_EMAILS
+                sync: false
         databases:
           - name: stockchief-staging
         services:
