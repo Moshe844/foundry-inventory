@@ -351,6 +351,7 @@ test('public, auth and invitation journeys work in desktop and mobile Chromium',
     }
     await page.goto(`${base}/pricing`);assert.equal(await page.locator('.plan-card').count(),4);
     assert.match(await page.locator('#growth .plan-card__usage').innerText(),/1,000 stockchief intelligent operations/i);
+    assert.doesNotMatch(await page.locator('.plan-ladder').innerText(),/document pages processed/i);
     await page.getByRole('button',{name:/Annual/}).click();
     assert.match(await page.locator('.plan-card').nth(1).innerText(),/billed annually/i);
     assert.match(await page.getByRole('link',{name:'Choose Growth'}).getAttribute('href'),/plan=growth.*interval=annual/);
