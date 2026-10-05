@@ -162,10 +162,18 @@ function verifyEvent(raw, headers = {}, options = {}) {
   const signatures = pieces.filter(([key]) => key === 'v1').map(([, value]) => value);
   const body = Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw || '');
   if (!timestamp || !signatures.length) throw new AuthenticationError('That billing signature cannot be verified.');
-  const expected = crypto.createHmac('sha256', secret).update(`${timestamp}.${body}`).digest('hex');
-  const valid = signatures.some((candidate) => {
+  const previous=options.previousWebhookSecret||config.commercial.stripePreviousWebhookSecret;
+  const previousExpires=options.previousWebhookSecretExpiresAt||config.commercial.stripePreviousWebhookSecretExpiresAt;
+  const secrets=[secret];
+  // A bounded overlap lets a pinned-version endpoint replace an older endpoint
+  // without dropping genuine deliveries. An absent/invalid deadline fails closed.
+  if(previous&&Date.parse(previousExpires)>Date.now())secrets.push(previous);
+  const valid = secrets.some(candidateSecret=>{
+   const expected = crypto.createHmac('sha256', candidateSecret).update(`${timestamp}.${body}`).digest('hex');
+   return signatures.some((candidate) => {
     const left = Buffer.from(expected);const right = Buffer.from(candidate);
     return left.length === right.length && crypto.timingSafeEqual(left, right);
+   });
   });
   if (!valid) throw new AuthenticationError('That billing event did not come from Stripe.');
   if (Math.abs(Date.now() / 1000 - Number(timestamp)) > 300) throw new AuthenticationError('That billing event is too old.');
@@ -176,4 +184,4 @@ module.exports = { createCheckout,createPortal,retrieveCheckout,retrieveSubscrip
   createAddonCheckout,createTopupPayment,retrievePaymentMethod,retrieveBalanceTransaction,retrieveInvoice,retrievePaymentIntent,listInvoicePayments,
   scheduleDowngrade,
   setCancellation,listInvoices,createInvoiceItem,verifyEvent,
-  __internal:{call,form} };
+  __internal:{call,form,apiVersion:API_VERSION} };

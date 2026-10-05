@@ -8,6 +8,7 @@ test('readiness rejects missing top-up/refund events and unpinned webhook versio
  assert.equal(bad.ready,false);assert.ok(bad.missingEvents.includes('payment_intent.succeeded'));
  assert.ok(bad.missingEvents.includes('refund.created'));assert.ok(bad.issues.includes('WEBHOOK_API_VERSION_UNPINNED'));
  assert.equal(configuration.inspectEndpoint(good,url).ready,true);
+ assert.ok(configuration.inspectEndpoint({...good,api_version:'2026-08-26.dahlia'},url).issues.includes('WEBHOOK_API_VERSION_MISMATCH'));
 });
 test('audit paginates and refuses multiple enabled destinations',async()=>{
  let calls=0;const result=await configuration.audit({expectedUrl:url,call:async()=>++calls===1?

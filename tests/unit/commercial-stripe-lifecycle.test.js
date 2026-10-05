@@ -44,3 +44,16 @@ test('invoice payment reconciliation reads all pages and rejects repeated cursor
  await assert.rejects(()=>stripe.listInvoicePayments('in_fixture',{secretKey:'sk_test_fixture',fetch:async()=>
   response({data:[{id:'inpay_loop'}],has_more:true})}),/repeated/);
 });
+
+test('webhook secret rotation accepts only explicitly bounded overlap and still rejects stale signatures',()=>{
+ const crypto=require('node:crypto');const raw=JSON.stringify({id:'evt_rotation',type:'invoice.paid'});
+ const now=Math.floor(Date.now()/1000);
+ const signature=(secret,time=now)=>`t=${time},v1=${crypto.createHmac('sha256',secret).update(`${time}.${raw}`).digest('hex')}`;
+ const options={webhookSecret:'whsec_current',previousWebhookSecret:'whsec_previous',previousWebhookSecretExpiresAt:new Date(Date.now()+60000).toISOString()};
+ assert.equal(stripe.verifyEvent(raw,{'stripe-signature':signature('whsec_current')},options).id,'evt_rotation');
+ assert.equal(stripe.verifyEvent(raw,{'stripe-signature':signature('whsec_previous')},options).id,'evt_rotation');
+ for(const deadline of [null,'invalid',new Date(Date.now()-1).toISOString()])assert.throws(()=>stripe.verifyEvent(raw,
+  {'stripe-signature':signature('whsec_previous')},{...options,previousWebhookSecretExpiresAt:deadline}),/did not come/);
+ assert.throws(()=>stripe.verifyEvent(raw,{'stripe-signature':signature('whsec_previous',now-301)},options),/too old/);
+ assert.throws(()=>stripe.verifyEvent(raw,{'stripe-signature':signature('whsec_unknown')},options),/did not come/);
+});

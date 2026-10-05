@@ -17,6 +17,7 @@ function inspectEndpoint(endpoint,expectedUrl){
  if(endpoint.url!==expectedUrl)issues.push('WEBHOOK_URL_MISMATCH');
  if(missingEvents.length)issues.push('WEBHOOK_EVENTS_MISSING');
  if(!endpoint.api_version)issues.push('WEBHOOK_API_VERSION_UNPINNED');
+ else if(endpoint.api_version!==stripe.__internal.apiVersion)issues.push('WEBHOOK_API_VERSION_MISMATCH');
  return {id:endpoint.id,url:endpoint.url,liveMode:endpoint.livemode,apiVersion:endpoint.api_version,
   missingEvents,issues,ready:issues.length===0};
 }
