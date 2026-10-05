@@ -104,19 +104,7 @@ function createPostgresAskRouter(database,options={}){
   });
   async function runAsk(req){
     const scope=commercialScope(req);await entitlements.assertCapability(database,scope,'ask.lookup');
-    const metered=Boolean(options.provider||config.ai.configured);const idempotencyKey=String(req.body.usageKey||newId('askusage'));
-    if(metered)await entitlements.reserveUsage(database,scope,{id:newId('usage'),meter:'intelligent_operations',units:1,
-      idempotencyKey,detail:{kind:'ask'}});
-    let modelCall=0;const onUsage=async(usage,detail)=>{modelCall+=1;const provider=usage.provider||options.provider?.name||config.ai.provider;
-      for(const [operation,quantity] of [['model_input',Number(usage.inputTokens||0)],['model_output',Number(usage.outputTokens||0)]]){
-        if(quantity<=0)continue;await commercialControl.recordCost(database,scope,{provider,operation,unit:'token',quantity,
-          idempotencyKey:`${idempotencyKey}:model:${modelCall}:${operation}`,detail:{...detail,model:usage.model||null,
-            latencyMs:usage.latencyMs||null}});}};
-    try{const result=await assistant.ask(database,req.ctx,req.body.message,{provider:options.provider,onUsage});
-      if(metered)await entitlements.commitUsage(database,scope,{meter:'intelligent_operations',idempotencyKey});
-      return result;
-    }catch(error){if(metered)await entitlements.reverseUsage(database,scope,{meter:'intelligent_operations',idempotencyKey,
-      reason:'Ask StockChief did not complete.'});throw error;}
+    return assistant.ask(database,req.ctx,req.body.message,{provider:options.provider,usageKey:String(req.body.usageKey||newId('askusage'))});
   }
   router.post('/ask',asyncRoute(async(req,res)=>{
     await runAsk(req);

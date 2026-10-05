@@ -144,6 +144,7 @@ async function createWorkspace(database,accountId,input={}){
   return database.transaction(async(client)=>{
     const account=(await client.query('SELECT * FROM accounts WHERE id=$1 FOR UPDATE',[accountId])).rows[0];
     if(!account)throw new NotFoundError('That account could not be found.');
+    await entitlements.assertCapability(client,{accountId,workspaceId:null},'workspace.core');
     await entitlements.assertMeterCapacity(client,{accountId,workspaceId:null},'workspaces',1);
     await client.query(`INSERT INTO workspaces(id,name,owner_account_id,data_mode,created_at)
       VALUES($1,$2,$3,'production',$4)`,[workspaceId,businessName,accountId,at]);

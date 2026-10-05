@@ -24,7 +24,7 @@ async function queueAccountEmail(database, input) {
   return jobs.enqueue(durableDatabase, {
     kind: 'system.email-send',
     idempotencyKey: input.idempotencyKey,
-    payload: { messageType: input.messageType, sealed },
+    payload: { messageType: input.messageType, accountId:input.accountId, sealed },
     priority: 5,
     maxAttempts: 8,
     availableAt: Date.now(),
@@ -65,8 +65,7 @@ async function queueSubscriptionSuspended(database, input) {
 async function queueUsageWarning(database,input){
   const url=billingUrl();const exhausted=input.threshold>=100;
   const policy=exhausted
-    ?input.overageMode==='BILL'?`Additional completed processing follows your configured overage policy.`:
-      'Costly optional processing pauses; your existing business records remain available.'
+    ?'Purchased usage is used next. An opted-in auto-top-up may buy your chosen pack within its spending cap. Costly optional processing pauses when no usage remains; business records remain available.'
     :'StockChief will warn you again before included usage is exhausted.';
   return queueAccountEmail(database,{
     accountId:input.accountId,idempotencyKey:`billing-usage-warning:${input.accountId}:${input.meter}:${input.periodStart}:${input.threshold}`,

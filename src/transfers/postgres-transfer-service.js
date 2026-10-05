@@ -33,6 +33,7 @@ function outcomeInteger(value, label) {
 }
 
 async function requirePermission(client, ctx, permission, what) {
+  await require('../commercial/enforcement').workspace(client,ctx.workspaceId,'inventory.transfers');
   const result = await client.query('SELECT id,role,permissions FROM users WHERE id=$1 AND workspace_id=$2',
     [ctx.actorId, ctx.workspaceId]);
   if (!result.rows.length) throw new ValidationError('The acting user does not belong to this inventory.');

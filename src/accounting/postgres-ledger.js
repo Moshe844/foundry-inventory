@@ -18,6 +18,7 @@ function monthBounds(date) {
 }
 
 async function requireAccountingActor(client, ctx) {
+  await require('../commercial/enforcement').workspace(client,ctx.workspaceId,'accounting.core');
   const result = await client.query(`SELECT role FROM users WHERE id=$1 AND workspace_id=$2`, [ctx.actorId,ctx.workspaceId]);
   if (!result.rows.length || !['owner','accountant'].includes(result.rows[0].role)) {
     throw new AuthorizationError('Only an owner or accountant can change the books.');
@@ -84,6 +85,8 @@ function normalizeLines(lines) {
 }
 
 async function postInTransaction(client, ctx, input) {
+  if(!(ctx.verifiedProviderReceipt&&['customer_payment','customer_deposit'].includes(input.sourceType)))
+    await require('../commercial/enforcement').workspace(client,ctx.workspaceId,'accounting.core');
   const postingDate=dateOnly(input.postingDate);
   const sourceKey=String(input.sourceKey||'').trim();
   if (!sourceKey) throw new ValidationError('A durable accounting source key is required.');

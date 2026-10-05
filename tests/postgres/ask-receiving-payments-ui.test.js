@@ -54,7 +54,7 @@ test('real Chromium Ask StockChief safely receives a PO and records one supplier
     const cluster=await startCluster();const database=openPostgres(cluster.connectionString,
       {applicationName:'stockchief-ask-receiving-payments-ui'});
     await migratePostgres(database);const app=createPostgresApp({database,env:'test',
-      sessionSecret:'ask-receiving-secret',aiProvider:provider});
+      sessionSecret:'ask-receiving-secret',aiProvider:require('../helpers/postgres-model-fixture').fixture(provider)});
     const server=await new Promise((resolve)=>{const started=app.listen(0,'127.0.0.1',()=>resolve(started));});
     const browser=await chromium.launch();const browserContext=await browser.newContext();
     context.after(async()=>{await browser.close();await new Promise((resolve)=>server.close(resolve));

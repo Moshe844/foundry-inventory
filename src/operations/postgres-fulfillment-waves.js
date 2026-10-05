@@ -308,3 +308,5 @@ async function containers(database,workspaceId){
 }
 
 module.exports={get,list,readyOrders,create,scan,reportShortage,packShipment,refresh,containers,resolveIdentity};
+require('../commercial/enforcement').guardExports(module.exports,0,1,{create:'warehouse.advanced',scan:'warehouse.advanced',
+ reportShortage:'warehouse.advanced',packShipment:'warehouse.advanced',refresh:'warehouse.advanced'});

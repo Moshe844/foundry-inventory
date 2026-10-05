@@ -65,8 +65,6 @@ function createPostgresAutopilotRouter(database){
   }));
   router.post('/autopilot/run',requireAuth,requireCapability(database,'forecasting.basic'),asyncRoute(async(req,res)=>{
     const result=await autonomy.run(database,req.ctx);
-    if(result.executed>0)await entitlements.recordUsage(database,commercialScope(req),{id:newId('usage'),meter:'automatic_actions',
-      units:result.executed,idempotencyKey:`autopilot-run:${newId('run')}`,detail:{kind:'autopilot',executed:result.executed}});
     req.flash('success',
       `Check complete — ${result.planned} prepared, ${result.executed} completed automatically, ${result.waiting} waiting for you.`);
     return res.redirect(303,'/autopilot');

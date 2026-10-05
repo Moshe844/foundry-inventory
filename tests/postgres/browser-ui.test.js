@@ -17,7 +17,7 @@ test('Chromium operates PostgreSQL onboarding, catalog, inventory movement and A
     const cluster=await startCluster();
     const database=openPostgres(cluster.connectionString,{applicationName:'stockchief-postgres-browser-ui'});
     await migratePostgres(database);
-    const app=createPostgresApp({database,env:'test',sessionSecret:'postgres-browser-secret',aiProvider:provider,
+    const app=createPostgresApp({database,env:'test',sessionSecret:'postgres-browser-secret',aiProvider:require('../helpers/postgres-model-fixture').fixture(provider),
       assetVersion:'postgres-browser-cert'});
     const server=await new Promise((resolve)=>{const started=app.listen(0,'127.0.0.1',()=>resolve(started));});
     const browser=await chromium.launch();

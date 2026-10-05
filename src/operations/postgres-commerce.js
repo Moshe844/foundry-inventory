@@ -220,3 +220,5 @@ async function salesOrder(database, workspaceId, id) {
 }
 
 module.exports={createSupplier,createCustomer,createCustomerInTransaction,suppliers,customers,catalogue,locations,purchaseOrders,purchaseOrder,salesOrders,salesOrder};
+require('../commercial/enforcement').guardExports(module.exports,0,1,{createSupplier:'purchasing.suppliers',
+  createCustomer:'sales_orders.core',createCustomerInTransaction:'sales_orders.core'});

@@ -153,7 +153,9 @@ async function quote(database,ctx,shipmentId,options={}){
   if(!current.ready)return {...current,rates:[]};
   const held=await accounts.contextFor(database,ctx);
   const provider=options.provider||defaultProviders.get(held.account.provider);
-  const answer=await provider.quote(held.ctx,{to:current.to,from:current.from,packages:current.boxes});
+  const answer=await require('../commercial/operations').run(database,ctx.workspaceId,{capability:'shipping.rates',
+    key:options.idempotencyKey||newId('quote'),provider:held.account.provider,operation:'carrier_quote'},
+    ()=>provider.quote(held.ctx,{to:current.to,from:current.from,packages:current.boxes}));
   await database.transaction(async(client)=>{
     await client.query('DELETE FROM shipment_rates WHERE workspace_id=$1 AND shipment_id=$2',[ctx.workspaceId,shipmentId]);
     const now=nowIso();
@@ -233,13 +235,10 @@ async function executeLabelPurchaseEffect(database,workspaceId,effectId,options=
   const provider=options.provider||defaultProviders.get(rate.provider);
   let bought;
   try{
-    try{bought=await provider.buy(held.ctx,{providerShipmentIds:String(shipment.provider_shipment_id||'').split(',').filter(Boolean),
-      rateIds:String(rate.provider_rate_id).split(',').filter(Boolean),idempotencyKey:effect.idempotencyKey});}
-    finally{const owner=(await database.query('SELECT owner_account_id FROM workspaces WHERE id=$1',[workspaceId])).rows[0];
-      if(owner?.owner_account_id)await commercialControl.recordCost(database,{accountId:owner.owner_account_id,workspaceId},{
-        provider:rate.provider||'shipping_provider',operation:'label_purchase',unit:'label',quantity:1,
-        idempotencyKey:effect.idempotencyKey,occurredAt:nowIso(),detail:{shipmentId:input.shipmentId,
-          transactionId:input.transactionId}});}
+    bought=await require('../commercial/operations').run(database,workspaceId,{capability:'shipping.labels',key:effect.idempotencyKey,
+      provider:rate.provider,operation:'label_purchase',unit:'label'},()=>provider.buy(held.ctx,
+      {providerShipmentIds:String(shipment.provider_shipment_id||'').split(',').filter(Boolean),
+       rateIds:String(rate.provider_rate_id).split(',').filter(Boolean),idempotencyKey:effect.idempotencyKey}));
   }catch(error){
     const ambiguous=!providerEffects.definiteFailure(error);
     await providerEffects.finishError(database,workspaceId,effectId,effect.claimToken,error,{ambiguous,
@@ -363,6 +362,13 @@ async function receiveProviderEvent(database,ctx,providerName,event,options={}){
     [newId('shipevt'),ctx.workspaceId,providerName,externalId,read.type||null,shipment?.id||null,
       JSON.stringify(event||{}),outcome,now]);
     if(!inserted.rows.length)return {applied:false,replayed:true,outcome};
+    // Existing delivery facts survive downgrade/exhaustion. This internal
+    // reconciliation is cost-metered, not a new optional carrier request.
+    const costScope=await require('../commercial/entitlements').ownerScopeForWorkspace(client,ctx.workspaceId);
+    await require('../commercial/control-service').recordCost(client,costScope,{provider:providerName,
+      operation:'tracking_webhook_reconciliation',unit:'event',quantity:1,providerVersion:'verified-webhook-v1',
+      idempotencyKey:`shipping-webhook:${providerName}:${ctx.workspaceId}:${externalId}`,
+      detail:{essentialReconciliation:true,customerUsageExempt:true}});
     if(!shipment)return {applied:false,replayed:false,outcome};
     const received=Array.isArray(read.events)&&read.events.length?read.events:[{status:read.status,detail:read.detail,
       location:read.location,occurredAt:read.occurredAt||now}];
@@ -391,8 +397,9 @@ async function refreshTracking(database,ctx,shipmentId,options={}){
   const held=await accounts.contextFor(database,ctx);
   if(!held)throw new ValidationError('Reconnect the postage account before checking the carrier.');
   const provider=options.provider||defaultProviders.get(held.account.provider);
-  const read=await provider.track(held.ctx,{trackingNumber:shipment.tracking_number,carrier:shipment.carrier,
-    providerShipmentId:shipment.provider_shipment_id});
+  const read=await require('../commercial/operations').run(database,ctx.workspaceId,{capability:'shipping.tracking',
+    key:options.idempotencyKey||newId('track'),provider:held.account.provider,operation:'carrier_tracking'},
+    ()=>provider.track(held.ctx,{trackingNumber:shipment.tracking_number,carrier:shipment.carrier,providerShipmentId:shipment.provider_shipment_id}));
   if(!read)return {applied:false,status:shipment.tracking_status,because:'The carrier has no scan for this parcel yet.'};
   const events=read.events?.length?read.events:[{externalEventId:`summary:${shipment.tracking_number}:${read.status}:${read.occurredAt||nowIso()}`,
     status:read.status,detail:read.detail,location:read.location,occurredAt:read.occurredAt||nowIso()}];
@@ -407,3 +414,5 @@ async function refreshTracking(database,ctx,shipmentId,options={}){
 
 module.exports={prepare,requireShipment,packagesFor,setPackages,state,ratesFor,quote,queueLabelPurchase,
   executeLabelPurchaseEffect,buyLabel,handoff,applyTracking,receiveProviderEvent,refreshTracking};
+require('../commercial/enforcement').guardExports(module.exports,0,1,{queueLabelPurchase:'shipping.labels',
+  prepare:'shipping.workflow',setPackages:'shipping.workflow',handoff:'shipping.workflow',applyTracking:'shipping.workflow'});

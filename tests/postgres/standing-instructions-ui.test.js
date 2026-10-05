@@ -35,7 +35,7 @@ test('real Chromium approves one free-form PostgreSQL standing instruction witho
   {timeout:180000},async(context)=>{
     const cluster=await startCluster();const database=openPostgres(cluster.connectionString,
       {applicationName:'stockchief-postgres-standing-instructions'});await migratePostgres(database);
-    const app=createPostgresApp({database,env:'test',sessionSecret:'postgres-standing-instruction-secret',aiProvider:provider});
+    const app=createPostgresApp({database,env:'test',sessionSecret:'postgres-standing-instruction-secret',aiProvider:require('../helpers/postgres-model-fixture').fixture(provider)});
     const server=await new Promise((resolve)=>{const started=app.listen(0,'127.0.0.1',()=>resolve(started));});
     const browser=await chromium.launch();context.after(async()=>{await browser.close();
       await new Promise((resolve)=>server.close(resolve));await app.locals.sessionStore.close();await database.close();cluster.stop();});
@@ -59,7 +59,7 @@ test('real Chromium approves one free-form PostgreSQL standing instruction witho
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Continue'}).click()]);
     assert.match(await page.locator('main').innerText(),/Nothing is in force yet/);
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM commercial_usage_events WHERE account_id=$1
-      AND meter='intelligent_operations' AND status='COMMITTED'`,[identity.account_id])).rows[0].count,'1');
+      AND meter='ai_work_credits' AND status='COMMITTED'`,[identity.account_id])).rows[0].count,'2');
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM commercial_cost_events WHERE account_id=$1
       AND provider='fixture-ai'`,[identity.account_id])).rows[0].count,'4');
     assert.equal((await database.query('SELECT COUNT(*) AS count FROM reorder_policies WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].count,'0');

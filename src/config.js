@@ -270,6 +270,7 @@ const config = {
   },
 
   commercial: {
+    get checkoutEnabled() { return process.env.STOCKCHIEF_CHECKOUT_ENABLED === 'true'; },
     get requirePaidWorkspace() {
       if (process.env.STOCKCHIEF_REQUIRE_PAID_WORKSPACE !== undefined) {
         return process.env.STOCKCHIEF_REQUIRE_PAID_WORKSPACE === 'true';

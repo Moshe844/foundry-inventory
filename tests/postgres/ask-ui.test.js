@@ -42,7 +42,7 @@ test('Ask StockChief grounds answers and executes only an approved PostgreSQL pr
     const cluster=await startCluster();
     const database=openPostgres(cluster.connectionString,{applicationName:'stockchief-postgres-ask-ui'});
     await migratePostgres(database);
-    const app=createPostgresApp({database,env:'test',sessionSecret:'postgres-ask-secret',aiProvider:provider});
+    const app=createPostgresApp({database,env:'test',sessionSecret:'postgres-ask-secret',aiProvider:require('../helpers/postgres-model-fixture').fixture(provider)});
     context.after(async()=>{await app.locals.sessionStore.close();await database.close();cluster.stop();});
     const agent=request.agent(app);
     const registration=await agent.get('/register');

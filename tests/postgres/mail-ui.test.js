@@ -87,7 +87,7 @@ test('real Chromium qualifies PostgreSQL business-mail filtering, exact replies 
     assert.match(needsText,/customer@example\.test is waiting for a response/);
     await page.goto(`${base}/mail/${supplierMessage.messageId}`);
     assert.match(await page.locator('main').innerText(),/Please confirm whether Friday works/);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Draft a reply'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Use standard holding reply'}).click()]);
     await page.getByLabel('Subject').fill('Re: Friday shipment');
     await page.locator('textarea[name="body"]').fill('Friday works. Please send the remaining units and share tracking.');
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Save for later'}).click()]);
@@ -116,7 +116,7 @@ test('real Chromium qualifies PostgreSQL business-mail filtering, exact replies 
       sender:'supplier@example.test',recipients:['business@example.test'],subject:'Second shipment question',
       bodyText:'Should we send the second carton?',receivedAt:'2026-09-23T13:03:00.000Z'});
     await page.goto(`${base}/mail/${uncertainMessage.messageId}`);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Draft a reply'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Use standard holding reply'}).click()]);
     await page.getByLabel('Subject').fill('Ambiguous provider outcome');
     await page.locator('textarea[name="body"]').fill('Please send the second carton.');
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Send to supplier@example.test'}).click()]);

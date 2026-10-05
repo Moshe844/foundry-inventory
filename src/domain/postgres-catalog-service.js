@@ -34,6 +34,7 @@ async function uniqueCode(client, workspaceId, candidate, taken) {
 async function createItemInTransaction(client, ctx, input) {
   const name = requireText(input.name, 'Item name', { max: 240 });
   const trackingMode = requireOneOf(input.trackingMode, TRACKING_MODE_IDS, 'Tracking type');
+  if(['lot','serial'].includes(trackingMode))await require('../commercial/enforcement').workspace(client,ctx.workspaceId,'inventory.lot_serial');
   const hasVariants = normaliseBoolean(input.hasVariants);
   const baseCode = trimOrNull(input.baseCode);
   const description = trimOrNull(input.description);
@@ -87,6 +88,7 @@ async function createItem(database, ctx, input) {
 async function createImportedItemInTransaction(client, ctx, input) {
   const name = requireText(input.name, 'Item name', { max: 240 });
   const trackingMode = requireOneOf(input.trackingMode, TRACKING_MODE_IDS, 'Tracking type');
+  if(['lot','serial'].includes(trackingMode))await require('../commercial/enforcement').workspace(client,ctx.workspaceId,'inventory.lot_serial');
   const variants = Array.isArray(input.variants) && input.variants.length ? input.variants : [{}];
   const description = trimOrNull(input.description);
   const unitLabel = trimOrNull(input.unitLabel) || 'unit';
@@ -402,3 +404,5 @@ async function setItemActive(database, ctx, itemId, active) {
 
 module.exports = { createItem, createItemInTransaction, createImportedItemInTransaction,
   listItems, getItem, updateItem, addVariant, setItemActive };
+require('../commercial/enforcement').guardExports(module.exports,0,1,{createItem:'inventory.core',createItemInTransaction:'inventory.core',
+ createImportedItemInTransaction:'inventory.core',updateItem:'inventory.core',addVariant:'inventory.core',setItemActive:'inventory.core'});

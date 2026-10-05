@@ -23,6 +23,7 @@ async function requireActor(client, ctx) {
 }
 
 async function requirePermission(client, ctx, permission, what) {
+  await require('../commercial/enforcement').workspace(client,ctx.workspaceId,'inventory.core');
   const actor = await requireActor(client, ctx);
   permissions.assertCan(actor, permission, what);
   return actor;
@@ -37,12 +38,15 @@ async function target(client, ctx, skuId, locationId) {
     WHERE s.id = $1 AND s.workspace_id = $2`, [skuId, ctx.workspaceId, locationId]);
   const row = result.rows[0];
   if (!row) throw new ValidationError('That item variant or location is not in this inventory.');
+  if(['lot','serial'].includes(row.tracking_mode))await require('../commercial/enforcement').workspace(client,ctx.workspaceId,'inventory.lot_serial');
   if (!Number(row.sku_active) || !Number(row.item_active)) throw new ValidationError('That item variant is archived.');
   if (!Number(row.location_active)) throw new ValidationError(`${row.location_name} is archived and cannot be used.`);
   return row;
 }
 
 async function beginOperation(client, ctx, kind, idempotencyKey) {
+  if(kind.includes('transfer'))await require('../commercial/enforcement').workspace(client,ctx.workspaceId,'inventory.transfers');
+  if(kind.includes('adjust'))await require('../commercial/enforcement').workspace(client,ctx.workspaceId,'inventory.counts');
   const key = String(idempotencyKey || newId('operation'));
   const id = newId('pgop');
   const inserted = await client.query(`INSERT INTO stockchief_runtime.business_operations

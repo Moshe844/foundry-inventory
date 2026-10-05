@@ -69,7 +69,8 @@ test('real Chromium connects each inventory to its own Stripe account without re
     accountReady=true;
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Check Stripe status'}).click()]);
     assert.match(await page.locator('main').innerText(),/ready to take payments/);
-    assert.match(await page.locator('main').innerText(),/confirmed that this business can accept customer payments/);
+    assert.equal(Number((await database.query('SELECT charges_enabled FROM payment_connect_accounts WHERE workspace_id=$1',
+      [ownerAccount.workspace_id])).rows[0].charges_enabled),1,'Stripe capability verification must be durably recorded.');
 
     const otherContext=await browser.newContext();const other=await otherContext.newPage();
     await other.goto(`${base}/register`);await other.getByLabel('Business name').fill('Other Business');
@@ -85,7 +86,8 @@ test('real Chromium connects each inventory to its own Stripe account without re
     const confirmation=page.getByRole('dialog');await confirmation.waitFor();
     await Promise.all([page.waitForNavigation(),confirmation.getByRole('button',{name:'Disconnect Stripe'}).click()]);
     assert.equal(releasedAccount,'acct_fixture_owner');
-    assert.match(await page.locator('main').innerText(),/No payment credential remains in StockChief|grant was released at Stripe/);
+    assert.equal(await page.getByText('Owner Stripe Sandbox').count(),0);
+    assert.equal(await page.getByRole('link',{name:'Connect existing Stripe account'}).count(),1);
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM payment_connect_accounts
       WHERE workspace_id=$1`,[ownerAccount.workspace_id])).rows[0].count,'0');
     assert.deepEqual(errors,[]);

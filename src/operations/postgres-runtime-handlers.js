@@ -24,7 +24,7 @@ const entitlements=require('../entitlements/postgres-service');
 
 function milliseconds(value){return Number(value || Date.now());}
 function scopedDatabase(client){return {query:(statement,values=[])=>client.query(statement,values),
-  transaction:(operation)=>operation(client)};}
+  transaction:(operation,options)=>typeof client.transaction==='function'?client.transaction(operation,options):operation(client)};}
 
 async function mailboxPoll(job,client,providers=defaultProviders){
   const connectorId=job.payload?.connectorId;
@@ -38,8 +38,11 @@ async function mailboxPoll(job,client,providers=defaultProviders){
   if(!provider?.poll)throw Object.assign(new Error('This mailbox provider has no polling implementation.'),
     {code:'mailbox_poll_unavailable',retryable:false});
   const database=scopedDatabase(client);
-  const credentials=await providerService.loadProviderCredentials(database,connection,provider);
-  const result=await provider.poll({credentials,since:connection.last_synced_at||connection.created_at});
+  let credentials;
+  const result=await require('../commercial/operations').run(database,job.workspaceId,{capability:'communications.email_ingestion',
+    key:`mailbox-poll:${job.id}`,retryReversed:true,operation:'mailbox_poll',provider:connection.provider_type},
+    async()=>{credentials=await providerService.loadProviderCredentials(database,connection,provider);
+      return provider.poll({credentials,since:connection.last_synced_at||connection.created_at});});
   let accepted=0;let setAside=0;let replayed=0;let ignoredOwn=0;
   for(const message of result.messages||[]){
     if(message.stockChiefMessageId||String(message.sender||'').toLowerCase()===String(credentials.mailbox||'').toLowerCase()){
@@ -96,7 +99,9 @@ async function mailboxPushRenewal(job,client,providers=defaultProviders,options=
     options.publicOrigin||config.connections.publicOrigin);
   if(!webhookUrl)return {renewed:false,skipped:'public_https_required'};
   const renew=provider.renewWebhooks||provider.registerWebhooks;
-  const result=await renew({credentials:providerCredentials,webhookUrl,connection});
+  const result=await require('../commercial/operations').run(database,job.workspaceId,{capability:'communications.email_ingestion',
+    key:`mailbox-renewal:${job.id}`,retryReversed:true,operation:'push_renewal',provider:connection.provider_type},
+    ()=>renew({credentials:providerCredentials,webhookUrl,connection}));
   if(result?.credentials){providerCredentials=result.credentials;
     await credentialStore.put(client,job.workspaceId,connectorId,'provider',providerCredentials,
       result.expiresAt||providerCredentialExpiry(providerCredentials));}
@@ -116,6 +121,24 @@ async function runtimeSweep(job,client,options={}){
   const now=milliseconds(job.payload?.now);const at=new Date(now).toISOString();
   const staleImportAt=new Date(now-15*60_000).toISOString();
   const staleEmailAt=new Date(now-5*60_000).toISOString();
+  const paused=(await client.query(`SELECT * FROM stockchief_runtime.jobs WHERE status='PAUSED'
+    AND workspace_id IS NOT NULL ORDER BY updated_at,id LIMIT 100 FOR UPDATE SKIP LOCKED`)).rows;
+  for(const pending of paused){const scope=await entitlements.ownerScopeForWorkspace(client,pending.workspace_id);
+    const subscription=await entitlements.subscriptionFor(client,scope.accountId);
+    if((subscription||config.commercial.requirePaidWorkspace)&&!entitlements.operationalAccess(subscription,new Date(now)).canOperate)continue;
+    const detail=pending.last_error?.details||{};
+    if(detail.capability&&!(await entitlements.capabilityState(client,scope,detail.capability,{now:at})).enabled)continue;
+    if(detail.meter){const balance=await entitlements.meterState(client,scope,detail.meter,{now:at});
+      if(balance.remaining!==null&&balance.remaining<Number(detail.additional||detail.units||1))continue;
+      if(subscription?.billing_interval!=='CUSTOM'&&balance.periodEnd&&balance.periodEnd<=new Date(now))continue;}
+    await client.query(`UPDATE stockchief_runtime.jobs SET status='RETRY',available_at=$2,last_error=NULL,
+      updated_at=$3 WHERE id=$1 AND status='PAUSED'`,[pending.id,now,at]);
+  }
+  await client.query(`INSERT INTO commercial_critical_warnings(id,account_id,fingerprint,code,detail)
+    SELECT 'stale-reservation:'||id,account_id,'stale-reservation:'||id,'STALE_USAGE_RESERVATION',
+      jsonb_build_object('workspaceId',workspace_id,'usageKey',idempotency_key,'reservationRetained',true)
+    FROM commercial_usage_events WHERE status='RESERVED' AND occurred_at<$1::timestamptz-interval '30 minutes'
+    ON CONFLICT(fingerprint) DO NOTHING`,[at]);
   const sessions=await client.query('DELETE FROM stockchief_runtime.sessions WHERE expires_at <= $1 RETURNING sid',[now]);
   const suspendedSubscriptions=await client.query(`UPDATE account_subscriptions SET status='SUSPENDED',updated_at=now()
     WHERE (status='GRACE' AND grace_ends_at IS NOT NULL AND grace_ends_at<=now())
@@ -268,15 +291,10 @@ async function runtimeSweep(job,client,options={}){
 async function autopilotEvaluate(job,client){
   if(!job.workspaceId||!job.payload?.actorId)throw Object.assign(new Error('An autopilot evaluation needs workspace and owner identity.'),
     {code:'invalid_autopilot_evaluation',retryable:false});
-  if(config.commercial.requirePaidWorkspace){const access=(await client.query(`SELECT subscription.status,subscription.current_period_end,
-      subscription.trial_ends_at,subscription.grace_ends_at
-      FROM workspaces workspace LEFT JOIN account_subscriptions subscription ON subscription.account_id=workspace.owner_account_id
-      WHERE workspace.id=$1`,[job.workspaceId])).rows[0];
-    const now=new Date();const allowed=access&&(['ACTIVE','COMP'].includes(access.status)
-      ||(access.status==='TRIALING'&&(!access.trial_ends_at||new Date(access.trial_ends_at)>now))
-      ||(access.status==='GRACE'&&(!access.grace_ends_at||new Date(access.grace_ends_at)>now))
-      ||(access.status==='CANCELLED'&&access.current_period_end&&new Date(access.current_period_end)>new Date()));
-    if(!allowed)return {skipped:'subscription_read_only'};}
+  const scope=await entitlements.ownerScopeForWorkspace(client,job.workspaceId);
+  const subscription=await entitlements.subscriptionFor(client,scope.accountId);
+  if((subscription||config.commercial.requirePaidWorkspace)&&!entitlements.operationalAccess(subscription).canOperate)
+    return {skipped:'subscription_read_only'};
   return autonomy.run(scopedDatabase(client),{workspaceId:job.workspaceId,actorId:job.payload.actorId});
 }
 
@@ -287,6 +305,16 @@ async function providerEffect(job,database,options={},providers=defaultProviders
   if(!job.workspaceId||!effectId)throw Object.assign(new Error('A provider job needs workspace and effect identity.'),
     {code:'invalid_provider_effect',retryable:false});
   const effect=await providerEffects.get(database,job.workspaceId,effectId);
+  const capability={'shipping.label.purchase':'shipping.labels','mail.reply.send':'communications.send_approved',
+    'mail.outbound.send':'communications.send_approved','payment.request.create':'payments.customer',
+    'payment.refund.create':'payments.customer','accounting.journal.export':'accounting.post_connected'}[effect.kind];
+  if(capability&&effect.status==='PENDING'){
+    const scope=await entitlements.ownerScopeForWorkspace(database,job.workspaceId);
+    await entitlements.assertCapability(database,scope,capability);
+    const budget=await entitlements.meterState(database,scope,'connected_operations');
+    if(budget.remaining!==null&&budget.remaining<1)throw new entitlements.EntitlementError(
+      'Connected Operations are exhausted. This pending operation is paused.',{meter:'connected_operations',units:1,capability});
+  }
   if(effect.kind==='shipping.label.purchase')return shipping.executeLabelPurchaseEffect(database,job.workspaceId,effectId,{
     provider:options.shippingProviderResolver?options.shippingProviderResolver(effect.provider):shippingProviders.get(effect.provider),
   });
@@ -317,7 +345,10 @@ async function alertDelivery(job,database,options={}){
 
 async function systemEmail(job,database,options={}){
   const message=email.unseal(job.payload);const sender=options.emailSender||email.sendResend;
-  const result=await sender(message,options.emailOptions||{});
+  let result;try{result=await sender(message,options.emailOptions||{});}finally{
+    const accountId=job.payload?.accountId||(await database.query('SELECT id FROM accounts WHERE lower(email)=lower($1)',[message.to])).rows[0]?.id;
+    await require('../commercial/control-service').recordCost(database,{accountId:accountId||null},{provider:'resend',operation:'system_email',
+      unit:'message',quantity:1,idempotencyKey:`${job.id}:attempt:${job.attemptCount||1}`,detail:{messageType:job.payload?.messageType}});}
   if(job.payload?.messageType==='password_reset')await checkpoints.record(database,'password_recovery.delivery','PASS',{
     provider:result.provider||'configured',externalId:result.externalId||null,releaseRef:config.operations.releaseRef});
   return result;
@@ -326,9 +357,12 @@ async function systemEmail(job,database,options={}){
 function create(providers=defaultProviders,options={}){return {'system.runtime-sweep':(job,client)=>runtimeSweep(job,client,options),
   'system.alert-delivery':external((job,database)=>alertDelivery(job,database,options)),
   'system.email-send':external((job,database)=>systemEmail(job,database,options)),
-  'mailbox.poll':(job,client)=>mailboxPoll(job,client,providers),
-  'mailbox.renew-push':(job,client)=>mailboxPushRenewal(job,client,providers,options),
-  'provider.catalog-sync':(job,client)=>providerSync.sync(job,client,providers),
+  'mailbox.poll':external((job,database)=>mailboxPoll(job,database,providers)),
+  'mailbox.renew-push':external((job,database)=>mailboxPushRenewal(job,database,providers,options)),
+  'provider.catalog-sync':external((job,database)=>providerSync.sync(job,database,providers)),
+  'commercial.auto-top-up':external((job,database)=>require('../commercial/addons').runTopup(database,
+    {accountId:job.payload.accountId,workspaceId:job.workspaceId},job.payload.category,options.commercialOptions||{})),
+  'commercial.stripe-financial-sync':external((job,database)=>require('../commercial/stripe-financials').sync(database,job,options.commercialOptions||{})),
   'provider.effect':external((job,database)=>providerEffect(job,database,options,providers)),
   'autopilot.evaluate':autopilotEvaluate};}
 

@@ -338,12 +338,14 @@ async function ingest(database,auth,raw,options={}){
       FROM workspaces workspace LEFT JOIN workspace_connectors connector
         ON connector.workspace_id=workspace.id AND connector.id=$2 WHERE workspace.id=$1`,
     [auth.workspaceId,auth.connectorId])).rows[0];
+    if(owner?.owner_account_id)await commercialUsage.assertCapability(client,{accountId:owner.owner_account_id,workspaceId:auth.workspaceId},
+      owner.provider_type==='custom'?'connections.custom_api':'connections.commerce');
     if(owner?.owner_account_id)await commercialUsage.recordUsage(client,{accountId:owner.owner_account_id,workspaceId:auth.workspaceId},
       {id:newId('usage'),meter:'external_events',units:1,idempotencyKey:`event:${auth.connectorId}:${event.eventId}`,
-        occurredAt:event.occurredAt||receivedAt,detail:{eventType:event.type,connectorId:auth.connectorId}});
+        occurredAt:receivedAt,detail:{eventType:event.type,connectorId:auth.connectorId,sourceOccurredAt:event.occurredAt}});
     if(owner?.owner_account_id)await commercialControl.recordCost(client,{accountId:owner.owner_account_id,
       workspaceId:auth.workspaceId},{provider:owner.provider_type||'commerce_connector',operation:'event_ingestion',unit:'event',
-      quantity:1,idempotencyKey:`event:${auth.connectorId}:${event.eventId}`,occurredAt:event.occurredAt||receivedAt,
+      quantity:1,idempotencyKey:`event:${auth.connectorId}:${event.eventId}`,occurredAt:receivedAt,
       detail:{eventType:event.type,connectorId:auth.connectorId}});
     if(event.type==='return.reported'){
       await persistReturnReview(client,auth,event);

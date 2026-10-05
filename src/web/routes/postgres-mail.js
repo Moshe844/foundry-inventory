@@ -41,7 +41,7 @@ function createPostgresMailRouter(database,options={}){
     const draft=message.draft_subject&&message.draft_body?{subject:message.draft_subject,body:message.draft_body,
       source:message.draft_source==='owner'?'person':message.draft_source,rejected:message.draft_rejected_because,
       sentAt:message.reply_sent_at}:null;
-    return res.page('mail/message',{title:message.subject||'Message',nav:'mail',message,draft,
+    return res.page('mail/message',{title:message.subject||'Message',nav:'mail',message,draft,productionMail:true,
       prepared:{order:orderRows.rows[0]||null,because:message.order_draft_reason||null},
       attachments:attachmentRows.rows,drawers:DRAWERS});
   }));
@@ -58,12 +58,12 @@ function createPostgresMailRouter(database,options={}){
       await mail.queueSend(database,req.ctx,req.params.id,{subject:req.body.subject,body:req.body.body},{providers:options.providers});
       req.flash('success','Reply queued securely. StockChief will show it as sent only after the mailbox provider confirms it.');
     }else if(req.body.action==='write'){
-      await entitlements.assertCapability(database,commercialScope(req),'email.response_generation');
+      await entitlements.assertCapability(database,commercialScope(req),'communications.send_approved');
       const message=await mail.get(database,req.ctx.workspaceId,req.params.id);
       const name=message.supplier_name||String(message.sender||'').split('@')[0]||'there';
       await mail.saveDraft(database,req.ctx,req.params.id,{subject:`Re: ${message.subject||'Your message'}`,
         body:`Hi ${name},\n\nThank you for your message. We are reviewing it against our current records and will follow up with the confirmed details.\n\nBest,\n${req.workspace?.name||'The team'}`});
-      req.flash('success','StockChief prepared a factual holding reply. Nothing was sent.');
+      req.flash('success','Standard holding reply template prepared for you to edit. Nothing was sent.');
     }else{
       await mail.saveDraft(database,req.ctx,req.params.id,{subject:req.body.subject,body:req.body.body});
       req.flash('success','Draft saved exactly as written. Nothing was sent.');

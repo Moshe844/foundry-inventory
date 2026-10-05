@@ -51,7 +51,7 @@ test('real Chromium Ask StockChief safely prepares and executes grounded custome
     const cluster=await startCluster();const database=openPostgres(cluster.connectionString,
       {applicationName:'stockchief-ask-business-orders-ui'});
     await migratePostgres(database);const app=createPostgresApp({database,env:'test',sessionSecret:'ask-orders-secret',
-      aiProvider:provider});
+      aiProvider:require('../helpers/postgres-model-fixture').fixture(provider)});
     const server=await new Promise((resolve)=>{const started=app.listen(0,'127.0.0.1',()=>resolve(started));});
     const browser=await chromium.launch();const first=await browser.newContext();const second=await browser.newContext();
     context.after(async()=>{await browser.close();await new Promise((resolve)=>server.close(resolve));

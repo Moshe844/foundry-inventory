@@ -52,6 +52,7 @@ async function consumeVerification(database,token){return database.transaction(a
   return {accountId:row.account_id};},{isolation:'SERIALIZABLE'});}
 
 async function createInvitation(database,ctx,input,options={}){
+  await require('../commercial/enforcement').workspace(database,ctx.workspaceId,'workspace.core');
   const email=auth.normaliseEmail(input.email);const name=String(input.name||'').trim()||null;
   const role=['owner','staff','accountant'].includes(input.role)?input.role:'staff';const token=crypto.randomBytes(32).toString('base64url');
   const id=newId('invite');const origin=options.origin||config.connections.publicOrigin;
@@ -80,6 +81,7 @@ async function acceptInvitation(database,token,input={}){return database.transac
   const invitation=(await client.query('SELECT * FROM workspace_invitations WHERE token_hash=$1 FOR UPDATE',[hash(token)])).rows[0];
   if(!invitation||invitation.status!=='PENDING'||new Date(invitation.expires_at)<=new Date())
     throw new ValidationError('That invitation is invalid, expired or was already used.');
+  await require('../commercial/enforcement').workspace(client,invitation.workspace_id,'workspace.core');
   let account=input.accountId?(await client.query('SELECT * FROM accounts WHERE id=$1',[input.accountId])).rows[0]:null;
   if(account&&account.email.toLowerCase()!==String(invitation.email).toLowerCase())throw new ValidationError('Sign in with the invited email address.');
   if(!account)account=(await client.query('SELECT * FROM accounts WHERE email=$1',[invitation.email])).rows[0];

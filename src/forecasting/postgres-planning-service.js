@@ -183,6 +183,7 @@ function transfers(rows) {
 }
 
 async function overview(database, workspaceId) {
+  await require('../commercial/enforcement').workspace(database,workspaceId,'planning.transfer_before_buy');
   const goal = await goals(database, workspaceId); const rows = await position(database, workspaceId);
   await ensureRecommendations(database, workspaceId, rows);
   const maxDays = goal.maxDaysOfSupply || 90;
@@ -237,3 +238,4 @@ async function decide(database, ctx, id, decision) {
 }
 
 module.exports = { goals,saveGoals,position,overview,openRecommendations,decide };
+require('../commercial/enforcement').guardExports(module.exports,0,1,{saveGoals:'planning.basic',decide:'planning.basic',overview:'planning.basic'});

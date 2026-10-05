@@ -14,6 +14,9 @@ projects:
                 value: https://qualify.stockchiefhq.com
               - key: FOUNDRY_DATABASE_PRIVATE_NETWORK
                 value: "true"
+              # Publishing the foundation does not approve economics or checkout.
+              - key: STOCKCHIEF_CHECKOUT_ENABLED
+                value: "false"
               - key: SESSION_SECRET
                 generateValue: true
               - key: FOUNDRY_CONNECTION_ENCRYPTION_KEY

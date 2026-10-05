@@ -15,7 +15,7 @@ test('Stripe subscription lifecycle requests are idempotent and carry the exact 
   await stripe.updateSubscription({changeId:'change_1',accountId:'acct_1',planId:'pro',subscriptionId:'sub_1',itemId:'si_1',
     priceId:'price_pro',prorationBehavior:'always_invoice',paymentBehavior:'pending_if_incomplete',prorationDate:1791200000},
   {secretKey:'sk_test_lifecycle',fetch});
-  await stripe.setCancellation({accountId:'acct_1',planId:'pro',subscriptionId:'sub_1',cancelAtPeriodEnd:true},
+  await stripe.setCancellation({accountId:'acct_1',planId:'pro',subscriptionId:'sub_1',requestId:'cancel_1',cancelAtPeriodEnd:true},
   {secretKey:'sk_test_lifecycle',fetch});
   assert.match(calls[0].url,/\/invoices\/create_preview$/);assert.equal(calls[0].body.get('subscription'),'sub_1');
   assert.equal(calls[0].body.get('subscription_details[items][0][price]'),'price_pro');
@@ -23,5 +23,5 @@ test('Stripe subscription lifecycle requests are idempotent and carry the exact 
   assert.equal(calls[1].body.get('items[0][price]'),'price_pro');assert.equal(calls[1].body.get('proration_behavior'),'always_invoice');
   assert.equal(calls[1].options.headers['Idempotency-Key'],'stockchief-subscription-change:change_1');
   assert.equal(calls[2].body.get('cancel_at_period_end'),'true');
-  assert.equal(calls[2].options.headers['Idempotency-Key'],'stockchief-subscription-cancellation:sub_1:cancel');
+  assert.equal(calls[2].options.headers['Idempotency-Key'],'stockchief-subscription-cancellation:sub_1:cancel_1');
 });

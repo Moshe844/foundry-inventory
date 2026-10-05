@@ -36,5 +36,5 @@ test('production launcher migrates PostgreSQL and serves shared multi-writer rea
   assert.equal((await health.json()).database,'postgresql');
   const readiness=await fetch(`${base}/readyz`);assert.equal(readiness.status,200);
   assert.deepEqual(await readiness.json(),{ok:true,database:'postgresql',shared:true,multiWriter:true,
-    migrations:25,deadJobs:0,staleJobs:0});
+    migrations:26,deadJobs:0,staleJobs:0});
 });

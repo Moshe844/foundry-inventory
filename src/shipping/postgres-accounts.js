@@ -107,3 +107,4 @@ async function describe(database,workspaceId){
 }
 
 module.exports={PROVIDERS,KEY_FIELD,requireProvider,isTestKey,connectorFor,forWorkspace,contextFor,connect,disconnect,describe};
+require('../commercial/enforcement').guardExports(module.exports,0,1,{connect:'shipping.rates'});

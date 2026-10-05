@@ -35,23 +35,8 @@ function createPostgresImportsRouter(database,{provider=null}={}){
     const file=files[0] || null;
     if(!file && !pasted)throw new ValidationError('Choose a file, or paste your data.');
     const source=file?.buffer||Buffer.from(pasted,'utf8');const sourceHash=crypto.createHash('sha256').update(source).digest('hex');
-    const scope={accountId:req.workspace.owner_account_id,workspaceId:req.ctx.workspaceId};
-    const usageKey=`import-analysis:${sourceHash}`;let reserved=false;let modelCall=0;
-    const onBeforeAi=async()=>{await entitlements.reserveUsage(database,scope,{id:newId('usage'),
-      meter:'intelligent_operations',units:1,idempotencyKey:usageKey,detail:{kind:'inventory_import_mapping'}});reserved=true;};
-    const onUsage=async(usage,detail)=>{modelCall+=1;const providerName=usage.provider||provider?.name||config.ai.provider;
-      for(const [operation,quantity] of [['model_input',Number(usage.inputTokens||0)],['model_output',Number(usage.outputTokens||0)]]){
-        if(quantity<=0)continue;await commercialControl.recordCost(database,scope,{provider:providerName,operation,unit:'token',quantity,
-          idempotencyKey:`${usageKey}:model:${modelCall}:${operation}`,detail:{...detail,model:usage.model||null,
-            latencyMs:usage.latencyMs||null}});}};
-    let plan;
-    try {plan=await imports.analyse(database,req.ctx,{buffer:file?.buffer,text:file?undefined:pasted,
-      filename:file?.filename,defaultLocationId:trimOrNull(req.body.defaultLocationId),provider,onBeforeAi,onUsage});
-      if(reserved){if(plan.transformations.aiUsed)await entitlements.commitUsage(database,scope,
-        {meter:'intelligent_operations',idempotencyKey:usageKey});else await entitlements.reverseUsage(database,scope,
-        {meter:'intelligent_operations',idempotencyKey:usageKey,reason:'Import mapping completed without model processing.'});}}
-    catch(error){if(reserved)await entitlements.reverseUsage(database,scope,{meter:'intelligent_operations',idempotencyKey:usageKey,
-      reason:'Import analysis did not complete.'});throw error;}
+    const plan=await imports.analyse(database,req.ctx,{buffer:file?.buffer,text:file?undefined:pasted,
+      filename:file?.filename,defaultLocationId:trimOrNull(req.body.defaultLocationId),provider,usageKey:`import-analysis:${sourceHash}`});
     if(wantsJson)return res.status(201).json({ok:true,location:`/imports/${plan.id}`});
     return res.redirect(303,`/imports/${plan.id}`);
   }));

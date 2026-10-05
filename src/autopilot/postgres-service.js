@@ -45,6 +45,7 @@ async function getState(database,workspaceId){return ensure(database,workspaceId
 
 async function setMode(database,ctx,membership,mode){if(!Object.values(MODES).includes(mode))
   throw new ValidationError('Choose watch only, ask first, or bounded automatic work.');
+  if(mode==='POLICY_AUTOMATED')await require('../commercial/enforcement').workspace(database,ctx.workspaceId,'authority.advanced');
   const current=await ensure(database,ctx.workspaceId);const rank={OBSERVE:0,SUPERVISED:1,POLICY_AUTOMATED:2};
   if(rank[mode]>rank[current.mode])assertAdmin(membership);else assertOperate(membership);
   await database.query('UPDATE workspace_autopilot SET mode=$2,updated_at=$3 WHERE workspace_id=$1',[ctx.workspaceId,mode,nowIso()]);
@@ -312,6 +313,12 @@ async function execute(database,ctx,workId,{approvedBy=null}={}){
       return getWork(scoped,ctx.workspaceId,item.id);
     }
   }
+  const scope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId);
+  await entitlements.assertCapability(client,scope,item.recommendedAction.type==='transfer'?'inventory.transfers':'purchasing.core');
+  const automatic=item.approval_requirement==='NONE';const usageKey=`autopilot-work:${item.id}`;
+  if(automatic){await entitlements.assertCapability(client,scope,item.recommendedAction.type==='transfer'?'automation.transfers':'automation.purchasing');
+    await entitlements.reserveUsage(client,scope,{meter:'connected_operations',units:1,idempotencyKey:usageKey,
+      detail:{operation:'autopilot_action',workId:item.id}});}
   await revalidate(scoped,ctx.workspaceId,item.recommendedAction);const at=nowIso();
   await client.query(`UPDATE work_items SET execution_status='EXECUTING',approved_by_user_id=COALESCE(approved_by_user_id,$3),
     approved_at=COALESCE(approved_at,$4),attempts=attempts+1 WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,workId,approvedBy,at]);
@@ -337,7 +344,10 @@ async function execute(database,ctx,workId,{approvedBy=null}={}){
     [ctx.workspaceId,item.id,JSON.stringify(result.movementIds||[]),result.purchaseOrderId||null,JSON.stringify(result),nowIso()]);
     await client.query(`INSERT INTO work_item_events(id,workspace_id,work_item_id,event,detail,actor_user_id,created_at)
       VALUES($1,$2,$3,'completed',$4,$5,$6)`,[newId('wievt'),ctx.workspaceId,item.id,JSON.stringify(result),ctx.actorId,nowIso()]);
-    const commercialScope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId);
+    if(automatic){await entitlements.commitUsage(client,scope,{meter:'connected_operations',idempotencyKey:usageKey});
+      await require('../commercial/control-service').recordCost(client,scope,{provider:'stockchief',operation:'autopilot_action',
+        unit:'operation',quantity:1,idempotencyKey:usageKey});}
+    const commercialScope=scope;
     await commercial.trackOnce(client,{eventName:'first_meaningful_stockchief_action',accountId:commercialScope.accountId,
       sourcePath:'autopilot',detail:{workItemId:item.id,actionType:action.type}});
     return getWork(scoped,ctx.workspaceId,item.id);},{isolation:'SERIALIZABLE',retrySafe:true});}
@@ -365,3 +375,5 @@ async function dashboard(database,workspaceId){const [state,policies,capabilitie
 
 module.exports={MODES,ACTIONS,STATUSES,ensure,getState,setMode,pause,resume,configureRoutine,replacePolicy,listPolicies,dashboard,plan,run,
   listCapabilities,setCapability,capabilityMay,getWork,approve,cancel,execute,evaluate,revalidate};
+require('../commercial/enforcement').guardExports(module.exports,0,1,{configureRoutine:'authority.advanced',
+ setCapability:'authority.advanced',plan:'planning.basic',run:'planning.basic'});

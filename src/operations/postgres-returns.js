@@ -38,6 +38,7 @@ async function requirePermission(client, ctx, permission, action) {
 }
 
 async function beginOperation(client, ctx, kind, rawKey) {
+  await require('../commercial/enforcement').workspace(client,ctx.workspaceId,'returns.core');
   const key = String(rawKey || '').trim();
   if (!key) throw new ValidationError('A durable idempotency key is required.');
   const id = newId('pgop');

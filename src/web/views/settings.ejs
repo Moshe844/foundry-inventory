@@ -104,7 +104,7 @@
   <a class="rm-choice" href="/settings/shipping">
     <span class="rm-choice__ic"><%- helpers.icon('ship', { size: 19 }) %></span>
     <span class="rm-choice__t">Shipping</span>
-    <span class="rm-choice__b">Which carrier and service StockChief may buy on its own, and up to what.</span>
+    <span class="rm-choice__b"><%= typeof commercialLimitsPooled!=='undefined'&&commercialLimitsPooled?'Review carrier connections, rates, labels and tracking.':'Which carrier and service StockChief may buy on its own, and up to what.' %></span>
     <span class="rm-choice__go">Open <%- helpers.icon('arrowRight', { size: 14 }) %></span>
   </a>
   <a class="rm-choice" href="/imports">
@@ -287,7 +287,7 @@
         <% }) %>
       </div>
       <p class="rm-quiet" style="font-size:12.5px;padding:12px 16px;border-top:1px solid var(--line-2);margin:0">
-        Inventories are counted across your whole account; everything else within this one.
+        <%= typeof commercialLimitsPooled!=='undefined'&&commercialLimitsPooled?'These structural limits are counted across all inventories owned by your commercial account.':'Inventories are counted across your whole account; everything else within this one.' %>
       </p>
       <div style="padding:0 16px 16px"><a class="rm-btn rm-btn--ghost rm-btn--sm" href="/billing">Manage plan and billing</a></div>
     </section>

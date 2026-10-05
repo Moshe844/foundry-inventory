@@ -60,7 +60,7 @@ async function capture(database,connection,message){
       [connection.workspace_id,connection.id,at]);
     if(owner?.owner_account_id)await commercialUsage.recordUsage(client,{accountId:owner.owner_account_id,
       workspaceId:connection.workspace_id},{id:newId('usage'),meter:'business_communications',units:1,
-      idempotencyKey:`email:${connection.id}:${externalId}`,occurredAt:message.receivedAt||at,
+      idempotencyKey:`email:${connection.id}:${externalId}`,occurredAt:at,
       detail:{kind:'business_email',connectorId:connection.id}});
     if(owner?.owner_account_id)await commercialControl.recordCost(client,{accountId:owner.owner_account_id,
       workspaceId:connection.workspace_id},{provider:connection.provider_type||'mailbox',operation:'message_ingestion',
@@ -177,8 +177,9 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){const
     return {message,connection};},{isolation:'SERIALIZABLE',retrySafe:true});message=loaded.message;connection=loaded.connection;
     if(!provider?.send)throw Object.assign(new ValidationError('This mailbox connection cannot send replies.'),{code:'email_send_unavailable'});
     const providerCredentials=await providerService.loadProviderCredentials(database,connection,provider);
-    providerCalled=true;const result=await provider.send({credentials:providerCredentials,message:{id:outbox.id,recipient:outbox.recipient,
-      subject:outbox.subject,body:outbox.body,externalThreadId:message.external_thread_id},idempotencyKey:effect.idempotencyKey});
+    providerCalled=true;const result=await require('../commercial/operations').run(database,workspaceId,{capability:'communications.send_approved',
+      key:effect.idempotencyKey,provider:effect.provider,operation:'reply_email',unit:'message'},()=>provider.send({credentials:providerCredentials,message:{id:outbox.id,recipient:outbox.recipient,
+      subject:outbox.subject,body:outbox.body,externalThreadId:message.external_thread_id},idempotencyKey:effect.idempotencyKey}));
     await providerEffects.succeed(database,workspaceId,effectId,effect.claimToken,{providerReference:{messageId:result.externalMessageId||null},
       result:{externalMessageId:result.externalMessageId||null,externalThreadId:result.externalThreadId||null},apply:async(client)=>{const at=nowIso();
       await client.query(`UPDATE stockchief_runtime.email_reply_outbox SET status='SENT',provider_message_id=$2,
@@ -202,3 +203,4 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){const
 }
 
 module.exports={capture,counts,list,get,setState,saveDraft,queueSend,executeSendEffect};
+require('../commercial/enforcement').guardExports(module.exports,0,1,{queueSend:'communications.send_approved',executeSendEffect:'communications.send_approved'});

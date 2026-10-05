@@ -170,9 +170,12 @@ async function analyse(database, ctx, input) {
   const prior=(await database.query(`SELECT field_mappings,detected_type FROM import_plans
     WHERE workspace_id=$1 AND source_hash=$2 AND status<>'CANCELLED' ORDER BY created_at DESC,id DESC LIMIT 1`,
   [ctx.workspaceId,sourceHash])).rows[0];
+  const modelProvider=input.provider||(require('../config').ai.configured?
+    require('../ai/provider').createProviderUnobserved(require('../config').ai.provider,require('../config').ai.tier('fast')):null);
   const proposal=await mappingService.proposeMappings({...sheet,sourceName:input.filename || 'pasted data'},
-    {provider:input.provider || null,mappings:input.mappings || json(prior?.field_mappings,null),
-      detectedType:input.detectedType || prior?.detected_type,onBeforeAi:input.onBeforeAi,onUsage:input.onUsage});
+    {provider:modelProvider?require('../commercial/model').wrap(database,ctx,modelProvider,'import_mapping',input.usageKey||`import-analysis:${sourceHash}`):null,
+      mappings:input.mappings || json(prior?.field_mappings,null),detectedType:input.detectedType || prior?.detected_type,
+      onBeforeAi:input.onBeforeAi,onUsage:input.onUsage});
   if(proposal.detectedType==='unknown')throw new ValidationError('StockChief could not identify a product or SKU column. Name the columns and try again.');
   const context=await workspaceContext(database,ctx.workspaceId);
   if(input.defaultLocationId && !context.locations.some((row)=>row.id===input.defaultLocationId))
@@ -394,3 +397,5 @@ async function cancel(database, ctx, id) {
 }
 
 module.exports={analyse,get,list,rowsFor,counts,duplicates,approve,execute,report,cancel,hydratePlan,hydrateRow};
+require('../commercial/enforcement').guardExports(module.exports,0,1,{analyse:'imports.spreadsheet',approve:'imports.spreadsheet',
+  execute:'imports.spreadsheet',cancel:'imports.spreadsheet'});

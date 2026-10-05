@@ -6,6 +6,7 @@ const { providerFetch } = require('../lib/provider-http');
 const { ValidationError, AuthenticationError } = require('../domain/errors');
 
 const API = 'https://api.stripe.com/v1';
+const API_VERSION='2026-09-30.endive';
 
 function form(values) {
   const body = new URLSearchParams();
@@ -19,7 +20,7 @@ function form(values) {
 async function call(path, options = {}) {
   const secretKey = options.secretKey || config.commercial.stripeSecretKey;
   if (!secretKey) throw new ValidationError('StockChief subscription billing is not configured yet.');
-  const headers = { Authorization:`Bearer ${secretKey}`, 'Content-Type':'application/x-www-form-urlencoded' };
+  const headers = { Authorization:`Bearer ${secretKey}`, 'Content-Type':'application/x-www-form-urlencoded','Stripe-Version':API_VERSION };
   if (options.idempotencyKey) headers['Idempotency-Key'] = options.idempotencyKey;
   const response = await providerFetch(`${API}${path}`, {
     method:options.method || 'POST', headers, body:options.values ? form(options.values) : undefined,
@@ -71,6 +72,20 @@ async function createPortal(input, options = {}) {
   });
 }
 
+async function createAddonCheckout(input,options={}){return call('/checkout/sessions',{...options,
+ idempotencyKey:`stockchief-addon:${input.purchaseId}`,values:{mode:'payment',customer:input.customerId,
+ success_url:input.successUrl,cancel_url:input.cancelUrl,'line_items[0][price]':input.priceId,'line_items[0][quantity]':1,
+ 'metadata[stockchief_purchase_id]':input.purchaseId,'metadata[stockchief_account_id]':input.accountId,
+ 'payment_intent_data[metadata][stockchief_purchase_id]':input.purchaseId,
+ 'payment_intent_data[metadata][stockchief_account_id]':input.accountId,
+ 'payment_intent_data[setup_future_usage]':'off_session'}});}
+async function createTopupPayment(input,options={}){return call('/payment_intents',{...options,
+ idempotencyKey:`stockchief-topup:${input.purchaseId}`,values:{amount:input.amountMinor,currency:input.currency.toLowerCase(),
+ customer:input.customerId,payment_method:input.paymentMethodId,off_session:'true',confirm:'true',
+ 'metadata[stockchief_purchase_id]':input.purchaseId,'metadata[stockchief_account_id]':input.accountId}});}
+async function retrievePaymentMethod(id,options={}){return call(`/payment_methods/${encodeURIComponent(id)}`,{...options,method:'GET'});}
+async function retrieveBalanceTransaction(id,options={}){return call(`/balance_transactions/${encodeURIComponent(id)}`,{...options,method:'GET'});}
+
 async function retrieveCheckout(sessionId, options = {}) {
   return call(`/checkout/sessions/${encodeURIComponent(sessionId)}?expand[]=subscription`, {...options,method:'GET'});
 }
@@ -92,14 +107,24 @@ async function updateSubscription(input,options={}){
     idempotencyKey:`stockchief-subscription-change:${input.changeId}`,values:{
       'items[0][id]':input.itemId,'items[0][price]':input.priceId,'items[0][quantity]':1,
       proration_behavior:input.prorationBehavior||'create_prorations',payment_behavior:input.paymentBehavior||'pending_if_incomplete',
-      proration_date:input.prorationDate,'metadata[stockchief_account_id]':input.accountId,
-      'metadata[stockchief_plan_id]':input.planId,cancel_at_period_end:'false',
+      proration_date:input.prorationDate,
     }});
+}
+async function scheduleDowngrade(input,options={}){
+ const schedule=await call('/subscription_schedules',{...options,idempotencyKey:`stockchief-schedule:${input.changeId}`,
+  values:{from_subscription:input.subscriptionId}});
+ return call(`/subscription_schedules/${encodeURIComponent(schedule.id)}`,{...options,
+  idempotencyKey:`stockchief-schedule-phases:${input.changeId}`,values:{end_behavior:'release',proration_behavior:'none',
+  'phases[0][start_date]':schedule.current_phase.start_date,'phases[0][end_date]':input.periodEnd,
+  'phases[0][items][0][price]':input.currentPriceId,'phases[0][items][0][quantity]':1,
+  'phases[1][start_date]':input.periodEnd,'phases[1][items][0][price]':input.priceId,'phases[1][items][0][quantity]':1,
+  'phases[1][duration][interval]':input.interval==='ANNUAL'?'year':'month','phases[1][duration][interval_count]':1,
+  'phases[1][proration_behavior]':'none'}});
 }
 
 async function setCancellation(input,options={}){
   return call(`/subscriptions/${encodeURIComponent(input.subscriptionId)}`,{...options,
-    idempotencyKey:`stockchief-subscription-cancellation:${input.subscriptionId}:${input.cancelAtPeriodEnd?'cancel':'reactivate'}`,
+    idempotencyKey:`stockchief-subscription-cancellation:${input.subscriptionId}:${input.requestId}`,
     values:{cancel_at_period_end:input.cancelAtPeriodEnd?'true':'false',
       'metadata[stockchief_account_id]':input.accountId,'metadata[stockchief_plan_id]':input.planId}});
 }
@@ -137,5 +162,7 @@ function verifyEvent(raw, headers = {}, options = {}) {
 }
 
 module.exports = { createCheckout,createPortal,retrieveCheckout,retrieveSubscription,previewSubscriptionChange,updateSubscription,
+  createAddonCheckout,createTopupPayment,retrievePaymentMethod,retrieveBalanceTransaction,
+  scheduleDowngrade,
   setCancellation,listInvoices,createInvoiceItem,verifyEvent,
   __internal:{call,form} };

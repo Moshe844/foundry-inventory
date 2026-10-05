@@ -16,7 +16,6 @@ const LIMITS = [
   { key: 'members', label: 'people', scope: 'workspace' },
   { key: 'locations', label: 'locations', scope: 'workspace' },
   { key: 'skus', label: 'items', scope: 'workspace' },
-  { key: 'aiRequestsPerDay', label: 'StockChief requests a day', scope: 'account' },
 ];
 
 const FEATURES = ['foundry_setup', 'foundry_assistant', 'attention_briefing', 'ask_foundry'];
@@ -28,13 +27,12 @@ const FEATURES = ['foundry_setup', 'foundry_assistant', 'attention_briefing', 'a
 const PLANS = {
   free: {
     id: 'free',
-    label: 'Free',
+    label: 'Local development fixture',
     limits: {
       workspaces: 3,
       members: 5,
       locations: 10,
       skus: 500,
-      aiRequestsPerDay: 50,
     },
     features: ['foundry_setup', 'foundry_assistant', 'attention_briefing', 'ask_foundry'],
   },
@@ -42,13 +40,12 @@ const PLANS = {
   // lookup rather than a constant, and gives billing somewhere to write.
   unlimited: {
     id: 'unlimited',
-    label: 'Unlimited',
+    label: 'Local unlimited fixture',
     limits: {
       workspaces: null,
       members: null,
       locations: null,
       skus: null,
-      aiRequestsPerDay: null,
     },
     features: [...FEATURES],
   },

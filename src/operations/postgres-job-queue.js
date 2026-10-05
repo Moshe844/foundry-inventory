@@ -140,16 +140,19 @@ async function fail(database, id, token, error, options = {}) {
     if (!owned.rows.length) return null;
     const row = owned.rows[0];
     const retryable = options.retryable !== false;
-    const dead = !retryable || row.attempt_count >= row.max_attempts;
+    const commercialPause=error?.code==='entitlement_required';
+    const dead = !commercialPause&&(!retryable || row.attempt_count >= row.max_attempts);
     const delay = options.retryAfterMs ?? Math.min(900000, 1000 * (2 ** Math.min(20, row.attempt_count - 1)));
     if (!Number.isSafeInteger(delay) || delay < 0) throw new TypeError('Invalid job retry delay.');
-    const detail = { code: error?.code || 'job_failed', message: String(error?.message || 'Job failed.'), retryable };
+    const detail = { code: error?.code || 'job_failed', message: String(error?.message || 'Job failed.'), retryable,
+      details:commercialPause?error.details:undefined };
     const result = await client.query(`UPDATE stockchief_runtime.jobs SET status = $2, available_at = $3,
       lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL, last_error = $4::jsonb,
       completed_at = $5, updated_at = $6 WHERE id = $1 RETURNING *`,
-    [id, dead ? 'DEAD' : 'RETRY', dead ? now : now + delay, JSON.stringify(detail),
+    [id, commercialPause?'PAUSED':dead ? 'DEAD' : 'RETRY', dead ? now : now + delay, JSON.stringify(detail),
       dead ? new Date(now).toISOString() : null, new Date(now).toISOString()]);
-    await event(client, id, dead ? 'DEAD_LETTERED' : 'RETRY_SCHEDULED', detail, now);
+    if(commercialPause)await client.query('UPDATE stockchief_runtime.jobs SET attempt_count=GREATEST(attempt_count-1,0) WHERE id=$1',[id]);
+    await event(client, id, commercialPause?'COMMERCIAL_PAUSED':dead ? 'DEAD_LETTERED' : 'RETRY_SCHEDULED', detail, now);
     return hydrate(result.rows[0]);
   }, { isolation: 'READ COMMITTED' });
 }
@@ -184,7 +187,8 @@ async function processOne(database, handlers, options = {}) {
   }
   if (handler.externalEffect === true) {
     try {
-      const outcome = await handler(job, database);
+      const scope=job.workspaceId?await require('../commercial/entitlements').ownerScopeForWorkspace(database,job.workspaceId):null;
+      const outcome = await require('../commercial/context').run({database,scope,requestId:job.id,attemptCount:Number(job.attemptCount)},()=>handler(job, database));
       if (!await complete(database, job.id, job.leaseToken, outcome || {}, options)) {
         throw Object.assign(new Error('The PostgreSQL job expired before its provider result was recorded.'), {
           code: 'lease_lost', retryable: true,
@@ -203,7 +207,8 @@ async function processOne(database, handlers, options = {}) {
       const owned = await client.query(`SELECT id FROM stockchief_runtime.jobs WHERE id = $1 AND lease_token = $2
         AND status = 'RUNNING' AND lease_expires_at > $3 FOR UPDATE`, [job.id, job.leaseToken, now]);
       if (!owned.rows.length) throw Object.assign(new Error('The PostgreSQL worker lost its lease.'), { code: 'lease_lost' });
-      const outcome = await handler(job, client);
+      const scope=job.workspaceId?await require('../commercial/entitlements').ownerScopeForWorkspace(client,job.workspaceId):null;
+      const outcome = await require('../commercial/context').run({database:client,scope,requestId:job.id,attemptCount:Number(job.attemptCount)},()=>handler(job, client));
       if (!await completeWithin(client, job.id, job.leaseToken, outcome || {}, await databaseTime(client, options))) {
         throw Object.assign(new Error('The PostgreSQL job expired before its effect could commit.'), { code: 'lease_lost' });
       }

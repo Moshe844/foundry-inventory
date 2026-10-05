@@ -32,6 +32,9 @@ function route(scope,handler){
     try{const auth=await publicApi.authenticate(req.app.locals.database,req.get('authorization'),scope);
       if(scope.endsWith(':write'))await entitlements.assertWorkspaceOperational(req.app.locals.database,auth.workspaceId);
       await entitlements.assertCapability(req.app.locals.database,auth,'api.public');
+      if(scope.endsWith(':read'))return require('../../commercial/operations').run(req.app.locals.database,auth.workspaceId,
+        {capability:'api.public',key:require('../../lib/util').newId('api-read'),provider:'stockchief_api',
+          operation:'inventory_read',unit:'request'},()=>handler(auth,req,res));
       return await handler(auth,req,res);}
     catch(error){return apiError(res,error);}
   };

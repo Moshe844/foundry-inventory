@@ -144,7 +144,8 @@ async function interpret(database,ctx,instruction,options={}){const clean=String
       WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 ORDER BY i.name,s.position LIMIT 500`,[ctx.workspaceId]),
     database.query(`SELECT name FROM locations WHERE workspace_id=$1 AND is_active=1 ORDER BY name LIMIT 200`,[ctx.workspaceId]),
     database.query(`SELECT name FROM suppliers WHERE workspace_id=$1 AND status='active' ORDER BY name LIMIT 200`,[ctx.workspaceId])]);
-  const response=await provider.complete({system:SYSTEM,prompt:JSON.stringify({instruction:clean,realSkus:catalogue.rows,
+  const metered=require('../commercial/model').wrap(database,ctx,provider,'instruction',options.instructionUsageKey);
+  const response=await metered.complete({system:SYSTEM,prompt:JSON.stringify({instruction:clean,realSkus:catalogue.rows,
     realLocations:locations.rows,realSuppliers:suppliers.rows}),schema:SCHEMA,schemaName:'postgres_operating_instruction'});
   if(options.onUsage&&response.usage)await options.onUsage(response.usage,{schemaName:'postgres_operating_instruction'});
   const read=response?.data||{};
@@ -237,6 +238,8 @@ async function approve(database,ctx,id,expectedHash){return database.transaction
   if(expectedHash&&expectedHash!==proposal.integrityHash)throw new ValidationError('This instruction changed since you reviewed it.');
   if(hash({statedAs:proposal.statedAs,resolvedChanges:proposal.resolvedChanges})!==proposal.integrityHash)
     throw new InvariantError('That instruction snapshot failed its integrity check.','instruction_integrity');
+  for(const change of proposal.resolvedChanges){if(['transfer_authority','purchase_authority'].includes(change.domain))
+    await require('../commercial/enforcement').workspace(client,ctx.workspaceId,'authority.advanced');}
   const applied=[];for(const change of proposal.resolvedChanges)applied.push(await applyChange(client,ctx,{...change,statedAs:proposal.statedAs}));
   const keys=new Set(proposal.resolvedChanges.map(target).filter(Boolean));const prior=(await client.query(`SELECT * FROM operating_instruction_proposals
     WHERE workspace_id=$1 AND status='APPROVED' AND id<>$2 FOR UPDATE`,[ctx.workspaceId,id])).rows;
@@ -260,3 +263,4 @@ async function answer(database,ctx,id,value,options={}){const proposal=await get
     WHERE workspace_id=$1 AND id=$2 AND status='PENDING'`,[ctx.workspaceId,id,nowIso()]);return replacement;}
 
 module.exports={SCHEMA,SYSTEM,interpret,get,approve,cancel,answer,describe};
+require('../commercial/enforcement').guardExports(module.exports,0,1,{interpret:'ask.prepare_actions',answer:'ask.prepare_actions',approve:'ask.prepare_actions'});

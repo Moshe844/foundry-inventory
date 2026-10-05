@@ -42,11 +42,16 @@ async function deliver(database,workspaceId,id,options={}){
   if(!url)throw Object.assign(new Error('External alert delivery is not configured.'),
     {retryable:false,code:'alert_delivery_not_configured'});
   const origin=options.publicOrigin||config.connections.publicOrigin;
-  const response=await (options.fetch||fetch)(url,{method:'POST',headers:{'content-type':'application/json',
+  let response;
+  try{response=await (options.fetch||fetch)(url,{method:'POST',headers:{'content-type':'application/json',
     ...(options.token||config.operations.alertWebhookToken?{authorization:`Bearer ${options.token||config.operations.alertWebhookToken}`}:{})},
   body:JSON.stringify({id:alert.id,severity:alert.severity,kind:alert.kind,title:alert.title,detail:alert.detail,
     occurrenceCount:Number(alert.occurrence_count),firstSeenAt:alert.first_seen_at,lastSeenAt:alert.last_seen_at,
-    acknowledgeUrl:origin?`${origin.replace(/\/$/,'')}/api/v1/operations/alerts/${alert.id}/ack`:null})});
+    acknowledgeUrl:origin?`${origin.replace(/\/$/,'')}/api/v1/operations/alerts/${alert.id}/ack`:null})});}
+  finally{const scope=workspaceId?await require('../commercial/entitlements').ownerScopeForWorkspace(database,workspaceId):{accountId:null};
+    await require('../commercial/control-service').recordCost(database,scope,{provider:new URL(url).hostname,
+      operation:'operational_alert',unit:'request',quantity:1,idempotencyKey:options.costKey||newId('alert-attempt'),
+      providerVersion:'webhook-v1',detail:{alertId:id,customerBillable:false}});}
   if(!response.ok)throw Object.assign(new Error(`Alert endpoint returned ${response.status}.`),
     {status:response.status,retryable:response.status===429||response.status>=500,code:'alert_delivery_failed'});
   const at=nowIso();await database.query(`UPDATE operational_alerts SET status='DELIVERED',delivered_at=$3

@@ -52,9 +52,10 @@ async function authenticate(database,authorization,requiredScope){
   const match=/^Bearer\s+(.+)$/i.exec(String(authorization||''));
   if(!match||!match[1].startsWith(PREFIX))throw new AuthenticationError('Use a valid StockChief API bearer token.');
   return database.transaction(async(client)=>{
-    const result=await client.query(`SELECT api.*,account_user.account_id FROM public_api_clients api
+    const result=await client.query(`SELECT api.*,workspace.owner_account_id AS account_id FROM public_api_clients api
       JOIN users account_user ON account_user.id=api.created_by_user_id
         AND account_user.workspace_id=api.workspace_id
+      JOIN workspaces workspace ON workspace.id=api.workspace_id
       WHERE api.token_hash=$1 AND api.revoked_at IS NULL FOR UPDATE OF api`,[hash(match[1])]);
     const row=result.rows[0];
     if(!row)throw new AuthenticationError('This API token is invalid or revoked.');
@@ -70,6 +71,7 @@ async function authenticate(database,authorization,requiredScope){
 }
 
 async function executeCommand(database,auth,input,handler){
+  await commercialUsage.assertCapability(database,{accountId:auth.accountId,workspaceId:auth.workspaceId},'api.public');
   const key=requireText(input.idempotencyKey,'Idempotency-Key header',{max:200});
   const commandType=requireText(input.commandType,'Command type',{max:100});
   const requestHash=hash(JSON.stringify(input.body||{}));
@@ -103,3 +105,4 @@ async function executeCommand(database,auth,input,handler){
 }
 
 module.exports={PREFIX,ALLOWED_SCOPES,hash,parse,create,list,revoke,authenticate,executeCommand};
+require('../commercial/enforcement').guardExports(module.exports,0,1,{create:'api.public'});

@@ -90,10 +90,14 @@ async function providerFetch(url, init = {}, options = {}) {
     attempt += 1;
     const started = Date.now();
     let response;
+    const commercialContext=require('../commercial/context').current();
+    let commercialAttempt=null;
+    if(commercialContext?.database)commercialAttempt=await require('../commercial/network').before(commercialContext,url,init,provider);
     try {
       response = await doFetch(url, { ...init, signal: init.signal || AbortSignal.timeout(timeoutMs) });
     } catch (cause) {
       lastError = cause;
+      if(commercialAttempt)await require('../commercial/network').after(commercialContext,commercialAttempt,false,{outcome:'unreachable'});
       const timedOut = cause && (cause.name === 'TimeoutError' || cause.name === 'AbortError');
       record(provider, { latencyMs: Date.now() - started, outcome: timedOut ? 'timeout' : 'unreachable', error: String(cause && cause.message || cause) });
       if (attempt <= retries) { await wait(backoff(attempt)); continue; }
@@ -101,6 +105,7 @@ async function providerFetch(url, init = {}, options = {}) {
       noteUnavailable(provider, error);
       throw error;
     }
+    if(commercialAttempt)await require('../commercial/network').after(commercialContext,commercialAttempt,response.ok,{httpStatus:response.status});
     if (RETRY_STATUSES.has(response.status)) {
       lastStatus = response.status;
       record(provider, { latencyMs: Date.now() - started, outcome: response.status === 429 ? 'rate_limited' : 'provider_error', error: `HTTP ${response.status}` });

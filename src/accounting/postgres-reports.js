@@ -72,3 +72,10 @@ async function generalLedger(database,workspaceId,input={}){
 }
 
 module.exports={profitAndLoss,balanceSheet,trialBalance,generalLedger};
+for(const name of Object.keys(module.exports)){const original=module.exports[name];
+  module.exports[name]=async function(database,workspaceId,...args){
+    const scope=await require('../commercial/entitlements').ownerScopeForWorkspace(database,workspaceId);
+    await require('../commercial/entitlements').assertCapability(database,scope,'accounting.reports',{allowReadOnly:true});
+    return original(database,workspaceId,...args);
+  };
+}

@@ -48,9 +48,6 @@ const USAGE = {
   skus: (db, { workspaceId }) =>
     db.prepare('SELECT COUNT(*) AS n FROM skus WHERE workspace_id = ? AND is_active = 1').get(workspaceId).n,
 
-  // Usage metering has no store yet; billing will supply one. Reporting zero is
-  // honest — the limit is declared and checked, it simply never binds today.
-  aiRequestsPerDay: () => 0,
 };
 
 function planIdFor(db, accountId) {
@@ -64,10 +61,12 @@ function planIdFor(db, accountId) {
  * @returns {{ key, limit, used, remaining, unlimited, exceeded }}
  */
 function usage(db, scope, key) {
+  if(typeof db.query==='function')throw new TypeError('PostgreSQL commercial usage must use commercial/entitlements. This synchronous adapter is only for local SQLite fixtures.');
   const planId = planIdFor(db, scope.accountId);
   const limit = limitFor(planId, key);
   const counter = USAGE[key];
-  const used = counter ? counter(db, scope) : 0;
+  if(!counter)throw new TypeError(`No local development counter exists for ${key}.`);
+  const used = counter(db, scope);
   return {
     key,
     planId,

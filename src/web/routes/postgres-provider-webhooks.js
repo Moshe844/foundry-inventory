@@ -6,6 +6,15 @@ const {DomainError}=require('../../domain/errors');
 const credentials=require('../../connections/postgres-credential-store');
 const ingestion=require('../../connections/postgres-event-ingestion');
 const providersDefault=require('../../connections/providers/registry');
+const commercial=require('../../commercial/entitlements');
+const commercialContext=require('../../commercial/context');
+const {newId}=require('../../lib/util');
+
+async function normalize(database,adapter,connection,input){
+  const scope=await commercial.ownerScopeForWorkspace(database,connection.workspace_id);
+  await commercial.assertCapability(database,scope,'connections.commerce');
+  return commercialContext.run({database,scope,requestId:newId('verified-webhook')},()=>adapter.normalizeWebhook(input));
+}
 
 function requestOrigin(req,configured){
   const origin=configured==='request'?`${req.protocol}://${req.get('host')}`
@@ -47,7 +56,7 @@ function createPostgresProviderWebhooks(database,options={}){
       const body=parseBody(rawBody);
       const webhookUrl=`${requestOrigin(req,options.publicOrigin)}${req.originalUrl}`;
       adapter.verifyWebhook({headers:req.headers,rawBody,webhookUrl,credentials:providerCredentials,connection,body});
-      const events=await adapter.normalizeWebhook({headers:req.headers,rawBody,body,
+      const events=await normalize(database,adapter,connection,{headers:req.headers,rawBody,body,
         credentials:providerCredentials,connection});
       if(!events.length)return res.status(200).json({received:true,accepted:0,replayed:0,needsMapping:0,results:[]});
       const auth={workspaceId:connection.workspace_id,connectorId:connection.id,
@@ -80,7 +89,7 @@ function createPostgresProviderWebhooks(database,options={}){
           const merchantBody={...body,merchants:{[merchantId]:updates}};
           adapter.verifyWebhook({headers:req.headers,rawBody,body:merchantBody,
             webhookUrl:`${requestOrigin(req,options.publicOrigin)}${req.originalUrl}`,credentials:providerCredentials,connection});
-          const events=await adapter.normalizeWebhook({headers:req.headers,rawBody,body:merchantBody,
+          const events=await normalize(database,adapter,connection,{headers:req.headers,rawBody,body:merchantBody,
             credentials:providerCredentials,connection});
           const auth={workspaceId:connection.workspace_id,connectorId:connection.id,
             actorId:connection.authorized_by_user_id,displayName:connection.display_name,providerType:'clover'};

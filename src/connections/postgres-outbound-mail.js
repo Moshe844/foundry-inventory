@@ -125,8 +125,9 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
     if(!provider?.send)throw Object.assign(new ValidationError('This mailbox connection cannot send messages.'),{code:'email_send_unavailable'});
     const providerCredentials=await providerService.loadProviderCredentials(database,loaded.connection,provider);
     providerCalled=true;
-    const result=await provider.send({credentials:providerCredentials,message:{id:loaded.message.id,
-      recipient:loaded.message.recipient,subject:loaded.message.subject,body:loaded.message.body},idempotencyKey:effect.idempotencyKey});
+    const result=await require('../commercial/operations').run(database,workspaceId,{capability:'communications.send_approved',
+      key:effect.idempotencyKey,provider:effect.provider,operation:'outbound_email',unit:'message'},()=>provider.send({credentials:providerCredentials,message:{id:loaded.message.id,
+      recipient:loaded.message.recipient,subject:loaded.message.subject,body:loaded.message.body},idempotencyKey:effect.idempotencyKey}));
     await providerEffects.succeed(database,workspaceId,effectId,effect.claimToken,{providerReference:{messageId:result.externalMessageId||null},
       result:{externalMessageId:result.externalMessageId||null,externalThreadId:result.externalThreadId||null},apply:async(client)=>{
         const at=nowIso();await client.query(`UPDATE ${table} SET status='SENT',external_message_id=$3,
@@ -153,3 +154,4 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
 }
 
 module.exports={contacts,mailboxes,resolveMailbox,resolveRecipient,queueInTransaction,get,executeSendEffect};
+require('../commercial/enforcement').guardExports(module.exports,0,1,{queueInTransaction:'communications.send_approved',executeSendEffect:'communications.send_approved'});

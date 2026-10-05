@@ -179,7 +179,7 @@ function create(options = {}) {
       const wantsThinking = effort !== 'none' && effort !== null;
       const body = {
         model,
-        max_tokens: maxTokens,
+        max_tokens: Math.min(maxTokens,request.maxOutputTokens||maxTokens),
         system: request.system,
         ...(wantsThinking ? { thinking: { type: 'adaptive' } } : {}),
         output_config: {
@@ -193,18 +193,24 @@ function create(options = {}) {
       };
 
       const response = await outlive(
-        () => client.messages.create(body, request.signal ? { signal: request.signal } : undefined),
-        backoffFor(), request.signal || null
+        () => client.messages.create(body, { ...(request.signal ? { signal: request.signal } : {}),
+          ...(request.commercial ? {maxRetries:0} : {}) }),
+        request.commercial ? [] : backoffFor(), request.signal || null
       );
 
+      const usage={provider:'anthropic',providerVersion:'2023-06-01',model:response.model||model,inputTokens:response.usage?.input_tokens,
+        outputTokens:response.usage?.output_tokens,cacheReadTokens:response.usage?.cache_read_input_tokens||0,
+        cacheWrite5mTokens:response.usage?.cache_creation?.ephemeral_5m_input_tokens??response.usage?.cache_creation_input_tokens??0,
+        cacheWrite1hTokens:response.usage?.cache_creation?.ephemeral_1h_input_tokens||0,latencyMs:Date.now()-startedAt};
+      const failed=(error)=>Object.assign(error,{usage});
       if (response.stop_reason === 'refusal') {
-        throw new ProviderError(SAID.declined, {
+        throw failed(new ProviderError(SAID.declined, {
           code: 'ai_refusal',
           status: 422,
-        });
+        }));
       }
       if (response.stop_reason === 'max_tokens') {
-        throw new ProviderOutputError(SAID.couldNotRead, { technical: 'stop_reason max_tokens: the answer did not fit in ' + maxTokens + ' tokens' });
+        throw failed(new ProviderOutputError(SAID.couldNotRead, { technical: 'stop_reason max_tokens: the answer did not fit in ' + maxTokens + ' tokens' }));
       }
 
       const text = response.content
@@ -213,28 +219,22 @@ function create(options = {}) {
         .join('');
 
       if (!text.trim()) {
-        throw new ProviderOutputError(SAID.couldNotRead, { technical: 'empty response' });
+        throw failed(new ProviderOutputError(SAID.couldNotRead, { technical: 'empty response' }));
       }
 
       let data;
       try {
         data = JSON.parse(text);
       } catch (err) {
-        throw new ProviderOutputError(SAID.couldNotRead, {
+        throw failed(new ProviderOutputError(SAID.couldNotRead, {
           technical: 'output is not valid JSON',
           preview: text.slice(0, 400),
-        });
+        }));
       }
 
       return {
         data,
-        usage: {
-          provider: 'anthropic',
-          model: response.model || model,
-          inputTokens: response.usage ? response.usage.input_tokens : null,
-          outputTokens: response.usage ? response.usage.output_tokens : null,
-          latencyMs: Date.now() - startedAt,
-        },
+        usage,
       };
     },
   };

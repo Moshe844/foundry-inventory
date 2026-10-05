@@ -1,4 +1,5 @@
 'use strict';
+process.env.NODE_ENV='test';
 
 const test=require('node:test');
 const assert=require('node:assert/strict');
@@ -30,17 +31,17 @@ test('commercial control system is versioned, atomic, idempotent and margin-awar
   const scope={accountId:business.accountId,workspaceId:business.workspaceId};
 
   await context.test('plan snapshots are authoritative and grandfathered',async()=>{
-    assert.equal((await entitlements.capabilityState(database,scope,'communications.ai_drafts')).enabled,true);
+    assert.equal((await entitlements.capabilityState(database,scope,'communications.email_ingestion')).enabled,true);
     await database.query(`UPDATE commercial_plan_entitlements SET enabled=0
-      WHERE plan_id='growth' AND capability='communications.ai_drafts'`);
-    assert.equal((await entitlements.capabilityState(database,scope,'communications.ai_drafts')).enabled,true);
+      WHERE plan_id='growth' AND capability='communications.email_ingestion'`);
+    assert.equal((await entitlements.capabilityState(database,scope,'communications.email_ingestion')).enabled,true);
   });
 
   await context.test('concurrent usage cannot cross a hard limit',async()=>{
     const current=await entitlements.subscriptionFor(database,business.accountId);
     const meters=current.plan_version_id?(await database.query('SELECT meters FROM commercial_plan_versions WHERE id=$1',
       [current.plan_version_id])).rows[0].meters:[];
-    const policy=meters.find((entry)=>entry.meter==='intelligent_operations');policy.included_units=1;policy.hard_limit=1;
+    const policy=meters.find((entry)=>entry.meter==='ai_work_credits');policy.included_units=1;policy.hard_limit=1;
     await database.query('UPDATE commercial_plan_versions SET meters=$2::jsonb WHERE id=$1',[current.plan_version_id,JSON.stringify(meters)]);
     const results=await Promise.allSettled(['one','two'].map((key)=>entitlements.recordUsage(database,scope,{id:newId('usage'),
       meter:'intelligent_operations',units:1,idempotencyKey:key,occurredAt:'2026-10-02T00:00:00Z'})));
@@ -68,21 +69,22 @@ test('commercial control system is versioned, atomic, idempotent and margin-awar
       quantity:2,idempotencyKey:'ask:stable',occurredAt:'2026-10-04'});
     assert.equal(first.created,true);assert.equal(Number(first.event.amount_minor),5);assert.equal(replay.created,false);
     const economics=await control.economics(database,scope,{now:'2026-10-05'});
-    assert.equal(economics.estimatedCostMinor,5);assert.equal(economics.costCoverage,'MEASURED');
+    // A measured model event does not establish hosting/database/provider costs.
+    assert.equal(economics.estimatedCostMinor,null);assert.equal(economics.costCoverage,'MISSING');
   });
 
   await context.test('usage warnings are emitted once at durable thresholds',async()=>{
     const current=await entitlements.subscriptionFor(database,business.accountId);
     const meters=(await database.query('SELECT meters FROM commercial_plan_versions WHERE id=$1',[current.plan_version_id])).rows[0].meters;
-    const policy=meters.find((entry)=>entry.meter==='business_communications');policy.included_units=21;policy.hard_limit=21;
+    const policy=meters.find((entry)=>entry.meter==='connected_operations');policy.included_units=21;policy.hard_limit=21;
     await database.query('UPDATE commercial_plan_versions SET meters=$2::jsonb WHERE id=$1',[current.plan_version_id,JSON.stringify(meters)]);
     for(const [key,units] of [['batch-80',16],['batch-95',3],['batch-100',1]])await entitlements.recordUsage(database,scope,
       {id:newId('usage'),meter:'business_communications',units,idempotencyKey:key,occurredAt:'2026-10-06'});
     const warnings=(await database.query(`SELECT threshold FROM commercial_usage_notifications WHERE account_id=$1
-      AND meter='business_communications' ORDER BY threshold`,[business.accountId])).rows.map((row)=>Number(row.threshold));
+      AND meter='connected_operations' ORDER BY threshold`,[business.accountId])).rows.map((row)=>Number(row.threshold));
     assert.deepEqual(warnings,[80,95,100]);
     assert.equal(Number((await database.query(`SELECT COUNT(*) AS count FROM stockchief_runtime.jobs
-      WHERE kind='system.email-send' AND idempotency_key LIKE 'billing-usage-warning:%:business_communications:%'`)).rows[0].count),3);
+      WHERE kind='system.email-send' AND idempotency_key LIKE 'billing-usage-warning:%:connected_operations:%'`)).rows[0].count),3);
   });
 
   await context.test('disabled capabilities cannot be enabled by an override',async()=>{
@@ -111,7 +113,7 @@ test('real Chromium shows metered Growth usage and activates Pro only from serve
   await migratePostgres(database);const business=await auth.createBusiness(database,{name:'Browser Owner',businessName:'Browser Business',
     email:'commercial-browser-control@example.test',password:'commercial-browser-password'});
   const growthVersion=(await database.query(`SELECT * FROM commercial_plan_versions WHERE plan_id='growth' AND status='ACTIVE'`)).rows[0];
-  const growthMeters=growthVersion.meters;const intelligent=growthMeters.find((entry)=>entry.meter==='intelligent_operations');
+  const growthMeters=growthVersion.meters;const intelligent=growthMeters.find((entry)=>entry.meter==='ai_work_credits');
   intelligent.included_units=10;intelligent.hard_limit=10;
   await database.query('UPDATE commercial_plan_versions SET meters=$2::jsonb WHERE id=$1',[growthVersion.id,JSON.stringify(growthMeters)]);
   await database.query(`INSERT INTO account_subscriptions
@@ -121,7 +123,11 @@ test('real Chromium shows metered Growth usage and activates Pro only from serve
   await database.query(`UPDATE commercial_plans SET packaging_status='APPROVED',stripe_monthly_price_id='price_pro_browser_monthly',
     stripe_annual_price_id='price_pro_browser_annual' WHERE id='pro'`);
   let checkoutInput=null;const billingProvider={
-    createCheckout:async(input)=>{checkoutInput=input;return {id:'cs_pro_browser',url:input.successUrl.replace('{CHECKOUT_SESSION_ID}','cs_pro_browser')};},
+    createCheckout:async(input)=>{checkoutInput=input;const subscription={id:'sub_pro_browser',customer:'cus_pro_browser',status:'active',
+      current_period_start:Math.floor(Date.now()/1000),current_period_end:Math.floor(Date.now()/1000)+2592000,
+      metadata:{stockchief_account_id:input.accountId},items:{data:[{price:{id:'price_pro_browser_monthly',recurring:{interval:'month'}}}]}};
+      await commercial.handleBillingEvent(database,{id:'evt_browser_verified',type:'customer.subscription.created',data:{object:subscription}});
+      return {id:'cs_pro_browser',url:input.successUrl.replace('{CHECKOUT_SESSION_ID}','cs_pro_browser')};},
     retrieveCheckout:async()=>({id:'cs_pro_browser',status:'complete',payment_status:'paid',
       metadata:{stockchief_account_id:checkoutInput.accountId,stockchief_plan_id:'pro'},subscription:{id:'sub_pro_browser',
         customer:'cus_pro_browser',status:'active',current_period_start:Math.floor(Date.now()/1000),
@@ -132,8 +138,8 @@ test('real Chromium shows metered Growth usage and activates Pro only from serve
   const provider={name:'fixture-ai',model:'fixture-model',async complete(){return {data:{intent:'lookup',view:'inventory',action:null,
     search:null,sku:null,location:null,fromLocation:null,toLocation:null,quantity:null,countedQuantity:null,reason:null,reference:null},
     usage:{provider:'fixture-ai',model:'fixture-model',inputTokens:120,outputTokens:40,latencyMs:4}};}};
-  const app=createPostgresApp({database,env:'test',sessionSecret:'commercial-control-browser-secret',aiProvider:provider,
-    commercialOptions:{billingProvider,loadInvoices:false,publicOrigin:'request'}});
+  const app=createPostgresApp({database,env:'test',sessionSecret:'commercial-control-browser-secret',aiProvider:require('../helpers/postgres-model-fixture').fixture(provider),
+    commercialOptions:{billingProvider,loadInvoices:false,publicOrigin:'request',testMode:true}});
   const server=await new Promise((resolve)=>{const started=app.listen(0,'127.0.0.1',()=>resolve(started));});
   const browser=await chromium.launch();context.after(async()=>{await browser.close();await new Promise((resolve)=>server.close(resolve));
     await app.locals.sessionStore.close();await database.close();cluster.stop();});const base=`http://127.0.0.1:${server.address().port}`;
@@ -146,7 +152,10 @@ test('real Chromium shows metered Growth usage and activates Pro only from serve
   await page.goto(`${base}/ask`);await page.getByLabel('Ask StockChief').fill('How many items are in my inventory?');
   await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Continue'}).click()]);
   await page.goto(`${base}/billing`);assert.match(await page.locator('body').innerText(),/1 of 10 included/);
-  await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Choose Pro'}).click()]);
+  await page.goto(`${base}/pricing`);await page.getByRole('link',{name:'Choose Pro'}).click();
+  await page.goto(`${base}/billing`);const token=await page.locator('input[name="_csrf"]').first().inputValue();
+  const checkout=await page.request.post(`${base}/billing/checkout`,{form:{_csrf:token,planId:'pro',interval:'monthly'}});
+  assert.equal(new URL(checkout.url()).pathname,'/onboarding');
   await page.goto(`${base}/billing`);assert.match(await page.locator('body').innerText(),/Current plan[\s\S]*Pro/);
   assert.equal((await entitlements.subscriptionFor(database,business.accountId)).plan_id,'pro');
   assert.equal(Number((await database.query(`SELECT COUNT(*) AS count FROM commercial_subscription_changes

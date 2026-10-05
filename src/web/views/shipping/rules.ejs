@@ -97,7 +97,7 @@
         ['MANUAL','Manual','Show all carrier rates; I choose and buy.'],
         ['RECOMMEND','Recommend','StockChief explains the best qualifying rate; I approve the purchase.'],
         ['AUTOMATIC','Automatic','StockChief may buy only when a saved rule and shipping-label authority both cover it.']
-      ].forEach(function (choice) { %>
+      ].filter(function(choice){return choice[0]!=='AUTOMATIC'||typeof automaticShippingAvailable==='undefined'||automaticShippingAvailable;}).forEach(function (choice) { %>
         <label class="choice">
           <input type="radio" name="mode" value="<%= choice[0] %>"
             <%= operationPolicy.mode === choice[0] ? 'checked' : '' %>>

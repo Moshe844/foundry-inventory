@@ -49,10 +49,12 @@ test('PostgreSQL account menu pages render truthful native settings and rename t
     await page.getByRole('button',{name:'Add person'}).click();const person=page.locator('#modal-person');
     await person.getByLabel('Name').fill('Settings Accountant');await person.getByLabel('Email').fill('accountant@example.test');
     assert.match(await person.innerText(),/choose their own password/i);await person.getByLabel('Role').selectOption('accountant');
-    await Promise.all([page.waitForNavigation(),person.getByRole('button',{name:'Add person'}).click()]);
-    assert.match(await page.locator('main').innerText(),/Invitation email queued for accountant@example\.test/i);
+    await Promise.all([page.waitForNavigation(),page.waitForResponse(response=>response.request().method()==='POST'
+      &&response.url()===`${base}/settings/people`),person.getByRole('button',{name:'Add person'}).click()]);
     const pending=(await database.query(`SELECT role,status FROM workspace_invitations WHERE email=$1`,['accountant@example.test'])).rows[0];
     assert.deepEqual(pending,{role:'accountant',status:'PENDING'});
+    assert.ok(Number((await database.query("SELECT COUNT(*) AS count FROM stockchief_runtime.jobs WHERE kind='system.email-send' AND payload->>'messageType'='workspace_invitation'")).rows[0].count)>0,
+      'The invitation must have durable delivery work, not just a transient success banner.');
     const alerts=page.locator('form[action="/settings/email-alerts"]');await alerts.getByRole('checkbox').check();
     await alerts.getByLabel('Recipients').fill('owner-alerts@example.test');
     await Promise.all([page.waitForNavigation(),alerts.getByRole('button',{name:'Save email alerts'}).click()]);

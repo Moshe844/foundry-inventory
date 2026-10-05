@@ -27,7 +27,7 @@ test('native PostgreSQL transactions and queue fencing', { timeout: 120000 }, as
     '017-assistant-communication-actions.sql', '018-assistant-order-actions.sql',
     '019-assistant-receiving-payment-actions.sql', '020-commercial-platform.sql', '021-review-commercial-packaging.sql',
     '022-approved-commercial-positioning.sql', '023-commercial-control-system.sql',
-    '024-authentication-security.sql']);
+    '024-authentication-security.sql','025-commercial-wallet.sql']);
   assert.deepEqual(await migratePostgres(second), []);
   await database.query(`INSERT INTO accounts(id, email, name, password_hash, created_at)
     VALUES ('account-one', 'one@example.test', 'One', 'test', '2026-09-23T00:00:00.000Z'),

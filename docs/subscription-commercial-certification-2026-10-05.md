@@ -1,5 +1,7 @@
 # StockChief Subscription and Commercial-Control Certification
 
+Historical report — superseded for the current subscription-foundation working tree by [Commercial Readiness Report](commercial-readiness-report-2026-10-05.md). Its earlier PASS and staging claims must not be used to approve the new wallet, pack or auto-top-up implementation. The current report keeps checkout disabled and distinguishes local fixtures from actual Stripe E2E evidence.
+
 Date: 2026-10-05
 
 ## Scope

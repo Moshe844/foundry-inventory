@@ -224,3 +224,8 @@ module.exports={normaliseCurrency,toMinor,formatMinor,requireSku,currentPrice,pu
   setPrice,setPriceInTransaction,setPurchaseCost,setPurchaseCostInTransaction,createPriceProposal,getPriceProposal,
   approvePriceProposal,cancelPriceProposal,createPurchaseCostProposal,getPurchaseCostProposal,
   approvePurchaseCostProposal,cancelPurchaseCostProposal};
+require('../commercial/enforcement').guardExports(module.exports,0,1,{
+  setPrice:'inventory.core',setPriceInTransaction:'inventory.core',createPriceProposal:'inventory.core',
+  approvePriceProposal:'inventory.core',cancelPriceProposal:'inventory.core',setPurchaseCost:'purchasing.suppliers',
+  setPurchaseCostInTransaction:'purchasing.suppliers',createPurchaseCostProposal:'purchasing.suppliers',
+  approvePurchaseCostProposal:'purchasing.suppliers',cancelPurchaseCostProposal:'purchasing.suppliers'});

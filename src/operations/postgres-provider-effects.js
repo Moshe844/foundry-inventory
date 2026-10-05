@@ -81,6 +81,21 @@ async function finishError(database,workspaceId,id,token,error,input={}){const a
     if(!locked)throw new NotFoundError('That provider operation was not found.');
     if(locked.status==='SUCCEEDED')return hydrate(locked);
     if(locked.status!=='RUNNING'||locked.claim_token!==token)return hydrate(locked);
+    if(error?.code==='entitlement_required'){
+      // No optional provider work is dispatched when funding/access is denied.
+      // Keep the durable intent resumable rather than turning exhaustion into
+      // an irreversible provider rejection.
+      if(locked.kind==='mail.reply.send')await client.query(`UPDATE stockchief_runtime.email_reply_outbox
+        SET status='PENDING' WHERE workspace_id=$1 AND id=$2 AND status='SENDING'`,[workspaceId,locked.payload.outboxId]);
+      if(locked.kind==='mail.outbound.send'){
+        const table={customer:'customer_communications',supplier:'supplier_communications'}[locked.payload.communicationKind];
+        if(table)await client.query(`UPDATE ${table} SET status='QUEUED' WHERE workspace_id=$1 AND id=$2 AND status='SENDING'`,
+          [workspaceId,locked.payload.communicationId]);}
+      const deferred=(await client.query(`UPDATE stockchief_runtime.provider_effects SET status='PENDING',
+        claim_token=NULL,claimed_at=NULL,error_code='entitlement_required',error_message=$4,updated_at=now()
+        WHERE workspace_id=$1 AND id=$2 AND claim_token=$3 RETURNING *`,[workspaceId,id,token,String(error.message).slice(0,500)])).rows[0];
+      return hydrate(deferred);
+    }
     if(input.apply)await input.apply(client,hydrate(locked),ambiguous);
     const at=nowIso();const row=(await client.query(`UPDATE stockchief_runtime.provider_effects SET status=$4,
       claim_token=NULL,claimed_at=NULL,error_code=$5,error_message=$6,completed_at=$7,updated_at=$7

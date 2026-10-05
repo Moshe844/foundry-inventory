@@ -140,3 +140,4 @@ async function authenticate(database,authorization){
 }
 
 module.exports={TOKEN_PREFIX,parseJson,publicStatus,hydrate,list,get,disconnect,pause,resume,createFeed,authenticate};
+require('../commercial/enforcement').guardExports(module.exports,0,1,{createFeed:'connections.custom_api',resume:'workspace.core'});

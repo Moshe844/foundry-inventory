@@ -305,6 +305,8 @@ async function proposeMappings(sheet, options = {}) {
       await options.onUsage(response.usage, { schemaName:'inventory_import_mapping' });
     }
   } catch (error) {
+    if(error.usage&&options.onUsage)await options.onUsage(error.usage,{schemaName:'inventory_import_mapping',failed:true});
+    if(['entitlement_required','validation_error'].includes(error.code))throw error;
     // The file is readable without the model. Losing it costs suggestions,
     // not the import.
     return { ...base, aiError: error.message };

@@ -92,7 +92,9 @@ async function shadow(database,ctx,connectorId,adapter,credentials,input={}){
     VALUES($1,$2,$3,'RUNNING',$4,'{}','{}',$5)`,[runId,ctx.workspaceId,connectorId,asOf,started]);
   try{
     const [local,external,mappings]=await Promise.all([localSnapshot(database,ctx.workspaceId,asOf),
-      adapter.readAccountingSnapshot({credentials,connection:await connections.get(database,ctx.workspaceId,connectorId),asOf}),
+      require('../commercial/operations').run(database,ctx.workspaceId,{capability:'accounting.sync',key:`accounting-shadow:${runId}`,
+        provider:adapter.metadata().id||'accounting',operation:'accounting_snapshot'},async()=>adapter.readAccountingSnapshot({credentials,
+          connection:await connections.get(database,ctx.workspaceId,connectorId),asOf})),
       database.query(`SELECT * FROM accounting_posting_account_mappings
         WHERE workspace_id=$1 AND connector_id=$2`,[ctx.workspaceId,connectorId])]);
     const differences=compare(local,external,mappings.rows);const status=differences.length?'MISMATCH':'MATCHED';const at=nowIso();
@@ -250,6 +252,7 @@ async function queuePending(database,ctx,connectorId,input={}){
 }
 
 async function executeExportEffect(database,workspaceId,effectId,options={}){
+  await require('../commercial/enforcement').workspace(database,workspaceId,'accounting.post_connected');
   const claimed=await providerEffects.claim(database,workspaceId,effectId);
   if(claimed.replayed)return {externalId:claimed.effect.providerReference?.externalId||null,replayed:true};
   const effect=claimed.effect;let providerCalled=false;
@@ -265,12 +268,19 @@ async function executeExportEffect(database,workspaceId,effectId,options={}){
     if(journal.lines.some((line)=>!line.external_account_id||(connection.provider_type==='quickbooks'&&
       ((line.customer_id&&!line.external_customer_id)||(line.supplier_id&&!line.external_supplier_id)))))throw Object.assign(
       new ValidationError('A journal mapping changed before export. Nothing was posted.'),{status:422});
+    const usageScope=await commercialUsage.ownerScopeForWorkspace(database,workspaceId);
+    const reservation=await commercialUsage.reserveUsage(database,usageScope,{meter:'accounting_syncs',units:1,idempotencyKey:effect.idempotencyKey,
+      detail:{operation:'journal_export',journalEntryId:journal.id}});
+    if(!reservation.created)throw new ValidationError('This export has existing usage evidence and requires reconciliation before another provider call.');
     providerCalled=true;let result;
-    try{result=await adapter.postJournalEntry({credentials,entry:journal,idempotencyKey:effect.idempotencyKey});}
+    try{result=await require('../commercial/context').run({...require('../commercial/context').current(),
+      database,scope:usageScope,funded:true,requestId:effect.idempotencyKey},
+      ()=>adapter.postJournalEntry({credentials,entry:journal,idempotencyKey:effect.idempotencyKey}));}
     finally{const owner=(await database.query('SELECT owner_account_id FROM workspaces WHERE id=$1',[workspaceId])).rows[0];
       if(owner?.owner_account_id)await commercialControl.recordCost(database,{accountId:owner.owner_account_id,workspaceId},{
         provider:connection.provider_type||'accounting_provider',operation:'journal_export',unit:'journal',quantity:1,
-        idempotencyKey:effect.idempotencyKey,occurredAt:nowIso(),detail:{connectorId:connection.id,journalEntryId:journal.id}});}
+        idempotencyKey:`${effect.idempotencyKey}:attempt:${effect.claimToken}`,occurredAt:nowIso(),
+        detail:{connectorId:connection.id,journalEntryId:journal.id}});}
     if(!result?.externalId)throw Object.assign(new ValidationError(
       'The accounting provider did not confirm an external journal identity.'),{status:422});
     await providerEffects.succeed(database,workspaceId,effectId,effect.claimToken,{providerReference:{
@@ -290,10 +300,12 @@ async function executeExportEffect(database,workspaceId,effectId,options={}){
       [newId('accheck'),workspaceId,connection.id,String(journal.entry_number),at]);
       const owner=(await client.query('SELECT owner_account_id FROM workspaces WHERE id=$1',[workspaceId])).rows[0];
       if(owner?.owner_account_id){const scope={accountId:owner.owner_account_id,workspaceId};
-        await commercialUsage.recordUsage(client,scope,{id:newId('usage'),meter:'accounting_syncs',units:1,
-          idempotencyKey:effect.idempotencyKey,occurredAt:at,detail:{connectorId:connection.id,journalEntryId:journal.id}});}}});
+        await commercialUsage.commitUsage(client,scope,{meter:'accounting_syncs',
+          idempotencyKey:effect.idempotencyKey,occurredAt:at,detail:{operation:'journal_export',connectorId:connection.id,journalEntryId:journal.id}});}}});
     return {externalId:String(result.externalId),replayed:false};
   }catch(error){const ambiguous=providerCalled&&!providerEffects.definiteFailure(error);
+    if(!ambiguous)await commercialUsage.reverseUsage(database,await commercialUsage.ownerScopeForWorkspace(database,workspaceId),
+      {meter:'accounting_syncs',idempotencyKey:effect.idempotencyKey,reason:error.message});
     await providerEffects.finishError(database,workspaceId,effectId,effect.claimToken,error,{ambiguous});
     throw Object.assign(error,{code:ambiguous?'accounting_export_ambiguous':(error.code||'accounting_export_failed'),retryable:false});
   }
@@ -322,3 +334,5 @@ async function state(database,workspaceId,connectorId){
 
 module.exports={hash,policy,initialize,chooseAuthority,localSnapshot,compare,shadow,mapAccount,mapParty,enableWrites,
   entry,pendingEntries,queuePending,executeExportEffect,state};
+require('../commercial/enforcement').guardExports(module.exports,0,1,{chooseAuthority:'connections.accounting',
+ enableWrites:'accounting.post_connected',queuePending:'accounting.post_connected',executeExportEffect:'accounting.post_connected',shadow:'accounting.sync'});

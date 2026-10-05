@@ -87,6 +87,8 @@ async function updateLocation(database,ctx,id,input){
 async function setLocationActive(database,ctx,id,isActive){
   return database.transaction(async(client)=>{
     const location=await requireLocation(client,ctx.workspaceId,id);
+    if(isActive&&!Number(location.is_active))await entitlements.assertMeterCapacity(client,
+      await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId),'locations',1);
     if(!isActive){
       const children=await client.query('SELECT name FROM locations WHERE workspace_id=$1 AND parent_location_id=$2 AND is_active=1 LIMIT 1',[ctx.workspaceId,id]);
       if(children.rows.length)throw new InvariantError(`${location.name} still contains ${children.rows[0].name}. Move or archive its sublocations first.`,'location_has_children');
@@ -99,3 +101,5 @@ async function setLocationActive(database,ctx,id,isActive){
 }
 
 module.exports={listHierarchy,createLocation,createLocationInTransaction,updateLocation,setLocationActive,requireLocation};
+require('../commercial/enforcement').guardExports(module.exports,0,1,{createLocation:'inventory.multi_location',
+ createLocationInTransaction:'inventory.multi_location',updateLocation:'inventory.multi_location',setLocationActive:'inventory.multi_location'});

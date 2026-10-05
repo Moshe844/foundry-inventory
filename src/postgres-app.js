@@ -63,6 +63,9 @@ function createPostgresApp({database,sessionStore,sessionSecret=config.sessionSe
   app.set('trust proxy',1);
   app.disable('x-powered-by');
   app.use(express.static(path.join(__dirname,'web','public'),{maxAge:env==='production'?'7d':0}));
+  // Webhooks and token APIs run before cookie authentication, but still need a
+  // database context so an unscoped external request cannot escape accounting.
+  app.use(require('./commercial/enforcement').contextMiddleware(database));
   app.use(createPostgresCommercialWebhooks(database,commercialOptions?.billingProvider?{
     provider:commercialOptions.billingProvider,providerOptions:commercialOptions.providerOptions||{}}:{}));
   app.use(createPostgresShippingWebhooks(database,shippingOptions || {}));
@@ -124,12 +127,14 @@ function createPostgresApp({database,sessionStore,sessionSecret=config.sessionSe
   app.use(commonMiddleware.flash);
   app.use(commonMiddleware.csrf);
   app.use(authMiddleware.loadUser(database));
+  app.use(require('./commercial/enforcement').contextMiddleware(database));
   app.use(async(req,res,next)=>{try{const commercialAccountId=req.workspace?.owner_account_id||req.account?.id;
     res.locals.commercial=req.account
       ?await postgresEntitlements.summary(database,{accountId:commercialAccountId,workspaceId:req.ctx?.workspaceId})
       :{subscription:null,access:postgresEntitlements.operationalAccess(null),capabilities:[],meters:[]};
     return next();}catch(error){return next(error);}});
   app.use(requireOperationalSubscription);
+  app.use(require('./commercial/enforcement').middleware(database));
   app.use(async(req,res,next)=>{
     if(!req.ctx)return next();
     try {

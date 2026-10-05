@@ -7,6 +7,7 @@ const {AuthenticationError,NotFoundError,ValidationError}=require('../domain/err
 const {newId,nowIso}=require('../lib/util');
 const entitlements=require('../entitlements/postgres-service');
 const commercial=require('../commercial/service');
+const operations=require('../commercial/operations');
 
 const PROVIDER='stripe';
 const STATE_PROVIDER='stripe_connect';
@@ -66,10 +67,16 @@ async function complete(database,query={},options={}){const state=await provider
       returnOrigin:state.metadata.returnOrigin};}
   if(!query.code)throw new AuthenticationError('Stripe sent nothing to complete the connection with.');
   try{const held=legacy.platform();const exchange=options.exchange||((code)=>legacy.post(TOKEN,
-    {grant_type:'authorization_code',code,client_secret:held.secretKey}));const granted=await exchange(query.code);
+    {grant_type:'authorization_code',code,client_secret:held.secretKey}));
+    const {granted,account}=await operations.run(database,state.workspace_id,{capability:'payments.customer',
+      key:`connect-authorization:${state.id}`,provider:'stripe',providerVersion:'connect-oauth-v1',operation:'connect_authorization'},async()=>{
+      const granted=await exchange(query.code);
+      const id=granted.stripe_user_id||granted.account_id||granted.stripe_account_id;
+      if(!id)throw new ValidationError('Stripe did not say which account was connected.');
+      const read=options.readAccount||((id)=>legacy.readAccount(id,held.secretKey));
+      return {granted,account:await read(id).catch(()=>null)};});
     const accountId=granted.stripe_user_id||granted.account_id||granted.stripe_account_id;
     if(!accountId)throw new ValidationError('Stripe did not say which account was connected.');
-    const read=options.readAccount||((id)=>legacy.readAccount(id,held.secretKey));const account=await read(accountId).catch(()=>null);
     const displayName=account&&(account.display_name||account.business_profile?.name||account.settings?.dashboard?.display_name||
       account.email)||null;const chargesEnabled=legacy.canTakeCharges(account);
     const liveMode=granted.livemode===true||granted.livemode==='true'||account?.livemode===true;
@@ -98,7 +105,8 @@ async function complete(database,query={},options={}){const state=await provider
 async function refresh(database,workspaceId,options={}){const row=await rowFor(database,workspaceId);
   if(!row)return describe(database,workspaceId);const held=legacy.platform();if(!held.secretKey)return describe(database,workspaceId);
   const read=options.readAccount||((id)=>legacy.readAccount(id,held.secretKey));let account;
-  try{account=await read(row.provider_account_id);}catch(error){if([401,403,404].includes(Number(error.status))){
+  try{account=await operations.run(database,workspaceId,{capability:'payments.customer',key:options.idempotencyKey||newId('connect-refresh'),
+    provider:'stripe',providerVersion:'connect-oauth-v1',operation:'connect_account_read'},()=>read(row.provider_account_id));}catch(error){if([401,403,404].includes(Number(error.status))){
       await database.transaction(async(client)=>{await client.query(`DELETE FROM payment_connect_accounts
           WHERE workspace_id=$1 AND provider=$2`,[workspaceId,PROVIDER]);if(row.connector_id)await client.query(`UPDATE workspace_connectors
           SET status='disconnected',setup_status='REAUTHORIZATION_REQUIRED',last_error=$3,updated_at=$4
@@ -113,7 +121,11 @@ async function refresh(database,workspaceId,options={}){const row=await rowFor(d
 async function disconnect(database,ctx,options={}){const row=await rowFor(database,ctx.workspaceId);
   if(!row)throw new NotFoundError('No Stripe account is connected to this inventory.');const held=legacy.platform();
   let releasedAtStripe=false;if(held.clientId&&held.secretKey){try{const release=options.deauthorize||((accountId)=>legacy.post(
-      DEAUTHORIZE,{client_id:held.clientId,stripe_user_id:accountId},held.secretKey));await release(row.provider_account_id);
+      DEAUTHORIZE,{client_id:held.clientId,stripe_user_id:accountId},held.secretKey));
+      const scope=await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId);
+      try{await require('../commercial/context').run({database,scope,system:true},()=>release(row.provider_account_id));}
+      finally{await require('../commercial/control-service').recordCost(database,scope,{provider:'stripe',operation:'connect_deauthorize',
+        providerVersion:'connect-oauth-v1',unit:'operation',quantity:1,idempotencyKey:newId('deauthorize'),detail:{customerBillable:false}});}
     releasedAtStripe=true;}catch{releasedAtStripe=false;}}
   await database.transaction(async(client)=>{await client.query('DELETE FROM payment_connect_accounts WHERE workspace_id=$1 AND provider=$2',
       [ctx.workspaceId,PROVIDER]);if(row.connector_id)await client.query(`UPDATE workspace_connectors
@@ -122,3 +134,4 @@ async function disconnect(database,ctx,options={}){const row=await rowFor(databa
   return {disconnected:true,releasedAtStripe};}
 
 module.exports={PROVIDER,STATE_PROVIDER,rowFor,describe,begin,complete,refresh,disconnect};
+require('../commercial/enforcement').guardExports(module.exports,0,1,{begin:'payments.customer',refresh:'payments.customer'});

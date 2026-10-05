@@ -63,7 +63,7 @@ test('real Chromium creates, exercises and revokes a scoped PostgreSQL inventory
     assert.equal(movements.rows[0].count,'1');
     const apiUsage=await database.query(`SELECT usage.units,usage.status FROM commercial_usage_events usage
       JOIN workspaces workspace ON workspace.id=usage.workspace_id
-      WHERE workspace.name='API Business' AND usage.meter='api_events'`);
+      WHERE workspace.name='API Business' AND usage.meter='connected_operations' AND usage.detail->>'operation'='api_events'`);
     assert.equal(apiUsage.rows.length,1);assert.equal(Number(apiUsage.rows[0].units),1);
     assert.equal(apiUsage.rows[0].status,'COMMITTED');
     await page.getByRole('button',{name:'Revoke',exact:true}).click();

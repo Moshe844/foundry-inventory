@@ -22,7 +22,7 @@ const CAPABILITIES = Object.freeze([
   ['shipping.rates','Carrier rates','shipping','CONDITIONAL',true],
   ['shipping.labels','Carrier labels','shipping','CONDITIONAL',true],
   ['shipping.tracking','Shipment tracking','shipping','CONDITIONAL',true],
-  ['shipping.automation','Automated shipping within authority','shipping','CONDITIONAL',true],
+  ['shipping.automation','Automated shipping within authority','shipping','DISABLED',true],
   ['payments.customer','Merchant customer payments','payments','CONDITIONAL',true],
   ['accounting.core','Operational accounting ledger','accounting','SELLABLE',false],
   ['accounting.reports','Accounting reports','accounting','SELLABLE',false],
@@ -31,15 +31,15 @@ const CAPABILITIES = Object.freeze([
   ['ask.lookup','Ask StockChief business questions','intelligence','SELLABLE',true],
   ['ask.prepare_actions','Ask StockChief prepared actions','intelligence','SELLABLE',true],
   ['communications.email_ingestion','Business mailbox monitoring','communications','CONDITIONAL',true],
-  ['communications.ai_drafts','AI communication drafts','communications','SELLABLE',true],
+  ['communications.ai_drafts','AI communication drafts','communications','DISABLED',true],
   ['communications.send_approved','Approved email sending','communications','CONDITIONAL',true],
-  ['communications.auto_send','Automatic sending within authority','communications','CONDITIONAL',true],
+  ['communications.auto_send','Automatic sending within authority','communications','DISABLED',true],
   ['connections.commerce','Commerce connections','connections','CONDITIONAL',true],
   ['connections.accounting','Accounting connections','connections','CONDITIONAL',true],
   ['connections.custom_api','Custom API and event feeds','connections','SELLABLE',true],
   ['imports.spreadsheet','Spreadsheet import with preview','migration','SELLABLE',false],
   ['documents.extraction','Document and page extraction','migration','DISABLED',true],
-  ['migration.assisted','Assisted system migration','migration','CONDITIONAL',true],
+  ['migration.assisted','Assisted system migration','migration','DISABLED',true],
   ['planning.basic','Demand and stockout planning','planning','SELLABLE',true],
   ['planning.transfer_before_buy','Transfer-before-buy optimization','planning','SELLABLE',true],
   ['automation.transfers','Automatic transfers within authority','automation','SELLABLE',true],
@@ -47,7 +47,9 @@ const CAPABILITIES = Object.freeze([
   ['authority.advanced','Advanced authority policies','automation','SELLABLE',true],
   ['adaptive_optimization','Adaptive optimization','planning','DISABLED',true],
   ['operations.alerts','Operational alerts and Needs You','operations','SELLABLE',true],
-  ['support.priority','Priority support','support','SELLABLE',true],
+  ['support.priority','Priority support','support','DISABLED',false],
+  ['warehouse.advanced','Warehouse waves, bins and scans','inventory','SELLABLE',false],
+  ['accounting.post_connected','Approved external accounting posting','accounting','CONDITIONAL',true],
   ['integrations.custom','Custom integrations','connections','CONDITIONAL',true],
   ['api.public','Public API','connections','SELLABLE',true],
   ['sales_orders','Sales orders compatibility key','compatibility','SELLABLE',false],
@@ -63,24 +65,26 @@ const CAPABILITIES = Object.freeze([
   ['connection.commerce','Commerce connection compatibility key','compatibility','CONDITIONAL',true],
   ['connection.accounting','Accounting connection compatibility key','compatibility','CONDITIONAL',true],
   ['email.auto_extract','Email extraction compatibility key','compatibility','CONDITIONAL',true],
-  ['email.response_generation','AI reply compatibility key','compatibility','SELLABLE',true],
+  ['email.response_generation','AI reply compatibility key','compatibility','DISABLED',true],
   ['documents.process','Document processing compatibility key','compatibility','DISABLED',true],
   ['forecasting.basic','Forecasting compatibility key','compatibility','SELLABLE',true],
 ]);
 
 const METERS = Object.freeze([
+  ['ai_work_credits','AI Work Credits','USAGE',true,false],
+  ['connected_operations','Connected Operations','USAGE',true,false],
   ['workspaces','Inventories','STRUCTURAL',true,true],
   ['members','People','STRUCTURAL',true,true],
   ['locations','Locations','STRUCTURAL',true,true],
   ['connections','Connections','STRUCTURAL',true,true],
-  ['business_communications','Business communications processed','USAGE',true,false],
-  ['document_pages','Document pages processed','USAGE',true,false],
-  ['intelligent_operations','StockChief intelligent operations','USAGE',true,false],
-  ['external_events','External orders and operating events','USAGE',true,false],
-  ['shipments_managed','Shipments managed','USAGE',true,false],
-  ['automatic_actions','Automatic actions completed','USAGE',true,false],
-  ['accounting_syncs','Accounting synchronization runs','USAGE',true,false],
-  ['api_events','API events processed','USAGE',true,false],
+  ['business_communications','Business communications processed','USAGE',false,false],
+  ['document_pages','Document pages processed','USAGE',false,false],
+  ['intelligent_operations','StockChief intelligent operations','USAGE',false,false],
+  ['external_events','External orders and operating events','USAGE',false,false],
+  ['shipments_managed','Shipments managed','USAGE',false,false],
+  ['automatic_actions','Automatic actions completed','USAGE',false,false],
+  ['accounting_syncs','Accounting synchronization runs','USAGE',false,false],
+  ['api_events','API events processed','USAGE',false,false],
   ['processing_units','Legacy business processing units','USAGE',false,false],
 ]);
 
@@ -91,7 +95,14 @@ const meterMap = new Map(METERS.map((row) => [row[0], {
   key:row[0],label:row[1],kind:row[2],customerVisible:row[3],critical:row[4],
 }]));
 
-function capability(key) { return capabilityMap.get(String(key || '').trim()) || null; }
+const ALIASES=Object.freeze({'connection.email':'communications.email_ingestion','email.auto_extract':'communications.email_ingestion',
+  'connection.commerce':'connections.commerce','connection.accounting':'connections.accounting','forecasting.basic':'planning.basic',
+  ask_stockchief:'ask.lookup',merchant_payments:'payments.customer',sales_orders:'sales_orders.core',purchasing:'purchasing.core',
+  suppliers:'purchasing.suppliers','receiving.manual':'receiving.core','accounting.basic':'accounting.core',needs_you:'operations.alerts',
+  'replenishment.basic':'planning.basic','documents.process':'documents.extraction','email.response_generation':'communications.ai_drafts',
+  'integrations.custom':'connections.custom_api'});
+function canonicalCapability(key){return ALIASES[key]||key;}
+function capability(key) { return capabilityMap.get(canonicalCapability(String(key || '').trim())) || null; }
 function meter(key) { return meterMap.get(String(key || '').trim()) || null; }
 function assertCapabilityKey(key) {
   const found=capability(key);
@@ -104,4 +115,4 @@ function assertMeterKey(key) {
   return found;
 }
 
-module.exports={CAPABILITIES,METERS,capability,meter,assertCapabilityKey,assertMeterKey};
+module.exports={CAPABILITIES,METERS,ALIASES,canonicalCapability,capability,meter,assertCapabilityKey,assertMeterKey};

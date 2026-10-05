@@ -47,7 +47,7 @@ test('the complete SQLite business moves atomically into constrained PostgreSQL'
     '017-assistant-communication-actions.sql', '018-assistant-order-actions.sql',
     '019-assistant-receiving-payment-actions.sql', '020-commercial-platform.sql', '021-review-commercial-packaging.sql',
     '022-approved-commercial-positioning.sql', '023-commercial-control-system.sql',
-    '024-authentication-security.sql']);
+    '024-authentication-security.sql','025-commercial-wallet.sql']);
   await postgres.query(`CREATE FUNCTION reject_cutover_row() RETURNS trigger LANGUAGE plpgsql AS $$
     BEGIN RAISE EXCEPTION 'synthetic cutover failure'; END; $$`);
   await postgres.query(`CREATE TRIGGER reject_cutover_row BEFORE INSERT ON items

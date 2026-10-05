@@ -21,6 +21,9 @@ async function beginAuthorization(database,ctx,input,requestOrigin,options={}){
   const adapter=registry.get(providerType);
   if(!adapter)throw new ValidationError('Choose a supported connection provider.');
   const meta=adapter.metadata();
+  const commercialScope=await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId);
+  await entitlements.assertCapability(database,commercialScope,['gmail','microsoft365'].includes(providerType)?'communications.email_ingestion':
+    adapter.integrationClass==='accounting'?'connections.accounting':'connections.commerce');
   if(!meta.available)throw new ValidationError(meta.unavailableReason||`${meta.name} is not configured.`);
   if(adapter.validateInput)adapter.validateInput(input);
   const connectorId=input.connectorId||newId('con');
@@ -81,6 +84,10 @@ async function callbackContext(database,stateValue,providerType){
 
 async function finishAuthorization(database,connection,actorId,result){
   return database.transaction(async(client)=>{
+    const scope=await entitlements.ownerScopeForWorkspace(client,connection.workspace_id);
+    await entitlements.assertCapability(client,scope,['gmail','microsoft365'].includes(connection.provider_type)?'communications.email_ingestion':
+      ['quickbooks','xero'].includes(connection.provider_type)?'connections.accounting':'connections.commerce');
+    await entitlements.assertMeterCapacity(client,scope,'connections',0);
     let target=connection;
     if(result.accountId){
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
@@ -128,9 +135,12 @@ async function completeOAuth(database,providerType,query,requestOrigin,options={
   const state=await readState(database,query.state,providerType,{consume:true});
   const connection=await connections.get(database,state.workspace_id,state.connector_id);
   try{
-    const result=await adapter.exchangeAuthorization({query,metadata:state.metadata});
+    const result=await require('../commercial/operations').run(database,connection.workspace_id,{capability:
+      ['gmail','microsoft365'].includes(providerType)?'communications.email_ingestion':adapter.integrationClass==='accounting'?'connections.accounting':'connections.commerce',
+      key:`oauth:${state.id}`,provider:providerType,operation:'authorization_exchange'},()=>adapter.exchangeAuthorization({query,metadata:state.metadata}));
     if(adapter.verifyReadOnly&&!result.verifiedFact&&adapter.integrationClass==='accounting'){
-      result.verifiedFact=await adapter.verifyReadOnly({credentials:result.credentials,connection});
+      result.verifiedFact=await require('../commercial/operations').run(database,connection.workspace_id,{capability:'connections.accounting',
+        key:`oauth-verify:${state.id}`,provider:providerType,operation:'accounting_verify'},()=>adapter.verifyReadOnly({credentials:result.credentials,connection}));
     }
     const connectorId=await finishAuthorization(database,connection,state.actor_id,result,requestOrigin);
     let connected=await connections.get(database,state.workspace_id,connectorId);
@@ -145,7 +155,9 @@ async function completeOAuth(database,providerType,query,requestOrigin,options={
         :`${origin}/api/v1/connections/${providerType}/webhooks/${encodeURIComponent(connectorId)}`;
       try{
         const current=await loadProviderCredentials(database,connected,adapter);
-        const registered=await adapter.registerWebhooks({credentials:current,webhookUrl,connection:connected});
+        const registered=await require('../commercial/operations').run(database,connected.workspace_id,{capability:
+          ['gmail','microsoft365'].includes(providerType)?'communications.email_ingestion':'connections.commerce',key:`oauth-webhooks:${state.id}`,
+          provider:providerType,operation:'webhook_registration'},()=>adapter.registerWebhooks({credentials:current,webhookUrl,connection:connected}));
         if(registered?.credentials)await credentials.put(database,connected.workspace_id,connected.id,'provider',
           registered.credentials,registered.expiresAt||null);
         const at=nowIso();
@@ -192,6 +204,7 @@ async function loadProviderCredentials(database,connection,adapter){
       if(refreshed.refreshed)await credentials.put(database,connection.workspace_id,connection.id,'provider',
         providerCredentials,refreshed.expiresAt||null);
     }catch(error){
+      if(error.code==='entitlement_required'||error.status===402)throw error;
       if(error.transient||error.status===429||error.status>=500){
         await database.query('UPDATE workspace_connectors SET last_error=$3,updated_at=$4 WHERE workspace_id=$1 AND id=$2',
           [connection.workspace_id,connection.id,'The provider is temporarily unavailable. Retry safely; authorization was preserved.',nowIso()]);
@@ -208,3 +221,4 @@ async function loadProviderCredentials(database,connection,adapter){
 
 module.exports={stateHash,providerOrigin,beginAuthorization,readState,callbackContext,finishAuthorization,
   completeOAuth,loadProviderCredentials};
+require('../commercial/enforcement').guardExports(module.exports,0,1,{loadProviderCredentials:'workspace.core'});

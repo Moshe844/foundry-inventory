@@ -57,6 +57,13 @@ async function requireRow(client, sql, values, message) {
 }
 
 async function beginOperation(client, ctx, kind, key) {
+  const capability=kind==='purchase_order.receive'?'receiving.core':kind.startsWith('supplier_invoice')?'purchasing.invoices':
+    kind.startsWith('purchase')?'purchasing.core':kind.includes('fulfill')?'fulfillment.core':
+    kind.startsWith('sales')?'sales_orders.core':'accounting.core';
+  // Only a validated durable provider receipt bypasses the subscription gate;
+  // cancellation must not erase incoming money facts.
+  if(!(ctx.verifiedProviderReceipt&&kind.startsWith('payment.')))
+    await require('../commercial/enforcement').workspace(client,ctx.workspaceId,capability);
   const idempotencyKey = String(key || '').trim();
   if (!idempotencyKey) throw new ValidationError('A durable idempotency key is required.');
   const id = newId('pgop');
@@ -786,6 +793,7 @@ async function recordPaymentInTransaction(client, rawContext, input) {
         WHERE id=$1 AND workspace_id=$2 AND request_id=$3 AND processed_at IS NULL FOR UPDATE`,
       [rawContext.providerEventId,ctx.workspaceId,rawContext.providerRequestId],
       'That provider payment event is not available for posting.');
+      ctx.verifiedProviderReceipt=true;
     }else await requirePermission(client, ctx, access.RECORD_PAYMENTS, 'record payments');
     const operation = await beginOperation(client, ctx, `payment.${direction.toLowerCase()}`, input.idempotencyKey);
     if (operation.replayed) return { ...operation.result, replayed: true };
@@ -865,6 +873,7 @@ async function recordCustomerDeposit(database, rawContext, input) {
         WHERE id=$1 AND workspace_id=$2 AND request_id=$3 AND processed_at IS NULL FOR UPDATE`,
       [rawContext.providerEventId, ctx.workspaceId, rawContext.providerRequestId],
       'That provider deposit event is not available for posting.');
+      ctx.verifiedProviderReceipt=true;
     } else await requirePermission(client, ctx, access.RECORD_PAYMENTS, 'record customer deposits');
     const operation = await beginOperation(client, ctx, 'payment.customer_deposit', input.idempotencyKey);
     if (operation.replayed) return { ...operation.result, replayed: true };

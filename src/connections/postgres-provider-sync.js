@@ -6,7 +6,7 @@ const providerService=require('./postgres-provider-service');
 const defaultProviders=require('./providers/registry');
 
 function scopedDatabase(client){return {query:(statement,values=[])=>client.query(statement,values),
-  transaction:(operation)=>operation(client)};}
+  transaction:(operation,options)=>typeof client.transaction==='function'?client.transaction(operation,options):operation(client)};}
 
 function providerData(record){
   return record.providerData&&typeof record.providerData==='object'&&!Array.isArray(record.providerData)
@@ -108,8 +108,7 @@ async function sync(job,client,providers=defaultProviders){
   const connectorId=job.payload?.connectorId;
   if(!job.workspaceId||!connectorId)throw Object.assign(new Error('A provider catalogue sync needs workspace and connection identity.'),
     {code:'invalid_provider_catalog_sync',retryable:false});
-  await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`provider-sync:${connectorId}`]);
-  const connection=(await client.query(`SELECT * FROM workspace_connectors WHERE workspace_id=$1 AND id=$2 FOR UPDATE`,
+  const connection=(await client.query(`SELECT * FROM workspace_connectors WHERE workspace_id=$1 AND id=$2`,
     [job.workspaceId,connectorId])).rows[0];
   if(!connection)return {skipped:'connection_missing'};
   if(connection.status!=='connected'||connection.paused_at)return {skipped:'connection_not_active'};
@@ -117,13 +116,25 @@ async function sync(job,client,providers=defaultProviders){
   if(!adapter?.discover)throw Object.assign(new Error('This provider does not expose catalogue discovery.'),
     {code:'provider_discovery_unavailable',retryable:false});
   const database=scopedDatabase(client);
-  const credentials=await providerService.loadProviderCredentials(database,connection,adapter);
   const runId=newId('csync');const startedAt=nowIso();
   await client.query(`INSERT INTO connection_sync_runs(id,workspace_id,connector_id,sync_kind,status,started_at)
     VALUES($1,$2,$3,'CATALOG_AND_LOCATIONS','RUNNING',$4)`,[runId,job.workspaceId,connectorId,startedAt]);
-  const found=await adapter.discover({credentials,connection});
+  const found=await require('../commercial/operations').run(client,job.workspaceId,{capability:
+    adapter.integrationClass==='accounting'?'connections.accounting':'connections.commerce',key:`catalog-sync:${job.id}`,
+    provider:connection.provider_type,operation:'catalog_sync',retryReversed:true},async()=>{
+      const credentials=await providerService.loadProviderCredentials(database,connection,adapter);
+      return adapter.discover({credentials,connection});});
   const products=Array.isArray(found?.products)?found.products:[];
   const locations=Array.isArray(found?.locations)?found.locations:[];
+  const apply=async(client)=>{
+  await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`provider-sync:${connectorId}`]);
+  const current=(await client.query('SELECT * FROM workspace_connectors WHERE workspace_id=$1 AND id=$2 FOR UPDATE',
+    [job.workspaceId,connectorId])).rows[0];
+  if(!current||current.status!=='connected'||current.paused_at||new Date(current.updated_at).getTime()!==new Date(connection.updated_at).getTime()){
+    await client.query(`UPDATE connection_sync_runs SET status='FAILED',completed_at=$2 WHERE id=$1`,[runId,nowIso()]);
+    return {skipped:'connection_changed',runId};}
+  await require('../commercial/enforcement').workspace(client,job.workspaceId,
+    adapter.integrationClass==='accounting'?'connections.accounting':'connections.commerce');
   await client.query(`UPDATE connection_external_records SET selected=0,updated_at=$3
     WHERE workspace_id=$1 AND connector_id=$2`,[job.workspaceId,connectorId,nowIso()]);
   let autoMapped=0;let needsMapping=0;let ignored=0;
@@ -154,6 +165,8 @@ async function sync(job,client,providers=defaultProviders){
       AND issue_type IN ('PROVIDER_REFRESH_REQUIRED','CONNECTION_SYNC_FAILED')`,
   [job.workspaceId,connectorId,completedAt]);
   return {runId,products:products.length,locations:locations.length,autoMapped,needsMapping,ignored,completedAt};
+  };
+  return database.transaction(apply,{isolation:'SERIALIZABLE',retrySafe:true});
 }
 
 async function setMappingInTransaction(client,ctx,input){
@@ -166,6 +179,9 @@ async function setMappingInTransaction(client,ctx,input){
   const connection=(await client.query(`SELECT * FROM workspace_connectors
     WHERE workspace_id=$1 AND id=$2 FOR UPDATE`,[ctx.workspaceId,input.connectorId])).rows[0];
   if(!connection)throw new ValidationError('That connection is not in this inventory.');
+  await require('../commercial/enforcement').workspace(client,ctx.workspaceId,
+    ['custom','erp','custom_api'].includes(connection.provider_type)?'connections.custom_api':
+      ['quickbooks','xero'].includes(connection.provider_type)?'connections.accounting':'connections.commerce');
   const target=(await client.query(`SELECT id FROM ${targetTable} WHERE workspace_id=$1 AND id=$2`,
     [ctx.workspaceId,targetId])).rows[0];
   if(!target)throw new ValidationError('The selected StockChief record is not in this inventory.');

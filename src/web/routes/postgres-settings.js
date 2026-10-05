@@ -109,7 +109,7 @@ async function settingsPage(database,req,res){const [counts,users,integrity,inst
     integrity:{ok:integrity.ok,problems},eventFeed:{configured:Boolean(feed),connected:feed?.status==='connected',
       recentEvents:events.rows.map((event)=>({eventId:event.external_event_id,type:event.event_type,status:event.status,
         error:event.error_message,processedAt:event.processed_at}))},newFeedToken,learnedInstructions:instructions.rows.map(instructionFrom),
-    stockGuards:[],emailAlerts,aiUsage:null,entitlements:{plan:{label:res.locals.commercial?.subscription?.plan_name||
+    stockGuards:[],emailAlerts,aiUsage:null,commercialLimitsPooled:true,entitlements:{plan:{label:res.locals.commercial?.subscription?.plan_name||
       (res.locals.commercial?.access?.mode==='DEVELOPMENT'?'Pre-subscription · unlimited':'No paid plan')},
       limits:(res.locals.commercial?.meters||[]).filter((meter)=>['workspaces','members','locations','connections'].includes(meter.meter))
         .map((meter)=>({key:meter.meter,used:meter.used,limit:meter.hardLimit??meter.included,
@@ -135,19 +135,8 @@ function createPostgresSettingsRouter(database,options={}){const router=express.
   router.post('/operating-instructions/:id/answer',requireOwner,asyncRoute(async(req,res)=>{
     const scope={accountId:req.workspace.owner_account_id,workspaceId:req.ctx.workspaceId};
     await entitlements.assertCapability(database,scope,'ask.prepare_actions');
-    const metered=Boolean(options.provider||config.ai.configured);const usageKey=String(req.body.usageKey||newId('instructionusage'));
-    if(metered)await entitlements.reserveUsage(database,scope,{id:newId('usage'),meter:'intelligent_operations',units:1,
-      idempotencyKey:usageKey,detail:{kind:'operating_instruction_clarification'}});
-    let modelCall=0;const onUsage=async(usage,detail)=>{modelCall+=1;const providerName=usage.provider||options.provider?.name||config.ai.provider;
-      for(const [operation,quantity] of [['model_input',Number(usage.inputTokens||0)],['model_output',Number(usage.outputTokens||0)]]){
-        if(quantity<=0)continue;await commercialControl.recordCost(database,scope,{provider:providerName,operation,unit:'token',quantity,
-          idempotencyKey:`${usageKey}:model:${modelCall}:${operation}`,detail:{...detail,model:usage.model||null,
-            latencyMs:usage.latencyMs||null}});}};
-    let replacement;try{replacement=await operatingInstructions.answer(database,req.ctx,req.params.id,req.body.answer,
-      {provider:options.provider,onUsage});if(metered)await entitlements.commitUsage(database,scope,
-      {meter:'intelligent_operations',idempotencyKey:usageKey});}
-    catch(error){if(metered)await entitlements.reverseUsage(database,scope,{meter:'intelligent_operations',idempotencyKey:usageKey,
-      reason:'The operating instruction clarification did not complete.'});throw error;}
+    const replacement=await operatingInstructions.answer(database,req.ctx,req.params.id,req.body.answer,
+      {provider:options.provider,instructionUsageKey:String(req.body.usageKey||newId('instructionusage'))});
     req.flash('success','The same instruction was read again with your answer.');
     return res.redirect(303,`/operating-instructions/${replacement.id}`);}));
   router.post('/operating-instructions/:id/approve',requireOwner,asyncRoute(async(req,res)=>{const result=await operatingInstructions.approve(
@@ -171,6 +160,7 @@ function createPostgresSettingsRouter(database,options={}){const router=express.
     req.flash('success',`Invitation email queued for ${email}. They choose their own password.`);return res.redirect(303,'/settings');
   }));
   router.post('/settings/email-alerts',requireOwner,asyncRoute(async(req,res)=>{const enabled=req.body.enabled==='1';
+    await require('../../commercial/enforcement').workspace(database,req.ctx.workspaceId,'operations.alerts');
     const minimum=['critical','important','all'].includes(req.body.minimumSeverity)?req.body.minimumSeverity:'important';
     const recipients=[...new Set(String(req.body.recipients||'').split(/[\s,;]+/).map((value)=>value.trim().toLowerCase()).filter(Boolean))];
     if(recipients.some((email)=>!/^\S+@\S+\.\S+$/.test(email)))throw new ValidationError('Enter valid alert email addresses.');

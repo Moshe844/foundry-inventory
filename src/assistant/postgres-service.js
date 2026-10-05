@@ -276,7 +276,9 @@ async function planMany(message,options={}) {
     return rawParts.slice(0,8).flatMap((raw)=>{const requestText=trimOrNull(raw?.requestText)||message;
       const intent=cleanPlan(raw,requestText);const balances=intent.intent==='lookup'?financialBalancePlans(requestText,intent):[];
       return balances.length?balances:[{requestText,intent}];}).slice(0,8);
-  } catch {
+  } catch(error) {
+    if(error.usage&&options.onUsage)await options.onUsage(error.usage,{schemaName:'stockchief_postgres_request',failed:true});
+    if(['entitlement_required','validation_error'].includes(error.code))throw error;
     return splitRequestTexts(message).flatMap((requestText)=>financialBalancePlans(requestText)
       .concat(financialBalanceViews(requestText).length?[]:[{requestText,intent:cleanPlan(null,requestText)}])).slice(0,8);
   }
@@ -763,9 +765,12 @@ async function storeInteraction(database,ctx,message,intent,result) {
 }
 
 async function ask(database,ctx,message,options={}) {
+  await require('../commercial/enforcement').workspace(database,ctx.workspaceId,'ask.lookup');
   const clean=String(message || '').trim();
   if(!clean)throw new ValidationError('Ask a question or describe what should happen.');
-  const requests=await planMany(clean,options);const results=[];const batchId=requests.length>1?newId('pgaskbatch'):null;
+  const provider=options.provider||(config.ai.configured?createProviderUnobserved(config.ai.provider,config.ai.tier('fast')):null);
+  const meteredOptions=provider?{...options,onUsage:null,provider:require('../commercial/model').wrap(database,ctx,provider,'ask',options.usageKey)}:options;
+  const requests=await planMany(clean,meteredOptions);const results=[];const batchId=requests.length>1?newId('pgaskbatch'):null;
   for(let index=0;index<requests.length;index+=1){
     const request=requests[index];const intent=request.intent;
     const result=intent.intent==='action'?await prepareAction(database,ctx,clean,intent):
@@ -808,6 +813,7 @@ async function getProposal(database,workspaceId,id,lock=false,client=database) {
 }
 
 async function executeProposal(database,ctx,id) {
+  await entitlements.assertCapability(database,await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId),'ask.prepare_actions');
   return database.transaction(async(client)=>{
     const proposal=await getProposal(database,ctx.workspaceId,id,true,client);
     if(proposal.status==='EXECUTED')return {...proposal,replayed:true};

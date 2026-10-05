@@ -1,0 +1,1116 @@
+{
+  "measuredAt": "2026-10-05T17:59:33.428Z",
+  "evidence": "REAL_MODEL_USAGE_WITH_MODELED_MONTHLY_PROFILES",
+  "pricingSource": "https://platform.claude.com/docs/en/about-claude/pricing",
+  "providerVersion": "2023-06-01",
+  "checkoutEnabled": false,
+  "limitations": [
+    "Small exploratory sample, not statistically representative production telemetry.",
+    "Connected-provider, hosting/compute/storage and email contract costs are unknown, NOT zero.",
+    "List subscription prices below are scenario inputs, NOT actual Stripe revenue or certified margins.",
+    "No connected merchant provider was called. Real Stripe E2E remains separate.",
+    "Enterprise is an illustrative contracted profile; actual contract volumes and price remain unspecified."
+  ],
+  "profiles": [
+    {
+      "plan": "starter",
+      "skus": 100,
+      "monthly": {
+        "ask": 150,
+        "instruction": 10,
+        "import_mapping": 2
+      },
+      "connectedOperations": 1500,
+      "samples": [
+        {
+          "operation": "ask",
+          "outcome": "SUCCESS",
+          "errorCode": null,
+          "latencyMs": 1922
+        },
+        {
+          "operation": "ask",
+          "outcome": "SUCCESS",
+          "errorCode": null,
+          "latencyMs": 2232
+        },
+        {
+          "operation": "ask",
+          "outcome": "SUCCESS",
+          "errorCode": null,
+          "latencyMs": 3343
+        },
+        {
+          "operation": "instruction",
+          "outcome": "SUCCESS",
+          "errorCode": null,
+          "latencyMs": 3363
+        },
+        {
+          "operation": "instruction",
+          "outcome": "SUCCESS",
+          "errorCode": null,
+          "latencyMs": 4420
+        },
+        {
+          "operation": "import_mapping",
+          "outcome": "SUCCESS",
+          "errorCode": null,
+          "latencyMs": 3641
+        }
+      ],
+      "measured": {
+        "ask": {
+          "sampleCount": 3,
+          "committedCredits": 3,
+          "missingCostRates": 0,
+          "realModelCostUsd": 0.009368,
+          "costUsdPerAttempt": 0.0031226666666666664,
+          "costUsdPerCommittedCredit": 0.0031226666666666664
+        },
+        "instruction": {
+          "sampleCount": 2,
+          "committedCredits": 6,
+          "missingCostRates": 0,
+          "realModelCostUsd": 0.026898000000000005,
+          "costUsdPerAttempt": 0.013449000000000003,
+          "costUsdPerCommittedCredit": 0.004483000000000001
+        },
+        "import_mapping": {
+          "sampleCount": 1,
+          "committedCredits": 5,
+          "missingCostRates": 0,
+          "realModelCostUsd": 0.001653,
+          "costUsdPerAttempt": 0.001653,
+          "costUsdPerCommittedCredit": 0.0003306
+        }
+      },
+      "costRows": [
+        {
+          "provider": "anthropic",
+          "model": "claude-haiku-4-5-20251001",
+          "provider_version": "2023-06-01",
+          "operation": "model_input",
+          "unit": "token",
+          "quantity": "2145.00000000",
+          "amount_minor": "0.214500",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 1620,
+            "operation": "ask",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T17:44:04.809Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-haiku-4-5-20251001",
+          "provider_version": "2023-06-01",
+          "operation": "model_output",
+          "unit": "token",
+          "quantity": "149.00000000",
+          "amount_minor": "0.074500",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 1620,
+            "operation": "ask",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T17:44:04.814Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-haiku-4-5-20251001",
+          "provider_version": "2023-06-01",
+          "operation": "model_input",
+          "unit": "token",
+          "quantity": "2147.00000000",
+          "amount_minor": "0.214700",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 2190,
+            "operation": "ask",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T17:44:07.097Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-haiku-4-5-20251001",
+          "provider_version": "2023-06-01",
+          "operation": "model_output",
+          "unit": "token",
+          "quantity": "285.00000000",
+          "amount_minor": "0.142500",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 2190,
+            "operation": "ask",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T17:44:07.1Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-haiku-4-5-20251001",
+          "provider_version": "2023-06-01",
+          "operation": "model_input",
+          "unit": "token",
+          "quantity": "2146.00000000",
+          "amount_minor": "0.214600",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 3308,
+            "operation": "ask",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T17:44:10.452Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-haiku-4-5-20251001",
+          "provider_version": "2023-06-01",
+          "operation": "model_output",
+          "unit": "token",
+          "quantity": "152.00000000",
+          "amount_minor": "0.076000",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 3308,
+            "operation": "ask",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T17:44:10.454Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-sonnet-5",
+          "provider_version": "2023-06-01",
+          "operation": "model_input",
+          "unit": "token",
+          "quantity": "5117.00000000",
+          "amount_minor": "1.023400",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 3187,
+            "operation": "instruction",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T17:44:13.796Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-sonnet-5",
+          "provider_version": "2023-06-01",
+          "operation": "model_output",
+          "unit": "token",
+          "quantity": "310.00000000",
+          "amount_minor": "0.310000",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 3187,
+            "operation": "instruction",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T17:44:13.802Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-sonnet-5",
+          "provider_version": "2023-06-01",
+          "operation": "model_input",
+          "unit": "token",
+          "quantity": "5127.00000000",
+          "amount_minor": "1.025400",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 4375,
+            "operation": "instruction",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T17:44:18.229Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-sonnet-5",
+          "provider_version": "2023-06-01",
+          "operation": "model_output",
+          "unit": "token",
+          "quantity": "331.00000000",
+          "amount_minor": "0.331000",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 4375,
+            "operation": "instruction",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T17:44:18.232Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-haiku-4-5-20251001",
+          "provider_version": "2023-06-01",
+          "operation": "model_input",
+          "unit": "token",
+          "quantity": "1273.00000000",
+          "amount_minor": "0.127300",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 3592,
+            "operation": "import_mapping",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T17:44:21.872Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-haiku-4-5-20251001",
+          "provider_version": "2023-06-01",
+          "operation": "model_output",
+          "unit": "token",
+          "quantity": "76.00000000",
+          "amount_minor": "0.038000",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 3592,
+            "operation": "import_mapping",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T17:44:21.877Z"
+        }
+      ],
+      "extrapolatedMonthlyModelCostUsd": 0.6061960000000001,
+      "connectedOperationCostUsd": null,
+      "infrastructureCostUsd": null,
+      "actualStripeRevenueUsd": null,
+      "certifiedMonthlyMarginPercent": null,
+      "recommendedFinalAllowances": null,
+      "recommendedFinalPackPrices": null
+    },
+    {
+      "plan": "growth",
+      "skus": 500,
+      "monthly": {
+        "ask": 800,
+        "instruction": 60,
+        "import_mapping": 10
+      },
+      "connectedOperations": 18000,
+      "samples": [
+        {
+          "operation": "ask",
+          "outcome": "SUCCESS",
+          "errorCode": null,
+          "latencyMs": 2868
+        },
+        {
+          "operation": "ask",
+          "outcome": "SUCCESS",
+          "errorCode": null,
+          "latencyMs": 3005
+        },
+        {
+          "operation": "ask",
+          "outcome": "SUCCESS",
+          "errorCode": null,
+          "latencyMs": 3923
+        },
+        {
+          "operation": "instruction",
+          "outcome": "SUCCESS",
+          "errorCode": null,
+          "latencyMs": 3056
+        },
+        {
+          "operation": "instruction",
+          "outcome": "SUCCESS",
+          "errorCode": null,
+          "latencyMs": 3799
+        },
+        {
+          "operation": "import_mapping",
+          "outcome": "SUCCESS",
+          "errorCode": null,
+          "latencyMs": 2094
+        }
+      ],
+      "measured": {
+        "ask": {
+          "sampleCount": 3,
+          "committedCredits": 3,
+          "missingCostRates": 0,
+          "realModelCostUsd": 0.009368,
+          "costUsdPerAttempt": 0.0031226666666666664,
+          "costUsdPerCommittedCredit": 0.0031226666666666664
+        },
+        "instruction": {
+          "sampleCount": 2,
+          "committedCredits": 6,
+          "missingCostRates": 0,
+          "realModelCostUsd": 0.079718,
+          "costUsdPerAttempt": 0.039859,
+          "costUsdPerCommittedCredit": 0.013286333333333332
+        },
+        "import_mapping": {
+          "sampleCount": 1,
+          "committedCredits": 5,
+          "missingCostRates": 0,
+          "realModelCostUsd": 0.001658,
+          "costUsdPerAttempt": 0.001658,
+          "costUsdPerCommittedCredit": 0.0003316
+        }
+      },
+      "costRows": [
+        {
+          "provider": "anthropic",
+          "model": "claude-haiku-4-5-20251001",
+          "provider_version": "2023-06-01",
+          "operation": "model_input",
+          "unit": "token",
+          "quantity": "2145.00000000",
+          "amount_minor": "0.214500",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 2827,
+            "operation": "ask",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T17:44:26.694Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-haiku-4-5-20251001",
+          "provider_version": "2023-06-01",
+          "operation": "model_output",
+          "unit": "token",
+          "quantity": "149.00000000",
+          "amount_minor": "0.074500",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 2827,
+            "operation": "ask",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T17:44:26.696Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-haiku-4-5-20251001",
+          "provider_version": "2023-06-01",
+          "operation": "model_input",
+          "unit": "token",
+          "quantity": "2147.00000000",
+          "amount_minor": "0.214700",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 2976,
+            "operation": "ask",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T17:44:29.708Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-haiku-4-5-20251001",
+          "provider_version": "2023-06-01",
+          "operation": "model_output",
+          "unit": "token",
+          "quantity": "285.00000000",
+          "amount_minor": "0.142500",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 2976,
+            "operation": "ask",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T17:44:29.71Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-haiku-4-5-20251001",
+          "provider_version": "2023-06-01",
+          "operation": "model_input",
+          "unit": "token",
+          "quantity": "2146.00000000",
+          "amount_minor": "0.214600",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 3889,
+            "operation": "ask",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T17:44:33.627Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-haiku-4-5-20251001",
+          "provider_version": "2023-06-01",
+          "operation": "model_output",
+          "unit": "token",
+          "quantity": "152.00000000",
+          "amount_minor": "0.076000",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 3889,
+            "operation": "ask",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T17:44:33.636Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-sonnet-5",
+          "provider_version": "2023-06-01",
+          "operation": "model_input",
+          "unit": "token",
+          "quantity": "18317.00000000",
+          "amount_minor": "3.663400",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 2986,
+            "operation": "instruction",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T17:44:36.652Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-sonnet-5",
+          "provider_version": "2023-06-01",
+          "operation": "model_output",
+          "unit": "token",
+          "quantity": "310.00000000",
+          "amount_minor": "0.310000",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 2986,
+            "operation": "instruction",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T17:44:36.655Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-sonnet-5",
+          "provider_version": "2023-06-01",
+          "operation": "model_input",
+          "unit": "token",
+          "quantity": "18327.00000000",
+          "amount_minor": "3.665400",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 3733,
+            "operation": "instruction",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T17:44:40.447Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-sonnet-5",
+          "provider_version": "2023-06-01",
+          "operation": "model_output",
+          "unit": "token",
+          "quantity": "333.00000000",
+          "amount_minor": "0.333000",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 3733,
+            "operation": "instruction",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T17:44:40.45Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-haiku-4-5-20251001",
+          "provider_version": "2023-06-01",
+          "operation": "model_input",
+          "unit": "token",
+          "quantity": "1273.00000000",
+          "amount_minor": "0.127300",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 2050,
+            "operation": "import_mapping",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T17:44:42.566Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-haiku-4-5-20251001",
+          "provider_version": "2023-06-01",
+          "operation": "model_output",
+          "unit": "token",
+          "quantity": "77.00000000",
+          "amount_minor": "0.038500",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 2050,
+            "operation": "import_mapping",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T17:44:42.567Z"
+        }
+      ],
+      "extrapolatedMonthlyModelCostUsd": 4.906253333333333,
+      "connectedOperationCostUsd": null,
+      "infrastructureCostUsd": null,
+      "actualStripeRevenueUsd": null,
+      "certifiedMonthlyMarginPercent": null,
+      "recommendedFinalAllowances": null,
+      "recommendedFinalPackPrices": null
+    },
+    {
+      "plan": "pro",
+      "skus": 2000,
+      "monthly": {
+        "ask": 2500,
+        "instruction": 160,
+        "import_mapping": 30
+      },
+      "connectedOperations": 90000,
+      "samples": [
+        {
+          "operation": "ask",
+          "outcome": "SUCCESS",
+          "errorCode": null,
+          "latencyMs": 2380
+        },
+        {
+          "operation": "ask",
+          "outcome": "SUCCESS",
+          "errorCode": null,
+          "latencyMs": 2706
+        },
+        {
+          "operation": "ask",
+          "outcome": "SUCCESS",
+          "errorCode": null,
+          "latencyMs": 3229
+        },
+        {
+          "operation": "instruction",
+          "outcome": "SUCCESS",
+          "errorCode": null,
+          "latencyMs": 3507
+        },
+        {
+          "operation": "instruction",
+          "outcome": "SUCCESS",
+          "errorCode": null,
+          "latencyMs": 3905
+        },
+        {
+          "operation": "import_mapping",
+          "outcome": "SUCCESS",
+          "errorCode": null,
+          "latencyMs": 2379
+        }
+      ],
+      "measured": {
+        "ask": {
+          "sampleCount": 3,
+          "committedCredits": 3,
+          "missingCostRates": 0,
+          "realModelCostUsd": 0.009368,
+          "costUsdPerAttempt": 0.0031226666666666664,
+          "costUsdPerCommittedCredit": 0.0031226666666666664
+        },
+        "instruction": {
+          "sampleCount": 2,
+          "committedCredits": 6,
+          "missingCostRates": 0,
+          "realModelCostUsd": 0.08359,
+          "costUsdPerAttempt": 0.041795,
+          "costUsdPerCommittedCredit": 0.013931666666666667
+        },
+        "import_mapping": {
+          "sampleCount": 1,
+          "committedCredits": 5,
+          "missingCostRates": 0,
+          "realModelCostUsd": 0.001578,
+          "costUsdPerAttempt": 0.001578,
+          "costUsdPerCommittedCredit": 0.0003156
+        }
+      },
+      "costRows": [
+        {
+          "provider": "anthropic",
+          "model": "claude-haiku-4-5-20251001",
+          "provider_version": "2023-06-01",
+          "operation": "model_input",
+          "unit": "token",
+          "quantity": "2145.00000000",
+          "amount_minor": "0.214500",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 2326,
+            "operation": "ask",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T17:44:58.631Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-haiku-4-5-20251001",
+          "provider_version": "2023-06-01",
+          "operation": "model_output",
+          "unit": "token",
+          "quantity": "149.00000000",
+          "amount_minor": "0.074500",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 2326,
+            "operation": "ask",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T17:44:58.633Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-haiku-4-5-20251001",
+          "provider_version": "2023-06-01",
+          "operation": "model_input",
+          "unit": "token",
+          "quantity": "2147.00000000",
+          "amount_minor": "0.214700",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 2499,
+            "operation": "ask",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T17:45:01.179Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-haiku-4-5-20251001",
+          "provider_version": "2023-06-01",
+          "operation": "model_output",
+          "unit": "token",
+          "quantity": "285.00000000",
+          "amount_minor": "0.142500",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 2499,
+            "operation": "ask",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T17:45:01.19Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-haiku-4-5-20251001",
+          "provider_version": "2023-06-01",
+          "operation": "model_input",
+          "unit": "token",
+          "quantity": "2146.00000000",
+          "amount_minor": "0.214600",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 3195,
+            "operation": "ask",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T17:45:04.59Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-haiku-4-5-20251001",
+          "provider_version": "2023-06-01",
+          "operation": "model_output",
+          "unit": "token",
+          "quantity": "152.00000000",
+          "amount_minor": "0.076000",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 3195,
+            "operation": "ask",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T17:45:04.592Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-sonnet-5",
+          "provider_version": "2023-06-01",
+          "operation": "model_input",
+          "unit": "token",
+          "quantity": "19215.00000000",
+          "amount_minor": "3.843000",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 3396,
+            "operation": "instruction",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T17:45:08.025Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-sonnet-5",
+          "provider_version": "2023-06-01",
+          "operation": "model_output",
+          "unit": "token",
+          "quantity": "310.00000000",
+          "amount_minor": "0.310000",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 3396,
+            "operation": "instruction",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T17:45:08.099Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-sonnet-5",
+          "provider_version": "2023-06-01",
+          "operation": "model_input",
+          "unit": "token",
+          "quantity": "19225.00000000",
+          "amount_minor": "3.845000",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 3877,
+            "operation": "instruction",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T17:45:11.999Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-sonnet-5",
+          "provider_version": "2023-06-01",
+          "operation": "model_output",
+          "unit": "token",
+          "quantity": "361.00000000",
+          "amount_minor": "0.361000",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 3877,
+            "operation": "instruction",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T17:45:12.001Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-haiku-4-5-20251001",
+          "provider_version": "2023-06-01",
+          "operation": "model_input",
+          "unit": "token",
+          "quantity": "1273.00000000",
+          "amount_minor": "0.127300",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 2360,
+            "operation": "import_mapping",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T17:45:14.384Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-haiku-4-5-20251001",
+          "provider_version": "2023-06-01",
+          "operation": "model_output",
+          "unit": "token",
+          "quantity": "61.00000000",
+          "amount_minor": "0.030500",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 2360,
+            "operation": "import_mapping",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T17:45:14.386Z"
+        }
+      ],
+      "extrapolatedMonthlyModelCostUsd": 14.541206666666666,
+      "connectedOperationCostUsd": null,
+      "infrastructureCostUsd": null,
+      "actualStripeRevenueUsd": null,
+      "certifiedMonthlyMarginPercent": null,
+      "recommendedFinalAllowances": null,
+      "recommendedFinalPackPrices": null
+    },
+    {
+      "plan": "enterprise",
+      "skus": 5000,
+      "monthly": {
+        "ask": 8000,
+        "instruction": 500,
+        "import_mapping": 100
+      },
+      "connectedOperations": 300000,
+      "samples": [
+        {
+          "operation": "ask",
+          "outcome": "SUCCESS",
+          "errorCode": null,
+          "latencyMs": 2591
+        },
+        {
+          "operation": "ask",
+          "outcome": "SUCCESS",
+          "errorCode": null,
+          "latencyMs": 2585
+        },
+        {
+          "operation": "ask",
+          "outcome": "SUCCESS",
+          "errorCode": null,
+          "latencyMs": 4915
+        },
+        {
+          "operation": "instruction",
+          "outcome": "SUCCESS",
+          "errorCode": null,
+          "latencyMs": 4170
+        },
+        {
+          "operation": "instruction",
+          "outcome": "SUCCESS",
+          "errorCode": null,
+          "latencyMs": 3862
+        },
+        {
+          "operation": "import_mapping",
+          "outcome": "SUCCESS",
+          "errorCode": null,
+          "latencyMs": 5835
+        }
+      ],
+      "measured": {
+        "ask": {
+          "sampleCount": 3,
+          "committedCredits": 3,
+          "missingCostRates": 0,
+          "realModelCostUsd": 0.009373,
+          "costUsdPerAttempt": 0.003124333333333333,
+          "costUsdPerCommittedCredit": 0.003124333333333333
+        },
+        "instruction": {
+          "sampleCount": 2,
+          "committedCredits": 6,
+          "missingCostRates": 0,
+          "realModelCostUsd": 0.08327999999999999,
+          "costUsdPerAttempt": 0.041639999999999996,
+          "costUsdPerCommittedCredit": 0.013879999999999998
+        },
+        "import_mapping": {
+          "sampleCount": 1,
+          "committedCredits": 5,
+          "missingCostRates": 0,
+          "realModelCostUsd": 0.001588,
+          "costUsdPerAttempt": 0.001588,
+          "costUsdPerCommittedCredit": 0.0003176
+        }
+      },
+      "costRows": [
+        {
+          "provider": "anthropic",
+          "model": "claude-haiku-4-5-20251001",
+          "provider_version": "2023-06-01",
+          "operation": "model_input",
+          "unit": "token",
+          "quantity": "2145.00000000",
+          "amount_minor": "0.214500",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 2406,
+            "operation": "ask",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T18:00:06.153Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-haiku-4-5-20251001",
+          "provider_version": "2023-06-01",
+          "operation": "model_output",
+          "unit": "token",
+          "quantity": "149.00000000",
+          "amount_minor": "0.074500",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 2406,
+            "operation": "ask",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T18:00:06.158Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-haiku-4-5-20251001",
+          "provider_version": "2023-06-01",
+          "operation": "model_input",
+          "unit": "token",
+          "quantity": "2147.00000000",
+          "amount_minor": "0.214700",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 2564,
+            "operation": "ask",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T18:00:08.799Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-haiku-4-5-20251001",
+          "provider_version": "2023-06-01",
+          "operation": "model_output",
+          "unit": "token",
+          "quantity": "286.00000000",
+          "amount_minor": "0.143000",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 2564,
+            "operation": "ask",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T18:00:08.8Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-haiku-4-5-20251001",
+          "provider_version": "2023-06-01",
+          "operation": "model_input",
+          "unit": "token",
+          "quantity": "2146.00000000",
+          "amount_minor": "0.214600",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 4883,
+            "operation": "ask",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T18:00:13.706Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-haiku-4-5-20251001",
+          "provider_version": "2023-06-01",
+          "operation": "model_output",
+          "unit": "token",
+          "quantity": "152.00000000",
+          "amount_minor": "0.076000",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 4883,
+            "operation": "ask",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T18:00:13.709Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-sonnet-5",
+          "provider_version": "2023-06-01",
+          "operation": "model_input",
+          "unit": "token",
+          "quantity": "19215.00000000",
+          "amount_minor": "3.843000",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 4031,
+            "operation": "instruction",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T18:00:17.869Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-sonnet-5",
+          "provider_version": "2023-06-01",
+          "operation": "model_output",
+          "unit": "token",
+          "quantity": "310.00000000",
+          "amount_minor": "0.310000",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 4031,
+            "operation": "instruction",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T18:00:17.871Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-sonnet-5",
+          "provider_version": "2023-06-01",
+          "operation": "model_input",
+          "unit": "token",
+          "quantity": "19225.00000000",
+          "amount_minor": "3.845000",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 3815,
+            "operation": "instruction",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T18:00:21.734Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-sonnet-5",
+          "provider_version": "2023-06-01",
+          "operation": "model_output",
+          "unit": "token",
+          "quantity": "330.00000000",
+          "amount_minor": "0.330000",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 3815,
+            "operation": "instruction",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T18:00:21.737Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-haiku-4-5-20251001",
+          "provider_version": "2023-06-01",
+          "operation": "model_input",
+          "unit": "token",
+          "quantity": "1273.00000000",
+          "amount_minor": "0.127300",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 4188,
+            "operation": "import_mapping",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T18:00:25.972Z"
+        },
+        {
+          "provider": "anthropic",
+          "model": "claude-haiku-4-5-20251001",
+          "provider_version": "2023-06-01",
+          "operation": "model_output",
+          "unit": "token",
+          "quantity": "63.00000000",
+          "amount_minor": "0.031500",
+          "currency": "USD",
+          "detail": {
+            "latencyMs": 4188,
+            "operation": "import_mapping",
+            "costRateMissing": false
+          },
+          "occurred_at": "2026-10-05T18:00:25.974Z"
+        }
+      ],
+      "extrapolatedMonthlyModelCostUsd": 45.97346666666666,
+      "connectedOperationCostUsd": null,
+      "infrastructureCostUsd": null,
+      "actualStripeRevenueUsd": null,
+      "certifiedMonthlyMarginPercent": null,
+      "recommendedFinalAllowances": null,
+      "recommendedFinalPackPrices": null
+    }
+  ]
+}

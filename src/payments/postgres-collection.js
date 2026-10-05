@@ -130,13 +130,20 @@ async function executeRequestEffect(database,workspaceId,effectId,options={}){
       WHERE workspace_id=$1 AND customer_id=$2 AND provider=$3 AND external_customer_id IS NOT NULL
       ORDER BY created_at DESC,id DESC LIMIT 1`,[workspaceId,request.customer_id,effect.provider])).rows[0];
     providerCalled=true;
-    const externalCustomerId=previous?.external_customer_id||(await provider.createCustomer(ctx,
-      {name:request.customer_name,email:request.customer_email})).externalCustomerId;
-    const created=await provider.createInvoice(ctx,{externalCustomerId,attemptId:request.id,
+    const operations=require('../commercial/operations');
+    const externalCustomerId=previous?.external_customer_id||(await operations.run(database,workspaceId,{capability:'payments.customer',
+      key:`${effect.idempotencyKey}:customer`,provider:effect.provider,operation:'customer_create'},()=>provider.createCustomer(ctx,
+      {name:request.customer_name,email:request.customer_email}))).externalCustomerId;
+    // Persist this verified intermediate result before reserving the invoice
+    // operation; exhaustion must not create a second Stripe customer later.
+    await database.query(`UPDATE payment_requests SET external_customer_id=$3 WHERE workspace_id=$1 AND id=$2
+      AND external_customer_id IS NULL`,[workspaceId,request.id,externalCustomerId]);
+    const created=await operations.run(database,workspaceId,{capability:'payments.customer',key:effect.idempotencyKey,
+      provider:effect.provider,operation:'invoice_create'},()=>provider.createInvoice(ctx,{externalCustomerId,attemptId:request.id,
       amountMinor:Number(request.amount_minor),currency:request.currency,
       description:request.purpose==='DEPOSIT'?`Deposit for ${request.order_number}`:request.order_number,
       reference:request.invoice_number||`${request.order_number}-deposit`,dueDate:request.due_date||null,
-      idempotencyKey:effect.idempotencyKey});
+      idempotencyKey:effect.idempotencyKey}));
     if(!created?.externalInvoiceId||!created?.hostedUrl)throw Object.assign(
       new ValidationError('The payment provider did not confirm a hosted payment page. Nothing was sent to the customer.'),
       {code:'payment_hosted_page_missing',status:422});
@@ -173,6 +180,11 @@ async function receiveVerifiedEvent(database,workspaceId,providerName,event,opti
       (id,workspace_id,provider,external_event_id,event_type,payload,request_id,external_payment_id,received_at)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,[eventId,workspaceId,providerName,externalEventId,read.kind,
       JSON.stringify(event||{}),request?.id||null,read.externalPaymentId||null,at]);
+    const costScope=await require('../commercial/entitlements').ownerScopeForWorkspace(client,workspaceId);
+    await require('../commercial/control-service').recordCost(client,costScope,{provider:providerName,
+      operation:'payment_webhook_reconciliation',unit:'event',quantity:1,providerVersion:'verified-webhook-v1',
+      idempotencyKey:`payment-webhook:${providerName}:${workspaceId}:${externalEventId}`,
+      detail:{essentialReconciliation:true,customerUsageExempt:true}});
     const finish=async(outcome,paymentId=null)=>{await client.query(`UPDATE payment_provider_events SET outcome=$2,
       payment_id=$3,processed_at=$4 WHERE id=$1`,[eventId,outcome,paymentId,nowIso()]);
       return {applied:Boolean(paymentId),replayed:false,outcome,paymentId,requestId:request?.id||null};};
@@ -275,9 +287,10 @@ async function executeRefundEffect(database,workspaceId,effectId,options={}){
     const account=await accountFor(database,workspaceId,effect.provider);
     const provider=options.provider||providerRegistry.get(effect.provider);
     providerCalled=true;
-    const created=await provider.refundPayment(providerContext(account,options),{
+    const created=await require('../commercial/operations').run(database,workspaceId,{capability:'payments.customer',key:effect.idempotencyKey,
+      provider:effect.provider,operation:'refund_create'},()=>provider.refundPayment(providerContext(account,options),{
       externalPaymentId:refund.external_payment_id,amountMinor:Number(refund.amount_minor),
-      idempotencyKey:effect.idempotencyKey});
+      idempotencyKey:effect.idempotencyKey}));
     if(!created?.externalRefundId)throw Object.assign(new ValidationError(
       'The payment provider did not confirm the refund. StockChief did not change cash or accounting.'),
     {code:'payment_refund_confirmation_missing',status:422});
@@ -305,3 +318,5 @@ async function executeRefundEffect(database,workspaceId,effectId,options={}){
 
 module.exports={hydrate,get,listForOrder,accountFor,queueRequest,executeRequestEffect,receiveVerifiedEvent,
   queueCustomerReturnRefund,executeRefundEffect};
+require('../commercial/enforcement').guardExports(module.exports,0,1,{queueRequest:'payments.customer',
+  executeRequestEffect:'payments.customer',queueCustomerReturnRefund:'payments.customer',executeRefundEffect:'payments.customer'});

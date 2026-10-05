@@ -1,4 +1,6 @@
 'use strict';
+process.env.NODE_ENV='test';
+process.env.ANTHROPIC_API_KEY=''; // Regression fixtures never call a paid model; the cost simulation is a separate real run.
 
 const test=require('node:test');
 const assert=require('node:assert/strict');
@@ -62,16 +64,17 @@ test('commercial entitlement and subscription lifecycle acceptance', {timeout:18
       current_period_end='2026-11-01T00:00:00Z' WHERE account_id=$1`,[business.accountId]);
     assert.equal((await entitlements.meterState(database,scope,'processing_units',{now:'2026-10-02T00:00:00Z'})).used,0);
   });
-  await context.test('6 overage calculation uses configured blocks',async()=>{
+  await context.test('6 included usage never creates implicit overage charges',async()=>{
     await entitlements.recordUsage(database,scope,{id:newId('usage'),meter:'processing_units',units:1001,
       idempotencyKey:'october-batch',occurredAt:'2026-10-03T00:00:00Z'});
     const state=await entitlements.meterState(database,scope,'processing_units',{now:'2026-10-04T00:00:00Z'});
-    assert.equal(state.overageUnits,1);assert.equal(state.overageAmountMinor,7500);
+    assert.equal(state.overageUnits,0);assert.equal(state.overageAmountMinor,0);
   });
   await context.test('7 enterprise-style override grants a plan-excluded capability',async()=>{
     await database.query(`INSERT INTO commercial_entitlement_overrides
-      (id,account_id,capability,enabled,reason) VALUES($1,$2,'integrations.custom',1,'Contract test')`,[newId('override'),business.accountId]);
+      (id,account_id,capability,enabled,reason) VALUES($1,$2,'connections.custom_api',1,'Contract test')`,[newId('override'),business.accountId]);
     assert.equal((await entitlements.capabilityState(database,scope,'integrations.custom')).enabled,true);
+    await database.query("DELETE FROM commercial_entitlement_overrides WHERE account_id=$1 AND capability='connections.custom_api'",[business.accountId]);
   });
   await context.test('8 downgrade preserves over-limit connection data',async()=>{
     const connectorId=newId('con');await database.query(`INSERT INTO workspace_connectors
@@ -84,8 +87,8 @@ test('commercial entitlement and subscription lifecycle acceptance', {timeout:18
       [business.workspaceId])).rows[0].count),1);
   });
   await context.test('9 failed billing enters grace without deleting business records',async()=>{
-    await database.query("UPDATE account_subscriptions SET stripe_customer_id='cus_acceptance' WHERE account_id=$1",[business.accountId]);
-    await commercial.handleBillingEvent(database,{id:'evt_failed_once',type:'invoice.payment_failed',data:{object:{id:'in_failed',customer:'cus_acceptance'}}});
+    await database.query("UPDATE account_subscriptions SET stripe_customer_id='cus_acceptance',stripe_subscription_id='sub_price_mapping' WHERE account_id=$1",[business.accountId]);
+    await commercial.handleBillingEvent(database,{id:'evt_failed_once',type:'invoice.payment_failed',data:{object:{id:'in_failed',customer:'cus_acceptance',subscription:'sub_price_mapping'}}});
     const subscription=await entitlements.subscriptionFor(database,business.accountId);assert.equal(subscription.status,'GRACE');
     assert.equal((await entitlements.operationalAccess(subscription)).canOperate,true);
     assert.equal(Number((await database.query('SELECT COUNT(*) AS count FROM workspaces WHERE id=$1',[business.workspaceId])).rows[0].count),1);
@@ -128,6 +131,10 @@ test('commercial entitlement and subscription lifecycle acceptance', {timeout:18
       [business.accountId])).rows[0].count),1);
   });
   await context.test('15 Starter connection limit is enforced before credentials are created',async()=>{
+    await assert.rejects(()=>connections.createFeed(database,{workspaceId:business.workspaceId,actorId:business.userId},
+      {displayName:'Plan-excluded custom feed'}),/does not include/);
+    await database.query(`INSERT INTO commercial_entitlement_overrides(id,account_id,capability,enabled,reason)
+      VALUES($1,$2,'connections.custom_api',1,'Structural capacity certification only')`,[newId('override'),business.accountId]);
     const first=await connections.createFeed(database,{workspaceId:business.workspaceId,actorId:business.userId},
       {displayName:'Second connection'});assert.ok(first.token.startsWith('fnd_live_'));
     await assert.rejects(()=>connections.createFeed(database,{workspaceId:business.workspaceId,actorId:business.userId},
@@ -136,6 +143,7 @@ test('commercial entitlement and subscription lifecycle acceptance', {timeout:18
       WHERE workspace_id=$1 AND status<>'disconnected'`,[business.workspaceId])).rows[0].count),2);
   });
   await context.test('16 Stripe Price ID, not stale metadata, determines the active plan',async()=>{
+    await database.query("UPDATE account_subscriptions SET stripe_customer_id='cus_price_mapping' WHERE account_id=$1",[business.accountId]);
     await database.query("UPDATE commercial_plans SET stripe_monthly_price_id='price_growth_live' WHERE id='growth'");
     await commercial.upsertSubscription(database,{id:'sub_price_mapping',customer:'cus_price_mapping',status:'active',
       metadata:{stockchief_account_id:business.accountId,stockchief_plan_id:'starter'},current_period_start:1788220800,
@@ -145,31 +153,31 @@ test('commercial entitlement and subscription lifecycle acceptance', {timeout:18
   });
   await context.test('17 repeated failed-payment events do not extend the original grace deadline',async()=>{
     await commercial.handleBillingEvent(database,{id:'evt_failed_grace_one',type:'invoice.payment_failed',
-      data:{object:{id:'in_failed_one',customer:'cus_price_mapping'}}});
+      data:{object:{id:'in_failed_one',customer:'cus_price_mapping',subscription:'sub_price_mapping'}}});
     const fixed='2026-11-15T12:00:00Z';await database.query('UPDATE account_subscriptions SET grace_ends_at=$2 WHERE account_id=$1',
       [business.accountId,fixed]);
     await commercial.handleBillingEvent(database,{id:'evt_failed_grace_two',type:'invoice.payment_failed',
-      data:{object:{id:'in_failed_two',customer:'cus_price_mapping'}}});
+      data:{object:{id:'in_failed_two',customer:'cus_price_mapping',subscription:'sub_price_mapping'}}});
     assert.equal(new Date((await entitlements.subscriptionFor(database,business.accountId)).grace_ends_at).toISOString(),
       new Date(fixed).toISOString());
   });
-  await context.test('18 overage is delivered to Stripe once and becomes billed with the paid invoice',async()=>{
+  await context.test('18 retired implicit overage delivery cannot charge Stripe',async()=>{
     await database.query(`UPDATE account_subscriptions SET plan_id='growth',status='ACTIVE',
       current_period_start='2026-10-01T00:00:00Z',current_period_end='2026-11-01T00:00:00Z'
       WHERE account_id=$1`,[business.accountId]);const prepared=await commercial.prepareOverageCharges(database,'cus_price_mapping');
-    assert.equal(prepared.length,1);assert.equal(Number(prepared[0].amount_minor),7500);let calls=0;
+    assert.equal(prepared.length,0);let calls=0;
     const provider={createInvoiceItem:async(input)=>{calls+=1;assert.equal(input.amountMinor,7500);return {id:'ii_overage_once'};}};
-    assert.equal((await commercial.deliverOverageCharges(database,'cus_price_mapping',provider)).length,1);
-    assert.equal((await commercial.deliverOverageCharges(database,'cus_price_mapping',provider)).length,0);assert.equal(calls,1);
+    assert.equal((await commercial.deliverOverageCharges(database,'cus_price_mapping',provider)).length,0);
+    assert.equal((await commercial.deliverOverageCharges(database,'cus_price_mapping',provider)).length,0);assert.equal(calls,0);
     await commercial.handleBillingEvent(database,{id:'evt_overage_paid',type:'invoice.paid',
       data:{object:{id:'in_overage_paid',customer:'cus_price_mapping'}}});
-    assert.equal((await database.query('SELECT status FROM commercial_overage_charges WHERE id=$1',[prepared[0].id])).rows[0].status,'BILLED');
+    assert.equal((await database.query('SELECT COUNT(*) AS n FROM commercial_overage_charges')).rows[0].n,'0');
   });
   await context.test('19 proposed packaging cannot open a real checkout',async()=>{
     const account=(await database.query('SELECT id,email FROM accounts WHERE id=$1',[business.accountId])).rows[0];
     await database.query("UPDATE commercial_plans SET packaging_status='PROPOSED',stripe_monthly_price_id='price_starter_test' WHERE id='starter'");
     await assert.rejects(()=>commercial.beginCheckout(database,account,{planId:'starter',interval:'monthly',origin:'https://stockchief.example'}),
-      /feature and pricing review is approved/i);
+      /pending approval of the Commercial Readiness Report/i);
   });
   await context.test('20 an expired grace period is read-only before the cleanup sweep runs',async()=>{
     await database.query(`UPDATE account_subscriptions SET status='GRACE',grace_ends_at='2026-08-31T00:00:00Z'
@@ -180,7 +188,7 @@ test('commercial entitlement and subscription lifecycle acceptance', {timeout:18
   await context.test('21 repeated Stripe past-due updates do not push the grace deadline forward',async()=>{
     const fixed='2026-09-07T00:00:00Z';await database.query(`UPDATE account_subscriptions SET status='GRACE',grace_ends_at=$2
       WHERE account_id=$1`,[business.accountId,fixed]);
-    const payload={id:'sub_grace_preserved',customer:'cus_price_mapping',status:'past_due',
+    const payload={id:'sub_price_mapping',customer:'cus_price_mapping',status:'past_due',
       metadata:{stockchief_account_id:business.accountId,stockchief_plan_id:'growth'},current_period_start:1788220800,
       current_period_end:1790812800,items:{data:[{price:{id:'price_growth_live',recurring:{interval:'month'}}}]}};
     await commercial.upsertSubscription(database,payload);await commercial.upsertSubscription(database,payload);
@@ -195,12 +203,12 @@ test('commercial entitlement and subscription lifecycle acceptance', {timeout:18
     const account=(await database.query('SELECT id,email FROM accounts WHERE id=$1',[business.accountId])).rows[0];let captured=null;
     const provider={createCheckout:async(input)=>{captured=input;return {id:'cs_promo_once',url:'https://checkout.example.test/promo'};}};
     await commercial.beginCheckout(database,account,{planId:'starter',interval:'monthly',promoCode:'launchday',
-      origin:'https://stockchief.example'},{provider});assert.equal(captured.trialDays,1);
+      origin:'https://stockchief.example'},{provider,testMode:true});assert.equal(captured.trialDays,1);
     assert.equal(captured.promotionCodeId,'promo_launchday');await commercial.completeCheckoutAttempt(database,'cs_promo_once');
     const attempt=(await database.query("SELECT * FROM commercial_checkout_attempts WHERE stripe_checkout_session_id='cs_promo_once'")).rows[0];
     assert.equal(attempt.status,'COMPLETED');assert.equal(attempt.promo_status,'REDEEMED');
     await assert.rejects(()=>commercial.beginCheckout(database,account,{planId:'starter',interval:'monthly',promoCode:'LAUNCHDAY',
-      origin:'https://stockchief.example'},{provider}),/exhausted/i);
+      origin:'https://stockchief.example'},{provider,testMode:true}),/exhausted/i);
   });
   await context.test('23 an expired checkout releases its reserved promotion',async()=>{
     await database.query(`INSERT INTO commercial_promo_codes(code,plan_id,trial_days,discount_percent,redemption_limit)
@@ -208,15 +216,15 @@ test('commercial entitlement and subscription lifecycle acceptance', {timeout:18
       [business.accountId])).rows[0];let sequence=0;const provider={createCheckout:async()=>({id:`cs_retry_${++sequence}`,
       url:'https://checkout.example.test/retry'})};
     await commercial.beginCheckout(database,account,{planId:'starter',interval:'monthly',promoCode:'TRYAGAIN',
-      origin:'https://stockchief.example'},{provider});await commercial.handleBillingEvent(database,{id:'evt_checkout_expired',
+      origin:'https://stockchief.example'},{provider,testMode:true});await commercial.handleBillingEvent(database,{id:'evt_checkout_expired',
       type:'checkout.session.expired',data:{object:{id:'cs_retry_1'}}});
     const promotion=(await database.query("SELECT * FROM commercial_promo_codes WHERE code='TRYAGAIN'")).rows[0];
     assert.equal(Number(promotion.redeemed_count),0);const retry=await commercial.beginCheckout(database,account,
-      {planId:'starter',interval:'monthly',promoCode:'TRYAGAIN',origin:'https://stockchief.example'},{provider});
+      {planId:'starter',interval:'monthly',promoCode:'TRYAGAIN',origin:'https://stockchief.example'},{provider,testMode:true});
     assert.equal(retry.sessionId,'cs_retry_2');
   });
   await context.test('24 Starter Ask does not bypass the connected-email entitlement',async()=>{
-    await subscribe(database,business.accountId,'starter','ACTIVE',{start:'2026-09-01T00:00:00Z',end:'2099-10-01T00:00:00Z'});
+    await subscribe(database,business.accountId,'starter','ACTIVE',{start:new Date().toISOString(),end:'2099-10-01T00:00:00Z'});
     const result=await assistant.ask(database,{workspaceId:business.workspaceId,actorId:business.userId},
       'Email Acme Supply and say the delivery is approved.');
     assert.equal(result.status,'CLARIFY');assert.match(result.answer,/available on Growth/i);
@@ -314,7 +322,7 @@ test('commercial entitlement and subscription lifecycle acceptance', {timeout:18
     await database.query(`UPDATE account_subscriptions SET status='ACTIVE',stripe_customer_id='cus_retry',grace_ends_at=NULL
       WHERE account_id=$1`,[business.accountId]);const original=commercialNotifications.queuePaymentFailed;
     commercialNotifications.queuePaymentFailed=async()=>{throw new Error('temporary queue outage');};
-    const event={id:'evt_retry_after_failure',type:'invoice.payment_failed',data:{object:{id:'in_retry',customer:'cus_retry'}}};
+    const event={id:'evt_retry_after_failure',type:'invoice.payment_failed',data:{object:{id:'in_retry',customer:'cus_retry',subscription:'sub_price_mapping'}}};
     try{await assert.rejects(()=>commercial.handleBillingEvent(database,event),/temporary queue outage/);}
     finally{commercialNotifications.queuePaymentFailed=original;}
     assert.equal((await database.query(`SELECT status FROM commercial_billing_events WHERE provider_event_id=$1`,[event.id])).rows[0].status,'FAILED');
@@ -350,9 +358,10 @@ test('public, auth and invitation journeys work in desktop and mobile Chromium',
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),true);
     }
     await page.goto(`${base}/pricing`);assert.equal(await page.locator('.plan-card').count(),4);
-    assert.match(await page.locator('#growth .plan-card__usage').innerText(),/1,000 stockchief intelligent operations/i);
+    assert.match(await page.locator('#growth .plan-card__usage').innerText(),/AI Work Credits/i);
+    assert.equal(await page.getByText('View usage details',{exact:true}).count(),4);
     assert.doesNotMatch(await page.locator('.plan-ladder').innerText(),/document pages processed/i);
-    assert.doesNotMatch(await page.locator('.plan-ladder').innerText(),/kits|document understanding|scoped APIs/i);
+    assert.doesNotMatch(await page.locator('.plan-ladder').innerText(),/\b(?:kits|SSO|EDI)\b|document understanding|AI email drafting/i);
     await page.getByRole('button',{name:/Annual/}).click();
     assert.match(await page.locator('.plan-card').nth(1).innerText(),/billed annually/i);
     assert.match(await page.getByRole('link',{name:'Choose Growth'}).getAttribute('href'),/plan=growth.*interval=annual/);
@@ -387,7 +396,11 @@ test('public, auth and invitation journeys work in desktop and mobile Chromium',
   await gatedPage.getByLabel('Email').fill('starter-owner@example.test');await gatedPage.getByLabel('Password').fill('starter-password');
   await Promise.all([gatedPage.waitForURL(`${base}/`),gatedPage.getByRole('button',{name:'Sign in'}).click()]);
   await gatedPage.goto(`${base}/register?plan=pro`);await gatedPage.waitForURL(`${base}/settings`);
-  assert.match(await gatedPage.locator('body').innerText(),/already signed in as starter-owner@example\.test/i);
+  // Redirect identity and durable account state are the security contract;
+  // the transient informational flash may already have been dismissed.
+  assert.match(await gatedPage.locator('body').innerText(),/starter-owner@example\.test/i);
+  assert.equal(Number((await database.query('SELECT COUNT(*) AS count FROM accounts WHERE email=$1',
+    ['starter-owner@example.test'])).rows[0].count),1);
   await gatedPage.goto(`${base}/settings/connections`);assert.match(await gatedPage.locator('body').innerText(),/Available on Growth/i);
   assert.ok(await gatedPage.getByRole('link',{name:'See Growth'}).count()>0);
   await gatedPage.goto(`${base}/planning`);assert.match(gatedPage.url(),/\/upgrade\?capability=forecasting.basic/);
@@ -395,6 +408,8 @@ test('public, auth and invitation journeys work in desktop and mobile Chromium',
   await gatedPage.goto(`${base}/planning`);assert.match(await gatedPage.locator('body').innerText(),/What happens next/i);
   await gatedPage.goto(`${base}/settings`);const csrfToken=await gatedPage.locator('input[name="_csrf"]').first().inputValue();
   const originalName=(await database.query('SELECT name FROM workspaces WHERE id=$1',[gated.workspaceId])).rows[0].name;
+  await database.query(`INSERT INTO commercial_entitlement_overrides(id,account_id,capability,enabled,reason)
+    VALUES($1,$2,'api.public',1,'Suspension bypass certification')`,[newId('override'),gated.accountId]);
   const apiClient=await publicApi.create(database,{workspaceId:gated.workspaceId,actorId:gated.userId},
     {name:'Suspension bypass test',scopes:['inventory:write']});
   await database.query("UPDATE account_subscriptions SET status='SUSPENDED' WHERE account_id=$1",[gated.accountId]);
@@ -408,7 +423,7 @@ test('public, auth and invitation journeys work in desktop and mobile Chromium',
   await database.query("UPDATE account_subscriptions SET status='ACTIVE' WHERE account_id=$1",[gated.accountId]);
   await database.query(`INSERT INTO commercial_admin_accounts(account_id,granted_by) VALUES($1,'browser-test')`,[gated.accountId]);
   await gatedPage.setViewportSize({width:390,height:844});await gatedPage.goto(`${base}/billing`);
-  const billingText=await gatedPage.locator('body').innerText();assert.match(billingText,/Plan and billing/i);
+  const billingText=await gatedPage.locator('body').innerText();assert.match(billingText,/Plan & Usage/i);
   assert.doesNotMatch(billingText,/Cancellation is scheduled/i);
   assert.equal(await gatedPage.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),true);
   await gatedPage.goto(`${base}/upgrade?capability=connection.email&return=/billing`);await gatedPage.waitForURL(`${base}/billing`);
@@ -440,7 +455,12 @@ test('paid-workspace signup verifies email before checkout and never provisions 
     await migratePostgres(database);await database.query(`UPDATE commercial_plans SET stripe_annual_price_id='price_pro_annual_test',
       packaging_status='APPROVED'
       WHERE id='pro'`);let checkoutInput=null;const billingProvider={
-      createCheckout:async(input)=>{checkoutInput=input;return {id:'cs_contract_test',url:input.successUrl.replace('{CHECKOUT_SESSION_ID}','cs_contract_test')};},
+      createCheckout:async(input)=>{checkoutInput=input;
+        await commercial.handleBillingEvent(database,{id:'evt_contract_fixture',type:'customer.subscription.created',created:Math.floor(Date.now()/1000),
+          data:{object:{id:'sub_contract_test',customer:'cus_contract_test',status:'active',
+            current_period_start:Math.floor(Date.now()/1000),current_period_end:Math.floor(Date.now()/1000)+365*86400,
+            metadata:{stockchief_account_id:input.accountId},items:{data:[{price:{id:'price_pro_annual_test',recurring:{interval:'year'}}}]}}}});
+        return {id:'cs_contract_test',url:input.successUrl.replace('{CHECKOUT_SESSION_ID}','cs_contract_test')};},
       retrieveCheckout:async()=>({id:'cs_contract_test',status:'complete',payment_status:'paid',
         metadata:{stockchief_account_id:checkoutInput.accountId,stockchief_plan_id:checkoutInput.planId},subscription:{
           id:'sub_contract_test',customer:'cus_contract_test',status:'active',current_period_start:1788220800,current_period_end:1790812800,
@@ -448,7 +468,7 @@ test('paid-workspace signup verifies email before checkout and never provisions 
           items:{data:[{price:{id:'price_pro_annual_test',recurring:{interval:'year'}}}]}}}),
       listInvoices:async()=>({data:[]}),createPortal:async()=>({url:'https://billing.example.test/portal'}),
     };const app=createPostgresApp({database,env:'test',sessionSecret:'commercial-auth-secret',
-      commercialOptions:{billingProvider,loadInvoices:false,publicOrigin:'request'}});
+      commercialOptions:{billingProvider,testMode:true,loadInvoices:false,publicOrigin:'request'}});
     const server=await new Promise((resolve)=>{const started=app.listen(0,'127.0.0.1',()=>resolve(started));});
     const browser=await chromium.launch();context.after(async()=>{if(prior===undefined)delete process.env.STOCKCHIEF_REQUIRE_PAID_WORKSPACE;
       else process.env.STOCKCHIEF_REQUIRE_PAID_WORKSPACE=prior;await browser.close();await new Promise((resolve)=>server.close(resolve));
