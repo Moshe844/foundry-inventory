@@ -52,7 +52,14 @@ function createPostgresAuthRouter(database) {
   });
   router.get('/register', async (req,res,next) => {
     try {
-    if(req.account)return res.redirect(req.user?'/':'/inventories');
+    if(req.account){
+      if(req.account.plan==='commercial_pending')return res.redirect(req.account.email_verified_at?'/complete-signup':'/verify-email/pending');
+      if(req.user){
+        req.flash('info',`You are already signed in as ${req.account.email} on ${req.user.workspace_name||'this inventory'}. Sign out before creating a different StockChief account.`);
+        return res.redirect('/settings');
+      }
+      return res.redirect('/inventories');
+    }
     const plans=await commercial.listPlans(database);const requested=String(req.query.plan||'growth');
     const selected=selfServiceSelection(plans,requested);
     await commercial.track(database,{eventName:'signup_started',anonymousId:req.sessionID,planId:selected?.id||null,sourcePath:'/register'});

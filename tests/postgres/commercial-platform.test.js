@@ -369,6 +369,8 @@ test('public, auth and invitation journeys work in desktop and mobile Chromium',
   await gatedPage.goto(`${base}/login?next=${encodeURIComponent('//attacker.example/steal-session')}`);
   await gatedPage.getByLabel('Email').fill('starter-owner@example.test');await gatedPage.getByLabel('Password').fill('starter-password');
   await Promise.all([gatedPage.waitForURL(`${base}/`),gatedPage.getByRole('button',{name:'Sign in'}).click()]);
+  await gatedPage.goto(`${base}/register?plan=pro`);await gatedPage.waitForURL(`${base}/settings`);
+  assert.match(await gatedPage.locator('body').innerText(),/already signed in as starter-owner@example\.test/i);
   await gatedPage.goto(`${base}/settings/connections`);assert.match(await gatedPage.locator('body').innerText(),/Available on Growth/i);
   assert.ok(await gatedPage.getByRole('link',{name:'See Growth'}).count()>0);
   await gatedPage.goto(`${base}/planning`);assert.match(gatedPage.url(),/\/upgrade\?capability=forecasting.basic/);
