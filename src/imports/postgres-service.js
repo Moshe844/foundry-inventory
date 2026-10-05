@@ -162,12 +162,17 @@ async function analyse(database, ctx, input) {
   const text=input.text === undefined ? null : String(input.text);
   if(!buffer && !String(text || '').trim())throw new ValidationError('Choose a file, or paste your data.');
   const bytes=buffer || Buffer.from(text,'utf8');
+  const sourceHash=digest(bytes);
   const parsedWorkbook=parser.parse(buffer?{buffer,filename:input.filename}:{text,filename:input.filename});
   const sheetIndex=Number.isInteger(input.sheetIndex)?input.sheetIndex:parsedWorkbook.primarySheet;
   const sheet=parsedWorkbook.sheets[sheetIndex];
   if(!sheet?.rows.length)throw new ValidationError('That source has no inventory rows.');
+  const prior=(await database.query(`SELECT field_mappings,detected_type FROM import_plans
+    WHERE workspace_id=$1 AND source_hash=$2 AND status<>'CANCELLED' ORDER BY created_at DESC,id DESC LIMIT 1`,
+  [ctx.workspaceId,sourceHash])).rows[0];
   const proposal=await mappingService.proposeMappings({...sheet,sourceName:input.filename || 'pasted data'},
-    {provider:input.provider || null,mappings:input.mappings,detectedType:input.detectedType});
+    {provider:input.provider || null,mappings:input.mappings || json(prior?.field_mappings,null),
+      detectedType:input.detectedType || prior?.detected_type,onBeforeAi:input.onBeforeAi,onUsage:input.onUsage});
   if(proposal.detectedType==='unknown')throw new ValidationError('StockChief could not identify a product or SKU column. Name the columns and try again.');
   const context=await workspaceContext(database,ctx.workspaceId);
   if(input.defaultLocationId && !context.locations.some((row)=>row.id===input.defaultLocationId))
@@ -176,7 +181,7 @@ async function analyse(database, ctx, input) {
   const at=nowIso();
   const plan={id:newId('imp'),workspaceId:ctx.workspaceId,createdByUserId:ctx.actorId,
     sourceName:input.filename || 'Pasted inventory data',sourceKind:buffer?(parsedWorkbook.format==='xlsx'?'xlsx':'csv'):'paste',
-    sourceHash:digest(bytes),sourceBytes:bytes.length,detectedType:proposal.detectedType,sheetName:sheet.name,
+    sourceHash,sourceBytes:bytes.length,detectedType:proposal.detectedType,sheetName:sheet.name,
     sheetIndex,sourceColumns:sheet.columns.map((column)=>({index:column.index,name:column.name})),
     fieldMappings:proposal.mappings,transformations:{axisNames:proposal.axisNames,aiUsed:proposal.aiUsed,
       ignoredColumns:proposal.ignoredColumns,sheetCount:parsedWorkbook.sheets.length},trackingModel:{mode:'per-row'},

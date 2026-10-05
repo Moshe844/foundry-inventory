@@ -4,6 +4,7 @@ const config = require('../config');
 const stripe = require('./stripe-billing');
 const notifications = require('./notifications');
 const entitlements = require('../entitlements/postgres-service');
+const control = require('./control-service');
 const { newId } = require('../lib/util');
 const { ValidationError,NotFoundError } = require('../domain/errors');
 
@@ -95,6 +96,63 @@ async function releaseCheckoutAttempt(database,idOrSession,status='EXPIRED'){ret
     promo_status=CASE WHEN promo_status='RESERVED' THEN 'RELEASED' ELSE promo_status END,updated_at=now() WHERE id=$1`,
   [attempt.id,status]);return attempt;},{isolation:'SERIALIZABLE'});}
 
+function planPriceId(plan,interval){return interval==='ANNUAL'?plan.stripe_annual_price_id:plan.stripe_monthly_price_id;}
+function prorationAmount(preview){return (preview?.lines?.data||[]).filter((line)=>line.proration===true
+  ||line.parent?.subscription_item_details?.proration===true).reduce((sum,line)=>sum+Number(line.amount||0),0);}
+
+async function subscriptionChangeQuote(database,accountId,input,options={}){
+  const provider=options.provider||stripe;const current=await entitlements.subscriptionFor(database,accountId);
+  if(!current?.stripe_subscription_id||!current.stripe_customer_id)throw new ValidationError(
+    'This account does not have a Stripe subscription to change.');
+  const target=await getSelfServicePlan(database,input.planId);const currentPlan=await getPlan(database,current.plan_id);
+  const interval=input.interval==='annual'||input.interval==='ANNUAL'?'ANNUAL':'MONTHLY';const priceId=planPriceId(target,interval);
+  if(!priceId)throw new ValidationError('That plan and billing interval are not configured for checkout.');
+  if(target.id===current.plan_id&&interval===current.billing_interval)throw new ValidationError('That plan is already active.');
+  const providerSubscription=await provider.retrieveSubscription(current.stripe_subscription_id,options.providerOptions||{});
+  const item=providerSubscription.items?.data?.[0];if(!item?.id)throw new ValidationError(
+    'Stripe did not return the subscription item required to change this plan.');
+  const downgrade=Number(target.display_order)<Number(currentPlan.display_order);
+  const excess=downgrade?await control.resourceExcess(database,{accountId,workspaceId:null},target.id):{};
+  const prorationDate=Math.floor(Date.now()/1000);let preview=null;
+  if(options.preview!==false&&provider.previewSubscriptionChange)preview=await provider.previewSubscriptionChange({
+    customerId:current.stripe_customer_id,subscriptionId:current.stripe_subscription_id,itemId:item.id,priceId,
+    prorationBehavior:downgrade?'none':'create_prorations',prorationDate},options.providerOptions||{});
+  return {current,currentPlan,target,interval,priceId,itemId:item.id,downgrade,excess,preview,prorationDate,
+    prorationAmountMinor:prorationAmount(preview),effectiveAt:downgrade?current.current_period_end:new Date().toISOString()};
+}
+
+async function requestSubscriptionChange(database,accountId,input,options={}){
+  const provider=options.provider||stripe;const quote=await subscriptionChangeQuote(database,accountId,input,options);
+  if(quote.downgrade&&Object.keys(quote.excess).length)throw new ValidationError(
+    'Current usage exceeds the lower plan. Reduce the listed resources before scheduling this downgrade.');
+  const changeId=newId('subchange');await database.query(`INSERT INTO commercial_subscription_changes
+    (id,account_id,subscription_id,from_plan_id,to_plan_id,status,effective_at,resource_excess,requested_by_account_id)
+    VALUES($1,$2,$3,$4,$5,'PENDING',$6,$7::jsonb,$8)`,[changeId,accountId,quote.current.id,quote.current.plan_id,
+    quote.target.id,quote.effectiveAt,JSON.stringify(quote.excess),input.requestedByAccountId||accountId]);
+  let updated;try{updated=await provider.updateSubscription({changeId,accountId,planId:quote.target.id,
+      subscriptionId:quote.current.stripe_subscription_id,itemId:quote.itemId,priceId:quote.priceId,
+      prorationBehavior:quote.downgrade?'none':'always_invoice',paymentBehavior:'pending_if_incomplete',
+      prorationDate:quote.downgrade?undefined:quote.prorationDate},options.providerOptions||{});
+  }catch(error){await database.query(`UPDATE commercial_subscription_changes SET status='BLOCKED',updated_at=now()
+      WHERE id=$1`,[changeId]);throw error;}
+  const providerConfirmedAt=new Date().toISOString();const saved=await database.transaction((client)=>upsertSubscription(client,updated,
+    {providerCreatedAt:providerConfirmedAt,authoritative:true}),{isolation:'SERIALIZABLE'});
+  const applied=saved?.plan_id===quote.target.id&&!saved?.scheduledChange;
+  await database.query(`UPDATE commercial_subscription_changes SET status=$2,provider_reference=$3,
+    proration_amount_minor=$4,updated_at=now() WHERE id=$1`,[changeId,applied?'APPLIED':'PENDING',updated.id||null,
+    quote.prorationAmountMinor]);
+  return {changeId,quote,subscription:saved,status:applied?'APPLIED':'PENDING'};
+}
+
+async function setSubscriptionCancellation(database,accountId,cancelAtPeriodEnd,options={}){
+  const provider=options.provider||stripe;const current=await entitlements.subscriptionFor(database,accountId);
+  if(!current?.stripe_subscription_id)throw new ValidationError('This account does not have an active Stripe subscription.');
+  const updated=await provider.setCancellation({accountId,planId:current.plan_id,
+    subscriptionId:current.stripe_subscription_id,cancelAtPeriodEnd:Boolean(cancelAtPeriodEnd)},options.providerOptions||{});
+  return database.transaction((client)=>upsertSubscription(client,updated,{providerCreatedAt:new Date().toISOString(),authoritative:true}),
+    {isolation:'SERIALIZABLE'});
+}
+
 function statusFromStripe(subscription) {
   if(subscription.status==='trialing')return 'TRIALING';
   if(subscription.status==='active')return 'ACTIVE';
@@ -107,13 +165,21 @@ async function upsertSubscription(client, data, options={}) {
   const item=data.items?.data?.[0]||{};const priceId=item.price?.id||item.plan?.id||null;
   const pricePlan=priceId?(await client.query(`SELECT id FROM commercial_plans
     WHERE stripe_monthly_price_id=$1 OR stripe_annual_price_id=$1`,[priceId])).rows[0]:null;
-  const planId=pricePlan?.id||data.metadata?.stockchief_plan_id||data.planId;
+  const requestedPlanId=pricePlan?.id||data.metadata?.stockchief_plan_id||data.planId;
   const accountId=data.metadata?.stockchief_account_id || data.accountId;
-  if(!planId||!accountId)return null;
+  if(!requestedPlanId||!accountId)return null;
   const providerCreatedAt=options.providerCreatedAt||null;
   const existing=(await client.query('SELECT * FROM account_subscriptions WHERE account_id=$1 FOR UPDATE',[accountId])).rows[0];
-  if(providerCreatedAt&&existing?.last_provider_event_created_at
+  if(!options.authoritative&&providerCreatedAt&&existing?.last_provider_event_created_at
       &&new Date(existing.last_provider_event_created_at)>new Date(providerCreatedAt))return {...existing,ignoredStaleEvent:true};
+  const pending=existing?(await client.query(`SELECT change.*,
+    (target.display_order<source.display_order) AS is_downgrade FROM commercial_subscription_changes change
+    JOIN commercial_plans source ON source.id=change.from_plan_id JOIN commercial_plans target ON target.id=change.to_plan_id
+    WHERE change.account_id=$1 AND change.to_plan_id=$2 AND change.status='PENDING'
+    ORDER BY change.created_at DESC LIMIT 1 FOR UPDATE`,[accountId,requestedPlanId])).rows[0]:null;
+  const eventPeriodStart=data.current_period_start?new Date(Number(data.current_period_start)*1000):new Date();
+  const deferPlan=Boolean(pending?.is_downgrade&&pending.effective_at&&eventPeriodStart<new Date(pending.effective_at));
+  const planId=deferPlan?existing.plan_id:requestedPlanId;
   const plan=(await client.query('SELECT grace_days FROM commercial_plans WHERE id=$1',[planId])).rows[0];
   if(!plan)return null;
   const status=statusFromStripe(data);const now=new Date();
@@ -135,15 +201,20 @@ async function upsertSubscription(client, data, options={}) {
       cancelled_at=EXCLUDED.cancelled_at,provider_state=EXCLUDED.provider_state,
       last_provider_event_created_at=COALESCE(EXCLUDED.last_provider_event_created_at,account_subscriptions.last_provider_event_created_at),
       updated_at=now() RETURNING *`,
-  [newId('sub'),accountId,planId,status,(item.price?.recurring?.interval||item.plan?.interval)==='year'?'ANNUAL':'MONTHLY',
+  [newId('sub'),accountId,planId,status,deferPlan?existing.billing_interval:
+    (item.price?.recurring?.interval||item.plan?.interval)==='year'?'ANNUAL':'MONTHLY',
     typeof data.customer==='string'?data.customer:data.customer?.id, data.id,
     data.current_period_start || null,data.current_period_end || null,data.trial_end || null,graceEnds,
-    data.cancel_at_period_end?1:0,data.canceled_at || null,JSON.stringify({stripeStatus:data.status}),providerCreatedAt]);
-  const saved=result.rows[0];
-  if(existing&&existing.plan_id!==saved.plan_id)await client.query(`INSERT INTO commercial_subscription_changes
+    data.cancel_at_period_end?1:0,data.canceled_at || null,JSON.stringify({stripeStatus:data.status,stripePlanId:requestedPlanId,
+      scheduledPlanId:deferPlan?requestedPlanId:null}),providerCreatedAt]);
+  const saved={...result.rows[0],scheduledChange:deferPlan?pending:null};
+  if(existing&&existing.plan_id!==saved.plan_id){const applied=await client.query(`UPDATE commercial_subscription_changes
+      SET status='APPLIED',effective_at=COALESCE(effective_at,now()),provider_reference=COALESCE(provider_reference,$4),updated_at=now()
+      WHERE account_id=$1 AND from_plan_id=$2 AND to_plan_id=$3 AND status='PENDING' RETURNING id`,
+    [saved.account_id,existing.plan_id,saved.plan_id,data.id]);if(!applied.rows.length)await client.query(`INSERT INTO commercial_subscription_changes
     (id,account_id,subscription_id,from_plan_id,to_plan_id,status,effective_at,provider_reference,resource_excess)
     VALUES($1,$2,$3,$4,$5,'APPLIED',now(),$6,'{}'::jsonb)`,[newId('subchange'),saved.account_id,saved.id,
-    existing.plan_id,saved.plan_id,data.id]);
+    existing.plan_id,saved.plan_id,data.id]);}
   return saved;
 }
 
@@ -239,7 +310,7 @@ async function prepareOverageCharges(database,customerId){
     JOIN commercial_plans plan ON plan.id=subscription.plan_id WHERE subscription.stripe_customer_id=$1`,[customerId])).rows[0];
   if(!subscription||!subscription.current_period_start||!subscription.current_period_end)return [];
   const meters=(await database.query(`SELECT meter FROM commercial_plan_meters WHERE plan_id=$1
-    AND overage_block_units IS NOT NULL AND overage_amount_minor IS NOT NULL`,[subscription.plan_id])).rows;
+    AND overage_mode='BILL' AND overage_block_units IS NOT NULL AND overage_amount_minor IS NOT NULL`,[subscription.plan_id])).rows;
   const created=[];for(const row of meters){const state=await entitlements.meterState(database,
     {accountId:subscription.account_id,workspaceId:null},row.meter,{subscription,
       now:new Date(new Date(subscription.current_period_end).getTime()-1).toISOString()});
@@ -267,5 +338,6 @@ async function deliverOverageCharges(database,customerId,provider=stripe,provide
   return delivered;
 }
 
-module.exports={listPlans,getPlan,getSelfServicePlan,validatePromotion,beginCheckout,completeCheckoutAttempt,releaseCheckoutAttempt,statusFromStripe,
-  upsertSubscription,handleBillingEvent,track,trackOnce,prepareOverageCharges,deliverOverageCharges};
+module.exports={listPlans,getPlan,getSelfServicePlan,validatePromotion,beginCheckout,completeCheckoutAttempt,releaseCheckoutAttempt,
+  subscriptionChangeQuote,requestSubscriptionChange,setSubscriptionCancellation,statusFromStripe,upsertSubscription,
+  handleBillingEvent,track,trackOnce,prepareOverageCharges,deliverOverageCharges};

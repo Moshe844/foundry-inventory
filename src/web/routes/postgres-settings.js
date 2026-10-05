@@ -5,6 +5,8 @@ const autopilot=require('../../autopilot/postgres-service');
 const connections=require('../../connections/postgres-service');
 const operatingInstructions=require('../../manager/postgres-operating-instructions');
 const readiness=require('../../operations/postgres-readiness');
+const entitlements=require('../../entitlements/postgres-service');
+const commercialControl=require('../../commercial/control-service');
 const passwordAuth=require('../../domain/auth-service');
 const accountLifecycle=require('../../domain/postgres-account-lifecycle');
 const {ROLE_IDS}=require('../../domain/constants');
@@ -129,9 +131,24 @@ function createPostgresSettingsRouter(database,options={}){const router=express.
   router.get('/operating-instructions/:id',requireAuth,asyncRoute(async(req,res)=>{const proposal=await operatingInstructions.get(
     database,req.ctx.workspaceId,req.params.id);return res.page('settings/postgres-operating-instruction',{
       title:'Review standing instruction',nav:'settings',room:true,backTo:{href:'/what-you-told-me',label:"What you've told me"},
-      proposal,descriptions:proposal.resolvedChanges.map(operatingInstructions.describe)});}));
-  router.post('/operating-instructions/:id/answer',requireOwner,asyncRoute(async(req,res)=>{const replacement=await operatingInstructions.answer(
-    database,req.ctx,req.params.id,req.body.answer,{provider:options.provider});req.flash('success','The same instruction was read again with your answer.');
+      proposal,descriptions:proposal.resolvedChanges.map(operatingInstructions.describe),usageKey:newId('instructionusage')});}));
+  router.post('/operating-instructions/:id/answer',requireOwner,asyncRoute(async(req,res)=>{
+    const scope={accountId:req.workspace.owner_account_id,workspaceId:req.ctx.workspaceId};
+    await entitlements.assertCapability(database,scope,'ask.prepare_actions');
+    const metered=Boolean(options.provider||config.ai.configured);const usageKey=String(req.body.usageKey||newId('instructionusage'));
+    if(metered)await entitlements.reserveUsage(database,scope,{id:newId('usage'),meter:'intelligent_operations',units:1,
+      idempotencyKey:usageKey,detail:{kind:'operating_instruction_clarification'}});
+    let modelCall=0;const onUsage=async(usage,detail)=>{modelCall+=1;const providerName=usage.provider||options.provider?.name||config.ai.provider;
+      for(const [operation,quantity] of [['model_input',Number(usage.inputTokens||0)],['model_output',Number(usage.outputTokens||0)]]){
+        if(quantity<=0)continue;await commercialControl.recordCost(database,scope,{provider:providerName,operation,unit:'token',quantity,
+          idempotencyKey:`${usageKey}:model:${modelCall}:${operation}`,detail:{...detail,model:usage.model||null,
+            latencyMs:usage.latencyMs||null}});}};
+    let replacement;try{replacement=await operatingInstructions.answer(database,req.ctx,req.params.id,req.body.answer,
+      {provider:options.provider,onUsage});if(metered)await entitlements.commitUsage(database,scope,
+      {meter:'intelligent_operations',idempotencyKey:usageKey});}
+    catch(error){if(metered)await entitlements.reverseUsage(database,scope,{meter:'intelligent_operations',idempotencyKey:usageKey,
+      reason:'The operating instruction clarification did not complete.'});throw error;}
+    req.flash('success','The same instruction was read again with your answer.');
     return res.redirect(303,`/operating-instructions/${replacement.id}`);}));
   router.post('/operating-instructions/:id/approve',requireOwner,asyncRoute(async(req,res)=>{const result=await operatingInstructions.approve(
     database,req.ctx,req.params.id,req.body.integrityHash);req.flash('success',result.replayed?'That rule was already in force.':

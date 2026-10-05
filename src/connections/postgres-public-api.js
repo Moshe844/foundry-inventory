@@ -3,6 +3,8 @@
 const crypto=require('node:crypto');
 const {newId,nowIso,requireText}=require('../lib/util');
 const {AuthenticationError,ValidationError,InvariantError}=require('../domain/errors');
+const commercialUsage=require('../entitlements/postgres-service');
+const commercialControl=require('../commercial/control-service');
 
 const PREFIX='fnd_api_';
 const ALLOWED_SCOPES=Object.freeze(['inventory:read','inventory:write']);
@@ -83,6 +85,15 @@ async function executeCommand(database,auth,input,handler){
       return {result:parse(prior.result,{}),replayed:true};
     }
     const result=await handler(client,`public-api:${auth.clientId}:${key}`);
+    const usageKey=`api:${auth.clientId}:${key}`;
+    await commercialUsage.recordUsage(client,{accountId:auth.accountId,workspaceId:auth.workspaceId},{
+      id:newId('usage'),meter:'api_events',units:1,idempotencyKey:usageKey,
+      detail:{clientId:auth.clientId,commandType},
+    });
+    await commercialControl.recordCost(client,{accountId:auth.accountId,workspaceId:auth.workspaceId},{
+      provider:'stockchief_api',operation:'command',unit:'event',quantity:1,idempotencyKey:usageKey,
+      detail:{clientId:auth.clientId,commandType},
+    });
     await client.query(`INSERT INTO public_api_commands
       (id,workspace_id,client_id,idempotency_key,command_type,request_hash,result,created_at)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,[newId('apicmd'),auth.workspaceId,auth.clientId,key,commandType,

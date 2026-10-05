@@ -58,7 +58,9 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
     await page.goto(`${base}/onboarding?add=1`);
     await page.getByLabel('Inventory spreadsheets').setInputFiles({name:'opening-stock.csv',mimeType:'text/csv',buffer:source});
     await page.waitForURL(/\/imports\/imp_/);
-    assert.match(await page.locator('main').innerText(),/This exact source was already imported/);
+    const duplicateMain=await page.locator('main').innerText();
+    assert.match(duplicateMain,/This exact source was already imported/);
+    assert.match(duplicateMain,/Approve 2 rows/);
     assert.equal(await page.getByRole('button',{name:'Approve 2 rows'}).isDisabled(),true);
     assert.deepEqual((await database.query(`SELECT COUNT(*) AS items,COALESCE((SELECT SUM(on_hand) FROM balances
       WHERE workspace_id=$1),0) AS units FROM items WHERE workspace_id=$1`,[identity.workspace_id])).rows[0],

@@ -31,6 +31,7 @@ function route(scope,handler){
   return async(req,res)=>{
     try{const auth=await publicApi.authenticate(req.app.locals.database,req.get('authorization'),scope);
       if(scope.endsWith(':write'))await entitlements.assertWorkspaceOperational(req.app.locals.database,auth.workspaceId);
+      await entitlements.assertCapability(req.app.locals.database,auth,'api.public');
       return await handler(auth,req,res);}
     catch(error){return apiError(res,error);}
   };

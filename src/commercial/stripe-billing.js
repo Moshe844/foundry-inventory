@@ -79,6 +79,31 @@ async function retrieveSubscription(subscriptionId, options = {}) {
   return call(`/subscriptions/${encodeURIComponent(subscriptionId)}`, {...options,method:'GET'});
 }
 
+async function previewSubscriptionChange(input,options={}){
+  return call('/invoices/create_preview',{...options,values:{customer:input.customerId,subscription:input.subscriptionId,
+    'subscription_details[items][0][id]':input.itemId,'subscription_details[items][0][price]':input.priceId,
+    'subscription_details[items][0][quantity]':1,
+    'subscription_details[proration_behavior]':input.prorationBehavior||'create_prorations',
+    'subscription_details[proration_date]':input.prorationDate}});
+}
+
+async function updateSubscription(input,options={}){
+  return call(`/subscriptions/${encodeURIComponent(input.subscriptionId)}`,{...options,
+    idempotencyKey:`stockchief-subscription-change:${input.changeId}`,values:{
+      'items[0][id]':input.itemId,'items[0][price]':input.priceId,'items[0][quantity]':1,
+      proration_behavior:input.prorationBehavior||'create_prorations',payment_behavior:input.paymentBehavior||'pending_if_incomplete',
+      proration_date:input.prorationDate,'metadata[stockchief_account_id]':input.accountId,
+      'metadata[stockchief_plan_id]':input.planId,cancel_at_period_end:'false',
+    }});
+}
+
+async function setCancellation(input,options={}){
+  return call(`/subscriptions/${encodeURIComponent(input.subscriptionId)}`,{...options,
+    idempotencyKey:`stockchief-subscription-cancellation:${input.subscriptionId}:${input.cancelAtPeriodEnd?'cancel':'reactivate'}`,
+    values:{cancel_at_period_end:input.cancelAtPeriodEnd?'true':'false',
+      'metadata[stockchief_account_id]':input.accountId,'metadata[stockchief_plan_id]':input.planId}});
+}
+
 async function listInvoices(customerId, options = {}) {
   return call(`/invoices?customer=${encodeURIComponent(customerId)}&limit=24`, {...options,method:'GET'});
 }
@@ -111,5 +136,6 @@ function verifyEvent(raw, headers = {}, options = {}) {
   return JSON.parse(body);
 }
 
-module.exports = { createCheckout,createPortal,retrieveCheckout,retrieveSubscription,listInvoices,createInvoiceItem,verifyEvent,
+module.exports = { createCheckout,createPortal,retrieveCheckout,retrieveSubscription,previewSubscriptionChange,updateSubscription,
+  setCancellation,listInvoices,createInvoiceItem,verifyEvent,
   __internal:{call,form} };

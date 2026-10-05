@@ -146,6 +146,7 @@ async function interpret(database,ctx,instruction,options={}){const clean=String
     database.query(`SELECT name FROM suppliers WHERE workspace_id=$1 AND status='active' ORDER BY name LIMIT 200`,[ctx.workspaceId])]);
   const response=await provider.complete({system:SYSTEM,prompt:JSON.stringify({instruction:clean,realSkus:catalogue.rows,
     realLocations:locations.rows,realSuppliers:suppliers.rows}),schema:SCHEMA,schemaName:'postgres_operating_instruction'});
+  if(options.onUsage&&response.usage)await options.onUsage(response.usage,{schemaName:'postgres_operating_instruction'});
   const read=response?.data||{};
   if(!read.understood||!Array.isArray(read.changes)||!read.changes.length)
     throw new ValidationError(read.unsupportedReason||read.clarifyingQuestion||'StockChief could not turn that into a safe standing rule.');

@@ -73,10 +73,13 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     return res.status(204).end();}));
   router.get('/billing',requireAccount,requireBillingOwner,asyncRoute(async(req,res)=>{const scope=commercialScope(req);
     const summary=await entitlements.summary(database,scope);const usageWarnings=await commercialControl.usageWarnings(database,scope,{summary});
+    const pendingChanges=(await database.query(`SELECT change.*,plan.public_name AS target_plan_name
+      FROM commercial_subscription_changes change JOIN commercial_plans plan ON plan.id=change.to_plan_id
+      WHERE change.account_id=$1 AND change.status='PENDING' ORDER BY change.created_at DESC`,[scope.accountId])).rows;
     let invoices=[];if(summary.subscription?.stripe_customer_id&&options.loadInvoices!==false){try{
       invoices=(await provider.listInvoices(summary.subscription.stripe_customer_id,options.providerOptions||{})).data||[];}catch{invoices=[];}}
     return res.page('commercial/billing',{title:'Plan and billing',nav:'settings',room:true,summary,usageWarnings,invoices,
-      billingConfigured:config.commercial.configured,plans:await commercial.listPlans(database)});}));
+      pendingChanges,billingConfigured:config.commercial.configured,plans:await commercial.listPlans(database)});}));
   router.get('/upgrade',requireAccount,requireBillingOwner,asyncRoute(async(req,res)=>{const capability=String(req.query.capability||'').trim();
     const scope=commercialScope(req);const returnPath=safeReturnPath(req.query.return);const current=await entitlements.subscriptionFor(database,scope.accountId);
     const currentCapability=await entitlements.capabilityState(database,scope,capability,{subscription:current});
@@ -91,9 +94,8 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
   router.post('/billing/checkout',requireAccount,requireBillingOwner,requireVerifiedEmail,asyncRoute(async(req,res)=>{
     const scope=commercialScope(req);const current=await entitlements.subscriptionFor(database,scope.accountId);
     const origin=options.publicOrigin==='request'?res.locals.origin:(options.publicOrigin||config.connections.publicOrigin||res.locals.origin);
-    if(current?.stripe_customer_id&&current?.stripe_subscription_id){const portal=await provider.createPortal({accountId:scope.accountId,
-      requestId:newId('portal'),customerId:current.stripe_customer_id,subscriptionId:current.stripe_subscription_id,
-      returnUrl:`${origin}/billing`},options.providerOptions||{});return res.redirect(303,portal.url);}
+    if(current?.stripe_customer_id&&current?.stripe_subscription_id)return res.redirect(303,
+      `/billing/change?plan=${encodeURIComponent(req.body.planId||'')}&interval=${req.body.interval==='annual'?'annual':'monthly'}`);
     req.session.checkoutSelection={planId:req.body.planId,interval:req.body.interval==='annual'?'annual':'monthly'};await saveSession(req);
     const checkout=await commercial.beginCheckout(database,req.account,{planId:req.body.planId,interval:req.body.interval,
       promoCode:req.body.promoCode,origin,returnPath:req.body.returnPath||'/onboarding'},{provider,providerOptions:options.providerOptions});
@@ -103,15 +105,32 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     options.providerOptions||{});if(session.metadata?.stockchief_account_id!==req.account.id)throw new AuthorizationError('That checkout belongs to another account.');
     let subscription=session.subscription;if(typeof subscription==='string')subscription=await provider.retrieveSubscription(subscription,options.providerOptions||{});
     if(session.status!=='complete'||!subscription)throw new ValidationError('Stripe has not completed this subscription checkout.');
-    await commercial.completeCheckoutAttempt(database,session.id);
     const saved=await database.transaction((client)=>commercial.upsertSubscription(client,subscription),{isolation:'SERIALIZABLE'});
     if(!saved||!entitlements.operationalAccess(saved).canOperate)throw new ValidationError('The subscription is not active yet. No workspace was created.');
+    await commercial.completeCheckoutAttempt(database,session.id);
     const provisioned=await auth.provisionFirstWorkspace(database,req.account.id);req.session.workspaceId=provisioned.workspaceId;
     await commercial.trackOnce(database,{eventName:'subscription_activated',accountId:req.account.id,
       planId:session.metadata?.stockchief_plan_id||null,sourcePath:'/billing/checkout/complete'});
     await commercial.trackOnce(database,{eventName:'first_workspace_setup_completed',accountId:req.account.id,
       planId:saved.plan_id,sourcePath:'/billing/checkout/complete',detail:{workspaceId:provisioned.workspaceId}});
     req.flash('success','Your plan is active. Your first inventory is ready to set up.');return req.session.save(()=>res.redirect(303,'/onboarding'));}));
+  router.get('/billing/change',requireAccount,requireBillingOwner,requireVerifiedEmail,asyncRoute(async(req,res)=>{
+    const scope=commercialScope(req);const quote=await commercial.subscriptionChangeQuote(database,scope.accountId,{planId:req.query.plan,
+      interval:req.query.interval},{provider,providerOptions:options.providerOptions});
+    return res.page('commercial/change',{title:'Review plan change',nav:'settings',room:true,quote});}));
+  router.post('/billing/change',requireAccount,requireBillingOwner,requireVerifiedEmail,asyncRoute(async(req,res)=>{
+    const scope=commercialScope(req);const changed=await commercial.requestSubscriptionChange(database,scope.accountId,{planId:req.body.planId,
+      interval:req.body.interval,requestedByAccountId:req.account.id},{provider,providerOptions:options.providerOptions});
+    req.flash('success',changed.status==='APPLIED'?`${changed.quote.target.public_name} is active.`:
+      `${changed.quote.target.public_name} is scheduled for ${new Date(changed.quote.effectiveAt).toLocaleDateString()}.`);
+    return req.session.save(()=>res.redirect(303,'/billing'));}));
+  router.post('/billing/cancel',requireAccount,requireBillingOwner,requireVerifiedEmail,asyncRoute(async(req,res)=>{
+    await commercial.setSubscriptionCancellation(database,commercialScope(req).accountId,true,{provider,providerOptions:options.providerOptions});
+    req.flash('success','Cancellation is scheduled for the end of the paid period. Your records remain available.');
+    return req.session.save(()=>res.redirect(303,'/billing'));}));
+  router.post('/billing/reactivate',requireAccount,requireBillingOwner,requireVerifiedEmail,asyncRoute(async(req,res)=>{
+    await commercial.setSubscriptionCancellation(database,commercialScope(req).accountId,false,{provider,providerOptions:options.providerOptions});
+    req.flash('success','Your subscription will renew normally.');return req.session.save(()=>res.redirect(303,'/billing'));}));
   router.post('/billing/portal',requireAccount,requireBillingOwner,asyncRoute(async(req,res)=>{const scope=commercialScope(req);
     const subscription=await entitlements.subscriptionFor(database,scope.accountId);
     if(!subscription?.stripe_customer_id)throw new ValidationError('A billing account has not been created yet.');
@@ -135,9 +154,12 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
       FROM commercial_meter_definitions definition LEFT JOIN commercial_plan_meters meter
         ON meter.meter=definition.meter AND meter.plan_id=$1
       WHERE definition.kind='USAGE' AND definition.customer_visible=1
-        AND (meter.meter IS NULL OR meter.included_units IS NULL OR meter.overage_mode IS NULL)
+        AND (meter.meter IS NULL OR meter.included_units IS NULL OR meter.overage_mode IS NULL
+          OR meter.overage_mode='CONTRACT'
+          OR (meter.overage_mode='BILL' AND (meter.overage_block_units IS NULL OR meter.overage_block_units<=0
+            OR meter.overage_amount_minor IS NULL)))
       ORDER BY definition.label`,[req.params.id])).rows;
-      if(incomplete.length)throw new ValidationError(`Before approving checkout, set an included allowance and overage policy for: ${incomplete.map((row)=>row.label).join(', ')}.`);}
+      if(incomplete.length)throw new ValidationError(`Before approving checkout, set a complete included allowance and overage policy for: ${incomplete.map((row)=>row.label).join(', ')}.`);}
     await database.query(`UPDATE commercial_plans SET
       public_name=$2,outcome=$3,audience=$4,monthly_amount_minor=NULLIF($5,0),annual_amount_minor=NULLIF($6,0),
       stripe_monthly_price_id=NULLIF($7,''),stripe_annual_price_id=NULLIF($8,''),trial_days=$9,grace_days=$10,
@@ -173,11 +195,14 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     commercialCatalog.assertMeterKey(req.params.meter);const before=(await database.query(
       'SELECT * FROM commercial_plan_meters WHERE plan_id=$1 AND meter=$2',[req.params.id,req.params.meter])).rows[0]||null;
     const nullable=(value)=>String(value??'').trim()===''?null:Math.max(0,Math.round(Number(value)));
+    const overageMode=['PAUSE','BILL','PURCHASE','CONTRACT'].includes(req.body.overageMode)?req.body.overageMode:'PAUSE';
+    const overageBlockUnits=nullable(req.body.overageBlockUnits);
+    const overageAmountMinor=String(req.body.overageAmount||'').trim()===''?null:Math.max(0,Math.round(Number(req.body.overageAmount)*100));
+    if(overageMode==='BILL'&&(!overageBlockUnits||overageAmountMinor===null))throw new ValidationError(
+      'Billed overage needs a positive block size and a price.');
     await database.query(`UPDATE commercial_plan_meters SET label=$3,included_units=$4,hard_limit=$5,
       overage_block_units=$6,overage_amount_minor=$7,overage_mode=$8 WHERE plan_id=$1 AND meter=$2`,[req.params.id,req.params.meter,
-      req.body.label,nullable(req.body.includedUnits),nullable(req.body.hardLimit),nullable(req.body.overageBlockUnits),
-      String(req.body.overageAmount||'').trim()===''?null:Math.max(0,Math.round(Number(req.body.overageAmount)*100)),
-      ['PAUSE','BILL','PURCHASE','CONTRACT'].includes(req.body.overageMode)?req.body.overageMode:'PAUSE']);
+      req.body.label,nullable(req.body.includedUnits),nullable(req.body.hardLimit),overageBlockUnits,overageAmountMinor,overageMode]);
     const after=(await database.query('SELECT * FROM commercial_plan_meters WHERE plan_id=$1 AND meter=$2',
       [req.params.id,req.params.meter])).rows[0];
     await commercialControl.audit(database,{actorAccountId:req.account.id,subjectType:'plan_meter',

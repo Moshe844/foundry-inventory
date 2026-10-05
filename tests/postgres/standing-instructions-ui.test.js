@@ -19,14 +19,15 @@ function json(value){return typeof value==='string'?JSON.parse(value):value;}
 
 const provider={async complete(input){
   if(input.schemaName==='stockchief_postgres_request')return {data:{intent:'instruction',view:null,action:null,
-    search:null,sku:null,location:null,fromLocation:null,toLocation:null,quantity:null,countedQuantity:null,reason:null,reference:null}};
+    search:null,sku:null,location:null,fromLocation:null,toLocation:null,quantity:null,countedQuantity:null,reason:null,reference:null},
+    usage:{provider:'fixture-ai',model:'fixture-model',inputTokens:20,outputTokens:10}};
   if(input.schemaName==='postgres_operating_instruction')return {data:{understood:true,
     summary:'Keep Rule Widget replenished within bounded automatic authority',clarifyingQuestion:'',unsupportedReason:'',changes:[
       change('replenishment',{sku:'RULE-1',reorderPoint:8,targetStock:20,safetyStock:3}),
       change('transfer_authority',{sourceLocation:'Main Warehouse',location:'Overflow Warehouse',maximumQuantity:5}),
       change('purchase_authority',{supplier:'Acme Supply',maximumValue:500,weeklyValue:1500}),
       change('operating_preference',{preferTransferBeforePurchasing:true}),
-    ]}};
+    ]},usage:{provider:'fixture-ai',model:'fixture-model',inputTokens:40,outputTokens:20}};
   throw new Error(`Unexpected model schema ${input.schemaName}`);
 }};
 
@@ -44,7 +45,7 @@ test('real Chromium approves one free-form PostgreSQL standing instruction witho
     await page.getByLabel('Business name').fill('Rule Business');await page.getByLabel('Your name').fill('Rule Owner');
     await page.getByLabel('Work email').fill('rules@example.test');await page.getByLabel('Password').fill('rules-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
-    const identity=(await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id FROM workspaces w
+    const identity=(await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id,a.id AS account_id FROM workspaces w
       JOIN users u ON u.workspace_id=w.id JOIN accounts a ON a.id=u.account_id WHERE a.email='rules@example.test'`)).rows[0];
     const ctx={workspaceId:identity.workspace_id,actorId:identity.actor_id};
     await locations.createLocation(database,ctx,{name:'Main Warehouse',kind:'warehouse'});
@@ -57,6 +58,10 @@ test('real Chromium approves one free-form PostgreSQL standing instruction witho
       'Keep Rule Widget replenished, transfer before buying, and automatically handle only the exact limits I stated.');
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Continue'}).click()]);
     assert.match(await page.locator('main').innerText(),/Nothing is in force yet/);
+    assert.equal((await database.query(`SELECT COUNT(*) AS count FROM commercial_usage_events WHERE account_id=$1
+      AND meter='intelligent_operations' AND status='COMMITTED'`,[identity.account_id])).rows[0].count,'1');
+    assert.equal((await database.query(`SELECT COUNT(*) AS count FROM commercial_cost_events WHERE account_id=$1
+      AND provider='fixture-ai'`,[identity.account_id])).rows[0].count,'4');
     assert.equal((await database.query('SELECT COUNT(*) AS count FROM reorder_policies WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].count,'0');
     assert.equal((await database.query('SELECT COUNT(*) AS count FROM automation_policies WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].count,'0');
     await Promise.all([page.waitForURL(/\/operating-instructions\/oin_/),page.getByRole('link',{name:'Review prepared change'}).click()]);

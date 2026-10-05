@@ -98,6 +98,18 @@ test('the obvious columns are recognised without asking a model', () => {
   );
 });
 
+test('AI-assisted mapping reports provider usage exactly once', async () => {
+  const sheet=sheetFrom('MATNR,MAKTX,LGORT,LABST\nCE-050,Copper Elbow,Main Warehouse,140');
+  let before=0;const usage=[];const provider={complete:async()=>({data:{detectedType:'inventory',columns:[
+    {index:0,field:'code',axisName:''},{index:1,field:'name',axisName:''},
+    {index:2,field:'location',axisName:''},{index:3,field:'quantity',axisName:''}],note:''},
+  usage:{provider:'fixture-ai',model:'fixture-model',inputTokens:40,outputTokens:20}})};
+  const result=await mappingService.proposeMappings({...sheet,sourceName:'opaque.csv'},{provider,
+    onBeforeAi:async()=>{before+=1;},onUsage:async(value,detail)=>usage.push({value,detail})});
+  assert.equal(result.aiUsed,true);assert.equal(before,1);assert.equal(usage.length,1);
+  assert.equal(usage[0].value.inputTokens,40);assert.equal(usage[0].detail.schemaName,'inventory_import_mapping');
+});
+
 test('a column headed like a quantity but full of words is not a quantity', () => {
   const sheet = sheetFrom(['Product,Units,Count', 'Widget,box,12', 'Gadget,case,4'].join('\n'));
   const { mappings } = fields.guessMappings(sheet.columns, sheet.rows);

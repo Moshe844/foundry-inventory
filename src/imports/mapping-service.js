@@ -285,6 +285,7 @@ async function proposeMappings(sheet, options = {}) {
 
   let response;
   try {
+    if (options.onBeforeAi) await options.onBeforeAi({ schemaName:'inventory_import_mapping' });
     response = await provider.complete({
       system: SYSTEM,
       prompt: profilePrompt(
@@ -300,6 +301,9 @@ async function proposeMappings(sheet, options = {}) {
       schema: MAPPING_SCHEMA,
       schemaName: 'inventory_import_mapping',
     });
+    if (options.onUsage && response.usage) {
+      await options.onUsage(response.usage, { schemaName:'inventory_import_mapping' });
+    }
   } catch (error) {
     // The file is readable without the model. Losing it costs suggestions,
     // not the import.
