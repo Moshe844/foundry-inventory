@@ -21,9 +21,9 @@ async function balances(database,scope,category,bounds,at=new Date()){
  COALESCE(SUM(a.units) FILTER(WHERE e.status='RESERVED'),0) AS reserved FROM commercial_usage_allocations a
  JOIN commercial_usage_events e ON e.id=a.event_id WHERE e.account_id=$1 AND e.meter=$2 AND a.grant_id IS NULL
  AND e.occurred_at>=$3 AND e.occurred_at<$4`,[scope.accountId,category,bounds.start,bounds.end])).rows[0];
- const grants=(await database.query(`SELECT g.*,g.units-g.revoked_units-COALESCE((SELECT SUM(a.units)
+ const grants=(await database.query(`SELECT g.*,GREATEST(0,g.units-g.revoked_units-g.dispute_hold_units-COALESCE((SELECT SUM(a.units)
  FROM commercial_usage_allocations a JOIN commercial_usage_events e ON e.id=a.event_id
- WHERE a.grant_id=g.id AND e.status IN ('RESERVED','COMMITTED')),0) AS remaining
+ WHERE a.grant_id=g.id AND e.status IN ('RESERVED','COMMITTED')),0)) AS remaining
  FROM commercial_usage_grants g WHERE g.account_id=$1 AND g.workspace_id=$2 AND g.category=$3
  AND g.expires_at>$4 ORDER BY g.expires_at,g.created_at,g.id`,[scope.accountId,scope.workspaceId||null,category,at])).rows;
  return {includedUsed:Number(totals.used),includedReserved:Number(totals.reserved),grants,

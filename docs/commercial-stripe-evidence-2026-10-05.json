@@ -1,0 +1,127 @@
+{
+  "runId": "commercial-1791228752577",
+  "startedAt": "2026-10-05T19:32:32.577Z",
+  "finishedAt": "2026-10-05T19:35:04.841Z",
+  "liveMode": false,
+  "sandboxAccountId": "acct_1UNFL0GrrtoE7Y2W",
+  "executedChecksPassed": true,
+  "fullCertificationComplete": false,
+  "tests": [
+    {
+      "name": "Real paid subscription activates only after signed webhook",
+      "passed": true,
+      "subscriptionId": "sub_1UNHduGrrtoE7Y2WwQy4zX2G",
+      "customerId": "cus_VO3lRNOfvy8V6Q"
+    },
+    {
+      "name": "Concurrent duplicate signed webhook is idempotent",
+      "passed": true,
+      "eventId": "evt_1UNHdwGrrtoE7Y2W3XiHJd6c"
+    },
+    {
+      "name": "Public checkout remains locked",
+      "passed": true
+    },
+    {
+      "name": "Real Buy More Checkout Session created without premature grant",
+      "passed": true,
+      "purchaseId": "purchase_aht2es6xaujhh0bex66ge9da"
+    },
+    {
+      "name": "Real browser Buy More payment grants once only after signed webhook",
+      "passed": true,
+      "eventId": "evt_1UNHeDGrrtoE7Y2W5HRa8oq1"
+    },
+    {
+      "name": "Real auto-top-up payment, exactly-once grant, concurrency and monthly cap",
+      "passed": true
+    },
+    {
+      "name": "Real prorated upgrade activates through webhook",
+      "passed": true,
+      "changeId": "subchange_je31819hppzmo477dtwjyk9x"
+    },
+    {
+      "name": "Real downgrade schedule created; execution awaiting sandbox claim",
+      "passed": true,
+      "changeId": "subchange_tqrt0x70433qldna5c5563bw"
+    },
+    {
+      "name": "Real browser pricing, signup, verified email handoff, Stripe payment and entitlement",
+      "passed": true,
+      "subscriptionId": "sub_1UNHebGrrtoE7Y2WBKBBEVWa",
+      "externalEmailDeliveryTested": false
+    },
+    {
+      "name": "Tenant isolation blocks a foreign inventory purchase",
+      "passed": true
+    },
+    {
+      "name": "Real failed upgrade does not revoke an already-paid tier",
+      "passed": true,
+      "invoiceId": "in_1UNHemGrrtoE7Y2WlYQlmGuQ"
+    },
+    {
+      "name": "Real failed upgrade recovers after successful payment and signed activation",
+      "passed": true
+    },
+    {
+      "name": "Out-of-order genuine webhook retries reconcile after subscription ownership",
+      "passed": true
+    },
+    {
+      "name": "Real purchased-pack refund is recorded exactly once and spent funding is flagged",
+      "passed": true
+    },
+    {
+      "name": "Actual Stripe invoice payments and balance-transaction fees reconciled",
+      "passed": true,
+      "invoices": 4,
+      "feeRows": 4
+    }
+  ],
+  "blocked": [
+    "Stripe sandbox must be claimed to run test-clock renewal and downgrade execution",
+    "Claimed sandbox credentials are required for direct balance-transaction reconciliation"
+  ],
+  "deliveryCount": 32,
+  "allDeliveredEventsAccepted": true,
+  "criticalWarnings": [
+    {
+      "code": "MISSING_COST_RATE",
+      "count": "1"
+    },
+    {
+      "code": "MISSING_STRIPE_FEE",
+      "count": "5"
+    },
+    {
+      "code": "REFUNDED_SPENT_USAGE",
+      "count": "1"
+    },
+    {
+      "code": "UNVERIFIED_INFRASTRUCTURE_COSTS",
+      "count": "1"
+    }
+  ],
+  "cleanup": [
+    {
+      "customer": "cus_VO3lRNOfvy8V6Q",
+      "deleted": true
+    },
+    {
+      "customer": "cus_VO3mzSi5TjC4RF",
+      "deleted": true
+    },
+    {
+      "product": "prod_VO3lcLlQFC0NeV",
+      "archived": true
+    }
+  ],
+  "notes": [
+    "Synthetic TEST prices are not approved customer prices.",
+    "Email verification used the local encrypted outbox; external delivery was not tested.",
+    "Invoice-expanded balance transactions provided four actual fee rows; direct balance-transaction retrieval was denied by the restricted sandbox key.",
+    "REFUNDED_SPENT_USAGE is an intentional adversarial fixture warning; other missing-cost and fee warnings remain release blockers."
+  ]
+}

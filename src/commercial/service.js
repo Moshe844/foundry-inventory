@@ -305,6 +305,12 @@ async function handleBillingEvent(database,event) {
           [invoiceSubscription||null])).rows[0];
         const invoiceCustomer=typeof object.customer==='string'?object.customer:object.customer?.id;
         if(existing&&existing.stripe_customer_id===invoiceCustomer&&existing.status!=='CANCELLED'){
+          if(object.billing_reason==='subscription_update'){
+            // A declined upgrade does not revoke the customer's already-paid tier.
+            // Stripe's pending update and subsequent subscription webhook decide the upgrade.
+            await client.query('UPDATE account_subscriptions SET provider_state=provider_state||$2::jsonb WHERE id=$1',
+              [existing.id,JSON.stringify({latestFailedUpgradeInvoice:object.id})]);
+          }else{
           const plan=(await client.query('SELECT grace_days FROM commercial_plans WHERE id=$1',[existing.plan_id])).rows[0];
           const providerCreatedAt=event.created?new Date(Number(event.created)*1000).toISOString():null;
           const failed=(await client.query(`UPDATE account_subscriptions SET status='GRACE',
@@ -314,16 +320,18 @@ async function handleBillingEvent(database,event) {
               OR last_provider_event_created_at<=$4::timestamptz) RETURNING account_id,grace_ends_at`,
           [existing.id,String(Number(plan?.grace_days||7)),JSON.stringify({latestFailedInvoice:object.id}),providerCreatedAt])).rows[0];
           if(failed)await notifications.queuePaymentFailed(client,{eventId:event.id,accountId:failed.account_id,
-            graceEnds:failed.grace_ends_at});}
+            graceEnds:failed.grace_ends_at});}}
       } else if(event.type==='invoice.paid'){
         const customer=typeof object.customer==='string'?object.customer:object.customer?.id;
         const invoiceSubscription=typeof object.subscription==='string'?object.subscription:object.subscription?.id||object.parent?.subscription_details?.subscription;
         const providerCreatedAt=event.created?new Date(Number(event.created)*1000).toISOString():null;
         await client.query(`UPDATE account_subscriptions SET status=CASE WHEN status='CANCELLED' THEN status ELSE 'ACTIVE' END,grace_ends_at=NULL,
           provider_state=provider_state||$2::jsonb,last_provider_event_created_at=COALESCE($3::timestamptz,last_provider_event_created_at),
-          updated_at=now() WHERE stripe_subscription_id=$1 AND stripe_customer_id=$4 AND ($3::timestamptz IS NULL OR last_provider_event_created_at IS NULL
+          updated_at=now() WHERE stripe_subscription_id=$1 AND stripe_customer_id=$4
+            AND (status<>'GRACE' OR provider_state->>'latestFailedInvoice'=$5)
+            AND ($3::timestamptz IS NULL OR last_provider_event_created_at IS NULL
             OR last_provider_event_created_at<=$3::timestamptz)`,
-        [invoiceSubscription||null,JSON.stringify({latestPaidInvoice:object.id}),providerCreatedAt,customer]);
+        [invoiceSubscription||null,JSON.stringify({latestPaidInvoice:object.id}),providerCreatedAt,customer,object.id]);
         const owner=(await client.query('SELECT account_id FROM account_subscriptions WHERE stripe_subscription_id=$1 AND stripe_customer_id=$2',
           [invoiceSubscription||null,customer])).rows[0];
         const legacyIntent=typeof object.payment_intent==='string'?object.payment_intent:object.payment_intent?.id;
@@ -339,6 +347,9 @@ async function handleBillingEvent(database,event) {
             JSON.stringify({invoiceId:object.id,paymentIntentId:paymentIntentIds[0]||null,paymentIntentIds,
               amountPaid:object.amount_paid,taxes:object.total_taxes||null,discounts:object.total_discount_amounts||[]})]);
         if(owner&&Number(object.amount_paid)>0){
+          const durable={query:client.query.bind(client),transaction:fn=>fn(client)};
+          await require('../operations/postgres-job-queue').enqueue(durable,{kind:'commercial.stripe-invoice-sync',
+            idempotencyKey:`stripe-invoice:${object.id}`,payload:{accountId:owner.account_id,invoiceId:object.id},maxAttempts:8});
           if(!paymentIntentIds.length||object.payments?.has_more)await client.query(`INSERT INTO commercial_critical_warnings
             (id,account_id,fingerprint,code,detail) VALUES($1,$2,$3,'MISSING_STRIPE_PAYMENT_BINDING',$4::jsonb)
             ON CONFLICT(fingerprint) DO UPDATE SET status='OPEN'`,[newId('critical'),owner.account_id,`invoice-payments:${object.id}`,

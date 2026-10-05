@@ -73,6 +73,11 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     if(!allowed.has(req.body.eventName))return res.status(204).end();await commercial.track(database,{eventName:req.body.eventName,
       anonymousId:req.sessionID,accountId:req.account?.id||null,planId:req.body.planId||null,sourcePath:req.body.sourcePath||null});
     return res.status(204).end();}));
+  router.post('/commercial-admin/provider-cost-statements',requireAccount,commercialAdmin,asyncRoute(async(req,res)=>{
+    let statement;try{statement=JSON.parse(req.body.statement);}catch{throw new ValidationError('Provide a valid provider cost statement JSON object.');}
+    await require('../../commercial/provider-costs').ingest(database,statement,req.account.id);
+    req.flash('success','Provider invoice cost recorded with its evidence and allocation. Coverage warnings remain until independently verified.');
+    return res.redirect(303,'/commercial-admin');}));
   router.get('/billing',requireAccount,requireBillingOwner,asyncRoute(async(req,res)=>{const scope=commercialScope(req);
     const summary=await entitlements.summary(database,scope);const usageWarnings=await commercialControl.usageWarnings(database,scope,{summary});
     const pendingChanges=(await database.query(`SELECT change.*,plan.public_name AS target_plan_name

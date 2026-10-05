@@ -436,6 +436,14 @@ test('public, auth and invitation journeys work in desktop and mobile Chromium',
   await starterForm.locator('input[name="monthlyAmount"]').fill('249');
   await Promise.all([gatedPage.waitForURL(/\/commercial-admin#starter$/),starterForm.getByRole('button',{name:'Save Starter'}).click()]);
   assert.equal(Number((await database.query("SELECT monthly_amount_minor FROM commercial_plans WHERE id='starter'")).rows[0].monthly_amount_minor),24900);
+  const costForm=gatedPage.locator('form[action="/commercial-admin/provider-cost-statements"]');
+  await costForm.locator('textarea[name="statement"]').fill(JSON.stringify({provider:'render',externalLineId:'browser-fixture:line1',
+    resourceId:'srv_fixture',amountMinor:101,currency:'USD',periodStart:'2026-10-01',periodEnd:'2026-11-01',
+    evidenceReference:'fixture-only-provider-invoice',evidenceSha256:'a'.repeat(64),allocationBasis:'Synthetic browser fixture',
+    excludesAlreadyMeteredDirectCosts:true,allocations:[{accountId:gated.accountId,weight:1}]}));
+  await Promise.all([gatedPage.waitForURL(`${base}/commercial-admin`),costForm.getByRole('button',{name:'Attest and record provider cost'}).click()]);
+  assert.equal(Number((await database.query("SELECT amount_minor FROM commercial_provider_cost_statements WHERE external_line_id='browser-fixture:line1'")).rows[0].amount_minor),101);
+  assert.match(await gatedPage.locator('#critical-cost-warnings').innerText(),/UNVERIFIED_INFRASTRUCTURE_COSTS/);
   await gatedPage.goto(`${base}/billing`);await gatedPage.getByRole('button',{name:'Sign out all devices'}).click();
   const confirmation=gatedPage.locator('dialog[open]');await confirmation.waitFor();
   await Promise.all([gatedPage.waitForURL(/\/login$/),confirmation.getByRole('button',{name:'Sign out all devices'}).click()]);

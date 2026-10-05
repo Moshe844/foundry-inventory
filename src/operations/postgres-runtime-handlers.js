@@ -363,6 +363,7 @@ function create(providers=defaultProviders,options={}){return {'system.runtime-s
   'commercial.auto-top-up':external((job,database)=>require('../commercial/addons').runTopup(database,
     {accountId:job.payload.accountId,workspaceId:job.workspaceId},job.payload.category,options.commercialOptions||{})),
   'commercial.stripe-financial-sync':external((job,database)=>require('../commercial/stripe-financials').sync(database,job,options.commercialOptions||{})),
+    'commercial.stripe-invoice-sync':external((job,database)=>require('../commercial/stripe-financials').syncInvoice(database,job,options.commercialOptions||{})),
   'provider.effect':external((job,database)=>providerEffect(job,database,options,providers)),
   'autopilot.evaluate':autopilotEvaluate};}
 

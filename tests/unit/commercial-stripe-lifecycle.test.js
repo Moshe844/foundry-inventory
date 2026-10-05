@@ -25,3 +25,22 @@ test('Stripe subscription lifecycle requests are idempotent and carry the exact 
   assert.equal(calls[2].body.get('cancel_at_period_end'),'true');
   assert.equal(calls[2].options.headers['Idempotency-Key'],'stockchief-subscription-cancellation:sub_1:cancel_1');
 });
+
+test('downgrade preview omits the proration date when Stripe proration is disabled',async()=>{
+ let body;await stripe.previewSubscriptionChange({customerId:'cus_1',subscriptionId:'sub_1',itemId:'si_1',
+  priceId:'price_starter',prorationBehavior:'none',prorationDate:1791200000},{secretKey:'sk_test_fixture',fetch:async(url,options)=>{
+   body=new URLSearchParams(options.body);return response({id:'preview_down'});
+  }});
+ assert.equal(body.get('subscription_details[proration_behavior]'),'none');
+ assert.equal(body.has('subscription_details[proration_date]'),false);
+});
+
+test('invoice payment reconciliation reads all pages and rejects repeated cursors',async()=>{
+ const urls=[];const options={secretKey:'sk_test_fixture',fetch:async url=>{
+  urls.push(url);return response(url.includes('starting_after')?{data:[{id:'inpay_2'}],has_more:false}:
+   {data:[{id:'inpay_1'}],has_more:true});}};
+ const rows=await stripe.listInvoicePayments('in_fixture',options);
+ assert.deepEqual(rows.map(x=>x.id),['inpay_1','inpay_2']);assert.match(urls[1],/starting_after=inpay_1/);
+ await assert.rejects(()=>stripe.listInvoicePayments('in_fixture',{secretKey:'sk_test_fixture',fetch:async()=>
+  response({data:[{id:'inpay_loop'}],has_more:true})}),/repeated/);
+});

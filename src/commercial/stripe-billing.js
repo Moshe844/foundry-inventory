@@ -85,6 +85,17 @@ async function createTopupPayment(input,options={}){return call('/payment_intent
  'metadata[stockchief_purchase_id]':input.purchaseId,'metadata[stockchief_account_id]':input.accountId}});}
 async function retrievePaymentMethod(id,options={}){return call(`/payment_methods/${encodeURIComponent(id)}`,{...options,method:'GET'});}
 async function retrieveBalanceTransaction(id,options={}){return call(`/balance_transactions/${encodeURIComponent(id)}`,{...options,method:'GET'});}
+async function retrieveInvoice(id,options={}){return call(`/invoices/${encodeURIComponent(id)}`,{...options,method:'GET'});}
+async function retrievePaymentIntent(id,options={}){return call(`/payment_intents/${encodeURIComponent(id)}?expand[]=latest_charge.balance_transaction`,{...options,method:'GET'});}
+async function listInvoicePayments(invoiceId,options={}){
+ const payments=[];const seen=new Set();let cursor;
+ do{const page=await call(`/invoice_payments?invoice=${encodeURIComponent(invoiceId)}&limit=100${cursor?`&starting_after=${encodeURIComponent(cursor)}`:''}`,{...options,method:'GET'});
+  if(!Array.isArray(page.data)||page.has_more&&!page.data.length)throw new ValidationError('Stripe returned incomplete invoice-payment pagination.');
+  for(const payment of page.data){if(seen.has(payment.id))throw new ValidationError('Stripe repeated an invoice payment while paginating.');seen.add(payment.id);payments.push(payment);}
+  cursor=page.has_more?page.data.at(-1).id:null;
+ }while(cursor);
+ return payments;
+}
 
 async function retrieveCheckout(sessionId, options = {}) {
   return call(`/checkout/sessions/${encodeURIComponent(sessionId)}?expand[]=subscription`, {...options,method:'GET'});
@@ -99,7 +110,7 @@ async function previewSubscriptionChange(input,options={}){
     'subscription_details[items][0][id]':input.itemId,'subscription_details[items][0][price]':input.priceId,
     'subscription_details[items][0][quantity]':1,
     'subscription_details[proration_behavior]':input.prorationBehavior||'create_prorations',
-    'subscription_details[proration_date]':input.prorationDate}});
+    'subscription_details[proration_date]':input.prorationBehavior==='none'?undefined:input.prorationDate}});
 }
 
 async function updateSubscription(input,options={}){
@@ -162,7 +173,7 @@ function verifyEvent(raw, headers = {}, options = {}) {
 }
 
 module.exports = { createCheckout,createPortal,retrieveCheckout,retrieveSubscription,previewSubscriptionChange,updateSubscription,
-  createAddonCheckout,createTopupPayment,retrievePaymentMethod,retrieveBalanceTransaction,
+  createAddonCheckout,createTopupPayment,retrievePaymentMethod,retrieveBalanceTransaction,retrieveInvoice,retrievePaymentIntent,listInvoicePayments,
   scheduleDowngrade,
   setCancellation,listInvoices,createInvoiceItem,verifyEvent,
   __internal:{call,form} };

@@ -108,10 +108,30 @@ test('approved commercial foundation: real PostgreSQL, concurrency, ledger and C
   assert.equal((await usage.meterState(db,{accountId:business.accountId,workspaceId:second.workspaceId},'ai_work_credits')).purchasedRemaining,0);
   await db.query("UPDATE account_subscriptions SET plan_id='starter',plan_version_id=(SELECT id FROM commercial_plan_versions WHERE plan_id='starter' AND status='ACTIVE') WHERE account_id=$1",[business.accountId]);
  });
- await t.test('refund revokes only unspent units and duplicate refunds are harmless',async()=>{
+ await t.test('disputes hold funding, survive reservation reversal, release when won and revoke when lost',async()=>{
+  const request={meter:'ai_work_credits',units:3,idempotencyKey:'reserve-before-dispute'};
+  await usage.reserveUsage(db,scope,request);
+  const dispute={id:'dp_wallet',payment_intent:`pi_${purchase.id}`,amount:100,currency:'usd',status:'needs_response'};
+  const pending=event('charge.dispute.created',dispute);
+  await commercial.handleBillingEvent(db,pending);
+  assert.equal((await usage.meterState(db,scope,'ai_work_credits')).purchasedRemaining,0);
+  await usage.reverseUsage(db,scope,request);
+  assert.equal((await usage.meterState(db,scope,'ai_work_credits')).purchasedRemaining,0);
+  await commercial.handleBillingEvent(db,event('charge.dispute.closed',{...dispute,status:'won'}));
+  assert.equal((await usage.meterState(db,scope,'ai_work_credits')).purchasedRemaining,10);
+  await commercial.handleBillingEvent(db,{...pending,id:newId('evt')});
+  assert.equal((await usage.meterState(db,scope,'ai_work_credits')).purchasedRemaining,10);
+  const lost=event('charge.dispute.closed',{...dispute,id:'dp_wallet_lost',amount:50,status:'lost'});
+  await Promise.all([commercial.handleBillingEvent(db,lost),commercial.handleBillingEvent(db,lost)]);
+  assert.equal((await usage.meterState(db,scope,'ai_work_credits')).purchasedRemaining,5);
+  await assert.rejects(()=>commercial.handleBillingEvent(db,event('charge.dispute.created',{...dispute,currency:'eur'})),/currency/);
+ });
+ await t.test('refund revokes funded units without resurrecting reversed reservations; duplicates are harmless',async()=>{
   await usage.recordUsage(db,scope,{meter:'ai_work_credits',units:3,idempotencyKey:'spent-pack'});
+  const request={meter:'ai_work_credits',units:2,idempotencyKey:'reserve-before-refund'};await usage.reserveUsage(db,scope,request);
   const refund=event('refund.created',{id:'re_wallet',status:'succeeded',payment_intent:`pi_${purchase.id}`,amount:100,currency:'usd'});
   await commercial.handleBillingEvent(db,refund);await commercial.handleBillingEvent(db,event('refund.updated',refund.data.object));
+  await usage.reverseUsage(db,scope,request);
   assert.equal((await usage.meterState(db,scope,'ai_work_credits')).purchasedRemaining,0);
   assert.ok((await db.query("SELECT id FROM commercial_critical_warnings WHERE code='REFUNDED_SPENT_USAGE'")).rows.length);
  });
@@ -129,6 +149,46 @@ test('approved commercial foundation: real PostgreSQL, concurrency, ledger and C
   assert.equal((await usage.meterState(db,scope,'ai_work_credits')).purchasedRemaining,10);
   await usage.recordUsage(db,scope,{meter:'ai_work_credits',units:10,idempotencyKey:'spent-auto'});
   assert.equal((await addons.runTopup(db,scope,'ai_work_credits',options)).triggered,false);
+ });
+ await t.test('declined upgrades retain the paid plan and unrelated paid invoices cannot end renewal grace',async()=>{
+  await commercial.handleBillingEvent(db,event('invoice.payment_failed',{id:'in_failed_upgrade',customer:'cus_wallet',subscription:'sub_wallet',billing_reason:'subscription_update'}));
+  assert.equal((await usage.subscriptionFor(db,business.accountId)).status,'ACTIVE');
+  await commercial.handleBillingEvent(db,event('invoice.payment_failed',{id:'in_failed_renewal',customer:'cus_wallet',subscription:'sub_wallet',billing_reason:'subscription_cycle'}));
+  const grace=await usage.subscriptionFor(db,business.accountId);assert.equal(grace.status,'GRACE');
+  await commercial.handleBillingEvent(db,event('invoice.paid',{id:'in_unrelated_zero',customer:'cus_wallet',subscription:'sub_wallet',amount_paid:0,currency:'usd'}));
+  assert.equal((await usage.subscriptionFor(db,business.accountId)).status,'GRACE');
+  await commercial.handleBillingEvent(db,event('invoice.paid',{id:'in_failed_renewal',customer:'cus_wallet',subscription:'sub_wallet',amount_paid:0,currency:'usd'}));
+  assert.equal((await usage.subscriptionFor(db,business.accountId)).status,'ACTIVE');
+ });
+ await t.test('spent monthly usage cannot prevent a next-term downgrade; structural capacity still can',async()=>{
+  await db.query("UPDATE commercial_plan_meters SET hard_limit=0 WHERE plan_id='starter' AND meter='processing_units'");
+  const existingExcess=await costs.resourceExcess(db,scope,'starter');
+  assert.equal(existingExcess.processing_units,undefined);assert.equal(existingExcess.ai_work_credits,undefined);
+  await db.query("UPDATE commercial_plan_meters SET hard_limit=0 WHERE plan_id='starter' AND meter='workspaces'");
+  assert.equal((await costs.resourceExcess(db,scope,'starter')).workspaces.used,2);
+  await db.query("UPDATE commercial_plan_meters SET hard_limit=1 WHERE plan_id='starter' AND meter='workspaces'");
+ });
+ await t.test('invoice reconciliation binds complete payments and records explicit fees before payout availability',async()=>{
+  await commercial.handleBillingEvent(db,event('invoice.paid',{id:'in_reconciled',customer:'cus_wallet',subscription:'sub_wallet',
+   currency:'usd',amount_paid:200,total:200,period_start:now-86400,period_end:now+29*86400}));
+  const provider={retrieveInvoice:async()=>({id:'in_reconciled',status:'paid',customer:'cus_wallet',subscription:'sub_wallet',currency:'usd',amount_paid:200,total:200}),
+   listInvoicePayments:async()=>[1,2].map(i=>({id:`inpay_reconcile_${i}`,invoice:'in_reconciled',status:'paid',currency:'usd',amount_paid:100,
+    payment:{type:'payment_intent',payment_intent:`pi_reconcile_${i}`}})),
+   retrievePaymentIntent:async id=>({id,status:'succeeded',customer:'cus_wallet',currency:'usd',amount_received:100,
+    latest_charge:{id:`ch_${id}`,payment_intent:id,customer:'cus_wallet',balance_transaction:{id:`txn_${id}`,status:'pending',
+     created:now,currency:'usd',amount:100,fee:33}}})};
+  const financials=require('../../src/commercial/stripe-financials');
+  const job={payload:{invoiceId:'in_reconciled',accountId:business.accountId}};
+  assert.equal((await financials.syncInvoice(db,job,{provider})).verified,true);
+  await financials.syncInvoice(db,job,{provider});
+  const fees=(await db.query("SELECT COUNT(*) AS n,SUM(amount_minor) AS total FROM commercial_revenue_events WHERE source_id LIKE 'stripe-fee:txn_pi_reconcile_%'")).rows[0];
+  assert.equal(Number(fees.n),2);assert.equal(Number(fees.total),-66);
+  assert.equal((await db.query("SELECT status FROM commercial_critical_warnings WHERE fingerprint='invoice-payments:in_reconciled'")).rows[0].status,'RESOLVED');
+  const receipt=(await db.query("SELECT detail FROM commercial_revenue_events WHERE source_id='invoice:in_reconciled'")).rows[0];
+  assert.equal(receipt.detail.stripeCashVerified,true);assert.equal(receipt.detail.paymentIntentIds.length,2);
+  await assert.rejects(()=>financials.syncInvoice(db,{payload:{invoiceId:'in_reconciled',accountId:other.accountId}},{provider}),/ownership/);
+  // Keep the original fixture's revenue assertions independent of this scenario.
+  await db.query("UPDATE commercial_revenue_events SET occurred_at=now()-interval '2 years' WHERE source_id='invoice:in_reconciled'");
  });
  await t.test('actual Stripe receipts replace list-price revenue and missing rates are unknown',async()=>{
   await commercial.handleBillingEvent(db,event('invoice.paid',{id:'in_actual',customer:'cus_wallet',subscription:'sub_wallet',currency:'usd',amount_paid:17000,
@@ -179,7 +239,8 @@ test('approved commercial foundation: real PostgreSQL, concurrency, ledger and C
   assert.equal((await usage.subscriptionFor(db,business.accountId)).status,'GRACE');
   await db.query("UPDATE account_subscriptions SET grace_ends_at=now()-interval '1 day' WHERE account_id=$1",[business.accountId]);
   await assert.rejects(()=>usage.reserveUsage(db,scope,{meter:'ai_work_credits',idempotencyKey:'expired-grace'}),/read-only/);
-  await commercial.handleBillingEvent(db,event('invoice.paid',{id:'in_recovered',customer:'cus_wallet',subscription:'sub_wallet',amount_paid:99900,currency:'usd'}));
+  await commercial.handleBillingEvent(db,event('invoice.paid',{id:'in_failed_again',customer:'cus_wallet',subscription:'sub_wallet',amount_paid:99900,currency:'usd'}));
+  assert.equal((await usage.subscriptionFor(db,business.accountId)).status,'ACTIVE');
  });
  await t.test('provider exhaustion blocks before invocation; failed operations reverse customer usage and retain cost',async()=>{
   let called=0;await assert.rejects(()=>operations.run(db,business.workspaceId,{capability:'communications.ai_drafts',key:'disabled-email',provider:'gmail',operation:'draft'},async()=>{called++;}),/does not include/);assert.equal(called,0);

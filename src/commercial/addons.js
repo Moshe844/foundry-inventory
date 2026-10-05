@@ -130,16 +130,46 @@ async function receiveRefund(client,event){const refund=event.data.object;if(ref
  VALUES($1,$2,$3,'REFUND',$4,$5,to_timestamp($6),$7::jsonb) ON CONFLICT(source_id) DO NOTHING RETURNING id`,
  [newId('revenue'),purchase.account_id,`refund:${refund.id}`,-Number(refund.amount),String(refund.currency).toUpperCase(),event.created,
  JSON.stringify({purchaseId:purchase.id})]);if(!added.rows.length)return true;
- const total=Number((await client.query("SELECT -SUM(amount_minor) AS amount FROM commercial_revenue_events WHERE account_id=$1 AND kind='REFUND' AND detail->>'purchaseId'=$2",
+ await reconcileAdjustments(client,purchase,grant);return true;
+}
+async function reconcileAdjustments(client,purchase,grant){
+ const total=Number((await client.query("SELECT COALESCE(-SUM(amount_minor),0) AS amount FROM commercial_revenue_events WHERE account_id=$1 AND kind='REFUND' AND detail->>'purchaseId'=$2",
  [purchase.account_id,purchase.id])).rows[0].amount);
+ const disputes=(await client.query(`SELECT COALESCE(SUM(amount_minor) FILTER(WHERE status='lost'),0) AS lost,
+  COALESCE(SUM(amount_minor) FILTER(WHERE status NOT IN ('lost','won','warning_closed')),0) AS pending
+  FROM commercial_usage_disputes WHERE purchase_id=$1`,[purchase.id])).rows[0];
  const consumed=Number((await client.query(`SELECT COALESCE(SUM(a.units),0) AS units FROM commercial_usage_allocations a
  JOIN commercial_usage_events e ON e.id=a.event_id WHERE a.grant_id=$1 AND e.status IN ('RESERVED','COMMITTED')`,[grant.id])).rows[0].units);
- const requested=Math.min(Number(grant.units),Math.floor(Number(grant.units)*total/Number(purchase.amount_minor)));
- const revoke=Math.min(requested,Number(grant.units)-consumed);
- await client.query('UPDATE commercial_usage_grants SET revoked_units=$2 WHERE id=$1',[grant.id,revoke]);
+ const requested=Math.min(Number(grant.units),Math.floor(Number(grant.units)*(total+Number(disputes.lost))/Number(purchase.amount_minor)));
+ // Funding adjustments apply to the whole grant, including reserved units.
+ // Otherwise reversing a reservation after a refund/dispute resurrects unfunded usage.
+ const revoke=requested;
+ const hold=Math.min(Number(grant.units)-revoke,Math.ceil(Number(grant.units)*Number(disputes.pending)/Number(purchase.amount_minor)));
+ await client.query('UPDATE commercial_usage_grants SET revoked_units=$2,dispute_hold_units=$3 WHERE id=$1',[grant.id,revoke,hold]);
  await client.query("UPDATE commercial_usage_purchases SET status=$2 WHERE id=$1",[purchase.id,total>=Number(purchase.amount_minor)?'REFUNDED':'PAID']);
- if(requested>revoke)await client.query(`INSERT INTO commercial_critical_warnings(id,account_id,fingerprint,code,detail)
+ if(requested>Number(grant.units)-consumed)await client.query(`INSERT INTO commercial_critical_warnings(id,account_id,fingerprint,code,detail)
  VALUES($1,$2,$3,'REFUNDED_SPENT_USAGE',$4::jsonb) ON CONFLICT(fingerprint) DO UPDATE SET detail=EXCLUDED.detail,status='OPEN'`,
- [newId('critical'),purchase.account_id,`refund-spent:${purchase.id}`,JSON.stringify({requested,revoke,consumed})]);return true;
+ [newId('critical'),purchase.account_id,`refund-spent:${purchase.id}`,JSON.stringify({requested,revoke,consumed,lostDisputeMinor:Number(disputes.lost)})]);
 }
-module.exports={packs,topups,beginPurchase,saveTopup,runTopup,receivePayment,receiveRefund};
+async function receiveDispute(client,event){
+ const dispute=event.data.object;const intent=typeof dispute.payment_intent==='string'?dispute.payment_intent:dispute.payment_intent?.id;
+ const purchase=(await client.query('SELECT * FROM commercial_usage_purchases WHERE stripe_payment_intent_id=$1 FOR UPDATE',[intent])).rows[0];
+ if(!purchase)return false;
+ if(String(dispute.currency).toUpperCase()!==purchase.currency||!Number.isSafeInteger(dispute.amount)||dispute.amount<=0||dispute.amount>Number(purchase.amount_minor))
+  throw new ValidationError('Dispute amount or currency does not match its purchased usage.');
+ const statuses=new Set(['needs_response','under_review','won','lost','warning_needs_response','warning_under_review','warning_closed']);
+ if(!statuses.has(dispute.status))throw new ValidationError('Unknown Stripe dispute state requires reconciliation.');
+ await wallet.lock(client,{accountId:purchase.account_id},purchase.category);
+ const prior=(await client.query('SELECT * FROM commercial_usage_disputes WHERE id=$1 FOR UPDATE',[dispute.id])).rows[0];
+ if(prior&&prior.purchase_id!==purchase.id)throw new ValidationError('Dispute identity belongs to a different usage purchase.');
+ const priorAt=prior?new Date(prior.provider_created_at).getTime():0;const eventAt=event.created*1000;
+ if(prior&&(priorAt>eventAt||priorAt===eventAt&&['won','lost','warning_closed'].includes(prior.status)))return true;
+ await client.query(`INSERT INTO commercial_usage_disputes(id,purchase_id,amount_minor,currency,status,provider_created_at)
+  VALUES($1,$2,$3,$4,$5,to_timestamp($6)) ON CONFLICT(id) DO UPDATE SET amount_minor=EXCLUDED.amount_minor,
+  status=EXCLUDED.status,provider_created_at=EXCLUDED.provider_created_at,updated_at=now()`,
+ [dispute.id,purchase.id,dispute.amount,purchase.currency,dispute.status,event.created]);
+ const grant=(await client.query('SELECT * FROM commercial_usage_grants WHERE purchase_id=$1 FOR UPDATE',[purchase.id])).rows[0];
+ if(grant)await reconcileAdjustments(client,purchase,grant);
+ return true;
+}
+module.exports={packs,topups,beginPurchase,saveTopup,runTopup,receivePayment,receiveRefund,receiveDispute};

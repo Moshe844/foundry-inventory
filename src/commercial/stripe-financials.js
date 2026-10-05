@@ -13,7 +13,9 @@ async function owner(db,object){const intent=typeof object.payment_intent==='str
  if(receipt)return receipt.account_id;
  const customer=typeof object.customer==='string'?object.customer:object.customer?.id;
  return customer?(await db.query('SELECT account_id FROM account_subscriptions WHERE stripe_customer_id=$1',[customer])).rows[0]?.account_id:null;}
-async function balance(db,accountId,row,kind){if(!row?.id||row.status==='pending')return false;
+async function balance(db,accountId,row,kind){if(!row?.id)return false;
+ // Stripe's pending/available status describes payout availability, not whether
+ // its explicit fee is known. Never substitute zero for an absent fee.
  const at=new Date(Number(row.created)*1000);const currency=String(row.currency).toUpperCase();
  if(kind==='DISPUTE')await db.query(`INSERT INTO commercial_revenue_events
  (id,account_id,source_id,kind,amount_minor,currency,occurred_at,detail) VALUES($1,$2,$3,'DISPUTE',$4,$5,$6,$7::jsonb)
@@ -26,6 +28,7 @@ async function balance(db,accountId,row,kind){if(!row?.id||row.status==='pending
  JSON.stringify({balanceTransactionId:row.id,feeDetails:row.fee_details||[],actual:true})]);
  await db.query("UPDATE commercial_critical_warnings SET status='RESOLVED' WHERE fingerprint=$1",[`stripe-fee:${row.id}`]);return true;}
 async function handle(db,event){const object=event.data?.object||{};const accountId=await owner(db,object);
+ if(event.type.startsWith('charge.dispute.'))await require('./addons').receiveDispute(db,event);
  if(event.type.startsWith('refund.')){
   if(object.status!=='succeeded')return false;
   const handled=await require('./addons').receiveRefund(db,event);
@@ -60,10 +63,46 @@ async function handle(db,event){const object=event.data?.object||{};const accoun
 async function reconcileForPayment(db,intent){const events=(await db.query(`SELECT payload FROM commercial_billing_events
  WHERE event_type IN ('refund.created','refund.updated','charge.succeeded','charge.updated',
    'charge.dispute.created','charge.dispute.updated','charge.dispute.closed')
- AND payload->'data'->'object'->>'payment_intent'=$1`,[intent])).rows;
+ AND payload->'data'->'object'->>'payment_intent'=$1 ORDER BY (payload->>'created')::bigint,provider_event_id`,[intent])).rows;
  for(const event of events)await handle(db,event.payload);}
 async function sync(db,job,options={}){const row=await (options.provider||stripe).retrieveBalanceTransaction(job.payload.balanceTransactionId,options.providerOptions||{});
  if(!await balance(db,job.payload.accountId,row,job.payload.kind))throw Object.assign(new Error('Stripe balance transaction fees are not settled yet.'),{retryable:true});
  if(job.payload.paymentIntentId)await db.query("UPDATE commercial_critical_warnings SET status='RESOLVED' WHERE fingerprint=$1",[`stripe-payment-fee:${job.payload.paymentIntentId}`]);
  return {balanceTransactionId:row.id,reconciled:true};}
-module.exports={handle,reconcileForPayment,sync,balance};
+async function syncInvoice(db,job,options={}){
+ const provider=options.provider||stripe;const api=options.providerOptions||{};
+ const invoice=await provider.retrieveInvoice(job.payload.invoiceId,api);
+ const subscription=(await db.query('SELECT * FROM account_subscriptions WHERE account_id=$1',[job.payload.accountId])).rows[0];
+ const id=value=>typeof value==='string'?value:value?.id;
+ if(invoice.id!==job.payload.invoiceId||id(invoice.customer)!==subscription?.stripe_customer_id||
+   id(invoice.subscription||invoice.parent?.subscription_details?.subscription)!==subscription?.stripe_subscription_id)
+  throw Error('Stripe invoice reconciliation ownership mismatch');
+ const payments=await provider.listInvoicePayments(invoice.id,api);const intents=[];let cash=0;let complete=invoice.status==='paid';
+ for(const payment of payments){if(payment.status!=='paid')continue;
+  if(id(payment.invoice)!==invoice.id||payment.currency!==invoice.currency)throw Error('Stripe invoice payment scope mismatch');
+  if(payment.payment?.type!=='payment_intent'){complete=false;continue;}
+  const intent=await provider.retrievePaymentIntent(id(payment.payment.payment_intent),api);
+  if(intent.status!=='succeeded'||id(intent.customer)!==subscription.stripe_customer_id||intent.currency!==invoice.currency||
+    !Number.isSafeInteger(payment.amount_paid)||payment.amount_paid<0||payment.amount_paid>Number(intent.amount_received))
+   throw Error('Stripe invoice payment is not verified customer cash');
+  cash+=payment.amount_paid;intents.push(intent);
+ }
+ // Credits and out-of-band settlements need explicit accounting treatment;
+ // they are never silently labelled Stripe cash receipts.
+ complete=complete&&cash===Number(invoice.amount_paid)&&cash===Number(invoice.total);
+ await db.transaction(async client=>{
+  if(!complete){await warning(client,`invoice-payments:${invoice.id}`,'UNVERIFIED_STRIPE_INVOICE_CASH',
+   {invoiceId:invoice.id,cashMinor:cash,amountPaid:invoice.amount_paid,total:invoice.total},job.payload.accountId);return;}
+  await client.query(`UPDATE commercial_revenue_events SET detail=detail||$2::jsonb WHERE source_id=$1 AND account_id=$3`,
+   [`invoice:${invoice.id}`,JSON.stringify({paymentIntentIds:[...new Set(intents.map(x=>x.id))],stripeCashVerified:true,
+     paidPaymentIds:payments.filter(x=>x.status==='paid').map(x=>x.id),cashMinor:cash}),job.payload.accountId]);
+  await client.query("UPDATE commercial_critical_warnings SET status='RESOLVED' WHERE fingerprint=$1",[`invoice-payments:${invoice.id}`]);
+  for(const intent of intents){await reconcileForPayment(client,intent.id);
+   const charge=intent.latest_charge;
+   if(charge&&typeof charge==='object')await handle(client,{id:`reconcile:${invoice.id}:${charge.id}`,type:'charge.updated',
+    created:Math.floor(Date.now()/1000),data:{object:charge}});
+  }
+ },{isolation:'SERIALIZABLE',retrySafe:true});
+ return {invoiceId:invoice.id,verified:complete,cashMinor:cash,payments:payments.length};
+}
+module.exports={handle,reconcileForPayment,sync,syncInvoice,balance};
