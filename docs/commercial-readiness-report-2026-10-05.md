@@ -4,11 +4,30 @@ Date: 2026-10-05
 
 ## Decision
 
-NOT READY FOR CHECKOUT. The commercial foundation is implemented and being published to the existing qualification service at the user's request, but this report does not certify paid launch. Checkout remains closed. Included usage quantities, operation weights, pack quantities and pack prices are provisional configuration, not approved economics.
+PUBLISHED, NOT READY FOR CHECKOUT. The commercial foundation is live on the existing qualification service at the user's request, but this report does not certify paid launch. Checkout remains closed. Included usage quantities, operation weights, pack quantities and pack prices are provisional configuration, not approved economics.
 
 The initial implementation used disposable local PostgreSQL clusters. Publication preparation additionally verified a Render-hosted backup and successfully rehearsed migration 025 against the existing hosted database inside an explicitly rolled-back transaction. That rehearsal preserved all four subscriptions (three Pro COMP and one Starter ACTIVE), confirmed closed checkout and null approval fields, and verified the new table did not remain after rollback. No hosted data was downloaded. Real model measurements used the configured model provider and synthetic business records, not production customer data. Publishing the application does not authorize live checkout or live charges.
 
-Hosted release evidence: backup `dpg-damlkhuk1f9s739h5ga0-a/2026-10-05T18:40Z`; successful rollback-only rehearsal job `job-db1uviek1f9s738ffks0`, completed at 18:43:35 UTC. The final deployment status and browser smoke results must be recorded after the services report healthy.
+Hosted release evidence: backup `dpg-damlkhuk1f9s739h5ga0-a/2026-10-05T18:40Z`; successful rollback-only rehearsal job `job-db1uviek1f9s738ffks0`, completed at 18:43:35 UTC.
+
+## Publication verification
+
+The application is published at [StockChief qualification](https://qualify.stockchiefhq.com). This is the existing Render qualification/staging environment, not a newly created production environment or an activated paid checkout.
+
+| Release evidence | Verified result |
+|---|---|
+| Deployed application commit | `ab739c22c02b7959d3b5edbb6cc749d83bfbdd5b` |
+| Web deployment | `dep-db1v0lbtqb8s73bedqlg`, LIVE at 18:46:35 UTC |
+| Worker deployment | `dep-db1v0lks728c73aeqtgg`, LIVE at 18:46:25 UTC |
+| Hosted migration | `025-commercial-wallet.sql` applied once; the second service correctly applied zero additional migrations |
+| Health and readiness | Both HTTP 200; matching release SHA; zero dead or stale jobs at verification |
+| Browser smoke | Home, pricing, capabilities, integrations, login and selected-plan registration HTTP 200; pricing-to-signup navigation passed |
+| Desktop/mobile pricing | Four plans, four usage disclosures, no unsupported claims tested, no horizontal mobile overflow and no browser JavaScript errors |
+| Backend purchase lock | Hosted job `job-db1v200m7kps73culmig` verified checkout disabled, both approvals absent and `assertCheckoutOpen` rejecting purchases |
+| Existing subscriptions | All four preserved: three Pro COMP, one Starter ACTIVE; all assigned audited foundation snapshots |
+| Pack approval | All six packs remain PROVISIONAL |
+
+Hosted verification produced `COMMERCIAL_PUBLICATION_PASS` at 18:48:41 UTC. The last local pre-publication wallet/Stripe-contract/Chromium run passed 24 checks. The hosted smoke log is `data/commercial-publication-browser.log`; desktop and mobile screenshots are `data/commercial-published-pricing-desktop.png` and `data/commercial-published-pricing-mobile.png`. These publication checks did not create a customer account, submit a payment, or certify the remaining actual Stripe lifecycle tests. No release-time error entries were returned by the service error-log query during this verification window.
 
 This report supersedes the earlier subscription certification for this working tree. Historical staging claims in that document are not evidence that this new engine has passed actual Stripe E2E.
 
