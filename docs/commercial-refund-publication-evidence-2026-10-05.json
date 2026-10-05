@@ -1,0 +1,62 @@
+{
+  "verifiedAt": "2026-10-05",
+  "environment": "existing Render qualification/staging",
+  "origin": "https://qualify.stockchiefhq.com",
+  "applicationCommit": "afb5d4bbcdfacffb1d6876cd3c74363c87ad6f6e",
+  "web": {
+    "id": "dep-db20l4p7lnhs73d62k30",
+    "status": "live",
+    "finishedAt": "2026-10-05T20:38:30.726098Z"
+  },
+  "worker": {
+    "id": "dep-db20l6h7lnhs73d631gg",
+    "status": "live",
+    "finishedAt": "2026-10-05T20:38:27.482905Z"
+  },
+  "health": {
+    "status": 200,
+    "migrations": 29,
+    "releaseRef": "afb5d4bbcdfacffb1d6876cd3c74363c87ad6f6e"
+  },
+  "readiness": {
+    "status": 200,
+    "migrations": 29,
+    "deadJobs": 0,
+    "staleJobs": 0
+  },
+  "browserSmoke": {
+    "passed": true,
+    "publicPages": [
+      "/",
+      "/pricing",
+      "/capabilities",
+      "/integrations",
+      "/login",
+      "/register?plan=starter&interval=monthly"
+    ],
+    "pageStatuses": 200,
+    "pricingToSignup": true,
+    "planCount": 4,
+    "usageDisclosures": 4,
+    "closedCheckoutNotice": true,
+    "provisionalAllowanceNotice": true,
+    "unsupportedClaimsTestedAbsent": true,
+    "mobileHorizontalOverflow": false,
+    "browserErrors": [],
+    "desktopAndMobileScreenshotsVisuallyReviewed": true,
+    "paymentSubmitted": false
+  },
+  "testWebhook": {
+    "id": "we_1UNI2aIjKuQgOJD6PCgmHmof",
+    "liveMode": false,
+    "apiVersion": "2026-09-30.endive",
+    "refundFailureSubscribed": true,
+    "missingEvents": [],
+    "issues": [],
+    "ready": true
+  },
+  "checkoutEnabledEnvironment": false,
+  "checkoutApprovalChanged": false,
+  "hostedDatabaseGuardReasserted": false,
+  "commercialLaunchCertified": false
+}
