@@ -330,6 +330,9 @@ test('public, auth and invitation journeys work in desktop and mobile Chromium',
   const cluster=await startCluster();const database=openPostgres(cluster.connectionString,{applicationName:'commercial-browser'});
   await migratePostgres(database);const app=createPostgresApp({database,env:'test',sessionSecret:'commercial-browser-secret',
     assetVersion:'commercial-browser'});const server=await new Promise((resolve)=>{const started=app.listen(0,'127.0.0.1',()=>resolve(started));});
+  await database.query(`UPDATE commercial_plan_meters SET included_units=CASE plan_id
+    WHEN 'starter' THEN 100 WHEN 'growth' THEN 1000 WHEN 'pro' THEN 5000 ELSE included_units END,
+    overage_mode='PAUSE' WHERE meter='intelligent_operations' AND plan_id IN ('starter','growth','pro')`);
   const browser=await chromium.launch();context.after(async()=>{await browser.close();await new Promise((resolve)=>server.close(resolve));
     await app.locals.sessionStore.close();await database.close();cluster.stop();});const base=`http://127.0.0.1:${server.address().port}`;
   for(const viewport of [{width:1440,height:900},{width:390,height:844}]){const page=await browser.newPage({viewport});const errors=[];
@@ -346,7 +349,9 @@ test('public, auth and invitation journeys work in desktop and mobile Chromium',
       await page.goto(`${base}${path}`);assert.equal(await page.locator('h1').count(),1);
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),true);
     }
-    await page.goto(`${base}/pricing`);assert.equal(await page.locator('.plan-card').count(),4);await page.getByRole('button',{name:/Annual/}).click();
+    await page.goto(`${base}/pricing`);assert.equal(await page.locator('.plan-card').count(),4);
+    assert.match(await page.locator('#growth .plan-card__usage').innerText(),/1,000 stockchief intelligent operations/i);
+    await page.getByRole('button',{name:/Annual/}).click();
     assert.match(await page.locator('.plan-card').nth(1).innerText(),/billed annually/i);
     assert.match(await page.getByRole('link',{name:'Choose Growth'}).getAttribute('href'),/plan=growth.*interval=annual/);
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),true);

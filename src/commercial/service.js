@@ -25,7 +25,10 @@ async function listPlans(database, options = {}) {
   for (const plan of plans) {
     plan.entitlements = (await database.query(`SELECT capability,enabled,configuration FROM commercial_plan_entitlements
       WHERE plan_id=$1 ORDER BY capability`,[plan.id])).rows;
-    plan.meters = (await database.query(`SELECT * FROM commercial_plan_meters WHERE plan_id=$1 ORDER BY meter`,[plan.id])).rows;
+    plan.meters = (await database.query(`SELECT policy.*,definition.kind,definition.customer_visible,
+      COALESCE(NULLIF(policy.label,''),definition.label) AS label
+      FROM commercial_plan_meters policy JOIN commercial_meter_definitions definition ON definition.meter=policy.meter
+      WHERE policy.plan_id=$1 ORDER BY definition.kind,policy.meter`,[plan.id])).rows;
   }
   return plans;
 }
