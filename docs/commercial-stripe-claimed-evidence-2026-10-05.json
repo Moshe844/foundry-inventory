@@ -1,0 +1,156 @@
+{
+  "runId": "commercial-1791230122086",
+  "startedAt": "2026-10-05T19:55:22.086Z",
+  "finishedAt": "2026-10-05T19:59:49.790Z",
+  "liveMode": false,
+  "sandboxAccountId": "acct_1UNFL0GrrtoE7Y2W",
+  "executedStripeChecksPassed": true,
+  "executedStripeScenariosComplete": true,
+  "commercialLaunchCertified": false,
+  "tests": [
+    {
+      "name": "Real paid subscription activates only after signed webhook",
+      "passed": true,
+      "subscriptionId": "sub_1UNHzDGrrtoE7Y2WcZjbmw9d",
+      "customerId": "cus_VO47NB9vyUFYK4"
+    },
+    {
+      "name": "Concurrent duplicate signed webhook is idempotent",
+      "passed": true,
+      "eventId": "evt_1UNHzGGrrtoE7Y2WkISZJcHQ"
+    },
+    {
+      "name": "Public checkout remains locked",
+      "passed": true
+    },
+    {
+      "name": "Real Buy More Checkout Session created without premature grant",
+      "passed": true,
+      "purchaseId": "purchase_ch8i8vh6iwvl0b882eor12rm"
+    },
+    {
+      "name": "Real browser Buy More payment grants once only after signed webhook",
+      "passed": true,
+      "eventId": "evt_1UNHzbGrrtoE7Y2WUxwbCwDL"
+    },
+    {
+      "name": "Real auto-top-up payment, exactly-once grant, concurrency and monthly cap",
+      "passed": true
+    },
+    {
+      "name": "Real prorated upgrade activates through webhook",
+      "passed": true,
+      "changeId": "subchange_ru0sonf1481akclh62auuxzp"
+    },
+    {
+      "name": "Real scheduled downgrade executes at renewal",
+      "passed": true,
+      "changeId": "subchange_kafi2f9ujle0cn9z96ksjfal"
+    },
+    {
+      "name": "Real renewal payment grants a fresh included period",
+      "passed": true,
+      "invoiceId": "in_1UNHzyGrrtoE7Y2WiiKfm6sP"
+    },
+    {
+      "name": "Real failed renewal starts fixed grace; application clock boundary enforces read-only",
+      "passed": true,
+      "invoiceId": "in_1UNI0LGrrtoE7Y2WzNKnjxtk",
+      "graceExpiryTest": "injected application evaluation time"
+    },
+    {
+      "name": "Real renewal recovery restores operational access",
+      "passed": true
+    },
+    {
+      "name": "Real browser pricing, signup, verified email handoff, Stripe payment and entitlement",
+      "passed": true,
+      "subscriptionId": "sub_1UNI0hGrrtoE7Y2W9PTR3uqj",
+      "externalEmailDeliveryTested": false
+    },
+    {
+      "name": "Tenant isolation blocks a foreign inventory purchase",
+      "passed": true
+    },
+    {
+      "name": "Real failed upgrade does not revoke an already-paid tier",
+      "passed": true,
+      "invoiceId": "in_1UNI0tGrrtoE7Y2W4LdhdOEl"
+    },
+    {
+      "name": "Real failed upgrade recovers after successful payment and signed activation",
+      "passed": true
+    },
+    {
+      "name": "Out-of-order genuine webhook retries reconcile after subscription ownership",
+      "passed": true
+    },
+    {
+      "name": "Real authentication-required auto-top-up grants no usage and cannot repeatedly charge",
+      "passed": true
+    },
+    {
+      "name": "Real won dispute adjusts purchased funding through signed events",
+      "passed": true,
+      "disputeId": "du_1UNI1pGrrtoE7Y2WLLh7vKJo"
+    },
+    {
+      "name": "Real lost dispute adjusts purchased funding through signed events",
+      "passed": true,
+      "disputeId": "du_1UNI2YGrrtoE7Y2WYTIE8YjI"
+    },
+    {
+      "name": "Real purchased-pack refund is recorded exactly once and spent funding is flagged",
+      "passed": true
+    },
+    {
+      "name": "Actual Stripe invoice payments and balance-transaction fees reconciled",
+      "passed": true,
+      "invoices": 6,
+      "feeRows": 14
+    },
+    {
+      "name": "No unresolved Stripe fee, payment-binding or delivery warnings",
+      "passed": true
+    }
+  ],
+  "blocked": [],
+  "deliveryCount": 65,
+  "allDeliveredEventsAccepted": true,
+  "criticalWarnings": [
+    {
+      "code": "MISSING_COST_RATE",
+      "count": "1"
+    },
+    {
+      "code": "REFUNDED_SPENT_USAGE",
+      "count": "1"
+    },
+    {
+      "code": "UNVERIFIED_INFRASTRUCTURE_COSTS",
+      "count": "1"
+    }
+  ],
+  "cleanup": [
+    {
+      "clock": "clock_1UNHz8GrrtoE7Y2WjwPmSVhq",
+      "deleted": true
+    },
+    {
+      "customer": "cus_VO48pmZWmUSo1C",
+      "deleted": true
+    },
+    {
+      "product": "prod_VO47m79gxccfD1",
+      "archived": true
+    }
+  ],
+  "notes": [
+    "Stripe CLI device authorization was approved by the user for this sandbox only; credentials remained in Stripe's credential store.",
+    "Real renewal invoices were collected; application grace expiry was evaluated using an injected evaluation timestamp, not by waiting seven real days.",
+    "Email verification used the local encrypted outbox; external email delivery was not tested.",
+    "14 actual Stripe balance fee rows reconciled; no missing Stripe fee/payment-binding/delivery/attribution warnings remained.",
+    "REFUNDED_SPENT_USAGE was deliberately triggered by the spent-refund scenario.",
+    "Missing provider cost rates and infrastructure coverage still block commercial readiness and pricing approval."
+  ]
+}
