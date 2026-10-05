@@ -62,4 +62,18 @@ async function queueSubscriptionSuspended(database, input) {
   });
 }
 
-module.exports = { queueAccountEmail, queuePaymentFailed, queueSubscriptionSuspended };
+async function queueUsageWarning(database,input){
+  const url=billingUrl();const exhausted=input.threshold>=100;
+  const policy=exhausted
+    ?input.overageMode==='BILL'?`Additional completed processing follows your configured overage policy.`:
+      'Costly optional processing pauses; your existing business records remain available.'
+    :'StockChief will warn you again before included usage is exhausted.';
+  return queueAccountEmail(database,{
+    accountId:input.accountId,idempotencyKey:`billing-usage-warning:${input.accountId}:${input.meter}:${input.periodStart}:${input.threshold}`,
+    messageType:'billing_usage_warning',subject:`StockChief usage is at ${input.threshold}%`,
+    text:(account)=>`Hi ${account.name||'there'},\n\nYou have used ${input.used} of ${input.included} included ${input.label.toLowerCase()} this billing period. ${policy}\n\nReview usage and billing: ${url}`,
+    html:(account)=>`<p>Hi ${account.name||'there'},</p><p>You have used <strong>${input.used} of ${input.included}</strong> included ${input.label.toLowerCase()} this billing period.</p><p>${policy}</p><p><a href="${url}">Review usage and billing</a></p>`,
+  });
+}
+
+module.exports = { queueAccountEmail, queuePaymentFailed, queueSubscriptionSuspended, queueUsageWarning };

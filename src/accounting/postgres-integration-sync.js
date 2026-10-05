@@ -8,6 +8,8 @@ const connections=require('../connections/postgres-service');
 const providerService=require('../connections/postgres-provider-service');
 const providers=require('../connections/providers/registry');
 const providerEffects=require('../operations/postgres-provider-effects');
+const commercialUsage=require('../entitlements/postgres-service');
+const commercialControl=require('../commercial/control-service');
 
 const hash=(value)=>crypto.createHash('sha256').update(typeof value==='string'?value:JSON.stringify(value)).digest('hex');
 const json=(value,fallback)=>{if(value&&typeof value==='object')return value;try{return JSON.parse(value)||fallback;}catch{return fallback;}};
@@ -263,7 +265,12 @@ async function executeExportEffect(database,workspaceId,effectId,options={}){
     if(journal.lines.some((line)=>!line.external_account_id||(connection.provider_type==='quickbooks'&&
       ((line.customer_id&&!line.external_customer_id)||(line.supplier_id&&!line.external_supplier_id)))))throw Object.assign(
       new ValidationError('A journal mapping changed before export. Nothing was posted.'),{status:422});
-    providerCalled=true;const result=await adapter.postJournalEntry({credentials,entry:journal,idempotencyKey:effect.idempotencyKey});
+    providerCalled=true;let result;
+    try{result=await adapter.postJournalEntry({credentials,entry:journal,idempotencyKey:effect.idempotencyKey});}
+    finally{const owner=(await database.query('SELECT owner_account_id FROM workspaces WHERE id=$1',[workspaceId])).rows[0];
+      if(owner?.owner_account_id)await commercialControl.recordCost(database,{accountId:owner.owner_account_id,workspaceId},{
+        provider:connection.provider_type||'accounting_provider',operation:'journal_export',unit:'journal',quantity:1,
+        idempotencyKey:effect.idempotencyKey,occurredAt:nowIso(),detail:{connectorId:connection.id,journalEntryId:journal.id}});}
     if(!result?.externalId)throw Object.assign(new ValidationError(
       'The accounting provider did not confirm an external journal identity.'),{status:422});
     await providerEffects.succeed(database,workspaceId,effectId,effect.claimToken,{providerReference:{
@@ -280,7 +287,11 @@ async function executeExportEffect(database,workspaceId,effectId,options={}){
         VALUES($1,$2,$3,'journal_entries',$4,$5,$5)
         ON CONFLICT(workspace_id,connector_id,stream) DO UPDATE SET cursor=EXCLUDED.cursor,
           watermark_at=EXCLUDED.watermark_at,updated_at=EXCLUDED.updated_at`,
-      [newId('accheck'),workspaceId,connection.id,String(journal.entry_number),at]);}});
+      [newId('accheck'),workspaceId,connection.id,String(journal.entry_number),at]);
+      const owner=(await client.query('SELECT owner_account_id FROM workspaces WHERE id=$1',[workspaceId])).rows[0];
+      if(owner?.owner_account_id){const scope={accountId:owner.owner_account_id,workspaceId};
+        await commercialUsage.recordUsage(client,scope,{id:newId('usage'),meter:'accounting_syncs',units:1,
+          idempotencyKey:effect.idempotencyKey,occurredAt:at,detail:{connectorId:connection.id,journalEntryId:journal.id}});}}});
     return {externalId:String(result.externalId),replayed:false};
   }catch(error){const ambiguous=providerCalled&&!providerEffects.definiteFailure(error);
     await providerEffects.finishError(database,workspaceId,effectId,effect.claimToken,error,{ambiguous});

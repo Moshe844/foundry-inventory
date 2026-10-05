@@ -90,6 +90,8 @@ test('real Chromium governs PostgreSQL accounting export and a worker posts each
     assert.deepEqual(posted[0].entry.lines.map((line)=>line.external_account_id),['ext-cash','ext-expense']);
     assert.equal(await jobs.processOne(database,runtime,{owner:'accounting-export-worker',leaseMs:30000}),null);
     assert.equal(providerWrites,1);
+    assert.equal((await database.query(`SELECT COUNT(*) AS count FROM commercial_usage_events
+      WHERE workspace_id=$1 AND meter='accounting_syncs' AND status='COMMITTED'`,[ctx.workspaceId])).rows[0].count,'1');
     await page.goto(connectionUrl);assert.match(await page.locator('main').innerText(),/Confirmed exports\s*1/i);
     const identityRow=(await database.query(`SELECT * FROM accounting_external_identities
       WHERE workspace_id=$1 AND connector_id=(SELECT id FROM workspace_connectors WHERE workspace_id=$1 AND provider_type='quickbooks')
@@ -105,6 +107,8 @@ test('real Chromium governs PostgreSQL accounting export and a worker posts each
     assert.equal(stopped.status,'DEAD');assert.equal(providerWrites,2);
     assert.equal(await jobs.processOne(database,runtime,{owner:'accounting-export-worker',leaseMs:30000}),null);
     assert.equal(providerWrites,2);
+    assert.equal((await database.query(`SELECT COUNT(*) AS count FROM commercial_cost_events
+      WHERE workspace_id=$1 AND operation='journal_export'`,[ctx.workspaceId])).rows[0].count,'2');
     const uncertainState=(await database.query(`SELECT effect.status,
         (SELECT COUNT(*) FROM accounting_external_identities identity WHERE identity.workspace_id=effect.workspace_id
           AND identity.connector_id=effect.payload->>'connectorId' AND identity.entity_type='journal_entry'

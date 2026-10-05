@@ -16,6 +16,9 @@ const { newId,nowIso }=require('../../src/lib/util');
 
 test('real Chromium renders PostgreSQL Brief, proactive Needs You count, activity and balanced financial reports',
   {timeout:180000},async(context)=>{
+    const currentMonth=new Date().toISOString().slice(0,7);const first=`${currentMonth}-01`;
+    const saleDate=`${currentMonth}-02`;const rentDate=`${currentMonth}-03`;
+    const reportEnd=new Date(Date.UTC(Number(currentMonth.slice(0,4)),Number(currentMonth.slice(5,7)),0)).toISOString().slice(0,10);
     const cluster=await startCluster();
     const database=openPostgres(cluster.connectionString,{applicationName:'stockchief-postgres-projections-ui'});
     await migratePostgres(database);
@@ -37,13 +40,13 @@ test('real Chromium renders PostgreSQL Brief, proactive Needs You count, activit
     const location=await locations.createLocation(database,ctx,{name:'Main Warehouse',kind:'warehouse'});
     const item=await catalog.createItem(database,ctx,{name:'Projection Widget',baseCode:'PROJ',trackingMode:'quantity',unitLabel:'unit'});
     await inventory.receive(database,ctx,{skuId:item.skuIds[0],locationId:location.id,quantity:12,reference:'OPENING-PROJECTION',idempotencyKey:'projection-opening'});
-    await ledger.configure(database,ctx,{startDate:'2026-09-01',currency:'USD'});
-    await ledger.post(database,ctx,{postingDate:'2026-09-01',sourceKey:'projection-opening-books',description:'Opening balances',
+    await ledger.configure(database,ctx,{startDate:first,currency:'USD'});
+    await ledger.post(database,ctx,{postingDate:first,sourceKey:'projection-opening-books',description:'Opening balances',
       lines:[{accountKey:'CASH',debitMinor:20000},{accountKey:'INVENTORY_ASSET',debitMinor:4000},{accountKey:'OPENING_BALANCE_EQUITY',creditMinor:24000}]});
-    await ledger.post(database,ctx,{postingDate:'2026-09-15',sourceKey:'projection-sale',description:'Verified sale',
+    await ledger.post(database,ctx,{postingDate:saleDate,sourceKey:'projection-sale',description:'Verified sale',
       lines:[{accountKey:'ACCOUNTS_RECEIVABLE',debitMinor:10000},{accountKey:'SALES_REVENUE',creditMinor:10000},
         {accountKey:'COST_OF_GOODS_SOLD',debitMinor:4000},{accountKey:'INVENTORY_ASSET',creditMinor:4000}]});
-    await ledger.post(database,ctx,{postingDate:'2026-09-16',sourceKey:'projection-rent',description:'Rent paid',
+    await ledger.post(database,ctx,{postingDate:rentDate,sourceKey:'projection-rent',description:'Rent paid',
       lines:[{accountKey:'RENT_EXPENSE',debitMinor:1000},{accountKey:'CASH',creditMinor:1000}]});
     const feed=await connections.createFeed(database,ctx,{displayName:'Store feed'});const at=nowIso();
     await database.query(`INSERT INTO connection_issues(id,workspace_id,connector_id,issue_type,fingerprint,title,
@@ -65,19 +68,19 @@ test('real Chromium renders PostgreSQL Brief, proactive Needs You count, activit
     assert.match(await page.locator('main').innerText(),/OPENING-PROJECTION/);
     await page.goto(`${base}/money`);const money=await page.locator('main').innerText();
     assert.match(money,/\$50\.00 net income this period/);assert.match(money,/\$100\.00 revenue/);
-    await page.goto(`${base}/accounting/reports/profit-and-loss?from=2026-09-01&to=2026-09-30`);
+    await page.goto(`${base}/accounting/reports/profit-and-loss?from=${first}&to=${reportEnd}`);
     const pnl=await page.locator('main').innerText();assert.match(pnl,/Revenue\s*\$100\.00/);assert.match(pnl,/Net income\s*\$50\.00/);
-    await page.goto(`${base}/accounting/reports/balance-sheet?asOf=2026-09-30`);
+    await page.goto(`${base}/accounting/reports/balance-sheet?asOf=${reportEnd}`);
     assert.match(await page.locator('main').innerText(),/Balanced/);
-    await page.goto(`${base}/accounting/reports/trial-balance?to=2026-09-30`);
+    await page.goto(`${base}/accounting/reports/trial-balance?to=${reportEnd}`);
     assert.match(await page.locator('main').innerText(),/Debits equal credits/);
-    await page.goto(`${base}/accounting/reports/general-ledger?from=2026-09-01&to=2026-09-30`);
+    await page.goto(`${base}/accounting/reports/general-ledger?from=${first}&to=${reportEnd}`);
     assert.match(await page.locator('main').innerText(),/Verified sale/);assert.match(await page.locator('main').innerText(),/Rent paid/);
     const accounts=(await database.query(`SELECT id,system_key FROM accounting_accounts WHERE workspace_id=$1
       AND system_key IN ('RENT_EXPENSE','CASH')`,[ctx.workspaceId])).rows;
     const accountIds=Object.fromEntries(accounts.map((account)=>[account.system_key,account.id]));
     await page.goto(`${base}/accounting/adjustments/new`);
-    await page.getByLabel('Posting date').fill('2026-09-20');await page.getByLabel('Amount').fill('25.00');
+    await page.getByLabel('Posting date').fill(saleDate);await page.getByLabel('Amount').fill('25.00');
     await page.getByLabel('What is this entry for?').fill('Accountant-directed correction');
     await page.getByLabel('Debit account').selectOption(accountIds.RENT_EXPENSE);
     await page.getByLabel('Credit account').selectOption(accountIds.CASH);
@@ -87,7 +90,7 @@ test('real Chromium renders PostgreSQL Brief, proactive Needs You count, activit
     await page.getByText('Advanced accounting details',{exact:true}).click();
     assert.match(await page.locator('main').innerText(),/\$25\.00/);
     await page.getByText('Correct this entry',{exact:true}).click();
-    await page.getByLabel('Correction date').fill('2026-09-21');await page.getByLabel('Why').fill('Entered for certification only');
+    await page.getByLabel('Correction date').fill(rentDate);await page.getByLabel('Why').fill('Entered for certification only');
     await Promise.all([page.waitForURL(/\/accounting\/entries\/je_/),page.getByRole('button',{name:'Post reversal'}).click()]);
     assert.match(await page.locator('main').innerText(),/Reversal of entry/);
     await page.getByText('Advanced accounting details',{exact:true}).click();

@@ -11,6 +11,7 @@ const catalog=require('../../src/domain/postgres-catalog-service');
 const locations=require('../../src/domain/postgres-location-service');
 const commerce=require('../../src/operations/postgres-commerce');
 const workflows=require('../../src/operations/postgres-business-workflows');
+const PAYMENT_DATE=new Date().toISOString().slice(0,10);
 
 function fields(overrides={}){
   return {intent:'lookup',view:'inventory',action:null,search:null,sku:null,location:null,fromLocation:null,toLocation:null,
@@ -28,10 +29,10 @@ const provider={name:'fixture',model:'fixture',async complete(request){
     receiptReference:'DN-ASK-1'}),usage:{}};
   if(message==='Pay the supplier without naming the bill')return {data:fields({intent:'action',view:null,
     action:'record_supplier_payment',supplier:'Safe Supply',amount:18,currency:'USD',paymentMethod:'ACH',
-    paymentDate:'2026-10-01'}),usage:{}};
+    paymentDate:PAYMENT_DATE}),usage:{}};
   if(message==='Record the proven supplier payment')return {data:fields({intent:'action',view:null,
     action:'record_supplier_payment',supplier:'Safe Supply',supplierBill:'BILL-00001',amount:18,currency:'USD',
-    paymentMethod:'ACH',paymentDate:'2026-10-01',reference:'BANK-77'}),usage:{}};
+    paymentMethod:'ACH',paymentDate:PAYMENT_DATE,reference:'BANK-77'}),usage:{}};
   return {data:fields(),usage:{}};
 }};
 
@@ -101,7 +102,7 @@ test('real Chromium Ask StockChief safely receives a PO and records one supplier
     assert.equal(await page.getByRole('link',{name:'Continue purchase order'}).count(),1);
 
     const bill=await workflows.recordSupplierInvoice(database,ctx,{supplierId:supplier.id,purchaseOrderId:purchase.purchaseOrderId,
-      supplierInvoiceNumber:'SUP-ASK-1',issueDate:'2026-10-01',idempotencyKey:'ask-receiving:bill',
+      supplierInvoiceNumber:'SUP-ASK-1',issueDate:PAYMENT_DATE,idempotencyKey:'ask-receiving:bill',
       lines:[{purchaseOrderLineId:purchase.lineIds[0],skuId,quantity:6,unitCostMinor:800,description:'Safety shoes'}]});
     assert.equal(bill.billNumber,'BILL-00001');assert.equal(bill.balanceMinor,4800);
     const onHandBeforePayment=Number((await database.query(`SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2
@@ -113,7 +114,7 @@ test('real Chromium Ask StockChief safely receives a PO and records one supplier
       [ctx.workspaceId])).rows[0].count,'0');
 
     text=await ask(page,base,'Record the proven supplier payment');
-    assert.match(text,/Record \$18\.00 paid to Safe Supply against BILL-00001 on 2026-10-01 by ACH/);
+    assert.match(text,new RegExp(`Record \\$18\\.00 paid to Safe Supply against BILL-00001 on ${PAYMENT_DATE} by ACH`));
     assert.match(text,/Inventory will not change/);assert.match(text,/Nothing has changed yet/);
     proposalHref=await page.locator('a',{hasText:'Review prepared change'}).last().getAttribute('href');
     await page.goto(`${base}${proposalHref}`);assert.match(await page.locator('main').innerText(),/supplier_payment\.record/);

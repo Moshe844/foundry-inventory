@@ -6,6 +6,9 @@ const assistant=require('../../assistant/postgres-service');
 const monitoring=require('../../operations/postgres-monitoring');
 const { requireAuth,asyncRoute }=require('../middleware');
 const {requireCapability}=require('../commercial-middleware');
+const entitlements=require('../../entitlements/postgres-service');
+const {commercialScope}=require('../commercial-middleware');
+const {newId}=require('../../lib/util');
 
 function createPostgresAutopilotRouter(database){
   const router=express.Router();
@@ -60,8 +63,11 @@ function createPostgresAutopilotRouter(database){
     await autonomy.resume(database,req.ctx,req.user);req.flash('success','StockChief is watching again. Old work will not be replayed.');
     return res.redirect(303,'/autopilot');
   }));
-  router.post('/autopilot/run',requireAuth,asyncRoute(async(req,res)=>{
-    const result=await autonomy.run(database,req.ctx);req.flash('success',
+  router.post('/autopilot/run',requireAuth,requireCapability(database,'forecasting.basic'),asyncRoute(async(req,res)=>{
+    const result=await autonomy.run(database,req.ctx);
+    if(result.executed>0)await entitlements.recordUsage(database,commercialScope(req),{id:newId('usage'),meter:'automatic_actions',
+      units:result.executed,idempotencyKey:`autopilot-run:${newId('run')}`,detail:{kind:'autopilot',executed:result.executed}});
+    req.flash('success',
       `Check complete — ${result.planned} prepared, ${result.executed} completed automatically, ${result.waiting} waiting for you.`);
     return res.redirect(303,'/autopilot');
   }));

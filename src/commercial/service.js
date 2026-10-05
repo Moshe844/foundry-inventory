@@ -103,34 +103,48 @@ function statusFromStripe(subscription) {
   return 'PENDING';
 }
 
-async function upsertSubscription(client, data) {
+async function upsertSubscription(client, data, options={}) {
   const item=data.items?.data?.[0]||{};const priceId=item.price?.id||item.plan?.id||null;
   const pricePlan=priceId?(await client.query(`SELECT id FROM commercial_plans
     WHERE stripe_monthly_price_id=$1 OR stripe_annual_price_id=$1`,[priceId])).rows[0]:null;
   const planId=pricePlan?.id||data.metadata?.stockchief_plan_id||data.planId;
   const accountId=data.metadata?.stockchief_account_id || data.accountId;
   if(!planId||!accountId)return null;
+  const providerCreatedAt=options.providerCreatedAt||null;
+  const existing=(await client.query('SELECT * FROM account_subscriptions WHERE account_id=$1 FOR UPDATE',[accountId])).rows[0];
+  if(providerCreatedAt&&existing?.last_provider_event_created_at
+      &&new Date(existing.last_provider_event_created_at)>new Date(providerCreatedAt))return {...existing,ignoredStaleEvent:true};
   const plan=(await client.query('SELECT grace_days FROM commercial_plans WHERE id=$1',[planId])).rows[0];
   if(!plan)return null;
   const status=statusFromStripe(data);const now=new Date();
   const graceEnds=status==='GRACE'?new Date(now.getTime()+Number(plan.grace_days||7)*86400000).toISOString():null;
   const result=await client.query(`INSERT INTO account_subscriptions
-    (id,account_id,plan_id,status,billing_interval,stripe_customer_id,stripe_subscription_id,current_period_start,
-     current_period_end,trial_ends_at,grace_ends_at,cancel_at_period_end,cancelled_at,source,provider_state,updated_at)
-    VALUES($1,$2,$3,$4,$5,$6,$7,to_timestamp($8),to_timestamp($9),to_timestamp($10),$11,$12,to_timestamp($13),
-      'SELF_SERVICE',$14::jsonb,now())
+    (id,account_id,plan_id,plan_version_id,status,billing_interval,stripe_customer_id,stripe_subscription_id,current_period_start,
+     current_period_end,trial_ends_at,grace_ends_at,cancel_at_period_end,cancelled_at,source,provider_state,
+     last_provider_event_created_at,updated_at)
+    VALUES($1,$2,$3,(SELECT id FROM commercial_plan_versions WHERE plan_id=$3 AND status='ACTIVE' ORDER BY version_number DESC LIMIT 1),
+      $4,$5,$6,$7,to_timestamp($8),to_timestamp($9),to_timestamp($10),$11,$12,to_timestamp($13),
+      'SELF_SERVICE',$14::jsonb,$15::timestamptz,now())
     ON CONFLICT(account_id) DO UPDATE SET plan_id=EXCLUDED.plan_id,status=EXCLUDED.status,
+      plan_version_id=EXCLUDED.plan_version_id,
       billing_interval=EXCLUDED.billing_interval,stripe_customer_id=EXCLUDED.stripe_customer_id,
       stripe_subscription_id=EXCLUDED.stripe_subscription_id,current_period_start=EXCLUDED.current_period_start,
       current_period_end=EXCLUDED.current_period_end,trial_ends_at=EXCLUDED.trial_ends_at,
       grace_ends_at=CASE WHEN EXCLUDED.status='GRACE' THEN COALESCE(account_subscriptions.grace_ends_at,EXCLUDED.grace_ends_at)
         ELSE EXCLUDED.grace_ends_at END,cancel_at_period_end=EXCLUDED.cancel_at_period_end,
-      cancelled_at=EXCLUDED.cancelled_at,provider_state=EXCLUDED.provider_state,updated_at=now() RETURNING *`,
+      cancelled_at=EXCLUDED.cancelled_at,provider_state=EXCLUDED.provider_state,
+      last_provider_event_created_at=COALESCE(EXCLUDED.last_provider_event_created_at,account_subscriptions.last_provider_event_created_at),
+      updated_at=now() RETURNING *`,
   [newId('sub'),accountId,planId,status,(item.price?.recurring?.interval||item.plan?.interval)==='year'?'ANNUAL':'MONTHLY',
     typeof data.customer==='string'?data.customer:data.customer?.id, data.id,
     data.current_period_start || null,data.current_period_end || null,data.trial_end || null,graceEnds,
-    data.cancel_at_period_end?1:0,data.canceled_at || null,JSON.stringify({stripeStatus:data.status})]);
-  return result.rows[0];
+    data.cancel_at_period_end?1:0,data.canceled_at || null,JSON.stringify({stripeStatus:data.status}),providerCreatedAt]);
+  const saved=result.rows[0];
+  if(existing&&existing.plan_id!==saved.plan_id)await client.query(`INSERT INTO commercial_subscription_changes
+    (id,account_id,subscription_id,from_plan_id,to_plan_id,status,effective_at,provider_reference,resource_excess)
+    VALUES($1,$2,$3,$4,$5,'APPLIED',now(),$6,'{}'::jsonb)`,[newId('subchange'),saved.account_id,saved.id,
+    existing.plan_id,saved.plan_id,data.id]);
+  return saved;
 }
 
 async function handleBillingEvent(database,event) {
@@ -155,15 +169,16 @@ async function handleBillingEvent(database,event) {
             promo_status=CASE WHEN promo_status='RESERVED' THEN 'RELEASED' ELSE promo_status END,updated_at=now() WHERE id=$1`,[attempt.id]);}
       } else if(event.type.startsWith('customer.subscription.')){const accountId=object.metadata?.stockchief_account_id;
         const previous=accountId?(await client.query('SELECT * FROM account_subscriptions WHERE account_id=$1',[accountId])).rows[0]:null;
-        subscription=await upsertSubscription(client,object);
-        if(subscription&&!previous&&entitlements.operationalAccess(subscription).canOperate)await client.query(`INSERT INTO commercial_funnel_events
+        subscription=await upsertSubscription(client,object,{providerCreatedAt:event.created
+          ?new Date(Number(event.created)*1000).toISOString():null});
+        if(subscription&&!subscription.ignoredStaleEvent&&!previous&&entitlements.operationalAccess(subscription).canOperate)await client.query(`INSERT INTO commercial_funnel_events
           (id,event_name,account_id,plan_id,source_path,detail) VALUES($1,'subscription_activated',$2,$3,'stripe_webhook',$4::jsonb)
           ON CONFLICT DO NOTHING`,[newId('funnel'),subscription.account_id,subscription.plan_id,
           JSON.stringify({stripeSubscriptionId:subscription.stripe_subscription_id})]);
-        if(subscription&&previous&&previous.plan_id!==subscription.plan_id)await client.query(`INSERT INTO commercial_funnel_events
+        if(subscription&&!subscription.ignoredStaleEvent&&previous&&previous.plan_id!==subscription.plan_id)await client.query(`INSERT INTO commercial_funnel_events
           (id,event_name,account_id,plan_id,source_path,detail) VALUES($1,'upgrade_completed',$2,$3,'stripe_webhook',$4::jsonb)`,
         [newId('funnel'),subscription.account_id,subscription.plan_id,JSON.stringify({fromPlan:previous.plan_id,toPlan:subscription.plan_id})]);
-        if(subscription&&object.cancel_at_period_end&&!Number(previous?.cancel_at_period_end||0))await client.query(`INSERT INTO commercial_funnel_events
+        if(subscription&&!subscription.ignoredStaleEvent&&object.cancel_at_period_end&&!Number(previous?.cancel_at_period_end||0))await client.query(`INSERT INTO commercial_funnel_events
           (id,event_name,account_id,plan_id,source_path,detail) VALUES($1,'cancellation',$2,$3,'stripe_webhook',$4::jsonb)`,
         [newId('funnel'),subscription.account_id,subscription.plan_id,JSON.stringify({atPeriodEnd:true})]);
       }
@@ -171,17 +186,23 @@ async function handleBillingEvent(database,event) {
         const existing=(await client.query('SELECT * FROM account_subscriptions WHERE stripe_customer_id=$1 FOR UPDATE',
           [typeof object.customer==='string'?object.customer:object.customer?.id])).rows[0];
         if(existing){const plan=(await client.query('SELECT grace_days FROM commercial_plans WHERE id=$1',[existing.plan_id])).rows[0];
+          const providerCreatedAt=event.created?new Date(Number(event.created)*1000).toISOString():null;
           const failed=(await client.query(`UPDATE account_subscriptions SET status='GRACE',
             grace_ends_at=COALESCE(grace_ends_at,now()+($2||' days')::interval),
-            provider_state=provider_state||$3::jsonb,updated_at=now() WHERE id=$1 RETURNING account_id,grace_ends_at`,
-          [existing.id,String(Number(plan?.grace_days||7)),JSON.stringify({latestFailedInvoice:object.id})])).rows[0];
-          await notifications.queuePaymentFailed(client,{eventId:event.id,accountId:failed.account_id,
+            provider_state=provider_state||$3::jsonb,last_provider_event_created_at=COALESCE($4::timestamptz,last_provider_event_created_at),
+            updated_at=now() WHERE id=$1 AND ($4::timestamptz IS NULL OR last_provider_event_created_at IS NULL
+              OR last_provider_event_created_at<=$4::timestamptz) RETURNING account_id,grace_ends_at`,
+          [existing.id,String(Number(plan?.grace_days||7)),JSON.stringify({latestFailedInvoice:object.id}),providerCreatedAt])).rows[0];
+          if(failed)await notifications.queuePaymentFailed(client,{eventId:event.id,accountId:failed.account_id,
             graceEnds:failed.grace_ends_at});}
       } else if(event.type==='invoice.paid'){
         const customer=typeof object.customer==='string'?object.customer:object.customer?.id;
+        const providerCreatedAt=event.created?new Date(Number(event.created)*1000).toISOString():null;
         await client.query(`UPDATE account_subscriptions SET status=CASE WHEN status='CANCELLED' THEN status ELSE 'ACTIVE' END,grace_ends_at=NULL,
-          provider_state=provider_state||$2::jsonb,updated_at=now() WHERE stripe_customer_id=$1`,
-        [customer,JSON.stringify({latestPaidInvoice:object.id})]);
+          provider_state=provider_state||$2::jsonb,last_provider_event_created_at=COALESCE($3::timestamptz,last_provider_event_created_at),
+          updated_at=now() WHERE stripe_customer_id=$1 AND ($3::timestamptz IS NULL OR last_provider_event_created_at IS NULL
+            OR last_provider_event_created_at<=$3::timestamptz)`,
+        [customer,JSON.stringify({latestPaidInvoice:object.id}),providerCreatedAt]);
         await client.query(`UPDATE commercial_overage_charges charge SET status='BILLED',updated_at=now()
           FROM account_subscriptions subscription WHERE charge.subscription_id=subscription.id
           AND subscription.stripe_customer_id=$1 AND charge.status='CHARGED'`,[customer]);

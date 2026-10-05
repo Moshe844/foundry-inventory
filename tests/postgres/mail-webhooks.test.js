@@ -92,5 +92,7 @@ test('PostgreSQL Gmail and Microsoft webhooks authenticate, deduplicate and wake
     assert.deepEqual(subjects,['Gmail supplier question','Microsoft customer question']);
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM stockchief_runtime.jobs WHERE workspace_id=$1
       AND kind='mailbox.poll'`,[ctx.workspaceId])).rows[0].count,'2');
+    assert.equal((await database.query(`SELECT COUNT(*) AS count FROM commercial_cost_events
+      WHERE workspace_id=$1 AND operation='message_ingestion'`,[ctx.workspaceId])).rows[0].count,'2');
     assert.equal(gmailId.length>0,true);
   });

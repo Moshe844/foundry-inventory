@@ -111,6 +111,7 @@ function createPostgresConnectionsRouter(database,options={}){
     return renderConnections(req,res,apiToken);
   }));
   router.get('/settings/connections/payments/launch',requireOwner,asyncRoute(async(req,res)=>{
+    await entitlements.assertCapability(database,commercialScope(req),'merchant_payments');
     const launch=req.session.connectionLaunch;
     delete req.session.connectionLaunch;
     if(!launch||launch.workspaceId!==req.ctx.workspaceId||launch.expiresAt<Date.now()
@@ -182,6 +183,7 @@ function createPostgresConnectionsRouter(database,options={}){
     });
   }));
   router.post('/settings/connections/:id/accounting/authority',requireOwner,asyncRoute(async(req,res)=>{
+    await entitlements.assertCapability(database,commercialScope(req),'connection.accounting');
     await accountingSync.chooseAuthority(database,req.ctx,req.params.id,req.body.authority);
     req.flash('success',req.body.authority==='POST'
       ?'Posting requested. Exact account mapping and a matching shadow comparison are still required.'
@@ -189,11 +191,13 @@ function createPostgresConnectionsRouter(database,options={}){
     return res.redirect(303,`/settings/connections/${req.params.id}`);
   }));
   router.post('/settings/connections/:id/accounting/map-account',requireOwner,asyncRoute(async(req,res)=>{
+    await entitlements.assertCapability(database,commercialScope(req),'connection.accounting');
     await accountingSync.mapAccount(database,req.ctx,req.params.id,req.body);
     req.flash('success','Exact posting account mapping saved. No journal was exported.');
     return res.redirect(303,`/settings/connections/${req.params.id}`);
   }));
   router.post('/settings/connections/:id/accounting/map-party',requireOwner,asyncRoute(async(req,res)=>{
+    await entitlements.assertCapability(database,commercialScope(req),'connection.accounting');
     const connection=await connections.get(database,req.ctx.workspaceId,req.params.id);
     const adapter=registry.get(connection.provider_type);const partyType=String(req.body.partyType||'').toLowerCase();
     if(!adapter?.listPostingParties)throw new Error('This accounting provider does not require posting-party mappings.');
@@ -207,6 +211,7 @@ function createPostgresConnectionsRouter(database,options={}){
     return res.redirect(303,`/settings/connections/${req.params.id}`);
   }));
   router.post('/settings/connections/:id/accounting/shadow',requireOwner,asyncRoute(async(req,res)=>{
+    await entitlements.assertCapability(database,commercialScope(req),'connection.accounting');
     const connection=await connections.get(database,req.ctx.workspaceId,req.params.id);
     const adapter=registry.get(connection.provider_type);
     const providerCredentials=await providerService.loadProviderCredentials(database,connection,adapter);
@@ -217,11 +222,13 @@ function createPostgresConnectionsRouter(database,options={}){
     return res.redirect(303,`/settings/connections/${req.params.id}`);
   }));
   router.post('/settings/connections/:id/accounting/enable',requireOwner,asyncRoute(async(req,res)=>{
+    await entitlements.assertCapability(database,commercialScope(req),'connection.accounting');
     await accountingSync.enableWrites(database,req.ctx,req.params.id);
     req.flash('success','Governed journal posting enabled for this inventory and this provider account.');
     return res.redirect(303,`/settings/connections/${req.params.id}`);
   }));
   router.post('/settings/connections/:id/accounting/export',requireOwner,asyncRoute(async(req,res)=>{
+    await entitlements.assertCapability(database,commercialScope(req),'connection.accounting');
     const result=await accountingSync.queuePending(database,req.ctx,req.params.id,{});
     req.flash('success',result.queued
       ?`${result.queued} journal export${result.queued===1?'':'s'} queued. The worker—not this browser—will call the provider.`
@@ -237,12 +244,14 @@ function createPostgresConnectionsRouter(database,options={}){
     return res.redirect(303,started.redirectUrl);
   }));
   router.post('/settings/connections/custom',requireOwner,asyncRoute(async(req,res)=>{
+    await entitlements.assertCapability(database,commercialScope(req),'integrations.custom');
     const created=await connections.createFeed(database,req.ctx,req.body);
     req.session.newConnectionToken=created.token;
     req.flash('success','Connection created. Copy its token now; StockChief will not show it again.');
     return res.redirect(303,`/settings/connections/${created.connection.id}`);
   }));
   router.post('/settings/connections/api-clients',requireOwner,asyncRoute(async(req,res)=>{
+    await entitlements.assertCapability(database,commercialScope(req),'api.public');
     const apiToken=await publicApi.create(database,req.ctx,{name:req.body.name,scopes:req.body.scopes});
     res.locals.flash.push({type:'success',message:'API client created. Copy its token now; StockChief will not show it again.'});
     return renderConnections(req,res,apiToken);

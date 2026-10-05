@@ -30,6 +30,7 @@ test.after(cleanupAll);
 
 // The books open today; a bill dated before that is refused, so the fixture is dated today.
 const TODAY = new Date().toISOString().slice(0, 10);
+const FUTURE_DUE_DATE = new Date(Date.parse(`${TODAY}T00:00:00.000Z`) + 30 * 86400000).toISOString().slice(0, 10);
 
 function setup() {
   const { db } = makeDatabase();
@@ -55,7 +56,7 @@ function orderedAndInvoiced(env) {
   const poLine = env.db.prepare('SELECT id FROM purchase_order_lines WHERE purchase_order_id = ?').get(order.id);
   const bill = payables.createDraft(env.db, env.ctx, env.membership, {
     supplierId: env.supplier.id, purchaseOrderId: order.id, billNumber: '9281',
-    issueDate: TODAY, dueDate: '2026-09-30',
+    issueDate: TODAY, dueDate: FUTURE_DUE_DATE,
     lines: [{ description: '24 Black Small', quantity: 24, unitCostMinor: 1000,
       skuId: env.item.skuId, purchaseOrderLineId: poLine.id }],
   });

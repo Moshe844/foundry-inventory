@@ -8,7 +8,8 @@ const commerce=require('../../operations/postgres-commerce');
 const address=require('../../shipping/address');
 const providerRegistry=require('../../shipping/provider');
 const legacyAccounts=require('../../shipping/accounts');
-const {requireCapability}=require('../commercial-middleware');
+const {requireCapability,commercialScope}=require('../commercial-middleware');
+const entitlements=require('../../entitlements/postgres-service');
 const permissions=require('../../actions/permissions');
 const carriers=require('../../sales/carriers');
 const {newId,nowIso,trimOrNull}=require('../../lib/util');
@@ -148,26 +149,34 @@ function createPostgresShippingRouter(database,options={}){
     req.flash('success','Measured package details saved.');
     return res.redirect(303,`/fulfilment/${req.params.id}`);
   }));
-  router.post('/fulfilment/:id/quote',asyncRoute(async(req,res)=>{
-    await shipping.quote(database,req.ctx,req.params.id,{provider:options.providerResolver?
-      options.providerResolver((await accounts.forWorkspace(database,req.ctx.workspaceId))?.provider):undefined});
+  async function quoteShipment(req){
+    const scope=commercialScope(req);const idempotencyKey=`shipment:${req.params.id}`;
+    await entitlements.reserveUsage(database,scope,{id:newId('usage'),meter:'shipments_managed',units:1,idempotencyKey,
+      detail:{kind:'shipment',shipmentId:req.params.id}});
+    try{const result=await shipping.quote(database,req.ctx,req.params.id,{provider:options.providerResolver?
+        options.providerResolver((await accounts.forWorkspace(database,req.ctx.workspaceId))?.provider):undefined});
+      await entitlements.commitUsage(database,scope,{meter:'shipments_managed',idempotencyKey});return result;
+    }catch(error){await entitlements.reverseUsage(database,scope,{meter:'shipments_managed',idempotencyKey,
+      reason:'Carrier rate request did not complete.'});throw error;}
+  }
+  router.post('/fulfilment/:id/quote',requireCapability(database,'shipping.automation'),asyncRoute(async(req,res)=>{
+    await quoteShipment(req);
     req.flash('success','Live rates refreshed. No postage was purchased.');
     return res.redirect(303,`/fulfilment/${req.params.id}#rates`);
   }));
-  router.post('/fulfilment/:id/rates',asyncRoute(async(req,res)=>{
-    await shipping.quote(database,req.ctx,req.params.id,{provider:options.providerResolver?
-      options.providerResolver((await accounts.forWorkspace(database,req.ctx.workspaceId))?.provider):undefined});
+  router.post('/fulfilment/:id/rates',requireCapability(database,'shipping.automation'),asyncRoute(async(req,res)=>{
+    await quoteShipment(req);
     req.flash('success','Live rates refreshed. No postage was purchased.');
     return res.redirect(303,`/fulfilment/${req.params.id}#carrier`);
   }));
-  router.post('/fulfilment/:id/buy',requireOwner,asyncRoute(async(req,res)=>{
+  router.post('/fulfilment/:id/buy',requireOwner,requireCapability(database,'shipping.automation'),asyncRoute(async(req,res)=>{
     const queued=await shipping.queueLabelPurchase(database,req.ctx,req.params.id,req.body.rateId,
       {idempotencyKey:req.body.idempotencyKey});
     req.flash('success',queued.replayed?'That label request is already being verified. StockChief did not submit it twice.':
       'Label purchase queued. StockChief will record it only after the carrier confirms the charge and tracking number.');
     return res.redirect(303,`/fulfilment/${req.params.id}#label`);
   }));
-  router.post('/fulfilment/:id/label',requireOwner,asyncRoute(async(req,res)=>{
+  router.post('/fulfilment/:id/label',requireOwner,requireCapability(database,'shipping.automation'),asyncRoute(async(req,res)=>{
     const queued=await shipping.queueLabelPurchase(database,req.ctx,req.params.id,req.body.rateId,
       {idempotencyKey:req.body.idempotencyKey||`label:${req.params.id}:${req.body.rateId}`});
     req.flash('success',queued.replayed?'That label request is already being verified. StockChief did not submit it twice.':

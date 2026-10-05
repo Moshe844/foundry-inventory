@@ -495,7 +495,7 @@ test('an answer leads with the measure the question named', () => {
   const prices = require('../../src/pricing/price-service');
   prices.setPrice(db, workspace.ctx, { skuId: item.skuId, amount: '10.00', currency: 'USD' });
   const order = sales.createOrder(db, workspace.ctx, {
-    customerName: 'Harbour Boutique', deliveryMethod: 'PICKUP', orderDate: '2026-09-01',
+    customerName: 'Harbour Boutique', deliveryMethod: 'PICKUP', orderDate: new Date().toISOString().slice(0, 10),
     lines: [{ skuId: item.skuId, quantity: 8 }],
   });
   sales.confirm(db, workspace.ctx, order.id, { idempotencyKey: `t:${order.id}` });

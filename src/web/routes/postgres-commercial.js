@@ -5,6 +5,8 @@ const config=require('../../config');
 const commercial=require('../../commercial/service');
 const billingProvider=require('../../commercial/stripe-billing');
 const entitlements=require('../../entitlements/postgres-service');
+const commercialControl=require('../../commercial/control-service');
+const commercialCatalog=require('../../commercial/catalog');
 const auth=require('../../domain/postgres-auth-service');
 const lifecycle=require('../../domain/postgres-account-lifecycle');
 const {newId}=require('../../lib/util');
@@ -69,10 +71,11 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     if(!allowed.has(req.body.eventName))return res.status(204).end();await commercial.track(database,{eventName:req.body.eventName,
       anonymousId:req.sessionID,accountId:req.account?.id||null,planId:req.body.planId||null,sourcePath:req.body.sourcePath||null});
     return res.status(204).end();}));
-  router.get('/billing',requireAccount,requireBillingOwner,asyncRoute(async(req,res)=>{const summary=await entitlements.summary(database,commercialScope(req));
+  router.get('/billing',requireAccount,requireBillingOwner,asyncRoute(async(req,res)=>{const scope=commercialScope(req);
+    const summary=await entitlements.summary(database,scope);const usageWarnings=await commercialControl.usageWarnings(database,scope,{summary});
     let invoices=[];if(summary.subscription?.stripe_customer_id&&options.loadInvoices!==false){try{
       invoices=(await provider.listInvoices(summary.subscription.stripe_customer_id,options.providerOptions||{})).data||[];}catch{invoices=[];}}
-    return res.page('commercial/billing',{title:'Plan and billing',nav:'settings',room:true,summary,invoices,
+    return res.page('commercial/billing',{title:'Plan and billing',nav:'settings',room:true,summary,usageWarnings,invoices,
       billingConfigured:config.commercial.configured,plans:await commercial.listPlans(database)});}));
   router.get('/upgrade',requireAccount,requireBillingOwner,asyncRoute(async(req,res)=>{const capability=String(req.query.capability||'').trim();
     const scope=commercialScope(req);const returnPath=safeReturnPath(req.query.return);const current=await entitlements.subscriptionFor(database,scope.accountId);
@@ -115,13 +118,25 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
       returnUrl:`${options.publicOrigin==='request'?res.locals.origin:(options.publicOrigin||config.connections.publicOrigin||res.locals.origin)}/billing`},options.providerOptions||{});
     return res.redirect(303,portal.url);}));
   router.get('/commercial-admin',requireAccount,commercialAdmin,asyncRoute(async(req,res)=>res.page('commercial/admin',{
-    title:'Commercial control',nav:'settings',room:true,plans:await commercial.listPlans(database,{includeDrafts:true,includePrivate:true})})));
+    title:'Commercial control',nav:'settings',room:true,plans:await commercial.listPlans(database,{includeDrafts:true,includePrivate:true}),
+    capabilities:commercialCatalog.CAPABILITIES.map((row)=>commercialCatalog.capability(row[0])),
+    meters:commercialCatalog.METERS.map((row)=>commercialCatalog.meter(row[0])),
+    costRates:(await database.query('SELECT * FROM commercial_cost_rates ORDER BY provider,operation,effective_from DESC')).rows,
+    commercialAudit:(await database.query('SELECT * FROM commercial_change_audit ORDER BY created_at DESC LIMIT 50')).rows,
+    economics:await commercialControl.portfolioEconomics(database)})));
   router.post('/commercial-admin/plans/:id',requireAccount,commercialAdmin,asyncRoute(async(req,res)=>{const monthly=Math.max(0,Math.round(Number(req.body.monthlyAmount||0)*100));
     const annual=Math.max(0,Math.round(Number(req.body.annualAmount||0)*100));const approved=req.body.packagingApproved==='1';
     const existing=(await database.query('SELECT * FROM commercial_plans WHERE id=$1',[req.params.id])).rows[0];
     if(!existing)throw new ValidationError('That commercial plan does not exist.');if(approved&&!Number(existing.sales_only)&&
       (!monthly||!annual||!String(req.body.stripeMonthlyPriceId||'').trim()||!String(req.body.stripeAnnualPriceId||'').trim()))
       throw new ValidationError('Before approving real checkout, set both public prices and both Stripe Price IDs.');
+    if(approved&&!Number(existing.sales_only)){const incomplete=(await database.query(`SELECT definition.label
+      FROM commercial_meter_definitions definition LEFT JOIN commercial_plan_meters meter
+        ON meter.meter=definition.meter AND meter.plan_id=$1
+      WHERE definition.kind='USAGE' AND definition.customer_visible=1
+        AND (meter.meter IS NULL OR meter.included_units IS NULL OR meter.overage_mode IS NULL)
+      ORDER BY definition.label`,[req.params.id])).rows;
+      if(incomplete.length)throw new ValidationError(`Before approving checkout, set an included allowance and overage policy for: ${incomplete.map((row)=>row.label).join(', ')}.`);}
     await database.query(`UPDATE commercial_plans SET
       public_name=$2,outcome=$3,audience=$4,monthly_amount_minor=NULLIF($5,0),annual_amount_minor=NULLIF($6,0),
       stripe_monthly_price_id=NULLIF($7,''),stripe_annual_price_id=NULLIF($8,''),trial_days=$9,grace_days=$10,
@@ -132,23 +147,50 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
       Math.max(0,Number(req.body.trialDays||0)),Math.max(0,Number(req.body.graceDays||7)),req.body.isPublic==='1'?1:0,
       req.body.isRecommended==='1'?1:0,['DRAFT','ACTIVE','ARCHIVED'].includes(req.body.status)?req.body.status:'DRAFT',
       approved?'APPROVED':'PROPOSED',req.account.id]);
+    const after=(await database.query('SELECT * FROM commercial_plans WHERE id=$1',[req.params.id])).rows[0];
+    await commercialControl.audit(database,{actorAccountId:req.account.id,subjectType:'plan',subjectId:req.params.id,
+      action:'updated',beforeState:existing,afterState:after,reason:'Commercial plan edited',sourceIp:req.ip});
+    await commercialControl.snapshotPlanVersion(database,req.params.id,{actorAccountId:req.account.id,
+      reason:'Plan settings changed',sourceIp:req.ip});
     req.flash('success','Commercial plan updated.');return res.redirect(303,`/commercial-admin#${req.params.id}`);}));
   router.post('/commercial-admin/plans/:id/entitlements/:capability',requireAccount,commercialAdmin,asyncRoute(async(req,res)=>{
+    const definition=commercialCatalog.assertCapabilityKey(req.params.capability);const enabled=req.body.enabled==='1'?1:0;
+    if(enabled&&definition.readiness==='DISABLED')throw new ValidationError('That capability is not production-ready and cannot be sold.');
+    const before=(await database.query('SELECT * FROM commercial_plan_entitlements WHERE plan_id=$1 AND capability=$2',
+      [req.params.id,req.params.capability])).rows[0]||null;
     await database.query(`INSERT INTO commercial_plan_entitlements(plan_id,capability,enabled) VALUES($1,$2,$3)
-      ON CONFLICT(plan_id,capability) DO UPDATE SET enabled=EXCLUDED.enabled`,[req.params.id,req.params.capability,req.body.enabled==='1'?1:0]);
+      ON CONFLICT(plan_id,capability) DO UPDATE SET enabled=EXCLUDED.enabled`,[req.params.id,req.params.capability,enabled]);
+    const after=(await database.query('SELECT * FROM commercial_plan_entitlements WHERE plan_id=$1 AND capability=$2',
+      [req.params.id,req.params.capability])).rows[0];
+    await commercialControl.audit(database,{actorAccountId:req.account.id,subjectType:'plan_entitlement',
+      subjectId:`${req.params.id}:${req.params.capability}`,action:'updated',beforeState:before,afterState:after,
+      reason:'Plan entitlement changed',sourceIp:req.ip});
+    await commercialControl.snapshotPlanVersion(database,req.params.id,{actorAccountId:req.account.id,
+      reason:`Entitlement ${req.params.capability} changed`,sourceIp:req.ip});
     req.flash('success','Plan entitlement updated.');return res.redirect(303,`/commercial-admin#${req.params.id}`);}));
   router.post('/commercial-admin/plans/:id/meters/:meter',requireAccount,commercialAdmin,asyncRoute(async(req,res)=>{
+    commercialCatalog.assertMeterKey(req.params.meter);const before=(await database.query(
+      'SELECT * FROM commercial_plan_meters WHERE plan_id=$1 AND meter=$2',[req.params.id,req.params.meter])).rows[0]||null;
     const nullable=(value)=>String(value??'').trim()===''?null:Math.max(0,Math.round(Number(value)));
     await database.query(`UPDATE commercial_plan_meters SET label=$3,included_units=$4,hard_limit=$5,
-      overage_block_units=$6,overage_amount_minor=$7 WHERE plan_id=$1 AND meter=$2`,[req.params.id,req.params.meter,
+      overage_block_units=$6,overage_amount_minor=$7,overage_mode=$8 WHERE plan_id=$1 AND meter=$2`,[req.params.id,req.params.meter,
       req.body.label,nullable(req.body.includedUnits),nullable(req.body.hardLimit),nullable(req.body.overageBlockUnits),
-      String(req.body.overageAmount||'').trim()===''?null:Math.max(0,Math.round(Number(req.body.overageAmount)*100))]);
+      String(req.body.overageAmount||'').trim()===''?null:Math.max(0,Math.round(Number(req.body.overageAmount)*100)),
+      ['PAUSE','BILL','PURCHASE','CONTRACT'].includes(req.body.overageMode)?req.body.overageMode:'PAUSE']);
+    const after=(await database.query('SELECT * FROM commercial_plan_meters WHERE plan_id=$1 AND meter=$2',
+      [req.params.id,req.params.meter])).rows[0];
+    await commercialControl.audit(database,{actorAccountId:req.account.id,subjectType:'plan_meter',
+      subjectId:`${req.params.id}:${req.params.meter}`,action:'updated',beforeState:before,afterState:after,
+      reason:'Plan usage policy changed',sourceIp:req.ip});
+    await commercialControl.snapshotPlanVersion(database,req.params.id,{actorAccountId:req.account.id,
+      reason:`Meter ${req.params.meter} changed`,sourceIp:req.ip});
     req.flash('success','Usage allowance updated.');return res.redirect(303,`/commercial-admin#${req.params.id}`);}));
   router.post('/commercial-admin/promos',requireAccount,commercialAdmin,asyncRoute(async(req,res)=>{const code=String(req.body.code||'').trim().toUpperCase();
     if(!/^[A-Z0-9_-]{3,40}$/.test(code))throw new ValidationError('Use 3–40 letters, numbers, dashes or underscores for the promo code.');
     const discount=Math.max(0,Math.min(100,Number(req.body.discountPercent||0)));
     if(discount>0&&!String(req.body.stripePromotionCodeId||'').trim())throw new ValidationError(
       'A discounted promotion needs its Stripe promotion code ID so checkout charges the approved amount.');
+    const before=(await database.query('SELECT * FROM commercial_promo_codes WHERE code=$1',[code])).rows[0]||null;
     await database.query(`INSERT INTO commercial_promo_codes(code,active,plan_id,trial_days,discount_percent,stripe_promotion_code_id,
       redemption_limit,starts_at,ends_at) VALUES($1,$2,NULLIF($3,''),$4,$5,NULLIF($6,''),$7,NULLIF($8,'')::timestamptz,
       NULLIF($9,'')::timestamptz) ON CONFLICT(code) DO UPDATE SET active=EXCLUDED.active,plan_id=EXCLUDED.plan_id,trial_days=EXCLUDED.trial_days,
@@ -156,7 +198,11 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
       redemption_limit=EXCLUDED.redemption_limit,starts_at=EXCLUDED.starts_at,ends_at=EXCLUDED.ends_at`,[code,
       req.body.active==='1'?1:0,req.body.planId||'',Math.max(0,Number(req.body.trialDays||0)),discount,
       req.body.stripePromotionCodeId||'',String(req.body.redemptionLimit||'').trim()===''?null:Math.max(1,Number(req.body.redemptionLimit)),
-      req.body.startsAt||'',req.body.endsAt||'']);req.flash('success','Promotion saved.');return res.redirect(303,'/commercial-admin#promotions');}));
+      req.body.startsAt||'',req.body.endsAt||'']);
+    const after=(await database.query('SELECT * FROM commercial_promo_codes WHERE code=$1',[code])).rows[0];
+    await commercialControl.audit(database,{actorAccountId:req.account.id,subjectType:'promotion',subjectId:code,
+      action:before?'updated':'created',beforeState:before,afterState:after,reason:'Promotion configuration changed',sourceIp:req.ip});
+    req.flash('success','Promotion saved.');return res.redirect(303,'/commercial-admin#promotions');}));
   router.post('/commercial-admin/grants',requireAccount,commercialAdmin,asyncRoute(async(req,res)=>{const account=(await database.query(
       'SELECT * FROM accounts WHERE email=$1',[String(req.body.email||'').trim().toLowerCase()])).rows[0];
     if(!account)throw new ValidationError('No StockChief account uses that email.');const plan=await commercial.getPlan(database,req.body.planId);
@@ -165,28 +211,52 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
       'This account has a Stripe subscription. Change or cancel it in Stripe before granting admin-funded access.');
     const status=req.body.kind==='trial'?'TRIALING':'COMP';const trialEnds=status==='TRIALING'
       ?new Date(Date.now()+Math.max(1,Number(req.body.days||1))*86400000).toISOString():null;
-    await database.query(`INSERT INTO account_subscriptions(id,account_id,plan_id,status,billing_interval,trial_ends_at,source)
-      VALUES($1,$2,$3,$4,'CUSTOM',$5,'ADMIN') ON CONFLICT(account_id) DO UPDATE SET plan_id=EXCLUDED.plan_id,
-      status=EXCLUDED.status,billing_interval='CUSTOM',trial_ends_at=EXCLUDED.trial_ends_at,source='ADMIN',updated_at=now()`,
-    [newId('sub'),account.id,plan.id,status,trialEnds]);req.flash('success',`${plan.public_name} ${status==='COMP'?'comp access':'trial'} granted.`);
+    const before=(await database.query('SELECT * FROM account_subscriptions WHERE account_id=$1',[account.id])).rows[0]||null;
+    const saved=(await database.query(`INSERT INTO account_subscriptions
+      (id,account_id,plan_id,plan_version_id,status,billing_interval,trial_ends_at,source)
+      VALUES($1,$2,$3,(SELECT id FROM commercial_plan_versions WHERE plan_id=$3 AND status='ACTIVE'
+        ORDER BY version_number DESC LIMIT 1),$4,'CUSTOM',$5,'ADMIN') ON CONFLICT(account_id) DO UPDATE SET
+      plan_id=EXCLUDED.plan_id,plan_version_id=EXCLUDED.plan_version_id,status=EXCLUDED.status,billing_interval='CUSTOM',
+      trial_ends_at=EXCLUDED.trial_ends_at,source='ADMIN',updated_at=now() RETURNING *`,
+    [newId('sub'),account.id,plan.id,status,trialEnds])).rows[0];
+    await commercialControl.audit(database,{actorAccountId:req.account.id,subjectType:'subscription_grant',subjectId:saved.id,
+      action:before?'updated':'created',beforeState:before,afterState:saved,reason:`Admin ${status==='COMP'?'comp access':'trial'} grant`,sourceIp:req.ip});
+    req.flash('success',`${plan.public_name} ${status==='COMP'?'comp access':'trial'} granted.`);
     return res.redirect(303,'/commercial-admin#grants');}));
   router.post('/commercial-admin/overrides',requireAccount,commercialAdmin,asyncRoute(async(req,res)=>{const account=(await database.query(
       'SELECT id FROM accounts WHERE email=$1',[String(req.body.email||'').trim().toLowerCase()])).rows[0];
     if(!account)throw new ValidationError('No StockChief account uses that email.');const capability=String(req.body.capability||'').trim();
-    await database.query(`INSERT INTO commercial_entitlement_overrides
-      (id,account_id,capability,enabled,ends_at,reason,source) VALUES($1,$2,$3,$4,NULLIF($5,'')::timestamptz,$6,'ADMIN')`,
-    [newId('override'),account.id,capability,req.body.enabled==='1'?1:0,req.body.endsAt||'',req.body.reason||'Commercial override']);
+    const definition=commercialCatalog.assertCapabilityKey(capability);const enabled=req.body.enabled==='1'?1:0;
+    if(enabled&&definition.readiness==='DISABLED')throw new ValidationError('That capability is not production-ready and cannot be granted.');
+    const created=(await database.query(`INSERT INTO commercial_entitlement_overrides
+      (id,account_id,capability,enabled,ends_at,reason,source) VALUES($1,$2,$3,$4,NULLIF($5,'')::timestamptz,$6,'ADMIN') RETURNING *`,
+    [newId('override'),account.id,capability,enabled,req.body.endsAt||'',req.body.reason||'Commercial override'])).rows[0];
+    await commercialControl.audit(database,{actorAccountId:req.account.id,subjectType:'entitlement_override',
+      subjectId:created?.id||`${account.id}:${capability}`,action:'created',afterState:{accountId:account.id,capability,enabled,
+        endsAt:req.body.endsAt||null},reason:req.body.reason||'Commercial override',sourceIp:req.ip});
     req.flash('success','Customer-specific entitlement override saved.');return res.redirect(303,'/commercial-admin#grants');}));
   router.post('/commercial-admin/meter-overrides',requireAccount,commercialAdmin,asyncRoute(async(req,res)=>{const account=(await database.query(
       'SELECT id FROM accounts WHERE email=$1',[String(req.body.email||'').trim().toLowerCase()])).rows[0];
     if(!account)throw new ValidationError('No StockChief account uses that email.');const meter=String(req.body.meter||'').trim();
-    const known=(await database.query('SELECT 1 FROM commercial_plan_meters WHERE meter=$1 LIMIT 1',[meter])).rows[0];
-    if(!known)throw new ValidationError('Choose a known commercial meter.');const limit=Math.round(Number(req.body.limitUnits));
+    commercialCatalog.assertMeterKey(meter);const limit=Math.round(Number(req.body.limitUnits));
     if(!Number.isSafeInteger(limit)||limit<0)throw new ValidationError('The customer-specific limit must be zero or a positive whole number.');
     await database.query(`INSERT INTO commercial_entitlement_overrides
       (id,account_id,meter,limit_units,ends_at,reason,source) VALUES($1,$2,$3,$4,NULLIF($5,'')::timestamptz,$6,'ADMIN')`,
     [newId('override'),account.id,meter,limit,req.body.endsAt||'',req.body.reason||'Commercial limit override']);
+    await commercialControl.audit(database,{actorAccountId:req.account.id,subjectType:'meter_override',
+      subjectId:`${account.id}:${meter}:${Date.now()}`,action:'created',afterState:{accountId:account.id,meter,limit,
+        endsAt:req.body.endsAt||null},reason:req.body.reason||'Commercial limit override',sourceIp:req.ip});
     req.flash('success','Customer-specific usage limit saved.');return res.redirect(303,'/commercial-admin#limits');}));
+  router.post('/commercial-admin/cost-rates',requireAccount,commercialAdmin,asyncRoute(async(req,res)=>{
+    const created=await commercialControl.saveCostRate(database,{provider:req.body.provider,operation:req.body.operation,
+      unit:req.body.unit,costPerUnitMinor:req.body.costPerUnitMinor,currency:req.body.currency||'USD',
+      effectiveFrom:req.body.effectiveFrom,effectiveUntil:req.body.effectiveUntil,source:req.body.source||'ADMIN',
+      actorAccountId:req.account.id});
+    await commercialControl.audit(database,{actorAccountId:req.account.id,subjectType:'cost_rate',subjectId:created.id,
+      action:'created',afterState:created,reason:'Variable-cost assumption changed',sourceIp:req.ip});
+    req.flash('success','Variable-cost rate saved. Existing historical cost events were not rewritten.');
+    return res.redirect(303,'/commercial-admin#cost-rates');
+  }));
   return router;}
 
 module.exports={createPostgresCommercialRouter,renderPublic,commercialAdmin};

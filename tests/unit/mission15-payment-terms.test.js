@@ -29,6 +29,7 @@ test.after(cleanupAll);
 
 // The books open the day the test runs; a date before that is refused, so fixtures are dated today.
 const TODAY = new Date().toISOString().slice(0, 10);
+const FUTURE_DUE_DATE = new Date(Date.parse(`${TODAY}T00:00:00.000Z`) + 30 * 86400000).toISOString().slice(0, 10);
 
 function setup() {
   const { db } = makeDatabase();
@@ -48,7 +49,7 @@ function orderWorth1500(env) {
     customerId: customer.id, lines: [{ skuId: env.item.skuId, quantity: 100 }],
   }).id);
   const { invoice } = receivables.createDraft(env.db, env.ctx, env.membership, {
-    customerId: customer.id, salesOrderId: order.id, issueDate: TODAY, dueDate: '2026-10-02',
+    customerId: customer.id, salesOrderId: order.id, issueDate: TODAY, dueDate: FUTURE_DUE_DATE,
     lines: [{ description: '100 Black Small Shirt', quantity: 100, unitPriceMinor: 1500 }],
   });
   receivables.open(env.db, env.ctx, env.membership, invoice.id);

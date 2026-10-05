@@ -134,6 +134,8 @@ test('real Chromium qualifies PostgreSQL rates, label, handoff and idempotent de
     assert.equal(await jobs.processOne(database,runtimeHandlers.create(undefined,{shippingProviderResolver:()=>fakeCarrier}),
       {owner:'shipping-ui-worker',leaseMs:30000}),null);
     assert.equal(buyCalls,1);
+    assert.equal((await database.query(`SELECT COUNT(*) AS count FROM commercial_cost_events
+      WHERE workspace_id=$1 AND operation='label_purchase'`,[ctx.workspaceId])).rows[0].count,'1');
     await page.reload();
     assert.match(await page.locator('main').innerText(),/still counts these goods in inventory/i);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:/Handed to carrier/}).click()]);

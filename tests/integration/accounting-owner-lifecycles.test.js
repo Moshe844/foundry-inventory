@@ -27,7 +27,10 @@ test.after(cleanupAll);
 
 // The books open the day the test runs; a date before that is refused, so fixtures are dated today.
 const TODAY = new Date().toISOString().slice(0, 10);
-const LIFECYCLE_DATE = '2026-09-12';
+const MONTH_START = `${TODAY.slice(0, 7)}-01`;
+const MONTH_END = new Date(Date.UTC(Number(TODAY.slice(0, 4)), Number(TODAY.slice(5, 7)), 0)).toISOString().slice(0, 10);
+const LIFECYCLE_DATE = TODAY;
+const FUTURE_DUE_DATE = new Date(Date.parse(`${TODAY}T00:00:00.000Z`) + 30 * 86400000).toISOString().slice(0, 10);
 
 test('a confirmed unpaid order is visible as customer money without becoming earned revenue', () => {
   const { db } = makeDatabase();
@@ -64,9 +67,9 @@ test('Mission 14 owner accounting proves all twenty required lifecycle scenarios
   const workspace = seedWorkspace(db, { workspaceName: 'Twenty Lifecycle Company' });
   const membership = auth.getMembership(db, workspace.workspaceId, workspace.accountId);
   ledger.configure(db, workspace.ctx, membership, {
-    startDate: '2026-09-01', currency: 'USD', costingMethod: 'WEIGHTED_AVERAGE',
+    startDate: MONTH_START, currency: 'USD', costingMethod: 'WEIGHTED_AVERAGE',
   });
-  ledger.post(db, workspace.ctx, { postingDate: '2026-09-01', description: 'Opening cash',
+  ledger.post(db, workspace.ctx, { postingDate: MONTH_START, description: 'Opening cash',
     sourceKey: 'twenty-opening-cash', lines: [{ accountKey: 'CASH', debitMinor: 500_000 },
       { accountKey: 'OPENING_BALANCE_EQUITY', creditMinor: 500_000 }] });
   const product = makeQuantityItem(db, workspace.ctx, { name: 'Lifecycle Shirt', baseCode: 'LIFE-SHIRT' });
@@ -75,7 +78,7 @@ test('Mission 14 owner accounting proves all twenty required lifecycle scenarios
   suppliers.linkItem(db, workspace.ctx, membership, { supplierId: supplier.id, skuId: product.skuId,
     supplierSku: 'LIFE-1', purchaseUnit: 'unit', unitsPerPurchaseUnit: 1, lastUnitCost: 10 });
   const dashboard = () => ownerDashboard.ownerDashboard(db, workspace.workspaceId,
-    { from: '2026-09-01', to: '2026-09-30', asOf: '2026-09-30' });
+    { from: MONTH_START, to: MONTH_END, asOf: MONTH_END });
 
   let po; let bill; let order; let invoice; let saleEntry;
   await t.test('01 PO created but nothing received', () => {
@@ -104,7 +107,7 @@ test('Mission 14 owner accounting proves all twenty required lifecycle scenarios
   await t.test('05 supplier invoice entered but unpaid', () => {
     const draft = payables.createDraft(db, workspace.ctx, membership, { supplierId: supplier.id,
       purchaseOrderId: po.id, supplierInvoiceNumber: 'LIFE-INV-1', issueDate: LIFECYCLE_DATE,
-      dueDate: '2026-09-20', sourceKey: 'life-bill-1', lines: [{ description: '100 Lifecycle Shirts',
+      dueDate: FUTURE_DUE_DATE, sourceKey: 'life-bill-1', lines: [{ description: '100 Lifecycle Shirts',
         quantity: 100, unitCostMinor: 1000, itemId: product.itemId, skuId: product.skuId,
         purchaseOrderLineId: po.lines[0].id }] });
     bill = payables.open(db, workspace.ctx, membership, draft.bill.id);
@@ -157,7 +160,7 @@ test('Mission 14 owner accounting proves all twenty required lifecycle scenarios
   });
   await t.test('12 inventory removed through damage', () => {
     const damaged = inventory.issue(db, workspace.ctx, { skuId: product.skuId,
-      locationId: workspace.main.id, quantity: 2, reasonCode: 'damaged', occurredAt: '2026-09-01' });
+      locationId: workspace.main.id, quantity: 2, reasonCode: 'damaged', occurredAt: LIFECYCLE_DATE });
     const published = events.publish(db, workspace.workspaceId, 'inventory.issued', { skuIds: [product.skuId] },
       { sourceRecordType: 'movement', sourceRecordId: damaged.movementIds[0], idempotencyKey: 'life-damage' });
     const result = operational.captureAndProcess(db, published.event);
@@ -165,26 +168,26 @@ test('Mission 14 owner accounting proves all twenty required lifecycle scenarios
   });
   await t.test('13 customer refund', () => {
     const result = refunds.refundSale(db, workspace.ctx, membership, { originalJournalEntryId: saleEntry.id,
-      refundDate: '2026-09-08', revenueMinor: 2_000, taxMinor: 0, cogsMinor: 0,
+      refundDate: LIFECYCLE_DATE, revenueMinor: 2_000, taxMinor: 0, cogsMinor: 0,
       physicalReturn: false, destination: 'CASH', reference: 'Customer refund', sourceKey: 'life-refund' });
     assert.equal(result.refund.revenue_minor, 2_000); assert.equal(result.refund.physical_return, 0);
   });
   let expenseBill;
   await t.test('14 supplier return or credit memo', () => {
     const draft = payables.createDraft(db, workspace.ctx, membership, { supplierId: supplier.id,
-      supplierInvoiceNumber: 'LIFE-EXP-CREDIT', issueDate: '2026-09-08', sourceKey: 'life-credit-bill',
+      supplierInvoiceNumber: 'LIFE-EXP-CREDIT', issueDate: LIFECYCLE_DATE, sourceKey: 'life-credit-bill',
       lines: [{ description: 'Shipping charge', quantity: 1, unitCostMinor: 1_000,
         debitAccountId: ledger.accountBySystemKey(db, workspace.workspaceId, 'OPERATING_EXPENSE').id }] });
     expenseBill = payables.open(db, workspace.ctx, membership, draft.bill.id);
     supplierCredits.record(db, workspace.ctx, membership, { billId: expenseBill.id,
-      amountMinor: 200, creditDate: '2026-09-09', creditNumber: 'CM-1', reason: 'Service credit',
+      amountMinor: 200, creditDate: LIFECYCLE_DATE, creditNumber: 'CM-1', reason: 'Service credit',
       sourceKey: 'life-credit-1' });
     expenseBill = payables.requireBill(db, workspace.workspaceId, expenseBill.id);
     assert.equal(expenseBill.balance_minor, 800);
   });
   await t.test('15 business expense recorded', () => {
     const draft = payables.createDraft(db, workspace.ctx, membership, { supplierId: supplier.id,
-      supplierInvoiceNumber: 'LIFE-RENT', issueDate: '2026-09-10', sourceKey: 'life-rent',
+      supplierInvoiceNumber: 'LIFE-RENT', issueDate: LIFECYCLE_DATE, sourceKey: 'life-rent',
       lines: [{ description: 'Warehouse rent', quantity: 1, unitCostMinor: 5_000,
         debitAccountId: ledger.accountBySystemKey(db, workspace.workspaceId, 'RENT_EXPENSE').id }] });
     const rent = payables.open(db, workspace.ctx, membership, draft.bill.id);
@@ -192,11 +195,11 @@ test('Mission 14 owner accounting proves all twenty required lifecycle scenarios
     assert.equal(dashboard().expenses.rows.some((row) => row.bill_id === rent.id), true);
   });
   await t.test('16 gross profit calculated', () => {
-    const pnl = reports.profitAndLoss(db, workspace.workspaceId, { from: '2026-09-01', to: '2026-09-30' });
+    const pnl = reports.profitAndLoss(db, workspace.workspaceId, { from: MONTH_START, to: MONTH_END });
     assert.equal(pnl.revenueMinor, 18_000); assert.equal(pnl.grossProfitMinor, 8_000);
   });
   await t.test('17 net profit calculated', () => {
-    const pnl = reports.profitAndLoss(db, workspace.workspaceId, { from: '2026-09-01', to: '2026-09-30' });
+    const pnl = reports.profitAndLoss(db, workspace.workspaceId, { from: MONTH_START, to: MONTH_END });
     assert.equal(pnl.operatingExpenseMinor, 7_800);
     assert.equal(pnl.netIncomeMinor, 200);
   });
@@ -205,10 +208,10 @@ test('Mission 14 owner accounting proves all twenty required lifecycle scenarios
     // opening balance. Do not derive this boundary from wall-clock "today": a
     // UTC date rollover would otherwise exclude the September 8 refund and
     // make this deterministic lifecycle scenario change by time zone/hour.
-    const cash = reports.cashFlow(db, workspace.workspaceId, { from: '2026-09-08', to: '2026-09-30' });
+    const cash = reports.cashFlow(db, workspace.workspaceId, { from: LIFECYCLE_DATE, to: MONTH_END });
     assert.equal(cash.netCashChangeMinor, -82_000);
     assert.notEqual(cash.netCashChangeMinor, reports.profitAndLoss(db, workspace.workspaceId,
-      { from: '2026-09-01', to: '2026-09-30' }).netIncomeMinor);
+      { from: MONTH_START, to: MONTH_END }).netIncomeMinor);
   });
   await t.test('19 current inventory value calculated from exact cost', () => {
     const value = costing.valuation(db, workspace.workspaceId);

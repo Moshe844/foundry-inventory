@@ -19,6 +19,7 @@
 <form class="rm-composer" id="tell-foundry" method="post" action="/foundry/tell"
       enctype="multipart/form-data" data-busy data-ask-form data-operator-command-form>
   <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <% if (locals.usageKey) { %><input type="hidden" name="usageKey" value="<%= locals.usageKey %>"><% } %>
   <% if (locals.queryConversation) { %><input type="hidden" name="queryConversation" value="1"><% } %>
   <% if (locals.actionClarification) { %>
     <input type="hidden" name="original" value="<%= locals.actionClarification.original %>">

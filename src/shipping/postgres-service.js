@@ -7,6 +7,7 @@ const accounts=require('./postgres-accounts');
 const defaultProviders=require('./provider');
 const workflows=require('../operations/postgres-business-workflows');
 const providerEffects=require('../operations/postgres-provider-effects');
+const commercialControl=require('../commercial/control-service');
 
 const RANK={UNKNOWN:0,PRE_TRANSIT:1,IN_TRANSIT:2,OUT_FOR_DELIVERY:3,FAILURE:3,DELIVERED:4,RETURNED:4,CANCELLED:4};
 
@@ -232,8 +233,13 @@ async function executeLabelPurchaseEffect(database,workspaceId,effectId,options=
   const provider=options.provider||defaultProviders.get(rate.provider);
   let bought;
   try{
-    bought=await provider.buy(held.ctx,{providerShipmentIds:String(shipment.provider_shipment_id||'').split(',').filter(Boolean),
-      rateIds:String(rate.provider_rate_id).split(',').filter(Boolean),idempotencyKey:effect.idempotencyKey});
+    try{bought=await provider.buy(held.ctx,{providerShipmentIds:String(shipment.provider_shipment_id||'').split(',').filter(Boolean),
+      rateIds:String(rate.provider_rate_id).split(',').filter(Boolean),idempotencyKey:effect.idempotencyKey});}
+    finally{const owner=(await database.query('SELECT owner_account_id FROM workspaces WHERE id=$1',[workspaceId])).rows[0];
+      if(owner?.owner_account_id)await commercialControl.recordCost(database,{accountId:owner.owner_account_id,workspaceId},{
+        provider:rate.provider||'shipping_provider',operation:'label_purchase',unit:'label',quantity:1,
+        idempotencyKey:effect.idempotencyKey,occurredAt:nowIso(),detail:{shipmentId:input.shipmentId,
+          transactionId:input.transactionId}});}
   }catch(error){
     const ambiguous=!providerEffects.definiteFailure(error);
     await providerEffects.finishError(database,workspaceId,effectId,effect.claimToken,error,{ambiguous,

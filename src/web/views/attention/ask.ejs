@@ -339,6 +339,7 @@
     composerPrefill: error ? question : about ? 'About ' + about + ': ' : '',
     composerPlaceholder: result && result.actionClarification ? 'Answer the question above…' : '',
     actionClarification: result && result.actionClarification ? result.actionClarification : null,
+    usageKey: locals.usageKey,
   }) %>
 
   <% if (!aiConfigured) { %>

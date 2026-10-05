@@ -70,8 +70,8 @@ test('commercial entitlement and subscription lifecycle acceptance', {timeout:18
   });
   await context.test('7 enterprise-style override grants a plan-excluded capability',async()=>{
     await database.query(`INSERT INTO commercial_entitlement_overrides
-      (id,account_id,capability,enabled,reason) VALUES($1,$2,'sso.saml',1,'Contract test')`,[newId('override'),business.accountId]);
-    assert.equal((await entitlements.capabilityState(database,scope,'sso.saml')).enabled,true);
+      (id,account_id,capability,enabled,reason) VALUES($1,$2,'integrations.custom',1,'Contract test')`,[newId('override'),business.accountId]);
+    assert.equal((await entitlements.capabilityState(database,scope,'integrations.custom')).enabled,true);
   });
   await context.test('8 downgrade preserves over-limit connection data',async()=>{
     const connectorId=newId('con');await database.query(`INSERT INTO workspace_connectors

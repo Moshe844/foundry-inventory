@@ -6,6 +6,10 @@ const assistant=require('../../assistant/postgres-service');
 const ledger=require('../../assistant/ledger');
 const permissions=require('../../actions/permissions');
 const { requireAuth,asyncRoute }=require('../middleware');
+const entitlements=require('../../entitlements/postgres-service');
+const commercialControl=require('../../commercial/control-service');
+const {commercialScope}=require('../commercial-middleware');
+const {newId}=require('../../lib/util');
 
 const STATUS={ANSWERED:'answered',PREPARED:'needs_approval',CLARIFY:'clarify',FAILED:'failed'};
 
@@ -90,19 +94,36 @@ function createPostgresAskRouter(database,options={}){
     return res.page('attention/ask',{title:'Ask StockChief',nav:'ask',room:true,suppressBack:true,...rules,
       about:String(req.query.about||'').slice(0,2000),question:latest?.message||'',result:resultFor(latest),error:null,
       conversation:null,transcript,currentGoalId:latest?.id||null,conversationId:`postgres:${req.ctx.workspaceId}`,
-      aiConfigured:Boolean(options.provider||config.ai.configured),examples:await askExamples(database,req.ctx.workspaceId)});
+      aiConfigured:Boolean(options.provider||config.ai.configured),usageKey:newId('askusage'),
+      examples:await askExamples(database,req.ctx.workspaceId)});
   }));
   router.post('/ask/new',(req,res)=>{
     req.session.postgresAskStartedAt=new Date().toISOString();
     req.flash('success','New conversation started. Earlier conversations remain in the audit history.');
     return res.redirect(303,'/ask');
   });
+  async function runAsk(req){
+    const scope=commercialScope(req);await entitlements.assertCapability(database,scope,'ask.lookup');
+    const metered=Boolean(options.provider||config.ai.configured);const idempotencyKey=String(req.body.usageKey||newId('askusage'));
+    if(metered)await entitlements.reserveUsage(database,scope,{id:newId('usage'),meter:'intelligent_operations',units:1,
+      idempotencyKey,detail:{kind:'ask'}});
+    let modelCall=0;const onUsage=async(usage,detail)=>{modelCall+=1;const provider=usage.provider||options.provider?.name||config.ai.provider;
+      for(const [operation,quantity] of [['model_input',Number(usage.inputTokens||0)],['model_output',Number(usage.outputTokens||0)]]){
+        if(quantity<=0)continue;await commercialControl.recordCost(database,scope,{provider,operation,unit:'token',quantity,
+          idempotencyKey:`${idempotencyKey}:model:${modelCall}:${operation}`,detail:{...detail,model:usage.model||null,
+            latencyMs:usage.latencyMs||null}});}};
+    try{const result=await assistant.ask(database,req.ctx,req.body.message,{provider:options.provider,onUsage});
+      if(metered)await entitlements.commitUsage(database,scope,{meter:'intelligent_operations',idempotencyKey});
+      return result;
+    }catch(error){if(metered)await entitlements.reverseUsage(database,scope,{meter:'intelligent_operations',idempotencyKey,
+      reason:'Ask StockChief did not complete.'});throw error;}
+  }
   router.post('/ask',asyncRoute(async(req,res)=>{
-    await assistant.ask(database,req.ctx,req.body.message,{provider:options.provider});
+    await runAsk(req);
     return res.redirect(303,'/ask#latest');
   }));
   router.post('/foundry/tell',requireAuth,asyncRoute(async(req,res)=>{
-    await assistant.ask(database,req.ctx,req.body.message,{provider:options.provider});
+    await runAsk(req);
     return res.redirect(303,'/ask#latest');
   }));
   router.post('/ask/leave-the-rest',asyncRoute(async(req,res)=>{
@@ -128,6 +149,7 @@ function createPostgresAskRouter(database,options={}){
     title:'Review prepared change',nav:'ask',proposal:await assistant.getProposal(database,req.ctx.workspaceId,req.params.id),
   })));
   router.post('/actions/:id/approve',asyncRoute(async(req,res)=>{
+    await entitlements.assertCapability(database,commercialScope(req),'ask.prepare_actions');
     const result=await assistant.executeProposal(database,req.ctx,req.params.id);
     req.flash('success',result.replayed?'That change had already been completed.':'The approved change was completed.');
     return res.redirect(303,`/actions/${req.params.id}`);

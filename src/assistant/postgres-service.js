@@ -271,6 +271,7 @@ async function planMany(message,options={}) {
   try {
     const response=await provider.complete({system:SYSTEM,prompt:JSON.stringify({message}),schema:PLAN_SCHEMA,
       schemaName:'stockchief_postgres_request'});
+    if(options.onUsage&&response.usage)await options.onUsage(response.usage,{schemaName:'stockchief_postgres_request'});
     const rawParts=Array.isArray(response.data?.parts)&&response.data.parts.length?response.data.parts:[response.data];
     return rawParts.slice(0,8).flatMap((raw)=>{const requestText=trimOrNull(raw?.requestText)||message;
       const intent=cleanPlan(raw,requestText);const balances=intent.intent==='lookup'?financialBalancePlans(requestText,intent):[];

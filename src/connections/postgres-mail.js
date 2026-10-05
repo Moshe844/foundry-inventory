@@ -8,6 +8,7 @@ const providerService=require('./postgres-provider-service');
 const defaultProviders=require('./providers/registry');
 const providerEffects=require('../operations/postgres-provider-effects');
 const commercialUsage=require('../entitlements/postgres-service');
+const commercialControl=require('../commercial/control-service');
 
 function contentHash(message){return crypto.createHash('sha256').update(JSON.stringify({sender:message.sender,
   subject:message.subject||'',body:message.bodyText||message.body||'',receivedAt:message.receivedAt||''})).digest('hex');}
@@ -58,9 +59,13 @@ async function capture(database,connection,message){
     await client.query('UPDATE workspace_connectors SET last_activity_at=$3,updated_at=$3 WHERE workspace_id=$1 AND id=$2',
       [connection.workspace_id,connection.id,at]);
     if(owner?.owner_account_id)await commercialUsage.recordUsage(client,{accountId:owner.owner_account_id,
-      workspaceId:connection.workspace_id},{id:newId('usage'),meter:'processing_units',units:1,
+      workspaceId:connection.workspace_id},{id:newId('usage'),meter:'business_communications',units:1,
       idempotencyKey:`email:${connection.id}:${externalId}`,occurredAt:message.receivedAt||at,
       detail:{kind:'business_email',connectorId:connection.id}});
+    if(owner?.owner_account_id)await commercialControl.recordCost(client,{accountId:owner.owner_account_id,
+      workspaceId:connection.workspace_id},{provider:connection.provider_type||'mailbox',operation:'message_ingestion',
+      unit:'message',quantity:1,idempotencyKey:`email:${connection.id}:${externalId}`,occurredAt:message.receivedAt||at,
+      detail:{connectorId:connection.id,externalMessageId:externalId}});
     return {accepted:true,replayed:false,messageId:id};
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
