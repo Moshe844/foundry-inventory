@@ -78,7 +78,14 @@ test('PostgreSQL scheduler polls tenant mailboxes, replays safely and treats suc
     await scheduler.scheduleOnce(database,{now:dueAgain});
     const dueSweep=await jobs.processOne(database,runtimeHandlers,{owner:'mail-scheduler',now:dueAgain,leaseMs:60000});
     assert.equal(dueSweep.result.scheduledMailboxPolls,1);
-    const replayPoll=await jobs.processOne(database,runtimeHandlers,{owner:'mail-worker',now:dueAgain+1,leaseMs:60000});
+    assert.equal(dueSweep.result.staleConnectors,0);
+    const missedAt=Date.parse(connector.last_synced_at)+11*60_000;
+    await scheduler.scheduleOnce(database,{now:missedAt});
+    const missedSweep=await jobs.processOne(database,runtimeHandlers,{owner:'mail-scheduler',now:missedAt,
+      leaseMs:60000});
+    assert.equal(missedSweep.result.staleConnectors,1);
+    const replayPoll=await jobs.processOne(database,runtimeHandlers,{owner:'mail-worker',now:missedAt+1,
+      leaseMs:60000});
     assert.equal(replayPoll.status,'COMPLETED');assert.equal(replayPoll.result.replayed,2);
     assert.equal(replayPoll.result.ignoredOwn,1);assert.equal(polls,2);
     assert.equal((await database.query('SELECT COUNT(*) AS count FROM connection_email_messages WHERE workspace_id=$1',

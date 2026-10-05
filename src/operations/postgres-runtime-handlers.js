@@ -213,7 +213,8 @@ async function runtimeSweep(job,client,options={}){
   let staleConnectors=0;let recoveredConnectors=0;let scheduledMailboxPolls=0;let scheduledMailboxRenewals=0;
   for(const connector of connectors){
     const fingerprint=`connector-stale:${connector.id}`;
-    const stale=Date.parse(connector.evidence_at)+Number(connector.expected_interval_minutes)*60_000<now;
+    const grace=['gmail','microsoft365'].includes(connector.provider_type)?2:1;
+    const stale=Date.parse(connector.evidence_at)+Number(connector.expected_interval_minutes)*grace*60_000<now;
     if(stale){
       staleConnectors+=1;
       await client.query(`INSERT INTO connection_issues(id,workspace_id,connector_id,issue_type,fingerprint,title,detail,

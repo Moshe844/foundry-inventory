@@ -19,8 +19,10 @@ function publicStatus(row,now=Date.now()){
   if(row.status==='error'||row.paused_at||row.last_error||Number(row.open_issues)>0)return 'Needs attention';
   const evidence=Math.max(...[row.last_activity_at,row.last_synced_at,row.created_at]
     .map((value)=>Date.parse(value||'')).filter(Number.isFinite));
-  if(Number.isFinite(evidence)&&Number(row.expected_interval_minutes)>0
-      && evidence+Number(row.expected_interval_minutes)*60000<now)return 'Needs attention';
+  const expectedMinutes=Number(row.expected_interval_minutes);
+  const grace=['gmail','microsoft365'].includes(row.provider_type)?2:1;
+  if(Number.isFinite(evidence)&&expectedMinutes>0
+      && evidence+expectedMinutes*grace*60000<now)return 'Needs attention';
   return 'Connected';
 }
 

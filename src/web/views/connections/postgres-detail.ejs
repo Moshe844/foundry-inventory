@@ -4,7 +4,7 @@
   const connected=connection.status==='connected'&&!connection.paused_at;
   const hasCatalogue=connection.productsMapped+connection.locationsMapped>0;
   const hasEvent=isMailbox?Boolean(mailboxLastPollAt):Boolean(connection.last_activity_at);
-  const proven=connected&&(!canDiscover||hasCatalogue)&&hasEvent&&!connection.openIssues;
+  const proven=connected&&connection.publicStatus==='Connected'&&(!canDiscover||hasCatalogue)&&hasEvent;
 %>
 
 <header class="page-head">
@@ -59,7 +59,7 @@
       <% if(accounting.pendingEntries.length){ %><div class="grid"><% accounting.pendingEntries.forEach(function(entry){ %><div class="list-row"><div><strong>Journal <%= entry.entry_number %> · <%= entry.description %></strong><p><%= entry.posting_date %></p></div><span class="badge"><%= entry.effect_status||'not queued' %></span></div><% }) %></div><% } %>
     </div></section>
   <% } else { %>
-    <section class="card"><div class="card-head"><div><h2>What this connection is doing</h2><p class="muted">Only successful provider evidence counts.</p></div></div><div class="card-body grid"><div class="list-row"><div><strong>Provider account</strong><p><%= connection.provider_account_name||'Not returned yet' %></p></div><span class="badge <%= connected?'badge--ok':'badge--muted' %>"><%= connected?'Connected':'Not connected' %></span></div><div class="list-row"><div><strong><%= isMailbox?'Last completed mailbox check':'Last successful exchange' %></strong><p><%= isMailbox?(mailboxLastPollAt||'No mailbox check has completed yet'):(connection.last_activity_at||connection.last_synced_at||'No successful exchange recorded yet') %></p></div></div></div></section>
+    <section class="card"><div class="card-head"><div><h2>What this connection is doing</h2><p class="muted">Only successful provider evidence counts.</p></div></div><div class="card-body grid"><div class="list-row"><div><strong>Provider account</strong><p><%= connection.provider_account_name||'Not returned yet' %></p></div><span class="badge <%= connected?'badge--ok':'badge--muted' %>"><%= connected?'Connected':'Not connected' %></span></div><div class="list-row"><div><strong><%= isMailbox?'Last completed mailbox check':'Last successful exchange' %></strong><p><%= isMailbox?(mailboxLastPollAt?helpers.timeAgo(mailboxLastPollAt):'No mailbox check has completed yet'):(connection.last_activity_at||connection.last_synced_at||'No successful exchange recorded yet') %></p></div></div></div></section>
     <% if(canDiscover){ %><section class="card"><div class="card-head"><div><h2>Products and locations</h2><p class="muted">Exact matches happen automatically. Ambiguous records stay unchanged.</p></div></div><div class="card-body"><% if(query&&query.refresh==='queued'){ %><div class="notice notice--success">Catalogue refresh queued.</div><% } %><% if(connected){ %><form method="post" action="/settings/connections/<%= connection.id %>/refresh"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit">Refresh now</button></form><% } %></div></section><% } %>
   <% } %>
   </div>
