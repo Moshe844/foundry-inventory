@@ -1,1 +1,47 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Email verified · StockChief</title><link rel="stylesheet" href="/commercial.css?v=auth"></head><body class="commercial-auth"><main class="auth-centered"><a class="pub-brand" href="/"><span class="pub-brand__mark">◇</span><span>StockChief</span></a><div class="auth-centered__card"><span class="auth-mail auth-mail--ok">✓</span><h1>Email verified.</h1><p>Next, activate the <strong><%= selection.planId %></strong> plan. Stripe handles payment details; StockChief never receives your card number.</p><form method="post" action="/billing/checkout" data-loading><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="planId" value="<%= selection.planId %>"><input type="hidden" name="interval" value="<%= selection.interval %>"><input type="hidden" name="promoCode" value="<%= selection.promoCode||'' %>"><button class="pub-btn pub-btn--block" type="submit" data-loading-label="Opening secure checkout…">Continue to secure checkout</button></form><p class="auth-foot"><a href="/pricing">Review plans first</a></p></div></main><script src="/commercial.js?v=auth" defer></script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Choose your plan · StockChief</title>
+  <link rel="stylesheet" href="/commercial.css?v=auth-plan-choice">
+</head>
+<body class="commercial-auth">
+  <main class="auth-centered">
+    <a class="pub-brand" href="/"><span class="pub-brand__mark">◇</span><span>StockChief</span></a>
+    <div class="auth-centered__card">
+      <span class="auth-mail auth-mail--ok">✓</span>
+      <h1>Choose your plan.</h1>
+      <p>Your email is verified. Choose the plan and billing period you want before StockChief opens Stripe's secure checkout.</p>
+      <% if(flash&&flash.length){flash.forEach(function(message){ %>
+        <div class="auth-message auth-message--<%= message.type %>" role="alert"><%= message.message %></div>
+      <% });} %>
+      <form method="post" action="/billing/checkout">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="promoCode" value="<%= selection.promoCode||'' %>">
+        <label class="auth-field" for="activation-plan">
+          <span>Plan</span>
+          <select id="activation-plan" name="planId" required>
+            <option value="" selected disabled>Choose a plan</option>
+            <% plans.filter(function(plan){return !plan.sales_only;}).forEach(function(plan){
+              const monthly=Number(plan.monthly_amount_minor||0)/100;
+            %>
+              <option value="<%= plan.id %>"><%= plan.public_name %> — <%= monthly.toLocaleString('en-US',{style:'currency',currency:plan.currency,maximumFractionDigits:0}) %>/month</option>
+            <% }); %>
+          </select>
+        </label>
+        <label class="auth-field" for="activation-interval">
+          <span>Billing</span>
+          <select id="activation-interval" name="interval" required>
+            <option value="monthly">Monthly</option>
+            <option value="annual">Annual</option>
+          </select>
+        </label>
+        <button class="pub-btn pub-btn--block" type="submit">Continue to secure checkout</button>
+      </form>
+      <p class="auth-help">Stripe handles payment details. StockChief never receives your card number.</p>
+      <p class="auth-foot"><a href="/pricing">Review plans first</a></p>
+    </div>
+  </main>
+</body>
+</html>

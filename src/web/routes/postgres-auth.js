@@ -106,9 +106,9 @@ function createPostgresAuthRouter(database) {
       flash:res.locals.flash,account:req.account,origin:res.locals.origin});
   });
   router.get('/complete-signup',async(req,res)=>{if(!req.account)return res.redirect('/login');if(req.user)return res.redirect('/');
-    if(!req.account.email_verified_at)return res.redirect('/verify-email/pending');return res.render('auth/verified',{
+    if(!req.account.email_verified_at)return res.redirect('/verify-email/pending');const plans=await commercial.listPlans(database);return res.render('auth/verified',{
       title:'Activate your StockChief plan',csrfToken:res.locals.csrfToken,flash:res.locals.flash,origin:res.locals.origin,
-      selection:pendingSelection(req.account,req.session.commercialSelection)});});
+      selection:pendingSelection(req.account,req.session.commercialSelection),plans});});
   router.post('/verify-email/resend',async(req,res,next)=>{try{if(req.account)await accountLifecycle.requestVerification(database,req.account.id,
       {origin:config.connections.publicOrigin||res.locals.origin});req.flash('success','A new verification link is on its way.');return res.redirect(303,'/verify-email/pending');}
     catch(error){return next(error);}});
@@ -120,9 +120,9 @@ function createPostgresAuthRouter(database) {
   router.post('/verify-email',async(req,res,next)=>{try{const verified=await accountLifecycle.consumeVerification(database,req.body.token||'');
     if(!req.account||req.account.id!==verified.accountId){await sessionCall(req,'regenerate');req.session.accountId=verified.accountId;}
     const account=await auth.getAccount(database,verified.accountId);
-    const selection=pendingSelection(account,req.session.commercialSelection);await sessionCall(req,'save');
+    const selection=pendingSelection(account,req.session.commercialSelection);const plans=await commercial.listPlans(database);await sessionCall(req,'save');
     return res.render('auth/verified',{title:'Email verified',csrfToken:res.locals.csrfToken,flash:res.locals.flash,
-      origin:res.locals.origin,selection});}catch(error){if(error.status&&error.status<500)return res.status(error.status).render('auth/verify-pending',{
+      origin:res.locals.origin,selection,plans});}catch(error){if(error.status&&error.status<500)return res.status(error.status).render('auth/verify-pending',{
       title:'Verification link expired',csrfToken:res.locals.csrfToken,flash:[{type:'error',message:error.message}],account:req.account,
       origin:res.locals.origin});return next(error);}});
   router.get('/invite',async(req,res,next)=>{try{const invitation=await accountLifecycle.inspectInvitation(database,req.query.token||'');

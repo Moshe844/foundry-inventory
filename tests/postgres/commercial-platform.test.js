@@ -457,15 +457,16 @@ test('paid-workspace signup verifies email before checkout and never provisions 
       'Opening or scanning the link must not consume it');
     const scanner=await browser.newPage();await scanner.goto(`${base}/verify-email?token=${encodeURIComponent(token)}`);
     assert.match(await scanner.locator('body').innerText(),/Verify and continue/i);await scanner.close();
-    await page.getByRole('button',{name:'Verify and continue'}).click();assert.match(await page.locator('body').innerText(),/Email verified/i);
-    assert.match(await page.locator('body').innerText(),/pro plan/i);assert.ok((await database.query('SELECT email_verified_at FROM accounts WHERE id=$1',
+    await page.getByRole('button',{name:'Verify and continue'}).click();assert.match(await page.locator('body').innerText(),/Choose your plan/i);
+    assert.equal(await page.getByLabel('Plan').inputValue(),'');assert.ok((await database.query('SELECT email_verified_at FROM accounts WHERE id=$1',
       [account.id])).rows[0].email_verified_at);
     await beforeVerify.reload();await beforeVerify.waitForURL(`${base}/complete-signup`);
-    assert.match(await beforeVerify.locator('body').innerText(),/activate the pro plan/i);await beforeVerify.close();
+    assert.match(await beforeVerify.locator('body').innerText(),/Choose your plan/i);assert.equal(await beforeVerify.getByLabel('Plan').inputValue(),'');await beforeVerify.close();
     const returningContext=await browser.newContext();const returning=await returningContext.newPage();await returning.goto(`${base}/login`);
     await returning.getByLabel('Email').fill(account.email);await returning.getByLabel('Password').fill('paid-owner-password');
     await Promise.all([returning.waitForURL(`${base}/complete-signup`),returning.getByRole('button',{name:'Sign in'}).click()]);
-    assert.match(await returning.locator('body').innerText(),/activate the pro plan/i);await returningContext.close();
+    assert.match(await returning.locator('body').innerText(),/Choose your plan/i);assert.equal(await returning.getByLabel('Plan').inputValue(),'');await returningContext.close();
+    await page.getByLabel('Plan').selectOption('pro');await page.getByLabel('Billing').selectOption('annual');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:/Continue to secure checkout/i}).click()]);
     assert.equal(checkoutInput.planId,'pro');assert.equal(checkoutInput.priceId,'price_pro_annual_test');
     const activated=await entitlements.subscriptionFor(database,account.id);assert.equal(activated.status,'ACTIVE');
