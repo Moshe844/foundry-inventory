@@ -7,6 +7,7 @@ const monitoring=require('../../operations/postgres-monitoring');
 const accountLifecycle=require('../../domain/postgres-account-lifecycle');
 const commercial=require('../../commercial/service');
 const config=require('../../config');
+const { ValidationError }=require('../../domain/errors');
 
 function safeNext(value) {
   if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//')) return '/';
@@ -16,10 +17,11 @@ function safeNext(value) {
 function sessionCall(req, method) {
   return new Promise((resolve, reject) => req.session[method]((error) => error ? reject(error) : resolve()));
 }
-function selfServiceSelection(plans,requested){return plans.find((plan)=>plan.id===requested&&!plan.sales_only)
-  ||plans.find((plan)=>plan.id==='growth')||plans.find((plan)=>!plan.sales_only);}
+function selfServiceSelection(plans,requested){return requested
+  ? plans.find((plan)=>plan.id===requested&&!plan.sales_only)||null
+  : null;}
 function pendingSelection(account,sessionSelection={}){return {
-  planId:account?.pending_commercial_plan_id||sessionSelection.planId||'growth',
+  planId:account?.pending_commercial_plan_id||sessionSelection.planId||'',
   interval:account?.pending_billing_interval==='ANNUAL'||sessionSelection.interval==='annual'?'annual':'monthly',
   promoCode:account?.pending_promo_code||sessionSelection.promoCode||'',
 };}
@@ -66,41 +68,44 @@ function createPostgresAuthRouter(database) {
       }
       return res.redirect('/inventories');
     }
-    const plans=await commercial.listPlans(database);const requested=String(req.query.plan||'growth');
+    const plans=await commercial.listPlans(database);const requested=String(req.query.plan||'').trim();
     const selected=selfServiceSelection(plans,requested);
     await commercial.track(database,{eventName:'signup_started',anonymousId:req.sessionID,planId:selected?.id||null,sourcePath:'/register'});
     if(req.query.plan)await commercial.track(database,{eventName:'plan_selected',anonymousId:req.sessionID,planId:selected?.id||null,
       sourcePath:'/pricing'});
     return res.render('auth/register', { title:'Create your account',csrfToken:res.locals.csrfToken,
       flash:res.locals.flash,form:{},appName:res.locals.appName,origin:res.locals.origin,
-      selectedPlan:selected?.id||'growth',selectedInterval:req.query.interval==='annual'?'annual':'monthly',
+      selectedPlan:selected?.id||'',selectedInterval:req.query.interval==='annual'?'annual':'monthly',
       selectedPromo:String(req.query.promo||'').trim().toUpperCase(),plans });
     } catch(error) { return next(error); }
   });
   router.post('/register', async (req,res,next) => {
     try {
       const paidRequired=config.commercial.requirePaidWorkspace;
-      if(paidRequired)await commercial.getSelfServicePlan(database,req.body.planId||'growth');
+      const requestedPlanId=String(req.body.planId||'').trim();
+      if(paidRequired&&requestedPlanId)await commercial.getSelfServicePlan(database,requestedPlanId);
+      if(paidRequired&&String(req.body.promoCode||'').trim()&&!requestedPlanId)
+        throw new ValidationError('Choose a plan before applying a promotion code.');
       if(paidRequired&&String(req.body.promoCode||'').trim())await commercial.validatePromotion(database,req.body.promoCode,
-        req.body.planId||'growth');
+        requestedPlanId);
       const created=paidRequired?await auth.createPendingAccount(database,req.body):await auth.createBusiness(database,req.body);
       await sessionCall(req,'regenerate');
       req.session.accountId=created.accountId||created.id;
       if(created.workspaceId)req.session.workspaceId=created.workspaceId;
-      req.session.commercialSelection={planId:req.body.planId||'growth',interval:req.body.interval==='annual'?'annual':'monthly',
+      req.session.commercialSelection={planId:requestedPlanId,interval:req.body.interval==='annual'?'annual':'monthly',
         promoCode:String(req.body.promoCode||'').trim().toUpperCase()};
       if(paidRequired)await accountLifecycle.requestVerification(database,created.id,{origin:config.connections.publicOrigin||res.locals.origin});
       req.session.flash=[{ type:'success',message:paidRequired?'Check your email to verify the account.':'Your first inventory is ready. Add your records or explore first.' }];
       await commercial.trackOnce(database,{eventName:'signup_completed',anonymousId:req.sessionID,accountId:created.accountId||created.id,
-        planId:req.body.planId||'growth',sourcePath:'/register'});
+        planId:requestedPlanId||null,sourcePath:'/register'});
       await sessionCall(req,'save');
       return res.redirect(paidRequired?'/verify-email/pending':'/onboarding');
     } catch(error) {
       if(error.status && error.status<500){const plans=await commercial.listPlans(database);
-        const selected=selfServiceSelection(plans,String(req.body.planId||'growth'));return res.status(error.status).render('auth/register', {
+        const selected=selfServiceSelection(plans,String(req.body.planId||'').trim());return res.status(error.status).render('auth/register', {
         title:'Create your account',csrfToken:res.locals.csrfToken,
         flash:[{ type:'error',message:error.message }],form:req.body,appName:res.locals.appName,origin:res.locals.origin,
-        selectedPlan:selected?.id||'growth',selectedInterval:req.body.interval||'monthly',
+        selectedPlan:selected?.id||'',selectedInterval:req.body.interval||'monthly',
         selectedPromo:String(req.body.promoCode||'').trim().toUpperCase(),plans,
       });}
       return next(error);

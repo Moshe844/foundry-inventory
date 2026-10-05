@@ -12,10 +12,10 @@ test('account email validation accepts normal work addresses and rejects malform
   }
 });
 
-test('password policy accepts passphrases and rejects short, numeric, repeated and common passwords', () => {
-  assert.equal(auth.checkPasswordStrength('correct horse battery staple'), 'correct horse battery staple');
+test('password policy requires length, a letter and a symbol and rejects predictable passwords', () => {
+  assert.equal(auth.checkPasswordStrength('correct-horse-battery-staple'), 'correct-horse-battery-staple');
   assert.equal(auth.checkPasswordStrength('Inventory!2026'), 'Inventory!2026');
-  for (const password of ['12345677', '123456789012', 'aaaaaaaaaaaa', 'Password1234', 'abcdefghijkl']) {
+  for (const password of ['12345677', '123456789012', 'aaaaaaaaaaaa', 'Password1234', 'abcdefghijkl', 'longpassword2026']) {
     assert.throws(() => auth.checkPasswordStrength(password), /password|characters|predictable|combine/i, password);
   }
 });

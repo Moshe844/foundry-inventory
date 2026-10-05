@@ -67,6 +67,9 @@ function checkPasswordStrength(password) {
   if (value !== value.trim()) {
     throw new ValidationError('Remove spaces from the beginning or end of your password.', { field: 'password' });
   }
+  if (!/[A-Za-z]/.test(value) || !/[^A-Za-z0-9\s]/.test(value)) {
+    throw new ValidationError('Use at least one letter and one symbol in your password.', { field: 'password' });
+  }
   const compact = value.toLowerCase().replace(/[^a-z0-9]/g, '');
   const common = new Set([
     'password1234', 'password12345', 'qwerty123456', 'letmein123456', 'welcome123456',

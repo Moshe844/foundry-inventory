@@ -448,7 +448,18 @@ test('paid-workspace signup verifies email before checkout and never provisions 
       await app.locals.sessionStore.close();await database.close();cluster.stop();});const base=`http://127.0.0.1:${server.address().port}`;
     const page=await browser.newPage();await page.goto(`${base}/login`);
     assert.equal(await page.getByRole('link',{name:'Create account'}).getAttribute('href'),'/register');
+    await page.goto(`${base}/register`);assert.match(await page.locator('body').innerText(),/NO PLAN SELECTED/i);
+    assert.equal(await page.locator('input[name="planId"]').inputValue(),'');
+    const unselectedContext=await browser.newContext();const unselected=await unselectedContext.newPage();
+    await unselected.goto(`${base}/register`);await unselected.getByLabel('Business name').fill('No Plan Business');
+    await unselected.getByLabel('Your name').fill('No Plan Owner');await unselected.getByLabel('Work email').fill('no-plan-owner@example.test');
+    await unselected.getByLabel('Password').fill('No-plan-password!');
+    await Promise.all([unselected.waitForURL(`${base}/verify-email/pending`),unselected.getByRole('button',{name:'Create account'}).click()]);
+    const unselectedAccount=(await database.query('SELECT pending_commercial_plan_id FROM accounts WHERE email=$1',
+      ['no-plan-owner@example.test'])).rows[0];assert.equal(unselectedAccount.pending_commercial_plan_id,null);
+    await unselectedContext.close();
     await page.goto(`${base}/register?plan=pro&interval=annual`);
+    assert.equal(await page.locator('input[name="planId"]').inputValue(),'pro');assert.match(await page.locator('aside').innerText(),/YOUR SELECTION[\s\S]*Pro/i);
     await page.getByLabel('Business name').fill('Paid Workspace');await page.getByLabel('Your name').fill('Paid Owner');
     await page.getByLabel('Work email').fill('paid-owner@example.test');await page.getByLabel('Password').fill('paid-owner-password');
     await Promise.all([page.waitForURL(`${base}/verify-email/pending`),page.getByRole('button',{name:'Create account'}).click()]);

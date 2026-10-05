@@ -122,7 +122,8 @@ async function createPendingAccount(database,input){
   try{const result=await database.query(`INSERT INTO accounts
     (id,email,name,password_hash,plan,pending_business_name,pending_commercial_plan_id,pending_billing_interval,pending_promo_code,created_at)
     VALUES($1,$2,$3,$4,'commercial_pending',$5,$6,$7,NULLIF($8,''),$9) RETURNING *`,[accountId,email,name,auth.hashPassword(password),
-    businessName,input.planId||'growth',input.interval==='annual'?'ANNUAL':'MONTHLY',String(input.promoCode||'').trim().toUpperCase(),at]);
+    businessName,input.planId||null,input.planId?(input.interval==='annual'?'ANNUAL':'MONTHLY'):null,
+    input.planId?String(input.promoCode||'').trim().toUpperCase():'',at]);
     return result.rows[0];}
   catch(error){if(error.code==='23505'&&(error.constraint||'').includes('accounts_email'))
     throw new ValidationError('An account already uses that email address.',{field:'email'});throw error;}
