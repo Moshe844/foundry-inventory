@@ -18,11 +18,35 @@ function checkedText(value){
   return `${Math.floor(elapsed/86400000)} days ago`;
 }
 
+function json(value){if(value&&typeof value==='object')return value;try{return JSON.parse(value||'{}');}catch{return {};}}
+
 async function home(database,workspaceId){
-  const [brief,state]=await Promise.all([
+  const [brief,state,completed,executing,upcoming]=await Promise.all([
     projections.brief(database,workspaceId),autonomy.getState(database,workspaceId),
+    database.query(`SELECT id,recommended_action,outcome,completed_at,COUNT(*) OVER() AS total
+      FROM work_items WHERE workspace_id=$1 AND source='postgres_autopilot'
+        AND approval_requirement='NONE' AND execution_status='COMPLETED'
+        AND verification_status='VERIFIED' AND completed_at>=$2
+      ORDER BY completed_at DESC,id DESC LIMIT 8`,[workspaceId,new Date(Date.now()-86400000).toISOString()]),
+    database.query(`SELECT id,recommended_action FROM work_items WHERE workspace_id=$1
+      AND source='postgres_autopilot' AND execution_status='EXECUTING'
+      ORDER BY created_at DESC LIMIT 4`,[workspaceId]),
+    database.query(`SELECT kind,id,reference,party,event_date FROM (
+      SELECT 'purchase' AS kind,po.id,po.po_number AS reference,s.name AS party,po.expected_date AS event_date
+      FROM purchase_orders po JOIN suppliers s ON s.id=po.supplier_id
+      WHERE po.workspace_id=$1 AND po.status IN ('ORDERED','PARTIALLY_RECEIVED')
+        AND po.expected_date>=CURRENT_DATE::text
+        AND po.expected_date_source IN ('supplier_item','supplier_default','manual')
+      UNION ALL
+      SELECT 'customer' AS kind,so.id,so.order_number AS reference,c.name AS party,so.needed_by AS event_date
+      FROM sales_orders so JOIN customers c ON c.id=so.customer_id
+      WHERE so.workspace_id=$1 AND so.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')
+        AND so.needed_by>=CURRENT_DATE::text
+      ) dated ORDER BY event_date,reference LIMIT 5`,[workspaceId]),
   ]);
-  const needs=brief.needs.slice(0,6).map((item)=>({title:item.title,because:item.why,
+  const needs=brief.needs.slice(0,6).map((item)=>({
+    title:item.kind==='order'?item.title.replace('does not have enough allocated stock','cannot be filled yet'):item.title,
+    because:item.kind==='order'?'There is not enough stock ready for this customer order.':item.why,importance:item.importance,
     href:item.href,link:item.href,action:item.actionLabel||'Open'}));
   const lastLookedAt=state.lastEvaluatedAt;
   const stale=!lastLookedAt||Date.now()-Date.parse(lastLookedAt)>86400000;
@@ -31,17 +55,31 @@ async function home(database,workspaceId){
   let next=null;
   if(!hasLocations)next={title:'Add the place where you keep stock',recommendation:'StockChief needs a location before it can record physical inventory.',href:'/locations/new',action:'Add a location'};
   else if(!hasInventory)next={title:'Add your inventory records',recommendation:'Import a file, connect a system, or enter the first product manually.',href:'/onboarding',action:'Add a source'};
-  const activity=brief.activity.slice(0,6).map((row)=>({headline:`${row.item_name} inventory changed`,
-    detail:`${row.quantityDelta>0?'+':''}${row.quantityDelta} at ${row.location_name}${row.reference?` · ${row.reference}`:''}`,
-    verified:true,link:'/activity'}));
-  return {brief,home:{needsYou:needs,needsYouTotal:brief.needs.length,coverageErrors:[],handling:[],setup:null,
+  const handled=completed.rows.map((row)=>{const action=json(row.recommended_action);const outcome=json(row.outcome);
+    const purchase=action.type==='purchase';const name=action.displayName||'Inventory';
+    return {headline:purchase?`${name}: purchase order approved`:`${name}: transfer approved`,
+      detail:purchase?`${Number(action.quantity||0)} units · ${action.supplierName||'supplier'} · ${outcome.poNumber||'purchase order'}; not yet sent`:
+        `${Number(action.quantity||0)} units · ${action.sourceLocationName||'source'} to ${action.destinationLocationName||'destination'}; physical move still pending`,
+      link:purchase&&outcome.purchaseOrderId?`/purchasing/orders/${outcome.purchaseOrderId}`:
+        !purchase&&outcome.transferId?`/transfers/${outcome.transferId}`:`/autopilot/work/${row.id}`,
+      verified:true,at:row.completed_at};});
+  const active=executing.rows.map((row)=>{const action=json(row.recommended_action);
+    return {title:action.type==='purchase'?'Preparing a purchase order':'Preparing a transfer',
+      detail:action.displayName||'Inventory',link:`/autopilot/work/${row.id}`};});
+  const nextDates=upcoming.rows.map((row)=>({text:row.kind==='purchase'
+    ?`${row.party} delivery expected · ${row.reference}`:`${row.party} order needed by · ${row.reference}`,
+    when:row.event_date,href:row.kind==='purchase'?`/purchasing/orders/${row.id}`:`/orders/${row.id}`}));
+  const noticed=[];
+  if(brief.stats.zeroCount>0)noticed.push({text:`${brief.stats.zeroCount} item${brief.stats.zeroCount===1?' is':'s are'} currently out of stock.`,
+    detail:'Open inventory to see which ones; customer shortages needing a decision are listed above.',href:'/inventory'});
+  return {brief,home:{needsYou:needs,needsYouTotal:brief.needs.length,coverageErrors:[],handling:active,setup:null,
     status:{paused:state.paused,pausedReason:state.pausedReason,suspended:state.suspended,
       suspendedReason:state.suspendedReason,lastLookedAt,lastEvaluatedText:checkedText(lastLookedAt),checkStale:stale},
-    did:{headline:'No automatic work completed in the last day.',actions:activity,counts:{handled:activity.length,
+    did:{headline:'No automatic work completed in the last 24 hours.',actions:handled,counts:{handled:completed.rows.length?Number(completed.rows[0].total):0,
       positionsWatched:brief.stats.skuCount}},readiness:{evidenceGaps:[],evidenceGapCount:0,notes:[]},
     guidance:{operationalReady:hasInventory&&hasLocations,checklistActive:false,steps:[],next,
-      examples:['What needs my attention?','What is running low?','What did you handle today?']}},
-    isEmpty:brief.stats.itemCount===0,whatsNext:[],noticed:[],operationSummary:
+      examples:hasInventory?['How many products do we have?','Did we make money this month?','Show me customer orders']:[]}},
+    isEmpty:brief.stats.itemCount===0,whatsNext:nextDates,noticed,operationSummary:
       `${brief.stats.available} units are available. ${brief.needs.length} exception${brief.needs.length===1?'':'s'} need${brief.needs.length===1?'s':''} you.`,homeSignature:[brief.stats.itemCount,
       brief.stats.unitsOnHand,brief.stats.openOrders,brief.stats.openPurchases,brief.needs.length,state.updatedAt].join(':'),
   };

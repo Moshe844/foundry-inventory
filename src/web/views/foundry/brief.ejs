@@ -1,512 +1,107 @@
 <%
-  /*
-   * Home is the operation, running.
-   *
-   * Not a dashboard of widgets and not a letter. The first thing on the screen
-   * is proof that StockChief is working — a live state, then the operation in four
-   * numbers, then the one thing that needs a person. Underneath, two columns:
-   * what it did and what is coming on the left, how the business is doing and
-   * what it is deliberately unsure about on the right.
-   *
-   * Every number here is a state something is in right now, and every one of
-   * them opens what is inside it. None of them is a vanity metric.
-   */
   var hour = new Date().getHours();
   var greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
   var firstName = currentUser && currentUser.name ? currentUser.name.split(/\s+/)[0] : '';
-  var today = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
-
   var needs = home.needsYou || [];
-  var needsCount = Number.isFinite(Number(home.needsYouTotal)) ? Number(home.needsYouTotal) : needs.length;
+  var needsCount = Number(home.needsYouTotal || needs.length);
+  var urgentCount = needs.filter(function (item) { return item.importance === 'Urgent'; }).length;
   var handled = (home.did && home.did.actions) || [];
-  var counts = (home.did && home.did.counts) || {};
+  var handledCount = Number((home.did && home.did.counts && home.did.counts.handled) || 0);
   var handling = home.handling || [];
+  var comingUp = locals.whatsNext || [];
+  var observations = locals.noticed || [];
   var paused = home.status.paused || home.status.suspended;
-  var neverChecked = !home.status.lastLookedAt;
-  var isEmpty = !!locals.isEmpty;
-  var activeMigration = locals.activeMigration || null;
-  var isSettingUp = !!home.setup || !!(home.guidance && !home.guidance.operationalReady);
-  var next = locals.whatsNext || [];
-  var guide = home.guidance || {};
-  /* A summary number must open the records behind that number. With one
-     handled item there is no reason to make somebody search a general log;
-     with several, the handled list immediately below is the useful index. */
-  var handledHref = handled.length === 1 && handled[0].link
-    ? handled[0].link
-    : (handled.length ? '/#foundry-handled' : null);
-  var handlingHref = handling.length === 1 && handling[0].link
-    ? handling[0].link
-    : (handling.length ? '/#foundry-handled' : null);
-
-  var coverageErrors = home.coverageErrors || [];
-  var gaps = (home.readiness && home.readiness.evidenceGaps) || [];
-  var gapCount = home.readiness && Number.isInteger(home.readiness.evidenceGapCount)
-    ? home.readiness.evidenceGapCount : gaps.length;
-  var isFreshEmpty = isEmpty && !needsCount && !handling.length && !handled.length && !coverageErrors.length && !paused;
-  var verdict = coverageErrors.length
-    ? 'Operations review is incomplete.'
-    : paused
-    ? 'StockChief is paused.'
-    : isEmpty && activeMigration
-      ? 'Your inventory is being prepared.'
-    : isEmpty
-      ? 'This inventory is empty.'
-      : needsCount === 1
-        ? '1 thing needs your attention.'
-        : needsCount > 1
-          ? needsCount + ' things need your attention.'
-          : isSettingUp
-            ? 'Getting StockChief ready.'
-            : neverChecked
-              ? 'Ready for the first operations check.'
-            : home.status.checkStale
-              /* "Under control" is only as good as the last look. A check
-                 older than a day is said with the verdict, not left to the
-                 small stamp beside the greeting. */
-              ? 'Nothing needs you — as of the last check.'
-              : 'Everything is under control.';
-  var verdictAside = paused || isEmpty
-    ? null
-    : (!isSettingUp && needsCount === 0 && (neverChecked || home.status.checkStale))
-      ? (home.status.lastLookedAt
-          ? 'StockChief last checked this inventory ' + home.status.lastEvaluatedText + '; the automatic check has not run since.'
-          : 'No all-clear has been issued yet.')
-      : null;
-
-  /* A line's icon comes from what it is about, so the feed can be read down
-     the left edge without reading a word of it. */
-  function nextIcon(line) {
-    var t = String(line.text || '').toLowerCase();
-    if (/pack|carrier|ship/.test(t)) return 'ship';
-    if (/deliver|arriv|due|expect/.test(t)) return 'arrive';
-    if (/pick/.test(t)) return 'box';
-    if (/pay|owe|invoice/.test(t)) return 'wallet';
-    return 'clock';
-  }
+  var empty = !!locals.isEmpty && !needsCount;
+  var stale = !paused && !empty && home.status.checkStale;
+  var migration = locals.activeMigration || null;
+  var headline = paused ? 'StockChief is paused.'
+    : empty ? (migration ? 'Your inventory is being prepared.' : 'StockChief is ready. Your inventory isn’t here yet.')
+    : urgentCount ? (urgentCount === 1 ? 'One urgent thing needs you.' : urgentCount + ' urgent things need you.')
+    : stale ? 'Here’s where things stood at the last check.'
+    : needsCount ? 'Everything else is under control.'
+    : 'Everything is under control.';
 %>
-
-<% if (!isEmpty && currentUser && currentUser.role === 'owner') { %><p class="rm-choices"><a href="/foundry/briefing">Since-Friday operations briefing</a></p><% } %>
-
-<% if (isEmpty && activeMigration) { %>
-<section class="rm-hero rm-hero--migration">
-  <span class="rm-hero__badge"><span class="rm-dot" aria-hidden="true"></span> Migration in progress</span>
-  <h1>Your workbook is saved. Nothing was cleared.</h1>
-  <p>
-    StockChief has prepared <strong><%= activeMigration.preparedCount %> of <%= activeMigration.operationalCount %></strong>
-    operational datasets from <strong><%= activeMigration.sourceRowsPrepared.toLocaleString() %></strong> source rows.
-    They are still private migration records. <strong><%= activeMigration.liveRecords.toLocaleString() %></strong> records are live.
-  </p>
-  <% if (activeMigration.filenames.length) { %><p class="rm-source-file"><%- helpers.icon('paperclip',{ size:14 }) %> <%= activeMigration.filenames.join(' · ') %></p><% } %>
-  <div class="rm-hero__foot">
-    <span><%- helpers.icon('shield', { size: 15 }) %> Your other inventories are untouched</span>
-    <span><%- helpers.icon('alert', { size: 15 }) %> <%= activeMigration.remainingCount %> source issue<%= activeMigration.remainingCount === 1 ? '' : 's' %> remain</span>
-  </div>
-</section>
-
-<section class="rm-next-card">
-  <div><span class="rm-stamp">Do this next</span><h2><%= activeMigration.remainingCount ? 'Finish the remaining source review.' : 'Verify the prepared records.' %></h2>
-    <p>StockChief will not switch this inventory live until its totals reconcile and you approve the result.</p></div>
-  <a class="rm-btn" href="/onboarding/migrations/<%= activeMigration.id %><%= activeMigration.remainingCount ? '/sources' : '' %>"><%= activeMigration.remainingCount ? 'Continue migration' : 'Run final checks' %></a>
-</section>
-
-<p class="rm-choices">
-  <a class="rm-btn rm-btn--ghost" href="/inventories">See my other inventories</a>
-</p>
-
-<% } else if (isFreshEmpty) { %>
-<section class="rm-empty-welcome" aria-label="Getting started">
-  <span class="rm-stamp">Your workspace is ready</span>
-  <h1>Welcome, <%= firstName || 'there' %>.</h1>
-  <p>No products yet. You can explore the app now, or add your first records whenever you’re ready.</p>
-  <div class="rm-choices">
-    <a class="rm-btn" href="/onboarding">Add a source</a>
-    <a class="rm-btn rm-btn--ghost" href="/inventory/new">Add a product manually</a>
-  </div>
-  <% if (currentUser.role === 'owner' && !onboardingEntry.dismissed) { %>
-    <div class="rm-sample-prompt">
-      <span>Want to see how it works first? Sample data is separate from your business.</span>
-      <form method="post" action="/onboarding/sample/load"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">Load sample data to explore</button></form>
-      <form method="post" action="/onboarding/sample/dismiss"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit" aria-label="Dismiss sample suggestion">Dismiss</button></form>
-    </div>
-  <% } %>
-  <p class="rm-empty-assurance">Nothing is ordered, emailed or paid automatically until you approve its limits.</p>
-</section>
-
-<% } else { %>
-
-<%# ------------------------------------------------------------ live header %>
-<p class="rm-stamp">
-  <span class="rm-live <%= paused ? 'rm-live--paused' : '' %>">
-    <span class="rm-dot" aria-hidden="true"></span>
-    <%= paused ? 'StockChief is paused' : neverChecked ? 'StockChief is ready' : 'StockChief is working' %>
-  </span>
-  <span><%= greeting %><%= firstName ? ', ' + firstName : '' %> · <%= today %></span>
-  <span<%= (neverChecked || home.status.checkStale) ? ' class="rm-stale"' : '' %>>· checked <%= home.status.lastEvaluatedText %></span>
-  <% if (!paused && canOperate) { %>
-    <form method="post" action="/autopilot/pause" data-confirm="Pause StockChief? Nothing will happen automatically until you resume it." style="margin:0">
-      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-      <input type="hidden" name="back" value="/">
-      <button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">Pause</button>
-    </form>
-  <% } %>
-</p>
-
-<h1 class="rm-verdict">
-  <%= verdict %><% if (verdictAside) { %> <span class="q"><%= verdictAside %></span><% } %>
-</h1>
-<% if (locals.operationSummary) { %><p class="rm-prose"><%= operationSummary %></p><% } %>
-<% if (currentUser.role === 'owner') { %><p class="rm-prose"><a href="/autopilot">Review suggested routine-work limits</a> · <a href="/autopilot/daily">Daily digest and batch approvals</a> · <a href="/autopilot/misses">Report an Ask miss</a></p><% } %>
-<% if (!paused && canOperate && (neverChecked || home.status.checkStale)) { %>
-  <form method="post" action="/autopilot/run" class="rm-prose">
-    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-    <button class="rm-btn" type="submit">Check now</button>
-  </form>
-<% } %>
-<% if (locals.routineProposal && routineProposal.available && !routineProposal.alreadyConfigured) { %>
-<section class="card section" aria-label="Suggested routine-work limits"><div class="card-head"><h2>Your records support routine-work limits</h2></div><div class="card-body">
-  <% if (routineProposal.suppliers.length) { %><p>For <%= routineProposal.suppliers.map(function (supplier) { return supplier.name; }).join(', ') %>: previously purchased products, up to <strong>$<%= routineProposal.maximumValue.toFixed(2) %> USD per purchase order</strong> and <strong>$<%= routineProposal.maximumValuePerWeek.toFixed(2) %> USD in any rolling seven days</strong>.</p><% } %>
-  <% routineProposal.email.forEach(function (email) { %><p>Routine supplier email to <%= email.recipient %> from <%= email.mailboxName %>, for orders up to $<%= (email.maximumValueMinor / 100).toFixed(2) %> USD.</p><% }) %>
-  <% routineProposal.shipping.forEach(function (shipping) { %><p><%= shipping.carrier %> <%= shipping.service %> labels up to $<%= (shipping.maximumValueMinor / 100).toFixed(2) %> USD each, based on recorded purchases.</p><% }) %>
-  <p>Nothing is enabled yet. Review the evidence and confirm once; anything outside the approved limits still asks first. Payments are not included.</p><a class="btn btn--primary" href="/autopilot">Review and confirm limits</a>
-</div></section>
-<% } %>
-<% if (coverageErrors.length) { %>
-  <div class="notice notice--warn" role="alert">StockChief could not check <%= coverageErrors.length %> exception sources. Known decisions are not a complete all-clear. <a href="/settings/operations">Review operational health</a></div>
-<% } %>
-
-<% if (paused) { %>
-  <p class="rm-prose">
-    <%= home.status.suspendedReason || home.status.pausedReason || 'Nothing happens automatically until you resume StockChief.' %>
-  </p>
-  <% if (canOperate) { %>
-    <form method="post" action="/autopilot/resume" style="margin:0 0 20px">
-      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-      <button class="rm-btn" type="submit"><%- helpers.icon('play', { size: 15 }) %> Resume StockChief</button>
-    </form>
-  <% } %>
-
-<% } else if (isFreshEmpty) { %>
-<% } else { %>
-
-  <%# ----------------------------------------------------------- the pulse %>
-  <div class="rm-pulse">
-    <<%= handledHref ? 'a' : 'div' %> class="rm-stat rm-stat--brand"<% if (handledHref) { %> href="<%= handledHref %>"<% } %>>
-      <span class="rm-stat__top"><%- helpers.icon('check', { size: 15 }) %> Handled</span>
-      <span class="rm-stat__n"><%= counts.handled || 0 %></span>
-      <span class="rm-stat__d"><%= counts.handled === 1 ? 'automatic action completed in the last day' : (counts.handled ? 'automatic actions completed in the last day' : 'no automatic actions in the last day') %></span>
-    </<%= handledHref ? 'a' : 'div' %>>
-    <<%= handlingHref ? 'a' : 'div' %> class="rm-stat <%= handling.length ? 'rm-working' : '' %>"<% if (handlingHref) { %> href="<%= handlingHref %>"<% } %>>
-      <span class="rm-stat__top"><%- helpers.icon('bolt', { size: 15 }) %> In progress</span>
-      <span class="rm-stat__n"><%= handling.length %></span>
-      <span class="rm-stat__d"><%= handling.length ? 'StockChief is on it now' : 'nothing part-finished' %></span>
-    </<%= handlingHref ? 'a' : 'div' %>>
-    <a class="rm-stat" href="/inventory">
-      <span class="rm-stat__top"><%- helpers.icon('eye', { size: 15 }) %> Watching</span>
-      <span class="rm-stat__n"><%= counts.positionsWatched || 0 %></span>
-      <span class="rm-stat__d">stock positions, continuously</span>
-    </a>
-    <a class="rm-stat <%= needsCount ? 'rm-stat--flag' : '' %>" href="<%= needsCount ? '/#needs-you' : '/needs-you' %>">
-      <span class="rm-stat__top"><%- helpers.icon('hand', { size: 15 }) %> Needs you</span>
-      <span class="rm-stat__n"><%= needsCount %></span>
-      <span class="rm-stat__d"><%= needsCount ? 'decisions only you can make' : 'nothing is waiting' %></span>
-    </a>
-  </div>
-
-<% } %>
-
-<%
-  /*
-   * Getting ready is a different ask from settling a decision, so it gets its
-   * own quieter treatment. There is never more than one amber card on a page.
-   */
-  var showChecklist = guide.checklistActive && guide.next;
-  var completedSteps = showChecklist ? guide.steps.filter(function (s) { return s.complete; }).length : 0;
-%>
-<% if (guide.next && !needsCount) { %>
-  <div class="rm-next">
-    <p class="rm-stamp"><%- helpers.icon('spark', { size: 13 }) %> <%= showChecklist ? 'Do this next' : (guide.next.eyebrow || 'Do this next') %></p>
-    <p class="rm-next__t"><%= guide.next.title %></p>
-    <% if (guide.next.recommendation) { %><p class="rm-next__d"><%= guide.next.recommendation %></p><% } %>
-    <% if (!showChecklist && guide.next.what) { %><p class="rm-next__d"><%= guide.next.what %></p><% } %>
-    <% if (guide.next.href && guide.next.action) { %>
-      <p class="rm-choices" style="margin-top:11px"><a class="rm-btn rm-btn--sm" href="<%= guide.next.href %>"><%= guide.next.action %></a></p>
-    <% } %>
-  </div>
-<% } %>
-<% if (showChecklist) { %>
-  <details class="rm-work" style="margin:-6px 0 16px">
-    <summary><%= guide.operationalReady ? 'Optional setup' : 'Setup progress' %> · <%= completedSteps %> of <%= guide.steps.length %> complete</summary>
-    <div class="rm-work__body" style="padding-bottom:6px">
-      <div class="rm-feed">
-        <% guide.steps.forEach(function (step) { %>
-          <div class="rm-feed__row" style="padding-left:0;padding-right:0">
-            <span class="rm-feed__ic <%= step.complete ? 'is-done' : '' %>"><%- helpers.icon(step.complete ? 'check' : 'clock', { size: 14 }) %></span>
-            <span class="rm-feed__t"><%= step.title %><% if (step.current || step.complete) { %><small><%= step.detail %></small><% } %></span>
-            <span class="rm-feed__m">
-              <% if (step.complete) { %>done<% } else if (step.href && step.action) { %><a href="<%= step.href %>"><%= step.action %></a><% } %>
-            </span>
-          </div>
-        <% }) %>
+<div class="sc-home <%= urgentCount ? 'sc-home--urgent' : '' %>">
+  <header class="sc-home__hero" aria-labelledby="sc-home-title">
+    <div class="sc-home__hero-main">
+      <p class="sc-home__greeting"><%= greeting %><%= firstName ? ', ' + firstName : '' %></p>
+      <h1 id="sc-home-title"><%= headline %></h1>
+      <% if (paused) { %>
+        <p class="sc-home__sentence"><%= home.status.suspendedReason || home.status.pausedReason || 'Automatic work is stopped until you resume it.' %></p>
+      <% } else if (empty) { %>
+        <p class="sc-home__sentence"><%= migration ? 'Your source is saved; StockChief will not switch it live until the records reconcile and you approve them.' : 'Bring in the products and quantities you already have. StockChief has not checked your business yet, and nothing will be ordered, paid, or emailed without your approval or the limits you set.' %></p>
+      <% } else { %>
+        <p class="sc-home__sentence">
+          <% if (handledCount) { %>StockChief <strong>handled <%= handledCount %> <%= handledCount === 1 ? 'thing' : 'things' %></strong> in the last 24 hours.<% } else { %>No new work was completed by StockChief in the last 24 hours.<% } %>
+          <% if (needsCount) { %><br><strong><%= needsCount %> <%= needsCount === 1 ? 'thing needs' : 'things need' %> you.</strong><% } else { %><br>Nothing needs you right now.<% } %>
+        </p>
+      <% } %>
+      <div class="sc-home__hero-actions">
+        <% if (paused && canOperate) { %>
+          <form method="post" action="/autopilot/resume"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="sc-home__primary" type="submit">Resume StockChief <%- helpers.icon('arrowRight', { size: 17 }) %></button></form>
+        <% } else if (empty) { %>
+          <a class="sc-home__primary" href="<%= migration ? '/onboarding/migrations/' + migration.id + (migration.remainingCount ? '/sources' : '') : '/onboarding' %>"><%= migration ? (migration.remainingCount ? 'Continue source review' : 'Run final checks') : 'Add your inventory' %> <%- helpers.icon('arrowRight', { size: 17 }) %></a>
+        <% } else if (needsCount) { %>
+          <a class="sc-home__primary" href="#needs-you">Review <%= needsCount %> <%= needsCount === 1 ? 'thing' : 'things' %> <%- helpers.icon('arrowRight', { size: 17 }) %></a>
+        <% } else if (stale && canOperate) { %>
+          <form method="post" action="/autopilot/run"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="sc-home__primary" type="submit">Check now <%- helpers.icon('arrowRight', { size: 17 }) %></button></form>
+        <% } %>
+        <% if (!empty && handledCount) { %><a class="sc-home__text-link" href="#handled">See what was handled</a><% } %>
       </div>
     </div>
-  </details>
-<% } %>
+    <div class="sc-home__status" aria-label="StockChief status"><span class="sc-home__status-dot <%= paused ? 'is-paused' : stale ? 'is-stale' : '' %>" aria-hidden="true"></span><span><%= paused ? 'Paused' : empty ? 'Ready to set up' : stale ? 'Check overdue' : 'On duty' %></span><small><%= empty ? 'No business check yet' : 'Last checked ' + home.status.lastEvaluatedText %></small></div>
+  </header>
 
-<%
-  /* The count above is never a mystery number. This compact index shows every
-     decision by name and opens its own decision context. The detailed guided
-     page still presents one decision at a time. */
-%>
-<% if (needsCount) { %>
-  <section class="rm-panel" id="needs-you" style="margin-bottom:18px;scroll-margin-top:22px">
-    <div class="rm-panel__head">
-      <%- helpers.icon('hand', { size: 15, className: 'rm-quiet' }) %>
-      <h2><%= needsCount %> <%= needsCount === 1 ? 'thing needs' : 'things need' %> you</h2>
-      <span class="right"><a href="/needs-you/all">See all together</a></span>
-    </div>
-    <%# Decisions that share one fix are one line: a supplier with no email
-        is one job however many orders are waiting on it. %>
-    <% var needGroups = []; var needByFix = {};
-       needs.forEach(function (item, i) {
-         var key = item.link || item.href || ('#' + i);
-         if (!needByFix[key]) { needByFix[key] = { lead: item, index: i, members: [] }; needGroups.push(needByFix[key]); }
-         else needByFix[key].members.push(item);
-       }); %>
-    <div class="rm-feed">
-      <% needGroups.forEach(function (group) { var item = group.lead; var i = group.index; var n = group.members.length + 1; %>
-        <a class="rm-feed__row" href="<%= item.link || item.href || ('/needs-you?at=' + i) %>">
-          <span class="rm-feed__ic is-flag"><%= i + 1 %></span>
-          <span class="rm-feed__t"><%= item.title %><% if (n > 1) { %><small><% var refs = group.members.map(function (m) { var t = String(m.title || (m.item && m.item.title) || ''); var r = t.match(/(?:PO|SO|RMA|BILL|INV|SHP)-[0-9]+/); return r ? r[0] : null; }).filter(Boolean); %><% if (refs.length) { %>The same fix also clears <%= refs.slice(0, 5).join(', ') %><%= refs.length > 5 ? ' and ' + (refs.length - 5) + ' more' : '' %>.<% } else { %>The same fix clears <%= n %> decisions.<% } %></small><% } else if (item.because) { %><small><%= item.because %></small><% } %></span>
-          <span class="rm-feed__m"><% if (n > 1) { %><span class="rm-pillbadge"><%= n %> in one</span> <% } %><%= item.action || 'Open' %></span>
-        </a>
-      <% }) %>
-    </div>
-    <% if (needsCount > needs.length) { %>
-      <div class="rm-panel__foot"><a href="/needs-you/all">Showing the <%= needs.length %> highest-priority decisions · Open all <%= needsCount %></a></div>
-    <% } %>
+  <% if (!empty && home.coverageErrors && home.coverageErrors.length) { %><p class="sc-home__warning" role="alert">StockChief could not check every source. This is not a complete all-clear. <a href="/settings/operations">See operational health</a></p><% } %>
+  <% if (!empty && stale) { %><p class="sc-home__warning" role="status">The automatic check has not run in over a day. Current conditions may have changed since the last check.</p><% } %>
+
+  <section class="sc-home__ask" aria-labelledby="sc-home-ask-title">
+    <div class="sc-home__ask-intro"><span class="sc-home__ask-mark" aria-hidden="true"><%- helpers.icon('foundry', { size: 22 }) %></span><div><p class="sc-home__eyebrow">Your direct line</p><h2 id="sc-home-ask-title">Ask or tell StockChief anything.</h2><p>Ask what’s happening, describe a change, or say what you want done. StockChief checks the records and asks before consequential action.</p></div></div>
+    <%- include('../partials/composer', { composerPlaceholder: 'What would you like StockChief to know or do?' }) %>
+    <% var suggestions = (home.guidance && home.guidance.examples) || []; %>
+    <% if (suggestions.length) { %><div class="sc-home__suggestions" aria-label="Things you can ask"><span>Try asking</span><% suggestions.slice(0, 3).forEach(function (line) { %><a href="/ask?q=<%= encodeURIComponent(line) %>"><%= line %></a><% }) %></div><% } %>
   </section>
-<% } %>
 
-<% if (!paused && !isEmpty) { %>
-<div class="rm-split">
+  <% if (empty && !migration) { %>
+    <section class="sc-home__first-steps" aria-labelledby="sc-home-first-steps-title">
+      <div class="sc-home__section-head"><div><p class="sc-home__eyebrow">One start, then StockChief takes over the routine</p><h2 id="sc-home-first-steps-title">What happens next</h2></div></div>
+      <ol>
+        <li><span>1</span><div><strong>Bring in what you have</strong><p>Use a spreadsheet, connect a system, or enter your first products.</p></div></li>
+        <li><span>2</span><div><strong>Check it together</strong><p>StockChief shows what it understood before imported records become live.</p></div></li>
+        <li><span>3</span><div><strong>Choose its limits</strong><p>You decide what StockChief can handle on its own and what still needs you.</p></div></li>
+      </ol>
+      <% if (currentUser && currentUser.role === 'owner' && onboardingEntry && !onboardingEntry.dismissed) { %>
+        <div class="sc-home__sample"><span>Want to explore first? Sample data stays separate from your business.</span><form method="post" action="/onboarding/sample/load"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button type="submit">Explore with sample data <%- helpers.icon('arrowRight', { size: 15 }) %></button></form></div>
+      <% } %>
+    </section>
+  <% } %>
 
-  <%# ------------------------------------------------------- what happened %>
-  <div class="rm-stack">
-    <section class="rm-panel" id="foundry-handled" style="scroll-margin-top:22px">
-      <div class="rm-panel__head">
-        <%- helpers.icon('check', { size: 15, className: 'rm-quiet' }) %>
-        <h2><%= handled.length ? 'What StockChief handled' : 'What StockChief checked' %></h2>
-        <span class="right"><a href="/activity">Everything that happened</a></span>
-      </div>
-      <div class="rm-feed">
-        <% if (handling.length) { %>
-          <% handling.slice(0, 3).forEach(function (item) { %>
-            <a class="rm-feed__row rm-working" href="<%= item.link %>">
-              <span class="rm-feed__ic is-live"><%- helpers.icon('bolt', { size: 14 }) %></span>
-              <span class="rm-feed__t"><%= item.title %><small><%= item.because %></small></span>
-              <span class="rm-feed__m">working</span>
-            </a>
-          <% }) %>
-        <% } %>
-        <% if (handled.length) { %>
-          <%# The same action done several times is one line with a count, not
-              the same line repeated until the panel is full of it. %>
-          <% var didGroups = []; var didByKey = {};
-             handled.forEach(function (action) {
-               var key = String(action.headline) + '|' + String(action.detail || '');
-               if (!didByKey[key]) { didByKey[key] = { lead: action, count: 0, verified: 0 }; didGroups.push(didByKey[key]); }
-               didByKey[key].count += 1; if (action.verified) didByKey[key].verified += 1;
-             }); %>
-          <% didGroups.slice(0, 6).forEach(function (group) { var action = group.lead; %>
-            <a class="rm-feed__row" href="<%= (group.count > 1 ? '/activity' : action.link) || '/activity' %>">
-              <span class="rm-feed__ic is-done"><%- helpers.icon('check', { size: 14 }) %></span>
-              <span class="rm-feed__t"><%= action.headline %><% if (group.count > 1) { %> <span class="rm-quiet">× <%= group.count %></span><% } %><% if (action.detail) { %><small><%= action.detail %></small><% } %></span>
-              <span class="rm-feed__m"><%= group.verified === group.count ? 'verified' : group.verified ? group.verified + ' of ' + group.count + ' verified' : '' %></span>
-            </a>
-          <% }) %>
-        <% } else if (!handling.length) { %>
-          <div class="rm-feed__row">
-            <span class="rm-feed__ic"><%- helpers.icon('eye', { size: 14 }) %></span>
-            <span class="rm-feed__t"><%= home.did.headline %><% if (/Nothing needed doing/i.test(home.did.headline || '')) { %><small>No automatic action was necessary.</small><% } %></span>
-            <span class="rm-feed__m"></span>
-          </div>
-        <% } %>
-      </div>
+  <% if (!empty) { %>
+    <div class="sc-home__workline">
+      <% if (handling.length && !paused) { %><details class="sc-home__working"><summary><span class="sc-home__working-dot" aria-hidden="true"></span><strong>StockChief is working</strong><span><%= handling.length %> <%= handling.length === 1 ? 'thing' : 'things' %> in progress</span></summary><div class="sc-home__working-body"><% handling.forEach(function (item) { %><a href="<%= item.link %>"><%= item.title %> — <%= item.detail %> <%- helpers.icon('arrowRight', { size: 14 }) %></a><% }) %></div></details>
+      <% } else { %><span><span class="sc-home__working-dot <%= paused ? 'is-paused' : '' %>" aria-hidden="true"></span><%= paused ? 'Automatic work is paused' : 'StockChief is watching for work; automatic actions stay within your approved limits' %></span><% } %>
+      <a href="/autopilot/history">View work history</a>
+    </div>
+
+    <section class="sc-home__decisions <%= urgentCount ? 'sc-home__decisions--urgent' : '' %>" id="needs-you" aria-labelledby="sc-home-needs-title">
+      <div class="sc-home__section-head"><div><p class="sc-home__eyebrow">Decisions only you can make</p><h2 id="sc-home-needs-title">Needs you<% if (needsCount) { %><span class="sc-home__count"><%= needsCount %></span><% } %></h2></div><% if (needsCount > needs.length) { %><a href="/needs-you/all">See all <%= needsCount %></a><% } %></div>
+      <% if (!needsCount) { %><p class="sc-home__all-clear"><%- helpers.icon('check', { size: 18 }) %> Nothing needs you.</p><% } else { %>
+        <div class="sc-home__decision-list"><% needs.forEach(function (item) { %><a class="sc-home__decision <%= item.importance === 'Urgent' ? 'is-urgent' : '' %>" href="<%= item.link || item.href %>"><span class="sc-home__decision-icon"><%- helpers.icon(item.importance === 'Urgent' ? 'alert' : 'hand', { size: 18 }) %></span><span class="sc-home__decision-copy"><% if (item.importance === 'Urgent') { %><small>Urgent</small><% } %><strong><%= item.title %></strong><% if (item.because) { %><span><%= item.because %></span><% } %></span><span class="sc-home__decision-action"><%= item.action || 'Review' %> <%- helpers.icon('arrowRight', { size: 16 }) %></span></a><% }) %></div>
+        <% if (needsCount > needs.length) { %><a class="sc-home__more" href="/needs-you/all">Open all <%= needsCount %> decisions</a><% } %>
+      <% } %>
     </section>
 
-    <%# ---------------------------------------------------------- coming up %>
-    <section class="rm-panel">
-      <div class="rm-panel__head">
-        <%- helpers.icon('calendar', { size: 15, className: 'rm-quiet' }) %>
-        <h2>Coming up</h2>
-      </div>
-      <div class="rm-feed">
-        <% if (next.length) { %>
-          <% next.forEach(function (line) { %>
-            <a class="rm-feed__row" href="<%= line.href %>">
-              <span class="rm-feed__ic <%= line.tone === 'late' ? 'is-flag' : '' %>"><%- helpers.icon(nextIcon(line), { size: 14 }) %></span>
-              <span class="rm-feed__t"><%= String(line.text).replace(/[0-9]{4}-[0-9]{2}-[0-9]{2}/g, function (d) { return helpers.shortDate(d); }) %></span>
-              <span class="rm-feed__m"><%= line.tone === 'late' ? 'late' : '' %></span>
-            </a>
-          <% }) %>
-        <% } else { %>
-          <div class="rm-feed__row">
-            <span class="rm-feed__ic"><%- helpers.icon('calendar', { size: 14 }) %></span>
-            <span class="rm-feed__t">Nothing is dated in the next few days.<small>No shipment waiting on a carrier, no delivery expected, nothing falling due.</small></span>
-            <span class="rm-feed__m"></span>
-          </div>
-        <% } %>
-      </div>
-    </section>
-  </div>
-
-  <%# ------------------------------------------------------------- the side %>
-  <div class="rm-stack">
-    <% if (locals.financialPulse) { %>
-      <%
-        var fp = financialPulse;
-        var cash = function (minor) {
-          var amount = Number(minor || 0) / 100;
-          return (amount < 0 ? '-' : '') + (fp.currency === 'USD' ? '$' : fp.currency + ' ')
-            + Math.abs(amount).toLocaleString('en-US', { maximumFractionDigits: 0 });
-        };
-        var net = fp.pnl ? fp.pnl.netIncomeMinor : null;
-        /* Bars are drawn from the three real figures beside them and share one
-           scale, so their heights can be compared to each other and to nothing
-           else. */
-        var owed = Number(fp.receivableMinor || 0);
-        var owe = Number(fp.payableMinor || 0);
-        var bank = Number(fp.cashMinor || 0);
-        var customerCash = Number(fp.customerCashReceivedMinor || 0);
-        var prepayments = Number(fp.customerPrepaymentsMinor || 0);
-        var top = Math.max(owed, owe, bank, customerCash, 1);
-        var pct = function (v) { return Math.max(3, Math.round((Number(v || 0) / top) * 100)); };
-      %>
-      <section class="rm-panel">
-        <div class="rm-panel__head">
-          <%- helpers.icon('accounting', { size: 15, className: 'rm-quiet' }) %>
-          <h2>The business</h2>
-          <span class="right"><a href="/money">Money</a></span>
-        </div>
-        <% if (net !== null) { %>
-          <a href="/accounting/reports/profit-and-loss?from=<%= fp.from %>&to=<%= fp.to %>" style="display:block;padding:14px 16px 8px;text-decoration:none;color:inherit">
-            <div class="rm-stat__top" style="margin-bottom:2px">
-              <%- helpers.icon(net < 0 ? 'trendDown' : 'trendUp', { size: 15 }) %>
-              <%= net < 0 ? 'Loss after fulfilled sales' : 'Profit from fulfilled sales' %>
-            </div>
-            <div class="rm-stat__n" style="color:<%= net < 0 ? 'var(--bad)' : 'var(--ink)' %>"><%= cash(Math.abs(net)) %></div>
-            <div class="rm-stat__top" style="margin-top:4px;font-weight:400;color:var(--muted)">
-              Customer payments appear below immediately. Profit appears after the goods leave and their recorded cost is applied.
-            </div>
-          </a>
-        <% } %>
-        <div class="rm-feed">
-          <a class="rm-feed__row" href="/accounting#cash" style="grid-template-columns:minmax(0,1fr) auto">
-            <span class="rm-feed__t">Customer cash received this period
-              <small>Payments from customers that StockChief has recorded.</small>
-              <span class="rm-meter is-good" style="margin-top:6px"><span style="width:<%= pct(customerCash) %>%"></span></span>
-            </span>
-            <span class="rm-feed__m" style="font-size:13px;color:var(--ink);font-weight:650"><%= cash(customerCash) %></span>
-          </a>
-          <% if (prepayments > 0) { %>
-            <a class="rm-feed__row" href="/accounting#customers" style="display:block">
-              <span class="rm-feed__t"><%= cash(prepayments) %> was paid before delivery.
-                <small>It is cash received, but it is not earned revenue or profit until the goods leave.</small>
-              </span>
-            </a>
-          <% } %>
-          <a class="rm-feed__row" href="/accounting#customers" style="grid-template-columns:minmax(0,1fr) auto">
-            <span class="rm-feed__t">Customers still need to pay
-              <small>Confirmed orders and completed sales, minus payments recorded.</small>
-              <span class="rm-meter is-good" style="margin-top:6px"><span style="width:<%= pct(owed) %>%"></span></span>
-            </span>
-            <span class="rm-feed__m" style="font-size:13px;color:var(--ink);font-weight:650"><%= cash(owed) %></span>
-          </a>
-          <a class="rm-feed__row" href="/accounting#suppliers" style="grid-template-columns:minmax(0,1fr) auto">
-            <span class="rm-feed__t">You owe
-              <span class="rm-meter is-flag" style="margin-top:6px"><span style="width:<%= pct(owe) %>%"></span></span>
-            </span>
-            <span class="rm-feed__m" style="font-size:13px;color:var(--ink);font-weight:650"><%= cash(owe) %></span>
-          </a>
-          <a class="rm-feed__row" href="/accounting#cash" style="grid-template-columns:minmax(0,1fr) auto">
-            <span class="rm-feed__t">Cash StockChief has recorded
-              <small>This is not a verified bank balance unless a bank connection supplies it.</small>
-              <span class="rm-meter" style="margin-top:6px"><span style="width:<%= pct(bank) %>%"></span></span>
-            </span>
-            <span class="rm-feed__m" style="font-size:13px;color:var(--ink);font-weight:650"><%= cash(bank) %></span>
-          </a>
-        </div>
+    <div class="sc-home__lower">
+      <section class="sc-home__outcomes" id="handled" aria-labelledby="sc-home-handled-title"><div class="sc-home__section-head"><div><p class="sc-home__eyebrow">What StockChief finished · last 24 hours</p><h2 id="sc-home-handled-title">Handled</h2></div><a href="/autopilot/history">Work history</a></div>
+        <% if (handled.length) { %><div class="sc-home__outcome-list"><% handled.slice(0, 4).forEach(function (item) { %><a href="<%= item.link %>" class="sc-home__outcome"><span class="sc-home__outcome-check"><%- helpers.icon('check', { size: 15 }) %></span><span><strong><%= item.headline %></strong><small><%= item.detail %></small></span><%- helpers.icon('arrowRight', { size: 15 }) %></a><% }) %></div><% if (handledCount > 4) { %><a class="sc-home__more" href="/autopilot/history">See more recent work</a><% } %>
+        <% } else { %><p class="sc-home__quiet">No automatic work was completed in the last 24 hours.</p><% } %>
       </section>
-    <% } %>
-
-    <%
-      /*
-       * What StockChief has noticed and not turned into a decision, plus where it
-       * is deliberately silent. The doctrine is that it never states what it
-       * cannot support, so silence is information — and information nobody can
-       * see is doing no work. This is the panel that makes the rest credible.
-       */
-      // Needs You already names every actionable issue from the unified inbox.
-      // The older stock-only daily brief can contain a smaller count, so do
-      // not repeat it here beside a broader authoritative count.
-      var noticedLine = !needsCount && locals.observedBrief ? String(locals.observedBrief).trim() : '';
-      var notes = (home.readiness && home.readiness.notes) || [];
-    %>
-    <% if (noticedLine || gapCount || notes.length) { %>
-      <section class="rm-panel">
-        <div class="rm-panel__head">
-          <%- helpers.icon('eye', { size: 15, className: 'rm-quiet' }) %>
-          <h2>Noticed, and not yet sure</h2>
-        </div>
-        <div class="rm-bands">
-          <% if (noticedLine) { %>
-            <div class="rm-band" style="grid-template-columns:minmax(0,1fr)">
-              <span class="rm-band__v"><%= noticedLine %></span>
-            </div>
-          <% } %>
-          <% if (gapCount) { %>
-            <div class="rm-band" style="grid-template-columns:minmax(0,1fr)">
-              <span class="rm-band__v"><span class="dim"><%= gapCount.toLocaleString() %> product<%= gapCount === 1 ? ' has' : 's have' %>
-                insufficient outbound history, so I cannot judge demand for <%= gapCount === 1 ? 'it' : 'them' %> and will not guess.</span></span>
-            </div>
-          <% } %>
-          <% notes.slice(0, 2).forEach(function (note) { %>
-            <div class="rm-band" style="grid-template-columns:minmax(0,1fr)">
-              <span class="rm-band__v"><span class="dim"><%= note %></span></span>
-            </div>
-          <% }) %>
-        </div>
-      </section>
-    <% } %>
-  </div>
-</div>
-<% } %>
-
-<%# ------------------------------------------------------------- the command %>
-<div style="margin-top:20px">
-  <p class="rm-stamp"><%- helpers.icon('foundry', { size: 14 }) %> Tell StockChief</p>
-  <%- include('../partials/composer', {
-    composerPlaceholder: (guide.examples && guide.examples[0]) || 'Tell me what happened, or ask me anything…',
-  }) %>
-  <% var couldSay = (guide.examples || []).slice(0, 3); %>
-  <% if (couldSay.length) { %>
-    <div class="rm-suggest">
-      <% couldSay.forEach(function (line) { %>
-        <a href="/ask?q=<%= encodeURIComponent(line) %>"><%= line %></a>
-      <% }) %>
+      <div class="sc-home__right-column">
+        <section class="sc-home__upcoming" aria-labelledby="sc-home-upcoming-title"><div class="sc-home__section-head"><div><p class="sc-home__eyebrow">Dates on your orders</p><h2 id="sc-home-upcoming-title">Coming up</h2></div></div><% if (comingUp.length) { %><div class="sc-home__upcoming-list"><% comingUp.forEach(function (item) { %><a href="<%= item.href %>"><span class="sc-home__date"><%= helpers.shortDate(item.when) %></span><span><%= item.text %></span><%- helpers.icon('arrowRight', { size: 14 }) %></a><% }) %></div><% } else { %><p class="sc-home__quiet">No dated customer commitments or supplier deliveries are approaching.</p><% } %></section>
+        <section class="sc-home__noticed" aria-labelledby="sc-home-noticed-title"><div class="sc-home__section-head"><div><p class="sc-home__eyebrow">Worth knowing</p><h2 id="sc-home-noticed-title">StockChief noticed</h2></div></div><% if (observations.length) { %><div class="sc-home__observations"><% observations.slice(0, 2).forEach(function (item) { %><a href="<%= item.href %>"><%- helpers.icon('eye', { size: 16 }) %><span><strong><%= item.text %></strong><small><%= item.detail %></small></span><%- helpers.icon('arrowRight', { size: 14 }) %></a><% }) %></div><% } else { %><p class="sc-home__quiet">No additional observation to surface right now.</p><% } %></section>
+      </div>
     </div>
   <% } %>
+
+  <% if (!empty) { %><p class="sc-home__browse"><a href="/inventory">Inventory</a><a href="/orders">Customer orders</a><a href="/purchasing/orders">Purchases</a><a href="/money">Money</a><a href="/activity">Activity</a></p><% } %>
 </div>
-
-<p class="rm-disclose">
-  <a href="/inventory">What you hold</a>
-  <a href="/orders">Customer orders</a>
-  <a href="/purchasing/orders">Purchases</a>
-  <a href="/money">Money</a>
-  <a href="/activity">Everything that happened</a>
-  <a href="/everything">Everything else</a>
-</p>
-
-<% } %>
-
-<div data-live-home data-signature="<%= homeSignature %>" hidden></div>
