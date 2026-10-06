@@ -18,10 +18,16 @@ async function main(){
  const aiPackAmount=candidate?4900:100;
  const aiPackUnits=candidate?500:10;
  const starterIncluded=candidate?650:500;
- const secret=process.env.STOCKCHIEF_BILLING_STRIPE_SECRET_KEY;
- if(!/^(sk|rk|rkcs)_test_/.test(secret||'')||process.env.NODE_ENV!=='test')throw Error('Explicit NODE_ENV=test and a TEST sandbox key are required');
  const cli=process.env.STOCKCHIEF_STRIPE_CLI;if(!cli)throw Error('STOCKCHIEF_STRIPE_CLI is required for genuine signed webhook delivery');
  const cliConfig=process.env.STOCKCHIEF_STRIPE_CLI_CONFIG;
+ // Claimed CLI sandboxes keep credentials in Stripe's store. The custom
+ // transport ignores Authorization, so never extract that credential merely to
+ // satisfy the test-mode guard. The account-ID check below is authoritative.
+ const secret=process.env.STOCKCHIEF_BILLING_STRIPE_SECRET_KEY||
+  (cliConfig?'sk_test_cli_transport_no_key':null);
+ if(!/^(sk|rk|rkcs)_test_/.test(secret||'')||process.env.NODE_ENV!=='test')throw Error('Explicit NODE_ENV=test and a TEST sandbox transport are required');
+ if(cliConfig&&!process.env.STOCKCHIEF_BILLING_STRIPE_SECRET_KEY)
+  process.env.STOCKCHIEF_BILLING_STRIPE_SECRET_KEY=secret;
  const providerOptions=cliConfig?{fetch:require('../tests/helpers/stripe-cli-transport').createStripeCliTransport({cli,config:cliConfig})}:{};
  const call=async(route,values,method=values?'POST':'GET')=>{
   const idempotencyKey=method==='POST'?`cert:${runId}:${crypto.randomUUID()}`:undefined;
