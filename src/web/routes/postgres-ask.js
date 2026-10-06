@@ -91,7 +91,7 @@ function createPostgresAskRouter(database,options={}){
       .filter((turn)=>!startedAt||String(turn.created_at)>=startedAt);
     const visible=interactions.slice(-12);const latest=visible.at(-1)||null;
     const transcript=transcriptFor(visible);const rules=await instructionLists(database,req.ctx.workspaceId);
-    return res.page('attention/ask',{title:'Ask StockChief',nav:'ask',room:true,suppressBack:true,...rules,
+    return res.page('attention/ask',{title:'Ask StockChief',nav:'ask',room:true,suppressBack:true,postgresAsk:true,...rules,
       about:String(req.query.about||'').slice(0,2000),question:latest?.message||'',result:resultFor(latest),error:null,
       conversation:null,transcript,currentGoalId:latest?.id||null,conversationId:`postgres:${req.ctx.workspaceId}`,
       aiConfigured:Boolean(options.provider||config.ai.configured),usageKey:newId('askusage'),

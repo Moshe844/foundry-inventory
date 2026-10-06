@@ -22,10 +22,19 @@ function fields(overrides={}){
 
 const provider={name:'fixture',model:'fixture',async complete(request){
   const message=JSON.parse(request.prompt).message;
-  if(message.includes('Trail Shoes received'))throw new Error('Exercise deterministic fallback');
-  if(message.includes('and move 2'))throw new Error('Exercise deterministic multi-request fallback');
-  if(message.includes('show me locations'))throw new Error('Exercise deterministic multi-lookup fallback');
-  if(message.includes('available, and in which warehouse'))return {data:fields({view:'locations'}),usage:{}};
+  if(message.includes('Trail Shoes received'))throw new Error('Exercise honest model failure');
+  if(message.includes('and move 2'))return {data:{parts:[
+    {requestText:'How many Trail Shoe do we have',...fields({search:'Trail Shoe'})},
+    {requestText:'move 2 SHOE-BLACK-8 from Main Warehouse to Overflow Store',...fields({intent:'action',view:null,
+      action:'transfer',sku:'SHOE-BLACK-8',fromLocation:'Main Warehouse',toLocation:'Overflow Store',quantity:2})},
+  ]},usage:{}};
+  if(message.includes('show me locations'))return {data:{parts:[
+    {requestText:'How many items are in my inventory',...fields({view:'inventory_summary'})},
+    {requestText:'show me locations',...fields({view:'locations'})},
+  ]},usage:{}};
+  if(message.includes('available, and in which warehouse'))return {data:fields({view:'inventory',search:'Trail Shoes'}),usage:{}};
+  if(message==='How many items are in my inventory currently?')return {data:fields({view:'inventory_summary'}),usage:{}};
+  if(message==='Did I lose any money yet?')return {data:fields({view:'accounting',search:'profit_and_loss'}),usage:{}};
   if(message.includes('how many'))return {data:fields({search:'Trail Shoe'}),usage:{}};
   if(message==='Show payment history')return {data:fields({view:'payments'}),usage:{}};
   if(message.includes('Receive seven'))return {data:fields({intent:'action',view:null,action:'receive',sku:'SHOE-BLACK-8',
@@ -73,7 +82,7 @@ test('Ask StockChief grounds answers and executes only an approved PostgreSQL pr
       message:'How many items are in my inventory currently?'});
     assert.equal(wholeInventory.status,303);
     const wholeInventoryAnswer=await agent.get('/ask');
-    assert.match(wholeInventoryAnswer.text,/1 SKU matched with 0 units on hand/);
+    assert.match(wholeInventoryAnswer.text,/You have 1 active product in StockChief, across 1 SKU/);
     assert.doesNotMatch(wholeInventoryAnswer.text,/No product or SKU matched/);
 
     const financial=await agent.post('/foundry/tell').type('form').send({_csrf:csrfFrom(wholeInventoryAnswer.text),
@@ -189,7 +198,7 @@ test('Ask StockChief grounds answers and executes only an approved PostgreSQL pr
     const multiLookupAnswer=(await agent.get('/ask')).text;
     assert.match(multiLookupAnswer,/StockChief · part 1 of 2/);
     assert.match(multiLookupAnswer,/StockChief · part 2 of 2/);
-    assert.match(multiLookupAnswer,/1 SKU matched with 7 units on hand/);
+    assert.match(multiLookupAnswer,/You have 1 active product in StockChief, across 1 SKU/);
     assert.match(multiLookupAnswer,/2 active locations hold 7 units/);
     const multi=await agent.post('/ask').type('form').send({_csrf:csrfFrom(groundedAfterTransfer),
       message:'How many Trail Shoe do we have and move 2 SHOE-BLACK-8 from Main Warehouse to Overflow Store'});
@@ -212,14 +221,15 @@ test('Ask StockChief grounds answers and executes only an approved PostgreSQL pr
     const left=await agent.post('/ask/leave-the-rest').type('form').send({_csrf:csrfFrom((await agent.get('/ask')).text),back:'/'});
     assert.equal(left.status,303);assert.equal(left.headers.location,'/');
 
+    const proposalsBefore=(await database.query(`SELECT COUNT(*) AS count FROM stockchief_runtime.assistant_action_proposals`)).rows[0].count;
     const fallback=await agent.post('/ask').type('form').send({_csrf:csrfFrom((await agent.get('/ask')).text),
       message:'Record 5 Trail Shoes received into Main Warehouse with reference FALLBACK-RECEIPT.'});
     assert.equal(fallback.status,303);
-    const fallbackAnswer=await agent.get('/ask');
-    assert.match(fallbackAnswer.text,/Receive 5 × Trail Shoe.*into Main Warehouse/);
-    assert.match(fallbackAnswer.text,/Nothing has changed yet/);
+    const failed=(await database.query(`SELECT status,answer FROM stockchief_runtime.assistant_interactions
+      ORDER BY created_at DESC,id DESC LIMIT 1`)).rows[0];
+    assert.equal(failed.status,'CLARIFY');
+    assert.match(failed.answer,/could not reliably understand that request/);
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM movements`)).rows[0].count,'1');
-    const fallbackProposal=(await database.query(`SELECT payload FROM stockchief_runtime.assistant_action_proposals
-      WHERE action_type='inventory.receive' ORDER BY created_at DESC LIMIT 1`)).rows[0];
-    assert.equal(fallbackProposal.payload.reference,'FALLBACK-RECEIPT');
+    assert.equal((await database.query(`SELECT COUNT(*) AS count FROM stockchief_runtime.assistant_action_proposals`)).rows[0].count,
+      proposalsBefore);
   });

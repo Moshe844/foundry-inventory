@@ -17,7 +17,7 @@ const entitlements=require('../entitlements/postgres-service');
 const { ValidationError, NotFoundError, InvariantError } = require('../domain/errors');
 const { newId, trimOrNull } = require('../lib/util');
 
-const VIEWS = ['inventory','needs_you','locations','purchase_orders','sales_orders','suppliers','customers','shipping','payments',
+const VIEWS = ['inventory','inventory_summary','needs_you','locations','purchase_orders','sales_orders','suppliers','customers','shipping','payments',
   'payables','receivables','accounting','connections'];
 const ACTIONS = ['receive','issue','transfer','adjust','create_item','create_location','set_price','set_purchase_cost',
   'send_email','create_sales_order','create_purchase_order','receive_purchase_order','record_supplier_payment'];
@@ -62,6 +62,8 @@ view is the business dataset needed for a lookup. action is one of the allowed a
 Use payables for open supplier/vendor bills and amounts the business owes. Use receivables for open customer invoices
 and amounts customers owe the business. Use payments only for payment transactions or payment history, never for balances owed.
 Use needs_you when the person asks what needs their attention, review, approval, or decision.
+Use inventory_summary for business-wide product and SKU totals; use inventory for stock quantities or named products.
+If none of the listed business datasets or actions can answer the request, use clarify with a null view. Never choose a nearby dataset merely to return an answer.
 search is the exact business name, order number, status or phrase they named, without command words.
 For receive, issue, transfer and adjust, sku is the product/SKU wording exactly as stated.
 For receive and issue, location is the stated place. For transfer, use fromLocation and toLocation.
@@ -123,15 +125,6 @@ function wholeInventoryLookup(message){
     || /\bhow much\s+(?:inventory|stock)\b/.test(text);
 }
 
-function attentionLookup(message){
-  return /\b(?:what|which|anything|is there anything)\b[\s\S]*\b(?:needs?\s+(?:my|our|your)?\s*attention|needs?\s+me|should\s+(?:i|we)\s+(?:review|approve|decide)|needs?\s+(?:my|our)?\s*(?:approval|decision))\b/i.test(String(message||''))
-    || /\bwhat\s+do\s+you\s+need\s+from\s+me\b/i.test(String(message||''));
-}
-
-function productCountLookup(message){
-  return /\bhow\s+many\s+(?:active\s+)?(?:products?|items?)\b/i.test(String(message||''));
-}
-
 function financialSummaryLookup(message){
   const text=String(message||'').toLowerCase();
   return /\b(?:did|have|are|were|am)\s+(?:i|we|the business|my business|our business)\s+(?:make|made|earn|earned|lose|lost|losing)\b/.test(text)
@@ -178,8 +171,6 @@ function fallbackPlan(message) {
   const text=String(message || '').trim();
   const lower=text.toLowerCase();
   const inventorySearch=inventoryLookupSearch(text);
-  const attention=attentionLookup(text);
-  const productCount=productCountLookup(text);
   const wholeInventory=wholeInventoryLookup(text);
   const financialSummary=financialSummaryLookup(text);
   const financialChange=financialChangeLookup(text);
@@ -207,8 +198,7 @@ function fallbackPlan(message) {
       location:null,fromLocation:null,toLocation:null,quantity:null,countedQuantity:null,amount,currency,reason:null,reference:null};
   }
   let view='inventory';
-  if(attention)view='needs_you';
-  else if(/\b(purchase order|po\b|buy|supplier order|incoming)\b/.test(lower))view='purchase_orders';
+  if(/\b(purchase order|po\b|buy|supplier order|incoming)\b/.test(lower))view='purchase_orders';
   else if(/\b(sales order|customer order|orders? from customer)\b/.test(lower))view='sales_orders';
   else if(financialBalanceViews(text).includes('payables'))view='payables';
   else if(financialBalanceViews(text).includes('receivables'))view='receivables';
@@ -219,8 +209,9 @@ function fallbackPlan(message) {
   else if(financialSummary||/\b(account|journal|profit|revenue|expense|books|balance)\b/.test(lower))view='accounting';
   else if(/\b(connection|connected|sync|connector)\b/.test(lower))view='connections';
   else if(!inventorySearch&&/\b(locations?|warehouses?|stores?|bins?|shelves?)\b/.test(lower))view='locations';
+  else if(wholeInventory)view='inventory_summary';
   if(!action)return {intent:'lookup',view,action:null,
-    search:financialChange?'profit_change':financialSummary?'profit_and_loss':productCount?'product_count':wholeInventory?null:inventorySearch,sku:null,location:null,fromLocation:null,
+    search:financialChange?'profit_change':financialSummary?'profit_and_loss':wholeInventory?null:inventorySearch,sku:null,location:null,fromLocation:null,
     toLocation:null,quantity:null,countedQuantity:null,amount:null,currency:null,reason:null,reference:null};
   const verb=/\b(receive|received|came in)\b/.test(lower)?'receive':/\b(issue|issued|sold|used)\b/.test(lower)?'issue':
     /\b(move|transfer)\b/.test(lower)?'transfer':/\b(count|adjust|correct)\b/.test(lower)?'adjust':
@@ -254,17 +245,9 @@ function cleanPlan(raw,message) {
   if(!raw || !['lookup','action','instruction','clarify'].includes(raw.intent))return fallback;
   const deterministicAction=fallback.intent==='action'&&fallback.action&&raw.intent!=='action';
   const source=deterministicAction?{...raw,...fallback}:raw;
-  const wholeInventory=fallback.intent==='lookup'&&wholeInventoryLookup(message);
-  const attention=attentionLookup(message);
-  const productCount=productCountLookup(message);
-  const financialSummary=fallback.intent==='lookup'&&financialSummaryLookup(message);
-  const financialChange=fallback.intent==='lookup'&&financialChangeLookup(message);
-  const groundedInventoryLookup=source.intent==='lookup'&&fallback.intent==='lookup'
-    &&fallback.view==='inventory'&&fallback.search;
-  return {intent:attention?'lookup':source.intent,view:attention?'needs_you':wholeInventory?'inventory':financialSummary?'accounting':
-    groundedInventoryLookup?'inventory':VIEWS.includes(source.view)?source.view:fallback.view,
+  return {intent:source.intent,view:VIEWS.includes(source.view)?source.view:fallback.view,
     action:ACTIONS.includes(source.action)?source.action:null,
-    search:attention?null:productCount?'product_count':wholeInventory?null:financialChange?'profit_change':financialSummary?'profit_and_loss':groundedInventoryLookup?fallback.search:trimOrNull(source.search),sku:trimOrNull(source.sku),
+    search:trimOrNull(source.search),sku:trimOrNull(source.sku),
     location:trimOrNull(source.location),fromLocation:trimOrNull(source.fromLocation),toLocation:trimOrNull(source.toLocation),
     quantity:Number.isSafeInteger(source.quantity)?source.quantity:null,
     countedQuantity:Number.isSafeInteger(source.countedQuantity)?source.countedQuantity:null,
@@ -296,8 +279,8 @@ async function planMany(message,options={}) {
   } catch(error) {
     if(error.usage&&options.onUsage)await options.onUsage(error.usage,{schemaName:'stockchief_postgres_request',failed:true});
     if(['entitlement_required','validation_error'].includes(error.code))throw error;
-    return splitRequestTexts(message).flatMap((requestText)=>financialBalancePlans(requestText)
-      .concat(financialBalanceViews(requestText).length?[]:[{requestText,intent:cleanPlan(null,requestText)}])).slice(0,8);
+    return [{requestText:message,intent:{intent:'clarify',view:null,action:null,
+      interpretationUnavailable:true}}];
   }
 }
 
@@ -361,7 +344,7 @@ async function lookup(database,ctx,request) {
     return {answer,rows,columns:['decision','importance','reason'],
       handoff:{href:needs.length?'/needs-you':'/',label:needs.length?'Review what needs you':'Open Home'}};
   }
-  if(request.view==='inventory'&&search==='product_count'){
+  if(request.view==='inventory_summary'){
     const count=(await database.query(`SELECT
       (SELECT COUNT(*) FROM items WHERE workspace_id=$1 AND is_active=1) AS products,
       (SELECT COUNT(*) FROM skus WHERE workspace_id=$1 AND is_active=1) AS skus`,[ctx.workspaceId])).rows[0];
@@ -815,7 +798,10 @@ async function ask(database,ctx,message,options={}) {
     const result=intent.intent==='action'?await prepareAction(database,ctx,clean,intent):
       intent.intent==='instruction'?await prepareInstruction(database,ctx,request.requestText,options):
       intent.intent==='lookup'?{status:'ANSWERED',...(await lookup(database,ctx,intent))}:
-        {status:'CLARIFY',answer:'What would you like StockChief to find or change?',rows:[],columns:[]};
+        {status:'CLARIFY',answer:intent.interpretationUnavailable
+          ?'I could not reliably understand that request just now. Nothing was changed. Please try again.'
+          :'I cannot confirm an answer or safe action from the connected business records for that request. What should I check or change?',
+        rows:[],columns:[]};
     const requestContext=requests.length>1?{batchId,sourceMessage:clean,requestIndex:index+1,requestCount:requests.length}:{};
     const storedIntent=result.proposal?{...intent,...requestContext,proposalId:result.proposal.id,
       proposalHref:result.proposal.href||`/actions/${result.proposal.id}`}:{...intent,...requestContext};
