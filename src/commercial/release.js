@@ -4,7 +4,8 @@ const {ValidationError}=require('../domain/errors');
 const stripeFeeEvidence=require('./stripe-live-fee-evidence');
 const LAUNCH_BLOCKERS=Object.freeze(['UNVERIFIED_STRIPE_BILLING_VOLUME_COST',
   'UNVERIFIED_INTUIT_PLATFORM_FEES','UNVERIFIED_XERO_PLATFORM_FEES',
-  'UNVERIFIED_OTHER_LAUNCH_PROVIDER_FEES','UNVERIFIED_MIXED_WORKLOAD_CAPACITY']);
+  'UNVERIFIED_OTHER_LAUNCH_PROVIDER_FEES','UNVERIFIED_MIXED_WORKLOAD_CAPACITY',
+  'MISSING_COST_RATE','MISSING_HISTORICAL_COST_RATE','AMBIGUOUS_PROVIDER_USAGE']);
 async function state(database){return (await database.query('SELECT * FROM commercial_release_control WHERE singleton=true')).rows[0];}
 async function isOpen(database){const release=await state(database);
  if(!(config.commercial.checkoutEnabled&&release?.checkout_enabled&&release.economics_approved_at&&release.readiness_approved_at))return false;

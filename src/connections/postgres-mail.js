@@ -65,6 +65,8 @@ async function capture(database,connection,message){
     if(owner?.owner_account_id)await commercialControl.recordCost(client,{accountId:owner.owner_account_id,
       workspaceId:connection.workspace_id},{provider:connection.provider_type||'mailbox',operation:'message_ingestion',
       unit:'message',quantity:1,idempotencyKey:`email:${connection.id}:${externalId}`,occurredAt:message.receivedAt||at,
+      ...(connection.provider_type==='gmail'?{amountMinor:0,costBasis:'NO_EXTRA_GMAIL_MESSAGE_INGESTION_FEE',
+        costConfidence:'HIGH',costSource:'https://developers.google.com/workspace/gmail/api/reference/quota; API attempts recorded separately'}:{}),
       detail:{connectorId:connection.id,externalMessageId:externalId}});
     return {accepted:true,replayed:false,messageId:id};
   },{isolation:'SERIALIZABLE',retrySafe:true});

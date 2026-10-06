@@ -88,21 +88,32 @@ test('actual provider invoices allocate every cent once with administrator attes
   assert.equal((await db.query('SELECT status FROM commercial_critical_warnings WHERE fingerprint=$1',
    [`cost-rate:${first.accountId}:stripe_billing:http_request:request::2026-09-30.endive`])).rows[0].status,'RESOLVED');
  });
- await t.test('Gmail polling records quota units and stays unknown until an explicit sourced estimate is installed',async()=>{
+ await t.test('Gmail quota attempts are sourced no-fee, while OAuth and alert delivery carry bounded estimates',async()=>{
   const network=require('../../src/commercial/network');const control=require('../../src/commercial/control-service');
   const scope={accountId:first.accountId,workspaceId:first.workspaceId};
   await network.after({database:db,scope,requestId:'gmail-quota-fixture'},
    {def:{provider:'gmail',version:'v1',host:'gmail.googleapis.com'},key:'gmail-quota-fixture',funded:true,
     url:'https://gmail.googleapis.com/gmail/v1/users/me/messages',method:'GET'},true,{status:200});
-  const unknown=(await db.query("SELECT * FROM commercial_cost_events WHERE provider='gmail' AND idempotency_key='gmail-quota-fixture'")).rows[0];
-  assert.equal(unknown.operation,'gmail_api_quota');assert.equal(unknown.unit,'quota_unit');
-  assert.equal(Number(unknown.quantity),5);assert.equal(unknown.amount_minor,null);
-  assert.equal(unknown.detail.providerOperation,'messages.list');
-  await control.saveCostRate(db,{provider:'gmail',providerVersion:'v1',operation:'gmail_api_quota',unit:'quota_unit',
-   costPerUnitMinor:.0001,effectiveFrom:'2026-01-01T00:00:00Z',
-   source:'Fixture-only conservative forecast; not Google billed usage',pricingBasis:'CONSERVATIVE_ESTIMATE',confidence:'LOW'});
-  const repriced=(await db.query('SELECT amount_minor,detail FROM commercial_cost_events WHERE id=$1',[unknown.id])).rows[0];
-  assert.equal(Number(repriced.amount_minor),.0005);assert.equal(repriced.detail.costConfidence,'LOW');
+  const gmail=(await db.query("SELECT * FROM commercial_cost_events WHERE provider='gmail' AND idempotency_key='gmail-quota-fixture'")).rows[0];
+  assert.equal(gmail.operation,'gmail_api_quota');assert.equal(gmail.unit,'quota_unit');
+  assert.equal(Number(gmail.quantity),5);assert.equal(Number(gmail.amount_minor),0);
+  assert.equal(gmail.detail.providerOperation,'messages.list');
+  assert.equal(gmail.detail.costBasis,'VERIFIED_NO_INCREMENTAL_GMAIL_API_FEE_BELOW_RESERVED_DAILY_THRESHOLD');
+  const oauth=network.definition('https://oauth2.googleapis.com/token');
+  assert.equal(oauth.provider,'google_oauth');assert.equal(oauth.version,'oauth2-v1');
+  const token=await control.recordCost(db,scope,{provider:oauth.provider,operation:'http_request',
+   providerVersion:oauth.version,unit:'request',quantity:1,idempotencyKey:'oauth-estimate'});
+  assert.equal(Number(token.event.amount_minor),.1);
+  assert.equal(token.event.detail.costConfidence,'LOW');
+  const alert=await control.recordCost(db,scope,{provider:'stockchief-alert-responder.mysolutionstesting.workers.dev',
+   operation:'operational_alert',providerVersion:'webhook-v1',unit:'request',quantity:1,
+   idempotencyKey:'alert-estimate'});
+  assert.equal(Number(alert.event.amount_minor),.1);
+  const novel=await control.recordCost(db,scope,{provider:'gmail',operation:'unclassified_future_method',
+   providerVersion:'v2',unit:'request',quantity:1,idempotencyKey:'novel-gmail'});
+  assert.equal(novel.event.amount_minor,null);
+  assert.equal((await db.query("SELECT status FROM commercial_critical_warnings WHERE fingerprint=$1",
+   [`cost-rate:${first.accountId}:gmail:unclassified_future_method:request::v2`])).rows[0].status,'OPEN');
  });
  await t.test('Stripe REST attempts are evidenced non-incremental; novel paid endpoints still fail cost coverage',async()=>{
   const network=require('../../src/commercial/network');

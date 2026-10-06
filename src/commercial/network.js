@@ -20,6 +20,8 @@ function gmailQuota(url,method){const address=new URL(url);if(address.hostname!=
  if(/^\/gmail\/v1\/users\/[^/]+\/messages\/[^/]+$/.test(path)&&verb==='GET')return {method:'messages.get',units:20};
  return null;}
 function definition(url){const address=new URL(url);const host=address.hostname;
+ if(host==='oauth2.googleapis.com'&&address.pathname==='/token')return {
+  provider:'google_oauth',capability:'communications.email_ingestion',version:'oauth2-v1',host};
  const rows=[[/googleapis\.com$/,'gmail','communications.email_ingestion'],[/microsoft\.com$/,'microsoft365','communications.email_ingestion'],
  [/intuit\.com$/,'quickbooks','connections.accounting'],[/xero\.com$/,'xero','connections.accounting'],
  [/stripe\.com$/,'stripe','payments.customer'],[/easypost\.com$/,'easypost','shipping.rates'],[/goshippo\.com$/,'shippo','shipping.rates'],
@@ -66,13 +68,21 @@ async function after(context,attempt,success,detail){
  {meter:'connected_operations',idempotencyKey:attempt.key,reason:'The provider request failed.'});}
  const gmail=attempt.url?gmailQuota(attempt.url,attempt.method):null;
  const billingClassification=attempt.billing?require('./stripe-request-classification').classify(attempt.url):null;
+ const gmailNoIncrementalFee=gmail&&attempt.def.host==='gmail.googleapis.com'?{
+   basis:'VERIFIED_NO_INCREMENTAL_GMAIL_API_FEE_BELOW_RESERVED_DAILY_THRESHOLD',
+   source:'https://developers.google.com/workspace/gmail/api/reference/quota',
+   projectDailySafetyCeiling:GMAIL_PROJECT_DAILY_SAFE_CEILING}:null;
  await control.recordCost(context.database,context.scope||{},{provider:attempt.billing?'stripe_billing':attempt.def.provider,
  operation:gmail?'gmail_api_quota':'http_request',unit:gmail?'quota_unit':'request',quantity:gmail?.units||1,
  providerVersion:attempt.def.version,idempotencyKey:attempt.key,
  ...(billingClassification?{amountMinor:0,costBasis:billingClassification.basis,costConfidence:'HIGH',
    costSource:billingClassification.source}:{}),
+ ...(gmailNoIncrementalFee?{amountMinor:0,costBasis:gmailNoIncrementalFee.basis,
+   costConfidence:'HIGH',costSource:gmailNoIncrementalFee.source}:{}),
  detail:{...detail,hostname:attempt.def.host,requestId:context.requestId,
    ...(billingClassification?{feeResponsibility:'NO_INCREMENTAL_HTTP_REQUEST_FEE',
      evidence:billingClassification,otherStripeFees:'Reconcile actual balance transactions and Billing volume charges separately.'}:{}),
+   ...(gmailNoIncrementalFee?{feeResponsibility:'NO_INCREMENTAL_GMAIL_API_FEE_BELOW_DAILY_THRESHOLD',
+     evidence:gmailNoIncrementalFee}:{}),
    providerOperation:gmail?.method||null,quotaSource:gmail?'https://developers.google.com/workspace/gmail/api/reference/quota':null}});}
 module.exports={definition,before,after,gmailQuota,reserveGmailQuota,GMAIL_PROJECT_DAILY_SAFE_CEILING};

@@ -46,6 +46,10 @@ test('initial monthly self-service snapshots exclude external accounting and mer
   process.env.STOCKCHIEF_BILLING_STRIPE_ACCOUNT_ID='acct_1UBFTdIjKuQgOJD6';
   assert.equal(await require('../../src/commercial/release').isOpen(db),true,
    'isolated fixture proves the unqualified-connector query is valid when every gate is satisfied');
+  await db.query(`INSERT INTO commercial_critical_warnings(id,account_id,fingerprint,code,detail)
+   VALUES('cost-gate-fixture',NULL,'cost-gate-fixture','MISSING_COST_RATE','{}')`);
+  assert.equal(await require('../../src/commercial/release').isOpen(db),false,
+   'a newly encountered unpriced provider blocks any future checkout activation');
  }finally{
   if(priorCheckout===undefined)delete process.env.STOCKCHIEF_CHECKOUT_ENABLED;
   else process.env.STOCKCHIEF_CHECKOUT_ENABLED=priorCheckout;
