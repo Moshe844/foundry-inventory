@@ -12,6 +12,7 @@ const catalog=require('../../src/domain/postgres-catalog-service');
 const inventory=require('../../src/domain/postgres-inventory-engine');
 const commerce=require('../../src/operations/postgres-commerce');
 const {newId,nowIso}=require('../../src/lib/util');
+const {fixture}=require('../helpers/postgres-model-fixture');
 
 function csrfFrom(html){const token=/name="_csrf" value="([^"]+)"/.exec(html)?.[1];if(!token)throw new Error('Missing CSRF token');return token;}
 
@@ -20,7 +21,11 @@ test('PostgreSQL Home leads with the owner briefing and never credits a human mo
     const cluster=await startCluster();
     const database=openPostgres(cluster.connectionString,{applicationName:'stockchief-postgres-home-ui'});
     await migratePostgres(database);
-    const app=createPostgresApp({database,env:'test',sessionSecret:'postgres-home-secret'});
+    const aiProvider=fixture({name:'home-test-model',model:'fixture',async complete(request){
+      const message=JSON.parse(request.prompt).message;
+      return {data:{intent:'lookup',view:/products/i.test(message)?'inventory_summary':'needs_you',search:null},usage:{}};
+    }});
+    const app=createPostgresApp({database,env:'test',sessionSecret:'postgres-home-secret',aiProvider});
     context.after(async()=>{await app.locals.sessionStore.close();await database.close();cluster.stop();});
     const agent=request.agent(app);
     const registration=await agent.get('/register');

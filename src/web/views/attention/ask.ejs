@@ -340,6 +340,7 @@
     composerPlaceholder: result && result.actionClarification ? 'Answer the question above…' : 'Ask what’s happening or tell StockChief what to do…',
     actionClarification: result && result.actionClarification ? result.actionClarification : null,
     usageKey: locals.usageKey,
+    hideAttachment: !!locals.postgresAsk,
   }) %>
 
   <% if (!aiConfigured) { %>

@@ -1092,6 +1092,65 @@
     });
   }
 
+  // Home starts a conversation; the working state belongs on the conversation page.
+  // The message stays in this tab (never in the URL) until that page is ready to submit it.
+  function initHomeAskHandoff() {
+    const key = 'stockchief:home-ask-handoff';
+    const homeForm = document.querySelector('[data-home-ask-handoff]');
+    if (homeForm) homeForm.addEventListener('submit', (event) => {
+      const input = homeForm.querySelector('[data-ask-input]');
+      const message = input && input.value.trim();
+      if (!message) return;
+      try {
+        window.sessionStorage.setItem(key, JSON.stringify({ message, createdAt: Date.now() }));
+      } catch { return; } // The ordinary form submission still works when storage is disabled.
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      window.location.assign('/ask');
+    }, true);
+
+    if (!document.body.classList.contains('page-ask')) return;
+    let saved;
+    try { saved = JSON.parse(window.sessionStorage.getItem(key) || 'null'); } catch { saved = null; }
+    if (!saved || typeof saved.message !== 'string' || !saved.message.trim()
+      || !Number.isFinite(saved.createdAt) || Date.now() - saved.createdAt > 30000) return;
+    try { window.sessionStorage.removeItem(key); } catch { /* No shared storage to clear. */ }
+    const form = document.querySelector('[data-ask-form]');
+    const input = form && form.querySelector('[data-ask-input]');
+    if (!input) return;
+    document.body.classList.add('is-handoff-pending');
+    const intro = document.querySelector('.rm-chat__intro');
+    if (intro) {
+      const title = intro.querySelector('h1');
+      if (title) title.textContent = 'Ask StockChief';
+    }
+    input.value = saved.message;
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      // Let the ordinary conversation working state render, but keep this page
+      // mounted while the backend answers. The owner is no longer stuck on Home.
+      window.setTimeout(async () => {
+        try {
+          const response = await window.fetch(form.action, {
+            method: 'POST', body: new FormData(form), credentials: 'same-origin',
+          });
+          if (!response.ok) throw new Error('ask_failed');
+          window.location.assign('/ask?latest=1#latest');
+        } catch {
+          const thinking = form.parentElement.querySelector('[data-thinking-text]');
+          if (thinking) {
+            thinking.textContent = 'I could not confirm the result. ';
+            const check = document.createElement('a');
+            check.href = '/ask';
+            check.textContent = 'Reload the conversation to check before sending again.';
+            thinking.append(check);
+          }
+        }
+      }, 0);
+    }, true);
+    window.requestAnimationFrame(() => form.requestSubmit());
+  }
+
   /**
    * The inventory switcher. It is a real form per option, so switching works
    * with JavaScript off too — this only collapses the list until it is wanted.
@@ -1727,6 +1786,7 @@
     initMigrationAutoStart();
     initOperatorAttachment();
     initAskPending();
+    initHomeAskHandoff();
     initSwitcher();
     initVendorVocabulary();
     initLiveHome();
