@@ -77,7 +77,7 @@ function createPostgresProjectionsRouter(database){
   router.get(['/', '/overview'],requireAuth,asyncRoute(async(req,res)=>{
     const result=await presenters.home(database,req.ctx.workspaceId);
     res.locals.attentionCount=result.brief.needs.length;
-    return res.page('foundry/brief',{title:'StockChief',nav:'home',room:true,postgresAsk:true,...result,
+    return res.page('foundry/brief',{title:'StockChief',nav:'home',room:true,suppressBack:true,postgresAsk:true,...result,
       stats:result.brief.stats,brief:{body:'',source:'deterministic',createdAt:null},activeMigration:null,
       routineProposal:null,financialPulse:null,observedBrief:'',canOperate:permissions.can(req.user,permissions.OPERATE)});
   }));
