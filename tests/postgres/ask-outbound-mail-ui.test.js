@@ -29,7 +29,11 @@ test('real Chromium Ask StockChief prepares, approves, sends and verifies one gr
     const providers={get(type){return type==='gmail'?adapter:null;},catalog(){return [adapter.metadata()];}};
     const cluster=await startCluster();const database=openPostgres(cluster.connectionString,{applicationName:'stockchief-ask-mail-ui'});
     await migratePostgres(database);const app=createPostgresApp({database,env:'test',sessionSecret:'ask-mail-secret',
-      aiProvider:require('../helpers/postgres-model-fixture').fixture({async complete(){return {data:{intent:'clarify'}};}}),
+      aiProvider:require('../helpers/postgres-model-fixture').fixture({async complete(input){
+        const message=JSON.parse(input.prompt).message;
+        return {data:{intent:'action',action:'send_email',recipient:'Solomon Supply',recipientKind:'supplier',
+          body:message==='Email Solomon Supply'?'':'we received the order and will confirm Friday.'}};
+      }}),
       connectionProviders:providers});
     const server=await new Promise((resolve)=>{const started=app.listen(0,'127.0.0.1',()=>resolve(started));});
     const browser=await chromium.launch();const first=await browser.newContext();const second=await browser.newContext();

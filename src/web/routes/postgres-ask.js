@@ -21,11 +21,13 @@ function columnsFor(turn){
 
 function provenanceFor(turn){
   const status=STATUS[turn.status]||'answered';
+  if(turn.intent?.view==='general_knowledge')return {reads:[],rowCount:0,asOf:turn.created_at,general:true,
+    reason:status==='clarify'?turn.intent?.presentation?.reason:undefined};
   const choices=turn.intent?.presentation?.choices||[];
   return {reads:status==='answered'?[{intent:turn.intent?.view||turn.intent?.intent||'lookup',
     entity:turn.intent?.search||turn.intent?.sku||null,location:turn.intent?.location||null}]:[],
   rowCount:status==='answered'?(turn.evidence||[]).length:null,asOf:status==='answered'?turn.created_at:null,
-  reason:status==='clarify'?(choices.length>1?'ambiguous':'missing'):undefined};
+  reason:status==='clarify'?(turn.intent?.presentation?.reason|| (choices.length>1?'ambiguous':'missing')):undefined};
 }
 
 function goalFor(turn,index,position=0){
@@ -55,8 +57,10 @@ function resultFor(turn){
   if(!turn)return null;const columns=columnsFor(turn);const rows=turn.evidence||[];
   const proposalHref=turn.intent?.proposalHref||null;const storedHandoff=turn.intent?.presentation?.handoff||null;
   return {question:turn.message,answer:turn.answer,spoken:null,progressiveDisclosure:false,rows,columns,
-    rowCount:rows.length,totalMatches:rows.length,sections:[],supported:true,general:false,isAction:false,
-    needsClarification:turn.status==='CLARIFY',choices:turn.intent?.presentation?.choices||[],
+    rowCount:rows.length,totalMatches:rows.length,sections:[],supported:turn.status!=='CLARIFY',
+    general:turn.intent?.view==='general_knowledge',answerReason:turn.intent?.presentation?.reason||null,isAction:false,
+    needsClarification:turn.status==='CLARIFY'&&!['unverified','unavailable'].includes(turn.intent?.presentation?.reason),
+    choices:turn.intent?.presentation?.choices||[],
     handoff:proposalHref?{href:proposalHref,label:'Review prepared change'}:storedHandoff,
     plan:{intent:turn.intent?.intent||'lookup',entityQuery:turn.intent?.search||turn.intent?.sku||'',
       locationQuery:turn.intent?.location||''},interpretation:turn.intent?.view||turn.intent?.action||turn.intent?.intent||'business request',
