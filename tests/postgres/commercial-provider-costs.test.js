@@ -55,7 +55,69 @@ test('actual provider invoices allocate every cent once with administrator attes
   assert.equal(Number(rate.cost_per_unit_minor),0);
   const missing=await control.recordCost(db,{accountId:first.accountId},{provider:'fixture-unknown',operation:'request',unit:'request',quantity:1,amountMinor:null,idempotencyKey:'still-unknown'});
   assert.equal(missing.event.amount_minor,null);
+  const estimate=await control.saveCostRate(db,{provider:'fixture-unknown',operation:'request',unit:'request',
+   costPerUnitMinor:.25,effectiveFrom:'2026-01-01T00:00:00Z',source:'Conservative fixture estimate; not an invoice',
+   pricingBasis:'CONSERVATIVE_ESTIMATE',confidence:'LOW'});
+  const repriced=(await db.query('SELECT amount_minor,rate_id,detail FROM commercial_cost_events WHERE id=$1',[missing.event.id])).rows[0];
+  assert.equal(Number(repriced.amount_minor),.25);assert.equal(repriced.rate_id,estimate.id);
+  assert.equal(repriced.detail.costRateMissing,false);
+  assert.equal(repriced.detail.costBasis,'CONSERVATIVE_ESTIMATE');
+  assert.equal((await db.query("SELECT status FROM commercial_critical_warnings WHERE fingerprint=$1",
+   [`cost-rate:${first.accountId}:fixture-unknown:request:request::`])).rows[0].status,'RESOLVED');
   const zero=await control.recordCost(db,{accountId:first.accountId},{provider:'fixture-explicit',operation:'request',unit:'request',quantity:1,amountMinor:0,idempotencyKey:'explicit-zero'});
   assert.equal(Number(zero.event.amount_minor),0);
+  await db.query("UPDATE account_subscriptions SET current_period_start='2026-10-01T00:00:00Z',current_period_end='2026-11-01T00:00:00Z' WHERE id='period-cost-sub'");
+  await db.query("UPDATE commercial_critical_warnings SET status='RESOLVED' WHERE status='OPEN'");
+  const economics=await control.economics(db,{accountId:first.accountId},{now:'2026-10-05'});
+  assert.equal(economics.costCoverage,'ESTIMATED');assert.equal(economics.contributionMarginPercent,null);
+  assert.ok(economics.conservativeEstimatedCostSubtotalMinor>=.25);
+  assert.ok(economics.measuredCostSubtotalMinor>0);
+ });
+ await t.test('known pinned Stripe request warning is backfilled with evidence without creating a zero rate',async()=>{
+  const control=require('../../src/commercial/control-service');
+  const fs=require('node:fs'),path=require('node:path');
+  const old=await control.recordCost(db,{accountId:first.accountId},{provider:'stripe_billing',operation:'http_request',
+   unit:'request',quantity:1,providerVersion:'2026-09-30.endive',idempotencyKey:'old-stripe-http',
+   detail:{hostname:'api.stripe.com',httpStatus:200}});
+  assert.equal(old.event.amount_minor,null);
+  const migration=fs.readFileSync(path.join(__dirname,'../../src/db/postgres-migrations/034-commercial-stripe-request-evidence.sql'),'utf8');
+  await db.query(migration);
+  const repaired=(await db.query('SELECT amount_minor,rate_id,detail FROM commercial_cost_events WHERE id=$1',[old.event.id])).rows[0];
+  assert.equal(Number(repaired.amount_minor),0);assert.equal(repaired.rate_id,null);
+  assert.equal(repaired.detail.costBasis,'VERIFIED_NO_INCREMENTAL_REQUEST_FEE');
+  assert.equal((await db.query('SELECT status FROM commercial_critical_warnings WHERE fingerprint=$1',
+   [`cost-rate:${first.accountId}:stripe_billing:http_request:request::2026-09-30.endive`])).rows[0].status,'RESOLVED');
+ });
+ await t.test('Gmail polling records quota units and stays unknown until an explicit sourced estimate is installed',async()=>{
+  const network=require('../../src/commercial/network');const control=require('../../src/commercial/control-service');
+  const scope={accountId:first.accountId,workspaceId:first.workspaceId};
+  await network.after({database:db,scope,requestId:'gmail-quota-fixture'},
+   {def:{provider:'gmail',version:'v1',host:'gmail.googleapis.com'},key:'gmail-quota-fixture',funded:true,
+    url:'https://gmail.googleapis.com/gmail/v1/users/me/messages',method:'GET'},true,{status:200});
+  const unknown=(await db.query("SELECT * FROM commercial_cost_events WHERE provider='gmail' AND idempotency_key='gmail-quota-fixture'")).rows[0];
+  assert.equal(unknown.operation,'gmail_api_quota');assert.equal(unknown.unit,'quota_unit');
+  assert.equal(Number(unknown.quantity),5);assert.equal(unknown.amount_minor,null);
+  assert.equal(unknown.detail.providerOperation,'messages.list');
+  await control.saveCostRate(db,{provider:'gmail',providerVersion:'v1',operation:'gmail_api_quota',unit:'quota_unit',
+   costPerUnitMinor:.0001,effectiveFrom:'2026-01-01T00:00:00Z',
+   source:'Fixture-only conservative forecast; not Google billed usage',pricingBasis:'CONSERVATIVE_ESTIMATE',confidence:'LOW'});
+  const repriced=(await db.query('SELECT amount_minor,detail FROM commercial_cost_events WHERE id=$1',[unknown.id])).rows[0];
+  assert.equal(Number(repriced.amount_minor),.0005);assert.equal(repriced.detail.costConfidence,'LOW');
+ });
+ await t.test('Stripe REST attempts are evidenced non-incremental; novel paid endpoints still fail cost coverage',async()=>{
+  const network=require('../../src/commercial/network');
+  const context={database:db,scope:{accountId:first.accountId,workspaceId:first.workspaceId},requestId:'stripe-cost-fixture'};
+  await network.after(context,{billing:true,def:{provider:'stripe',version:'2026-09-30.endive',host:'api.stripe.com'},
+   key:'stripe-http-known',url:'https://api.stripe.com/v1/invoices/in_fixture',method:'GET'},true,{httpStatus:200});
+  const known=(await db.query("SELECT * FROM commercial_cost_events WHERE idempotency_key='stripe-http-known'")).rows[0];
+  assert.equal(Number(known.amount_minor),0);assert.equal(known.rate_id,null);
+  assert.equal(known.detail.costBasis,'VERIFIED_NO_INCREMENTAL_REQUEST_FEE');
+  assert.equal(known.detail.feeResponsibility,'NO_INCREMENTAL_HTTP_REQUEST_FEE');
+  await network.after(context,{billing:true,def:{provider:'stripe',version:'2026-09-30.endive',host:'api.stripe.com'},
+   key:'stripe-http-unknown',url:'https://api.stripe.com/v1/tax/calculations',method:'POST'},true,{httpStatus:200});
+  const unknown=(await db.query("SELECT amount_minor FROM commercial_cost_events WHERE idempotency_key='stripe-http-unknown'")).rows[0];
+  assert.equal(unknown.amount_minor,null);
+  assert.equal((await db.query("SELECT status FROM commercial_critical_warnings WHERE fingerprint=$1",
+   [`cost-rate:${first.accountId}:stripe_billing:http_request:request::2026-09-30.endive`])).rows[0].status,'OPEN');
  });
 });

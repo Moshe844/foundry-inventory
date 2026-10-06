@@ -83,7 +83,17 @@ async function syncInvoice(db,job,options={}){
    throw Error('Stripe invoice payment is not verified customer cash');
   cash+=payment.amount_paid;intents.push(intent);
  }
- const settlement=require('./invoice-cash').settlement(invoice,cash);
+ const creditNotes=(invoice.pre_payment_credit_notes_amount??0)>0
+  ?await provider.listCreditNotes(invoice.id,api):[];
+ if(creditNotes.some(note=>id(note.invoice)!==invoice.id))throw Error('Stripe credit note scope mismatch');
+ const balanceTransactions=(invoice.amount_overpaid??0)>0
+  ?await provider.listCustomerBalanceTransactions(subscription.stripe_customer_id,invoice.id,api):[];
+ const overpaidTransactions=balanceTransactions.filter(row=>row.type==='invoice_overpaid');
+ const overpaymentEvidence=overpaidTransactions.length>0&&overpaidTransactions.every(row=>
+   id(row.invoice)===invoice.id&&id(row.customer)===subscription.stripe_customer_id&&
+   row.currency===invoice.currency&&Number.isSafeInteger(row.amount)&&row.amount<0)&&
+   overpaidTransactions.reduce((sum,row)=>sum-row.amount,0)===invoice.amount_overpaid;
+ const settlement=require('./invoice-cash').settlement(invoice,cash,{creditNotes,overpaymentEvidence});
  complete=complete&&settlement.verified;
  await db.transaction(async client=>{
   if(!complete){await warning(client,`invoice-payments:${invoice.id}`,'UNVERIFIED_STRIPE_INVOICE_CASH',
@@ -91,10 +101,17 @@ async function syncInvoice(db,job,options={}){
   const receipt=(await client.query('SELECT * FROM commercial_revenue_events WHERE source_id=$1 AND account_id=$2 FOR UPDATE',
     [`invoice:${invoice.id}`,job.payload.accountId])).rows[0];
   if(!receipt)throw Error('Stripe invoice reconciliation needs its signed invoice receipt first.');
-  if(Number(receipt.amount_minor)!==settlement.netCashRevenueMinor)throw Error('Signed invoice receipt differs from verified net cash revenue.');
-  await client.query(`UPDATE commercial_revenue_events SET detail=detail||$2::jsonb WHERE source_id=$1 AND account_id=$3`,
-   [`invoice:${invoice.id}`,JSON.stringify({paymentIntentIds:[...new Set(intents.map(x=>x.id))],stripeCashVerified:true,
-     paidPaymentIds:payments.filter(x=>x.status==='paid').map(x=>x.id),...settlement}),job.payload.accountId]);
+  if(receipt.detail?.stripeCashVerified===true&&Number(receipt.amount_minor)!==settlement.netCashRevenueMinor)
+   throw Error('Previously verified invoice cash changed; manual reconciliation required.');
+  if(receipt.detail?.stripeCashVerified!==true&&Number(receipt.amount_minor)!==0)
+   throw Error('Unverified invoice receipt contains nonzero revenue; manual reconciliation required.');
+  await client.query(`UPDATE commercial_revenue_events SET amount_minor=$2,detail=detail||$3::jsonb
+    WHERE source_id=$1 AND account_id=$4`,
+   [`invoice:${invoice.id}`,settlement.netCashRevenueMinor,
+    JSON.stringify({paymentIntentIds:[...new Set(intents.map(x=>x.id))],stripeCashVerified:true,
+     paidPaymentIds:payments.filter(x=>x.status==='paid').map(x=>x.id),
+     creditNoteIds:creditNotes.filter(x=>x.status!=='void').map(x=>x.id),
+     overpaymentBalanceTransactionIds:overpaidTransactions.map(x=>x.id),...settlement}),job.payload.accountId]);
   await client.query("UPDATE commercial_critical_warnings SET status='RESOLVED' WHERE fingerprint=$1",[`invoice-payments:${invoice.id}`]);
   for(const intent of intents){await reconcileForPayment(client,intent.id);
    const charge=intent.latest_charge;

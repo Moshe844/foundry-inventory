@@ -362,9 +362,9 @@ test('public, auth and invitation journeys work in desktop and mobile Chromium',
     assert.equal(await page.getByText('View usage details',{exact:true}).count(),4);
     assert.doesNotMatch(await page.locator('.plan-ladder').innerText(),/document pages processed/i);
     assert.doesNotMatch(await page.locator('.plan-ladder').innerText(),/\b(?:kits|SSO|EDI)\b|document understanding|AI email drafting/i);
-    await page.getByRole('button',{name:/Annual/}).click();
-    assert.match(await page.locator('.plan-card').nth(1).innerText(),/billed annually/i);
-    assert.match(await page.getByRole('link',{name:'Choose Growth'}).getAttribute('href'),/plan=growth.*interval=annual/);
+    assert.equal(await page.getByRole('button',{name:/Annual/}).count(),0);
+    assert.match(await page.locator('.plan-card').nth(1).innerText(),/billed monthly/i);
+    assert.match(await page.getByRole('link',{name:'Choose Growth'}).getAttribute('href'),/plan=growth.*interval=monthly/);
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),true);
     await page.goto(`${base}/contact`);assert.match(await page.locator('body').innerText(),/person building the product/i);
     assert.equal(await page.getByText(/Talk to sales/i).count(),0);
@@ -467,20 +467,20 @@ test('paid-workspace signup verifies email before checkout and never provisions 
   {timeout:180000,concurrency:false},async(context)=>{
     const prior=process.env.STOCKCHIEF_REQUIRE_PAID_WORKSPACE;process.env.STOCKCHIEF_REQUIRE_PAID_WORKSPACE='true';
     const cluster=await startCluster();const database=openPostgres(cluster.connectionString,{applicationName:'commercial-auth'});
-    await migratePostgres(database);await database.query(`UPDATE commercial_plans SET stripe_annual_price_id='price_pro_annual_test',
+    await migratePostgres(database);await database.query(`UPDATE commercial_plans SET stripe_monthly_price_id='price_pro_monthly_test',
       packaging_status='APPROVED'
       WHERE id='pro'`);let checkoutInput=null;const billingProvider={
       createCheckout:async(input)=>{checkoutInput=input;
         await commercial.handleBillingEvent(database,{id:'evt_contract_fixture',type:'customer.subscription.created',created:Math.floor(Date.now()/1000),
           data:{object:{id:'sub_contract_test',customer:'cus_contract_test',status:'active',
-            current_period_start:Math.floor(Date.now()/1000),current_period_end:Math.floor(Date.now()/1000)+365*86400,
-            metadata:{stockchief_account_id:input.accountId},items:{data:[{price:{id:'price_pro_annual_test',recurring:{interval:'year'}}}]}}}});
+            current_period_start:Math.floor(Date.now()/1000),current_period_end:Math.floor(Date.now()/1000)+30*86400,
+            metadata:{stockchief_account_id:input.accountId},items:{data:[{price:{id:'price_pro_monthly_test',recurring:{interval:'month'}}}]}}}});
         return {id:'cs_contract_test',url:input.successUrl.replace('{CHECKOUT_SESSION_ID}','cs_contract_test')};},
       retrieveCheckout:async()=>({id:'cs_contract_test',status:'complete',payment_status:'paid',
         metadata:{stockchief_account_id:checkoutInput.accountId,stockchief_plan_id:checkoutInput.planId},subscription:{
           id:'sub_contract_test',customer:'cus_contract_test',status:'active',current_period_start:1788220800,current_period_end:1790812800,
           metadata:{stockchief_account_id:checkoutInput.accountId,stockchief_plan_id:checkoutInput.planId},
-          items:{data:[{price:{id:'price_pro_annual_test',recurring:{interval:'year'}}}]}}}),
+          items:{data:[{price:{id:'price_pro_monthly_test',recurring:{interval:'month'}}}]}}}),
       listInvoices:async()=>({data:[]}),createPortal:async()=>({url:'https://billing.example.test/portal'}),
     };const app=createPostgresApp({database,env:'test',sessionSecret:'commercial-auth-secret',
       commercialOptions:{billingProvider,testMode:true,loadInvoices:false,publicOrigin:'request'}});
@@ -502,6 +502,7 @@ test('paid-workspace signup verifies email before checkout and never provisions 
     await unselectedContext.close();
     await page.goto(`${base}/register?plan=pro&interval=annual`);
     assert.equal(await page.locator('input[name="planId"]').inputValue(),'pro');assert.match(await page.locator('aside').innerText(),/YOUR SELECTION[\s\S]*Pro/i);
+    assert.equal(await page.locator('input[name="interval"]').inputValue(),'monthly');
     await page.getByLabel('Business name').fill('Paid Workspace');await page.getByLabel('Your name').fill('Paid Owner');
     await page.getByLabel('Work email').fill('paid-owner@example.test');await page.getByLabel('Password').fill('paid-owner-password');
     await Promise.all([page.waitForURL(`${base}/verify-email/pending`),page.getByRole('button',{name:'Create account'}).click()]);
@@ -529,12 +530,12 @@ test('paid-workspace signup verifies email before checkout and never provisions 
     await returning.getByLabel('Email').fill(account.email);await returning.getByLabel('Password').fill('paid-owner-password');
     await Promise.all([returning.waitForURL(`${base}/complete-signup`),returning.getByRole('button',{name:'Sign in'}).click()]);
     assert.match(await returning.locator('body').innerText(),/Choose your plan/i);assert.equal(await returning.getByLabel('Plan').inputValue(),'');await returningContext.close();
-    await page.getByLabel('Plan').selectOption('pro');await page.getByLabel('Billing').selectOption('annual');
+    await page.getByLabel('Plan').selectOption('pro');assert.equal(await page.locator('input[name="interval"]').inputValue(),'monthly');
     await commercial.trackOnce(database,{eventName:'subscription_activated',accountId:account.id,planId:'pro',sourcePath:'stripe_webhook'});
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:/Continue to secure checkout/i}).click()]);
-    assert.equal(checkoutInput.planId,'pro');assert.equal(checkoutInput.priceId,'price_pro_annual_test');
+    assert.equal(checkoutInput.planId,'pro');assert.equal(checkoutInput.priceId,'price_pro_monthly_test');
     const activated=await entitlements.subscriptionFor(database,account.id);assert.equal(activated.status,'ACTIVE');
-    assert.equal(activated.plan_id,'pro');assert.equal(activated.billing_interval,'ANNUAL');
+    assert.equal(activated.plan_id,'pro');assert.equal(activated.billing_interval,'MONTHLY');
     assert.equal(Number((await database.query(`SELECT COUNT(*) AS count FROM commercial_funnel_events
       WHERE account_id=$1 AND event_name='subscription_activated'`,[account.id])).rows[0].count),1);
     assert.equal(Number((await database.query('SELECT COUNT(*) AS count FROM workspaces WHERE owner_account_id=$1',

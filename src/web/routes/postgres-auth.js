@@ -22,7 +22,7 @@ function selfServiceSelection(plans,requested){return requested
   : null;}
 function pendingSelection(account,sessionSelection={}){return {
   planId:account?.pending_commercial_plan_id||sessionSelection.planId||'',
-  interval:account?.pending_billing_interval==='ANNUAL'||sessionSelection.interval==='annual'?'annual':'monthly',
+  interval:'monthly',
   promoCode:account?.pending_promo_code||sessionSelection.promoCode||'',
 };}
 
@@ -75,13 +75,14 @@ function createPostgresAuthRouter(database) {
       sourcePath:'/pricing'});
     return res.render('auth/register', { title:'Create your account',csrfToken:res.locals.csrfToken,
       flash:res.locals.flash,form:{},appName:res.locals.appName,origin:res.locals.origin,
-      selectedPlan:selected?.id||'',selectedInterval:req.query.interval==='annual'?'annual':'monthly',
+      selectedPlan:selected?.id||'',selectedInterval:'monthly',
       selectedPromo:String(req.query.promo||'').trim().toUpperCase(),plans });
     } catch(error) { return next(error); }
   });
   router.post('/register', async (req,res,next) => {
     try {
       const paidRequired=config.commercial.requirePaidWorkspace;
+      if(paidRequired)require('../../commercial/launch-interval').assertMonthly(req.body.interval);
       const requestedPlanId=String(req.body.planId||'').trim();
       if(paidRequired&&requestedPlanId)await commercial.getSelfServicePlan(database,requestedPlanId);
       if(paidRequired&&String(req.body.promoCode||'').trim()&&!requestedPlanId)
@@ -92,7 +93,7 @@ function createPostgresAuthRouter(database) {
       await sessionCall(req,'regenerate');
       req.session.accountId=created.accountId||created.id;
       if(created.workspaceId)req.session.workspaceId=created.workspaceId;
-      req.session.commercialSelection={planId:requestedPlanId,interval:req.body.interval==='annual'?'annual':'monthly',
+      req.session.commercialSelection={planId:requestedPlanId,interval:'monthly',
         promoCode:String(req.body.promoCode||'').trim().toUpperCase()};
       if(paidRequired)await accountLifecycle.requestVerification(database,created.id,{origin:config.connections.publicOrigin||res.locals.origin});
       req.session.flash=[{ type:'success',message:paidRequired?'Check your email to verify the account.':'Your first inventory is ready. Add your records or explore first.' }];
@@ -105,7 +106,7 @@ function createPostgresAuthRouter(database) {
         const selected=selfServiceSelection(plans,String(req.body.planId||'').trim());return res.status(error.status).render('auth/register', {
         title:'Create your account',csrfToken:res.locals.csrfToken,
         flash:[{ type:'error',message:error.message }],form:req.body,appName:res.locals.appName,origin:res.locals.origin,
-        selectedPlan:selected?.id||'',selectedInterval:req.body.interval||'monthly',
+        selectedPlan:selected?.id||'',selectedInterval:'monthly',
         selectedPromo:String(req.body.promoCode||'').trim().toUpperCase(),plans,
       });}
       return next(error);

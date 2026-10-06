@@ -46,6 +46,7 @@ function createPostgresConnectionsRouter(database,options={}){
   }
 
   async function renderConnections(req,res,apiToken=null){
+    const qualifiedTestConnect=options.testMode===true&&options.paymentConnectOptions?.testQualifiedConnection===true;
     const launchTicket=crypto.randomBytes(24).toString('base64url');
     req.session.connectionLaunch={ticket:launchTicket,workspaceId:req.ctx.workspaceId,expiresAt:Date.now()+5*60000};
     const requestOrigin=`${req.protocol}://${req.get('host')}`;
@@ -56,9 +57,13 @@ function createPostgresConnectionsRouter(database,options={}){
     ]);
     return res.page('connections/index',{
       title:'Connections',nav:'connections',room:true,backTo:{href:'/settings',label:'Settings'},launchTicket,
-      postgresMode:true,connections:connectionRows,providerCatalog:registry.catalog(),apiToken,apiClients:clients,
-      paymentAccount:{...payment,source:'connect'},paymentConnect:{...payment,flow:'oauth',testMode:payment.connected?!payment.liveMode:true},
-      shippingAccount:{...shipping,billingReady:shipping.connected},shippingPlatform:{available:true},
+      postgresMode:true,connections:connectionRows,providerCatalog:registry.catalog().filter(row=>row.available),apiToken,apiClients:clients,
+      // Preserve existing merchant account details, but do not advertise new
+      // self-service Connect or StockChief-funded guided shipping at launch.
+      paymentAccount:payment.connected||qualifiedTestConnect?{...payment,source:'connect'}:null,
+      paymentConnect:payment.connected||qualifiedTestConnect?
+        {...payment,flow:'oauth',testMode:!payment.liveMode}:null,
+      shippingAccount:{...shipping,billingReady:shipping.connected},shippingPlatform:{available:false},
       connectionPublicOrigin:requestPublicOrigin,xeroRedirectOrigin:requestPublicOrigin,
       paymentReturnOrigin:requestOrigin,currentWorkspaceId:req.ctx.workspaceId,
       workspaceName:req.workspace?.name||'',webhookSecret:null,outboundWebhooks:[],

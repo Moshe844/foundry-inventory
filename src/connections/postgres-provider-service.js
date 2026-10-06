@@ -7,6 +7,7 @@ const { newId,nowIso,requireText }=require('../lib/util');
 const credentials=require('./postgres-credential-store');
 const connections=require('./postgres-service');
 const defaultProviders=require('./providers/registry');
+const launchPolicy=require('./launch-policy');
 const jobs=require('../operations/postgres-job-queue');
 const entitlements=require('../entitlements/postgres-service');
 const commercial=require('../commercial/service');
@@ -18,6 +19,7 @@ const providerOrigin=(requestOrigin)=>config.connections.publicOrigin||requestOr
 async function beginAuthorization(database,ctx,input,requestOrigin,options={}){
   const registry=options.providers||defaultProviders;
   const providerType=requireText(input.providerType,'Provider',{max:40}).toLowerCase();
+  if(!options.providers)launchPolicy.assertNewConnection(providerType);
   const adapter=registry.get(providerType);
   if(!adapter)throw new ValidationError('Choose a supported connection provider.');
   const meta=adapter.metadata();
@@ -129,6 +131,7 @@ async function finishAuthorization(database,connection,actorId,result){
 }
 
 async function completeOAuth(database,providerType,query,requestOrigin,options={}){
+  if(!options.providers)launchPolicy.assertNewConnection(providerType);
   const registry=options.providers||defaultProviders;
   const adapter=registry.get(providerType);
   if(!adapter)throw new NotFoundError('Provider not found.');

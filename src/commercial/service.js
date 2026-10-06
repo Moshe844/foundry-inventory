@@ -9,6 +9,7 @@ const release=require('./release');
 const addons=require('./addons');
 const { newId } = require('../lib/util');
 const { ValidationError,NotFoundError } = require('../domain/errors');
+const {assertMonthly}=require('./launch-interval');
 
 function normalizePlan(plan) {
   if (!plan) return plan;
@@ -62,7 +63,7 @@ async function validatePromotion(database,codeInput,planId,options={}){
 
 async function beginCheckout(database, account, input, options = {}) {
   await release.assertCheckoutOpen(database,options);
-  const plan=await getSelfServicePlan(database,input.planId);const interval=input.interval==='annual'?'ANNUAL':'MONTHLY';
+  const plan=await getSelfServicePlan(database,input.planId);const interval=assertMonthly(input.interval);
   const priceId=interval==='ANNUAL'?plan.stripe_annual_price_id:plan.stripe_monthly_price_id;
   if(!priceId)throw new ValidationError('Checkout for this plan is not configured yet. Contact StockChief support.');
   const attemptId=newId('checkout');const promoCode=String(input.promoCode||'').trim().toUpperCase();let promotion=null;
@@ -112,7 +113,7 @@ async function subscriptionChangeQuote(database,accountId,input,options={}){
   if(!current?.stripe_subscription_id||!current.stripe_customer_id)throw new ValidationError(
     'This account does not have a Stripe subscription to change.');
   const target=await getSelfServicePlan(database,input.planId);const currentPlan=await getPlan(database,current.plan_id);
-  const interval=input.interval==='annual'||input.interval==='ANNUAL'?'ANNUAL':'MONTHLY';const priceId=planPriceId(target,interval);
+  const interval=assertMonthly(input.interval);const priceId=planPriceId(target,interval);
   if(!priceId)throw new ValidationError('That plan and billing interval are not configured for checkout.');
   if(target.id===current.plan_id&&interval===current.billing_interval)throw new ValidationError('That plan is already active.');
   const providerSubscription=await provider.retrieveSubscription(current.stripe_subscription_id,options.providerOptions||{});
@@ -342,17 +343,24 @@ async function handleBillingEvent(database,event) {
           throw new ValidationError('This paid Stripe invoice is awaiting authoritative subscription ownership. Retry reconciliation after its subscription webhook.');
         if(owner)await client.query(`INSERT INTO commercial_revenue_events(id,account_id,source_id,kind,amount_minor,currency,period_start,period_end,occurred_at,detail)
           VALUES($1,$2,$3,'SUBSCRIPTION',$4,$5,to_timestamp($6),to_timestamp($7),to_timestamp($8),$9::jsonb) ON CONFLICT(source_id) DO NOTHING`,
-          [newId('revenue'),owner.account_id,`invoice:${object.id}`,Math.max(0,Number(object.amount_paid||0)-Number(object.total_taxes?.reduce((sum,t)=>sum+Number(t.amount||0),0)||object.tax||0)),
+          // The signed webhook establishes ownership and paid status, not verified
+          // cash revenue. A separate invoice/payment read must establish the
+          // actual amount before this receipt contributes to margin reporting.
+          [newId('revenue'),owner.account_id,`invoice:${object.id}`,0,
             String(object.currency||'usd').toUpperCase(),object.period_start||null,object.period_end||null,event.created||Math.floor(Date.now()/1000),
             JSON.stringify({invoiceId:object.id,paymentIntentId:paymentIntentIds[0]||null,paymentIntentIds,
-              amountPaid:object.amount_paid,taxes:object.total_taxes||null,discounts:object.total_discount_amounts||[]})]);
+              unverifiedAmountPaid:object.amount_paid,taxes:object.total_taxes||null,discounts:object.total_discount_amounts||[],
+              stripeCashVerified:false})]);
         if(owner){
           const durable={query:client.query.bind(client),transaction:fn=>fn(client)};
           await require('../operations/postgres-job-queue').enqueue(durable,{kind:'commercial.stripe-invoice-sync',
             idempotencyKey:`stripe-invoice:${object.id}`,payload:{accountId:owner.account_id,invoiceId:object.id},maxAttempts:8});
-          if(!paymentIntentIds.length||object.payments?.has_more)await client.query(`INSERT INTO commercial_critical_warnings
-            (id,account_id,fingerprint,code,detail) VALUES($1,$2,$3,'MISSING_STRIPE_PAYMENT_BINDING',$4::jsonb)
-            ON CONFLICT(fingerprint) DO UPDATE SET status='OPEN'`,[newId('critical'),owner.account_id,`invoice-payments:${object.id}`,
+          const receipt=(await client.query('SELECT detail FROM commercial_revenue_events WHERE source_id=$1 AND account_id=$2',
+            [`invoice:${object.id}`,owner.account_id])).rows[0];
+          if(receipt?.detail?.stripeCashVerified!==true)await client.query(`INSERT INTO commercial_critical_warnings
+            (id,account_id,fingerprint,code,detail) VALUES($1,$2,$3,'UNVERIFIED_STRIPE_INVOICE_CASH',$4::jsonb)
+            ON CONFLICT(fingerprint) DO UPDATE SET status='OPEN',code=EXCLUDED.code,detail=EXCLUDED.detail`,
+            [newId('critical'),owner.account_id,`invoice-payments:${object.id}`,
               JSON.stringify({invoiceId:object.id,paidInvoiceAmount:object.amount_paid,notVerifiedAsStripeCash:true})]);
           for(const intent of paymentIntentIds){await client.query(`INSERT INTO commercial_critical_warnings(id,account_id,fingerprint,code,detail)
             VALUES($1,$2,$3,'MISSING_STRIPE_FEE',$4::jsonb) ON CONFLICT(fingerprint) DO UPDATE SET status='OPEN'`,

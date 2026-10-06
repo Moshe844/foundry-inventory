@@ -156,7 +156,9 @@
   <p class="rm-head__eyebrow"><%- helpers.icon('link', { size: 15 }) %> Connections</p>
   <h1>Where your business already happens</h1>
   <p>
-    Each inventory connects to its own accounts. Connect your shop, till, mailbox, books, payments and carriers. Once connected, StockChief keeps
+    Each inventory connects to its own accounts. <%= postgresMode
+      ? 'Connect a qualified store or till, Gmail, your own software, or a carrier account you pay for.'
+      : 'Connect your shop, till, mailbox, books, payments and carriers.' %> Once connected, StockChief keeps
     itself up to date and only asks you when something cannot be matched.
   </p>
 </header>
@@ -536,12 +538,12 @@
         <p class="quiet"><%= shipping.testMode ? 'Test labels only right now.'
           : 'Live rates and labels are available from this account.' %></p>
       <% } else { %>
-        <p class="quiet">
-          One short setup connects your carriers, confirms where parcels leave from, and keeps
-          postage on this business’s payment method. StockChief handles the rest from Orders.
-        </p>
         <% if (shippingSetup && !shippingSetup.available) { %>
-          <p class="quiet">Guided carrier setup is not enabled on this installation yet.</p>
+          <p class="quiet">Connect an existing carrier or shipping-provider account that your business pays for.
+            StockChief does not buy postage or labels on a shared account.</p>
+        <% } else { %>
+          <p class="quiet">One short setup connects your carriers, confirms where parcels leave from, and keeps
+            postage on this business’s payment method. StockChief handles the rest from Orders.</p>
         <% } %>
       <% } %>
       <div class="rm-choices">

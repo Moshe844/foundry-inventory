@@ -78,6 +78,7 @@ function openPostgres(connectionString, options = {}) {
     }
   }
   return { query, transaction, close: () => pool.end(), connectionErrors: errors,
+    poolMetrics:()=>({max:pool.options.max,total:pool.totalCount,idle:pool.idleCount,waiting:pool.waitingCount}),
     topology: Object.freeze({ engine: 'postgresql', shared: true, multiWriter: true }) };
 }
 

@@ -9,6 +9,7 @@ const microsoft365 = require('./microsoft365');
 const quickbooks = require('./quickbooks');
 const xero = require('./xero');
 const supplierEmail = require('./supplier-email');
+const launchPolicy = require('../launch-policy');
 
 const adapters = Object.freeze({ shopify, square, clover, woocommerce, gmail, microsoft365,
   quickbooks, xero, supplier_email:supplierEmail });
@@ -29,6 +30,7 @@ const future = Object.freeze([
 
 function get(type) { return adapters[type] || null; }
 function catalog() { return [shopify.metadata(), square.metadata(), clover.metadata(), woocommerce.metadata(), generic,
-  ...future, gmail.metadata(), microsoft365.metadata(), quickbooks.metadata(), xero.metadata()]; }
+  ...future, gmail.metadata(), microsoft365.metadata(), quickbooks.metadata(), xero.metadata()]
+  .map(launchPolicy.metadata); }
 
 module.exports = { get, catalog, generic };

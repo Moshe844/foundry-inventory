@@ -71,6 +71,10 @@ test('commercial control system is versioned, atomic, idempotent and margin-awar
     const economics=await control.economics(database,scope,{now:'2026-10-05'});
     // A measured model event does not establish hosting/database/provider costs.
     assert.equal(economics.estimatedCostMinor,null);assert.equal(economics.costCoverage,'MISSING');
+    assert.equal(rate.pricing_basis,'UNVERIFIED');
+    assert.equal(economics.estimatedCostEventCount,1);
+    assert.equal(economics.conservativeEstimatedCostSubtotalMinor,5);
+    assert.equal(economics.measuredCostSubtotalMinor,0);
   });
 
   await context.test('usage warnings are emitted once at durable thresholds',async()=>{
@@ -135,9 +139,12 @@ test('real Chromium shows metered Growth usage and activates Pro only from serve
         items:{data:[{price:{id:'price_pro_browser_monthly',recurring:{interval:'month'}}}]}}}),
     listInvoices:async()=>({data:[]}),createPortal:async()=>({url:'https://billing.example.test/portal'}),
   };
-  const provider={name:'fixture-ai',model:'fixture-model',async complete(){return {data:{intent:'lookup',view:'inventory',action:null,
+  const provider={name:'anthropic',model:'fixture-model',async complete(){return {data:{intent:'lookup',view:'inventory',action:null,
     search:null,sku:null,location:null,fromLocation:null,toLocation:null,quantity:null,countedQuantity:null,reason:null,reference:null},
-    usage:{provider:'fixture-ai',model:'fixture-model',inputTokens:120,outputTokens:40,latencyMs:4}};}};
+    usage:{provider:'anthropic',providerVersion:'2023-06-01',model:'fixture-model',inputTokens:120,outputTokens:40,latencyMs:4}};}};
+  for(const operation of ['model_input','cache_write_1h','model_output'])await control.saveCostRate(database,
+    {provider:'anthropic',model:'fixture-model',providerVersion:'2023-06-01',operation,unit:'token',
+      costPerUnitMinor:.0001,pricingBasis:'VERIFIED_CONTRACT',confidence:'HIGH',source:'Synthetic browser-test fixture'});
   const app=createPostgresApp({database,env:'test',sessionSecret:'commercial-control-browser-secret',aiProvider:require('../helpers/postgres-model-fixture').fixture(provider),
     commercialOptions:{billingProvider,loadInvoices:false,publicOrigin:'request',testMode:true}});
   const server=await new Promise((resolve)=>{const started=app.listen(0,'127.0.0.1',()=>resolve(started));});

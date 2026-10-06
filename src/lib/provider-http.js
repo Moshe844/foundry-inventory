@@ -91,6 +91,10 @@ async function providerFetch(url, init = {}, options = {}) {
     const started = Date.now();
     let response;
     const commercialContext=require('../commercial/context').current();
+    if((process.env.FOUNDRY_DATABASE_URL||process.env.DATABASE_URL)&&
+      provider!=='StockChief Billing'&&!commercialContext?.database)
+      throw new (require('../domain/errors').ValidationError)(
+        'This PostgreSQL provider request has no commercial operation scope. No provider call was made.');
     let commercialAttempt=null;
     if(commercialContext?.database)commercialAttempt=await require('../commercial/network').before(commercialContext,url,init,provider);
     try {

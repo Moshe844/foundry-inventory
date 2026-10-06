@@ -36,9 +36,10 @@ test('new-inventory onboarding exposes real connection choices before sending ow
   assert.match(startText, /An admin account and API access/);
   assert.match(startText, /Not sure which source fits/);
   assert.match(startText, /Recommend my starting source/);
-  for (const provider of ['Shopify', 'Square', 'Clover', 'WooCommerce', 'Custom API']) {
+  for (const provider of ['Square', 'WooCommerce', 'secure API connection']) {
     assert.match(startText, new RegExp(provider));
   }
+  assert.doesNotMatch(startText, /Shopify|Clover/);
 
   const chosen = await agent.post('/onboarding/choose').type('form')
     .send({ _csrf: csrfFrom(start.text), path: 'software' });
@@ -49,9 +50,8 @@ test('new-inventory onboarding exposes real connection choices before sending ow
   const systemText = plain(system.text);
   assert.equal(system.status, 200);
   assert.match(systemText, /Pick the system you use/);
-  assert.match(systemText, /Connect Shopify/);
+  assert.doesNotMatch(systemText, /Connect Shopify|Connect Clover|Connect An ERP not listed here/);
   assert.match(systemText, /Connect Square/);
-  assert.match(systemText, /Connect Clover/);
   assert.match(systemText, /Connect WooCommerce/);
   assert.match(systemText, /Create secure API connection/);
   assert.match(systemText, /Use an export instead/);

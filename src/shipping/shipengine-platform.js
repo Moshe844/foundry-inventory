@@ -77,6 +77,8 @@ function createToken(sellerId, options = {}) {
 }
 
 async function platformCall(path, options = {}) {
+  if(process.env.FOUNDRY_DATABASE_URL||process.env.DATABASE_URL)
+    throw new ValidationError('The legacy ShipEngine platform connector is not enabled in PostgreSQL.');
   const cfg = options.configuration || configuration();
   const response = await (options.fetch || fetch)(`${BASE}${path}`, {
     method: options.method || 'GET',

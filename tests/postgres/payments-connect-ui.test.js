@@ -13,7 +13,7 @@ test('real Chromium connects each inventory to its own Stripe account without re
     const priorClient=process.env.STRIPE_CONNECT_CLIENT_ID;const priorSecret=process.env.STRIPE_SECRET_KEY;
     process.env.STRIPE_CONNECT_CLIENT_ID='ca_fixture_platform';process.env.STRIPE_SECRET_KEY='sk_test_fixture_platform';
     let accountReady=false;let releasedAccount=null;
-    const connect={authorizeEndpoint:null,
+    const connect={authorizeEndpoint:null,testQualifiedConnection:true,
       async exchange(code){assert.equal(code,'fixture-stripe-code');return {stripe_user_id:'acct_fixture_owner',
         access_token:'sk_test_merchant_secret_that_must_not_be_stored',livemode:false};},
       async readAccount(accountId){assert.equal(accountId,'acct_fixture_owner');return {id:accountId,

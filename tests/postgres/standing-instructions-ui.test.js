@@ -61,7 +61,7 @@ test('real Chromium approves one free-form PostgreSQL standing instruction witho
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM commercial_usage_events WHERE account_id=$1
       AND meter='ai_work_credits' AND status='COMMITTED'`,[identity.account_id])).rows[0].count,'2');
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM commercial_cost_events WHERE account_id=$1
-      AND provider='fixture-ai'`,[identity.account_id])).rows[0].count,'4');
+      AND provider='anthropic'`,[identity.account_id])).rows[0].count,'4');
     assert.equal((await database.query('SELECT COUNT(*) AS count FROM reorder_policies WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].count,'0');
     assert.equal((await database.query('SELECT COUNT(*) AS count FROM automation_policies WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].count,'0');
     await Promise.all([page.waitForURL(/\/operating-instructions\/oin_/),page.getByRole('link',{name:'Review prepared change'}).click()]);

@@ -181,6 +181,8 @@ test('approved commercial foundation: real PostgreSQL, concurrency, ledger and C
   const job={payload:{invoiceId:'in_reconciled',accountId:business.accountId}};
   assert.equal((await financials.syncInvoice(db,job,{provider})).verified,true);
   await financials.syncInvoice(db,job,{provider});
+  await commercial.handleBillingEvent(db,event('invoice.paid',{id:'in_reconciled',customer:'cus_wallet',subscription:'sub_wallet',
+   currency:'usd',amount_paid:200,total:200,period_start:now-86400,period_end:now+29*86400}));
   const fees=(await db.query("SELECT COUNT(*) AS n,SUM(amount_minor) AS total FROM commercial_revenue_events WHERE source_id LIKE 'stripe-fee:txn_pi_reconcile_%'")).rows[0];
   assert.equal(Number(fees.n),2);assert.equal(Number(fees.total),-66);
   assert.equal((await db.query("SELECT status FROM commercial_critical_warnings WHERE fingerprint='invoice-payments:in_reconciled'")).rows[0].status,'RESOLVED');
@@ -193,6 +195,16 @@ test('approved commercial foundation: real PostgreSQL, concurrency, ledger and C
  await t.test('actual Stripe receipts replace list-price revenue and missing rates are unknown',async()=>{
   await commercial.handleBillingEvent(db,event('invoice.paid',{id:'in_actual',customer:'cus_wallet',subscription:'sub_wallet',currency:'usd',amount_paid:17000,
    tax:1000,period_start:now-86400,period_end:now+29*86400}));
+  const before=await costs.economics(db,scope);
+  assert.equal(before.revenueMinor,0);assert.equal(before.contributionMarginPercent,null);
+  assert.ok((await db.query("SELECT 1 FROM commercial_critical_warnings WHERE fingerprint='invoice-payments:in_actual' AND status='OPEN'")).rows.length);
+  const actualProvider={retrieveInvoice:async()=>({id:'in_actual',status:'paid',customer:'cus_wallet',subscription:'sub_wallet',
+   currency:'usd',amount_paid:17000,total:17000,tax:1000}),
+   listInvoicePayments:async()=>[{id:'inpay_actual',invoice:'in_actual',status:'paid',currency:'usd',amount_paid:17000,
+    payment:{type:'payment_intent',payment_intent:'pi_actual'}}],
+   retrievePaymentIntent:async()=>({id:'pi_actual',status:'succeeded',customer:'cus_wallet',currency:'usd',amount_received:17000})};
+  await require('../../src/commercial/stripe-financials').syncInvoice(db,
+   {payload:{invoiceId:'in_actual',accountId:business.accountId}},{provider:actualProvider});
   const missing=await costs.recordCost(db,scope,{provider:'anthropic',model:'unknown-model',operation:'model_input',unit:'token',quantity:100,idempotencyKey:'unknown-rate'});
   assert.equal(missing.event.amount_minor,null);
   const margin=await costs.economics(db,scope);assert.equal(margin.revenueMinor,16000);assert.equal(margin.estimatedCostMinor,null);

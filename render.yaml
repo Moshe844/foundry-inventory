@@ -14,9 +14,22 @@ projects:
                 value: https://qualify.stockchiefhq.com
               - key: FOUNDRY_DATABASE_PRIVATE_NETWORK
                 value: "true"
+              - key: FOUNDRY_POSTGRES_DISK_GB
+                value: "15"
+              - key: FOUNDRY_PROCESS_MEMORY_MB
+                value: "2048"
+              - key: FOUNDRY_PROCESS_CPU_CORES
+                value: "1"
               # Publishing the foundation does not approve economics or checkout.
               - key: STOCKCHIEF_CHECKOUT_ENABLED
                 value: "false"
+              # Tax API use needs separate fee and tax-obligation approval.
+              - key: STOCKCHIEF_BILLING_AUTOMATIC_TAX
+                value: "false"
+              # Fee evidence is account-specific. A different live billing account
+              # requires a new fee review before checkout can open.
+              - key: STOCKCHIEF_BILLING_STRIPE_ACCOUNT_ID
+                value: acct_1UBFTdIjKuQgOJD6
               - key: SESSION_SECRET
                 generateValue: true
               - key: FOUNDRY_CONNECTION_ENCRYPTION_KEY

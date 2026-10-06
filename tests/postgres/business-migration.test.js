@@ -3,6 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
+const fs = require('node:fs');
 const { startCluster } = require('../helpers/postgres-cluster');
 const { openPostgres } = require('../../src/db/postgres');
 const { migratePostgres } = require('../../src/db/migrate-postgres');
@@ -38,16 +39,10 @@ test('the complete SQLite business moves atomically into constrained PostgreSQL'
   sqlite.pragma('wal_checkpoint(TRUNCATE)');
 
   const applied = await migratePostgres(postgres);
-  assert.deepEqual(applied, ['000-business-schema.js', '001-runtime.sql',
-    '002-business-operations.sql', '003-runtime-sessions.sql', '004-legacy-synthetic-evidence.sql',
-    '005-complete-search-projections.sql', '006-assistant-runtime.sql', '007-job-event-order.sql',
-    '008-email-reply-outbox.sql', '009-customer-return-evidence.sql', '010-supplier-return-account.sql',
-    '011-provider-effects.sql','012-email-provider-effects.sql','013-payment-provider-effects.sql',
-    '014-payment-deposits-refunds.sql', '015-operational-scope.sql', '016-assistant-pricing-actions.sql',
-    '017-assistant-communication-actions.sql', '018-assistant-order-actions.sql',
-    '019-assistant-receiving-payment-actions.sql', '020-commercial-platform.sql', '021-review-commercial-packaging.sql',
-    '022-approved-commercial-positioning.sql', '023-commercial-control-system.sql',
-    '024-authentication-security.sql','025-commercial-wallet.sql']);
+  const expected=fs.readdirSync(path.join(__dirname,'../../src/db/postgres-migrations'))
+    .filter(name=>/^\d{3}-[a-z-]+\.(?:sql|js)$/.test(name)).sort();
+  assert.ok(expected.includes('040-commercial-capacity-window.sql'));
+  assert.deepEqual(applied,expected);
   await postgres.query(`CREATE FUNCTION reject_cutover_row() RETURNS trigger LANGUAGE plpgsql AS $$
     BEGIN RAISE EXCEPTION 'synthetic cutover failure'; END; $$`);
   await postgres.query(`CREATE TRIGGER reject_cutover_row BEFORE INSERT ON items

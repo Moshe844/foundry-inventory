@@ -21,12 +21,14 @@ async function startPostgresWeb(options={}){
     listening.once('error',reject);
   });
   console.log(`StockChief PostgreSQL web listening on port ${server.address().port}`);
+  const capacity=options.capacityMonitor===false?null:require('./operations/postgres-capacity').start(database,
+    {role:'web',onError:error=>console.error('[stockchief] web capacity telemetry failed:',error.code||error.message)});
   let closing=false;
   const close=async(signal='shutdown',exit=false)=>{
     if(closing)return;closing=true;
     console.log(`[stockchief] ${signal}; stopping PostgreSQL web.`);
     await new Promise((resolve)=>server.close(resolve));
-    await app.locals.sessionStore.close();await database.close();
+    if(capacity)await capacity.stop();await app.locals.sessionStore.close();await database.close();
     if(exit)process.exit(0);
   };
   if(options.installSignalHandlers!==false){

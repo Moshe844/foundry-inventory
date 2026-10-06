@@ -58,8 +58,8 @@ test('Connections UI exposes accounting safety stages and developer integrations
   assert.equal(page.status, 200); const listing = plain(page.text);
   assert.match(listing, /Accounting/); assert.match(listing, /QuickBooks Online/); assert.match(listing, /Xero/);
   assert.match(listing, /An ERP not listed here/);
-  assert.match(listing, /Start verified ERP connection/);
-  assert.doesNotMatch(listing, /More ERP connectors[\s\S]{0,300}Not available here/);
+  assert.doesNotMatch(listing, /Start verified ERP connection/);
+  assert.match(listing, /Custom ERP connections require a qualified contract/);
   assert.match(listing, /Advanced: connect custom software with APIs and webhooks/);
   assert.match(listing, /How to prove this API works/);
   assert.match(listing, /How to prove this webhook works/);
@@ -111,7 +111,8 @@ test('accounting authorization stays in a popup and its HTTPS callback does not 
     const agent = request.agent(f.app);
     await signIn(agent, f.workspace.account.email);
     const page = await agent.get('/settings/connections');
-    assert.match(page.text, /data-oauth-connect="quickbooks"/);
+    assert.doesNotMatch(page.text, /data-oauth-connect="quickbooks"/);
+    assert.match(page.text, /QuickBooks is not included in initial self-service launch/);
     const started = await agent.post('/settings/connections/connect').type('form').send({
       _csrf: csrfFrom(page.text), providerType: 'quickbooks', popup: '1',
     });

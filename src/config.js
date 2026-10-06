@@ -278,6 +278,7 @@ const config = {
       return (process.env.NODE_ENV || 'development') === 'production';
     },
     get stripeSecretKey() { return process.env.STOCKCHIEF_BILLING_STRIPE_SECRET_KEY || null; },
+    get stripeAccountId() { return process.env.STOCKCHIEF_BILLING_STRIPE_ACCOUNT_ID || null; },
     get stripeWebhookSecret() { return process.env.STOCKCHIEF_BILLING_STRIPE_WEBHOOK_SECRET || null; },
     get stripePreviousWebhookSecret() { return process.env.STOCKCHIEF_BILLING_STRIPE_PREVIOUS_WEBHOOK_SECRET || null; },
     get stripePreviousWebhookSecretExpiresAt() { return process.env.STOCKCHIEF_BILLING_STRIPE_PREVIOUS_WEBHOOK_SECRET_EXPIRES_AT || null; },

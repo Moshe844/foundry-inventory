@@ -13,6 +13,8 @@ function nonNegativeNumber(value,label){
     throw new ValidationError(`${label} requires an explicit non-negative number.`);
   return Number(value);
 }
+const RATE_BASES=new Set(['UNVERIFIED','VERIFIED_PUBLIC','VERIFIED_CONTRACT','CONSERVATIVE_ESTIMATE']);
+const CONFIDENCES=new Set(['LOW','MEDIUM','HIGH']);
 
 async function audit(database,input){
   await database.query(`INSERT INTO commercial_change_audit
@@ -38,12 +40,17 @@ async function recordCost(database,scope,input){
     AND model=$5 AND provider_version=$6 ORDER BY effective_from DESC LIMIT 1`,[provider,operation,unit,occurredAt,model,providerVersion])).rows[0]||null;
   const amount=explicit===null?(rate?quantity*Number(rate.cost_per_unit_minor):null):explicit;
   if(amount!==null&&(!Number.isFinite(amount)||amount<0))throw new ValidationError('Variable cost must be zero or greater.');
+  const costBasis=explicit===null?(rate?.pricing_basis||'MISSING'):
+    input.costBasis||(input.detail?.basis==='ADMIN_ATTESTED_PROVIDER_INVOICE'?'PROVIDER_INVOICE':'EXPLICIT_UNVERIFIED');
+  const costConfidence=explicit===null?(rate?.confidence||'LOW'):
+    input.costConfidence||(costBasis==='PROVIDER_INVOICE'?'HIGH':'LOW');
   const result=await database.query(`INSERT INTO commercial_cost_events
     (id,account_id,workspace_id,provider,operation,unit,quantity,amount_minor,currency,idempotency_key,rate_id,detail,occurred_at,model,provider_version)
     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13::timestamptz,$14,$15)
     ON CONFLICT DO NOTHING RETURNING *`,[input.id||newId('cost'),scope.accountId||null,
     scope.workspaceId||null,provider,operation,unit,quantity,amount,input.currency||rate?.currency||'USD',input.idempotencyKey,
-    rate?.id||null,JSON.stringify({...input.detail,costRateMissing:explicit===null&&!rate}),occurredAt,model,providerVersion]);
+    rate?.id||null,JSON.stringify({...input.detail,costRateMissing:explicit===null&&!rate,
+      costBasis,costConfidence,costSource:explicit===null?rate?.source||null:input.costSource||input.detail?.evidenceReference||null}),occurredAt,model,providerVersion]);
   if(amount===null)await database.query(`INSERT INTO commercial_critical_warnings(id,account_id,fingerprint,code,detail)
     VALUES($1,$2,$3,'MISSING_COST_RATE',$4::jsonb) ON CONFLICT(fingerprint) DO UPDATE SET status='OPEN',detail=EXCLUDED.detail`,
     [newId('critical'),scope.accountId||null,`cost-rate:${scope.accountId||'platform'}:${provider}:${operation}:${unit}:${model}:${providerVersion}`,
@@ -56,14 +63,45 @@ async function saveCostRate(database,input){
   const operation=String(input.operation||'').trim().toLowerCase();
   const unit=String(input.unit||'').trim().toLowerCase();
   const costPerUnitMinor=nonNegativeNumber(input.costPerUnitMinor,'Cost rate');
+  const pricingBasis=String(input.pricingBasis||'UNVERIFIED').trim().toUpperCase();
+  const confidence=String(input.confidence||'LOW').trim().toUpperCase();
+  const source=String(input.source||'').trim();
   if(!provider||!operation||!unit||!Number.isFinite(costPerUnitMinor)||costPerUnitMinor<0)
     throw new ValidationError('Enter a provider, operation, unit and non-negative cost per unit.');
-  const row=(await database.query(`INSERT INTO commercial_cost_rates
-    (id,provider,operation,unit,cost_per_unit_minor,currency,effective_from,effective_until,source,created_by_account_id,model,provider_version)
-    VALUES($1,$2,$3,$4,$5,$6,COALESCE($7::timestamptz,now()),NULLIF($8,'')::timestamptz,$9,$10,$11,$12) RETURNING *`,
+  if(!RATE_BASES.has(pricingBasis)||!CONFIDENCES.has(confidence)||!source)
+    throw new ValidationError('A cost rate needs an explicit evidence basis, confidence and dated source or estimate rationale.');
+  const save=async client=>{const row=(await client.query(`INSERT INTO commercial_cost_rates
+    (id,provider,operation,unit,cost_per_unit_minor,currency,effective_from,effective_until,source,created_by_account_id,model,provider_version,pricing_basis,confidence)
+    VALUES($1,$2,$3,$4,$5,$6,COALESCE($7::timestamptz,now()),NULLIF($8,'')::timestamptz,$9,$10,$11,$12,$13,$14) RETURNING *`,
   [newId('costrate'),provider,operation,unit,costPerUnitMinor,input.currency||'USD',input.effectiveFrom||null,
-    input.effectiveUntil||'',input.source||'ADMIN',input.actorAccountId||null,input.model||'',input.providerVersion||''])).rows[0];
-  return row;
+    input.effectiveUntil||'',source,input.actorAccountId||null,input.model||'',input.providerVersion||'',pricingBasis,confidence])).rows[0];
+  // Reprice historical unknowns only against the most recent rate actually
+  // effective at each event's time. Never silently leave an old NULL at zero.
+  const repriced=(await client.query(`WITH chosen AS (
+    SELECT event.id,event.account_id,rate.id AS rate_id,rate.currency,rate.source,rate.pricing_basis,rate.confidence,
+      event.quantity*rate.cost_per_unit_minor AS amount_minor
+    FROM commercial_cost_events event JOIN LATERAL (
+      SELECT * FROM commercial_cost_rates candidate WHERE candidate.provider=event.provider
+        AND candidate.operation=event.operation AND candidate.unit=event.unit AND candidate.model=event.model
+        AND candidate.provider_version=event.provider_version AND candidate.effective_from<=event.occurred_at
+        AND (candidate.effective_until IS NULL OR candidate.effective_until>event.occurred_at)
+      ORDER BY candidate.effective_from DESC LIMIT 1) rate ON true
+    WHERE event.amount_minor IS NULL AND event.provider=$1 AND event.operation=$2 AND event.unit=$3
+      AND event.model=$4 AND event.provider_version=$5)
+    UPDATE commercial_cost_events event SET amount_minor=chosen.amount_minor,rate_id=chosen.rate_id,
+      currency=chosen.currency,detail=event.detail||jsonb_build_object('costRateMissing',false,
+        'costBasis',chosen.pricing_basis,'costConfidence',chosen.confidence,'costSource',chosen.source)
+    FROM chosen WHERE event.id=chosen.id RETURNING event.account_id`,
+   [provider,operation,unit,input.model||'',input.providerVersion||''])).rows;
+  for(const accountId of new Set(repriced.map(item=>item.account_id))){
+   const remaining=(await client.query(`SELECT 1 FROM commercial_cost_events WHERE account_id IS NOT DISTINCT FROM $1
+     AND provider=$2 AND operation=$3 AND unit=$4 AND model=$5 AND provider_version=$6
+     AND amount_minor IS NULL LIMIT 1`,[accountId,provider,operation,unit,input.model||'',input.providerVersion||''])).rows.length;
+   if(!remaining)await client.query("UPDATE commercial_critical_warnings SET status='RESOLVED' WHERE fingerprint=$1",
+    [`cost-rate:${accountId||'platform'}:${provider}:${operation}:${unit}:${input.model||''}:${input.providerVersion||''}`]);
+  }
+  return row;};
+  return typeof database.transaction==='function'?database.transaction(save,{isolation:'SERIALIZABLE',retrySafe:true}):save(database);
 }
 
 async function economics(database,scope,options={}){
@@ -86,28 +124,45 @@ async function economics(database,scope,options={}){
   // Invoice-backed resource costs cover a service period, not just their ledger
   // posting date. Accrue the immutable account allocation over its exact overlap
   // with the usage period; do not add a second copy of the invoice to the ledger.
-  const costs=(await database.query(`SELECT COALESCE(SUM(CASE WHEN statement.id IS NULL THEN cost.amount_minor
-      ELSE cost.amount_minor*EXTRACT(EPOCH FROM (LEAST(statement.period_end,$3::timestamptz)
-        -GREATEST(statement.period_start,$2::timestamptz)))
-        /EXTRACT(EPOCH FROM (statement.period_end-statement.period_start)) END)
-      FILTER(WHERE cost.currency=$4),0) AS amount,COUNT(*) AS events,
-    COUNT(*) FILTER(WHERE cost.amount_minor IS NULL OR cost.currency<>$4) AS missing_rates
+  const costs=(await database.query(`WITH observed AS (
+    SELECT cost.currency,cost.amount_minor,
+      COALESCE(rate.pricing_basis,cost.detail->>'costBasis',
+        CASE WHEN cost.detail->>'basis'='ADMIN_ATTESTED_PROVIDER_INVOICE' THEN 'PROVIDER_INVOICE' ELSE 'UNVERIFIED' END) AS cost_basis,
+      CASE WHEN statement.id IS NULL THEN cost.amount_minor
+        ELSE cost.amount_minor*EXTRACT(EPOCH FROM (LEAST(statement.period_end,$3::timestamptz)
+          -GREATEST(statement.period_start,$2::timestamptz)))
+          /EXTRACT(EPOCH FROM (statement.period_end-statement.period_start)) END AS accrued_minor
     FROM commercial_cost_events cost LEFT JOIN commercial_provider_cost_statements statement
       ON cost.provider_version='provider-invoice-v1' AND cost.detail->>'statementId'=statement.id
+    LEFT JOIN commercial_cost_rates rate ON rate.id=cost.rate_id
     WHERE cost.account_id=$1 AND ((statement.id IS NULL AND cost.occurred_at>=$2 AND cost.occurred_at<$3)
-      OR (statement.id IS NOT NULL AND statement.period_start<$3 AND statement.period_end>$2))`,
+      OR (statement.id IS NOT NULL AND statement.period_start<$3 AND statement.period_end>$2)))
+    SELECT COALESCE(SUM(accrued_minor) FILTER(WHERE currency=$4),0) AS amount,COUNT(*) AS events,
+      COUNT(*) FILTER(WHERE amount_minor IS NULL OR currency<>$4) AS missing_rates,
+      COUNT(*) FILTER(WHERE cost_basis IN ('UNVERIFIED','CONSERVATIVE_ESTIMATE','EXPLICIT_UNVERIFIED')) AS estimated_events,
+      COALESCE(SUM(accrued_minor) FILTER(WHERE currency=$4 AND cost_basis IN
+        ('UNVERIFIED','CONSERVATIVE_ESTIMATE','EXPLICIT_UNVERIFIED')),0) AS provisional_amount
+    FROM observed`,
   [scope.accountId,bounds.start.toISOString(),bounds.end.toISOString(),plan.currency])).rows[0];
   const criticalWarningCount=Number((await database.query(`SELECT COUNT(*) AS count FROM commercial_critical_warnings
     WHERE status='OPEN' AND (account_id=$1 OR account_id IS NULL)`,[scope.accountId])).rows[0].count);
   const unsupportedRevenueCurrencyCount=Number(receipts.unsupported_currencies);
-  const estimatedCostMinor=Number(costs.missing_rates)||criticalWarningCount||unsupportedRevenueCurrencyCount||!Number(costs.events)?null:Number(costs.amount);const totalRevenue=revenueMinor+addonRevenueMinor+revenueAdjustmentsMinor;
-  const contributionMinor=estimatedCostMinor===null?null:totalRevenue-estimatedCostMinor;
+  const knownCost=Number(costs.amount);const provisionalCost=Number(costs.provisional_amount);
+  const estimatedCostMinor=Number(costs.missing_rates)||criticalWarningCount||unsupportedRevenueCurrencyCount||!Number(costs.events)?null:knownCost;
+  const totalRevenue=revenueMinor+addonRevenueMinor+revenueAdjustmentsMinor;
+  const projectedContributionMinor=estimatedCostMinor===null?null:totalRevenue-estimatedCostMinor;
+  const contributionMinor=Number(costs.estimated_events)?null:projectedContributionMinor;
   return {subscription,periodStart:bounds.start,periodEnd:bounds.end,revenueMinor,overageRevenueMinor:0,addonRevenueMinor,revenueAdjustmentsMinor,estimatedCostMinor,
     contributionMinor,contributionMarginPercent:totalRevenue&&contributionMinor!==null?Math.round(contributionMinor/totalRevenue*10000)/100:null,
+    projectedContributionMinor,projectedContributionMarginPercent:totalRevenue&&projectedContributionMinor!==null?
+      Math.round(projectedContributionMinor/totalRevenue*10000)/100:null,
+    measuredCostSubtotalMinor:knownCost-provisionalCost,conservativeEstimatedCostSubtotalMinor:provisionalCost,
+    estimatedCostEventCount:Number(costs.estimated_events),
     targetContributionMarginPercent:Number(plan.target_contribution_margin_bps||0)/100,costEventCount:Number(costs.events),
     missingCostRateCount:Number(costs.missing_rates),criticalWarningCount,unsupportedRevenueCurrencyCount,accountingBasis:'STRIPE_CASH_RECEIPTS_NOT_ACCRUAL',
-    knownCostSubtotalMinor:Number(costs.amount),costPeriodBasis:'DIRECT_EVENT_TIME_AND_PROVIDER_STATEMENT_OVERLAP',
-    costCoverage:Number(costs.events)>0&&Number(costs.missing_rates)===0&&criticalWarningCount===0&&unsupportedRevenueCurrencyCount===0?'MEASURED':'MISSING'};
+    knownCostSubtotalMinor:knownCost,costPeriodBasis:'DIRECT_EVENT_TIME_AND_PROVIDER_STATEMENT_OVERLAP',
+    costCoverage:Number(costs.events)>0&&Number(costs.missing_rates)===0&&criticalWarningCount===0&&unsupportedRevenueCurrencyCount===0?
+      Number(costs.estimated_events)>0?'ESTIMATED':'MEASURED':'MISSING'};
 }
 
 async function usageWarnings(database,scope,options={}){

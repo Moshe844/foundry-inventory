@@ -29,6 +29,7 @@ async function call(path, options = {}) {
   if (!response.ok) throw new ValidationError(payload?.error?.message || `Stripe Billing refused the request (${response.status}).`);
   return payload;
 }
+async function retrievePrice(id,options={}){return call(`/prices/${encodeURIComponent(id)}`,{...options,method:'GET'});}
 
 async function createCheckout(input, options = {}) {
   const promotion=input.promotionCodeId?{'discounts[0][promotion_code]':input.promotionCodeId}:{};
@@ -59,12 +60,14 @@ async function createCheckout(input, options = {}) {
 }
 
 async function createPortal(input, options = {}) {
-  const flow=input.subscriptionId?{
-    'flow_data[type]':'subscription_update',
-    'flow_data[subscription_update][subscription]':input.subscriptionId,
+  // A generic portal may expose annual Prices configured in Stripe outside of
+  // StockChief. Use only the payment-method deep link until annual is launched;
+  // invoice links are rendered separately in Plan & Usage.
+  const flow={
+    'flow_data[type]':'payment_method_update',
     'flow_data[after_completion][type]':'redirect',
     'flow_data[after_completion][redirect][return_url]':input.returnUrl,
-  }:{};
+  };
   return call('/billing_portal/sessions', {
     ...options,
     idempotencyKey:`stockchief-portal:${input.accountId}:${input.requestId}`,
@@ -87,6 +90,26 @@ async function retrievePaymentMethod(id,options={}){return call(`/payment_method
 async function retrieveBalanceTransaction(id,options={}){return call(`/balance_transactions/${encodeURIComponent(id)}`,{...options,method:'GET'});}
 async function retrieveInvoice(id,options={}){return call(`/invoices/${encodeURIComponent(id)}`,{...options,method:'GET'});}
 async function retrievePaymentIntent(id,options={}){return call(`/payment_intents/${encodeURIComponent(id)}?expand[]=latest_charge.balance_transaction`,{...options,method:'GET'});}
+async function listCreditNotes(invoiceId,options={}){
+ const notes=[];const seen=new Set();let cursor;
+ do{const page=await call(`/credit_notes?invoice=${encodeURIComponent(invoiceId)}&limit=100${cursor?`&starting_after=${encodeURIComponent(cursor)}`:''}`,{...options,method:'GET'});
+  if(!Array.isArray(page.data)||page.has_more&&!page.data.length)throw new ValidationError('Stripe returned incomplete credit-note pagination.');
+  for(const note of page.data){if(seen.has(note.id))throw new ValidationError('Stripe repeated a credit note while paginating.');seen.add(note.id);notes.push(note);}
+  cursor=page.has_more?page.data.at(-1).id:null;
+ }while(cursor);
+ return notes;
+}
+async function listCustomerBalanceTransactions(customerId,invoiceId,options={}){
+ const transactions=[];const seen=new Set();let cursor;
+ do{const page=await call(`/customers/${encodeURIComponent(customerId)}/balance_transactions?invoice=${encodeURIComponent(invoiceId)}&limit=100${cursor?`&starting_after=${encodeURIComponent(cursor)}`:''}`,
+   {...options,method:'GET'});
+  if(!Array.isArray(page.data)||page.has_more&&!page.data.length)throw new ValidationError('Stripe returned incomplete customer-balance pagination.');
+  for(const row of page.data){if(seen.has(row.id))throw new ValidationError('Stripe repeated a customer-balance transaction while paginating.');
+   seen.add(row.id);transactions.push(row);}
+  cursor=page.has_more?page.data.at(-1).id:null;
+ }while(cursor);
+ return transactions;
+}
 async function listInvoicePayments(invoiceId,options={}){
  const payments=[];const seen=new Set();let cursor;
  do{const page=await call(`/invoice_payments?invoice=${encodeURIComponent(invoiceId)}&limit=100${cursor?`&starting_after=${encodeURIComponent(cursor)}`:''}`,{...options,method:'GET'});
@@ -181,7 +204,7 @@ function verifyEvent(raw, headers = {}, options = {}) {
 }
 
 module.exports = { createCheckout,createPortal,retrieveCheckout,retrieveSubscription,previewSubscriptionChange,updateSubscription,
-  createAddonCheckout,createTopupPayment,retrievePaymentMethod,retrieveBalanceTransaction,retrieveInvoice,retrievePaymentIntent,listInvoicePayments,
+  createAddonCheckout,createTopupPayment,retrievePrice,retrievePaymentMethod,retrieveBalanceTransaction,retrieveInvoice,retrievePaymentIntent,listInvoicePayments,listCreditNotes,listCustomerBalanceTransactions,
   scheduleDowngrade,
   setCancellation,listInvoices,createInvoiceItem,verifyEvent,
   __internal:{call,form,apiVersion:API_VERSION} };

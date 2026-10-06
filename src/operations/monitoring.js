@@ -79,6 +79,8 @@ function webhookDispatcher(db, options = {}) {
       throw error;
     }
     const origin = config.connections.publicOrigin;
+    if(process.env.FOUNDRY_DATABASE_URL||process.env.DATABASE_URL)
+      throw new Error('The legacy alert dispatcher is unavailable in PostgreSQL; use the metered PostgreSQL dispatcher.');
     const response = await fetch(url, {
       method: 'POST',
       headers: {

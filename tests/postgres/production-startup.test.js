@@ -35,6 +35,11 @@ test('production launcher migrates PostgreSQL and serves shared multi-writer rea
   const health=await fetch(`${base}/healthz`);assert.equal(health.status,200);
   assert.equal((await health.json()).database,'postgresql');
   const readiness=await fetch(`${base}/readyz`);assert.equal(readiness.status,200);
-  assert.deepEqual(await readiness.json(),{ok:true,database:'postgresql',shared:true,multiWriter:true,
-    migrations:26,deadJobs:0,staleJobs:0});
+  const payload=await readiness.json();
+  assert.equal(payload.ok,true);assert.equal(payload.database,'postgresql');
+  assert.equal(payload.shared,true);assert.equal(payload.multiWriter,true);
+  assert.equal(payload.migrations,Number((await runtime.database.query(
+    'SELECT COUNT(*) AS n FROM stockchief_postgres_migrations')).rows[0].n));
+  assert.ok(payload.migrations>=41);assert.equal(payload.deadJobs,0);assert.equal(payload.staleJobs,0);
+  assert.equal(payload.commercialTelemetry.persistenceFailures,0);
 });

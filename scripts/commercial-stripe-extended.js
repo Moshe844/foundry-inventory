@@ -31,7 +31,15 @@ async function run({call,db,product,runId,until,check,deliveries,forward,provide
   const event=await until(()=>deliveries.find(e=>e.type==='invoice.paid'&&e.event.data.object.id===id&&e.status===200),'extended signed paid invoice');
   await Promise.all([forward(event),forward(event)]);
   const result=await financials.syncInvoice(db,{payload:{accountId:person.accountId,invoiceId:id}},{providerOptions});
-  assert.equal(result.verified,true);assert.equal(result.cashMinor,expectedCash);
+  if(!result.verified){const invoice=await call(`/invoices/${id}`);
+   const warning=(await db.query('SELECT detail FROM commercial_critical_warnings WHERE fingerprint=$1',
+    [`invoice-payments:${id}`])).rows[0];
+   throw Error(`Real Stripe invoice settlement was unverified: ${JSON.stringify({id,
+    total:invoice.total,amount_due:invoice.amount_due,amount_paid:invoice.amount_paid,
+    amount_overpaid:invoice.amount_overpaid,starting_balance:invoice.starting_balance,
+    pre_payment_credit_notes_amount:invoice.pre_payment_credit_notes_amount,
+    cashMinor:result.cashMinor,reasons:warning?.detail?.reasons})}`);}
+  assert.equal(result.cashMinor,expectedCash);
   const rows=(await db.query('SELECT * FROM commercial_revenue_events WHERE source_id=$1',[`invoice:${id}`])).rows;
   assert.equal(rows.length,1);assert.equal(Number(rows[0].amount_minor),expectedNet);assert.equal(rows[0].detail.stripeCashVerified,true);
   return rows[0];
@@ -62,6 +70,12 @@ async function run({call,db,product,runId,until,check,deliveries,forward,provide
   assert.equal(row.detail.customerBalanceCreditMinor,credit);
   check('Real customer credit is not counted as new Stripe cash',{creditMinor:credit,cashMinor:1000-credit,invoiceId:invoiceId(credited)});
  }
+ const debitPerson=await fixture('Carried customer debit');
+ await call(`/customers/${debitPerson.customer.id}/balance_transactions`,{amount:100,currency:'usd',description:'Synthetic prior receivable, not current sale'});
+ const debitSub=await subscribe(debitPerson);const debitRow=await reconcile(debitPerson,invoiceId(debitSub),1100,1000);
+ assert.equal(debitRow.detail.carriedDebitCollectionMinor,100);
+ check('Real positive customer balance is prior receivable cash, not current subscription revenue',
+  {invoiceId:invoiceId(debitSub),collectedPriorMinor:100});
  const coupon=await call('/coupons',{duration:'once',percent_off:25,name:`${runId} test discount`});
  const tax=await call('/tax_rates',{display_name:'Synthetic certification tax',percentage:10,inclusive:false});
  try{
@@ -69,6 +83,15 @@ async function run({call,db,product,runId,until,check,deliveries,forward,provide
   const taxed=await subscribe(person,{'discounts[0][coupon]':coupon.id,'default_tax_rates[0]':tax.id});
   await reconcile(person,invoiceId(taxed),825,750);
   check('Real discounted taxed invoice excludes collected tax from commercial revenue',{invoiceId:invoiceId(taxed),cashMinor:825,taxMinor:75,netMinor:750,taxComplianceCertified:false});
+  const credited=await fixture('Tax with customer balance credit');
+  await call(`/customers/${credited.customer.id}/balance_transactions`,{amount:-300,currency:'usd',description:'Synthetic certification credit, not cash'});
+  const creditedSub=await subscribe(credited,{'default_tax_rates[0]':tax.id});
+  const creditedInvoice=await call(`/invoices/${invoiceId(creditedSub)}`);
+  assert.equal(creditedInvoice.total,1100);assert.equal(creditedInvoice.amount_paid,800);
+  const creditedRow=await reconcile(credited,creditedInvoice.id,800,727);
+  assert.equal(creditedRow.detail.cashTaxMinor,73);
+  check('Real tax plus customer balance credit allocates tax to actual cash',
+   {invoiceId:creditedInvoice.id,cashMinor:800,cashTaxMinor:73,netMinor:727});
  }finally{await call(`/tax_rates/${tax.id}`,{active:false});await call(`/coupons/${coupon.id}`,undefined,'DELETE');}
  // Stripe supports subscription partial payments for send_invoice, not ordinary
  // auto-charge subscriptions. This validates settlement, not a new public offer.
@@ -88,5 +111,20 @@ async function run({call,db,product,runId,until,check,deliveries,forward,provide
  const adjusted=await reconcile(partial,partialId,800,800);assert.equal(adjusted.detail.prePaymentCreditMinor,200);
  assert.equal(adjusted.detail.paidPaymentIds.length,2);
  check('Real split payments and pre-payment credit reconcile only settled Stripe cash',{invoiceId:partialId,cashMinor:800,creditMinor:200,partialPaymentScope:'send_invoice test fixture only'});
+ const excess=await fixture('Overpayment liability');
+ const excessSub=await subscribe(excess,{collection_method:'send_invoice',days_until_due:30});
+ const excessId=invoiceId(excessSub);let excessInvoice=await call(`/invoices/${excessId}`);
+ if(excessInvoice.status==='draft')excessInvoice=await call(`/invoices/${excessId}/finalize`,{auto_advance:false});
+ const excessIntent=await call('/payment_intents',{customer:excess.customer.id,amount:1000,currency:'usd',payment_method:excess.pm.id,
+  'automatic_payment_methods[enabled]':true,'automatic_payment_methods[allow_redirects]':'never'});
+ await call(`/invoices/${excessId}/attach_payment`,{payment_intent:excessIntent.id});
+ await call('/credit_notes',{invoice:excessId,amount:100,memo:'Synthetic pre-payment credit after payment attachment'});
+ await call(`/payment_intents/${excessIntent.id}/confirm`,{});
+ excessInvoice=await call(`/invoices/${excessId}`);
+ assert.equal(excessInvoice.status,'paid');assert.equal(excessInvoice.amount_overpaid,100);
+ const excessRow=await reconcile(excess,excessId,1000,900);
+ assert.equal(excessRow.detail.overpaymentLiabilityMinor,100);
+ check('Real invoice overpayment is a customer liability, not current subscription revenue',
+  {invoiceId:excessId,overpaymentMinor:100});
 }
 module.exports={run};

@@ -171,6 +171,11 @@ function create(options = {}) {
      * @param {{system: string, prompt: string, schema: object, schemaName: string, signal?: AbortSignal}} request
      */
     async complete(request) {
+      // Production is PostgreSQL-only. A legacy/transitively imported model
+      // path may not bypass the commercial reservation and dollar guard.
+      if((process.env.FOUNDRY_DATABASE_URL||process.env.DATABASE_URL)&&request.commercial!==true)
+        throw new ProviderError('A PostgreSQL model call needs commercial metering before provider execution.',
+          {code:'commercial_meter_required',status:503});
       const startedAt = Date.now();
       // Extended thinking is a per-tier choice, not a constant. The small
       // models StockChief uses for bounded extraction do not support it at all,

@@ -61,7 +61,8 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     title:'Switching to StockChief',nav:'switching',description:'Bring inventory records into StockChief through preview, clarification, reconciliation and controlled approval.'})));
   router.get('/pricing',asyncRoute(async(req,res)=>{const plans=await commercial.listPlans(database);await commercial.track(database,{eventName:'pricing_viewed',
     anonymousId:req.sessionID,accountId:req.account?.id||null,sourcePath:'/pricing'});return renderPublic(req,res,'public/pricing',{
-    title:'Pricing',nav:'pricing',plans,checkoutCancelled:req.query.checkout==='cancelled'});}));
+    title:'Pricing',nav:'pricing',plans,checkoutOpen:await release.isOpen(database),
+    checkoutCancelled:req.query.checkout==='cancelled'});}));
   router.get(['/control','/trust'],asyncRoute(async(req,res)=>renderPublic(req,res,'public/trust',{title:'Control and trust',nav:'control',
     description:'Understand StockChief authority, approvals, evidence, tenant isolation, credentials and operational recovery.'})));
   router.get('/privacy',asyncRoute(async(req,res)=>renderPublic(req,res,'public/legal',{
@@ -113,9 +114,10 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
   router.post('/billing/checkout',requireAccount,requireBillingOwner,requireVerifiedEmail,asyncRoute(async(req,res)=>{
     const scope=commercialScope(req);const current=await entitlements.subscriptionFor(database,scope.accountId);
     const origin=options.publicOrigin==='request'?res.locals.origin:(options.publicOrigin||config.connections.publicOrigin||res.locals.origin);
+    require('../../commercial/launch-interval').assertMonthly(req.body.interval);
     if(current?.stripe_customer_id&&current?.stripe_subscription_id)return res.redirect(303,
-      `/billing/change?plan=${encodeURIComponent(req.body.planId||'')}&interval=${req.body.interval==='annual'?'annual':'monthly'}`);
-    req.session.checkoutSelection={planId:req.body.planId,interval:req.body.interval==='annual'?'annual':'monthly'};await saveSession(req);
+      `/billing/change?plan=${encodeURIComponent(req.body.planId||'')}&interval=monthly`);
+    req.session.checkoutSelection={planId:req.body.planId,interval:'monthly'};await saveSession(req);
     const checkout=await commercial.beginCheckout(database,req.account,{planId:req.body.planId,interval:req.body.interval,
       promoCode:req.body.promoCode,origin,returnPath:req.body.returnPath||'/onboarding'},{provider,providerOptions:options.providerOptions,testMode:options.testMode});
     await commercial.track(database,{eventName:'billing_checkout_started',accountId:req.account.id,planId:req.body.planId,
@@ -172,8 +174,8 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     const annual=Math.max(0,Math.round(Number(req.body.annualAmount||0)*100));const approved=req.body.packagingApproved==='1';
     const existing=(await database.query('SELECT * FROM commercial_plans WHERE id=$1',[req.params.id])).rows[0];
     if(!existing)throw new ValidationError('That commercial plan does not exist.');if(approved&&!Number(existing.sales_only)&&
-      (!monthly||!annual||!String(req.body.stripeMonthlyPriceId||'').trim()||!String(req.body.stripeAnnualPriceId||'').trim()))
-      throw new ValidationError('Before approving real checkout, set both public prices and both Stripe Price IDs.');
+      (!monthly||!String(req.body.stripeMonthlyPriceId||'').trim()))
+      throw new ValidationError('Before approving monthly checkout, set the monthly public price and Stripe Price ID.');
     if(approved&&!Number(existing.sales_only)){const incomplete=(await database.query(`SELECT definition.label
       FROM commercial_meter_definitions definition LEFT JOIN commercial_plan_meters meter
         ON meter.meter=definition.meter AND meter.plan_id=$1
@@ -305,7 +307,8 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     const created=await commercialControl.saveCostRate(database,{provider:req.body.provider,operation:req.body.operation,
       unit:req.body.unit,costPerUnitMinor:req.body.costPerUnitMinor,currency:req.body.currency||'USD',
       effectiveFrom:req.body.effectiveFrom,effectiveUntil:req.body.effectiveUntil,source:req.body.source||'ADMIN',
-      actorAccountId:req.account.id,model:req.body.model||'',providerVersion:req.body.providerVersion||''});
+      actorAccountId:req.account.id,model:req.body.model||'',providerVersion:req.body.providerVersion||'',
+      pricingBasis:req.body.pricingBasis,confidence:req.body.confidence});
     await commercialControl.audit(database,{actorAccountId:req.account.id,subjectType:'cost_rate',subjectId:created.id,
       action:'created',afterState:created,reason:'Variable-cost assumption changed',sourceIp:req.ip});
     req.flash('success','Variable-cost rate saved. Existing historical cost events were not rewritten.');

@@ -4,31 +4,46 @@ const {ValidationError}=require('../domain/errors');
 const wallet=require('./wallet');
 const release=require('./release');
 const stripe=require('./stripe-billing');
+const paidBudget=require('./paid-model-budget');
 const entitlements=require('../entitlements/postgres-service');
-async function packs(database){return (await database.query("SELECT * FROM commercial_usage_packs WHERE status<>'RETIRED' ORDER BY category,units")).rows;}
+async function packs(database){const rows=(await database.query("SELECT * FROM commercial_usage_packs WHERE status<>'RETIRED' ORDER BY category,units")).rows;
+ return Promise.all(rows.map(async pack=>{let funded=false;try{await paidBudget.assertSafePack(database,pack);funded=true;}catch{return {...pack,purchasable:false};}
+  return {...pack,purchasable:funded&&pack.status==='APPROVED'&&Boolean(pack.stripe_price_id)};}));}
 async function topups(database,scope){await wallet.assertScope(database,scope);return (await database.query(
  'SELECT * FROM commercial_auto_topups WHERE account_id=$1 AND workspace_id=$2',[scope.accountId,scope.workspaceId])).rows;}
 async function packFor(database,id,options){const pack=(await database.query('SELECT * FROM commercial_usage_packs WHERE id=$1',[id])).rows[0];
  if(!pack||pack.status!=='APPROVED'&&!(options.testMode&&process.env.NODE_ENV==='test'))throw new ValidationError('This usage pack is provisional and cannot be purchased.');
- if(!pack.stripe_price_id)throw new ValidationError('The usage pack has no configured Stripe price.');return pack;}
+ if(!pack.stripe_price_id)throw new ValidationError('The usage pack has no configured Stripe price.');
+ await paidBudget.assertSafePack(database,pack);return pack;}
 async function beginPurchase(database,scope,input,options={}){
  await release.assertCheckoutOpen(database,options);await wallet.assertScope(database,scope);
  if(!scope.workspaceId)throw new ValidationError('Choose the inventory receiving this usage pack.');
  const subscription=await entitlements.subscriptionFor(database,scope.accountId);
  if(!subscription?.stripe_customer_id||!entitlements.operationalAccess(subscription).canOperate)throw new ValidationError('An operational subscription is required to purchase additional usage.');
  const pack=await packFor(database,input.packId,options);
+ const billingProvider=options.provider||stripe;
+ if(typeof billingProvider.retrievePrice==='function'){
+  const remote=await billingProvider.retrievePrice(pack.stripe_price_id,options.providerOptions||{});
+  if(remote.id!==pack.stripe_price_id||remote.active!==true||remote.currency?.toUpperCase()!==pack.currency||
+   Number(remote.unit_amount)!==Number(pack.amount_minor)||remote.type!=='one_time'||remote.recurring)
+   throw new ValidationError('The Stripe price does not match this funded usage pack. No checkout was created.');
+ }else if(!(options.testMode&&process.env.NODE_ENV==='test'))
+  throw new ValidationError('The billing provider cannot verify this usage pack price.');
  if(!input.idempotencyKey)throw new ValidationError('A purchase requires its stable request key.');
  const purchase=await database.transaction(async(client)=>{
   await wallet.lock(client,scope,pack.category);
   const prior=(await client.query('SELECT * FROM commercial_usage_purchases WHERE account_id=$1 AND idempotency_key=$2',
    [scope.accountId,input.idempotencyKey])).rows[0];
   if(prior){if(prior.pack_id!==pack.id||prior.workspace_id!==scope.workspaceId)throw new ValidationError('That purchase key was already used for another pack.');return prior;}
-  return (await client.query(`INSERT INTO commercial_usage_purchases(id,account_id,workspace_id,pack_id,category,units,amount_minor,currency,kind,idempotency_key)
-   VALUES($1,$2,$3,$4,$5,$6,$7,$8,'MANUAL',$9) RETURNING *`,[newId('purchase'),scope.accountId,scope.workspaceId,pack.id,pack.category,
-   pack.units,pack.amount_minor,pack.currency,input.idempotencyKey])).rows[0];
+  return (await client.query(`INSERT INTO commercial_usage_purchases(id,account_id,workspace_id,pack_id,category,units,amount_minor,currency,kind,idempotency_key,
+   provider_cost_budget_minor,conservative_cost_per_credit_minor,cost_model_key,cost_budget_source,approved_model_rate_ceiling)
+   VALUES($1,$2,$3,$4,$5,$6,$7,$8,'MANUAL',$9,$10,$11,$12,$13,$14::jsonb) RETURNING *`,[newId('purchase'),scope.accountId,scope.workspaceId,pack.id,pack.category,
+   pack.units,pack.amount_minor,pack.currency,input.idempotencyKey,pack.provider_cost_budget_minor,
+   pack.conservative_cost_per_credit_minor,pack.cost_model_key,pack.cost_budget_source,
+   JSON.stringify(pack.approved_model_rate_ceiling)])).rows[0];
  },{isolation:'SERIALIZABLE',retrySafe:true});
  if(['PAID','REFUNDED','REVIEW','EXPIRED'].includes(purchase.status))return {purchase,url:`${input.origin}/billing`};
- const session=await (options.provider||stripe).createAddonCheckout({purchaseId:purchase.id,accountId:scope.accountId,
+ const session=await billingProvider.createAddonCheckout({purchaseId:purchase.id,accountId:scope.accountId,
   workspaceId:scope.workspaceId,customerId:subscription.stripe_customer_id,priceId:pack.stripe_price_id,
   successUrl:`${input.origin}/billing?purchase=pending`,cancelUrl:`${input.origin}/billing?purchase=cancelled`},options.providerOptions||{});
  await database.query("UPDATE commercial_usage_purchases SET stripe_session_id=$2,status=CASE WHEN status='CREATED' THEN 'OPEN' ELSE status END WHERE id=$1",[purchase.id,session.id]);
@@ -72,9 +87,12 @@ async function runTopup(database,scope,category,options={}){
   if(Number(spending.pending)>0||Number(spending.spent)+Number(pack.amount_minor)>Number(settings.monthly_cap_minor))return null;
   const sub=await entitlements.subscriptionFor(client,scope.accountId);if(!entitlements.operationalAccess(sub).canOperate)return null;
   const id=newId('topup');const purchase=(await client.query(`INSERT INTO commercial_usage_purchases
-   (id,account_id,workspace_id,pack_id,category,units,amount_minor,currency,kind,idempotency_key)
-   VALUES($1,$2,$3,$4,$5,$6,$7,$8,'AUTO',$1) RETURNING *`,[id,scope.accountId,scope.workspaceId,pack.id,category,
-   pack.units,pack.amount_minor,pack.currency])).rows[0];return {purchase,settings,sub};
+   (id,account_id,workspace_id,pack_id,category,units,amount_minor,currency,kind,idempotency_key,
+    provider_cost_budget_minor,conservative_cost_per_credit_minor,cost_model_key,cost_budget_source,approved_model_rate_ceiling)
+   VALUES($1,$2,$3,$4,$5,$6,$7,$8,'AUTO',$1,$9,$10,$11,$12,$13::jsonb) RETURNING *`,[id,scope.accountId,scope.workspaceId,pack.id,category,
+   pack.units,pack.amount_minor,pack.currency,pack.provider_cost_budget_minor,
+   pack.conservative_cost_per_credit_minor,pack.cost_model_key,pack.cost_budget_source,
+   JSON.stringify(pack.approved_model_rate_ceiling)])).rows[0];return {purchase,settings,sub};
  },{isolation:'SERIALIZABLE',retrySafe:true});
  if(!created)return {triggered:false};
  try{const intent=await (options.provider||stripe).createTopupPayment({purchaseId:created.purchase.id,accountId:scope.accountId,
@@ -108,6 +126,8 @@ async function receivePayment(client,event){
  await client.query(`INSERT INTO commercial_usage_grants(id,account_id,workspace_id,category,purchase_id,units,expires_at)
   VALUES($1,$2,$3,$4,$5,$6,now()+interval '12 months') ON CONFLICT(purchase_id) DO NOTHING`,
  [newId('grant'),purchase.account_id,purchase.workspace_id,purchase.category,id,purchase.units]);
+ const grant=(await client.query('SELECT * FROM commercial_usage_grants WHERE purchase_id=$1',[id])).rows[0];
+ await paidBudget.createGrantBudget(client,purchase,grant);
  await client.query("UPDATE commercial_usage_purchases SET status=CASE WHEN status='REFUNDED' THEN status ELSE 'PAID' END,paid_at=COALESCE(paid_at,now()),stripe_payment_intent_id=$2,stripe_session_id=COALESCE(stripe_session_id,$3) WHERE id=$1",
  [id,intent,session?object.id:null]);
  await client.query(`INSERT INTO commercial_revenue_events(id,account_id,source_id,kind,amount_minor,currency,occurred_at,detail)
@@ -142,6 +162,7 @@ async function reconcileAdjustments(client,purchase,grant){
  const revoke=requested;
  const hold=Math.min(Number(grant.units)-revoke,Math.ceil(Number(grant.units)*Number(disputes.pending)/Number(purchase.amount_minor)));
  await client.query('UPDATE commercial_usage_grants SET revoked_units=$2,dispute_hold_units=$3 WHERE id=$1',[grant.id,revoke,hold]);
+ await paidBudget.reconcileFunding(client,purchase,{...grant,revoked_units:revoke,dispute_hold_units:hold});
  await client.query("UPDATE commercial_usage_purchases SET status=$2 WHERE id=$1",[purchase.id,total>=Number(purchase.amount_minor)?'REFUNDED':'PAID']);
  if(requested>Number(grant.units)-consumed)await client.query(`INSERT INTO commercial_critical_warnings(id,account_id,fingerprint,code,detail)
  VALUES($1,$2,$3,'REFUNDED_SPENT_USAGE',$4::jsonb) ON CONFLICT(fingerprint) DO UPDATE SET detail=EXCLUDED.detail,status='OPEN'`,

@@ -32,6 +32,10 @@ async function measure(database,input,operation){const state=create(input);
  });
 }
 function middleware(database){return (req,res,next)=>{
+ // Liveness/readiness probes are shared control-plane checks, not customer
+ // workload. Persisting them would add DB writes to every probe and could
+ // itself make readiness fail when the measurement sink is unavailable.
+ if(req.path==='/healthz'||req.path==='/readyz')return next();
  const state=create({runtimeKind:'web',operation:req.method});let saved=false;
  storage.run(state,()=>{
   const done=()=>{if(saved)return;saved=true;

@@ -32,10 +32,8 @@
         </label>
         <label class="auth-field" for="activation-interval">
           <span>Billing</span>
-          <select id="activation-interval" name="interval" required>
-            <option value="monthly" <%= !lastSelection||lastSelection.interval!=='annual'?'selected':'' %>>Monthly</option>
-            <option value="annual" <%= lastSelection&&lastSelection.interval==='annual'?'selected':'' %>>Annual</option>
-          </select>
+          <input type="hidden" name="interval" value="monthly">
+          <span>Monthly</span>
         </label>
         <button class="pub-btn pub-btn--block" type="submit">Continue to secure checkout</button>
       </form>

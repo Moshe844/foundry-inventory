@@ -9,6 +9,7 @@ const jobs = require('../../src/operations/postgres-job-queue');
 const { PostgresSessionStore } = require('../../src/web/postgres-session-store');
 const { fork } = require('node:child_process');
 const path = require('node:path');
+const fs = require('node:fs');
 
 test('native PostgreSQL transactions and queue fencing', { timeout: 120000 }, async (context) => {
   const cluster = await startCluster();
@@ -18,16 +19,10 @@ test('native PostgreSQL transactions and queue fencing', { timeout: 120000 }, as
     await Promise.all([database.close(), second.close()]);
     cluster.stop();
   });
-  assert.deepEqual(await migratePostgres(database), ['000-business-schema.js', '001-runtime.sql',
-    '002-business-operations.sql', '003-runtime-sessions.sql', '004-legacy-synthetic-evidence.sql',
-    '005-complete-search-projections.sql', '006-assistant-runtime.sql', '007-job-event-order.sql',
-    '008-email-reply-outbox.sql', '009-customer-return-evidence.sql', '010-supplier-return-account.sql',
-    '011-provider-effects.sql','012-email-provider-effects.sql','013-payment-provider-effects.sql',
-    '014-payment-deposits-refunds.sql', '015-operational-scope.sql', '016-assistant-pricing-actions.sql',
-    '017-assistant-communication-actions.sql', '018-assistant-order-actions.sql',
-    '019-assistant-receiving-payment-actions.sql', '020-commercial-platform.sql', '021-review-commercial-packaging.sql',
-    '022-approved-commercial-positioning.sql', '023-commercial-control-system.sql',
-    '024-authentication-security.sql','025-commercial-wallet.sql']);
+  const expected=fs.readdirSync(path.join(__dirname,'../../src/db/postgres-migrations'))
+    .filter(name=>/^\d{3}-[a-z-]+\.(?:sql|js)$/.test(name)).sort();
+  assert.ok(expected.includes('040-commercial-capacity-window.sql'));
+  assert.deepEqual(await migratePostgres(database),expected);
   assert.deepEqual(await migratePostgres(second), []);
   await database.query(`INSERT INTO accounts(id, email, name, password_hash, created_at)
     VALUES ('account-one', 'one@example.test', 'One', 'test', '2026-09-23T00:00:00.000Z'),

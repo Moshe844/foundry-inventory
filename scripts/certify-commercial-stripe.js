@@ -13,13 +13,28 @@ const {createPostgresApp}=require('../src/postgres-app');const {chromium}=requir
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function until(fn,label,timeout=60000){const deadline=Date.now()+timeout;while(Date.now()<deadline){const result=await fn();if(result)return result;await delay(500);}throw Error(`Timed out: ${label}`);}
 async function main(){
+ const candidate=process.env.STOCKCHIEF_CERTIFICATION_LAUNCH_CANDIDATE==='true';
+ const aiPackId=candidate?'ai-500-v2':'ai-500-v1';
+ const aiPackAmount=candidate?4900:100;
+ const aiPackUnits=candidate?500:10;
+ const starterIncluded=candidate?650:500;
  const secret=process.env.STOCKCHIEF_BILLING_STRIPE_SECRET_KEY;
  if(!/^(sk|rk|rkcs)_test_/.test(secret||'')||process.env.NODE_ENV!=='test')throw Error('Explicit NODE_ENV=test and a TEST sandbox key are required');
  const cli=process.env.STOCKCHIEF_STRIPE_CLI;if(!cli)throw Error('STOCKCHIEF_STRIPE_CLI is required for genuine signed webhook delivery');
  const cliConfig=process.env.STOCKCHIEF_STRIPE_CLI_CONFIG;
  const providerOptions=cliConfig?{fetch:require('../tests/helpers/stripe-cli-transport').createStripeCliTransport({cli,config:cliConfig})}:{};
- const call=(route,values,method=values?'POST':'GET')=>stripe.__internal.call(route,{...providerOptions,values,method,secretKey:secret,idempotencyKey:method==='POST'?`cert:${runId}:${crypto.randomUUID()}`:undefined});
- const runId=`commercial-${Date.now()}`;const report={runId,startedAt:new Date().toISOString(),liveMode:false,tests:[],blocked:[],objects:{},cleanup:[]};
+ const call=async(route,values,method=values?'POST':'GET')=>{
+  const idempotencyKey=method==='POST'?`cert:${runId}:${crypto.randomUUID()}`:undefined;
+  for(let attempt=0;attempt<4;attempt++)try{return await stripe.__internal.call(route,
+    {...providerOptions,values,method,secretKey:secret,idempotencyKey});}
+   catch(error){if(!/another API request or Stripe process is currently accessing it/i.test(String(error.message))||attempt===3)throw error;
+    await delay(500*(attempt+1));}
+ };
+ const runId=`commercial-${Date.now()}`;const report={runId,startedAt:new Date().toISOString(),liveMode:false,
+  launchCandidate:candidate,configuration:candidate?{plans:{starter:{usd:199,ai:650,connected:2000},
+   growth:{usd:499,ai:2500,connected:20000},pro:{usd:999,ai:8500,connected:70000}},
+   packs:{ai500:{usd:49,credits:500,providerBudgetUsd:14.70},connected10000:{usd:79,operations:10000}}}:null,
+  tests:[],blocked:[],objects:{},cleanup:[]};
  const check=(name,detail={})=>{report.tests.push({name,passed:true,...detail});console.log('PASS',name,JSON.stringify(detail));};
  if(secret.startsWith('rkcs_test_')&&!cliConfig){
   // A newly provisioned, unclaimed CLI sandbox cannot list webhook endpoints.
@@ -63,12 +78,18 @@ async function main(){
   listener.stdout.on('data',consume);listener.stderr.on('data',consume);
   await until(()=>process.env.STOCKCHIEF_BILLING_STRIPE_WEBHOOK_SECRET,'Stripe CLI signing secret: '+listenerFailure,30000);
   product=await call('/products',{name:`StockChief isolated ${runId}`});report.objects.product=product.id;
-  const prices={};for(const [plan,amount] of [['starter',100],['growth',200],['pro',300]]){
+  const prices={};for(const [plan,amount] of candidate?[['starter',19900],['growth',49900],['pro',99900]]:[['starter',100],['growth',200],['pro',300]]){
    const price=await call('/prices',{product:product.id,currency:'usd',unit_amount:amount,'recurring[interval]':'month'});prices[plan]=price.id;
    await db.query("UPDATE commercial_plans SET stripe_monthly_price_id=$2,monthly_amount_minor=$3,packaging_status='APPROVED',trial_days=0 WHERE id=$1",[plan,price.id,amount]);
   }
-  const packPrice=await call('/prices',{product:product.id,currency:'usd',unit_amount:100});
-  await db.query("UPDATE commercial_usage_packs SET stripe_price_id=$1,amount_minor=100,units=10 WHERE id='ai-500-v1'",[packPrice.id]);
+  const packPrice=await call('/prices',{product:product.id,currency:'usd',unit_amount:aiPackAmount});
+  if(candidate){await db.query("UPDATE commercial_usage_packs SET stripe_price_id=$1 WHERE id='ai-500-v2'",[packPrice.id]);
+   const connectedPrice=await call('/prices',{product:product.id,currency:'usd',unit_amount:7900});
+   await db.query("UPDATE commercial_usage_packs SET stripe_price_id=$1 WHERE id='ops-10000-v2'",[connectedPrice.id]);
+   if(process.env.STOCKCHIEF_CERTIFICATION_LARGE_PACKS==='true')for(const [id,amount] of [['ai-2500-v2',23900],['ops-50000-v2',34900]]){
+    const price=await call('/prices',{product:product.id,currency:'usd',unit_amount:amount});
+    await db.query('UPDATE commercial_usage_packs SET stripe_price_id=$2 WHERE id=$1',[id,price.id]);}}
+  else await db.query("UPDATE commercial_usage_packs SET stripe_price_id=$1,amount_minor=100,units=10 WHERE id='ai-500-v1'",[packPrice.id]);
   if(process.env.STOCKCHIEF_CERTIFICATION_EXTENDED_ONLY==='true'){
    held=false;
    await require('./commercial-stripe-extended').run({call,db,product,runId,until,check,deliveries,forward,providerOptions,extraCustomers,extraClocks});
@@ -103,7 +124,7 @@ async function main(){
   check('Concurrent duplicate signed webhook is idempotent',{eventId:duplicate.id});
   await assert.rejects(()=>release.assertCheckoutOpen(db),/closed/);check('Public checkout remains locked');
   const options={testMode:true,providerOptions};held=true;
-  const pack=await addons.beginPurchase(db,scope,{packId:'ai-500-v1',idempotencyKey:'real-buy-more',origin},options);
+  const pack=await addons.beginPurchase(db,scope,{packId:aiPackId,idempotencyKey:'real-buy-more',origin},options);
   report.objects.packCheckout=pack.purchase.id;
   assert.equal(Number((await db.query('SELECT count(*) FROM commercial_usage_grants')).rows[0].count),0);
   check('Real Buy More Checkout Session created without premature grant',{purchaseId:pack.purchase.id});
@@ -137,23 +158,36 @@ async function main(){
   const packPaid=deliveries.find(x=>x.type==='checkout.session.completed'&&x.event.data.object.metadata?.stockchief_purchase_id===pack.purchase.id);
   await Promise.all(Array.from({length:4},()=>forward(packPaid)));
   assert.equal(Number((await db.query('SELECT count(*) FROM commercial_usage_grants')).rows[0].count),1);
+  if(candidate){const funded=(await db.query(`SELECT b.budget_minor,b.pack_units FROM commercial_model_grant_budgets b
+   WHERE b.purchase_id=$1`,[pack.purchase.id])).rows[0];assert.equal(Number(funded?.budget_minor),1470);
+   assert.equal(Number(funded.pack_units),500);}
   check('Real browser Buy More payment grants once only after signed webhook',{eventId:packPaid.id});
+  if(candidate){held=true;const connected=await addons.beginPurchase(db,scope,{packId:'ops-10000-v2',idempotencyKey:'real-connected-buy-more',origin},options);
+   await payCheckout(connected.url);
+   await until(()=>queue.some(x=>x.type==='checkout.session.completed'&&x.event.data.object.metadata?.stockchief_purchase_id===connected.purchase.id),'Connected Buy More signed checkout event');
+   await flush();await until(async()=>Number((await db.query('SELECT count(*) FROM commercial_usage_grants WHERE purchase_id=$1',[connected.purchase.id])).rows[0].count)===1,'Connected grant');
+   const connectedPaid=deliveries.find(x=>x.type==='checkout.session.completed'&&x.event.data.object.metadata?.stockchief_purchase_id===connected.purchase.id);
+   await Promise.all([forward(connectedPaid),forward(connectedPaid)]);
+   assert.equal(Number((await db.query('SELECT count(*) FROM commercial_usage_grants WHERE purchase_id=$1',[connected.purchase.id])).rows[0].count),1);
+   check('Real Connected Operations Buy More grants once after signed payment',{purchaseId:connected.purchase.id});}
   held=true;
   // Test the exact off-session payment path with a real card and genuine webhooks.
-  await usage.recordUsage(db,scope,{meter:'ai_work_credits',units:510,idempotencyKey:'real-topup-exhaustion'});
-  await addons.saveTopup(db,scope,{enabled:true,explicitConsent:true,category:'ai_work_credits',packId:'ai-500-v1',monthlyCapMinor:100},options);
+  await usage.recordUsage(db,scope,{meter:'ai_work_credits',units:starterIncluded+aiPackUnits-10,idempotencyKey:'real-topup-exhaustion'});
+  await addons.saveTopup(db,scope,{enabled:true,explicitConsent:true,category:'ai_work_credits',packId:aiPackId,monthlyCapMinor:aiPackAmount},options);
   const topups=await Promise.all(Array.from({length:4},()=>addons.runTopup(db,scope,'ai_work_credits',options)));
   assert.equal(topups.filter(x=>x.triggered).length,1);
-  assert.equal(Number((await db.query('SELECT count(*) FROM commercial_usage_grants')).rows[0].count),1);
+  assert.equal(Number((await db.query("SELECT count(*) FROM commercial_usage_grants WHERE category='ai_work_credits'")).rows[0].count),1);
   await until(()=>queue.some(x=>x.type==='payment_intent.succeeded'&&x.event.data.object.metadata?.stockchief_purchase_id),'top-up signed payment event');
-  await flush();await until(async()=>Number((await db.query('SELECT count(*) FROM commercial_usage_grants')).rows[0].count)===2,'exactly one top-up grant');
+  await flush();await until(async()=>Number((await db.query("SELECT count(*) FROM commercial_usage_grants WHERE category='ai_work_credits'")).rows[0].count)===2,'exactly one top-up grant');
   await usage.recordUsage(db,scope,{meter:'ai_work_credits',units:10,idempotencyKey:'consume-real-topup'});
   assert.equal((await addons.runTopup(db,scope,'ai_work_credits',options)).triggered,false);
   check('Real auto-top-up payment, exactly-once grant, concurrency and monthly cap');
+  const purchasedBeforePlanChange=(await usage.meterState(db,scope,'ai_work_credits')).purchasedRemaining;
   held=true;const change=await commercial.requestSubscriptionChange(db,business.accountId,{planId:'pro',interval:'monthly',idempotencyKey:'real-upgrade'},options);
   assert.equal((await usage.subscriptionFor(db,business.accountId)).plan_id,'starter');
   await until(()=>queue.some(x=>x.type==='customer.subscription.updated'&&x.event.data.object.items.data[0].price.id===prices.pro),'upgrade signed event');
   await flush();await until(async()=>(await usage.subscriptionFor(db,business.accountId)).plan_id==='pro','upgrade activation');
+  assert.equal((await usage.meterState(db,scope,'ai_work_credits')).purchasedRemaining,purchasedBeforePlanChange);
   check('Real prorated upgrade activates through webhook',{changeId:change.changeId});
   const down=await commercial.requestSubscriptionChange(db,business.accountId,{planId:'starter',interval:'monthly',idempotencyKey:'real-downgrade'},options);
   assert.equal((await usage.subscriptionFor(db,business.accountId)).plan_id,'pro');
@@ -161,6 +195,7 @@ async function main(){
   if(clock){await call(`/test_helpers/test_clocks/${clock.id}/advance`,{frozen_time:periodEnd+3660});
    await until(async()=> (await call(`/test_helpers/test_clocks/${clock.id}`)).status==='ready','Stripe clock advance',90000);
    await until(async()=> (await usage.subscriptionFor(db,business.accountId)).plan_id==='starter','scheduled downgrade event',90000);
+   assert.equal((await usage.meterState(db,scope,'ai_work_credits')).purchasedRemaining,purchasedBeforePlanChange);
    check('Real scheduled downgrade executes at renewal',{changeId:down.changeId});
    async function collectRenewal(expectSuccess){
     const current=await stripe.retrieveSubscription(sub.id,providerOptions);
@@ -178,7 +213,7 @@ async function main(){
    const renewedInvoice=await collectRenewal(true);
    await until(()=>deliveries.some(x=>x.type==='invoice.paid'&&x.event.data.object.id===renewedInvoice&&x.status===200),'signed renewal invoice');
    const resetUsage=await usage.meterState(db,scope,'ai_work_credits',{now:new Date((periodEnd+3660)*1000)});
-   assert.equal(resetUsage.includedRemaining,500);
+   assert.equal(resetUsage.includedRemaining,starterIncluded);
    check('Real renewal payment grants a fresh included period',{invoiceId:renewedInvoice});
    const declinedRenewal=await call('/payment_methods/pm_card_chargeCustomerFail/attach',{customer:customer.id});
    await call(`/subscriptions/${sub.id}`,{default_payment_method:declinedRenewal.id});
@@ -226,7 +261,7 @@ async function main(){
   assert.match(await page.locator('body').innerText(),/Growth/);
   assert.equal(Number((await db.query('SELECT count(*) FROM workspaces WHERE owner_account_id=$1',[signup.id])).rows[0].count),1);
   await assert.rejects(()=>addons.beginPurchase(db,{accountId:signup.id,workspaceId:business.workspaceId},
-   {packId:'ai-500-v1',idempotencyKey:'foreign-purchase',origin},options),/another commercial account/);
+   {packId:aiPackId,idempotencyKey:'foreign-purchase',origin},options),/another commercial account/);
   check('Real browser pricing, signup, verified email handoff, Stripe payment and entitlement',{subscriptionId:signupSub.stripe_subscription_id,externalEmailDeliveryTested:false});
   check('Tenant isolation blocks a foreign inventory purchase');
   const signupRemote=await stripe.retrieveSubscription(signupSub.stripe_subscription_id,providerOptions);
@@ -247,33 +282,66 @@ async function main(){
   // after ownership exists, then require every delivery to have been accepted.
   await flush();assert.ok(deliveries.every(x=>x.status===200));
   check('Out-of-order genuine webhook retries reconcile after subscription ownership');
+  if(candidate&&process.env.STOCKCHIEF_CERTIFICATION_LARGE_PACKS==='true')for(const [id,expectedBudget] of
+   [['ai-2500-v2',7170],['ops-50000-v2',null]]){
+   const larger=await addons.beginPurchase(db,scope,{packId:id,idempotencyKey:`large-${id}`,origin},options);
+   await payCheckout(larger.url);
+   await until(async()=>Number((await db.query('SELECT count(*) AS n FROM commercial_usage_grants WHERE purchase_id=$1',
+    [larger.purchase.id])).rows[0].n)===1,`signed ${id} grant`);
+   const signed=deliveries.find(x=>x.type==='checkout.session.completed'&&
+    x.event.data.object.metadata?.stockchief_purchase_id===larger.purchase.id&&x.status===200);
+   assert.ok(signed);await Promise.all([forward(signed),forward(signed)]);
+   assert.equal(Number((await db.query('SELECT count(*) AS n FROM commercial_usage_grants WHERE purchase_id=$1',
+    [larger.purchase.id])).rows[0].n),1);
+   if(expectedBudget!==null)assert.equal(Number((await db.query('SELECT budget_minor FROM commercial_model_grant_budgets WHERE purchase_id=$1',
+    [larger.purchase.id])).rows[0]?.budget_minor),expectedBudget);
+   check(`Real ${id} hosted Checkout, signed grant and duplicate replay`,{purchaseId:larger.purchase.id});
+  }
   if(process.env.STOCKCHIEF_CERTIFICATION_EDGE_CASES==='true'){
    const signupScope={accountId:signup.id,workspaceId:(await db.query('SELECT id FROM workspaces WHERE owner_account_id=$1',[signup.id])).rows[0].id};
    const available=await usage.meterState(db,signupScope,'ai_work_credits');
    await usage.recordUsage(db,signupScope,{meter:'ai_work_credits',units:available.remaining,idempotencyKey:'authentication-topup-exhaustion'});
    const requiresAuth=await call('/payment_methods/pm_card_authenticationRequired/attach',{customer:signupSub.stripe_customer_id});
    await call(`/subscriptions/${signupSub.stripe_subscription_id}`,{default_payment_method:requiresAuth.id});
-   await addons.saveTopup(db,signupScope,{enabled:true,explicitConsent:true,category:'ai_work_credits',packId:'ai-500-v1',monthlyCapMinor:100},options);
+   await addons.saveTopup(db,signupScope,{enabled:true,explicitConsent:true,category:'ai_work_credits',packId:aiPackId,monthlyCapMinor:aiPackAmount},options);
    const authTopup=await addons.runTopup(db,signupScope,'ai_work_credits',options);assert.equal(authTopup.triggered,true);
    await until(async()=>['REVIEW','FAILED'].includes((await db.query("SELECT status FROM commercial_usage_purchases WHERE account_id=$1 AND kind='AUTO'",[signup.id])).rows[0]?.status),'authentication-required top-up retained');
    assert.equal(Number((await db.query('SELECT count(*) FROM commercial_usage_grants WHERE account_id=$1',[signup.id])).rows[0].count),0);
    assert.equal((await addons.runTopup(db,signupScope,'ai_work_credits',options)).triggered,false);
    await call(`/subscriptions/${signupSub.stripe_subscription_id}`,{default_payment_method:savedMethod});
    check('Real authentication-required auto-top-up grants no usage and cannot repeatedly charge');
+   if(candidate){const partiallyUsed=await addons.beginPurchase(db,signupScope,{packId:aiPackId,
+     idempotencyKey:'partial-refund-after-consumption',origin},options);
+    await payCheckout(partiallyUsed.url);
+    const funded=await until(async()=>{const row=(await db.query(`SELECT p.*,g.id AS grant_id FROM commercial_usage_purchases p
+     JOIN commercial_usage_grants g ON g.purchase_id=p.id WHERE p.id=$1`,[partiallyUsed.purchase.id])).rows[0];
+     return row?.stripe_payment_intent_id?row:null;},'signed partial-refund pack funding');
+    await usage.recordUsage(db,signupScope,{meter:'ai_work_credits',units:100,idempotencyKey:'real-partially-used-pack'});
+    const partial=await call('/refunds',{payment_intent:funded.stripe_payment_intent_id,amount:2450});
+    await until(async()=>{const row=(await db.query('SELECT revoked_units FROM commercial_usage_grants WHERE id=$1',[funded.grant_id])).rows[0];
+     return Number(row?.revoked_units)===250;},'signed partial refund after consumption');
+    const signed=deliveries.find(x=>x.type.startsWith('refund.')&&x.event.data.object.id===partial.id&&x.status===200);
+    assert.ok(signed);await Promise.all([forward(signed),forward(signed)]);
+    const funding=(await db.query(`SELECT b.budget_minor,g.revoked_units,g.units FROM commercial_model_grant_budgets b
+     JOIN commercial_usage_grants g ON g.id=b.grant_id WHERE b.grant_id=$1`,[funded.grant_id])).rows[0];
+    assert.equal(Number(funding.budget_minor)*(Number(funding.units)-Number(funding.revoked_units))/Number(funding.units),735);
+    assert.equal((await usage.meterState(db,signupScope,'ai_work_credits')).purchasedRemaining,150);
+    check('Real partial refund after pack consumption revokes unused credits and proportional dollar funding once',{refundId:partial.id});}
    for(const outcome of ['won','lost']){
-    const disputedPack=await addons.beginPurchase(db,signupScope,{packId:'ai-500-v1',idempotencyKey:`dispute-${outcome}`,origin},options);
+    const disputedPack=await addons.beginPurchase(db,signupScope,{packId:aiPackId,idempotencyKey:`dispute-${outcome}`,origin},options);
     await payCheckout(disputedPack.url,'4000000000000259');
     const hold=await until(async()=>{const row=(await db.query(`SELECT g.*,d.id AS dispute_id FROM commercial_usage_grants g
      JOIN commercial_usage_disputes d ON d.purchase_id=g.purchase_id WHERE g.purchase_id=$1`,[disputedPack.purchase.id])).rows[0];
-     return row&&Number(row.dispute_hold_units)===10?row:null;},'signed dispute holds purchased funding',90000);
+     return row&&Number(row.dispute_hold_units)===aiPackUnits?row:null;},'signed dispute holds purchased funding',90000);
     await call(`/disputes/${hold.dispute_id}`,{'evidence[uncategorized_text]':outcome==='won'?'winning_evidence':'losing_evidence',submit:true});
     await until(async()=>{const row=(await db.query(`SELECT g.*,d.status AS dispute_status FROM commercial_usage_grants g
      JOIN commercial_usage_disputes d ON d.purchase_id=g.purchase_id WHERE g.id=$1`,[hold.id])).rows[0];
-     return row.dispute_status===outcome&&Number(row.dispute_hold_units)===0&&Number(row.revoked_units)===(outcome==='lost'?10:0);},`signed ${outcome} dispute funding adjustment`,90000);
+     return row.dispute_status===outcome&&Number(row.dispute_hold_units)===0&&Number(row.revoked_units)===(outcome==='lost'?aiPackUnits:0);},`signed ${outcome} dispute funding adjustment`,90000);
     check(`Real ${outcome} dispute adjusts purchased funding through signed events`,{disputeId:hold.dispute_id});
    }
-   for(const [outcome,card] of [['failed','4000000000005126'],['succeeded','4000000000007726']]){
-    const asyncPack=await addons.beginPurchase(db,signupScope,{packId:'ai-500-v1',idempotencyKey:`async-refund-${outcome}`,origin},options);
+   for(const [outcome,card] of process.env.STOCKCHIEF_CERTIFICATION_ASYNC_REFUNDS==='false'?[]:
+    [['failed','4000000000005126'],['succeeded','4000000000007726']]){
+    const asyncPack=await addons.beginPurchase(db,signupScope,{packId:aiPackId,idempotencyKey:`async-refund-${outcome}`,origin},options);
     await payCheckout(asyncPack.url,card);
     const funded=await until(async()=>{const row=(await db.query('SELECT * FROM commercial_usage_purchases WHERE id=$1',[asyncPack.purchase.id])).rows[0];
       return row.status==='PAID'?row:null;},'asynchronous-refund pack funding');
@@ -287,9 +355,9 @@ async function main(){
     for(const entry of [...genuine].reverse())await forward(entry);
     await Promise.all(genuine.flatMap(entry=>[forward(entry),forward(entry)]));
     const adjusted=(await db.query('SELECT revoked_units FROM commercial_usage_grants WHERE purchase_id=$1',[funded.id])).rows[0];
-    assert.equal(Number(adjusted.revoked_units),outcome==='failed'?0:10);
+    assert.equal(Number(adjusted.revoked_units),outcome==='failed'?0:aiPackUnits);
     const ledger=(await db.query("SELECT count(*) AS n,COALESCE(SUM(amount_minor),0) AS total FROM commercial_revenue_events WHERE detail->>'refundId'=$1",[asynchronous.id])).rows[0];
-    assert.equal(Number(ledger.total),outcome==='failed'?0:-100);
+    assert.equal(Number(ledger.total),outcome==='failed'?0:-aiPackAmount);
     assert.equal(Number(ledger.n),outcome==='failed'?2:1);
     check(`Real asynchronous refund ${outcome} conserves funding and cash across reversed duplicate signed deliveries`,{refundId:asynchronous.id,ledgerRows:Number(ledger.n)});
    }
@@ -320,6 +388,7 @@ async function main(){
   report.deliveries=deliveries.map(x=>({id:x.id,type:x.type,status:x.status}));
   report.revenue=(await db.query('SELECT source_id,kind,amount_minor,currency,detail FROM commercial_revenue_events ORDER BY occurred_at')).rows;
   report.criticalWarnings=(await db.query("SELECT code,count(*) FROM commercial_critical_warnings WHERE status='OPEN' GROUP BY code")).rows;
+  report.missingCostRateDetails=(await db.query("SELECT detail FROM commercial_critical_warnings WHERE status='OPEN' AND code='MISSING_COST_RATE'")).rows.map(row=>row.detail);
   report.passed=true;report.complete=report.blocked.length===0;
  }catch(error){report.passed=false;report.error=error.message.replace(/(?:sk_|rk_|rkcs_|whsec_)[^\s'"]+/g,'[redacted]');report.deliveries=deliveries.map(x=>({id:x.id,type:x.type,status:x.status,error:x.response?.error?.message}));
   if(browser){const page=browser.contexts()[0]?.pages()[0];if(page){await page.screenshot({path:'data/commercial-stripe-browser-failure.png',fullPage:true});

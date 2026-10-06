@@ -23,11 +23,38 @@ test('zero-cash and customer-credit invoice settlement preserves signed ownershi
  assert.equal(rows.length,1);assert.equal(Number(rows[0].amount_minor),0);assert.equal(rows[0].detail.stripeCashVerified,true);
  assert.equal(rows[0].detail.customerBalanceCreditMinor,1000);
  assert.equal(Number((await db.query("SELECT count(*) FROM stockchief_runtime.jobs WHERE kind='commercial.stripe-invoice-sync'")).rows[0].count),1);
- const ambiguous={...invoice,id:'in_tax_credit',total_taxes:[{amount:100}]};
- await commercial.handleBillingEvent(db,{...event,id:'evt_tax_credit',data:{object:ambiguous}});
- assert.equal((await financials.syncInvoice(db,{payload:{...job.payload,invoiceId:ambiguous.id}},
-  {provider:{...provider,retrieveInvoice:async()=>ambiguous}})).verified,false);
- const amount=(await db.query('SELECT amount_minor FROM commercial_revenue_events WHERE source_id=$1',[`invoice:${ambiguous.id}`])).rows[0].amount_minor;
- assert.equal(Number(amount),0);
- assert.ok((await db.query("SELECT 1 FROM commercial_critical_warnings WHERE code='UNVERIFIED_STRIPE_INVOICE_CASH' AND status='OPEN'")).rows.length);
+ const taxCredit={...invoice,id:'in_tax_credit',total_taxes:[{amount:100}],starting_balance:-300,
+  amount_due:700,amount_paid:700};
+ await commercial.handleBillingEvent(db,{...event,id:'evt_tax_credit',data:{object:taxCredit}});
+ const taxProvider={...provider,retrieveInvoice:async()=>taxCredit,
+  listInvoicePayments:async()=>[{id:'inpay_tax',status:'paid',invoice:taxCredit.id,currency:'usd',amount_paid:700,
+   payment:{type:'payment_intent',payment_intent:'pi_tax'}}],
+  retrievePaymentIntent:async()=>({id:'pi_tax',status:'succeeded',customer:'cus_credit',currency:'usd',amount_received:700})};
+ assert.equal((await financials.syncInvoice(db,{payload:{...job.payload,invoiceId:taxCredit.id}},
+  {provider:taxProvider})).verified,true);
+ const taxReceipt=(await db.query('SELECT amount_minor,detail FROM commercial_revenue_events WHERE source_id=$1',
+  [`invoice:${taxCredit.id}`])).rows[0];
+ assert.equal(Number(taxReceipt.amount_minor),630);assert.equal(taxReceipt.detail.cashTaxMinor,70);
+ for(const [suffix,patch,payment] of [
+  ['carried_debit',{starting_balance:100,amount_due:1100,amount_paid:1100},1100],
+  ['overpaid',{starting_balance:0,amount_due:1000,amount_paid:1000,amount_overpaid:100},1100],
+ ]){
+  const candidate={...invoice,...patch,id:`in_${suffix}`};
+  await commercial.handleBillingEvent(db,{...event,id:`evt_${suffix}`,data:{object:candidate}});
+  const paymentId=`inpay_${suffix}`;const intentId=`pi_${suffix}`;
+  const verifiedProvider={retrieveInvoice:async()=>candidate,
+   listInvoicePayments:async()=>[{id:paymentId,status:'paid',invoice:candidate.id,currency:'usd',amount_paid:payment,
+    payment:{type:'payment_intent',payment_intent:intentId}}],
+   retrievePaymentIntent:async()=>({id:intentId,status:'succeeded',customer:'cus_credit',currency:'usd',amount_received:payment}),
+   listCustomerBalanceTransactions:async()=>[{id:'cbtxn_overpaid',type:'invoice_overpaid',amount:-100,
+    currency:'usd',customer:'cus_credit',invoice:candidate.id}]};
+  assert.equal((await financials.syncInvoice(db,{payload:{...job.payload,invoiceId:candidate.id}},
+   {provider:verifiedProvider})).verified,true);
+  const receipt=(await db.query('SELECT amount_minor,detail FROM commercial_revenue_events WHERE source_id=$1',
+   [`invoice:${candidate.id}`])).rows[0];
+  assert.equal(Number(receipt.amount_minor),1000,`${suffix} must exclude non-current-invoice cash`);
+  assert.equal(receipt.detail.stripeCashVerified,true);
+  assert.equal(receipt.detail.currentInvoiceCashMinor+receipt.detail.carriedDebitCollectionMinor+
+   receipt.detail.overpaymentLiabilityMinor,payment);
+ }
 });
