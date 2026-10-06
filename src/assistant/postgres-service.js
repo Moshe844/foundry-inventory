@@ -24,16 +24,18 @@ const ACTIONS = ['receive','issue','transfer','adjust','create_item','create_loc
   'send_email','create_sales_order','create_purchase_order','receive_purchase_order','record_supplier_payment'];
 const PLAN_PART_SCHEMA = {
   type:'object',additionalProperties:false,
-  required:['requestText','clarifyingQuestion','intent','view','action','search','sku','location','fromLocation','toLocation','quantity','countedQuantity',
+  required:['requestText','continuesPrevious','clarifyingQuestion','intent','view','action','search','sku','skuReference','location','fromLocation','toLocation','quantity','countedQuantity',
     'amount','currency','reason','reference','recipient','recipientKind','subject','body','mailbox','customer','supplier',
     'deliveryMethod','shipToAddress','neededBy','purchaseOrder','supplierBill','receiptReference','paymentMethod','paymentDate'],
   properties:{
     requestText:{type:'string',maxLength:2000},
+    continuesPrevious:{type:'boolean'},
     clarifyingQuestion:{type:'string',maxLength:300},
     intent:{type:'string',enum:['lookup','action','instruction','clarify']},
     view:{anyOf:[{type:'string',enum:VIEWS},{type:'null'}]},
     action:{anyOf:[{type:'string',enum:ACTIONS},{type:'null'}]},
     search:{type:['string','null'],maxLength:160},sku:{type:['string','null'],maxLength:160},
+    skuReference:{type:'string',enum:['','stocked']},
     location:{type:['string','null'],maxLength:160},fromLocation:{type:['string','null'],maxLength:160},
     toLocation:{type:['string','null'],maxLength:160},quantity:{type:['integer','null'],minimum:0},
     countedQuantity:{type:['integer','null'],minimum:0},reason:{type:['string','null'],maxLength:120},
@@ -52,12 +54,20 @@ const PLAN_PART_SCHEMA = {
 const PLAN_SCHEMA={type:'object',additionalProperties:false,required:['parts'],properties:{
   parts:{type:'array',minItems:1,maxItems:8,items:PLAN_PART_SCHEMA},
 }};
+const FOLLOWUP_SCHEMA={type:'object',additionalProperties:false,
+  required:['disposition','value','currency'],properties:{
+    disposition:{type:'string',enum:['answer','unknown','new_request']},
+    value:{type:'string',maxLength:500},currency:{type:'string',maxLength:3},
+  }};
 const SYSTEM=`Decompose and extract the person's complete message into one or more requests to an inventory operations system. Return only the schema.
 Preserve every distinct question, instruction and requested action. Never silently omit a requirement. Each parts entry must contain
 one request and requestText must be the exact portion of the person's message represented by that entry. Keep dependent wording with
 the request it qualifies. Use one part when the message contains only one request and no more than eight parts total.
+The input may include context with the previous unanswered user request and StockChief's clarification. Resolve conversational replies before classifying intent: a short name, SKU, location, quantity, price, date, or yes/no that directly answers the clarification is a continuation of the previous task, not a new lookup. In that case set continuesPrevious=true and make requestText a complete restatement of the combined request, INCLUDING the new message's detail. Populate the corresponding schema field from that detail; never drop the new answer. Carry forward only details actually supplied in the previous request or new message. If the new message is a clearly independent request, set continuesPrevious=false, ignore context, and use the new message alone. Without context, always set continuesPrevious=false.
 Use lookup when the person asks what is true. Use action only when they want StockChief to create or change a record.
 If the person asks StockChief to carry out a supported action but leaves out a recipient, product, quantity, or other detail, still choose that action and leave the missing field empty; StockChief will ask the precise follow-up before preparing anything.
+If the person says they need more stock or asks StockChief to get more, use create_purchase_order to prepare a draft purchase order, even if they do not say "purchase order". Do not treat a need for future stock as goods physically received, and never increase on-hand stock for this request.
+If they refer to whichever product is currently in stock without naming it, use skuReference="stocked" and sku=null. StockChief will inspect current inventory and resolve it only if exactly one SKU has positive on-hand quantity. Use skuReference="" when no such reference was made. Do not ask for the SKU before the inventory check.
 Use instruction for a lasting rule, preference, threshold, supplier term, stock protection rule, or bounded authority
 that should continue applying in the future. One-time work is action, not instruction.
 Never invent a product, SKU, location, quantity, reason or reference. Missing values are null.
@@ -84,7 +94,7 @@ For send_email, recipient is only the named recipient, recipientKind is customer
 subject and body are only words explicitly supplied, and mailbox is only an explicitly named connected mailbox.
 Use create_sales_order only when the person asks to prepare or record a customer order. Extract customer, SKU, quantity,
 deliveryMethod, shipToAddress and neededBy only when stated. Use SHIP, PICKUP or OWN_DELIVERY for deliveryMethod.
-Use create_purchase_order only when the person asks to buy stock or prepare a supplier purchase order. Extract supplier,
+Use create_purchase_order when the person asks to buy or obtain more stock, or prepare a supplier purchase order. Extract supplier,
 SKU, quantity, destination inventory location, amount and currency only when stated.
 Use receive_purchase_order only when the person says physical goods arrived against a purchase order. Extract the exact
 purchaseOrder number, SKU, quantity, receiving location and receiptReference such as a delivery note only when stated.
@@ -263,7 +273,7 @@ function cleanPlan(raw,message) {
     timeframe:requestedTimeframe||'all_time',
     clarifyingQuestion:invalidLookup?'What business information should I check?':trimOrNull(source.clarifyingQuestion),
     action:source.intent==='clarify'?null:ACTIONS.includes(source.action)?source.action:null,
-    search:trimOrNull(source.search),sku:trimOrNull(source.sku),
+    search:trimOrNull(source.search),sku:trimOrNull(source.sku),skuReference:source.skuReference==='stocked'?'stocked':'',
     location:trimOrNull(source.location),fromLocation:trimOrNull(source.fromLocation),toLocation:trimOrNull(source.toLocation),
     quantity:Number.isSafeInteger(source.quantity)?source.quantity:null,
     countedQuantity:Number.isSafeInteger(source.countedQuantity)?source.countedQuantity:null,
@@ -294,21 +304,65 @@ function explicitTimeframe(message){
 
 async function planMany(message,options={}) {
   const provider=options.provider || (config.ai.configured?createProviderUnobserved(config.ai.provider,config.ai.tier('fast')):null);
+  let context=options.context||null;
+  if(provider&&options.context?.awaitingField&&options.context?.previousIntent?.action){
+    const continued=await planClarificationReply(message,options.context,options.followupProvider||provider);
+    if(continued?.newRequest)context=null;
+    else if(continued)return [continued];
+  }
   if(!provider)return splitRequestTexts(message).flatMap((requestText)=>financialBalancePlans(requestText)
     .concat(financialBalanceViews(requestText).length?[]:[{requestText,intent:cleanPlan(null,requestText)}])).slice(0,8);
   try {
-    const response=await provider.complete({system:SYSTEM,prompt:JSON.stringify({message}),schema:PLAN_SCHEMA,
+    const response=await provider.complete({system:SYSTEM,prompt:JSON.stringify({message,
+      ...(context?{context}:{})}),schema:PLAN_SCHEMA,
       schemaName:'stockchief_postgres_request'});
     if(options.onUsage&&response.usage)await options.onUsage(response.usage,{schemaName:'stockchief_postgres_request'});
     const rawParts=Array.isArray(response.data?.parts)&&response.data.parts.length?response.data.parts:[response.data];
-    return rawParts.slice(0,8).flatMap((raw)=>{const requestText=trimOrNull(raw?.requestText)||message;
+    return rawParts.slice(0,8).flatMap((raw)=>{const continued=Boolean(context&&raw?.continuesPrevious);
+      const requestText=continued?(trimOrNull(raw?.requestText)||message)
+        :rawParts.length===1?message:(trimOrNull(raw?.requestText)||message);
       const intent=cleanPlan(raw,requestText);const balances=intent.intent==='lookup'?financialBalancePlans(requestText,intent):[];
-      return balances.length?balances:[{requestText,intent}];}).slice(0,8);
+      return balances.length?balances.map((entry)=>({...entry,continued})):[{requestText,intent,continued}];}).slice(0,8);
   } catch(error) {
     if(error.usage&&options.onUsage)await options.onUsage(error.usage,{schemaName:'stockchief_postgres_request',failed:true});
     if(['entitlement_required','validation_error'].includes(error.code))throw error;
     return [{requestText:message,intent:{intent:'clarify',view:null,action:null,
       interpretationUnavailable:true}}];
+  }
+}
+
+async function planClarificationReply(message,context,provider){
+  try{
+    const response=await provider.complete({system:`Decide whether the person's new message answers StockChief's immediately preceding clarification. The pending task and exact missing field are provided. A short name, code, number, amount, date, or place can be an answer. Return disposition=answer only when it actually supplies the missing field; value must contain only that supplied value, not a guess from context. For an amount, use digits with an optional decimal point and put an explicitly stated three-letter currency in currency. Return unknown when the person cannot provide the detail. Return new_request for an independent question or task. Never execute an action.`,
+      prompt:JSON.stringify({pendingRequest:context.previousUserMessage,
+        question:context.previousAssistantQuestion,missingField:context.awaitingField,message}),
+      schema:FOLLOWUP_SCHEMA,schemaName:'stockchief_postgres_followup'});
+    if(response.data?.disposition==='new_request')return {newRequest:true};
+    if(response.data?.disposition!=='answer')return null;
+    const value=trimOrNull(response.data.value);if(!value)return null;
+    const field=context.awaitingField;const intent={...context.previousIntent};
+    if(field==='quantity'||field==='countedQuantity'){
+      if(!/^\d+$/.test(value)||Number(value)<(field==='quantity'?1:0)||!Number.isSafeInteger(Number(value)))return null;
+      intent[field]=Number(value);
+    }else if(field==='amount'){
+      if(!/^\d+(?:\.\d{1,2})?$/.test(value))return null;
+      intent.amount=Number(value);
+      if(/^[A-Z]{3}$/.test(response.data.currency))intent.currency=response.data.currency;
+    }else if(['sku','supplier','customer','location','fromLocation','toLocation','purchaseOrder','supplierBill',
+      'recipient','mailbox','paymentMethod','paymentDate','neededBy','receiptReference','shipToAddress','body',
+      'reason','reference','search'].includes(field)){
+      if(!String(message).toLowerCase().includes(value.toLowerCase()))return null;
+      intent[field]=value;
+      if(field==='sku')intent.skuReference='';
+    }else if(field==='deliveryMethod'){
+      if(!['SHIP','PICKUP','OWN_DELIVERY'].includes(value))return null;
+      intent.deliveryMethod=value;
+    }else return null;
+    const requestText=`${context.previousUserMessage} — ${message}`;
+    return {requestText,intent,continued:true};
+  }catch(error){
+    if(['entitlement_required','validation_error'].includes(error.code))throw error;
+    return null;
   }
 }
 
@@ -645,12 +699,14 @@ function matchTerms(value){
 async function resolveOne(database,table,workspaceId,search,columns) {
   if(!search)return {missing:true};
   const allowed={skus:{select:`s.id,s.code,i.name,s.variant_label,i.tracking_mode`,from:'skus s JOIN items i ON i.id=s.item_id',
-    scope:`s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1`,search:`CONCAT_WS(' ',s.code,i.name,COALESCE(s.variant_label,''))`},
-  locations:{select:'id,name,kind',from:'locations',scope:`workspace_id=$1 AND is_active=1`,search:'name'}};
+    scope:`s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1`,search:`CONCAT_WS(' ',s.code,i.name,COALESCE(s.variant_label,''))`,
+    exact:`(lower(s.code)=lower($2) OR lower(i.name)=lower($2))`},
+  locations:{select:'id,name,kind',from:'locations',scope:`workspace_id=$1 AND is_active=1`,search:'name',
+    exact:`lower(name)=lower($2)`}};
   const target=allowed[table];
   if(!target)throw new TypeError('Unsupported resolution target.');
   const exact=await database.query(`SELECT ${target.select} FROM ${target.from} WHERE ${target.scope}
-    AND lower(${target.search})=lower($2) ORDER BY ${columns} LIMIT 12`,[workspaceId,search]);
+    AND ${target.exact} ORDER BY ${columns} LIMIT 12`,[workspaceId,search]);
   if(exact.rows.length===1)return {row:exact.rows[0]};
   const broad=exact.rows.length?exact:await database.query(`SELECT ${target.select} FROM ${target.from}
     WHERE ${target.scope} AND ${target.search} ILIKE $2 ORDER BY ${columns} LIMIT 12`,[workspaceId,`%${search}%`]);
@@ -663,6 +719,46 @@ async function resolveOne(database,table,workspaceId,search,columns) {
   [workspaceId,...terms.map((term)=>`%${term}%`)]);
   if(tokenMatches.rows.length===1)return {row:tokenMatches.rows[0]};
   return tokenMatches.rows.length?{ambiguous:tokenMatches.rows}:{notFound:true};
+}
+
+async function resolveRequestedSku(database,workspaceId,request){
+  if(request.sku)return resolveOne(database,'skus',workspaceId,request.sku,'i.name,s.position');
+  if(request.skuReference!=='stocked')return {missing:true};
+  const rows=(await database.query(`SELECT s.id,s.code,i.name,s.variant_label,i.tracking_mode,
+    SUM(b.on_hand) AS stocked_units
+    FROM balances b JOIN skus s ON s.id=b.sku_id AND s.workspace_id=b.workspace_id
+      JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
+    WHERE b.workspace_id=$1 AND b.on_hand>0 AND s.is_active=1 AND i.is_active=1
+    GROUP BY s.id,s.code,i.name,s.variant_label,i.tracking_mode
+    ORDER BY lower(i.name),s.code LIMIT 12`,[workspaceId])).rows;
+  if(rows.length===1)return {row:rows[0],fromCurrentStock:true};
+  if(rows.length>1)return {ambiguous:rows,fromCurrentStock:true};
+  return {stockEmpty:true};
+}
+
+async function resolvePurchaseSupplier(database,workspaceId,skuId,supplierName){
+  if(supplierName)return resolveParty(database,'supplier',workspaceId,supplierName);
+  const linked=(await database.query(`SELECT supplier.* ,si.is_preferred FROM supplier_items si
+    JOIN suppliers supplier ON supplier.id=si.supplier_id AND supplier.workspace_id=si.workspace_id
+    WHERE si.workspace_id=$1 AND si.sku_id=$2 AND si.is_active=1 AND supplier.status='active'
+    ORDER BY si.is_preferred DESC,lower(supplier.name),supplier.id LIMIT 12`,[workspaceId,skuId])).rows;
+  if(linked.length===1)return {row:linked[0],inferred:true};
+  const preferred=linked.filter((row)=>Number(row.is_preferred)===1);
+  if(preferred.length===1)return {row:preferred[0],inferred:true};
+  return linked.length?{ambiguous:linked}:{missing:true};
+}
+
+async function resolvePurchaseDestination(database,workspaceId,skuId,locationName){
+  if(locationName)return resolveOne(database,'locations',workspaceId,locationName,'name');
+  const places=(await database.query(`SELECT l.id,l.name,l.kind,
+    COALESCE(SUM(CASE WHEN b.on_hand>0 THEN b.on_hand ELSE 0 END),0) AS stocked_units
+    FROM locations l LEFT JOIN balances b ON b.location_id=l.id AND b.workspace_id=l.workspace_id AND b.sku_id=$2
+    WHERE l.workspace_id=$1 AND l.is_active=1 GROUP BY l.id,l.name,l.kind
+    ORDER BY stocked_units DESC,lower(l.name) LIMIT 12`,[workspaceId,skuId])).rows;
+  const stocked=places.filter((row)=>Number(row.stocked_units)>0);
+  if(stocked.length===1)return {row:stocked[0],inferred:true};
+  if(places.length===1)return {row:places[0],inferred:true};
+  return places.length?{ambiguous:places}:{missing:true};
 }
 
 async function resolveParty(database,kind,workspaceId,search){
@@ -689,7 +785,7 @@ async function prepareAction(database,ctx,message,request) {
     if(!emailAccess.enabled)return {status:'CLARIFY',answer:'Connected supplier and customer email is available on Growth and above. Nothing was prepared or sent.',
       handoff:{href:'/upgrade?capability=connection.email&return=/ask',label:'Review email automation plans'}};
     const recipient=await outboundMail.resolveRecipient(database,ctx.workspaceId,request.recipient,request.recipientKind);
-    if(recipient.missing)return {status:'CLARIFY',answer:'Who should StockChief email? Name an existing customer or supplier, or give the exact email address.'};
+    if(recipient.missing)return {status:'CLARIFY',answer:'Who should StockChief email? Name an existing customer or supplier, or give the exact email address.',awaitingField:'recipient'};
     if(recipient.notFound){
       const kind=request.recipientKind||null;
       return {status:'CLARIFY',answer:kind
@@ -700,11 +796,11 @@ async function prepareAction(database,ctx,message,request) {
     if(recipient.ambiguous)return {status:'CLARIFY',answer:`“${request.recipient}” matches more than one business contact. Say whether this is the customer or supplier.`,
       choices:recipient.ambiguous.map((row)=>({label:`${row.name} · ${row.kind}`,value:`the ${row.kind} named ${row.name}`}))};
     if(!recipient.row.email)return {status:'CLARIFY',answer:`${recipient.row.name} has no email address. Add it to the ${recipient.row.kind} record before preparing this message.`};
-    if(!request.body)return {status:'CLARIFY',answer:`What exactly should the email to ${recipient.row.name} say?`};
+    if(!request.body)return {status:'CLARIFY',answer:`What exactly should the email to ${recipient.row.name} say?`,awaitingField:'body'};
     const mailbox=await outboundMail.resolveMailbox(database,ctx.workspaceId,request.mailbox);
     if(mailbox.missing)return {status:'CLARIFY',answer:'Connect and verify a Gmail or Microsoft 365 business mailbox before preparing this email.'};
     if(mailbox.notFound)return {status:'CLARIFY',answer:`No connected business mailbox matches “${request.mailbox}”. Nothing was prepared.`};
-    if(mailbox.ambiguous)return {status:'CLARIFY',answer:'More than one business mailbox can send this. Name the exact mailbox to use.',
+    if(mailbox.ambiguous)return {status:'CLARIFY',answer:'More than one business mailbox can send this. Name the exact mailbox to use.',awaitingField:'mailbox',
       choices:mailbox.ambiguous.map((row)=>({label:`${row.display_name}${row.provider_account_name?` · ${row.provider_account_name}`:''}`,value:row.display_name}))};
     const business=(await database.query('SELECT name FROM workspaces WHERE id=$1',[ctx.workspaceId])).rows[0];
     const subject=request.subject||`Message from ${business.name}`;
@@ -714,7 +810,7 @@ async function prepareAction(database,ctx,message,request) {
     `Email ${recipient.row.name} at ${recipient.row.email} from ${mailbox.row.display_name}.`);
   }
   if(request.action==='receive_purchase_order'){
-    if(!request.purchaseOrder)return {status:'CLARIFY',answer:'Which exact purchase order number did these goods arrive against?'};
+    if(!request.purchaseOrder)return {status:'CLARIFY',answer:'Which exact purchase order number did these goods arrive against?',awaitingField:'purchaseOrder'};
     const orders=(await database.query(`SELECT po.*,supplier.name AS supplier_name FROM purchase_orders po
       JOIN suppliers supplier ON supplier.id=po.supplier_id AND supplier.workspace_id=po.workspace_id
       WHERE po.workspace_id=$1 AND lower(po.po_number)=lower($2) ORDER BY po.created_at DESC`,
@@ -730,12 +826,12 @@ async function prepareAction(database,ctx,message,request) {
       if(party.row&&party.row.id!==order.supplier_id)return {status:'CLARIFY',answer:`${order.po_number} belongs to ${order.supplier_name}, not ${party.row.name}. Nothing was prepared.`};
     }
     const sku=await resolveOne(database,'skus',ctx.workspaceId,request.sku,'i.name,s.position');
-    if(sku.missing)return {status:'CLARIFY',answer:'Which product or SKU physically arrived?'};
+    if(sku.missing)return {status:'CLARIFY',answer:'Which product or SKU physically arrived?',awaitingField:'sku'};
     if(sku.notFound)return {status:'CLARIFY',answer:`I could not find product or SKU “${request.sku}”. Nothing was prepared.`};
     if(sku.ambiguous)return {status:'CLARIFY',answer:`More than one SKU matches “${request.sku}”. Use the exact SKU code.`};
     if(sku.row.tracking_mode!=='quantity')return {status:'CLARIFY',answer:`${sku.row.code} needs its exact ${sku.row.tracking_mode==='serial'?'serial numbers':'lot evidence'}. Open ${order.po_number} and record the physical receipt there.`};
-    if(!request.quantity||request.quantity<1)return {status:'CLARIFY',answer:'How many units physically arrived?'};
-    if(!request.receiptReference)return {status:'CLARIFY',answer:'What delivery note, packing slip, or receipt reference proves this arrival?'};
+    if(!request.quantity||request.quantity<1)return {status:'CLARIFY',answer:'How many units physically arrived?',awaitingField:'quantity'};
+    if(!request.receiptReference)return {status:'CLARIFY',answer:'What delivery note, packing slip, or receipt reference proves this arrival?',awaitingField:'receiptReference'};
     const lines=(await database.query(`SELECT pol.*,COALESCE(pol.destination_location_id,po.destination_location_id) AS default_location_id
       FROM purchase_order_lines pol JOIN purchase_orders po ON po.id=pol.purchase_order_id AND po.workspace_id=pol.workspace_id
       WHERE pol.workspace_id=$1 AND pol.purchase_order_id=$2 AND pol.sku_id=$3 ORDER BY pol.line_number`,
@@ -751,7 +847,7 @@ async function prepareAction(database,ctx,message,request) {
       if(place.ambiguous)return {status:'CLARIFY',answer:'More than one location matches that receiving place. Use its exact name.'};
       locationId=place.row?.id||null;locationName=place.row?.name||null;
     }
-    if(!locationId)return {status:'CLARIFY',answer:'Which inventory location physically received these goods?'};
+    if(!locationId)return {status:'CLARIFY',answer:'Which inventory location physically received these goods?',awaitingField:'location'};
     if(!locationName)locationName=(await database.query(`SELECT name FROM locations WHERE id=$1 AND workspace_id=$2 AND is_active=1`,
       [locationId,ctx.workspaceId])).rows[0]?.name||null;
     if(!locationName)return {status:'CLARIFY',answer:'The purchase order destination is no longer active. Choose an active receiving location.'};
@@ -761,10 +857,10 @@ async function prepareAction(database,ctx,message,request) {
   }
   if(request.action==='record_supplier_payment'){
     const party=await resolveParty(database,'supplier',ctx.workspaceId,request.supplier);
-    if(party.missing)return {status:'CLARIFY',answer:'Which supplier was paid?'};
+    if(party.missing)return {status:'CLARIFY',answer:'Which supplier was paid?',awaitingField:'supplier'};
     if(party.notFound)return {status:'CLARIFY',answer:`I could not find supplier “${request.supplier}”. Nothing was prepared.`};
     if(party.ambiguous)return {status:'CLARIFY',answer:'More than one supplier matches that name. Use its exact name.'};
-    if(!request.supplierBill)return {status:'CLARIFY',answer:'Which exact supplier bill or supplier invoice number was paid?'};
+    if(!request.supplierBill)return {status:'CLARIFY',answer:'Which exact supplier bill or supplier invoice number was paid?',awaitingField:'supplierBill'};
     const bills=(await database.query(`SELECT * FROM accounting_supplier_bills WHERE workspace_id=$1 AND supplier_id=$2
       AND (lower(bill_number)=lower($3) OR lower(COALESCE(supplier_invoice_number,''))=lower($3))
       ORDER BY created_at DESC`,[ctx.workspaceId,party.row.id,request.supplierBill])).rows;
@@ -772,9 +868,9 @@ async function prepareAction(database,ctx,message,request) {
     if(bills.length>1)return {status:'CLARIFY',answer:'More than one bill matches that number. Open Money and choose the exact bill.'};
     const bill=bills[0];
     if(!['OPEN','PARTIALLY_PAID'].includes(bill.status))return {status:'CLARIFY',answer:`${bill.bill_number} is ${bill.status} and is not open for another payment.`};
-    if(request.amount===null||request.amount<=0)return {status:'CLARIFY',answer:`How much was paid toward ${bill.bill_number}?`};
-    if(!request.paymentDate||!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(request.paymentDate))return {status:'CLARIFY',answer:'What exact date was the supplier paid, in YYYY-MM-DD format?'};
-    if(!request.paymentMethod)return {status:'CLARIFY',answer:'How was the supplier paid, for example ACH, check, wire, or card?'};
+    if(request.amount===null||request.amount<=0)return {status:'CLARIFY',answer:`How much was paid toward ${bill.bill_number}?`,awaitingField:'amount'};
+    if(!request.paymentDate||!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(request.paymentDate))return {status:'CLARIFY',answer:'What exact date was the supplier paid, in YYYY-MM-DD format?',awaitingField:'paymentDate'};
+    if(!request.paymentMethod)return {status:'CLARIFY',answer:'How was the supplier paid, for example ACH, check, wire, or card?',awaitingField:'paymentMethod'};
     const amountMinor=pricing.toMinor(String(request.amount),'Payment amount');const currency=request.currency||bill.currency;
     if(request.currency&&request.currency!==bill.currency)return {status:'CLARIFY',answer:`${bill.bill_number} is in ${bill.currency}, not ${request.currency}. Nothing was prepared.`};
     if(amountMinor>Number(bill.balance_minor))return {status:'CLARIFY',answer:`${bill.bill_number} has ${pricing.formatMinor(Number(bill.balance_minor),bill.currency)} outstanding, so ${pricing.formatMinor(amountMinor,currency)} cannot be applied.`};
@@ -784,24 +880,32 @@ async function prepareAction(database,ctx,message,request) {
   }
   if(['create_sales_order','create_purchase_order'].includes(request.action)){
     const sales=request.action==='create_sales_order';
-    const party=await resolveParty(database,sales?'customer':'supplier',ctx.workspaceId,sales?request.customer:request.supplier);
-    if(party.missing)return {status:'CLARIFY',answer:`Which ${sales?'customer':'supplier'} is this for?`};
+    const sku=await resolveRequestedSku(database,ctx.workspaceId,request);
+    if(sku.stockEmpty)return {status:'CLARIFY',answer:'I could not find any product currently in stock. Which product should StockChief get more of? Nothing was prepared.',awaitingField:'sku'};
+    if(sku.missing)return {status:'CLARIFY',answer:`Which product or SKU ${sales?'is on the customer order':'do you need more of'}?`,awaitingField:'sku'};
+    if(sku.notFound)return {status:'CLARIFY',answer:`I could not find a product or SKU matching “${request.sku}”. Nothing was prepared.`};
+    if(sku.ambiguous)return {status:'CLARIFY',answer:sku.fromCurrentStock
+      ?'I found more than one product currently in stock. Which one needs more? Nothing was prepared.'
+      :`More than one SKU matches “${request.sku}”. Which one?`,awaitingField:'sku',
+    choices:sku.ambiguous.map((row)=>({label:`${row.name}${row.variant_label?` · ${row.variant_label}`:''} · ${row.code}${row.stocked_units?` · ${row.stocked_units} on hand`:''}`,value:row.code}))};
+    const skuContext={sku:sku.row.code,skuReference:''};
+    if(!request.quantity||request.quantity<1)return {status:'CLARIFY',answer:'How many units are needed?',awaitingField:'quantity',carryForward:skuContext};
+    const party=sales?await resolveParty(database,'customer',ctx.workspaceId,request.customer)
+      :await resolvePurchaseSupplier(database,ctx.workspaceId,sku.row.id,request.supplier);
+    if(party.missing)return {status:'CLARIFY',answer:sales?'Which customer is this for?'
+      :`I found ${sku.row.name}${sku.row.variant_label?` · ${sku.row.variant_label}`:''} (${sku.row.code})${sku.row.stocked_units?` with ${sku.row.stocked_units} on hand`:''}. Which supplier should provide ${request.quantity} more? Nothing was prepared.`,awaitingField:sales?'customer':'supplier',carryForward:skuContext};
     if(party.notFound){
       const kind=sales?'customer':'supplier';const name=sales?request.customer:request.supplier;
       return {status:'CLARIFY',answer:`I could not find ${kind} “${name}”. Add the ${kind} record first, then return here to prepare the order. Nothing was prepared.`,
-        handoff:recordHandoff(kind,name,{shippingAddress:request.shipToAddress})};
+        handoff:recordHandoff(kind,name,{shippingAddress:request.shipToAddress}),carryForward:skuContext};
     }
-    if(party.ambiguous)return {status:'CLARIFY',answer:`More than one ${sales?'customer':'supplier'} matches that name. Which one?`,
+    if(party.ambiguous)return {status:'CLARIFY',answer:`More than one ${sales?'customer':'supplier'} could be used. Which one? Nothing was prepared.`,
+      awaitingField:sales?'customer':'supplier',carryForward:skuContext,
       choices:party.ambiguous.map((row)=>({label:`${row.name}${row.email?` · ${row.email}`:''}`,value:row.name}))};
-    const sku=await resolveOne(database,'skus',ctx.workspaceId,request.sku,'i.name,s.position');
-    if(sku.missing)return {status:'CLARIFY',answer:'Which product or SKU is on the order?'};
-    if(sku.notFound)return {status:'CLARIFY',answer:`I could not find a product or SKU matching “${request.sku}”. Nothing was prepared.`};
-    if(sku.ambiguous)return {status:'CLARIFY',answer:`More than one SKU matches “${request.sku}”. Which one?`,
-      choices:sku.ambiguous.map((row)=>({label:`${row.name}${row.variant_label?` · ${row.variant_label}`:''} · ${row.code}`,value:row.code}))};
-    if(!request.quantity||request.quantity<1)return {status:'CLARIFY',answer:'How many units are on the order?'};
+    const orderContext={...skuContext,[sales?'customer':'supplier']:party.row.name};
     if(request.neededBy&&!/^\d{4}-\d{2}-\d{2}$/.test(request.neededBy))return {status:'CLARIFY',answer:'What exact date is needed, in YYYY-MM-DD format?'};
     if(sales){
-      if(!request.deliveryMethod)return {status:'CLARIFY',answer:'Should the customer order be shipped, picked up, or delivered by your business?'};
+      if(!request.deliveryMethod)return {status:'CLARIFY',answer:'Should the customer order be shipped, picked up, or delivered by your business?',awaitingField:'deliveryMethod',carryForward:orderContext};
       let fulfillmentLocationId=null;let fulfillmentLocationName=null;
       if(request.location){
         const place=await resolveOne(database,'locations',ctx.workspaceId,request.location,'name');
@@ -809,27 +913,29 @@ async function prepareAction(database,ctx,message,request) {
         if(place.ambiguous)return {status:'CLARIFY',answer:'More than one location matches that request. Use its exact name.'};
         fulfillmentLocationId=place.row?.id||null;fulfillmentLocationName=place.row?.name||null;
       }
-      if(request.deliveryMethod==='PICKUP'&&!fulfillmentLocationId)return {status:'CLARIFY',answer:'Which location will the customer pick this order up from?'};
+      if(request.deliveryMethod==='PICKUP'&&!fulfillmentLocationId)return {status:'CLARIFY',answer:'Which location will the customer pick this order up from?',awaitingField:'location',carryForward:orderContext};
       const destination=trimOrNull(request.shipToAddress)||trimOrNull(party.row.shipping_address);
-      if(request.deliveryMethod!=='PICKUP'&&!destination)return {status:'CLARIFY',answer:`What is the delivery address for ${party.row.name}? Nothing will be prepared without a destination.`};
+      if(request.deliveryMethod!=='PICKUP'&&!destination)return {status:'CLARIFY',answer:`What is the delivery address for ${party.row.name}? Nothing will be prepared without a destination.`,awaitingField:'shipToAddress',carryForward:orderContext};
       const current=await pricing.currentPrice(database,ctx.workspaceId,sku.row.id);
       const amountMinor=request.amount===null?current.amount_minor:pricing.toMinor(String(request.amount),'Selling price');
-      if(amountMinor===null)return {status:'CLARIFY',answer:`What selling price per unit should this order use for ${sku.row.name}?`};
+      if(amountMinor===null)return {status:'CLARIFY',answer:`What selling price per unit should this order use for ${sku.row.name}?`,awaitingField:'amount',carryForward:orderContext};
       const currency=request.currency||current.currency||'USD';
       return createProposal(database,ctx,message,'sales_order.create',{customerId:party.row.id,
         deliveryMethod:request.deliveryMethod,shipToAddress:destination,fulfillmentLocationId,neededBy:request.neededBy,
         currency,reference:request.reference,lines:[{skuId:sku.row.id,quantity:request.quantity,unitPriceMinor:amountMinor}]},
       `Prepare a draft customer order for ${party.row.name}: ${request.quantity} × ${sku.row.name}${sku.row.variant_label?` · ${sku.row.variant_label}`:''} at ${pricing.formatMinor(amountMinor,currency)} each, ${request.deliveryMethod==='PICKUP'?`pickup from ${fulfillmentLocationName}`:`to ${destination}`}.`);
     }
-    const place=await resolveOne(database,'locations',ctx.workspaceId,request.location,'name');
-    if(place.missing)return {status:'CLARIFY',answer:'Which inventory location should receive this purchase order?'};
+    const place=await resolvePurchaseDestination(database,ctx.workspaceId,sku.row.id,request.location);
+    if(place.missing)return {status:'CLARIFY',answer:'Which inventory location should receive this purchase order?',awaitingField:'location',carryForward:orderContext};
     if(place.notFound)return {status:'CLARIFY',answer:`I could not find a location matching “${request.location}”. Nothing was prepared.`};
-    if(place.ambiguous)return {status:'CLARIFY',answer:'More than one location matches that request. Use its exact name.'};
+    if(place.ambiguous)return {status:'CLARIFY',answer:'Which location should receive this purchase order? Nothing was prepared.',awaitingField:'location',carryForward:orderContext,
+      choices:place.ambiguous.map((row)=>({label:row.name,value:row.name}))};
     const supplierItem=(await database.query(`SELECT * FROM supplier_items WHERE workspace_id=$1 AND supplier_id=$2
       AND sku_id=$3 AND is_active=1`,[ctx.workspaceId,party.row.id,sku.row.id])).rows[0]||null;
     const unitCost=request.amount===null?(supplierItem?.last_unit_cost===null||supplierItem?.last_unit_cost===undefined
       ?null:Number(supplierItem.last_unit_cost)):request.amount;
-    if(unitCost===null)return {status:'CLARIFY',answer:`What is ${party.row.name}'s cost per inventory unit for ${sku.row.name}?`};
+    if(unitCost===null)return {status:'CLARIFY',answer:`What is ${party.row.name}'s cost per inventory unit for ${sku.row.name}?`,awaitingField:'amount',
+      carryForward:{...orderContext,location:place.row.name}};
     const currency=request.currency||party.row.currency||'USD';
     return createProposal(database,ctx,message,'purchase_order.create',{supplierId:party.row.id,
       destinationLocationId:place.row.id,currency,expectedDate:request.neededBy,reference:request.reference,
@@ -837,22 +943,25 @@ async function prepareAction(database,ctx,message,request) {
     `Prepare a draft purchase order to ${party.row.name}: ${request.quantity} × ${sku.row.name}${sku.row.variant_label?` · ${sku.row.variant_label}`:''} for ${place.row.name} at ${pricing.formatMinor(Math.round(unitCost*100),currency)} per inventory unit.`);
   }
   if(request.action==='create_item'){
-    if(!request.search && !request.sku)return {status:'CLARIFY',answer:'What is the product name?'};
+    if(!request.search && !request.sku)return {status:'CLARIFY',answer:'What is the product name?',awaitingField:'search'};
     return createProposal(database,ctx,message,'catalog.create_item',{name:request.search || request.sku,trackingMode:'quantity'},
       `Create product “${request.search || request.sku}” counted by quantity.`);
   }
   if(request.action==='create_location'){
-    if(!request.search && !request.location)return {status:'CLARIFY',answer:'What is the location name?'};
+    if(!request.search && !request.location)return {status:'CLARIFY',answer:'What is the location name?',awaitingField:'location'};
     return createProposal(database,ctx,message,'location.create',{name:request.search || request.location,kind:'warehouse'},
       `Create warehouse location “${request.search || request.location}”.`);
   }
-  const sku=await resolveOne(database,'skus',ctx.workspaceId,request.sku,'i.name,s.position');
-  if(sku.missing)return {status:'CLARIFY',answer:'Which product or SKU is this for?'};
+  const sku=await resolveRequestedSku(database,ctx.workspaceId,request);
+  if(sku.stockEmpty)return {status:'CLARIFY',answer:'I could not find any product currently in stock. Which product do you mean? Nothing was prepared.'};
+  if(sku.missing)return {status:'CLARIFY',answer:'Which product or SKU is this for?',awaitingField:'sku'};
   if(sku.notFound)return {status:'CLARIFY',answer:`I could not find a product or SKU matching “${request.sku}”. Nothing was prepared.`};
-  if(sku.ambiguous)return {status:'CLARIFY',answer:`More than one SKU matches “${request.sku}”. Which one?`,
-    choices:sku.ambiguous.map((row)=>({label:`${row.name}${row.variant_label?` · ${row.variant_label}`:''} · ${row.code}`,value:row.code}))};
+  if(sku.ambiguous)return {status:'CLARIFY',answer:sku.fromCurrentStock
+    ?'I found more than one product currently in stock. Which one do you mean? Nothing was prepared.'
+    :`More than one SKU matches “${request.sku}”. Which one?`,awaitingField:'sku',
+  choices:sku.ambiguous.map((row)=>({label:`${row.name}${row.variant_label?` · ${row.variant_label}`:''} · ${row.code}`,value:row.code}))};
   if(['set_price','set_purchase_cost'].includes(request.action)){
-    if(request.amount===null)return {status:'CLARIFY',answer:`What ${request.action==='set_price'?'selling price':'purchase cost'} per unit should StockChief use?`};
+    if(request.amount===null)return {status:'CLARIFY',answer:`What ${request.action==='set_price'?'selling price':'purchase cost'} per unit should StockChief use?`,awaitingField:'amount'};
     const currency=request.currency||'USD';const current=request.action==='set_price'?
       await pricing.currentPrice(database,ctx.workspaceId,sku.row.id):await pricing.purchaseCost(database,ctx.workspaceId,sku.row.id);
     const actionType=request.action==='set_price'?'catalog.set_price':'catalog.set_purchase_cost';
@@ -867,23 +976,23 @@ async function prepareAction(database,ctx,message,request) {
     if(from.missing || to.missing)return {status:'CLARIFY',answer:'Which location is stock moving from, and which location is it moving to?'};
     if(from.notFound || to.notFound)return {status:'CLARIFY',answer:'One of those locations is not in this inventory. Nothing was prepared.'};
     if(from.ambiguous || to.ambiguous)return {status:'CLARIFY',answer:'More than one location matches that request. Use the exact source and destination names.'};
-    if(!request.quantity || request.quantity<1)return {status:'CLARIFY',answer:'How many units should move?'};
+    if(!request.quantity || request.quantity<1)return {status:'CLARIFY',answer:'How many units should move?',awaitingField:'quantity'};
     return createProposal(database,ctx,message,'inventory.transfer',{skuId:sku.row.id,sourceLocationId:from.row.id,
       destinationLocationId:to.row.id,quantity:request.quantity,reference:request.reference},
     `Move ${request.quantity} × ${sku.row.name}${sku.row.variant_label?` · ${sku.row.variant_label}`:''} from ${from.row.name} to ${to.row.name}.`);
   }
   const place=await resolveOne(database,'locations',ctx.workspaceId,request.location,'name');
-  if(place.missing)return {status:'CLARIFY',answer:'Which location is this for?'};
+  if(place.missing)return {status:'CLARIFY',answer:'Which location is this for?',awaitingField:'location'};
   if(place.notFound)return {status:'CLARIFY',answer:`I could not find a location matching “${request.location}”. Nothing was prepared.`};
   if(place.ambiguous)return {status:'CLARIFY',answer:'More than one location matches that request. Use its exact name.'};
   if(request.action==='adjust'){
-    if(request.countedQuantity===null)return {status:'CLARIFY',answer:'What was the physical count?'};
-    if(!request.reason)return {status:'CLARIFY',answer:'Why is the count being corrected?'};
+    if(request.countedQuantity===null)return {status:'CLARIFY',answer:'What was the physical count?',awaitingField:'countedQuantity'};
+    if(!request.reason)return {status:'CLARIFY',answer:'Why is the count being corrected?',awaitingField:'reason'};
     return createProposal(database,ctx,message,'inventory.adjust',{skuId:sku.row.id,locationId:place.row.id,
       countedQuantity:request.countedQuantity,reasonCode:'physical_count',notes:request.reason,reference:request.reference},
     `Correct ${sku.row.name}${sku.row.variant_label?` · ${sku.row.variant_label}`:''} at ${place.row.name} to ${request.countedQuantity}. Reason: ${request.reason}.`);
   }
-  if(!request.quantity || request.quantity<1)return {status:'CLARIFY',answer:'How many units?'};
+  if(!request.quantity || request.quantity<1)return {status:'CLARIFY',answer:'How many units?',awaitingField:'quantity'};
   const type=request.action==='receive'?'inventory.receive':'inventory.issue';
   return createProposal(database,ctx,message,type,{skuId:sku.row.id,locationId:place.row.id,quantity:request.quantity,
     reasonCode:request.action==='issue'?'other':undefined,notes:request.reason,reference:request.reference},
@@ -901,8 +1010,8 @@ async function createProposal(database,ctx,message,actionType,payload,summary) {
 
 async function storeInteraction(database,ctx,message,intent,result) {
   const id=newId('pgask');
-  const storedIntent={...intent,presentation:{columns:result.columns || [],choices:result.choices || [],handoff:result.handoff || null,
-    reason:result.reason||null}};
+  const storedIntent={...intent,...(result.carryForward||{}),presentation:{columns:result.columns || [],choices:result.choices || [],handoff:result.handoff || null,
+    reason:result.reason||null,awaitingField:result.awaitingField||null}};
   await database.query(`INSERT INTO stockchief_runtime.assistant_interactions
     (id,workspace_id,actor_user_id,message,intent,answer,evidence,status)
     VALUES($1,$2,$3,$4,$5::jsonb,$6,$7::jsonb,$8)`,[id,ctx.workspaceId,ctx.actorId,message,JSON.stringify(storedIntent),
@@ -915,7 +1024,9 @@ async function ask(database,ctx,message,options={}) {
   const clean=String(message || '').trim();
   if(!clean)throw new ValidationError('Ask a question or describe what should happen.');
   const provider=options.provider||(config.ai.configured?createProviderUnobserved(config.ai.provider,config.ai.tier('fast')):null);
-  const meteredOptions=provider?{...options,onUsage:null,provider:require('../commercial/model').wrap(database,ctx,provider,'ask',options.usageKey)}:options;
+  const meteredOptions=provider?{...options,onUsage:null,
+    provider:require('../commercial/model').wrap(database,ctx,provider,'ask',`${options.usageKey||newId('askusage')}:plan`),
+    followupProvider:require('../commercial/model').wrap(database,ctx,provider,'ask',`${options.usageKey||newId('askusage')}:followup`)}:options;
   const requests=await planMany(clean,meteredOptions);const results=[];const batchId=requests.length>1?newId('pgaskbatch'):null;
   for(let index=0;index<requests.length;index+=1){
     const request=requests[index];const intent=request.intent;
@@ -929,10 +1040,11 @@ async function ask(database,ctx,message,options={}) {
           ?'I could not reliably understand that request just now. Nothing was changed. Please try again.'
           :intent.clarifyingQuestion||'I cannot confirm an answer or safe action from the connected business records for that request. What should I check or change?',
         rows:[],columns:[],reason:intent.interpretationUnavailable?'unavailable':null};
-    const requestContext=requests.length>1?{batchId,sourceMessage:clean,requestIndex:index+1,requestCount:requests.length}:{};
+    const requestContext={...(request.continued?{resolvedRequestText:request.requestText}:{}),
+      ...(requests.length>1?{batchId,sourceMessage:clean,requestIndex:index+1,requestCount:requests.length}:{})};
     const storedIntent=result.proposal?{...intent,...requestContext,proposalId:result.proposal.id,
       proposalHref:result.proposal.href||`/actions/${result.proposal.id}`}:{...intent,...requestContext};
-    result.interactionId=await storeInteraction(database,ctx,request.requestText,storedIntent,result);
+    result.interactionId=await storeInteraction(database,ctx,request.continued?clean:request.requestText,storedIntent,result);
     result.intent=intent;results.push(result);
   }
   return results.length===1?results[0]:{status:results.some((result)=>result.status==='CLARIFY')?'CLARIFY':'ANSWERED',
@@ -955,6 +1067,16 @@ async function listInteractions(database,workspaceId,limit=20) {
     if(left.intent.batchId&&left.intent.batchId===right.intent.batchId)return Number(left.intent.requestIndex)-Number(right.intent.requestIndex);
     return String(left.id).localeCompare(String(right.id));
   });
+}
+
+async function pendingClarification(database,ctx,startedAt=null){
+  const latest=(await database.query(`SELECT message,intent,answer,status FROM stockchief_runtime.assistant_interactions
+    WHERE workspace_id=$1 AND actor_user_id=$2 AND ($3::timestamptz IS NULL OR created_at >= $3::timestamptz)
+    ORDER BY created_at DESC,id DESC LIMIT 1`,[ctx.workspaceId,ctx.actorId,startedAt])).rows[0];
+  if(!latest||latest.status!=='CLARIFY'||['unverified','unavailable'].includes(latest.intent?.presentation?.reason))return null;
+  return {previousUserMessage:latest.intent?.resolvedRequestText||latest.message,
+    previousAssistantQuestion:latest.answer,previousIntent:cleanPlan(latest.intent,latest.intent?.resolvedRequestText||latest.message),
+    awaitingField:latest.intent?.presentation?.awaitingField||null};
 }
 
 async function getProposal(database,workspaceId,id,lock=false,client=database) {
@@ -1011,4 +1133,5 @@ async function cancelProposal(database,ctx,id) {
   return result.rows[0];
 }
 
-module.exports={PLAN_SCHEMA,SYSTEM,plan,planMany,lookup,ask,listInteractions,getProposal,executeProposal,cancelProposal};
+module.exports={PLAN_SCHEMA,SYSTEM,plan,planMany,lookup,ask,listInteractions,pendingClarification,
+  getProposal,executeProposal,cancelProposal};
