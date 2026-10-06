@@ -127,6 +127,8 @@ async function registerFixtures(db,base,count){const agents=[];const fixtureId=c
    {form:true});
   if(signed.status!==302)throw Error(`Fixture login ${signed.status}`);
   const page=await agent.get('/inventory');if(page.status!==200)throw Error(`Fixture inventory ${page.status}`);
+  if(realMixed){const connectionsPage=await agent.get('/settings/connections');
+   if(connectionsPage.status!==200)throw Error(`Fixture connections page ${connectionsPage.status}`);}
   const token=csrf(page.text);
   const opening=await agent.post('/api/v1/business/inventory/receive',
    {skuId:sku,locationId:location,quantity:50,reference:'CAP-OPENING',
@@ -379,7 +381,7 @@ async function main(){const source=sourceUrl(),originalDatabase=decodeURICompone
     sku:null,location:null,fromLocation:null,toLocation:null,quantity:null,countedQuantity:null,reason:null,
     reference:null},usage:{}};}});
   app=createPostgresApp({database:db,env:'test',sessionSecret:`capacity-${crypto.randomUUID()}`,
-   aiProvider,connectionProviders:{},shippingOptions:{},paymentOptions:{}});
+   aiProvider,connectionProviders:require('../src/connections/providers/registry'),shippingOptions:{},paymentOptions:{}});
   server=await new Promise(resolve=>{const started=app.listen(0,'127.0.0.1',()=>resolve(started));});
   const base=`http://127.0.0.1:${server.address().port}`;
   const agents=await registerFixtures(db,base,Math.max(...settings.levels)),results=[];
