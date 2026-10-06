@@ -108,7 +108,9 @@ function createPostgresAskRouter(database,options={}){
   });
   async function runAsk(req){
     const scope=commercialScope(req);await entitlements.assertCapability(database,scope,'ask.lookup');
-    return assistant.ask(database,req.ctx,req.body.message,{provider:options.provider,usageKey:String(req.body.usageKey||newId('askusage'))});
+    const context=await assistant.pendingClarification(database,req.ctx,req.session.postgresAskStartedAt||null);
+    return assistant.ask(database,req.ctx,req.body.message,{provider:options.provider,
+      usageKey:String(req.body.usageKey||newId('askusage')),context});
   }
   router.post('/ask',asyncRoute(async(req,res)=>{
     await runAsk(req);

@@ -1,7 +1,7 @@
 'use strict';
 // Expand legacy test shorthand into the actual production request schema. This
 // helper is test-only; production model output must pass validation unchanged.
-function part(value,message){return {requestText:message,clarifyingQuestion:'',intent:'clarify',view:null,action:null,search:null,sku:null,
+function part(value,message){return {requestText:message,continuesPrevious:false,clarifyingQuestion:'',intent:'clarify',view:null,action:null,search:null,sku:null,skuReference:'',
  location:null,fromLocation:null,toLocation:null,quantity:null,countedQuantity:null,amount:null,currency:null,reason:null,
  reference:null,recipient:'',recipientKind:'',subject:'',body:'',mailbox:'',customer:'',supplier:'',deliveryMethod:'',
  shipToAddress:'',neededBy:'',purchaseOrder:'',supplierBill:'',receiptReference:'',paymentMethod:'',paymentDate:'',...value};}
