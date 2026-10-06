@@ -1,0 +1,24 @@
+/* The owner conversation reached from Home. Keep the exchange legible and the next message obvious. */
+.page-ask .rm-canvas { max-width: 1060px; padding-top: 30px; }
+.page-ask .rm-chat { width: min(100%, 790px); max-width: 790px; gap: 12px; }
+.page-ask .rm-chat__bar { align-items: end; padding: 1px 2px 12px; margin-bottom: 8px; border-bottom: 1px solid #e1e3ed; }
+.page-ask .rm-chat__bar .rm-stamp { margin: 0 0 4px; color: #77718e; font-size: 11px; font-weight: 730; letter-spacing: .07em; text-transform: uppercase; }
+.page-ask .rm-chat__title { margin: 0; color: #242139; font-size: 26px; font-weight: 700; line-height: 1.14; letter-spacing: -.04em; }
+.page-ask .rm-chat__intro { margin-bottom: 7px; }
+.page-ask .rm-turn--you { max-width: min(84%, 620px); }
+.page-ask .rm-turn--foundry { max-width: 100%; min-width: min(100%, 360px); }
+.page-ask .rm-turn__who { margin-bottom: 6px; color: #777b8d; font-size: 11px; font-weight: 700; }
+.page-ask .rm-turn--foundry .rm-turn__who { color: #5f50bb; }
+.page-ask .rm-said { border-color: #e0e2eb; border-radius: 17px 17px 17px 5px; box-shadow: 0 9px 26px -24px #1d184a; }
+.page-ask .rm-said__text { padding: 17px 20px 10px; color: #25283d; font-size: 15px; line-height: 1.55; }
+.page-ask .rm-said__meta { padding: 0 20px 14px; font-size: 11px; }
+.page-ask .rm-chat-evidence > summary,.page-ask .rm-chat-reading > summary { padding: 11px 20px; color: #666c80; font-size: 12px; }
+.page-ask .rm-chat > .rm-composer { margin-top: 20px; padding: 8px 10px; border: 1px solid #c8c4e2; border-radius: 17px; background: #fff; box-shadow: 0 14px 38px -25px rgba(38,28,101,.62),0 1px 4px rgba(38,28,101,.1); }
+.page-ask .rm-chat > .rm-composer:focus-within { border-color: #7868df; box-shadow: 0 0 0 3px rgba(116,100,224,.14),0 14px 38px -25px rgba(38,28,101,.62); }
+.page-ask .rm-chat > .rm-composer::before { background: transparent; }
+.page-ask .rm-chat > .rm-composer .rm-composer__input { min-height: 52px; height: 52px; padding: 12px 10px; color: #24243a; font-size: 15px; }
+.page-ask .rm-chat > .rm-composer .rm-composer__input::placeholder { color: #838a9c; }
+.page-ask .rm-chat > .rm-composer .rm-composer__attach { color: #625e77; background: #f4f3fa; }
+.page-ask .rm-chat > .rm-composer .rm-composer__send { border-radius: 11px; background: #5b4bd0; color: #fff; }
+@media(max-width:720px) { .page-ask .rm-rooms,.page-ask .rail-search { display:none; } }
+@media(max-width:680px) { .page-ask .rm-canvas { padding-top: 19px; } .page-ask .rm-chat { width: 100%; } .page-ask .rm-chat__title { font-size: 23px; } .page-ask .rm-chat > .rm-composer { position:relative; bottom:auto; margin-bottom:8px; } .page-ask .rm-said__text { padding: 14px 15px 8px; } }

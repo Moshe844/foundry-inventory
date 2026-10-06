@@ -65,8 +65,8 @@ test('Ask StockChief grounds answers and executes only an approved PostgreSQL pr
     const answer=await agent.get('/ask');
     assert.match(answer.text,/1 SKU matched with 0 units on hand/);
     assert.match(answer.text,/SHOE-BLACK-8/);
-    assert.match(answer.text,/This conversation/);
-    assert.match(answer.text,/Tell me what happened, ask me anything/);
+    assert.match(answer.text,/Your direct line/);
+    assert.match(answer.text,/Ask what.s happening or tell StockChief what to do/);
     assert.doesNotMatch(answer.text,/Back to StockChief/);
 
     const wholeInventory=await agent.post('/foundry/tell').type('form').send({_csrf:csrfFrom(answer.text),

@@ -49,7 +49,8 @@ async function home(database,workspaceId){
     because:item.kind==='order'?'There is not enough stock ready for this customer order.':item.why,importance:item.importance,
     href:item.href,link:item.href,action:item.actionLabel||'Open'}));
   const lastLookedAt=state.lastEvaluatedAt;
-  const stale=!lastLookedAt||Date.now()-Date.parse(lastLookedAt)>86400000;
+  const checkPending=!lastLookedAt;
+  const stale=!!lastLookedAt&&Date.now()-Date.parse(lastLookedAt)>86400000;
   const hasInventory=brief.stats.itemCount>0;
   const hasLocations=brief.stats.locationCount>0;
   let next=null;
@@ -74,7 +75,8 @@ async function home(database,workspaceId){
     detail:'Open inventory to see which ones; customer shortages needing a decision are listed above.',href:'/inventory'});
   return {brief,home:{needsYou:needs,needsYouTotal:brief.needs.length,coverageErrors:[],handling:active,setup:null,
     status:{paused:state.paused,pausedReason:state.pausedReason,suspended:state.suspended,
-      suspendedReason:state.suspendedReason,lastLookedAt,lastEvaluatedText:checkedText(lastLookedAt),checkStale:stale},
+      suspendedReason:state.suspendedReason,lastLookedAt,lastEvaluatedText:checkedText(lastLookedAt),
+      checkPending,checkStale:stale},
     did:{headline:'No automatic work completed in the last 24 hours.',actions:handled,counts:{handled:completed.rows.length?Number(completed.rows[0].total):0,
       positionsWatched:brief.stats.skuCount}},readiness:{evidenceGaps:[],evidenceGapCount:0,notes:[]},
     guidance:{operationalReady:hasInventory&&hasLocations,checklistActive:false,steps:[],next,
