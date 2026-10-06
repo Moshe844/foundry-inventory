@@ -131,4 +131,32 @@ test('actual provider invoices allocate every cent once with administrator attes
   assert.equal((await db.query("SELECT status FROM commercial_critical_warnings WHERE fingerprint=$1",
    [`cost-rate:${first.accountId}:stripe_billing:http_request:request::2026-09-30.endive`])).rows[0].status,'OPEN');
  });
+ await t.test('historical Gmail and OAuth attempts are repriced without hiding novel costs',async()=>{
+  const control=require('../../src/commercial/control-service');
+  const fs=require('node:fs'),path=require('node:path');
+  const scope={accountId:first.accountId,workspaceId:first.workspaceId};
+  const quota=await control.recordCost(db,scope,{provider:'gmail',operation:'gmail_api_quota',
+   unit:'quota_unit',providerVersion:'v1',quantity:5,idempotencyKey:'historical-gmail-quota',
+   detail:{hostname:'gmail.googleapis.com'}});
+  const oauth=await control.recordCost(db,scope,{provider:'gmail',operation:'http_request',
+   unit:'request',providerVersion:'unversioned',quantity:1,idempotencyKey:'historical-google-oauth',
+   detail:{hostname:'oauth2.googleapis.com'}});
+  assert.equal(quota.event.amount_minor,null);assert.equal(oauth.event.amount_minor,null);
+  const migration=fs.readFileSync(path.join(__dirname,
+   '../../src/db/postgres-migrations/042-commercial-gmail-alert-cost-coverage.sql'),'utf8');
+  await db.query(migration);
+  const repaired=(await db.query(`SELECT idempotency_key,provider,amount_minor,detail
+   FROM commercial_cost_events WHERE idempotency_key IN ($1,$2) ORDER BY idempotency_key`,
+   ['historical-gmail-quota','historical-google-oauth'])).rows;
+  assert.equal(repaired.length,2);
+  assert.equal(Number(repaired[0].amount_minor),0);
+  assert.equal(repaired[0].detail.costRateMissing,false);
+  assert.equal(repaired[1].provider,'google_oauth');
+  assert.equal(Number(repaired[1].amount_minor),.1);
+  assert.equal(repaired[1].detail.costConfidence,'LOW');
+  assert.equal((await db.query(`SELECT status FROM commercial_critical_warnings WHERE fingerprint=$1`,
+   [`cost-rate:${first.accountId}:gmail:http_request:request::unversioned`])).rows[0].status,'RESOLVED');
+  assert.equal((await db.query(`SELECT status FROM commercial_critical_warnings WHERE fingerprint=$1`,
+   [`cost-rate:${first.accountId}:gmail:unclassified_future_method:request::v2`])).rows[0].status,'OPEN');
+ });
 });

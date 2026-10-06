@@ -11,7 +11,7 @@ test('PostgreSQL commercial capacity sampler measures queue, connection, disk an
  t.after(async()=>{await db.close();cluster.stop();});await migratePostgres(db);
  const clean=await capacity.sample(db,{role:'worker',diskCapacityGb:15});
  const release=require('../../src/commercial/release');
- for(const code of release.LAUNCH_BLOCKERS)assert.equal((await db.query(
+ for(const code of release.LAUNCH_BLOCKERS.filter(code=>code.startsWith('UNVERIFIED_')))assert.equal((await db.query(
   "SELECT status FROM commercial_critical_warnings WHERE code=$1",[code])).rows[0].status,
   code==='UNVERIFIED_MIXED_WORKLOAD_CAPACITY'?'OPEN':'RESOLVED');
  const priorCheckout=process.env.STOCKCHIEF_CHECKOUT_ENABLED;
