@@ -11,9 +11,11 @@ async function main(){
   const [warnings,missingCosts,alerts,release,capacity]=await Promise.all([
    db.query(`SELECT code,status,count(*)::int AS count FROM commercial_critical_warnings
     GROUP BY code,status ORDER BY code,status`),
-   db.query(`SELECT provider,operation,provider_version,count(*)::int AS count
+   db.query(`SELECT provider,operation,provider_version,
+    COALESCE(detail->>'hostname','') AS hostname,count(*)::int AS count
     FROM commercial_cost_events WHERE amount_minor IS NULL
-    GROUP BY provider,operation,provider_version ORDER BY provider,operation,provider_version`),
+    GROUP BY provider,operation,provider_version,COALESCE(detail->>'hostname','')
+    ORDER BY provider,operation,provider_version,hostname`),
    db.query(`SELECT kind,status,count(*)::int AS count FROM operational_alerts
     WHERE kind LIKE 'capacity.%' OR kind='capacity.certification_probe'
     GROUP BY kind,status ORDER BY kind,status`),
