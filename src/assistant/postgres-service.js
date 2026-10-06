@@ -11,23 +11,25 @@ const pricing = require('../pricing/postgres-service');
 const outboundMail = require('../connections/postgres-outbound-mail');
 const workflows = require('../operations/postgres-business-workflows');
 const accountingReports = require('../accounting/postgres-reports');
+const evidenceAnswers = require('./postgres-evidence-answer');
 const projections = require('../projections/postgres-service');
 const autonomy = require('../autopilot/postgres-service');
 const entitlements=require('../entitlements/postgres-service');
 const { ValidationError, NotFoundError, InvariantError } = require('../domain/errors');
 const { newId, trimOrNull } = require('../lib/util');
 
-const VIEWS = ['inventory','inventory_summary','needs_you','locations','purchase_orders','sales_orders','suppliers','customers','shipping','payments',
-  'payables','receivables','accounting','connections'];
+const VIEWS = ['inventory','inventory_summary','needs_you','replenishment','locations','purchase_orders','sales_orders','suppliers','customers','shipping','payments',
+  'payables','receivables','accounting','connections','business_analysis','general_knowledge'];
 const ACTIONS = ['receive','issue','transfer','adjust','create_item','create_location','set_price','set_purchase_cost',
   'send_email','create_sales_order','create_purchase_order','receive_purchase_order','record_supplier_payment'];
 const PLAN_PART_SCHEMA = {
   type:'object',additionalProperties:false,
-  required:['requestText','intent','view','action','search','sku','location','fromLocation','toLocation','quantity','countedQuantity',
+  required:['requestText','clarifyingQuestion','intent','view','action','search','sku','location','fromLocation','toLocation','quantity','countedQuantity',
     'amount','currency','reason','reference','recipient','recipientKind','subject','body','mailbox','customer','supplier',
     'deliveryMethod','shipToAddress','neededBy','purchaseOrder','supplierBill','receiptReference','paymentMethod','paymentDate'],
   properties:{
     requestText:{type:'string',maxLength:2000},
+    clarifyingQuestion:{type:'string',maxLength:300},
     intent:{type:'string',enum:['lookup','action','instruction','clarify']},
     view:{anyOf:[{type:'string',enum:VIEWS},{type:'null'}]},
     action:{anyOf:[{type:'string',enum:ACTIONS},{type:'null'}]},
@@ -55,6 +57,7 @@ Preserve every distinct question, instruction and requested action. Never silent
 one request and requestText must be the exact portion of the person's message represented by that entry. Keep dependent wording with
 the request it qualifies. Use one part when the message contains only one request and no more than eight parts total.
 Use lookup when the person asks what is true. Use action only when they want StockChief to create or change a record.
+If the person asks StockChief to carry out a supported action but leaves out a recipient, product, quantity, or other detail, still choose that action and leave the missing field empty; StockChief will ask the precise follow-up before preparing anything.
 Use instruction for a lasting rule, preference, threshold, supplier term, stock protection rule, or bounded authority
 that should continue applying in the future. One-time work is action, not instruction.
 Never invent a product, SKU, location, quantity, reason or reference. Missing values are null.
@@ -62,8 +65,12 @@ view is the business dataset needed for a lookup. action is one of the allowed a
 Use payables for open supplier/vendor bills and amounts the business owes. Use receivables for open customer invoices
 and amounts customers owe the business. Use payments only for payment transactions or payment history, never for balances owed.
 Use needs_you when the person asks what needs their attention, review, approval, or decision.
+Use replenishment when the person asks what stock to buy, reorder, or restock next; it reads existing StockChief recommendations and check status, and never places an order.
 Use inventory_summary for business-wide product and SKU totals; use inventory for stock quantities or named products.
+Use business_analysis for comparisons, trends, reasons, or questions that need figures from more than one business dataset. It can read posted financials when allowed on this plan, customer order counts, and the last business-check time. Use inventory_summary for inventory totals.
+Use general_knowledge for questions that can be answered without this business's records, such as explaining a business term or principle.
 If none of the listed business datasets or actions can answer the request, use clarify with a null view. Never choose a nearby dataset merely to return an answer.
+When intent is clarify, clarifyingQuestion must be one plain, specific question that would let the owner continue; otherwise use an empty string. Never invent a business fact in that question.
 search is the exact business name, order number, status or phrase they named, without command words.
 For receive, issue, transfer and adjust, sku is the product/SKU wording exactly as stated.
 For receive and issue, location is the stated place. For transfer, use fromLocation and toLocation.
@@ -242,11 +249,15 @@ function fallbackPlan(message) {
 
 function cleanPlan(raw,message) {
   const fallback=fallbackPlan(message);
-  if(!raw || !['lookup','action','instruction','clarify'].includes(raw.intent))return fallback;
-  const deterministicAction=fallback.intent==='action'&&fallback.action&&raw.intent!=='action';
-  const source=deterministicAction?{...raw,...fallback}:raw;
-  return {intent:source.intent,view:VIEWS.includes(source.view)?source.view:fallback.view,
-    action:ACTIONS.includes(source.action)?source.action:null,
+  if(!raw)return fallback;
+  if(!['lookup','action','instruction','clarify'].includes(raw.intent))return {intent:'clarify',view:null,action:null,
+    clarifyingQuestion:'I could not reliably understand that request. Could you say what you want to know or change?'};
+  const source=raw;
+  const invalidLookup=source.intent==='lookup'&&!VIEWS.includes(source.view);
+  return {intent:invalidLookup?'clarify':source.intent,
+    view:source.intent==='clarify'||invalidLookup?null:VIEWS.includes(source.view)?source.view:fallback.view,
+    clarifyingQuestion:invalidLookup?'What business information should I check?':trimOrNull(source.clarifyingQuestion),
+    action:source.intent==='clarify'?null:ACTIONS.includes(source.action)?source.action:null,
     search:trimOrNull(source.search),sku:trimOrNull(source.sku),
     location:trimOrNull(source.location),fromLocation:trimOrNull(source.fromLocation),toLocation:trimOrNull(source.toLocation),
     quantity:Number.isSafeInteger(source.quantity)?source.quantity:null,
@@ -328,8 +339,58 @@ async function explainProfitChange(database,ctx){
     handoff:{href:`/accounting/reports/profit-and-loss?from=${current.from}&to=${current.to}`,label:'Open the current profit and loss report'}};
 }
 
-async function lookup(database,ctx,request) {
+async function lookup(database,ctx,request,options={}) {
   const search=trimOrNull(request.search);
+  if(request.view==='replenishment'){
+    const overview=await autonomy.dashboard(database,ctx.workspaceId);
+    const recommendations=overview.recent.filter((item)=>item.category==='replenishment_plan'
+      &&['WAITING_FOR_APPROVAL','AUTHORIZED','EXECUTING'].includes(item.execution_status)).slice(0,12);
+    const rows=recommendations.map((item)=>{
+      const action=item.recommendedAction||{};
+      return evidenceRow({product:action.displayName||action.code||'Product',quantity:action.quantity||0,
+        supplier:action.supplierName||'Not selected',status:item.execution_status},`/autopilot/work/${item.id}`);
+    });
+    const answer=rows.length?`StockChief has ${rows.length} purchase ${rows.length===1?'recommendation':'recommendations'} in progress. The first is ${rows[0].quantity} ${rows[0].product} from ${rows[0].supplier}. Review the evidence before ordering.`:
+      !overview.state.lastEvaluatedAt?'StockChief has not run its first business check, so there is no verified reorder recommendation yet. Run the first check on Home.':
+        'StockChief has no open purchase recommendation from its latest check. That does not prove nothing should be bought; check stock rules and current demand before deciding.';
+    return {answer,rows,columns:['product','quantity','supplier','status'],
+      handoff:{href:rows.length?'/needs-you':'/',label:rows.length?'Review recommendations':'Open Home'}};
+  }
+  if(request.view==='general_knowledge'){
+    let explained;
+    try{explained=await evidenceAnswers.answer(options.provider,options.question||'',{},'general');}
+    catch(error){if(error.code==='entitlement_required')throw error;
+      return {status:'CLARIFY',answer:'I could not verify that answer just now. Nothing was changed. Please try again.',
+        rows:[],columns:[],general:true,reason:'unavailable'};}
+    return {status:explained.supported?'ANSWERED':'CLARIFY',answer:explained.answer,
+      rows:[],columns:[],general:true,reason:explained.supported?null:'unverified'};
+  }
+  if(request.view==='business_analysis'){
+    const scope=await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId);
+    const access=await entitlements.capabilityState(database,scope,'accounting.explanations');
+    const evidence=await evidenceAnswers.businessEvidence(database,ctx.workspaceId,{includeFinancials:access.enabled});
+    let explained;
+    try{explained=await evidenceAnswers.answer(options.provider,options.question||'',evidence,'business');}
+    catch(error){if(error.code==='entitlement_required')throw error;
+      return {status:'CLARIFY',answer:'I could not verify an answer from the business records just now. Nothing was changed. Please try again.',
+        rows:[],columns:[],reason:'unavailable'};}
+    const rows=explained.evidenceKeys.map((key)=>{
+      const fact=evidence[key];
+      if(key==='customerOrders')return {measure:'Customer orders',value:`${fact.currentCount} this month; ${fact.priorComparableCount} in the comparable previous period; ${fact.openCount} open`};
+      if(key==='lastBusinessCheck')return {measure:'Last business check',value:fact.at?`${fact.at}${fact.paused?' · paused':''}`:'Not run yet'};
+      if(key==='availability')return {measure:'Financial analysis',value:fact.postedFinancialAnalysis};
+      if(key.startsWith('postedFinancials'))return {measure:key==='postedFinancialsCurrent'?'Posted financials · this month':'Posted financials · previous comparable period',
+        value:`Revenue ${pricing.formatMinor(fact.revenueMinor,fact.currency)}; net income ${pricing.formatMinor(fact.netIncomeMinor,fact.currency)}`};
+      return null;
+    }).filter(Boolean);
+    const keys=new Set(explained.evidenceKeys);
+    const handoff=keys.has('customerOrders')&&!['postedFinancialsCurrent','postedFinancialsPriorComparable'].some((key)=>keys.has(key))
+      ?{href:'/orders',label:'Review customer orders'}
+      :keys.has('postedFinancialsCurrent')||keys.has('postedFinancialsPriorComparable')
+          ?{href:'/money',label:'Review financial records'}:null;
+    return {status:explained.supported?'ANSWERED':'CLARIFY',answer:explained.answer,
+      rows,columns:['measure','value'],handoff,reason:explained.supported?null:'unverified'};
+  }
   if(request.view==='needs_you'){
     const [needs,state]=await Promise.all([projections.needs(database,ctx.workspaceId),autonomy.getState(database,ctx.workspaceId)]);
     const lastCheck=state.lastEvaluatedAt?Date.parse(state.lastEvaluatedAt):NaN;
@@ -778,7 +839,8 @@ async function createProposal(database,ctx,message,actionType,payload,summary) {
 
 async function storeInteraction(database,ctx,message,intent,result) {
   const id=newId('pgask');
-  const storedIntent={...intent,presentation:{columns:result.columns || [],choices:result.choices || [],handoff:result.handoff || null}};
+  const storedIntent={...intent,presentation:{columns:result.columns || [],choices:result.choices || [],handoff:result.handoff || null,
+    reason:result.reason||null}};
   await database.query(`INSERT INTO stockchief_runtime.assistant_interactions
     (id,workspace_id,actor_user_id,message,intent,answer,evidence,status)
     VALUES($1,$2,$3,$4,$5::jsonb,$6,$7::jsonb,$8)`,[id,ctx.workspaceId,ctx.actorId,message,JSON.stringify(storedIntent),
@@ -795,13 +857,16 @@ async function ask(database,ctx,message,options={}) {
   const requests=await planMany(clean,meteredOptions);const results=[];const batchId=requests.length>1?newId('pgaskbatch'):null;
   for(let index=0;index<requests.length;index+=1){
     const request=requests[index];const intent=request.intent;
+    const synthesisProvider=provider?require('../commercial/model').wrap(database,ctx,provider,'ask',
+      `${options.usageKey||newId('askusage')}:answer:${index}`):null;
     const result=intent.intent==='action'?await prepareAction(database,ctx,clean,intent):
       intent.intent==='instruction'?await prepareInstruction(database,ctx,request.requestText,options):
-      intent.intent==='lookup'?{status:'ANSWERED',...(await lookup(database,ctx,intent))}:
+      intent.intent==='lookup'?{status:'ANSWERED',...(await lookup(database,ctx,intent,
+        {provider:synthesisProvider,question:request.requestText}))}:
         {status:'CLARIFY',answer:intent.interpretationUnavailable
           ?'I could not reliably understand that request just now. Nothing was changed. Please try again.'
-          :'I cannot confirm an answer or safe action from the connected business records for that request. What should I check or change?',
-        rows:[],columns:[]};
+          :intent.clarifyingQuestion||'I cannot confirm an answer or safe action from the connected business records for that request. What should I check or change?',
+        rows:[],columns:[],reason:intent.interpretationUnavailable?'unavailable':null};
     const requestContext=requests.length>1?{batchId,sourceMessage:clean,requestIndex:index+1,requestCount:requests.length}:{};
     const storedIntent=result.proposal?{...intent,...requestContext,proposalId:result.proposal.id,
       proposalHref:result.proposal.href||`/actions/${result.proposal.id}`}:{...intent,...requestContext};

@@ -204,7 +204,7 @@
           <p class="rm-said__meta"><span>Nothing has changed. You will see the exact change before it happens.</span></p>
         <% } %>
 
-        <% if (!result.supported && !result.isAction && !result.needsClarification) { %>
+        <% if (!result.supported && !result.isAction && !result.needsClarification && !result.answerReason) { %>
           <p class="rm-said__meta"><span>Things I can answer</span></p>
           <div class="rm-suggest">
             <% examples.slice(0, 4).forEach(function (example) { %>
