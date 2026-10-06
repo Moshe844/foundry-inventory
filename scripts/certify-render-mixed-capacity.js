@@ -64,7 +64,8 @@ function metric(result){const rows=result.rows[0];return {connections:Number(row
 async function dbMetrics(db){return metric(await db.query(`SELECT
  (SELECT count(*) FROM pg_stat_activity WHERE datname=current_database()) AS connections,
  (SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND state='active') AS active_connections,
- (SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event IS NOT NULL) AS waiting_connections,
+ (SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND state='active'
+   AND wait_event IS NOT NULL) AS waiting_connections,
  (SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock') AS lock_waiters,
  (SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND state='active'
    AND pid<>pg_backend_pid() AND clock_timestamp()-query_start>interval '1 second') AS slow_active_queries,
@@ -202,7 +203,7 @@ async function phase(db,agents,level){const rps=Math.min(settings.maxRps,Math.ma
     const queued=await jobs.enqueue(db,{workspaceId:actor.workspaceId,kind:'mailbox.poll',
      idempotencyKey:`${prefix}${index}`,payload:{connectorId:actor.connectorId},maxAttempts:1});
     if(!queued.created)throw Error('Mailbox job unexpectedly duplicated');
-    const processed=await resourceMetrics.measure(db,{runtimeKind:'capacity',operation:'mailbox.poll'},
+    const processed=await resourceMetrics.measure(db,{runtimeKind:'worker',operation:'mailbox.poll'},
      ()=>jobs.processOne(db,{'mailbox.poll':mailboxHandler},
       {owner:`capacity-mail-${index}`,leaseMs:60000}));
     if(processed?.status!=='COMPLETED')throw Error(`Mailbox job ${processed?.status||'missing'}`);
@@ -212,16 +213,16 @@ async function phase(db,agents,level){const rps=Math.min(settings.maxRps,Math.ma
     const queued=await jobs.enqueue(db,{workspaceId:actor.workspaceId,kind:'autopilot.evaluate',
      idempotencyKey:`${prefix}${index}`,payload:{actorId:actor.actorId},maxAttempts:1});
     if(!queued.created)throw Error('Autopilot job unexpectedly duplicated');
-    const processed=await resourceMetrics.measure(db,{runtimeKind:'capacity',operation:'autopilot.evaluate'},
+    const processed=await resourceMetrics.measure(db,{runtimeKind:'worker',operation:'autopilot.evaluate'},
      ()=>jobs.processOne(db,{'autopilot.evaluate':runtimeHandlers.create()['autopilot.evaluate']},
       {owner:`capacity-autopilot-${index}`,leaseMs:60000}));
     if(processed?.status!=='COMPLETED')throw Error(`Autopilot job ${processed?.status||'missing'}`);
     mixed.autopilotEvaluations++;completedJobs++;
    }else if(realMixed&&(kind==='import'||kind==='import-job')){
-    await resourceMetrics.measure(db,{runtimeKind:'capacity',operation:'import.execute'},
+    await resourceMetrics.measure(db,{runtimeKind:'worker',operation:'import.execute'},
      ()=>realImport(db,actor,`${prefix}${index}`,index));mixed.imports++;
    }else if(realMixed&&kind==='shipping'){
-    await resourceMetrics.measure(db,{runtimeKind:'capacity',operation:'shipping.quote'},
+    await resourceMetrics.measure(db,{runtimeKind:'worker',operation:'shipping.quote'},
      ()=>realShipping(db,actor,`${prefix}${index}`,index,carrier));mixed.shipments++;mixed.quotes++;
    }else if(['background','connector-event','mailbox','import-job'].includes(kind)){
     const result=await jobs.enqueue(db,{kind:'certification.noop',

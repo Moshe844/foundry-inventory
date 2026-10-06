@@ -54,6 +54,8 @@ test('isolated real mixed probe executes mailbox, import and shipping handlers w
    assert.ok(result.mixed.mailReplayed>0);
    assert.equal(result.postgres.maxLockWaiters,0);
    assert.equal(result.postgres.maxPoolWaiters,0);
+   assert.ok(result.postgres.queryTelemetry.measuredOperations>=result.completed,
+    JSON.stringify(result.postgres.queryTelemetry));
    assert.equal(result.liveProviderCalls,0);
    assert.equal(events.at(-1).event,'capacity_cleanup');
    assert.equal(events.at(-1).dropped,true);
