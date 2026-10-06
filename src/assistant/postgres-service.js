@@ -18,7 +18,7 @@ const entitlements=require('../entitlements/postgres-service');
 const { ValidationError, NotFoundError, InvariantError } = require('../domain/errors');
 const { newId, trimOrNull } = require('../lib/util');
 
-const VIEWS = ['inventory','inventory_summary','needs_you','replenishment','locations','purchase_orders','sales_orders','suppliers','customers','shipping','payments',
+const VIEWS = ['inventory','inventory_summary','needs_you','replenishment','locations','purchase_orders','sales_orders','sales_activity','suppliers','customers','shipping','payments',
   'payables','receivables','accounting','connections','business_analysis','general_knowledge'];
 const ACTIONS = ['receive','issue','transfer','adjust','create_item','create_location','set_price','set_purchase_cost',
   'send_email','create_sales_order','create_purchase_order','receive_purchase_order','record_supplier_payment'];
@@ -67,11 +67,14 @@ and amounts customers owe the business. Use payments only for payment transactio
 Use needs_you when the person asks what needs their attention, review, approval, or decision.
 Use replenishment when the person asks what stock to buy, reorder, or restock next; it reads existing StockChief recommendations and check status, and never places an order.
 Use inventory_summary for business-wide product and SKU totals; use inventory for stock quantities or named products.
+Use sales_activity for business-wide questions about whether any sales or customer orders are recorded, or how many sales/orders are recorded in one period. It summarizes recorded customer orders, fulfilled units, and posted revenue; it does not filter by customer or order number.
+Use sales_orders to list customer orders or find orders for a named customer, order number, or status. Preserve the exact named customer, order number, or status in search.
 Use business_analysis for comparisons, trends, reasons, or questions that need figures from more than one business dataset. It can read posted financials when allowed on this plan, customer order counts, and the last business-check time. Use inventory_summary for inventory totals.
 Use general_knowledge for questions that can be answered without this business's records, such as explaining a business term or principle.
 If none of the listed business datasets or actions can answer the request, use clarify with a null view. Never choose a nearby dataset merely to return an answer.
 When intent is clarify, clarifyingQuestion must be one plain, specific question that would let the owner continue; otherwise use an empty string. Never invent a business fact in that question.
-search is the exact business name, order number, status or phrase they named, without command words.
+When a sales summary names a time period, preserve that exact wording in requestText. Never infer an unstated time window; StockChief validates the period against the person's words. If the requested period cannot be supported, use clarify.
+search is only an explicitly named business entity, order number, or record status, without command words. General words such as any, anything, yet, sales, and this month are not search filters. Never set a search filter on sales_activity or business_analysis; use sales_orders for a filtered order list.
 For receive, issue, transfer and adjust, sku is the product/SKU wording exactly as stated.
 For receive and issue, location is the stated place. For transfer, use fromLocation and toLocation.
 Use set_price for customer selling-price changes and set_purchase_cost for supplier or purchase-cost changes.
@@ -254,8 +257,10 @@ function cleanPlan(raw,message) {
     clarifyingQuestion:'I could not reliably understand that request. Could you say what you want to know or change?'};
   const source=raw;
   const invalidLookup=source.intent==='lookup'&&!VIEWS.includes(source.view);
+  const requestedTimeframe=explicitTimeframe(message);
   return {intent:invalidLookup?'clarify':source.intent,
     view:source.intent==='clarify'||invalidLookup?null:VIEWS.includes(source.view)?source.view:fallback.view,
+    timeframe:requestedTimeframe||'all_time',
     clarifyingQuestion:invalidLookup?'What business information should I check?':trimOrNull(source.clarifyingQuestion),
     action:source.intent==='clarify'?null:ACTIONS.includes(source.action)?source.action:null,
     search:trimOrNull(source.search),sku:trimOrNull(source.sku),
@@ -273,6 +278,18 @@ function cleanPlan(raw,message) {
     purchaseOrder:trimOrNull(source.purchaseOrder),supplierBill:trimOrNull(source.supplierBill),
     receiptReference:trimOrNull(source.receiptReference),paymentMethod:trimOrNull(source.paymentMethod),
     paymentDate:trimOrNull(source.paymentDate)};
+}
+
+function explicitTimeframe(message){
+  const text=String(message||'').toLowerCase();
+  if(/\b(?:today|this day)\b/.test(text))return 'today';
+  if(/\b(?:this month|month to date|mtd)\b/.test(text))return 'month_to_date';
+  if(/\b(?:last month|previous month)\b/.test(text))return 'previous_month';
+  if(/\b(?:last|past)\s+30\s+days\b/.test(text))return 'last_30_days';
+  if(/\b(?:yesterday|tomorrow|tonight|morning|afternoon|week|quarter|year|since|until|between|before|after|january|february|march|april|june|july|august|september|october|november|december)\b/.test(text)
+    ||/\b(?:in|for|during|of)\s+may\b/.test(text)||/\b(?:last|past|next)\s+\d+\s+days?\b/.test(text)
+    ||/\b\d{4}-\d{2}(?:-\d{2})?\b/.test(text))return 'unsupported';
+  return null;
 }
 
 async function planMany(message,options={}) {
@@ -339,8 +356,52 @@ async function explainProfitChange(database,ctx){
     handoff:{href:`/accounting/reports/profit-and-loss?from=${current.from}&to=${current.to}`,label:'Open the current profit and loss report'}};
 }
 
+function salesPeriod(timeframe,now=new Date()){
+  const iso=(date)=>date.toISOString().slice(0,10);
+  const year=now.getUTCFullYear(),month=now.getUTCMonth(),today=iso(now);
+  if(timeframe==='today')return {from:today,to:today,label:'today'};
+  if(timeframe==='month_to_date')return {from:iso(new Date(Date.UTC(year,month,1))),to:today,label:'this month'};
+  if(timeframe==='previous_month')return {from:iso(new Date(Date.UTC(year,month-1,1))),
+    to:iso(new Date(Date.UTC(year,month,0))),label:'last month'};
+  if(timeframe==='last_30_days')return {from:iso(new Date(Date.UTC(year,month,now.getUTCDate()-29))),
+    to:today,label:'in the last 30 days'};
+  return {from:'1900-01-01',to:today,label:'so far'};
+}
+
+async function salesActivity(database,ctx,timeframe){
+  const period=salesPeriod(timeframe);
+  const counts=(await database.query(`SELECT COUNT(DISTINCT so.id) AS orders,
+    COALESCE(SUM(sol.quantity_fulfilled),0) AS fulfilled_units
+    FROM sales_orders so LEFT JOIN sales_order_lines sol ON sol.sales_order_id=so.id
+    WHERE so.workspace_id=$1 AND so.order_date BETWEEN $2 AND $3
+      AND so.status NOT IN ('DRAFT','CANCELLED')`,[ctx.workspaceId,period.from,period.to])).rows[0];
+  let report=null;
+  try{report=await accountingReports.profitAndLoss(database,ctx.workspaceId,{from:period.from,to:period.to});}
+  catch(error){if(error.code!=='entitlement_required')throw error;}
+  const orders=Number(counts.orders),fulfilledUnits=Number(counts.fulfilled_units);
+  const revenue=report?pricing.formatMinor(report.revenueMinor,report.currency):null;
+  const rows=[{measure:'Customer orders',value:orders},{measure:'Units fulfilled',value:fulfilledUnits},
+    {measure:'Posted revenue',value:revenue||'Not available'}];
+  const answer=orders===0&&report?.revenueMinor===0
+    ?`I don't see any customer orders or posted sales revenue recorded in StockChief ${period.label}. Sales through systems that are not connected or imported here would not appear in this answer.`
+    :orders===0&&!report
+      ?`I don't see any customer orders recorded in StockChief ${period.label}. Posted revenue is not available here, so I cannot confirm whether other sales occurred.`
+    :`StockChief records show ${orders} customer ${orders===1?'order':'orders'} ${period.label}, ${fulfilledUnits} units fulfilled, and ${revenue||'no available posted-revenue figure'}. Orders and posted revenue are different measures; sales outside connected or imported records are not included.`;
+  return {answer,rows,columns:['measure','value'],handoff:{href:'/orders',label:'Review customer orders'}};
+}
+
 async function lookup(database,ctx,request,options={}) {
   const search=trimOrNull(request.search);
+  if(['sales_activity','business_analysis'].includes(request.view)&&search)return {status:'CLARIFY',
+    answer:'I cannot apply a named record filter to a business-wide summary. Ask me to show matching customer orders, or ask for the unfiltered summary.',
+    rows:[],columns:[],reason:'unverified'};
+  if(request.view==='sales_activity'&&request.timeframe==='unsupported')return {status:'CLARIFY',
+    answer:'I cannot verify that time period from this summary. I can check all recorded time, today, this month, last month, or the last 30 days. Which would you like?',
+    rows:[],columns:[],reason:'unverified'};
+  if(request.view==='business_analysis'&&!['all_time','month_to_date'].includes(request.timeframe))return {status:'CLARIFY',
+    answer:'This comparison covers this month to date against the same days last month. I cannot safely apply the period you named to this comparison.',
+    rows:[],columns:[],reason:'unverified'};
+  if(request.view==='sales_activity')return salesActivity(database,ctx,request.timeframe);
   if(request.view==='replenishment'){
     const overview=await autonomy.dashboard(database,ctx.workspaceId);
     const recommendations=overview.recent.filter((item)=>item.category==='replenishment_plan'
@@ -442,8 +503,9 @@ async function lookup(database,ctx,request,options={}) {
         OR so.status ILIKE '%'||$2||'%') GROUP BY so.id,c.name ORDER BY so.created_at DESC LIMIT 100`,
     [ctx.workspaceId,search])).rows.map((row)=>evidenceRow({order:row.order_number,status:row.status,customer:row.customer,
       openUnits:Number(row.open_units)},`/sales/orders/${row.id}`));
-    return {answer:rows.length?`${rows.length} customer order${rows.length===1?'':'s'} matched; ${rows.reduce((sum,row)=>sum+row.openUnits,0).toLocaleString('en-US')} units remain open.`:
-      'No customer order matched that request.',rows,columns:['order','status','customer','openUnits']};
+    return {answer:rows.length?`${rows.length===100?'Showing the first 100':rows.length} customer order${rows.length===1?'':'s'} ${search?'matched':'recorded'}; ${rows.reduce((sum,row)=>sum+row.openUnits,0).toLocaleString('en-US')} units remain open.`:
+      search?'No customer order matched that request.':'No customer orders are recorded in StockChief. Sales through systems that are not connected or imported here would not appear in this list.',
+      rows,columns:['order','status','customer','openUnits']};
   }
   if(['suppliers','customers'].includes(request.view)){
     const supplier=request.view==='suppliers';
