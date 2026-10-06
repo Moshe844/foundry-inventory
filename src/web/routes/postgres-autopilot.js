@@ -57,17 +57,17 @@ function createPostgresAutopilotRouter(database){
   }));
   router.post('/autopilot/pause',requireAuth,asyncRoute(async(req,res)=>{
     await autonomy.pause(database,req.ctx,req.user,req.body.reason);req.flash('success','Automatic work is paused.');
-    return res.redirect(303,'/autopilot');
+    return res.redirect(303,req.body.returnToHome==='1'?'/':'/autopilot');
   }));
   router.post('/autopilot/resume',requireAuth,asyncRoute(async(req,res)=>{
     await autonomy.resume(database,req.ctx,req.user);req.flash('success','StockChief is watching again. Old work will not be replayed.');
-    return res.redirect(303,'/autopilot');
+    return res.redirect(303,req.body.returnToHome==='1'?'/':'/autopilot');
   }));
   router.post('/autopilot/run',requireAuth,requireCapability(database,'forecasting.basic'),asyncRoute(async(req,res)=>{
     const result=await autonomy.run(database,req.ctx);
     req.flash('success',
       `Check complete — ${result.planned} prepared, ${result.executed} completed automatically, ${result.waiting} waiting for you.`);
-    return res.redirect(303,'/autopilot');
+    return res.redirect(303,req.body.returnToHome==='1'?'/':'/autopilot');
   }));
   router.get('/autopilot/work/:id',requireAuth,asyncRoute(async(req,res)=>res.page('autopilot/postgres-work',{
     title:'Review StockChief’s decision',nav:'autopilot',backTo:{href:'/needs-you',label:'Needs you'},

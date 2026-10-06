@@ -74,7 +74,7 @@
 <div class="rm-chat" data-conversation="<%= locals.conversationId || '' %>">
   <% if (started) { %>
   <div class="rm-chat__bar">
-    <p class="rm-stamp">This conversation</p>
+    <div><p class="rm-stamp">Your direct line</p><h1 class="rm-chat__title">Ask StockChief</h1></div>
       <form method="post" action="/ask/new" class="rm-chat__new">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">New conversation</button>
@@ -268,7 +268,7 @@
             without a script, and is where the statement of record lives.
           %>
           <details class="rm-chat-reading">
-            <summary>How StockChief read this</summary>
+            <summary>Why this answer?</summary>
             <div class="rm-chat-reading__body">
               <% if (record) { %>
                 <p class="rm-chat-reading__record"><%= helpers.figures(record) %></p>
@@ -337,7 +337,7 @@
   <%- include('../partials/composer', {
     queryConversation: true,
     composerPrefill: error ? question : about ? 'About ' + about + ': ' : '',
-    composerPlaceholder: result && result.actionClarification ? 'Answer the question above…' : '',
+    composerPlaceholder: result && result.actionClarification ? 'Answer the question above…' : 'Ask what’s happening or tell StockChief what to do…',
     actionClarification: result && result.actionClarification ? result.actionClarification : null,
     usageKey: locals.usageKey,
   }) %>

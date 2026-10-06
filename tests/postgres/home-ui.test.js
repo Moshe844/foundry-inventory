@@ -49,9 +49,19 @@ test('PostgreSQL Home leads with the owner briefing and never credits a human mo
     assert.match(response.text,/Needs you/);
     assert.match(response.text,/Coming up/);
     assert.match(response.text,/StockChief noticed/);
-    assert.match(response.text,/No new work was completed by StockChief in the last 24 hours/);
+    assert.match(response.text,/StockChief has not checked them yet/);
     assert.doesNotMatch(response.text,/White Medium inventory changed/);
     assert.match(response.text,/\/home\.css\?/);
+    assert.match(response.text,/Your inventory is here\. Let’s do the first check/);
+    assert.match(response.text,/First check needed/);
+    assert.match(response.text,/Pause automatic work/);
+    assert.doesNotMatch(response.text,/Nothing needs you\./);
+    const check=await agent.post('/autopilot/run').type('form').send({_csrf:csrfFrom(response.text),returnToHome:'1'});
+    assert.equal(check.status,303);
+    assert.equal(check.headers.location,'/');
+    const checkedHome=await agent.get('/');
+    assert.match(checkedHome.text,/Everything is under control/);
+    assert.match(checkedHome.text,/Last checked just now/);
     const at=nowIso();
     await database.query(`INSERT INTO attention_items
       (id,workspace_id,fingerprint,category,severity,priority_score,title,concise_summary,explanation,recommendation,
@@ -78,4 +88,26 @@ test('PostgreSQL Home leads with the owner briefing and never credits a human mo
     assert.match(activeHome.text,/Blue Large: purchase order approved/);
     assert.match(activeHome.text,/not yet sent/);
     assert.match(activeHome.text,/ABC Supply delivery expected/);
+    const pause=await agent.post('/autopilot/pause').type('form').send({_csrf:csrfFrom(activeHome.text),returnToHome:'1'});
+    assert.equal(pause.status,303);
+    assert.equal(pause.headers.location,'/');
+    const pausedHome=await agent.get('/');
+    assert.match(pausedHome.text,/StockChief is paused/);
+    assert.match(pausedHome.text,/Resume StockChief/);
+    assert.doesNotMatch(pausedHome.text,/Pause automatic work/);
+    const resume=await agent.post('/autopilot/resume').type('form').send({_csrf:csrfFrom(pausedHome.text),returnToHome:'1'});
+    assert.equal(resume.status,303);
+    assert.equal(resume.headers.location,'/');
+    const count=await agent.post('/foundry/tell').type('form').send({_csrf:csrfFrom((await agent.get('/')).text),
+      message:'How many products do we have?'});
+    assert.equal(count.status,303);
+    const counted=await agent.get('/ask');
+    assert.match(counted.text,/You have 1 active product in StockChief, across 1 SKU/);
+    const attention=await agent.post('/foundry/tell').type('form').send({_csrf:csrfFrom(counted.text),
+      message:'What needs my attention?'});
+    assert.equal(attention.status,303);
+    const answered=await agent.get('/ask');
+    assert.match(answered.text,/1 thing needs your attention/);
+    assert.match(answered.text,/White Medium needs a decision/);
+    assert.doesNotMatch(answered.text,/What needs my attention\?[\s\S]{0,350}1 SKU matched/);
   });

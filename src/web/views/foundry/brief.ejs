@@ -12,11 +12,13 @@
   var observations = locals.noticed || [];
   var paused = home.status.paused || home.status.suspended;
   var empty = !!locals.isEmpty && !needsCount;
+  var firstCheck = !empty && home.status.checkPending;
   var stale = !paused && !empty && home.status.checkStale;
   var migration = locals.activeMigration || null;
   var headline = paused ? 'StockChief is paused.'
     : empty ? (migration ? 'Your inventory is being prepared.' : 'StockChief is ready. Your inventory isn’t here yet.')
     : urgentCount ? (urgentCount === 1 ? 'One urgent thing needs you.' : urgentCount + ' urgent things need you.')
+    : firstCheck ? 'Your inventory is here. Let’s do the first check.'
     : stale ? 'Here’s where things stood at the last check.'
     : needsCount ? 'Everything else is under control.'
     : 'Everything is under control.';
@@ -27,9 +29,11 @@
       <p class="sc-home__greeting"><%= greeting %><%= firstName ? ', ' + firstName : '' %></p>
       <h1 id="sc-home-title"><%= headline %></h1>
       <% if (paused) { %>
-        <p class="sc-home__sentence"><%= home.status.suspendedReason || home.status.pausedReason || 'Automatic work is stopped until you resume it.' %></p>
+        <p class="sc-home__sentence"><%= home.status.suspendedReason || home.status.pausedReason || 'Automatic work is stopped until you resume it.' %><%= firstCheck ? ' No business check has run yet.' : '' %></p>
       <% } else if (empty) { %>
         <p class="sc-home__sentence"><%= migration ? 'Your source is saved; StockChief will not switch it live until the records reconcile and you approve them.' : 'Bring in the products and quantities you already have. StockChief has not checked your business yet, and nothing will be ordered, paid, or emailed without your approval or the limits you set.' %></p>
+      <% } else if (firstCheck) { %>
+        <p class="sc-home__sentence">Your records are in place, but StockChief has not checked them yet. Run the first check to see what needs attention. No automatic action goes beyond the limits you set.</p>
       <% } else { %>
         <p class="sc-home__sentence">
           <% if (handledCount) { %>StockChief <strong>handled <%= handledCount %> <%= handledCount === 1 ? 'thing' : 'things' %></strong> in the last 24 hours.<% } else { %>No new work was completed by StockChief in the last 24 hours.<% } %>
@@ -38,18 +42,23 @@
       <% } %>
       <div class="sc-home__hero-actions">
         <% if (paused && canOperate) { %>
-          <form method="post" action="/autopilot/resume"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="sc-home__primary" type="submit">Resume StockChief <%- helpers.icon('arrowRight', { size: 17 }) %></button></form>
+          <form method="post" action="/autopilot/resume"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="returnToHome" value="1"><button class="sc-home__primary" type="submit">Resume StockChief <%- helpers.icon('arrowRight', { size: 17 }) %></button></form>
         <% } else if (empty) { %>
           <a class="sc-home__primary" href="<%= migration ? '/onboarding/migrations/' + migration.id + (migration.remainingCount ? '/sources' : '') : '/onboarding' %>"><%= migration ? (migration.remainingCount ? 'Continue source review' : 'Run final checks') : 'Add your inventory' %> <%- helpers.icon('arrowRight', { size: 17 }) %></a>
+        <% } else if (firstCheck && canOperate) { %>
+          <form method="post" action="/autopilot/run"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="returnToHome" value="1"><button class="sc-home__primary" type="submit">Run first check <%- helpers.icon('arrowRight', { size: 17 }) %></button></form>
         <% } else if (needsCount) { %>
           <a class="sc-home__primary" href="#needs-you">Review <%= needsCount %> <%= needsCount === 1 ? 'thing' : 'things' %> <%- helpers.icon('arrowRight', { size: 17 }) %></a>
         <% } else if (stale && canOperate) { %>
-          <form method="post" action="/autopilot/run"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="sc-home__primary" type="submit">Check now <%- helpers.icon('arrowRight', { size: 17 }) %></button></form>
+          <form method="post" action="/autopilot/run"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="returnToHome" value="1"><button class="sc-home__primary" type="submit">Check now <%- helpers.icon('arrowRight', { size: 17 }) %></button></form>
         <% } %>
         <% if (!empty && handledCount) { %><a class="sc-home__text-link" href="#handled">See what was handled</a><% } %>
       </div>
     </div>
-    <div class="sc-home__status" aria-label="StockChief status"><span class="sc-home__status-dot <%= paused ? 'is-paused' : stale ? 'is-stale' : '' %>" aria-hidden="true"></span><span><%= paused ? 'Paused' : empty ? 'Ready to set up' : stale ? 'Check overdue' : 'On duty' %></span><small><%= empty ? 'No business check yet' : 'Last checked ' + home.status.lastEvaluatedText %></small></div>
+    <div class="sc-home__control">
+      <div class="sc-home__status" aria-label="StockChief status"><span class="sc-home__status-dot <%= paused ? 'is-paused' : firstCheck || stale ? 'is-stale' : '' %>" aria-hidden="true"></span><span><%= paused ? 'Paused' : empty ? 'Ready to set up' : firstCheck ? 'First check needed' : stale ? 'Check overdue' : 'On duty' %></span><small><%= empty || firstCheck ? 'No business check yet' : 'Last checked ' + home.status.lastEvaluatedText %></small></div>
+      <% if (canOperate && !paused) { %><form method="post" action="/autopilot/pause"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="returnToHome" value="1"><button class="sc-home__pause" type="submit"><%- helpers.icon('pause', { size: 14 }) %> Pause automatic work</button></form><% } %>
+    </div>
   </header>
 
   <% if (!empty && home.coverageErrors && home.coverageErrors.length) { %><p class="sc-home__warning" role="alert">StockChief could not check every source. This is not a complete all-clear. <a href="/settings/operations">See operational health</a></p><% } %>
@@ -85,7 +94,7 @@
 
     <section class="sc-home__decisions <%= urgentCount ? 'sc-home__decisions--urgent' : '' %>" id="needs-you" aria-labelledby="sc-home-needs-title">
       <div class="sc-home__section-head"><div><p class="sc-home__eyebrow">Decisions only you can make</p><h2 id="sc-home-needs-title">Needs you<% if (needsCount) { %><span class="sc-home__count"><%= needsCount %></span><% } %></h2></div><% if (needsCount > needs.length) { %><a href="/needs-you/all">See all <%= needsCount %></a><% } %></div>
-      <% if (!needsCount) { %><p class="sc-home__all-clear"><%- helpers.icon('check', { size: 18 }) %> Nothing needs you.</p><% } else { %>
+      <% if (!needsCount) { %><p class="sc-home__all-clear"><%- helpers.icon('check', { size: 18 }) %> <%= firstCheck ? 'No decisions are waiting yet. Run the first check to find out what needs attention.' : 'Nothing needs you.' %></p><% } else { %>
         <div class="sc-home__decision-list"><% needs.forEach(function (item) { %><a class="sc-home__decision <%= item.importance === 'Urgent' ? 'is-urgent' : '' %>" href="<%= item.link || item.href %>"><span class="sc-home__decision-icon"><%- helpers.icon(item.importance === 'Urgent' ? 'alert' : 'hand', { size: 18 }) %></span><span class="sc-home__decision-copy"><% if (item.importance === 'Urgent') { %><small>Urgent</small><% } %><strong><%= item.title %></strong><% if (item.because) { %><span><%= item.because %></span><% } %></span><span class="sc-home__decision-action"><%= item.action || 'Review' %> <%- helpers.icon('arrowRight', { size: 16 }) %></span></a><% }) %></div>
         <% if (needsCount > needs.length) { %><a class="sc-home__more" href="/needs-you/all">Open all <%= needsCount %> decisions</a><% } %>
       <% } %>
