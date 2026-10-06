@@ -17,7 +17,9 @@ const ledger=require('../src/accounting/postgres-ledger');
 const {newId}=require('../src/lib/util');
 
 const smoke=process.argv.includes('--smoke');
-const settings={levels:smoke?[1]:[5,10,25,50],seconds:smoke?8:30,maxRps:smoke?2:16,maxDurationMs:15*60*1000,
+const soak=process.argv.includes('--soak');
+const settings={levels:smoke?[1]:soak?[25]:[5,10,25,50],seconds:smoke?8:soak?300:30,
+  maxRps:smoke?2:16,maxDurationMs:15*60*1000,
   maxP95Ms:2500,maxErrorRate:.02,maxDbConnectionFraction:.7};
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 function percentile(sorted,fraction){return Math.round(sorted[Math.max(0,Math.ceil(sorted.length*fraction)-1)]||0);}
