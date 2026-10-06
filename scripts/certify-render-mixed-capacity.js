@@ -171,6 +171,7 @@ async function phase(db,agents,level){const rps=Math.min(settings.maxRps,Math.ma
  const mixed={mailAccepted:0,mailReplayed:0,mailPolls:0,imports:0,shipments:0,quotes:0,
   autopilotEvaluations:0};
  const eligible=agents.slice(0,level).filter(actor=>actor.plan!=='starter');
+ const pro=agents.slice(0,level).filter(actor=>actor.plan==='pro');
  const seenMail=new Map();
  const mailboxAdapter={async poll({credentials}){
   providerCalls++;
@@ -195,8 +196,17 @@ async function phase(db,agents,level){const rps=Math.min(settings.maxRps,Math.ma
    'receive','ask','background','connector-event','mailbox','accounting-write','shipping',
    'import','search','sales-order','purchasing-write','inventory','transfer',
    'accounting-read','replenishment','import-job'];
-  const kind=kinds[index%kinds.length];
-  if(realMixed&&(kind==='mailbox'||kind==='shipping'))actor=eligible[index%eligible.length];
+  const occurrence=Math.floor(index/kinds.length);let kind=kinds[index%kinds.length];
+  if(realMixed){
+   // Polls, imports, quotes and autonomous evaluations are periodic work, not
+   // something each business repeats on every page view. Keep the mix realistic.
+   if(kind==='background'&&occurrence%20!==0)kind='replenishment';
+   if(kind==='mailbox'&&!realMixedSmoke&&occurrence%13!==0)kind='connections-read';
+   if(kind==='shipping'&&occurrence%5!==0)kind='shipping-read';
+   if((kind==='import'||kind==='import-job')&&occurrence%7!==0)kind='imports-read';
+   if(kind==='background')actor=pro[Math.floor(occurrence/20)%pro.length];
+   if(kind==='mailbox'||kind==='shipping')actor=eligible[occurrence%eligible.length];
+  }
   const since=performance.now();let status=200,size=0;
   try{
    if(realMixed&&kind==='mailbox'){
@@ -258,7 +268,8 @@ async function phase(db,agents,level){const rps=Math.min(settings.maxRps,Math.ma
        lines:[{accountKey:'ACCOUNTS_RECEIVABLE',debitMinor:1500},
         {accountKey:'SALES_REVENUE',creditMinor:1500}]},{csrf:actor.csrf});
     else {const paths={accounting:'/accounting/books',shipping:'/settings/shipping',
-      'accounting-read':'/accounting/books',import:'/imports',search:'/inventory?search=CAP-',
+      'shipping-read':'/settings/shipping','connections-read':'/settings/connections',
+      'imports-read':'/imports','accounting-read':'/accounting/books',import:'/imports',search:'/inventory?search=CAP-',
       replenishment:'/planning',inventory:'/inventory'};
       response=await actor.agent.get(paths[kind]||pathFor(index));}
     status=response.status;size=Buffer.byteLength(response.text||JSON.stringify(response.body||{}));bytesOut+=size;
@@ -350,7 +361,8 @@ async function phase(db,agents,level){const rps=Math.min(settings.maxRps,Math.ma
   safeByProbe:errors.length/Math.max(1,observations.length)<=settings.maxErrorRate&&
    percentile(durations,.95)<=settings.maxP95Ms&&
    maxConnections/endDb.maxConnections<settings.maxDbConnectionFraction&&maxLockWaiters===0&&
-   maxPoolWaiters===0&&(integrity===null||integrity.passed)};
+   maxPoolWaiters===0&&(!realMixed||queue.every(row=>row.status==='COMPLETED'))&&
+   maxQueueAgeMs<60000&&(integrity===null||integrity.passed)};
  await db.query(`DELETE FROM stockchief_runtime.jobs WHERE kind='certification.noop' AND idempotency_key LIKE $1`,[`${prefix}%`]);
  return result;}
 async function main(){const source=sourceUrl(),originalDatabase=decodeURIComponent(source.pathname.slice(1));
