@@ -22,6 +22,7 @@
 .page-ask .rm-chat > .rm-composer .rm-composer__input::placeholder { color: #838a9c; }
 .page-ask .rm-chat > .rm-composer .rm-composer__attach { color: #625e77; background: #f4f3fa; }
 .page-ask .rm-chat > .rm-composer .rm-composer__send { border-radius: 11px; background: #5b4bd0; color: #fff; }
+.page-ask .rm-chat--guided > .rm-composer { position: relative; bottom: auto; z-index: 1; }
 .page-ask .rm-email-flow,.page-ask .rm-email-preview { margin: 2px 18px 18px; padding: 17px 18px; border: 1px solid #dcddea; border-radius: 14px; background: #f9f9fd; }
 .page-ask .rm-email-flow { display: grid; gap: 14px; }
 .page-ask .rm-email-flow fieldset { display: grid; gap: 9px; margin: 0; padding: 0; border: 0; }

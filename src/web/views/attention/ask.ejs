@@ -27,6 +27,9 @@
   var currentGoalId = locals.currentGoalId || '';
   var showingCurrent = !!(result || error);
   var started = transcript.length > 0 || showingCurrent;
+  /* A guided email step owns the next interaction. Keep the general composer
+     available, but place it after the step instead of floating over its fields. */
+  var guidedEmailStep = !!(result && (result.emailFlow || (result.emailProposal && result.emailProposal.status === 'PENDING')));
   /*
    * Where an answer came from, in one line a person can check: which
    * lookup, which records, which filters, how many rows, as of when.
@@ -72,7 +75,7 @@
   }
 %>
 
-<div class="rm-chat" data-conversation="<%= locals.conversationId || '' %>">
+<div class="rm-chat<%= guidedEmailStep ? ' rm-chat--guided' : '' %>" data-conversation="<%= locals.conversationId || '' %>">
   <% if (started) { %>
   <div class="rm-chat__bar">
     <div><p class="rm-stamp">Your direct line</p><h1 class="rm-chat__title">Ask StockChief</h1></div>
