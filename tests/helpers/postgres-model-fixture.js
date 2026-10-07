@@ -4,7 +4,8 @@
 function part(value,message){return {requestText:message,continuesPrevious:false,clarifyingQuestion:'',intent:'clarify',view:null,action:null,search:null,sku:null,skuReference:'',
  location:null,fromLocation:null,toLocation:null,quantity:null,countedQuantity:null,amount:null,currency:null,reason:null,
  reference:null,recipient:'',recipientKind:'',subject:'',body:'',mailbox:'',customer:'',supplier:'',deliveryMethod:'',
- shipToAddress:'',neededBy:'',purchaseOrder:'',supplierBill:'',receiptReference:'',paymentMethod:'',paymentDate:'',...value};}
+ shipToAddress:'',neededBy:'',purchaseOrder:'',supplierBill:'',receiptReference:'',paymentMethod:'',paymentDate:'',
+ readQueries:[],...value};}
 const PRICED_MODEL='claude-haiku-4-5-20251001';
 function pricedUsage(usage={}){return {...usage,provider:'anthropic',model:PRICED_MODEL,
  providerVersion:'2023-06-01',inputTokens:usage.inputTokens??20,outputTokens:usage.outputTokens??10};}

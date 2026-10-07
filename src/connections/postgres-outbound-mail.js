@@ -61,7 +61,11 @@ function tableFor(kind){return kind==='supplier'?'supplier_communications':'cust
 
 async function queueInTransaction(client,ctx,payload,idempotencyKey){
   await requireOperator(client,ctx);
-  const table=tableFor(payload.recipientKind);const at=nowIso();
+  // A one-off address has no supplier/customer record. Its durable outbox row
+  // uses the customer communications table, so downstream effects must use the
+  // same concrete kind for retry and entitlement recovery.
+  const communicationKind=payload.recipientKind==='address'?'customer':payload.recipientKind;
+  const table=tableFor(communicationKind);const at=nowIso();
   let contact=null;
   if(payload.recipientKind==='supplier')contact=(await client.query(`SELECT id,name,email FROM suppliers
     WHERE workspace_id=$1 AND id=$2 AND status='active' FOR UPDATE`,[ctx.workspaceId,payload.recipientId])).rows[0];
@@ -86,10 +90,10 @@ async function queueInTransaction(client,ctx,payload,idempotencyKey){
   const message=inserted.rows[0]||(await client.query(`SELECT * FROM ${table} WHERE workspace_id=$1 AND idempotency_key=$2`,
     [ctx.workspaceId,idempotencyKey])).rows[0];
   const queued=await providerEffects.enqueueInTransaction(client,{workspaceId:ctx.workspaceId,kind:'mail.outbound.send',
-    provider:connection.provider_type,aggregateType:payload.recipientKind==='supplier'?'supplier_communication':'customer_communication',
+    provider:connection.provider_type,aggregateType:communicationKind==='supplier'?'supplier_communication':'customer_communication',
     aggregateId:message.id,idempotencyKey,requestedByUserId:ctx.actorId,
-    payload:{communicationId:message.id,communicationKind:payload.recipientKind,connectorId:connection.id},priority:10,maxAttempts:12});
-  return {communicationId:message.id,communicationKind:payload.recipientKind,status:message.status,effectId:queued.effect.id,
+    payload:{communicationId:message.id,communicationKind,connectorId:connection.id},priority:10,maxAttempts:12});
+  return {communicationId:message.id,communicationKind,status:message.status,effectId:queued.effect.id,
     queued:queued.effect.status==='PENDING'};
 }
 

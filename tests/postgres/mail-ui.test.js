@@ -75,6 +75,11 @@ test('real Chromium qualifies PostgreSQL business-mail filtering, exact replies 
     assert.deepEqual({id:unrelatedReplay.id,replayed:unrelatedReplay.replayed},{id:unrelated.id,replayed:true});
     assert.equal((await database.query('SELECT COUNT(*) AS count FROM connection_email_messages WHERE workspace_id=$1',
       [ctx.workspaceId])).rows[0].count,'2');
+    const automated=await mail.capture(database,connection,{externalMessageId:'supplier-auto-1',
+      sender:'supplier@example.test',subject:'Automatic reply: out of office',bodyText:'I am away today.',
+      receivedAt:'2026-09-23T13:02:30.000Z'});
+    const automaticRow=await mail.get(database,ctx.workspaceId,automated.messageId);
+    assert.equal(automaticRow.reply_state,'HANDLED','an automated response is not a decision for the owner');
     const aside=(await database.query('SELECT * FROM connection_email_set_aside WHERE workspace_id=$1',[ctx.workspaceId])).rows;
     assert.equal(aside.length,1);assert.equal(Object.hasOwn(aside[0],'body_text'),false);
     assert.doesNotMatch(JSON.stringify(aside),/private body|Different replay body/);
@@ -135,6 +140,13 @@ test('real Chromium qualifies PostgreSQL business-mail filtering, exact replies 
     assert.match(await page.locator('main').innerText(),/Reply sent and verified/);
     stored=(await database.query('SELECT * FROM connection_email_messages WHERE id=$1',[supplierMessage.messageId])).rows[0];
     assert.equal(stored.reply_state,'WAITING');assert.ok(stored.reply_sent_at);
+    const supplierFollowup=await mail.capture(database,connection,{externalMessageId:'supplier-followup-1',
+      externalThreadId:'supplier-thread-1',sender:'supplier@example.test',recipients:['business@example.test'],
+      subject:'Re: Can we ship the balance Friday?',bodyText:'Yes, Friday works. Can you confirm the address?',
+      receivedAt:'2026-09-23T14:00:00.000Z'});
+    assert.equal((await mail.get(database,ctx.workspaceId,supplierFollowup.messageId)).reply_state,'NEEDS_REPLY');
+    assert.equal((await mail.get(database,ctx.workspaceId,supplierMessage.messageId)).reply_state,'HANDLED',
+      'a real reply closes the old waiting state and creates fresh work');
     const replay=await mail.queueSend(database,ctx,supplierMessage.messageId,{subject:'Re: Friday shipment',
       body:'Friday works. Send the remaining units and email the tracking number.'},{providers});
     assert.equal(replay.replayed,true);assert.equal(providerCalls,1);
