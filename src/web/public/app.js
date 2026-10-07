@@ -1135,7 +1135,14 @@
             method: 'POST', body: new FormData(form), credentials: 'same-origin',
           });
           if (!response.ok) throw new Error('ask_failed');
-          window.location.assign('/ask?latest=1#latest');
+          // Fetch follows the server's 303. A navigation capability can land
+          // on any registered page; don't throw that destination away and
+          // force every Home request back to the conversation.
+          const arrived = new URL(response.url, window.location.href);
+          if (arrived.origin !== window.location.origin) throw new Error('ask_redirect_origin');
+          window.location.assign(arrived.pathname === '/ask'
+            ? '/ask?latest=1#latest'
+            : `${arrived.pathname}${arrived.search}${arrived.hash}`);
         } catch {
           const thinking = form.parentElement.querySelector('[data-thinking-text]');
           if (thinking) {
