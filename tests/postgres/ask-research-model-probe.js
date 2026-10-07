@@ -9,6 +9,7 @@ const auth=require('../../src/domain/postgres-auth-service');
 const catalog=require('../../src/domain/postgres-catalog-service');
 const locations=require('../../src/domain/postgres-location-service');
 const inventory=require('../../src/domain/postgres-inventory-engine');
+const commerce=require('../../src/operations/postgres-commerce');
 const assistant=require('../../src/assistant/postgres-service');
 const config=require('../../src/config');
 const {createProviderUnobserved}=require('../../src/ai/provider');
@@ -45,6 +46,15 @@ const {newId,nowIso}=require('../../src/lib/util');
       missing:email.awaitingField}));
     assert.equal(email.status,'CLARIFY');
     assert.equal(email.awaitingField,'recipientEmail');
+    await commerce.createSupplier(database,ctx,{name:'Known Supply',email:'known-supply@example.test'});
+    const knownContact=await assistant.ask(database,ctx,'Could you send an email to Known Supply?',
+      {provider,usageKey:'probe-known-supplier-email'});
+    console.log(JSON.stringify({question:'Email known supplier without message',status:knownContact.status,
+      answer:knownContact.answer,action:knownContact.intent.action,missing:knownContact.awaitingField}));
+    assert.equal(knownContact.intent.action,'send_email');
+    assert.equal(knownContact.status,'CLARIFY');
+    assert.equal(knownContact.awaitingField,'body');
+    assert.doesNotMatch(knownContact.answer,/email address/i);
     const purchase=await assistant.ask(database,ctx,'Whatever I have in stock, get 20 more.',
       {provider,usageKey:'probe-stocked-replenishment'});
     console.log(JSON.stringify({question:'Get 20 more of stocked product',status:purchase.status,

@@ -39,12 +39,16 @@ test('real Chromium Ask StockChief prepares, approves, sends and verifies one gr
           return {data:{subject:'Order received',body:'We received the order and will confirm Friday.'}};
         }
         const message=JSON.parse(input.prompt).message;
+        if(input.schemaName==='stockchief_postgres_action_review')return {data:{
+          requestedAction:true,action:'send_email',evidenceQuote:JSON.parse(input.prompt).request}};
         if(input.schemaName==='stockchief_postgres_followup')return {data:{
           disposition:message==='new-supplier@example.test'?'answer':'new_request',
           value:message==='new-supplier@example.test'?message:'',currency:''}};
         const recipient=message.startsWith('Email New Supplier')?'New Supplier':
           message.startsWith('Email No Address Supply')?'No Address Supply':
           message.startsWith('Email New Customer')?'New Customer':'Solomon Supply';
+        if(message==='Email Solomon Supply')return {data:{intent:'clarify',recipient,
+          clarifyingQuestion:'What email address and message should I use?'}};
         return {data:{intent:'action',action:'send_email',recipient,
           recipientKind:recipient==='New Customer'?'customer':'supplier',
           body:message==='Email Solomon Supply'?'':message.includes('recieved seven gloves')

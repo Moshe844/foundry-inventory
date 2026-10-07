@@ -56,6 +56,15 @@ const PLAN_PART_SCHEMA = {
 const PLAN_SCHEMA={type:'object',additionalProperties:false,required:['parts'],properties:{
   parts:{type:'array',minItems:1,maxItems:8,items:PLAN_PART_SCHEMA},
 }};
+const ACTION_REVIEW_SCHEMA={type:'object',additionalProperties:false,
+  required:['requestedAction','action','evidenceQuote'],properties:{
+    requestedAction:{type:'boolean'},action:{type:'string',enum:['none',...ACTIONS]},
+    evidenceQuote:{type:'string',maxLength:300},
+  }};
+const ACTION_REVIEW_SYSTEM=`Decide only whether the owner's original words request StockChief to perform a supported business operation now.
+The available operations are: receive stock, issue stock, transfer stock, adjust stock, create an item, create a location, set a selling price, set a purchase cost, send email, create a customer order, create a purchase order, receive a purchase order, and record a supplier payment.
+Missing recipient, product, amount, email message, or other arguments do not change whether an operation was requested. The business workflow will check records and ask for truly missing details after you decide the operation. Do not supply or invent those details.
+Set requestedAction=true and choose the matching action only if the owner is asking StockChief to do that operation. Set requestedAction=false and action=none for questions about what is true or whether StockChief has a capability. evidenceQuote must be an exact substring of the original request that expresses the requested operation; leave it empty when requestedAction=false. Do not answer the owner.`;
 const FOLLOWUP_SCHEMA={type:'object',additionalProperties:false,
   required:['disposition','value','currency'],properties:{
     disposition:{type:'string',enum:['answer','unknown','new_request']},
@@ -69,6 +78,7 @@ This is a grammar and spelling correction, not a composition task. Keep the same
 Do not add a greeting, thanks, sign-off, explanation, promise, fact, deadline, price, order status, shipment claim, receipt claim, or attachment claim unless the owner explicitly supplied it. Do not invent the sender's name.
 Use a short subject made only from concepts the owner explicitly stated; if there is no safe subject, return an empty string. The body should contain only the corrected version of the supplied message, ready for the owner to review before sending.`;
 const SYSTEM=`Decompose and extract the person's complete message into one or more requests to an inventory operations system. Return only the schema.
+Classify the purpose of each request independently of whether its details are complete. A request to perform an operation is action even when the recipient, product, amount, message, or other argument is missing. Leave missing fields empty; the business workflow will inspect records and ask for what it actually needs. Use clarify only when the requested operation or question itself cannot be identified.
 Preserve every distinct question, instruction and requested action. Never silently omit a requirement. Each parts entry must contain
 one request and requestText must be the exact portion of the person's message represented by that entry. Keep dependent wording with
 the request it qualifies. Use one part when the message contains only one request and no more than eight parts total.
@@ -333,11 +343,31 @@ async function planMany(message,options={}) {
       schemaName:'stockchief_postgres_request'});
     if(options.onUsage&&response.usage)await options.onUsage(response.usage,{schemaName:'stockchief_postgres_request'});
     const rawParts=Array.isArray(response.data?.parts)&&response.data.parts.length?response.data.parts:[response.data];
-    return rawParts.slice(0,8).flatMap((raw)=>{const continued=Boolean(context&&raw?.continuesPrevious);
+    const planned=[];
+    for(const [partIndex,raw] of rawParts.slice(0,8).entries()){const continued=Boolean(context&&raw?.continuesPrevious);
       const requestText=continued?(trimOrNull(raw?.requestText)||message)
         :rawParts.length===1?message:(trimOrNull(raw?.requestText)||message);
-      const intent=cleanPlan(raw,requestText);const balances=intent.intent==='lookup'?financialBalancePlans(requestText,intent):[];
-      return balances.length?balances.map((entry)=>({...entry,continued})):[{requestText,intent,continued}];}).slice(0,8);
+      let intent=cleanPlan(raw,requestText);
+      if(intent.intent==='clarify'){
+        try{
+          const reviewProvider=options.actionReviewProviderFor?.(partIndex)||provider;
+          const reviewed=await reviewProvider.complete({system:ACTION_REVIEW_SYSTEM,
+            prompt:JSON.stringify({request:requestText}),
+            schema:ACTION_REVIEW_SCHEMA,schemaName:'stockchief_postgres_action_review'});
+          if(options.onUsage&&reviewed.usage)await options.onUsage(reviewed.usage,{schemaName:'stockchief_postgres_action_review'});
+          const decision=reviewed.data||{};
+          const quote=trimOrNull(decision.evidenceQuote);
+          if(decision.requestedAction===true&&ACTIONS.includes(decision.action)&&quote
+            &&requestText.toLowerCase().includes(quote.toLowerCase()))
+            intent={...intent,intent:'action',view:null,action:decision.action,clarifyingQuestion:null};
+        }catch(error){
+          if(['entitlement_required','validation_error'].includes(error.code))throw error;
+        }
+      }
+      const balances=intent.intent==='lookup'?financialBalancePlans(requestText,intent):[];
+      planned.push(...(balances.length?balances.map((entry)=>({...entry,continued})):[{requestText,intent,continued}]));
+    }
+    return planned.slice(0,8);
   } catch(error) {
     if(error.usage&&options.onUsage)await options.onUsage(error.usage,{schemaName:'stockchief_postgres_request',failed:true});
     if(['entitlement_required','validation_error'].includes(error.code))throw error;
@@ -1230,6 +1260,8 @@ async function ask(database,ctx,message,options={}) {
   const meteredOptions=provider?{...options,onUsage:null,
     history,
     provider:require('../commercial/model').wrap(database,ctx,provider,'ask',`${options.usageKey||newId('askusage')}:plan`),
+    actionReviewProviderFor:(index)=>require('../commercial/model').wrap(database,ctx,provider,'ask',
+      `${options.usageKey||newId('askusage')}:action-review:${index}`),
     followupProvider:require('../commercial/model').wrap(database,ctx,provider,'ask',`${options.usageKey||newId('askusage')}:followup`)}:options;
   const requests=await planMany(clean,meteredOptions);const results=[];const batchId=requests.length>1?newId('pgaskbatch'):null;
   for(let index=0;index<requests.length;index+=1){
