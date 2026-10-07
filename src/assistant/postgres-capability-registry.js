@@ -155,7 +155,8 @@ for(const [name,required] of Object.entries(REQUIRED)){
 }
 
 const READS={
-  inventory:'Current stock for a product or SKU.',inventory_positions:'Current stock by product and location.',
+  inventory:'Current SKU stock across the business, including on-hand, committed, available-to-fulfill quantities, incoming, and stock locations.',
+  inventory_positions:'Current on-hand stock by product and location only. It does not account for commitments and cannot establish what is available to ship.',
   inventory_movements:'Recorded stock movements.',inventory_summary:'Business-wide active product, SKU, and on-hand totals, including confirmation that none have been recorded yet. Requires no product or location.',
   prices:'Current recorded selling prices.',purchase_costs:'Current recorded purchase costs.',
   supplier_items:'Supplier-product links, purchasing terms, and costs.',needs_you:'Owner decisions awaiting attention.',
@@ -173,7 +174,8 @@ for(const [view,description] of Object.entries(READS))add(`read.${view}`,descrip
   ['search','timeframe'],'read',permissions.VIEW,'none',
   async(service,db,ctx,text,args,options)=>service.lookup(db,ctx,{view,search:args.search||null,
     timeframe:args.timeframe||'all_time'},{provider:options.answerProvider,question:text}),
-  async(_service,_db,_ctx,result)=>Boolean(result&&Array.isArray(result.rows)),{view});
+  async(_service,_db,_ctx,result)=>Boolean(result&&Array.isArray(result.rows)),
+  {view,answerMode:['general_knowledge','business_analysis'].includes(view)?'executor':'evidence'});
 for(const [name,description,search] of [
   ['read.profit_and_loss','Read the current month’s posted profit and loss; never infer unrecorded activity.','profit_and_loss'],
   ['read.profit_change','Explain the change in posted profit against the comparable prior month when the accounting analysis entitlement allows it.','profit_change'],

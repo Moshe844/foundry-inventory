@@ -10,10 +10,54 @@ const {createPostgresApp}=require('../../src/postgres-app');
 const {pricedUsage,PRICED_MODEL}=require('../helpers/postgres-model-fixture');
 const catalog=require('../../src/domain/postgres-catalog-service');
 const locations=require('../../src/domain/postgres-location-service');
+const inventory=require('../../src/domain/postgres-inventory-engine');
 
 function csrf(html){return /name="_csrf" value="([^"]+)"/.exec(html)?.[1];}
 function step(capability,args={}){return {capability,arguments:Object.entries(args).map(([name,value])=>({name,value:String(value)})),
   dependsOn:[],continuesPending:false};}
+
+test('Ask re-reads a registered source when the first read cannot answer the owner',
+  {timeout:120000},async(context)=>{
+    const cluster=await startCluster();
+    const database=openPostgres(cluster.connectionString,{applicationName:'stockchief-ask-read-repair'});
+    await migratePostgres(database);
+    const schemas=[];
+    const provider={name:'anthropic',model:PRICED_MODEL,async complete(input){
+      schemas.push(input.schemaName);
+      if(input.schemaName==='stockchief_capability_plan')return {data:{steps:[step('read.inventory_positions')],
+        clarifyingQuestion:''},usage:pricedUsage()};
+      if(input.schemaName==='stockchief_capability_answer'){
+        const evidence=JSON.parse(input.prompt).evidence;
+        if(evidence.length===1)return {data:{answer:'Those positions show on-hand units but not what is available.',
+          supported:false,usedSteps:[],additionalReads:['read.inventory']},usage:pricedUsage()};
+        const row=evidence[1].rows[0];
+        return {data:{answer:`${row.available} units of ${row.product} are available in the recorded stock.`,
+          supported:true,usedSteps:[1],additionalReads:[]},usage:pricedUsage()};
+      }
+      throw new Error(`Unexpected model request ${input.schemaName}`);
+    }};
+    const app=createPostgresApp({database,env:'test',sessionSecret:'ask-read-repair-secret',aiProvider:provider});
+    context.after(async()=>{await app.locals.sessionStore.close();await database.close();cluster.stop();});
+    const agent=request.agent(app);const registration=await agent.get('/register');
+    await agent.post('/register').type('form').send({_csrf:csrf(registration.text),name:'Owner',
+      businessName:'Recorded Stock Business',email:'recorded-stock@example.test',password:'password-for-testing'});
+    const owner=(await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id FROM workspaces w
+      JOIN users u ON u.workspace_id=w.id WHERE w.name='Recorded Stock Business'`)).rows[0];
+    const ctx={workspaceId:owner.workspace_id,actorId:owner.actor_id};
+    const place=await locations.createLocation(database,ctx,{name:'Only Store',kind:'warehouse'});
+    const item=await catalog.createItem(database,ctx,{name:'Copper Clamp',trackingMode:'quantity'});
+    await inventory.receive(database,ctx,{skuId:item.skuIds[0],locationId:place.id,quantity:6,
+      reference:'OPENING',idempotencyKey:'read-repair-opening'});
+    const page=await agent.get('/ask');
+    const sent=await agent.post('/ask').type('form').send({_csrf:csrf(page.text),
+      message:'Could I fulfill a small request from what is here today?'});
+    assert.equal(sent.status,303);
+    const rendered=(await agent.get('/ask')).text;
+    assert.match(rendered,/6 units of Copper Clamp are available in the recorded stock/);
+    assert.doesNotMatch(rendered,/recorded product-location positions matched/);
+    assert.deepEqual(schemas,['stockchief_capability_plan','stockchief_capability_answer',
+      'stockchief_capability_answer']);
+  });
 
 test('Ask selects a registered operation, resolves unique records, and executes only after approval',
   {timeout:120000},async(context)=>{

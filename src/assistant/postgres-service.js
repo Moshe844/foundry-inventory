@@ -923,7 +923,7 @@ async function askCapabilities(database,ctx,message,options={}){
   const provider=rawProvider?{...rawProvider,complete:(request)=>require('../commercial/model')
     .wrap(database,ctx,rawProvider,'ask',`${usageKey}:capability:${modelCall++}`).complete(request)}:null;
   const history=(await database.query(`SELECT message,answer,status,intent FROM stockchief_runtime.assistant_interactions
-    WHERE workspace_id=$1 AND actor_user_id=$2 AND ($3::timestamptz IS NULL OR created_at >= $3::timestamptz)
+    WHERE workspace_id=$1 AND actor_user_id=$2 AND ($3::timestamptz IS NULL OR created_at > $3::timestamptz)
     ORDER BY created_at DESC,id DESC LIMIT 6`,[ctx.workspaceId,ctx.actorId,options.startedAt||null])).rows.reverse();
   const latest=history.at(-1);const pending=['CLARIFY','PREPARED'].includes(latest?.status)
     &&latest.intent?.controlPlane?.capability
@@ -970,9 +970,11 @@ async function prepareInstruction(database,ctx,message,options={}){
     proposal:{id:proposal.id,summary:proposal.summary,actionType:'operating.instruction',href:`/operating-instructions/${proposal.id}`}};
 }
 
-async function listInteractions(database,workspaceId,limit=20) {
+async function listInteractions(database,workspaceId,limit=20,{actorId=null,startedAt=null}={}) {
   const result=await database.query(`SELECT * FROM stockchief_runtime.assistant_interactions
-    WHERE workspace_id=$1 ORDER BY created_at DESC,id DESC LIMIT $2`,[workspaceId,Math.min(100,Math.max(1,limit))]);
+    WHERE workspace_id=$1 AND ($3::text IS NULL OR actor_user_id=$3)
+      AND ($4::timestamptz IS NULL OR created_at > $4::timestamptz)
+    ORDER BY created_at DESC,id DESC LIMIT $2`,[workspaceId,Math.min(100,Math.max(1,limit)),actorId,startedAt]);
   return result.rows.map((row)=>({...row,intent:row.intent || {},evidence:row.evidence || []})).sort((left,right)=>{
     const byTime=new Date(left.created_at)-new Date(right.created_at);if(byTime)return byTime;
     if(left.intent.batchId&&left.intent.batchId===right.intent.batchId)return Number(left.intent.requestIndex)-Number(right.intent.requestIndex);
@@ -983,7 +985,7 @@ async function listInteractions(database,workspaceId,limit=20) {
 async function continueEmail(database,ctx,input,options={}){
   await require('../commercial/enforcement').workspace(database,ctx.workspaceId,'ask.lookup');
   const latest=(await database.query(`SELECT id,message,intent,status FROM stockchief_runtime.assistant_interactions
-    WHERE workspace_id=$1 AND actor_user_id=$2 AND ($3::timestamptz IS NULL OR created_at >= $3::timestamptz)
+    WHERE workspace_id=$1 AND actor_user_id=$2 AND ($3::timestamptz IS NULL OR created_at > $3::timestamptz)
     ORDER BY created_at DESC,id DESC LIMIT 1`,[ctx.workspaceId,ctx.actorId,options.startedAt||null])).rows[0];
   const flow=latest?.intent?.presentation?.emailFlow;
   if(!latest||latest.id!==input.interactionId||latest.status!=='CLARIFY'

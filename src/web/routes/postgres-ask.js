@@ -109,8 +109,8 @@ function createPostgresAskRouter(database,options={}){
   router.use(['/ask','/actions'],requireAuth);
   router.get('/ask',asyncRoute(async(req,res)=>{
     const startedAt=req.session.postgresAskStartedAt||null;
-    const interactions=(await assistant.listInteractions(database,req.ctx.workspaceId,100))
-      .filter((turn)=>!startedAt||String(turn.created_at)>=startedAt);
+    const interactions=await assistant.listInteractions(database,req.ctx.workspaceId,100,
+      {actorId:req.ctx.actorId,startedAt});
     const visible=interactions.slice(-12);const latest=visible.at(-1)||null;
     let emailProposal=null;
     if(latest?.intent?.proposalId&&latest.intent.proposalHref?.startsWith('/actions/')){
@@ -133,11 +133,15 @@ function createPostgresAskRouter(database,options={}){
       aiConfigured:Boolean(options.provider||config.ai.configured),usageKey:newId('askusage'),
       examples:await askExamples(database,req.ctx.workspaceId)});
   }));
-  router.post('/ask/new',(req,res)=>{
-    req.session.postgresAskStartedAt=new Date().toISOString();
+  router.post('/ask/new',asyncRoute(async(req,res)=>{
+    // Use the database clock that timestamps interactions, then persist the
+    // boundary before redirecting so the next GET cannot resurrect old turns.
+    const boundary=(await database.query('SELECT clock_timestamp()::text AS started_at')).rows[0].started_at;
+    req.session.postgresAskStartedAt=boundary;
     req.flash('success','New conversation started. Earlier conversations remain in the audit history.');
+    await new Promise((resolve,reject)=>req.session.save((error)=>error?reject(error):resolve()));
     return res.redirect(303,'/ask');
-  });
+  }));
   async function runAsk(req){
     const scope=commercialScope(req);await entitlements.assertCapability(database,scope,'ask.lookup');
     const page=await require('../../assistant/postgres-page-context').load(database,req.ctx.workspaceId,req.body.sourcePath);

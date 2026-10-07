@@ -86,7 +86,8 @@ function parseSteps(raw,catalogue=registry){
   return {steps,clarifyingQuestion:String(raw.clarifyingQuestion||'').trim().slice(0,300)};
 }
 
-async function plan(provider,message,{catalogue=registry,history=[],pending=null,page=null,workspace=null}={}){
+async function plan(provider,message,{catalogue=registry,history=[],pending=null,page=null,workspace=null,
+  deferReadFit=false}={}){
   if(!provider)return {steps:[],clarifyingQuestion:'StockChief cannot interpret free-form requests while its reasoning connection is unavailable. Nothing changed.'};
   const context={message,
     workspace,
@@ -109,6 +110,10 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
       schema:schemaFor(catalogue),schemaName:'stockchief_capability_plan'});
   }
   let selected=parseSteps(response.data,catalogue);
+  // Read plans are checked against the actual records by the answer stage.
+  // A separate pre-read model critique adds latency without seeing the facts.
+  if(deferReadFit&&selected.steps.length&&selected.steps.every((step)=>step.contract.kind==='read'))
+    return selected;
   if(!selected.steps.length){
     try{
       const checked=await provider.complete({system:NO_STEP_FIT_SYSTEM,

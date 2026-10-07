@@ -97,7 +97,7 @@ test('Ask routes broad questions through supported evidence and general knowledg
     const across=await ask('How many products and customer orders do we have?');
     assert.match(across,/0 active products and 3 recorded customer orders/);
     const followup=await ask('What about last month?');
-    assert.match(followup,/2 customer orders last month/);
+    assert.match(followup,/Two customer orders were recorded last month/);
     const reorder=await ask('What should I reorder?');
     assert.match(reorder,/has not run its first business check/);
   });

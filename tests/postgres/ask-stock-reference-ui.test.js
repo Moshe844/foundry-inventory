@@ -80,6 +80,10 @@ test('Ask resolves the only stocked SKU and continues a purchase clarification w
     let fresh=await agent.get('/ask');
     let restarted=await agent.post('/ask/new').type('form').send({_csrf:csrf(fresh.text)});
     assert.equal(restarted.headers.location,'/ask');
+    fresh=await agent.get('/ask');
+    assert.doesNotMatch(fresh.text,/Earlier in this conversation/);
+    assert.doesNotMatch(fresh.text,/Safe Supply: 20 × Safety Shoe/);
+    assert.match(fresh.text,/What can I help you run\?/);
     result=await ask('whatever i have in stock i need 20 more');
     assert.equal(result.latest.status,'PREPARED');
     assert.match(result.latest.answer,/Safe Supply: 20 × Safety Shoe/);
@@ -91,6 +95,9 @@ test('Ask resolves the only stocked SKU and continues a purchase clarification w
     restarted=await agent.post('/ask/new').type('form').send({_csrf:csrf(fresh.text)});
     assert.equal(restarted.status,303);
     assert.equal(restarted.headers.location,'/ask');
+    fresh=await agent.get('/ask');
+    assert.doesNotMatch(fresh.text,/Earlier in this conversation/);
+    assert.doesNotMatch(fresh.text,/Safe Supply: 20 × Safety Shoe/);
     result=await ask('whatever i have in stock i need 20 more');
     assert.equal(result.latest.status,'CLARIFY');
     assert.match(result.latest.answer,/more than one product currently in stock/);
