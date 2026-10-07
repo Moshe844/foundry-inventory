@@ -4,6 +4,7 @@ const express=require('express');
 const config=require('../../config');
 const assistant=require('../../assistant/postgres-service');
 const outboundMail=require('../../connections/postgres-outbound-mail');
+const connections=require('../../connections/postgres-service');
 const ledger=require('../../assistant/ledger');
 const permissions=require('../../actions/permissions');
 const { requireAuth,asyncRoute }=require('../middleware');
@@ -11,7 +12,7 @@ const entitlements=require('../../entitlements/postgres-service');
 const commercialControl=require('../../commercial/control-service');
 const {commercialScope}=require('../commercial-middleware');
 const {newId}=require('../../lib/util');
-const {destinationFor}=require('../postgres-navigation');
+const {destinationFor,connectionDestination}=require('../postgres-navigation');
 
 const STATUS={ANSWERED:'answered',PREPARED:'needs_approval',CLARIFY:'clarify',FAILED:'failed'};
 
@@ -106,6 +107,11 @@ async function instructionLists(database,workspaceId){
 
 function createPostgresAskRouter(database,options={}){
   const router=express.Router();
+  async function navigationDestination(req){
+    const destination=destinationFor(req.body.message);
+    return destination?.providerType?connectionDestination(destination,
+      await connections.list(database,req.ctx.workspaceId)):destination;
+  }
   router.use(['/ask','/actions'],requireAuth);
   router.get('/ask',asyncRoute(async(req,res)=>{
     const startedAt=req.session.postgresAskStartedAt||null;
@@ -146,7 +152,7 @@ function createPostgresAskRouter(database,options={}){
       startedAt:req.session.postgresAskStartedAt||null});
   }
   router.post('/ask',asyncRoute(async(req,res)=>{
-    const destination=destinationFor(req.body.message);
+    const destination=await navigationDestination(req);
     if(destination){req.flash('success',`Opened ${destination.label}.`);return res.redirect(303,destination.href);}
     await runAsk(req);
     return res.redirect(303,'/ask#latest');
@@ -177,7 +183,7 @@ function createPostgresAskRouter(database,options={}){
     return res.redirect(303,'/ask#latest');
   }));
   router.post('/foundry/tell',requireAuth,asyncRoute(async(req,res)=>{
-    const destination=destinationFor(req.body.message);
+    const destination=await navigationDestination(req);
     if(destination){req.flash('success',`Opened ${destination.label}.`);return res.redirect(303,destination.href);}
     await runAsk(req);
     return res.redirect(303,'/ask#latest');

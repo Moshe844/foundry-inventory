@@ -69,6 +69,10 @@ test('Ask StockChief grounds answers and executes only an approved PostgreSQL pr
 
     const askPage=await agent.get('/ask');
     assert.equal(askPage.status,200);
+    const mailboxNavigation=await agent.post('/ask').type('form').send({_csrf:csrfFrom(askPage.text),
+      message:'Open my Gmail connection settings.'});
+    assert.equal(mailboxNavigation.status,303);
+    assert.equal(mailboxNavigation.headers.location,'/settings/connections');
     const asked=await agent.post('/ask').type('form').send({_csrf:csrfFrom(askPage.text),message:'how many Trail Shoe do we have?'});
     assert.equal(asked.status,303);
     const answer=await agent.get('/ask');
