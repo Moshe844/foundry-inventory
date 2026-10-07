@@ -9,6 +9,7 @@ const defaultProviders=require('./providers/registry');
 const providerEffects=require('../operations/postgres-provider-effects');
 const commercialUsage=require('../entitlements/postgres-service');
 const commercialControl=require('../commercial/control-service');
+const replyTriage=require('./reply-triage');
 
 function contentHash(message){return crypto.createHash('sha256').update(JSON.stringify({sender:message.sender,
   subject:message.subject||'',body:message.bodyText||message.body||'',receivedAt:message.receivedAt||''})).digest('hex');}
@@ -27,7 +28,15 @@ async function capture(database,connection,message){
     const customer=(await client.query(`SELECT id,name FROM customers WHERE workspace_id=$1 AND record_state='ACTIVE'
       AND lower(email)=lower($2) ORDER BY id LIMIT 2`,[connection.workspace_id,sender])).rows;
     const matches=[...supplier.map((row)=>({...row,kind:'supplier'})),...customer.map((row)=>({...row,kind:'customer'}))];
-    if(matches.length!==1){
+    const threadId=trimOrNull(message.externalThreadId||message.threadId);
+    const sentThread=threadId?(await client.query(`SELECT id FROM (
+      SELECT id FROM supplier_communications WHERE workspace_id=$1 AND connector_id=$2 AND status='SENT'
+        AND lower(recipient)=lower($3) AND external_thread_id=$4
+      UNION ALL
+      SELECT id FROM customer_communications WHERE workspace_id=$1 AND connector_id=$2 AND status='SENT'
+        AND lower(recipient)=lower($3) AND external_thread_id=$4
+    ) sent LIMIT 1`,[connection.workspace_id,connection.id,sender,threadId])).rows[0]:null;
+    if(matches.length!==1&&!sentThread){
       const id=newId('emailaside');const at=nowIso();
       const inserted=await client.query(`INSERT INTO connection_email_set_aside
         (id,workspace_id,connector_id,external_message_id,sender,subject,received_at,reason,created_at)
@@ -40,21 +49,32 @@ async function capture(database,connection,message){
         AND connector_id=$2 AND external_message_id=$3`,[connection.workspace_id,connection.id,externalId])).rows[0];
       return {accepted:false,setAside:true,replayed:true,id:existing.id};
     }
-    const match=matches[0];const id=newId('emailmsg');const at=nowIso();
+    const match=matches.length===1?matches[0]:{id:null,name:sender,kind:'business_reply'};
+    const id=newId('emailmsg');const at=nowIso();
+    const triage=replyTriage.judge({sender,subject:message.subject,
+      bodyText:message.bodyText||message.body,attachmentCount:(message.attachments||[]).length,
+      classification:match.kind,knownCounterparty:true});
     const inserted=await client.query(`INSERT INTO connection_email_messages
       (id,workspace_id,connector_id,external_message_id,sender,recipients,subject,body_text,received_at,
        supplier_id,trust_status,classification,external_thread_id,internet_message_id,content_hash,
        processing_status,reply_state,reply_reason,reply_state_at,created_at)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'TRUSTED',$11,$12,$13,$14,'CAPTURED','NEEDS_REPLY',$15,$16,$16)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'TRUSTED',$11,$12,$13,$14,'CAPTURED',$15,$16,$17,$17)
       ON CONFLICT(workspace_id,connector_id,external_message_id) DO NOTHING RETURNING id`,
     [id,connection.workspace_id,connection.id,externalId,sender,JSON.stringify(message.recipients||[]),
       trimOrNull(message.subject),trimOrNull(message.bodyText||message.body),message.receivedAt||at,
-      match.kind==='supplier'?match.id:null,match.kind,message.externalThreadId||message.threadId||null,message.internetMessageId||null,
-      contentHash(message),`${match.kind} message from ${match.name} needs a response.`,at]);
+      match.kind==='supplier'?match.id:null,match.kind,threadId,message.internetMessageId||null,
+      contentHash(message),triage.state,triage.reason,at]);
     if(!inserted.rows.length){
       const existing=(await client.query(`SELECT id FROM connection_email_messages WHERE workspace_id=$1
         AND connector_id=$2 AND external_message_id=$3`,[connection.workspace_id,connection.id,externalId])).rows[0];
       return {accepted:true,replayed:true,messageId:existing.id};
+    }
+    if(threadId&&!replyTriage.NO_REPLY_SENDER.test(sender)&&!replyTriage.AUTOMATIC_SUBJECT.test(String(message.subject||''))){
+      await client.query(`UPDATE connection_email_messages SET reply_state='HANDLED',
+        reply_reason='The counterparty replied on this conversation; review their new message.',reply_state_at=$5
+        WHERE workspace_id=$1 AND connector_id=$2 AND external_thread_id=$3 AND lower(sender)=lower($4)
+          AND id<>$6 AND reply_state='WAITING' AND reply_sent_at IS NOT NULL`,
+      [connection.workspace_id,connection.id,threadId,sender,at,id]);
     }
     await client.query('UPDATE workspace_connectors SET last_activity_at=$3,updated_at=$3 WHERE workspace_id=$1 AND id=$2',
       [connection.workspace_id,connection.id,at]);

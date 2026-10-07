@@ -21,9 +21,27 @@ test('Ask routes broad questions through supported evidence and general knowledg
     const observed=[];
     const provider=fixture({name:'evidence-fixture',model:'fixture',async complete(input){
       if(input.schemaName==='stockchief_postgres_request'){
-        const question=JSON.parse(input.prompt).message;
+        const payload=JSON.parse(input.prompt);const question=payload.message;
         const view=question.includes('FIFO')?'general_knowledge':question.includes('reorder')?'replenishment':'business_analysis';
-        return {data:{intent:'lookup',view,search:null},usage:{}};
+        const readQueries=question==='How many products and customer orders do we have?'?[
+          {view:'inventory_summary',search:null,timeframe:'all_time'},
+          {view:'sales_activity',search:null,timeframe:'all_time'}]:question==='What about last month?'
+          &&payload.history?.some((turn)=>turn.message==='How many products and customer orders do we have?')?[
+            {view:'sales_activity',search:null,timeframe:'previous_month'}]:[];
+        return {data:{intent:'lookup',view,search:null,readQueries},usage:{}};
+      }
+      if(input.schemaName==='stockchief_postgres_research_answer'){
+        const payload=JSON.parse(input.prompt);const evidence=payload.evidence;
+        if(evidence.length===2){
+          assert.equal(evidence[0].query.view,'inventory_summary');
+          assert.equal(evidence[0].result.rows[0].products,0);
+          assert.equal(evidence[1].query.view,'sales_activity');
+          return {data:{answer:'StockChief has 0 active products and 3 recorded customer orders.',
+            supported:true,usedViews:['inventory_summary','sales_activity']},usage:{}};
+        }
+        assert.equal(evidence[0].query.timeframe,'previous_month');
+        return {data:{answer:'Two customer orders were recorded last month.',
+          supported:true,usedViews:['sales_activity']},usage:{}};
       }
       observed.push({schema:input.schemaName,prompt:JSON.parse(input.prompt)});
       if(input.schemaName==='stockchief_postgres_general_answer'){
@@ -76,6 +94,10 @@ test('Ask routes broad questions through supported evidence and general knowledg
     assert.match(general,/FIFO means first in, first out/);
     assert.match(general,/General knowledge/);
     assert.equal(observed.find((entry)=>entry.schema==='stockchief_postgres_general_answer').prompt.evidence,undefined);
+    const across=await ask('How many products and customer orders do we have?');
+    assert.match(across,/0 active products and 3 recorded customer orders/);
+    const followup=await ask('What about last month?');
+    assert.match(followup,/Two customer orders were recorded last month/);
     const reorder=await ask('What should I reorder?');
     assert.match(reorder,/has not run its first business check/);
   });

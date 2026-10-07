@@ -24,8 +24,10 @@ function provenanceFor(turn){
   if(turn.intent?.view==='general_knowledge')return {reads:[],rowCount:0,asOf:turn.created_at,general:true,
     reason:status==='clarify'?turn.intent?.presentation?.reason:undefined};
   const choices=turn.intent?.presentation?.choices||[];
-  return {reads:status==='answered'?[{intent:turn.intent?.view||turn.intent?.intent||'lookup',
-    entity:turn.intent?.search||turn.intent?.sku||null,location:turn.intent?.location||null}]:[],
+  const researchViews=turn.intent?.presentation?.researchViews||[];
+  return {reads:status==='answered'?(researchViews.length?researchViews:[turn.intent?.view||turn.intent?.intent||'lookup'])
+    .map((view)=>({intent:view,entity:turn.intent?.search||turn.intent?.sku||null,
+      location:turn.intent?.location||null})):[],
   rowCount:status==='answered'?(turn.evidence||[]).length:null,asOf:status==='answered'?turn.created_at:null,
   reason:status==='clarify'?(turn.intent?.presentation?.reason|| (choices.length>1?'ambiguous':'missing')):undefined};
 }
@@ -63,7 +65,8 @@ function resultFor(turn){
     choices:turn.intent?.presentation?.choices||[],
     handoff:proposalHref?{href:proposalHref,label:'Review prepared change'}:storedHandoff,
     plan:{intent:turn.intent?.intent||'lookup',entityQuery:turn.intent?.search||turn.intent?.sku||'',
-      locationQuery:turn.intent?.location||''},interpretation:turn.intent?.view||turn.intent?.action||turn.intent?.intent||'business request',
+    locationQuery:turn.intent?.location||''},interpretation:(turn.intent?.presentation?.researchViews||[]).join(', ')||
+      turn.intent?.view||turn.intent?.action||turn.intent?.intent||'business request',
     semanticPlan:null};
 }
 
@@ -110,7 +113,8 @@ function createPostgresAskRouter(database,options={}){
     const scope=commercialScope(req);await entitlements.assertCapability(database,scope,'ask.lookup');
     const context=await assistant.pendingClarification(database,req.ctx,req.session.postgresAskStartedAt||null);
     return assistant.ask(database,req.ctx,req.body.message,{provider:options.provider,
-      usageKey:String(req.body.usageKey||newId('askusage')),context});
+      usageKey:String(req.body.usageKey||newId('askusage')),context,
+      startedAt:req.session.postgresAskStartedAt||null});
   }
   router.post('/ask',asyncRoute(async(req,res)=>{
     await runAsk(req);

@@ -12,21 +12,22 @@ const outboundMail = require('../connections/postgres-outbound-mail');
 const workflows = require('../operations/postgres-business-workflows');
 const accountingReports = require('../accounting/postgres-reports');
 const evidenceAnswers = require('./postgres-evidence-answer');
+const businessResearch = require('./postgres-research');
 const projections = require('../projections/postgres-service');
 const autonomy = require('../autopilot/postgres-service');
 const entitlements=require('../entitlements/postgres-service');
 const { ValidationError, NotFoundError, InvariantError } = require('../domain/errors');
 const { newId, trimOrNull } = require('../lib/util');
 
-const VIEWS = ['inventory','inventory_summary','needs_you','replenishment','locations','purchase_orders','sales_orders','sales_activity','suppliers','customers','shipping','payments',
-  'payables','receivables','accounting','connections','business_analysis','general_knowledge'];
+const VIEWS = ['inventory','inventory_positions','inventory_movements','inventory_summary','prices','purchase_costs','supplier_items','needs_you','replenishment','locations','purchase_orders','sales_orders','sales_activity','suppliers','customers','shipping','payments',
+  'payables','receivables','accounting','connections','messages','business_analysis','general_knowledge'];
 const ACTIONS = ['receive','issue','transfer','adjust','create_item','create_location','set_price','set_purchase_cost',
   'send_email','create_sales_order','create_purchase_order','receive_purchase_order','record_supplier_payment'];
 const PLAN_PART_SCHEMA = {
   type:'object',additionalProperties:false,
   required:['requestText','continuesPrevious','clarifyingQuestion','intent','view','action','search','sku','skuReference','location','fromLocation','toLocation','quantity','countedQuantity',
     'amount','currency','reason','reference','recipient','recipientKind','subject','body','mailbox','customer','supplier',
-    'deliveryMethod','shipToAddress','neededBy','purchaseOrder','supplierBill','receiptReference','paymentMethod','paymentDate'],
+    'deliveryMethod','shipToAddress','neededBy','purchaseOrder','supplierBill','receiptReference','paymentMethod','paymentDate','readQueries'],
   properties:{
     requestText:{type:'string',maxLength:2000},
     continuesPrevious:{type:'boolean'},
@@ -49,6 +50,7 @@ const PLAN_PART_SCHEMA = {
     purchaseOrder:{type:'string',maxLength:160},supplierBill:{type:'string',maxLength:160},
     receiptReference:{type:'string',maxLength:160},paymentMethod:{type:'string',maxLength:120},
     paymentDate:{type:'string',maxLength:10},
+    readQueries:{type:'array',maxItems:6,items:businessResearch.RESEARCH_SCHEMA.properties.queries.items},
   },
 };
 const PLAN_SCHEMA={type:'object',additionalProperties:false,required:['parts'],properties:{
@@ -65,6 +67,7 @@ one request and requestText must be the exact portion of the person's message re
 the request it qualifies. Use one part when the message contains only one request and no more than eight parts total.
 The input may include context with the previous unanswered user request and StockChief's clarification. Resolve conversational replies before classifying intent: a short name, SKU, location, quantity, price, date, or yes/no that directly answers the clarification is a continuation of the previous task, not a new lookup. In that case set continuesPrevious=true and make requestText a complete restatement of the combined request, INCLUDING the new message's detail. Populate the corresponding schema field from that detail; never drop the new answer. Carry forward only details actually supplied in the previous request or new message. If the new message is a clearly independent request, set continuesPrevious=false, ignore context, and use the new message alone. Without context, always set continuesPrevious=false.
 Use lookup when the person asks what is true. Use action only when they want StockChief to create or change a record.
+For a lookup, populate readQueries with the read-only datasets needed to answer the complete question. Select several when needed. The named view is only an initial hint; StockChief will use readQueries to gather current evidence. Use readQueries=[] for actions, instructions, clarifications, and general knowledge.
 If the person asks StockChief to carry out a supported action but leaves out a recipient, product, quantity, or other detail, still choose that action and leave the missing field empty; StockChief will ask the precise follow-up before preparing anything.
 If the person says they need more stock or asks StockChief to get more, use create_purchase_order to prepare a draft purchase order, even if they do not say "purchase order". Do not treat a need for future stock as goods physically received, and never increase on-hand stock for this request.
 If they refer to whichever product is currently in stock without naming it, use skuReference="stocked" and sku=null. StockChief will inspect current inventory and resolve it only if exactly one SKU has positive on-hand quantity. Use skuReference="" when no such reference was made. Do not ask for the SKU before the inventory check.
@@ -77,6 +80,7 @@ and amounts customers owe the business. Use payments only for payment transactio
 Use needs_you when the person asks what needs their attention, review, approval, or decision.
 Use replenishment when the person asks what stock to buy, reorder, or restock next; it reads existing StockChief recommendations and check status, and never places an order.
 Use inventory_summary for business-wide product and SKU totals; use inventory for stock quantities or named products.
+Use inventory_positions for quantities at individual locations, inventory_movements for recorded stock changes, prices for current selling prices, purchase_costs for recorded unit costs, supplier_items for which suppliers provide which products, and messages for sent or received business email.
 Use sales_activity for business-wide questions about whether any sales or customer orders are recorded, or how many sales/orders are recorded in one period. It summarizes recorded customer orders, fulfilled units, and posted revenue; it does not filter by customer or order number.
 Use sales_orders to list customer orders or find orders for a named customer, order number, or status. Preserve the exact named customer, order number, or status in search.
 Use business_analysis for comparisons, trends, reasons, or questions that need figures from more than one business dataset. It can read posted financials when allowed on this plan, customer order counts, and the last business-check time. Use inventory_summary for inventory totals.
@@ -287,7 +291,8 @@ function cleanPlan(raw,message) {
     shipToAddress:trimOrNull(source.shipToAddress),neededBy:trimOrNull(source.neededBy),
     purchaseOrder:trimOrNull(source.purchaseOrder),supplierBill:trimOrNull(source.supplierBill),
     receiptReference:trimOrNull(source.receiptReference),paymentMethod:trimOrNull(source.paymentMethod),
-    paymentDate:trimOrNull(source.paymentDate)};
+    paymentDate:trimOrNull(source.paymentDate),
+    readQueries:source.intent==='lookup'?businessResearch.cleanQueries(source.readQueries):null};
 }
 
 function explicitTimeframe(message){
@@ -314,7 +319,7 @@ async function planMany(message,options={}) {
     .concat(financialBalanceViews(requestText).length?[]:[{requestText,intent:cleanPlan(null,requestText)}])).slice(0,8);
   try {
     const response=await provider.complete({system:SYSTEM,prompt:JSON.stringify({message,
-      ...(context?{context}:{})}),schema:PLAN_SCHEMA,
+      ...(context?{context}:{}),...(options.history?.length?{history:options.history.slice(-6)}:{})}),schema:PLAN_SCHEMA,
       schemaName:'stockchief_postgres_request'});
     if(options.onUsage&&response.usage)await options.onUsage(response.usage,{schemaName:'stockchief_postgres_request'});
     const rawParts=Array.isArray(response.data?.parts)&&response.data.parts.length?response.data.parts:[response.data];
@@ -326,6 +331,11 @@ async function planMany(message,options={}) {
   } catch(error) {
     if(error.usage&&options.onUsage)await options.onUsage(error.usage,{schemaName:'stockchief_postgres_request',failed:true});
     if(['entitlement_required','validation_error'].includes(error.code))throw error;
+    // An explicit price/cost amount can be prepared for review without model inference.
+    // Do not guess inventory changes when interpretation fails.
+    const fallback=cleanPlan(null,message);
+    if(fallback.intent==='action'&&['set_price','set_purchase_cost'].includes(fallback.action)
+      &&fallback.sku&&Number.isFinite(fallback.amount))return [{requestText:message,intent:fallback}];
     return [{requestText:message,intent:{intent:'clarify',view:null,action:null,
       interpretationUnavailable:true}}];
   }
@@ -446,6 +456,109 @@ async function salesActivity(database,ctx,timeframe){
 
 async function lookup(database,ctx,request,options={}) {
   const search=trimOrNull(request.search);
+  if(request.view==='inventory_positions'){
+    const rows=(await database.query(`SELECT i.id AS item_id,i.name AS product,s.code AS sku,
+      COALESCE(s.variant_label,'') AS variant,l.name AS location,b.on_hand,b.updated_at
+      FROM balances b JOIN skus s ON s.id=b.sku_id AND s.workspace_id=b.workspace_id
+      JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
+      JOIN locations l ON l.id=b.location_id AND l.workspace_id=b.workspace_id
+      WHERE b.workspace_id=$1 AND i.is_active=1 AND s.is_active=1
+      AND ($2::text IS NULL OR i.name ILIKE '%'||$2||'%' OR s.code ILIKE '%'||$2||'%'
+        OR COALESCE(s.variant_label,'') ILIKE '%'||$2||'%' OR l.name ILIKE '%'||$2||'%')
+      ORDER BY i.name,s.code,l.name LIMIT 100`,[ctx.workspaceId,search])).rows.map((row)=>
+      evidenceRow({product:row.product,sku:row.sku,variant:row.variant,location:row.location,
+        onHand:Number(row.on_hand),updatedAt:row.updated_at},`/inventory/${row.item_id}`));
+    return {answer:rows.length?`${rows.length}${rows.length===100?'+':''} recorded product-location positions matched. These are on-hand quantities, not uncommitted availability.`:
+      'No product-location stock position matched that request.',rows,
+      columns:['product','sku','variant','location','onHand','updatedAt']};
+  }
+  if(request.view==='inventory_movements'){
+    const rows=(await database.query(`SELECT i.id AS item_id,i.name AS product,s.code AS sku,l.name AS location,
+      m.operation,m.quantity_delta,m.balance_after,m.reference,m.reason_code,m.occurred_at
+      FROM movements m JOIN items i ON i.id=m.item_id AND i.workspace_id=m.workspace_id
+      JOIN skus s ON s.id=m.sku_id AND s.workspace_id=m.workspace_id
+      JOIN locations l ON l.id=m.location_id AND l.workspace_id=m.workspace_id
+      WHERE m.workspace_id=$1 AND ($2::text IS NULL OR i.name ILIKE '%'||$2||'%'
+        OR s.code ILIKE '%'||$2||'%' OR l.name ILIKE '%'||$2||'%'
+        OR COALESCE(m.reference,'') ILIKE '%'||$2||'%')
+      ORDER BY m.occurred_at DESC,m.seq DESC LIMIT 100`,[ctx.workspaceId,search])).rows.map((row)=>
+      evidenceRow({product:row.product,sku:row.sku,location:row.location,operation:row.operation,
+        change:Number(row.quantity_delta),balanceAfter:Number(row.balance_after),reference:row.reference||'',
+        reason:row.reason_code||'',at:row.occurred_at},`/inventory/${row.item_id}`));
+    return {answer:rows.length?`Showing ${rows.length}${rows.length===100?'+':''} recent recorded stock changes matching the request.`:
+      'No recorded stock change matched that request.',rows,
+      columns:['product','sku','location','operation','change','balanceAfter','reference','reason','at']};
+  }
+  if(request.view==='prices'){
+    const rows=(await database.query(`SELECT i.id AS item_id,i.name AS product,s.code AS sku,
+      COALESCE(s.variant_label,'') AS variant,p.amount_minor,p.currency,p.created_at
+      FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
+      LEFT JOIN LATERAL (SELECT amount_minor,currency,created_at FROM sku_prices
+        WHERE workspace_id=s.workspace_id AND sku_id=s.id ORDER BY created_at DESC,id DESC LIMIT 1) p ON true
+      WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1
+      AND ($2::text IS NULL OR i.name ILIKE '%'||$2||'%' OR s.code ILIKE '%'||$2||'%'
+        OR COALESCE(s.variant_label,'') ILIKE '%'||$2||'%')
+      ORDER BY i.name,s.code LIMIT 100`,[ctx.workspaceId,search])).rows.map((row)=>
+      evidenceRow({product:row.product,sku:row.sku,variant:row.variant,
+        sellingPrice:row.amount_minor===null?'Not recorded':pricing.formatMinor(Number(row.amount_minor),row.currency),
+        priceRecordedAt:row.created_at||''},`/inventory/${row.item_id}`));
+    return {answer:rows.length?`Showing current recorded selling prices for ${rows.length}${rows.length===100?'+':''} SKUs.`:
+      'No product or SKU matched that price request.',rows,
+      columns:['product','sku','variant','sellingPrice','priceRecordedAt']};
+  }
+  if(request.view==='purchase_costs'){
+    const rows=(await database.query(`SELECT i.id AS item_id,i.name AS product,s.code AS sku,
+      COALESCE(s.variant_label,'') AS variant,c.amount_minor,c.currency,c.created_at
+      FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
+      LEFT JOIN LATERAL (SELECT amount_minor,currency,created_at FROM sku_purchase_costs
+        WHERE workspace_id=s.workspace_id AND sku_id=s.id ORDER BY created_at DESC,id DESC LIMIT 1) c ON true
+      WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1
+      AND ($2::text IS NULL OR i.name ILIKE '%'||$2||'%' OR s.code ILIKE '%'||$2||'%'
+        OR COALESCE(s.variant_label,'') ILIKE '%'||$2||'%')
+      ORDER BY i.name,s.code LIMIT 100`,[ctx.workspaceId,search])).rows.map((row)=>
+      evidenceRow({product:row.product,sku:row.sku,variant:row.variant,
+        purchaseCost:row.amount_minor===null?'Not recorded':pricing.formatMinor(Number(row.amount_minor),row.currency),
+        costRecordedAt:row.created_at||''},`/inventory/${row.item_id}`));
+    return {answer:rows.length?`Showing current recorded purchase costs for ${rows.length}${rows.length===100?'+':''} SKUs.`:
+      'No product or SKU matched that cost request.',rows,
+      columns:['product','sku','variant','purchaseCost','costRecordedAt']};
+  }
+  if(request.view==='supplier_items'){
+    const rows=(await database.query(`SELECT i.id AS item_id,i.name AS product,sku.code AS sku,
+      supplier.name AS supplier,si.supplier_sku,si.last_unit_cost,si.last_cost_at,
+      si.lead_time_days,si.is_preferred,si.purchase_unit,si.units_per_purchase_unit
+      FROM supplier_items si JOIN suppliers supplier ON supplier.id=si.supplier_id AND supplier.workspace_id=si.workspace_id
+      JOIN skus sku ON sku.id=si.sku_id AND sku.workspace_id=si.workspace_id
+      JOIN items i ON i.id=sku.item_id AND i.workspace_id=si.workspace_id
+      WHERE si.workspace_id=$1 AND si.is_active=1 AND supplier.status='active'
+      AND ($2::text IS NULL OR i.name ILIKE '%'||$2||'%' OR sku.code ILIKE '%'||$2||'%'
+        OR supplier.name ILIKE '%'||$2||'%')
+      ORDER BY i.name,si.is_preferred DESC,supplier.name LIMIT 100`,[ctx.workspaceId,search])).rows.map((row)=>
+      evidenceRow({product:row.product,sku:row.sku,supplier:row.supplier,
+        supplierCode:row.supplier_sku||'',lastUnitCost:row.last_unit_cost===null?'Not recorded':Number(row.last_unit_cost),
+        costRecordedAt:row.last_cost_at||'',leadTimeDays:row.lead_time_days===null?'Not recorded':Number(row.lead_time_days),
+        preferred:Boolean(row.is_preferred),purchaseUnit:row.purchase_unit,
+        unitsPerPurchaseUnit:Number(row.units_per_purchase_unit)},`/inventory/${row.item_id}`));
+    return {answer:rows.length?`${rows.length}${rows.length===100?'+':''} active supplier-product relationships matched.`:
+      'No active supplier-product relationship matched that request.',rows,
+      columns:['product','sku','supplier','supplierCode','lastUnitCost','costRecordedAt','leadTimeDays','preferred','purchaseUnit','unitsPerPurchaseUnit']};
+  }
+  if(request.view==='messages'){
+    const rows=(await database.query(`SELECT kind,recipient,subject,body,status,at FROM (
+      SELECT 'sent supplier email' AS kind,recipient,subject,left(body,2000) AS body,status,
+        COALESCE(sent_at,created_at) AS at,workspace_id FROM supplier_communications
+      UNION ALL SELECT 'sent customer email',recipient,subject,left(body,2000),status,
+        COALESCE(sent_at,created_at),workspace_id FROM customer_communications
+      UNION ALL SELECT 'received business email',sender,subject,left(body_text,2000),reply_state,
+        received_at,workspace_id FROM connection_email_messages
+    ) mail WHERE workspace_id=$1 AND ($2::text IS NULL OR recipient ILIKE '%'||$2||'%'
+      OR COALESCE(subject,'') ILIKE '%'||$2||'%') ORDER BY at DESC LIMIT 100`,
+    [ctx.workspaceId,search])).rows.map((row)=>({kind:row.kind,party:row.recipient,subject:row.subject||'',
+      message:row.body||'',status:row.status,at:row.at}));
+    return {answer:rows.length?`Showing ${rows.length}${rows.length===100?'+':''} recorded business messages matching the request.`:
+      'No recorded business message matched that request.',rows,
+      columns:['kind','party','subject','message','status','at']};
+  }
   if(['sales_activity','business_analysis'].includes(request.view)&&search)return {status:'CLARIFY',
     answer:'I cannot apply a named record filter to a business-wide summary. Ask me to show matching customer orders, or ask for the unfiltered summary.',
     rows:[],columns:[],reason:'unverified'};
@@ -788,14 +901,12 @@ async function prepareAction(database,ctx,message,request) {
     if(recipient.missing)return {status:'CLARIFY',answer:'Who should StockChief email? Name an existing customer or supplier, or give the exact email address.',awaitingField:'recipient'};
     if(recipient.notFound){
       const kind=request.recipientKind||null;
-      return {status:'CLARIFY',answer:kind
-        ?`I could not find ${kind} “${request.recipient}”. Add the ${kind} record first, then return here to prepare the email. Nothing was prepared.`
-        :`I could not find a customer or supplier matching “${request.recipient}”. Say whether this is a customer or supplier, or give the exact email address. Nothing was prepared.`,
-      handoff:kind?recordHandoff(kind,request.recipient):null};
+      return {status:'CLARIFY',answer:`I could not find ${kind?`the ${kind}`:'a customer or supplier'} “${request.recipient}”. What exact email address should I use? I can prepare a one-off message for your approval without creating a contact. Nothing was sent.`,
+        awaitingField:'recipient'};
     }
     if(recipient.ambiguous)return {status:'CLARIFY',answer:`“${request.recipient}” matches more than one business contact. Say whether this is the customer or supplier.`,
       choices:recipient.ambiguous.map((row)=>({label:`${row.name} · ${row.kind}`,value:`the ${row.kind} named ${row.name}`}))};
-    if(!recipient.row.email)return {status:'CLARIFY',answer:`${recipient.row.name} has no email address. Add it to the ${recipient.row.kind} record before preparing this message.`};
+    if(!recipient.row.email)return {status:'CLARIFY',answer:`I found ${recipient.row.name}, but no email address is recorded. What exact address should I use for this one-off message? Nothing was sent.`,awaitingField:'recipient'};
     if(!request.body)return {status:'CLARIFY',answer:`What exactly should the email to ${recipient.row.name} say?`,awaitingField:'body'};
     const mailbox=await outboundMail.resolveMailbox(database,ctx.workspaceId,request.mailbox);
     if(mailbox.missing)return {status:'CLARIFY',answer:'Connect and verify a Gmail or Microsoft 365 business mailbox before preparing this email.'};
@@ -1011,7 +1122,7 @@ async function createProposal(database,ctx,message,actionType,payload,summary) {
 async function storeInteraction(database,ctx,message,intent,result) {
   const id=newId('pgask');
   const storedIntent={...intent,...(result.carryForward||{}),presentation:{columns:result.columns || [],choices:result.choices || [],handoff:result.handoff || null,
-    reason:result.reason||null,awaitingField:result.awaitingField||null}};
+    reason:result.reason||null,awaitingField:result.awaitingField||null,researchViews:result.researchViews||[]}};
   await database.query(`INSERT INTO stockchief_runtime.assistant_interactions
     (id,workspace_id,actor_user_id,message,intent,answer,evidence,status)
     VALUES($1,$2,$3,$4,$5::jsonb,$6,$7::jsonb,$8)`,[id,ctx.workspaceId,ctx.actorId,message,JSON.stringify(storedIntent),
@@ -1024,7 +1135,11 @@ async function ask(database,ctx,message,options={}) {
   const clean=String(message || '').trim();
   if(!clean)throw new ValidationError('Ask a question or describe what should happen.');
   const provider=options.provider||(config.ai.configured?createProviderUnobserved(config.ai.provider,config.ai.tier('fast')):null);
+  const history=(await database.query(`SELECT message,answer,status FROM stockchief_runtime.assistant_interactions
+    WHERE workspace_id=$1 AND actor_user_id=$2 AND ($3::timestamptz IS NULL OR created_at >= $3::timestamptz)
+    ORDER BY created_at DESC,id DESC LIMIT 6`,[ctx.workspaceId,ctx.actorId,options.startedAt||null])).rows.reverse();
   const meteredOptions=provider?{...options,onUsage:null,
+    history,
     provider:require('../commercial/model').wrap(database,ctx,provider,'ask',`${options.usageKey||newId('askusage')}:plan`),
     followupProvider:require('../commercial/model').wrap(database,ctx,provider,'ask',`${options.usageKey||newId('askusage')}:followup`)}:options;
   const requests=await planMany(clean,meteredOptions);const results=[];const batchId=requests.length>1?newId('pgaskbatch'):null;
@@ -1032,10 +1147,21 @@ async function ask(database,ctx,message,options={}) {
     const request=requests[index];const intent=request.intent;
     const synthesisProvider=provider?require('../commercial/model').wrap(database,ctx,provider,'ask',
       `${options.usageKey||newId('askusage')}:answer:${index}`):null;
+    const researchSelected=Boolean(provider&&intent.intent==='lookup'&&intent.view!=='general_knowledge'
+      &&intent.readQueries?.length);
+    const researched=researchSelected
+      ?await businessResearch.research(database,ctx,request.requestText,{
+        plannedQueries:intent.readQueries,
+        answerProvider:require('../commercial/model').wrap(database,ctx,provider,'ask',
+          `${options.usageKey||newId('askusage')}:research-answer:${index}`),
+        lookup,history}):null;
     const result=intent.intent==='action'?await prepareAction(database,ctx,clean,intent):
       intent.intent==='instruction'?await prepareInstruction(database,ctx,request.requestText,options):
-      intent.intent==='lookup'?{status:'ANSWERED',...(await lookup(database,ctx,intent,
-        {provider:synthesisProvider,question:request.requestText}))}:
+      intent.intent==='lookup'?researched||(researchSelected
+        ?{status:'CLARIFY',answer:'I could not verify that answer from your business records just now. Please try again.',
+          rows:[],columns:[],reason:'unavailable'}
+        :{status:'ANSWERED',...(await lookup(database,ctx,intent,
+          {provider:synthesisProvider,question:request.requestText}))}):
         {status:'CLARIFY',answer:intent.interpretationUnavailable
           ?'I could not reliably understand that request just now. Nothing was changed. Please try again.'
           :intent.clarifyingQuestion||'I cannot confirm an answer or safe action from the connected business records for that request. What should I check or change?',

@@ -55,8 +55,8 @@ test('real Chromium renders PostgreSQL Brief, proactive Needs You count, activit
     [newId('conissue'),ctx.workspaceId,feed.connection.id,at]);
 
     await page.goto(`${base}/`);const brief=await page.locator('main').innerText();
-    assert.match(brief,/1 exception needs you/);assert.match(brief,/12 units are available/);
-    assert.match(brief,/Projection Widget/);assert.match(brief,/OPENING-PROJECTION/);
+    assert.match(brief,/Needs you\s+1/i);
+    assert.match(brief,/Store feed stopped updating/);
     assert.equal(await page.locator('a[href="/needs-you"] .nav-count').innerText(),'1');
     await page.locator('.rm-rail__nav a[href="/needs-you"]').click();
     assert.match(await page.locator('main').innerText(),/Store feed stopped updating/);

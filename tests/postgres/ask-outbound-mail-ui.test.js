@@ -9,6 +9,7 @@ const {migratePostgres}=require('../../src/db/migrate-postgres');
 const {createPostgresApp}=require('../../src/postgres-app');
 const commerce=require('../../src/operations/postgres-commerce');
 const credentials=require('../../src/connections/postgres-credential-store');
+const mail=require('../../src/connections/postgres-mail');
 const jobs=require('../../src/operations/postgres-job-queue');
 const runtimeHandlers=require('../../src/operations/postgres-runtime-handlers');
 const {newId,nowIso}=require('../../src/lib/util');
@@ -25,13 +26,18 @@ test('real Chromium Ask StockChief prepares, approves, sends and verifies one gr
     const delivered=[];
     const adapter={metadata(){return {type:'gmail',name:'Gmail',category:'email',authMode:'oauth',available:true};},
       async send({credentials:providerCredentials,message}){assert.equal(providerCredentials.accessToken,'ask-mail-token');
-        delivered.push(message);return {externalMessageId:`provider-message-${delivered.length}`};}};
+        delivered.push(message);return {externalMessageId:`provider-message-${delivered.length}`,
+          externalThreadId:`provider-thread-${delivered.length}`};}};
     const providers={get(type){return type==='gmail'?adapter:null;},catalog(){return [adapter.metadata()];}};
     const cluster=await startCluster();const database=openPostgres(cluster.connectionString,{applicationName:'stockchief-ask-mail-ui'});
     await migratePostgres(database);const app=createPostgresApp({database,env:'test',sessionSecret:'ask-mail-secret',
       aiProvider:require('../helpers/postgres-model-fixture').fixture({async complete(input){
         const message=JSON.parse(input.prompt).message;
+        if(input.schemaName==='stockchief_postgres_followup')return {data:{
+          disposition:message==='new-supplier@example.test'?'answer':'new_request',
+          value:message==='new-supplier@example.test'?message:'',currency:''}};
         return {data:{intent:'action',action:'send_email',recipient:'Solomon Supply',recipientKind:'supplier',
+          ...(message.startsWith('Email New Supplier')?{recipient:'New Supplier'}:{}),
           body:message==='Email Solomon Supply'?'':'we received the order and will confirm Friday.'}};
       }}),
       connectionProviders:providers});
@@ -96,4 +102,34 @@ test('real Chromium Ask StockChief prepares, approves, sends and verifies one gr
       [one.workspace_id])).rows[0].count,'1');
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM supplier_communications WHERE workspace_id=$1`,
       [two.workspace_id])).rows[0].count,'0');
+    await page.getByLabel('Ask StockChief').fill('Email New Supplier that we received the order and will confirm Friday.');
+    await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Continue'}).click()]);
+    assert.match(await page.locator('main').innerText(),/What exact email address should I use/);
+    assert.equal((await database.query(`SELECT COUNT(*) AS count FROM stockchief_runtime.assistant_action_proposals
+      WHERE workspace_id=$1 AND status='PENDING'`,[one.workspace_id])).rows[0].count,'0');
+    await page.getByLabel('Ask StockChief').fill('new-supplier@example.test');
+    await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Continue'}).click()]);
+    assert.match(await page.locator('main').innerText(),/Email new-supplier@example\.test at new-supplier@example\.test/);
+    const oneOff=(await database.query(`SELECT payload,status FROM stockchief_runtime.assistant_action_proposals
+      WHERE workspace_id=$1 ORDER BY created_at DESC LIMIT 1`,[one.workspace_id])).rows[0];
+    assert.equal(oneOff.status,'PENDING');
+    assert.equal(oneOff.payload.recipientKind,'address');
+    assert.equal(oneOff.payload.recipientEmail,'new-supplier@example.test');
+    const oneOffHref=await page.locator('a',{hasText:'Review prepared change'}).last().getAttribute('href');
+    await page.goto(`${base}${oneOffHref}`);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve and execute'}).click()]);
+    await jobs.processOne(database,runtimeHandlers.create(providers),{owner:'ask-one-off-mail-worker'});
+    const sentOneOff=(await database.query(`SELECT * FROM customer_communications WHERE workspace_id=$1
+      AND recipient='new-supplier@example.test'`,[one.workspace_id])).rows[0];
+    assert.equal(sentOneOff.status,'SENT');
+    const incoming=await mail.capture(database,{id:connectorId,workspace_id:one.workspace_id,provider_type:'gmail'},
+      {externalMessageId:'new-supplier-reply-1',externalThreadId:sentOneOff.external_thread_id,
+        sender:'new-supplier@example.test',subject:'Re: Message from Ask Mail One',
+        bodyText:'Can you confirm the delivery date?',receivedAt:nowIso()});
+    assert.equal(incoming.accepted,true,'a verified reply to a sent one-off email must not be set aside');
+    assert.equal((await mail.get(database,one.workspace_id,incoming.messageId)).reply_state,'NEEDS_REPLY');
+    const unrelatedThread=await mail.capture(database,{id:connectorId,workspace_id:one.workspace_id,provider_type:'gmail'},
+      {externalMessageId:'new-supplier-unrelated-1',externalThreadId:'unrelated-thread',
+        sender:'new-supplier@example.test',subject:'Unrelated',bodyText:'Private message',receivedAt:nowIso()});
+    assert.equal(unrelatedThread.setAside,true,'a matching address alone is not permission to capture unrelated mail');
   });
