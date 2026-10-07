@@ -48,7 +48,7 @@ const sections=[
     {href:'/accounting/reports/profit-and-loss',label:'Profit and loss'},
     {href:'/accounting/reports/balance-sheet',label:'Balance sheet'}]},
   {title:'Messages',why:'StockChief is not an email client. Supplier mail lives on the purchase, customer mail on the order, and anything waiting on a reply is on the desk. This is the whole mailbox, for when you want to look through it.',links:[
-    {href:'/mail',label:'All conversations'},{href:'/activity',label:'Everything that happened, in order'}]},
+    {href:'/mail',label:'All conversations'},{href:'/activity',label:'Recent operational activity'}]},
   {title:'What StockChief may do on its own',why:'Authority is two choices: ask me first, or handle routine work inside limits you approve. The exact limits are here.',links:[
     {href:'/autopilot',label:'Standing authority'},{href:'/autopilot',label:'Limits and preferences'},
     {href:'/autopilot/history',label:'Everything it did on its own'},{href:'/actions',label:'Changes prepared for approval'},
@@ -105,7 +105,7 @@ async function settingsPage(database,req,res){const [counts,users,integrity,inst
   const feed=feedRows.rows[0]||null;const problems=Object.entries(integrity).filter(([key,value])=>key!=='ok'&&Number(value)>0)
     .map(([kind,value])=>({kind:kind.replaceAll('_',' '),detail:`${value} record${Number(value)===1?'':'s'} do not reconcile.`}));
   const newFeedToken=req.session.newFeedToken||null;delete req.session.newFeedToken;
-  return res.page('settings',{title:'Settings',nav:'settings',room:true,users:users.rows,workspace:req.workspace,
+  return res.page('settings',{title:'Settings',nav:'settings',room:true,postgresMode:true,users:users.rows,workspace:req.workspace,
     integrity:{ok:integrity.ok,problems},eventFeed:{configured:Boolean(feed),connected:feed?.status==='connected',
       recentEvents:events.rows.map((event)=>({eventId:event.external_event_id,type:event.event_type,status:event.status,
         error:event.error_message,processedAt:event.processed_at}))},newFeedToken,learnedInstructions:instructions.rows.map(instructionFrom),
@@ -128,6 +128,14 @@ function createPostgresSettingsRouter(database,options={}){const router=express.
     title:'Everything else',nav:'settings',room:true,sections,
   })));
   router.get('/settings',requireAuth,asyncRoute(async(req,res)=>settingsPage(database,req,res)));
+  router.post('/settings/test-inventory',requireOwner,asyncRoute(async(req,res)=>{
+    const created=await require('../../domain/postgres-auth-service').createWorkspace(database,req.account.id,
+      {name:req.body.name,dataMode:'synthetic'});
+    req.session.workspaceId=created.workspaceId;
+    req.flash('success','Separate test inventory created. Its records will not mix with your real inventory.');
+    await new Promise((resolve,reject)=>req.session.save((error)=>error?reject(error):resolve()));
+    return res.redirect(303,'/onboarding');
+  }));
   router.get('/operating-instructions/:id',requireAuth,asyncRoute(async(req,res)=>{const proposal=await operatingInstructions.get(
     database,req.ctx.workspaceId,req.params.id);return res.page('settings/postgres-operating-instruction',{
       title:'Review standing instruction',nav:'settings',room:true,backTo:{href:'/what-you-told-me',label:"What you've told me"},
@@ -172,9 +180,20 @@ function createPostgresSettingsRouter(database,options={}){const router=express.
       ?'Alert preferences are saved. Server email delivery still needs a verified sender.'
       :enabled?'Automatic email alerts are on.':'Automatic email alerts are off.');return res.redirect(303,'/settings#email-alerts');
   }));
-  router.post('/settings/email-alerts/test',requireOwner,asyncRoute(async(req,res)=>{req.flash('warn',config.email.configured
-      ?'Test delivery is queued by the notification worker when a new actionable item opens.'
-      :'This server does not yet have a verified email sender. No test email was sent.');return res.redirect(303,'/settings#email-alerts');}));
+  router.post('/settings/email-alerts/test',requireOwner,asyncRoute(async(req,res)=>{
+    if(!config.email.configured){req.flash('warn','This server does not have a verified email sender. No test email was sent.');
+      return res.redirect(303,'/settings#email-alerts');}
+    const recipient=String(req.account.email||'').trim();
+    const sealed=require('../../connections/credentials').encrypt({to:recipient,
+      subject:'[StockChief] Email alert delivery test',
+      text:'This is a delivery test. No inventory or business record was changed.',
+      html:'<p>This is a delivery test. No inventory or business record was changed.</p>'});
+    await require('../../operations/postgres-job-queue').enqueue(database,{workspaceId:req.ctx.workspaceId,
+      kind:'system.email-send',idempotencyKey:`email-alert-test:${req.ctx.workspaceId}:${req.account.id}:${Math.floor(Date.now()/60000)}`,
+      payload:{messageType:'email_alert_test',accountId:req.account.id,sealed},priority:5,maxAttempts:8});
+    req.flash('success',`Test email queued for ${recipient}. Delivery may take a moment; check your inbox.`);
+    return res.redirect(303,'/settings#email-alerts');
+  }));
   router.post('/settings/event-feed/enable',requireOwner,asyncRoute(async(req,res)=>{const existing=(await database.query(`SELECT id FROM workspace_connectors
       WHERE workspace_id=$1 AND provider_type='reference_webhook' ORDER BY updated_at DESC LIMIT 1`,[req.ctx.workspaceId])).rows[0];
     if(existing)await connections.disconnect(database,req.ctx.workspaceId,existing.id);const created=await connections.createFeed(database,req.ctx,{displayName:'Live operating feed'});

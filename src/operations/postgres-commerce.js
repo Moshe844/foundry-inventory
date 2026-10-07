@@ -21,26 +21,29 @@ function positiveInteger(value, label) {
   return number;
 }
 
-async function createSupplier(database, ctx, input) {
-  await requirePermission(database, ctx, access.MANAGE_SUPPLIERS, 'add suppliers');
+async function createSupplierInTransaction(client, ctx, input) {
+  await requirePermission(client, ctx, access.MANAGE_SUPPLIERS, 'add suppliers');
   const name = trimOrNull(input.name);
   if (!name) throw new ValidationError('Supplier name is required.');
-  return database.transaction(async(client)=>{
-    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',[`supplier:${ctx.workspaceId}:${name.toLowerCase()}`]);
-    const duplicate=await client.query('SELECT id FROM suppliers WHERE workspace_id=$1 AND lower(name)=lower($2)',
-      [ctx.workspaceId,name]);
-    if(duplicate.rows.length)throw new ValidationError('A supplier with that name already exists.');
-    const id=newId('sup'); const at=nowIso();
-    await client.query(`INSERT INTO suppliers
-      (id,workspace_id,name,code,contact_name,email,phone,notes,status,default_lead_time_days,
-       minimum_order_amount,currency,payment_terms,created_at,updated_at)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,'active',$9,$10,$11,$12,$13,$13)`,
-    [id,ctx.workspaceId,name,trimOrNull(input.code),trimOrNull(input.contactName),trimOrNull(input.email),
-      trimOrNull(input.phone),trimOrNull(input.notes),input.defaultLeadTimeDays?positiveInteger(input.defaultLeadTimeDays,'Lead time'):null,
-      input.minimumOrderAmount?Number(input.minimumOrderAmount):null,trimOrNull(input.currency)||'USD',
-      trimOrNull(input.paymentTerms),at]);
-    return {id,name};
-  },{isolation:'SERIALIZABLE',retrySafe:true});
+  await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',[`supplier:${ctx.workspaceId}:${name.toLowerCase()}`]);
+  const duplicate=await client.query('SELECT id FROM suppliers WHERE workspace_id=$1 AND lower(name)=lower($2)',
+    [ctx.workspaceId,name]);
+  if(duplicate.rows.length)throw new ValidationError('A supplier with that name already exists.');
+  const id=newId('sup'); const at=nowIso();
+  await client.query(`INSERT INTO suppliers
+    (id,workspace_id,name,code,contact_name,email,phone,notes,status,default_lead_time_days,
+     minimum_order_amount,currency,payment_terms,created_at,updated_at)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,'active',$9,$10,$11,$12,$13,$13)`,
+  [id,ctx.workspaceId,name,trimOrNull(input.code),trimOrNull(input.contactName),trimOrNull(input.email),
+    trimOrNull(input.phone),trimOrNull(input.notes),input.defaultLeadTimeDays?positiveInteger(input.defaultLeadTimeDays,'Lead time'):null,
+    input.minimumOrderAmount?Number(input.minimumOrderAmount):null,trimOrNull(input.currency)||'USD',
+    trimOrNull(input.paymentTerms),at]);
+  return {id,name};
+}
+
+async function createSupplier(database, ctx, input) {
+  return database.transaction((client)=>createSupplierInTransaction(client,ctx,input),
+    {isolation:'SERIALIZABLE',retrySafe:true});
 }
 
 async function createCustomerInTransaction(client,ctx,input){
@@ -219,6 +222,6 @@ async function salesOrder(database, workspaceId, id) {
     paymentRequests:paymentRequests.rows.map((row)=>({...row,amount_minor:Number(row.amount_minor),paid_minor:Number(row.paid_minor)}))};
 }
 
-module.exports={createSupplier,createCustomer,createCustomerInTransaction,suppliers,customers,catalogue,locations,purchaseOrders,purchaseOrder,salesOrders,salesOrder};
-require('../commercial/enforcement').guardExports(module.exports,0,1,{createSupplier:'purchasing.suppliers',
+module.exports={createSupplier,createSupplierInTransaction,createCustomer,createCustomerInTransaction,suppliers,customers,catalogue,locations,purchaseOrders,purchaseOrder,salesOrders,salesOrder};
+require('../commercial/enforcement').guardExports(module.exports,0,1,{createSupplier:'purchasing.suppliers',createSupplierInTransaction:'purchasing.suppliers',
   createCustomer:'sales_orders.core',createCustomerInTransaction:'sales_orders.core'});

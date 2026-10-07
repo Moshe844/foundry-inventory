@@ -47,7 +47,6 @@ function flash(req, res, next) {
     req.session.flash.push({ type, message });
   };
   const messages = (req.session && req.session.flash) || [];
-  if (req.session) req.session.flash = [];
   res.locals.flash = messages;
   next();
 }
@@ -462,6 +461,8 @@ function pageRenderer(req, res, next) {
       // A page may opt out of the application chrome — a purchase order printed
       // for a supplier should be the document and nothing else.
       if (data.layout === false) return res.send(html);
+      const flashMessages = req.session?.flash || res.locals.flash || [];
+      if (req.session) req.session.flash = [];
       const resolvedBackTo = data.suppressBack ? null : (navigationArrival && navigationArrival.backTo)
         || cameFrom(req) || data.backTo || data.backToFallback || null;
       if (req.session && data.title) {
@@ -481,6 +482,7 @@ function pageRenderer(req, res, next) {
       return res.render('layout', {
         ...data,
         body: html,
+        flash: flashMessages,
         title: data.title || 'StockChief',
         nav: data.nav || null,
         /*

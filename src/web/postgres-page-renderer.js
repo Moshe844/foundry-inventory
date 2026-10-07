@@ -5,6 +5,8 @@ function postgresPageRenderer(req,res,next){
     return res.render(view,{...data,onboardingEntry},(error,body)=>{
     if(error)return next(error);
     if(data.layout===false)return res.send(body);
+    const flashMessages=req.session?.flash||res.locals.flash||[];
+    if(req.session)req.session.flash=[];
     const currentHref=(()=>{try{const parsed=new URL(req.originalUrl||req.path||'/',`http://${req.get('host')}`);
       return `${parsed.pathname}${parsed.search}`;}catch{return req.path||'/';}})();
     if(req.session&&data.title){const labels=req.session.renderedPageLabels||{};
@@ -18,7 +20,7 @@ function postgresPageRenderer(req,res,next){
     catch{arrivedFrom=null;}}
     return res.render('layout',{...data,body,title:data.title || 'StockChief',nav:data.nav || null,
       assetVersion:res.locals.assetVersion,
-      flash:res.locals.flash || [],csrfToken:res.locals.csrfToken,
+      flash:flashMessages,csrfToken:res.locals.csrfToken,
       backTo:data.suppressBack?null:(data.backTo || arrivedFrom || data.backToFallback || null),
       onboardingEntry,
       navigationArrival:null,workspaceGuidance:null,assistantQueue:req.session?.assistantQueue||null,

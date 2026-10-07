@@ -161,5 +161,16 @@ test('real Chromium runs PostgreSQL purchasing, receiving, supplier money, custo
     {order:'FULFILLED',invoice:'PAID',customerBalance:0,bill:'PARTIALLY_PAID',supplierBalance:5000});
     const unbalanced=await database.query(`SELECT e.id FROM accounting_journal_entries e JOIN accounting_journal_lines l ON l.entry_id=e.id
       WHERE e.workspace_id=$1 GROUP BY e.id HAVING SUM(l.debit_minor)<>SUM(l.credit_minor)`,[ctx.workspaceId]);
-    assert.equal(unbalanced.rows.length,0);assert.deepEqual(errors,[]);
+    assert.equal(unbalanced.rows.length,0);
+    const activityResponse=await page.goto(`${base}/activity`);
+    assert.equal(activityResponse.status(),200,await page.locator('main').innerText());
+    assert.match(await page.locator('main').innerText(),/PO-00001/);
+    const activity=await page.locator('.timeline--panel').innerText();
+    assert.match(activity,/PO-00001.*Boot Supply/s);
+    assert.match(activity,/Commerce Boot/);
+    assert.match(activity,/Pickup Customer/);
+    await page.locator('.inbox-bar').getByRole('link',{name:'Purchasing',exact:true}).click();
+    assert.match(await page.locator('.timeline--panel').innerText(),/PO-00001/);
+    assert.doesNotMatch(await page.locator('.timeline--panel').innerText(),/Pickup Customer/);
+    assert.deepEqual(errors,[]);
   });

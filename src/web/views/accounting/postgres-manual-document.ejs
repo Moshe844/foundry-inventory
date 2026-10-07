@@ -1,0 +1,19 @@
+<header class="page-head"><div class="titles"><a class="back-link" href="<%= kind==='invoice'?'/accounting/receivables':'/accounting/payables' %>">‹ Back to balances</a><h1><%= kind==='invoice'?'Record a customer invoice':'Record a supplier bill' %></h1><p class="page-sub">Use this for a real document not already created from an order. It changes the books, not physical stock. Record payment separately after money actually moves.</p></div></header>
+
+<form class="card section" method="post" action="<%= kind==='invoice'?'/accounting/receivables':'/accounting/payables' %>">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <input type="hidden" name="idempotencyKey" value="<%= idempotencyKey %>">
+  <div class="card-head"><h2>Document evidence</h2></div>
+  <div class="card-body grid grid--2">
+    <label class="field"><span class="field-label"><%= kind==='invoice'?'Customer':'Supplier' %></span><select class="select" name="counterpartyId" required><option value="">Choose one</option><% counterparties.forEach(function(party){ %><option value="<%= party.id %>"><%= party.name %></option><% }) %></select></label>
+    <label class="field"><span class="field-label"><%= kind==='invoice'?'Invoice number (optional)':'Supplier invoice number (required)' %></span><input class="input" name="documentNumber" maxlength="80" <%= kind==='invoice'?'':'required' %>></label>
+    <label class="field"><span class="field-label">Issue date</span><input class="input" type="date" name="issueDate" value="<%= today %>" required></label>
+    <label class="field"><span class="field-label">Due date (optional)</span><input class="input" type="date" name="dueDate"></label>
+    <label class="field"><span class="field-label">Description</span><input class="input" name="description" maxlength="250" required></label>
+    <label class="field"><span class="field-label">Quantity</span><input class="input" type="number" name="quantity" min="0.01" step="0.01" value="1" required></label>
+    <label class="field"><span class="field-label">Unit amount</span><input class="input" name="unitAmount" inputmode="decimal" placeholder="0.00" required></label>
+    <label class="field"><span class="field-label">Exact tax amount (optional)</span><input class="input" name="tax" inputmode="decimal" placeholder="0.00"></label>
+    <label class="field field--wide"><span class="field-label">Notes (optional)</span><input class="input" name="notes" maxlength="500"></label>
+  </div>
+  <div class="card-foot"><button class="btn btn--primary" type="submit"><%= kind==='invoice'?'Record invoice':'Record bill' %></button></div>
+</form>

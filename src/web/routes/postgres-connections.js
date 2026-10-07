@@ -11,6 +11,7 @@ const accountingSync=require('../../accounting/postgres-integration-sync');
 const publicApi=require('../../connections/postgres-public-api');
 const paymentConnect=require('../../payments/postgres-connect');
 const shippingAccounts=require('../../shipping/postgres-accounts');
+const {ValidationError}=require('../../domain/errors');
 const entitlements=require('../../entitlements/postgres-service');
 const {commercialScope}=require('../commercial-middleware');
 
@@ -195,6 +196,30 @@ function createPostgresConnectionsRouter(database,options={}){
       connection,newConnectionToken,provider:adapter?.metadata?.()||{name:connection.display_name},
       canDiscover:Boolean(adapter?.discover)&&!isMailbox,isMailbox,mailboxLastPollAt,
     });
+  }));
+  router.post('/settings/connections/:id/check-mail',requireOwner,asyncRoute(async(req,res)=>{
+    const connection=await connections.get(database,req.ctx.workspaceId,req.params.id);
+    if(!['gmail','microsoft365'].includes(connection.provider_type)||connection.status!=='connected'||connection.paused_at)
+      throw new ValidationError('Connect and resume this mailbox before checking it.');
+    await entitlements.assertCapability(database,commercialScope(req),'connection.email');
+    const bucket=Math.floor(Date.now()/60000);
+    await jobs.enqueue(database,{workspaceId:req.ctx.workspaceId,kind:'mailbox.poll',
+      idempotencyKey:`mailbox-poll:${connection.id}:manual:${bucket}`,payload:{connectorId:connection.id},
+      priority:20,maxAttempts:5});
+    req.flash('success','Mailbox check queued. Open Mail to see messages after the check completes.');
+    return res.redirect(303,`/settings/connections/${connection.id}`);
+  }));
+  router.post('/settings/connections/:id/mailbox-cadence',requireOwner,asyncRoute(async(req,res)=>{
+    const connection=await connections.get(database,req.ctx.workspaceId,req.params.id);
+    if(!['gmail','microsoft365'].includes(connection.provider_type))
+      throw new ValidationError('This connection is not a mailbox.');
+    const minutes=Number(req.body.minutes);
+    if(![1,5,10,15,30].includes(minutes))throw new ValidationError('Choose a supported mailbox check interval.');
+    await database.query(`UPDATE workspace_connectors SET expected_interval_minutes=$3,
+      config=jsonb_set(config::jsonb,'{mailboxCheckMinutes}',$4::jsonb,true)::text,updated_at=$5
+      WHERE workspace_id=$1 AND id=$2`,[req.ctx.workspaceId,connection.id,minutes,JSON.stringify(minutes),new Date().toISOString()]);
+    req.flash('success',`Mailbox checks now run every ${minutes} minute${minutes===1?'':'s'}.`);
+    return res.redirect(303,`/settings/connections/${connection.id}`);
   }));
   router.post('/settings/connections/:id/accounting/authority',requireOwner,asyncRoute(async(req,res)=>{
     await entitlements.assertCapability(database,commercialScope(req),'connection.accounting');

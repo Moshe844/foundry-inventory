@@ -11,7 +11,7 @@ const planning=require('../../forecasting/postgres-planning-service');
 const presenters=require('../postgres-presenters');
 const permissions=require('../../actions/permissions');
 const {requireAuth,requirePermission,asyncRoute}=require('../middleware');
-const {newId,nowIso,trimOrNull}=require('../../lib/util');
+const {newId,nowIso,trimOrNull,requireText}=require('../../lib/util');
 const {ValidationError}=require('../../domain/errors');
 
 function key(req,kind){return trimOrNull(req.body.idempotencyKey)||`${kind}:${newId('form')}`;}
@@ -724,6 +724,42 @@ function createPostgresCommerceRouter(database,options={}){
     const customer=await commerce.createCustomer(database,req.ctx,req.body);
     req.flash('success',`${customer.name} was added.`);
     return res.redirect(303,'/orders');
+  }));
+
+  router.get('/sales/customers/:id',requirePermission(permissions.VIEW,'view customers'),asyncRoute(async(req,res)=>{
+    const customer=(await database.query(`SELECT * FROM customers WHERE workspace_id=$1 AND id=$2`,
+      [req.ctx.workspaceId,req.params.id])).rows[0];
+    if(!customer)throw new ValidationError('That customer was not found in this inventory.');
+    const [orders,balance,settings]=await Promise.all([
+      database.query(`SELECT id,order_number,order_date,status FROM sales_orders
+        WHERE workspace_id=$1 AND customer_id=$2 ORDER BY created_at DESC LIMIT 100`,[req.ctx.workspaceId,customer.id]),
+      database.query(`SELECT COALESCE(SUM(balance_minor),0)::bigint AS minor FROM accounting_customer_invoices
+        WHERE workspace_id=$1 AND customer_id=$2 AND status IN ('OPEN','PARTIALLY_PAID')`,[req.ctx.workspaceId,customer.id]),
+      database.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId]),
+    ]);
+    return res.page('sales/postgres-customer',{title:customer.name,nav:'sales',customer,
+      orders:orders.rows,balanceMinor:Number(balance.rows[0].minor),currency:settings.rows[0]?.base_currency||'USD'});
+  }));
+  router.post('/sales/customers/:id',requirePermission(permissions.OPERATE,'change customers'),asyncRoute(async(req,res)=>{
+    const name=requireText(req.body.name,'Customer name',{max:160});
+    const email=trimOrNull(req.body.email);
+    if(email&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))throw new ValidationError('Enter a valid customer email address.');
+    const updated=await database.query(`UPDATE customers SET name=$3,company=$4,email=$5,phone=$6,
+      shipping_address=$7,notes=$8,updated_at=$9 WHERE workspace_id=$1 AND id=$2 RETURNING id`,
+    [req.ctx.workspaceId,req.params.id,name,trimOrNull(req.body.company),email,trimOrNull(req.body.phone),
+      trimOrNull(req.body.shippingAddress),trimOrNull(req.body.notes),nowIso()]);
+    if(!updated.rows.length)throw new ValidationError('That customer was not found in this inventory.');
+    req.flash('success','Customer details saved. Existing orders keep their original delivery address.');
+    return res.redirect(303,`/sales/customers/${req.params.id}`);
+  }));
+  router.post('/sales/customers/:id/archive',requirePermission(permissions.OPERATE,'archive customers'),asyncRoute(async(req,res)=>{
+    const restore=req.body.restore==='1';
+    const updated=await database.query(`UPDATE customers SET record_state=$3,updated_at=$4
+      WHERE workspace_id=$1 AND id=$2 RETURNING id`,[req.ctx.workspaceId,req.params.id,
+      restore?'ACTIVE':'ARCHIVED',nowIso()]);
+    if(!updated.rows.length)throw new ValidationError('That customer was not found in this inventory.');
+    req.flash('success',restore?'Customer restored.':'Customer archived. Past orders and invoices remain intact.');
+    return res.redirect(303,`/sales/customers/${req.params.id}`);
   }));
 
   router.post(['/orders','/sales/orders'],requirePermission(permissions.OPERATE,'create sales orders'),asyncRoute(async(req,res)=>{

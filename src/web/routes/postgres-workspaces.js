@@ -14,7 +14,7 @@ function createPostgresWorkspacesRouter(database){
   router.get('/inventories',asyncRoute(async(req,res)=>res.page('workspaces/list',{
     title:'Your inventories',nav:'inventories',suppressBack:true,workspaces:res.locals.workspaces,
     currentWorkspaceId:req.workspace?.id||null,layoutOnboardingEntry:null,
-    allowance:{...allowance,used:res.locals.workspaces.length},
+    allowance:{...allowance,used:res.locals.workspaces.length},postgresMode:true,
   })));
   router.get('/inventories/new',(req,res)=>res.page('workspaces/new',{
     title:'New inventory',nav:'inventories',backTo:{href:'/inventories',label:'Your inventories'},form:{},

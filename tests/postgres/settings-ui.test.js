@@ -59,6 +59,22 @@ test('PostgreSQL account menu pages render truthful native settings and rename t
     await alerts.getByLabel('Recipients').fill('owner-alerts@example.test');
     await Promise.all([page.waitForNavigation(),alerts.getByRole('button',{name:'Save email alerts'}).click()]);
     assert.match(await page.locator('main').innerText(),/Automatic email alerts are on|preferences are saved/i);
+    const oldKey=process.env.RESEND_API_KEY;
+    const oldSender=process.env.FOUNDRY_FROM_EMAIL;
+    process.env.RESEND_API_KEY='test-only-key';
+    process.env.FOUNDRY_FROM_EMAIL='StockChief <alerts@example.test>';
+    try{
+      await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Send a test email'}).click()]);
+      assert.match(await page.locator('main').innerText(),/Test email queued for settings@example\.test/);
+      const queued=(await database.query(`SELECT payload FROM stockchief_runtime.jobs
+        WHERE workspace_id=$1 AND kind='system.email-send' AND payload->>'messageType'='email_alert_test'`,
+      [(await database.query(`SELECT id FROM workspaces WHERE name='Renamed Operation'`)).rows[0].id])).rows;
+      assert.equal(queued.length,1);
+      assert.equal(require('../../src/operations/email').unseal(queued[0].payload).to,'settings@example.test');
+    }finally{
+      if(oldKey===undefined)delete process.env.RESEND_API_KEY;else process.env.RESEND_API_KEY=oldKey;
+      if(oldSender===undefined)delete process.env.FOUNDRY_FROM_EMAIL;else process.env.FOUNDRY_FROM_EMAIL=oldSender;
+    }
     await page.locator('#live-event-feed > summary').click();
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Connect live feed'}).click()]);
     assert.match(await page.locator('main').innerText(),/Copy this token now/);

@@ -64,6 +64,7 @@
   }
   function evidenceHref(href, label) {
     if (!href) return null;
+    if (locals.postgresAsk) return String(href).startsWith('/') && !String(href).startsWith('//') ? href : null;
     if (!String(href).startsWith('/') || String(href).startsWith('/foundry/navigate?')) return href;
     return '/foundry/navigate?to=' + encodeURIComponent(href)
       + '&label=' + encodeURIComponent('Open ' + label)
@@ -166,7 +167,47 @@
       %>
       <div class="rm-said">
         <p class="rm-said__text" style="white-space:pre-line"><%= helpers.figures(said) %></p>
-        <p class="rm-said__meta"><span class="rm-pill rm-pill--<%= goal.statusTone %>"><%= goal.statusLabel %></span><% if (result.general) { %><span class="rm-pill rm-pill--muted">General knowledge — not read from your records</span><% } %><% if (result.needsClarification && goal.status === 'clarify') { %><span><%= result.choices && result.choices.length ? 'Pick one, or reply below.' : 'Reply below to continue this question.' %> Nothing has changed.</span><% } %></p>
+        <p class="rm-said__meta"><span class="rm-pill rm-pill--<%= goal.statusTone %>"><%= goal.statusLabel %></span><% if (result.general) { %><span class="rm-pill rm-pill--muted">General knowledge — not read from your records</span><% } %><% if (result.needsClarification && goal.status === 'clarify' && !result.emailFlow) { %><span><%= result.choices && result.choices.length ? 'Pick one, or reply below.' : 'Reply below to continue this question.' %> Nothing has changed.</span><% } %></p>
+        <% if (result.emailFlow && result.needsClarification) { %>
+          <form method="post" action="/ask/email/continue" class="rm-email-flow" data-busy>
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <input type="hidden" name="interactionId" value="<%= currentGoalId %>">
+            <input type="hidden" name="usageKey" value="<%= locals.usageKey %>">
+            <fieldset><legend><%= result.emailFlow.kind === 'missing_contact' ? 'How should I handle this new contact?' : 'Use this address just once, or save it for next time?' %></legend>
+              <% if (result.emailFlow.kind === 'missing_contact') { %>
+                <% if (!result.emailFlow.recipientKind || result.emailFlow.recipientKind === 'customer') { %><label><input type="radio" name="mode" value="add_customer" <%= result.emailFlow.recipientKind === 'customer' ? 'checked' : '' %> required> Add <%= result.emailFlow.name %> as a customer</label><% } %>
+                <% if (!result.emailFlow.recipientKind || result.emailFlow.recipientKind === 'supplier') { %><label><input type="radio" name="mode" value="add_supplier" <%= result.emailFlow.recipientKind === 'supplier' ? 'checked' : '' %> required> Add <%= result.emailFlow.name %> as a supplier</label><% } %>
+                <label><input type="radio" name="mode" value="one_off" <%= !result.emailFlow.recipientKind ? 'checked' : '' %> required> Send once without adding a contact</label>
+              <% } else { %>
+                <label><input type="radio" name="mode" value="save" checked required> Save the address on <%= result.emailFlow.name %> and use it</label>
+                <label><input type="radio" name="mode" value="once" required> Use it for this email only</label>
+              <% } %>
+            </fieldset>
+            <label class="rm-email-flow__address">Email address<input type="email" name="email" autocomplete="email" placeholder="name@example.com" required maxlength="254"></label>
+            <button class="rm-btn rm-btn--sm" type="submit">Prepare the email <span aria-hidden="true">→</span></button>
+            <small>No contact is added and nothing is sent until you approve the finished draft.</small>
+          </form>
+        <% } %>
+        <% if (result.emailProposal) { var emailDraft = result.emailProposal; var emailPayload = emailDraft.payload || {}; %>
+          <section class="rm-email-preview" aria-label="Email draft">
+            <p class="rm-email-preview__k"><%= emailDraft.status === 'PENDING' ? 'Ready for your approval' : emailDraft.status === 'EXECUTED' ? emailDraft.deliveryStatus === 'SENT' ? 'Sent and confirmed' : emailDraft.deliveryStatus === 'FAILED' ? 'Delivery needs attention' : 'Approved · sending' : 'Discarded draft' %></p>
+            <dl><div><dt>To</dt><dd><%= emailPayload.recipientName %> &lt;<%= emailPayload.recipientEmail %>&gt;</dd></div>
+              <div><dt>From</dt><dd><%= emailPayload.mailboxName %></dd></div>
+              <div><dt>Subject</dt><dd><%= emailPayload.subject %></dd></div></dl>
+            <div class="rm-email-preview__body"><%= emailPayload.body %></div>
+            <% if (emailPayload.addContactKind) { %><p class="rm-email-preview__note">Approval also adds <%= emailPayload.recipientName %> as a <%= emailPayload.addContactKind %> with this address.</p><% } %>
+            <% if (emailPayload.saveEmailToContact) { %><p class="rm-email-preview__note">Approval also saves this address on the contact.</p><% } %>
+            <% if (!emailPayload.draftPolished && !emailPayload.editedByOwner && emailDraft.status === 'PENDING') { %><p class="rm-email-preview__note">I could not polish this wording automatically. Review or edit it before approving.</p><% } %>
+            <% if (emailDraft.status === 'PENDING') { %>
+              <div class="rm-email-preview__actions"><form method="post" action="/ask/email/<%= emailDraft.id %>/approve" data-busy><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--sm" type="submit">Approve and send</button></form>
+                <form method="post" action="/ask/email/<%= emailDraft.id %>/cancel"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">Discard</button></form></div>
+              <details class="rm-email-preview__edit"><summary>Edit this draft</summary><form method="post" action="/ask/email/<%= emailDraft.id %>/revise" data-busy><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label>Subject<input name="subject" value="<%= emailPayload.subject %>" maxlength="200" required></label><label>Message<textarea name="body" rows="7" maxlength="6000" required><%= emailPayload.body %></textarea></label><button class="rm-btn rm-btn--sm" type="submit">Save draft</button></form></details>
+              <p class="rm-email-preview__note">Nothing is sent until you approve. You can change the wording here.</p>
+            <% } else if (emailDraft.status === 'EXECUTED' && emailDraft.result?.communicationId) { %>
+              <p class="rm-email-preview__note">Delivery: <%= emailDraft.deliveryStatus || 'QUEUED' %>. <a href="/messages/<%= emailDraft.result.communicationKind %>/<%= emailDraft.result.communicationId %>">Track this email</a></p>
+            <% } %>
+          </section>
+        <% } %>
         <%# A "which one?" is answered with a click: each candidate is the reply, sent as the answer to this question. %>
         <% if (result.needsClarification && result.choices && result.choices.length) { %>
           <div class="rm-suggest rm-suggest--answers">
@@ -262,7 +303,7 @@
         <% } %>
 
         <% const conversational = result.plan && ['small_talk', 'conversation_recap', 'general_knowledge', 'undo', 'action_clarification'].includes(result.plan.intent); %>
-        <% if ((result.supported || result.isAction) && !conversational) { %>
+        <% if ((result.supported || result.isAction) && !conversational && !result.emailProposal) { %>
           <%#
             The working, folded. A native disclosure says what it is, opens
             without a script, and is where the statement of record lives.

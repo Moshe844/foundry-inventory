@@ -140,6 +140,7 @@ async function provisionFirstWorkspace(database,accountId,input={}){
 
 async function createWorkspace(database,accountId,input={}){
   const businessName=requireText(input.name,'Inventory name',{max:120});
+  const dataMode=input.dataMode==='synthetic'?'synthetic':'production';
   const workspaceId=newId('wsp');const userId=newId('usr');const at=input.now||nowIso();
   return database.transaction(async(client)=>{
     const account=(await client.query('SELECT * FROM accounts WHERE id=$1 FOR UPDATE',[accountId])).rows[0];
@@ -147,7 +148,7 @@ async function createWorkspace(database,accountId,input={}){
     await entitlements.assertCapability(client,{accountId,workspaceId:null},'workspace.core');
     await entitlements.assertMeterCapacity(client,{accountId,workspaceId:null},'workspaces',1);
     await client.query(`INSERT INTO workspaces(id,name,owner_account_id,data_mode,created_at)
-      VALUES($1,$2,$3,'production',$4)`,[workspaceId,businessName,accountId,at]);
+      VALUES($1,$2,$3,$4,$5)`,[workspaceId,businessName,accountId,dataMode,at]);
     await client.query(`INSERT INTO users(id,workspace_id,account_id,name,role,created_at)
       VALUES($1,$2,$3,$4,'owner',$5)`,[userId,workspaceId,accountId,account.name,at]);
     await ledger.configureInTransaction(client,{workspaceId,actorId:userId},{startDate:at.slice(0,10),currency:'USD'});

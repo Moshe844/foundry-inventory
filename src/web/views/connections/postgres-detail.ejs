@@ -59,6 +59,25 @@
       <% if(accounting.pendingEntries.length){ %><div class="grid"><% accounting.pendingEntries.forEach(function(entry){ %><div class="list-row"><div><strong>Journal <%= entry.entry_number %> · <%= entry.description %></strong><p><%= entry.posting_date %></p></div><span class="badge"><%= entry.effect_status||'not queued' %></span></div><% }) %></div><% } %>
     </div></section>
   <% } else { %>
+    <% if(isMailbox){ %>
+      <section class="card" aria-label="Mailbox settings">
+        <div class="card-head"><div><h2>Business email</h2><p class="muted">Only mail from a known customer or supplier, or a reply to a conversation StockChief sent, enters the business inbox. Other senders are set aside without saving their message body or attachments.</p></div></div>
+        <div class="card-body grid">
+          <p><strong>Connected mailbox:</strong> <%= connection.provider_account_name||'Account identity unavailable' %></p>
+          <div class="form-actions"><a class="btn btn--primary" href="/mail">View business emails</a><a class="btn" href="/mail/set-aside">Review set-aside senders</a></div>
+          <p class="hint">Add or update a supplier or customer email address on that contact's record. StockChief matches the sender to those addresses; connecting a mailbox alone does not approve every sender.</p>
+          <% if(currentUser.role==='owner'){ %>
+            <form method="post" action="/settings/connections/<%= connection.id %>/mailbox-cadence" class="form-actions">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <label class="field"><span class="field-label">Check for new mail</span><select class="select" name="minutes"><% [1,5,10,15,30].forEach(function(minutes){ %><option value="<%= minutes %>" <%= Number(connection.expected_interval_minutes||5)===minutes?'selected':'' %>>Every <%= minutes %> minute<%= minutes===1?'':'s' %></option><% }) %></select></label>
+              <button class="btn" type="submit">Save timing</button>
+            </form>
+            <% if(connected){ %><form method="post" action="/settings/connections/<%= connection.id %>/check-mail"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit">Check mailbox now</button></form><% } %>
+          <% } %>
+          <p class="hint">Last completed check: <%= mailboxLastPollAt?helpers.timeAgo(mailboxLastPollAt):'not yet' %>. Queuing a check is not proof that it completed.</p>
+        </div>
+      </section>
+    <% } %>
     <section class="card"><div class="card-head"><div><h2>What this connection is doing</h2><p class="muted">Only successful provider evidence counts.</p></div></div><div class="card-body grid"><div class="list-row"><div><strong>Provider account</strong><p><%= connection.provider_account_name||'Not returned yet' %></p></div><span class="badge <%= connected?'badge--ok':'badge--muted' %>"><%= connected?'Connected':'Not connected' %></span></div><div class="list-row"><div><strong><%= isMailbox?'Last completed mailbox check':'Last successful exchange' %></strong><p><%= isMailbox?(mailboxLastPollAt?helpers.timeAgo(mailboxLastPollAt):'No mailbox check has completed yet'):(connection.last_activity_at||connection.last_synced_at||'No successful exchange recorded yet') %></p></div></div></div></section>
     <% if(canDiscover){ %><section class="card"><div class="card-head"><div><h2>Products and locations</h2><p class="muted">Exact matches happen automatically. Ambiguous records stay unchanged.</p></div></div><div class="card-body"><% if(query&&query.refresh==='queued'){ %><div class="notice notice--success">Catalogue refresh queued.</div><% } %><% if(connected){ %><form method="post" action="/settings/connections/<%= connection.id %>/refresh"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit">Refresh now</button></form><% } %></div></section><% } %>
   <% } %>

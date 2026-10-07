@@ -22,5 +22,27 @@
 .page-ask .rm-chat > .rm-composer .rm-composer__input::placeholder { color: #838a9c; }
 .page-ask .rm-chat > .rm-composer .rm-composer__attach { color: #625e77; background: #f4f3fa; }
 .page-ask .rm-chat > .rm-composer .rm-composer__send { border-radius: 11px; background: #5b4bd0; color: #fff; }
+.page-ask .rm-email-flow,.page-ask .rm-email-preview { margin: 2px 18px 18px; padding: 17px 18px; border: 1px solid #dcddea; border-radius: 14px; background: #f9f9fd; }
+.page-ask .rm-email-flow { display: grid; gap: 14px; }
+.page-ask .rm-email-flow fieldset { display: grid; gap: 9px; margin: 0; padding: 0; border: 0; }
+.page-ask .rm-email-flow legend { margin-bottom: 10px; color: #2b2940; font-size: 13px; font-weight: 700; }
+.page-ask .rm-email-flow fieldset label { display: flex; align-items: center; gap: 9px; font-size: 13px; line-height: 1.4; }
+.page-ask .rm-email-flow input[type=radio] { width: 17px; height: 17px; accent-color: #5b4bd0; }
+.page-ask .rm-email-flow__address,.page-ask .rm-email-preview__edit label { display: grid; gap: 6px; color: #48465f; font-size: 12px; font-weight: 700; }
+.page-ask .rm-email-flow input[type=email],.page-ask .rm-email-preview__edit input,.page-ask .rm-email-preview__edit textarea { width: 100%; padding: 11px 12px; border: 1px solid #c9c9da; border-radius: 9px; background: #fff; color: #25243b; font: inherit; font-size: 14px; }
+.page-ask .rm-email-flow .rm-btn { justify-self: start; }
+.page-ask .rm-email-flow small,.page-ask .rm-email-preview__note { color: #65667c; font-size: 11px; line-height: 1.45; }
+.page-ask .rm-email-preview__k { margin: 0 0 12px; color: #5b4bd0; font-size: 11px; font-weight: 750; letter-spacing: .06em; text-transform: uppercase; }
+.page-ask .rm-email-preview dl { display: grid; gap: 8px; margin: 0 0 15px; }
+.page-ask .rm-email-preview dl div { display: grid; grid-template-columns: 62px minmax(0,1fr); gap: 10px; font-size: 12px; }
+.page-ask .rm-email-preview dt { color: #77788e; }
+.page-ask .rm-email-preview dd { margin: 0; overflow-wrap: anywhere; color: #26243c; font-weight: 650; }
+.page-ask .rm-email-preview__body { padding: 16px; border: 1px solid #e1e1eb; border-radius: 10px; background: #fff; color: #29283c; font-size: 13px; line-height: 1.6; white-space: pre-wrap; }
+.page-ask .rm-email-preview__actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 15px; }
+.page-ask .rm-email-preview__actions form { margin: 0; }
+.page-ask .rm-email-preview__edit { margin-top: 14px; font-size: 12px; }
+.page-ask .rm-email-preview__edit summary { cursor: pointer; color: #5142b6; font-weight: 700; }
+.page-ask .rm-email-preview__edit form { display: grid; gap: 12px; padding-top: 12px; }
+.page-ask .rm-email-preview__edit button { justify-self: start; }
 @media(max-width:720px) { .page-ask .rm-rooms,.page-ask .rail-search { display:none; } }
-@media(max-width:680px) { .page-ask .rm-canvas { padding-top: 19px; } .page-ask .rm-chat { width: 100%; } .page-ask .rm-chat__title { font-size: 23px; } .page-ask .rm-chat > .rm-composer { position:relative; bottom:auto; margin-bottom:8px; } .page-ask .rm-said__text { padding: 14px 15px 8px; } }
+@media(max-width:680px) { .page-ask .rm-canvas { padding-top: 19px; } .page-ask .rm-chat { width: 100%; } .page-ask .rm-chat__title { font-size: 23px; } .page-ask .rm-chat > .rm-composer { position:relative; bottom:auto; margin-bottom:8px; } .page-ask .rm-said__text { padding: 14px 15px 8px; } .page-ask .rm-email-flow,.page-ask .rm-email-preview { margin-inline: 12px; padding: 14px; } }

@@ -69,7 +69,7 @@
               <button class="btn btn--primary btn--sm" type="submit">Open</button>
             </form>
           <% } %>
-          <% if (!workspace.deleting && workspaces.length > 1) { %>
+          <% if (!locals.postgresMode && !workspace.deleting && workspaces.length > 1) { %>
             <form method="post" action="/inventories/<%= workspace.workspaceId %>/leave"
                   data-confirm="Leave <%= workspace.name %>? Its records stay exactly as they are; you just lose access.">
               <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -79,7 +79,7 @@
           <%# Deleting is a link, not a button: it opens a page that shows what
               would be destroyed and asks for the name. There is no one-click
               path to it anywhere. %>
-          <% if (!workspace.deleting && workspace.role === 'owner') { %>
+          <% if (!locals.postgresMode && !workspace.deleting && workspace.role === 'owner') { %>
             <a class="btn btn--ghost btn--sm" href="/inventories/<%= workspace.workspaceId %>/delete">Delete</a>
           <% } %>
         </div>
@@ -88,6 +88,7 @@
   </div>
 
   <p class="muted" style="font-size:12.5px; margin-top:16px;">
+    <% if (locals.postgresMode) { %>Inventory leaving and permanent deletion are not yet available on this version. Contact support if you need either action.<br><% } %>
     <% if (allowance.unlimited) { %>
       <%= workspaces.length %> <%= helpers.plural(workspaces.length, 'inventory', 'inventories') %>.
     <% } else { %>

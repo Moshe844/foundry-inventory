@@ -8,6 +8,7 @@ const classification=Object.freeze({
  'ai/providers/anthropic.js':'METERED',
  'assistant/calls.js':'NOT_PG_ENABLED',
  'assistant/mail-draft.js':'NOT_PG_ENABLED',
+ 'assistant/postgres-evidence-answer.js':'METERED',
  'assistant/postgres-service.js':'METERED',
  'assistant/understand.js':'NOT_PG_ENABLED',
  'attention/interpretation-service.js':'NOT_PG_ENABLED',

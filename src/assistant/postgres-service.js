@@ -61,6 +61,13 @@ const FOLLOWUP_SCHEMA={type:'object',additionalProperties:false,
     disposition:{type:'string',enum:['answer','unknown','new_request']},
     value:{type:'string',maxLength:500},currency:{type:'string',maxLength:3},
   }};
+const EMAIL_DRAFT_SCHEMA={type:'object',additionalProperties:false,required:['subject','body'],properties:{
+  subject:{type:'string',maxLength:200},body:{type:'string',maxLength:6000},
+}};
+const EMAIL_DRAFT_SYSTEM=`Copyedit the owner's email words. Return only the schema.
+This is a grammar and spelling correction, not a composition task. Keep the same business nouns, verbs, dates, quantities, names, amounts, commitments, and uncertainties. Do not infer what a vague word such as "confirm" refers to.
+Do not add a greeting, thanks, sign-off, explanation, promise, fact, deadline, price, order status, shipment claim, receipt claim, or attachment claim unless the owner explicitly supplied it. Do not invent the sender's name.
+Use a short subject made only from concepts the owner explicitly stated; if there is no safe subject, return an empty string. The body should contain only the corrected version of the supplied message, ready for the owner to review before sending.`;
 const SYSTEM=`Decompose and extract the person's complete message into one or more requests to an inventory operations system. Return only the schema.
 Preserve every distinct question, instruction and requested action. Never silently omit a requirement. Each parts entry must contain
 one request and requestText must be the exact portion of the person's message represented by that entry. Keep dependent wording with
@@ -292,6 +299,9 @@ function cleanPlan(raw,message) {
     purchaseOrder:trimOrNull(source.purchaseOrder),supplierBill:trimOrNull(source.supplierBill),
     receiptReference:trimOrNull(source.receiptReference),paymentMethod:trimOrNull(source.paymentMethod),
     paymentDate:trimOrNull(source.paymentDate),
+    recipientEmail:trimOrNull(source.recipientEmail),
+    recipientMode:['one_off','add_supplier','add_customer'].includes(source.recipientMode)?source.recipientMode:null,
+    saveEmailToContact:source.saveEmailToContact===true,
     readQueries:source.intent==='lookup'?businessResearch.cleanQueries(source.readQueries):null};
 }
 
@@ -358,6 +368,10 @@ async function planClarificationReply(message,context,provider){
       if(!/^\d+(?:\.\d{1,2})?$/.test(value))return null;
       intent.amount=Number(value);
       if(/^[A-Z]{3}$/.test(response.data.currency))intent.currency=response.data.currency;
+    }else if(field==='recipientEmail'){
+      if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)||!String(message).includes(value))return null;
+      intent.recipientEmail=value;
+      if(context.emailFlow?.kind==='missing_contact')intent.recipientMode='one_off';
     }else if(['sku','supplier','customer','location','fromLocation','toLocation','purchaseOrder','supplierBill',
       'recipient','mailbox','paymentMethod','paymentDate','neededBy','receiptReference','shipToAddress','body',
       'reason','reference','search'].includes(field)){
@@ -890,7 +904,63 @@ async function resolveParty(database,kind,workspaceId,search){
   return broad.rows.length?{ambiguous:broad.rows}:{notFound:true};
 }
 
-async function prepareAction(database,ctx,message,request) {
+const EMAIL_GRAMMAR_WORDS=new Set('a an and are as at be been but by can could did do for from had has have i if in is it its me my of on or our please should so that the their them there these this to us we were will with would you your hello regards best sincerely thank thanks'.split(' '));
+function editDistanceAtMostTwo(left,right){
+  if(Math.abs(left.length-right.length)>2)return false;
+  let previous=Array.from({length:right.length+1},(_,index)=>index);
+  for(let i=1;i<=left.length;i+=1){
+    const current=[i];for(let j=1;j<=right.length;j+=1)
+      current[j]=Math.min(current[j-1]+1,previous[j]+1,previous[j-1]+(left[i-1]===right[j-1]?0:1));
+    previous=current;
+  }
+  return previous[right.length]<=2;
+}
+function noNewBusinessWords(original,drafted){
+  const words=(text)=>String(text).toLowerCase().match(/[a-z]+(?:'[a-z]+)?/g)||[];
+  const source=[...new Set(words(original))];const output=words(drafted);
+  if(source.length>300||output.length>450)return false;
+  return output.every((word)=>EMAIL_GRAMMAR_WORDS.has(word)||source.includes(word)
+    ||(word.length>3&&source.some((existing)=>existing.length>3&&existing[0]===word[0]
+      &&editDistanceAtMostTwo(existing,word))));
+}
+function boundedEmailRewrite(original,drafted){
+  const words=(text)=>String(text).toLowerCase().match(/[a-z]+(?:'[a-z]+)?/g)||[];
+  const source=[...new Set(words(original))];const output=words(drafted);
+  if(source.length>300||output.length>450)return false;
+  const meaningWords=['no','not','never','without','cannot',"can't","won't","don't",'only','before','after','until',
+    'will','must','may','might','can','could','should','would'];
+  const count=(list,word)=>list.filter((entry)=>entry===word).length;
+  const sourceWords=words(original);
+  if(meaningWords.some((word)=>count(sourceWords,word)!==count(output,word)))return false;
+  if((String(original).match(/\?/g)||[]).length!==(String(drafted).match(/\?/g)||[]).length)return false;
+  if(source.some((word)=>!EMAIL_GRAMMAR_WORDS.has(word)&&!output.some((candidate)=>candidate===word
+    ||(word.length>3&&candidate.length>3&&candidate[0]===word[0]&&editDistanceAtMostTwo(word,candidate)))))return false;
+  return noNewBusinessWords(original,drafted);
+}
+async function draftBusinessEmail(request,businessName,provider){
+  const fallback={subject:request.subject||`Message from ${businessName}`,body:request.body,polished:false};
+  if(!provider)return fallback;
+  try{
+    const response=await provider.complete({system:EMAIL_DRAFT_SYSTEM,
+      prompt:JSON.stringify({recipientName:request.recipient,ownerSubject:request.subject||null,
+        ownerMessage:request.body,businessName}),schema:EMAIL_DRAFT_SCHEMA,
+      schemaName:'stockchief_postgres_email_draft',maxOutputTokens:1000});
+    const body=trimOrNull(response.data?.body);
+    const suggestedSubject=trimOrNull(response.data?.subject);
+    if(!body||body.length>6000||!boundedEmailRewrite(request.body,body))return fallback;
+    const subject=suggestedSubject&&noNewBusinessWords(`${request.subject||''} ${request.body}`,suggestedSubject)
+      ?suggestedSubject:fallback.subject;
+    if(subject.length>200)return fallback;
+    const numbers=(text)=>String(text).match(/\b\d+(?:[.,]\d+)*\b/g)||[];
+    const originalNumbers=numbers(`${request.subject||''} ${request.body}`);
+    const draftedNumbers=numbers(`${subject} ${body}`);
+    if(originalNumbers.some((number)=>!draftedNumbers.includes(number))
+      ||draftedNumbers.some((number)=>!originalNumbers.includes(number)))return fallback;
+    return {subject,body,polished:true};
+  }catch(error){return fallback;}
+}
+
+async function prepareAction(database,ctx,message,request,options={}) {
   if(!request.action)return {status:'CLARIFY',answer:'What would you like StockChief to change?'};
   if(request.action==='send_email'){
     const commercialScope=await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId);
@@ -899,26 +969,39 @@ async function prepareAction(database,ctx,message,request) {
       handoff:{href:'/upgrade?capability=connection.email&return=/ask',label:'Review email automation plans'}};
     const recipient=await outboundMail.resolveRecipient(database,ctx.workspaceId,request.recipient,request.recipientKind);
     if(recipient.missing)return {status:'CLARIFY',answer:'Who should StockChief email? Name an existing customer or supplier, or give the exact email address.',awaitingField:'recipient'};
+    let addContactKind=null;let resolved=recipient;
     if(recipient.notFound){
       const kind=request.recipientKind||null;
-      return {status:'CLARIFY',answer:`I could not find ${kind?`the ${kind}`:'a customer or supplier'} “${request.recipient}”. What exact email address should I use? I can prepare a one-off message for your approval without creating a contact. Nothing was sent.`,
-        awaitingField:'recipient'};
+      if(!request.recipientEmail)return {status:'CLARIFY',answer:`I could not find ${kind?`the ${kind}`:'a customer or supplier'} “${request.recipient}”. Add the contact or send this email once? Enter the exact email address below. Nothing was sent.`,
+        awaitingField:'recipientEmail',emailFlow:{kind:'missing_contact',name:request.recipient,recipientKind:kind}};
+      addContactKind=request.recipientMode?.startsWith('add_')?request.recipientMode.slice(4):null;
+      if(addContactKind&&!['supplier','customer'].includes(addContactKind))throw new ValidationError('Choose a customer or supplier.');
+      if(addContactKind&&kind&&addContactKind!==kind)throw new ValidationError('The contact type must match the request.');
+      resolved={row:{id:null,name:request.recipient,email:request.recipientEmail,kind:'address'}};
     }
     if(recipient.ambiguous)return {status:'CLARIFY',answer:`“${request.recipient}” matches more than one business contact. Say whether this is the customer or supplier.`,
       choices:recipient.ambiguous.map((row)=>({label:`${row.name} · ${row.kind}`,value:`the ${row.kind} named ${row.name}`}))};
-    if(!recipient.row.email)return {status:'CLARIFY',answer:`I found ${recipient.row.name}, but no email address is recorded. What exact address should I use for this one-off message? Nothing was sent.`,awaitingField:'recipient'};
-    if(!request.body)return {status:'CLARIFY',answer:`What exactly should the email to ${recipient.row.name} say?`,awaitingField:'body'};
+    if(!resolved.row.email&&!request.recipientEmail)return {status:'CLARIFY',answer:`I found ${resolved.row.name}, but no email address is recorded. Enter the address to use below. Nothing was sent.`,
+      awaitingField:'recipientEmail',emailFlow:{kind:'missing_email',name:resolved.row.name,recipientKind:resolved.row.kind}};
+    if(!request.body)return {status:'CLARIFY',answer:`What would you like the email to ${resolved.row.name} to say? I’ll polish it before you approve it.`,awaitingField:'body'};
     const mailbox=await outboundMail.resolveMailbox(database,ctx.workspaceId,request.mailbox);
     if(mailbox.missing)return {status:'CLARIFY',answer:'Connect and verify a Gmail or Microsoft 365 business mailbox before preparing this email.'};
     if(mailbox.notFound)return {status:'CLARIFY',answer:`No connected business mailbox matches “${request.mailbox}”. Nothing was prepared.`};
     if(mailbox.ambiguous)return {status:'CLARIFY',answer:'More than one business mailbox can send this. Name the exact mailbox to use.',awaitingField:'mailbox',
       choices:mailbox.ambiguous.map((row)=>({label:`${row.display_name}${row.provider_account_name?` · ${row.provider_account_name}`:''}`,value:row.display_name}))};
     const business=(await database.query('SELECT name FROM workspaces WHERE id=$1',[ctx.workspaceId])).rows[0];
-    const subject=request.subject||`Message from ${business.name}`;
-    return createProposal(database,ctx,message,'communication.send_email',{recipientKind:recipient.row.kind,
-      recipientId:recipient.row.id,recipientName:recipient.row.name,recipientEmail:recipient.row.email,subject,body:request.body,
+    const drafted=await draftBusinessEmail(request,business.name,options.emailDraftProvider);
+    const recipientEmail=request.recipientEmail||resolved.row.email;
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(recipientEmail||'')))
+      return {status:'CLARIFY',answer:'Enter a valid email address before I prepare the message.',awaitingField:'recipientEmail',
+        emailFlow:{kind:recipient.notFound?'missing_contact':'missing_email',name:request.recipient,
+          recipientKind:request.recipientKind||null}};
+    return createProposal(database,ctx,message,'communication.send_email',{recipientKind:resolved.row.kind,
+      recipientId:resolved.row.id,recipientName:resolved.row.name,recipientEmail,subject:drafted.subject,body:drafted.body,
+      originalBody:request.body,draftPolished:drafted.polished,addContactKind,addContactName:addContactKind?request.recipient:null,
+      saveEmailToContact:request.saveEmailToContact===true,
       connectorId:mailbox.row.id,mailboxName:mailbox.row.display_name},
-    `Email ${recipient.row.name} at ${recipient.row.email} from ${mailbox.row.display_name}.`);
+    `Email ${resolved.row.name} at ${recipientEmail} from ${mailbox.row.display_name}.`);
   }
   if(request.action==='receive_purchase_order'){
     if(!request.purchaseOrder)return {status:'CLARIFY',answer:'Which exact purchase order number did these goods arrive against?',awaitingField:'purchaseOrder'};
@@ -1122,7 +1205,8 @@ async function createProposal(database,ctx,message,actionType,payload,summary) {
 async function storeInteraction(database,ctx,message,intent,result) {
   const id=newId('pgask');
   const storedIntent={...intent,...(result.carryForward||{}),presentation:{columns:result.columns || [],choices:result.choices || [],handoff:result.handoff || null,
-    reason:result.reason||null,awaitingField:result.awaitingField||null,researchViews:result.researchViews||[]}};
+    reason:result.reason||null,awaitingField:result.awaitingField||null,emailFlow:result.emailFlow||null,
+    researchViews:result.researchViews||[]}};
   await database.query(`INSERT INTO stockchief_runtime.assistant_interactions
     (id,workspace_id,actor_user_id,message,intent,answer,evidence,status)
     VALUES($1,$2,$3,$4,$5::jsonb,$6,$7::jsonb,$8)`,[id,ctx.workspaceId,ctx.actorId,message,JSON.stringify(storedIntent),
@@ -1155,7 +1239,10 @@ async function ask(database,ctx,message,options={}) {
         answerProvider:require('../commercial/model').wrap(database,ctx,provider,'ask',
           `${options.usageKey||newId('askusage')}:research-answer:${index}`),
         lookup,history}):null;
-    const result=intent.intent==='action'?await prepareAction(database,ctx,clean,intent):
+    const result=intent.intent==='action'?await prepareAction(database,ctx,clean,intent,{
+      emailDraftProvider:provider&&intent.action==='send_email'
+        ?require('../commercial/model').wrap(database,ctx,provider,'ask',
+          `${options.usageKey||newId('askusage')}:email-draft:${index}`):null}):
       intent.intent==='instruction'?await prepareInstruction(database,ctx,request.requestText,options):
       intent.intent==='lookup'?researched||(researchSelected
         ?{status:'CLARIFY',answer:'I could not verify that answer from your business records just now. Please try again.',
@@ -1202,7 +1289,60 @@ async function pendingClarification(database,ctx,startedAt=null){
   if(!latest||latest.status!=='CLARIFY'||['unverified','unavailable'].includes(latest.intent?.presentation?.reason))return null;
   return {previousUserMessage:latest.intent?.resolvedRequestText||latest.message,
     previousAssistantQuestion:latest.answer,previousIntent:cleanPlan(latest.intent,latest.intent?.resolvedRequestText||latest.message),
-    awaitingField:latest.intent?.presentation?.awaitingField||null};
+    awaitingField:latest.intent?.presentation?.awaitingField||null,emailFlow:latest.intent?.presentation?.emailFlow||null};
+}
+
+async function continueEmail(database,ctx,input,options={}){
+  await require('../commercial/enforcement').workspace(database,ctx.workspaceId,'ask.lookup');
+  const latest=(await database.query(`SELECT id,message,intent,status FROM stockchief_runtime.assistant_interactions
+    WHERE workspace_id=$1 AND actor_user_id=$2 AND ($3::timestamptz IS NULL OR created_at >= $3::timestamptz)
+    ORDER BY created_at DESC,id DESC LIMIT 1`,[ctx.workspaceId,ctx.actorId,options.startedAt||null])).rows[0];
+  const flow=latest?.intent?.presentation?.emailFlow;
+  if(!latest||latest.id!==input.interactionId||latest.status!=='CLARIFY'
+    ||latest.intent?.action!=='send_email'||!['missing_contact','missing_email'].includes(flow?.kind))
+    throw new ValidationError('This email question has changed. Read the latest reply before continuing.');
+  const email=trimOrNull(input.email);
+  if(!email||email.length>254||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+    throw new ValidationError('Enter the exact valid email address to use.');
+  const mode=String(input.mode||'');
+  if(flow.kind==='missing_contact'&&!['one_off','add_supplier','add_customer'].includes(mode))
+    throw new ValidationError('Choose whether to add this contact or send once.');
+  if(flow.kind==='missing_contact'&&flow.recipientKind&&mode.startsWith('add_')
+    &&mode!==`add_${flow.recipientKind}`)throw new ValidationError('The contact type must match the original request.');
+  if(flow.kind==='missing_email'&&!['once','save'].includes(mode))
+    throw new ValidationError('Choose whether to save the email on this contact.');
+  const original=latest.intent.resolvedRequestText||latest.message;
+  const request=cleanPlan(latest.intent,original);
+  request.recipientEmail=email;
+  request.recipientMode=flow.kind==='missing_contact'?mode:null;
+  request.saveEmailToContact=flow.kind==='missing_email'&&mode==='save';
+  const message=flow.kind==='missing_contact'
+    ?`${mode==='one_off'?'Send once without adding':`Add ${flow.name} as a ${mode.slice(4)} and send`} to ${email}`
+    :`${mode==='save'?'Save and use':'Use once'} ${email} for ${flow.name}`;
+  const provider=options.provider||(config.ai.configured?createProviderUnobserved(config.ai.provider,config.ai.tier('fast')):null);
+  const result=await prepareAction(database,ctx,`${original} — ${message}`,request,{
+    emailDraftProvider:provider?require('../commercial/model').wrap(database,ctx,provider,'ask',
+      `${options.usageKey||newId('askusage')}:email-draft`):null});
+  const storedIntent={...request,resolvedRequestText:original,
+    ...(result.proposal?{proposalId:result.proposal.id,
+      proposalHref:result.proposal.href||`/actions/${result.proposal.id}`}:{})};
+  result.interactionId=await storeInteraction(database,ctx,message,storedIntent,result);
+  return result;
+}
+
+async function reviseEmailProposal(database,ctx,id,input){
+  const subject=trimOrNull(input.subject);const body=trimOrNull(input.body);
+  if(!subject||subject.length>200||!body||body.length>6000)
+    throw new ValidationError('The email needs a subject and message within the allowed length.');
+  return database.transaction(async(client)=>{
+    const proposal=await getProposal(database,ctx.workspaceId,id,true,client);
+    if(proposal.actor_user_id!==ctx.actorId||proposal.action_type!=='communication.send_email'
+      ||proposal.status!=='PENDING')throw new ValidationError('That email draft is no longer editable.');
+    const payload={...proposal.payload,subject,body,draftPolished:false,editedByOwner:true};
+    await client.query(`UPDATE stockchief_runtime.assistant_action_proposals SET payload=$3::jsonb
+      WHERE workspace_id=$1 AND id=$2 AND status='PENDING'`,[ctx.workspaceId,id,JSON.stringify(payload)]);
+    return payload;
+  },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 
 async function getProposal(database,workspaceId,id,lock=false,client=database) {
@@ -1260,4 +1400,4 @@ async function cancelProposal(database,ctx,id) {
 }
 
 module.exports={PLAN_SCHEMA,SYSTEM,plan,planMany,lookup,ask,listInteractions,pendingClarification,
-  getProposal,executeProposal,cancelProposal};
+  continueEmail,reviseEmailProposal,getProposal,executeProposal,cancelProposal};

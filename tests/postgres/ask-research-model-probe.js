@@ -12,6 +12,7 @@ const inventory=require('../../src/domain/postgres-inventory-engine');
 const assistant=require('../../src/assistant/postgres-service');
 const config=require('../../src/config');
 const {createProviderUnobserved}=require('../../src/ai/provider');
+const {newId,nowIso}=require('../../src/lib/util');
 
 (async()=>{
   if(!config.ai.configured){console.log('Real model unavailable in this environment.');return;}
@@ -43,12 +44,30 @@ const {createProviderUnobserved}=require('../../src/ai/provider');
     console.log(JSON.stringify({question:'Email unknown supplier',status:email.status,answer:email.answer,
       missing:email.awaitingField}));
     assert.equal(email.status,'CLARIFY');
-    assert.equal(email.awaitingField,'recipient');
+    assert.equal(email.awaitingField,'recipientEmail');
     const purchase=await assistant.ask(database,ctx,'Whatever I have in stock, get 20 more.',
       {provider,usageKey:'probe-stocked-replenishment'});
     console.log(JSON.stringify({question:'Get 20 more of stocked product',status:purchase.status,
       answer:purchase.answer,action:purchase.intent.action,sku:purchase.intent.sku}));
     assert.equal(purchase.intent.action,'create_purchase_order');
     assert.equal(purchase.intent.sku,'GLOVE');
+    const connectorId=newId('con');const at=nowIso();
+    await database.query(`INSERT INTO workspace_connectors
+      (id,workspace_id,connector_key,display_name,provider_type,provides,config,status,capabilities,credential_ref,
+       expected_interval_minutes,setup_status,authorized_by_user_id,provider_account_id,provider_account_name,created_at,updated_at)
+      VALUES($1,$2,$3,'Synthetic mailbox','gmail',$4,'{}','connected',$5,$6,5,'CONNECTED',$7,'probe-mailbox',
+        'business@example.test',$8,$8)`,[connectorId,ctx.workspaceId,`gmail:${connectorId}`,JSON.stringify(['business mail']),
+      JSON.stringify(['mail:read','mail:send']),`connection_credentials:${connectorId}`,ctx.actorId,at]);
+    const drafted=await assistant.ask(database,ctx,
+      'Email glove-buyer@example.test and say we recieved seven gloves, will confirm thursday.',
+      {provider,usageKey:'probe-email-polish'});
+    assert.equal(drafted.status,'PREPARED');
+    const proposal=await assistant.getProposal(database,ctx.workspaceId,drafted.proposal.id);
+    console.log(JSON.stringify({question:'Draft one email',status:drafted.status,
+      recipient:proposal.payload.recipientEmail,subject:proposal.payload.subject,body:proposal.payload.body,
+      polished:proposal.payload.draftPolished}));
+    assert.equal(proposal.payload.recipientEmail,'glove-buyer@example.test');
+    assert.equal(proposal.payload.draftPolished,true);
+    assert.doesNotMatch(proposal.payload.body,/recieved/i);
   }finally{await database.close();cluster.stop();}
 })().catch((error)=>{console.error(error);process.exitCode=1;});

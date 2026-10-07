@@ -89,6 +89,14 @@ test('real Chromium qualifies PostgreSQL business-mail filtering, exact replies 
     assert.match(connectionText,/Complete a mailbox check/);
     assert.match(connectionText,/No mailbox check has completed yet/);
     assert.doesNotMatch(connectionText,/Read products and locations|Receive one real event/);
+    assert.equal(await page.getByRole('link',{name:'View business emails'}).getAttribute('href'),'/mail');
+    assert.equal(await page.getByRole('link',{name:'Review set-aside senders'}).getAttribute('href'),'/mail/set-aside');
+    await page.getByLabel('Check for new mail').selectOption('10');
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Save timing'}).click()]);
+    const cadence=(await database.query('SELECT expected_interval_minutes,config FROM workspace_connectors WHERE id=$1',
+      [connectorId])).rows[0];
+    assert.equal(Number(cadence.expected_interval_minutes),10);
+    assert.equal(JSON.parse(cadence.config).mailboxCheckMinutes,10);
 
     await page.goto(`${base}/mail`);
     assert.equal(await page.locator('a[href="/needs-you"] .nav-count').innerText(),'2');

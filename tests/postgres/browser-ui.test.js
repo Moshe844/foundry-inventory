@@ -57,10 +57,17 @@ test('Chromium operates PostgreSQL onboarding, catalog, inventory movement and A
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Record receipt'}).click()]);
     assert.match(await page.locator('main').innerText(),/14\s+units on hand/);
     await page.goto(`${base}/ask`);
+    await page.getByLabel('Ask StockChief').fill('Open the Gmail settings page');
+    await Promise.all([page.waitForURL(`${base}/settings/connections`),page.getByRole('button',{name:'Continue'}).click()]);
+    await page.goto(`${base}/ask`);
+    await page.getByLabel('Ask StockChief').fill('Take me to the orders page');
+    await Promise.all([page.waitForURL(`${base}/orders`),page.getByRole('button',{name:'Continue'}).click()]);
+    await page.goto(`${base}/ask`);
     await page.getByLabel('Ask StockChief').fill('How many Browser Widget do we have?');
     await Promise.all([page.waitForURL(`${base}/ask#latest`),page.getByRole('button',{name:'Continue'}).click()]);
     assert.match(await page.locator('main').innerText(),/1 SKU matched with 14 units on hand/);
     await page.getByText('Records behind this').click();
     assert.match(await page.locator('main').innerText(),/BROWSER-1/);
+    assert.equal(await page.locator('a[href^="/foundry/navigate?"]').count(),0);
     assert.deepEqual(errors,[]);
   });

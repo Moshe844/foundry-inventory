@@ -4,11 +4,13 @@ const express=require('express');
 const projections=require('../../projections/postgres-service');
 const reports=require('../../accounting/postgres-reports');
 const ledger=require('../../accounting/postgres-ledger');
+const manualInvoices=require('../../accounting/postgres-manual-invoices');
+const banking=require('../../accounting/postgres-banking');
 const workflows=require('../../operations/postgres-business-workflows');
 const presenters=require('../postgres-presenters');
 const permissions=require('../../actions/permissions');
 const { requireAuth,requirePermission,asyncRoute }=require('../middleware');
-const { newId,nowIso,trimOrNull }=require('../../lib/util');
+const { newId,nowIso,trimOrNull,requireText }=require('../../lib/util');
 const { ValidationError }=require('../../domain/errors');
 
 function period(query){
@@ -30,6 +32,54 @@ function movementSentence(row){const quantity=Math.abs(Number(row.quantity_delta
   if(row.operation==='transfer_out')return `Sent ${quantity} × ${product} from ${row.location_name}.`;
   if(row.operation==='transfer_in')return `Received ${quantity} × ${product} at ${row.location_name} from another location.`;
   return `${String(row.operation).replaceAll('_',' ')} ${quantity} × ${product} at ${row.location_name}.`;
+}
+
+async function businessActivity(database,workspaceId){
+  const [sales,purchasing,exceptions,actions]=await Promise.all([
+    database.query(`SELECT so.id,so.order_number,so.status,so.created_at,so.confirmed_at,so.completed_at,
+      c.name AS customer_name FROM sales_orders so JOIN customers c ON c.id=so.customer_id
+      WHERE so.workspace_id=$1 ORDER BY so.created_at DESC LIMIT 100`,[workspaceId]),
+    database.query(`SELECT po.id,po.po_number,po.status,po.created_at,po.ordered_at,po.completed_at,
+      s.name AS supplier_name FROM purchase_orders po JOIN suppliers s ON s.id=po.supplier_id
+      WHERE po.workspace_id=$1 ORDER BY po.created_at DESC LIMIT 100`,[workspaceId]),
+    database.query(`SELECT id,title,concise_summary,first_detected_at,resolved_at FROM attention_items
+      WHERE workspace_id=$1 ORDER BY first_detected_at DESC LIMIT 100`,[workspaceId]),
+    database.query(`SELECT id,action_type,status,created_at,completed_at FROM action_proposals
+      WHERE workspace_id=$1 ORDER BY created_at DESC LIMIT 100`,[workspaceId]),
+  ]);
+  const events=[];
+  for(const row of sales.rows){
+    const href=`/orders/${row.id}`;
+    events.push({stream:'sales',at:row.created_at,title:`${row.order_number} created for ${row.customer_name}`,
+      detail:'Order recorded; fulfillment is separate.',who:null,href});
+    if(row.confirmed_at)events.push({stream:'sales',at:row.confirmed_at,title:`${row.order_number} confirmed`,
+      detail:`Customer: ${row.customer_name}`,who:null,href});
+    if(row.completed_at)events.push({stream:'sales',at:row.completed_at,title:`${row.order_number} fulfilled`,
+      detail:`Customer: ${row.customer_name}`,who:null,href});
+  }
+  for(const row of purchasing.rows){
+    const href=`/purchasing/orders/${row.id}`;
+    events.push({stream:'purchasing',at:row.created_at,title:`${row.po_number} prepared for ${row.supplier_name}`,
+      detail:'A prepared order is not yet placed.',who:null,href});
+    if(row.ordered_at)events.push({stream:'purchasing',at:row.ordered_at,title:`${row.po_number} placed with ${row.supplier_name}`,
+      detail:'Supplier order placed.',who:null,href});
+    if(row.completed_at)events.push({stream:'purchasing',at:row.completed_at,title:`${row.po_number} received`,
+      detail:'Purchase order completed.',who:null,href});
+  }
+  for(const row of exceptions.rows){
+    events.push({stream:'exception',at:row.first_detected_at,title:row.title,detail:row.concise_summary,
+      who:'StockChief',href:'/needs-you'});
+    if(row.resolved_at)events.push({stream:'exception',at:row.resolved_at,title:`Resolved: ${row.title}`,
+      detail:row.concise_summary,who:'StockChief',href:'/needs-you'});
+  }
+  for(const row of actions.rows){
+    const actionName=String(row.action_type).replaceAll('_',' ').toLowerCase();
+    events.push({stream:'foundry',at:row.created_at,title:`${actionName} prepared`,
+      detail:`Status: ${row.status}`,who:'StockChief',href:`/actions/${row.id}`});
+    if(row.completed_at)events.push({stream:'foundry',at:row.completed_at,title:`${actionName} ${row.status.toLowerCase()}`,
+      detail:'Open the action for its evidence.',who:'StockChief',href:`/actions/${row.id}`});
+  }
+  return events;
 }
 
 async function activityPage(database,workspaceId,query){const page=positivePage(query.page);const pageSize=50;
@@ -54,16 +104,26 @@ async function activityPage(database,workspaceId,query){const page=positivePage(
   const hasMore=rows.length>pageSize;const visible=rows.slice(0,pageSize);const groups=visible.map((row)=>({operation:row.operation,
     itemId:row.item_id,displayName:row.variant_label||row.item_name,sentence:movementSentence(row),actorName:row.actor_name||'StockChief',
     occurredAt:row.occurred_at,reasonLabel:null,reference:row.reference,notes:row.notes}));
-  const events=visible.map((row)=>({stream:'inventory',at:row.occurred_at,title:movementSentence(row),
+  const inventoryEvents=visible.map((row)=>({stream:'inventory',at:row.occurred_at,title:movementSentence(row),
     detail:[row.reference&&`Reference ${row.reference}`,row.notes].filter(Boolean).join(' · '),who:row.actor_name||'StockChief',href:`/inventory/${row.item_id}`}));
+  const streams=['inventory','sales','purchasing','foundry','exception'];
+  const stream=streams.includes(query.stream)?query.stream:'all';
+  const stockOnly=Boolean(filters.operation||filters.itemId||filters.locationId||filters.actorId);
+  const otherEvents=stockOnly?[]:await businessActivity(database,workspaceId);
+  const needle=search.toLowerCase();
+  const events=[...inventoryEvents,...otherEvents].filter((event)=>(stream==='all'||event.stream===stream)
+    &&(!needle||`${event.title} ${event.detail} ${event.who}`.toLowerCase().includes(needle))
+    &&(!filters.dateFrom||String(event.at).slice(0,10)>=filters.dateFrom)
+    &&(!filters.dateTo||String(event.at).slice(0,10)<=filters.dateTo))
+    .sort((left,right)=>String(right.at).localeCompare(String(left.at))).slice(0,100);
   const [locations,users,items]=await Promise.all([
     database.query(`SELECT id,name FROM locations WHERE workspace_id=$1 ORDER BY is_active DESC,name,id`,[workspaceId]),
     database.query(`SELECT id,name FROM users WHERE workspace_id=$1 ORDER BY name,id`,[workspaceId]),
     database.query(`SELECT id,name FROM items WHERE workspace_id=$1 ORDER BY is_active DESC,name,id LIMIT 200`,[workspaceId])]);
   const total=Number(count.count);return {page,pageSize,hasMore,total,filters,groups,locations:locations.rows,users:users.rows,
-    items:items.rows,stream:'inventory',query:search,streams:['inventory'],
-    streamLabels:{all:'All activity',inventory:'Inventory',purchasing:'Purchasing',foundry:'StockChief',exception:'Exceptions',system:'System'},
-    log:{events,counts:{all:total,inventory:total},quietChecks:0}};}
+    items:items.rows,stream,query:search,streams,
+    streamLabels:{all:'All activity',inventory:'Inventory',sales:'Sales orders',purchasing:'Purchasing',foundry:'StockChief',exception:'Exceptions',system:'System'},
+    log:{events,counts:{},quietChecks:0}};}
 
 function aging(rows){const today=Date.now();const buckets={current:0,days1to30:0,days31to60:0,days61to90:0,over90:0};let totalMinor=0;
   for(const row of rows){if(!['OPEN','PARTIALLY_PAID'].includes(row.status))continue;const balance=Number(row.balance_minor||0);totalMinor+=balance;
@@ -88,7 +148,7 @@ function createPostgresProjectionsRouter(database){
   }));
   router.get('/activity',requireAuth,asyncRoute(async(req,res)=>{
     return res.page('activity/list',{title:'Activity',nav:'history',backToFallback:{href:'/everything',label:'Everything else'},
-      ...(await activityPage(database,req.ctx.workspaceId,req.query))});
+      recentOnly:true,...(await activityPage(database,req.ctx.workspaceId,req.query))});
   }));
   router.get(['/money','/accounting'],requireAuth,asyncRoute(async(req,res)=>{
     const result=await presenters.money(database,req.ctx.workspaceId,period(req.query));
@@ -137,6 +197,43 @@ function createPostgresProjectionsRouter(database){
       canReview:payable&&permissions.can(req.user,permissions.MANAGE_ACCOUNTING)});}
   router.get('/accounting/receivables',requireAuth,requirePermission(permissions.VIEW_ACCOUNTING,'view receivables'),asyncRoute((req,res)=>subledger(req,res,'receivables')));
   router.get('/accounting/payables',requireAuth,requirePermission(permissions.VIEW_ACCOUNTING,'view payables'),asyncRoute((req,res)=>subledger(req,res,'payables')));
+  async function manualDocument(req,res,kind){
+    if(kind==='bill'&&req.query.purchaseOrderId)return res.redirect(302,
+      `/purchasing/orders/${encodeURIComponent(req.query.purchaseOrderId)}`);
+    const table=kind==='invoice'?'customers':'suppliers';
+    const filter=kind==='invoice'?"record_state='ACTIVE'":"status='active'";
+    const counterparties=(await database.query(`SELECT id,name FROM ${table} WHERE workspace_id=$1 AND ${filter}
+      ORDER BY lower(name)`,[req.ctx.workspaceId])).rows;
+    return res.page('accounting/postgres-manual-document',{title:kind==='invoice'?'Record a customer invoice':'Record a supplier bill',
+      nav:'accounting',kind,counterparties,today:new Date().toISOString().slice(0,10),idempotencyKey:newId('manual-doc')});
+  }
+  router.get('/accounting/receivables/new',requireAuth,requirePermission(permissions.MANAGE_ACCOUNTING,'create customer invoices'),
+    asyncRoute((req,res)=>manualDocument(req,res,'invoice')));
+  router.get('/accounting/payables/new',requireAuth,requirePermission(permissions.MANAGE_ACCOUNTING,'create supplier bills'),
+    asyncRoute((req,res)=>manualDocument(req,res,'bill')));
+  router.post('/accounting/receivables',requireAuth,requirePermission(permissions.MANAGE_ACCOUNTING,'create customer invoices'),asyncRoute(async(req,res)=>{
+    const result=await manualInvoices.createCustomerInvoice(database,req.ctx,{customerId:req.body.counterpartyId,
+      documentNumber:req.body.documentNumber,issueDate:req.body.issueDate,dueDate:req.body.dueDate,
+      description:req.body.description,quantity:req.body.quantity,unitAmount:req.body.unitAmount,
+      tax:req.body.tax,notes:req.body.notes,idempotencyKey:req.body.idempotencyKey});
+    req.flash('success',`${result.invoice_number} recorded. Payment remains separate.`);
+    return res.redirect(303,'/accounting/receivables');
+  }));
+  router.post('/accounting/payables',requireAuth,requirePermission(permissions.MANAGE_ACCOUNTING,'create supplier bills'),asyncRoute(async(req,res)=>{
+    const supplierInvoiceNumber=requireText(req.body.documentNumber,'Supplier invoice number',{max:80});
+    const prior=(await database.query(`SELECT id FROM accounting_supplier_bills WHERE workspace_id=$1 AND supplier_id=$2
+      AND supplier_invoice_number=$3 AND status<>'VOID'`,[req.ctx.workspaceId,req.body.counterpartyId,supplierInvoiceNumber])).rows[0];
+    if(prior){req.flash('warn','That supplier invoice is already recorded. No duplicate bill was created.');
+      return res.redirect(303,'/accounting/payables');}
+    const result=await workflows.recordSupplierInvoice(database,req.ctx,{supplierId:req.body.counterpartyId,
+      supplierInvoiceNumber,issueDate:req.body.issueDate,dueDate:trimOrNull(req.body.dueDate),
+      taxMinor:req.body.tax?moneyMinor(req.body.tax,'Tax'):0,
+      idempotencyKey:requireText(req.body.idempotencyKey,'Bill request key',{max:160}),
+      notes:trimOrNull(req.body.notes),lines:[{description:requireText(req.body.description,'Description',{max:250}),
+        quantity:req.body.quantity,unitCostMinor:moneyMinor(req.body.unitAmount,'Unit cost')}],});
+    req.flash('success',`${result.billNumber} recorded. No physical stock or payment was changed.`);
+    return res.redirect(303,'/accounting/payables');
+  }));
   router.post('/accounting/receivables/:id/payment',requireAuth,requirePermission(permissions.RECORD_PAYMENTS,'record customer payments'),asyncRoute(async(req,res)=>{
     const invoice=(await database.query(`SELECT * FROM accounting_customer_invoices WHERE workspace_id=$1 AND id=$2`,
       [req.ctx.workspaceId,req.params.id])).rows[0];if(!invoice)throw new ValidationError('That customer invoice was not found.');
@@ -205,6 +302,45 @@ function createPostgresProjectionsRouter(database){
       transactions:transactions.rows,reconciliations:reconciliations.rows,paymentMatches:payments.rows,journalMatches:journals.rows,
       today:new Date().toISOString().slice(0,10)});
   }));
+  router.post('/accounting/banking/accounts',requireAuth,requirePermission(permissions.MANAGE_ACCOUNTING,'add financial accounts'),asyncRoute(async(req,res)=>{
+    const name=requireText(req.body.name,'Account name',{max:120});
+    const kind=String(req.body.kind||'').toUpperCase();
+    if(!['BANK','CREDIT_CARD'].includes(kind))throw new ValidationError('Choose bank or credit card.');
+    const account=(await database.query(`SELECT id,account_type FROM accounting_accounts
+      WHERE workspace_id=$1 AND id=$2 AND active=1`,[req.ctx.workspaceId,req.body.ledgerAccountId])).rows[0];
+    const expectedType=kind==='BANK'?'ASSET':'LIABILITY';
+    if(account?.account_type!==expectedType)throw new ValidationError(`A ${kind==='BANK'?'bank':'credit-card'} account must use an active ${expectedType.toLowerCase()} ledger account.`);
+    const currency=(await database.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',
+      [req.ctx.workspaceId])).rows[0]?.base_currency||'USD';
+    const at=nowIso();
+    await database.query(`INSERT INTO accounting_bank_accounts
+      (id,workspace_id,name,account_kind,currency,ledger_account_id,active,created_by_user_id,created_at,updated_at)
+      VALUES($1,$2,$3,$4,$5,$6,1,$7,$8,$8)`,
+    [newId('bank'),req.ctx.workspaceId,name,kind,currency,account.id,req.ctx.actorId,at]);
+    req.flash('success','Financial account added. No bank transactions or accounting entries were created.');
+    return res.redirect(303,'/accounting/banking');
+  }));
+  router.post('/accounting/banking/:id/import',requireAuth,
+    requirePermission(permissions.RECONCILE_ACCOUNTS,'import bank evidence'),asyncRoute(async(req,res)=>{
+      const result=await banking.importOne(database,req.ctx,req.params.id,req.body);
+      req.flash(result.replayed?'warn':'success',result.replayed
+        ?'This exact statement line was already imported. No duplicate was created.'
+        :'Bank evidence imported as unmatched. No sale, expense or payment was posted.');
+      return res.redirect(303,'/accounting/banking');
+    }));
+  router.post('/accounting/banking/transactions/:id/match',requireAuth,
+    requirePermission(permissions.RECONCILE_ACCOUNTS,'match bank evidence'),asyncRoute(async(req,res)=>{
+      await banking.match(database,req.ctx,req.params.id,req.body.matchTarget);
+      req.flash('success','Statement line matched to the existing posting. No new accounting entry was created.');
+      return res.redirect(303,'/accounting/banking');
+    }));
+  router.post('/accounting/banking/:id/reconcile',requireAuth,
+    requirePermission(permissions.RECONCILE_ACCOUNTS,'reconcile financial accounts'),asyncRoute(async(req,res)=>{
+      const result=await banking.reconcile(database,req.ctx,req.params.id,{...req.body,complete:req.body.complete==='yes'});
+      req.flash(result.status==='COMPLETED'?'success':'warn',result.status==='COMPLETED'
+        ?'Statement reconciled exactly.':'Reconciliation saved for review; it is not complete.');
+      return res.redirect(303,'/accounting/banking');
+    }));
   router.get('/foundry/briefing',requireAuth,(req,res)=>res.redirect(302,'/'));
   router.get('/accounting/reports/:kind',requireAuth,requirePermission(permissions.VIEW_ACCOUNTING,'view financial reports'),asyncRoute(async(req,res)=>{
     const dates=period(req.query);let report;let title;

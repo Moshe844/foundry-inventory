@@ -44,7 +44,7 @@
         </form>
       </details>
     <% } %>
-    <p><a href="/onboarding?add=1">Add another inventory source</a> · <a href="/settings/ingestion">Set up ongoing email-attachment ingestion</a></p>
+    <p><a href="/onboarding?add=1">Add another inventory source</a> · <% if (locals.postgresMode) { %><a href="/settings/connections#supplier-communication">Manage business email connections</a><% } else { %><a href="/settings/ingestion">Set up ongoing email-attachment ingestion</a><% } %></p>
   </div>
 </section>
 

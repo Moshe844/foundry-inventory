@@ -6,6 +6,7 @@ const access=require('../actions/permissions');
 const providerService=require('./postgres-provider-service');
 const defaultProviders=require('./providers/registry');
 const providerEffects=require('../operations/postgres-provider-effects');
+const commerce=require('../operations/postgres-commerce');
 
 async function requireOperator(client,ctx){
   const actor=(await client.query('SELECT id,role,permissions FROM users WHERE workspace_id=$1 AND id=$2',
@@ -61,31 +62,49 @@ function tableFor(kind){return kind==='supplier'?'supplier_communications':'cust
 
 async function queueInTransaction(client,ctx,payload,idempotencyKey){
   await requireOperator(client,ctx);
+  const prepared={...payload};
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(prepared.recipientEmail||'')))
+    throw new ValidationError('Review the exact recipient email address before sending.');
+  if(prepared.addContactKind){
+    if(!['supplier','customer'].includes(prepared.addContactKind)||!trimOrNull(prepared.addContactName))
+      throw new ValidationError('Choose whether to add this person as a customer or supplier.');
+    const input={name:prepared.addContactName,email:prepared.recipientEmail};
+    const created=prepared.addContactKind==='supplier'
+      ?await commerce.createSupplierInTransaction(client,ctx,input)
+      :await commerce.createCustomerInTransaction(client,ctx,input);
+    prepared.recipientKind=prepared.addContactKind;prepared.recipientId=created.id;
+  }
   // A one-off address has no supplier/customer record. Its durable outbox row
   // uses the customer communications table, so downstream effects must use the
   // same concrete kind for retry and entitlement recovery.
-  const communicationKind=payload.recipientKind==='address'?'customer':payload.recipientKind;
+  const communicationKind=prepared.recipientKind==='address'?'customer':prepared.recipientKind;
   const table=tableFor(communicationKind);const at=nowIso();
   let contact=null;
-  if(payload.recipientKind==='supplier')contact=(await client.query(`SELECT id,name,email FROM suppliers
-    WHERE workspace_id=$1 AND id=$2 AND status='active' FOR UPDATE`,[ctx.workspaceId,payload.recipientId])).rows[0];
-  else if(payload.recipientKind==='customer')contact=(await client.query(`SELECT id,name,email FROM customers
-    WHERE workspace_id=$1 AND id=$2 AND record_state='ACTIVE' FOR UPDATE`,[ctx.workspaceId,payload.recipientId])).rows[0];
-  if(payload.recipientKind!=='address'&&!contact)throw new NotFoundError('That recipient is no longer an active business contact.');
-  const recipient=contact?.email||payload.recipientEmail;
-  if(!recipient||recipient.toLowerCase()!==String(payload.recipientEmail||'').toLowerCase())
+  if(prepared.recipientKind==='supplier')contact=(await client.query(`SELECT id,name,email FROM suppliers
+    WHERE workspace_id=$1 AND id=$2 AND status='active' FOR UPDATE`,[ctx.workspaceId,prepared.recipientId])).rows[0];
+  else if(prepared.recipientKind==='customer')contact=(await client.query(`SELECT id,name,email FROM customers
+    WHERE workspace_id=$1 AND id=$2 AND record_state='ACTIVE' FOR UPDATE`,[ctx.workspaceId,prepared.recipientId])).rows[0];
+  if(prepared.recipientKind!=='address'&&!contact)throw new NotFoundError('That recipient is no longer an active business contact.');
+  if(contact&&!contact.email&&prepared.saveEmailToContact){
+    const contactTable=prepared.recipientKind==='supplier'?'suppliers':'customers';
+    await client.query(`UPDATE ${contactTable} SET email=$3,updated_at=$4 WHERE workspace_id=$1 AND id=$2`,
+      [ctx.workspaceId,contact.id,prepared.recipientEmail,at]);
+    contact.email=prepared.recipientEmail;
+  }
+  const recipient=contact?.email||prepared.recipientEmail;
+  if(!recipient||recipient.toLowerCase()!==String(prepared.recipientEmail||'').toLowerCase())
     throw new ValidationError('The recipient email changed after this message was prepared. Review it again before sending.');
   const connection=(await client.query(`SELECT id,provider_type FROM workspace_connectors WHERE workspace_id=$1 AND id=$2
     AND provider_type IN ('gmail','microsoft365') AND status='connected' AND paused_at IS NULL FOR UPDATE`,
-  [ctx.workspaceId,payload.connectorId])).rows[0];
+    [ctx.workspaceId,prepared.connectorId])).rows[0];
   if(!connection)throw new ValidationError('Reconnect or resume the selected mailbox before sending.');
-  const id=newId('businessmsg');const columns=payload.recipientKind==='supplier'?'supplier_id':'customer_id';
+  const id=newId('businessmsg');const columns=prepared.recipientKind==='supplier'?'supplier_id':'customer_id';
   const inserted=await client.query(`INSERT INTO ${table}
     (id,workspace_id,${columns},channel,recipient,subject,body,status,transport,message_kind,connector_id,
      approved_by_user_id,approved_at,idempotency_key,created_at,queued_at,updated_at)
     VALUES($1,$2,$3,'email',$4,$5,$6,'QUEUED',$7,'owner_message',$8,$9,$10,$11,$10,$10,$10)
     ON CONFLICT(workspace_id,idempotency_key) DO NOTHING RETURNING *`,
-  [id,ctx.workspaceId,payload.recipientId,recipient,payload.subject,payload.body,connection.provider_type,
+  [id,ctx.workspaceId,prepared.recipientId,recipient,prepared.subject,prepared.body,connection.provider_type,
     connection.id,ctx.actorId,at,idempotencyKey]);
   const message=inserted.rows[0]||(await client.query(`SELECT * FROM ${table} WHERE workspace_id=$1 AND idempotency_key=$2`,
     [ctx.workspaceId,idempotencyKey])).rows[0];
