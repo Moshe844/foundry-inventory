@@ -23,6 +23,7 @@ test('Ask selects a registered operation, resolves unique records, and executes 
     const plans=[step('inventory.receive',{quantity:11,reference:'CARTON-11'}),
       step('navigate.purchasing')];
     const provider={name:'anthropic',model:PRICED_MODEL,async complete(input){
+      if(input.schemaName==='stockchief_capability_fit')return {data:{aligned:true,reason:''},usage:pricedUsage()};
       if(input.schemaName!=='stockchief_capability_plan')throw new Error(`Unexpected model request ${input.schemaName}`);
       return {data:{steps:[plans.shift()],clarifyingQuestion:''},usage:pricedUsage()};
     }};
@@ -67,6 +68,7 @@ test('a dependent capability is prepared after the first approval, never execute
     const first=step('catalog.create_item',{search:'Copper Clip'});
     const second={...step('inventory.receive',{sku:'Copper Clip',quantity:3}),dependsOn:[0]};
     const provider={name:'anthropic',model:PRICED_MODEL,async complete(input){
+      if(input.schemaName==='stockchief_capability_fit')return {data:{aligned:true,reason:''},usage:pricedUsage()};
       assert.equal(input.schemaName,'stockchief_capability_plan');
       return {data:{steps:[first,second],clarifyingQuestion:''},usage:pricedUsage()};
     }};
@@ -114,6 +116,7 @@ test('a correction replaces the pending proposal instead of leaving two approvab
     const plans=[step('inventory.receive',{quantity:11}),
       {...step('inventory.receive',{quantity:12}),continuesPending:true}];
     const provider={name:'anthropic',model:PRICED_MODEL,async complete(input){
+      if(input.schemaName==='stockchief_capability_fit')return {data:{aligned:true,reason:''},usage:pricedUsage()};
       assert.equal(input.schemaName,'stockchief_capability_plan');
       return {data:{steps:[plans.shift()],clarifyingQuestion:''},usage:pricedUsage()};
     }};

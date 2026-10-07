@@ -115,6 +115,10 @@ async function resolveArguments(database,ctx,contract,provided={},context={}){
   }
   if(args.fromLocation&&args.toLocation&&args.fromLocation===args.toLocation)
     unresolved.push({field:'toLocation',reason:'same_as_source',supplied:args.toLocation,choices:[]});
+  for(const field of contract.required||[]){
+    if(args[field]===null&&!unresolved.some((entry)=>entry.field===field))
+      unresolved.push({field,reason:'missing',supplied:null,choices:[]});
+  }
   return {args,provenance,unresolved};
 }
 

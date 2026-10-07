@@ -7,6 +7,7 @@ const locations=require('../domain/postgres-location-service');
 const pricing=require('../pricing/postgres-service');
 const mail=require('../connections/postgres-outbound-mail');
 const workflows=require('../operations/postgres-business-workflows');
+const commerce=require('../operations/postgres-commerce');
 
 async function exists(client,table,workspaceId,id){
   if(!id)return false;
@@ -48,6 +49,20 @@ const EXECUTORS=Object.freeze({
     verify:(client,ctx,result)=>exists(client,'sku_prices',ctx.workspaceId,result.id)},
   'catalog.set_purchase_cost':{execute:(client,ctx,payload)=>pricing.setPurchaseCostInTransaction(client,ctx,payload),
     verify:(client,ctx,result)=>exists(client,'sku_purchase_costs',ctx.workspaceId,result.id)},
+  'contact.create':{execute:async(client,ctx,payload)=>{
+    const created=payload.kind==='supplier'
+      ?await commerce.createSupplierInTransaction(client,ctx,{name:payload.name,email:payload.email,
+        phone:payload.phone,notes:payload.notes})
+      :await commerce.createCustomerInTransaction(client,ctx,{name:payload.name,email:payload.email,
+        phone:payload.phone,notes:payload.notes});
+    return {contactId:created.id,kind:payload.kind,name:created.name};
+  },verify:async(client,ctx,result,payload)=>{
+    if(!result?.contactId||!['supplier','customer'].includes(result.kind)||result.kind!==payload.kind)return false;
+    const table=result.kind==='supplier'?'suppliers':'customers';
+    const row=(await client.query(`SELECT name,email FROM ${table} WHERE workspace_id=$1 AND id=$2`,
+      [ctx.workspaceId,result.contactId])).rows[0];
+    return Boolean(row&&row.name===payload.name&&(row.email||null)===(payload.email||null));
+  }},
   'communication.send_email':{execute:(client,ctx,payload)=>mail.queueInTransaction(client,ctx,payload,payload.idempotencyKey),
     verify:async(client,ctx,result,payload)=>{
       if(!result?.communicationId||!result?.effectId||!['supplier','customer'].includes(result.communicationKind))return false;

@@ -40,6 +40,7 @@ function contractPlan(result,message){
  return {steps,clarifyingQuestion:steps.length?'':String(parts[0]?.clarifyingQuestion||'What should I check?')};
 }
 function fixture(provider){return {...provider,name:'anthropic',model:PRICED_MODEL,async complete(request){
+ if(request.schemaName==='stockchief_capability_fit')return {data:{aligned:true,reason:''},usage:pricedUsage()};
  if(request.schemaName==='stockchief_capability_plan'){
   const payload=JSON.parse(request.prompt);const legacy={...request,schemaName:'stockchief_postgres_request',
    prompt:JSON.stringify({message:payload.message,history:payload.conversation||[]})};

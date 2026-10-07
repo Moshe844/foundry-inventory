@@ -24,8 +24,14 @@ const FIELDS=Object.freeze({
   currency:{type:'string',description:'Three-letter currency code.'},
   reason:{type:'string',description:'Reason stated by the owner.'},
   reference:{type:'string',description:'External or business reference.'},
-  recipient:{type:'string',entity:'contact',description:'Person, customer, supplier, or email address to contact.'},
-  recipientKind:{type:'string',description:'customer or supplier, only if established.'},
+  recipient:{type:'string',entity:'contact',description:'Person, customer, supplier, or email address to contact.',
+    question:'What is the name of the person or business?'},
+  recipientKind:{type:'string',description:'customer or supplier, only if established.',
+    question:'Should I add this contact as a supplier or customer?'},
+  recipientEmail:{type:'string',description:'Exact email address supplied for the recipient, including a contact not yet on file.'},
+  recipientMode:{type:'string',description:'For an explicitly requested new contact: add_supplier or add_customer. Otherwise omit; a one-off email must not create a contact.'},
+  phone:{type:'string',description:'Telephone number supplied for a new business contact.'},
+  notes:{type:'string',description:'Notes explicitly supplied for a new business contact.'},
   subject:{type:'string',description:'Email subject supplied by the owner.'},
   body:{type:'string',description:'Message content supplied by the owner.'},
   mailbox:{type:'string',entity:'mailbox',description:'Connected sending mailbox.'},
@@ -61,8 +67,14 @@ class Registry {
   }
   get(name){return this.entries.get(name)||null;}
   list(kind=null){return [...this.entries.values()].filter((entry)=>!kind||entry.kind===kind);}
-  description(){return this.list().map(({name,description,fields,kind,confirmation})=>({name,description,kind,
-    inputs:fields.map((field)=>({name:field,...FIELDS[field]})),confirmation}));}
+  description(){return this.list().map((entry)=>({name:entry.name,description:entry.description,
+    kind:entry.kind,inputs:entry.fields.map((field)=>({name:field,...FIELDS[field],
+      required:Boolean(entry.required?.includes(field))})),contextSources:entry.contextSources,
+    permission:entry.permission,authority:entry.authority,confirmation:entry.confirmation,
+    resultingRecords:entry.resultingRecords,
+    validation:'StockChief resolves references and validates the exact operation before execution',
+    executor:entry.kind==='mutation'?'canonical deterministic business service':null,
+    verification:entry.kind==='mutation'?'resulting business records checked in the approval transaction':null}));}
 }
 
 const registry=new Registry();
@@ -78,6 +90,7 @@ const RESULT_RECORDS={
   'inventory.transfer':['inventory_transfers'],'inventory.adjust':['adjustments','movements','balances'],
   'catalog.create_item':['items','skus'],'location.create':['locations'],
   'catalog.set_price':['sku_prices'],'catalog.set_purchase_cost':['sku_purchase_costs'],
+  'contact.create':['suppliers','customers'],
   'communication.send_email':['business_communication','stockchief_runtime.provider_effects'],
   'sales_order.create':['sales_orders'],'purchase_order.create':['purchase_orders'],
   'purchase_order.receive':['purchase_order_receipts','movements','balances'],
@@ -99,6 +112,7 @@ const REQUIRED={
   'location.create':['location'],
   'catalog.set_price':['sku','amount'],
   'catalog.set_purchase_cost':['sku','amount'],
+  'contact.create':['recipient','recipientKind'],
   'communication.send_email':['recipient'],
   'sales_order.create':['customer','sku','quantity'],
   'purchase_order.create':['sku','quantity'],
@@ -121,8 +135,10 @@ action('catalog.set_price','Change the current customer selling price of a SKU.'
   ['sku','amount','currency'],permissions.OPERATE,'set_price');
 action('catalog.set_purchase_cost','Change the recorded current per-unit purchase cost of a SKU, not historical cost of goods sold.',
   ['sku','amount','currency'],permissions.ADMIN,'set_purchase_cost');
+action('contact.create','Add a new supplier or customer business contact to this inventory. This creates only the contact record; it does not send email, order goods, or move money.',
+  ['recipient','recipientKind','recipientEmail','phone','notes'],permissions.OPERATE,'create_contact');
 action('communication.send_email','Prepare a business email for review; sending requires a connected verified mailbox and explicit approval.',
-  ['recipient','recipientKind','subject','body','mailbox'],permissions.OPERATE,'send_email');
+  ['recipient','recipientKind','recipientEmail','recipientMode','subject','body','mailbox'],permissions.OPERATE,'send_email');
 action('sales_order.create','Prepare a draft customer order without claiming it was fulfilled.',
   ['customer','sku','skuScope','quantity','deliveryMethod','shipToAddress','location','neededBy','amount','currency','reference'],
   permissions.MANAGE_SALES,'create_sales_order',{allowUnknownEntities:['customer']});

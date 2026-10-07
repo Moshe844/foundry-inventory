@@ -29,6 +29,10 @@ function questionFor(unresolved){
   if(first.field==='sku'&&first.scope==='currently_stocked'&&first.choices.length)
     return 'I found more than one product currently in stock. Which one do you mean? Nothing changed.';
   if(first.reason==='ambiguous')return `I found more than one matching ${label}. Which one do you mean? Nothing changed.`;
+  if(first.reason==='missing'){
+    const question=require('./postgres-capability-registry').FIELDS[first.field]?.question;
+    if(question)return `${question} Nothing changed.`;
+  }
   return `Which ${label} do you mean? Nothing changed.`;
 }
 

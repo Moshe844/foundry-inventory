@@ -610,6 +610,27 @@ async function draftBusinessEmail(request,businessName,provider){
 
 async function prepareAction(database,ctx,message,request,options={}) {
   if(!request.action)return {status:'CLARIFY',answer:'What would you like StockChief to change?'};
+  if(request.action==='create_contact'){
+    const kind=trimOrNull(request.recipientKind)?.toLowerCase();
+    if(!['supplier','customer'].includes(kind))return {status:'CLARIFY',
+      answer:'Should this new business contact be a supplier or a customer?',awaitingField:'recipientKind'};
+    const name=trimOrNull(request.recipient);
+    if(!name||name.includes('@'))return {status:'CLARIFY',
+      answer:`What name should I use for the new ${kind}?`,awaitingField:'recipient'};
+    if(name.length>200)return {status:'CLARIFY',answer:'That contact name is too long. Give me a shorter name.'};
+    const email=trimOrNull(request.recipientEmail);
+    if(email&&(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||email.length>254))return {status:'CLARIFY',
+      answer:'That email address does not look valid. What address should I save?',awaitingField:'recipientEmail'};
+    const table=kind==='supplier'?'suppliers':'customers';
+    const existing=(await database.query(`SELECT id FROM ${table} WHERE workspace_id=$1 AND lower(name)=lower($2) LIMIT 1`,
+      [ctx.workspaceId,name])).rows[0];
+    if(existing)return {status:'CLARIFY',
+      answer:`${name} is already recorded as a ${kind}. I did not create a duplicate. Tell me if you want to change the existing record.`,
+      reason:'duplicate_contact'};
+    return createProposal(database,ctx,message,'contact.create',{kind,name,email,
+      phone:trimOrNull(request.phone),notes:trimOrNull(request.notes)},
+    `Add ${name} as a ${kind}${email?` with ${email}`:''}.`);
+  }
   if(request.action==='send_email'){
     const commercialScope=await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId);
     const emailAccess=await entitlements.capabilityState(database,commercialScope,'connection.email');
@@ -908,6 +929,7 @@ async function askCapabilities(database,ctx,message,options={}){
     &&latest.intent?.controlPlane?.capability
     ?{capability:latest.intent.controlPlane.capability,args:latest.intent.controlPlane.args,
       question:latest.answer,status:latest.status,
+      awaitingField:latest.intent.presentation?.awaitingField||null,
       proposalId:latest.intent.controlPlane.pendingProposalId||latest.intent.proposalId||null}:null;
   if(pending?.proposalId){
     const active=await getProposal(database,ctx.workspaceId,pending.proposalId).catch(()=>null);
