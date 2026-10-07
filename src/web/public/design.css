@@ -1472,7 +1472,7 @@ details > summary::-webkit-details-marker { display: none; }
  * `card-head` must stay full width, or its rule stops halfway across the card.
  */
 details > summary.is-plain,
-details:not(.disclose):not(.rm-work):not(.rm-more):not(.disclosure):not(.advanced-settings):not(.fold):not(.filter-more):not(.rm-choice-set):not(.card):not(.panel):not(.rm-panel):not(.list-row)
+details:not(.disclose):not(.rm-work):not(.rm-more):not(.disclosure):not(.advanced-settings):not(.fold):not(.filter-more):not(.rm-choice-set):not(.card):not(.panel):not(.rm-panel):not(.list-row):not(.owner-manual)
   > summary:not(.card-head):not(.panel-head):not(.rm-panel__head):not(.modal-head) {
   list-style: none;
   display: inline-flex;
@@ -1483,7 +1483,7 @@ details:not(.disclose):not(.rm-work):not(.rm-more):not(.disclosure):not(.advance
   color: var(--ink-2);
   transition: color var(--dur-1) var(--ease);
 }
-details:not(.disclose):not(.rm-work):not(.rm-more):not(.disclosure):not(.advanced-settings):not(.fold):not(.filter-more):not(.rm-choice-set):not(.card):not(.panel):not(.rm-panel):not(.list-row)
+details:not(.disclose):not(.rm-work):not(.rm-more):not(.disclosure):not(.advanced-settings):not(.fold):not(.filter-more):not(.rm-choice-set):not(.card):not(.panel):not(.rm-panel):not(.list-row):not(.owner-manual)
   > summary:not(.card-head):not(.panel-head):not(.rm-panel__head):not(.modal-head)::before {
   content: "";
   width: 6px; height: 6px; flex: none;
@@ -1492,11 +1492,11 @@ details:not(.disclose):not(.rm-work):not(.rm-more):not(.disclosure):not(.advance
   transform: rotate(-45deg);
   transition: transform var(--dur-2) var(--ease);
 }
-details[open]:not(.disclose):not(.rm-work):not(.rm-more):not(.disclosure):not(.advanced-settings):not(.fold):not(.filter-more):not(.rm-choice-set):not(.card):not(.panel):not(.rm-panel):not(.list-row)
+details[open]:not(.disclose):not(.rm-work):not(.rm-more):not(.disclosure):not(.advanced-settings):not(.fold):not(.filter-more):not(.rm-choice-set):not(.card):not(.panel):not(.rm-panel):not(.list-row):not(.owner-manual)
   > summary:not(.card-head):not(.panel-head):not(.rm-panel__head):not(.modal-head)::before {
   transform: rotate(45deg);
 }
-details:not(.disclose):not(.rm-work):not(.rm-more):not(.disclosure):not(.advanced-settings):not(.fold):not(.filter-more):not(.rm-choice-set):not(.card):not(.panel):not(.rm-panel):not(.list-row)
+details:not(.disclose):not(.rm-work):not(.rm-more):not(.disclosure):not(.advanced-settings):not(.fold):not(.filter-more):not(.rm-choice-set):not(.card):not(.panel):not(.rm-panel):not(.list-row):not(.owner-manual)
   > summary:not(.card-head):not(.panel-head):not(.rm-panel__head):not(.modal-head):hover {
   color: var(--brand-2);
 }

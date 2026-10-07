@@ -21,6 +21,7 @@
   var timingRisks = plan.blocked.filter(function (line) { return line.reason === 'incoming_timing_risk'; });
   var stuck = short.length > 0;
   var hasPlan = plan.recommendations.length > 0;
+  var catalogueCount = (locals.catalogue || []).length;
 
   // One list of what is on its way. `late` and `arriving` are both slices of
   // `open`, so the lateness is carried onto the row rather than into its own
@@ -32,20 +33,32 @@
   });
 %>
 
+
 <% var drafts = locals.drafts || []; %>
 <div class="page-head">
   <div>
     <h1>Purchasing</h1>
     <p class="page-sub">
-      What you are running low on, based on what you have, what is already on its way, and how fast it
-      has been selling. Nothing is ordered until you say so.
+      Purchase orders, supplier deliveries and decisions awaiting approval. Ordering advice is shown only when StockChief has evidence for it.
     </p>
   </div>
   <div class="page-actions">
-    <% if (permissions.create) { %><a class="btn btn--primary" href="/purchasing/orders/new"><%- helpers.icon('plus', { size: 15 }) %> Write a purchase order</a><% } %>
     <% if (permissions.receive) { %><a class="btn" href="/purchasing/receive"><%- helpers.icon('receive', { size: 15 }) %> Book in a delivery</a><% } %>
   </div>
 </div>
+
+<p class="owner-verdict" role="status"><%
+  if (drafts.length) { %><%= drafts.length %> purchase order<%= drafts.length === 1 ? ' is' : 's are' %> waiting for your approval.<%
+  } else if (late.length) { %><%= late.length %> supplier deliver<%= late.length === 1 ? 'y is' : 'ies are' %> late.<%
+  } else if (hasPlan) { %><%= plan.recommendations.length %> product<%= plan.recommendations.length === 1 ? ' needs' : 's need' %> ordering.<%
+  } else if (stuck) { %><%= short.length %> product<%= short.length === 1 ? ' needs' : 's need' %> a supplier before StockChief can order.<%
+  } else if (!catalogueCount) { %>No products are here to purchase yet.<%
+  } else if (locals.postgresQuickEntry) { %>No purchase order is waiting for you.<%
+  } else if (unknown.length) { %>StockChief needs more history before it can judge <%= unknown.length %> product<%= unknown.length === 1 ? '' : 's' %>.<%
+  } else { %>Nothing needs ordering right now.<% } %></p>
+<% if (locals.postgresQuickEntry && catalogueCount && !hasPlan) { %><p class="owner-verdict-note">This is not a stock all-clear. No verified reorder recommendation is recorded here yet. <a href="/planning">See measured shortages and planning evidence</a>.</p><% } %>
+
+<%- include('../partials/owner-direct-line', { directLineContext: 'Ask what should be ordered, or tell StockChief to prepare a purchase.' }) %>
 
 <% if (drafts.length) { %>
   <div class="flash section" role="status" style="margin-top:0">
@@ -265,6 +278,9 @@
             underneath, and tells somebody to record a sale they just recorded. %>
         StockChief does not have enough history for these yet, so it cannot say whether they need
         ordering — and it will not guess. Each one says what it is waiting for.
+      <% } else if (locals.postgresQuickEntry) { %>
+        No verified order recommendation is recorded here yet. This page does not infer safety from an empty plan.
+        <a href="/planning">Review measured stock needs</a> or tell StockChief what you want purchased.
       <% } else { %>
         Everything was checked against how fast it sells and what is already on the way. Nothing is below its reorder point.
       <% } %>
@@ -376,6 +392,7 @@
 <% } %>
 
 <nav class="page-links" aria-label="Purchasing pages">
+  <% if (permissions.create) { %><a href="/purchasing/orders/new">Full purchase order form</a><% } %>
   <a href="/suppliers">Suppliers and their terms</a>
   <a href="/purchasing/orders">All purchases</a>
   <a href="/accounting/payables">Bills to pay</a>

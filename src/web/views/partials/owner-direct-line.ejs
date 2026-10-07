@@ -1,0 +1,11 @@
+<section class="owner-line" aria-label="Talk to StockChief">
+  <div class="owner-line__intro">
+    <span class="owner-line__mark" aria-hidden="true"><%- helpers.icon('foundry', { size: 19 }) %></span>
+    <div>
+      <p class="owner-line__label">Your direct line</p>
+      <h2>Ask or tell StockChief.</h2>
+      <p><%= locals.directLineContext || 'Ask what is happening or tell StockChief what you need done.' %></p>
+    </div>
+  </div>
+  <%- include('composer', { composerPlaceholder: 'What would you like StockChief to know or do?', homeHandoff: true, hideAttachment: true }) %>
+</section>

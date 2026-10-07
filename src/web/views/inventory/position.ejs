@@ -17,9 +17,10 @@
   var missingCostUnits = Math.max(0, Number(totals.onHand || 0) - knownCostUnits);
 %>
 
+
 <p class="rm-stamp">
   <%= totals.locations || 0 %> location<%= totals.locations === 1 ? '' : 's' %>
-  · <%= totals.skus || 0 %> product<%= totals.skus === 1 ? '' : 's' %> counted continuously
+  · <%= totals.skus || 0 %> product<%= totals.skus === 1 ? '' : 's' %> tracked
 </p>
 <% if (position.productNames && position.productNames.length) { %><p class="sr-only">Products in this inventory: <%= position.productNames.join(', ') %>.</p><% } %>
 
@@ -31,6 +32,7 @@
     <%= totals.skus %> products is past that line, so here is the table instead, which is what
     you would want at this size anyway.
   </p>
+  <%- include('../partials/owner-direct-line', { directLineContext: 'Ask what you have, what is short, or tell StockChief about a change.' }) %>
   <p class="rm-choices"><a class="rm-btn" href="/inventory/table">Open the stock table</a></p>
 
 <% } else { %>
@@ -59,6 +61,8 @@
     <p class="rm-sub"><a href="/accounting#inventory">Show the units and recorded cost</a>.</p>
   <% } %>
 
+  <%- include('../partials/owner-direct-line', { directLineContext: 'Ask what you have, what is short, or tell StockChief about a change.' }) %>
+
   <div class="rm-groups">
     <% position.groups.forEach(function (group) { %>
       <%
@@ -79,7 +83,7 @@
 
   <% if (position.groups.length) { %>
     <div class="rm-choices" style="margin-top:16px">
-      <a class="rm-btn" href="/inventory/table"><%- helpers.icon('inventory', { size: 15 }) %> Open the stock table</a>
+      <a class="rm-btn rm-btn--ghost" href="/inventory/table"><%- helpers.icon('inventory', { size: 15 }) %> Open the stock table</a>
       <a class="rm-btn rm-btn--ghost" href="/inventory/new"><%- helpers.icon('plus', { size: 15 }) %> Add a product</a>
       <a class="rm-btn rm-btn--ghost" href="/actions">Record stock activity</a>
     </div>
@@ -87,10 +91,10 @@
 
   <% if (!position.groups.length) { %>
     <div class="rm-choices" style="margin-top:16px">
-      <a class="rm-btn" href="/inventory/describe"><%- helpers.icon('spark', { size: 15 }) %> Tell StockChief what you sell</a>
+      <a class="rm-btn" href="/ask"><%- helpers.icon('spark', { size: 15 }) %> Tell StockChief what you sell</a>
       <a class="rm-btn rm-btn--ghost" href="/inventory/new"><%- helpers.icon('plus', { size: 15 }) %> Add one manually</a>
-      <a class="rm-btn rm-btn--ghost" href="/onboarding/migrations/new">Import existing inventory</a>
-      <a class="rm-btn rm-btn--ghost" href="/onboarding/system">Connect a business system</a>
+      <a class="rm-btn rm-btn--ghost" href="/imports">Import existing inventory</a>
+      <a class="rm-btn rm-btn--ghost" href="/settings/connections">Connect a business system</a>
     </div>
   <% } %>
 

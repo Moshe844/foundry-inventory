@@ -67,6 +67,9 @@ test('real Chromium runs PostgreSQL purchasing, receiving, supplier money, custo
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Link product'}).click()]);
     assert.match(await page.locator('main').innerText(),/SUP-BOOT-1/);
     await page.goto(`${base}/purchasing`);
+    assert.equal(await page.locator('.owner-manual').first().evaluate((element)=>element.open),false);
+    assert.equal(await page.getByRole('heading',{name:'Ask or tell StockChief.'}).count(),1);
+    await page.locator('#suppliers > summary').click();
     await page.getByText('Add a supplier',{exact:true}).click();
     const quickSupplier=page.locator('#suppliers details').filter({hasText:'Add a supplier'});
     const supplierInputWidths=await quickSupplier.locator('input[name="name"], input[name="email"]').evaluateAll(
@@ -79,6 +82,7 @@ test('real Chromium runs PostgreSQL purchasing, receiving, supplier money, custo
       (inputs)=>inputs.map((input)=>Math.round(input.getBoundingClientRect().width)));
     assert.ok(compactSupplierWidths.every((width)=>width>600),`Compact supplier controls were ${compactSupplierWidths.join(', ')}px wide.`);
     await page.setViewportSize({width:1440,height:1000});
+    await page.locator('.owner-manual').first().locator('summary').click();
     await page.getByLabel('Supplier').selectOption({label:'Boot Supply'});
     await page.getByLabel('Product / SKU').selectOption(item.skuIds[0]);
     await page.getByLabel('Destination').selectOption(location.id);await page.getByLabel('Units').fill('10');
@@ -124,8 +128,8 @@ test('real Chromium runs PostgreSQL purchasing, receiving, supplier money, custo
     assert.match(await page.locator('main').innerText(),/Set up purchasing/);
     assert.match(await page.locator('main').innerText(),/Commerce Boot/);
 
-    await page.goto(`${base}/orders`);await page.getByText('Add a customer',{exact:true}).click();
-    const customerForm=page.locator('details').filter({hasText:'Add a customer'});
+    await page.goto(`${base}/orders`);await page.locator('#customers > summary').click();
+    const customerForm=page.locator('#customers');
     const customerInputWidths=await customerForm.locator('input[name="name"], input[name="email"]').evaluateAll(
       (inputs)=>inputs.map((input)=>Math.round(input.getBoundingClientRect().width)));
     assert.equal(customerInputWidths.length,2);
@@ -133,6 +137,7 @@ test('real Chromium runs PostgreSQL purchasing, receiving, supplier money, custo
     assert.ok(Math.abs(customerInputWidths[0]-customerInputWidths[1])<=2,'Customer form columns must align.');
     await customerForm.getByLabel('Name').fill('Pickup Customer');await customerForm.getByLabel('Email').fill('pickup@example.test');
     await Promise.all([page.waitForNavigation(),customerForm.getByRole('button',{name:'Add customer'}).click()]);
+    await page.locator('.owner-manual').first().locator('summary').click();
     await page.getByLabel('Customer',{exact:true}).selectOption({label:'Pickup Customer'});
     await page.getByLabel('Product / SKU').selectOption(item.skuIds[0]);await page.getByLabel('Quantity').fill('4');
     await page.getByLabel('Selling price').fill('15.00');await page.getByLabel('Delivery method').selectOption('PICKUP');
@@ -172,5 +177,26 @@ test('real Chromium runs PostgreSQL purchasing, receiving, supplier money, custo
     await page.locator('.inbox-bar').getByRole('link',{name:'Purchasing',exact:true}).click();
     assert.match(await page.locator('.timeline--panel').innerText(),/PO-00001/);
     assert.doesNotMatch(await page.locator('.timeline--panel').innerText(),/Pickup Customer/);
+    if(process.env.STOCKCHIEF_UX_CAPTURE){
+      const path=require('node:path');const fs=require('node:fs');
+      fs.mkdirSync(process.env.STOCKCHIEF_UX_CAPTURE,{recursive:true});
+      for(const [name,href] of [['inventory','/inventory'],['purchasing','/purchasing'],
+        ['orders','/orders'],['money','/money'],['work','/autopilot/history']]){
+        const response=await page.goto(`${base}${href}`);
+        assert.equal(response.status(),200);
+        await page.waitForTimeout(450);
+        await page.screenshot({path:path.join(process.env.STOCKCHIEF_UX_CAPTURE,`${name}.png`),fullPage:true});
+      }
+    }
+    await page.setViewportSize({width:390,height:844});
+    for(const href of ['/inventory','/purchasing','/orders','/money','/autopilot/history']){
+      await page.goto(`${base}${href}`);
+      assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),true,
+        `${href} must fit a phone without horizontal scrolling`);
+    }
+    if(process.env.STOCKCHIEF_UX_CAPTURE){
+      await page.goto(`${base}/orders`);await page.waitForTimeout(450);
+      await page.screenshot({path:require('node:path').join(process.env.STOCKCHIEF_UX_CAPTURE,'orders-mobile.png'),fullPage:true});
+    }
     assert.deepEqual(errors,[]);
   });

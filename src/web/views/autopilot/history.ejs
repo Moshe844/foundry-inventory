@@ -1,52 +1,39 @@
-<div class="page-head">
-  <div class="titles">
-    <a class="back-link" href="/"><%- helpers.icon('chevron', { size: 14 }) %> StockChief</a>
-    <h1>StockChief's work</h1>
-    <div class="page-sub">In words. The raw movements are in <a href="/activity">Activity</a>.</div>
-  </div>
-</div>
-
 <%
   var sections = [
-    { key: 'automatic', label: 'Completed automatically' },
-    { key: 'prepared', label: 'Prepared, then approved by you' },
-    { key: 'needsYou', label: 'Waiting for you' },
-    { key: 'blocked', label: 'Stopped or failed' }
+    { key: 'needsYou', label: 'Needs you', icon: 'hand' },
+    { key: 'blocked', label: 'Stopped or failed', icon: 'alert' },
+    { key: 'automatic', label: 'Handled automatically', icon: 'check' },
+    { key: 'prepared', label: 'Approved by you, then handled', icon: 'check' }
   ];
   var anything = operations.length || evaluations.length || sections.some(function (section) { return groups[section.key].length; });
+  var handledCount = groups.automatic.length + groups.prepared.length;
+  var waitingCount = groups.needsYou.length + groups.blocked.length;
 %>
 
+<p class="rm-stamp">StockChief's work</p>
+<h1 class="rm-figure"><%= waitingCount ? waitingCount + (waitingCount === 1 ? ' thing needs a closer look.' : ' things need a closer look.') : handledCount ? handledCount + (handledCount === 1 ? ' outcome recorded.' : ' outcomes recorded.') : anything ? 'Work is recorded below.' : 'Nothing to report yet.' %></h1>
+<p class="rm-sub">Completed work and anything StockChief could not finish are here. Routine checks are kept below; <a href="/activity">Activity</a> holds the underlying business record.</p>
+<p class="rm-choices"><a class="rm-btn rm-btn--ghost" href="/ask">Ask about this work</a><a class="rm-btn rm-btn--ghost" href="/needs-you">Open decisions</a></p>
+
 <% if (!anything) { %>
-  <div class="card section">
-    <div class="card-body">
-      <p class="lede">StockChief has not had anything to do yet.</p>
-      <p class="muted">Work appears here as it is planned, prepared and carried out.</p>
-    </div>
-  </div>
+  <p class="rm-quiet section">Once StockChief plans, completes or stops work, the outcome appears here. No work has been recorded yet.</p>
 <% } %>
 
 <% sections.forEach(function (section) { %>
   <% if (groups[section.key].length) { %>
-    <div class="card section">
-      <div class="card-head">
-        <h2><%= section.label %></h2>
-        <span class="spacer"></span>
-        <span class="badge badge--muted"><%= groups[section.key].length %></span>
+    <section class="owner-outcomes section" aria-labelledby="outcome-<%= section.key %>">
+      <div class="owner-outcomes__head"><h2 id="outcome-<%= section.key %>"><%= section.label %></h2><span><%= groups[section.key].length %></span></div>
+      <div class="owner-outcomes__list">
+        <% groups[section.key].forEach(function (item) { var described = describe(item); %>
+          <a href="/autopilot/work/<%= item.id %>" class="owner-outcomes__row">
+            <span class="owner-outcomes__icon <%= section.key === 'needsYou' || section.key === 'blocked' ? 'is-attention' : '' %>"><%- helpers.icon(section.icon, { size: 16 }) %></span>
+            <span class="owner-outcomes__copy"><strong><%= described.headline %></strong><% if (described.detail) { %><small><%= described.detail %></small><% } %><% if (item.errorMessage) { %><small class="is-warn"><%= item.errorMessage %></small><% } %></span>
+            <span class="owner-outcomes__when"><%= helpers.timeAgo(item.completedAt || item.createdAt) %></span>
+            <%- helpers.icon('arrowRight', { size: 15 }) %>
+          </a>
+        <% }) %>
       </div>
-      <div class="card-body">
-        <ul class="plain-list">
-          <% groups[section.key].forEach(function (item) { %>
-            <% var described = describe(item); %>
-            <li>
-              <a href="/autopilot/work/<%= item.id %>"><%= described.headline %></a>
-              <% if (described.detail) { %><span class="muted"> — <%= described.detail %></span><% } %>
-              <% if (item.errorMessage) { %><div class="is-warn"><%= item.errorMessage %></div><% } %>
-              <div class="muted"><%= helpers.timeAgo(item.completedAt || item.createdAt) %></div>
-            </li>
-          <% }) %>
-        </ul>
-      </div>
-    </div>
+    </section>
   <% } %>
 <% }) %>
 

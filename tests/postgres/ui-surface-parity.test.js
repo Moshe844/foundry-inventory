@@ -9,7 +9,7 @@ const {migratePostgres}=require('../../src/db/migrate-postgres');
 const {createPostgresApp}=require('../../src/postgres-app');
 const commerce=require('../../src/operations/postgres-commerce');
 
-const SURFACES=['/onboarding','/inventory','/purchasing','/orders','/money','/settings',
+const SURFACES=['/onboarding','/inventory','/purchasing','/orders','/money','/autopilot/history','/settings',
   '/settings/connections','/settings/shipping','/mail','/ask','/everything','/autopilot',
   '/warehouse','/planning','/imports/start'];
 

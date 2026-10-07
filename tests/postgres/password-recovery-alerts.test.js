@@ -93,6 +93,6 @@ test('real Chromium completes PostgreSQL password recovery without revealing whe
     await page.getByLabel('Email').fill(business.email);await page.getByLabel('Password').fill('new-browser-password');
     const [response]=await Promise.all([page.waitForResponse((candidate)=>candidate.url()===`${base}/`),
       page.waitForURL(`${base}/`),page.getByRole('button',{name:'Sign in'}).click()]);
-    assert.equal(response.status(),200);assert.match(await page.locator('body').innerText(),/Your inventory is ready|Brief/i);
+    assert.equal(response.status(),200);assert.match(await page.locator('body').innerText(),/Your inventory is ready|Home/i);
     assert.deepEqual(errors,[]);
   });

@@ -58,10 +58,17 @@ test('real Chromium plans shortages, transfers, excess and governed policy chang
     await owner.goto(`${base}/inventory`);
     await owner.getByRole('link',{name:'What happens next'}).click();
     await owner.waitForURL(`${base}/planning`);
+    if(process.env.STOCKCHIEF_UX_CAPTURE){
+      const path=require('node:path');const fs=require('node:fs');
+      fs.mkdirSync(process.env.STOCKCHIEF_UX_CAPTURE,{recursive:true});
+      await owner.waitForTimeout(450);
+      await owner.screenshot({path:path.join(process.env.STOCKCHIEF_UX_CAPTURE,'planning.png'),fullPage:true});
+    }
     const text=await owner.locator('main').innerText();
     assert.match(text,/Evidence-based planning/i);
     assert.match(text,/Planning Widget · PLAN-WIDGET/i);
-    assert.match(text,/Main warehouse[\s\S]*2[\s\S]*0[\s\S]*18 issued \/ 90 days/i);
+    assert.match(text,/Main warehouse[\s\S]*18 issued \/ 90 days/i);
+    assert.match(text,/2 available · 0 incoming/i);
     assert.match(text,/Move 3 Planning Widget · PLAN-WIDGET from Overflow warehouse to Main warehouse/i);
     assert.doesNotMatch(text,/Tenant Secret Product|TENANT-SECRET/);
     const recommendation=await database.query(`SELECT id,recommended_value FROM planning_recommendations
@@ -76,11 +83,13 @@ test('real Chromium plans shortages, transfers, excess and governed policy chang
     assert.match(policy.notes,/Approved planning recommendation/);
     assert.equal((await database.query('SELECT status FROM planning_recommendations WHERE id=$1',[recommendation.rows[0].id])).rows[0].status,'APPLIED');
 
+    await owner.locator('#goals > summary').click();
     await owner.getByLabel('Availability preference').selectOption('protective');
     await owner.getByLabel('Maximum days of supply').fill('120');
     await owner.getByLabel('Inventory investment limit').fill('1000.00');
     await owner.getByLabel('Cash reserve').fill('250.00');
     await Promise.all([owner.waitForURL(`${base}/planning#goals`),owner.getByRole('button',{name:'Save planning goals'}).click()]);
+    await owner.locator('#goals > summary').click();
     assert.equal(await owner.getByLabel('Availability preference').inputValue(),'protective');
     assert.equal(await owner.getByLabel('Maximum days of supply').inputValue(),'120');
     const stored=(await database.query(`SELECT key,value FROM operational_preferences WHERE workspace_id=$1

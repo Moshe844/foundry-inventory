@@ -49,6 +49,7 @@
   };
 %>
 
+
 <p class="rm-stamp"><%= counts.stuck %> fulfilment exceptions · <%= waiting.length %> waiting for stock · <%= counts.ready + counts.moving %> ready or moving · <%= counts.unpaid %> unpaid · <%= counts.done %> done</p>
 <h1 class="rm-figure">
   <% if (view === 'stuck') { %><%= counts.stuck %> order<%= counts.stuck === 1 ? ' needs' : 's need' %> you.
@@ -80,8 +81,9 @@
   <% } %>
 </p>
 
+<%- include('../partials/owner-direct-line', { directLineContext: 'Ask about a customer order or tell StockChief what a customer needs.' }) %>
+
 <div class="rm-choices" style="margin:4px 0 18px">
-  <a class="rm-btn" href="/orders/new"><%- helpers.icon('plus', { size: 15 }) %> Write an order</a>
   <a class="rm-btn rm-btn--ghost" href="/fulfilment">Picking and packing</a>
   <% if (!locals.postgresQuickEntry) { %><a class="rm-btn rm-btn--ghost" href="/sales/customers/new">Add a customer</a><% } %>
 </div>
@@ -204,6 +206,7 @@
 <% } %>
 
 <p class="rm-disclose">
+  <a href="/orders/new">Full customer order form</a>
   <a href="/accounting/receivables">Money customers owe</a>
   <% if (!sellingConnectionCount) { %><a href="/settings/connections">Connect a shop so orders arrive on their own</a><% } %>
   <a href="/ask?about=<%= encodeURIComponent('my orders') %>">Ask about your orders</a>

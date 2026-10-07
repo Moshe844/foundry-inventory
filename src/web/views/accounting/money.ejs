@@ -38,6 +38,7 @@
   var inbound = (story.comingUp || []).filter(function (r) { return r.direction === 'in'; });
 %>
 
+
 <p class="rm-stamp">
   <%= story.status.caughtUp ? 'Books caught up' : story.status.headline %>
   · <%= day(story.from) %> to <%= day(story.to) %>
@@ -55,6 +56,8 @@
     <%= story.profit.marginPct === null ? '' : story.profit.marginPct + '% gross margin.' %>
   <% } %>
 </p>
+
+<%- include('../partials/owner-direct-line', { directLineContext: 'Ask about money, a payment, or a number that does not look right.' }) %>
 
 <div class="rm-ledger">
   <div class="rm-ledger__row">

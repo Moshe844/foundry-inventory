@@ -25,6 +25,7 @@
   <link rel="stylesheet" href="/foundry.css?v=<%= assetVersion %>">
   <link rel="stylesheet" href="/room.css?v=<%= assetVersion %>">
   <link rel="stylesheet" href="/design.css?v=<%= assetVersion %>">
+  <link rel="stylesheet" href="/owner-workspaces.css?v=<%= assetVersion %>">
   <% if (nav === 'home') { %><link rel="stylesheet" href="/home.css?v=<%= assetVersion %>"><% } %>
   <% if (nav === 'ask') { %><link rel="stylesheet" href="/ask.css?v=<%= assetVersion %>"><% } %>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%235B4BE8'/%3E%3Cpath d='M6 8.5 12 5.8l6 2.7v6L12 17.2 6 14.5z' fill='none' stroke='white' stroke-width='1.5' stroke-linejoin='round'/%3E%3C/svg%3E">
@@ -77,7 +78,7 @@
 
     <nav class="rm-rail__nav" aria-label="Primary navigation">
       <% if (workspace) { %>
-        <a class="rm-tab <%= railTab === 'brief' ? 'is-on' : '' %>" href="/"<%- railTab === 'brief' ? ' aria-current="page"' : '' %>><span class="rm-tab__icon"><%- helpers.icon('overview', { size: 18 }) %></span><span>Brief</span></a>
+        <a class="rm-tab <%= railTab === 'brief' ? 'is-on' : '' %>" href="/"<%- railTab === 'brief' ? ' aria-current="page"' : '' %>><span class="rm-tab__icon"><%- helpers.icon('overview', { size: 18 }) %></span><span>Home</span></a>
         <a class="rm-tab <%= railTab === 'needs' ? 'is-on' : '' %>" href="/needs-you"<%- railTab === 'needs' ? ' aria-current="page"' : '' %>><span class="rm-tab__icon"><%- helpers.icon('attention', { size: 18 }) %></span><span>Needs you</span><% if (attentionCount > 0) { %><span aria-label="<%= attentionCount %> waiting" class="rm-tab__count nav-count"><%= attentionCount %></span><% } %></a>
         <a class="rm-tab <%= railTab === 'ask' ? 'is-on' : '' %>" href="/ask"<%- railTab === 'ask' ? ' aria-current="page"' : '' %>><span class="rm-tab__icon"><%- helpers.icon('foundry', { size: 18 }) %></span><span>Ask StockChief</span></a>
       <% } else { %>
