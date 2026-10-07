@@ -2,25 +2,19 @@
 
 const test=require('node:test');
 const assert=require('node:assert/strict');
-const {destinationFor,connectionDestination}=require('../../src/web/postgres-navigation');
+const {destinationById,postgresDestinations}=require('../../src/web/postgres-navigation');
+const {RECORDS}=require('../../src/web/postgres-record-destinations');
 
-test('Ask opens a unique connected provider setting without guessing another workspace account',()=>{
-  const destination=destinationFor('Open my Gmail connection settings.');
-  assert.equal(destination.providerType,'gmail');
-  const rows=[{id:'gmail-owner',provider_type:'gmail',status:'connected'},
-    {id:'outlook-owner',provider_type:'microsoft365',status:'connected'}];
-  assert.deepEqual(connectionDestination(destination,rows),
-    {href:'/settings/connections/gmail-owner',label:'Gmail settings'});
-  assert.deepEqual(connectionDestination(destination,[]),
-    {href:'/settings/connections',label:'Connections'});
-  assert.deepEqual(connectionDestination(destination,rows.concat({id:'gmail-second',provider_type:'gmail',status:'connected'})),
-    {href:'/settings/connections',label:'Connections'});
+test('registered page destinations build only server-owned PostgreSQL URLs',()=>{
+  assert.deepEqual(destinationById('inventory'),{href:'/inventory',label:'Inventory'});
+  assert.deepEqual(destinationById('mail'),{href:'/mail',label:'Business mailbox'});
+  assert.deepEqual(destinationById('accounting'),{href:'/money',label:'Money'});
+  assert.equal(destinationById('unregistered'),null);
+  assert.ok(Object.values(postgresDestinations).every((href)=>href.startsWith('/')&&!href.startsWith('//')));
 });
 
-test('Ask retains existing page navigation and does not mistake mailbox access for settings',()=>{
-  assert.equal(destinationFor('Open the inventory page').href,'/inventory');
-  assert.equal(destinationFor('Open my email inbox').href,'/mail');
-  assert.equal(destinationFor('Open Gmail settings').providerType,'gmail');
-  assert.equal(destinationFor('Open Microsoft 365 connection settings').providerType,'microsoft365');
-  assert.equal(destinationFor('Please send an email to our supplier'),null);
+test('record destinations have deterministic URL builders and access contracts',()=>{
+  assert.equal(RECORDS.purchase_order.href({id:'po-example'}),'/purchasing/orders/po-example');
+  assert.equal(RECORDS.sales_order.href({id:'so-example'}),'/orders/so-example');
+  for(const record of Object.values(RECORDS))assert.ok(record.permission);
 });

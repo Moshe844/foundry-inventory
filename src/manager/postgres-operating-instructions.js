@@ -6,9 +6,9 @@ const {createProviderUnobserved}=require('../ai/provider');
 const {newId,nowIso}=require('../lib/util');
 const {ValidationError,NotFoundError,InvariantError}=require('../domain/errors');
 const autonomy=require('../autopilot/postgres-service');
+const policyContracts=require('./postgres-policy-contracts');
 
-const DOMAINS=['replenishment','supplier_terms','transfer_authority','purchase_authority',
-  'operating_preference','stock_protection'];
+const DOMAINS=policyContracts.NAMES;
 const CHANGE_SCHEMA={type:'object',additionalProperties:false,required:['domain','operation','sku','supplier','location',
   'sourceLocation','reorderPoint','targetStock','safetyStock','leadTimeDays','unitsPerPurchaseUnit',
   'minimumOrderQuantity','orderMultiple','maximumQuantity','maximumValue','weeklyValue','daysOfStock',
@@ -153,7 +153,9 @@ async function interpret(database,ctx,instruction,options={}){const clean=String
     throw new ValidationError(read.unsupportedReason||read.clarifyingQuestion||'StockChief could not turn that into a safe standing rule.');
   const resolved=await Promise.all(read.changes.map((change)=>resolveChange(database,ctx.workspaceId,change)));
   const questions=[...new Set([read.clarifyingQuestion,...resolved.flatMap((change)=>change.questions)].filter(Boolean))];
-  const resolvedChanges=resolved.map(({questions:unused,...change})=>change);const snapshot={statedAs:clean,resolvedChanges};
+  const resolvedChanges=resolved.map(({questions:unused,...change})=>({
+    ...change,policyContract:policyContracts.compile(change)}));
+  const snapshot={statedAs:clean,resolvedChanges};
   const id=newId('oin');const at=nowIso();await database.query(`INSERT INTO operating_instruction_proposals
     (id,workspace_id,created_by_user_id,stated_as,summary,changes,resolved_changes,questions,status,integrity_hash,created_at,updated_at)
     VALUES($1,$2,$3,$4,$5,$6,$7,$8,'PENDING',$9,$10,$10)`,[id,ctx.workspaceId,ctx.actorId,clean,
@@ -238,6 +240,9 @@ async function approve(database,ctx,id,expectedHash){return database.transaction
   if(expectedHash&&expectedHash!==proposal.integrityHash)throw new ValidationError('This instruction changed since you reviewed it.');
   if(hash({statedAs:proposal.statedAs,resolvedChanges:proposal.resolvedChanges})!==proposal.integrityHash)
     throw new InvariantError('That instruction snapshot failed its integrity check.','instruction_integrity');
+  for(const change of proposal.resolvedChanges)if(stable(change.policyContract)!==stable(policyContracts.compile(change)))
+    throw new InvariantError('That standing rule no longer matches a registered policy engine.',
+      'instruction_policy_contract_changed');
   for(const change of proposal.resolvedChanges){if(['transfer_authority','purchase_authority'].includes(change.domain))
     await require('../commercial/enforcement').workspace(client,ctx.workspaceId,'authority.advanced');}
   const applied=[];for(const change of proposal.resolvedChanges)applied.push(await applyChange(client,ctx,{...change,statedAs:proposal.statedAs}));

@@ -47,8 +47,8 @@ test('real Chromium Ask StockChief prepares, approves, sends and verifies one gr
         const recipient=message.startsWith('Email New Supplier')?'New Supplier':
           message.startsWith('Email No Address Supply')?'No Address Supply':
           message.startsWith('Email New Customer')?'New Customer':'Solomon Supply';
-        if(message==='Email Solomon Supply')return {data:{intent:'clarify',recipient,
-          clarifyingQuestion:'What email address and message should I use?'}};
+        if(message==='Email Solomon Supply')return {data:{intent:'action',action:'send_email',recipient,
+          recipientKind:'supplier',body:''}};
         return {data:{intent:'action',action:'send_email',recipient,
           recipientKind:recipient==='New Customer'?'customer':'supplier',
           body:message==='Email Solomon Supply'?'':message.includes('recieved seven gloves')

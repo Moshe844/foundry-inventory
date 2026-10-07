@@ -14,8 +14,11 @@ test('real Chromium previews and approves PostgreSQL selling prices and purchase
   {timeout:180000},async(context)=>{
     const cluster=await startCluster();const database=openPostgres(cluster.connectionString,{applicationName:'stockchief-postgres-pricing-ui'});
     await migratePostgres(database);const app=createPostgresApp({database,env:'test',sessionSecret:'postgres-pricing-secret',
-      aiProvider:require('../helpers/postgres-model-fixture').fixture({complete:async()=>{
-        throw new Error('Use deterministic certification parsing.');}})});
+      aiProvider:require('../helpers/postgres-model-fixture').fixture({complete:async(input)=>{
+        const message=JSON.parse(input.prompt).message;
+        return {data:{intent:'action',action:message.includes('purchase cost')?'set_purchase_cost':'set_price',
+          sku:'PRICE-WIDGET',amount:message.includes('purchase cost')?14.25:28,currency:'USD'},usage:{}};
+      }})});
     const server=await new Promise((resolve)=>{const started=app.listen(0,'127.0.0.1',()=>resolve(started));});
     const browser=await chromium.launch();context.after(async()=>{await browser.close();await new Promise((resolve)=>server.close(resolve));
       await app.locals.sessionStore.close();await database.close();cluster.stop();});

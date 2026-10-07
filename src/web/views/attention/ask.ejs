@@ -305,7 +305,7 @@
           </details>
         <% } %>
 
-        <% const conversational = result.plan && ['small_talk', 'conversation_recap', 'general_knowledge', 'undo', 'action_clarification'].includes(result.plan.intent); %>
+        <% const conversational = result.plan && ['small_talk', 'conversation_recap', 'general_knowledge', 'undo', 'action_clarification', 'navigation'].includes(result.plan.intent); %>
         <% if ((result.supported || result.isAction) && !conversational && !result.emailProposal) { %>
           <%#
             The working, folded. A native disclosure says what it is, opens

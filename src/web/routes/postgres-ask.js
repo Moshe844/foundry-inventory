@@ -4,7 +4,6 @@ const express=require('express');
 const config=require('../../config');
 const assistant=require('../../assistant/postgres-service');
 const outboundMail=require('../../connections/postgres-outbound-mail');
-const connections=require('../../connections/postgres-service');
 const ledger=require('../../assistant/ledger');
 const permissions=require('../../actions/permissions');
 const { requireAuth,asyncRoute }=require('../middleware');
@@ -12,7 +11,6 @@ const entitlements=require('../../entitlements/postgres-service');
 const commercialControl=require('../../commercial/control-service');
 const {commercialScope}=require('../commercial-middleware');
 const {newId}=require('../../lib/util');
-const {destinationFor,connectionDestination}=require('../postgres-navigation');
 
 const STATUS={ANSWERED:'answered',PREPARED:'needs_approval',CLARIFY:'clarify',FAILED:'failed'};
 
@@ -24,6 +22,7 @@ function columnsFor(turn){
 
 function provenanceFor(turn){
   const status=STATUS[turn.status]||'answered';
+  if(turn.intent?.intent==='navigation')return {reads:[],rowCount:null,asOf:null};
   if(turn.intent?.view==='general_knowledge')return {reads:[],rowCount:0,asOf:turn.created_at,general:true,
     reason:status==='clarify'?turn.intent?.presentation?.reason:undefined};
   const choices=turn.intent?.presentation?.choices||[];
@@ -107,11 +106,6 @@ async function instructionLists(database,workspaceId){
 
 function createPostgresAskRouter(database,options={}){
   const router=express.Router();
-  async function navigationDestination(req){
-    const destination=destinationFor(req.body.message);
-    return destination?.providerType?connectionDestination(destination,
-      await connections.list(database,req.ctx.workspaceId)):destination;
-  }
   router.use(['/ask','/actions'],requireAuth);
   router.get('/ask',asyncRoute(async(req,res)=>{
     const startedAt=req.session.postgresAskStartedAt||null;
@@ -146,16 +140,14 @@ function createPostgresAskRouter(database,options={}){
   });
   async function runAsk(req){
     const scope=commercialScope(req);await entitlements.assertCapability(database,scope,'ask.lookup');
-    const context=await assistant.pendingClarification(database,req.ctx,req.session.postgresAskStartedAt||null);
+    const page=await require('../../assistant/postgres-page-context').load(database,req.ctx.workspaceId,req.body.sourcePath);
     return assistant.ask(database,req.ctx,req.body.message,{provider:options.provider,
-      usageKey:String(req.body.usageKey||newId('askusage')),context,
-      startedAt:req.session.postgresAskStartedAt||null});
+      usageKey:String(req.body.usageKey||newId('askusage')),
+      page,startedAt:req.session.postgresAskStartedAt||null});
   }
   router.post('/ask',asyncRoute(async(req,res)=>{
-    const destination=await navigationDestination(req);
-    if(destination){req.flash('success',`Opened ${destination.label}.`);return res.redirect(303,destination.href);}
-    await runAsk(req);
-    return res.redirect(303,'/ask#latest');
+    const result=await runAsk(req);
+    return res.redirect(303,result.navigation?.href||'/ask#latest');
   }));
   router.post('/ask/email/continue',asyncRoute(async(req,res)=>{
     await assistant.continueEmail(database,req.ctx,req.body,{provider:options.provider,
@@ -183,10 +175,8 @@ function createPostgresAskRouter(database,options={}){
     return res.redirect(303,'/ask#latest');
   }));
   router.post('/foundry/tell',requireAuth,asyncRoute(async(req,res)=>{
-    const destination=await navigationDestination(req);
-    if(destination){req.flash('success',`Opened ${destination.label}.`);return res.redirect(303,destination.href);}
-    await runAsk(req);
-    return res.redirect(303,'/ask#latest');
+    const result=await runAsk(req);
+    return res.redirect(303,result.navigation?.href||'/ask#latest');
   }));
   router.post('/ask/leave-the-rest',asyncRoute(async(req,res)=>{
     delete req.session.assistantQueue;
@@ -207,19 +197,40 @@ function createPostgresAskRouter(database,options={}){
       examples:await askExamples(database,req.ctx.workspaceId),question:null,unsupported:null,assistantGoal:null,where:null,
       blocked:null,physicalEventId:null,choices:null,continuationId:null,questionTone:null});
   }));
-  router.get('/actions/:id',asyncRoute(async(req,res)=>res.page('attention/postgres-proposal',{
-    title:'Review prepared change',nav:'ask',proposal:await assistant.getProposal(database,req.ctx.workspaceId,req.params.id),
-  })));
+  router.get('/actions/:id',asyncRoute(async(req,res)=>{
+    const proposal=await assistant.getProposal(database,req.ctx.workspaceId,req.params.id);
+    const resuming=(await database.query(`SELECT 1 FROM stockchief_runtime.assistant_capability_plans
+      WHERE workspace_id=$1 AND actor_user_id=$2 AND status='ADVANCING'
+        AND steps @> $3::jsonb LIMIT 1`,[req.ctx.workspaceId,req.ctx.actorId,
+      JSON.stringify([{proposalId:proposal.id}])])).rows.length>0;
+    return res.page('attention/postgres-proposal',{title:'Review prepared change',nav:'ask',proposal,
+      resumeAvailable:proposal.status==='EXECUTED'&&resuming});
+  }));
   router.post('/actions/:id/approve',asyncRoute(async(req,res)=>{
     await entitlements.assertCapability(database,commercialScope(req),'ask.prepare_actions');
     const result=await assistant.executeProposal(database,req.ctx,req.params.id);
-    req.flash('success',result.replayed?'That change had already been completed.':'The approved change was completed.');
+    if(result.continuationError)req.flash('error',
+      'The approved change completed, but StockChief could not continue the remaining steps. Nothing further was approved.');
+    else req.flash('success',result.replayed?'That change had already been completed.':
+      result.continued?.length?'The approved change completed. Review the next part of your request.':
+        'The approved change was completed.');
+    if(result.continued?.length)return res.redirect(303,'/ask#latest');
     return res.redirect(303,`/actions/${req.params.id}`);
   }));
   router.post('/actions/:id/cancel',asyncRoute(async(req,res)=>{
     await assistant.cancelProposal(database,req.ctx,req.params.id);
     req.flash('success','The prepared change was discarded. Nothing changed.');
     return res.redirect(303,'/actions');
+  }));
+  router.post('/actions/:id/continue',asyncRoute(async(req,res)=>{
+    const proposal=await assistant.getProposal(database,req.ctx.workspaceId,req.params.id);
+    if(proposal.status!=='EXECUTED')throw new (require('../../domain/errors').ValidationError)(
+      'Approve the prepared change before continuing its dependent steps.');
+    const result=await assistant.executeProposal(database,req.ctx,proposal.id);
+    req.flash(result.continuationError?'error':'success',result.continuationError
+      ?'The completed change is safe, but the remaining steps still need another try.'
+      :'StockChief continued the remaining request from the completed step.');
+    return res.redirect(303,result.continued?.length?'/ask#latest':`/actions/${proposal.id}`);
   }));
   return router;
 }

@@ -8,7 +8,11 @@ const { openPostgres }=require('../../src/db/postgres');
 const { migratePostgres }=require('../../src/db/migrate-postgres');
 const { createPostgresApp }=require('../../src/postgres-app');
 
-const provider={name:'browser-fixture',model:'browser-fixture',async complete(){return {data:{intent:'lookup',view:'inventory',
+const provider={name:'browser-fixture',model:'browser-fixture',async complete(input){
+  const message=JSON.parse(input.prompt).message;
+  if(message==='Open the Gmail settings page')return {data:{navigate:'connections'},usage:{}};
+  if(message==='Take me to the orders page')return {data:{navigate:'sales'},usage:{}};
+  return {data:{intent:'lookup',view:'inventory',
   action:null,search:'Browser Widget',sku:null,location:null,fromLocation:null,toLocation:null,quantity:null,
   countedQuantity:null,reason:null,reference:null},usage:{}};}};
 

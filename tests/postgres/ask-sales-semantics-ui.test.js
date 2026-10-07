@@ -23,6 +23,10 @@ test('Ask distinguishes recorded sales totals from filtered customer-order lists
       if(message==='Show me orders from Acme')return {data:{intent:'lookup',view:'sales_orders',search:'Acme'}};
       if(message==='List customer orders')return {data:{intent:'lookup',view:'sales_orders',search:null}};
       if(message==='Compare orders for Acme')return {data:{intent:'lookup',view:'business_analysis',search:'Acme'}};
+      if(message==='What have we sold this month?')return {data:{intent:'lookup',view:'sales_activity',
+        search:null,timeframe:'month_to_date'}};
+      if(message==='Have I sold anything last week?')return {data:{intent:'lookup',view:'sales_activity',
+        search:null,timeframe:'unsupported'}};
       return {data:{intent:'lookup',view:'sales_activity',search:null}};
     }});
     const app=createPostgresApp({database,env:'test',sessionSecret:'ask-sales-semantics-secret',aiProvider:model});

@@ -22,6 +22,13 @@ function fields(overrides={}){
 
 const provider={name:'fixture',model:'fixture',async complete(request){
   const message=JSON.parse(request.prompt).message;
+  if(new Set(['What do we currently owe suppliers, and what customer money is still outstanding?',
+    'Show AP and AR outstanding.','Any unpaid supplier bills and customer invoices?',
+    'How much is due to vendors and due from customers?']).has(message))return {data:{parts:[
+      {requestText:message,...fields({view:'payables'})},
+      {requestText:message,...fields({view:'receivables'})},
+    ]},usage:{}};
+  if(message==='Open my Gmail connection settings.')return {data:{navigate:'connections'},usage:{}};
   if(message.includes('Trail Shoes received'))throw new Error('Exercise honest model failure');
   if(message.includes('and move 2'))return {data:{parts:[
     {requestText:'How many Trail Shoe do we have',...fields({search:'Trail Shoe'})},
@@ -93,7 +100,7 @@ test('Ask StockChief grounds answers and executes only an approved PostgreSQL pr
       message:'Did I lose any money yet?'});
     assert.equal(financial.status,303);
     const financialAnswer=await agent.get('/ask');
-    assert.match(financialAnswer.text,/broken even so far this month/i);
+    assert.match(financialAnswer.text,/No income or expenses are recorded in StockChief for this month/i);
     assert.match(financialAnswer.text,/Revenue is/);
 
     const owner=(await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id FROM workspaces w
@@ -117,28 +124,24 @@ test('Ask StockChief grounds answers and executes only an approved PostgreSQL pr
       message:'What do we currently owe suppliers, and what customer money is still outstanding?'});
     assert.equal(balances.status,303);
     const balanceAnswer=await agent.get('/ask');
-    assert.match(balanceAnswer.text,/StockChief · part 1 of 2/);
-    assert.match(balanceAnswer.text,/StockChief · part 2 of 2/);
     assert.match(balanceAnswer.text,/We currently owe suppliers \$50\.00 USD across 1 open supplier bill/);
     assert.match(balanceAnswer.text,/Customers currently owe us \$70\.00 USD across 1 open customer invoice/);
     assert.match(balanceAnswer.text,/INV-ASK/);
     assert.doesNotMatch(balanceAnswer.text,/No payment matched that request/);
-    const balanceTurns=(await database.query(`SELECT intent->>'view' AS view,status FROM stockchief_runtime.assistant_interactions
-      WHERE intent->>'sourceMessage'=$1 ORDER BY (intent->>'requestIndex')::integer`,
+    const balanceTurns=(await database.query(`SELECT intent,evidence,status FROM stockchief_runtime.assistant_interactions
+      WHERE message=$1 ORDER BY created_at DESC,id DESC LIMIT 1`,
     ['What do we currently owe suppliers, and what customer money is still outstanding?'])).rows;
-    assert.deepEqual(balanceTurns,[{view:'payables',status:'ANSWERED'},{view:'receivables',status:'ANSWERED'}]);
-    const balanceEvidence=(await database.query(`SELECT evidence FROM stockchief_runtime.assistant_interactions
-      WHERE intent->>'sourceMessage'=$1 ORDER BY (intent->>'requestIndex')::integer`,
-    ['What do we currently owe suppliers, and what customer money is still outstanding?'])).rows;
-    assert.equal(balanceEvidence[0].evidence[0].document,'BILL-ASK');
-    assert.equal(balanceEvidence[1].evidence[0].document,'INV-ASK');
+    assert.equal(balanceTurns[0].status,'ANSWERED');
+    assert.deepEqual(balanceTurns[0].intent.presentation.researchViews,['payables','receivables']);
+    assert.match(JSON.stringify(balanceTurns[0].evidence),/BILL-ASK/);
+    assert.match(JSON.stringify(balanceTurns[0].evidence),/INV-ASK/);
     for(const wording of ['Show AP and AR outstanding.','Any unpaid supplier bills and customer invoices?',
       'How much is due to vendors and due from customers?']){
       const page=await agent.get('/ask');
       await agent.post('/ask').type('form').send({_csrf:csrfFrom(page.text),message:wording});
-      const routed=(await database.query(`SELECT intent->>'view' AS view FROM stockchief_runtime.assistant_interactions
-        WHERE intent->>'sourceMessage'=$1 ORDER BY (intent->>'requestIndex')::integer`,[wording])).rows;
-      assert.deepEqual(routed,[{view:'payables'},{view:'receivables'}]);
+      const routed=(await database.query(`SELECT intent FROM stockchief_runtime.assistant_interactions
+        WHERE message=$1 ORDER BY created_at DESC,id DESC LIMIT 1`,[wording])).rows;
+      assert.deepEqual(routed[0].intent.presentation.researchViews,['payables','receivables']);
     }
     const paymentPage=await agent.get('/ask');
     await agent.post('/ask').type('form').send({_csrf:csrfFrom(paymentPage.text),message:'Show payment history'});
@@ -187,7 +190,7 @@ test('Ask StockChief grounds answers and executes only an approved PostgreSQL pr
       message:'Receive five SHOE-BLACK-8'});
     assert.equal(missing.status,303);
     const clarification=await agent.get('/ask');
-    assert.match(clarification.text,/Which location is this for/);
+    assert.match(clarification.text,/more than one matching location/);
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM stockchief_runtime.assistant_action_proposals`)).rows[0].count,'2');
 
     const told=await agent.post('/foundry/tell').type('form').send({_csrf:csrfFrom(clarification.text),
@@ -200,8 +203,6 @@ test('Ask StockChief grounds answers and executes only an approved PostgreSQL pr
       message:'How many items are in my inventory and show me locations'});
     assert.equal(multiLookup.status,303);
     const multiLookupAnswer=(await agent.get('/ask')).text;
-    assert.match(multiLookupAnswer,/StockChief · part 1 of 2/);
-    assert.match(multiLookupAnswer,/StockChief · part 2 of 2/);
     assert.match(multiLookupAnswer,/You have 1 active product in StockChief, across 1 SKU/);
     assert.match(multiLookupAnswer,/2 active locations hold 7 units/);
     const multi=await agent.post('/ask').type('form').send({_csrf:csrfFrom(groundedAfterTransfer),
@@ -232,7 +233,7 @@ test('Ask StockChief grounds answers and executes only an approved PostgreSQL pr
     const failed=(await database.query(`SELECT status,answer FROM stockchief_runtime.assistant_interactions
       ORDER BY created_at DESC,id DESC LIMIT 1`)).rows[0];
     assert.equal(failed.status,'CLARIFY');
-    assert.match(failed.answer,/could not reliably understand that request/);
+    assert.match(failed.answer,/could not reliably interpret that request/);
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM movements`)).rows[0].count,'1');
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM stockchief_runtime.assistant_action_proposals`)).rows[0].count,
       proposalsBefore);

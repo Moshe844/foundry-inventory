@@ -23,12 +23,9 @@ test('Ask resolves the only stocked SKU and continues a purchase clarification w
     await migratePostgres(database);
     const model=fixture({async complete(input){
       const prompt=JSON.parse(input.prompt);
-      if(input.schemaName==='stockchief_postgres_followup'){
-        if(prompt.message==='Safe Supply')return {data:{disposition:'answer',value:'Safe Supply',currency:''}};
-        if(prompt.message==='$8 per unit')return {data:{disposition:'answer',value:'8',currency:''}};
-        return {data:{disposition:'new_request',value:'',currency:''}};
-      }
       if(prompt.message==='How many products are in inventory?')return {data:{intent:'lookup',view:'inventory_summary'}};
+      if(prompt.message==='$8 per unit')return {data:{intent:'action',view:null,
+        action:'create_purchase_order',amount:8,continuesPrevious:true}};
       return {data:{intent:'action',view:null,action:'create_purchase_order',sku:null,skuReference:'stocked',quantity:20}};
     }});
     const app=createPostgresApp({database,env:'test',sessionSecret:'ask-stock-reference-secret',aiProvider:model});
@@ -57,19 +54,12 @@ test('Ask resolves the only stocked SKU and continues a purchase clarification w
 
     let result=await ask('whatever i have in stock i need 20 more');
     assert.equal(result.latest.status,'CLARIFY');
-    assert.match(result.latest.answer,/Safety Shoe \(SHOE\) with 4 on hand/);
-    assert.match(result.latest.answer,/Which supplier should provide 20 more/);
+    assert.match(result.latest.answer,/cost per inventory unit for Safety Shoe/);
     assert.doesNotMatch(result.html,/What product or SKU do you need 20 more of/);
-    assert.equal(result.latest.intent.presentation.awaitingField,'supplier');
-
-    result=await ask('Safe Supply');
-    assert.equal(result.latest.message,'Safe Supply');
     assert.equal(result.latest.intent.supplier,'Safe Supply');
     assert.equal(result.latest.intent.quantity,20);
     assert.equal(result.latest.intent.sku,'SHOE');
-    assert.equal(result.latest.intent.skuReference,'');
     assert.equal(result.latest.intent.presentation.awaitingField,'amount');
-    assert.match(result.latest.answer,/cost per inventory unit for Safety Shoe/);
 
     result=await ask('$8 per unit');
     assert.equal(result.latest.status,'PREPARED');

@@ -2,74 +2,17 @@
 
 const config = require('../config');
 const { createProviderUnobserved } = require('../ai/provider');
-const inventory = require('../domain/postgres-inventory-engine');
-const transfers = require('../transfers/postgres-transfer-service');
-const catalog = require('../domain/postgres-catalog-service');
-const locations = require('../domain/postgres-location-service');
 const operatingInstructions = require('../manager/postgres-operating-instructions');
 const pricing = require('../pricing/postgres-service');
 const outboundMail = require('../connections/postgres-outbound-mail');
-const workflows = require('../operations/postgres-business-workflows');
 const accountingReports = require('../accounting/postgres-reports');
 const evidenceAnswers = require('./postgres-evidence-answer');
-const businessResearch = require('./postgres-research');
 const projections = require('../projections/postgres-service');
 const autonomy = require('../autopilot/postgres-service');
 const entitlements=require('../entitlements/postgres-service');
 const { ValidationError, NotFoundError, InvariantError } = require('../domain/errors');
 const { newId, trimOrNull } = require('../lib/util');
 
-const VIEWS = ['inventory','inventory_positions','inventory_movements','inventory_summary','prices','purchase_costs','supplier_items','needs_you','replenishment','locations','purchase_orders','sales_orders','sales_activity','suppliers','customers','shipping','payments',
-  'payables','receivables','accounting','connections','messages','business_analysis','general_knowledge'];
-const ACTIONS = ['receive','issue','transfer','adjust','create_item','create_location','set_price','set_purchase_cost',
-  'send_email','create_sales_order','create_purchase_order','receive_purchase_order','record_supplier_payment'];
-const PLAN_PART_SCHEMA = {
-  type:'object',additionalProperties:false,
-  required:['requestText','continuesPrevious','clarifyingQuestion','intent','view','action','search','sku','skuReference','location','fromLocation','toLocation','quantity','countedQuantity',
-    'amount','currency','reason','reference','recipient','recipientKind','subject','body','mailbox','customer','supplier',
-    'deliveryMethod','shipToAddress','neededBy','purchaseOrder','supplierBill','receiptReference','paymentMethod','paymentDate','readQueries'],
-  properties:{
-    requestText:{type:'string',maxLength:2000},
-    continuesPrevious:{type:'boolean'},
-    clarifyingQuestion:{type:'string',maxLength:300},
-    intent:{type:'string',enum:['lookup','action','instruction','clarify']},
-    view:{anyOf:[{type:'string',enum:VIEWS},{type:'null'}]},
-    action:{anyOf:[{type:'string',enum:ACTIONS},{type:'null'}]},
-    search:{type:['string','null'],maxLength:160},sku:{type:['string','null'],maxLength:160},
-    skuReference:{type:'string',enum:['','stocked']},
-    location:{type:['string','null'],maxLength:160},fromLocation:{type:['string','null'],maxLength:160},
-    toLocation:{type:['string','null'],maxLength:160},quantity:{type:['integer','null'],minimum:0},
-    countedQuantity:{type:['integer','null'],minimum:0},reason:{type:['string','null'],maxLength:120},
-    amount:{type:['number','null'],minimum:0},currency:{type:['string','null'],maxLength:3},
-    reference:{type:['string','null'],maxLength:160},
-    recipient:{type:'string',maxLength:200},recipientKind:{type:'string',enum:['','customer','supplier']},
-    subject:{type:'string',maxLength:300},body:{type:'string',maxLength:10000},mailbox:{type:'string',maxLength:200},
-    customer:{type:'string',maxLength:200},supplier:{type:'string',maxLength:200},
-    deliveryMethod:{type:'string',enum:['','SHIP','PICKUP','OWN_DELIVERY']},
-    shipToAddress:{type:'string',maxLength:500},neededBy:{type:'string',maxLength:10},
-    purchaseOrder:{type:'string',maxLength:160},supplierBill:{type:'string',maxLength:160},
-    receiptReference:{type:'string',maxLength:160},paymentMethod:{type:'string',maxLength:120},
-    paymentDate:{type:'string',maxLength:10},
-    readQueries:{type:'array',maxItems:6,items:businessResearch.RESEARCH_SCHEMA.properties.queries.items},
-  },
-};
-const PLAN_SCHEMA={type:'object',additionalProperties:false,required:['parts'],properties:{
-  parts:{type:'array',minItems:1,maxItems:8,items:PLAN_PART_SCHEMA},
-}};
-const ACTION_REVIEW_SCHEMA={type:'object',additionalProperties:false,
-  required:['requestedAction','action','evidenceQuote'],properties:{
-    requestedAction:{type:'boolean'},action:{type:'string',enum:['none',...ACTIONS]},
-    evidenceQuote:{type:'string',maxLength:300},
-  }};
-const ACTION_REVIEW_SYSTEM=`Decide only whether the owner's original words request StockChief to perform a supported business operation now.
-The available operations are: receive stock, issue stock, transfer stock, adjust stock, create an item, create a location, set a selling price, set a purchase cost, send email, create a customer order, create a purchase order, receive a purchase order, and record a supplier payment.
-Missing recipient, product, amount, email message, or other arguments do not change whether an operation was requested. The business workflow will check records and ask for truly missing details after you decide the operation. Do not supply or invent those details.
-Set requestedAction=true and choose the matching action only if the owner is asking StockChief to do that operation. Set requestedAction=false and action=none for questions about what is true or whether StockChief has a capability. evidenceQuote must be an exact substring of the original request that expresses the requested operation; leave it empty when requestedAction=false. Do not answer the owner.`;
-const FOLLOWUP_SCHEMA={type:'object',additionalProperties:false,
-  required:['disposition','value','currency'],properties:{
-    disposition:{type:'string',enum:['answer','unknown','new_request']},
-    value:{type:'string',maxLength:500},currency:{type:'string',maxLength:3},
-  }};
 const EMAIL_DRAFT_SCHEMA={type:'object',additionalProperties:false,required:['subject','body'],properties:{
   subject:{type:'string',maxLength:200},body:{type:'string',maxLength:6000},
 }};
@@ -77,68 +20,6 @@ const EMAIL_DRAFT_SYSTEM=`Copyedit the owner's email words. Return only the sche
 This is a grammar and spelling correction, not a composition task. Keep the same business nouns, verbs, dates, quantities, names, amounts, commitments, and uncertainties. Do not infer what a vague word such as "confirm" refers to.
 Do not add a greeting, thanks, sign-off, explanation, promise, fact, deadline, price, order status, shipment claim, receipt claim, or attachment claim unless the owner explicitly supplied it. Do not invent the sender's name.
 Use a short subject made only from concepts the owner explicitly stated; if there is no safe subject, return an empty string. The body should contain only the corrected version of the supplied message, ready for the owner to review before sending.`;
-const SYSTEM=`Decompose and extract the person's complete message into one or more requests to an inventory operations system. Return only the schema.
-Classify the purpose of each request independently of whether its details are complete. A request to perform an operation is action even when the recipient, product, amount, message, or other argument is missing. Leave missing fields empty; the business workflow will inspect records and ask for what it actually needs. Use clarify only when the requested operation or question itself cannot be identified.
-Preserve every distinct question, instruction and requested action. Never silently omit a requirement. Each parts entry must contain
-one request and requestText must be the exact portion of the person's message represented by that entry. Keep dependent wording with
-the request it qualifies. Use one part when the message contains only one request and no more than eight parts total.
-The input may include context with the previous unanswered user request and StockChief's clarification. Resolve conversational replies before classifying intent: a short name, SKU, location, quantity, price, date, or yes/no that directly answers the clarification is a continuation of the previous task, not a new lookup. In that case set continuesPrevious=true and make requestText a complete restatement of the combined request, INCLUDING the new message's detail. Populate the corresponding schema field from that detail; never drop the new answer. Carry forward only details actually supplied in the previous request or new message. If the new message is a clearly independent request, set continuesPrevious=false, ignore context, and use the new message alone. Without context, always set continuesPrevious=false.
-Use lookup when the person asks what is true. Use action only when they want StockChief to create or change a record.
-For a lookup, populate readQueries with the read-only datasets needed to answer the complete question. Select several when needed. The named view is only an initial hint; StockChief will use readQueries to gather current evidence. Use readQueries=[] for actions, instructions, clarifications, and general knowledge.
-If the person asks StockChief to carry out a supported action but leaves out a recipient, product, quantity, or other detail, still choose that action and leave the missing field empty; StockChief will ask the precise follow-up before preparing anything.
-If the person says they need more stock or asks StockChief to get more, use create_purchase_order to prepare a draft purchase order, even if they do not say "purchase order". Do not treat a need for future stock as goods physically received, and never increase on-hand stock for this request.
-If they refer to whichever product is currently in stock without naming it, use skuReference="stocked" and sku=null. StockChief will inspect current inventory and resolve it only if exactly one SKU has positive on-hand quantity. Use skuReference="" when no such reference was made. Do not ask for the SKU before the inventory check.
-Use instruction for a lasting rule, preference, threshold, supplier term, stock protection rule, or bounded authority
-that should continue applying in the future. One-time work is action, not instruction.
-Never invent a product, SKU, location, quantity, reason or reference. Missing values are null.
-view is the business dataset needed for a lookup. action is one of the allowed action values.
-Use payables for open supplier/vendor bills and amounts the business owes. Use receivables for open customer invoices
-and amounts customers owe the business. Use payments only for payment transactions or payment history, never for balances owed.
-Use needs_you when the person asks what needs their attention, review, approval, or decision.
-Use replenishment when the person asks what stock to buy, reorder, or restock next; it reads existing StockChief recommendations and check status, and never places an order.
-Use inventory_summary for business-wide product and SKU totals and total on-hand units; use inventory for stock quantities of named products.
-Use inventory_positions for quantities at individual locations, inventory_movements for recorded stock changes, prices for current selling prices, purchase_costs for recorded unit costs, supplier_items for which suppliers provide which products, and messages for sent or received business email.
-Use sales_activity for business-wide questions about whether any sales or customer orders are recorded, or how many sales/orders are recorded in one period. It summarizes recorded customer orders, fulfilled units, and posted revenue; it does not filter by customer or order number.
-Use sales_orders to list customer orders or find orders for a named customer, order number, or status. Preserve the exact named customer, order number, or status in search.
-Use business_analysis for comparisons, trends, reasons, or questions that need figures from more than one business dataset. It can read posted financials when allowed on this plan, customer order counts, and the last business-check time. Use inventory_summary for inventory totals.
-Use general_knowledge for questions that can be answered without this business's records, such as explaining a business term or principle.
-If none of the listed business datasets or actions can answer the request, use clarify with a null view. Never choose a nearby dataset merely to return an answer.
-When intent is clarify, clarifyingQuestion must be one plain, specific question that would let the owner continue; otherwise use an empty string. Never invent a business fact in that question.
-When a sales summary names a time period, preserve that exact wording in requestText. Never infer an unstated time window; StockChief validates the period against the person's words. If the requested period cannot be supported, use clarify.
-search is only an explicitly named business entity, order number, or record status, without command words. General words such as any, anything, yet, sales, and this month are not search filters. Never set a search filter on sales_activity or business_analysis; use sales_orders for a filtered order list.
-For receive, issue, transfer and adjust, sku is the product/SKU wording exactly as stated.
-For receive and issue, location is the stated place. For transfer, use fromLocation and toLocation.
-Use set_price for customer selling-price changes and set_purchase_cost for supplier or purchase-cost changes.
-For those actions, sku is the exact product or SKU wording, amount is the stated per-unit amount and currency is its three-letter code.
-Use send_email when the person asks to email, message, write to or contact a customer, supplier or email address.
-For send_email, recipient is only the named recipient, recipientKind is customer or supplier only when stated,
-subject and body are only words explicitly supplied, and mailbox is only an explicitly named connected mailbox.
-Use create_sales_order only when the person asks to prepare or record a customer order. Extract customer, SKU, quantity,
-deliveryMethod, shipToAddress and neededBy only when stated. Use SHIP, PICKUP or OWN_DELIVERY for deliveryMethod.
-Use create_purchase_order when the person asks to buy or obtain more stock, or prepare a supplier purchase order. Extract supplier,
-SKU, quantity, destination inventory location, amount and currency only when stated.
-Use receive_purchase_order only when the person says physical goods arrived against a purchase order. Extract the exact
-purchaseOrder number, SKU, quantity, receiving location and receiptReference such as a delivery note only when stated.
-Use record_supplier_payment only when the person says a supplier bill was paid. Extract supplier, supplierBill number,
-amount, currency, paymentMethod, paymentDate and reference only when stated. An invoice is not a physical receipt.
-Use an empty string for missing recipient, recipientKind, subject, body, mailbox, customer, supplier, deliveryMethod,
-shipToAddress, neededBy, purchaseOrder, supplierBill, receiptReference, paymentMethod or paymentDate values; other missing values are null.
-quantity is the movement quantity; countedQuantity is the physical count after an adjustment.`;
-
-const REQUEST_START='(?:move|transfer|receive|received|issue|issued|sell|sold|email|e-mail|message|write|contact|create|add|set|change|update|record|buy|prepare|what|how|where|which|did|do|show|list|tell)';
-
-function splitRequestTexts(message){
-  const text=String(message||'').trim();
-  const marked=text.replace(new RegExp(`\\s*(?:;|\\n+|,?\\s+and\\s+|,?\\s+then\\s+|,?\\s+also\\s+)(?=(?:please\\s+)?${REQUEST_START}\\b)`,'gi'),'\n');
-  const parts=marked.split(/\n+/).map((part)=>part.trim()).filter(Boolean);
-  return parts.length>1?parts:[text];
-}
-
-function cleanReference(value) {
-  const reference=trimOrNull(value);
-  return reference ? trimOrNull(reference.replace(/[.,;:!?]+$/,'')) : null;
-}
-
 function recordHandoff(kind,name,extras={}) {
   const params=new URLSearchParams({name:String(name||'').trim()});
   if(kind==='customer'&&trimOrNull(extras.shippingAddress))params.set('shippingAddress',trimOrNull(extras.shippingAddress));
@@ -146,286 +27,15 @@ function recordHandoff(kind,name,extras={}) {
   return {href:kind==='customer'?`/sales/customers/new?${params}`:`/suppliers?${params}#add-supplier`,label};
 }
 
-function inventoryLookupSearch(message){
-  const text=String(message||'').trim();
-  const patterns=[
-    /\b(?:how many|how much)\s+(.+?)\s+(?:are|is)\s+(?:currently\s+)?(?:on hand|available|in stock|left)\b/i,
-    /\b(?:on hand|available|in stock)\s+(?:for|of)\s+(.+?)(?=\s+(?:at|in|across|and|where)\b|[?.!,]|$)/i,
-    /\bwhere\s+(?:is|are)\s+(.+?)\s+(?:held|stocked|stored|located)\b/i,
-  ];
-  const value=trimOrNull(patterns.map((pattern)=>pattern.exec(text)?.[1]).find(Boolean));
-  if(!value)return null;
-  const cleaned=trimOrNull(value.replace(/^(?:the|our|my)\s+/i,''));
-  return /^(?:inventory|items?|products?|skus?|stock|units?)$/i.test(cleaned||'')?null:cleaned;
-}
-
-function wholeInventoryLookup(message){
-  const text=String(message||'').toLowerCase();
-  return /\bhow many\s+(?:items?|products?|skus?|units?)\b/.test(text)
-    || /\b(?:total|overall)\s+(?:items?|products?|skus?|units?|inventory|stock)\b/.test(text)
-    || /\bhow much\s+(?:inventory|stock)\b/.test(text);
-}
-
-function financialSummaryLookup(message){
-  const text=String(message||'').toLowerCase();
-  return /\b(?:did|have|are|were|am)\s+(?:i|we|the business|my business|our business)\s+(?:make|made|earn|earned|lose|lost|losing)\b/.test(text)
-    || /\b(?:profit|profitable|loss|net income|gross profit|money made|money lost|earnings)\b/.test(text);
-}
-
-function financialChangeLookup(message){
-  const text=String(message||'').toLowerCase();
-  return /\bwhy\b[\s\S]*\b(?:profit|margin|earnings|net income)\b|\bwhat (?:changed|hurt|drove)\b[\s\S]*\b(?:profit|margin|earnings)\b/.test(text);
-}
-
-function financialBalanceViews(message){
-  const text=String(message||'').toLowerCase();
-  const question=/\b(?:what|which|show|list|tell|how much|how many|any|do|does|are|is)\b/.test(text);
-  if(!question)return [];
-  const payables=/\baccounts? payable\b|\ba\/?p\b|\bpayables?\b|\b(?:supplier|vendor)s?\s+(?:balances?|bills?|invoices?)\b|\b(?:unpaid|open|outstanding|due)\s+(?:supplier|vendor)\s+(?:bills?|invoices?)\b|\b(?:owe|owed|owing)\s+(?:to\s+)?(?:our\s+)?(?:supplier|vendor)s?\b|\bdue\s+to\s+(?:our\s+)?(?:supplier|vendor)s?\b/.test(text)
-    || /\bwhat\s+(?:do|does)\s+(?:we|i|the business|our business|my business)\s+owe\b/.test(text);
-  const receivables=/\baccounts? receivable\b|\ba\/?r\b|\breceivables?\b|\bcustomer\s+(?:balances?|invoices?|money)\b|\b(?:unpaid|open|outstanding|due)\s+customer\s+(?:balances?|invoices?|money)\b|\bcustomers?\s+(?:owe|owes|owed|owing)\s+(?:us|me|the business)\b|\bdue\s+from\s+(?:our\s+)?customers?\b/.test(text)
-    || /\bwhat\s+(?:do|does)\s+(?:our\s+)?customers?\s+owe\b/.test(text);
-  return [...(payables?['payables']:[]),...(receivables?['receivables']:[])];
-}
-
-function financialBalancePlans(requestText,intent=null){
-  const views=financialBalanceViews(requestText);
-  if(!views.length)return [];
-  return views.map((view)=>({requestText,intent:{...(intent||cleanPlan(null,requestText)),intent:'lookup',view,
-    action:null,search:views.length===1?trimOrNull(intent?.search):null}}));
-}
-
-function lookupSearchPatterns(value){
-  const original=trimOrNull(value);
-  if(!original)return [];
-  const parts=original.split(/\s+/);const last=parts.at(-1);
-  let singular=last;
-  if(/ies$/i.test(last)&&last.length>3)singular=`${last.slice(0,-3)}y`;
-  else if(/(?:sses|xes|zes|ches|shes)$/i.test(last)&&last.length>3)singular=last.slice(0,-2);
-  else if(/s$/i.test(last)&&!/ss$/i.test(last)&&last.length>3)singular=last.slice(0,-1);
-  const values=[original];
-  if(singular!==last)values.push([...parts.slice(0,-1),singular].join(' '));
-  return [...new Set(values)].map((entry)=>`%${entry}%`);
-}
-
-function fallbackPlan(message) {
-  const text=String(message || '').trim();
-  const lower=text.toLowerCase();
-  const inventorySearch=inventoryLookupSearch(text);
-  const wholeInventory=wholeInventoryLookup(text);
-  const financialSummary=financialSummaryLookup(text);
-  const financialChange=financialChangeLookup(text);
-  const email=/^(?:please\s+)?(?:send\s+(?:an?\s+)?email\s+to|email|e-mail|message|write\s+to|contact)\s+(.+?)(?:\s+(?:that|saying|to\s+say|and\s+(?:say|tell|ask)|about|regarding)\s+|\s*[—:]\s*)([\s\S]+)$/i.exec(text);
-  const emailOnly=/^(?:please\s+)?(?:send\s+(?:an?\s+)?email\s+to|email|e-mail|message|write\s+to|contact)\s+(.+?)\s*[.!]?$/i.exec(text);
-  if(email||emailOnly){const recipient=String((email||emailOnly)[1]||'').trim();const role=/^(?:the\s+)?(supplier|vendor|customer|client)\s+(?:named\s+|called\s+)?(.+)$/i.exec(recipient);
-    return {intent:'action',view:null,action:'send_email',search:null,sku:null,location:null,fromLocation:null,toLocation:null,
-      quantity:null,countedQuantity:null,amount:null,currency:null,reason:null,reference:null,recipient,
-      recipientKind:role?(/supplier|vendor/i.test(role[1])?'supplier':'customer'):null,
-      subject:null,body:email?String(email[2]).trim():null,mailbox:null};}
-  const lasting=/\b(always|whenever|every time|from now on|automatically|without asking|standing rule|prefer)\b/.test(lower)
-    || /\b(?:reorder|restock)\b[\s\S]*\b(?:below|under|at)\s+\d+\b/.test(lower);
-  if(lasting)return {intent:'instruction',view:null,action:null,search:null,sku:null,location:null,fromLocation:null,
-    toLocation:null,quantity:null,countedQuantity:null,reason:null,reference:null};
-  const action=/\b(receive|received|came in|issue|issued|sold|used|move|transfer|count|adjust|correct|create|add)\b/.test(lower);
-  const priceChange=/\b(set|change|update|make)\b[\s\S]*\b(price|cost)\b|\b(price|cost)\b[\s\S]*\b(to|at|is)\b/.test(lower);
-  const purchaseCost=/\b(supplier|vendor|purchase|buying|wholesale|unit)\s+(price|cost)\b|\bpurchase cost\b/.test(lower);
-  const money=text.match(/([$£€¥])\s*([\d,]+(?:\.\d{1,2})?)|\b(USD|EUR|GBP|CAD|AUD|JPY)\s*([\d,]+(?:\.\d{1,2})?)/i);
-  if(priceChange&&money){
-    const target=text.match(/\b(?:for|of)\s+(.+?)\s+(?:to|at|is)\s*(?=[$£€¥]|\b(?:USD|EUR|GBP|CAD|AUD|JPY)\b)/i)?.[1]
-      || text.match(/\b(?:price|cost)\s+(?:of|for)\s+(.+?)\s*(?:to|at|is)\s*/i)?.[1]||null;
-    const amount=Number(String(money[2]||money[4]).replace(/,/g,''));
-    const currency=money[3]?money[3].toUpperCase():({'$':'USD','£':'GBP','€':'EUR','¥':'JPY'}[money[1]]||'USD');
-    return {intent:'action',view:null,action:purchaseCost?'set_purchase_cost':'set_price',search:null,sku:trimOrNull(target),
-      location:null,fromLocation:null,toLocation:null,quantity:null,countedQuantity:null,amount,currency,reason:null,reference:null};
-  }
-  let view='inventory';
-  if(/\b(purchase order|po\b|buy|supplier order|incoming)\b/.test(lower))view='purchase_orders';
-  else if(/\b(sales order|customer order|orders? from customer)\b/.test(lower))view='sales_orders';
-  else if(financialBalanceViews(text).includes('payables'))view='payables';
-  else if(financialBalanceViews(text).includes('receivables'))view='receivables';
-  else if(/\bsuppliers?\b/.test(lower))view='suppliers';
-  else if(/\bcustomers?\b/.test(lower))view='customers';
-  else if(/\b(ship|shipment|tracking|carrier|delivery)\b/.test(lower))view='shipping';
-  else if(/\b(payment|paid|owing|outstanding|receivable|payable)\b/.test(lower))view='payments';
-  else if(financialSummary||/\b(account|journal|profit|revenue|expense|books|balance)\b/.test(lower))view='accounting';
-  else if(/\b(connection|connected|sync|connector)\b/.test(lower))view='connections';
-  else if(!inventorySearch&&/\b(locations?|warehouses?|stores?|bins?|shelves?)\b/.test(lower))view='locations';
-  else if(wholeInventory)view='inventory_summary';
-  if(!action)return {intent:'lookup',view,action:null,
-    search:financialChange?'profit_change':financialSummary?'profit_and_loss':wholeInventory?null:inventorySearch,sku:null,location:null,fromLocation:null,
-    toLocation:null,quantity:null,countedQuantity:null,amount:null,currency:null,reason:null,reference:null};
-  const verb=/\b(receive|received|came in)\b/.test(lower)?'receive':/\b(issue|issued|sold|used)\b/.test(lower)?'issue':
-    /\b(move|transfer)\b/.test(lower)?'transfer':/\b(count|adjust|correct)\b/.test(lower)?'adjust':
-      /\b(location|warehouse|store|bin|shelf)\b/.test(lower)?'create_location':'create_item';
-  const number=Number(/\b(\d+)\b/.exec(text)?.[1]);
-  const quantity=Number.isSafeInteger(number)?number:null;
-  const reference=cleanReference(/\b(?:reference|ref)\s*[:#-]?\s*([a-z0-9][a-z0-9._/-]*)/i.exec(text)?.[1]);
-  let sku=null;let location=null;let fromLocation=null;let toLocation=null;
-  const tail='(?=\\s+(?:with\\s+)?(?:reference|ref)\\b|[,.;]|$)';
-  if(verb==='transfer'){
-    const move=new RegExp('\\b(?:move|transfer)\\s+\\d+\\s+(?:x\\s+)?(.+?)\\s+from\\s+(.+?)\\s+to\\s+(.+?)'+tail,'i').exec(text);
-    if(move){sku=trimOrNull(move[1]);fromLocation=trimOrNull(move[2]);toLocation=trimOrNull(move[3]);}
-  }else if(['receive','issue'].includes(verb)){
-    const receive=verb==='receive';
-    const productPattern=receive
-      ? /\b(?:receive(?:d)?|record(?:ed)?|book(?:ed)?\s+in)\s+\d+\s+(?:x\s+)?(.+?)(?=\s+(?:received\s+)?(?:into|at|in|with|reference|ref)\b|[,.;]|$)/i
-      : /\b(?:issue(?:d)?|sell|sold|use|used|record(?:ed)?)\s+\d+\s+(?:x\s+)?(.+?)(?=\s+(?:from|at|in|with|reference|ref)\b|[,.;]|$)/i;
-    sku=trimOrNull(productPattern.exec(text)?.[1]);
-    const placePattern=receive
-      ? /\b(?:received\s+)?(?:into|at|in)\s+(.+?)(?=\s+(?:with\s+)?(?:reference|ref)\b|[,.;]|$)/i
-      : /\b(?:from|at|in)\s+(.+?)(?=\s+(?:with\s+)?(?:reference|ref)\b|[,.;]|$)/i;
-    location=trimOrNull(placePattern.exec(text)?.[1]);
-  }
-  return {intent:'action',view:null,action:verb,search:null,sku,location,fromLocation,toLocation,
-    quantity,countedQuantity:verb==='adjust'?quantity:null,
-    amount:null,currency:null,reason:null,reference};
-}
-
-function cleanPlan(raw,message) {
-  const fallback=fallbackPlan(message);
-  if(!raw)return fallback;
-  if(!['lookup','action','instruction','clarify'].includes(raw.intent))return {intent:'clarify',view:null,action:null,
-    clarifyingQuestion:'I could not reliably understand that request. Could you say what you want to know or change?'};
-  const source=raw;
-  const invalidLookup=source.intent==='lookup'&&!VIEWS.includes(source.view);
-  const requestedTimeframe=explicitTimeframe(message);
-  return {intent:invalidLookup?'clarify':source.intent,
-    view:source.intent==='clarify'||invalidLookup?null:VIEWS.includes(source.view)?source.view:fallback.view,
-    timeframe:requestedTimeframe||'all_time',
-    clarifyingQuestion:invalidLookup?'What business information should I check?':trimOrNull(source.clarifyingQuestion),
-    action:source.intent==='clarify'?null:ACTIONS.includes(source.action)?source.action:null,
-    search:trimOrNull(source.search),sku:trimOrNull(source.sku),skuReference:source.skuReference==='stocked'?'stocked':'',
-    location:trimOrNull(source.location),fromLocation:trimOrNull(source.fromLocation),toLocation:trimOrNull(source.toLocation),
-    quantity:Number.isSafeInteger(source.quantity)?source.quantity:null,
-    countedQuantity:Number.isSafeInteger(source.countedQuantity)?source.countedQuantity:null,
-    amount:Number.isFinite(source.amount)&&source.amount>=0?source.amount:null,
-    currency:/^[A-Z]{3}$/.test(String(source.currency||'').toUpperCase())?String(source.currency).toUpperCase():null,
-    reason:trimOrNull(source.reason),reference:cleanReference(source.reference),recipient:trimOrNull(source.recipient),
-    recipientKind:['customer','supplier'].includes(source.recipientKind)?source.recipientKind:null,
-    subject:trimOrNull(source.subject),body:trimOrNull(source.body),mailbox:trimOrNull(source.mailbox),
-    customer:trimOrNull(source.customer),supplier:trimOrNull(source.supplier),
-    deliveryMethod:['SHIP','PICKUP','OWN_DELIVERY'].includes(source.deliveryMethod)?source.deliveryMethod:null,
-    shipToAddress:trimOrNull(source.shipToAddress),neededBy:trimOrNull(source.neededBy),
-    purchaseOrder:trimOrNull(source.purchaseOrder),supplierBill:trimOrNull(source.supplierBill),
-    receiptReference:trimOrNull(source.receiptReference),paymentMethod:trimOrNull(source.paymentMethod),
-    paymentDate:trimOrNull(source.paymentDate),
-    recipientEmail:trimOrNull(source.recipientEmail),
-    recipientMode:['one_off','add_supplier','add_customer'].includes(source.recipientMode)?source.recipientMode:null,
-    saveEmailToContact:source.saveEmailToContact===true,
-    readQueries:source.intent==='lookup'?businessResearch.cleanQueries(source.readQueries):null};
-}
-
-function explicitTimeframe(message){
-  const text=String(message||'').toLowerCase();
-  if(/\b(?:today|this day)\b/.test(text))return 'today';
-  if(/\b(?:this month|month to date|mtd)\b/.test(text))return 'month_to_date';
-  if(/\b(?:last month|previous month)\b/.test(text))return 'previous_month';
-  if(/\b(?:last|past)\s+30\s+days\b/.test(text))return 'last_30_days';
-  if(/\b(?:yesterday|tomorrow|tonight|morning|afternoon|week|quarter|year|since|until|between|before|after|january|february|march|april|june|july|august|september|october|november|december)\b/.test(text)
-    ||/\b(?:in|for|during|of)\s+may\b/.test(text)||/\b(?:last|past|next)\s+\d+\s+days?\b/.test(text)
-    ||/\b\d{4}-\d{2}(?:-\d{2})?\b/.test(text))return 'unsupported';
-  return null;
-}
-
-async function planMany(message,options={}) {
-  const provider=options.provider || (config.ai.configured?createProviderUnobserved(config.ai.provider,config.ai.tier('fast')):null);
-  let context=options.context||null;
-  if(provider&&options.context?.awaitingField&&options.context?.previousIntent?.action){
-    const continued=await planClarificationReply(message,options.context,options.followupProvider||provider);
-    if(continued?.newRequest)context=null;
-    else if(continued)return [continued];
-  }
-  if(!provider)return splitRequestTexts(message).flatMap((requestText)=>financialBalancePlans(requestText)
-    .concat(financialBalanceViews(requestText).length?[]:[{requestText,intent:cleanPlan(null,requestText)}])).slice(0,8);
-  try {
-    const response=await provider.complete({system:SYSTEM,prompt:JSON.stringify({message,
-      ...(context?{context}:{}),...(options.history?.length?{history:options.history.slice(-6)}:{})}),schema:PLAN_SCHEMA,
-      schemaName:'stockchief_postgres_request'});
-    if(options.onUsage&&response.usage)await options.onUsage(response.usage,{schemaName:'stockchief_postgres_request'});
-    const rawParts=Array.isArray(response.data?.parts)&&response.data.parts.length?response.data.parts:[response.data];
-    const planned=[];
-    for(const [partIndex,raw] of rawParts.slice(0,8).entries()){const continued=Boolean(context&&raw?.continuesPrevious);
-      const requestText=continued?(trimOrNull(raw?.requestText)||message)
-        :rawParts.length===1?message:(trimOrNull(raw?.requestText)||message);
-      let intent=cleanPlan(raw,requestText);
-      if(intent.intent==='clarify'){
-        try{
-          const reviewProvider=options.actionReviewProviderFor?.(partIndex)||provider;
-          const reviewed=await reviewProvider.complete({system:ACTION_REVIEW_SYSTEM,
-            prompt:JSON.stringify({request:requestText}),
-            schema:ACTION_REVIEW_SCHEMA,schemaName:'stockchief_postgres_action_review'});
-          if(options.onUsage&&reviewed.usage)await options.onUsage(reviewed.usage,{schemaName:'stockchief_postgres_action_review'});
-          const decision=reviewed.data||{};
-          const quote=trimOrNull(decision.evidenceQuote);
-          if(decision.requestedAction===true&&ACTIONS.includes(decision.action)&&quote
-            &&requestText.toLowerCase().includes(quote.toLowerCase()))
-            intent={...intent,intent:'action',view:null,action:decision.action,clarifyingQuestion:null};
-        }catch(error){
-          if(['entitlement_required','validation_error'].includes(error.code))throw error;
-        }
-      }
-      const balances=intent.intent==='lookup'?financialBalancePlans(requestText,intent):[];
-      planned.push(...(balances.length?balances.map((entry)=>({...entry,continued})):[{requestText,intent,continued}]));
-    }
-    return planned.slice(0,8);
-  } catch(error) {
-    if(error.usage&&options.onUsage)await options.onUsage(error.usage,{schemaName:'stockchief_postgres_request',failed:true});
-    if(['entitlement_required','validation_error'].includes(error.code))throw error;
-    // An explicit price/cost amount can be prepared for review without model inference.
-    // Do not guess inventory changes when interpretation fails.
-    const fallback=cleanPlan(null,message);
-    if(fallback.intent==='action'&&['set_price','set_purchase_cost'].includes(fallback.action)
-      &&fallback.sku&&Number.isFinite(fallback.amount))return [{requestText:message,intent:fallback}];
-    return [{requestText:message,intent:{intent:'clarify',view:null,action:null,
-      interpretationUnavailable:true}}];
-  }
-}
-
-async function planClarificationReply(message,context,provider){
-  try{
-    const response=await provider.complete({system:`Decide whether the person's new message answers StockChief's immediately preceding clarification. The pending task and exact missing field are provided. A short name, code, number, amount, date, or place can be an answer. Return disposition=answer only when it actually supplies the missing field; value must contain only that supplied value, not a guess from context. For an amount, use digits with an optional decimal point and put an explicitly stated three-letter currency in currency. Return unknown when the person cannot provide the detail. Return new_request for an independent question or task. Never execute an action.`,
-      prompt:JSON.stringify({pendingRequest:context.previousUserMessage,
-        question:context.previousAssistantQuestion,missingField:context.awaitingField,message}),
-      schema:FOLLOWUP_SCHEMA,schemaName:'stockchief_postgres_followup'});
-    if(response.data?.disposition==='new_request')return {newRequest:true};
-    if(response.data?.disposition!=='answer')return null;
-    const value=trimOrNull(response.data.value);if(!value)return null;
-    const field=context.awaitingField;const intent={...context.previousIntent};
-    if(field==='quantity'||field==='countedQuantity'){
-      if(!/^\d+$/.test(value)||Number(value)<(field==='quantity'?1:0)||!Number.isSafeInteger(Number(value)))return null;
-      intent[field]=Number(value);
-    }else if(field==='amount'){
-      if(!/^\d+(?:\.\d{1,2})?$/.test(value))return null;
-      intent.amount=Number(value);
-      if(/^[A-Z]{3}$/.test(response.data.currency))intent.currency=response.data.currency;
-    }else if(field==='recipientEmail'){
-      if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)||!String(message).includes(value))return null;
-      intent.recipientEmail=value;
-      if(context.emailFlow?.kind==='missing_contact')intent.recipientMode='one_off';
-    }else if(['sku','supplier','customer','location','fromLocation','toLocation','purchaseOrder','supplierBill',
-      'recipient','mailbox','paymentMethod','paymentDate','neededBy','receiptReference','shipToAddress','body',
-      'reason','reference','search'].includes(field)){
-      if(!String(message).toLowerCase().includes(value.toLowerCase()))return null;
-      intent[field]=value;
-      if(field==='sku')intent.skuReference='';
-    }else if(field==='deliveryMethod'){
-      if(!['SHIP','PICKUP','OWN_DELIVERY'].includes(value))return null;
-      intent.deliveryMethod=value;
-    }else return null;
-    const requestText=`${context.previousUserMessage} — ${message}`;
-    return {requestText,intent,continued:true};
-  }catch(error){
-    if(['entitlement_required','validation_error'].includes(error.code))throw error;
-    return null;
-  }
-}
-
-async function plan(message,options={}) {
-  return (await planMany(message,options))[0].intent;
-}
-
 function evidenceRow(row,href) {
   return {...row,...(href?{href}:{})};
+}
+
+function lookupSearchPatterns(search){
+  if(!search)return [];
+  const terms=require('./postgres-context-resolver').tokens(search);
+  const escaped=terms.map((token)=>token.replace(/[\\%_]/gu,'\\$&'));
+  return [`%${escaped.join('%')}%`];
 }
 
 function profitComparisonPeriods(now=new Date()){
@@ -760,8 +370,11 @@ async function lookup(database,ctx,request,options={}) {
       const report=await accountingReports.profitAndLoss(database,ctx.workspaceId);
       const money=(minor)=>pricing.formatMinor(Number(minor||0),report.currency);
       const result=Number(report.netIncomeMinor);
-      const outcome=result<0?`The business has lost ${money(Math.abs(result))} this month.`:
-        result>0?`The business has earned ${money(result)} this month.`:'The business has broken even so far this month.';
+      const recorded=Number(report.revenueMinor)||Number(report.cogsMinor)||Number(report.operatingExpenseMinor);
+      const outcome=result<0?`Recorded activity shows a net loss of ${money(Math.abs(result))} this month.`:
+        result>0?`Recorded activity shows net income of ${money(result)} this month.`:
+          recorded?'Recorded income and expenses net to zero so far this month.':
+            'No income or expenses are recorded in StockChief for this month.';
       const rows=[
         {measure:'Revenue',value:money(report.revenueMinor)},
         {measure:'Cost of goods sold',value:money(report.cogsMinor)},
@@ -1230,11 +843,18 @@ async function prepareAction(database,ctx,message,request,options={}) {
 
 async function createProposal(database,ctx,message,actionType,payload,summary) {
   const id=newId('pgprop');
-  const key=`assistant:${id}`;
-  await database.query(`INSERT INTO stockchief_runtime.assistant_action_proposals
+  const key=ctx.planStepKey||`assistant:${id}`;
+  const inserted=await database.query(`INSERT INTO stockchief_runtime.assistant_action_proposals
     (id,workspace_id,actor_user_id,action_type,payload,summary,source_message,idempotency_key)
-    VALUES($1,$2,$3,$4,$5::jsonb,$6,$7,$8)`,[id,ctx.workspaceId,ctx.actorId,actionType,JSON.stringify(payload),summary,message,key]);
-  return {status:'PREPARED',answer:`${summary} Nothing has changed yet. Review and approve the exact change.`,proposal:{id,summary,actionType}};
+    VALUES($1,$2,$3,$4,$5::jsonb,$6,$7,$8)
+    ON CONFLICT(workspace_id,idempotency_key) DO NOTHING RETURNING id`,
+  [id,ctx.workspaceId,ctx.actorId,actionType,JSON.stringify(payload),summary,message,key]);
+  const proposalId=inserted.rows[0]?.id||(await database.query(`SELECT id,action_type FROM stockchief_runtime.assistant_action_proposals
+    WHERE workspace_id=$1 AND idempotency_key=$2 AND actor_user_id=$3`,
+  [ctx.workspaceId,key,ctx.actorId])).rows[0]?.id;
+  if(!proposalId)throw new InvariantError('A prepared change could not be recovered safely.','proposal_idempotency');
+  return {status:'PREPARED',answer:`${summary} Nothing has changed yet. Review and approve the exact change.`,
+    proposal:{id:proposalId,summary,actionType}};
 }
 
 async function storeInteraction(database,ctx,message,intent,result) {
@@ -1249,56 +869,75 @@ async function storeInteraction(database,ctx,message,intent,result) {
   return id;
 }
 
-async function ask(database,ctx,message,options={}) {
+function capabilityService(){return {lookup,prepareAction,prepareInstruction,
+  verifyProposal:async(db,scope,result)=>{
+    if(!result?.proposal?.id)return false;
+    const saved=await getProposal(db,scope.workspaceId,result.proposal.id).catch(()=>null);
+    return Boolean(saved&&saved.status==='PENDING'&&saved.workspace_id===scope.workspaceId);
+  },navigate:(_db,_scope,id)=>require('../web/postgres-navigation').destinationById(id),
+  navigateRecord:(db,scope,kind,reference)=>require('../web/postgres-record-destinations').resolve(db,scope,kind,reference)};}
+
+async function recordCapabilityOutcome(database,ctx,message,outcome,{batchId=null,planId=null,index=0,count=1}={}){
+  const {step,args,provenance}=outcome;const result=outcome.result;const contract=step?.contract;
+  const intent={intent:contract?.kind==='mutation'?'action':contract?.kind==='policy'?'instruction':
+    contract?.kind==='navigation'?'navigation':'lookup',
+    view:contract?.view||null,action:contract?.legacyAction||null,...args,
+    controlPlane:contract?{capability:contract.name,args,provenance,dependsOn:step.dependsOn,
+      continuesPending:step.continuesPending,...(planId?{planId}:{}),
+      ...(result.pendingProposalId?{pendingProposalId:result.pendingProposalId}:{})}:null,
+    ...(batchId?{batchId,sourceMessage:message,requestIndex:index+1,requestCount:count}:{}),
+    ...(result.proposal?{proposalId:result.proposal.id,
+      proposalHref:result.proposal.href||`/actions/${result.proposal.id}`}:{})};
+  result.interactionId=await storeInteraction(database,ctx,message,intent,result);
+  result.intent=intent;return result;
+}
+
+/** The production Ask entry point. Language selects registered contracts;
+ * canonical services retain exclusive authority over business state. */
+async function askCapabilities(database,ctx,message,options={}){
   await require('../commercial/enforcement').workspace(database,ctx.workspaceId,'ask.lookup');
-  const clean=String(message || '').trim();
-  if(!clean)throw new ValidationError('Ask a question or describe what should happen.');
-  const provider=options.provider||(config.ai.configured?createProviderUnobserved(config.ai.provider,config.ai.tier('fast')):null);
-  const history=(await database.query(`SELECT message,answer,status FROM stockchief_runtime.assistant_interactions
+  const clean=String(message||'').trim();if(!clean)throw new ValidationError('Ask a question or describe what should happen.');
+  const rawProvider=options.provider||(config.ai.configured?createProviderUnobserved(config.ai.provider,config.ai.tier('fast')):null);
+  const usageKey=String(options.usageKey||newId('askusage'));let modelCall=0;
+  const provider=rawProvider?{...rawProvider,complete:(request)=>require('../commercial/model')
+    .wrap(database,ctx,rawProvider,'ask',`${usageKey}:capability:${modelCall++}`).complete(request)}:null;
+  const history=(await database.query(`SELECT message,answer,status,intent FROM stockchief_runtime.assistant_interactions
     WHERE workspace_id=$1 AND actor_user_id=$2 AND ($3::timestamptz IS NULL OR created_at >= $3::timestamptz)
     ORDER BY created_at DESC,id DESC LIMIT 6`,[ctx.workspaceId,ctx.actorId,options.startedAt||null])).rows.reverse();
-  const meteredOptions=provider?{...options,onUsage:null,
-    history,
-    provider:require('../commercial/model').wrap(database,ctx,provider,'ask',`${options.usageKey||newId('askusage')}:plan`),
-    actionReviewProviderFor:(index)=>require('../commercial/model').wrap(database,ctx,provider,'ask',
-      `${options.usageKey||newId('askusage')}:action-review:${index}`),
-    followupProvider:require('../commercial/model').wrap(database,ctx,provider,'ask',`${options.usageKey||newId('askusage')}:followup`)}:options;
-  const requests=await planMany(clean,meteredOptions);const results=[];const batchId=requests.length>1?newId('pgaskbatch'):null;
-  for(let index=0;index<requests.length;index+=1){
-    const request=requests[index];const intent=request.intent;
-    const synthesisProvider=provider?require('../commercial/model').wrap(database,ctx,provider,'ask',
-      `${options.usageKey||newId('askusage')}:answer:${index}`):null;
-    const researchSelected=Boolean(provider&&intent.intent==='lookup'&&intent.view!=='general_knowledge'
-      &&intent.readQueries?.length);
-    const researched=researchSelected
-      ?await businessResearch.research(database,ctx,request.requestText,{
-        plannedQueries:intent.readQueries,
-        answerProvider:require('../commercial/model').wrap(database,ctx,provider,'ask',
-          `${options.usageKey||newId('askusage')}:research-answer:${index}`),
-        lookup,history}):null;
-    const result=intent.intent==='action'?await prepareAction(database,ctx,clean,intent,{
-      emailDraftProvider:provider&&intent.action==='send_email'
-        ?require('../commercial/model').wrap(database,ctx,provider,'ask',
-          `${options.usageKey||newId('askusage')}:email-draft:${index}`):null}):
-      intent.intent==='instruction'?await prepareInstruction(database,ctx,request.requestText,options):
-      intent.intent==='lookup'?researched||(researchSelected
-        ?{status:'CLARIFY',answer:'I could not verify that answer from your business records just now. Please try again.',
-          rows:[],columns:[],reason:'unavailable'}
-        :{status:'ANSWERED',...(await lookup(database,ctx,intent,
-          {provider:synthesisProvider,question:request.requestText}))}):
-        {status:'CLARIFY',answer:intent.interpretationUnavailable
-          ?'I could not reliably understand that request just now. Nothing was changed. Please try again.'
-          :intent.clarifyingQuestion||'I cannot confirm an answer or safe action from the connected business records for that request. What should I check or change?',
-        rows:[],columns:[],reason:intent.interpretationUnavailable?'unavailable':null};
-    const requestContext={...(request.continued?{resolvedRequestText:request.requestText}:{}),
-      ...(requests.length>1?{batchId,sourceMessage:clean,requestIndex:index+1,requestCount:requests.length}:{})};
-    const storedIntent=result.proposal?{...intent,...requestContext,proposalId:result.proposal.id,
-      proposalHref:result.proposal.href||`/actions/${result.proposal.id}`}:{...intent,...requestContext};
-    result.interactionId=await storeInteraction(database,ctx,request.continued?clean:request.requestText,storedIntent,result);
-    result.intent=intent;results.push(result);
+  const latest=history.at(-1);const pending=['CLARIFY','PREPARED'].includes(latest?.status)
+    &&latest.intent?.controlPlane?.capability
+    ?{capability:latest.intent.controlPlane.capability,args:latest.intent.controlPlane.args,
+      question:latest.answer,status:latest.status,
+      proposalId:latest.intent.controlPlane.pendingProposalId||latest.intent.proposalId||null}:null;
+  if(pending?.proposalId){
+    const active=await getProposal(database,ctx.workspaceId,pending.proposalId).catch(()=>null);
+    if(!active||active.status!=='PENDING')pending.proposalId=null;
   }
-  return results.length===1?results[0]:{status:results.some((result)=>result.status==='CLARIFY')?'CLARIFY':'ANSWERED',
-    answer:`StockChief handled all ${results.length} parts separately.`,results};
+  const selection=await require('./postgres-control-plane').run(capabilityService(),database,ctx,clean,
+    {provider,rawProvider,history,pending,page:options.page||null,usageKey});
+  const {outcomes,steps}=selection;const batchId=steps.length>1?newId('pgaskbatch'):null;
+  for(const outcome of outcomes){
+    if(outcome.step?.continuesPending&&pending?.proposalId&&outcome.result.status==='PREPARED'
+      &&outcome.result.proposal?.id!==pending.proposalId){
+      const replaced=await supersedePendingProposal(database,ctx,pending.proposalId,
+        outcome.result.proposal.id,outcome.args);
+      if(!replaced)Object.assign(outcome.result,{status:'CLARIFY',proposal:null,
+        answer:'The earlier change was already completed or discarded. This correction was not prepared. Review the current record before asking again.',
+        reason:'stale_correction'});
+    }
+    if(outcome.step?.continuesPending&&pending?.proposalId&&outcome.result.status==='CLARIFY')
+      outcome.result.pendingProposalId=pending.proposalId;
+  }
+  const plan=await require('./postgres-capability-plans').save(database,ctx,clean,batchId,steps,outcomes);
+  const results=[];
+  for(const [index,outcome] of outcomes.entries()){
+    if(outcome.result.reason==='dependency_waiting')continue;
+    results.push(await recordCapabilityOutcome(database,ctx,clean,outcome,
+      {batchId,planId:plan?.id,index,count:steps.length||1}));
+  }
+  if(results.length===1)return results[0];
+  return {status:results.some((row)=>row.status==='CLARIFY')?'CLARIFY':'ANSWERED',
+    answer:`StockChief checked ${results.length} parts of your request.`,results};
 }
 
 async function prepareInstruction(database,ctx,message,options={}){
@@ -1317,16 +956,6 @@ async function listInteractions(database,workspaceId,limit=20) {
     if(left.intent.batchId&&left.intent.batchId===right.intent.batchId)return Number(left.intent.requestIndex)-Number(right.intent.requestIndex);
     return String(left.id).localeCompare(String(right.id));
   });
-}
-
-async function pendingClarification(database,ctx,startedAt=null){
-  const latest=(await database.query(`SELECT message,intent,answer,status FROM stockchief_runtime.assistant_interactions
-    WHERE workspace_id=$1 AND actor_user_id=$2 AND ($3::timestamptz IS NULL OR created_at >= $3::timestamptz)
-    ORDER BY created_at DESC,id DESC LIMIT 1`,[ctx.workspaceId,ctx.actorId,startedAt])).rows[0];
-  if(!latest||latest.status!=='CLARIFY'||['unverified','unavailable'].includes(latest.intent?.presentation?.reason))return null;
-  return {previousUserMessage:latest.intent?.resolvedRequestText||latest.message,
-    previousAssistantQuestion:latest.answer,previousIntent:cleanPlan(latest.intent,latest.intent?.resolvedRequestText||latest.message),
-    awaitingField:latest.intent?.presentation?.awaitingField||null,emailFlow:latest.intent?.presentation?.emailFlow||null};
 }
 
 async function continueEmail(database,ctx,input,options={}){
@@ -1349,7 +978,7 @@ async function continueEmail(database,ctx,input,options={}){
   if(flow.kind==='missing_email'&&!['once','save'].includes(mode))
     throw new ValidationError('Choose whether to save the email on this contact.');
   const original=latest.intent.resolvedRequestText||latest.message;
-  const request=cleanPlan(latest.intent,original);
+  const request={...latest.intent.controlPlane?.args,...latest.intent,action:'send_email'};
   request.recipientEmail=email;
   request.recipientMode=flow.kind==='missing_contact'?mode:null;
   request.saveEmailToContact=flow.kind==='missing_email'&&mode==='save';
@@ -1360,7 +989,7 @@ async function continueEmail(database,ctx,input,options={}){
   const result=await prepareAction(database,ctx,`${original} — ${message}`,request,{
     emailDraftProvider:provider?require('../commercial/model').wrap(database,ctx,provider,'ask',
       `${options.usageKey||newId('askusage')}:email-draft`):null});
-  const storedIntent={...request,resolvedRequestText:original,
+  const storedIntent={...request,intent:'action',resolvedRequestText:original,
     ...(result.proposal?{proposalId:result.proposal.id,
       proposalHref:result.proposal.href||`/actions/${result.proposal.id}`}:{})};
   result.interactionId=await storeInteraction(database,ctx,message,storedIntent,result);
@@ -1389,43 +1018,76 @@ async function getProposal(database,workspaceId,id,lock=false,client=database) {
   return result.rows[0];
 }
 
+async function supersedePendingProposal(database,ctx,oldId,newId,args){
+  return database.transaction(async(client)=>{
+    const old=await getProposal(database,ctx.workspaceId,oldId,true,client);
+    const replacement=await getProposal(database,ctx.workspaceId,newId,true,client);
+    if(old.actor_user_id!==ctx.actorId||replacement.actor_user_id!==ctx.actorId)
+      throw new ValidationError('The prepared change does not belong to this user.');
+    if(old.status!=='PENDING'){
+      await client.query(`UPDATE stockchief_runtime.assistant_action_proposals
+        SET status='CANCELLED',cancelled_at=now() WHERE workspace_id=$1 AND id=$2 AND status='PENDING'`,
+      [ctx.workspaceId,newId]);return false;
+    }
+    if(replacement.status!=='PENDING')throw new ValidationError('The replacement is no longer waiting for review.');
+    await client.query(`UPDATE stockchief_runtime.assistant_action_proposals
+      SET status='CANCELLED',cancelled_at=now() WHERE workspace_id=$1 AND id=$2 AND status='PENDING'`,
+    [ctx.workspaceId,oldId]);
+    const plans=(await client.query(`SELECT * FROM stockchief_runtime.assistant_capability_plans
+      WHERE workspace_id=$1 AND actor_user_id=$2 AND status='WAITING' AND steps @> $3::jsonb FOR UPDATE`,
+    [ctx.workspaceId,ctx.actorId,JSON.stringify([{proposalId:oldId}])])).rows;
+    for(const plan of plans){
+      const steps=plan.steps;const step=steps.find((entry)=>entry.proposalId===oldId);
+      if(!step)continue;
+      if(old.action_type===replacement.action_type){
+        step.proposalId=newId;step.args=args;step.state='WAITING';step.reason=null;
+      }else{step.state='BLOCKED';step.reason='changed_operation';}
+      const waiting=steps.find((entry)=>entry.state==='WAITING');
+      await client.query(`UPDATE stockchief_runtime.assistant_capability_plans
+        SET steps=$3::jsonb,status=$4,waiting_proposal_id=$5,updated_at=now()
+        WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,plan.id,JSON.stringify(steps),
+        waiting?'WAITING':'BLOCKED',waiting?.proposalId||null]);
+    }
+    return true;
+  },{isolation:'SERIALIZABLE',retrySafe:true});
+}
+
+async function continueApprovedPlans(database,ctx,proposalId){
+  const rawProvider=config.ai.configured?createProviderUnobserved(config.ai.provider,config.ai.tier('fast')):null;
+  let call=0;const provider=rawProvider?{...rawProvider,complete:(request)=>require('../commercial/model')
+    .wrap(database,ctx,rawProvider,'ask',`plan:${proposalId}:${call++}`).complete(request)}:null;
+  return require('./postgres-capability-plans').resume(database,ctx,proposalId,{
+    service:capabilityService(),provider,rawProvider,
+    record:(plan,index,outcome)=>recordCapabilityOutcome(database,ctx,plan.source_message,outcome,
+      {batchId:plan.batch_id,planId:plan.id,index,count:plan.steps.length}),
+  });
+}
+
 async function executeProposal(database,ctx,id) {
   await entitlements.assertCapability(database,await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId),'ask.prepare_actions');
-  return database.transaction(async(client)=>{
+  const committed=await database.transaction(async(client)=>{
     const proposal=await getProposal(database,ctx.workspaceId,id,true,client);
     if(proposal.status==='EXECUTED')return {...proposal,replayed:true};
     if(proposal.status!=='PENDING')throw new InvariantError('That prepared change is no longer waiting for approval.',
       'proposal_not_pending');
+    const contract=require('./postgres-capability-registry').registry.get(proposal.action_type);
+    if(!contract||contract.kind!=='mutation')throw new InvariantError('That prepared action is not registered.','proposal_action_unknown');
+    const actor=(await client.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',
+      [ctx.workspaceId,ctx.actorId])).rows[0];
+    require('../actions/permissions').assertCan(actor,contract.permission,contract.name);
     const payload={...proposal.payload,idempotencyKey:proposal.idempotency_key};
-    let result;
-    if(proposal.action_type==='inventory.receive')result=await inventory.receiveInTransaction(client,ctx,payload);
-    else if(proposal.action_type==='inventory.issue')result=await inventory.issueInTransaction(client,ctx,payload);
-    else if(proposal.action_type==='inventory.transfer'){
-      const requested=await transfers.requestInTransaction(client,ctx,{fromLocationId:payload.sourceLocationId,
-        toLocationId:payload.destinationLocationId,reference:payload.reference,idempotencyKey:payload.idempotencyKey,
-        lines:[{skuId:payload.skuId,quantity:payload.quantity}]});
-      const approved=await transfers.approveInTransaction(client,ctx,requested.id,
-        {idempotencyKey:`${payload.idempotencyKey}:approve`});
-      result={transferId:approved.id,transferNumber:approved.transfer_number,status:approved.status,
-        quantity:approved.totals.approved,physicalState:'Stock is reserved at the source; nothing has left yet.'};
-    }
-    else if(proposal.action_type==='inventory.adjust')result=await inventory.adjustInTransaction(client,ctx,payload);
-    else if(proposal.action_type==='catalog.create_item')result=await catalog.createItemInTransaction(client,ctx,payload);
-    else if(proposal.action_type==='location.create')result=await locations.createLocationInTransaction(client,ctx,payload);
-    else if(proposal.action_type==='catalog.set_price')result=await pricing.setPriceInTransaction(client,ctx,payload);
-    else if(proposal.action_type==='catalog.set_purchase_cost')result=await pricing.setPurchaseCostInTransaction(client,ctx,payload);
-    else if(proposal.action_type==='communication.send_email')result=await outboundMail.queueInTransaction(client,ctx,payload,proposal.idempotency_key);
-    else if(proposal.action_type==='sales_order.create')result=await workflows.createSalesOrderInTransaction(client,ctx,payload);
-    else if(proposal.action_type==='purchase_order.create')result=await workflows.createPurchaseOrderInTransaction(client,ctx,payload);
-    else if(proposal.action_type==='purchase_order.receive')result=await workflows.receivePurchaseOrderInTransaction(client,ctx,payload.purchaseOrderId,payload);
-    else if(proposal.action_type==='supplier_payment.record')result=await workflows.recordSupplierPaymentInTransaction(client,ctx,payload);
-    else throw new InvariantError('That prepared action is not executable.','proposal_action_unknown');
+    const result=await contract.execute(client,ctx,payload);
+    if(!await contract.verifyExecution(client,ctx,result,payload))
+      throw new InvariantError('StockChief could not verify the resulting business record. Nothing was committed.',
+        'proposal_result_unverified');
     const changed=await client.query(`UPDATE stockchief_runtime.assistant_action_proposals
       SET status='EXECUTED',result=$3::jsonb,executed_at=now() WHERE workspace_id=$1 AND id=$2 AND status='PENDING'
       RETURNING *`,[ctx.workspaceId,id,JSON.stringify(result)]);
     if(!changed.rows.length)throw new InvariantError('That prepared change was updated by another request.','proposal_changed');
     return {...changed.rows[0],replayed:false};
   },{isolation:'SERIALIZABLE',retrySafe:true});
+  try{return {...committed,continued:await continueApprovedPlans(database,ctx,id)};}
+  catch(error){return {...committed,continuationError:error.message};}
 }
 
 async function cancelProposal(database,ctx,id) {
@@ -1433,8 +1095,9 @@ async function cancelProposal(database,ctx,id) {
     SET status='CANCELLED',cancelled_at=now() WHERE workspace_id=$1 AND id=$2 AND status='PENDING' RETURNING *`,
   [ctx.workspaceId,id]);
   if(!result.rows.length)throw new InvariantError('That prepared change is no longer waiting.','proposal_not_pending');
+  await continueApprovedPlans(database,ctx,id).catch(()=>{});
   return result.rows[0];
 }
 
-module.exports={PLAN_SCHEMA,SYSTEM,plan,planMany,lookup,ask,listInteractions,pendingClarification,
+module.exports={lookup,ask:askCapabilities,listInteractions,
   continueEmail,reviseEmailProposal,getProposal,executeProposal,cancelProposal};

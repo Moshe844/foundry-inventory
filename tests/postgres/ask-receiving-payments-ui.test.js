@@ -109,9 +109,13 @@ test('real Chromium Ask StockChief safely receives a PO and records one supplier
       AND location_id=$3`,[ctx.workspaceId,skuId,location.id])).rows[0].on_hand);
 
     text=await ask(page,base,'Pay the supplier without naming the bill');
-    assert.match(text,/Which exact supplier bill or supplier invoice number was paid/);
+    assert.match(text,/Record \$18\.00 paid to Safe Supply against BILL-00001/);
+    assert.match(text,/Nothing has changed yet/);
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM accounting_payments WHERE workspace_id=$1`,
       [ctx.workspaceId])).rows[0].count,'0');
+    const inferred=(await database.query(`SELECT id FROM stockchief_runtime.assistant_action_proposals
+      WHERE workspace_id=$1 AND status='PENDING' ORDER BY created_at DESC LIMIT 1`,[ctx.workspaceId])).rows[0];
+    await require('../../src/assistant/postgres-service').cancelProposal(database,ctx,inferred.id);
 
     text=await ask(page,base,'Record the proven supplier payment');
     assert.match(text,new RegExp(`Record \\$18\\.00 paid to Safe Supply against BILL-00001 on ${PAYMENT_DATE} by ACH`));

@@ -24,6 +24,14 @@ const {newId}=require('../../src/lib/util');
 const systemEmail=require('../../src/operations/email');
 const runtimeHandlers=require('../../src/operations/postgres-runtime-handlers');
 const commercialNotifications=require('../../src/commercial/notifications');
+const {pricedUsage,PRICED_MODEL}=require('../helpers/postgres-model-fixture');
+const askPlanProvider={name:'anthropic',model:PRICED_MODEL,async complete(input){
+  const message=JSON.parse(input.prompt).message;
+  const email=message.startsWith('Email ');
+  return {data:{steps:[{capability:email?'communication.send_email':'read.profit_change',
+    arguments:email?[{name:'recipient',value:'Acme Supply'},{name:'body',value:'The delivery is approved.'}]:[],
+    dependsOn:[],continuesPending:false}],clarifyingQuestion:''},usage:pricedUsage()};
+}};
 
 async function subscribe(database,accountId,planId,status='ACTIVE',input={}){
   const id=newId('sub');await database.query(`INSERT INTO account_subscriptions
@@ -226,26 +234,28 @@ test('commercial entitlement and subscription lifecycle acceptance', {timeout:18
   await context.test('24 Starter Ask does not bypass the connected-email entitlement',async()=>{
     await subscribe(database,business.accountId,'starter','ACTIVE',{start:new Date().toISOString(),end:'2099-10-01T00:00:00Z'});
     const result=await assistant.ask(database,{workspaceId:business.workspaceId,actorId:business.userId},
-      'Email Acme Supply and say the delivery is approved.');
+      'Email Acme Supply and say the delivery is approved.',{provider:askPlanProvider});
     assert.equal(result.status,'CLARIFY');assert.match(result.answer,/available on Growth/i);
     assert.match(result.handoff.href,/capability=connection.email/);
   });
   await context.test('25 Growth Ask passes the email entitlement and grounds the recipient',async()=>{
     await database.query("UPDATE account_subscriptions SET plan_id='growth' WHERE account_id=$1",[business.accountId]);
     const result=await assistant.ask(database,{workspaceId:business.workspaceId,actorId:business.userId},
-      'Email Acme Supply and say the delivery is approved.');
+      'Email Acme Supply and say the delivery is approved.',{provider:askPlanProvider});
     assert.equal(result.status,'CLARIFY');assert.doesNotMatch(result.answer,/available on Growth/i);
     assert.match(result.answer,/could not find.*Acme Supply/i);
   });
   await context.test('26 Starter receives a contextual upgrade for period-over-period profit explanation',async()=>{
     await database.query("UPDATE account_subscriptions SET plan_id='starter' WHERE account_id=$1",[business.accountId]);
-    const result=await assistant.ask(database,{workspaceId:business.workspaceId,actorId:business.userId},'Why did profit fall?');
+    const result=await assistant.ask(database,{workspaceId:business.workspaceId,actorId:business.userId},
+      'Why did profit fall?',{provider:askPlanProvider});
     assert.equal(result.status,'CLARIFY');assert.match(result.answer,/available on Growth/i);
     assert.match(result.handoff.href,/accounting.explanations/);
   });
   await context.test('27 Growth profit explanation uses deterministic period evidence',async()=>{
     await database.query("UPDATE account_subscriptions SET plan_id='growth' WHERE account_id=$1",[business.accountId]);
-    const result=await assistant.ask(database,{workspaceId:business.workspaceId,actorId:business.userId},'Why did profit fall?');
+    const result=await assistant.ask(database,{workspaceId:business.workspaceId,actorId:business.userId},
+      'Why did profit fall?',{provider:askPlanProvider});
     assert.equal(result.status,'ANSWERED');assert.match(result.answer,/Net income/i);assert.equal(result.rows.length,4);
     assert.deepEqual(result.columns,['measure','current','previous','profitImpact']);
   });
