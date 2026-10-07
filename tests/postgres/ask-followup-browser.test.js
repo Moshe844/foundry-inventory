@@ -93,7 +93,7 @@ test('browser Ask retains contact details through a follow-up and does not route
     assert.equal((await database.query('SELECT COUNT(*)::int AS total FROM suppliers WHERE workspace_id=$1',
       [owner.workspace_id])).rows[0].total,0);
     await ask('What is in stock right now?');
-    assert.match(await page.locator('main').innerText(),/0 active products/i);
+    assert.match(await page.locator('main').innerText(),/No products have ever been recorded/i);
     const latest=(await database.query(`SELECT intent FROM stockchief_runtime.assistant_interactions
       WHERE workspace_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1`,[owner.workspace_id])).rows[0];
     assert.equal(latest.intent.controlPlane.capability,'read.inventory_summary');

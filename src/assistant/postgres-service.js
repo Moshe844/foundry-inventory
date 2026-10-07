@@ -290,15 +290,20 @@ async function lookup(database,ctx,request,options={}) {
   if(request.view==='inventory_summary'){
     const count=(await database.query(`SELECT
       (SELECT COUNT(*) FROM items WHERE workspace_id=$1 AND is_active=1) AS products,
+      (SELECT COUNT(*) FROM items WHERE workspace_id=$1) AS products_ever,
       (SELECT COUNT(*) FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
         WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1) AS skus,
       (SELECT COALESCE(SUM(b.on_hand),0) FROM balances b
         JOIN skus s ON s.id=b.sku_id AND s.workspace_id=b.workspace_id
         JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
         WHERE b.workspace_id=$1 AND s.is_active=1 AND i.is_active=1) AS on_hand`,[ctx.workspaceId])).rows[0];
-    const products=Number(count.products),skus=Number(count.skus),onHand=Number(count.on_hand);
-    return {answer:`You have ${products.toLocaleString('en-US')} active ${products===1?'product':'products'} in StockChief, across ${skus.toLocaleString('en-US')} ${skus===1?'SKU':'SKUs'}, with ${onHand.toLocaleString('en-US')} units on hand.`,
-      rows:[{products,skus,onHand}],columns:['products','skus','onHand'],handoff:{href:'/inventory',label:'Open inventory'}};
+    const products=Number(count.products),productsEver=Number(count.products_ever),
+      skus=Number(count.skus),onHand=Number(count.on_hand);
+    const answer=productsEver===0?'No products have ever been recorded in StockChief; you have 0 units on hand.':
+      `You have ${products.toLocaleString('en-US')} active ${products===1?'product':'products'} in StockChief, across ${skus.toLocaleString('en-US')} ${skus===1?'SKU':'SKUs'}, with ${onHand.toLocaleString('en-US')} units on hand.${productsEver>products?` ${productsEver.toLocaleString('en-US')} products have been recorded here over time.`:''}`;
+    return {answer,
+      rows:[{products,skus,onHand,productsEver}],columns:['products','skus','onHand','productsEver'],
+      handoff:{href:'/inventory',label:'Open inventory'}};
   }
   if(request.view==='locations'){
     const rows=(await database.query(`SELECT l.id,l.name,l.kind,COALESCE(SUM(b.on_hand),0) AS units
@@ -552,6 +557,14 @@ async function resolveParty(database,kind,workspaceId,search){
   return broad.rows.length?{ambiguous:broad.rows}:{notFound:true};
 }
 
+async function pendingContact(database,workspaceId,kind,name){
+  if(!name)return null;
+  return (await database.query(`SELECT id,summary FROM stockchief_runtime.assistant_action_proposals
+    WHERE workspace_id=$1 AND action_type='contact.create' AND status='PENDING'
+      AND payload->>'kind'=$2 AND lower(payload->>'name')=lower($3)
+    ORDER BY created_at DESC,id DESC LIMIT 1`,[workspaceId,kind,name])).rows[0]||null;
+}
+
 const EMAIL_GRAMMAR_WORDS=new Set('a an and are as at be been but by can could did do for from had has have i if in is it its me my of on or our please should so that the their them there these this to us we were will with would you your hello regards best sincerely thank thanks'.split(' '));
 function editDistanceAtMostTwo(left,right){
   if(Math.abs(left.length-right.length)>2)return false;
@@ -627,9 +640,11 @@ async function prepareAction(database,ctx,message,request,options={}) {
     if(existing)return {status:'CLARIFY',
       answer:`${name} is already recorded as a ${kind}. I did not create a duplicate. Tell me if you want to change the existing record.`,
       reason:'duplicate_contact'};
+    const phone=trimOrNull(request.phone);
+    const details=[email?`email ${email}`:null,phone?`phone ${phone}`:null].filter(Boolean);
     return createProposal(database,ctx,message,'contact.create',{kind,name,email,
-      phone:trimOrNull(request.phone),notes:trimOrNull(request.notes)},
-    `Add ${name} as a ${kind}${email?` with ${email}`:''}.`);
+      phone,notes:trimOrNull(request.notes)},
+    `Add ${name} as a ${kind}${details.length?` with ${details.join(' and ')}`:''}.`);
   }
   if(request.action==='send_email'){
     const commercialScope=await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId);
@@ -671,6 +686,51 @@ async function prepareAction(database,ctx,message,request,options={}) {
       saveEmailToContact:request.saveEmailToContact===true,
       connectorId:mailbox.row.id,mailboxName:mailbox.row.display_name},
     `Email ${resolved.row.name} at ${recipientEmail} from ${mailbox.row.display_name}.`);
+  }
+  if(request.action==='create_customer_invoice'){
+    const customer=await resolveParty(database,'customer',ctx.workspaceId,request.customer);
+    if(customer.missing)return {status:'CLARIFY',answer:'Which customer should the invoice be for?',awaitingField:'customer'};
+    if(customer.notFound){const waiting=await pendingContact(database,ctx.workspaceId,'customer',request.customer);
+      return waiting?{status:'CLARIFY',answer:`${request.customer} is prepared but not yet a customer. Approve that contact first; no invoice was recorded.`,
+        handoff:{href:`/actions/${waiting.id}`,label:'Approve customer'}}:
+        {status:'CLARIFY',answer:`I could not find customer “${request.customer}”. Nothing was prepared.`,
+          handoff:recordHandoff('customer',request.customer)};}
+    if(customer.ambiguous)return {status:'CLARIFY',answer:'More than one customer matches. Which one should receive the invoice?',
+      awaitingField:'customer',choices:customer.ambiguous.map((row)=>({label:row.name,value:row.name}))};
+    if(!Number.isSafeInteger(request.quantity)||request.quantity<1)return {status:'CLARIFY',
+      answer:'How many units should this invoice cover?',awaitingField:'quantity'};
+    let description=request.description||null;let unitAmount=request.amount;
+    let priceCurrency=null;
+    if(request.sku){
+      const sku=await resolveOne(database,'skus',ctx.workspaceId,request.sku,'i.name,s.position');
+      if(sku.notFound)return {status:'CLARIFY',answer:`I could not find product “${request.sku}”. Nothing was prepared.`};
+      if(sku.ambiguous)return {status:'CLARIFY',answer:'More than one product matches. Which exact SKU should appear on the invoice?',
+        awaitingField:'sku'};
+      if(sku.row){
+        description=description||`${sku.row.name}${sku.row.variant_label?` · ${sku.row.variant_label}`:''}`;
+        const price=await pricing.currentPrice(database,ctx.workspaceId,sku.row.id);
+        if(unitAmount===null||unitAmount===undefined)unitAmount=price.amount_minor===null?null:price.amount_minor/100;
+        priceCurrency=price.currency;
+      }
+    }
+    if(!description)return {status:'CLARIFY',answer:'What product or service should appear on the invoice?',
+      awaitingField:'description'};
+    if(unitAmount===null||unitAmount===undefined||unitAmount<=0)return {status:'CLARIFY',
+      answer:`What is the unit price for ${description}?`,awaitingField:'amount'};
+    const base=(await database.query(`SELECT base_currency FROM accounting_settings WHERE workspace_id=$1 AND enabled=1`,
+      [ctx.workspaceId])).rows[0]?.base_currency;
+    if(!base)return {status:'CLARIFY',answer:'Accounting must be configured before StockChief can record an invoice. Nothing was prepared.',
+      handoff:{href:'/accounting/settings',label:'Configure accounting'}};
+    if(request.currency&&request.currency!==base||!request.currency&&priceCurrency&&priceCurrency!==base)
+      return {status:'CLARIFY',answer:`This business records invoices in ${base}; the requested price is in ${request.currency||priceCurrency}. Nothing was prepared.`};
+    const issueDate=request.issueDate||new Date().toISOString().slice(0,10);
+    const tax=pricing.toMinor(String(request.tax??0),'Invoice tax');
+    const unitMinor=pricing.toMinor(String(unitAmount),'Invoice unit price');
+    if(unitMinor<=0)return {status:'CLARIFY',answer:'The invoice unit price must be greater than zero.'};
+    return createProposal(database,ctx,message,'customer_invoice.create',{
+      customerId:customer.row.id,description,quantity:request.quantity,unitAmount:String(unitAmount),
+      tax:String(request.tax??0),issueDate,dueDate:request.dueDate||null,notes:request.reference||null,
+    },`Record an invoice for ${customer.row.name}: ${request.quantity} × ${description} at ${pricing.formatMinor(unitMinor,base)} each${tax?`, plus ${pricing.formatMinor(tax,base)} tax`:`, with no tax added`}. Approval posts the invoice; it does not send it, fulfill an order, or record payment.`);
   }
   if(request.action==='receive_purchase_order'){
     if(!request.purchaseOrder)return {status:'CLARIFY',answer:'Which exact purchase order number did these goods arrive against?',awaitingField:'purchaseOrder'};
@@ -759,6 +819,9 @@ async function prepareAction(database,ctx,message,request,options={}) {
       :`I found ${sku.row.name}${sku.row.variant_label?` · ${sku.row.variant_label}`:''} (${sku.row.code})${sku.row.stocked_units?` with ${sku.row.stocked_units} on hand`:''}. Which supplier should provide ${request.quantity} more? Nothing was prepared.`,awaitingField:sales?'customer':'supplier',carryForward:skuContext};
     if(party.notFound){
       const kind=sales?'customer':'supplier';const name=sales?request.customer:request.supplier;
+      const waiting=await pendingContact(database,ctx.workspaceId,kind,name);
+      if(waiting)return {status:'CLARIFY',answer:`${name} is prepared but not yet a ${kind}. Approve that contact first; no order was recorded.`,
+        handoff:{href:`/actions/${waiting.id}`,label:`Approve ${kind}`},carryForward:skuContext};
       return {status:'CLARIFY',answer:`I could not find ${kind} “${name}”. Add the ${kind} record first, then return here to prepare the order. Nothing was prepared.`,
         handoff:recordHandoff(kind,name,{shippingAddress:request.shipToAddress}),carryForward:skuContext};
     }
@@ -797,13 +860,11 @@ async function prepareAction(database,ctx,message,request,options={}) {
       AND sku_id=$3 AND is_active=1`,[ctx.workspaceId,party.row.id,sku.row.id])).rows[0]||null;
     const unitCost=request.amount===null?(supplierItem?.last_unit_cost===null||supplierItem?.last_unit_cost===undefined
       ?null:Number(supplierItem.last_unit_cost)):request.amount;
-    if(unitCost===null)return {status:'CLARIFY',answer:`What is ${party.row.name}'s cost per inventory unit for ${sku.row.name}?`,awaitingField:'amount',
-      carryForward:{...orderContext,location:place.row.name}};
     const currency=request.currency||party.row.currency||'USD';
     return createProposal(database,ctx,message,'purchase_order.create',{supplierId:party.row.id,
       destinationLocationId:place.row.id,currency,expectedDate:request.neededBy,reference:request.reference,
       lines:[{skuId:sku.row.id,quantityUnits:request.quantity,unitCost,destinationLocationId:place.row.id}]},
-    `Prepare a draft purchase order to ${party.row.name}: ${request.quantity} × ${sku.row.name}${sku.row.variant_label?` · ${sku.row.variant_label}`:''} for ${place.row.name} at ${pricing.formatMinor(Math.round(unitCost*100),currency)} per inventory unit.`);
+    `Prepare a draft purchase order to ${party.row.name}: ${request.quantity} × ${sku.row.name}${sku.row.variant_label?` · ${sku.row.variant_label}`:''} for ${place.row.name}${unitCost===null?'. Supplier cost is not recorded; the draft cannot be placed until it is priced':` at ${pricing.formatMinor(Math.round(unitCost*100),currency)} per inventory unit`}.`);
   }
   if(request.action==='create_item'){
     if(!request.search && !request.sku)return {status:'CLARIFY',answer:'What is the product name?',awaitingField:'search'};
@@ -829,8 +890,12 @@ async function prepareAction(database,ctx,message,request,options={}) {
       await pricing.currentPrice(database,ctx.workspaceId,sku.row.id):await pricing.purchaseCost(database,ctx.workspaceId,sku.row.id);
     const actionType=request.action==='set_price'?'catalog.set_price':'catalog.set_purchase_cost';
     const label=request.action==='set_price'?'selling price':'purchase cost';
-    return createProposal(database,ctx,message,actionType,{skuId:sku.row.id,amountMinor:pricing.toMinor(String(request.amount),label),
-      currency,expectedCurrentId:current?.id||null},`Set ${sku.row.name}${sku.row.variant_label?` · ${sku.row.variant_label}`:''} ${label} to ${pricing.formatMinor(pricing.toMinor(String(request.amount),label),currency)}.`);
+    const amountMinor=pricing.toMinor(String(request.amount),label);
+    if(Number(current?.amount_minor)===amountMinor&&current?.amount_minor!==null&&current?.amount_minor!==undefined
+      &&current?.currency===currency)return {status:'ANSWERED',
+      answer:`${sku.row.name}${sku.row.variant_label?` · ${sku.row.variant_label}`:''} already has a ${label} of ${pricing.formatMinor(amountMinor,currency)}. Nothing changed.`};
+    return createProposal(database,ctx,message,actionType,{skuId:sku.row.id,amountMinor,
+      currency,expectedCurrentId:current?.id||null},`Set ${sku.row.name}${sku.row.variant_label?` · ${sku.row.variant_label}`:''} ${label} to ${pricing.formatMinor(amountMinor,currency)}.`);
   }
   if(sku.row.tracking_mode!=='quantity')return {status:'CLARIFY',answer:`${sku.row.name} is ${sku.row.tracking_mode}-tracked. Include the exact ${sku.row.tracking_mode==='lot'?'lot or batch':'serial numbers'} before StockChief prepares the movement.`};
   if(request.action==='transfer'){
@@ -958,8 +1023,9 @@ async function askCapabilities(database,ctx,message,options={}){
       {batchId,planId:plan?.id,index,count:steps.length||1}));
   }
   if(results.length===1)return results[0];
-  return {status:results.some((row)=>row.status==='CLARIFY')?'CLARIFY':'ANSWERED',
-    answer:`StockChief checked ${results.length} parts of your request.`,results};
+  return {status:results.some((row)=>row.status==='CLARIFY')?'CLARIFY':
+    results.some((row)=>row.status==='PREPARED')?'PREPARED':'ANSWERED',
+  answer:results.map((row)=>row.answer).filter(Boolean).join(' '),results};
 }
 
 async function prepareInstruction(database,ctx,message,options={}){

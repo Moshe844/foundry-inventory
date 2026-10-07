@@ -21,6 +21,11 @@ function minor(value,label,allowZero=false){
 }
 
 async function createCustomerInvoice(database,ctx,input){
+  return database.transaction((client)=>createCustomerInvoiceInTransaction(client,ctx,input),
+    {isolation:'SERIALIZABLE',retrySafe:true});
+}
+
+async function createCustomerInvoiceInTransaction(client,ctx,input){
   const customerId=String(input.customerId||'');
   const description=requireText(input.description,'Description',{max:250});
   const quantity=Number(input.quantity);
@@ -36,7 +41,7 @@ async function createCustomerInvoice(database,ctx,input){
   if(dueDate&&dueDate<issueDate)throw new ValidationError('Due date cannot be before the issue date.');
   const requestKey=requireText(input.idempotencyKey,'Invoice request key',{max:160});
   const sourceKey=`manual-customer-invoice:${requestKey}`;
-  return database.transaction(async(client)=>{
+  return (async()=>{
     await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',[`invoice:${ctx.workspaceId}`]);
     const existing=(await client.query(`SELECT id,invoice_number FROM accounting_customer_invoices
       WHERE workspace_id=$1 AND source_key=$2`,[ctx.workspaceId,sourceKey])).rows[0];
@@ -82,7 +87,7 @@ async function createCustomerInvoice(database,ctx,input){
       VALUES($1,$2,$3,1,$4,$5,$6,$7,$8,$9)`,
     [newId('arline'),ctx.workspaceId,invoiceId,description,quantity,unitPriceMinor,subtotalMinor,revenueAccount.id,at]);
     return {id:invoiceId,invoice_number:invoiceNumber,replayed:false};
-  },{isolation:'SERIALIZABLE',retrySafe:true});
+  })();
 }
 
-module.exports={createCustomerInvoice};
+module.exports={createCustomerInvoice,createCustomerInvoiceInTransaction};

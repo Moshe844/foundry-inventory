@@ -35,6 +35,12 @@ test('live reasoning model and Chromium prepare, approve, and verify a supplier 
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
     const workspaceId=(await database.query("SELECT id FROM workspaces WHERE name='Meadow Fixtures'")).rows[0].id;
     await page.goto(`${base}/ask`);
+    await page.getByLabel('Ask StockChief').fill('Has this new business ever recorded any inventory products?');
+    await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Continue'}).click()]);
+    const firstAnswer=await page.locator('.rm-turn--latest + .rm-turn--foundry').innerText();
+    assert.match(firstAnswer,/no (?:inventory )?products|0 products|never recorded any inventory products/i);
+    assert.doesNotMatch(firstAnswer,/productsEver|inventory_summary/i);
+    await Promise.all([page.waitForURL(`${base}/ask`),page.getByRole('button',{name:'New conversation'}).click()]);
     await page.getByLabel('Ask StockChief').fill('Put Meadow Materials in our supplier contacts. Their email is meadow@example.test.');
     await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Continue'}).click()]);
     const proposal=(await database.query(`SELECT id,status,payload FROM stockchief_runtime.assistant_action_proposals
@@ -49,6 +55,9 @@ test('live reasoning model and Chromium prepare, approve, and verify a supplier 
     await page.getByRole('button',{name:/approve/i}).click();
     assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM suppliers WHERE workspace_id=$1
       AND name='Meadow Materials' AND email='meadow@example.test'`,[workspaceId])).rows[0].count,1);
+    await page.goto(`${base}/ask`);
+    assert.match(await page.locator('main').innerText(),/Completed: Add Meadow Materials as a supplier/);
+    assert.doesNotMatch(await page.locator('main').innerText(),/Needs your approval/);
 
     const actorId=(await database.query('SELECT id FROM users WHERE workspace_id=$1 ORDER BY created_at LIMIT 1',
       [workspaceId])).rows[0].id;

@@ -8,13 +8,15 @@
 const DEFINITIONS=Object.freeze({
   replenishment:{description:'Set a reorder point, target stock, or safety stock for a real SKU. This detects need but grants no purchase authority.',
     trigger:'inventory_position_evaluated',action:'recommend_replenishment',engine:'reorder_policies'},
+  stock_alert:{description:'Notify the owner in Needs You once when approved physical on-hand stock for a SKU reaches or falls below a stated level. A recovery rearms the rule; this does not order goods or send external email.',
+    trigger:'scheduled_stock_position_evaluated',action:'notify_owner',engine:'stock_threshold_rules'},
   supplier_terms:{description:'Store supplier lead time, pack size, minimum quantity, or order multiple for a real supplier and SKU.',
     trigger:'purchase_planning',action:'apply_supplier_terms',engine:'supplier_items'},
   transfer_authority:{description:'Authorize bounded automatic transfers under the existing transfer policy engine.',
     trigger:'autopilot_plan',action:'approve_transfer',engine:'automation_policies'},
   purchase_authority:{description:'Authorize bounded automatic supplier purchase orders under the existing purchasing policy engine.',
     trigger:'autopilot_plan',action:'approve_purchase_order',engine:'automation_policies'},
-  operating_preference:{description:'Set the existing target days of stock or transfer-before-purchasing preference.',
+  operating_preference:{description:'Set a workspace-wide planning preference: when stock is needed, favor an available transfer between locations before recommending a new supplier purchase. This stores the preference for later planning; it does not itself move stock or place an order. Can also set target days of stock.',
     trigger:'planning_evaluation',action:'apply_preference',engine:'operational_preferences'},
   stock_protection:{description:'Block or warn about an outgoing stock issue at a SKU threshold using the existing stock guard.',
     trigger:'inventory_issue_requested',action:'enforce_stock_guard',engine:'operating_guards'},
@@ -30,6 +32,7 @@ function compile(change){
   let condition={};
   if(change.domain==='replenishment')condition={reorderPoint:change.reorderPoint,targetStock:change.targetStock,
     safetyStock:change.safetyStock};
+  else if(change.domain==='stock_alert')condition={onHandAtOrBelow:change.notificationThreshold};
   else if(change.domain==='supplier_terms')condition={leadTimeDays:change.leadTimeDays,
     unitsPerPurchaseUnit:change.unitsPerPurchaseUnit,minimumOrderQuantity:change.minimumOrderQuantity,
     orderMultiple:change.orderMultiple};
@@ -46,8 +49,9 @@ function compile(change){
   return {version:1,domain:change.domain,trigger:definition.trigger,scope,condition,
     action:definition.action,authority:{approval:'owner_required',automatic:
       ['transfer_authority','purchase_authority'].includes(change.domain)&&!removing},
-    notification:{kind:['transfer_authority','purchase_authority'].includes(change.domain)
-      ?'existing_work_item':'none'},lifecycle:{state:removing?'revoke_on_approval':'activate_on_approval',
+    notification:{kind:change.domain==='stock_alert'?'needs_you':
+      ['transfer_authority','purchase_authority'].includes(change.domain)?'existing_work_item':'none'},
+    lifecycle:{state:removing?'revoke_on_approval':'activate_on_approval',
       supersession:'versioned_by_scope'},engine:definition.engine};
 }
 

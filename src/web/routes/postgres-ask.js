@@ -34,38 +34,51 @@ function provenanceFor(turn){
   reason:status==='clarify'?(turn.intent?.presentation?.reason|| (choices.length>1?'ambiguous':'missing')):undefined};
 }
 
-function goalFor(turn,index,position=0,emailProposal=null){
-  const status=emailProposal&&emailProposal.status!=='PENDING'?'answered':STATUS[turn.status]||'answered';
+function goalFor(turn,index,position=0,proposal=null){
+  const status=proposal&&proposal.status!=='PENDING'?'answered':STATUS[turn.status]||'answered';
   const provenance=provenanceFor(turn);const label=ledger.statusLabelFor(status,provenance);
-  return {id:turn.id,position,kind:turn.intent?.intent||'lookup',text:turn.message,status,said:turn.answer,
-    resultHref:emailProposal?null:turn.intent?.proposalHref||null,resultLabel:turn.intent?.proposalHref?'Review prepared change':null,
-    provenance,statusLabel:emailProposal?.status==='EXECUTED'
-      ?emailProposal.deliveryStatus==='SENT'?'Sent':emailProposal.deliveryStatus==='FAILED'?'Delivery issue':'Sending'
-      :emailProposal?.status==='CANCELLED'?'Discarded':label.label,
+  const said=proposal?.status==='PENDING'&&turn.status==='PREPARED'?proposal.summary:
+    proposal?.status==='APPROVED'?`Rule in force: ${proposal.summary}`:
+    proposal?.status==='EXECUTED'?proposal.actionType==='communication.send_email'
+      ?`Email approved for ${proposal.payload.recipientEmail}; check delivery status.`:`Completed: ${proposal.summary}`:
+      ['CANCELLED','SUPERSEDED'].includes(proposal?.status)?'This proposal was discarded.':turn.answer;
+  return {id:turn.id,position,kind:turn.intent?.intent||'lookup',text:turn.message,status,said,
+    resultHref:proposal?.status==='PENDING'?turn.intent?.proposalHref||null:null,
+    resultLabel:proposal?.status==='PENDING'?'Review prepared change':null,
+    provenance,statusLabel:proposal?.status==='APPROVED'?'In force':proposal?.status==='EXECUTED'
+      ?proposal.actionType==='communication.send_email'
+        ?proposal.deliveryStatus==='SENT'?'Sent':proposal.deliveryStatus==='FAILED'?'Delivery issue':'Sending'
+        :'Completed'
+      :['CANCELLED','SUPERSEDED'].includes(proposal?.status)?'Discarded':label.label,
     statusTone:label.tone,createdAt:turn.created_at,updatedAt:turn.created_at,index};
 }
 
-function transcriptFor(interactions,emailProposal=null){
+function transcriptFor(interactions,proposals=new Map()){
   const transcript=[];const batches=new Map();
   interactions.forEach((turn,index)=>{
     const batchId=turn.intent?.batchId;
     if(!batchId){transcript.push({id:`turn-${turn.id}`,conversationId:'postgres',channel:'ask',message:turn.message,
       understanding:turn.intent||{},createdAt:turn.created_at,
-      goals:[goalFor(turn,index,0,emailProposal?.interactionId===turn.id?emailProposal:null)],referents:[]});return;}
+      goals:[goalFor(turn,index,0,proposals.get(turn.intent?.proposalId))],referents:[]});return;}
     let batch=batches.get(batchId);
     if(!batch){batch={id:`turn-${batchId}`,conversationId:'postgres',channel:'ask',message:turn.intent.sourceMessage||turn.message,
       understanding:{intent:'multi_request'},createdAt:turn.created_at,goals:[],referents:[]};batches.set(batchId,batch);transcript.push(batch);}
     batch.goals.push(goalFor(turn,index,Math.max(0,Number(turn.intent.requestIndex||1)-1),
-      emailProposal?.interactionId===turn.id?emailProposal:null));
+      proposals.get(turn.intent?.proposalId)));
     batch.goals.sort((left,right)=>left.position-right.position);
   });
   return transcript;
 }
 
-function resultFor(turn,emailProposal=null){
+function resultFor(turn,proposal=null){
   if(!turn)return null;const columns=columnsFor(turn);const rows=turn.evidence||[];
   const proposalHref=turn.intent?.proposalHref||null;const storedHandoff=turn.intent?.presentation?.handoff||null;
+  const emailProposal=proposal?.actionType==='communication.send_email'?proposal:null;
   let answer=turn.answer;
+  if(proposal?.status==='PENDING'&&turn.status==='PREPARED')answer=proposal.summary;
+  if(proposal?.status==='EXECUTED'&&!emailProposal)answer=`Completed: ${proposal.summary}`;
+  if(proposal?.status==='APPROVED')answer=`Rule in force: ${proposal.summary}`;
+  if(['CANCELLED','SUPERSEDED'].includes(proposal?.status))answer='Discarded. Nothing was changed by this proposal.';
   if(emailProposal?.status==='EXECUTED')answer=emailProposal.deliveryStatus==='SENT'
     ?`Email sent to ${emailProposal.payload.recipientEmail}. The mailbox confirmed delivery.`
     :emailProposal.deliveryStatus==='FAILED'
@@ -78,7 +91,8 @@ function resultFor(turn,emailProposal=null){
     needsClarification:turn.status==='CLARIFY'&&!['unverified','unavailable'].includes(turn.intent?.presentation?.reason),
     choices:turn.intent?.presentation?.choices||[],emailFlow:turn.intent?.presentation?.emailFlow||null,
     emailProposal,
-    handoff:emailProposal?null:proposalHref?{href:proposalHref,label:'Review prepared change'}:storedHandoff,
+    handoff:proposal&&proposal.status!=='PENDING'?null:emailProposal?null:
+      proposalHref?{href:proposalHref,label:'Review prepared change'}:storedHandoff,
     plan:{intent:turn.intent?.intent||'lookup',entityQuery:turn.intent?.search||turn.intent?.sku||'',
     locationQuery:turn.intent?.location||''},interpretation:(turn.intent?.presentation?.researchViews||[]).join(', ')||
       turn.intent?.view||turn.intent?.action||turn.intent?.intent||'business request',
@@ -104,6 +118,22 @@ async function instructionLists(database,workspaceId){
   return {recentRules:rows.filter((row)=>row.status==='APPROVED'),pendingRules:rows.filter((row)=>row.status==='PENDING')};
 }
 
+async function proposalStates(database,workspaceId,interactions){
+  const ids=[...new Set(interactions.map((turn)=>turn.intent?.proposalId).filter(Boolean))];
+  const states=new Map();if(!ids.length)return states;
+  const [actions,instructions]=await Promise.all([
+    database.query(`SELECT id,status,action_type,summary,payload,result FROM stockchief_runtime.assistant_action_proposals
+      WHERE workspace_id=$1 AND id=ANY($2::text[])`,[workspaceId,ids]),
+    database.query(`SELECT id,status,summary FROM operating_instruction_proposals
+      WHERE workspace_id=$1 AND id=ANY($2::text[])`,[workspaceId,ids]),
+  ]);
+  for(const row of actions.rows)states.set(row.id,{id:row.id,status:row.status,actionType:row.action_type,
+    summary:row.summary,payload:row.payload,result:row.result});
+  for(const row of instructions.rows)states.set(row.id,{id:row.id,status:row.status,
+    actionType:'operating.instruction',summary:row.summary});
+  return states;
+}
+
 function createPostgresAskRouter(database,options={}){
   const router=express.Router();
   router.use(['/ask','/actions'],requireAuth);
@@ -112,23 +142,21 @@ function createPostgresAskRouter(database,options={}){
     const interactions=await assistant.listInteractions(database,req.ctx.workspaceId,100,
       {actorId:req.ctx.actorId,startedAt});
     const visible=interactions.slice(-12);const latest=visible.at(-1)||null;
-    let emailProposal=null;
-    if(latest?.intent?.proposalId&&latest.intent.proposalHref?.startsWith('/actions/')){
-      const proposal=await assistant.getProposal(database,req.ctx.workspaceId,latest.intent.proposalId);
-      if(proposal.action_type==='communication.send_email'){
+    const proposals=await proposalStates(database,req.ctx.workspaceId,visible);
+    const latestProposal=proposals.get(latest?.intent?.proposalId);
+    if(latestProposal?.actionType==='communication.send_email'){
+      const proposal=latestProposal;
         let deliveryStatus=null;
         if(proposal.status==='EXECUTED'&&proposal.result?.communicationId){
           const delivered=await outboundMail.get(database,req.ctx.workspaceId,
             proposal.result.communicationKind,proposal.result.communicationId);
           deliveryStatus=delivered.status;
         }
-        emailProposal={id:proposal.id,interactionId:latest.id,payload:proposal.payload,
-          status:proposal.status,result:proposal.result||null,deliveryStatus};
-      }
+        proposal.deliveryStatus=deliveryStatus;
     }
-    const transcript=transcriptFor(visible,emailProposal);const rules=await instructionLists(database,req.ctx.workspaceId);
+    const transcript=transcriptFor(visible,proposals);const rules=await instructionLists(database,req.ctx.workspaceId);
     return res.page('attention/ask',{title:'Ask StockChief',nav:'ask',room:true,suppressBack:true,postgresAsk:true,...rules,
-      about:String(req.query.about||'').slice(0,2000),question:latest?.message||'',result:resultFor(latest,emailProposal),error:null,
+      about:String(req.query.about||'').slice(0,2000),question:latest?.message||'',result:resultFor(latest,latestProposal),error:null,
       conversation:null,transcript,currentGoalId:latest?.id||null,conversationId:`postgres:${req.ctx.workspaceId}`,
       aiConfigured:Boolean(options.provider||config.ai.configured),usageKey:newId('askusage'),
       examples:await askExamples(database,req.ctx.workspaceId)});

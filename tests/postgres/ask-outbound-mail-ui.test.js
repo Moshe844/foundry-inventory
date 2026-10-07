@@ -88,7 +88,7 @@ test('real Chromium Ask StockChief prepares, approves, sends and verifies one gr
     await page.getByLabel('Ask StockChief').fill('Please email Solomon Supply that we received the order and will confirm Friday.');
     await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Continue'}).click()]);
     const askText=await page.locator('main').innerText();assert.match(askText,/Email Solomon Supply at solomon@supplier\.example from Business Gmail/);
-    assert.match(askText,/Nothing has changed yet/);assert.equal(delivered.length,0);
+    assert.match(askText,/Needs your approval/);assert.equal(delivered.length,0);
     const proposal=(await database.query(`SELECT * FROM stockchief_runtime.assistant_action_proposals
       WHERE workspace_id=$1 ORDER BY created_at DESC LIMIT 1`,[one.workspace_id])).rows[0];
     const review=await page.locator('main').innerText();

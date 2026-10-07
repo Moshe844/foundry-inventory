@@ -7,6 +7,7 @@ const locations=require('../domain/postgres-location-service');
 const pricing=require('../pricing/postgres-service');
 const mail=require('../connections/postgres-outbound-mail');
 const workflows=require('../operations/postgres-business-workflows');
+const invoices=require('../accounting/postgres-manual-invoices');
 const commerce=require('../operations/postgres-commerce');
 
 async function exists(client,table,workspaceId,id){
@@ -78,6 +79,21 @@ const EXECUTORS=Object.freeze({
     }},
   'sales_order.create':{execute:(client,ctx,payload)=>workflows.createSalesOrderInTransaction(client,ctx,payload),
     verify:(client,ctx,result)=>exists(client,'sales_orders',ctx.workspaceId,result.salesOrderId)},
+  'customer_invoice.create':{execute:async(client,ctx,payload)=>{
+    const created=await invoices.createCustomerInvoiceInTransaction(client,ctx,{
+      customerId:payload.customerId,description:payload.description,quantity:payload.quantity,
+      unitAmount:payload.unitAmount,tax:payload.tax,issueDate:payload.issueDate,
+      dueDate:payload.dueDate,documentNumber:payload.documentNumber,
+      notes:payload.notes,idempotencyKey:payload.idempotencyKey});
+    return {invoiceId:created.id,invoiceNumber:created.invoice_number};
+  },verify:async(client,ctx,result,payload)=>{
+    if(!result?.invoiceId)return false;
+    const row=(await client.query(`SELECT customer_id,status,total_minor,journal_entry_id
+      FROM accounting_customer_invoices WHERE workspace_id=$1 AND id=$2`,
+    [ctx.workspaceId,result.invoiceId])).rows[0];
+    return Boolean(row&&row.customer_id===payload.customerId&&row.status==='OPEN'
+      &&Number(row.total_minor)>0&&row.journal_entry_id);
+  }},
   'purchase_order.create':{execute:(client,ctx,payload)=>workflows.createPurchaseOrderInTransaction(client,ctx,payload),
     verify:(client,ctx,result)=>exists(client,'purchase_orders',ctx.workspaceId,result.purchaseOrderId)},
   'purchase_order.receive':{execute:(client,ctx,payload)=>workflows.receivePurchaseOrderInTransaction(client,ctx,payload.purchaseOrderId,payload),

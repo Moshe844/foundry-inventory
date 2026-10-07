@@ -83,7 +83,7 @@ test('real Chromium Ask StockChief safely receives a PO and records one supplier
 
     text=await ask(page,base,'Receive the proven delivery');
     assert.match(text,/Receive 6 × Safety Shoe · 9 on PO-00001 into Main Warehouse, supported by DN-ASK-1/);
-    assert.match(text,/Nothing has changed yet/);
+    assert.match(text,/Needs your approval/);
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM movements WHERE workspace_id=$1`,[ctx.workspaceId])).rows[0].count,'0');
     let proposalHref=await page.locator('a',{hasText:'Review prepared change'}).last().getAttribute('href');
     await page.goto(`${base}${proposalHref}`);assert.match(await page.locator('main').innerText(),/purchase_order\.receive/);
@@ -110,7 +110,7 @@ test('real Chromium Ask StockChief safely receives a PO and records one supplier
 
     text=await ask(page,base,'Pay the supplier without naming the bill');
     assert.match(text,/Record \$18\.00 paid to Safe Supply against BILL-00001/);
-    assert.match(text,/Nothing has changed yet/);
+    assert.match(text,/Needs your approval/);
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM accounting_payments WHERE workspace_id=$1`,
       [ctx.workspaceId])).rows[0].count,'0');
     const inferred=(await database.query(`SELECT id FROM stockchief_runtime.assistant_action_proposals
@@ -119,7 +119,7 @@ test('real Chromium Ask StockChief safely receives a PO and records one supplier
 
     text=await ask(page,base,'Record the proven supplier payment');
     assert.match(text,new RegExp(`Record \\$18\\.00 paid to Safe Supply against BILL-00001 on ${PAYMENT_DATE} by ACH`));
-    assert.match(text,/Inventory will not change/);assert.match(text,/Nothing has changed yet/);
+    assert.match(text,/Inventory will not change/);assert.match(text,/Needs your approval/);
     proposalHref=await page.locator('a',{hasText:'Review prepared change'}).last().getAttribute('href');
     await page.goto(`${base}${proposalHref}`);assert.match(await page.locator('main').innerText(),/supplier_payment\.record/);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve and execute'}).click()]);

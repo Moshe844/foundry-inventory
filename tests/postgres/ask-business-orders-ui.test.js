@@ -30,6 +30,8 @@ const provider={name:'fixture',model:'fixture',async complete(request){
   if(message==='Buy seventeen pairs from our supplier')return {data:fields({intent:'action',view:null,
     action:'create_purchase_order',supplier:'Safe Supply',sku:'SHOE-9',quantity:17,location:'Main Warehouse',
     amount:8,currency:'USD',neededBy:'2026-10-05'}),usage:{}};
+  if(message==='Prepare an unpriced draft for our supplier')return {data:fields({intent:'action',view:null,
+    action:'create_purchase_order',supplier:'Safe Supply',sku:'SHOE-9',quantity:3,location:'Main Warehouse'}),usage:{}};
   return {data:fields(),usage:{}};
 }};
 
@@ -113,7 +115,7 @@ test('real Chromium Ask StockChief safely prepares and executes grounded custome
 
     text=await ask(page,base,'Record the complete customer order');
     assert.match(text,/Prepare a draft customer order for Builder Co/);assert.match(text,/10 Jobsite Road/);
-    assert.match(text,/Nothing has changed yet/);
+    assert.match(text,/Needs your approval/);
     assert.doesNotMatch(text,/999 Wrong Tenant Road/);
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM sales_orders WHERE workspace_id=$1`,
       [one.workspace_id])).rows[0].count,'0');
@@ -137,7 +139,7 @@ test('real Chromium Ask StockChief safely prepares and executes grounded custome
 
     text=await ask(page,base,'Buy seventeen pairs from our supplier');
     assert.match(text,/Prepare a draft purchase order to Safe Supply/);assert.match(text,/17 × Safety Shoe/);
-    assert.match(text,/Main Warehouse/);assert.match(text,/Nothing has changed yet/);
+    assert.match(text,/Main Warehouse/);assert.match(text,/Needs your approval/);
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM purchase_orders WHERE workspace_id=$1`,
       [one.workspace_id])).rows[0].count,'0');
     proposalHref=await page.locator('a',{hasText:'Review prepared change'}).last().getAttribute('href');
@@ -160,6 +162,15 @@ test('real Chromium Ask StockChief safely prepares and executes grounded custome
       [one.workspace_id])).rows[0].count,'1');
     await purchaseLink.click();await page.waitForURL(new RegExp(`/purchasing/orders/${purchaseOrder.id}$`));
     assert.match(await page.locator('main').innerText(),/Safe Supply/);
+    text=await ask(page,base,'Prepare an unpriced draft for our supplier');
+    assert.match(text,/Supplier cost is not recorded; the draft cannot be placed until it is priced/);
+    proposalHref=await page.locator('a',{hasText:'Review prepared change'}).last().getAttribute('href');
+    await page.goto(`${base}${proposalHref}`);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve and execute'}).click()]);
+    const unpriced=(await database.query(`SELECT po.status,pol.unit_cost FROM purchase_orders po
+      JOIN purchase_order_lines pol ON pol.purchase_order_id=po.id
+      WHERE po.workspace_id=$1 AND po.id<>$2`,[one.workspace_id,purchaseOrder.id])).rows[0];
+    assert.equal(unpriced.status,'DRAFT');assert.equal(unpriced.unit_cost,null);
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM sales_orders WHERE workspace_id=$1`,
       [two.workspace_id])).rows[0].count,'0');
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM purchase_orders WHERE workspace_id=$1`,

@@ -12,7 +12,8 @@ const DOMAINS=policyContracts.NAMES;
 const CHANGE_SCHEMA={type:'object',additionalProperties:false,required:['domain','operation','sku','supplier','location',
   'sourceLocation','reorderPoint','targetStock','safetyStock','leadTimeDays','unitsPerPurchaseUnit',
   'minimumOrderQuantity','orderMultiple','maximumQuantity','maximumValue','weeklyValue','daysOfStock',
-  'preferTransferBeforePurchasing','guardMode','guardComparator','guardThreshold','guardReleaseCondition'],properties:{
+  'preferTransferBeforePurchasing','guardMode','guardComparator','guardThreshold','guardReleaseCondition',
+  'notificationThreshold'],properties:{
   domain:{type:'string',enum:DOMAINS},operation:{type:'string',enum:['set','remove']},sku:{type:'string'},
   supplier:{type:'string'},location:{type:'string'},sourceLocation:{type:'string'},reorderPoint:{type:'integer'},
   targetStock:{type:'integer'},safetyStock:{type:'integer'},leadTimeDays:{type:'integer'},
@@ -20,18 +21,21 @@ const CHANGE_SCHEMA={type:'object',additionalProperties:false,required:['domain'
   maximumQuantity:{type:'integer'},maximumValue:{type:'number'},weeklyValue:{type:'number'},daysOfStock:{type:'integer'},
   preferTransferBeforePurchasing:{type:'boolean'},guardMode:{type:'string',enum:['','block','warn']},
   guardComparator:{type:'string',enum:['','below','at_or_below']},guardThreshold:{type:'integer'},
-  guardReleaseCondition:{type:'string',enum:['','on_order','stock_recovered','manual']}}};
+  guardReleaseCondition:{type:'string',enum:['','on_order','stock_recovered','manual']},
+  notificationThreshold:{type:'integer'}}};
 const SCHEMA={type:'object',additionalProperties:false,required:['understood','summary','changes','clarifyingQuestion','unsupportedReason'],
   properties:{understood:{type:'boolean'},summary:{type:'string'},changes:{type:'array',minItems:0,maxItems:12,items:CHANGE_SCHEMA},
     clarifyingQuestion:{type:'string'},unsupportedReason:{type:'string'}}};
 const SYSTEM=`Translate one owner's lasting StockChief operating instruction into typed settings. Return only the schema.
 Extract only facts and limits explicitly stated. Never invent a product, supplier, location, threshold, authority or default.
+An omitted location means the rule applies across this inventory; do not ask which location unless the owner explicitly refers to one ambiguously. Set clarifyingQuestion only when a required fact is missing or the requested effect is semantically ambiguous, not to seek an optional narrower scope.
 Use replenishment for reorder point, target stock and safety stock. These settings detect need but grant no authority.
+Use stock_alert for an owner's request to be notified in Needs You when a SKU's physical on-hand stock is at or below a stated level. It needs a SKU and notificationThreshold; it neither sends external email nor orders goods. A replenishment rule alone does not notify.
 Use supplier_terms for lead time, units per purchase unit, MOQ or order multiple for one real supplier and SKU.
 Use transfer_authority only when the owner explicitly permits automatic transfers without approval; maximumQuantity is required.
 Use purchase_authority only when the owner explicitly permits automatic purchasing without approval; supplier, maximumValue
 per order and weeklyValue are required. Preparing a purchase order is not automatic authority.
-Use operating_preference for target days of stock or an explicit preference to transfer before purchasing.
+Use operating_preference for target days of stock or an explicit preference to transfer before purchasing. This is a workspace-wide preference by design; it has no SKU, supplier, or location scope. Do not ask the owner to choose those optional scopes. A clear request for this preference is understood even when no product or supplier is named.
 Use stock_protection only for blocking or warning about outgoing stock at a threshold. It requires a SKU, guardMode,
 guardComparator, guardThreshold and guardReleaseCondition. A supplier reorder threshold is replenishment, not protection.
 Use operation remove only when the owner explicitly revokes that exact setting or authority.
@@ -74,11 +78,11 @@ function cleanChange(raw={}){return {domain:DOMAINS.includes(raw.domain)?raw.dom
   maximumValue:Number(raw.maximumValue),weeklyValue:Number(raw.weeklyValue),daysOfStock:Number(raw.daysOfStock),
   preferTransferBeforePurchasing:Boolean(raw.preferTransferBeforePurchasing),guardMode:String(raw.guardMode||''),
   guardComparator:String(raw.guardComparator||''),guardThreshold:Number(raw.guardThreshold),
-  guardReleaseCondition:String(raw.guardReleaseCondition||'')};}
+  guardReleaseCondition:String(raw.guardReleaseCondition||''),notificationThreshold:Number(raw.notificationThreshold)};}
 
 async function resolveChange(database,workspaceId,raw){const change=cleanChange(raw);const questions=[];
   if(!change.domain){questions.push('Which lasting inventory rule should StockChief set?');return {...change,questions};}
-  if(['replenishment','supplier_terms','stock_protection'].includes(change.domain)){
+  if(['replenishment','supplier_terms','stock_protection','stock_alert'].includes(change.domain)){
     const found=await exact(database,workspaceId,'sku',change.sku);
     if(found.row)Object.assign(change,{skuId:found.row.id,itemId:found.row.item_id,skuCode:found.row.code,
       displayName:`${found.row.name}${found.row.variant_label?` · ${found.row.variant_label}`:''}`});
@@ -99,6 +103,8 @@ async function resolveChange(database,workspaceId,raw){const change=cleanChange(
     else questions.push(`No active source location exactly matches “${change.sourceLocation}”.`);}
   if(change.operation==='set'&&change.domain==='replenishment'&&
     [change.reorderPoint,change.targetStock,change.safetyStock].every((value)=>number(value)===null))questions.push('State the reorder point, target stock or safety stock.');
+  if(change.operation==='set'&&change.domain==='stock_alert'&&number(change.notificationThreshold)===null)
+    questions.push('At what on-hand quantity should StockChief notify you?');
   if(change.operation==='set'&&change.domain==='supplier_terms'&&[change.leadTimeDays,change.unitsPerPurchaseUnit,
     change.minimumOrderQuantity,change.orderMultiple].every((value)=>number(value,{positive:true})===null))
     questions.push('State the supplier lead time, pack size, minimum order or order multiple.');
@@ -122,6 +128,9 @@ async function resolveChange(database,workspaceId,raw){const change=cleanChange(
 function describe(change){if(change.domain==='replenishment')return `${change.displayName}: ${change.operation==='remove'?'remove its taught replenishment settings':[
     number(change.reorderPoint)!==null?`reorder at ${change.reorderPoint}`:null,number(change.targetStock)!==null?`target ${change.targetStock}`:null,
     number(change.safetyStock)!==null?`safety stock ${change.safetyStock}`:null].filter(Boolean).join(', ')}`;
+  if(change.domain==='stock_alert')return change.operation==='remove'
+    ?`Stop the stock alert for ${change.displayName}.`
+    :`Notify you in Needs You when ${change.displayName}${change.locationName?` at ${change.locationName}`:''} is at or below ${change.notificationThreshold} on hand. No order or email is sent.`;
   if(change.domain==='supplier_terms')return `${change.supplierName} terms for ${change.displayName}: ${change.operation==='remove'?'remove the relationship':[
     number(change.leadTimeDays,{positive:true})!==null?`${change.leadTimeDays}-day lead time`:null,
     number(change.unitsPerPurchaseUnit,{positive:true})!==null?`${change.unitsPerPurchaseUnit} units per purchase unit`:null,
@@ -145,14 +154,26 @@ async function interpret(database,ctx,instruction,options={}){const clean=String
     database.query(`SELECT name FROM locations WHERE workspace_id=$1 AND is_active=1 ORDER BY name LIMIT 200`,[ctx.workspaceId]),
     database.query(`SELECT name FROM suppliers WHERE workspace_id=$1 AND status='active' ORDER BY name LIMIT 200`,[ctx.workspaceId])]);
   const metered=require('../commercial/model').wrap(database,ctx,provider,'instruction',options.instructionUsageKey);
-  const response=await metered.complete({system:SYSTEM,prompt:JSON.stringify({instruction:clean,realSkus:catalogue.rows,
-    realLocations:locations.rows,realSuppliers:suppliers.rows}),schema:SCHEMA,schemaName:'postgres_operating_instruction'});
+  const evidence={instruction:clean,realSkus:catalogue.rows,
+    realLocations:locations.rows,realSuppliers:suppliers.rows};
+  let response=await metered.complete({system:SYSTEM,prompt:JSON.stringify(evidence),
+    schema:SCHEMA,schemaName:'postgres_operating_instruction'});
   if(options.onUsage&&response.usage)await options.onUsage(response.usage,{schemaName:'postgres_operating_instruction'});
-  const read=response?.data||{};
+  let read=response?.data||{};
+  if(!read.understood||!Array.isArray(read.changes)||!read.changes.length){
+    response=await metered.complete({system:SYSTEM,prompt:JSON.stringify({...evidence,
+      rejectedInterpretation:read,
+      correction:'Recheck the registered rule domains. A missing optional scope is not a missing required input: an omitted location applies across the workspace. Extract the stated rule and let deterministic validation decide whether any required value remains missing. Never invent a rule or authority.'}),
+    schema:SCHEMA,schemaName:'postgres_operating_instruction'});
+    if(options.onUsage&&response.usage)await options.onUsage(response.usage,{schemaName:'postgres_operating_instruction'});
+    read=response?.data||{};
+  }
   if(!read.understood||!Array.isArray(read.changes)||!read.changes.length)
     throw new ValidationError(read.unsupportedReason||read.clarifyingQuestion||'StockChief could not turn that into a safe standing rule.');
   const resolved=await Promise.all(read.changes.map((change)=>resolveChange(database,ctx.workspaceId,change)));
-  const questions=[...new Set([read.clarifyingQuestion,...resolved.flatMap((change)=>change.questions)].filter(Boolean))];
+  // The deterministic contracts decide which fields actually block approval.
+  // Model-authored questions about optional scope must not create owner work.
+  const questions=[...new Set(resolved.flatMap((change)=>change.questions).filter(Boolean))];
   const resolvedChanges=resolved.map(({questions:unused,...change})=>({
     ...change,policyContract:policyContracts.compile(change)}));
   const snapshot={statedAs:clean,resolvedChanges};
@@ -166,6 +187,37 @@ async function assertOwner(client,ctx){const actor=(await client.query('SELECT r
   [ctx.workspaceId,ctx.actorId])).rows[0];if(actor?.role!=='owner')throw new ValidationError('Only an owner can approve standing operating rules.');}
 
 async function applyChange(client,ctx,change){const at=nowIso();
+  if(change.domain==='stock_alert'){
+    const prior=(await client.query(`SELECT id FROM stockchief_runtime.stock_threshold_rules
+      WHERE workspace_id=$1 AND sku_id=$2 AND location_id IS NOT DISTINCT FROM $3 FOR UPDATE`,
+    [ctx.workspaceId,change.skuId,change.locationId||null])).rows[0];
+    if(change.operation==='remove'){
+      if(prior){
+        await client.query(`UPDATE stockchief_runtime.stock_threshold_rules SET is_active=FALSE,updated_at=$2
+          WHERE id=$1`,[prior.id,at]);
+        await client.query(`UPDATE attention_items SET status='RESOLVED',resolution_reason=$3,
+          resolved_at=$4,last_evaluated_at=$4 WHERE workspace_id=$1 AND fingerprint=$2
+          AND status IN ('OPEN','ACKNOWLEDGED')`,[ctx.workspaceId,`stock-threshold:${prior.id}`,
+        'The owner removed this stock alert.',at]);
+      }
+      return {kind:'stock_threshold_rule',id:prior?.id||null,removed:true};
+    }
+    const id=prior?.id||newId('sthr');
+    if(prior){
+      await client.query(`UPDATE attention_items SET status='RESOLVED',resolution_reason=$3,
+        resolved_at=$4,last_evaluated_at=$4 WHERE workspace_id=$1 AND fingerprint=$2
+        AND status IN ('OPEN','ACKNOWLEDGED')`,[ctx.workspaceId,`stock-threshold:${id}`,
+      'The owner changed this stock alert level.',at]);
+      await client.query(`UPDATE stockchief_runtime.stock_threshold_rules
+        SET threshold=$2,armed=TRUE,is_active=TRUE,stated_as=$3,approved_by_user_id=$4,updated_at=$5
+        WHERE id=$1`,[id,change.notificationThreshold,change.statedAs,ctx.actorId,at]);
+    }
+    else await client.query(`INSERT INTO stockchief_runtime.stock_threshold_rules
+      (id,workspace_id,sku_id,location_id,threshold,armed,is_active,stated_as,approved_by_user_id,created_at,updated_at)
+      VALUES($1,$2,$3,$4,$5,TRUE,TRUE,$6,$7,$8,$8)`,[id,ctx.workspaceId,change.skuId,
+      change.locationId||null,change.notificationThreshold,change.statedAs,ctx.actorId,at]);
+    return {kind:'stock_threshold_rule',id,skuId:change.skuId,threshold:change.notificationThreshold};
+  }
   if(change.domain==='replenishment'){
     if(change.operation==='remove'){await client.query('DELETE FROM reorder_policies WHERE workspace_id=$1 AND sku_id=$2 AND location_id IS NULL',
       [ctx.workspaceId,change.skuId]);return {kind:'reorder_policy',skuId:change.skuId,removed:true};}
@@ -228,6 +280,7 @@ async function applyChange(client,ctx,change){const at=nowIso();
   throw new ValidationError('That instruction domain is not supported by the PostgreSQL runtime.');}
 
 function target(change){if(change.domain==='replenishment')return `replenishment:${change.skuId}`;
+  if(change.domain==='stock_alert')return `stock_alert:${change.skuId}:${change.locationId||'*'}`;
   if(change.domain==='supplier_terms')return `supplier:${change.supplierId}:${change.skuId}`;
   if(change.domain==='transfer_authority')return 'authority:transfer';if(change.domain==='purchase_authority')return 'authority:purchase';
   if(change.domain==='operating_preference')return `preference:${number(change.daysOfStock,{positive:true})!==null?'days':'transfer'}`;
@@ -246,6 +299,8 @@ async function approve(database,ctx,id,expectedHash){return database.transaction
   for(const change of proposal.resolvedChanges){if(['transfer_authority','purchase_authority'].includes(change.domain))
     await require('../commercial/enforcement').workspace(client,ctx.workspaceId,'authority.advanced');}
   const applied=[];for(const change of proposal.resolvedChanges)applied.push(await applyChange(client,ctx,{...change,statedAs:proposal.statedAs}));
+  if(proposal.resolvedChanges.some((change)=>change.domain==='stock_alert'))
+    await require('./postgres-stock-threshold-alerts').evaluate(client,{workspaceId:ctx.workspaceId});
   const keys=new Set(proposal.resolvedChanges.map(target).filter(Boolean));const prior=(await client.query(`SELECT * FROM operating_instruction_proposals
     WHERE workspace_id=$1 AND status='APPROVED' AND id<>$2 FOR UPDATE`,[ctx.workspaceId,id])).rows;
   for(const row of prior){if(parse(row.resolved_changes,[]).some((change)=>keys.has(target(change))))

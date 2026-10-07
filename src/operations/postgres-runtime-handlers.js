@@ -283,10 +283,11 @@ async function runtimeSweep(job,client,options={}){
       maxAttempts:3,availableAt:now,now});
     if(scheduled.created)scheduledAutopilotChecks+=1;
   }
+  const stockAlerts=await require('../manager/postgres-stock-threshold-alerts').evaluate(client);
   return {expiredSessions:sessions.rowCount,suspendedSubscriptions:suspendedSubscriptions.rowCount,recoveredImports:staleImports.rowCount,
     ambiguousEmails:uncertainEmails.rowCount,ambiguousProviderEffects:staleProviderEffects.rowCount,
     staleConnectors,recoveredConnectors,scheduledMailboxPolls,
-    scheduledMailboxRenewals,scheduledAlertDeliveries,scheduledAutopilotChecks,at};
+    scheduledMailboxRenewals,scheduledAlertDeliveries,scheduledAutopilotChecks,stockAlerts,at};
 }
 
 async function autopilotEvaluate(job,client){

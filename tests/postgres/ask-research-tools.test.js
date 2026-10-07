@@ -29,10 +29,10 @@ test('Ask research reads real inventory positions, stock history and prices with
     await inventory.receive(database,owner,{skuId:item.skuIds[0],locationId:place.id,quantity:7,
       reference:'OPENING-GLOVES',idempotencyKey:'opening-gloves'});
     const summary=await assistant.lookup(database,owner,{view:'inventory_summary'});
-    assert.deepEqual(summary.rows,[{products:1,skus:1,onHand:7}]);
+    assert.deepEqual(summary.rows,[{products:1,skus:1,onHand:7,productsEver:1}]);
     assert.match(summary.answer,/7 units on hand/);
     const otherSummary=await assistant.lookup(database,other,{view:'inventory_summary'});
-    assert.deepEqual(otherSummary.rows,[{products:0,skus:0,onHand:0}]);
+    assert.deepEqual(otherSummary.rows,[{products:0,skus:0,onHand:0,productsEver:0}]);
     const grounded=await research.research(database,owner,'How many units are on hand in this inventory?',{
       plannedQueries:[{view:'inventory_summary',search:null,timeframe:'all_time'}],
       answerProvider:{complete(){throw new Error('A single verified inventory summary needs no model synthesis.');}},

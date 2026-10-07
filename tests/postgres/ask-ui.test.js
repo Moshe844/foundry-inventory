@@ -153,7 +153,7 @@ test('Ask StockChief grounds answers and executes only an approved PostgreSQL pr
       message:'Receive seven SHOE-BLACK-8 into Main Warehouse, reference ASK-RECEIPT'});
     assert.equal(prepared.status,303);
     const afterPrepared=await agent.get('/ask');
-    assert.match(afterPrepared.text,/Nothing has changed yet/);
+    assert.match(afterPrepared.text,/Needs your approval/);
     const proposalHref=/href="(\/actions\/pgprop_[a-z0-9]+)"/.exec(afterPrepared.text)?.[1];
     assert.ok(proposalHref);
     const before=(await database.query('SELECT COUNT(*) AS count FROM movements')).rows[0].count;

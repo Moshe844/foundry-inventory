@@ -16,7 +16,7 @@ const {newId,nowIso}=require('../../src/lib/util');
 
 function csrf(html){return /name="_csrf" value="([^"]+)"/.exec(html)?.[1];}
 
-test('Ask resolves the only stocked SKU and continues a purchase clarification without changing stock',
+test('Ask resolves the only stocked SKU and prepares unpriced or priced purchase drafts without changing stock',
   {timeout:120000},async(context)=>{
     const cluster=await startCluster();
     const database=openPostgres(cluster.connectionString,{applicationName:'stockchief-ask-stock-reference'});
@@ -53,13 +53,13 @@ test('Ask resolves the only stocked SKU and continues a purchase clarification w
     const supplier=await commerce.createSupplier(database,ctx,{name:'Safe Supply',currency:'USD'});
 
     let result=await ask('whatever i have in stock i need 20 more');
-    assert.equal(result.latest.status,'CLARIFY');
-    assert.match(result.latest.answer,/cost per inventory unit for Safety Shoe/);
+    assert.equal(result.latest.status,'PREPARED');
+    assert.match(result.latest.answer,/Supplier cost is not recorded; the draft cannot be placed until it is priced/);
     assert.doesNotMatch(result.html,/What product or SKU do you need 20 more of/);
     assert.equal(result.latest.intent.supplier,'Safe Supply');
     assert.equal(result.latest.intent.quantity,20);
     assert.equal(result.latest.intent.sku,'SHOE');
-    assert.equal(result.latest.intent.presentation.awaitingField,'amount');
+    assert.equal(result.latest.intent.presentation.awaitingField,null);
 
     result=await ask('$8 per unit');
     assert.equal(result.latest.status,'PREPARED');
@@ -102,8 +102,9 @@ test('Ask resolves the only stocked SKU and continues a purchase clarification w
     assert.equal(result.latest.status,'CLARIFY');
     assert.match(result.latest.answer,/more than one product currently in stock/);
     assert.equal(result.latest.intent.presentation.choices.length,2);
-    assert.equal((await database.query(`SELECT COUNT(*) AS count FROM stockchief_runtime.assistant_action_proposals
-      WHERE workspace_id=$1`,[ctx.workspaceId])).rows[0].count,'2');
+    const proposals=(await database.query(`SELECT status,summary FROM stockchief_runtime.assistant_action_proposals
+      WHERE workspace_id=$1 ORDER BY created_at,id`,[ctx.workspaceId])).rows;
+    assert.deepEqual(proposals.map((row)=>row.status),['CANCELLED','PENDING','PENDING']);
 
     result=await ask('How many products are in inventory?');
     assert.equal(result.latest.status,'ANSWERED',JSON.stringify({intent:result.latest.intent,answer:result.latest.answer}));

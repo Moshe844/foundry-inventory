@@ -21,7 +21,11 @@ const FIELDS=Object.freeze({
   quantity:{type:'integer',description:'Number of units being moved or ordered.'},
   countedQuantity:{type:'integer',description:'Physical quantity counted, not a delta.'},
   amount:{type:'number',description:'Monetary amount in major currency units.'},
+  tax:{type:'number',description:'Total invoice tax amount in major currency units, when explicitly supplied.'},
   currency:{type:'string',description:'Three-letter currency code.'},
+  description:{type:'string',description:'The invoice line description when supplied.'},
+  issueDate:{type:'string',description:'Invoice issue date in YYYY-MM-DD format.'},
+  dueDate:{type:'string',description:'Invoice due date in YYYY-MM-DD format.'},
   reason:{type:'string',description:'Reason stated by the owner.'},
   reference:{type:'string',description:'External or business reference.'},
   recipient:{type:'string',entity:'contact',description:'Person, customer, supplier, or email address to contact.',
@@ -93,6 +97,7 @@ const RESULT_RECORDS={
   'contact.create':['suppliers','customers'],
   'communication.send_email':['business_communication','stockchief_runtime.provider_effects'],
   'sales_order.create':['sales_orders'],'purchase_order.create':['purchase_orders'],
+  'customer_invoice.create':['accounting_customer_invoices','accounting_journal_entries'],
   'purchase_order.receive':['purchase_order_receipts','movements','balances'],
   'supplier_payment.record':['accounting_payments','accounting_journal_entries'],
 };
@@ -115,6 +120,7 @@ const REQUIRED={
   'contact.create':['recipient','recipientKind'],
   'communication.send_email':['recipient'],
   'sales_order.create':['customer','sku','quantity'],
+  'customer_invoice.create':['customer','quantity'],
   'purchase_order.create':['sku','quantity'],
   'purchase_order.receive':['purchaseOrder','sku','quantity','location'],
   'supplier_payment.record':['supplier','supplierBill','amount','paymentDate','paymentMethod'],
@@ -142,7 +148,10 @@ action('communication.send_email','Prepare a business email for review; sending 
 action('sales_order.create','Prepare a draft customer order without claiming it was fulfilled.',
   ['customer','sku','skuScope','quantity','deliveryMethod','shipToAddress','location','neededBy','amount','currency','reference'],
   permissions.MANAGE_SALES,'create_sales_order',{allowUnknownEntities:['customer']});
-action('purchase_order.create','Prepare a draft order for stock from a supplier; this does not increase on-hand stock.',
+action('customer_invoice.create','Prepare a customer invoice for review. Approval records and posts the invoice in StockChief; it does not create or fulfill a customer order, send the invoice, or collect payment.',
+  ['customer','sku','quantity','amount','tax','currency','description','issueDate','dueDate','reference'],
+  permissions.MANAGE_ACCOUNTING,'create_customer_invoice',{allowUnknownEntities:['customer']});
+action('purchase_order.create','Prepare a draft order for stock from a supplier. Supplier unit cost may remain unknown in the draft, but it must be priced before placement; a draft does not increase on-hand stock.',
   ['supplier','sku','skuScope','quantity','location','amount','currency','neededBy','reference'],
   permissions.CREATE_PO,'create_purchase_order',{allowUnknownEntities:['supplier']});
 action('purchase_order.receive','Receive physically arrived goods against an existing placed purchase order. Requires the owner or context to identify the purchase order; an arrival alone does not establish one.',
@@ -157,11 +166,12 @@ for(const [name,required] of Object.entries(REQUIRED)){
 const READS={
   inventory:'Current SKU stock across the business, including on-hand, committed, available-to-fulfill quantities, incoming, and stock locations.',
   inventory_positions:'Current on-hand stock by product and location only. It does not account for commitments and cannot establish what is available to ship.',
-  inventory_movements:'Recorded stock movements.',inventory_summary:'Business-wide active product, SKU, and on-hand totals, including confirmation that none have been recorded yet. Requires no product or location.',
+  inventory_movements:'Recorded stock movements.',inventory_summary:'Business-wide active product, SKU, and on-hand totals, plus the count of product records ever created here. Requires no product or location.',
   prices:'Current recorded selling prices.',purchase_costs:'Current recorded purchase costs.',
   supplier_items:'Supplier-product links, purchasing terms, and costs.',needs_you:'Owner decisions awaiting attention.',
   replenishment:'Recorded replenishment recommendations and their state.',locations:'Inventory locations.',
-  purchase_orders:'Supplier purchase orders and their status.',sales_orders:'Customer orders and their status.',
+  purchase_orders:'Answer questions about recorded supplier purchase orders and their status without changing the current page.',
+  sales_orders:'Answer questions about recorded customer orders and their status without changing the current page.',
   sales_activity:'Recorded customer order and sales activity for supported time windows.',
   suppliers:'Supplier records.',customers:'Customer records.',shipping:'Shipping records.',
   payments:'Recorded payment transactions.',payables:'Open supplier bill balances.',
@@ -175,7 +185,7 @@ for(const [view,description] of Object.entries(READS))add(`read.${view}`,descrip
   async(service,db,ctx,text,args,options)=>service.lookup(db,ctx,{view,search:args.search||null,
     timeframe:args.timeframe||'all_time'},{provider:options.answerProvider,question:text}),
   async(_service,_db,_ctx,result)=>Boolean(result&&Array.isArray(result.rows)),
-  {view,answerMode:['general_knowledge','business_analysis'].includes(view)?'executor':'evidence'});
+  {view,answerMode:['general_knowledge','business_analysis','inventory_summary'].includes(view)?'executor':'evidence'});
 for(const [name,description,search] of [
   ['read.profit_and_loss','Read the current month’s posted profit and loss; never infer unrecorded activity.','profit_and_loss'],
   ['read.profit_change','Explain the change in posted profit against the comparable prior month when the accounting analysis entitlement allows it.','profit_change'],
@@ -196,7 +206,7 @@ const PAGE_PERMISSIONS={purchasing:permissions.VIEW_PURCHASING,suppliers:permiss
   autopilot:permissions.ADMIN,actions:permissions.OPERATE};
 for(const destination of destinations){
   const page=destinationById(destination.id);if(!page)continue;
-  add(`navigate.${destination.id}`,`Open the ${page.label} area.`,
+  add(`navigate.${destination.id}`,`Change the visible application page to ${page.label}. Use only for a requested page change; it does not answer a question about records or counts.`,
     [],'navigation',PAGE_PERMISSIONS[destination.id]||permissions.VIEW,'none',
     async(service,db,ctx)=>service.navigate(db,ctx,destination.id),
     async(_service,_db,_ctx,result)=>Boolean(result?.href?.startsWith('/')),{destinationId:destination.id});
