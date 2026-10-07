@@ -34,6 +34,7 @@
     return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
   };
   var net = story.profit.netMinor;
+  var noProfitActivity = !net && !story.profit.revenueMinor && !story.profit.cogsMinor && !story.profit.expensesMinor;
   var out = (story.comingUp || []).filter(function (r) { return r.direction === 'out'; });
   var inbound = (story.comingUp || []).filter(function (r) { return r.direction === 'in'; });
 %>
@@ -45,10 +46,12 @@
 </p>
 
 <h1 class="rm-figure">
-  <a href="/accounting/reports/profit-and-loss?from=<%= story.from %>&to=<%= story.to %>"><%= money(Math.abs(net)) %> <%= net < 0 ? 'lost' : 'earned' %> this period.</a>
+  <a href="/accounting/reports/profit-and-loss?from=<%= story.from %>&to=<%= story.to %>"><%= noProfitActivity ? 'No profit or loss recorded yet.' : money(Math.abs(net)) + ' ' + (net < 0 ? 'lost' : 'earned') + ' this period.' %></a>
 </h1>
 <p class="rm-sub">
-  <% if (story.profit.why && story.profit.why.length) { %>
+  <% if (noProfitActivity) { %>
+    No sales or costs are in this period's profit-and-loss report. Bills, cash and stock value are shown below.
+  <% } else if (story.profit.why && story.profit.why.length) { %>
     <%= story.profit.why.join(' ') %>
   <% } else { %>
     <%= money(story.profit.revenueMinor) %> of sales, <%= money(story.profit.cogsMinor) %> of stock sold,
@@ -56,6 +59,7 @@
     <%= story.profit.marginPct === null ? '' : story.profit.marginPct + '% gross margin.' %>
   <% } %>
 </p>
+<% if (story.inventory.missingCostUnits) { %><p class="owner-verdict-note" role="status">StockChief does not have recorded cost for <%= story.inventory.missingCostUnits %> unit<%= story.inventory.missingCostUnits === 1 ? '' : 's' %>, so the stock value below is incomplete. <a href="/inventory">See your inventory</a>.</p><% } %>
 
 <%- include('../partials/owner-direct-line', { directLineContext: 'Ask about money, a payment, or a number that does not look right.' }) %>
 
