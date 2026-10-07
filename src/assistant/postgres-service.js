@@ -86,7 +86,7 @@ Use payables for open supplier/vendor bills and amounts the business owes. Use r
 and amounts customers owe the business. Use payments only for payment transactions or payment history, never for balances owed.
 Use needs_you when the person asks what needs their attention, review, approval, or decision.
 Use replenishment when the person asks what stock to buy, reorder, or restock next; it reads existing StockChief recommendations and check status, and never places an order.
-Use inventory_summary for business-wide product and SKU totals; use inventory for stock quantities or named products.
+Use inventory_summary for business-wide product and SKU totals and total on-hand units; use inventory for stock quantities of named products.
 Use inventory_positions for quantities at individual locations, inventory_movements for recorded stock changes, prices for current selling prices, purchase_costs for recorded unit costs, supplier_items for which suppliers provide which products, and messages for sent or received business email.
 Use sales_activity for business-wide questions about whether any sales or customer orders are recorded, or how many sales/orders are recorded in one period. It summarizes recorded customer orders, fulfilled units, and posted revenue; it does not filter by customer or order number.
 Use sales_orders to list customer orders or find orders for a named customer, order number, or status. Preserve the exact named customer, order number, or status in search.
@@ -650,10 +650,15 @@ async function lookup(database,ctx,request,options={}) {
   if(request.view==='inventory_summary'){
     const count=(await database.query(`SELECT
       (SELECT COUNT(*) FROM items WHERE workspace_id=$1 AND is_active=1) AS products,
-      (SELECT COUNT(*) FROM skus WHERE workspace_id=$1 AND is_active=1) AS skus`,[ctx.workspaceId])).rows[0];
-    const products=Number(count.products),skus=Number(count.skus);
-    return {answer:`You have ${products.toLocaleString('en-US')} active ${products===1?'product':'products'} in StockChief, across ${skus.toLocaleString('en-US')} ${skus===1?'SKU':'SKUs'}.`,
-      rows:[{products,skus}],columns:['products','skus'],handoff:{href:'/inventory',label:'Open inventory'}};
+      (SELECT COUNT(*) FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
+        WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1) AS skus,
+      (SELECT COALESCE(SUM(b.on_hand),0) FROM balances b
+        JOIN skus s ON s.id=b.sku_id AND s.workspace_id=b.workspace_id
+        JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
+        WHERE b.workspace_id=$1 AND s.is_active=1 AND i.is_active=1) AS on_hand`,[ctx.workspaceId])).rows[0];
+    const products=Number(count.products),skus=Number(count.skus),onHand=Number(count.on_hand);
+    return {answer:`You have ${products.toLocaleString('en-US')} active ${products===1?'product':'products'} in StockChief, across ${skus.toLocaleString('en-US')} ${skus===1?'SKU':'SKUs'}, with ${onHand.toLocaleString('en-US')} units on hand.`,
+      rows:[{products,skus,onHand}],columns:['products','skus','onHand'],handoff:{href:'/inventory',label:'Open inventory'}};
   }
   if(request.view==='locations'){
     const rows=(await database.query(`SELECT l.id,l.name,l.kind,COALESCE(SUM(b.on_hand),0) AS units

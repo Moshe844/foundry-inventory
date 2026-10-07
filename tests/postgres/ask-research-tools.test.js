@@ -10,6 +10,7 @@ const catalog=require('../../src/domain/postgres-catalog-service');
 const locations=require('../../src/domain/postgres-location-service');
 const inventory=require('../../src/domain/postgres-inventory-engine');
 const assistant=require('../../src/assistant/postgres-service');
+const research=require('../../src/assistant/postgres-research');
 
 test('Ask research reads real inventory positions, stock history and prices within one business only',
   {timeout:120000},async(context)=>{
@@ -27,6 +28,19 @@ test('Ask research reads real inventory positions, stock history and prices with
     const item=await catalog.createItem(database,owner,{name:'Blue Work Glove',baseCode:'GLOVE',trackingMode:'quantity'});
     await inventory.receive(database,owner,{skuId:item.skuIds[0],locationId:place.id,quantity:7,
       reference:'OPENING-GLOVES',idempotencyKey:'opening-gloves'});
+    const summary=await assistant.lookup(database,owner,{view:'inventory_summary'});
+    assert.deepEqual(summary.rows,[{products:1,skus:1,onHand:7}]);
+    assert.match(summary.answer,/7 units on hand/);
+    const otherSummary=await assistant.lookup(database,other,{view:'inventory_summary'});
+    assert.deepEqual(otherSummary.rows,[{products:0,skus:0,onHand:0}]);
+    const grounded=await research.research(database,owner,'How many units are on hand in this inventory?',{
+      plannedQueries:[{view:'inventory_summary',search:null,timeframe:'all_time'}],
+      answerProvider:{complete(){throw new Error('A single verified inventory summary needs no model synthesis.');}},
+      lookup:assistant.lookup,
+    });
+    assert.equal(grounded.status,'ANSWERED');
+    assert.match(grounded.answer,/7 units on hand/);
+    assert.deepEqual(grounded.researchViews,['inventory_summary']);
     const positions=await assistant.lookup(database,owner,{view:'inventory_positions',search:'Blue Work Glove'});
     assert.equal(positions.rows.length,1);
     assert.equal(positions.rows[0].location,'North Stockroom');

@@ -22,7 +22,7 @@ You may select several datasets for one question. Use the conversation history o
 Never treat previous answers as current facts. Do not invent a customer, supplier, item, period, or filter.
 Use search only for an explicitly named entity, order number, record status, or SKU. Use null for business-wide questions.
 Choose every relevant dataset, but no irrelevant ones. An inventory question about a named product needs inventory; a question about sales needs sales_activity or sales_orders; a comparison may need multiple datasets.
-These are the only available datasets: inventory (SKU stock, commitments, incoming), inventory_positions (on-hand by SKU and location), inventory_movements (recorded stock changes), inventory_summary (product/SKU counts), prices (latest selling price by SKU), purchase_costs (latest recorded unit purchase cost), supplier_items (which suppliers supply which products, their pack size and lead time), needs_you (decisions), replenishment (open purchase recommendations), locations, purchase_orders, sales_orders, sales_activity (recorded order counts and posted revenue for supported periods), suppliers, customers, shipping, payments, payables, receivables, accounting, connections, messages (sent and received business mail).
+These are the only available datasets: inventory (SKU stock, commitments, incoming), inventory_positions (on-hand by SKU and location), inventory_movements (recorded stock changes), inventory_summary (business-wide product/SKU counts and total on-hand units), prices (latest selling price by SKU), purchase_costs (latest recorded unit purchase cost), supplier_items (which suppliers supply which products, their pack size and lead time), needs_you (decisions), replenishment (open purchase recommendations), locations, purchase_orders, sales_orders, sales_activity (recorded order counts and posted revenue for supported periods), suppliers, customers, shipping, payments, payables, receivables, accounting, connections, messages (sent and received business mail).
 The supported sales_activity periods are all_time, today, month_to_date, previous_month, last_30_days. If the owner names another period, set unsupported; do not silently substitute a period.
 Current-state datasets such as inventory_positions and prices are snapshots: use all_time for "now" or "currently". For a historical period on a dataset without a verified period filter, choose unsupported rather than returning current data as history.
 Restate the complete question in question, including relevant references resolved from history. Do not turn a request to change the business into a read request.`;
@@ -60,6 +60,12 @@ function evidenceRows(results){
 }
 function compactRow(row){return Object.fromEntries(Object.entries(row).map(([key,value])=>
   [key,typeof value==='string'?value.slice(0,key==='message'?900:300):value]));}
+function completeInventorySummaryQuestion(question){
+  const text=String(question||'').toLowerCase();
+  return /\b(?:how many|number of|total|count|overview|summary)\b/.test(text)
+    && /\b(?:products?|items?|skus?|on[ -]?hand|stock|inventory)\b/.test(text)
+    && !/\b(?:available|committed|incoming|price|cost|worth|value|revenue|sales|orders|why|change|changed|yesterday|month|today|week|year)\b/.test(text);
+}
 async function research(database,ctx,question,{selectionProvider,answerProvider,lookup,history=[],plannedQueries=null}={}){
   if(!answerProvider)return null;
   let selection={question,queries:cleanQueries(plannedQueries)};
@@ -87,6 +93,12 @@ async function research(database,ctx,question,{selectionProvider,answerProvider,
         returnedRows:rows.length,status:result.status||'ANSWERED',truncated:rows.length>30||rows.length>=100}});
     }catch(error){if(error.code==='entitlement_required')throw error;
       results.push({query,result:{status:'UNAVAILABLE',answer:'This dataset could not be read.',rows:[],truncated:false}});}
+  }
+  if(queries.length===1&&completeInventorySummaryQuestion(question)
+    &&queries[0].view==='inventory_summary'&&!queries[0].search
+    &&queries[0].timeframe==='all_time'&&results[0].result.status==='ANSWERED'){
+    return {status:'ANSWERED',answer:results[0].result.answer,rows:evidenceRows(results),
+      columns:['source','record','details'],reason:null,researchViews:['inventory_summary']};
   }
   let composed;
   try{
