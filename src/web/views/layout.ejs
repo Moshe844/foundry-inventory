@@ -33,7 +33,7 @@
 <body class="page-<%= nav || 'plain' %>">
 <%
   /*
-   * Three states, not eight destinations.
+   * Three daily actions, with records and settings one step away.
    *
    * The rail carries what a person actually does in a day: read what StockChief
    * left them, settle what it could not, say something to it. Inventory,
@@ -64,6 +64,7 @@
     : nav === 'accounting' ? 'money' : null;
   var allWorkspaces = typeof workspaces !== 'undefined' && workspaces ? workspaces : [];
   var others = allWorkspaces.filter(function (w) { return !workspace || w.workspaceId !== workspace.id; });
+  var directorySections = typeof moreSections !== 'undefined' && moreSections ? moreSections : [];
 %>
 <a class="skip-link" href="#main">Skip to content</a>
 <div class="app">
@@ -113,13 +114,31 @@
     <% } %>
 
     <% if (workspace) { %>
+      <div class="rm-rail__utility">
+        <a class="rm-utility-link <%= nav === 'settings' && !currentHref.startsWith('/everything') ? 'is-on' : '' %>" href="/settings" aria-label="Settings"><%- helpers.icon('settings', { size: 17 }) %><span>Settings</span></a>
+        <div class="rm-more-menu" data-more-menu>
+          <button class="rm-utility-link <%= currentHref.startsWith('/everything') ? 'is-on' : '' %>" type="button" data-more-toggle aria-label="More" aria-expanded="false" aria-controls="rail-more-panel"><%- helpers.icon('layers', { size: 17 }) %><span>More</span><%- helpers.icon('chevron', { size: 13 }) %></button>
+          <nav class="rm-more-panel" id="rail-more-panel" data-more-panel aria-label="More destinations" hidden>
+            <div class="rm-more-panel__head"><div><strong>Explore StockChief</strong><span>Open a part of your business</span></div><a href="/everything">Full directory <%- helpers.icon('arrowRight', { size: 14 }) %></a></div>
+            <div class="rm-more-panel__groups">
+              <% directorySections.forEach(function (section) { %>
+                <section class="rm-more-panel__group"><h2><%= section.title %></h2><div><% section.links.forEach(function (link) { %><a href="<%= link.href %>"><%= link.label %></a><% }) %></div></section>
+              <% }) %>
+            </div>
+            <% if (!directorySections.length) { %><a class="rm-more-panel__fallback" href="/everything">See all StockChief areas</a><% } %>
+          </nav>
+        </div>
+      </div>
+    <% } %>
+
+    <% if (workspace) { %>
       <div class="rm-switch" data-switcher>
-        <button class="rm-switch__btn" type="button" data-switcher-toggle aria-expanded="false" aria-haspopup="true">
-          <%= workspace.name %><%- helpers.icon('chevron', { size: 12 }) %>
+        <button class="rm-switch__btn" type="button" data-switcher-toggle aria-expanded="false" aria-controls="rail-inventory-menu">
+          <span><%= workspace.name %></span><%- helpers.icon('chevronDown', { size: 14 }) %>
         </button>
-        <div class="rm-switch__menu" data-switcher-menu hidden>
+        <div class="rm-switch__menu" id="rail-inventory-menu" data-switcher-menu hidden>
           <% if (others.length) { %>
-            <div class="rm-switch__label">Switch to</div>
+            <div class="rm-switch__label">Switch inventory</div>
             <% others.forEach(function (other) { %>
               <form method="post" action="/inventories/switch">
                 <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -129,11 +148,9 @@
               </form>
             <% }) %>
           <% } %>
-          <div class="rm-switch__label">Elsewhere</div>
+          <div class="rm-switch__label">Manage inventories</div>
           <a class="rm-switch__item" href="/inventories">All inventories</a>
           <a class="rm-switch__item" href="/inventories/new">New inventory</a>
-          <a class="rm-switch__item" href="/what-you-told-me">What you've told me</a>
-          <a class="rm-switch__item" href="/everything">Everything else</a>
         </div>
       </div>
     <% } %>

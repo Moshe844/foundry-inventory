@@ -37,6 +37,9 @@
       && connection.status !== 'disconnected'
       && !activeConnections.includes(connection);
   });
+  var disconnectedConnections = connections.filter(function (connection) {
+    return connection.status === 'disconnected';
+  });
 
   var pay = typeof paymentAccount === 'undefined' ? null : paymentAccount;
   var grant = typeof paymentConnect === 'undefined' ? null : paymentConnect;
@@ -156,9 +159,7 @@
   <p class="rm-head__eyebrow"><%- helpers.icon('link', { size: 15 }) %> Connections</p>
   <h1>Where your business already happens</h1>
   <p>
-    Each inventory connects to its own accounts. <%= postgresMode
-      ? 'Connect a qualified store or till, Gmail, your own software, or a carrier account you pay for.'
-      : 'Connect your shop, till, mailbox, books, payments and carriers.' %> Once connected, StockChief keeps
+    Each inventory connects to its own accounts. Connect your shop, till, mailbox, books, payments and carriers. Once connected, StockChief keeps
     itself up to date and only asks you when something cannot be matched.
   </p>
 </header>
@@ -217,6 +218,19 @@
   </details>
 <% } %>
 
+<% if (disconnectedConnections.length) { %>
+  <details class="rm-work">
+    <summary><%= disconnectedConnections.length %> disconnected or incomplete connection<%= disconnectedConnections.length === 1 ? '' : 's' %> · history retained</summary>
+    <div class="rm-work__body">
+      <% disconnectedConnections.forEach(function (connection) { %>
+        <p><strong><%= connection.display_name %></strong> · <%= connection.provider_type.replaceAll('_', ' ') %>
+          — <%= connection.last_error || 'Not connected to this inventory.' %>
+          <a href="/settings/connections/<%= connection.id %>">View record</a></p>
+      <% }) %>
+    </div>
+  </details>
+<% } %>
+
 <%# ----------------------------------------------------- what you can connect %>
 <% providerGroups.forEach(function (group) {
      var groupProviders = providerCatalog.filter(function (p) { return p.category === group.key; });
@@ -240,20 +254,20 @@
           <span class="rm-provider__mark <%= String(provider.mark).length > 2 ? 'is-word' : '' %>" aria-hidden="true"><%= provider.mark %></span>
           <span class="rm-provider__n"><%= provider.name %></span>
           <span class="rm-provider__s">
-            <% if (alreadyConnected) { %><span class="rm-pillbadge is-ok">Connected</span>
-            <% } else if (!includedOnPlan) { %><span class="rm-pillbadge">Growth</span>
-            <% } else if (!provider.available) { %><span class="rm-pillbadge">Not available here</span><% } %>
+          <% if (alreadyConnected) { %><span class="rm-pillbadge is-ok">Connected</span>
+            <% } else if (!provider.available) { %><span class="rm-pillbadge">Not ready to connect</span>
+            <% } else if (!includedOnPlan) { %><span class="rm-pillbadge">Growth</span><% } %>
           </span>
         </div>
         <p><%= provider.description %></p>
 
-        <% if (currentUser.role !== 'owner') { %>
+        <% if (!provider.available) { %>
+          <p class="quiet"><%= provider.unavailableReason %></p>
+        <% } else if (currentUser.role !== 'owner') { %>
           <p class="quiet">An owner can connect this</p>
         <% } else if (!includedOnPlan) { %>
           <p class="quiet">Available on Growth. Let StockChief bring this system into the operation automatically.</p>
           <a class="rm-btn rm-btn--wash" href="/upgrade?capability=<%= encodeURIComponent(requiredCommercialCapability) %>&return=<%= encodeURIComponent('/settings/connections') %>">See Growth</a>
-        <% } else if (!provider.available) { %>
-          <p class="quiet"><%= provider.unavailableReason %></p>
         <% } else if (provider.type === 'reference_webhook' || provider.integrationMode === 'custom_contract') { %>
           <form method="post" action="<%= postgresMode ? '/settings/connections/custom' : '/settings/connections' %>">
             <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -502,9 +516,14 @@
           </div>
         <% } else if (grant && !grant.connected) { %>
           <p class="quiet">
-            <strong>Stripe account setup is not ready on this installation.</strong>
-            StockChief’s administrator must finish the Stripe Connect platform setup. StockChief will not
-            ask the business to paste an API key.
+            <% if (postgresMode && pay.available) { %>
+              <strong>New Stripe connections are not enabled for this production release.</strong>
+              Your existing payment records remain available. StockChief will show the connect action when this provider is qualified for live use.
+            <% } else { %>
+              <strong>Stripe account setup is not ready on this installation.</strong>
+              StockChief’s administrator must finish the Stripe Connect platform setup. StockChief will not
+              ask the business to paste an API key.
+            <% } %>
           </p>
         <% } %>
       <% } %>

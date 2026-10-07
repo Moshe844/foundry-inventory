@@ -71,6 +71,14 @@
     <% if (suggestions.length) { %><div class="sc-home__suggestions" aria-label="Things you can ask"><span>Try asking</span><% suggestions.slice(0, 3).forEach(function (line) { %><a href="/ask?q=<%= encodeURIComponent(line) %>"><%= line %></a><% }) %></div><% } %>
   </section>
 
+  <% if (!empty) { %>
+    <a class="sc-home__inventory-line" href="/inventory" aria-label="Open inventory">
+      <span class="sc-home__inventory-line-icon"><%- helpers.icon('inventory', { size: 17 }) %></span>
+      <span><small>Inventory now</small><strong><%= Number(stats.itemCount).toLocaleString() %> <%= stats.itemCount === 1 ? 'product' : 'products' %> · <%= Number(stats.unitsOnHand).toLocaleString() %> units on hand · <%= Number(stats.available).toLocaleString() %> available for orders</strong></span>
+      <%- helpers.icon('arrowRight', { size: 16 }) %>
+    </a>
+  <% } %>
+
   <% if (empty && !migration) { %>
     <section class="sc-home__first-steps" aria-labelledby="sc-home-first-steps-title">
       <div class="sc-home__section-head"><div><p class="sc-home__eyebrow">One start, then StockChief takes over the routine</p><h2 id="sc-home-first-steps-title">What happens next</h2></div></div>

@@ -494,6 +494,39 @@ input[type="number"], .rm-ledger__v, .rm-told__m, .rm-spine__d {
   font-size: var(--t-xs); font-weight: 600; color: var(--ghost);
   padding: 9px 9px 4px; letter-spacing: .01em;
 }
+.rm-switch__btn > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.rm-switch__menu { max-height: min(55vh, 420px); overflow-y: auto; }
+
+/* Quiet utilities at the foot of the rail. More is a grouped directory, not
+   another long list of departments competing with Home and Ask. */
+.rm-rail__utility { display: flex; align-items: center; gap: 4px; }
+.rm-utility-link {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  min-height: 36px; padding: 7px 9px; border: 0; border-radius: 9px;
+  color: var(--muted); background: transparent; font: 600 12px/1.2 var(--f);
+  text-decoration: none; cursor: pointer;
+}
+.rm-utility-link:hover, .rm-utility-link.is-on { color: var(--ink); background: var(--surface-3); }
+.rm-utility-link .icon:last-child:not(:first-child) { margin-left: auto; }
+.rm-more-menu { position: relative; }
+.rm-more-panel {
+  position: fixed; z-index: 90; left: calc(var(--rail-w) + 12px); bottom: 18px;
+  width: min(690px, calc(100vw - var(--rail-w) - 28px));
+  max-height: min(720px, calc(100vh - 36px)); overflow-y: auto;
+  padding: 19px 22px 21px; border: 1px solid #dfe1ec; border-radius: 17px;
+  color: #252b43; background: #fff; box-shadow: 0 24px 70px rgba(19, 21, 45, .23);
+}
+.rm-more-panel[hidden] { display: none; }
+.rm-more-panel__head { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding-bottom: 16px; border-bottom: 1px solid #e7e8ef; }
+.rm-more-panel__head strong { display: block; font-size: 17px; letter-spacing: -.025em; }
+.rm-more-panel__head span { display: block; margin-top: 3px; color: #758094; font-size: 12px; }
+.rm-more-panel__head a { display: inline-flex; align-items: center; gap: 5px; color: #5a4ab8; font-size: 12px; font-weight: 650; white-space: nowrap; }
+.rm-more-panel__groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 25px; }
+.rm-more-panel__group { min-width: 0; padding: 16px 0 15px; border-bottom: 1px solid #e9eaf0; }
+.rm-more-panel__group h2 { margin: 0 0 7px; color: #343951; font-size: 11px; font-weight: 750; letter-spacing: .055em; text-transform: uppercase; }
+.rm-more-panel__group > div { display: grid; gap: 1px; }
+.rm-more-panel__group a, .rm-more-panel__fallback { display: block; padding: 5px 0; border-radius: 6px; color: #485168; font-size: 12.5px; line-height: 1.3; text-decoration: none; }
+.rm-more-panel__group a:hover, .rm-more-panel__group a:focus-visible, .rm-more-panel__fallback:hover { color: #5544bb; text-decoration: underline; text-underline-offset: 3px; }
 
 .rm-rail__who {
   font-size: var(--t-sm); color: var(--muted);
@@ -2631,17 +2664,16 @@ a.rm-group:hover { background: var(--surface-2); color: inherit; }
 
 /* The vault: every screen that is not on the main path, grouped by question. */
 .rm-vault {
-  display: grid; gap: var(--s3);
+  display: grid; gap: 0 32px;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   align-items: start;
 }
 .rm-vault__grp {
-  padding: var(--s4);
-  background: var(--surface); border: 1px solid var(--line);
-  border-radius: var(--r-lg); box-shadow: var(--sh-1);
+  padding: 20px 0;
+  border-top: 1px solid var(--line);
 }
-.rm-vault__h { font-size: var(--t-md); font-weight: 600; color: var(--ink); margin: 0 0 3px; }
-.rm-vault__why { font-size: var(--t-sm); color: var(--muted); line-height: 1.5; margin: 0 0 var(--s3); }
+.rm-vault__h { font-size: var(--t-lg); font-weight: 680; color: var(--ink); margin: 0 0 4px; }
+.rm-vault__why { font-size: var(--t-sm); color: var(--muted); line-height: 1.5; margin: 0 0 10px; }
 .rm-vault__links { display: grid; gap: 2px; }
 .rm-vault__links a {
   font-size: var(--t-md); color: var(--ink-2); font-weight: 450;
@@ -3183,7 +3215,11 @@ a.rm-stat:hover, a.stat:hover, .card--link.stat:hover {
   .rail-search .search-input::placeholder { color: #747D98; }
   .rail-search .search-input:focus { background: rgba(255,255,255,.09); border-color: #756CFF; }
   .search-results { top: auto; bottom: calc(100% + 7px); left: 0; right: auto; width: 360px; }
-  .rm-switch { order: 11; }
+  .rm-rail__utility { order: 11; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; padding: 7px 0 3px; border-top: 1px solid rgba(255,255,255,.09); }
+  .rm-rail__utility .rm-utility-link { width: 100%; justify-content: flex-start; min-height: 39px; color: #9EA6BF; }
+  .rm-rail__utility .rm-utility-link:hover, .rm-rail__utility .rm-utility-link.is-on { color: #fff; background: rgba(255,255,255,.075); }
+  .rm-more-menu { min-width: 0; }
+  .rm-switch { order: 12; }
   .rm-switch::before {
     content: "CURRENT INVENTORY";
     display: block;
@@ -3206,9 +3242,9 @@ a.rm-stat:hover, a.stat:hover, .card--link.stat:hover {
     box-shadow: none;
   }
   .rm-switch__btn:hover { color: #FFF; background: rgba(255,255,255,.09); border-color: rgba(255,255,255,.16); }
-  .rm-switch__menu { inset: auto auto 0 calc(100% + 12px); }
+  .rm-switch__menu { inset: auto 0 calc(100% + 8px) 0; min-width: 100%; }
   .rm-rail__who {
-    order: 12;
+    order: 13;
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 4px;
@@ -3251,6 +3287,9 @@ a.rm-stat:hover, a.stat:hover, .card--link.stat:hover {
   .rail-search { flex: 1 1 auto; min-width: 0; margin: 0 var(--s2) 0 auto; }
   .rm-rail__who > span { display: none; }
   .rm-switch__btn { max-width: 130px; }
+  .rm-rail__utility .rm-utility-link { width: 38px; padding: 7px; }
+  .rm-rail__utility .rm-utility-link span, .rm-rail__utility .rm-utility-link .icon:last-child:not(:first-child) { display: none; }
+  .rm-more-panel { left: 12px; right: 12px; top: calc(var(--rail-h) + 8px); bottom: auto; width: auto; max-height: calc(100vh - var(--rail-h) - 20px); }
   .rm-canvas.is-wide, .rm-operation-page { max-width: none; }
 
   .grid--2, .grid--3 { grid-template-columns: minmax(0, 1fr); }
@@ -3305,11 +3344,14 @@ a.rm-stat:hover, a.stat:hover, .card--link.stat:hover {
   .rm-rail__brand { order: 0; margin: 0; }
   .rm-rail__spacer { order: 1; flex: 1 1 auto; margin: 0; }
   .rm-switch { order: 2; }
+  .rm-switch__menu { left: 0; right: auto; min-width: min(256px, calc(100vw - 24px)); }
   .rm-rail__who { order: 3; border-left: 0; margin: 0; padding: 0; }
+  .rm-rail__utility { order: 4; }
   .rm-rail__nav { order: 6; flex: 0 1 auto; }
   .rail-search { order: 7; flex: 1 1 140px; min-width: 120px; margin: 0 0 0 auto; }
   .rail-search .search-input { height: 34px; }
   .search-results { left: auto; right: 0; min-width: min(320px, calc(100vw - 24px)); }
+  .rm-more-panel__groups { grid-template-columns: 1fr; }
 
   /*
    * A table that nobody wrapped in a scroller.

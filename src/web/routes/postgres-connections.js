@@ -58,12 +58,15 @@ function createPostgresConnectionsRouter(database,options={}){
     ]);
     return res.page('connections/index',{
       title:'Connections',nav:'connections',room:true,backTo:{href:'/settings',label:'Settings'},launchTicket,
-      postgresMode:true,connections:connectionRows,providerCatalog:registry.catalog().filter(row=>row.available),apiToken,apiClients:clients,
+      postgresMode:true,connections:connectionRows,providerCatalog:registry.catalog(),apiToken,apiClients:clients,
       // Preserve existing merchant account details, but do not advertise new
       // self-service Connect or StockChief-funded guided shipping at launch.
-      paymentAccount:payment.connected||qualifiedTestConnect?{...payment,source:'connect'}:null,
-      paymentConnect:payment.connected||qualifiedTestConnect?
-        {...payment,flow:'oauth',testMode:!payment.liveMode}:null,
+      paymentAccount:{...payment,source:'connect',
+        because:!payment.connected&&!qualifiedTestConnect
+          ?'Stripe is visible here, but new production connections are not yet qualified. Existing connected accounts remain available.'
+          :payment.because},
+      paymentConnect:{...payment,flow:'oauth',testMode:!payment.liveMode,
+        available:payment.available&&(payment.connected||qualifiedTestConnect)},
       shippingAccount:{...shipping,billingReady:shipping.connected},shippingPlatform:{available:false},
       connectionPublicOrigin:requestPublicOrigin,xeroRedirectOrigin:requestPublicOrigin,
       paymentReturnOrigin:requestOrigin,currentWorkspaceId:req.ctx.workspaceId,

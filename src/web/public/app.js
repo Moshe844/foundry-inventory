@@ -1185,7 +1185,33 @@
       if (!root.contains(event.target)) close();
     });
     document.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') close();
+      if (event.key === 'Escape' && !menu.hidden) { close(); toggle.focus(); }
+    });
+  }
+
+  function initMoreMenu() {
+    const root = document.querySelector('[data-more-menu]');
+    if (!root) return;
+    const toggle = root.querySelector('[data-more-toggle]');
+    const panel = root.querySelector('[data-more-panel]');
+    if (!toggle || !panel) return;
+    const close = () => {
+      panel.hidden = true;
+      toggle.setAttribute('aria-expanded', 'false');
+      root.classList.remove('is-open');
+    };
+    toggle.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const open = panel.hidden;
+      panel.hidden = !open;
+      toggle.setAttribute('aria-expanded', String(open));
+      root.classList.toggle('is-open', open);
+    });
+    document.addEventListener('click', (event) => {
+      if (!root.contains(event.target)) close();
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && !panel.hidden) { close(); toggle.focus(); }
     });
   }
 
@@ -1795,6 +1821,7 @@
     initAskPending();
     initHomeAskHandoff();
     initSwitcher();
+    initMoreMenu();
     initVendorVocabulary();
     initLiveHome();
     initLiveMailbox();

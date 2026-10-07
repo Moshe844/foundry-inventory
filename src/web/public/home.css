@@ -52,6 +52,15 @@
 .sc-home__suggestions a { padding:6px 10px; border:1px solid rgba(219,213,255,.25); border-radius:999px; color:#e1ddf5; background:rgba(255,255,255,.065); font-size:12px; line-height:1.25; transition:background .16s,border-color .16s; }
 .sc-home__suggestions a:hover { background:rgba(255,255,255,.14); border-color:rgba(219,213,255,.5); }
 
+/* One factual line, not a wall of KPI cards. Decisions and the direct line
+   remain dominant; a new owner can still see the current stock picture. */
+.sc-home__inventory-line { display:grid; grid-template-columns:34px minmax(0,1fr) 16px; align-items:center; gap:11px; min-height:67px; padding:12px 5px; border-bottom:1px solid #e0e2e9; color:#333a52; }
+.sc-home__inventory-line:hover strong { color:#5946cc; }
+.sc-home__inventory-line-icon { display:grid; place-items:center; width:30px; height:30px; border-radius:9px; color:#7060b9; background:#f0edfb; }
+.sc-home__inventory-line small { display:block; margin-bottom:3px; color:#7d8297; font-size:10px; font-weight:750; letter-spacing:.07em; text-transform:uppercase; }
+.sc-home__inventory-line strong { display:block; font-size:13px; font-weight:630; line-height:1.4; }
+.sc-home__inventory-line > svg { color:#9297a8; }
+
 .sc-home__workline { display:flex; justify-content:space-between; align-items:center; gap:14px; min-height:56px; padding:10px 4px; color:#687085; font-size:12px; border-bottom:1px solid #e0e2e9; }
 .sc-home__workline > span { display:inline-flex; align-items:center; gap:10px; }
 .sc-home__workline > a { color:#6658aa; font-weight:600; white-space:nowrap; }

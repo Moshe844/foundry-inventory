@@ -1,5 +1,7 @@
 'use strict';
 
+const {sections:moreSections}=require('./routes/postgres-settings');
+
 function postgresPageRenderer(req,res,next){
   res.page=(view,data={})=>{const onboardingEntry=data.onboardingEntry || data.layoutOnboardingEntry || res.locals.globalOnboardingEntry || null;
     return res.render(view,{...data,onboardingEntry},(error,body)=>{
@@ -19,6 +21,7 @@ function postgresPageRenderer(req,res,next){
         if(href!==currentHref)arrivedFrom={href,label:req.session?.renderedPageLabels?.[href]||'previous page'};}}
     catch{arrivedFrom=null;}}
     return res.render('layout',{...data,body,title:data.title || 'StockChief',nav:data.nav || null,
+      moreSections,
       assetVersion:res.locals.assetVersion,
       flash:flashMessages,csrfToken:res.locals.csrfToken,
       backTo:data.suppressBack?null:(data.backTo || arrivedFrom || data.backToFallback || null),
