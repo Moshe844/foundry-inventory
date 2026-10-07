@@ -1176,6 +1176,14 @@
     };
     toggle.addEventListener('click', (event) => {
       event.stopPropagation();
+      const more = document.querySelector('[data-more-menu]');
+      if (more) {
+        const panel = more.querySelector('[data-more-panel]');
+        const button = more.querySelector('[data-more-toggle]');
+        if (panel) panel.hidden = true;
+        if (button) button.setAttribute('aria-expanded', 'false');
+        more.classList.remove('is-open');
+      }
       const open = menu.hidden;
       menu.hidden = !open;
       root.classList.toggle('is-open', open);
@@ -1202,6 +1210,14 @@
     };
     toggle.addEventListener('click', (event) => {
       event.stopPropagation();
+      const switcher = document.querySelector('[data-switcher]');
+      if (switcher) {
+        const menu = switcher.querySelector('[data-switcher-menu]');
+        const button = switcher.querySelector('[data-switcher-toggle]');
+        if (menu) menu.hidden = true;
+        if (button) button.setAttribute('aria-expanded', 'false');
+        switcher.classList.remove('is-open');
+      }
       const open = panel.hidden;
       panel.hidden = !open;
       toggle.setAttribute('aria-expanded', String(open));

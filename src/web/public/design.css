@@ -3242,7 +3242,7 @@ a.rm-stat:hover, a.stat:hover, .card--link.stat:hover {
     box-shadow: none;
   }
   .rm-switch__btn:hover { color: #FFF; background: rgba(255,255,255,.09); border-color: rgba(255,255,255,.16); }
-  .rm-switch__menu { inset: auto 0 calc(100% + 8px) 0; min-width: 100%; }
+  .rm-switch__menu { inset: auto auto 0 calc(100% + 10px); min-width: 228px; }
   .rm-rail__who {
     order: 13;
     display: grid;

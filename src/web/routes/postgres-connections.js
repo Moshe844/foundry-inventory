@@ -63,7 +63,7 @@ function createPostgresConnectionsRouter(database,options={}){
       // self-service Connect or StockChief-funded guided shipping at launch.
       paymentAccount:{...payment,source:'connect',
         because:!payment.connected&&!qualifiedTestConnect
-          ?'Stripe is visible here, but new production connections are not yet qualified. Existing connected accounts remain available.'
+          ?'No Stripe account is connected to this inventory.'
           :payment.because},
       paymentConnect:{...payment,flow:'oauth',testMode:!payment.liveMode,
         available:payment.available&&(payment.connected||qualifiedTestConnect)},

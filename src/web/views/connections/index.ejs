@@ -159,8 +159,7 @@
   <p class="rm-head__eyebrow"><%- helpers.icon('link', { size: 15 }) %> Connections</p>
   <h1>Where your business already happens</h1>
   <p>
-    Each inventory connects to its own accounts. Connect your shop, till, mailbox, books, payments and carriers. Once connected, StockChief keeps
-    itself up to date and only asks you when something cannot be matched.
+    Each inventory has its own accounts. See what is connected, what you can connect now, and what is not ready here yet. StockChief keeps connected sources up to date and asks you when something cannot be matched.
   </p>
 </header>
 
@@ -516,9 +515,9 @@
           </div>
         <% } else if (grant && !grant.connected) { %>
           <p class="quiet">
-            <% if (postgresMode && pay.available) { %>
-              <strong>New Stripe connections are not enabled for this production release.</strong>
-              Your existing payment records remain available. StockChief will show the connect action when this provider is qualified for live use.
+            <% if (postgresMode) { %>
+              <strong>New Stripe connections are not ready here yet.</strong>
+              Existing connected accounts and payment records remain available. StockChief will show the connect action when live setup is qualified; you do not need to paste an API key.
             <% } else { %>
               <strong>Stripe account setup is not ready on this installation.</strong>
               StockChief’s administrator must finish the Stripe Connect platform setup. StockChief will not

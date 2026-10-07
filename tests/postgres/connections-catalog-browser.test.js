@@ -43,15 +43,19 @@ test('Connections browser shows every provider and retained disconnected history
     const directory=page.getByRole('navigation',{name:'More destinations'});
     await directory.getByRole('heading',{name:'Connections'}).waitFor();
     assert.equal(await directory.getByRole('link',{name:'All connections'}).getAttribute('href'),'/settings/connections');
-    await page.keyboard.press('Escape');
-    assert.equal(await directory.isVisible(),false);
     await page.getByRole('button',{name:'Visible Connections'}).click();
+    assert.equal(await directory.isVisible(),false);
     const switcher=page.locator('#rail-inventory-menu');
     assert.equal(await switcher.isVisible(),true);
     assert.equal(await switcher.getByRole('link',{name:'All inventories'}).count(),1);
     assert.equal(await switcher.getByRole('link',{name:'Everything else'}).count(),0);
     const menuBox=await switcher.boundingBox();const railBox=await page.locator('.rm-rail').boundingBox();
-    assert.ok(menuBox.x>=railBox.x && menuBox.x+menuBox.width<=railBox.x+railBox.width+1);
+    assert.ok(menuBox.x>=railBox.x+railBox.width-4 && menuBox.x+menuBox.width<=1281,
+      JSON.stringify({menuBox,railBox}));
+    await page.getByRole('button',{name:'More'}).click();
+    assert.equal(await switcher.isVisible(),false);
+    await page.keyboard.press('Escape');
+    assert.equal(await directory.isVisible(),false);
     const id=newId('con');const at=nowIso();
     await database.query(`INSERT INTO workspace_connectors
       (id,workspace_id,connector_key,display_name,provider_type,status,capabilities,provides,config,
