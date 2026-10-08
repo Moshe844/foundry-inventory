@@ -146,6 +146,19 @@ test('Ask browser controls a real customer order, payment, and return through th
     [[item.skuIds[0],2,2500],[hat.skuIds[0],1,500]].sort((a,b)=>a[0].localeCompare(b[0])));
     assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM sales_orders
       WHERE workspace_id=$1`,[ctx.workspaceId])).rows[0].count,beforeMulti+1);
+    const aliasMessage=`Draft one pickup order for Builder Co: 1 ${skuCode} at $25 and 2 ${hatCode} at $5; `+
+      'both lines on the same order, no reservation or invoice';
+    plans.set(aliasMessage,step('sales_order.create',{customer:'Builder Co',deliveryMethod:'pickup',
+      location:'Main Warehouse',orderLines:JSON.stringify([
+        {productName:skuCode,units:1,pricePerUnit:'25',description:'A boot'},
+        {productName:hatCode,units:2,pricePerUnit:'5',description:'A hat'}])}));
+    const aliasOrder=await prepareAndApprove(page,base,database,ctx.workspaceId,aliasMessage,'sales_order.create');
+    const aliasLines=(await database.query(`SELECT sku_id,quantity_ordered,unit_price_minor FROM sales_order_lines
+      WHERE workspace_id=$1 AND sales_order_id=$2 ORDER BY sku_id`,
+    [ctx.workspaceId,aliasOrder.result.salesOrderId])).rows;
+    assert.deepEqual(aliasLines.map((line)=>[line.sku_id,Number(line.quantity_ordered),
+      Number(line.unit_price_minor)]).sort((a,b)=>a[0].localeCompare(b[0])),
+    [[item.skuIds[0],1,2500],[hat.skuIds[0],2,500]].sort((a,b)=>a[0].localeCompare(b[0])));
     const combined='Create another two-boot order for Builder Co dated 2026-08-14, pickup at Main Warehouse, and reserve the stock';
     plans.set(combined,[step('sales_order.create',{customer:'Builder Co',sku:'Work Boot',quantity:2,
       deliveryMethod:'customer pickup',location:'Main Warehouse',orderDate:'2026-08-14'}),

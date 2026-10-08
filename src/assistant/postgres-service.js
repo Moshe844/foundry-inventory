@@ -36,10 +36,17 @@ async function resolveCustomerOrderLines(database,ctx,raw,message,currency){
     .map((match)=>pricing.toMinor(match[1].replaceAll(',',''),'Quoted selling price'));
   const seen=new Set(),lines=[],summaries=[];let orderCurrency=currency||null;
   for(const [index,entry] of entries.entries()){
-    if(!entry||typeof entry!=='object'||Array.isArray(entry)
-      ||Object.keys(entry).some((key)=>!['sku','quantity','unitPrice'].includes(key)))
-      return {answer:'One product line contained an invalid field. Nothing was prepared.'};
-    const named=trimOrNull(entry.sku),quantity=Number(entry.quantity);
+    if(!entry||typeof entry!=='object'||Array.isArray(entry))
+      return {answer:'One product line was not an item with a product and quantity. Nothing was prepared.'};
+    const normalized=Object.fromEntries(Object.entries(entry)
+      .map(([key,value])=>[key.replace(/[^a-z0-9]/gi,'').toLowerCase(),value]));
+    const first=(keys)=>keys.map((key)=>normalized[key]).find((value)=>value!==undefined&&value!==null&&value!=='');
+    const rawProduct=first(['sku','skucode','product','productname','item','itemname','itemcode','code','name']);
+    const product=rawProduct&&typeof rawProduct==='object'
+      ?rawProduct.sku||rawProduct.code||rawProduct.name:null;
+    const named=trimOrNull(product||rawProduct);
+    const quantity=Number(first(['quantity','qty','units','unitcount']));
+    const statedPrice=first(['unitprice','priceperunit','perunitprice','sellingprice','price','amount']);
     if(!named||!Number.isSafeInteger(quantity)||quantity<1||quantity>100000)
       return {answer:'Each product line needs an exact product and a positive whole-unit quantity. Nothing was prepared.'};
     const found=await resolveRequestedSku(database,ctx.workspaceId,{sku:named});
@@ -47,14 +54,14 @@ async function resolveCustomerOrderLines(database,ctx,raw,message,currency){
     if(seen.has(found.row.id))return {answer:`${found.row.code} appears twice. Combine its quantity into one line; nothing was prepared.`};
     seen.add(found.row.id);
     const current=await pricing.currentPrice(database,ctx.workspaceId,found.row.id);
-    if(quotedAmounts.length>=entries.length&&(entry.unitPrice===null||entry.unitPrice===undefined||entry.unitPrice===''))
+    if(quotedAmounts.length>=entries.length&&statedPrice===undefined)
       return {answer:`Your request quotes prices for every line, but ${found.row.code} has no preserved quoted price. Nothing was prepared.`};
-    if(orderCurrency&&current.currency&&current.currency!==orderCurrency&&entry.unitPrice==null)
+    if(orderCurrency&&current.currency&&current.currency!==orderCurrency&&statedPrice===undefined)
       return {answer:'Those products have prices in different currencies. Name one order currency and exact per-unit prices; nothing was prepared.'};
     orderCurrency=orderCurrency||current.currency||'USD';
     let unitPriceMinor=current.amount_minor;
-    if(entry.unitPrice!==null&&entry.unitPrice!==undefined&&entry.unitPrice!==''){
-      try{unitPriceMinor=pricing.toMinor(String(entry.unitPrice),'Selling price');}
+    if(statedPrice!==undefined){
+      try{unitPriceMinor=pricing.toMinor(String(statedPrice),'Selling price');}
       catch{return {answer:`The per-unit price for ${found.row.code} is invalid. Nothing was prepared.`};}
       if(!quotedAmounts.includes(unitPriceMinor))return {answer:
         `I could not verify the proposed ${pricing.formatMinor(unitPriceMinor,orderCurrency)} per-unit price for ${found.row.code} in your request. Nothing was prepared.`};
