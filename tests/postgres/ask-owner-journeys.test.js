@@ -158,9 +158,14 @@ test('Ask approvals update the conversation, invoices use the canonical ledger, 
         data:{understood:true,summary:'A stock alert',clarifyingQuestion:'',unsupportedReason:'',
           changes:[change({sku:'Blue Shoe',notificationThreshold:4,notificationMetric:metric,
             notificationComparator:'below'})]},usage:pricedUsage()};
-        if(input.schemaName==='postgres_operating_instruction_effect_fit')return {
-          data:{equivalent,difference:equivalent?'':'Available-to-fulfill was changed to physical on-hand.'},
-          usage:pricedUsage()};
+        if(input.schemaName==='postgres_operating_instruction_effect_fit'){
+          const evidence=JSON.parse(input.prompt);
+          assert.deepEqual([evidence.resolvedEntities[0].requestedSku,
+            evidence.resolvedEntities[0].verifiedSkuCode,
+            evidence.resolvedEntities[0].verifiedProductName],['Blue Shoe','BLUE-SHOE','Blue Shoe']);
+          return {data:{equivalent,difference:equivalent?'':
+            'Available-to-fulfill was changed to physical on-hand.'},usage:pricedUsage()};
+        }
         throw new Error(`Unexpected schema ${input.schemaName}`);}});
     await assert.rejects(instructions.interpret(database,ctx,availableInstruction,
       {provider:forMeasure('on_hand',false),instructionUsageKey:'mismatched-alert'}),

@@ -34,7 +34,10 @@ const EFFECT_FIT_SYSTEM=`Compare the owner's instruction with the exact effects 
 Reject any changed measure, comparator, threshold, named SKU/location/supplier, authority, automatic action,
 notification channel or timing. A requested prohibition is satisfied only if no proposed effect violates it.
 The effects are authoritative descriptions of the business engines, not suggestions. Do not infer an
-additional effect from the owner's intent. If the effects are faithful, equivalent=true. If not, give one
+additional effect from the owner's intent. The resolvedEntities mapping is verified by this workspace's
+database: a supplied SKU code and its product display name identify the SAME record, not different targets.
+Do not reject an effect merely because it uses the verified display name instead of the supplied SKU code.
+If the effects are faithful, equivalent=true. If not, give one
 concrete plain-language difference. Missing optional scope is not a difference.`;
 const SYSTEM=`Translate one owner's lasting StockChief operating instruction into typed settings. Return only the schema.
 Extract only facts and limits explicitly stated. Never invent a product, supplier, location, threshold, authority or default.
@@ -211,7 +214,11 @@ async function interpret(database,ctx,instruction,options={}){const clean=String
   if(!questions.length){
     const effects=resolvedChanges.map(describe);
     const fit=await completeModel({system:EFFECT_FIT_SYSTEM,
-      prompt:JSON.stringify({ownerInstruction:clean,enforcedEffects:effects}),
+      prompt:JSON.stringify({ownerInstruction:clean,enforcedEffects:effects,
+        resolvedEntities:resolvedChanges.map((change)=>({requestedSku:change.sku||null,
+          verifiedSkuCode:change.skuCode||null,verifiedProductName:change.displayName||null,
+          requestedLocation:change.location||null,verifiedLocationName:change.locationName||null,
+          requestedSupplier:change.supplier||null,verifiedSupplierName:change.supplierName||null}))}),
       schema:EFFECT_FIT_SCHEMA,schemaName:'postgres_operating_instruction_effect_fit'});
     if(options.onUsage&&fit.usage)await options.onUsage(fit.usage,
       {schemaName:'postgres_operating_instruction_effect_fit'});
