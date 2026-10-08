@@ -139,9 +139,13 @@ function systemFor(catalogue=registry,{compact=false}={}){return `${PLANNING_RUL
 async function completeWithOutputRetry(provider,request){
   try{return await provider.complete(request);}
   catch(error){if(error.code!=='ai_invalid_output')throw error;
-    // A malformed model response is not a business rejection. Retry once
-    // under the same bounded provider budget; no business effect has run.
-    return provider.complete(request);}
+    // A verifier can exhaust its deliberately small output budget before
+    // producing the schema-shaped decision. Repeating the identical token
+    // limit just reproduces the failure and wrongly rejects a valid action.
+    // The commercial provider-dollar reservation still bounds this retry.
+    const retry=request.maxOutputTokens
+      ?{...request,maxOutputTokens:Math.max(1024,request.maxOutputTokens*2)}:request;
+    return provider.complete(retry);}
 }
 
 async function completeRepair(provider,catalogue,prompt){
@@ -444,7 +448,8 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
           proposedSteps:selected.steps.map((step)=>step.contract.name)}));
       if(error.code==='rate_limited')return {steps:[],clarifyingQuestion:error.limitKind==='daily_model_attempts'
         ?error.message:'This request exceeds the safe AI cost limit even with a shorter verification. Nothing changed. Try one part at a time.'};
-      console.warn('[stockchief] Ask capability verification failed',error.code||error.name||'unknown');
+      console.warn('[stockchief] Ask capability verification failed',error.code||error.name||'unknown',
+        String(error.details?.technical||'').slice(0,120));
       return {steps:[],clarifyingQuestion:'I could not safely verify that I understood this request. Nothing changed.'};
     }
   }

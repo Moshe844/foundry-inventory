@@ -41,6 +41,26 @@ test('malformed model output retries once without turning a supported read into 
   assert.equal(result.steps[0].contract.name,'read.locations');
 });
 
+test('a truncated capability-fit response retries with a bounded larger output budget',async()=>{
+  const fitBudgets=[];
+  const provider={async complete({schemaName,maxOutputTokens}){
+    if(schemaName==='stockchief_capability_fit'){
+      fitBudgets.push(maxOutputTokens);
+      if(fitBudgets.length===1)throw Object.assign(new Error('Truncated fit response'),{
+        code:'ai_invalid_output',details:{technical:'stop_reason max_tokens'}});
+      return {data:{aligned:true,reason:''}};
+    }
+    return {data:{steps:[{capability:'sales_order.create',arguments:[
+      {name:'customer',value:'Lab Eastside Facilities'},
+      {name:'sku',value:'LAB-WASH-030'},
+      {name:'quantity',value:'2'}],dependsOn:[],continuesPending:false}],clarifyingQuestion:''}};
+  }};
+  const result=await planner.plan(provider,
+    'Prepare a draft order for Lab Eastside Facilities: two LAB-WASH-030 washers.');
+  assert.deepEqual(fitBudgets,[384,1024]);
+  assert.equal(result.steps[0].contract.name,'sales_order.create');
+});
+
 test('a single navigation request cannot produce two competing page jumps',async()=>{
   let attempts=0;
   const step=(capability)=>({capability,arguments:[],dependsOn:[],continuesPending:false});
