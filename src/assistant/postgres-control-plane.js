@@ -148,7 +148,10 @@ async function executeStep(service,database,ctx,step,{actor,provider,rawProvider
     answer:'The planned operation contained an invalid business input. Nothing changed.',rows:[],columns:[]},
     args:resolved.args,provenance:resolved.provenance};
   const args=normalizeForLegacy(contract,resolved.args);
-  const result=await contract.prepare(service,database,ctx,sourceMessage,args,
+  // Preparation may need to ground quoted prices or other stated facts in the
+  // original instruction. A short answer to a clarification is not a new,
+  // self-contained request; preserve both turns through the canonical engine.
+  const result=await contract.prepare(service,database,ctx,resolutionMessage,args,
     {emailDraftProvider:contract.name==='communication.send_email'?provider:null});
   if(result?.status==='PREPARED'&&!await contract.verify(service,database,ctx,result))
     return {result:{status:'CLARIFY',answer:'StockChief could not verify the prepared change. Nothing changed.',

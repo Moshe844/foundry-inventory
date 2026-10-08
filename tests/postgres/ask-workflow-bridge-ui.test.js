@@ -147,6 +147,25 @@ test('Ask browser controls a real customer order, payment, and return through th
     [[item.skuIds[0],2,2500],[hat.skuIds[0],1,500]].sort((a,b)=>a[0].localeCompare(b[0])));
     assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM sales_orders
       WHERE workspace_id=$1`,[ctx.workspaceId])).rows[0].count,beforeMulti+1);
+    const pendingOrderMessage=`Create one draft pickup order for Builder Co with 2 ${skuCode} at $25 each `+
+      `and 1 ${hatCode} at $5 each; do not reserve or invoice`;
+    const pickupAnswer='Main Warehouse is the pickup location.';
+    plans.set(pendingOrderMessage,step('sales_order.create',{customer:'Builder Co',deliveryMethod:'pickup',
+      orderLines:JSON.stringify([{sku:skuCode,quantity:2,unitPrice:'25'},
+        {sku:hatCode,quantity:1,unitPrice:'5'}])}));
+    plans.set(pickupAnswer,{...step('sales_order.create',{location:'Main Warehouse'}),continuesPending:true});
+    await page.goto(`${base}/ask`);
+    await page.getByLabel('Ask StockChief').fill(pendingOrderMessage);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Continue'}).click()]);
+    assert.match(await page.locator('main').innerText(),/Which location will the customer pick/);
+    await page.getByLabel('Ask StockChief').fill(pickupAnswer);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Continue'}).click()]);
+    const resumedOrderProposal=(await database.query(`SELECT * FROM stockchief_runtime.assistant_action_proposals
+      WHERE workspace_id=$1 AND action_type='sales_order.create' ORDER BY created_at DESC,id DESC LIMIT 1`,
+    [ctx.workspaceId])).rows[0];
+    assert.equal(resumedOrderProposal.status,'PENDING');
+    assert.deepEqual(resumedOrderProposal.payload.lines.map(({quantity,unitPriceMinor})=>[quantity,unitPriceMinor]),
+      [[2,2500],[1,500]]);
     const aliasMessage=`Draft one pickup order for Builder Co: 1 ${skuCode} at $25 and 2 ${hatCode} at $5; `+
       'both lines on the same order, no reservation or invoice';
     plans.set(aliasMessage,step('sales_order.create',{customer:'Builder Co',deliveryMethod:'pickup',
