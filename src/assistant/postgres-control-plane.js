@@ -184,6 +184,27 @@ async function synthesizeReads(provider,message,executed){
       rows:[],columns:[],reason:'unavailable'}}];}
 }
 
+async function groundNamedSkuReads(service,database,ctx,message,executed,catalogue,executionOptions){
+  if(!executed.some((entry)=>['inventory','inventory_positions','inventory_movements',
+    'inventory_valuation','inventory_cost_movements','inventory_summary','prices','purchase_costs']
+    .includes(entry.step.contract.view)))return;
+  const named=(await database.query(`SELECT s.code FROM skus s JOIN items i
+    ON i.id=s.item_id AND i.workspace_id=s.workspace_id
+    WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1
+      AND length(s.code)>=4 AND strpos(lower($2),lower(s.code))>0
+    ORDER BY length(s.code) DESC LIMIT 2`,[ctx.workspaceId,message])).rows;
+  if(named.length!==1)return;
+  for(const view of ['inventory','inventory_valuation','inventory_cost_movements','prices']){
+    if(executed.some((entry)=>entry.step.contract.view===view&&
+      entry.args.search===named[0].code))continue;
+    const contract=catalogue.get(`read.${view}`);
+    if(!contract)continue;
+    const step={contract,args:{search:named[0].code,timeframe:'all_time'},dependsOn:[],continuesPending:false};
+    const outcome=await executeStep(service,database,ctx,step,executionOptions);
+    executed.push({step,...outcome});
+  }
+}
+
 async function run(service,database,ctx,message,{provider,rawProvider=null,history=[],pending=null,page=null,usageKey=''}){
   let selected;let catalogue;let workspace;let recentChanges=[];
   try{
@@ -255,6 +276,8 @@ async function run(service,database,ctx,message,{provider,rawProvider=null,histo
     executed.push({step,...outcome});
   }
   if(executed.length&&executed.every((entry)=>entry.step.contract.kind==='read')){
+    await groundNamedSkuReads(service,database,ctx,message,executed,catalogue,
+      {actor,provider,rawProvider,sourceMessage:message,pending,page,usageKey});
     if(executed.length===1&&executed[0].step.contract.answerMode==='executor')
       return {steps:selected.steps,outcomes:executed};
     let answered=await synthesizeReads(provider,message,executed);

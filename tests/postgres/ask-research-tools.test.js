@@ -12,6 +12,7 @@ const inventory=require('../../src/domain/postgres-inventory-engine');
 const costing=require('../../src/accounting/postgres-costing');
 const assistant=require('../../src/assistant/postgres-service');
 const research=require('../../src/assistant/postgres-research');
+const control=require('../../src/assistant/postgres-control-plane');
 
 test('Ask research reads real inventory positions, stock history and prices within one business only',
   {timeout:120000},async(context)=>{
@@ -65,6 +66,24 @@ test('Ask research reads real inventory positions, stock history and prices with
     assert.equal(costChanges.rows[0].bookCostChange,'$1.26');
     assert.equal(costChanges.rows[0].recordedUnitCost,'$0.18');
     assert.equal(costChanges.rows[0].change,7);
+    const seen=[];
+    const badPlanner={complete:async(request)=>{
+      if(request.schemaName==='stockchief_capability_plan')return {data:{steps:[{capability:'read.inventory_summary',
+        arguments:[],dependsOn:[],continuesPending:false}],clarifyingQuestion:'',closestAlternative:''}};
+      if(request.schemaName==='stockchief_capability_answer'){
+        const evidence=JSON.parse(request.prompt).evidence;
+        seen.push(...evidence.map((entry)=>entry.capability));
+        return {data:{answer:'7 gloves were recorded at $0.18 each, for $1.26 of book cost.',
+          supported:true,usedSteps:[1,2,3],additionalReads:[]}};
+      }
+      throw new Error(`Unexpected model stage: ${request.schemaName}`);
+    }};
+    const groundedSku=await control.run(assistant,database,owner,
+      'For GLOVE, what is its quantity and recorded book cost?',{provider:badPlanner});
+    assert.equal(groundedSku.outcomes[0].result.status,'ANSWERED');
+    assert.ok(seen.includes('read.inventory_valuation'));
+    assert.ok(seen.includes('read.inventory_cost_movements'));
+    assert.ok(seen.includes('read.inventory'));
     const supplierItems=await assistant.lookup(database,owner,{view:'supplier_items',search:'Blue Work Glove'});
     assert.equal(supplierItems.rows.length,0);
     for(const view of ['inventory_positions','inventory_movements','inventory_valuation',
