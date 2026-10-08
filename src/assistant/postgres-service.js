@@ -1088,16 +1088,27 @@ async function recordCapabilityOutcome(database,ctx,message,outcome,{batchId=nul
 
 /** The production Ask entry point. Language selects registered contracts;
  * canonical services retain exclusive authority over business state. */
+function fundedAskProvider(database,ctx,rawProvider,prefix,
+  wrapModel=require('../commercial/model').wrap){
+  if(!rawProvider)return null;
+  let call=0,fundingKey=null;
+  return {...rawProvider,async complete(request){
+    const key=`${prefix}:${call++}`;
+    // A failed model attempt reverses its credit reservation. The next attempt
+    // must establish new funding before any later calls can be internal.
+    const options=fundingKey?{chargeCustomer:false,fundingKey}:{};
+    const response=await wrapModel(database,ctx,rawProvider,'ask',key,options).complete(request);
+    if(!fundingKey)fundingKey=key;
+    return response;
+  }};
+}
+
 async function askCapabilities(database,ctx,message,options={}){
   await require('../commercial/enforcement').workspace(database,ctx.workspaceId,'ask.lookup');
   const clean=String(message||'').trim();if(!clean)throw new ValidationError('Ask a question or describe what should happen.');
   const rawProvider=options.provider||(config.ai.configured?createProviderUnobserved(config.ai.provider,config.ai.tier('fast')):null);
-  const usageKey=String(options.usageKey||newId('askusage'));let modelCall=0;
-  const provider=rawProvider?{...rawProvider,complete:(request)=>{
-    const call=modelCall++;
-    return require('../commercial/model').wrap(database,ctx,rawProvider,'ask',
-      `${usageKey}:capability:${call}`,call?{chargeCustomer:false,fundingKey:`${usageKey}:capability:0`}:{})
-      .complete(request);}}:null;
+  const usageKey=String(options.usageKey||newId('askusage'));
+  const provider=fundedAskProvider(database,ctx,rawProvider,`${usageKey}:capability`);
   const history=(await database.query(`SELECT message,answer,status,intent FROM stockchief_runtime.assistant_interactions
     WHERE workspace_id=$1 AND actor_user_id=$2 AND ($3::timestamptz IS NULL OR created_at > $3::timestamptz)
     ORDER BY created_at DESC,id DESC LIMIT 6`,[ctx.workspaceId,ctx.actorId,options.startedAt||null])).rows.reverse();
@@ -1255,11 +1266,7 @@ async function supersedePendingProposal(database,ctx,oldId,newId,args){
 
 async function continueApprovedPlans(database,ctx,proposalId){
   const rawProvider=config.ai.configured?createProviderUnobserved(config.ai.provider,config.ai.tier('fast')):null;
-  let call=0;const provider=rawProvider?{...rawProvider,complete:(request)=>{
-    const index=call++;
-    return require('../commercial/model').wrap(database,ctx,rawProvider,'ask',
-      `plan:${proposalId}:${index}`,index?{chargeCustomer:false,fundingKey:`plan:${proposalId}:0`}:{})
-      .complete(request);}}:null;
+  const provider=fundedAskProvider(database,ctx,rawProvider,`plan:${proposalId}`);
   return require('./postgres-capability-plans').resume(database,ctx,proposalId,{
     service:capabilityService(),provider,rawProvider,
     record:(plan,index,outcome)=>recordCapabilityOutcome(database,ctx,plan.source_message,outcome,
@@ -1310,4 +1317,5 @@ async function cancelProposal(database,ctx,id) {
 }
 
 module.exports={lookup,ask:askCapabilities,listInteractions,
-  continueEmail,reviseEmailProposal,getProposal,executeProposal,cancelProposal};
+  continueEmail,reviseEmailProposal,getProposal,executeProposal,cancelProposal,
+  fundedAskProvider};

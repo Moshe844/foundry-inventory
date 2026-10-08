@@ -6,6 +6,25 @@ const planner=require('../../src/assistant/postgres-capability-planner');
 const {registry}=require('../../src/assistant/postgres-capability-registry');
 const control=require('../../src/assistant/postgres-control-plane');
 const capabilityPlans=require('../../src/assistant/postgres-capability-plans');
+const capabilityService=require('../../src/assistant/postgres-service');
+
+test('failed model attempt is not treated as funding for its retry',async()=>{
+  const attempts=[];
+  const provider=capabilityService.fundedAskProvider({}, {}, {name:'test'},'ask:test',
+    (_db,_ctx,_provider,_operation,key,options)=>({complete:async()=>{
+      attempts.push({key,options});
+      if(attempts.length===1)throw new Error('First attempt reversed its reservation.');
+      return {data:{ok:true}};
+    }}));
+  await assert.rejects(provider.complete({}),/First attempt reversed/);
+  await provider.complete({});
+  await provider.complete({});
+  assert.deepEqual(attempts,[
+    {key:'ask:test:0',options:{}},
+    {key:'ask:test:1',options:{}},
+    {key:'ask:test:2',options:{chargeCustomer:false,fundingKey:'ask:test:1'}},
+  ]);
+});
 
 test('post-approval reads are scoped to the one completed business record',()=>{
   const steps=[{capability:'sales_order.fulfill',state:'DONE',args:{recordReference:'SO-00009'}},
