@@ -345,6 +345,34 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
                 prompt:JSON.stringify(candidate()),schema:FIT_SCHEMA,
                 schemaName:'stockchief_capability_fit'});
               if(stronger.data?.aligned===true)return selected;
+              // Two fit checks rejected the fast plan. Before telling the owner
+              // a supported action is unavailable, let the bounded verifier
+              // choose a NEW plan from the same registry and check its effects.
+              // The resolver and approval gate still validate every write.
+              try{
+                const alternative=await verificationProvider.complete({system:systemFor(catalogue),
+                  prompt:JSON.stringify({...context,rejectedPlan:repaired.data,
+                    validationErrors:[{issue:'The proposed plan failed independent capability-fit checks.',
+                      fastReason:String(fit.data.reason||'').slice(0,240),
+                      independentReason:String(stronger.data?.reason||'').slice(0,240)}],
+                    instruction:'Replan from the current request using only registered capabilities. Preserve every requested business effect and explicit input. Choose no steps if no exact supported effect exists.'}),
+                  schema:schemaFor(catalogue),schemaName:'stockchief_capability_plan'});
+                const retry=parseSteps(alternative.data,catalogue);
+                if(retry.steps.length){
+                  if(!pending)for(const step of retry.steps)step.continuesPending=false;
+                  groundedMoneyArguments(retry.steps,message,pending);
+                  coverExplicitOrderReservation(retry.steps,message,catalogue,pending);
+                  sequenceApprovedMutations(retry.steps);
+                  selected=retry;
+                  const finalFit=await verificationProvider.complete({system:FIT_SYSTEM,
+                    prompt:JSON.stringify(candidate()),schema:FIT_SCHEMA,
+                    schemaName:'stockchief_capability_fit'});
+                  if(finalFit.data?.aligned===true)return selected;
+                }
+              }catch(error){
+                if(error.code==='entitlement_required'||error.code==='rate_limited')throw error;
+                console.warn('[stockchief] Ask independent replan failed',error.code||error.name||'unknown');
+              }
             }
             if(process.env.STOCKCHIEF_ASK_DIAGNOSTICS==='1')console.warn('[stockchief] Ask fit rejected',
               JSON.stringify({stage:'repaired',steps:selected.steps.map((step)=>step.contract.name),
