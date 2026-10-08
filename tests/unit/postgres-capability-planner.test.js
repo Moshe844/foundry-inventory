@@ -7,15 +7,7 @@ const {registry}=require('../../src/assistant/postgres-capability-registry');
 const control=require('../../src/assistant/postgres-control-plane');
 
 test('a dependent order read can answer exact quantities after an approved write',async()=>{
-  let evidence;
-  const provider={complete:async(request)=>{
-    evidence=JSON.parse(request.prompt).evidence;
-    assert.deepEqual(JSON.parse(request.prompt).completedActions,[{capability:'sales_order.fulfill',
-      recordReference:'SO-00008',status:'EXECUTED'}]);
-    assert.match(request.system,/ALREADY occurred/);
-    return {data:{supported:true,answer:'SO-00008 has 2 ordered, 1 fulfilled and 1 still held; $0.75 is invoiced and unpaid.',
-      usedSteps:[0],additionalReads:[]}};
-  }};
+  const provider={complete:async()=>{throw new Error('Exact post-action order evidence does not need a model guess.');}};
   const rows=[{order:'SO-00008',orderedUnits:2,fulfilledUnits:1,heldUnits:1,
     openUnits:1,invoiced:'$0.75',paid:'$0.00',outstanding:'$0.75'}];
   const answered=await control.synthesizeReads(provider,
@@ -24,8 +16,8 @@ test('a dependent order read can answer exact quantities after an approved write
       result:{status:'ANSWERED',answer:'1 customer order matched; 1 units remain open.',rows,
         columns:Object.keys(rows[0])}}],{completedActions:[{capability:'sales_order.fulfill',
         recordReference:'SO-00008',status:'EXECUTED'}]});
-  assert.deepEqual(evidence[0].rows,rows);
-  assert.match(answered[0].result.answer,/1 fulfilled and 1 still held/);
+  assert.equal(answered[0].result.answer,
+    'SO-00008: 2 ordered, 1 fulfilled, 1 still held; $0.75 invoiced, $0.00 paid, $0.75 outstanding.');
   assert.equal(answered[0].result.status,'ANSWERED');
 });
 

@@ -155,6 +155,21 @@ async function executeStep(service,database,ctx,step,{actor,provider,rawProvider
 
 async function synthesizeReads(provider,message,executed,{completedActions=[]}={}){
   if(executed.some((entry)=>entry.result.status!=='ANSWERED'))return executed;
+  // A completed multi-step order needs a current-state receipt, not another
+  // model inference about whether the already-approved action was possible.
+  // Render verified, exact-match order evidence without inventing a before-state.
+  if(completedActions.length&&executed.length===1
+    &&executed[0].step.contract.view==='sales_orders'){
+    const entry=executed[0],rows=entry.result.rows||[];
+    const sought=String(entry.args.search||'').trim().toLowerCase();
+    if(rows.length===1&&sought&&String(rows[0].order||'').toLowerCase()===sought){
+      const row=rows[0];
+      const answer=`${row.order}: ${row.orderedUnits} ordered, ${row.fulfilledUnits} fulfilled, `+
+        `${row.heldUnits} still held; ${row.invoiced} invoiced, ${row.paid} paid, `+
+        `${row.outstanding} outstanding.`;
+      return [{...entry,result:{...entry.result,answer}}];
+    }
+  }
   const evidence=executed.map((entry,index)=>({step:index,capability:entry.step.contract.name,arguments:entry.args,
     recordedAnswer:entry.result.answer,rows:(entry.result.rows||[]).slice(0,30),
     truncated:(entry.result.rows||[]).length>=100}));
