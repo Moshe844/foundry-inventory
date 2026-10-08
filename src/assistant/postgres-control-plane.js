@@ -205,6 +205,23 @@ async function groundNamedSkuReads(service,database,ctx,message,executed,catalog
   }
 }
 
+async function focusedRecordCatalogue(database,ctx,message,catalogue){
+  const records=require('./postgres-workflow-capabilities').RECORDS;
+  const matches=(await Promise.all(Object.entries(records).map(async([kind,source])=>{
+    const found=await database.query(`SELECT 1 FROM ${source.table} WHERE workspace_id=$1
+      AND length(${source.number})>=4 AND strpos(lower($2),lower(${source.number}))>0 LIMIT 1`,
+    [ctx.workspaceId,message]);
+    return found.rows.length?kind:null;
+  }))).filter(Boolean);
+  if(matches.length!==1)return null;
+  const entries=catalogue.list().filter((entry)=>entry.recordKind===matches[0]
+    ||entry.kind==='read'||entry.kind==='navigation');
+  if(entries.length===catalogue.list().length)return null;
+  const selected=new Map(entries.map((entry)=>[entry.name,entry]));
+  return {list:(kind=null)=>entries.filter((entry)=>!kind||entry.kind===kind),
+    get:(name)=>selected.get(name)||null};
+}
+
 async function run(service,database,ctx,message,{provider,rawProvider=null,history=[],pending=null,page=null,usageKey=''}){
   let selected;let catalogue;let workspace;let recentChanges=[];
   try{
@@ -223,6 +240,14 @@ async function run(service,database,ctx,message,{provider,rawProvider=null,histo
         /(?:Id|Number)$/.test(key)&&typeof value==='string'))}));
     selected=await planner.plan(provider,message,{catalogue,history,pending,page,workspace,recentChanges,
       deferReadFit:true});
+    if(!selected.steps.length){
+      const focused=await focusedRecordCatalogue(database,ctx,message,catalogue);
+      if(focused){
+        const retry=await planner.plan(provider,message,{catalogue:focused,history,pending,page,workspace,
+          recentChanges,deferReadFit:true});
+        if(retry.steps.length)selected=retry;
+      }
+    }
   }
   catch(error){if(['entitlement_required','validation_error'].includes(error.code))throw error;
     if(error.code==='rate_limited')return {steps:[],outcomes:[{result:{status:'CLARIFY',
@@ -303,4 +328,5 @@ async function run(service,database,ctx,message,{provider,rawProvider=null,histo
   return {steps:selected.steps,outcomes:executed};
 }
 
-module.exports={run,executeStep,normalizeForLegacy,questionFor,READ_PERMISSIONS,planningCatalogue};
+module.exports={run,executeStep,normalizeForLegacy,questionFor,READ_PERMISSIONS,planningCatalogue,
+  focusedRecordCatalogue};

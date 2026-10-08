@@ -4,6 +4,17 @@ const test=require('node:test');
 const assert=require('node:assert/strict');
 const planner=require('../../src/assistant/postgres-capability-planner');
 const {registry}=require('../../src/assistant/postgres-capability-registry');
+const control=require('../../src/assistant/postgres-control-plane');
+
+test('a failed broad plan can retry against the actual named record’s capabilities',async()=>{
+  const database={query:async(sql)=>({rows:/FROM sales_orders\s/i.test(sql)?[{'?column?':1}]:[]})};
+  const focused=await control.focusedRecordCatalogue(database,{workspaceId:'one'},
+    'Reserve all stock for SO-00007',registry);
+  assert.ok(focused.get('sales_order.reserve_all'));
+  assert.ok(focused.get('sales_order.confirm'));
+  assert.ok(focused.get('read.sales_orders'));
+  assert.equal(focused.get('purchase_order.approve'),null);
+});
 
 test('capability discovery remains compact while preserving action safety contracts',()=>{
   const catalogue=planner.planningCatalogue();
