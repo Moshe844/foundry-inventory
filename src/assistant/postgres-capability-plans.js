@@ -96,8 +96,12 @@ async function resume(database,ctx,proposalId,{service,provider,rawProvider,reco
         // query's generic count is not an answer to requested measurements.
         if(contract.kind==='read'&&outcome.result.status==='ANSWERED'
           &&contract.answerMode!=='executor'){
+          const completedActions=steps.slice(0,next).filter((step)=>step.state==='DONE'
+            &&registry.get(step.capability)?.kind==='mutation').map((step)=>({
+              capability:step.capability,recordReference:step.args?.recordReference||null,
+              status:'EXECUTED'}));
           const answered=await synthesizeReads(provider,claimed.source_message,
-            [{step:{contract},...outcome}]);
+            [{step:{contract},...outcome}],{completedActions});
           outcome={...outcome,result:answered[0].result};
         }
         stored.args=outcome.args;stored.state=outcome.result.status==='ANSWERED'?'DONE':

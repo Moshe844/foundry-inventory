@@ -10,6 +10,9 @@ test('a dependent order read can answer exact quantities after an approved write
   let evidence;
   const provider={complete:async(request)=>{
     evidence=JSON.parse(request.prompt).evidence;
+    assert.deepEqual(JSON.parse(request.prompt).completedActions,[{capability:'sales_order.fulfill',
+      recordReference:'SO-00008',status:'EXECUTED'}]);
+    assert.match(request.system,/ALREADY occurred/);
     return {data:{supported:true,answer:'SO-00008 has 2 ordered, 1 fulfilled and 1 still held; $0.75 is invoiced and unpaid.',
       usedSteps:[0],additionalReads:[]}};
   }};
@@ -19,7 +22,8 @@ test('a dependent order read can answer exact quantities after an approved write
     'Fulfill one unit and tell me the order’s fulfilled and committed quantities.',
     [{step:{contract:registry.get('read.sales_orders')},args:{search:'SO-00008'},
       result:{status:'ANSWERED',answer:'1 customer order matched; 1 units remain open.',rows,
-        columns:Object.keys(rows[0])}}]);
+        columns:Object.keys(rows[0])}}],{completedActions:[{capability:'sales_order.fulfill',
+        recordReference:'SO-00008',status:'EXECUTED'}]});
   assert.deepEqual(evidence[0].rows,rows);
   assert.match(answered[0].result.answer,/1 fulfilled and 1 still held/);
   assert.equal(answered[0].result.status,'ANSWERED');
