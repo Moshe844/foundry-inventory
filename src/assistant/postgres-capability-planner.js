@@ -30,6 +30,7 @@ const PLANNING_RULES=[
   'Match exact real-world effect and timing. Recording a past event is not initiating it; a draft is not sending, buying, paying or fulfilling; internal status is not an external provider action. Never claim a dependent approval or physical event already happened.',
   'Use zero-based dependsOn only for genuine prior-step dependencies. Use continuesPending only when the current message answers the pending question; otherwise prior turns are context, not commands. Preserve a supplied email address; a subject is optional.',
   'Retain every requested outcome. A draft order does not reserve stock. For creation plus confirmation, follow sales_order.create with sales_order.confirm; for creation plus full reservation, use sales_order.reserve_all. Both need separate approvals. A draft-only request needs no confirmation.',
+  'One customer order with several product lines is one sales_order.create step using orderLines JSON, not several sales_order.create steps. Preserve each distinct line and each stated per-unit price; do not invent a price or silently omit a product.',
   'The currentPage record is reloaded from this workspace and can resolve “this product”, “this order”, or similar references. Use its matching entity when the owner did not name another; an explicitly named entity always wins. A lasting reorder point is a policy proposal, not a stock movement.',
   'RecentChanges contains this user’s verified changes. Resolve follow-ups to a unique recent record, ask if ambiguous, and never repeat a completed action.',
   'Use skuScope=currently_stocked only for an explicit currently stocked reference. Do not assume a linked order, bill, payment or policy exists. Prefer the valid contract requiring fewer unproven business facts.',
@@ -186,7 +187,7 @@ function groundedMoneyArguments(steps,message,pending){
   const statedNumbers=[...source.matchAll(/(?:^|[^\w])(?:[$€£]\s*)?(\d[\d,]*(?:\.\d+)?)(?=$|[^\w])/g)]
     .map((match)=>Number(match[1].replaceAll(',',''))).filter(Number.isFinite);
   for(const step of steps){
-    if(unitPriceContracts.has(step.contract.name)&&quotedUnitPrices.length===1)
+    if(unitPriceContracts.has(step.contract.name)&&!step.args.orderLines&&quotedUnitPrices.length===1)
       step.args.amount=String(quotedUnitPrices[0]);
     for(const [field,value] of Object.entries(step.args)){
     if(field==='orderDate'&&!source.includes(String(value))){delete step.args[field];continue;}

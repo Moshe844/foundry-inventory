@@ -64,6 +64,7 @@ const FIELDS=Object.freeze({
   allocationPriority:{type:'integer',description:'Customer-order stock allocation priority, a whole number from 0 to 1000.'},
   purchaseOrder:{type:'string',entity:'purchase_order',description:'Purchase order identity or number.'},
   supplierBill:{type:'string',entity:'supplier_bill',description:'Supplier bill identity or number.'},
+  orderLines:{type:'string',description:'For a customer order with multiple products: a JSON array of distinct line objects, each with exact sku/product name, integer quantity, and optional unitPrice decimal from the owner. Preserve every requested line in ONE order; never invent a price.'},
   receiptReference:{type:'string',description:'Delivery note or receipt reference.'},
   paymentMethod:{type:'string',description:'Actual method of a recorded payment.'},
   paymentDate:{type:'string',description:'Payment date in YYYY-MM-DD format.'},
@@ -180,7 +181,7 @@ const REQUIRED={
   'catalog.set_purchase_cost':['sku','amount'],
   'contact.create':['recipient','recipientKind'],
   'communication.send_email':['recipient'],
-  'sales_order.create':['customer','sku','quantity'],
+  'sales_order.create':['customer'],
   'customer_invoice.create':['customer','quantity'],
   'purchase_order.create':['sku','quantity'],
   'purchase_order.receive':['purchaseOrder','sku','quantity','location'],
@@ -209,8 +210,8 @@ action('contact.create','Add a new supplier or customer business contact to this
 action('communication.send_email','Prepare a business email for review; sending requires a connected verified mailbox and explicit approval.',
   ['recipient','recipientKind','recipientEmail','recipientMode','subject','body','mailbox'],permissions.OPERATE,'send_email',
   {additionalCommercialCapabilities:['connection.email']});
-action('sales_order.create','Prepare a draft customer order without fulfillment or payment. The amount input is the selling price PER UNIT, not the order total.',
-  ['customer','sku','skuScope','quantity','deliveryMethod','shipToAddress','location','orderDate','neededBy','amount','currency','reference'],
+action('sales_order.create','Prepare ONE draft customer order without fulfillment or payment. For several products use orderLines JSON, preserving every SKU, quantity and per-unit price; for one product use sku, quantity and amount. Do not create separate orders for separate lines.',
+  ['customer','sku','skuScope','quantity','orderLines','deliveryMethod','shipToAddress','location','orderDate','neededBy','amount','currency','reference'],
   permissions.MANAGE_SALES,'create_sales_order',{allowUnknownEntities:['customer'],
     resultReference:'salesOrderId',resultDisplayReference:'orderNumber',resultRecordKind:'sales_order'});
 action('customer_invoice.create','Prepare a customer invoice for review. Approval records and posts the invoice in StockChief; it does not create or fulfill a customer order, send the invoice, or collect payment.',

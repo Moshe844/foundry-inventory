@@ -126,6 +126,26 @@ test('Ask browser controls a real customer order, payment, and return through th
     assert.deepEqual({method:pickupOrder.delivery_method,address:pickupOrder.ship_to_address,
       location:pickupOrder.fulfillment_location_id,status:pickupOrder.status},
     {method:'PICKUP',address:null,location:place.id,status:'DRAFT'});
+    const hat=await catalog.createItem(database,ctx,{name:'Safety Hat',trackingMode:'quantity'});
+    const hatCode=(await database.query('SELECT code FROM skus WHERE workspace_id=$1 AND id=$2',
+      [ctx.workspaceId,hat.skuIds[0]])).rows[0].code;
+    const multiMessage=`Create ONE draft pickup sales order for Builder Co with 2 ${skuCode} at $25 each `+
+      `and 1 ${hatCode} at $5 each from Main Warehouse; do not reserve or invoice`;
+    plans.set(multiMessage,step('sales_order.create',{customer:'Builder Co',deliveryMethod:'pickup',
+      location:'Main Warehouse',orderLines:JSON.stringify([
+        {sku:skuCode,quantity:2,unitPrice:'25'},
+        {sku:hatCode,quantity:1,unitPrice:'5'}])}));
+    const beforeMulti=(await database.query(`SELECT COUNT(*)::int AS count FROM sales_orders
+      WHERE workspace_id=$1`,[ctx.workspaceId])).rows[0].count;
+    const multiOrder=await prepareAndApprove(page,base,database,ctx.workspaceId,multiMessage,'sales_order.create');
+    const multiLines=(await database.query(`SELECT sku_id,quantity_ordered,unit_price_minor FROM sales_order_lines
+      WHERE workspace_id=$1 AND sales_order_id=$2 ORDER BY sku_id`,
+    [ctx.workspaceId,multiOrder.result.salesOrderId])).rows;
+    assert.deepEqual(multiLines.map((line)=>[line.sku_id,Number(line.quantity_ordered),
+      Number(line.unit_price_minor)]).sort((a,b)=>a[0].localeCompare(b[0])),
+    [[item.skuIds[0],2,2500],[hat.skuIds[0],1,500]].sort((a,b)=>a[0].localeCompare(b[0])));
+    assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM sales_orders
+      WHERE workspace_id=$1`,[ctx.workspaceId])).rows[0].count,beforeMulti+1);
     const combined='Create another two-boot order for Builder Co dated 2026-08-14, pickup at Main Warehouse, and reserve the stock';
     plans.set(combined,[step('sales_order.create',{customer:'Builder Co',sku:'Work Boot',quantity:2,
       deliveryMethod:'customer pickup',location:'Main Warehouse',orderDate:'2026-08-14'}),

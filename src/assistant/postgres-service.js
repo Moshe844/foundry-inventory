@@ -27,6 +27,48 @@ function recordHandoff(kind,name,extras={}) {
   return {href:kind==='customer'?`/sales/customers/new?${params}`:`/suppliers?${params}#add-supplier`,label};
 }
 
+async function resolveCustomerOrderLines(database,ctx,raw,message,currency){
+  let entries;
+  try{entries=JSON.parse(String(raw||''));}catch{return {answer:'I could not safely read all the product lines. Restate the items, quantities, and per-unit prices; nothing was prepared.'};}
+  if(!Array.isArray(entries)||entries.length<2||entries.length>12)return {answer:
+    'A multi-product draft needs two to twelve distinct product lines. Nothing was prepared.'};
+  const quotedAmounts=[...String(message||'').matchAll(/[$€£]\s*(\d[\d,]*(?:\.\d{1,2})?)/g)]
+    .map((match)=>pricing.toMinor(match[1].replaceAll(',',''),'Quoted selling price'));
+  const seen=new Set(),lines=[],summaries=[];let orderCurrency=currency||null;
+  for(const [index,entry] of entries.entries()){
+    if(!entry||typeof entry!=='object'||Array.isArray(entry)
+      ||Object.keys(entry).some((key)=>!['sku','quantity','unitPrice'].includes(key)))
+      return {answer:'One product line contained an invalid field. Nothing was prepared.'};
+    const named=trimOrNull(entry.sku),quantity=Number(entry.quantity);
+    if(!named||!Number.isSafeInteger(quantity)||quantity<1||quantity>100000)
+      return {answer:'Each product line needs an exact product and a positive whole-unit quantity. Nothing was prepared.'};
+    const found=await resolveRequestedSku(database,ctx.workspaceId,{sku:named});
+    if(!found.row)return {answer:`I could not uniquely verify product “${named}”. Give its exact SKU code; nothing was prepared.`};
+    if(seen.has(found.row.id))return {answer:`${found.row.code} appears twice. Combine its quantity into one line; nothing was prepared.`};
+    seen.add(found.row.id);
+    const current=await pricing.currentPrice(database,ctx.workspaceId,found.row.id);
+    if(quotedAmounts.length>=entries.length&&(entry.unitPrice===null||entry.unitPrice===undefined||entry.unitPrice===''))
+      return {answer:`Your request quotes prices for every line, but ${found.row.code} has no preserved quoted price. Nothing was prepared.`};
+    if(orderCurrency&&current.currency&&current.currency!==orderCurrency&&entry.unitPrice==null)
+      return {answer:'Those products have prices in different currencies. Name one order currency and exact per-unit prices; nothing was prepared.'};
+    orderCurrency=orderCurrency||current.currency||'USD';
+    let unitPriceMinor=current.amount_minor;
+    if(entry.unitPrice!==null&&entry.unitPrice!==undefined&&entry.unitPrice!==''){
+      try{unitPriceMinor=pricing.toMinor(String(entry.unitPrice),'Selling price');}
+      catch{return {answer:`The per-unit price for ${found.row.code} is invalid. Nothing was prepared.`};}
+      if(!quotedAmounts.includes(unitPriceMinor))return {answer:
+        `I could not verify the proposed ${pricing.formatMinor(unitPriceMinor,orderCurrency)} per-unit price for ${found.row.code} in your request. Nothing was prepared.`};
+      if(quotedAmounts.length===entries.length&&quotedAmounts[index]!==unitPriceMinor)return {answer:
+        `The proposed per-unit prices do not follow the line order you gave. Restate the items and prices; nothing was prepared.`};
+    }
+    if(!Number.isSafeInteger(unitPriceMinor)||unitPriceMinor<=0)return {answer:
+      `What selling price per unit should ${found.row.code} use? Nothing was prepared.`};
+    lines.push({skuId:found.row.id,quantity,unitPriceMinor});
+    summaries.push(`${quantity} × ${found.row.code} at ${pricing.formatMinor(unitPriceMinor,orderCurrency)} each`);
+  }
+  return {lines,currency:orderCurrency,summary:summaries.join('; ')};
+}
+
 function evidenceRow(row,href) {
   return {...row,...(href?{href}:{})};
 }
@@ -1051,16 +1093,19 @@ async function prepareAction(database,ctx,message,request,options={}) {
   }
   if(['create_sales_order','create_purchase_order'].includes(request.action)){
     const sales=request.action==='create_sales_order';
-    const sku=await resolveRequestedSku(database,ctx.workspaceId,request);
-    if(sku.stockEmpty)return {status:'CLARIFY',answer:'I could not find any product currently in stock. Which product should StockChief get more of? Nothing was prepared.',awaitingField:'sku'};
-    if(sku.missing)return {status:'CLARIFY',answer:`Which product or SKU ${sales?'is on the customer order':'do you need more of'}?`,awaitingField:'sku'};
-    if(sku.notFound)return {status:'CLARIFY',answer:`I could not find a product or SKU matching “${request.sku}”. Nothing was prepared.`};
-    if(sku.ambiguous)return {status:'CLARIFY',answer:sku.fromCurrentStock
-      ?'I found more than one product currently in stock. Which one needs more? Nothing was prepared.'
-      :`More than one SKU matches “${request.sku}”. Which one?`,awaitingField:'sku',
-    choices:sku.ambiguous.map((row)=>({label:`${row.name}${row.variant_label?` · ${row.variant_label}`:''} · ${row.code}${row.stocked_units?` · ${row.stocked_units} on hand`:''}`,value:row.code}))};
-    const skuContext={sku:sku.row.code,skuReference:''};
-    if(!request.quantity||request.quantity<1)return {status:'CLARIFY',answer:'How many units are needed?',awaitingField:'quantity',carryForward:skuContext};
+    const multipleLines=sales&&Boolean(request.orderLines);
+    const sku=multipleLines?null:await resolveRequestedSku(database,ctx.workspaceId,request);
+    if(!multipleLines){
+      if(sku.stockEmpty)return {status:'CLARIFY',answer:'I could not find any product currently in stock. Which product should StockChief get more of? Nothing was prepared.',awaitingField:'sku'};
+      if(sku.missing)return {status:'CLARIFY',answer:`Which product or SKU ${sales?'is on the customer order':'do you need more of'}?`,awaitingField:'sku'};
+      if(sku.notFound)return {status:'CLARIFY',answer:`I could not find a product or SKU matching “${request.sku}”. Nothing was prepared.`};
+      if(sku.ambiguous)return {status:'CLARIFY',answer:sku.fromCurrentStock
+        ?'I found more than one product currently in stock. Which one needs more? Nothing was prepared.'
+        :`More than one SKU matches “${request.sku}”. Which one?`,awaitingField:'sku',
+      choices:sku.ambiguous.map((row)=>({label:`${row.name}${row.variant_label?` · ${row.variant_label}`:''} · ${row.code}${row.stocked_units?` · ${row.stocked_units} on hand`:''}`,value:row.code}))};
+    }
+    const skuContext=multipleLines?{orderLines:request.orderLines}:{sku:sku.row.code,skuReference:''};
+    if(!multipleLines&&(!request.quantity||request.quantity<1))return {status:'CLARIFY',answer:'How many units are needed?',awaitingField:'quantity',carryForward:skuContext};
     const party=sales?await resolveParty(database,'customer',ctx.workspaceId,request.customer)
       :await resolvePurchaseSupplier(database,ctx.workspaceId,sku.row.id,request.supplier);
     if(party.missing)return {status:'CLARIFY',answer:sales?'Which customer is this for?'
@@ -1098,15 +1143,23 @@ async function prepareAction(database,ctx,message,request,options={}) {
       const destination=deliveryMethod==='PICKUP'?null:
         trimOrNull(request.shipToAddress)||trimOrNull(party.row.shipping_address);
       if(deliveryMethod!=='PICKUP'&&!destination)return {status:'CLARIFY',answer:`What is the delivery address for ${party.row.name}? Nothing will be prepared without a destination.`,awaitingField:'shipToAddress',carryForward:orderContext};
-      const current=await pricing.currentPrice(database,ctx.workspaceId,sku.row.id);
-      const amountMinor=request.amount===null?current.amount_minor:pricing.toMinor(String(request.amount),'Selling price');
-      if(amountMinor===null)return {status:'CLARIFY',answer:`What selling price per unit should this order use for ${sku.row.name}?`,awaitingField:'amount',carryForward:orderContext};
-      const currency=request.currency||current.currency||'USD';
+      const orderLines=multipleLines
+        ?await resolveCustomerOrderLines(database,ctx,request.orderLines,message,request.currency)
+        :null;
+      if(orderLines?.answer)return {status:'CLARIFY',answer:orderLines.answer,carryForward:orderContext};
+      const current=multipleLines?null:await pricing.currentPrice(database,ctx.workspaceId,sku.row.id);
+      const amountMinor=multipleLines?null:request.amount===null?current.amount_minor:
+        pricing.toMinor(String(request.amount),'Selling price');
+      if(!multipleLines&&amountMinor===null)return {status:'CLARIFY',answer:`What selling price per unit should this order use for ${sku.row.name}?`,awaitingField:'amount',carryForward:orderContext};
+      const currency=orderLines?.currency||request.currency||current?.currency||'USD';
+      const lines=orderLines?.lines||[{skuId:sku.row.id,quantity:request.quantity,unitPriceMinor:amountMinor}];
       return createProposal(database,ctx,message,'sales_order.create',{customerId:party.row.id,
         deliveryMethod,shipToAddress:destination,fulfillmentLocationId,orderDate:request.orderDate,
         neededBy:request.neededBy,
-        currency,reference:request.reference,lines:[{skuId:sku.row.id,quantity:request.quantity,unitPriceMinor:amountMinor}]},
-      `Prepare a draft customer order for ${party.row.name}: ${request.quantity} × ${sku.row.name}${sku.row.variant_label?` · ${sku.row.variant_label}`:''} at ${pricing.formatMinor(amountMinor,currency)} each, ${deliveryMethod==='PICKUP'?`pickup from ${fulfillmentLocationName}`:`to ${destination}`}.`);
+        currency,reference:request.reference,lines},
+      `Prepare one draft customer order for ${party.row.name}: ${orderLines?.summary||
+        `${request.quantity} × ${sku.row.name}${sku.row.variant_label?` · ${sku.row.variant_label}`:''} at ${pricing.formatMinor(amountMinor,currency)} each`}, `+
+        `${deliveryMethod==='PICKUP'?`pickup from ${fulfillmentLocationName}`:`to ${destination}`}.`);
     }
     const place=await resolvePurchaseDestination(database,ctx.workspaceId,sku.row.id,request.location);
     if(place.missing)return {status:'CLARIFY',answer:'Which inventory location should receive this purchase order?',awaitingField:'location',carryForward:orderContext};
