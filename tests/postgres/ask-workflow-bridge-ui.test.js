@@ -545,8 +545,9 @@ test('Ask browser controls a real customer order, payment, and return through th
     assert.equal(ordered.status,'ORDERED');
     const incomingBeforeCancel=(await assistant.lookup(database,ctx,{view:'inventory',search:skuCode})).rows[0];
     assert.ok(incomingBeforeCancel.incomingOnPurchaseOrders>=7);
-    assert.equal(incomingBeforeCancel.incoming,
-      incomingBeforeCancel.incomingOnPurchaseOrders+incomingBeforeCancel.incomingOnTransfers);
+    assert.equal(incomingBeforeCancel.incoming,incomingBeforeCancel.incomingOnPurchaseOrders);
+    assert.ok(incomingBeforeCancel.internalTransferPlanned>=1);
+    assert.ok(incomingBeforeCancel.internalTransferInTransit>=1);
     const cancelPurchase=`Cancel ${purchase.poNumber}; the supplier says it cannot ship`;
     plans.set(cancelPurchase,step('purchase_order.cancel',{recordReference:purchase.poNumber,
       reason:'Supplier cannot ship'}));
