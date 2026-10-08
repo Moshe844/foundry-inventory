@@ -322,6 +322,7 @@ test('Ask browser controls a real customer order, payment, and return through th
     {...step('navigate.record.transfer'),dependsOn:[0]}]);
     const askedTransferProposal=await prepareAndApprove(page,base,database,ctx.workspaceId,
       askedTransfer,'inventory.transfer');
+    assert.match(page.url(),new RegExp(`/transfers/${askedTransferProposal.result.transferId}$`));
     const askedTransferPlan=(await database.query(`SELECT status,steps FROM stockchief_runtime.assistant_capability_plans
       WHERE workspace_id=$1 AND source_message=$2 ORDER BY created_at DESC LIMIT 1`,
     [ctx.workspaceId,askedTransfer])).rows[0];
@@ -354,6 +355,9 @@ test('Ask browser controls a real customer order, payment, and return through th
     assert.equal(resumed.status,'DONE');
     assert.deepEqual(resumed.steps.map((entry)=>entry.state),['DONE','DONE','DONE']);
     assert.equal(resumed.steps[1].args.recordReference,askedTransferProposal.result.transferId);
+    await page.goto(`${base}/ask`);
+    const recoveredTranscript=await page.locator('main').innerText();
+    assert.doesNotMatch(recoveredTranscript,/part 3 of 2/);
     const requestedTransfer=await transfers.request(database,ctx,{fromLocationId:place.id,toLocationId:destination.id,
       idempotencyKey:'ask-workflow-transfer',lines:[{skuId:item.skuIds[0],quantity:2}]});
     const transferNumber=requestedTransfer.transfer_number;

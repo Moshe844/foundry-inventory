@@ -79,6 +79,7 @@ function transcriptFor(interactions,proposals=new Map()){
       proposals.get(turn.intent?.proposalId)));
     batch.goals.sort((left,right)=>left.position-right.position);
   });
+  for(const batch of batches.values())batch.goals.forEach((goal,position)=>{goal.position=position;});
   return transcript;
 }
 
@@ -276,6 +277,8 @@ function createPostgresAskRouter(database,options={}){
     else req.flash('success',result.replayed?'That change had already been completed.':
       result.continued?.length?'The approved change completed. Review the next part of your request.':
         'The approved change was completed.');
+    const opened=result.continued?.findLast((part)=>part.navigation?.href)?.navigation;
+    if(opened?.href?.startsWith('/')&&!opened.href.startsWith('//'))return res.redirect(303,opened.href);
     if(result.continued?.length)return res.redirect(303,'/ask#latest');
     return res.redirect(303,`/actions/${req.params.id}`);
   }));
@@ -292,6 +295,8 @@ function createPostgresAskRouter(database,options={}){
     req.flash(result.continuationError?'error':'success',result.continuationError
       ?'The completed change is safe, but the remaining steps still need another try.'
       :'StockChief continued the remaining request from the completed step.');
+    const opened=result.continued?.findLast((part)=>part.navigation?.href)?.navigation;
+    if(opened?.href?.startsWith('/')&&!opened.href.startsWith('//'))return res.redirect(303,opened.href);
     return res.redirect(303,result.continued?.length?'/ask#latest':`/actions/${proposal.id}`);
   }));
   return router;
