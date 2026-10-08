@@ -60,9 +60,9 @@
   <div class="table-scroll"><table class="table table--tight"><thead><tr><th>Row</th><th>Product</th><th>SKU / variant</th><th>Qty</th><th>Unit cost</th><th>Selling price</th><th>Location</th><th>Result</th></tr></thead><tbody>
     <% rows.forEach(function(row){ %><tr class="<%= row.status==='INVALID'?'is-warn-row':'' %>"><td><%= row.rowNumber %></td><td><%= row.parsed.name || '—' %></td>
       <td><%= [row.parsed.code,(row.parsed.variants || []).map(function(part){return part.name+': '+part.value;}).join(' / ')].filter(Boolean).join(' · ') || '—' %></td>
-      <td><%= row.parsed.quantity===null?'—':row.parsed.quantity %></td>
-      <td><%= row.parsed.unitCostMinor===null?'Not provided':(row.parsed.currency||'USD')+' '+(row.parsed.unitCostMinor/100).toFixed(2) %></td>
-      <td><%= row.parsed.sellingPriceMinor===null?'—':(row.parsed.currency||'USD')+' '+(row.parsed.sellingPriceMinor/100).toFixed(2) %></td>
+      <td><%= row.parsed.quantity==null?'—':row.parsed.quantity %></td>
+      <td><%= Number.isFinite(row.parsed.unitCostMinor)?(row.parsed.currency||'USD')+' '+(row.parsed.unitCostMinor/100).toFixed(2):'Not provided' %></td>
+      <td><%= Number.isFinite(row.parsed.sellingPriceMinor)?(row.parsed.currency||'USD')+' '+(row.parsed.sellingPriceMinor/100).toFixed(2):'—' %></td>
       <td><%= row.parsed.locationName || row.parsed.locationText || '—' %></td>
       <td><span class="badge badge--<%= row.status==='IMPORTED'?'ok':row.status==='INVALID'?'danger':'muted' %>"><%= row.status %></span>
         <% row.problems.forEach(function(item){ %><div class="muted"><%= item.message %></div><% }) %></td></tr><% }) %>

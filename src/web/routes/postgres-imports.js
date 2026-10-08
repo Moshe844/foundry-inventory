@@ -23,7 +23,7 @@ function createPostgresImportsRouter(database,{provider=null}={}){
   router.use('/imports',requireAuth);
   async function renderStart(req,res){return res.page('imports/start',{
     title:'Bring your data in',nav:'imports',recent:await imports.list(database,req.ctx.workspaceId,10),
-    locations:await locations(database,req.ctx.workspaceId),aiConfigured:Boolean(provider),canOperate:true,
+    locations:await locations(database,req.ctx.workspaceId),aiConfigured:Boolean(provider||config.ai.configured),canOperate:true,
   });}
   router.get('/imports/start',asyncRoute(renderStart));
   router.get('/imports',asyncRoute(renderStart));
