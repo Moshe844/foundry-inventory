@@ -109,7 +109,7 @@ test('a dependent capability is prepared after the first approval, never execute
     const cluster=await startCluster();
     const database=openPostgres(cluster.connectionString,{applicationName:'stockchief-capability-plan'});
     await migratePostgres(database);
-    const first=step('catalog.create_item',{search:'Copper Clip'});
+    const first=step('catalog.create_item',{search:'Copper Clip',baseCode:'COPPER-CLIP-TEST'});
     const second={...step('inventory.receive',{sku:'Copper Clip',quantity:3}),dependsOn:[0]};
     const provider={name:'anthropic',model:PRICED_MODEL,async complete(input){
       if(input.schemaName==='stockchief_capability_fit')return {data:{aligned:true,reason:''},usage:pricedUsage()};
@@ -127,7 +127,7 @@ test('a dependent capability is prepared after the first approval, never execute
     await locations.createLocation(database,ctx,{name:'Only Store',kind:'warehouse'});
     const ask=await agent.get('/ask');
     const prepared=await agent.post('/ask').type('form').send({_csrf:csrf(ask.text),
-      message:'Put Copper Clip in the catalog, then register three delivered units.',usageKey:'sequential-ask'});
+      message:'Put Copper Clip with SKU COPPER-CLIP-TEST in the catalog, then register three delivered units.',usageKey:'sequential-ask'});
     assert.equal(prepared.status,303);
     const initial=(await database.query(`SELECT * FROM stockchief_runtime.assistant_action_proposals
       WHERE workspace_id=$1`,[ctx.workspaceId])).rows;
@@ -142,6 +142,10 @@ test('a dependent capability is prepared after the first approval, never execute
       WHERE workspace_id=$1 ORDER BY created_at`,[ctx.workspaceId])).rows;
     assert.equal(after.length,2);assert.equal(after[0].status,'EXECUTED');
     assert.equal(after[1].action_type,'inventory.receive');assert.equal(after[1].status,'PENDING');
+    const created=(await database.query(`SELECT i.base_code,s.code FROM items i JOIN skus s ON s.item_id=i.id
+      WHERE i.workspace_id=$1 AND i.name='Copper Clip'`,[ctx.workspaceId])).rows[0];
+    assert.equal(created.base_code,'COPPER-CLIP-TEST');
+    assert.equal(created.code,'COPPER-CLIP-TEST');
     const onHand=(await database.query(`SELECT COALESCE(SUM(on_hand),0) AS units FROM balances WHERE workspace_id=$1`,
       [ctx.workspaceId])).rows[0];
     assert.equal(Number(onHand.units),0);

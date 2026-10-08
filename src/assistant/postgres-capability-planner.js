@@ -146,9 +146,23 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
       schema:schemaFor(catalogue),schemaName:'stockchief_capability_plan'});
   }
   let selected=parseSteps(response.data,catalogue);
+  let reconsidered=false;
+  if(!selected.steps.length){
+    // A single model miss must not turn a registered, ordinary question into
+    // an unsupported feature. Reconsider once against the same contracts;
+    // the independent fit check below still rejects a merely related action.
+    try{
+      const retry=await provider.complete({system:systemFor(catalogue),
+        prompt:JSON.stringify({...context,rejectedPlan:response.data,
+          instruction:'Reconsider the current request independently. If an exact registered read or action can fulfill it, choose that contract. If none can, return no steps. Do not substitute a related but different effect.'}),
+        schema:schemaFor(catalogue),schemaName:'stockchief_capability_plan'});
+      selected=parseSteps(retry.data,catalogue);
+      reconsidered=true;
+    }catch(error){if(error.code==='entitlement_required')throw error;}
+  }
   // Read-only plans can be checked against actual evidence by the answer
   // stage, which can request a broader registered read when needed.
-  if(deferReadFit&&selected.steps.length&&selected.steps.every((step)=>step.contract.kind==='read'))
+  if(deferReadFit&&!reconsidered&&selected.steps.length&&selected.steps.every((step)=>step.contract.kind==='read'))
     return selected;
   // Without a registered step, a model-authored explanation could silently
   // reinterpret an unavailable effect as a related operation. Never expose

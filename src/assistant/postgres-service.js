@@ -876,8 +876,9 @@ async function prepareAction(database,ctx,message,request,options={}) {
   }
   if(request.action==='create_item'){
     if(!request.search && !request.sku)return {status:'CLARIFY',answer:'What is the product name?',awaitingField:'search'};
-    return createProposal(database,ctx,message,'catalog.create_item',{name:request.search || request.sku,trackingMode:'quantity'},
-      `Create product “${request.search || request.sku}” counted by quantity.`);
+    return createProposal(database,ctx,message,'catalog.create_item',{name:request.search || request.sku,
+      baseCode:request.baseCode||null,trackingMode:'quantity'},
+    `Create product “${request.search || request.sku}”${request.baseCode?` with SKU ${request.baseCode}`:''} counted by quantity.`);
   }
   if(request.action==='create_location'){
     if(!request.search && !request.location)return {status:'CLARIFY',answer:'What is the location name?',awaitingField:'location'};

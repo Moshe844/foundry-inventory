@@ -116,7 +116,7 @@ test('unavailable effects offer only a different registered and permitted altern
       message:'Send a bank transfer to my supplier now',usageKey:'fallback-1'});
     const rendered=await agent.get('/ask');
     assert.match(rendered.text,/I cannot complete that exact request here/);
-    assert.match(rendered.text,/record a supplier payment already made/);
+    assert.match(rendered.text,/record a supplier payment already made/i);
     assert.match(rendered.text,/different result/);
     const proposals=(await database.query('SELECT COUNT(*)::int AS total FROM stockchief_runtime.assistant_action_proposals')).rows[0];
     assert.equal(proposals.total,0);

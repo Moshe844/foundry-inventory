@@ -13,6 +13,7 @@ const {destinationById}=require('../web/postgres-navigation');
 
 const FIELDS=Object.freeze({
   search:{type:'string',description:'Name, code, or status explicitly being sought.'},
+  baseCode:{type:'string',description:'Exact new product SKU or base code explicitly supplied by the owner.'},
   sku:{type:'string',entity:'sku',description:'Product, variant, or SKU identity.'},
   skuScope:{type:'string',description:'Subset of SKUs explicitly referred to: active or currently_stocked.'},
   location:{type:'string',entity:'location',description:'One inventory location.'},
@@ -185,8 +186,8 @@ action('inventory.transfer','Request and approve a transfer between inventory lo
   ['sku','skuScope','fromLocation','toLocation','quantity','reference'],permissions.REQUEST_TRANSFER,'transfer');
 action('inventory.adjust','Correct a stock position to a verified physical count.',
   ['sku','skuScope','location','countedQuantity','reason','reference'],permissions.ADJUST,'adjust');
-action('catalog.create_item','Create a quantity-tracked product record.',
-  ['search'],permissions.OPERATE,'create_item');
+action('catalog.create_item','Create a quantity-tracked product record with its exact SKU code when supplied.',
+  ['search','baseCode'],permissions.OPERATE,'create_item');
 action('location.create','Create an inventory location.',
   ['location'],permissions.ADMIN,'create_location');
 action('catalog.set_price','Change the current customer selling price of a SKU.',

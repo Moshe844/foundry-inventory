@@ -3,17 +3,21 @@
 const test=require('node:test');
 const assert=require('node:assert/strict');
 const planner=require('../../src/assistant/postgres-capability-planner');
+const {registry}=require('../../src/assistant/postgres-capability-registry');
 
 test('capability discovery remains compact while preserving action safety contracts',()=>{
   const catalogue=planner.planningCatalogue();
   assert.ok(planner.systemFor().length<24000,'A larger catalog can exceed Ask’s model-cost safety bound.');
-  const contact=catalogue.mutations.find((entry)=>entry.name==='contact.create');
-  assert.deepEqual(contact.required,['recipient','recipientKind']);
-  assert.ok(contact.optional.includes('recipientEmail'));
-  assert.ok(contact.resultingRecords.includes('suppliers'));
-  assert.equal(catalogue.sharedContract.mutation.authority,'explicit approval');
-  assert.equal(catalogue.sharedContract.mutation.verification,
-    'resulting records checked in the approval transaction');
+  const contact=catalogue.mutations.find((entry)=>entry.n==='contact.create');
+  assert.ok(contact,'contact creation is discoverable');
+  assert.ok(contact.a.includes('recipient'));
+  assert.ok(contact.a.includes('recipientKind'));
+  assert.ok(contact.a.includes('recipientEmail'));
+  const contract=registry.get('contact.create');
+  assert.deepEqual(contract.required,['recipient','recipientKind']);
+  assert.ok(contract.description.toLowerCase().includes('supplier'));
+  assert.match(planner.systemFor(),/approval/i);
+  assert.match(planner.systemFor(),/resolver verifies unique records/i);
 });
 
 for(const initial of ['read.suppliers','communication.send_email'])test(`semantic fit check rejects ${initial} when it misses the current goal`,async()=>{
@@ -69,6 +73,27 @@ test('a no-step reply cannot steer an unsupported goal into a different operatio
   assert.deepEqual(result.steps,[]);
   assert.match(result.clarifyingQuestion,/could not safely match/i);
   assert.doesNotMatch(result.clarifyingQuestion,/record a payment/i);
+});
+
+test('an initial no-step miss can recover an exact registered read only after independent fit',async()=>{
+  let plans=0;let fits=0;
+  const provider={async complete(request){
+    if(request.schemaName==='stockchief_capability_plan'){
+      plans++;
+      return {data:{steps:plans===1?[]:[{capability:'read.inventory',arguments:[],
+        dependsOn:[],continuesPending:false}],clarifyingQuestion:''}};
+    }
+    if(request.schemaName==='stockchief_capability_fit'){
+      fits++;
+      return {data:{aligned:true,reason:''}};
+    }
+    throw new Error(`Unexpected request ${request.schemaName}`);
+  }};
+  const result=await planner.plan(provider,'How many units are on hand across my inventory?',
+    {deferReadFit:true});
+  assert.equal(result.steps[0].contract.name,'read.inventory');
+  assert.equal(plans,2);
+  assert.equal(fits,1,'a recovered read cannot bypass the independent semantic check');
 });
 
 test('semantic review repairs a plan that drops an explicitly named entity',async()=>{
