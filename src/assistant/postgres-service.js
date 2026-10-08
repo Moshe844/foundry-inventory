@@ -185,7 +185,19 @@ async function lookup(database,ctx,request,options={}) {
   }
   if(request.view==='inventory_movements'){
     const rows=(await database.query(`SELECT i.id AS item_id,i.name AS product,s.code AS sku,l.name AS location,
-      m.operation,m.quantity_delta,m.balance_after,m.reference,m.reason_code,m.occurred_at
+      m.operation,m.quantity_delta,m.balance_after,m.reference,m.reason_code,m.occurred_at,
+      CASE
+        WHEN EXISTS (SELECT 1 FROM import_rows ir WHERE ir.workspace_id=m.workspace_id
+          AND ir.movement_ids::jsonb ? m.id) THEN 'inventory_import'
+        WHEN EXISTS (SELECT 1 FROM purchase_order_receipt_lines prl WHERE prl.workspace_id=m.workspace_id
+          AND prl.movement_ids::jsonb ? m.id) THEN 'supplier_purchase_receipt'
+        WHEN EXISTS (SELECT 1 FROM customer_return_lines crl WHERE crl.workspace_id=m.workspace_id
+          AND (crl.receive_movement_ids::jsonb ? m.id OR crl.disposition_movement_ids::jsonb ? m.id))
+          THEN 'customer_return'
+        WHEN EXISTS (SELECT 1 FROM inventory_transfers t WHERE t.workspace_id=m.workspace_id
+          AND t.transfer_number=m.reference) THEN 'internal_transfer'
+        WHEN m.reason_code='sale' THEN 'customer_sale_fulfillment'
+        ELSE 'other_recorded_movement' END AS source_kind
       FROM movements m JOIN items i ON i.id=m.item_id AND i.workspace_id=m.workspace_id
       JOIN skus s ON s.id=m.sku_id AND s.workspace_id=m.workspace_id
       JOIN locations l ON l.id=m.location_id AND l.workspace_id=m.workspace_id
@@ -195,10 +207,10 @@ async function lookup(database,ctx,request,options={}) {
       ORDER BY m.occurred_at DESC,m.seq DESC LIMIT 100`,[ctx.workspaceId,search])).rows.map((row)=>
       evidenceRow({product:row.product,sku:row.sku,location:row.location,operation:row.operation,
         change:Number(row.quantity_delta),balanceAfter:Number(row.balance_after),reference:row.reference||'',
-        reason:row.reason_code||'',at:row.occurred_at},`/inventory/${row.item_id}`));
+        reason:row.reason_code||'',sourceKind:row.source_kind,at:row.occurred_at},`/inventory/${row.item_id}`));
     return {answer:rows.length?`Showing ${rows.length}${rows.length===100?'+':''} recent recorded stock changes matching the request.`:
       'No recorded stock change matched that request.',rows,
-      columns:['product','sku','location','operation','change','balanceAfter','reference','reason','at']};
+      columns:['product','sku','location','operation','change','balanceAfter','reference','reason','sourceKind','at']};
   }
   if(request.view==='inventory_valuation'){
     const currency=(await database.query(`SELECT base_currency FROM accounting_settings
