@@ -252,6 +252,9 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
   let selected=parseSteps(response.data,catalogue);
   let reconsidered=false;
   if(!selected.steps.length){
+    if(process.env.STOCKCHIEF_ASK_DIAGNOSTICS==='1')console.warn('[stockchief] Ask plan empty',
+      JSON.stringify({stage:'initial',catalogueSize:catalogue.list().length,
+        clarification:String(response.data?.clarifyingQuestion||'').slice(0,300)}));
     // A single model miss must not turn a registered, ordinary question into
     // an unsupported feature. Reconsider once against the same contracts;
     // the independent fit check below still rejects a merely related action.
@@ -260,6 +263,10 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
         instruction:'Reconsider the current request independently. If an exact registered read or action can fulfill it, choose that contract. If none can, return no steps. Do not substitute a related but different effect.'});
       selected=parseSteps(retry.data,catalogue);
       reconsidered=true;
+      if(!selected.steps.length&&process.env.STOCKCHIEF_ASK_DIAGNOSTICS==='1')
+        console.warn('[stockchief] Ask plan empty',JSON.stringify({stage:'reconsidered',
+          catalogueSize:catalogue.list().length,
+          clarification:String(retry.data?.clarifyingQuestion||'').slice(0,300)}));
     }catch(error){if(error.code==='entitlement_required')throw error;}
   }
   if(selected.steps.length){
