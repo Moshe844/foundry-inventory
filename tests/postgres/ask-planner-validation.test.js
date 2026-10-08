@@ -56,6 +56,20 @@ test('a single navigation request cannot produce two competing page jumps',async
   assert.deepEqual(result.steps.map(({contract})=>contract.name),['navigate.connections']);
 });
 
+test('a factual order follow-up cannot be replaced by opening its page',async()=>{
+  let plans=0;
+  const provider={async complete({schemaName}){
+    if(schemaName==='stockchief_capability_fit')return {data:{aligned:true,reason:''}};
+    plans+=1;
+    return {data:{steps:[{capability:plans===1?'navigate.sales_order':'read.sales_orders',
+      arguments:[],dependsOn:[],continuesPending:false}],clarifyingQuestion:''}};
+  }};
+  const result=await planner.plan(provider,
+    'Verify the actual lines and total of the order you just created.',{deferReadFit:true});
+  assert.equal(plans,2);
+  assert.deepEqual(result.steps.map(({contract})=>contract.name),['read.sales_orders']);
+});
+
 test('a short answer to a pending action is judged against the original goal',async()=>{
   const original='Create a customer order for five valves for Northside, customer pickup.';
   const provider={async complete({schemaName,prompt,system}){

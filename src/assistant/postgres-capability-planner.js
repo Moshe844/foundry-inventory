@@ -301,11 +301,20 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
   });
   if((response.data?.steps||[]).filter((step)=>catalogue.get(step?.capability)?.kind==='navigation').length>1)
     invalid.push({issue:'A single request can open only one destination. Keep the one page that best fulfills the owner’s navigation goal.'});
+  const asksForFacts=/\b(?:verify|check|explain|why|what|which|whether|how|tell\s+me|summari[sz]e)\b/i.test(message);
+  const explicitlyOpens=/\b(?:open|navigate|go\s+to|take\s+me\s+to|bring\s+up|jump\s+to)\b/i.test(message);
+  if(asksForFacts&&!explicitlyOpens&&(response.data?.steps||[]).some((step)=>
+    catalogue.get(step?.capability)?.kind==='navigation'))
+    invalid.push({issue:'The owner asked for verified facts, not a page change. Use registered reads to answer; navigation alone does not answer this request.'});
   if(invalid.length){
     response=await completeRepair(provider,catalogue,{...context,rejectedPlan:response.data,validationErrors:invalid,
       instruction:'Revise the plan to satisfy every validation error. Use only declared input fields, preserve the owner’s details, do not invent missing ones, and choose one final navigation destination.'});
   }
   let selected=parseSteps(response.data,catalogue);
+  const rejectUnaskedNavigation=(planned)=>asksForFacts&&!explicitlyOpens
+    &&planned.steps.some((step)=>step.contract.kind==='navigation')
+    ?{steps:[],clarifyingQuestion:SAFE_CLARIFICATION}:planned;
+  selected=rejectUnaskedNavigation(selected);
   if(!pending)for(const step of selected.steps)step.continuesPending=false;
   let reconsidered=false;
   if(!selected.steps.length){
@@ -319,6 +328,7 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
       const retry=await completeRepair(provider,catalogue,{...context,rejectedPlan:response.data,
         instruction:'Reconsider the current request independently. If an exact registered read or action can fulfill it, choose that contract. If none can, return no steps. Do not substitute a related but different effect.'});
       selected=parseSteps(retry.data,catalogue);
+      selected=rejectUnaskedNavigation(selected);
       if(!pending)for(const step of selected.steps)step.continuesPending=false;
       reconsidered=true;
       if(!selected.steps.length&&process.env.STOCKCHIEF_ASK_DIAGNOSTICS==='1')
