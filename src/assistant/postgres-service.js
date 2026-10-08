@@ -208,8 +208,30 @@ async function lookup(database,ctx,request,options={}) {
       evidenceRow({product:row.product,sku:row.sku,location:row.location,operation:row.operation,
         change:Number(row.quantity_delta),balanceAfter:Number(row.balance_after),reference:row.reference||'',
         reason:row.reason_code||'',sourceKind:row.source_kind,at:row.occurred_at},`/inventory/${row.item_id}`));
-    return {answer:rows.length?`Showing ${rows.length}${rows.length===100?'+':''} recent recorded stock changes matching the request.`:
-      'No recorded stock change matched that request.',rows,
+    const groups=new Map();
+    for(const row of rows){
+      const key=`${row.sku}\u0000${row.sourceKind}`;
+      if(!groups.has(key))groups.set(key,{sku:row.sku,sourceKind:row.sourceKind,
+        incoming:0,outgoing:0,references:new Set()});
+      const group=groups.get(key);
+      if(row.change>0)group.incoming+=row.change;
+      else group.outgoing-=row.change;
+      if(row.reference)group.references.add(row.reference);
+    }
+    const sourceLabel={inventory_import:'inventory import',
+      supplier_purchase_receipt:'supplier purchase receipt',customer_return:'customer return',
+      internal_transfer:'internal transfer',customer_sale_fulfillment:'customer sale fulfillment',
+      other_recorded_movement:'other recorded movement'};
+    const answer=rows.length
+      ?`Recorded physical stock movements${rows.length===100?' (most recent 100 only; totals may be incomplete)':''}: `+
+        [...groups.values()].map((group)=>{
+          const refs=[...group.references];
+          const referenceText=refs.length?` [${refs.slice(0,8).join(', ')}${refs.length>8?', …':''}]`:'';
+          return `${group.sku} ${sourceLabel[group.sourceKind]||group.sourceKind}: `+
+            `+${group.incoming} received, -${group.outgoing} issued, net ${group.incoming-group.outgoing}${referenceText}`;
+        }).join('; ')+'. Internal transfers and return restocking may have both an outgoing and incoming leg; their net is not a new supplier receipt.'
+      :'No recorded stock change matched that request.';
+    return {answer,rows,
       columns:['product','sku','location','operation','change','balanceAfter','reference','reason','sourceKind','at']};
   }
   if(request.view==='inventory_valuation'){

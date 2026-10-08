@@ -218,6 +218,16 @@ function readOnlyCatalogue(catalogue){
 
 async function synthesizeReads(provider,message,executed,{completedActions=[],catalogue=null,recentChanges=[]}={}){
   if(executed.some((entry)=>entry.result.status!=='ANSWERED'))return executed;
+  // Stock movement quantities and source attribution are ledger arithmetic.
+  // Return the executor's grouped totals instead of asking a language model to
+  // re-count movement rows (a -2 issue is one event but two units). A separate
+  // cost/valuation question still uses the broader evidence synthesizer.
+  const movement=executed[0];
+  if(!completedActions.length&&movement?.step.contract.view==='inventory_movements'
+    &&!/(?:cost|valuation|value|expense|profit|price|money)/i.test(message)){
+    return [{...movement,result:{...movement.result,
+      researchViews:['inventory_movements']}}];
+  }
   // A completed multi-step order needs a current-state receipt, not another
   // model inference about whether the already-approved action was possible.
   // Render verified, exact-match order evidence without inventing a before-state.
@@ -303,6 +313,16 @@ async function groundNamedSkuReads(service,database,ctx,message,executed,catalog
       AND length(s.code)>=4 AND strpos(lower($2),lower(s.code))>0
     ORDER BY length(s.code) DESC LIMIT 2`,[ctx.workspaceId,message])).rows;
   if(named.length!==1)return;
+  // A planner may omit the SKU search even when the customer named a unique
+  // SKU. Re-read those movement rows with the exact SKU to avoid mixing other
+  // products into both the displayed evidence and the numerical summary.
+  for(let index=0;index<executed.length;index++){
+    const entry=executed[index];
+    if(entry.step.contract.view!=='inventory_movements'||entry.args.search===named[0].code)continue;
+    const step={...entry.step,args:{...entry.args,search:named[0].code}};
+    const outcome=await executeStep(service,database,ctx,step,executionOptions);
+    executed[index]={step,...outcome};
+  }
   for(const view of ['inventory','inventory_valuation','inventory_cost_movements','prices']){
     if(executed.some((entry)=>entry.step.contract.view===view&&
       entry.args.search===named[0].code))continue;

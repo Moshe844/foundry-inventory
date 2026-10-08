@@ -68,6 +68,7 @@ test('Ask research reads real inventory positions, stock history and prices with
     assert.equal(changes.rows[0].change,7);
     assert.equal(changes.rows[0].reference,'OPENING-GLOVES');
     assert.equal(changes.rows[0].sourceKind,'other_recorded_movement');
+    assert.match(changes.answer,/GLOVE other recorded movement: \+7 received, -0 issued, net 7/);
     const prices=await assistant.lookup(database,owner,{view:'prices',search:'Blue Work Glove'});
     assert.equal(prices.rows[0].sellingPrice,'Not recorded');
     const costs=await assistant.lookup(database,owner,{view:'purchase_costs',search:'Blue Work Glove'});

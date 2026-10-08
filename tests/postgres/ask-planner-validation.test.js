@@ -61,6 +61,19 @@ test('a truncated capability-fit response retries with a bounded larger output b
   assert.equal(result.steps[0].contract.name,'sales_order.create');
 });
 
+test('physical movement source totals bypass model arithmetic mistakes',async()=>{
+  const step={contract:registry.get('read.inventory_movements')};
+  const executed=[{step,args:{search:'LAB-WASH-030'},provenance:{},result:{status:'ANSWERED',
+    answer:'LAB-WASH-030 customer sale fulfillment: +0 received, -7 issued, net -7 [SO-00008, SO-00009, SO-00010].',
+    rows:[{sku:'LAB-WASH-030',sourceKind:'customer_sale_fulfillment',change:-2},
+      {sku:'LAB-WASH-030',sourceKind:'customer_sale_fulfillment',change:-1}]}}];
+  const provider={async complete(){throw new Error('Movement arithmetic must not use AI synthesis');}};
+  const result=await synthesizeReads(provider,'How many LAB-WASH-030 units went to customer sales?',executed);
+  assert.equal(result[0].result.status,'ANSWERED');
+  assert.match(result[0].result.answer,/-7 issued/);
+  assert.deepEqual(result[0].result.researchViews,['inventory_movements']);
+});
+
 test('read synthesis reports a reached daily model limit rather than alleging absent evidence',async()=>{
   const step={contract:registry.get('read.customer_returns')};
   const executed=[{step,args:{search:'RMA-01002'},provenance:{},result:{status:'ANSWERED',
