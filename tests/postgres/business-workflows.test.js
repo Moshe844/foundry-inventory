@@ -52,6 +52,30 @@ async function accountBalance(database, key) {
   return Number(result.rows[0].balance);
 }
 
+test('full reservation refuses shortages atomically while ordinary confirmation can backorder',
+  {timeout:120000},async(context)=>{
+    const cluster=await startCluster();
+    const database=openPostgres(cluster.connectionString,{applicationName:'stockchief-full-reservation-test'});
+    context.after(async()=>{await database.close();cluster.stop();});
+    await migratePostgres(database);
+    const ctx=await seed(database);
+    const order=await workflows.createSalesOrder(database,ctx,{customerId:'customer',
+      fulfillmentLocationId:'main',deliveryMethod:'PICKUP',idempotencyKey:'reserve:order',
+      lines:[{skuId:'sku',quantity:2,unitPriceMinor:500}]});
+    await assert.rejects(workflows.confirmSalesOrder(database,ctx,order.salesOrderId,
+      {idempotencyKey:'reserve:all',requireFullAllocation:true}),/full order cannot be reserved/);
+    const unchanged=(await database.query(`SELECT status,version FROM sales_orders WHERE id=$1`,
+      [order.salesOrderId])).rows[0];
+    assert.equal(unchanged.status,'DRAFT');
+    assert.equal(Number(unchanged.version),1);
+    assert.equal((await database.query(`SELECT COUNT(*)::int AS n FROM sales_order_allocations
+      WHERE sales_order_line_id=$1`,[order.lineIds[0]])).rows[0].n,0);
+    const normal=await workflows.confirmSalesOrder(database,ctx,order.salesOrderId,
+      {idempotencyKey:'reserve:partial'});
+    assert.equal(normal.status,'BACKORDERED');
+    assert.equal(normal.shortage,true);
+  });
+
 test('PostgreSQL purchasing, receiving, sales and payments remain one reconciled business story',
   { timeout: 120000 }, async (context) => {
     const cluster = await startCluster();

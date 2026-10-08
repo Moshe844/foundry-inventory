@@ -650,6 +650,12 @@ const SPECS=Object.freeze([
     states:['DRAFT','CONFIRMED','BACKORDERED'],verb:'Confirm and allocate',
     execute:(client,ctx,p)=>workflows.confirmSalesOrderInTransaction(client,ctx,p.recordId,p),
     verify:(client,ctx,r,p)=>state(client,ctx,'sales_orders',p.recordId,[r.status])},
+  {name:'sales_order.reserve_all',description:'Confirm an existing draft or backordered customer order only if every open unit can be reserved now. If stock is insufficient, leave the order and allocations unchanged and explain the shortage; do not substitute a partial backorder.',
+    record:'sales_order',fields:['recordReference'],permission:permissions.MANAGE_SALES,capability:'sales_orders.core',
+    states:['DRAFT','CONFIRMED','BACKORDERED'],verb:'Reserve all remaining stock for',
+    execute:(client,ctx,p)=>workflows.confirmSalesOrderInTransaction(client,ctx,p.recordId,{...p,requireFullAllocation:true}),
+    verify:async(client,ctx,r,p)=>Boolean(!r.shortage&&r.status==='CONFIRMED'&&
+      await state(client,ctx,'sales_orders',p.recordId,['CONFIRMED']))},
   {name:'sales_order.fulfill',description:'Record allocated, quantity-tracked goods physically leaving an existing customer order; atomically post inventory, revenue, cost and invoice. Never substitute a draft or a shipment label.',
     record:'sales_order',fields:['recordReference','sku','quantity'],permission:permissions.FULFILL_SALES,
     capability:'fulfillment.core',build:fulfillment,

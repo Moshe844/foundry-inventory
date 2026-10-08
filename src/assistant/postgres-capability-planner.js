@@ -21,16 +21,17 @@ function schemaFor(catalogue=registry){
 const PLANNING_RULES=[
   "Plan the owner's CURRENT goal by meaning, not phrase matching. Use only registered contracts (n=name, d=effect, a=allowed inputs). At most eight steps; use the fewest that actually accomplish the goal.",
   'Include only argument fields declared for each contract. Preserve every product, party, record, amount, location, date and address the owner supplied. Omit unknown values; never guess a default entity, fabricate a placeholder, or supply fields for a capability with no inputs. The resolver verifies unique records or asks for missing inputs.',
-  'A broad question uses a business-wide read even when the workspace is empty. Zero recorded products or stock is a verifiable answer, not a reason to refuse or offer a narrower lookup. Workspace counts route the question but are not answer evidence. Read recorded facts; navigate only when the owner asks to change the visible page, and open at most one destination.',
+  'Broad questions use business-wide reads, even in empty workspaces; zero stock is an answer. Workspace counts route but do not prove facts. Read records; navigate only when asked, to one destination.',
+  'A request to correct your previous factual answer calls for fresh reads, not a business-data write. Changing a record still requires its matching approved write.',
   'For navigation, match the requested page label and scope exactly. Prefer a specific destination to a similarly named parent or administrative page; do not turn a request to open a page into a financial or inventory answer.',
   'A requested change needs its matching write, not a related read. A declarative lasting supplier term, threshold or operating preference may be a policy instruction. Do not create extra contacts, products, orders, purchases or movements as prerequisites. Invoicing does not imply fulfillment or payment.',
   'The executor obtains context itself; do not add a preliminary read solely for a write. Add a read only if the owner separately asks its answer. Missing action inputs are clarified later; do not replace the action with a read.',
   'When one contract already accepts and applies every stated input for the requested outcome, do not add another mutation that sets the same field or performs a preparatory version of that outcome. Plan independent business effects only when the owner separately requested each one.',
   'Match exact real-world effect and timing. Recording a past event is not initiating it; a draft is not sending, buying, paying or fulfilling; internal status is not an external provider action. Never claim a dependent approval or physical event already happened.',
   'Use zero-based dependsOn only for genuine prior-step dependencies. Use continuesPending only when the current message answers the pending question; otherwise prior turns are context, not commands. Preserve a supplied email address; a subject is optional.',
-  'When the owner explicitly requests several business outcomes, retain every outcome. Creating a draft customer order does not reserve stock; if the same request also asks to confirm or reserve it, include sales_order.confirm as a dependent step after sales_order.create. Approval of the first step prepares the second for its own approval. Do not infer confirmation from a request for a draft alone.',
+  'Retain every requested outcome. A draft order does not reserve stock. For creation plus confirmation, follow sales_order.create with sales_order.confirm; for creation plus full reservation, use sales_order.reserve_all. Both need separate approvals. A draft-only request needs no confirmation.',
   'The currentPage record is reloaded from this workspace and can resolve “this product”, “this order”, or similar references. Use its matching entity when the owner did not name another; an explicitly named entity always wins. A lasting reorder point is a policy proposal, not a stock movement.',
-  'RecentChanges lists verified, approved changes in this inventory by this user. Resolve “the order I just created” and similar follow-ups from a unique matching recent result; never treat an older, different record as the target when the reference is ambiguous. Do not repeat a completed action.',
+  'RecentChanges contains this user’s verified changes. Resolve follow-ups to a unique recent record, ask if ambiguous, and never repeat a completed action.',
   'Use skuScope=currently_stocked only for an explicit currently stocked reference. Do not assume a linked order, bill, payment or policy exists. Prefer the valid contract requiring fewer unproven business facts.',
   'If executionFeedback reports that a proposed step cannot run in the current record state, do not repeat it or invent a prerequisite. Replan the current goal using the actual state, or clarify if no valid path exists.',
   'If no registered contract achieves the exact goal, return no steps and a short plain-language unavailable explanation. A closestAlternative is only a clearly different suggestion, never a substitute action. Do not invent facts, policies, authority or SQL.',
@@ -58,8 +59,12 @@ unique just-created record for a follow-up; do not reject a matching operation o
 The authenticated currentWorkspace is the inventory the owner is operating in. "This inventory" or
 "this business" refers to that workspace even when currentPage is null. The executor remains tenant-scoped;
 do not ask for another workspace name before a workspace-level setting or rename.
+When the owner says an earlier answer was wrong and asks for the recorded facts again, check the proposed
+reads against the actual new question. Correcting an answer is not changing a business record.
 Check the ENTIRE current request, not only whether each proposed step is individually relevant. If the owner
 asks for two independent effects and the plan includes only one, set aligned=false and name the omitted effect.
+If the owner requires all units reserved now, partial confirmation or backordering does not fulfill that goal;
+choose sales_order.reserve_all. Ordinary confirmation can create a truthful backorder.
 In particular, creating a draft order does not commit or reserve inventory: when both creation and reservation
 are requested, the plan needs a dependent confirmation step. Do not pass a create-only plan on the grounds that
 the owner can ask for confirmation later. Conversely, do not add confirmation when the owner asked only for a draft.

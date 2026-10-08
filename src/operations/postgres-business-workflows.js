@@ -549,6 +549,8 @@ async function confirmSalesOrderInTransaction(client, rawContext, salesOrderId, 
       }
       if (needed > 0) short = true;
     }
+    if (short && input.requireFullAllocation === true) throw new ValidationError(
+      'The full order cannot be reserved from available stock. No confirmation or allocation was saved. Receive or transfer the missing stock, then try again.');
     const status = short ? 'BACKORDERED' : 'CONFIRMED';
     const at = nowIso();
     await client.query(`UPDATE sales_orders SET status=$3,confirmed_by_user_id=$4,
