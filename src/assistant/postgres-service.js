@@ -570,6 +570,9 @@ async function lookup(database,ctx,request,options={}) {
     const rows=(await database.query(`SELECT so.id,so.order_number,so.status,so.currency,c.name AS customer,
       COALESCE(lines.ordered_units,0) AS ordered_units,
       COALESCE(lines.fulfilled_units,0) AS fulfilled_units,
+      COALESCE(lines.line_count,0) AS line_count,
+      COALESCE(lines.order_total_minor,0) AS order_total_minor,
+      COALESCE(lines.line_items_json,'[]'::json) AS line_items_json,
       COALESCE(lines.ordered_units,0)-COALESCE(lines.fulfilled_units,0) AS open_units,
       COALESCE(held.units,0) AS held_units,COALESCE(invoices.invoice_count,0) AS invoice_count,
       COALESCE(invoices.invoiced_minor,0) AS invoiced_minor,
@@ -579,9 +582,16 @@ async function lookup(database,ctx,request,options={}) {
       COALESCE(posted.cogs_minor,0) AS posted_cogs_minor,
       COALESCE(shipments.shipment_count,0) AS shipment_count
       FROM sales_orders so JOIN customers c ON c.id=so.customer_id AND c.workspace_id=so.workspace_id
-      LEFT JOIN LATERAL (SELECT SUM(quantity_ordered) AS ordered_units,
-        SUM(quantity_fulfilled) AS fulfilled_units FROM sales_order_lines
-        WHERE workspace_id=so.workspace_id AND sales_order_id=so.id) lines ON true
+      LEFT JOIN LATERAL (SELECT SUM(sol.quantity_ordered) AS ordered_units,
+        SUM(sol.quantity_fulfilled) AS fulfilled_units,COUNT(*)::int AS line_count,
+        SUM(sol.quantity_ordered*sol.unit_price_minor) AS order_total_minor,
+        JSON_AGG(JSON_BUILD_OBJECT('sku',sku.code,'product',item.name,
+          'quantity',sol.quantity_ordered,'unitPriceMinor',sol.unit_price_minor,
+          'lineTotalMinor',sol.quantity_ordered*sol.unit_price_minor) ORDER BY sol.id) AS line_items_json
+        FROM sales_order_lines sol
+        JOIN skus sku ON sku.id=sol.sku_id AND sku.workspace_id=sol.workspace_id
+        JOIN items item ON item.id=sku.item_id AND item.workspace_id=sku.workspace_id
+        WHERE sol.workspace_id=so.workspace_id AND sol.sales_order_id=so.id) lines ON true
       LEFT JOIN LATERAL (SELECT SUM(a.quantity) AS units FROM sales_order_allocations a
         JOIN sales_order_lines sol ON sol.id=a.sales_order_line_id AND sol.workspace_id=a.workspace_id
         WHERE a.workspace_id=so.workspace_id AND sol.sales_order_id=so.id) held ON true
@@ -610,6 +620,10 @@ async function lookup(database,ctx,request,options={}) {
     [ctx.workspaceId,search])).rows.map((row)=>evidenceRow({order:row.order_number,status:row.status,customer:row.customer,
       orderedUnits:Number(row.ordered_units),heldUnits:Number(row.held_units),
       fulfilledUnits:Number(row.fulfilled_units),openUnits:Number(row.open_units),
+      lineCount:Number(row.line_count),orderTotal:pricing.formatMinor(Number(row.order_total_minor),row.currency),
+      lineItems:(Array.isArray(row.line_items_json)?row.line_items_json:[]).map((line)=>
+        `${line.quantity} × ${line.sku} ${line.product} at ${pricing.formatMinor(Number(line.unitPriceMinor),row.currency)} each = `+
+        pricing.formatMinor(Number(line.lineTotalMinor),row.currency)).join('; '),
       invoiceCount:Number(row.invoice_count),invoiced:pricing.formatMinor(Number(row.invoiced_minor),row.currency),
       paid:pricing.formatMinor(Number(row.paid_minor),row.currency),
       outstanding:pricing.formatMinor(Number(row.outstanding_minor),row.currency),
@@ -619,7 +633,8 @@ async function lookup(database,ctx,request,options={}) {
       shipments:Number(row.shipment_count)},`/orders/${row.id}`));
     return {answer:rows.length?`${rows.length===100?'Showing the first 100':rows.length} customer order${rows.length===1?'':'s'} ${search?'matched':'recorded'}; ${rows.reduce((sum,row)=>sum+row.openUnits,0).toLocaleString('en-US')} units remain open.`:
       search?'No customer order matched that request.':'No customer orders are recorded in StockChief. Sales through systems that are not connected or imported here would not appear in this list.',
-      rows,columns:['order','status','customer','orderedUnits','heldUnits','fulfilledUnits','openUnits',
+      rows,columns:['order','status','customer','lineCount','lineItems','orderTotal',
+        'orderedUnits','heldUnits','fulfilledUnits','openUnits',
         'invoiceCount','invoiced','paid','outstanding','postedRevenue','postedProductCost',
         'postedGrossProfit','shipments']};
   }

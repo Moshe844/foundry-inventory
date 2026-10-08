@@ -23,6 +23,7 @@ const pricing=require('../../src/pricing/postgres-service');
 const imports=require('../../src/imports/postgres-service');
 const jobs=require('../../src/operations/postgres-job-queue');
 const runtimeHandlers=require('../../src/operations/postgres-runtime-handlers');
+const assistant=require('../../src/assistant/postgres-service');
 
 function step(capability,args={}){return {capability,arguments:Object.entries(args).map(([name,value])=>({name,value:String(value)})),
   dependsOn:[],continuesPending:false};}
@@ -159,6 +160,17 @@ test('Ask browser controls a real customer order, payment, and return through th
     assert.deepEqual(aliasLines.map((line)=>[line.sku_id,Number(line.quantity_ordered),
       Number(line.unit_price_minor)]).sort((a,b)=>a[0].localeCompare(b[0])),
     [[item.skuIds[0],1,2500],[hat.skuIds[0],2,500]].sort((a,b)=>a[0].localeCompare(b[0])));
+    const multiOrderNumber=(await database.query(`SELECT order_number FROM sales_orders
+      WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,multiOrder.result.salesOrderId])).rows[0].order_number;
+    const orderEvidence=await assistant.lookup(database,ctx,{view:'sales_orders',search:multiOrderNumber});
+    assert.equal(orderEvidence.rows.length,1);
+    assert.equal(orderEvidence.rows[0].lineCount,2);
+    assert.equal(orderEvidence.rows[0].orderTotal,'$55.00');
+    assert.match(orderEvidence.rows[0].lineItems,new RegExp(`${skuCode} Work Boot at \\$25\\.00 each`));
+    assert.match(orderEvidence.rows[0].lineItems,new RegExp(`${hatCode} Safety Hat at \\$5\\.00 each`));
+    assert.equal(orderEvidence.rows[0].heldUnits,0);
+    assert.equal(orderEvidence.rows[0].invoiceCount,0);
+    assert.equal(orderEvidence.rows[0].paid,'$0.00');
     const combined='Create another two-boot order for Builder Co dated 2026-08-14, pickup at Main Warehouse, and reserve the stock';
     plans.set(combined,[step('sales_order.create',{customer:'Builder Co',sku:'Work Boot',quantity:2,
       deliveryMethod:'customer pickup',location:'Main Warehouse',orderDate:'2026-08-14'}),
