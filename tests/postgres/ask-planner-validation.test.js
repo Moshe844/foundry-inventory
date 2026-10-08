@@ -192,3 +192,34 @@ test('a twice-rejected fast plan gets one compact, independently verified regist
   assert.deepEqual(result.steps.map((row)=>row.contract.name),['sales_order.create']);
   assert.equal(fastPlans,3);assert.equal(strongFits,3);
 });
+
+test('duplicate state-transition proposals collapse to one dependent approval',async()=>{
+  const step=(capability,dependsOn=[])=>({capability,arguments:[],dependsOn,continuesPending:false});
+  const provider={async complete({schemaName,prompt}){
+    if(schemaName==='stockchief_capability_fit'){
+      const proposed=JSON.parse(prompt).proposedSteps;
+      assert.deepEqual(proposed.map((row)=>row.capability),
+        ['sales_order.create','sales_order.reserve_all']);
+      assert.deepEqual(proposed[1].dependsOn,[0]);
+      return {data:{aligned:true,reason:''}};
+    }
+    return {data:{steps:[step('sales_order.create'),step('sales_order.reserve_all',[0]),
+      step('sales_order.reserve_all',[1])],clarifyingQuestion:''}};
+  }};
+  const result=await planner.plan(provider,
+    'Create an order for sixteen washers and reserve all sixteen.');
+  assert.deepEqual(result.steps.map((row)=>row.contract.name),
+    ['sales_order.create','sales_order.reserve_all']);
+});
+
+test('distinct targets and repeatable financial movements are not silently collapsed',()=>{
+  const catalogue=require('../../src/assistant/postgres-capability-registry').registry;
+  const steps=[
+    {contract:catalogue.get('sales_order.reserve_all'),args:{recordReference:'SO-1'},dependsOn:[],continuesPending:false},
+    {contract:catalogue.get('sales_order.reserve_all'),args:{recordReference:'SO-2'},dependsOn:[],continuesPending:false},
+    {contract:catalogue.get('supplier_payment.record'),args:{amount:'5'},dependsOn:[],continuesPending:false},
+    {contract:catalogue.get('supplier_payment.record'),args:{amount:'5'},dependsOn:[],continuesPending:false},
+  ];
+  planner.collapseRepeatedEffects(steps);
+  assert.equal(steps.length,4);
+});

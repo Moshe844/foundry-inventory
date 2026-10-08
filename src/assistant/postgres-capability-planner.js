@@ -228,6 +228,31 @@ function sequenceApprovedMutations(steps){
   return steps;
 }
 
+function collapseRepeatedEffects(steps){
+  const retained=[];const indexMap=new Map();const seen=new Map();
+  for(const [oldIndex,step] of steps.entries()){
+    const dependencies=[...new Set(step.dependsOn.map((index)=>indexMap.get(index)))];
+    const key=step.contract.singleEffectPerTarget
+      ?JSON.stringify([step.contract.name,step.args,step.continuesPending]) :null;
+    const earlier=key?seen.get(key):undefined;
+    if(earlier!==undefined&&dependencies.every((index)=>index<=earlier)){
+      // A state transition on the same uniquely resolved target cannot have
+      // two distinct effects in one plan. Keep the first approval and preserve
+      // any prerequisites the redundant step carried.
+      retained[earlier].dependsOn=[...new Set([...retained[earlier].dependsOn,
+        ...dependencies.filter((index)=>index!==earlier)])];
+      indexMap.set(oldIndex,earlier);
+      continue;
+    }
+    const index=retained.length;
+    retained.push({...step,dependsOn:dependencies});
+    indexMap.set(oldIndex,index);
+    if(key)seen.set(key,index);
+  }
+  steps.splice(0,steps.length,...retained);
+  return steps;
+}
+
 async function plan(provider,message,{catalogue=registry,history=[],pending=null,page=null,workspace=null,
   recentChanges=[],deferReadFit=false,feedback=null,verificationProvider=null}={}){
   if(!provider)return {steps:[],clarifyingQuestion:'StockChief cannot interpret free-form requests while its reasoning connection is unavailable. Nothing changed.'};
@@ -288,6 +313,7 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
   if(selected.steps.length){
     groundedMoneyArguments(selected.steps,message,pending);
     coverExplicitOrderReservation(selected.steps,message,catalogue,pending);
+    collapseRepeatedEffects(selected.steps);
     sequenceApprovedMutations(selected.steps);
   }
   // Read-only plans can be checked against actual evidence by the answer
@@ -314,12 +340,12 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
           dependsOn:step.dependsOn,
           continuesPending:step.continuesPending}))});
       let fit=await provider.complete({system:FIT_SYSTEM,prompt:JSON.stringify(candidate()),
-        schema:FIT_SCHEMA,schemaName:'stockchief_capability_fit'});
+        schema:FIT_SCHEMA,schemaName:'stockchief_capability_fit',maxOutputTokens:384});
       if(fit.data?.aligned===false){
         if(verificationProvider){
           const stronger=await verificationProvider.complete({system:FIT_SYSTEM,
             prompt:JSON.stringify(candidate()),schema:FIT_SCHEMA,
-            schemaName:'stockchief_capability_fit'});
+            schemaName:'stockchief_capability_fit',maxOutputTokens:384});
           if(stronger.data?.aligned===true)return selected;
         }
         if(process.env.STOCKCHIEF_ASK_DIAGNOSTICS==='1')console.warn('[stockchief] Ask fit rejected',
@@ -334,16 +360,17 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
         if(selected.steps.length){
           groundedMoneyArguments(selected.steps,message,pending);
           coverExplicitOrderReservation(selected.steps,message,catalogue,pending);
+          collapseRepeatedEffects(selected.steps);
           sequenceApprovedMutations(selected.steps);
         }
         if(selected.steps.length){
           fit=await provider.complete({system:FIT_SYSTEM,prompt:JSON.stringify(candidate()),
-            schema:FIT_SCHEMA,schemaName:'stockchief_capability_fit'});
+            schema:FIT_SCHEMA,schemaName:'stockchief_capability_fit',maxOutputTokens:384});
           if(fit.data?.aligned===false){
             if(verificationProvider){
               const stronger=await verificationProvider.complete({system:FIT_SYSTEM,
                 prompt:JSON.stringify(candidate()),schema:FIT_SCHEMA,
-                schemaName:'stockchief_capability_fit'});
+                schemaName:'stockchief_capability_fit',maxOutputTokens:384});
               if(stronger.data?.aligned===true)return selected;
               // Two fit checks rejected the fast plan. Before telling the owner
               // a supported action is unavailable, make one compact replan
@@ -362,11 +389,12 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
                   if(!pending)for(const step of retry.steps)step.continuesPending=false;
                   groundedMoneyArguments(retry.steps,message,pending);
                   coverExplicitOrderReservation(retry.steps,message,catalogue,pending);
+                  collapseRepeatedEffects(retry.steps);
                   sequenceApprovedMutations(retry.steps);
                   selected=retry;
                   const finalFit=await verificationProvider.complete({system:FIT_SYSTEM,
                     prompt:JSON.stringify(candidate()),schema:FIT_SCHEMA,
-                    schemaName:'stockchief_capability_fit'});
+                    schemaName:'stockchief_capability_fit',maxOutputTokens:384});
                   if(finalFit.data?.aligned===true)return selected;
                 }
               }catch(error){
@@ -397,4 +425,4 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
 }
 
 module.exports={schemaFor,systemFor,planningCatalogue,parseSteps,plan,
-  groundedMoneyArguments,coverExplicitOrderReservation,sequenceApprovedMutations};
+  groundedMoneyArguments,coverExplicitOrderReservation,collapseRepeatedEffects,sequenceApprovedMutations};

@@ -219,6 +219,7 @@ for(const spec of require('./postgres-workflow-capabilities').SPECS)action(spec.
     ?['quantity','reason','location']:[])],commercialCapability:spec.capability,
     additionalCommercialCapabilities:spec.additionalCapabilities||[],
     resultingRecords:spec.record?[spec.record]:spec.resultingRecords||[],recordKind:spec.record||null,
+    singleEffectPerTarget:Boolean(spec.singleEffectPerTarget),
     ownerOnly:Boolean(spec.ownerOnly),
     discovery:{label:spec.name.replace(/[._]/g,' ').replace(/^./,(letter)=>letter.toUpperCase()),
       prompt:`Help me ${spec.name.replace(/[._]/g,' ')}`,rank:160,

@@ -22,7 +22,7 @@ function wrap(database,ctx,provider,operation,key,options={}){const policy=POLIC
     idempotencyKey,internal?`${ctx.workspaceId}:${options.fundingKey}`:idempotencyKey);
     modelAttemptDay=await require('./model-budget').begin(database,scope.accountId);
     const {onValidated,...providerRequest}=request;
-    providerStarted=true;response=await provider.complete({...providerRequest,maxOutputTokens:policy.maxOutputTokens,commercial:true});
+    providerStarted=true;response=await provider.complete({...providerRequest,maxOutputTokens:costHold.outputTokenLimit,commercial:true});
     await operations.modelUsage(database,scope,response.usage||{provider:provider.name,model:provider.model},idempotencyKey,{operation});
     const validated=require('../foundry/validator').validate(require('../foundry/schema-tools').toWireSchema(request.schema),response.data);
     if(!validated.ok)throw new (require('../ai/provider').ProviderOutputError)('The model response did not match the operation contract. No credits were consumed.',validated.errors);

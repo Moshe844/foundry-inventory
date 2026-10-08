@@ -646,11 +646,13 @@ async function accountMapping(database,ctx,row,args){
 
 const SPECS=Object.freeze([
   {name:'sales_order.confirm',description:'Confirm an existing draft customer order and reserve available stock; report a real shortage rather than invent stock.',
+    singleEffectPerTarget:true,
     record:'sales_order',fields:['recordReference'],permission:permissions.MANAGE_SALES,capability:'sales_orders.core',
     states:['DRAFT','CONFIRMED','BACKORDERED'],verb:'Confirm and allocate',
     execute:(client,ctx,p)=>workflows.confirmSalesOrderInTransaction(client,ctx,p.recordId,p),
     verify:(client,ctx,r,p)=>state(client,ctx,'sales_orders',p.recordId,[r.status])},
   {name:'sales_order.reserve_all',description:'Confirm an existing draft or backordered customer order only if every open unit can be reserved now. If stock is insufficient, leave the order and allocations unchanged and explain the shortage; do not substitute a partial backorder.',
+    singleEffectPerTarget:true,
     record:'sales_order',fields:['recordReference'],permission:permissions.MANAGE_SALES,capability:'sales_orders.core',
     states:['DRAFT','CONFIRMED','BACKORDERED'],verb:'Reserve all remaining stock for',
     execute:(client,ctx,p)=>workflows.confirmSalesOrderInTransaction(client,ctx,p.recordId,{...p,requireFullAllocation:true}),

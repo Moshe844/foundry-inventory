@@ -18,8 +18,10 @@ function estimateMaximumMinor(request,policy,inputRateMinor,outputRateMinor){
  const bytes=Buffer.byteLength(String(request.system||''))+Buffer.byteLength(String(request.prompt||''))+
   Buffer.byteLength(JSON.stringify(request.schema||{}));
  const inputTokens=bytes+INPUT_OVERHEAD_TOKENS;
- return {maximumMinor:Math.ceil((inputTokens*inputRateMinor+policy.maxOutputTokens*outputRateMinor)*
-  MAX_PROVIDER_EXECUTIONS*1e6)/1e6,inputTokens,outputTokens:policy.maxOutputTokens,
+ const outputTokens=Number.isSafeInteger(request.maxOutputTokens)&&request.maxOutputTokens>0
+   ?Math.min(request.maxOutputTokens,policy.maxOutputTokens):policy.maxOutputTokens;
+ return {maximumMinor:Math.ceil((inputTokens*inputRateMinor+outputTokens*outputRateMinor)*
+  MAX_PROVIDER_EXECUTIONS*1e6)/1e6,inputTokens,outputTokens,
   providerExecutions:MAX_PROVIDER_EXECUTIONS};}
 async function rate(database,provider,model,operation,version){return (await database.query(`SELECT cost_per_unit_minor,
  pricing_basis,confidence,source FROM commercial_cost_rates WHERE provider=$1 AND model=$2 AND provider_version=$3
@@ -134,7 +136,7 @@ async function reserve(database,scope,provider,request,policy,operation,idempote
   for(const source of sources)await client.query(`INSERT INTO commercial_model_cost_hold_allocations
    (id,hold_id,source,grant_id,maximum_minor) VALUES($1,$2,$3,$4,$5)`,
    [newId('modelallocation'),hold.id,source.source,source.grantId,source.maximumMinor]);
-  return hold;};
+ return {...hold,outputTokenLimit:bound.outputTokens};};
  return typeof database.transaction==='function'?database.transaction(transaction,{isolation:'SERIALIZABLE',retrySafe:true}):transaction(database);
 }
 async function release(database,scope,idempotencyKey){await database.query(`UPDATE commercial_model_cost_holds SET status='RELEASED',settled_at=now()
