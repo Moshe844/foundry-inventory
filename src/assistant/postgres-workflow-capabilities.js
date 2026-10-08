@@ -344,11 +344,11 @@ async function returnRefund(database,ctx,customerReturn,args){
 function normalizeRefundDestination(value){
   const raw=String(value||'').trim().toUpperCase();
   if(['AR','CASH'].includes(raw))return raw;
-  const words=new Set(raw.split(/[^A-Z]+/).filter(Boolean));
-  const receivable=words.has('RECEIVABLE')||words.has('INVOICE')||words.has('CREDIT')
-    ||words.has('UNPAID');
-  const paidFunds=words.has('CASH')||words.has('MONEY')||words.has('PROVIDER')
-    ||words.has('PAID');
+  const words=raw.split(/[^A-Z]+/).filter(Boolean);
+  const asserted=(terms)=>words.some((word,index)=>terms.includes(word)
+    &&!words.slice(Math.max(0,index-4),index).some((prior)=>['NO','NOT','WITHOUT','NEVER'].includes(prior)));
+  const receivable=asserted(['AR','RECEIVABLE','INVOICE','CREDIT','UNPAID']);
+  const paidFunds=asserted(['CASH','MONEY','PROVIDER','PAID']);
   if(receivable&&!paidFunds)return 'AR';
   if(paidFunds&&!receivable)return 'CASH';
   throw new ValidationError('Choose whether to reduce an unpaid invoice balance or return money already paid.');
