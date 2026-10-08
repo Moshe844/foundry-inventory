@@ -1,8 +1,10 @@
 'use strict';
 
 const express=require('express');
+const crypto=require('node:crypto');
 const config=require('../../config');
 const assistant=require('../../assistant/postgres-service');
+const imports=require('../../imports/postgres-service');
 const outboundMail=require('../../connections/postgres-outbound-mail');
 const ledger=require('../../assistant/ledger');
 const permissions=require('../../actions/permissions');
@@ -11,6 +13,7 @@ const entitlements=require('../../entitlements/postgres-service');
 const commercialControl=require('../../commercial/control-service');
 const {commercialScope}=require('../commercial-middleware');
 const {newId}=require('../../lib/util');
+const {ValidationError}=require('../../domain/errors');
 
 const STATUS={ANSWERED:'answered',PREPARED:'needs_approval',CLARIFY:'clarify',FAILED:'failed'};
 
@@ -176,6 +179,18 @@ function createPostgresAskRouter(database,options={}){
   }));
   async function runAsk(req){
     const scope=commercialScope(req);await entitlements.assertCapability(database,scope,'ask.lookup');
+    const files=(req.files||[]).filter((entry)=>entry.field==='file'&&entry.size>0);
+    if(files.length){
+      if(files.length!==1)throw new ValidationError('Attach one inventory file at a time so its preview can be checked.');
+      const file=files[0];
+      if(!/\.(csv|tsv|txt|xlsx|pdf)$/i.test(file.filename||''))
+        throw new ValidationError('Ask can preview inventory CSV, TSV, Excel and text-layer PDF files here. This file type was not imported.');
+      await entitlements.assertCapability(database,scope,'imports.spreadsheet');
+      const hash=crypto.createHash('sha256').update(file.buffer).digest('hex');
+      const plan=await imports.analyse(database,req.ctx,{buffer:file.buffer,filename:file.filename,
+        provider:options.provider,usageKey:`import-analysis:${hash}`});
+      return {navigation:{href:`/imports/${plan.id}`}};
+    }
     const remembered=req.session.postgresAskPageContext;
     const page=await require('../../assistant/postgres-page-context').load(database,req.ctx.workspaceId,
       req.body.sourcePath||(remembered?.workspaceId===req.ctx.workspaceId?remembered.path:null));

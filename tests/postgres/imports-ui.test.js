@@ -8,6 +8,8 @@ const { openPostgres }=require('../../src/db/postgres');
 const { migratePostgres }=require('../../src/db/migrate-postgres');
 const { createPostgresApp }=require('../../src/postgres-app');
 const imports=require('../../src/imports/postgres-service');
+const fs=require('node:fs');
+const path=require('node:path');
 
 test('real Chromium previews, approves, imports and reconciles PostgreSQL inventory with duplicate and rollback safety',
   {timeout:180000},async(context)=>{
@@ -48,7 +50,7 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
     assert.equal((await database.query('SELECT COUNT(*) AS count FROM items WHERE workspace_id=$1',[identity.workspace_id])).rows[0].count,'0');
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Import and verify'}).click()]);
     const main=await page.locator('main').innerText();
-    assert.match(main,/Verified/);assert.match(main,/2 rows created 1 products, 2 SKUs and 12 opening units/);
+    assert.match(main,/Verified/);assert.match(main,/2 rows created 1 product, 2 SKUs and 12 opening units/);
     const truth=(await database.query(`SELECT COUNT(DISTINCT i.id) AS items,COUNT(DISTINCT s.id) AS skus,
       COALESCE(SUM(b.on_hand),0) AS units,COALESCE(SUM(m.quantity_delta),0) AS ledger_units
       FROM items i JOIN skus s ON s.item_id=i.id LEFT JOIN balances b ON b.sku_id=s.id
@@ -65,6 +67,41 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
     assert.deepEqual((await database.query(`SELECT COUNT(*) AS items,COALESCE((SELECT SUM(on_hand) FROM balances
       WHERE workspace_id=$1),0) AS units FROM items WHERE workspace_id=$1`,[identity.workspace_id])).rows[0],
     {items:'1',units:'12'});
+
+    await page.goto(`${base}/ask`);
+    const askSource=Buffer.from('Product,SKU,Location,Quantity\nAsk Imported Valve,ASK-VALVE-1,Main Warehouse,9\n');
+    await page.locator('input[type="file"][name="file"]').setInputFiles({
+      name:'ask-inventory.csv',mimeType:'text/csv',buffer:askSource});
+    await Promise.all([page.waitForURL(/\/imports\/imp_/),page.getByRole('button',{name:'Continue'}).click()]);
+    assert.match(await page.locator('main').innerText(),/1 row read · 1 ready · 0 need correction/);
+    assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM items WHERE workspace_id=$1
+      AND name='Ask Imported Valve'`,[identity.workspace_id])).rows[0].count,0);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve 1 row'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Import and verify'}).click()]);
+    assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM items WHERE workspace_id=$1
+      AND name='Ask Imported Valve'`,[identity.workspace_id])).rows[0].count,1);
+
+    for(const [name,kind] of [['Lab Main Warehouse','warehouse'],['Lab Overflow Shelf','shelf']]){
+      await page.goto(`${base}/locations`);
+      await page.getByRole('button',{name:'Add location',exact:true}).first().click();
+      const dialog=page.locator('#modal-location');
+      await dialog.getByLabel('Name',{exact:true}).fill(name);
+      await dialog.getByLabel('Type',{exact:true}).selectOption(kind);
+      await Promise.all([page.waitForNavigation(),dialog.getByRole('button',{name:'Add location'}).click()]);
+    }
+    await page.goto(`${base}/ask`);
+    await page.locator('input[type="file"][name="file"]').setInputFiles({
+      name:'ask-import-stock.pdf',mimeType:'application/pdf',
+      buffer:fs.readFileSync(path.join(__dirname,'../fixtures/ask-import-stock.pdf'))});
+    await Promise.all([page.waitForURL(/\/imports\/imp_/),page.getByRole('button',{name:'Continue'}).click()]);
+    assert.match(await page.locator('main').innerText(),/3 rows read · 3 ready · 0 need correction/);
+    assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM skus WHERE workspace_id=$1
+      AND code IN ('LAB-PT-012','LAB-BN-015','LAB-PC-022')`,[identity.workspace_id])).rows[0].count,0);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve 3 rows'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Import and verify'}).click()]);
+    assert.match(await page.locator('main').innerText(),/3 rows created/);
+    assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM skus WHERE workspace_id=$1
+      AND code IN ('LAB-PT-012','LAB-BN-015','LAB-PC-022')`,[identity.workspace_id])).rows[0].count,3);
 
     const failing=await imports.analyse(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},{
       text:'Product,SKU,Location,Quantity\nRollback One,RB-1,Main Warehouse,3\nRollback Two,RB-2,Main Warehouse,4\n',

@@ -201,7 +201,8 @@ action('communication.send_email','Prepare a business email for review; sending 
   {additionalCommercialCapabilities:['connection.email']});
 action('sales_order.create','Prepare a draft customer order without claiming it was fulfilled.',
   ['customer','sku','skuScope','quantity','deliveryMethod','shipToAddress','location','neededBy','amount','currency','reference'],
-  permissions.MANAGE_SALES,'create_sales_order',{allowUnknownEntities:['customer'],resultReference:'salesOrderId'});
+  permissions.MANAGE_SALES,'create_sales_order',{allowUnknownEntities:['customer'],
+    resultReference:'salesOrderId',resultRecordKind:'sales_order'});
 action('customer_invoice.create','Prepare a customer invoice for review. Approval records and posts the invoice in StockChief; it does not create or fulfill a customer order, send the invoice, or collect payment.',
   ['customer','sku','quantity','amount','tax','currency','description','issueDate','dueDate','reference'],
   permissions.MANAGE_ACCOUNTING,'create_customer_invoice',{allowUnknownEntities:['customer']});

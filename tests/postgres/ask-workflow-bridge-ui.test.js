@@ -114,7 +114,7 @@ test('Ask browser controls a real customer order, payment, and return through th
     const combined='Create another two-boot order for Builder Co, pickup at Main Warehouse, and reserve the stock';
     plans.set(combined,[step('sales_order.create',{customer:'Builder Co',sku:'Work Boot',quantity:2,
       deliveryMethod:'customer pickup',location:'Main Warehouse'}),
-    {...step('sales_order.confirm'),dependsOn:[0]}]);
+    {...step('sales_order.confirm',{recordReference:'Builder Co'}),dependsOn:[0]}]);
     const combinedCreate=await prepareAndApprove(page,base,database,ctx.workspaceId,combined,'sales_order.create');
     const combinedConfirm=(await database.query(`SELECT * FROM stockchief_runtime.assistant_action_proposals
       WHERE workspace_id=$1 AND action_type='sales_order.confirm' ORDER BY created_at DESC,id DESC LIMIT 1`,

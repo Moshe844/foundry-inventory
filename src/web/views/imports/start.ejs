@@ -21,9 +21,9 @@
       <div class="card-body">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <label class="field">
-          <span class="field-label">Spreadsheet or CSV</span>
-          <input class="input" type="file" name="file" accept=".csv,.tsv,.txt,.xlsx" required>
-          <span class="field-help">.xlsx, .csv or .tsv, up to 32MB. Extra title rows, blank lines and stray columns are fine.</span>
+          <span class="field-label">Spreadsheet, CSV or text PDF</span>
+          <input class="input" type="file" name="file" accept=".csv,.tsv,.txt,.xlsx,.pdf" required>
+          <span class="field-help">.xlsx, .csv, .tsv or PDF with selectable table text, up to 32MB. Extra title rows, blank lines and stray columns are fine. Scanned PDFs need separate OCR review.</span>
         </label>
         <label class="field">
           <span class="field-label">If the file has no location column, put the stock in</span>

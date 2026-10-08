@@ -1,6 +1,6 @@
 <div class="page-head">
   <div class="titles"><a class="back-link" href="/imports">Bring data in</a><h1><%= plan.sourceName %></h1>
-    <div class="page-sub"><%= plan.recordsDetected %> rows read · <%= plan.recordsValid %> ready · <%= plan.recordsInvalid %> need correction</div>
+    <div class="page-sub"><%= plan.recordsDetected %> <%= helpers.plural(plan.recordsDetected, 'row') %> read · <%= plan.recordsValid %> ready · <%= plan.recordsInvalid %> need correction</div>
   </div>
   <div class="page-actions"><span class="badge badge--<%= plan.status==='SUCCEEDED'?'ok':'muted' %>"><%= plan.status %></span></div>
 </div>
@@ -11,7 +11,7 @@
 <% if(run){ %>
   <div class="card section <%= run.verified?'':'card--warn' %>"><div class="card-head"><h2>Reconciliation</h2>
     <span class="spacer"></span><span class="badge badge--<%= run.verified?'ok':'danger' %>"><%= run.verified?'Verified':'Not verified' %></span></div>
-    <div class="card-body"><p class="lede"><%= run.rowsImported %> rows created <%= run.itemsCreated %> products, <%= run.skusCreated %> SKUs and <%= run.unitsEstablished %> opening units.</p>
+    <div class="card-body"><p class="lede"><%= run.rowsImported %> <%= helpers.plural(run.rowsImported, 'row') %> created <%= run.itemsCreated %> <%= helpers.plural(run.itemsCreated, 'product') %>, <%= run.skusCreated %> <%= helpers.plural(run.skusCreated, 'SKU') %> and <%= run.unitsEstablished %> opening <%= helpers.plural(run.unitsEstablished, 'unit') %>.</p>
       <table class="table table--tight"><thead><tr><th>Check</th><th>Expected</th><th>Found</th></tr></thead><tbody>
         <% run.checks.forEach(function(check){ %><tr><td><%= check.name %></td><td><%= check.expected %></td><td><%= check.observed %></td></tr><% }) %>
       </tbody></table></div><div class="card-foot"><a class="btn btn--primary" href="/inventory">See imported inventory</a></div>
@@ -19,13 +19,13 @@
 <% } else { %>
   <div class="card section"><div class="card-head"><h2>What will happen</h2><span class="spacer"></span>
     <span class="badge badge--muted">No inventory changed yet</span></div>
-    <div class="card-body"><p class="lede">StockChief will create or match <%= plan.recordsValid %> valid rows and establish only the quantities shown below through the inventory ledger.</p>
+    <div class="card-body"><p class="lede">StockChief will create or match <%= plan.recordsValid %> valid <%= helpers.plural(plan.recordsValid, 'row') %> and establish only the quantities shown below through the inventory ledger.</p>
       <% if(plan.warnings.length){ %><ul class="plain-list"><% plan.warnings.forEach(function(warning){ %><li class="is-warn"><%= warning %></li><% }) %></ul><% } %>
       <% if(plan.conflicts.length){ %><p><strong>Missing setup:</strong> Add or correct these locations before importing: <%= plan.conflicts.map(function(c){return c.text;}).join(', ') %>.</p><% } %>
     </div>
     <div class="card-foot"><div class="btn-row">
       <% if(plan.approvalStatus==='APPROVED'){ %><form method="post" action="/imports/<%= plan.id %>/run"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Import and verify</button></form>
-      <% } else { %><form method="post" action="/imports/<%= plan.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><button class="btn btn--primary" type="submit" <%= !plan.recordsValid || duplicatePlans.length?'disabled':'' %>>Approve <%= plan.recordsValid %> rows</button></form><% } %>
+      <% } else { %><form method="post" action="/imports/<%= plan.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><button class="btn btn--primary" type="submit" <%= !plan.recordsValid || duplicatePlans.length?'disabled':'' %>>Approve <%= plan.recordsValid %> <%= helpers.plural(plan.recordsValid, 'row') %></button></form><% } %>
       <form method="post" action="/imports/<%= plan.id %>/cancel"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost" type="submit">Cancel</button></form>
     </div></div>
   </div>

@@ -81,8 +81,14 @@ async function resume(database,ctx,proposalId,{service,provider,rawProvider,reco
         const stored=steps[next];const contract=registry.get(stored.capability);
         if(!contract){stored.state='BLOCKED';stored.reason='capability_removed';break;}
         const dependencyArgs=Object.assign({},...stored.dependsOn.map((index)=>steps[index]?.args||{}));
+        const produced=stored.dependsOn.map((index)=>steps[index]).filter((parent)=>
+          parent?.args?.recordReference&&registry.get(parent.capability)?.resultRecordKind===contract.recordKind);
+        // The identifier returned by an approved creation is authoritative.
+        // A planner-supplied guess for the not-yet-existing record cannot override it.
+        const executionArgs=produced.length===1
+          ?{...stored.args,recordReference:produced[0].args.recordReference}:stored.args;
         const outcome=await executeStep(service,database,{...ctx,planStepKey:`plan:${claimed.id}:${next}`},
-          {contract,args:stored.args,dependsOn:stored.dependsOn,continuesPending:false},
+          {contract,args:executionArgs,dependsOn:stored.dependsOn,continuesPending:false},
           {actor,provider,rawProvider,sourceMessage:claimed.source_message,pending:null,page:null,
             usageKey:`plan:${claimed.id}:${next}`,dependencyArgs});
         stored.args=outcome.args;stored.state=outcome.result.status==='ANSWERED'?'DONE':

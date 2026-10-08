@@ -163,7 +163,9 @@ async function analyse(database, ctx, input) {
   if(!buffer && !String(text || '').trim())throw new ValidationError('Choose a file, or paste your data.');
   const bytes=buffer || Buffer.from(text,'utf8');
   const sourceHash=digest(bytes);
-  const parsedWorkbook=parser.parse(buffer?{buffer,filename:input.filename}:{text,filename:input.filename});
+  const isPdf=Boolean(buffer)&&buffer.subarray(0,5).toString('ascii')==='%PDF-';
+  const parsedWorkbook=isPdf?await require('./pdf-table').parse(buffer):
+    parser.parse(buffer?{buffer,filename:input.filename}:{text,filename:input.filename});
   const sheetIndex=Number.isInteger(input.sheetIndex)?input.sheetIndex:parsedWorkbook.primarySheet;
   const sheet=parsedWorkbook.sheets[sheetIndex];
   if(!sheet?.rows.length)throw new ValidationError('That source has no inventory rows.');
@@ -183,7 +185,8 @@ async function analyse(database, ctx, input) {
   const validated=validateRows(sheet,proposal.mappings,proposal,context,input);
   const at=nowIso();
   const plan={id:newId('imp'),workspaceId:ctx.workspaceId,createdByUserId:ctx.actorId,
-    sourceName:input.filename || 'Pasted inventory data',sourceKind:buffer?(parsedWorkbook.format==='xlsx'?'xlsx':'csv'):'paste',
+    sourceName:input.filename || 'Pasted inventory data',sourceKind:buffer?parsedWorkbook.format==='pdf'
+      ?'pdf':parsedWorkbook.format==='xlsx'?'xlsx':'csv':'paste',
     sourceHash,sourceBytes:bytes.length,detectedType:proposal.detectedType,sheetName:sheet.name,
     sheetIndex,sourceColumns:sheet.columns.map((column)=>({index:column.index,name:column.name})),
     fieldMappings:proposal.mappings,transformations:{axisNames:proposal.axisNames,aiUsed:proposal.aiUsed,
