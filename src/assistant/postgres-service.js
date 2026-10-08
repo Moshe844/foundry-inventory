@@ -368,16 +368,28 @@ async function lookup(database,ctx,request,options={}) {
       'No active location matched that request.',rows,columns:['name','kind','units']};
   }
   if(request.view==='purchase_orders'){
-    const rows=(await database.query(`SELECT po.id,po.po_number,po.status,s.name AS supplier,
-      COALESCE(SUM(pol.quantity_units-pol.quantity_received_units),0) AS outstanding_units
-      FROM purchase_orders po JOIN suppliers s ON s.id=po.supplier_id
-      LEFT JOIN purchase_order_lines pol ON pol.purchase_order_id=po.id
+    const rows=(await database.query(`SELECT po.id,po.po_number,po.status,po.currency,s.name AS supplier,
+      COALESCE(SUM(pol.quantity_units),0) AS ordered_units,
+      COALESCE(SUM(pol.quantity_received_units),0) AS received_units,
+      COALESCE(SUM(pol.quantity_units-pol.quantity_received_units),0) AS outstanding_units,
+      COALESCE(SUM(pol.line_total),0) AS total_amount,
+      COUNT(pol.id) FILTER (WHERE pol.unit_cost IS NULL) AS unpriced_lines
+      FROM purchase_orders po JOIN suppliers s ON s.id=po.supplier_id AND s.workspace_id=po.workspace_id
+      LEFT JOIN purchase_order_lines pol ON pol.purchase_order_id=po.id AND pol.workspace_id=po.workspace_id
       WHERE po.workspace_id=$1 AND ($2::text IS NULL OR po.po_number ILIKE '%'||$2||'%' OR s.name ILIKE '%'||$2||'%'
         OR po.status ILIKE '%'||$2||'%') GROUP BY po.id,s.name ORDER BY po.created_at DESC LIMIT 100`,
     [ctx.workspaceId,search])).rows.map((row)=>evidenceRow({order:row.po_number,status:row.status,supplier:row.supplier,
-      outstandingUnits:Number(row.outstanding_units)},`/purchasing/orders/${row.id}`));
-    return {answer:rows.length?`${rows.length} purchase order${rows.length===1?'':'s'} matched; ${rows.reduce((sum,row)=>sum+row.outstandingUnits,0).toLocaleString('en-US')} units remain outstanding.`:
-      'No purchase order matched that request.',rows,columns:['order','status','supplier','outstandingUnits']};
+      orderedUnits:Number(row.ordered_units),receivedUnits:Number(row.received_units),
+      outstandingUnits:Number(row.outstanding_units),currency:row.currency,
+      total:Number(row.unpriced_lines)?null:pricing.formatMinor(Math.round(Number(row.total_amount)*100),row.currency),
+      unpricedLines:Number(row.unpriced_lines)},`/purchasing/orders/${row.id}`));
+    const answer=rows.length===1?`${rows[0].order} is ${rows[0].status.toLowerCase().replace(/_/g,' ')}: `+
+      `${rows[0].orderedUnits} ordered, ${rows[0].receivedUnits} received, ${rows[0].outstandingUnits} still expected; `+
+      `total ${rows[0].total===null?'not fully priced':rows[0].total}.`:
+      rows.length?`${rows.length} purchase orders matched; ${rows.reduce((sum,row)=>sum+row.outstandingUnits,0).toLocaleString('en-US')} units remain outstanding.`:
+        'No purchase order matched that request.';
+    return {answer,rows,columns:['order','status','supplier','orderedUnits','receivedUnits',
+      'outstandingUnits','total','currency','unpricedLines']};
   }
   if(request.view==='sales_orders'){
     const rows=(await database.query(`SELECT so.id,so.order_number,so.status,so.currency,c.name AS customer,

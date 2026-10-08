@@ -407,6 +407,13 @@ test('Ask browser controls a real customer order, payment, and return through th
     assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM purchase_order_events
       WHERE workspace_id=$1 AND purchase_order_id=$2 AND event='draft_line_revised'`,
     [ctx.workspaceId,purchase.purchaseOrderId])).rows[0].count,1);
+    const purchaseEvidence=await require('../../src/assistant/postgres-service').lookup(database,ctx,
+      {view:'purchase_orders',search:purchase.poNumber});
+    assert.equal(purchaseEvidence.rows.length,1);
+    assert.deepEqual({ordered:purchaseEvidence.rows[0].orderedUnits,
+      received:purchaseEvidence.rows[0].receivedUnits,
+      outstanding:purchaseEvidence.rows[0].outstandingUnits,total:purchaseEvidence.rows[0].total},
+    {ordered:7,received:0,outstanding:7,total:'$70.00'});
     const approvePurchase=`Approve supplier purchase order ${purchase.poNumber}`;
     plans.set(approvePurchase,step('purchase_order.approve',{recordReference:purchase.poNumber}));
     await prepareAndApprove(page,base,database,ctx.workspaceId,approvePurchase,'purchase_order.approve');
