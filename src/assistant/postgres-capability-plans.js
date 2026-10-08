@@ -32,12 +32,18 @@ function readyIndexes(steps){return steps.flatMap((step,index)=>step.state==='BL
 async function refreshApprovals(database,workspaceId,steps){
   const ids=steps.filter((step)=>step.state==='WAITING'&&step.proposalId).map((step)=>step.proposalId);
   if(!ids.length)return;
-  const rows=(await database.query(`SELECT id,status FROM stockchief_runtime.assistant_action_proposals
+  const rows=(await database.query(`SELECT id,status,result FROM stockchief_runtime.assistant_action_proposals
     WHERE workspace_id=$1 AND id=ANY($2::text[])`,[workspaceId,ids])).rows;
-  const byId=new Map(rows.map((row)=>[row.id,row.status]));
+  const byId=new Map(rows.map((row)=>[row.id,row]));
   for(const step of steps){
-    if(step.state==='WAITING'&&byId.get(step.proposalId)==='EXECUTED')step.state='DONE';
-    if(step.state==='WAITING'&&byId.get(step.proposalId)==='CANCELLED'){
+    const completed=byId.get(step.proposalId);
+    if(step.state==='WAITING'&&completed?.status==='EXECUTED'){
+      step.state='DONE';
+      const resultReference=registry.get(step.capability)?.resultReference;
+      if(resultReference&&completed.result?.[resultReference])
+        step.args={...step.args,recordReference:completed.result[resultReference]};
+    }
+    if(step.state==='WAITING'&&completed?.status==='CANCELLED'){
       step.state='BLOCKED';step.reason='dependency_cancelled';
     }
   }

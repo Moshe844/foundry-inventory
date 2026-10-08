@@ -63,7 +63,7 @@ test('Ask browser controls a real customer order, payment, and return through th
       assert.equal(input.schemaName,'stockchief_capability_plan');
       const message=JSON.parse(input.prompt).message;
       const planned=plans.get(message);assert.ok(planned,`No fixture plan for ${message}`);
-      return {data:{steps:[planned],clarifyingQuestion:''},usage:pricedUsage()};
+      return {data:{steps:Array.isArray(planned)?planned:[planned],clarifyingQuestion:''},usage:pricedUsage()};
     }};
     const app=createPostgresApp({database,env:'test',sessionSecret:'ask-workflow-bridge-secret',aiProvider:provider});
     const server=await new Promise((resolve)=>{const started=app.listen(0,'127.0.0.1',()=>resolve(started));});
@@ -111,6 +111,27 @@ test('Ask browser controls a real customer order, payment, and return through th
     assert.deepEqual({method:pickupOrder.delivery_method,address:pickupOrder.ship_to_address,
       location:pickupOrder.fulfillment_location_id,status:pickupOrder.status},
     {method:'PICKUP',address:null,location:place.id,status:'DRAFT'});
+    const combined='Create another two-boot order for Builder Co, pickup at Main Warehouse, and reserve the stock';
+    plans.set(combined,[step('sales_order.create',{customer:'Builder Co',sku:'Work Boot',quantity:2,
+      deliveryMethod:'customer pickup',location:'Main Warehouse'}),
+    {...step('sales_order.confirm'),dependsOn:[0]}]);
+    const combinedCreate=await prepareAndApprove(page,base,database,ctx.workspaceId,combined,'sales_order.create');
+    const combinedConfirm=(await database.query(`SELECT * FROM stockchief_runtime.assistant_action_proposals
+      WHERE workspace_id=$1 AND action_type='sales_order.confirm' ORDER BY created_at DESC,id DESC LIMIT 1`,
+    [ctx.workspaceId])).rows[0];
+    assert.equal(combinedConfirm.status,'PENDING');
+    assert.equal(combinedConfirm.payload.recordId,combinedCreate.result.salesOrderId);
+    assert.equal((await database.query('SELECT status FROM sales_orders WHERE workspace_id=$1 AND id=$2',
+      [ctx.workspaceId,combinedCreate.result.salesOrderId])).rows[0].status,'DRAFT');
+    await page.goto(`${base}/actions/${combinedConfirm.id}`);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve and execute'}).click()]);
+    const combinedOrder=(await database.query('SELECT status FROM sales_orders WHERE workspace_id=$1 AND id=$2',
+      [ctx.workspaceId,combinedCreate.result.salesOrderId])).rows[0];
+    assert.equal(combinedOrder.status,'CONFIRMED');
+    const combinedAllocation=(await database.query(`SELECT a.quantity FROM sales_order_allocations a
+      JOIN sales_order_lines l ON l.id=a.sales_order_line_id WHERE a.workspace_id=$1 AND l.sales_order_id=$2`,
+    [ctx.workspaceId,combinedCreate.result.salesOrderId])).rows;
+    assert.equal(combinedAllocation.reduce((sum,row)=>sum+Number(row.quantity),0),2);
     const created=await workflows.createSalesOrder(database,ctx,{customerId:customer.id,deliveryMethod:'SHIP',
       fulfillmentLocationId:place.id,idempotencyKey:'ask-workflow-order',
       lines:[{skuId:item.skuIds[0],quantity:3,unitPriceMinor:2500}]});
