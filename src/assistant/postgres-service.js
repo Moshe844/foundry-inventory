@@ -171,8 +171,16 @@ async function lookup(database,ctx,request,options={}) {
       ORDER BY i.name,s.code,l.name LIMIT 100`,[ctx.workspaceId,search])).rows.map((row)=>
       evidenceRow({product:row.product,sku:row.sku,variant:row.variant,location:row.location,
         onHand:Number(row.on_hand),updatedAt:row.updated_at},`/inventory/${row.item_id}`));
-    return {answer:rows.length?`${rows.length}${rows.length===100?'+':''} recorded product-location positions matched. These are on-hand quantities, not uncommitted availability.`:
-      'No product-location stock position matched that request.',rows,
+    const question=String(options.question||'').toLocaleLowerCase();
+    const named=question?rows.filter((row)=>
+      (String(row.sku).length>=4&&question.includes(String(row.sku).toLocaleLowerCase())
+        ||String(row.product).length>=5&&question.includes(String(row.product).toLocaleLowerCase()))
+      &&String(row.location).length>=5&&question.includes(String(row.location).toLocaleLowerCase())):[];
+    const answer=named.length===1
+      ?`${named[0].sku} at ${named[0].location} has ${named[0].onHand} physically on hand. This is not uncommitted availability.`
+      :rows.length?`${rows.length}${rows.length===100?'+':''} recorded product-location positions matched. These are on-hand quantities, not uncommitted availability.`:
+        'No product-location stock position matched that request.';
+    return {answer,rows,
       columns:['product','sku','variant','location','onHand','updatedAt']};
   }
   if(request.view==='inventory_movements'){
@@ -1274,9 +1282,15 @@ async function prepareAction(database,ctx,message,request,options={}) {
   if(request.action==='adjust'){
     if(request.countedQuantity===null)return {status:'CLARIFY',answer:'What was the physical count?',awaitingField:'countedQuantity'};
     if(!request.reason)return {status:'CLARIFY',answer:'Why is the count being corrected?',awaitingField:'reason'};
+    const recorded=Number((await database.query(`SELECT on_hand FROM balances
+      WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3`,
+    [ctx.workspaceId,sku.row.id,place.row.id])).rows[0]?.on_hand||0);
+    if(recorded===request.countedQuantity)return {status:'ANSWERED',
+      answer:`${sku.row.code} at ${place.row.name} already records ${recorded} physically on hand, matching the count. No correction was prepared.`,
+      rows:[],columns:[]};
     return createProposal(database,ctx,message,'inventory.adjust',{skuId:sku.row.id,locationId:place.row.id,
       countedQuantity:request.countedQuantity,reasonCode:'physical_count',notes:request.reason,reference:request.reference},
-    `Correct ${sku.row.name}${sku.row.variant_label?` · ${sku.row.variant_label}`:''} at ${place.row.name} to ${request.countedQuantity}. Reason: ${request.reason}.`);
+    `Correct ${sku.row.name}${sku.row.variant_label?` · ${sku.row.variant_label}`:''} at ${place.row.name} from ${recorded} recorded units to ${request.countedQuantity} counted units. Reason: ${request.reason}.`);
   }
   if(!request.quantity || request.quantity<1)return {status:'CLARIFY',answer:'How many units?',awaitingField:'quantity'};
   const type=request.action==='receive'?'inventory.receive':'inventory.issue';
@@ -1582,6 +1596,6 @@ async function cancelProposal(database,ctx,id) {
   return result.rows[0];
 }
 
-module.exports={lookup,ask:askCapabilities,listInteractions,
+module.exports={lookup,prepareAction,ask:askCapabilities,listInteractions,
   continueEmail,reviseEmailProposal,getProposal,executeProposal,cancelProposal,
   fundedAskProvider};

@@ -50,6 +50,19 @@ test('Ask research reads real inventory positions, stock history and prices with
     assert.equal(positions.rows.length,1);
     assert.equal(positions.rows[0].location,'North Stockroom');
     assert.equal(positions.rows[0].onHand,7);
+    const namedPosition=await assistant.lookup(database,owner,{view:'inventory_positions'},
+      {question:'At North Stockroom, compare the physical count for Blue Work Glove with the recorded balance.'});
+    assert.match(namedPosition.answer,/North Stockroom has 7 physically on hand/);
+    const matchingCount=await assistant.prepareAction(database,owner,'Counted seven gloves in North Stockroom',{
+      action:'adjust',sku:'Blue Work Glove',location:'North Stockroom',countedQuantity:7,
+      reason:'physical count'});
+    assert.equal(matchingCount.status,'ANSWERED');
+    assert.match(matchingCount.answer,/matching the count.*No correction was prepared/);
+    const differentCount=await assistant.prepareAction(database,owner,'Counted six gloves in North Stockroom',{
+      action:'adjust',sku:'Blue Work Glove',location:'North Stockroom',countedQuantity:6,
+      reason:'physical count'});
+    assert.equal(differentCount.status,'PREPARED');
+    assert.match(differentCount.answer,/from 7 recorded units to 6 counted units/);
     const changes=await assistant.lookup(database,owner,{view:'inventory_movements',search:'Blue Work Glove'});
     assert.equal(changes.rows.length,1);
     assert.equal(changes.rows[0].change,7);
