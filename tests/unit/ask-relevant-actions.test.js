@@ -11,6 +11,7 @@ test('return guidance includes governed return lifecycle rather than generic rec
     'and what steps are possible before a refund?');
   const names = actions.map((action) => action.name);
   assert.ok(names.includes('customer_return.request'));
+  assert.ok(names.includes('customer_return.authorize'));
   assert.ok(names.includes('customer_return.receive'));
   assert.ok(names.includes('customer_return.inspect'));
   assert.ok(names.includes('customer_return.refund'));
@@ -30,7 +31,8 @@ test('read synthesis shows applicable registered actions without executing one',
   const result = await control.synthesizeReads(provider,
     'How can we handle a customer return and refund safely?', executed, { catalogue: registry });
   assert.equal(result[0].result.status, 'ANSWERED');
-  assert.ok(prompt.availableActions.some((action) => action.name === 'customer_return.refund'));
+  assert.ok(prompt.availableActions.some((action) => action.action === 'customer return refund'));
+  assert.ok(prompt.availableActions.every((action) => !Object.hasOwn(action, 'name')));
   assert.equal(prompt.completedActions.length, 0);
 });
 
