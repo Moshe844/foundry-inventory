@@ -217,6 +217,22 @@ function readOnlyCatalogue(catalogue){
     get:(name)=>names.get(name)||null};
 }
 
+async function focusNamedSkuCatalogue(database,ctx,message,catalogue){
+  if(!catalogue.get('read.capabilities'))return catalogue;
+  const named=(await database.query(`SELECT 1 FROM skus s JOIN items i
+    ON i.id=s.item_id AND i.workspace_id=s.workspace_id
+    WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1
+      AND length(s.code)>=4 AND strpos(lower($2),lower(s.code))>0 LIMIT 1`,
+  [ctx.workspaceId,message])).rows.length>0;
+  if(!named)return catalogue;
+  // A workspace-specific SKU question needs current business evidence. A
+  // generic feature catalogue cannot establish that SKU's settings or state.
+  const entries=catalogue.list().filter((entry)=>entry.name!=='read.capabilities');
+  const names=new Map(entries.map((entry)=>[entry.name,entry]));
+  return {list:(kind=null)=>entries.filter((entry)=>!kind||entry.kind===kind),
+    get:(name)=>names.get(name)||null};
+}
+
 async function synthesizeReads(provider,message,executed,{completedActions=[],catalogue=null,recentChanges=[]}={}){
   if(executed.some((entry)=>entry.result.status!=='ANSWERED'))return executed;
   // Stock movement quantities and source attribution are ledger arithmetic.
@@ -361,7 +377,8 @@ async function run(service,database,ctx,message,{provider,rawProvider=null,histo
   try{
     const actor=await membership(database,ctx);
     catalogue=await planningCatalogue(database,ctx,actor);
-    const planningScope=explicitlyReadOnly(message)?readOnlyCatalogue(catalogue):catalogue;
+    const focused=await focusNamedSkuCatalogue(database,ctx,message,catalogue);
+    const planningScope=explicitlyReadOnly(message)?readOnlyCatalogue(focused):focused;
     workspace=(await database.query(`SELECT w.name AS business_name,
       (SELECT COUNT(*)::int FROM locations WHERE workspace_id=w.id AND is_active=1) AS location_count,
       (SELECT COUNT(*)::int FROM items WHERE workspace_id=w.id AND is_active=1) AS product_count,
@@ -480,4 +497,4 @@ async function run(service,database,ctx,message,{provider,rawProvider=null,histo
 
 module.exports={run,executeStep,normalizeForLegacy,questionFor,READ_PERMISSIONS,planningCatalogue,
   focusedRecordCatalogue,synthesizeReads,relevantActions,explicitlyReadOnly,readOnlyCatalogue,
-  selectedPendingChoice};
+  selectedPendingChoice,focusNamedSkuCatalogue};

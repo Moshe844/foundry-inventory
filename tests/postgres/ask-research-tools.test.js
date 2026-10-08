@@ -28,6 +28,13 @@ test('Ask research reads real inventory positions, stock history and prices with
     const other={workspaceId:second.workspaceId,actorId:second.userId};
     const place=await locations.createLocation(database,owner,{name:'North Stockroom',kind:'stockroom'});
     const item=await catalog.createItem(database,owner,{name:'Blue Work Glove',baseCode:'GLOVE',trackingMode:'quantity'});
+    const registry=require('../../src/assistant/postgres-capability-registry').registry;
+    const focused=await control.focusNamedSkuCatalogue(database,owner,
+      'What does the approved warning for GLOVE do?',registry);
+    assert.equal(focused.get('read.capabilities'),null);
+    assert.ok(focused.get('read.operating_rules'));
+    const broad=await control.focusNamedSkuCatalogue(database,owner,'What can you do?',registry);
+    assert.ok(broad.get('read.capabilities'));
     const opening=await inventory.receive(database,owner,{skuId:item.skuIds[0],locationId:place.id,quantity:7,
       reference:'OPENING-GLOVES',idempotencyKey:'opening-gloves'});
     await database.transaction((client)=>costing.receiveInTransaction(client,owner,{
