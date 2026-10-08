@@ -123,6 +123,8 @@ test('Ask browser controls a real customer order, payment, and return through th
     assert.equal(combinedConfirm.payload.recordId,combinedCreate.result.salesOrderId);
     assert.equal((await database.query('SELECT status FROM sales_orders WHERE workspace_id=$1 AND id=$2',
       [ctx.workspaceId,combinedCreate.result.salesOrderId])).rows[0].status,'DRAFT');
+    await page.goto(`${base}/ask`);
+    assert.match(await page.locator('main').innerText(),/1 of 2 parts settled/);
     await page.goto(`${base}/actions/${combinedConfirm.id}`);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve and execute'}).click()]);
     const combinedOrder=(await database.query('SELECT status,order_date FROM sales_orders WHERE workspace_id=$1 AND id=$2',

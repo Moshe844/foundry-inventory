@@ -66,6 +66,7 @@ function transcriptFor(interactions,proposals=new Map()){
       goals:[goalFor(turn,index,0,proposals.get(turn.intent?.proposalId))],referents:[]});return;}
     let batch=batches.get(batchId);
     if(!batch){batch={id:`turn-${batchId}`,conversationId:'postgres',channel:'ask',message:turn.intent.sourceMessage||turn.message,
+      coveragePendingStatuses:['pending','needs_approval','clarify'],
       understanding:{intent:'multi_request'},createdAt:turn.created_at,goals:[],referents:[]};batches.set(batchId,batch);transcript.push(batch);}
     batch.goals.push(goalFor(turn,index,Math.max(0,Number(turn.intent.requestIndex||1)-1),
       proposals.get(turn.intent?.proposalId)));

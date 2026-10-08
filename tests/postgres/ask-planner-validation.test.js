@@ -195,8 +195,9 @@ test('a twice-rejected fast plan gets one compact, independently verified regist
 
 test('duplicate state-transition proposals collapse to one dependent approval',async()=>{
   const step=(capability,dependsOn=[])=>({capability,arguments:[],dependsOn,continuesPending:false});
-  const provider={async complete({schemaName,prompt}){
+  const provider={async complete({schemaName,prompt,maxOutputTokens}){
     if(schemaName==='stockchief_capability_fit'){
+      assert.equal(maxOutputTokens,384);
       const proposed=JSON.parse(prompt).proposedSteps;
       assert.deepEqual(proposed.map((row)=>row.capability),
         ['sales_order.create','sales_order.reserve_all']);
