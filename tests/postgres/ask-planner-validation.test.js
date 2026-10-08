@@ -3,6 +3,21 @@
 const test=require('node:test');
 const assert=require('node:assert/strict');
 const planner=require('../../src/assistant/postgres-capability-planner');
+const {selectedPendingChoice}=require('../../src/assistant/postgres-control-plane');
+const {registry}=require('../../src/assistant/postgres-capability-registry');
+
+test('a selected clarification choice resumes the original authorized capability, not an unrelated read',()=>{
+  const pending={status:'CLARIFY',capability:'supplier_payment.record',awaitingField:'supplier',
+    args:{supplierBill:'LAB-INV-7',amount:0.5,paymentMethod:'cash',paymentDate:'2026-10-08'},
+    choices:[{label:'Lab Fastener Supply',value:'Lab Fastener Supply'},
+      {label:'Lab Copper Supply',value:'Lab Copper Supply'}]};
+  const chosen=selectedPendingChoice(pending,'Lab Fastener Supply',registry);
+  assert.equal(chosen.steps[0].contract.name,'supplier_payment.record');
+  assert.equal(chosen.steps[0].continuesPending,true);
+  assert.equal(chosen.steps[0].args.supplier,'Lab Fastener Supply');
+  assert.equal(selectedPendingChoice(pending,'Tell me about Lab Fastener Supply',registry),null);
+  assert.equal(selectedPendingChoice(pending,'Lab Fastener Supply — no changes now',registry),null);
+});
 
 test('malformed model output retries once without turning a supported read into unavailable',async()=>{
   let attempts=0;

@@ -1188,6 +1188,7 @@ async function askCapabilities(database,ctx,message,options={}){
     ?{capability:latest.intent.controlPlane.capability,args:latest.intent.controlPlane.args,
       question:latest.answer,originalMessage:latest.message,status:latest.status,
       awaitingField:latest.intent.presentation?.awaitingField||null,
+      choices:latest.intent.presentation?.choices||[],
       proposalId:latest.intent.controlPlane.pendingProposalId||latest.intent.proposalId||null}:null;
   if(pending?.proposalId){
     const active=await getProposal(database,ctx.workspaceId,pending.proposalId).catch(()=>null);

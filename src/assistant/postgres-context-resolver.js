@@ -17,7 +17,9 @@ const ENTITIES={
     WHERE workspace_id=$1 AND record_state='ACTIVE'`,order:'label'},
   purchase_order:{query:`SELECT po_number AS value,po_number AS label FROM purchase_orders
     WHERE workspace_id=$1`,order:'label'},
-  supplier_bill:{query:`SELECT bill_number AS value,bill_number AS label FROM accounting_supplier_bills
+  supplier_bill:{query:`SELECT bill_number AS value,
+      CONCAT_WS(' ',bill_number,supplier_invoice_number) AS label,
+      supplier_invoice_number AS alias FROM accounting_supplier_bills
     WHERE workspace_id=$1`,order:'label'},
   mailbox:{query:`SELECT display_name AS value,display_name AS label FROM workspace_connectors
     WHERE workspace_id=$1 AND provider_type IN ('gmail','microsoft365')
@@ -98,8 +100,10 @@ async function uniqueMention(database,workspaceId,entity,message,{scope=null}={}
     [workspaceId])).rows;
   const said=new Set(tokens(message));
   const matches=rows.filter((row)=>{
-    const name=String(row.alias||row.label||'');const parts=tokens(name);
-    return name.length>=5&&parts.length&&parts.every((part)=>said.has(part));
+    return [row.value,row.alias,row.label].some((candidate)=>{
+      const name=String(candidate||'');const parts=tokens(name);
+      return name.length>=5&&parts.length&&parts.every((part)=>said.has(part));
+    });
   });
   return matches.length===1?matches[0]:null;
 }
@@ -114,9 +118,23 @@ async function mentionedRecord(database,workspaceId,entity,message,scope){
   return null;
 }
 
+async function supplierFromBill(database,ctx,contract,provided,context){
+  if(!contract.fields.includes('supplier')||!contract.fields.includes('supplierBill'))return null;
+  const reference=nonempty(provided.supplierBill)||nonempty(context.previousArgs?.supplierBill)
+    ||(context.message? (await uniqueMention(database,ctx.workspaceId,'supplier_bill',context.message))?.value:null);
+  if(!reference)return null;
+  const matched=choose(await choices(database,ctx.workspaceId,'supplier_bill',{wanted:reference}),reference);
+  if(!matched.value)return null;
+  const row=(await database.query(`SELECT s.name FROM accounting_supplier_bills b
+    JOIN suppliers s ON s.id=b.supplier_id AND s.workspace_id=b.workspace_id
+    WHERE b.workspace_id=$1 AND b.bill_number=$2`,[ctx.workspaceId,matched.value])).rows[0];
+  return row?.name||null;
+}
+
 /** Resolve the same field type the same way, regardless of which capability asks. */
 async function resolveArguments(database,ctx,contract,provided={},context={}){
   const args={};const provenance={};const unresolved=[];
+  const relatedSupplier=await supplierFromBill(database,ctx,contract,provided,context);
   for(const field of contract.fields){
     const spec=FIELDS[field];
     let raw=convert(field,provided[field]);let source=raw!==null?'owner_message':null;
@@ -129,6 +147,7 @@ async function resolveArguments(database,ctx,contract,provided={},context={}){
     if(raw===null&&context.page?.[field]){
       raw=convert(field,context.page[field]);if(raw!==null)source='current_record';
     }
+    if(field==='supplier'&&raw===null&&relatedSupplier){raw=relatedSupplier;source='verified_bill_relationship';}
     if(field==='recordReference'&&raw===null&&contract.recordKind&&context.message){
       const mentioned=await require('./postgres-workflow-capabilities').record(database,ctx,
         contract.recordKind,null,context.message);

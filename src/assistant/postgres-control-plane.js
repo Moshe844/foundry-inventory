@@ -134,7 +134,9 @@ async function executeStep(service,database,ctx,step,{actor,provider,rawProvider
   }
   await entitlements.assertCapability(database,await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId),
     'ask.prepare_actions');
-  const resolved=await resolver.resolveArguments(database,ctx,contract,step.args,{page,message:sourceMessage,
+  const resolutionMessage=step.continuesPending&&pending?.originalMessage
+    ?`${pending.originalMessage} ${sourceMessage}`:sourceMessage;
+  const resolved=await resolver.resolveArguments(database,ctx,contract,step.args,{page,message:resolutionMessage,
     continuesPending:step.continuesPending&&pending?.capability===contract.name,
     previousArgs:pending?.args||null,dependencyArgs});
   const blocking=resolved.unresolved.filter(({field})=>contract.required?.includes(field));
@@ -189,6 +191,19 @@ function explicitlyReadOnly(message){
 }
 
 function nullIfReadOnly(pending,message){return explicitlyReadOnly(message)?null:pending;}
+
+function selectedPendingChoice(pending,message,catalogue){
+  if(pending?.status!=='CLARIFY'||!pending.awaitingField||!Array.isArray(pending.choices)
+    ||!pending.choices.length||explicitlyReadOnly(message))return null;
+  const contract=catalogue.get(pending.capability);
+  if(!contract?.fields.includes(pending.awaitingField))return null;
+  const reply=String(message||'').trim().toLocaleLowerCase();
+  const matches=pending.choices.filter((choice)=>[choice.value,choice.label]
+    .some((value)=>String(value||'').trim().toLocaleLowerCase()===reply));
+  if(matches.length!==1)return null;
+  return {steps:[{contract,args:{...pending.args,[pending.awaitingField]:String(matches[0].value)},
+    dependsOn:[],continuesPending:true}],clarifyingQuestion:''};
+}
 
 function readOnlyCatalogue(catalogue){
   const entries=catalogue.list().filter((entry)=>['read','navigation'].includes(entry.kind));
@@ -314,7 +329,7 @@ async function run(service,database,ctx,message,{provider,rawProvider=null,histo
     recentChanges=recent.map((row)=>({action:row.action_type,summary:String(row.summary||'').slice(0,80),
       record:Object.fromEntries(Object.entries(row.result||{}).filter(([key,value])=>
         /(?:Id|Number)$/.test(key)&&typeof value==='string'))}));
-    selected=await planner.plan(provider,message,{catalogue:planningScope,history,pending:nullIfReadOnly(pending,message),page,workspace,recentChanges,
+    selected=selectedPendingChoice(pending,message,planningScope)||await planner.plan(provider,message,{catalogue:planningScope,history,pending:nullIfReadOnly(pending,message),page,workspace,recentChanges,
       verificationProvider:provider?.verifyComplete?{complete:provider.verifyComplete}:null,
       deferReadFit:true});
     if(!selected.steps.length){
@@ -409,4 +424,5 @@ async function run(service,database,ctx,message,{provider,rawProvider=null,histo
 }
 
 module.exports={run,executeStep,normalizeForLegacy,questionFor,READ_PERMISSIONS,planningCatalogue,
-  focusedRecordCatalogue,synthesizeReads,relevantActions,explicitlyReadOnly,readOnlyCatalogue};
+  focusedRecordCatalogue,synthesizeReads,relevantActions,explicitlyReadOnly,readOnlyCatalogue,
+  selectedPendingChoice};

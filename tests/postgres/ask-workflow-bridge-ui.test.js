@@ -501,7 +501,7 @@ test('Ask browser controls a real customer order, payment, and return through th
       sku:skuCode,quantity:3,unitAmount:10,tax:0}));
     const invoiceAction=await prepareAndApprove(page,base,database,ctx.workspaceId,matchedInvoice,
       'purchase_order.record_supplier_invoice');
-    const matchedBill=(await database.query(`SELECT id,status,match_status,total_minor,balance_minor,journal_entry_id
+    const matchedBill=(await database.query(`SELECT id,bill_number,status,match_status,total_minor,balance_minor,journal_entry_id
       FROM accounting_supplier_bills WHERE workspace_id=$1 AND purchase_order_id=$2
       AND supplier_invoice_number='SS-INVOICE-3'`,
     [ctx.workspaceId,invoicedPurchase.purchaseOrderId])).rows[0];
@@ -548,6 +548,16 @@ test('Ask browser controls a real customer order, payment, and return through th
     assert.match(invoiceEvidence.rows[0].invoiceDocuments.join(' '),/SS-INVOICE-EXCEPTION disputed/);
     assert.match(invoiceEvidence.rows[0].invoiceDocuments.join(' '),/invoice_ahead_of_receipt/);
     assert.match(invoiceEvidence.rows[0].invoiceDocuments.join(' '),/price_outside_approved_cost/);
+    const paymentContract=require('../../src/assistant/postgres-capability-registry').registry
+      .get('supplier_payment.record');
+    const resolvedPayment=await require('../../src/assistant/postgres-context-resolver')
+      .resolveArguments(database,ctx,paymentContract,{amount:'0.50',paymentMethod:'cash',
+        paymentDate:'2026-10-08',reference:'SS-PAY-3'},
+      {message:'Record a partial payment already made on supplier invoice SS-INVOICE-3; do not send money'});
+    assert.equal(resolvedPayment.args.supplier,'Safety Supply');
+    assert.equal(resolvedPayment.args.supplierBill,matchedBill.bill_number);
+    assert.equal(resolvedPayment.unresolved.filter((entry)=>['supplier','supplierBill']
+      .includes(entry.field)).length,0);
     for(const [instruction,capability,args] of [
       ['Pause automatic work while we review a stock problem','autopilot.pause',
         {reason:'Reviewing a stock problem'}],
