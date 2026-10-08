@@ -10,13 +10,15 @@ const read=name=>fs.readFileSync(path.join(src,name),'utf8');
 // The runtime guards make legacy model/HTTP paths fail closed if invoked.
 const expected={
  'actions/second-read.js':1,'ai/deadline.js':1,'ai/providers/anthropic.js':1,
- 'assistant/calls.js':1,'assistant/mail-draft.js':1,'assistant/postgres-service.js':3,
+ 'assistant/calls.js':1,'assistant/mail-draft.js':1,'assistant/postgres-capability-planner.js':6,
+ 'assistant/postgres-control-plane.js':1,'assistant/postgres-service.js':1,
  'assistant/postgres-evidence-answer.js':1,
  'assistant/understand.js':1,'attention/interpretation-service.js':1,'commercial/model.js':1,
- 'commercial/stripe-billing.js':1,'connections/providers/common.js':1,'connections/reply-drafting.js':1,
+ 'commercial/stripe-billing.js':1,'connections/postgres-reply-drafting.js':1,
+ 'connections/providers/common.js':1,'connections/reply-drafting.js':1,
  'foundry/document-intake.js':1,'foundry/understanding-service.js':3,'imports/mapping-service.js':1,
  'lib/provider-http.js':1,'manager/operating-instructions.js':1,
- 'manager/postgres-operating-instructions.js':1,'operations/email.js':1,'operations/monitoring.js':1,
+ 'manager/postgres-operating-instructions.js':2,'operations/email.js':1,'operations/monitoring.js':1,
  'operations/postgres-monitoring.js':1,'payments/connect.js':3,'payments/providers/stripe.js':1,
  'product-brain/navigation.js':1,'purchasing/supplier-document-extractor.js':1,
  'sales/order-from-email.js':1,'shipping/providers/easypost-partner.js':1,
@@ -35,6 +37,10 @@ test('PostgreSQL production dependency graph has no unclassified direct provider
  // Actual PostgreSQL model entrypoints feed the commercial wrapper.
  for(const file of ['assistant/postgres-service.js','manager/postgres-operating-instructions.js',
   'imports/postgres-service.js'])assert.match(read(file),/commercial\/model/);
+ assert.match(read('assistant/postgres-service.js'),/capability:\$\{call\}/,
+  'each Ask planner and answer call must use an individually metered operation key');
+ assert.match(read('connections/postgres-reply-drafting.js'),/model\.wrap\(/,
+  'mailbox reply drafting must use the commercial model wrapper');
  assert.match(read('ai/providers/anthropic.js'),/commercial_meter_required/);
  assert.match(read('lib/provider-http.js'),/no commercial operation scope/);
  assert.match(read('operations/postgres-runtime-handlers.js'),/provider:'resend',operation:'system_email'/);

@@ -125,8 +125,8 @@ test('an unfinished migration replaces the empty-home dead end without asking fo
   const agent = request.agent(store.app);
   await signIn(agent,seeded.account.email);
   const home = plain((await agent.get('/')).text);
-  assert.match(home,/Your workbook is saved. Nothing was cleared/);
-  assert.match(home,/Continue migration/);
+  assert.match(home,/Your source is saved; StockChief will not switch it live/);
+  assert.match(home,/Continue source review|Run final checks/);
   assert.doesNotMatch(home,/This inventory is empty. Let's fill it/);
   const needs = plain((await agent.get('/needs-you')).text);
   assert.match(needs,/current-system.csv/);

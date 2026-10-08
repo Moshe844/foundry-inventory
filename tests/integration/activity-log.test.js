@@ -175,7 +175,7 @@ test('the brief sends Activity to the business history', async () => {
    * to Activity goes to the business history and not to the autopilot log.
    */
   const brief = (await env.agent.get('/')).text;
-  assert.match(brief, /href="\/activity"[^>]*>Everything that happened</,
+  assert.match(brief, /href="\/activity"[^>]*>Activity</,
     'the brief offers the business history by name');
   const vault = (await env.agent.get('/everything')).text;
   assert.match(vault, /href="\/activity"/, 'and it is listed with everything else');

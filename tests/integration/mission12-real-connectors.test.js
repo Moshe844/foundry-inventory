@@ -64,7 +64,7 @@ test('Connections UI offers real business providers and does not instruct owners
   assert.match(text, /Selling/); assert.match(text, /Business systems/); assert.match(text, /Supplier communication/);
   assert.match(text, /Shopify/); assert.match(text, /Square/); assert.match(text, /Clover/); assert.match(text, /WooCommerce/);
   assert.match(page.text, /data-oauth-connect="woocommerce"/);
-  assert.match(text, /Your own software/); assert.match(text, /only asks you when something cannot be matched/);
+  assert.match(text, /Your own software/); assert.match(text, /asks you when something cannot be matched/);
   assert.doesNotMatch(text, /PowerShell|curl/i);
   env.db.close();
 });
@@ -122,8 +122,13 @@ test('a disconnected duplicate with preserved credentials is not presented as wo
   const agent = request.agent(env.app);
   await signIn(agent, env.workspace.account.email, env.workspace.account.password);
   const page = await agent.get('/settings/connections');
-  assert.doesNotMatch(page.text, new RegExp(duplicate.id));
-  assert.doesNotMatch(plain(page.text), /Shopify Store.*Disconnected/);
+  assert.match(plain(page.text), /Nothing is connected yet/);
+  assert.match(plain(page.text), /disconnected or incomplete connection.*history retained/);
+  assert.match(page.text, new RegExp(`/settings/connections/${duplicate.id}`),
+    'the disconnected record remains reachable from retained history');
+  const workingNow=page.text.split('disconnected or incomplete connection')[0];
+  assert.doesNotMatch(workingNow, new RegExp(duplicate.id),
+    'a disconnected duplicate must never appear in Working now');
   env.db.close();
 });
 

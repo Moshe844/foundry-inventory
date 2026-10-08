@@ -313,8 +313,8 @@ test('every main nav destination renders where it says, even when empty', async 
 
   // And Overview says what is actually true about this inventory.
   const overview = plain((await agent.get('/')).text);
-  assert.match(overview, /first records/);
-  assert.match(overview, /Add a source/);
+  assert.match(overview, /inventory isn’t here yet/);
+  assert.match(overview, /Add your inventory/);
   assert.ok(!overview.includes("Today's briefing"), 'no briefing about nothing');
 });
 

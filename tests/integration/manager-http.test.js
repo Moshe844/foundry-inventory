@@ -699,7 +699,7 @@ test('Home confirms a selected attachment and a file-only Tell StockChief reques
      VALUES (?, datetime('now'), 1, '{}', '{}', '{"primaryArchetype":"quantity"}', datetime('now'))`
   ).run(env.workspace.workspaceId);
   const home = await env.agent.get('/');
-  assert.match(plain(home.text), /Add a source/);
+  assert.match(plain(home.text), /Add your inventory/);
   const ask = await env.agent.get('/ask');
   assert.match(ask.text, /data-operator-attachment/);
   assert.match(ask.text, /data-operator-attachment-status/);

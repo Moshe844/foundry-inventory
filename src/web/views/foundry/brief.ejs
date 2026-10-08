@@ -11,7 +11,7 @@
   var comingUp = locals.whatsNext || [];
   var observations = locals.noticed || [];
   var paused = home.status.paused || home.status.suspended;
-  var empty = !!locals.isEmpty && !needsCount;
+  var empty = !!locals.isEmpty && (!needsCount || !!locals.activeMigration);
   var firstCheck = !empty && home.status.checkPending;
   var stale = !paused && !empty && home.status.checkStale;
   var migration = locals.activeMigration || null;
@@ -86,13 +86,16 @@
     </section>
   <% } %>
 
-  <% if (!empty) { %>
+  <% if (!empty || handling.length) { %>
     <div class="sc-home__workline">
       <% if (handling.length && !paused) { %><details class="sc-home__working"><summary><span class="sc-home__working-dot" aria-hidden="true"></span><strong>StockChief is working</strong><span><%= handling.length %> <%= handling.length === 1 ? 'thing' : 'things' %> in progress</span></summary><div class="sc-home__working-body"><% handling.forEach(function (item) { %><a href="<%= item.link %>"><%= item.title %> — <%= item.detail %> <%- helpers.icon('arrowRight', { size: 14 }) %></a><% }) %></div></details>
       <% } else { %><span><span class="sc-home__working-dot <%= paused ? 'is-paused' : '' %>" aria-hidden="true"></span><%= paused ? 'Automatic work is paused' : 'StockChief is watching for work; automatic actions stay within your approved limits' %></span><% } %>
       <a href="/autopilot/history">View work history</a>
     </div>
 
+  <% } %>
+
+  <% if (!empty) { %>
     <section class="sc-home__decisions <%= urgentCount ? 'sc-home__decisions--urgent' : '' %>" id="needs-you" aria-labelledby="sc-home-needs-title">
       <div class="sc-home__section-head"><div><p class="sc-home__eyebrow">Decisions only you can make</p><h2 id="sc-home-needs-title">Needs you<% if (needsCount) { %><span class="sc-home__count"><%= needsCount %></span><% } %></h2></div><% if (needsCount > needs.length) { %><a href="/needs-you/all">See all <%= needsCount %></a><% } %></div>
       <% if (!needsCount) { %><p class="sc-home__all-clear"><%- helpers.icon('check', { size: 18 }) %> <%= firstCheck ? 'No decisions are waiting yet. Run the first check to find out what needs attention.' : 'Nothing needs you.' %></p><% } else { %>

@@ -8,12 +8,17 @@ const classification=Object.freeze({
  'ai/providers/anthropic.js':'METERED',
  'assistant/calls.js':'NOT_PG_ENABLED',
  'assistant/mail-draft.js':'NOT_PG_ENABLED',
+ // Ask receives a per-call commercial/model wrapper in postgres-service;
+ // planner retries, fit reviews and answers remain separate metered attempts.
+ 'assistant/postgres-capability-planner.js':'METERED',
+ 'assistant/postgres-control-plane.js':'METERED',
  'assistant/postgres-evidence-answer.js':'METERED',
  'assistant/postgres-service.js':'METERED',
  'assistant/understand.js':'NOT_PG_ENABLED',
  'attention/interpretation-service.js':'NOT_PG_ENABLED',
  'commercial/model.js':'METERED',
  'commercial/stripe-billing.js':'PLATFORM_BILLING_RECONCILED',
+ 'connections/postgres-reply-drafting.js':'METERED',
  'connections/providers/common.js':'METERED',
  'connections/reply-drafting.js':'NOT_PG_ENABLED',
  'foundry/document-intake.js':'NOT_PG_ENABLED',

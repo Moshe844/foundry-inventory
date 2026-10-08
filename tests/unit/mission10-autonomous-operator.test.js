@@ -171,7 +171,8 @@ test('the real Brief and work-history pages expose active universal work', async
   const agent = request.agent(env.app);
   await signIn(agent, workspace.account.email);
   const home = await agent.get('/').expect(200);
-  assert.match(plain(home.text), /In progress 1 StockChief is on it now/);
+  assert.match(plain(home.text), /StockChief is working 1 thing in progress/);
+  assert.match(plain(home.text), /Checking QuickBooks/);
   const history = await agent.get('/autopilot/history').expect(200);
   assert.match(plain(history.text), /Universal operations .* Checking QuickBooks/);
   assert.doesNotMatch(history.text, /\{&quot;booksAgree&quot;/, 'customers never see raw JSON');

@@ -107,7 +107,7 @@ test('a message page shows what arrived and offers only the three drawers', asyn
   assert.match(text, /Two boxes arrived crushed/);
   assert.match(text, /Needs a reply/);
   assert.match(text, /I answered — waiting on them/);
-  assert.match(text, /Handled, nothing needed/);
+  assert.match(text, /Dismiss — no reply needed/);
   assert.match(text, /StockChief can draft this from what it holds about/,
     'the page offers the draft rather than leaving somebody hunting');
 
