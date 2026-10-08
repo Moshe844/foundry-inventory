@@ -150,14 +150,24 @@ function parseSteps(raw,catalogue=registry){
 function groundedMoneyArguments(steps,message,pending){
   const moneyFields=new Set(['amount','tax','unitAmount','maxCost']);
   const source=`${pending?.originalMessage||''} ${message}`;
+  // These contracts define `amount` as a per-unit price. An explicit quoted
+  // unit price wins over a stale catalogue/supplier default or a model typo.
+  const unitPriceContracts=new Set(['catalog.set_price','catalog.set_purchase_cost',
+    'sales_order.create','purchase_order.create']);
+  const quotedUnitPrices=[...source.matchAll(/[$€£]\s*(\d[\d,]*(?:\.\d{1,2})?)\s*(?:each|per\s+(?:unit|item|piece)|\/\s*(?:unit|item|piece))\b/gi)]
+    .map((match)=>Number(match[1].replaceAll(',',''))).filter(Number.isFinite);
   const statedNumbers=[...source.matchAll(/(?:^|[^\w])(?:[$€£]\s*)?(\d[\d,]*(?:\.\d+)?)(?=$|[^\w])/g)]
     .map((match)=>Number(match[1].replaceAll(',',''))).filter(Number.isFinite);
-  for(const step of steps)for(const [field,value] of Object.entries(step.args)){
+  for(const step of steps){
+    if(unitPriceContracts.has(step.contract.name)&&quotedUnitPrices.length===1)
+      step.args.amount=String(quotedUnitPrices[0]);
+    for(const [field,value] of Object.entries(step.args)){
     if(field==='orderDate'&&!source.includes(String(value))){delete step.args[field];continue;}
     if(!moneyFields.has(field))continue;
     const planned=Number(String(value).replaceAll(',',''));
     if(Number.isFinite(planned)&&!statedNumbers.some((stated)=>Math.abs(stated-planned)<.000001))
       delete step.args[field];
+    }
   }
   return steps;
 }

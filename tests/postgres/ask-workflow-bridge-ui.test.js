@@ -212,12 +212,26 @@ test('Ask browser controls a real customer order, payment, and return through th
       [`Authorize ${refundNumber}`,'customer_return.authorize',{recordReference:refundNumber}],
       [`Receive the returned boot on ${refundNumber}`,'customer_return.receive',{recordReference:refundNumber}],
       [`Inspect ${refundNumber} and restock the good boot in Main Warehouse`,'customer_return.inspect',
-        {recordReference:refundNumber,disposition:'restock',location:'Main Warehouse',reason:'Good condition'}],
-      [`Refund the paid amount on ${refundNumber} in cash`,'customer_return.refund',
-        {recordReference:refundNumber,refundDestination:'CASH'}]]){
+        {recordReference:refundNumber,disposition:'restock',location:'Main Warehouse',reason:'Good condition'}]]){
       plans.set(instruction,step(capability,args));
       await prepareAndApprove(page,base,database,ctx.workspaceId,instruction,capability);
     }
+    const ambiguousRefund=`Handle the refund on ${refundNumber}`;
+    plans.set(ambiguousRefund,step('customer_return.refund',{recordReference:refundNumber}));
+    await page.goto(`${base}/ask`);
+    await page.getByLabel('Ask StockChief').fill(ambiguousRefund);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Continue'}).click()]);
+    assert.match(await page.locator('main').innerText(),/reduce an unpaid invoice balance or return money already paid/);
+    const clarified=(await database.query(`SELECT status,intent FROM stockchief_runtime.assistant_interactions
+      WHERE workspace_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1`,[ctx.workspaceId])).rows[0];
+    assert.equal(clarified.status,'CLARIFY');
+    assert.equal(clarified.intent.controlPlane.capability,'customer_return.refund');
+    assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM stockchief_runtime.assistant_action_proposals
+      WHERE workspace_id=$1 AND action_type='customer_return.refund'`,[ctx.workspaceId])).rows[0].count,0);
+    const refundInstruction=`Refund the paid amount on ${refundNumber} in cash`;
+    plans.set(refundInstruction,step('customer_return.refund',
+      {recordReference:refundNumber,refundDestination:'CASH'}));
+    await prepareAndApprove(page,base,database,ctx.workspaceId,refundInstruction,'customer_return.refund');
     const refundState=(await database.query(`SELECT status FROM customer_returns WHERE workspace_id=$1 AND id=$2`,
       [ctx.workspaceId,secondReturn.result.customerReturnId])).rows[0];
     assert.equal(refundState.status,'COMPLETED');

@@ -25,6 +25,15 @@ test('capability discovery remains compact while preserving action safety contra
   }
 });
 
+test('an explicit per-unit quote survives a model typo and cannot fall back to a stale supplier price',()=>{
+  const selected=planner.parseSteps({steps:[{capability:'purchase_order.create',arguments:[
+    {name:'supplier',value:'Lab Copper Supply'},{name:'sku',value:'LAB-CE-100'},
+    {name:'quantity',value:'20'},{name:'amount',value:'2.50'}],dependsOn:[],continuesPending:false}]});
+  planner.groundedMoneyArguments(selected.steps,
+    'Prepare a draft PO for 20 LAB-CE-100 from Lab Copper Supply at $2.40 each.');
+  assert.equal(selected.steps[0].args.amount,'2.4');
+});
+
 for(const initial of ['read.suppliers','communication.send_email'])test(`semantic fit check rejects ${initial} when it misses the current goal`,async()=>{
   const schemas=[];let planCalls=0;let fitCalls=0;
   const provider={async complete(request){schemas.push(request.schemaName);

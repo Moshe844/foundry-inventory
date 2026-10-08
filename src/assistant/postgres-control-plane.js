@@ -235,13 +235,21 @@ async function run(service,database,ctx,message,{provider,rawProvider=null,histo
       sourceMessage:message,pending,page,usageKey,dependencyArgs});}
     catch(error){
       const bridge=require('./postgres-workflow-capabilities').SPECS.some((spec)=>spec.name===step.contract.name);
-      if(replanned||index!==0||!bridge||error.code!=='validation_error'||!provider)throw error;
-      const revised=await planner.plan(provider,message,{catalogue,history,pending,page,workspace,recentChanges,
-        deferReadFit:true,feedback:{rejectedCapability:step.contract.name,rejectedArguments:step.args,
-          reason:String(error.message).slice(0,240),state:'No business change was made. Choose a valid action for the current request.'}});
-      if(!revised.steps.length||revised.steps[0].contract.name===step.contract.name&&
-        JSON.stringify(revised.steps[0].args)===JSON.stringify(step.args))throw error;
-      selected=revised;replanned=true;index=-1;continue;
+      if(index!==0||!bridge||error.code!=='validation_error')throw error;
+      if(!replanned&&provider){
+        const revised=await planner.plan(provider,message,{catalogue,history,pending,page,workspace,recentChanges,
+          deferReadFit:true,feedback:{rejectedCapability:step.contract.name,rejectedArguments:step.args,
+            reason:String(error.message).slice(0,240),state:'No business change was made. Choose a valid action for the current request.'}});
+        if(revised.steps.length&&(revised.steps[0].contract.name!==step.contract.name||
+          JSON.stringify(revised.steps[0].args)!==JSON.stringify(step.args))){
+          selected=revised;replanned=true;index=-1;continue;
+        }
+      }
+      // A missing business choice is part of this conversation, not a page-level
+      // error. Preserve the attempted capability and arguments for the follow-up.
+      executed.push({step,args:step.args,provenance:{},result:{status:'CLARIFY',
+        answer:String(error.message).trim(),rows:[],columns:[],reason:'clarification_required'}});
+      continue;
     }
     executed.push({step,...outcome});
   }
