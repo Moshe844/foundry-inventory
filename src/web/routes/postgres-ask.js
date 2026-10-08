@@ -11,11 +11,18 @@ const permissions=require('../../actions/permissions');
 const { requireAuth,asyncRoute }=require('../middleware');
 const entitlements=require('../../entitlements/postgres-service');
 const commercialControl=require('../../commercial/control-service');
+const {registry:capabilities}=require('../../assistant/postgres-capability-registry');
 const {commercialScope}=require('../commercial-middleware');
 const {newId}=require('../../lib/util');
 const {ValidationError}=require('../../domain/errors');
 
 const STATUS={ANSWERED:'answered',PREPARED:'needs_approval',CLARIFY:'clarify',FAILED:'failed'};
+
+function completedSummary(proposal){
+  const key=capabilities.get(proposal.actionType)?.resultDisplayReference;
+  const reference=key&&proposal.result?.[key];
+  return `Completed: ${proposal.summary}${reference?` Reference: ${reference}.`:''}`;
+}
 
 function columnsFor(turn){
   const configured=turn.intent?.presentation?.columns;
@@ -44,7 +51,7 @@ function goalFor(turn,index,position=0,proposal=null){
     ?`${proposal.summary} Nothing has changed yet.`:
     proposal?.status==='APPROVED'?`Rule in force: ${proposal.summary}`:
     proposal?.status==='EXECUTED'?proposal.actionType==='communication.send_email'
-      ?`Email approved for ${proposal.payload.recipientEmail}; check delivery status.`:`Completed: ${proposal.summary}`:
+      ?`Email approved for ${proposal.payload.recipientEmail}; check delivery status.`:completedSummary(proposal):
       ['CANCELLED','SUPERSEDED'].includes(proposal?.status)?'This proposal was discarded.':turn.answer;
   return {id:turn.id,position,kind:turn.intent?.intent||'lookup',text:turn.message,status,said,
     resultHref:proposal?.status==='PENDING'?turn.intent?.proposalHref||null:null,
@@ -81,7 +88,7 @@ function resultFor(turn,proposal=null){
   const emailProposal=proposal?.actionType==='communication.send_email'?proposal:null;
   let answer=turn.answer;
   if(proposal?.status==='PENDING'&&turn.status==='PREPARED')answer=`${proposal.summary} Nothing has changed yet.`;
-  if(proposal?.status==='EXECUTED'&&!emailProposal)answer=`Completed: ${proposal.summary}`;
+  if(proposal?.status==='EXECUTED'&&!emailProposal)answer=completedSummary(proposal);
   if(proposal?.status==='APPROVED')answer=`Rule in force: ${proposal.summary}`;
   if(['CANCELLED','SUPERSEDED'].includes(proposal?.status))answer='Discarded. Nothing was changed by this proposal.';
   if(emailProposal?.status==='EXECUTED')answer=emailProposal.deliveryStatus==='SENT'

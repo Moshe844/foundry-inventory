@@ -191,7 +191,8 @@ action('inventory.receive','Record physically arrived goods without a purchase o
 action('inventory.issue','Record a physical removal of goods from inventory.',
   ['sku','skuScope','location','quantity','reason','reference'],permissions.OPERATE,'issue');
 action('inventory.transfer','Request and approve a transfer between inventory locations. This reserves stock; dispatch and receipt are separate physical steps.',
-  ['sku','skuScope','fromLocation','toLocation','quantity','reference'],permissions.REQUEST_TRANSFER,'transfer');
+  ['sku','skuScope','fromLocation','toLocation','quantity','reference'],permissions.REQUEST_TRANSFER,'transfer',
+  {resultReference:'transferId',resultDisplayReference:'transferNumber',resultRecordKind:'transfer'});
 action('inventory.adjust','Correct a stock position to a verified physical count.',
   ['sku','skuScope','location','countedQuantity','reason','reference'],permissions.ADJUST,'adjust');
 action('catalog.create_item','Create a quantity-tracked product record with its exact SKU code when supplied.',
@@ -210,13 +211,14 @@ action('communication.send_email','Prepare a business email for review; sending 
 action('sales_order.create','Prepare a draft customer order without fulfillment or payment. The amount input is the selling price PER UNIT, not the order total.',
   ['customer','sku','skuScope','quantity','deliveryMethod','shipToAddress','location','orderDate','neededBy','amount','currency','reference'],
   permissions.MANAGE_SALES,'create_sales_order',{allowUnknownEntities:['customer'],
-    resultReference:'salesOrderId',resultRecordKind:'sales_order'});
+    resultReference:'salesOrderId',resultDisplayReference:'orderNumber',resultRecordKind:'sales_order'});
 action('customer_invoice.create','Prepare a customer invoice for review. Approval records and posts the invoice in StockChief; it does not create or fulfill a customer order, send the invoice, or collect payment.',
   ['customer','sku','quantity','amount','tax','currency','description','issueDate','dueDate','reference'],
   permissions.MANAGE_ACCOUNTING,'create_customer_invoice',{allowUnknownEntities:['customer']});
 action('purchase_order.create','Prepare a draft supplier order; amount is cost PER UNIT, not total. Unit cost may remain unknown in draft but must be priced before placement; no on-hand stock changes.',
   ['supplier','sku','skuScope','quantity','location','amount','currency','neededBy','reference'],
-  permissions.CREATE_PO,'create_purchase_order',{allowUnknownEntities:['supplier']});
+  permissions.CREATE_PO,'create_purchase_order',{allowUnknownEntities:['supplier'],
+    resultReference:'purchaseOrderId',resultDisplayReference:'poNumber',resultRecordKind:'purchase_order'});
 action('purchase_order.receive','Receive physically arrived goods against an existing placed purchase order. Requires the owner or context to identify the purchase order; an arrival alone does not establish one.',
   ['purchaseOrder','supplier','sku','quantity','location','receiptReference'],permissions.RECEIVE_PO,'receive_purchase_order');
 action('supplier_payment.record','Record a payment already made against an open supplier bill; this does not initiate bank payment.',

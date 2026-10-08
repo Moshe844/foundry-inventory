@@ -316,6 +316,24 @@ test('Ask browser controls a real customer order, payment, and return through th
       WHERE workspace_id=$1 AND sales_order_id=$2`,[ctx.workspaceId,shipmentOrder.salesOrderId])).rows[0].count,1);
 
     const destination=await locations.createLocation(database,ctx,{name:'Branch Store',kind:'store'});
+    const askedTransfer='Request and reserve one Work Boot from Main Warehouse to Branch Store, then show that transfer; do not pick or dispatch it';
+    plans.set(askedTransfer,[step('inventory.transfer',{sku:skuCode,fromLocation:'Main Warehouse',
+      toLocation:'Branch Store',quantity:1}),
+    {...step('navigate.record.transfer'),dependsOn:[0]}]);
+    const askedTransferProposal=await prepareAndApprove(page,base,database,ctx.workspaceId,
+      askedTransfer,'inventory.transfer');
+    const askedTransferPlan=(await database.query(`SELECT status,steps FROM stockchief_runtime.assistant_capability_plans
+      WHERE workspace_id=$1 AND source_message=$2 ORDER BY created_at DESC LIMIT 1`,
+    [ctx.workspaceId,askedTransfer])).rows[0];
+    assert.equal(askedTransferPlan.status,'DONE');
+    assert.equal(askedTransferPlan.steps[1].state,'DONE');
+    assert.equal(askedTransferPlan.steps[1].args.recordReference,
+      askedTransferProposal.result.transferId);
+    assert.equal((await database.query(`SELECT status FROM inventory_transfers WHERE workspace_id=$1 AND id=$2`,
+      [ctx.workspaceId,askedTransferProposal.result.transferId])).rows[0].status,'APPROVED');
+    await page.goto(`${base}/ask`);
+    assert.ok((await page.locator('main').innerText()).includes(
+      `Reference: ${askedTransferProposal.result.transferNumber}`));
     const requestedTransfer=await transfers.request(database,ctx,{fromLocationId:place.id,toLocationId:destination.id,
       idempotencyKey:'ask-workflow-transfer',lines:[{skuId:item.skuIds[0],quantity:2}]});
     const transferNumber=requestedTransfer.transfer_number;
