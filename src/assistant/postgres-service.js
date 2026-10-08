@@ -380,16 +380,46 @@ async function lookup(database,ctx,request,options={}) {
       'No purchase order matched that request.',rows,columns:['order','status','supplier','outstandingUnits']};
   }
   if(request.view==='sales_orders'){
-    const rows=(await database.query(`SELECT so.id,so.order_number,so.status,c.name AS customer,
-      COALESCE(SUM(sol.quantity_ordered-sol.quantity_fulfilled),0) AS open_units
-      FROM sales_orders so JOIN customers c ON c.id=so.customer_id LEFT JOIN sales_order_lines sol ON sol.sales_order_id=so.id
+    const rows=(await database.query(`SELECT so.id,so.order_number,so.status,so.currency,c.name AS customer,
+      COALESCE(lines.ordered_units,0) AS ordered_units,
+      COALESCE(lines.fulfilled_units,0) AS fulfilled_units,
+      COALESCE(lines.ordered_units,0)-COALESCE(lines.fulfilled_units,0) AS open_units,
+      COALESCE(held.units,0) AS held_units,COALESCE(invoices.invoice_count,0) AS invoice_count,
+      COALESCE(invoices.invoiced_minor,0) AS invoiced_minor,
+      COALESCE(invoices.outstanding_minor,0) AS outstanding_minor,
+      COALESCE(payments.paid_minor,0) AS paid_minor,
+      COALESCE(shipments.shipment_count,0) AS shipment_count
+      FROM sales_orders so JOIN customers c ON c.id=so.customer_id AND c.workspace_id=so.workspace_id
+      LEFT JOIN LATERAL (SELECT SUM(quantity_ordered) AS ordered_units,
+        SUM(quantity_fulfilled) AS fulfilled_units FROM sales_order_lines
+        WHERE workspace_id=so.workspace_id AND sales_order_id=so.id) lines ON true
+      LEFT JOIN LATERAL (SELECT SUM(a.quantity) AS units FROM sales_order_allocations a
+        JOIN sales_order_lines sol ON sol.id=a.sales_order_line_id AND sol.workspace_id=a.workspace_id
+        WHERE a.workspace_id=so.workspace_id AND sol.sales_order_id=so.id) held ON true
+      LEFT JOIN LATERAL (SELECT COUNT(*)::int AS invoice_count,SUM(total_minor) AS invoiced_minor,
+        SUM(balance_minor) AS outstanding_minor FROM accounting_customer_invoices
+        WHERE workspace_id=so.workspace_id AND sales_order_id=so.id
+          AND status IN ('OPEN','PARTIALLY_PAID','PAID')) invoices ON true
+      LEFT JOIN LATERAL (SELECT SUM(a.amount_minor) AS paid_minor
+        FROM accounting_payment_allocations a
+        JOIN accounting_customer_invoices inv ON inv.id=a.customer_invoice_id AND inv.workspace_id=a.workspace_id
+        JOIN accounting_payments pay ON pay.id=a.payment_id AND pay.workspace_id=a.workspace_id
+        WHERE a.workspace_id=so.workspace_id AND inv.sales_order_id=so.id AND pay.status='POSTED') payments ON true
+      LEFT JOIN LATERAL (SELECT COUNT(*)::int AS shipment_count FROM sales_shipments
+        WHERE workspace_id=so.workspace_id AND sales_order_id=so.id) shipments ON true
       WHERE so.workspace_id=$1 AND ($2::text IS NULL OR so.order_number ILIKE '%'||$2||'%' OR c.name ILIKE '%'||$2||'%'
-        OR so.status ILIKE '%'||$2||'%') GROUP BY so.id,c.name ORDER BY so.created_at DESC LIMIT 100`,
+        OR so.status ILIKE '%'||$2||'%') ORDER BY so.created_at DESC LIMIT 100`,
     [ctx.workspaceId,search])).rows.map((row)=>evidenceRow({order:row.order_number,status:row.status,customer:row.customer,
-      openUnits:Number(row.open_units)},`/sales/orders/${row.id}`));
+      orderedUnits:Number(row.ordered_units),heldUnits:Number(row.held_units),
+      fulfilledUnits:Number(row.fulfilled_units),openUnits:Number(row.open_units),
+      invoiceCount:Number(row.invoice_count),invoiced:pricing.formatMinor(Number(row.invoiced_minor),row.currency),
+      paid:pricing.formatMinor(Number(row.paid_minor),row.currency),
+      outstanding:pricing.formatMinor(Number(row.outstanding_minor),row.currency),
+      shipments:Number(row.shipment_count)},`/orders/${row.id}`));
     return {answer:rows.length?`${rows.length===100?'Showing the first 100':rows.length} customer order${rows.length===1?'':'s'} ${search?'matched':'recorded'}; ${rows.reduce((sum,row)=>sum+row.openUnits,0).toLocaleString('en-US')} units remain open.`:
       search?'No customer order matched that request.':'No customer orders are recorded in StockChief. Sales through systems that are not connected or imported here would not appear in this list.',
-      rows,columns:['order','status','customer','openUnits']};
+      rows,columns:['order','status','customer','orderedUnits','heldUnits','fulfilledUnits','openUnits',
+        'invoiceCount','invoiced','paid','outstanding','shipments']};
   }
   if(['suppliers','customers'].includes(request.view)){
     const supplier=request.view==='suppliers';

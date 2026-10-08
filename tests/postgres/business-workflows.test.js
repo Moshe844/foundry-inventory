@@ -9,6 +9,7 @@ const ledger = require('../../src/accounting/postgres-ledger');
 const workflows = require('../../src/operations/postgres-business-workflows');
 const jobs = require('../../src/operations/postgres-job-queue');
 const businessHandlers = require('../../src/operations/postgres-business-handlers');
+const assistant = require('../../src/assistant/postgres-service');
 
 async function seed(database) {
   const at = '2026-09-23T00:00:00.000Z';
@@ -74,6 +75,13 @@ test('full reservation refuses shortages atomically while ordinary confirmation 
       {idempotencyKey:'reserve:partial'});
     assert.equal(normal.status,'BACKORDERED');
     assert.equal(normal.shortage,true);
+    const details=await assistant.lookup(database,ctx,{view:'sales_orders',search:order.orderNumber});
+    assert.equal(details.rows.length,1);
+    assert.deepEqual({ordered:details.rows[0].orderedUnits,held:details.rows[0].heldUnits,
+      fulfilled:details.rows[0].fulfilledUnits,open:details.rows[0].openUnits,
+      invoiced:details.rows[0].invoiced,paid:details.rows[0].paid,
+      shipments:details.rows[0].shipments},
+    {ordered:2,held:0,fulfilled:0,open:2,invoiced:'$0.00',paid:'$0.00',shipments:0});
   });
 
 test('PostgreSQL purchasing, receiving, sales and payments remain one reconciled business story',
