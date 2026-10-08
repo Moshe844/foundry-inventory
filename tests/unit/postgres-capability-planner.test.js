@@ -96,6 +96,60 @@ test('an initial no-step miss can recover an exact registered read only after in
   assert.equal(fits,1,'a recovered read cannot bypass the independent semantic check');
 });
 
+test('independent fit receives verified page identity for a current-product policy',async()=>{
+  const page={path:'/inventory/item_verified',product:'Rule Widget',sku:'RULE-1'};
+  const provider={async complete(request){
+    if(request.schemaName==='stockchief_capability_plan')return {data:{steps:[{
+      capability:'policy.propose',arguments:[],dependsOn:[],continuesPending:false}],clarifyingQuestion:''}};
+    if(request.schemaName==='stockchief_capability_fit'){
+      const candidate=JSON.parse(request.prompt);
+      assert.deepEqual(candidate.currentPage,page);
+      assert.equal(candidate.proposedSteps[0].inputMode,'full_owner_message');
+      return {data:{aligned:true,reason:''}};
+    }
+    throw new Error(`Unexpected request ${request.schemaName}`);
+  }};
+  const result=await planner.plan(provider,'Set the reorder point to 4 for this product.',{page});
+  assert.equal(result.steps[0].contract.name,'policy.propose');
+});
+
+test('a tentative read cannot replace a requested change when semantic fit rejects it',async()=>{
+  let plans=0;let fits=0;
+  const provider={async complete(request){
+    if(request.schemaName==='stockchief_capability_plan'){
+      plans++;
+      return {data:{steps:[{capability:plans===1?'read.sales_orders':'sales_order.confirm',
+        arguments:plans===1?[]:[{name:'recordReference',value:'SO-00001'}],
+        dependsOn:[],continuesPending:false}],clarifyingQuestion:plans===1?'Need to verify the order state.':''}};
+    }
+    if(request.schemaName==='stockchief_capability_fit'){
+      fits++;
+      return {data:{aligned:fits===2,reason:fits===1?'A read does not reserve stock.':''}};
+    }
+    throw new Error(`Unexpected request ${request.schemaName}`);
+  }};
+  const result=await planner.plan(provider,'Commit available stock to SO-00001.',{deferReadFit:true});
+  assert.equal(result.steps[0].contract.name,'sales_order.confirm');
+  assert.equal(plans,2);
+  assert.equal(fits,2);
+});
+
+test('independent fit treats this inventory as the authenticated workspace',async()=>{
+  const workspace={business_name:'Current Business',location_count:1,product_count:2,purchase_order_count:0};
+  const provider={async complete(request){
+    if(request.schemaName==='stockchief_capability_plan')return {data:{steps:[{
+      capability:'workspace.rename',arguments:[{name:'workspaceName',value:'New Business'}],
+      dependsOn:[],continuesPending:false}],clarifyingQuestion:''}};
+    if(request.schemaName==='stockchief_capability_fit'){
+      assert.deepEqual(JSON.parse(request.prompt).currentWorkspace,workspace);
+      return {data:{aligned:true,reason:''}};
+    }
+    throw new Error(`Unexpected request ${request.schemaName}`);
+  }};
+  const result=await planner.plan(provider,'Rename this inventory to New Business.',{workspace});
+  assert.equal(result.steps[0].contract.name,'workspace.rename');
+});
+
 test('semantic review repairs a plan that drops an explicitly named entity',async()=>{
   let plans=0;
   const provider={async complete(request){

@@ -46,6 +46,12 @@ Reject a redundant preparatory mutation if the final selected contract itself ac
 measurement, setting, or identity. Do not infer a second business operation from a detail of the requested one.
 A capability marked full_owner_message receives the complete message, including every named product, value and limit;
 it is deliberately not given separate arguments. Do not mark it misaligned for empty arguments.
+The currentPage record is verified from this workspace and supplied to the executor. When the owner says
+"this product" or an equivalent current-record reference, that verified record can identify the target;
+do not require the owner to restate its name or SKU. An explicitly named different record takes precedence.
+The authenticated currentWorkspace is the inventory the owner is operating in. "This inventory" or
+"this business" refers to that workspace even when currentPage is null. The executor remains tenant-scoped;
+do not ask for another workspace name before a workspace-level setting or rename.
 An owner stating a durable supplier term, stock threshold or operating preference is telling StockChief business information
 worth proposing as a rule. The proposal still requires explicit owner approval before any setting changes.
 Preparing a consequential operation for owner approval is StockChief's normal safety boundary: judge the effect
@@ -59,6 +65,9 @@ rather than addressing a new one, or ignores an answer to a pending question. Fo
 input fields, check that identifying details explicitly given by the owner survive in the arguments.
 Judge capability fit, not input completeness. Required inputs the owner did not provide must be omitted;
 the deterministic resolver supplies a unique value from workspace or prior context, or asks the owner.
+Do not infer a record's current lifecycle status from an informal adjective in the message; the
+executor checks its real state. Match the requested effect: reserving or committing available
+stock to a draft customer order is order confirmation, not physical picking or fulfillment.
 Never mark an otherwise fitting capability misaligned merely because quantity, cost, location, party,
 or another required input is genuinely missing. A clarification is the expected next result.
 For a read, check that the contract description covers every measure and distinction the owner asks for;
@@ -163,7 +172,8 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
   }
   // Read-only plans can be checked against actual evidence by the answer
   // stage, which can request a broader registered read when needed.
-  if(deferReadFit&&!reconsidered&&selected.steps.length&&selected.steps.every((step)=>step.contract.kind==='read'))
+  if(deferReadFit&&!reconsidered&&!selected.clarifyingQuestion&&selected.steps.length
+    &&selected.steps.every((step)=>step.contract.kind==='read'))
     return selected;
   // Without a registered step, a model-authored explanation could silently
   // reinterpret an unavailable effect as a related operation. Never expose
@@ -172,7 +182,8 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
     closestAlternative:selected.closestAlternative||null};
   if(selected.steps.length){
     try{
-      const candidate=()=>({message,pendingQuestion:selected.steps.some((step)=>step.continuesPending)
+      const candidate=()=>({message,currentWorkspace:workspace||null,currentPage:page||null,
+        pendingQuestion:selected.steps.some((step)=>step.continuesPending)
         ?pending?.question||null:null,
         proposedSteps:selected.steps.map((step)=>({capability:step.contract.name,
           description:step.contract.description,arguments:step.args,

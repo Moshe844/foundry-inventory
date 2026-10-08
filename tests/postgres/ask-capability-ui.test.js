@@ -69,6 +69,8 @@ test('Ask selects a registered operation, resolves unique records, and executes 
     const provider={name:'anthropic',model:PRICED_MODEL,async complete(input){
       if(input.schemaName==='stockchief_capability_fit')return {data:{aligned:true,reason:''},usage:pricedUsage()};
       if(input.schemaName!=='stockchief_capability_plan')throw new Error(`Unexpected model request ${input.schemaName}`);
+      if(plans.length===1)assert.equal(JSON.parse(input.prompt).pending,null,
+        'an executed approval must not remain a pending goal for the next request');
       return {data:{steps:[plans.shift()],clarifyingQuestion:''},usage:pricedUsage()};
     }};
     const app=createPostgresApp({database,env:'test',sessionSecret:'capability-ask-secret',aiProvider:provider});

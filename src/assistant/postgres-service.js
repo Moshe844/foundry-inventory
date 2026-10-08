@@ -1003,7 +1003,7 @@ async function askCapabilities(database,ctx,message,options={}){
   const history=(await database.query(`SELECT message,answer,status,intent FROM stockchief_runtime.assistant_interactions
     WHERE workspace_id=$1 AND actor_user_id=$2 AND ($3::timestamptz IS NULL OR created_at > $3::timestamptz)
     ORDER BY created_at DESC,id DESC LIMIT 6`,[ctx.workspaceId,ctx.actorId,options.startedAt||null])).rows.reverse();
-  const latest=history.at(-1);const pending=['CLARIFY','PREPARED'].includes(latest?.status)
+  const latest=history.at(-1);let pending=['CLARIFY','PREPARED'].includes(latest?.status)
     &&latest.intent?.controlPlane?.capability
     ?{capability:latest.intent.controlPlane.capability,args:latest.intent.controlPlane.args,
       question:latest.answer,status:latest.status,
@@ -1011,7 +1011,7 @@ async function askCapabilities(database,ctx,message,options={}){
       proposalId:latest.intent.controlPlane.pendingProposalId||latest.intent.proposalId||null}:null;
   if(pending?.proposalId){
     const active=await getProposal(database,ctx.workspaceId,pending.proposalId).catch(()=>null);
-    if(!active||active.status!=='PENDING')pending.proposalId=null;
+    if(!active||active.status!=='PENDING')pending=null;
   }
   const selection=await require('./postgres-control-plane').run(capabilityService(),database,ctx,clean,
     {provider,rawProvider,history,pending,page:options.page||null,usageKey});
