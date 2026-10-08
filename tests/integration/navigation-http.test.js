@@ -82,11 +82,11 @@ test('the rail marks the state you are in, and only that one', async () => {
   };
 
   // Unconfigured: "/" is still the brief, whichever view it renders underneath.
-  assert.deepEqual(await activeOn('/'), ['Brief']);
+  assert.deepEqual(await activeOn('/'), ['Home']);
 
   // And configured, where "/" has a whole operation to report on.
   configure(db, workspace.workspaceId);
-  assert.deepEqual(await activeOn('/'), ['Brief']);
+  assert.deepEqual(await activeOn('/'), ['Home']);
 
   assert.deepEqual(await activeOn('/needs-you'), ['Needs you']);
   assert.deepEqual(await activeOn('/ask'), ['Ask StockChief']);
@@ -116,7 +116,7 @@ test('the chrome offers three states, not a directory of departments', async () 
     .map((anchor) => anchor.replace(/<[^>]*>/g, '').replace(/\d+/g, '').trim())
     .filter(Boolean);
 
-  assert.deepEqual(labels, ['Brief', 'Needs you', 'Ask StockChief']);
+  assert.deepEqual(labels, ['Home', 'Needs you', 'Ask StockChief']);
 
   /*
    * Consolidating is not removing. Every department that came off the rail is

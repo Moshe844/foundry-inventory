@@ -130,8 +130,9 @@ test('a new account is handed to StockChief, not an empty dashboard', async () =
   // points at StockChief, rather than silently sending you there.
   const home = await agent.get('/');
   assert.equal(home.status, 200);
-  assert.match(plain(home.text), /first records/);
-  assert.match(plain(home.text), /Add a source/);
+  assert.match(plain(home.text), /inventory isn’t here yet/);
+  assert.match(plain(home.text), /Add your inventory/);
+  assert.match(home.text, /href="\/onboarding"/);
 
   // The first decision is now how they manage inventory today. Sending someone
   // with a spreadsheet straight to "describe your business" was asking them to
@@ -422,7 +423,7 @@ test('after configuring, the console uses the customer terminology', async () =>
   // products yet. Customer terminology belongs to the traditional overview, so
   // that is where it is checked.
   const home = plain((await agent.get('/')).text);
-  assert.match(home, /first records/);
+  assert.match(home, /Add the first thing you sell/);
 
   const overview = plain((await agent.get('/overview')).text);
   assert.match(overview, /Ask StockChief about your inventory/);

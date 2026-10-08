@@ -155,7 +155,8 @@ test('the waiting order learns payment immediately and returns receipt and invoi
     assert.match(page.text, /View or print Stripe invoice/);
 
     const home = plain((await agent.get('/')).text);
-    assert.match(home, /Handled\s*1\s*automatic action completed in the last day/i);
+    assert.match(home, /StockChief handled 1 thing in the last 24 hours/i);
+    assert.match(home, /Handled/);
     assert.match(home, /Recorded \$300\.00 from Moshe Ekstein.*confirmed the payment and StockChief posted it to SO-1001 without you/i);
   } finally { undo(); env.db.close(); }
 });

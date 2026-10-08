@@ -40,12 +40,11 @@ test('a fresh inventory asks for the real source instead of assuming manual entr
   const response = await agent.get('/');
   const page = plain(response.text);
 
-  assert.match(page, /Your workspace is ready/);
-  assert.match(page, /No products yet/);
-  assert.match(page, /Add a source/);
-  assert.match(page, /Add a product manually/);
+  assert.match(page, /inventory isn’t here yet/);
+  assert.match(page, /Choose where StockChief should get your inventory/);
+  assert.match(page, /Add your inventory/);
   assert.match(response.text, /href="\/onboarding"/);
-  assert.match(page, /Nothing is ordered, emailed or paid automatically until you approve its limits/);
+  assert.match(page, /nothing will be ordered, paid, or emailed without your approval or the limits you set/);
   assert.doesNotMatch(page, /Learn more/);
 });
 
@@ -69,7 +68,7 @@ test('an operating inventory is not called getting ready while optional setup re
   const agent = await ownerAgent(env);
   const page = plain((await agent.get('/')).text);
   assert.doesNotMatch(page, /Getting StockChief ready/i);
-  assert.match(page, /Ready for the first operations check/i);
+  assert.match(page, /Your inventory is here. Let’s do the first check/i);
   assert.doesNotMatch(page, /Everything is under control/i);
   assert.match(page, /Optional setup · 2 of 5 complete/i);
   env.db.close();
@@ -339,9 +338,9 @@ test('a configured inventory is asked for its first product, not for a source ag
   const agent = await ownerAgent(env);
   const page = plain((await agent.get('/')).text);
 
-  assert.match(page, /No products yet/,
+  assert.match(page, /no products in it yet/,
     'the missing thing is a product, and it says so');
-  assert.match(page, /Add a product manually/);
+  assert.match(page, /Add your first product/);
   assert.doesNotMatch(page, /Choose where StockChief should get your inventory/,
     'that question was answered by configuring the inventory');
   assert.match((await agent.get('/')).text, /href="\/inventory\/new"/,
@@ -349,5 +348,5 @@ test('a configured inventory is asked for its first product, not for a source ag
 
   // The checklist says which half of the step is done rather than reading as
   // if nothing had happened.
-  assert.match(page, /No products yet\./);
+  assert.match(page, /no products in it yet\./);
 });

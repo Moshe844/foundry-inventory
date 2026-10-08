@@ -12,7 +12,7 @@
   var observations = locals.noticed || [];
   var paused = home.status.paused || home.status.suspended;
   var empty = !!locals.isEmpty && (!needsCount || !!locals.activeMigration);
-  var firstCheck = !empty && home.status.checkPending;
+  var firstCheck = !empty && !home.status.lastLookedAt;
   var stale = !paused && !empty && home.status.checkStale;
   var migration = locals.activeMigration || null;
   var headline = paused ? 'StockChief is paused.'
@@ -72,6 +72,22 @@
     </a>
   <% } %>
 
+  <% var nextAction = home.guidance && home.guidance.next; %>
+  <% if (nextAction && nextAction.kind !== 'needs-you' && !migration) { %>
+    <section class="sc-home__first-steps" aria-labelledby="sc-home-next-title">
+      <div class="sc-home__section-head"><div>
+        <p class="sc-home__eyebrow"><%= nextAction.eyebrow || 'Do this next' %></p>
+        <h2 id="sc-home-next-title"><%= nextAction.title %></h2>
+      </div></div>
+      <% if (nextAction.what) { %><p><%= nextAction.what %></p><% } %>
+      <% if (nextAction.recommendation) { %><p><%= nextAction.recommendation %></p><% } %>
+      <% if (nextAction.href) { %><p><a href="<%= nextAction.href %>"><%= nextAction.action || 'Open this step' %></a></p><% } %>
+      <% if (home.guidance.operationalReady && home.guidance.checklistActive) { %>
+        <p>Optional setup · <%= home.guidance.steps.filter(function (step) { return step.complete; }).length %> of <%= home.guidance.steps.length %> complete</p>
+      <% } %>
+    </section>
+  <% } %>
+
   <% if (empty && !migration) { %>
     <section class="sc-home__first-steps" aria-labelledby="sc-home-first-steps-title">
       <div class="sc-home__section-head"><div><p class="sc-home__eyebrow">One start, then StockChief takes over the routine</p><h2 id="sc-home-first-steps-title">What happens next</h2></div></div>
@@ -111,7 +127,7 @@
       </section>
       <div class="sc-home__right-column">
         <section class="sc-home__upcoming" aria-labelledby="sc-home-upcoming-title"><div class="sc-home__section-head"><div><p class="sc-home__eyebrow">Dates on your orders</p><h2 id="sc-home-upcoming-title">Coming up</h2></div></div><% if (comingUp.length) { %><div class="sc-home__upcoming-list"><% comingUp.forEach(function (item) { %><a href="<%= item.href %>"><span class="sc-home__date"><%= helpers.shortDate(item.when) %></span><span><%= item.text %></span><%- helpers.icon('arrowRight', { size: 14 }) %></a><% }) %></div><% } else { %><p class="sc-home__quiet">No dated customer commitments or supplier deliveries are approaching.</p><% } %></section>
-        <section class="sc-home__noticed" aria-labelledby="sc-home-noticed-title"><div class="sc-home__section-head"><div><p class="sc-home__eyebrow">Worth knowing</p><h2 id="sc-home-noticed-title">StockChief noticed</h2></div></div><% if (observations.length) { %><div class="sc-home__observations"><% observations.slice(0, 2).forEach(function (item) { %><a href="<%= item.href %>"><%- helpers.icon('eye', { size: 16 }) %><span><strong><%= item.text %></strong><small><%= item.detail %></small></span><%- helpers.icon('arrowRight', { size: 14 }) %></a><% }) %></div><% } else { %><p class="sc-home__quiet">No additional observation to surface right now.</p><% } %></section>
+        <section class="sc-home__noticed" aria-labelledby="sc-home-noticed-title"><div class="sc-home__section-head"><div><p class="sc-home__eyebrow">Worth knowing</p><h2 id="sc-home-noticed-title">StockChief noticed</h2></div></div><% if (observations.length) { %><div class="sc-home__observations"><% observations.slice(0, 2).forEach(function (item) { %><a href="<%= item.href %>"><%- helpers.icon('eye', { size: 16 }) %><span><strong><%= item.text %></strong><small><%= item.detail %></small></span><%- helpers.icon('arrowRight', { size: 14 }) %></a><% }) %></div><% } else { %><p class="sc-home__quiet"><%= locals.observedBrief || 'No additional observation to surface right now.' %></p><% } %></section>
       </div>
     </div>
   <% } %>
