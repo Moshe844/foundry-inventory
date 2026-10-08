@@ -520,6 +520,24 @@ test('Ask browser controls a real customer order, payment, and return through th
     assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM accounting_supplier_bills
       WHERE workspace_id=$1 AND supplier_invoice_number='SS-INVOICE-3'`,
     [two.workspace_id])).rows[0].count,0);
+    const disputedInvoice=`Record Safety Supply invoice SS-INVOICE-EXCEPTION against `+
+      `${invoicedPurchase.poNumber} for one ${skuCode} unit at $12 each, without receiving more stock`;
+    plans.set(disputedInvoice,step('purchase_order.record_supplier_invoice',{
+      recordReference:invoicedPurchase.poNumber,supplierInvoiceNumber:'SS-INVOICE-EXCEPTION',
+      sku:skuCode,quantity:1,unitAmount:12,tax:0}));
+    await prepareAndApprove(page,base,database,ctx.workspaceId,disputedInvoice,
+      'purchase_order.record_supplier_invoice');
+    const disputedBill=(await database.query(`SELECT status,match_status,journal_entry_id,total_minor
+      FROM accounting_supplier_bills WHERE workspace_id=$1 AND purchase_order_id=$2
+      AND supplier_invoice_number='SS-INVOICE-EXCEPTION'`,
+    [ctx.workspaceId,invoicedPurchase.purchaseOrderId])).rows[0];
+    assert.deepEqual({status:disputedBill.status,match:disputedBill.match_status,
+      journal:disputedBill.journal_entry_id,total:Number(disputedBill.total_minor)},
+    {status:'DISPUTED',match:'EXCEPTION',journal:null,total:1200});
+    assert.equal((await database.query(`SELECT COALESCE(SUM(balance_minor),0)::int AS owed
+      FROM accounting_supplier_bills WHERE workspace_id=$1 AND purchase_order_id=$2
+      AND status IN ('OPEN','PARTIALLY_PAID')`,
+    [ctx.workspaceId,invoicedPurchase.purchaseOrderId])).rows[0].owed,3000);
     for(const [instruction,capability,args] of [
       ['Pause automatic work while we review a stock problem','autopilot.pause',
         {reason:'Reviewing a stock problem'}],
