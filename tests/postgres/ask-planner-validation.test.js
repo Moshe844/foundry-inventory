@@ -150,3 +150,20 @@ test('a cost-bounded semantic repair uses the compact catalogue and still verifi
   assert.equal(fitChecks,2);
   assert.deepEqual(result.steps.map((step)=>step.contract.name),['sales_order.create','sales_order.confirm']);
 });
+
+test('consequential writes in one instruction wait for earlier approved writes',async()=>{
+  const provider={async complete({schemaName}){
+    if(schemaName==='stockchief_capability_fit')return {data:{aligned:true,reason:''}};
+    return {data:{steps:[
+      {capability:'catalog.set_price',arguments:[{name:'sku',value:'HG-400'},
+        {name:'amount',value:'14.50'}],dependsOn:[],continuesPending:false},
+      {capability:'sales_order.create',arguments:[{name:'sku',value:'HG-400'},
+        {name:'customer',value:'Eastside'},{name:'quantity',value:'5'}],dependsOn:[],continuesPending:false},
+    ],clarifyingQuestion:''}};
+  }};
+  const result=await planner.plan(provider,
+    'Set the HG-400 selling price to $14.50, create an Eastside order for five and reserve them.');
+  assert.deepEqual(result.steps.map((step)=>step.contract.name),
+    ['catalog.set_price','sales_order.create','sales_order.confirm']);
+  assert.deepEqual(result.steps.map((step)=>step.dependsOn),[[],[0],[1]]);
+});

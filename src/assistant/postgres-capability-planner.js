@@ -182,6 +182,16 @@ function coverExplicitOrderReservation(steps,message,catalogue,pending){
   return steps;
 }
 
+function sequenceApprovedMutations(steps){
+  let prior=null;
+  for(const [index,step] of steps.entries()){
+    if(step.contract.kind!=='mutation')continue;
+    if(prior!==null&&!step.dependsOn.includes(prior))step.dependsOn.push(prior);
+    prior=index;
+  }
+  return steps;
+}
+
 async function plan(provider,message,{catalogue=registry,history=[],pending=null,page=null,workspace=null,
   recentChanges=[],deferReadFit=false,feedback=null}={}){
   if(!provider)return {steps:[],clarifyingQuestion:'StockChief cannot interpret free-form requests while its reasoning connection is unavailable. Nothing changed.'};
@@ -233,6 +243,7 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
   if(selected.steps.length){
     groundedMoneyArguments(selected.steps,message,pending);
     coverExplicitOrderReservation(selected.steps,message,catalogue,pending);
+    sequenceApprovedMutations(selected.steps);
   }
   // Read-only plans can be checked against actual evidence by the answer
   // stage, which can request a broader registered read when needed.
@@ -267,6 +278,7 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
         if(selected.steps.length){
           groundedMoneyArguments(selected.steps,message,pending);
           coverExplicitOrderReservation(selected.steps,message,catalogue,pending);
+          sequenceApprovedMutations(selected.steps);
         }
         if(selected.steps.length){
           fit=await provider.complete({system:FIT_SYSTEM,prompt:JSON.stringify(candidate()),
@@ -286,4 +298,4 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
 }
 
 module.exports={schemaFor,systemFor,planningCatalogue,parseSteps,plan,
-  groundedMoneyArguments,coverExplicitOrderReservation};
+  groundedMoneyArguments,coverExplicitOrderReservation,sequenceApprovedMutations};
