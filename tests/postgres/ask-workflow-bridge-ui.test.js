@@ -543,12 +543,18 @@ test('Ask browser controls a real customer order, payment, and return through th
     const ordered=(await database.query('SELECT status FROM purchase_orders WHERE workspace_id=$1 AND id=$2',
       [ctx.workspaceId,purchase.purchaseOrderId])).rows[0];
     assert.equal(ordered.status,'ORDERED');
+    const incomingBeforeCancel=(await assistant.lookup(database,ctx,{view:'inventory',search:skuCode})).rows[0];
+    assert.ok(incomingBeforeCancel.incomingOnPurchaseOrders>=7);
+    assert.equal(incomingBeforeCancel.incoming,
+      incomingBeforeCancel.incomingOnPurchaseOrders+incomingBeforeCancel.incomingOnTransfers);
     const cancelPurchase=`Cancel ${purchase.poNumber}; the supplier says it cannot ship`;
     plans.set(cancelPurchase,step('purchase_order.cancel',{recordReference:purchase.poNumber,
       reason:'Supplier cannot ship'}));
     await prepareAndApprove(page,base,database,ctx.workspaceId,cancelPurchase,'purchase_order.cancel');
     assert.equal((await database.query('SELECT status FROM purchase_orders WHERE workspace_id=$1 AND id=$2',
       [ctx.workspaceId,purchase.purchaseOrderId])).rows[0].status,'CANCELLED');
+    const incomingAfterCancel=(await assistant.lookup(database,ctx,{view:'inventory',search:skuCode})).rows[0];
+    assert.equal(incomingBeforeCancel.incomingOnPurchaseOrders-incomingAfterCancel.incomingOnPurchaseOrders,7);
     const uiPurchase=await workflows.createPurchaseOrder(database,ctx,{supplierId:supplier.id,
       destinationLocationId:place.id,idempotencyKey:'ask-workflow-ui-purchase',
       lines:[{skuId:item.skuIds[0],quantityUnits:1,unitCost:10,destinationLocationId:place.id}]});

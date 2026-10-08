@@ -242,7 +242,7 @@ for(const [name,required] of Object.entries(REQUIRED)){
 }
 
 const READS={
-  inventory:'Current SKU stock across the business, including on-hand, committed, available-to-fulfill quantities, incoming, and stock locations.',
+  inventory:'Current SKU stock across the business, including on-hand, committed, available-to-fulfill quantities, incoming separated into purchase-order and transfer sources, and stock locations.',
   inventory_positions:'Current on-hand stock by product and location only. It does not account for commitments and cannot establish what is available to ship.',
   inventory_movements:'Recorded stock movements.',
   inventory_valuation:'Current recorded inventory book cost by product and location; distinct from supplier purchase quotes.',
@@ -254,7 +254,7 @@ const READS={
   purchase_orders:'Read supplier purchase orders, deliveries, linked invoice documents including disputes and exceptions, and the actually posted open payable; PO planned cost and disputed documents are not posted debt.',
   transfers:'Read tracked inventory transfers, their exact workflow state, source and destination, units held at source, departed/in transit, physically received, and unresolved loss or damage. An approved transfer has not physically left.',
   customer_returns:'Read customer returns and their lifecycle, original sale, authorized, physically received and inspected quantities, disposition, and posted cash refund versus unpaid-invoice credit. A return request alone is not a receipt or refund.',
-  sales_orders:'Read recorded customer orders with ordered, held, fulfilled and open units, invoice and payment balances, and posted sale revenue, product cost and gross profit from fulfillment journals; answers do not change business records.',
+  sales_orders:'Read recorded customer orders, their product lines, per-unit prices and draft order total, ordered, held, fulfilled and open units, invoice and payment balances, and posted sale revenue, product cost and gross profit from fulfillment journals; answers do not change business records.',
   sales_activity:'Recorded customer order and sales activity for supported time windows.',
   suppliers:'Supplier records.',customers:'Customer records.',shipping:'Shipping records.',
   payments:'Recorded payment transactions.',payables:'Open supplier bill balances.',

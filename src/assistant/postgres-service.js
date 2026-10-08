@@ -752,20 +752,27 @@ async function lookup(database,ctx,request,options={}) {
       ) sources GROUP BY sku_id)
     SELECT i.id,i.name,s.code,s.variant_label,COALESCE(SUM(b.on_hand),0) AS on_hand,
       COALESCE(c.quantity,0) AS committed,COALESCE(inc.quantity,0) AS incoming,
+      COALESCE(pi.quantity,0) AS purchase_incoming,
+      COALESCE(ti.quantity,0) AS transfer_incoming,
       COALESCE(costed.quantity,0) AS costed_units,
       COALESCE(STRING_AGG(DISTINCT l.name, ', ') FILTER (WHERE b.on_hand<>0),'') AS locations
     FROM items i JOIN skus s ON s.item_id=i.id LEFT JOIN balances b ON b.sku_id=s.id
     LEFT JOIN locations l ON l.id=b.location_id AND l.workspace_id=b.workspace_id
     LEFT JOIN committed c ON c.sku_id=s.id LEFT JOIN incoming inc ON inc.sku_id=s.id
+    LEFT JOIN purchase_incoming pi ON pi.sku_id=s.id
+    LEFT JOIN transfer_incoming ti ON ti.sku_id=s.id
     LEFT JOIN costed ON costed.sku_id=s.id
     WHERE i.workspace_id=$1 AND i.is_active=1 AND ($2::text IS NULL OR i.name ILIKE ANY($3::text[])
       OR s.code ILIKE ANY($3::text[]) OR COALESCE(s.variant_label,'') ILIKE ANY($3::text[]))
-    GROUP BY i.id,s.id,c.quantity,inc.quantity,costed.quantity ORDER BY i.name,s.position LIMIT 100`,
+    GROUP BY i.id,s.id,c.quantity,inc.quantity,pi.quantity,ti.quantity,costed.quantity
+    ORDER BY i.name,s.position LIMIT 100`,
   [ctx.workspaceId,search,lookupSearchPatterns(search)])).rows.map((row)=>{
       const onHand=Number(row.on_hand),committed=Number(row.committed),incoming=Number(row.incoming),
         costedUnits=Number(row.costed_units);
       return evidenceRow({product:row.variant_label?`${row.name} · ${row.variant_label}`:row.name,sku:row.code,
-        onHand,committed,available:Math.max(0,onHand-committed),incoming,costedUnits,
+        onHand,committed,available:Math.max(0,onHand-committed),incoming,
+        incomingOnPurchaseOrders:Number(row.purchase_incoming),incomingOnTransfers:Number(row.transfer_incoming),
+        costedUnits,
         unitsMissingCost:Math.max(0,onHand-costedUnits),locations:row.locations||'No stock location'},`/inventory/${row.id}`);
     });
   const totals=rows.reduce((sum,row)=>({onHand:sum.onHand+row.onHand,committed:sum.committed+row.committed,
@@ -775,7 +782,8 @@ async function lookup(database,ctx,request,options={}) {
   const missingCost=rows.reduce((sum,row)=>sum+row.unitsMissingCost,0);
   const costWarning=missingCost?` ${missingCost} on-hand units have no recorded inventory cost and cannot be posted as a sale until their cost is established.`:'';
   return {answer:rows.length?`${rows.length} SKU${rows.length===1?'':'s'} matched with ${totals.onHand.toLocaleString('en-US')} units on hand, ${totals.committed.toLocaleString('en-US')} committed, ${totals.available.toLocaleString('en-US')} available and ${totals.incoming.toLocaleString('en-US')} incoming.${where}${costWarning}`:
-    'No product or SKU matched that request.',rows,columns:['product','sku','onHand','committed','available','incoming','costedUnits','unitsMissingCost','locations']};
+    'No product or SKU matched that request.',rows,columns:['product','sku','onHand','committed','available',
+      'incoming','incomingOnPurchaseOrders','incomingOnTransfers','costedUnits','unitsMissingCost','locations']};
 }
 
 const MATCH_NOTHING=new Set(['the','our','my','this','that','some','item','items','product','products','unit','units']);
