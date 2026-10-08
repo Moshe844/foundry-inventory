@@ -112,10 +112,18 @@ async function resume(database,ctx,proposalId,{service,provider,rawProvider,reco
           ?{...stored.args,recordReference:produced[0].args.recordReference}:stored.args;
         const executionArgs=await scopeReadToRelatedParty(database,ctx,steps,next,contract,
           scopeReadToCompletedRecord(steps,next,contract,mutationArgs));
-        let outcome=await executeStep(service,database,{...ctx,planStepKey:`plan:${claimed.id}:${next}`},
-          {contract,args:executionArgs,dependsOn:stored.dependsOn,continuesPending:false},
-          {actor,provider,rawProvider,sourceMessage:claimed.source_message,pending:null,page:null,
-            usageKey:`plan:${claimed.id}:${next}`,dependencyArgs});
+        let outcome;
+        try{
+          outcome=await executeStep(service,database,{...ctx,planStepKey:`plan:${claimed.id}:${next}`},
+            {contract,args:executionArgs,dependsOn:stored.dependsOn,continuesPending:false},
+            {actor,provider,rawProvider,sourceMessage:claimed.source_message,pending:null,page:null,
+              usageKey:`plan:${claimed.id}:${next}`,dependencyArgs});
+        }catch(error){
+          console.warn('[stockchief] Ask plan step failed',JSON.stringify({
+            capability:stored.capability,code:error.code||error.name||'unknown',
+          }));
+          throw error;
+        }
         // A read resumed after approval must answer the owner's original
         // question from its rows, just like a standalone Ask read. The raw
         // query's generic count is not an answer to requested measurements.
