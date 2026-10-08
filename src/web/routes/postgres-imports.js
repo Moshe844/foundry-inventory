@@ -56,6 +56,19 @@ function createPostgresImportsRouter(database,{provider=null}={}){
       duplicatePlans,run,locations:locationRows,mappingRows,fieldOptions:fields.FIELDS,page,pageSize:PAGE_SIZE,filter,
     });
   }));
+  router.post('/imports/:id/revise',asyncRoute(async(req,res)=>{
+    try{
+      const plan=await imports.get(database,req.ctx.workspaceId,req.params.id);
+      const locationMappings=Object.fromEntries(plan.conflicts.map((conflict,index)=>
+        [conflict.text,trimOrNull(req.body[`location_${index}`])]).filter((entry)=>entry[1]));
+      const quantityOverrides=Object.fromEntries(Object.entries(req.body).filter(([key,value])=>
+        /^quantity_\d+$/.test(key)&&trimOrNull(value)).map(([key,value])=>[key.slice(9),String(value).trim()]));
+      await imports.revise(database,req.ctx,plan.id,{expectedHash:trimOrNull(req.body.integrityHash),
+        locationMappings,quantityOverrides});
+      req.flash('success','Preview corrected and recalculated. Review all rows again before approving.');
+    }catch(error){if(!(error instanceof ValidationError))throw error;req.flash('error',error.message);}
+    return res.redirect(303,`/imports/${req.params.id}`);
+  }));
   router.post('/imports/:id/approve',asyncRoute(async(req,res)=>{
     try {await imports.approve(database,req.ctx,req.params.id,trimOrNull(req.body.integrityHash));
       req.flash('success','Preview approved. Nothing has been created yet.');}

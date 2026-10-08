@@ -96,14 +96,18 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     const problems=[];
     const code=trimOrNull(textCell(row,mappings.code));
     const name=trimOrNull(textCell(row,mappings.name)) || code;
-    const quantityRead=rowValues.readQuantity(textCell(row,mappings.quantity));
+    const quantitySource=Object.hasOwn(input.quantityOverrides||{},row.sourceRow)
+      ?input.quantityOverrides[row.sourceRow]:textCell(row,mappings.quantity);
+    const quantityRead=rowValues.readQuantity(quantitySource);
     let quantity=quantityRead.ok ? quantityRead.value : null;
     if(!quantityRead.ok)problems.push(problem(quantityRead.problem,'Quantity must be a whole number of zero or more.'));
     const locationText=trimOrNull(textCell(row,mappings.location));
     let location=defaultLocation;
     if(locationText){
+      const mapped=context.locations.find((candidate)=>candidate.id===input.locationMappings?.[locationText]);
       const matches=context.locationByName.get(locationText.toLowerCase()) || [];
-      if(matches.length===1)location=matches[0];
+      if(mapped)location=mapped;
+      else if(matches.length===1)location=matches[0];
       else {
         location=null;
         unknownLocations.set(locationText,(unknownLocations.get(locationText) || 0)+1);
@@ -249,6 +253,56 @@ async function duplicates(database, workspaceId, plan) {
     WHERE p.workspace_id=$1 AND p.source_hash=$2 AND p.id<>$3 AND p.status='SUCCEEDED'
     ORDER BY COALESCE(p.completed_at,p.created_at) DESC`,[workspaceId,plan.sourceHash,plan.id]);
   return result.rows;
+}
+
+async function revise(database,ctx,id,input={}){
+  await assertOperator(database,ctx);
+  return database.transaction(async(client)=>{
+    const saved=(await client.query('SELECT * FROM import_plans WHERE workspace_id=$1 AND id=$2 FOR UPDATE',
+      [ctx.workspaceId,id])).rows[0];
+    if(!saved)throw new NotFoundError('That import could not be found.');
+    const plan=hydratePlan(saved);
+    if(plan.status!=='READY'||plan.approvalStatus!=='AWAITING_APPROVAL')
+      throw new ValidationError('Only an unapproved preview can be corrected.');
+    if(plan.integrityHash!==input.expectedHash)throw new ValidationError('The preview changed. Review it before correcting rows.');
+    const current=(await client.query(`SELECT * FROM import_rows WHERE workspace_id=$1 AND import_id=$2
+      ORDER BY row_number,id FOR UPDATE`,[ctx.workspaceId,id])).rows.map(hydrateRow);
+    const allowedLocations=new Set(plan.conflicts.map((entry)=>entry.text));
+    const locationMappings={...plan.locationMappings};
+    for(const [source,value] of Object.entries(input.locationMappings||{})){
+      if(!allowedLocations.has(source))throw new ValidationError('That source location is not in this preview.');
+      if(value)locationMappings[source]=String(value);
+    }
+    const quantityOverrides={...(plan.transformations.quantityOverrides||{})};
+    const rowNumbers=new Set(current.map((row)=>String(row.rowNumber)));
+    for(const [number,value] of Object.entries(input.quantityOverrides||{})){
+      if(!rowNumbers.has(String(number)))throw new ValidationError('That row is not in this preview.');
+      if(String(value).trim())quantityOverrides[number]=String(value).trim();
+    }
+    const context=await workspaceContext(client,ctx.workspaceId);
+    if(Object.values(locationMappings).some((value)=>!context.locations.some((row)=>row.id===value)))
+      throw new ValidationError('Choose a location in this inventory for each correction.');
+    const sheet={rows:current.map((row)=>({cells:row.raw,sourceRow:row.rowNumber}))};
+    const validated=validateRows(sheet,plan.fieldMappings,
+      {detectedType:plan.detectedType,axisNames:plan.transformations.axisNames||{}},context,
+      {defaultLocationId:plan.defaultLocationId,locationMappings,quantityOverrides});
+    const revised={...plan,locationMappings,transformations:{...plan.transformations,quantityOverrides},
+      recordsValid:validated.summary.valid,recordsInvalid:validated.summary.invalid,
+      warnings:validated.summary.invalid?[`${validated.summary.invalid} row(s) need correction before they can be imported.`]:[],
+      conflicts:validated.conflicts,planVersion:plan.planVersion+1};
+    revised.integrityHash=integrityFor(revised,validated.rows);
+    await client.query(`UPDATE import_plans SET location_mappings=$3::jsonb,transformations=$4::jsonb,
+      records_valid=$5,records_invalid=$6,warnings=$7::jsonb,conflicts=$8::jsonb,
+      plan_version=$9,integrity_hash=$10 WHERE workspace_id=$1 AND id=$2`,
+    [ctx.workspaceId,id,JSON.stringify(locationMappings),JSON.stringify(revised.transformations),
+      revised.recordsValid,revised.recordsInvalid,JSON.stringify(revised.warnings),JSON.stringify(revised.conflicts),
+      revised.planVersion,revised.integrityHash]);
+    for(const row of validated.rows)await client.query(`UPDATE import_rows SET parsed=$4::jsonb,status=$5,
+      problems=$6::jsonb,location_id=$7,quantity=$8 WHERE workspace_id=$1 AND import_id=$2 AND row_number=$3`,
+    [ctx.workspaceId,id,row.rowNumber,JSON.stringify(row.parsed),row.status,JSON.stringify(row.problems),
+      row.parsed.locationId,row.parsed.quantity]);
+    return revised;
+  },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 
 async function approve(database, ctx, id, expectedHash) {
@@ -399,6 +453,6 @@ async function cancel(database, ctx, id) {
   if(!result.rows.length)throw new ValidationError('Only an import waiting to run can be cancelled.');
 }
 
-module.exports={analyse,get,list,rowsFor,counts,duplicates,approve,execute,report,cancel,hydratePlan,hydrateRow};
+module.exports={analyse,get,list,rowsFor,counts,duplicates,revise,approve,execute,report,cancel,hydratePlan,hydrateRow};
 require('../commercial/enforcement').guardExports(module.exports,0,1,{analyse:'imports.spreadsheet',approve:'imports.spreadsheet',
-  execute:'imports.spreadsheet',cancel:'imports.spreadsheet'});
+  revise:'imports.spreadsheet',execute:'imports.spreadsheet',cancel:'imports.spreadsheet'});

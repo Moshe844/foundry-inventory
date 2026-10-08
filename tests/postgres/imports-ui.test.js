@@ -103,6 +103,42 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
     assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM skus WHERE workspace_id=$1
       AND code IN ('LAB-PT-012','LAB-BN-015','LAB-PC-022')`,[identity.workspace_id])).rows[0].count,3);
 
+    await page.goto(`${base}/ask`);
+    const correctionSource=Buffer.from('Product,SKU,Location,Quantity\nCorrected Tape,CORR-TAPE,Old Warehouse,6\nCorrected Valve,CORR-VALVE,Old Warehouse,invalid\n');
+    await page.locator('input[type="file"][name="file"]').setInputFiles({
+      name:'needs-correction.csv',mimeType:'text/csv',buffer:correctionSource});
+    await Promise.all([page.waitForURL(/\/imports\/imp_/),page.getByRole('button',{name:'Continue'}).click()]);
+    assert.match(await page.locator('main').innerText(),/2 rows read · 0 ready · 2 need correction/);
+    const correctionId=page.url().split('/').at(-1);
+    const staleHash=(await imports.get(database,identity.workspace_id,correctionId)).integrityHash;
+    const other=await browser.newPage();
+    await other.goto(`${base}/register`);
+    await other.getByLabel('Business name').fill('Other Import Business');
+    await other.getByLabel('Your name').fill('Other Owner');
+    await other.getByLabel('Work email').fill('other-imports-pg@example.test');
+    await other.getByLabel('Password').fill('other-import-password');
+    await Promise.all([other.waitForURL(`${base}/onboarding`),other.getByRole('button',{name:'Create account'}).click()]);
+    const otherIdentity=(await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id FROM workspaces w
+      JOIN users u ON u.workspace_id=w.id JOIN accounts a ON a.id=u.account_id
+      WHERE a.email='other-imports-pg@example.test'`)).rows[0];
+    await assert.rejects(imports.revise(database,{workspaceId:otherIdentity.workspace_id,
+      actorId:otherIdentity.actor_id},correctionId,{expectedHash:staleHash}),/not be found/i);
+    await page.getByLabel(/Source location “Old Warehouse”/).selectOption({label:'Main Warehouse'});
+    await page.getByLabel(/Row 3 · Corrected Valve quantity/).fill('4');
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Recalculate preview'}).click()]);
+    assert.match(await page.locator('main').innerText(),/2 rows read · 2 ready · 0 need correction/);
+    await assert.rejects(imports.revise(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},
+      correctionId,{expectedHash:staleHash,locationMappings:{'Old Warehouse':'not-this-workspace'}}),
+    /preview changed/i);
+    assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM skus WHERE workspace_id=$1
+      AND code IN ('CORR-TAPE','CORR-VALVE')`,[identity.workspace_id])).rows[0].count,0);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve 2 rows'}).click()]);
+    await assert.rejects(imports.revise(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},
+      correctionId,{expectedHash:(await imports.get(database,identity.workspace_id,correctionId)).integrityHash}),
+    /unapproved preview/i);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Import and verify'}).click()]);
+    assert.match(await page.locator('main').innerText(),/2 rows created 2 products, 2 SKUs and 10 opening units/);
+
     const failing=await imports.analyse(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},{
       text:'Product,SKU,Location,Quantity\nRollback One,RB-1,Main Warehouse,3\nRollback Two,RB-2,Main Warehouse,4\n',
       filename:'rollback.csv'});

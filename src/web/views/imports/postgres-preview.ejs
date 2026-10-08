@@ -30,6 +30,25 @@
     </div></div>
   </div>
 <% } %>
+<% if(plan.status==='READY' && plan.approvalStatus==='AWAITING_APPROVAL' && plan.recordsInvalid){ %>
+  <div class="card section"><div class="card-head"><h2>Correct the preview</h2></div>
+    <div class="card-body"><p>No stock changes while you correct source locations or invalid quantities. Review the recalculated rows before approval.</p>
+      <form method="post" action="/imports/<%= plan.id %>/revise" class="stack-form">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>">
+        <% plan.conflicts.forEach(function(conflict,index){ %><label class="field"><span class="field-label">Source location “<%= conflict.text %>” (<%= conflict.count %> <%= helpers.plural(conflict.count,'row') %>)</span>
+          <select name="location_<%= index %>" class="select"><option value="">Leave unresolved</option>
+            <% locations.forEach(function(location){ %><option value="<%= location.id %>" <%= plan.locationMappings[conflict.text]===location.id?'selected':'' %>><%= location.name %></option><% }) %>
+          </select></label><% }) %>
+        <% rows.filter(function(row){return row.status==='INVALID' && row.problems.some(function(item){return ['bad_quantity','negative_quantity','fractional_quantity'].includes(item.code);});}).forEach(function(row){ %>
+          <label class="field"><span class="field-label">Row <%= row.rowNumber %> · <%= row.parsed.name || row.parsed.code || 'product' %> quantity</span>
+            <input class="input" name="quantity_<%= row.rowNumber %>" type="number" min="0" step="1" value="<%= plan.transformations.quantityOverrides?.[row.rowNumber] || '' %>" placeholder="Whole units"></label>
+        <% }) %>
+        <button class="btn btn--primary" type="submit">Recalculate preview</button>
+      </form>
+    </div>
+  </div>
+<% } %>
 <div class="card section"><div class="card-head"><h2>How the columns were read</h2></div>
   <table class="table table--tight"><thead><tr><th>Source column</th><th>Meaning</th></tr></thead><tbody>
     <% mappingRows.forEach(function(row){ %><tr><td><%= row.column %></td><td><%= row.field ? (fieldOptions.find(function(field){return field.id===row.field;}) || {}).label : 'Not imported' %></td></tr><% }) %>
