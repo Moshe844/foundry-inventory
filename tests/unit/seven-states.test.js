@@ -46,6 +46,8 @@ test('the labels for the seven states are distinct', () => {
   assert.match(ledger.statusLabelFor('unavailable', {}).label, /could not be reached/);
   assert.match(ledger.statusLabelFor('failed', { reason: 'lookup_failed' }).label, /lookup itself failed/);
   assert.match(ledger.statusLabelFor('answered', { reason: 'no_match' }).label, /nothing on file/);
+  assert.match(ledger.statusLabelFor('clarify', { reason: 'daily_safety_limit' }).label,
+    /Paused until the daily AI reset/);
 });
 
 test('an action question says whether something is missing, ambiguous, or nothing on file', async () => {

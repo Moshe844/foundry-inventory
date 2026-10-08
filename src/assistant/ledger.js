@@ -55,6 +55,7 @@ const REASON_LABEL = {
   'clarify:unverified': 'Could not verify from these records',
   'clarify:unavailable': 'Could not answer right now',
   'clarify:unsupported': 'Not available — no action taken',
+  'clarify:daily_safety_limit': 'Paused until the daily AI reset',
   'answered:no_match': 'Answered — nothing on file',
   'failed:lookup_failed': 'Not done — the lookup itself failed',
   'failed:execution_failed': 'Not done — the change failed',

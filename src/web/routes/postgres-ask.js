@@ -92,7 +92,8 @@ function resultFor(turn,proposal=null){
   return {question:turn.message,answer,spoken:null,progressiveDisclosure:false,rows,columns,
     rowCount:rows.length,totalMatches:rows.length,sections:[],supported:turn.status!=='CLARIFY',
     general:turn.intent?.view==='general_knowledge',answerReason:turn.intent?.presentation?.reason||null,isAction:false,
-    needsClarification:turn.status==='CLARIFY'&&!['unverified','unavailable','unsupported'].includes(turn.intent?.presentation?.reason),
+    needsClarification:turn.status==='CLARIFY'&&
+      !['unverified','unavailable','unsupported','daily_safety_limit'].includes(turn.intent?.presentation?.reason),
     choices:turn.intent?.presentation?.choices||[],emailFlow:turn.intent?.presentation?.emailFlow||null,
     emailProposal,
     handoff:proposal&&proposal.status!=='PENDING'?null:emailProposal?null:
