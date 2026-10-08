@@ -135,11 +135,19 @@ function planningCatalogue(catalogue=registry,{compact=false}={}){
 
 function systemFor(catalogue=registry,{compact=false}={}){return `${PLANNING_RULES}\nRegistered capability contracts: ${JSON.stringify(planningCatalogue(catalogue,{compact}))}`;}
 
+async function completeWithOutputRetry(provider,request){
+  try{return await provider.complete(request);}
+  catch(error){if(error.code!=='ai_invalid_output')throw error;
+    // A malformed model response is not a business rejection. Retry once
+    // under the same bounded provider budget; no business effect has run.
+    return provider.complete(request);}
+}
+
 async function completeRepair(provider,catalogue,prompt){
   const request={prompt:JSON.stringify(prompt),schema:schemaFor(catalogue),schemaName:'stockchief_capability_plan'};
-  try{return await provider.complete({...request,system:systemFor(catalogue)});}
+  try{return await completeWithOutputRetry(provider,{...request,system:systemFor(catalogue)});}
   catch(error){if(error.code!=='rate_limited'||error.limitKind==='daily_model_attempts')throw error;
-    return provider.complete({...request,system:systemFor(catalogue,{compact:true})});}
+    return completeWithOutputRetry(provider,{...request,system:systemFor(catalogue,{compact:true})});}
 }
 
 function parseSteps(raw,catalogue=registry){
@@ -275,13 +283,13 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
     executionFeedback:feedback||null,
     currentPage:page||null};
   let response;
-  try{response=await provider.complete({system:systemFor(catalogue),prompt:JSON.stringify(context),
+  try{response=await completeWithOutputRetry(provider,{system:systemFor(catalogue),prompt:JSON.stringify(context),
     schema:schemaFor(catalogue),schemaName:'stockchief_capability_plan'});}
   catch(error){if(error.code!=='rate_limited'||error.limitKind==='daily_model_attempts')throw error;
     const smaller={...context,recentChanges:context.recentChanges.slice(0,2),
       conversation:context.conversation.slice(-2).map((entry)=>({
         ...entry,message:entry.message.slice(0,180),answer:entry.answer.slice(0,120)}))};
-    response=await provider.complete({system:systemFor(catalogue,{compact:true}),
+    response=await completeWithOutputRetry(provider,{system:systemFor(catalogue,{compact:true}),
       prompt:JSON.stringify(smaller),schema:schemaFor(catalogue),schemaName:'stockchief_capability_plan'});
   }
   const invalid=(response.data?.steps||[]).flatMap((step)=>{
@@ -346,11 +354,11 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
           inputMode:step.contract.fields.length?'typed_arguments':'full_owner_message',
           dependsOn:step.dependsOn,
           continuesPending:step.continuesPending}))});
-      let fit=await provider.complete({system:FIT_SYSTEM,prompt:JSON.stringify(candidate()),
+      let fit=await completeWithOutputRetry(provider,{system:FIT_SYSTEM,prompt:JSON.stringify(candidate()),
         schema:FIT_SCHEMA,schemaName:'stockchief_capability_fit',maxOutputTokens:384});
       if(fit.data?.aligned===false){
         if(verificationProvider){
-          const stronger=await verificationProvider.complete({system:FIT_SYSTEM,
+          const stronger=await completeWithOutputRetry(verificationProvider,{system:FIT_SYSTEM,
             prompt:JSON.stringify(candidate()),schema:FIT_SCHEMA,
             schemaName:'stockchief_capability_fit',maxOutputTokens:384});
           if(stronger.data?.aligned===true)return selected;
@@ -371,11 +379,11 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
           sequenceApprovedMutations(selected.steps);
         }
         if(selected.steps.length){
-          fit=await provider.complete({system:FIT_SYSTEM,prompt:JSON.stringify(candidate()),
+          fit=await completeWithOutputRetry(provider,{system:FIT_SYSTEM,prompt:JSON.stringify(candidate()),
             schema:FIT_SCHEMA,schemaName:'stockchief_capability_fit',maxOutputTokens:384});
           if(fit.data?.aligned===false){
             if(verificationProvider){
-              const stronger=await verificationProvider.complete({system:FIT_SYSTEM,
+              const stronger=await completeWithOutputRetry(verificationProvider,{system:FIT_SYSTEM,
                 prompt:JSON.stringify(candidate()),schema:FIT_SCHEMA,
                 schemaName:'stockchief_capability_fit',maxOutputTokens:384});
               if(stronger.data?.aligned===true)return selected;
@@ -384,7 +392,7 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
               // under the existing cost ceiling, then independently verify it.
               // The resolver and approval gate still validate every write.
               try{
-                const alternative=await provider.complete({system:systemFor(catalogue,{compact:true}),
+                const alternative=await completeWithOutputRetry(provider,{system:systemFor(catalogue,{compact:true}),
                   prompt:JSON.stringify({...context,rejectedPlan:repaired.data,
                     validationErrors:[{issue:'The proposed plan failed independent capability-fit checks.',
                       fastReason:String(fit.data.reason||'').slice(0,240),
@@ -399,7 +407,7 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
                   collapseRepeatedEffects(retry.steps);
                   sequenceApprovedMutations(retry.steps);
                   selected=retry;
-                  const finalFit=await verificationProvider.complete({system:FIT_SYSTEM,
+                  const finalFit=await completeWithOutputRetry(verificationProvider,{system:FIT_SYSTEM,
                     prompt:JSON.stringify(candidate()),schema:FIT_SCHEMA,
                     schemaName:'stockchief_capability_fit',maxOutputTokens:384});
                   if(finalFit.data?.aligned===true)return selected;

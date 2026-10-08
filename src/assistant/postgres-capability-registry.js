@@ -71,7 +71,7 @@ const FIELDS=Object.freeze({
   recordReference:{type:'string',description:'The stated name, number, or ID of a business record.'},
   rate:{type:'string',description:'One exact quoted carrier rate ID or carrier and service name.'},
   paymentPurpose:{type:'string',description:'The requested payment-link purpose, such as balance or full.'},
-  returnResolution:{type:'string',description:'Refund, exchange, or no refund for a customer return.'},
+  returnResolution:{type:'string',description:'One exact customer-return resolution: REFUND (also invoice credit), EXCHANGE, or NO_REFUND.'},
   refundDestination:{type:'string',description:'Refund destination: the unpaid receivable (AR) or money paid back (CASH).'},
   disposition:{type:'string',description:'Physical return disposition: restock, scrap, or repair.'},
   handover:{type:'string',description:'Physical shipping handoff: carrier, collected, or delivered by us.'},

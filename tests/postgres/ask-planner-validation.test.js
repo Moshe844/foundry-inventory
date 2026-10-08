@@ -4,6 +4,19 @@ const test=require('node:test');
 const assert=require('node:assert/strict');
 const planner=require('../../src/assistant/postgres-capability-planner');
 
+test('malformed model output retries once without turning a supported read into unavailable',async()=>{
+  let attempts=0;
+  const provider={async complete(){
+    attempts+=1;
+    if(attempts===1)throw Object.assign(new Error('Malformed model response'),{code:'ai_invalid_output'});
+    return {data:{steps:[{capability:'read.locations',arguments:[],dependsOn:[],continuesPending:false}],
+      clarifyingQuestion:''}};
+  }};
+  const result=await planner.plan(provider,'Which inventory locations exist?',{deferReadFit:true});
+  assert.equal(attempts,2);
+  assert.equal(result.steps[0].contract.name,'read.locations');
+});
+
 test('a single navigation request cannot produce two competing page jumps',async()=>{
   let attempts=0;
   const step=(capability)=>({capability,arguments:[],dependsOn:[],continuesPending:false});

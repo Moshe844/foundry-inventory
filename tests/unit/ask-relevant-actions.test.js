@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const control = require('../../src/assistant/postgres-control-plane');
 const registry = require('../../src/assistant/postgres-capability-registry').registry;
+const workflow = require('../../src/assistant/postgres-workflow-capabilities');
 
 test('return guidance includes governed return lifecycle rather than generic receipt', () => {
   const actions = control.relevantActions(registry,
@@ -44,4 +45,11 @@ test('explicit read-only intent removes every write from planning while preservi
   assert.equal(scoped.get('customer_return.request'), null);
   assert.ok(scoped.get('read.capabilities'));
   assert.ok(scoped.get('read.locations'));
+});
+
+test('return resolution normalizes an invoice credit without guessing an ambiguous outcome', () => {
+  assert.equal(workflow.returnResolution('credit the unpaid invoice after inspection'), 'REFUND');
+  assert.equal(workflow.returnResolution('exchange'), 'EXCHANGE');
+  assert.equal(workflow.returnResolution('NO_REFUND'), 'NO_REFUND');
+  assert.throws(() => workflow.returnResolution('refund or exchange'), /Choose refund/);
 });

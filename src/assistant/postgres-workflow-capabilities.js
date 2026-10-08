@@ -224,6 +224,17 @@ async function label(database,ctx,shipment,args){
     'Approval queues the provider purchase; delivery is not yet confirmed.');
 }
 
+function returnResolution(value){
+  const raw=String(value||'REFUND').trim().toUpperCase().replace(/[\s-]+/g,'_');
+  if(['REFUND','EXCHANGE','NO_REFUND'].includes(raw))return raw;
+  const words=new Set(raw.split(/[^A-Z]+/).filter(Boolean));
+  const refund=words.has('REFUND')||words.has('CREDIT');
+  const exchange=words.has('EXCHANGE');
+  if(refund&&!exchange&&!words.has('NO')&&!words.has('NOT')&&!words.has('WITHOUT'))return 'REFUND';
+  if(exchange&&!refund)return 'EXCHANGE';
+  throw new ValidationError('Choose refund, exchange, or no refund as the return resolution.');
+}
+
 async function returnRequest(database,ctx,order,args){
   requireState(order,['FULFILLED','PARTIALLY_FULFILLED'],'This customer order');
   if(!args.reason)throw new ValidationError('State why the customer is returning the goods.');
@@ -247,9 +258,7 @@ async function returnRequest(database,ctx,order,args){
   const line=eligible[0],quantity=positive(args.quantity,'Return quantity');
   if(quantity>Number(line.quantity_fulfilled)-Number(line.already_returned))throw new ValidationError(
     'The return quantity exceeds fulfilled units not already in another return.');
-  const resolution=String(args.returnResolution||'REFUND').trim().toUpperCase().replace(/[\s-]+/g,'_');
-  if(!['REFUND','EXCHANGE','NO_REFUND'].includes(resolution))throw new ValidationError(
-    'Choose refund, exchange, or no refund as the return resolution.');
+  const resolution=returnResolution(args.returnResolution);
   return prepareResult({salesOrderId:order.id,quarantineLocationId:place[0].id,resolution,
     reason:args.reason,lines:[{salesOrderLineId:line.id,quantity}]},
   `Request return of ${quantity} × ${line.code} from ${order.order_number} into ${place[0].name}, `+
@@ -1390,4 +1399,4 @@ async function prepare(database,ctx,message,name,args,createProposal){
 }
 
 const EXECUTORS=Object.fromEntries(SPECS.map((spec)=>[spec.name,{execute:spec.execute,verify:spec.verify}]));
-module.exports={SPECS,EXECUTORS,prepare,record,RECORDS};
+module.exports={SPECS,EXECUTORS,prepare,record,RECORDS,returnResolution};
