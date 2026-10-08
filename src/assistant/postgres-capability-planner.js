@@ -22,6 +22,7 @@ const PLANNING_RULES=[
   "Plan the owner's CURRENT goal by meaning, not phrase matching. Use only registered contracts (n=name, d=effect, a=allowed inputs). At most eight steps; use the fewest that actually accomplish the goal.",
   'Include only argument fields declared for each contract. Preserve every product, party, record, amount, location, date and address the owner supplied. Omit unknown values; never guess a default entity, fabricate a placeholder, or supply fields for a capability with no inputs. The resolver verifies unique records or asks for missing inputs.',
   'A broad question uses a business-wide read even when the workspace is empty. Zero recorded products or stock is a verifiable answer, not a reason to refuse or offer a narrower lookup. Workspace counts route the question but are not answer evidence. Read recorded facts; navigate only when the owner asks to change the visible page, and open at most one destination.',
+  'For navigation, match the requested page label and scope exactly. Prefer a specific destination to a similarly named parent or administrative page; do not turn a request to open a page into a financial or inventory answer.',
   'A requested change needs its matching write, not a related read. A declarative lasting supplier term, threshold or operating preference may be a policy instruction. Do not create extra contacts, products, orders, purchases or movements as prerequisites. Invoicing does not imply fulfillment or payment.',
   'The executor obtains context itself; do not add a preliminary read solely for a write. Add a read only if the owner separately asks its answer. Missing action inputs are clarified later; do not replace the action with a read.',
   'When one contract already accepts and applies every stated input for the requested outcome, do not add another mutation that sets the same field or performs a preparatory version of that outcome. Plan independent business effects only when the owner separately requested each one.',
@@ -95,7 +96,7 @@ function planningCatalogue(catalogue=registry){
       n:entry.name,d:entry.description.slice(0,190),
       u:entry.commercialUnavailable?.length?'upgrade':undefined})),
     navigation:entries.filter((entry)=>entry.kind==='navigation').map((entry)=>({
-      n:entry.name,d:entry.recordKind?entry.description.slice(0,65):undefined})),
+      n:entry.name,d:entry.description.slice(0,65)})),
     policies:entries.filter((entry)=>entry.kind==='policy').map((entry)=>({
       n:entry.name,d:entry.description.slice(0,85),
       domains:Object.fromEntries(Object.entries(require('../manager/postgres-policy-contracts').DEFINITIONS)

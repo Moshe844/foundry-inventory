@@ -81,8 +81,17 @@ async function describe(database,ctx){
   const productCount=canCreateProduct?(await database.query(
     'SELECT COUNT(*)::int AS total FROM items WHERE workspace_id=$1 AND is_active=1',[ctx.workspaceId]
   )).rows[0].total:null;
+  const seenDomains=new Set();
+  const representativeActions=selected.filter((entry)=>entry.kind==='mutation').filter((entry)=>{
+    const domain=entry.name.split('.')[0];
+    if(seenDomains.has(domain))return false;
+    seenDomains.add(domain);return true;
+  }).slice(0,7);
+  const highlights=[...selected.filter((entry)=>entry.kind==='read').slice(0,2),
+    ...representativeActions,...selected.filter((entry)=>entry.kind==='policy').slice(0,1),
+    ...selected.filter((entry)=>entry.kind==='navigation').slice(0,1)];
   const answer=selected.length
-    ?`I can help with ${selected.slice(0,4).map((entry)=>entry.label.toLowerCase()).join(', ')}. `+
+    ?`I can help with ${highlights.map((entry)=>entry.label.toLowerCase()).join(', ')}. `+
       (actions?'I will show you any change for approval before making it.':'I can show you the records you are allowed to see.')+
       (productCount===0?' You have no products yet; I can help add your first one.':'')
     :'I can help explain this inventory, but no additional actions are available to your account here.';

@@ -18,6 +18,11 @@ test('capability discovery remains compact while preserving action safety contra
   assert.ok(contract.description.toLowerCase().includes('supplier'));
   assert.match(planner.systemFor(),/approval/i);
   assert.match(planner.systemFor(),/resolver verifies unique records/i);
+  for(const [name,label] of [['navigate.accounting','Money'],['navigate.warehouse','Warehouse'],
+    ['navigate.shipping','Shipping setup']]){
+    const destination=catalogue.navigation.find((entry)=>entry.n===name);
+    assert.match(destination.d,new RegExp(label),`${name} must have a distinct destination label`);
+  }
 });
 
 for(const initial of ['read.suppliers','communication.send_email'])test(`semantic fit check rejects ${initial} when it misses the current goal`,async()=>{

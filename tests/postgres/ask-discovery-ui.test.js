@@ -91,6 +91,8 @@ test('Ask explains only verified registered capabilities and never changes busin
     assert.equal(response.status,303);
     const rendered=await agent.get('/ask');
     assert.match(rendered.text,/I can help with/);
+    assert.match(rendered.text,/stock receipt/i,
+      'capability discovery should represent executable work, not only its first four reads');
     assert.match(rendered.text,/no products yet; I can help add your first one/);
     assert.doesNotMatch(rendered.text,/create carrier labels|initiate bank transfers/i);
     const proposals=(await database.query('SELECT COUNT(*)::int AS total FROM stockchief_runtime.assistant_action_proposals')).rows[0];
