@@ -40,7 +40,7 @@ test('real Chromium and reasoning model discover actual capabilities without bus
     await page.getByLabel('Ask StockChief').fill('I am new here. What can you help me do in this business?');
     await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Continue'}).click()]);
     const reply=await page.locator('.rm-turn--latest + .rm-turn--foundry').innerText();
-    assert.match(reply,/I can help with/i);
+    assert.match(reply,/I can help you/i);
     assert.match(reply,/approval|records you are allowed to see/i);
     assert.doesNotMatch(reply,/carrier label|bank transfer|AI email draft/i);
     const proposals=(await database.query('SELECT COUNT(*)::int AS total FROM stockchief_runtime.assistant_action_proposals')).rows[0];

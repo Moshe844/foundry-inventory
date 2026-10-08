@@ -120,7 +120,10 @@ test('real Chromium Ask StockChief safely prepares and executes grounded custome
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM sales_orders WHERE workspace_id=$1`,
       [one.workspace_id])).rows[0].count,'0');
     let proposalHref=await page.locator('a',{hasText:'Review prepared change'}).last().getAttribute('href');
-    await page.goto(`${base}${proposalHref}`);assert.match(await page.locator('main').innerText(),/sales_order\.create/);
+    await page.goto(`${base}${proposalHref}`);const reviewText=await page.locator('main').innerText();
+    assert.match(reviewText,/sales_order\.create/);
+    assert.doesNotMatch(reviewText,/\[object Object\]/,'the approval must show nested order lines');
+    assert.match(reviewText,/"quantity": 4/);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve and execute'}).click()]);
     const salesOrder=(await database.query(`SELECT so.*,sol.quantity_ordered,sol.unit_price_minor FROM sales_orders so
       JOIN sales_order_lines sol ON sol.sales_order_id=so.id WHERE so.workspace_id=$1`,[one.workspace_id])).rows[0];

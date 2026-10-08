@@ -336,9 +336,9 @@ const LEGACY_CAPABILITIES={
 for(const contract of registry.list('mutation')){
   const commercialCapability=contract.commercialCapability||LEGACY_CAPABILITIES[contract.name]||null;
   if(contract.discovery){registry.entries.set(contract.name,Object.freeze({...contract,commercialCapability}));continue;}
-  const name=contract.name.replace(/[._]/g,' ');
-  const discovery=Object.freeze({label:name[0].toUpperCase()+name.slice(1),
-    prompt:`Help me ${name}`,rank:160,commercialCapability});
+  const label=contract.description.split(/[.!?]/,1)[0];
+  const discovery=Object.freeze({label,
+    prompt:`Help me ${label.toLowerCase()}`,rank:160,commercialCapability});
   registry.entries.set(contract.name,Object.freeze({...contract,commercialCapability,discovery}));
 }
 

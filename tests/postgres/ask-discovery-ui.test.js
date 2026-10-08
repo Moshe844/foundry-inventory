@@ -90,7 +90,7 @@ test('Ask explains only verified registered capabilities and never changes busin
       message:'I am new here. How can you help me run this business?',usageKey:'discovery-answer-1'});
     assert.equal(response.status,303);
     const rendered=await agent.get('/ask');
-    assert.match(rendered.text,/I can help with/);
+    assert.match(rendered.text,/I can help you/);
     assert.match(rendered.text,/stock receipt/i,
       'capability discovery should represent executable work, not only its first four reads');
     assert.match(rendered.text,/no products yet; I can help add your first one/);

@@ -91,7 +91,7 @@ async function describe(database,ctx){
     ...representativeActions,...selected.filter((entry)=>entry.kind==='policy').slice(0,1),
     ...selected.filter((entry)=>entry.kind==='navigation').slice(0,1)];
   const answer=selected.length
-    ?`I can help with ${highlights.map((entry)=>entry.label.toLowerCase()).join(', ')}. `+
+    ?`I can help you ${highlights.map((entry)=>entry.label.toLowerCase()).join(', ')}. `+
       (actions?'I will show you any change for approval before making it.':'I can show you the records you are allowed to see.')+
       (productCount===0?' You have no products yet; I can help add your first one.':'')
     :'I can help explain this inventory, but no additional actions are available to your account here.';
