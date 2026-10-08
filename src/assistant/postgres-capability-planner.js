@@ -246,7 +246,8 @@ function collapseRepeatedEffects(steps){
     if(earlier===undefined)for(let index=retained.length-1;index>=0;index--){
       const prior=retained[index];
       if(prior.contract.satisfiesCapabilities?.includes(step.contract.name)
-        &&(dependencies.includes(index)||!step.args.recordReference)){
+        &&(dependencies.includes(index)||!step.args.recordReference||
+          Boolean(prior.args.recordReference&&prior.args.recordReference===step.args.recordReference))){
         earlier=index;break;
       }
     }

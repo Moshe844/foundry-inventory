@@ -869,6 +869,7 @@ const SPECS=Object.freeze([
   {name:'transfer.depart',description:'Confirm an approved transfer physically left its source. Use the canonical pick, dispatch, and in-transit transitions together, as the transfer page does. Do not mark goods received at destination.',
     record:'transfer',fields:['recordReference'],permission:permissions.DISPATCH_TRANSFER,
     capability:'inventory.transfers',states:['APPROVED','PICKED','SHIPPED'],verb:'Confirm departure of',
+    satisfiesCapabilities:['transfer.pick','transfer.dispatch','transfer.in_transit'],
     execute:async(client,ctx,p)=>{
       let transfer=await transfers.get(client,ctx.workspaceId,p.recordId,{lock:true});
       if(transfer.status==='APPROVED')transfer=await transfers.pickInTransaction(client,ctx,p.recordId,

@@ -367,6 +367,50 @@ async function lookup(database,ctx,request,options={}) {
     return {answer:rows.length?`${rows.length} active location${rows.length===1?'':'s'} hold ${rows.reduce((sum,row)=>sum+row.units,0).toLocaleString('en-US')} units.`:
       'No active location matched that request.',rows,columns:['name','kind','units']};
   }
+  if(request.view==='transfers'){
+    const rows=(await database.query(`SELECT t.id,t.transfer_number,t.status,
+      source.name AS source_name,destination.name AS destination_name,
+      COALESCE(SUM(line.requested_quantity),0) AS requested_units,
+      COALESCE(SUM(line.approved_quantity),0) AS approved_units,
+      COALESCE(SUM(line.picked_quantity),0) AS picked_units,
+      COALESCE(SUM(line.shipped_quantity),0) AS shipped_units,
+      COALESCE(SUM(line.received_quantity),0) AS received_units,
+      COALESCE(SUM(line.lost_quantity),0) AS lost_units,
+      COALESCE(SUM(line.damaged_quantity),0) AS damaged_units,
+      COALESCE(SUM(line.shipped_quantity-line.received_quantity-line.lost_quantity-line.damaged_quantity),0)
+        AS in_transit_units,
+      COALESCE(JSONB_AGG(JSONB_BUILD_OBJECT('sku',sku.code,'product',item.name,
+        'requested',line.requested_quantity,'shipped',line.shipped_quantity,
+        'received',line.received_quantity)) FILTER (WHERE line.id IS NOT NULL),'[]'::jsonb) AS products
+      FROM inventory_transfers t
+      JOIN locations source ON source.id=t.source_location_id AND source.workspace_id=t.workspace_id
+      JOIN locations destination ON destination.id=t.destination_location_id AND destination.workspace_id=t.workspace_id
+      LEFT JOIN inventory_transfer_lines line ON line.transfer_id=t.id AND line.workspace_id=t.workspace_id
+      LEFT JOIN skus sku ON sku.id=line.sku_id AND sku.workspace_id=t.workspace_id
+      LEFT JOIN items item ON item.id=sku.item_id AND item.workspace_id=t.workspace_id
+      WHERE t.workspace_id=$1 AND ($2::text IS NULL OR t.transfer_number ILIKE '%'||$2||'%'
+        OR t.status ILIKE '%'||$2||'%' OR source.name ILIKE '%'||$2||'%'
+        OR destination.name ILIKE '%'||$2||'%')
+      GROUP BY t.id,source.name,destination.name ORDER BY t.created_at DESC LIMIT 100`,
+    [ctx.workspaceId,search])).rows.map((row)=>{
+      const heldAtSource=['APPROVED','PICKED'].includes(row.status)?Number(row.approved_units):0;
+      return evidenceRow({transfer:row.transfer_number,status:row.status,
+        source:row.source_name,destination:row.destination_name,
+        requestedUnits:Number(row.requested_units),heldAtSource,
+        pickedUnits:Number(row.picked_units),departedUnits:Number(row.shipped_units),
+        inTransitUnits:Number(row.in_transit_units),receivedUnits:Number(row.received_units),
+        lostUnits:Number(row.lost_units),damagedUnits:Number(row.damaged_units),products:row.products},
+      `/transfers/${row.id}`);
+    });
+    const answer=rows.length===1?`${rows[0].transfer} is ${rows[0].status.toLowerCase().replace(/_/g,' ')}: `+
+      `${rows[0].heldAtSource} held at ${rows[0].source}, ${rows[0].departedUnits} departed, `+
+      `${rows[0].inTransitUnits} in transit, ${rows[0].receivedUnits} received at ${rows[0].destination}.`:
+      rows.length?`${rows.length} tracked transfers matched; ${rows.reduce((sum,row)=>sum+row.inTransitUnits,0)} units are in transit.`:
+        'No tracked inventory transfer matched that request.';
+    return {answer,rows,columns:['transfer','status','source','destination','requestedUnits',
+      'heldAtSource','pickedUnits','departedUnits','inTransitUnits','receivedUnits',
+      'lostUnits','damagedUnits','products']};
+  }
   if(request.view==='purchase_orders'){
     const rows=(await database.query(`SELECT po.id,po.po_number,po.status,po.currency,s.name AS supplier,
       COALESCE(SUM(pol.quantity_units),0) AS ordered_units,

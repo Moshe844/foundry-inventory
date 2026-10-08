@@ -230,6 +230,7 @@ for(const spec of require('./postgres-workflow-capabilities').SPECS)action(spec.
     additionalCommercialCapabilities:spec.additionalCapabilities||[],
     resultingRecords:spec.record?[spec.record]:spec.resultingRecords||[],recordKind:spec.record||null,
     singleEffectPerTarget:Boolean(spec.singleEffectPerTarget),
+    satisfiesCapabilities:spec.satisfiesCapabilities||[],
     ownerOnly:Boolean(spec.ownerOnly),
     discovery:{label:spec.name.replace(/[._]/g,' ').replace(/^./,(letter)=>letter.toUpperCase()),
       prompt:`Help me ${spec.name.replace(/[._]/g,' ')}`,rank:160,
@@ -250,6 +251,7 @@ const READS={
   supplier_items:'Supplier-product links, purchasing terms, and costs.',needs_you:'Owner decisions awaiting attention.',
   replenishment:'Recorded replenishment recommendations and their state.',locations:'Inventory locations.',
   purchase_orders:'Read supplier purchase orders, deliveries, linked invoice documents including disputes and exceptions, and the actually posted open payable; PO planned cost and disputed documents are not posted debt.',
+  transfers:'Read tracked inventory transfers, their exact workflow state, source and destination, units held at source, departed/in transit, physically received, and unresolved loss or damage. An approved transfer has not physically left.',
   sales_orders:'Read recorded customer orders with ordered, held, fulfilled and open units, invoice and payment balances, and posted sale revenue, product cost and gross profit from fulfillment journals; answers do not change business records.',
   sales_activity:'Recorded customer order and sales activity for supported time windows.',
   suppliers:'Supplier records.',customers:'Customer records.',shipping:'Shipping records.',
@@ -259,7 +261,7 @@ const READS={
   business_analysis:'Verified comparisons across multiple recorded business datasets.',
   general_knowledge:'General business explanation that does not claim to read this workspace’s records.',
 };
-const READ_RECORD_KINDS={sales_orders:'sales_order',purchase_orders:'purchase_order'};
+const READ_RECORD_KINDS={sales_orders:'sales_order',purchase_orders:'purchase_order',transfers:'transfer'};
 for(const [view,description] of Object.entries(READS))add(`read.${view}`,description,
   ['search','timeframe'],'read',permissions.VIEW,'none',
   async(service,db,ctx,text,args,options)=>service.lookup(db,ctx,{view,search:args.search||null,

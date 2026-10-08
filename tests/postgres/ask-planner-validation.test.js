@@ -19,6 +19,15 @@ test('a selected clarification choice resumes the original authorized capability
   assert.equal(selectedPendingChoice(pending,'Lab Fastener Supply — no changes now',registry),null);
 });
 
+test('one physical departure does not schedule a second in-transit state transition',()=>{
+  const depart=registry.get('transfer.depart');
+  const transit=registry.get('transfer.in_transit');
+  const steps=[{contract:depart,args:{recordReference:'TR-0004'},dependsOn:[],continuesPending:false},
+    {contract:transit,args:{recordReference:'TR-0004'},dependsOn:[],continuesPending:false}];
+  planner.collapseRepeatedEffects(steps);
+  assert.deepEqual(steps.map((entry)=>entry.contract.name),['transfer.depart']);
+});
+
 test('malformed model output retries once without turning a supported read into unavailable',async()=>{
   let attempts=0;
   const provider={async complete(){

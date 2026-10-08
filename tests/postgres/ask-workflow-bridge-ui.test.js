@@ -332,6 +332,11 @@ test('Ask browser controls a real customer order, payment, and return through th
       askedTransferProposal.result.transferId);
     assert.equal((await database.query(`SELECT status FROM inventory_transfers WHERE workspace_id=$1 AND id=$2`,
       [ctx.workspaceId,askedTransferProposal.result.transferId])).rows[0].status,'APPROVED');
+    const approvedTransferEvidence=await require('../../src/assistant/postgres-service').lookup(database,ctx,
+      {view:'transfers',search:askedTransferProposal.result.transferNumber});
+    assert.equal(approvedTransferEvidence.rows[0].status,'APPROVED');
+    assert.equal(approvedTransferEvidence.rows[0].departedUnits,0);
+    assert.equal(approvedTransferEvidence.rows[0].receivedUnits,0);
     await page.goto(`${base}/ask`);
     assert.ok((await page.locator('main').innerText()).includes(
       `Reference: ${askedTransferProposal.result.transferNumber}`));
@@ -382,6 +387,11 @@ test('Ask browser controls a real customer order, payment, and return through th
     const departedState=(await database.query(`SELECT status FROM inventory_transfers WHERE workspace_id=$1 AND id=$2`,
       [ctx.workspaceId,departing.id])).rows[0];
     assert.equal(departedState.status,'IN_TRANSIT');
+    const departedEvidence=await require('../../src/assistant/postgres-service').lookup(database,ctx,
+      {view:'transfers',search:departing.transfer_number});
+    assert.equal(departedEvidence.rows[0].departedUnits,1);
+    assert.equal(departedEvidence.rows[0].inTransitUnits,1);
+    assert.equal(departedEvidence.rows[0].receivedUnits,0);
     assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM inventory_transfer_events
       WHERE workspace_id=$1 AND transfer_id=$2 AND event_type IN ('PICKED','SHIPPED','IN_TRANSIT')`,
     [ctx.workspaceId,departing.id])).rows[0].count,3);
