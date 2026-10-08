@@ -338,20 +338,11 @@ function createPostgresCommerceRouter(database,options={}){
   }));
 
   router.post('/suppliers/:id/items',requireAuth,requirePermission(permissions.MANAGE_SUPPLIERS,'manage suppliers'),asyncRoute(async(req,res)=>{
-    const skuId=trimOrNull(req.body.skuId);if(!skuId)throw new ValidationError('Choose a product to link.');const at=nowIso();
-    const units=Math.max(1,Number(req.body.unitsPerPurchaseUnit||1));
-    await database.query(`INSERT INTO supplier_items(id,workspace_id,supplier_id,sku_id,supplier_sku,purchase_unit,
-      units_per_purchase_unit,last_unit_cost,last_cost_at,lead_time_days,minimum_order_quantity,order_multiple,is_preferred,is_active,notes,created_at,updated_at)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,1,$14,$9,$9)
-      ON CONFLICT(workspace_id,supplier_id,sku_id) DO UPDATE SET supplier_sku=EXCLUDED.supplier_sku,
-        purchase_unit=EXCLUDED.purchase_unit,units_per_purchase_unit=EXCLUDED.units_per_purchase_unit,
-        last_unit_cost=EXCLUDED.last_unit_cost,last_cost_at=EXCLUDED.last_cost_at,lead_time_days=EXCLUDED.lead_time_days,
-        minimum_order_quantity=EXCLUDED.minimum_order_quantity,order_multiple=EXCLUDED.order_multiple,
-        is_preferred=EXCLUDED.is_preferred,is_active=1,notes=EXCLUDED.notes,updated_at=EXCLUDED.updated_at`,
-    [newId('supitem'),req.ctx.workspaceId,req.params.id,skuId,trimOrNull(req.body.supplierSku),
-      trimOrNull(req.body.purchaseUnit)||'unit',units,req.body.lastUnitCost===''?null:Number(req.body.lastUnitCost),at,
-      req.body.leadTimeDays===''?null:Number(req.body.leadTimeDays),req.body.minimumOrderQuantity===''?null:Number(req.body.minimumOrderQuantity),
-      req.body.orderMultiple===''?null:Number(req.body.orderMultiple),req.body.isPreferred==='1'?1:0,trimOrNull(req.body.notes)]);
+    await commerce.linkSupplierItem(database,req.ctx,{supplierId:req.params.id,skuId:req.body.skuId,
+      supplierSku:req.body.supplierSku,purchaseUnit:req.body.purchaseUnit||'unit',
+      unitsPerPurchaseUnit:req.body.unitsPerPurchaseUnit||1,lastUnitCost:req.body.lastUnitCost,
+      leadTimeDays:req.body.leadTimeDays,minimumOrderQuantity:req.body.minimumOrderQuantity,
+      orderMultiple:req.body.orderMultiple,isPreferred:req.body.isPreferred==='1',notes:req.body.notes});
     req.flash('success','Product linked to this supplier.');return res.redirect(303,`/suppliers/${req.params.id}`);
   }));
 

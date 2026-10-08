@@ -2,6 +2,7 @@
 
 const permissions=require('../actions/permissions');
 const workflows=require('../operations/postgres-business-workflows');
+const commerce=require('../operations/postgres-commerce');
 const transfers=require('../transfers/postgres-transfer-service');
 const returns=require('../operations/postgres-returns');
 const waves=require('../operations/postgres-fulfillment-waves');
@@ -1047,6 +1048,41 @@ const SPECS=Object.freeze([
         WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,p.recordId])).rows.some((row)=>
         row.name===p.value.name&&row.contact_name===p.value.contactName&&row.email===p.value.email&&
         row.phone===p.value.phone&&row.notes===p.value.notes))},
+  {name:'supplier.link_product',description:'Link one exact active SKU to one existing supplier, optionally recording the supplier code, unit cost, lead time, pack terms and preferred status. This records purchasing terms but does not create or send an order.',
+    record:'supplier',fields:['recordReference','sku','supplierSku','purchaseUnit','unitsPerPurchaseUnit',
+      'amount','leadTimeDays','minimumOrderQuantity','orderMultiple','isPreferred'],
+    permission:permissions.MANAGE_SUPPLIERS,capability:'purchasing.core',
+    build:async(database,ctx,supplier,args)=>{
+      if(!args.sku)throw new ValidationError('Which exact product or SKU should I link to this supplier?');
+      const matches=(await database.query(`SELECT s.id,s.code,i.name FROM skus s
+        JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
+        WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1
+          AND (lower(s.id)=lower($2) OR lower(s.code)=lower($2) OR lower(i.name)=lower($2))
+        ORDER BY s.code LIMIT 2`,[ctx.workspaceId,args.sku])).rows;
+      if(matches.length!==1)throw new ValidationError(matches.length?
+        'More than one SKU matches. Give the exact SKU code.':'That SKU was not found in this inventory.');
+      const sku=matches[0];const previous=(await database.query(`SELECT updated_at FROM supplier_items
+        WHERE workspace_id=$1 AND supplier_id=$2 AND sku_id=$3`,
+      [ctx.workspaceId,supplier.id,sku.id])).rows[0];
+      const input={supplierId:supplier.id,skuId:sku.id,
+        ...(previous?{expectedUpdatedAt:new Date(previous.updated_at).toISOString()}:{expectAbsent:true}),
+        ...Object.fromEntries([['supplierSku','supplierSku'],['purchaseUnit','purchaseUnit'],
+          ['unitsPerPurchaseUnit','unitsPerPurchaseUnit'],['amount','lastUnitCost'],
+          ['leadTimeDays','leadTimeDays'],['minimumOrderQuantity','minimumOrderQuantity'],
+          ['orderMultiple','orderMultiple'],['isPreferred','isPreferred']]
+          .filter(([field])=>args[field]!=null).map(([field,target])=>[target,
+            field==='isPreferred'?String(args[field]).toLowerCase():args[field]]))};
+      const terms=[args.amount!=null?`unit cost $${Number(args.amount).toFixed(2)}`:null,
+        args.leadTimeDays!=null?`${args.leadTimeDays}-day lead time`:null,
+        args.isPreferred!=null?`${String(args.isPreferred).toLowerCase()==='true'?'preferred':'not preferred'}`:null].filter(Boolean);
+      return prepareResult(input,`Link ${sku.name} (${sku.code}) to ${supplier.name}`+
+        `${terms.length?` with ${terms.join(', ')}`:''}. No purchase order is created.`);
+    },
+    execute:(client,ctx,p)=>commerce.linkSupplierItemInTransaction(client,ctx,p),
+    verify:async(client,ctx,r,p)=>Boolean(r.supplier_id===p.supplierId&&r.sku_id===p.skuId&&
+      Number(r.is_active)===1&&(await client.query(`SELECT 1 FROM supplier_items
+        WHERE workspace_id=$1 AND id=$2 AND supplier_id=$3 AND sku_id=$4 AND is_active=1`,
+      [ctx.workspaceId,r.id,p.supplierId,p.skuId])).rows.length)},
   {name:'mail.state',description:'Mark one exact received business message as needing reply, waiting, or handled. This is a triage decision; it neither sends email nor deletes evidence.',
     record:'mail_message',fields:['recordReference','mailboxState','reason'],
     permission:permissions.OPERATE,build:mailboxState,

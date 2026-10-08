@@ -46,6 +46,68 @@ async function createSupplier(database, ctx, input) {
     {isolation:'SERIALIZABLE',retrySafe:true});
 }
 
+async function linkSupplierItemInTransaction(client,ctx,input){
+  await requirePermission(client,ctx,access.MANAGE_SUPPLIERS,'link supplier products');
+  const supplierId=trimOrNull(input.supplierId);const skuId=trimOrNull(input.skuId);
+  if(!supplierId||!skuId)throw new ValidationError('Choose one existing supplier and one exact SKU.');
+  const supplier=(await client.query(`SELECT id,status FROM suppliers WHERE workspace_id=$1 AND id=$2 FOR UPDATE`,
+    [ctx.workspaceId,supplierId])).rows[0];
+  const sku=(await client.query(`SELECT s.id FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
+      WHERE s.workspace_id=$1 AND s.id=$2 AND s.is_active=1 AND i.is_active=1`,[ctx.workspaceId,skuId])).rows[0];
+  if(!supplier||supplier.status!=='active'||!sku)throw new ValidationError(
+    'The supplier and active product must both belong to this inventory.');
+  await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',
+    [`supplier-product:${ctx.workspaceId}:${skuId}`]);
+  const current=(await client.query(`SELECT * FROM supplier_items
+    WHERE workspace_id=$1 AND supplier_id=$2 AND sku_id=$3 FOR UPDATE`,
+  [ctx.workspaceId,supplierId,skuId])).rows[0]||null;
+  if(input.expectAbsent&&current)throw new ValidationError(
+    'This supplier-product link was added after review. Ask again before changing its terms.');
+  if(input.expectedUpdatedAt&&new Date(current?.updated_at||0).toISOString()!==
+    new Date(input.expectedUpdatedAt).toISOString())throw new ValidationError(
+    'The supplier-product terms changed after review. Ask again before approving.');
+  const text=(name,fallback)=>Object.hasOwn(input,name)?trimOrNull(input[name]):fallback;
+  const whole=(name,fallback,min,max,nullable=false)=>{if(!Object.hasOwn(input,name))return fallback;
+    if(input[name]==null||String(input[name]).trim()===''){
+      if(nullable)return null;throw new ValidationError(`${name} is required.`);}
+    const value=Number(input[name]);if(!Number.isSafeInteger(value)||value<min||value>max)
+      throw new ValidationError(`${name} must be a whole number from ${min} to ${max}.`);return value;};
+  const cost=Object.hasOwn(input,'lastUnitCost')?(input.lastUnitCost==null||String(input.lastUnitCost).trim()===''
+    ?null:Number(input.lastUnitCost)):
+    current?.last_unit_cost==null?null:Number(current.last_unit_cost);
+  if(cost!==null&&(!Number.isFinite(cost)||cost<0||Math.abs(Math.round(cost*100)-cost*100)>1e-6))
+    throw new ValidationError('Unit cost must be a non-negative amount with no more than two decimals.');
+  const value={supplierSku:text('supplierSku',current?.supplier_sku||null),
+    purchaseUnit:text('purchaseUnit',current?.purchase_unit||'unit')||'unit',
+    unitsPerPurchaseUnit:whole('unitsPerPurchaseUnit',Number(current?.units_per_purchase_unit||1),1,100000),
+    lastUnitCost:cost,leadTimeDays:whole('leadTimeDays',current?.lead_time_days==null?null:Number(current.lead_time_days),0,365,true),
+    minimumOrderQuantity:whole('minimumOrderQuantity',current?.minimum_order_quantity==null?null:Number(current.minimum_order_quantity),0,100000,true),
+    orderMultiple:whole('orderMultiple',current?.order_multiple==null?null:Number(current.order_multiple),1,100000,true),
+    isPreferred:Object.hasOwn(input,'isPreferred')?[true,1,'true','1'].includes(input.isPreferred):Boolean(current?.is_preferred),
+    notes:text('notes',current?.notes||null)};
+  if(value.isPreferred)await client.query(`UPDATE supplier_items SET is_preferred=0,updated_at=$3
+    WHERE workspace_id=$1 AND sku_id=$2 AND supplier_id<>$4 AND is_preferred=1`,
+  [ctx.workspaceId,skuId,nowIso(),supplierId]);
+  const at=nowIso();const id=current?.id||newId('supitem');
+  const result=await client.query(`INSERT INTO supplier_items(id,workspace_id,supplier_id,sku_id,supplier_sku,purchase_unit,
+    units_per_purchase_unit,last_unit_cost,last_cost_at,lead_time_days,minimum_order_quantity,order_multiple,
+    is_preferred,is_active,notes,created_at,updated_at)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,1,$14,$15,$15)
+    ON CONFLICT(workspace_id,supplier_id,sku_id) DO UPDATE SET supplier_sku=EXCLUDED.supplier_sku,
+      purchase_unit=EXCLUDED.purchase_unit,units_per_purchase_unit=EXCLUDED.units_per_purchase_unit,
+      last_unit_cost=EXCLUDED.last_unit_cost,last_cost_at=EXCLUDED.last_cost_at,
+      lead_time_days=EXCLUDED.lead_time_days,minimum_order_quantity=EXCLUDED.minimum_order_quantity,
+      order_multiple=EXCLUDED.order_multiple,is_preferred=EXCLUDED.is_preferred,is_active=1,
+      notes=EXCLUDED.notes,updated_at=EXCLUDED.updated_at RETURNING id,supplier_id,sku_id,is_active`,
+  [id,ctx.workspaceId,supplierId,skuId,value.supplierSku,value.purchaseUnit,value.unitsPerPurchaseUnit,
+    value.lastUnitCost,value.lastUnitCost===null?null:at,value.leadTimeDays,
+    value.minimumOrderQuantity,value.orderMultiple,value.isPreferred?1:0,value.notes,current?.created_at||at]);
+  return result.rows[0];
+}
+
+async function linkSupplierItem(database,ctx,input){return database.transaction(
+  client=>linkSupplierItemInTransaction(client,ctx,input),{isolation:'SERIALIZABLE',retrySafe:true});}
+
 async function createCustomerInTransaction(client,ctx,input){
   await requirePermission(client, ctx, access.OPERATE, 'add customers');
   const name=trimOrNull(input.name);
@@ -222,6 +284,8 @@ async function salesOrder(database, workspaceId, id) {
     paymentRequests:paymentRequests.rows.map((row)=>({...row,amount_minor:Number(row.amount_minor),paid_minor:Number(row.paid_minor)}))};
 }
 
-module.exports={createSupplier,createSupplierInTransaction,createCustomer,createCustomerInTransaction,suppliers,customers,catalogue,locations,purchaseOrders,purchaseOrder,salesOrders,salesOrder};
+module.exports={createSupplier,createSupplierInTransaction,linkSupplierItem,linkSupplierItemInTransaction,
+  createCustomer,createCustomerInTransaction,suppliers,customers,catalogue,locations,purchaseOrders,purchaseOrder,salesOrders,salesOrder};
 require('../commercial/enforcement').guardExports(module.exports,0,1,{createSupplier:'purchasing.suppliers',createSupplierInTransaction:'purchasing.suppliers',
+  linkSupplierItem:'purchasing.suppliers',linkSupplierItemInTransaction:'purchasing.suppliers',
   createCustomer:'sales_orders.core',createCustomerInTransaction:'sales_orders.core'});
