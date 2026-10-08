@@ -59,6 +59,36 @@ test('a complete-order reservation stays one dependent step, not a duplicate par
   planner.coverExplicitOrderReservation(createOnly.steps,
     'Create the order and reserve all units.',registry);
   assert.equal(createOnly.steps[1].contract.name,'sales_order.reserve_all');
+  const partial=planner.parseSteps({steps:[
+    {capability:'sales_order.create',arguments:[],dependsOn:[],continuesPending:false},
+    {capability:'sales_order.confirm',arguments:[],dependsOn:[0],continuesPending:false}],
+    clarifyingQuestion:''});
+  planner.coverExplicitOrderReservation(partial.steps,
+    'Create the order, then fully reserve both units.',registry);
+  assert.deepEqual(partial.steps.map((step)=>step.contract.name),
+    ['sales_order.create','sales_order.reserve_all']);
+});
+
+test('full-reservation intent reaches independent fit as the strict dependent action',async()=>{
+  const provider={complete:async(request)=>{
+    if(request.schemaName==='stockchief_capability_plan')return {data:{steps:[
+      {capability:'sales_order.create',arguments:[{name:'customer',value:'Field Buyer'},
+        {name:'sku',value:'LAB-WASH-030'},{name:'quantity',value:'2'},
+        {name:'deliveryMethod',value:'PICKUP'},{name:'location',value:'Main Warehouse'}],
+      dependsOn:[],continuesPending:false},
+      {capability:'sales_order.confirm',arguments:[],dependsOn:[0],continuesPending:false}],
+      clarifyingQuestion:''}};
+    if(request.schemaName==='stockchief_capability_fit'){
+      const steps=JSON.parse(request.prompt).proposedSteps;
+      assert.equal(steps[1].capability,'sales_order.reserve_all');
+      return {data:{aligned:true,reason:''}};
+    }
+    throw new Error(`Unexpected model stage ${request.schemaName}`);
+  }};
+  const selected=await planner.plan(provider,
+    'Create a pickup order for two washers, then fully reserve both units.');
+  assert.deepEqual(selected.steps.map((step)=>step.contract.name),
+    ['sales_order.create','sales_order.reserve_all']);
 });
 
 test('daily model-attempt ceiling is not mistaken for a prompt-cost failure or retried',async()=>{

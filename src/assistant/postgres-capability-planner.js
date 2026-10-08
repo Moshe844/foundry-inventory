@@ -189,10 +189,15 @@ function coverExplicitOrderReservation(steps,message,catalogue,pending){
     if(/^hold$/i.test(match[0])&&!/\b(?:stock|inventory|units?|items?|products?)\b/i.test(after))return false;
     return true;
   });
-  if(!requested||steps.some((step)=>['sales_order.confirm','sales_order.reserve_all']
+  const fullReservation=/\b(?:all|every|entire|fully|both)\b[^.!?]{0,45}\b(?:reserv\w*|allocat\w*|hold|commit)\b|\b(?:reserv\w*|allocat\w*|hold|commit)\b[^.!?]{0,45}\b(?:all|every|entire|fully|both)\b/i.test(goal);
+  if(!requested)return steps;
+  if(fullReservation){
+    const strict=catalogue.get('sales_order.reserve_all');
+    if(strict)for(const step of steps)if(step.contract.name==='sales_order.confirm')step.contract=strict;
+  }
+  if(steps.some((step)=>['sales_order.confirm','sales_order.reserve_all']
     .includes(step.contract.name)))return steps;
   const creates=steps.map((step,index)=>({step,index})).filter(({step})=>step.contract.name==='sales_order.create');
-  const fullReservation=/\b(?:all|every|entire|fully|both)\b[^.!?]{0,45}\b(?:reserv\w*|allocat\w*|hold|commit)\b|\b(?:reserv\w*|allocat\w*|hold|commit)\b[^.!?]{0,45}\b(?:all|every|entire|fully|both)\b/i.test(goal);
   const confirm=catalogue.get(fullReservation?'sales_order.reserve_all':'sales_order.confirm');
   if(creates.length!==1||!confirm||steps.length>=8)return steps;
   steps.push({contract:confirm,args:{},dependsOn:[creates[0].index],continuesPending:false});
