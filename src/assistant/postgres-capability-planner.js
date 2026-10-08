@@ -42,7 +42,7 @@ const FIT_SCHEMA={type:'object',additionalProperties:false,required:['aligned','
 }};
 const FIT_SYSTEM=`Independently check whether the proposed StockChief capabilities accomplish the owner's CURRENT goal.
 If a proposed step continuesPending, the current goal is the original pending request with the owner's latest answer applied. Check that the latest message actually answers the pending question and that the proposed capability fulfills the original request; a short field answer need not restate the entire business action. If no step continuesPending, the pending question is context only and the current message must stand on its own. Judge the exact business effect and timing, not wording or topical overlap.
-Reject extra steps the owner did not request; do not invent contact, product, order, purchase or stock movement creation
+Reject extra MUTATIONS the owner did not request; do not invent contact, product, order, purchase or stock movement creation
 as a precaution. The deterministic resolver checks existing records and asks only if an identity is missing.
 Reject a preliminary read used only as context for a mutation when the owner did not request that information separately;
 the deterministic resolver fetches required facts without showing an extra answer.
@@ -69,6 +69,9 @@ do not demand a separate "summary" capability. A negative request such as not re
 when no proposed step records payment; do not require a no-op step to prove absence.
 The dependsOn indices in proposedSteps are executable sequencing, not merely suggestions.
 Use each contract's own input semantics; never reinterpret a documented per-unit amount as a line total.
+Read steps are non-mutating evidence gathering. A broad or redundant read is not a reason to block an otherwise
+correct mutation plan: its answer is checked against live evidence later, and an irrelevant read can be omitted
+from the final response. Do not demand a separate narration or summary capability after a read.
 If the owner requires all units reserved now, partial confirmation or backordering does not fulfill that goal;
 choose sales_order.reserve_all. Ordinary confirmation can create a truthful backorder.
 In particular, creating a draft order does not commit or reserve inventory: when both creation and reservation
@@ -95,7 +98,12 @@ or another required input is genuinely missing. A clarification is the expected 
 For a read, check that the contract description covers every measure and distinction the owner asks for;
 reject a narrower read when a registered broader read is required to answer fully.
 If the desired effect has no registered capability, set aligned=false even when a proposed action concerns the same
-supplier, customer, product, or amount. Do not perform the operation or invent business facts.`;
+supplier, customer, product, or amount. Do not perform the operation or invent business facts.
+FINAL DECISION RULE: set aligned=false only for a CONCRETE mismatch supported by the supplied contract descriptions:
+a wrong or extra write, a missing requested write, an unsafe external effect, or a read-only plan for a write request.
+Do not reject based on hypothetical missing data, guessed field semantics, or redundant read steps. If no concrete
+mutation/effect mismatch is demonstrable, set aligned=true; the deterministic resolver and explicit owner approval
+still gate every write.`;
 const SAFE_CLARIFICATION='I could not safely match that request to a supported action. Nothing changed.';
 
 function conciseClarification(value){

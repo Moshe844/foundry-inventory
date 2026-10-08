@@ -35,6 +35,24 @@ test('post-approval reads are scoped to the one completed business record',()=>{
     registry.get('read.receivables'),steps[1].args),{search:null});
 });
 
+test('post-approval customer balance read is scoped through the changed order',async()=>{
+  const steps=[{capability:'sales_order.fulfill',state:'DONE',args:{recordReference:'SO-00009'}},
+    {capability:'read.receivables',state:'BLOCKED',dependsOn:[0],args:{search:null}}];
+  const database={query:async(_sql,args)=>{
+    assert.deepEqual(args,['workspace-one','SO-00009']);
+    return {rows:[{name:'Lab Northside Plumbing'}]};
+  }};
+  const scoped=await capabilityPlans.scopeReadToRelatedParty(database,
+    {workspaceId:'workspace-one'},steps,1,registry.get('read.receivables'),steps[1].args);
+  assert.deepEqual(scoped,{search:'Lab Northside Plumbing'});
+  const answered=await control.synthesizeReads(null,'What does this customer owe?',
+    [{step:{contract:registry.get('read.receivables')},args:scoped,result:{status:'ANSWERED',
+      rows:[{party:'Lab Northside Plumbing',balanceMinor:150,balance:'$1.50',currency:'USD'}],
+      columns:['party','balance']}}],{completedActions:[{capability:'sales_order.fulfill',status:'EXECUTED'}]});
+  assert.equal(answered[0].result.answer,
+    'Lab Northside Plumbing: $1.50 outstanding across 1 open invoice recorded in StockChief.');
+});
+
 test('a dependent order read can answer exact quantities after an approved write',async()=>{
   const provider={complete:async()=>{throw new Error('Exact post-action order evidence does not need a model guess.');}};
   const rows=[{order:'SO-00008',orderedUnits:2,fulfilledUnits:1,heldUnits:1,
@@ -73,6 +91,7 @@ test('capability discovery remains compact while preserving action safety contra
   assert.ok(contract.description.toLowerCase().includes('supplier'));
   assert.match(planner.systemFor(),/approval/i);
   assert.match(planner.systemFor(),/resolver verifies unique records/i);
+  assert.match(planner.systemFor(),/fewest that actually accomplish the goal/i);
   assert.match(registry.get('sales_order.create').description,/price PER UNIT/);
   assert.match(registry.get('purchase_order.create').description,/cost PER UNIT/);
   for(const [name,label] of [['navigate.accounting','Money'],['navigate.warehouse','Warehouse'],
@@ -149,6 +168,8 @@ test('fit sees post-approval read dependencies and clears impossible pending fla
     assert.equal(candidate.proposedSteps[1].continuesPending,false);
     assert.match(candidate.proposedSteps[1].description,/fulfilled and open units/);
     assert.match(request.system,/AFTER approval/);
+    assert.match(request.system,/redundant read steps/);
+    assert.match(request.system,/CONCRETE mismatch/);
     return {data:{aligned:true,reason:''}};
   }};
   const selected=await planner.plan(provider,

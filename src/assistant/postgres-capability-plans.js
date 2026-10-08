@@ -38,6 +38,20 @@ function scopeReadToCompletedRecord(steps,index,contract,args){
   return references.length===1?{...args,search:references[0]}:args;
 }
 
+async function scopeReadToRelatedParty(database,ctx,steps,index,contract,args){
+  if(contract.kind!=='read'||contract.view!=='receivables'||args.search)return args;
+  const references=[...new Set(steps.slice(0,index).filter((step)=>step.state==='DONE'
+    &&registry.get(step.capability)?.kind==='mutation'
+    &&registry.get(step.capability)?.recordKind==='sales_order'
+    &&step.args?.recordReference).map((step)=>step.args.recordReference))];
+  if(references.length!==1)return args;
+  const rows=(await database.query(`SELECT c.name FROM sales_orders so JOIN customers c
+    ON c.id=so.customer_id AND c.workspace_id=so.workspace_id
+    WHERE so.workspace_id=$1 AND (so.order_number=$2 OR so.id=$2) LIMIT 2`,
+  [ctx.workspaceId,references[0]])).rows;
+  return rows.length===1?{...args,search:rows[0].name}:args;
+}
+
 async function refreshApprovals(database,workspaceId,steps){
   const ids=steps.filter((step)=>step.state==='WAITING'&&step.proposalId).map((step)=>step.proposalId);
   if(!ids.length)return;
@@ -96,7 +110,8 @@ async function resume(database,ctx,proposalId,{service,provider,rawProvider,reco
         // A planner-supplied guess for the not-yet-existing record cannot override it.
         const mutationArgs=produced.length===1
           ?{...stored.args,recordReference:produced[0].args.recordReference}:stored.args;
-        const executionArgs=scopeReadToCompletedRecord(steps,next,contract,mutationArgs);
+        const executionArgs=await scopeReadToRelatedParty(database,ctx,steps,next,contract,
+          scopeReadToCompletedRecord(steps,next,contract,mutationArgs));
         let outcome=await executeStep(service,database,{...ctx,planStepKey:`plan:${claimed.id}:${next}`},
           {contract,args:executionArgs,dependsOn:stored.dependsOn,continuesPending:false},
           {actor,provider,rawProvider,sourceMessage:claimed.source_message,pending:null,page:null,
@@ -134,4 +149,5 @@ async function resume(database,ctx,proposalId,{service,provider,rawProvider,reco
   return continued;
 }
 
-module.exports={serialized,save,readyIndexes,scopeReadToCompletedRecord,resume};
+module.exports={serialized,save,readyIndexes,scopeReadToCompletedRecord,
+  scopeReadToRelatedParty,resume};

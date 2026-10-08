@@ -502,7 +502,8 @@ async function lookup(database,ctx,request,options={}) {
       AND ($2::text IS NULL OR p.name ILIKE '%'||$2||'%' OR d.${documentColumn} ILIKE '%'||$2||'%')
       ORDER BY COALESCE(d.due_date,'9999-12-31'),d.created_at DESC LIMIT 100`,[ctx.workspaceId,search]);
     const rows=result.rows.map((row)=>evidenceRow({party:row.party,document:row.document,status:row.status,
-      due:row.due_date||'Not set',balance:pricing.formatMinor(Number(row.balance_minor),row.currency),currency:row.currency},href));
+      due:row.due_date||'Not set',balance:pricing.formatMinor(Number(row.balance_minor),row.currency),
+      balanceMinor:Number(row.balance_minor),currency:row.currency},href));
     const totals=new Map();for(const row of result.rows)totals.set(row.currency,(totals.get(row.currency)||0)+Number(row.balance_minor));
     const totalText=[...totals.entries()].map(([currency,amount])=>`${pricing.formatMinor(amount,currency)} ${currency}`).join(' and ');
     const noun=payable?'open supplier bill':'open customer invoice';

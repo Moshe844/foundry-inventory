@@ -170,6 +170,20 @@ async function synthesizeReads(provider,message,executed,{completedActions=[]}={
       return [{...entry,result:{...entry.result,answer}}];
     }
   }
+  if(completedActions.length&&executed.length===1
+    &&executed[0].step.contract.view==='receivables'){
+    const entry=executed[0],rows=entry.result.rows||[];
+    const party=String(entry.args.search||'').trim();
+    if(party&&rows.length<100&&rows.every((row)=>String(row.party||'').toLowerCase()===party.toLowerCase())
+      &&new Set(rows.map((row)=>row.currency)).size<=1
+      &&rows.every((row)=>Number.isSafeInteger(row.balanceMinor)&&row.balanceMinor>=0)){
+      const currency=rows[0]?.currency||'USD';
+      const amount=require('../pricing/postgres-service').formatMinor(
+        rows.reduce((sum,row)=>sum+row.balanceMinor,0),currency);
+      const answer=`${party}: ${amount} outstanding across ${rows.length} open invoice${rows.length===1?'':'s'} recorded in StockChief.`;
+      return [{...entry,result:{...entry.result,answer}}];
+    }
+  }
   const evidence=executed.map((entry,index)=>({step:index,capability:entry.step.contract.name,arguments:entry.args,
     recordedAnswer:entry.result.answer,rows:(entry.result.rows||[]).slice(0,30),
     truncated:(entry.result.rows||[]).length>=100}));
