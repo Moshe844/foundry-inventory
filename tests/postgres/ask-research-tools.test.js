@@ -84,6 +84,13 @@ test('Ask research reads real inventory positions, stock history and prices with
     assert.ok(seen.includes('read.inventory_valuation'));
     assert.ok(seen.includes('read.inventory_cost_movements'));
     assert.ok(seen.includes('read.inventory'));
+    await inventory.receive(database,owner,{skuId:item.skuIds[0],locationId:place.id,quantity:2,
+      reference:'UNCOSTED-ARRIVAL',idempotencyKey:'uncosted-arrival'});
+    const physical=await assistant.lookup(database,owner,{view:'inventory',search:'GLOVE'});
+    assert.equal(physical.rows[0].onHand,9);
+    assert.equal(physical.rows[0].costedUnits,7);
+    assert.equal(physical.rows[0].unitsMissingCost,2);
+    assert.match(physical.answer,/2 on-hand units have no recorded inventory cost/);
     const supplierItems=await assistant.lookup(database,owner,{view:'supplier_items',search:'Blue Work Glove'});
     assert.equal(supplierItems.rows.length,0);
     for(const view of ['inventory_positions','inventory_movements','inventory_valuation',

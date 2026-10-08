@@ -179,7 +179,7 @@ const REQUIRED={
   'purchase_order.receive':['purchaseOrder','sku','quantity','location'],
   'supplier_payment.record':['supplier','supplierBill','amount','paymentDate','paymentMethod'],
 };
-action('inventory.receive','Record physically arrived goods as an inventory receipt, updating on-hand stock without requiring a purchase order. Use for an arrival not explicitly tied to an existing purchase order.',
+action('inventory.receive','Record physically arrived goods without a purchase order as a physical-only receipt. It does not establish supplier liability or inventory book cost; uncosted units cannot be fulfilled as a sale. For valued supplier goods use a placed purchase order receipt.',
   ['sku','skuScope','location','quantity','reason','reference'],permissions.OPERATE,'receive');
 action('inventory.issue','Record a physical removal of goods from inventory.',
   ['sku','skuScope','location','quantity','reason','reference'],permissions.OPERATE,'issue');

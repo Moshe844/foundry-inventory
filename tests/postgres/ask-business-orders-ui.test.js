@@ -120,7 +120,9 @@ test('real Chromium Ask StockChief safely prepares and executes grounded custome
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM sales_orders WHERE workspace_id=$1`,
       [one.workspace_id])).rows[0].count,'0');
     let proposalHref=await page.locator('a',{hasText:'Review prepared change'}).last().getAttribute('href');
-    await page.goto(`${base}${proposalHref}`);const reviewText=await page.locator('main').innerText();
+    await page.goto(`${base}${proposalHref}`);
+    await page.locator('details.advanced-settings summary').click();
+    const reviewText=await page.locator('main').innerText();
     assert.match(reviewText,/sales_order\.create/);
     assert.doesNotMatch(reviewText,/\[object Object\]/,'the approval must show nested order lines');
     assert.match(reviewText,/"quantity": 4/);
@@ -142,18 +144,21 @@ test('real Chromium Ask StockChief safely prepares and executes grounded custome
 
     text=await ask(page,base,'Buy seventeen pairs from our supplier');
     assert.match(text,/Prepare a draft purchase order to Safe Supply/);assert.match(text,/17 × Safety Shoe/);
+    assert.match(text,/Supplier cost is not recorded; the draft cannot be placed until it is priced/);
     assert.match(text,/Main Warehouse/);assert.match(text,/Needs your approval/);
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM purchase_orders WHERE workspace_id=$1`,
       [one.workspace_id])).rows[0].count,'0');
     proposalHref=await page.locator('a',{hasText:'Review prepared change'}).last().getAttribute('href');
-    await page.goto(`${base}${proposalHref}`);assert.match(await page.locator('main').innerText(),/purchase_order\.create/);
+    await page.goto(`${base}${proposalHref}`);
+    await page.locator('details.advanced-settings summary').click();
+    assert.match(await page.locator('main').innerText(),/purchase_order\.create/);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve and execute'}).click()]);
     const purchaseOrder=(await database.query(`SELECT po.*,pol.quantity_units,pol.unit_cost FROM purchase_orders po
       JOIN purchase_order_lines pol ON pol.purchase_order_id=po.id WHERE po.workspace_id=$1`,[one.workspace_id])).rows[0];
     assert.deepEqual({supplier:purchaseOrder.supplier_id,location:purchaseOrder.destination_location_id,
       needed:purchaseOrder.expected_date,quantity:Number(purchaseOrder.quantity_units),cost:Number(purchaseOrder.unit_cost),
       status:purchaseOrder.status},{supplier:supplier.id,location:(await database.query(`SELECT id FROM locations
-        WHERE workspace_id=$1 AND name='Main Warehouse'`,[one.workspace_id])).rows[0].id,needed:'2026-10-05',quantity:17,cost:8,status:'DRAFT'});
+        WHERE workspace_id=$1 AND name='Main Warehouse'`,[one.workspace_id])).rows[0].id,needed:'2026-10-05',quantity:17,cost:0,status:'DRAFT'});
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM balances WHERE workspace_id=$1`,
       [one.workspace_id])).rows[0].count,'0');
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM purchase_orders WHERE workspace_id=$1

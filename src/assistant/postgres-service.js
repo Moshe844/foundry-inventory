@@ -525,30 +525,39 @@ async function lookup(database,ctx,request,options={}) {
       FROM inventory_transfer_lines tl JOIN inventory_transfers t ON t.id=tl.transfer_id
       WHERE tl.workspace_id=$1 AND t.status IN ('REQUESTED','APPROVED','PICKED','SHIPPED','IN_TRANSIT','PARTIALLY_RECEIVED')
       GROUP BY tl.sku_id
+    ), costed AS (
+      SELECT sku_id,SUM(quantity_units) AS quantity FROM accounting_inventory_cost_balances
+      WHERE workspace_id=$1 GROUP BY sku_id
     ), incoming AS (
       SELECT sku_id,SUM(quantity) AS quantity FROM (
         SELECT * FROM purchase_incoming UNION ALL SELECT * FROM transfer_incoming
       ) sources GROUP BY sku_id)
     SELECT i.id,i.name,s.code,s.variant_label,COALESCE(SUM(b.on_hand),0) AS on_hand,
       COALESCE(c.quantity,0) AS committed,COALESCE(inc.quantity,0) AS incoming,
+      COALESCE(costed.quantity,0) AS costed_units,
       COALESCE(STRING_AGG(DISTINCT l.name, ', ') FILTER (WHERE b.on_hand<>0),'') AS locations
     FROM items i JOIN skus s ON s.item_id=i.id LEFT JOIN balances b ON b.sku_id=s.id
     LEFT JOIN locations l ON l.id=b.location_id AND l.workspace_id=b.workspace_id
     LEFT JOIN committed c ON c.sku_id=s.id LEFT JOIN incoming inc ON inc.sku_id=s.id
+    LEFT JOIN costed ON costed.sku_id=s.id
     WHERE i.workspace_id=$1 AND i.is_active=1 AND ($2::text IS NULL OR i.name ILIKE ANY($3::text[])
       OR s.code ILIKE ANY($3::text[]) OR COALESCE(s.variant_label,'') ILIKE ANY($3::text[]))
-    GROUP BY i.id,s.id,c.quantity,inc.quantity ORDER BY i.name,s.position LIMIT 100`,
+    GROUP BY i.id,s.id,c.quantity,inc.quantity,costed.quantity ORDER BY i.name,s.position LIMIT 100`,
   [ctx.workspaceId,search,lookupSearchPatterns(search)])).rows.map((row)=>{
-      const onHand=Number(row.on_hand),committed=Number(row.committed),incoming=Number(row.incoming);
+      const onHand=Number(row.on_hand),committed=Number(row.committed),incoming=Number(row.incoming),
+        costedUnits=Number(row.costed_units);
       return evidenceRow({product:row.variant_label?`${row.name} · ${row.variant_label}`:row.name,sku:row.code,
-        onHand,committed,available:Math.max(0,onHand-committed),incoming,locations:row.locations||'No stock location'},`/inventory/${row.id}`);
+        onHand,committed,available:Math.max(0,onHand-committed),incoming,costedUnits,
+        unitsMissingCost:Math.max(0,onHand-costedUnits),locations:row.locations||'No stock location'},`/inventory/${row.id}`);
     });
   const totals=rows.reduce((sum,row)=>({onHand:sum.onHand+row.onHand,committed:sum.committed+row.committed,
     available:sum.available+row.available,incoming:sum.incoming+row.incoming}),{onHand:0,committed:0,available:0,incoming:0});
   const places=[...new Set(rows.flatMap((row)=>row.locations==='No stock location'?[]:row.locations.split(', ')))];
   const where=places.length?` Stock is in ${places.join(', ')}.`:'';
-  return {answer:rows.length?`${rows.length} SKU${rows.length===1?'':'s'} matched with ${totals.onHand.toLocaleString('en-US')} units on hand, ${totals.committed.toLocaleString('en-US')} committed, ${totals.available.toLocaleString('en-US')} available and ${totals.incoming.toLocaleString('en-US')} incoming.${where}`:
-    'No product or SKU matched that request.',rows,columns:['product','sku','onHand','committed','available','incoming','locations']};
+  const missingCost=rows.reduce((sum,row)=>sum+row.unitsMissingCost,0);
+  const costWarning=missingCost?` ${missingCost} on-hand units have no recorded inventory cost and cannot be posted as a sale until their cost is established.`:'';
+  return {answer:rows.length?`${rows.length} SKU${rows.length===1?'':'s'} matched with ${totals.onHand.toLocaleString('en-US')} units on hand, ${totals.committed.toLocaleString('en-US')} committed, ${totals.available.toLocaleString('en-US')} available and ${totals.incoming.toLocaleString('en-US')} incoming.${where}${costWarning}`:
+    'No product or SKU matched that request.',rows,columns:['product','sku','onHand','committed','available','incoming','costedUnits','unitsMissingCost','locations']};
 }
 
 const MATCH_NOTHING=new Set(['the','our','my','this','that','some','item','items','product','products','unit','units']);
@@ -1017,9 +1026,12 @@ async function prepareAction(database,ctx,message,request,options={}) {
   }
   if(!request.quantity || request.quantity<1)return {status:'CLARIFY',answer:'How many units?',awaitingField:'quantity'};
   const type=request.action==='receive'?'inventory.receive':'inventory.issue';
+  const accountingEnabled=request.action==='receive'&&Boolean((await database.query(`SELECT 1 FROM accounting_settings
+    WHERE workspace_id=$1 AND enabled=1`,[ctx.workspaceId])).rows.length);
   return createProposal(database,ctx,message,type,{skuId:sku.row.id,locationId:place.row.id,quantity:request.quantity,
     reasonCode:request.action==='issue'?'other':undefined,notes:request.reason,reference:request.reference},
-  `${request.action==='receive'?'Receive':'Issue'} ${request.quantity} × ${sku.row.name}${sku.row.variant_label?` · ${sku.row.variant_label}`:''} ${request.action==='receive'?'into':'from'} ${place.row.name}.`);
+  `${request.action==='receive'?'Receive':'Issue'} ${request.quantity} × ${sku.row.name}${sku.row.variant_label?` · ${sku.row.variant_label}`:''} ${request.action==='receive'?'into':'from'} ${place.row.name}.`+
+    (accountingEnabled?' Physical stock only: no purchase cost or supplier liability is recorded. These units cannot be sold until their cost is established through a verified purchasing or opening-balance workflow.':''));
 }
 
 async function createProposal(database,ctx,message,actionType,payload,summary) {

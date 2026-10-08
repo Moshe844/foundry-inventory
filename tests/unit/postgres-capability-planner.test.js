@@ -45,6 +45,22 @@ test('an explicit per-unit quote survives a model typo and cannot fall back to a
   assert.equal(selected.steps[0].args.amount,'2.4');
 });
 
+test('a complete-order reservation stays one dependent step, not a duplicate partial confirmation',()=>{
+  const planned=planner.parseSteps({steps:[
+    {capability:'sales_order.create',arguments:[{name:'customer',value:'Field Buyer'},
+      {name:'sku',value:'LAB-WASH-030'},{name:'quantity',value:'2'}],dependsOn:[],continuesPending:false},
+    {capability:'sales_order.reserve_all',arguments:[],dependsOn:[0],continuesPending:false}],
+    clarifyingQuestion:''});
+  planner.coverExplicitOrderReservation(planned.steps,'Create an order, then fully reserve both units.',registry);
+  assert.deepEqual(planned.steps.map((step)=>step.contract.name),
+    ['sales_order.create','sales_order.reserve_all']);
+  const createOnly=planner.parseSteps({steps:[{capability:'sales_order.create',arguments:[],
+    dependsOn:[],continuesPending:false}],clarifyingQuestion:''});
+  planner.coverExplicitOrderReservation(createOnly.steps,
+    'Create the order and reserve all units.',registry);
+  assert.equal(createOnly.steps[1].contract.name,'sales_order.reserve_all');
+});
+
 test('daily model-attempt ceiling is not mistaken for a prompt-cost failure or retried',async()=>{
   let calls=0;
   const provider={async complete(){calls++;const error=new Error('Daily model-attempt safety limit reached.');
