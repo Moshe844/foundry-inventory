@@ -484,6 +484,42 @@ test('Ask browser controls a real customer order, payment, and return through th
     assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM purchase_order_events
       WHERE workspace_id=$1 AND purchase_order_id=$2 AND event='cancelled'`,
     [ctx.workspaceId,uiPurchase.purchaseOrderId])).rows[0].count,1);
+    const invoicedPurchase=await workflows.createPurchaseOrder(database,ctx,{supplierId:supplier.id,
+      destinationLocationId:place.id,idempotencyKey:'ask-workflow-invoice-purchase',
+      lines:[{skuId:item.skuIds[0],quantityUnits:4,unitCost:10,destinationLocationId:place.id}]});
+    await workflows.approvePurchaseOrder(database,ctx,invoicedPurchase.purchaseOrderId,
+      {idempotencyKey:'ask-workflow-invoice-approve'});
+    await workflows.placePurchaseOrder(database,ctx,invoicedPurchase.purchaseOrderId,
+      {idempotencyKey:'ask-workflow-invoice-place'});
+    await workflows.receivePurchaseOrder(database,ctx,invoicedPurchase.purchaseOrderId,
+      {idempotencyKey:'ask-workflow-invoice-receive',reference:'DELIVERY-3',
+        lines:[{lineId:invoicedPurchase.lineIds[0],quantity:3,locationId:place.id}]});
+    const matchedInvoice=`Record Safety Supply invoice SS-INVOICE-3 against ${invoicedPurchase.poNumber} `+
+      `for three ${skuCode} units at $10 each with no tax; do not receive or pay again`;
+    plans.set(matchedInvoice,step('purchase_order.record_supplier_invoice',{
+      recordReference:invoicedPurchase.poNumber,supplierInvoiceNumber:'SS-INVOICE-3',
+      sku:skuCode,quantity:3,unitAmount:10,tax:0}));
+    const invoiceAction=await prepareAndApprove(page,base,database,ctx.workspaceId,matchedInvoice,
+      'purchase_order.record_supplier_invoice');
+    const matchedBill=(await database.query(`SELECT id,status,match_status,total_minor,balance_minor,journal_entry_id
+      FROM accounting_supplier_bills WHERE workspace_id=$1 AND purchase_order_id=$2
+      AND supplier_invoice_number='SS-INVOICE-3'`,
+    [ctx.workspaceId,invoicedPurchase.purchaseOrderId])).rows[0];
+    assert.deepEqual({status:matchedBill.status,match:matchedBill.match_status,
+      total:Number(matchedBill.total_minor),balance:Number(matchedBill.balance_minor)},
+    {status:'OPEN',match:'MATCHED',total:3000,balance:3000});
+    assert.ok(matchedBill.journal_entry_id);
+    await page.goto(`${base}/actions/${invoiceAction.id}`);
+    const invoiceCsrf=await page.locator('input[name="_csrf"]').first().getAttribute('value');
+    const invoiceReplay=await page.request.post(`${base}/actions/${invoiceAction.id}/approve`,
+      {form:{_csrf:invoiceCsrf},maxRedirects:0});
+    assert.equal(invoiceReplay.status(),303);
+    assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM accounting_supplier_bills
+      WHERE workspace_id=$1 AND purchase_order_id=$2 AND supplier_invoice_number='SS-INVOICE-3'`,
+    [ctx.workspaceId,invoicedPurchase.purchaseOrderId])).rows[0].count,1);
+    assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM accounting_supplier_bills
+      WHERE workspace_id=$1 AND supplier_invoice_number='SS-INVOICE-3'`,
+    [two.workspace_id])).rows[0].count,0);
     for(const [instruction,capability,args] of [
       ['Pause automatic work while we review a stock problem','autopilot.pause',
         {reason:'Reviewing a stock problem'}],

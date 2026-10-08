@@ -192,6 +192,54 @@ async function supplierBill(database,ctx,supplier,args){
     'not a physical stock receipt or bank payment.');
 }
 
+async function purchaseOrderSupplierInvoice(database,ctx,order,args){
+  requireState(order,['ORDERED','PARTIALLY_RECEIVED','RECEIVED'],'This purchase order');
+  const number=String(args.supplierInvoiceNumber||'').trim();
+  const quantity=Number(args.quantity);
+  const unitCostMinor=Math.round(Number(args.unitAmount)*100);
+  const taxMinor=args.tax==null?0:Math.round(Number(args.tax)*100);
+  if(!number||number.length>80)throw new ValidationError('State the supplier’s exact invoice number (up to 80 characters).');
+  if(!Number.isSafeInteger(quantity)||quantity<1||!Number.isSafeInteger(unitCostMinor)||unitCostMinor<0
+    ||!Number.isSafeInteger(taxMinor)||taxMinor<0)throw new ValidationError(
+    'State the invoiced stock-unit quantity, non-negative unit cost, and non-negative tax.');
+  const prior=(await database.query(`SELECT id FROM accounting_supplier_bills WHERE workspace_id=$1
+    AND supplier_id=$2 AND supplier_invoice_number=$3 AND status<>'VOID'`,
+  [ctx.workspaceId,order.supplier_id,number])).rows[0];
+  if(prior)throw new ValidationError('That supplier invoice is already recorded. Ask about its existing bill instead.');
+  const lines=(await database.query(`SELECT pol.id,pol.sku_id,pol.description,pol.quantity_received_units,
+      pol.unit_cost,s.code,i.name AS item_name,
+      COALESCE((SELECT SUM(bl.quantity) FROM accounting_supplier_bill_lines bl
+        JOIN accounting_supplier_bills b ON b.id=bl.bill_id AND b.workspace_id=bl.workspace_id
+        WHERE bl.workspace_id=pol.workspace_id AND bl.purchase_order_line_id=pol.id
+          AND b.status IN ('OPEN','PARTIALLY_PAID','PAID')),0) AS billed_units
+    FROM purchase_order_lines pol JOIN skus s ON s.id=pol.sku_id AND s.workspace_id=pol.workspace_id
+    JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
+    WHERE pol.workspace_id=$1 AND pol.purchase_order_id=$2 ORDER BY pol.line_number`,
+  [ctx.workspaceId,order.id])).rows;
+  const matching=args.sku?lines.filter((line)=>[line.code,line.item_name].some((value)=>
+    value.toLowerCase()===String(args.sku).trim().toLowerCase())):lines;
+  if(matching.length!==1)throw new ValidationError(matching.length?
+    'This purchase order has several products. Name the exact invoiced SKU.':
+    'The invoiced product does not match a line on this purchase order.');
+  const line=matching[0],approvedCostMinor=Math.round(Number(line.unit_cost)*100);
+  const disputed=Number(line.billed_units)+quantity>Number(line.quantity_received_units)
+    ||unitCostMinor!==approvedCostMinor;
+  const totalMinor=quantity*unitCostMinor+taxMinor;
+  return prepareResult({supplierId:order.supplier_id,purchaseOrderId:order.id,
+    purchaseOrderLineId:line.id,supplierInvoiceNumber:number,
+    issueDate:args.issueDate||nowIso().slice(0,10),dueDate:args.dueDate||null,
+    currency:order.currency,taxMinor,expectedReceivedUnits:Number(line.quantity_received_units),
+    expectedBilledUnits:Number(line.billed_units),expectedApprovedCostMinor:approvedCostMinor,
+    expectedStatus:disputed?'DISPUTED':'OPEN',expectedTotalMinor:totalMinor,
+    lines:[{purchaseOrderLineId:line.id,skuId:line.sku_id,
+      description:line.description||line.item_name,quantity,unitCostMinor}]},
+  `Record supplier invoice ${number} against ${order.po_number}: ${quantity} × ${line.code} at `+
+    `${pricing.formatMinor(unitCostMinor,order.currency)} plus ${pricing.formatMinor(taxMinor,order.currency)} tax. `+
+    (disputed?'This exceeds received quantity or approved unit cost, so it will be disputed without a journal.':
+      'This matches the received quantity and approved unit cost; it creates a payable without receiving stock again.')+
+    ' No bank payment occurs.');
+}
+
 async function shippingHandoff(database,ctx,shipment,args){
   requireState(shipment,['PACKED'],'This shipment');
   const handover=String(args.handover||shipment.handover||'CARRIER').toUpperCase();
@@ -883,6 +931,34 @@ const SPECS=Object.freeze([
       (await client.query(`SELECT 1 FROM accounting_supplier_bills WHERE workspace_id=$1 AND id=$2
         AND supplier_id=$3 AND supplier_invoice_number=$4 AND total_minor=$5`,
       [ctx.workspaceId,r.billId,p.supplierId,p.supplierInvoiceNumber,r.totalMinor])).rows.length)},
+  {name:'purchase_order.record_supplier_invoice',description:'Record a one-line supplier invoice against an existing placed purchase order using its exact SKU, invoiced quantity, per-stock-unit cost, invoice number and tax. The canonical three-way match posts a payable only when received quantity and approved cost agree; exceptions are retained as disputed without a journal. Never receive stock or pay the supplier from this action.',
+    record:'purchase_order',fields:['recordReference','supplierInvoiceNumber','sku','quantity','unitAmount',
+      'tax','issueDate','dueDate'],permission:permissions.MANAGE_ACCOUNTING,
+    capability:'accounting.core',build:purchaseOrderSupplierInvoice,
+    execute:async(client,ctx,p)=>{
+      const current=(await client.query(`SELECT pol.quantity_received_units,pol.unit_cost,
+        COALESCE((SELECT SUM(bl.quantity) FROM accounting_supplier_bill_lines bl
+          JOIN accounting_supplier_bills b ON b.id=bl.bill_id AND b.workspace_id=bl.workspace_id
+          WHERE bl.workspace_id=pol.workspace_id AND bl.purchase_order_line_id=pol.id
+            AND b.status IN ('OPEN','PARTIALLY_PAID','PAID')),0) AS billed_units
+        FROM purchase_order_lines pol WHERE pol.workspace_id=$1 AND pol.id=$2 AND pol.purchase_order_id=$3
+        FOR UPDATE`,[ctx.workspaceId,p.purchaseOrderLineId,p.purchaseOrderId])).rows[0];
+      if(!current||Number(current.quantity_received_units)!==p.expectedReceivedUnits
+        ||Number(current.billed_units)!==p.expectedBilledUnits
+        ||Math.round(Number(current.unit_cost)*100)!==p.expectedApprovedCostMinor)
+        throw new ValidationError('The purchase order or received quantity changed after review. Ask again.');
+      const duplicate=(await client.query(`SELECT id FROM accounting_supplier_bills
+        WHERE workspace_id=$1 AND supplier_id=$2 AND supplier_invoice_number=$3 AND status<>'VOID'`,
+      [ctx.workspaceId,p.supplierId,p.supplierInvoiceNumber])).rows[0];
+      if(duplicate)throw new ValidationError('This supplier invoice was recorded after review. Ask about that bill.');
+      return workflows.recordSupplierInvoice(sameClient(client),ctx,p);},
+    verify:async(client,ctx,r,p)=>Boolean(r.billId&&r.status===p.expectedStatus
+      &&r.totalMinor===p.expectedTotalMinor
+      &&(r.status==='DISPUTED'?!r.journalEntryId:Boolean(r.journalEntryId))
+      &&(await client.query(`SELECT 1 FROM accounting_supplier_bills WHERE workspace_id=$1
+        AND id=$2 AND purchase_order_id=$3 AND supplier_invoice_number=$4 AND total_minor=$5
+        AND status=$6`,[ctx.workspaceId,r.billId,p.purchaseOrderId,p.supplierInvoiceNumber,
+        p.expectedTotalMinor,p.expectedStatus])).rows.length)},
   {name:'shipping.label',description:'Buy a carrier label at one exact recent quoted rate for an existing prepared shipment. Explicit owner approval is required; a queued purchase is not a confirmed label.',
     record:'shipment',fields:['recordReference','rate'],permission:permissions.ADMIN,
     capability:'shipping.labels',build:label,
