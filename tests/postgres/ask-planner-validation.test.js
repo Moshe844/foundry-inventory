@@ -61,6 +61,12 @@ test('a truncated capability-fit response retries with a bounded larger output b
   assert.equal(result.steps[0].contract.name,'sales_order.create');
 });
 
+test('PO placement no-transmission guarantee survives planner catalogue compaction',()=>{
+  const brief=planner.planningCatalogue(registry).mutations.find((entry)=>entry.n==='purchase_order.place');
+  assert.match(brief.d,/Approved PO only/);
+  assert.match(brief.d,/no email, API/);
+});
+
 test('physical movement source totals bypass model arithmetic mistakes',async()=>{
   const step={contract:registry.get('read.inventory_movements')};
   const executed=[{step,args:{search:'LAB-WASH-030'},provenance:{},result:{status:'ANSWERED',

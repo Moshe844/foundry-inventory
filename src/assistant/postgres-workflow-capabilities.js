@@ -840,7 +840,7 @@ const SPECS=Object.freeze([
         AND purchase_order_id=$2 AND id=$3 AND quantity_units=$4`,
       [ctx.workspaceId,p.recordId,p.lineId,p.quantityUnits])).rows.length&&
       await state(client,ctx,'purchase_orders',p.recordId,['DRAFT','AWAITING_APPROVAL']))},
-  {name:'purchase_order.place',description:'Mark an approved purchase order as placed with the supplier; this records the business commitment but does not pretend an email or supplier acceptance occurred.',
+  {name:'purchase_order.place',description:'Approved PO only: record ORDERED status internally; no email, API transmission, or supplier acceptance. This records the business commitment but does not contact the supplier.',
     record:'purchase_order',fields:['recordReference','reference'],permission:permissions.APPROVE_PO,
     capability:'purchasing.core',states:['APPROVED'],verb:'Record placement of',
     execute:(client,ctx,p)=>workflows.placePurchaseOrder(sameClient(client),ctx,p.recordId,
