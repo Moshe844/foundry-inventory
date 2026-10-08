@@ -252,11 +252,18 @@ async function synthesizeReads(provider,message,executed,{completedActions=[],ca
     truncated:(entry.result.rows||[]).length>=100}));
   if(!provider)return executed;
   try{
-    const response=await provider.complete({system:ANSWER_SYSTEM,prompt:JSON.stringify({question:message,evidence,
+    const request={system:ANSWER_SYSTEM,prompt:JSON.stringify({question:message,evidence,
       completedActions,recentChanges,
       availableActions:humanActionGuidance(relevantActions(catalogue,message)),
       availableReads:registry.list('read').map((entry)=>({name:entry.name,description:entry.description}))}),
-      schema:ANSWER_SCHEMA,schemaName:'stockchief_capability_answer'});
+      schema:ANSWER_SCHEMA,schemaName:'stockchief_capability_answer'};
+    let response;
+    try{response=await provider.complete(request);}
+    catch(error){if(error.code!=='ai_invalid_output')throw error;
+      // An invalid/truncated answer is a failed model attempt, not proof that
+      // the recorded business evidence is absent. Retry once under the same
+      // commercial reservation and dollar guard.
+      response=await provider.complete(request);}
     const answer=response.data;
     const used=[...new Set(answer?.usedSteps||[])].filter((index)=>Number.isInteger(index)&&index>=0&&index<executed.length);
     if(typeof answer?.answer!=='string'||!answer.answer.trim()||answer.supported&&!used.length)throw new Error('Unverified answer');
@@ -275,6 +282,12 @@ async function synthesizeReads(provider,message,executed,{completedActions=[],ca
       additionalReads:answer.supported?[]:additionalReads,
       reason:answer.supported?null:'unverified'}}];
   }catch(error){if(error.code==='entitlement_required')throw error;
+    if(error.code==='rate_limited')return [{step:executed[0].step,args:executed[0].args,
+      provenance:{},result:{status:'CLARIFY',answer:error.limitKind==='daily_model_attempts'
+        ?error.message:'This answer exceeds the safe AI cost limit. Nothing changed.',
+      rows:[],columns:[],reason:error.limitKind==='daily_model_attempts'?'daily_safety_limit':'cost_bound'}}];
+    console.warn('[stockchief] Ask evidence synthesis failed',error.code||error.name||'unknown',
+      String(error.details?.technical||'').slice(0,120));
     return [{step:executed[0].step,args:executed[0].args,provenance:{},result:{status:'CLARIFY',
       answer:'StockChief could not verify an answer from those records just now. Nothing changed.',
       rows:[],columns:[],reason:'unavailable'}}];}

@@ -3,7 +3,7 @@
 const test=require('node:test');
 const assert=require('node:assert/strict');
 const planner=require('../../src/assistant/postgres-capability-planner');
-const {selectedPendingChoice}=require('../../src/assistant/postgres-control-plane');
+const {selectedPendingChoice,synthesizeReads}=require('../../src/assistant/postgres-control-plane');
 const {registry}=require('../../src/assistant/postgres-capability-registry');
 
 test('a selected clarification choice resumes the original authorized capability, not an unrelated read',()=>{
@@ -59,6 +59,33 @@ test('a truncated capability-fit response retries with a bounded larger output b
     'Prepare a draft order for Lab Eastside Facilities: two LAB-WASH-030 washers.');
   assert.deepEqual(fitBudgets,[384,1024]);
   assert.equal(result.steps[0].contract.name,'sales_order.create');
+});
+
+test('read synthesis reports a reached daily model limit rather than alleging absent evidence',async()=>{
+  const step={contract:registry.get('read.customer_returns')};
+  const executed=[{step,args:{search:'RMA-01002'},provenance:{},result:{status:'ANSWERED',
+    answer:'One verified return.',rows:[{return:'RMA-01002',status:'RESTOCKED'}]}}];
+  const provider={async complete(){throw Object.assign(new Error('Daily model-attempt limit reached.'),{
+    code:'rate_limited',limitKind:'daily_model_attempts'});}};
+  const result=await synthesizeReads(provider,'What happened to this return?',executed);
+  assert.equal(result[0].result.status,'CLARIFY');
+  assert.equal(result[0].result.reason,'daily_safety_limit');
+  assert.match(result[0].result.answer,/Daily model-attempt limit reached/);
+});
+
+test('read synthesis retries one invalid model output without discarding verified evidence',async()=>{
+  let attempts=0;
+  const step={contract:registry.get('read.customer_returns')};
+  const executed=[{step,args:{search:'RMA-01002'},provenance:{},result:{status:'ANSWERED',
+    answer:'One verified return.',rows:[{return:'RMA-01002',status:'RESTOCKED'}]}}];
+  const provider={async complete(){attempts+=1;
+    if(attempts===1)throw Object.assign(new Error('Truncated'),{code:'ai_invalid_output'});
+    return {data:{answer:'The verified return was restocked.',supported:true,usedSteps:[0],additionalReads:[]}};
+  }};
+  const result=await synthesizeReads(provider,'What happened to this return?',executed);
+  assert.equal(attempts,2);
+  assert.equal(result[0].result.status,'ANSWERED');
+  assert.match(result[0].result.answer,/verified return was restocked/);
 });
 
 test('a single navigation request cannot produce two competing page jumps',async()=>{
