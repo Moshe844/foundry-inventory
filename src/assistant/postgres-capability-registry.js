@@ -231,8 +231,11 @@ for(const [name,required] of Object.entries(REQUIRED)){
 const READS={
   inventory:'Current SKU stock across the business, including on-hand, committed, available-to-fulfill quantities, incoming, and stock locations.',
   inventory_positions:'Current on-hand stock by product and location only. It does not account for commitments and cannot establish what is available to ship.',
-  inventory_movements:'Recorded stock movements.',inventory_summary:'Business-wide current and historical inventory setup evidence: active product and SKU counts, total on-hand units, and count of every product record ever created, including inactive records. Valid even when this business is empty; requires no product or location.',
-  prices:'Current recorded selling prices.',purchase_costs:'Current recorded purchase costs.',
+  inventory_movements:'Recorded stock movements.',
+  inventory_valuation:'Current recorded inventory book cost by product and location; distinct from supplier purchase quotes.',
+  inventory_cost_movements:'Recorded changes in inventory book cost with import file and row provenance.',
+  inventory_summary:'Business-wide current and historical inventory setup evidence: active product and SKU counts, total on-hand units, and count of every product record ever created, including inactive records. Valid even when this business is empty; requires no product or location.',
+  prices:'Current recorded selling prices.',purchase_costs:'Current supplier or owner-recorded unit purchase costs; not the book value of imported opening inventory.',
   supplier_items:'Supplier-product links, purchasing terms, and costs.',needs_you:'Owner decisions awaiting attention.',
   replenishment:'Recorded replenishment recommendations and their state.',locations:'Inventory locations.',
   purchase_orders:'Answer questions about recorded supplier purchase orders and their status without changing the current page.',

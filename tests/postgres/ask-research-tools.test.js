@@ -9,6 +9,7 @@ const auth=require('../../src/domain/postgres-auth-service');
 const catalog=require('../../src/domain/postgres-catalog-service');
 const locations=require('../../src/domain/postgres-location-service');
 const inventory=require('../../src/domain/postgres-inventory-engine');
+const costing=require('../../src/accounting/postgres-costing');
 const assistant=require('../../src/assistant/postgres-service');
 const research=require('../../src/assistant/postgres-research');
 
@@ -26,8 +27,11 @@ test('Ask research reads real inventory positions, stock history and prices with
     const other={workspaceId:second.workspaceId,actorId:second.userId};
     const place=await locations.createLocation(database,owner,{name:'North Stockroom',kind:'stockroom'});
     const item=await catalog.createItem(database,owner,{name:'Blue Work Glove',baseCode:'GLOVE',trackingMode:'quantity'});
-    await inventory.receive(database,owner,{skuId:item.skuIds[0],locationId:place.id,quantity:7,
+    const opening=await inventory.receive(database,owner,{skuId:item.skuIds[0],locationId:place.id,quantity:7,
       reference:'OPENING-GLOVES',idempotencyKey:'opening-gloves'});
+    await database.transaction((client)=>costing.receiveInTransaction(client,owner,{
+      movementId:opening.movementId,totalCostMinor:126,unitCostMinor:18,
+      sourceType:'opening_inventory',sourceRecordId:opening.movementId}));
     const summary=await assistant.lookup(database,owner,{view:'inventory_summary'});
     assert.deepEqual(summary.rows,[{products:1,skus:1,onHand:7,productsEver:1}]);
     assert.match(summary.answer,/7 units on hand/);
@@ -53,9 +57,18 @@ test('Ask research reads real inventory positions, stock history and prices with
     assert.equal(prices.rows[0].sellingPrice,'Not recorded');
     const costs=await assistant.lookup(database,owner,{view:'purchase_costs',search:'Blue Work Glove'});
     assert.equal(costs.rows[0].purchaseCost,'Not recorded');
+    const valuation=await assistant.lookup(database,owner,{view:'inventory_valuation',search:'Blue Work Glove'});
+    assert.equal(valuation.rows[0].inventoryBookCost,'$1.26');
+    assert.equal(valuation.rows[0].averageRecordedUnitCost,'$0.18');
+    assert.equal(valuation.rows[0].costedUnits,7);
+    const costChanges=await assistant.lookup(database,owner,{view:'inventory_cost_movements',search:'Blue Work Glove'});
+    assert.equal(costChanges.rows[0].bookCostChange,'$1.26');
+    assert.equal(costChanges.rows[0].recordedUnitCost,'$0.18');
+    assert.equal(costChanges.rows[0].change,7);
     const supplierItems=await assistant.lookup(database,owner,{view:'supplier_items',search:'Blue Work Glove'});
     assert.equal(supplierItems.rows.length,0);
-    for(const view of ['inventory_positions','inventory_movements','prices','purchase_costs','supplier_items']){
+    for(const view of ['inventory_positions','inventory_movements','inventory_valuation',
+      'inventory_cost_movements','prices','purchase_costs','supplier_items']){
       const result=await assistant.lookup(database,other,{view,search:'Blue Work Glove'});
       assert.equal(result.rows.length,0,`${view} must never read another business`);
     }
