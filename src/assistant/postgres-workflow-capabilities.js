@@ -1217,8 +1217,13 @@ const SPECS=Object.freeze([
           ['orderMultiple','orderMultiple'],['isPreferred','isPreferred']]
           .filter(([field])=>args[field]!=null).map(([field,target])=>[target,
             field==='isPreferred'?String(args[field]).toLowerCase():args[field]]))};
-      const terms=[args.amount!=null?`unit cost $${Number(args.amount).toFixed(2)}`:null,
+      const terms=[args.supplierSku?`supplier SKU ${args.supplierSku}`:null,
+        args.amount!=null?`unit cost $${Number(args.amount).toFixed(2)}`:null,
+        args.purchaseUnit?`purchase unit ${args.purchaseUnit}`:null,
+        args.unitsPerPurchaseUnit!=null?`${args.unitsPerPurchaseUnit} stock units per purchase unit`:null,
         args.leadTimeDays!=null?`${args.leadTimeDays}-day lead time`:null,
+        args.minimumOrderQuantity!=null?`minimum order ${args.minimumOrderQuantity} purchase units`:null,
+        args.orderMultiple!=null?`order multiple ${args.orderMultiple} purchase units`:null,
         args.isPreferred!=null?`${String(args.isPreferred).toLowerCase()==='true'?'preferred':'not preferred'}`:null].filter(Boolean);
       return prepareResult(input,`Link ${sku.name} (${sku.code}) to ${supplier.name}`+
         `${terms.length?` with ${terms.join(', ')}`:''}. No purchase order is created.`);

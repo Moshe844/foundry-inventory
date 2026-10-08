@@ -104,17 +104,26 @@ test('Ask browser controls a real customer order, payment, and return through th
     const bootSupplier=await commerce.createSupplier(database,ctx,{name:'Boot Supply Co'});
     const skuCode=(await database.query('SELECT code FROM skus WHERE workspace_id=$1 AND id=$2',
       [ctx.workspaceId,item.skuIds[0]])).rows[0].code;
-    const supplierLinkMessage=`Link ${skuCode} to Boot Supply Co at $10.25 per unit with a 12-day lead time; do not place an order`;
+    const supplierLinkMessage=`Link ${skuCode} to Boot Supply Co as supplier SKU BOOT-12 at $10.25 per unit `+
+      'with a 12-day lead time and minimum order of 4 packs; do not place an order';
     plans.set(supplierLinkMessage,step('supplier.link_product',{recordReference:'Boot Supply Co',sku:skuCode,
-      amount:'10.25',leadTimeDays:'12'}));
+      supplierSku:'BOOT-12',amount:'10.25',leadTimeDays:'12',minimumOrderQuantity:'4'}));
+    await page.goto(`${base}/ask`);
+    await page.getByLabel('Ask StockChief').fill(supplierLinkMessage);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Continue'}).click()]);
+    assert.match(await page.locator('main').innerText(),/supplier SKU BOOT-12/);
+    assert.match(await page.locator('main').innerText(),/minimum order 4 purchase units/);
     await prepareAndApprove(page,base,database,ctx.workspaceId,supplierLinkMessage,'supplier.link_product');
-    const linked=(await database.query(`SELECT supplier_id,sku_id,last_unit_cost,lead_time_days,is_active
+    const linked=(await database.query(`SELECT supplier_id,sku_id,supplier_sku,last_unit_cost,
+      lead_time_days,minimum_order_quantity,is_active
       FROM supplier_items WHERE workspace_id=$1 AND supplier_id=$2 AND sku_id=$3`,
     [ctx.workspaceId,bootSupplier.id,item.skuIds[0]])).rows[0];
     assert.equal(linked.supplier_id,bootSupplier.id);
     assert.equal(linked.sku_id,item.skuIds[0]);
+    assert.equal(linked.supplier_sku,'BOOT-12');
     assert.equal(Number(linked.last_unit_cost),10.25);
     assert.equal(Number(linked.lead_time_days),12);
+    assert.equal(Number(linked.minimum_order_quantity),4);
     assert.equal(Number(linked.is_active),1);
     await pricing.setPrice(database,ctx,{skuId:item.skuIds[0],amountMinor:2500,currency:'USD'});
     const pickup='Prepare a one-boot draft order for Builder Co, customer pickup at Main Warehouse';
