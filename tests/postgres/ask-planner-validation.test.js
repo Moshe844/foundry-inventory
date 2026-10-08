@@ -95,6 +95,24 @@ test('a request to leave an order as draft never gains a reservation step',async
   assert.deepEqual(result.steps.map(({contract})=>contract.name),['sales_order.create']);
 });
 
+test('a transfer that already reserves stock cannot add a second approval for the same new transfer',async()=>{
+  const provider={async complete({schemaName}){
+    if(schemaName==='stockchief_capability_fit')return {data:{aligned:true,reason:''}};
+    return {data:{steps:[
+      {capability:'inventory.transfer',arguments:[{name:'sku',value:'WASH-30'},
+        {name:'fromLocation',value:'Main'},{name:'toLocation',value:'Overflow'},
+        {name:'quantity',value:'2'}],dependsOn:[],continuesPending:false},
+      {capability:'transfer.approve',arguments:[],dependsOn:[0],continuesPending:false},
+      {capability:'navigate.record.transfer',arguments:[],dependsOn:[1],continuesPending:false},
+    ],clarifyingQuestion:''}};
+  }};
+  const result=await planner.plan(provider,
+    'Transfer and reserve two washers from Main to Overflow, then open that transfer. Do not pick or dispatch.');
+  assert.deepEqual(result.steps.map((step)=>step.contract.name),
+    ['inventory.transfer','navigate.record.transfer']);
+  assert.deepEqual(result.steps.map((step)=>step.dependsOn),[[],[0]]);
+});
+
 test('planner bounds stale conversation text while preserving the full current request',async()=>{
   const current='Create an order dated 2026-08-15 for four rolls and reserve the stock.';
   const provider={async complete({schemaName,prompt}){

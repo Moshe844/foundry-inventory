@@ -192,7 +192,8 @@ action('inventory.issue','Record a physical removal of goods from inventory.',
   ['sku','skuScope','location','quantity','reason','reference'],permissions.OPERATE,'issue');
 action('inventory.transfer','Request and approve a transfer between inventory locations. This reserves stock; dispatch and receipt are separate physical steps.',
   ['sku','skuScope','fromLocation','toLocation','quantity','reference'],permissions.REQUEST_TRANSFER,'transfer',
-  {resultReference:'transferId',resultDisplayReference:'transferNumber',resultRecordKind:'transfer'});
+  {resultReference:'transferId',resultDisplayReference:'transferNumber',resultRecordKind:'transfer',
+    satisfiesCapabilities:['transfer.approve']});
 action('inventory.adjust','Correct a stock position to a verified physical count.',
   ['sku','skuScope','location','countedQuantity','reason','reference'],permissions.ADJUST,'adjust');
 action('catalog.create_item','Create a quantity-tracked product record with its exact SKU code when supplied.',

@@ -334,6 +334,26 @@ test('Ask browser controls a real customer order, payment, and return through th
     await page.goto(`${base}/ask`);
     assert.ok((await page.locator('main').innerText()).includes(
       `Reference: ${askedTransferProposal.result.transferNumber}`));
+    const oldPlanId='pgplan_legacy_transfer_approval';
+    await database.query(`INSERT INTO stockchief_runtime.assistant_capability_plans
+      (id,workspace_id,actor_user_id,batch_id,source_message,steps,status,waiting_proposal_id)
+      VALUES($1,$2,$3,$4,$5,$6::jsonb,'WAITING',$7)`,
+    [oldPlanId,ctx.workspaceId,ctx.actorId,oldPlanId,'Open the transfer just created',JSON.stringify([
+      {capability:'inventory.transfer',args:{},dependsOn:[],state:'WAITING',reason:null,
+        proposalId:askedTransferProposal.id},
+      {capability:'transfer.approve',args:{},dependsOn:[0],state:'BLOCKED',reason:'dependency_waiting',
+        proposalId:null},
+      {capability:'navigate.record.transfer',args:{},dependsOn:[1],state:'BLOCKED',
+        reason:'dependency_waiting',proposalId:null},
+    ]),askedTransferProposal.id]);
+    const continued=await require('../../src/assistant/postgres-service').executeProposal(database,ctx,
+      askedTransferProposal.id);
+    assert.equal(continued.continuationError,undefined);
+    const resumed=(await database.query(`SELECT status,steps FROM stockchief_runtime.assistant_capability_plans
+      WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,oldPlanId])).rows[0];
+    assert.equal(resumed.status,'DONE');
+    assert.deepEqual(resumed.steps.map((entry)=>entry.state),['DONE','DONE','DONE']);
+    assert.equal(resumed.steps[1].args.recordReference,askedTransferProposal.result.transferId);
     const requestedTransfer=await transfers.request(database,ctx,{fromLocationId:place.id,toLocationId:destination.id,
       idempotencyKey:'ask-workflow-transfer',lines:[{skuId:item.skuIds[0],quantity:2}]});
     const transferNumber=requestedTransfer.transfer_number;

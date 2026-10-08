@@ -103,6 +103,18 @@ async function resume(database,ctx,proposalId,{service,provider,rawProvider,reco
         const next=readyIndexes(steps)[0];if(next===undefined)break;
         const stored=steps[next];const contract=registry.get(stored.capability);
         if(!contract){stored.state='BLOCKED';stored.reason='capability_removed';break;}
+        const satisfiedBy=stored.dependsOn.map((index)=>steps[index]).filter((parent)=>
+          parent?.state==='DONE'&&parent.args?.recordReference&&
+          registry.get(parent.capability)?.resultRecordKind===contract.recordKind&&
+          registry.get(parent.capability)?.satisfiesCapabilities?.includes(contract.name));
+        if(satisfiedBy.length===1){
+          // Plans saved before a capability-subsumption fix can be resumed
+          // without repeating an already-completed business transition.
+          stored.args={...stored.args,recordReference:satisfiedBy[0].args.recordReference};
+          stored.state='DONE';stored.reason=null;
+          await update(database,claimed,token,steps,'ADVANCING');
+          continue;
+        }
         const dependencyArgs=Object.assign({},...stored.dependsOn.map((index)=>steps[index]?.args||{}));
         const produced=stored.dependsOn.map((index)=>steps[index]).filter((parent)=>
           parent?.args?.recordReference&&registry.get(parent.capability)?.resultRecordKind===contract.recordKind);

@@ -234,7 +234,14 @@ function collapseRepeatedEffects(steps){
     const dependencies=[...new Set(step.dependsOn.map((index)=>indexMap.get(index)))];
     const key=step.contract.singleEffectPerTarget
       ?JSON.stringify([step.contract.name,step.args,step.continuesPending]) :null;
-    const earlier=key?seen.get(key):undefined;
+    let earlier=key?seen.get(key):undefined;
+    if(earlier===undefined)for(let index=retained.length-1;index>=0;index--){
+      const prior=retained[index];
+      if(prior.contract.satisfiesCapabilities?.includes(step.contract.name)
+        &&(dependencies.includes(index)||!step.args.recordReference)){
+        earlier=index;break;
+      }
+    }
     if(earlier!==undefined&&dependencies.every((index)=>index<=earlier)){
       // A state transition on the same uniquely resolved target cannot have
       // two distinct effects in one plan. Keep the first approval and preserve
