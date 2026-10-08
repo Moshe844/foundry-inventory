@@ -249,7 +249,7 @@ const READS={
   prices:'Current recorded selling prices.',purchase_costs:'Current supplier or owner-recorded unit purchase costs; not the book value of imported opening inventory.',
   supplier_items:'Supplier-product links, purchasing terms, and costs.',needs_you:'Owner decisions awaiting attention.',
   replenishment:'Recorded replenishment recommendations and their state.',locations:'Inventory locations.',
-  purchase_orders:'Answer questions about recorded supplier purchase orders and their status without changing the current page.',
+  purchase_orders:'Read supplier purchase orders, deliveries, linked invoice documents including disputes and exceptions, and the actually posted open payable; PO planned cost and disputed documents are not posted debt.',
   sales_orders:'Read recorded customer orders with ordered, held, fulfilled and open units, invoice and payment balances, and posted sale revenue, product cost and gross profit from fulfillment journals; answers do not change business records.',
   sales_activity:'Recorded customer order and sales activity for supported time windows.',
   suppliers:'Supplier records.',customers:'Customer records.',shipping:'Shipping records.',

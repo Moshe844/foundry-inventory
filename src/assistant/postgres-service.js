@@ -373,23 +373,61 @@ async function lookup(database,ctx,request,options={}) {
       COALESCE(SUM(pol.quantity_received_units),0) AS received_units,
       COALESCE(SUM(pol.quantity_units-pol.quantity_received_units),0) AS outstanding_units,
       COALESCE(SUM(pol.line_total),0) AS total_amount,
-      COUNT(pol.id) FILTER (WHERE pol.unit_cost IS NULL) AS unpriced_lines
+      COUNT(pol.id) FILTER (WHERE pol.unit_cost IS NULL) AS unpriced_lines,
+      COALESCE(bills.invoice_count,0) AS invoice_count,
+      COALESCE(bills.disputed_count,0) AS disputed_count,
+      COALESCE(bills.invoice_documents_minor,0) AS invoice_documents_minor,
+      COALESCE(bills.posted_payable_minor,0) AS posted_payable_minor,
+      bills.invoice_documents
       FROM purchase_orders po JOIN suppliers s ON s.id=po.supplier_id AND s.workspace_id=po.workspace_id
       LEFT JOIN purchase_order_lines pol ON pol.purchase_order_id=po.id AND pol.workspace_id=po.workspace_id
+      LEFT JOIN LATERAL (SELECT COUNT(*)::int AS invoice_count,
+        COUNT(*) FILTER (WHERE status='DISPUTED')::int AS disputed_count,
+        SUM(total_minor) AS invoice_documents_minor,
+        SUM(CASE WHEN status IN ('OPEN','PARTIALLY_PAID') THEN balance_minor ELSE 0 END) AS posted_payable_minor,
+        (SELECT JSONB_AGG(JSONB_BUILD_OBJECT('number',latest.supplier_invoice_number,
+          'status',latest.status,'match',latest.match_status,'total',latest.total_minor,
+          'owed',latest.balance_minor,'exceptions',latest.exception_detail::jsonb->'differences'))
+          FROM (SELECT supplier_invoice_number,status,match_status,total_minor,balance_minor,exception_detail
+            FROM accounting_supplier_bills WHERE workspace_id=po.workspace_id
+              AND purchase_order_id=po.id AND status<>'VOID'
+            ORDER BY created_at DESC,id DESC LIMIT 10) latest) AS invoice_documents
+        FROM accounting_supplier_bills bill WHERE bill.workspace_id=po.workspace_id
+          AND bill.purchase_order_id=po.id AND bill.status<>'VOID') bills ON true
       WHERE po.workspace_id=$1 AND ($2::text IS NULL OR po.po_number ILIKE '%'||$2||'%' OR s.name ILIKE '%'||$2||'%'
-        OR po.status ILIKE '%'||$2||'%') GROUP BY po.id,s.name ORDER BY po.created_at DESC LIMIT 100`,
-    [ctx.workspaceId,search])).rows.map((row)=>evidenceRow({order:row.po_number,status:row.status,supplier:row.supplier,
+        OR po.status ILIKE '%'||$2||'%') GROUP BY po.id,s.name,bills.invoice_count,bills.disputed_count,
+        bills.invoice_documents_minor,bills.posted_payable_minor,bills.invoice_documents
+      ORDER BY po.created_at DESC LIMIT 100`,
+    [ctx.workspaceId,search])).rows.map((row)=>{
+      const documents=Array.isArray(row.invoice_documents)?row.invoice_documents:[];
+      const invoiceDocuments=documents.map((invoice)=>{
+        const exceptions=Array.isArray(invoice.exceptions)?invoice.exceptions.map((entry)=>entry.kind).filter(Boolean):[];
+        return `${invoice.number||'Unnumbered invoice'} ${String(invoice.status).toLowerCase()} `+
+          `${pricing.formatMinor(Number(invoice.total),row.currency)} document, `+
+          `${pricing.formatMinor(Number(invoice.owed),row.currency)} balance`+
+          (exceptions.length?`; exceptions: ${exceptions.join(', ')}`:'');
+      });
+      return evidenceRow({order:row.po_number,status:row.status,supplier:row.supplier,
       orderedUnits:Number(row.ordered_units),receivedUnits:Number(row.received_units),
       outstandingUnits:Number(row.outstanding_units),currency:row.currency,
       total:Number(row.unpriced_lines)?null:pricing.formatMinor(Math.round(Number(row.total_amount)*100),row.currency),
-      unpricedLines:Number(row.unpriced_lines)},`/purchasing/orders/${row.id}`));
+      unpricedLines:Number(row.unpriced_lines),invoiceCount:Number(row.invoice_count),
+      disputedInvoiceCount:Number(row.disputed_count),
+      invoiceDocumentsReceived:pricing.formatMinor(Number(row.invoice_documents_minor),row.currency),
+      postedPayable:pricing.formatMinor(Number(row.posted_payable_minor),row.currency),
+      invoiceDocuments,invoiceDocumentsTruncated:Number(row.invoice_count)>invoiceDocuments.length},
+      `/purchasing/orders/${row.id}`);
+    });
     const answer=rows.length===1?`${rows[0].order} is ${rows[0].status.toLowerCase().replace(/_/g,' ')}: `+
       `${rows[0].orderedUnits} ordered, ${rows[0].receivedUnits} received, ${rows[0].outstandingUnits} still expected; `+
-      `total ${rows[0].total===null?'not fully priced':rows[0].total}.`:
+      `total ${rows[0].total===null?'not fully priced':rows[0].total}; `+
+      `${rows[0].invoiceCount} supplier invoice${rows[0].invoiceCount===1?'':'s'} recorded, `+
+      `${rows[0].postedPayable} posted payable.`:
       rows.length?`${rows.length} purchase orders matched; ${rows.reduce((sum,row)=>sum+row.outstandingUnits,0).toLocaleString('en-US')} units remain outstanding.`:
         'No purchase order matched that request.';
     return {answer,rows,columns:['order','status','supplier','orderedUnits','receivedUnits',
-      'outstandingUnits','total','currency','unpricedLines']};
+      'outstandingUnits','total','currency','unpricedLines','invoiceCount','disputedInvoiceCount',
+      'invoiceDocumentsReceived','postedPayable','invoiceDocuments','invoiceDocumentsTruncated']};
   }
   if(request.view==='sales_orders'){
     const rows=(await database.query(`SELECT so.id,so.order_number,so.status,so.currency,c.name AS customer,

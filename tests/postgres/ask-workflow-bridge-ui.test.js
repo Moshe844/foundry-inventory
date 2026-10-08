@@ -538,6 +538,16 @@ test('Ask browser controls a real customer order, payment, and return through th
       FROM accounting_supplier_bills WHERE workspace_id=$1 AND purchase_order_id=$2
       AND status IN ('OPEN','PARTIALLY_PAID')`,
     [ctx.workspaceId,invoicedPurchase.purchaseOrderId])).rows[0].owed,3000);
+    const invoiceEvidence=await require('../../src/assistant/postgres-service').lookup(database,ctx,
+      {view:'purchase_orders',search:invoicedPurchase.poNumber});
+    assert.equal(invoiceEvidence.rows.length,1);
+    assert.equal(invoiceEvidence.rows[0].invoiceCount,2);
+    assert.equal(invoiceEvidence.rows[0].disputedInvoiceCount,1);
+    assert.equal(invoiceEvidence.rows[0].invoiceDocumentsReceived,'$42.00');
+    assert.equal(invoiceEvidence.rows[0].postedPayable,'$30.00');
+    assert.match(invoiceEvidence.rows[0].invoiceDocuments.join(' '),/SS-INVOICE-EXCEPTION disputed/);
+    assert.match(invoiceEvidence.rows[0].invoiceDocuments.join(' '),/invoice_ahead_of_receipt/);
+    assert.match(invoiceEvidence.rows[0].invoiceDocuments.join(' '),/price_outside_approved_cost/);
     for(const [instruction,capability,args] of [
       ['Pause automatic work while we review a stock problem','autopilot.pause',
         {reason:'Reviewing a stock problem'}],
