@@ -200,14 +200,14 @@ action('contact.create','Add a new supplier or customer business contact to this
 action('communication.send_email','Prepare a business email for review; sending requires a connected verified mailbox and explicit approval.',
   ['recipient','recipientKind','recipientEmail','recipientMode','subject','body','mailbox'],permissions.OPERATE,'send_email',
   {additionalCommercialCapabilities:['connection.email']});
-action('sales_order.create','Prepare a draft customer order without claiming it was fulfilled.',
+action('sales_order.create','Prepare a draft customer order without fulfillment or payment. The amount input is the selling price PER UNIT, not the order total.',
   ['customer','sku','skuScope','quantity','deliveryMethod','shipToAddress','location','orderDate','neededBy','amount','currency','reference'],
   permissions.MANAGE_SALES,'create_sales_order',{allowUnknownEntities:['customer'],
     resultReference:'salesOrderId',resultRecordKind:'sales_order'});
 action('customer_invoice.create','Prepare a customer invoice for review. Approval records and posts the invoice in StockChief; it does not create or fulfill a customer order, send the invoice, or collect payment.',
   ['customer','sku','quantity','amount','tax','currency','description','issueDate','dueDate','reference'],
   permissions.MANAGE_ACCOUNTING,'create_customer_invoice',{allowUnknownEntities:['customer']});
-action('purchase_order.create','Prepare a draft order for stock from a supplier. Supplier unit cost may remain unknown in the draft, but it must be priced before placement; a draft does not increase on-hand stock.',
+action('purchase_order.create','Prepare a draft supplier order; amount is cost PER UNIT, not total. Unit cost may remain unknown in draft but must be priced before placement; no on-hand stock changes.',
   ['supplier','sku','skuScope','quantity','location','amount','currency','neededBy','reference'],
   permissions.CREATE_PO,'create_purchase_order',{allowUnknownEntities:['supplier']});
 action('purchase_order.receive','Receive physically arrived goods against an existing placed purchase order. Requires the owner or context to identify the purchase order; an arrival alone does not establish one.',

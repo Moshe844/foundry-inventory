@@ -68,6 +68,7 @@ will exist AFTER approval. Reading order quantities or money is how StockChief t
 do not demand a separate "summary" capability. A negative request such as not recording payment is satisfied
 when no proposed step records payment; do not require a no-op step to prove absence.
 The dependsOn indices in proposedSteps are executable sequencing, not merely suggestions.
+Use each contract's own input semantics; never reinterpret a documented per-unit amount as a line total.
 If the owner requires all units reserved now, partial confirmation or backordering does not fulfill that goal;
 choose sales_order.reserve_all. Ordinary confirmation can create a truthful backorder.
 In particular, creating a draft order does not commit or reserve inventory: when both creation and reservation

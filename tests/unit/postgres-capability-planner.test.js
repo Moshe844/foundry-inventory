@@ -52,6 +52,8 @@ test('capability discovery remains compact while preserving action safety contra
   assert.ok(contract.description.toLowerCase().includes('supplier'));
   assert.match(planner.systemFor(),/approval/i);
   assert.match(planner.systemFor(),/resolver verifies unique records/i);
+  assert.match(registry.get('sales_order.create').description,/price PER UNIT/);
+  assert.match(registry.get('purchase_order.create').description,/cost PER UNIT/);
   for(const [name,label] of [['navigate.accounting','Money'],['navigate.warehouse','Warehouse'],
     ['navigate.shipping','Shipping setup']]){
     const destination=catalogue.navigation.find((entry)=>entry.n===name);
