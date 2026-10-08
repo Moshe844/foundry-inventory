@@ -738,6 +738,40 @@ const SPECS=Object.freeze([
     capability:'purchasing.core',states:['DRAFT','AWAITING_APPROVAL'],verb:'Approve',
     execute:(client,ctx,p)=>workflows.approvePurchaseOrder(sameClient(client),ctx,p.recordId,p),
     verify:(client,ctx,_r,p)=>state(client,ctx,'purchase_orders',p.recordId,['APPROVED'])},
+  {name:'purchase_order.revise_draft_line',description:'Change the ordered stock-unit quantity of one exact line on an unapproved draft purchase order. Preserve its recorded supplier unit cost, supplier, and destination. No supplier message, receipt, or invoice is created.',
+    record:'purchase_order',fields:['recordReference','sku','quantity'],permission:permissions.CREATE_PO,
+    capability:'purchasing.core',build:async(database,ctx,row,args)=>{
+      requireState(row,['DRAFT','AWAITING_APPROVAL'],'This purchase order');
+      const quantity=positive(args.quantity,'Revised ordered quantity');
+      const lines=(await database.query(`SELECT pol.id,pol.quantity_units,pol.quantity_received_units,
+        pol.units_per_purchase_unit,pol.unit_cost,s.code,i.name
+        FROM purchase_order_lines pol JOIN skus s ON s.id=pol.sku_id AND s.workspace_id=pol.workspace_id
+        JOIN items i ON i.id=s.item_id AND i.workspace_id=pol.workspace_id
+        WHERE pol.workspace_id=$1 AND pol.purchase_order_id=$2 ORDER BY pol.line_number`,
+      [ctx.workspaceId,row.id])).rows;
+      const named=String(args.sku||'').trim().toLowerCase();
+      const selected=named?lines.filter((line)=>line.code.toLowerCase()===named||
+        line.name.toLowerCase()===named):lines;
+      if(selected.length!==1)throw new ValidationError(named?
+        'Name the exact SKU on this draft purchase order; no line was changed.':
+        'This order has several lines. Name the exact SKU to revise.');
+      const line=selected[0];
+      if(Number(line.quantity_received_units)!==0)throw new ValidationError(
+        'This line already has received stock and cannot be revised as a draft.');
+      if(quantity%Number(line.units_per_purchase_unit)!==0)throw new ValidationError(
+        `Order a multiple of ${line.units_per_purchase_unit} stock units for this supplier pack.`);
+      const cost=line.unit_cost==null?null:Number(line.unit_cost);
+      return prepareResult({recordId:row.id,lineId:line.id,quantityUnits:quantity,
+        expectedQuantityUnits:Number(line.quantity_units),expectedUpdatedAt:new Date(row.updated_at).toISOString()},
+      `Revise ${row.po_number}: ${line.code} from ${line.quantity_units} to ${quantity} stock units`+
+        `${cost==null?' (unit cost not yet recorded)':` at ${row.currency} ${cost.toFixed(2)} per unit, new line total ${row.currency} ${(cost*quantity).toFixed(2)}`}. `+
+        'Keep this draft unapproved; no supplier message or inventory movement occurs.');},
+    execute:(client,ctx,p)=>workflows.reviseDraftPurchaseOrderLineInTransaction(client,ctx,p.recordId,p),
+    verify:async(client,ctx,r,p)=>Boolean(r.lineId===p.lineId&&r.quantityUnits===p.quantityUnits&&
+      (await client.query(`SELECT 1 FROM purchase_order_lines WHERE workspace_id=$1
+        AND purchase_order_id=$2 AND id=$3 AND quantity_units=$4`,
+      [ctx.workspaceId,p.recordId,p.lineId,p.quantityUnits])).rows.length&&
+      await state(client,ctx,'purchase_orders',p.recordId,['DRAFT','AWAITING_APPROVAL']))},
   {name:'purchase_order.place',description:'Mark an approved purchase order as placed with the supplier; this records the business commitment but does not pretend an email or supplier acceptance occurred.',
     record:'purchase_order',fields:['recordReference','reference'],permission:permissions.APPROVE_PO,
     capability:'purchasing.core',states:['APPROVED'],verb:'Record placement of',

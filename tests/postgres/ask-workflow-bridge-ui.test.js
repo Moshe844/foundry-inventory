@@ -388,6 +388,25 @@ test('Ask browser controls a real customer order, payment, and return through th
     const purchase=await workflows.createPurchaseOrder(database,ctx,{supplierId:supplier.id,
       destinationLocationId:place.id,idempotencyKey:'ask-workflow-purchase',
       lines:[{skuId:item.skuIds[0],quantityUnits:5,unitCost:10,destinationLocationId:place.id}]});
+    const revisePurchase=`Change the draft quantity on ${purchase.poNumber} for ${skuCode} from five to seven units without approving or sending it`;
+    plans.set(revisePurchase,step('purchase_order.revise_draft_line',{recordReference:purchase.poNumber,
+      sku:skuCode,quantity:7}));
+    const revision=await prepareAndApprove(page,base,database,ctx.workspaceId,revisePurchase,
+      'purchase_order.revise_draft_line');
+    const revisedLine=(await database.query(`SELECT quantity_units,quantity_purchase_units,line_total
+      FROM purchase_order_lines WHERE workspace_id=$1 AND purchase_order_id=$2`,
+    [ctx.workspaceId,purchase.purchaseOrderId])).rows[0];
+    assert.equal(Number(revisedLine.quantity_units),7);
+    assert.equal(Number(revisedLine.quantity_purchase_units),7);
+    assert.equal(Number(revisedLine.line_total),70);
+    assert.equal((await database.query(`SELECT status FROM purchase_orders WHERE workspace_id=$1 AND id=$2`,
+      [ctx.workspaceId,purchase.purchaseOrderId])).rows[0].status,'DRAFT');
+    const revisionReplay=await workflows.reviseDraftPurchaseOrderLine(database,ctx,purchase.purchaseOrderId,
+      {...revision.payload,idempotencyKey:revision.idempotency_key});
+    assert.equal(revisionReplay.replayed,true);
+    assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM purchase_order_events
+      WHERE workspace_id=$1 AND purchase_order_id=$2 AND event='draft_line_revised'`,
+    [ctx.workspaceId,purchase.purchaseOrderId])).rows[0].count,1);
     const approvePurchase=`Approve supplier purchase order ${purchase.poNumber}`;
     plans.set(approvePurchase,step('purchase_order.approve',{recordReference:purchase.poNumber}));
     await prepareAndApprove(page,base,database,ctx.workspaceId,approvePurchase,'purchase_order.approve');

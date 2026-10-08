@@ -196,6 +196,54 @@ async function createPurchaseOrder(database, rawContext, input) {
   return transaction(database, (client) => createPurchaseOrderInTransaction(client, rawContext, input));
 }
 
+async function reviseDraftPurchaseOrderLineInTransaction(client, rawContext, purchaseOrderId, input) {
+  const ctx = requireContext(rawContext);
+  await requirePermission(client, ctx, access.CREATE_PO, 'edit draft purchase orders');
+  const operation = await beginOperation(client, ctx, 'purchase_order.revise_draft_line', input.idempotencyKey);
+  if (operation.replayed) return { ...operation.result, replayed: true };
+  const order = await requireRow(client, `SELECT id,status,updated_at,integrity_hash FROM purchase_orders
+    WHERE id=$1 AND workspace_id=$2 FOR UPDATE`, [purchaseOrderId, ctx.workspaceId],
+  'That purchase order was not found.');
+  if (!['DRAFT', 'AWAITING_APPROVAL'].includes(order.status)) throw new ValidationError(
+    'Only an unapproved draft purchase order can be revised; nothing changed.');
+  if (input.expectedUpdatedAt && new Date(order.updated_at).toISOString() !== input.expectedUpdatedAt)
+    throw new ValidationError('This draft changed after review. Ask again before revising it.');
+  const line = await requireRow(client, `SELECT id,sku_id,quantity_units,quantity_purchase_units,
+    units_per_purchase_unit,unit_cost,quantity_received_units FROM purchase_order_lines
+    WHERE id=$1 AND purchase_order_id=$2 AND workspace_id=$3 FOR UPDATE`,
+  [input.lineId, purchaseOrderId, ctx.workspaceId], 'That purchase-order line was not found.');
+  if (Number(line.quantity_received_units) !== 0) throw new ValidationError(
+    'Received purchase-order goods cannot be revised as a draft.');
+  if (input.expectedQuantityUnits != null && Number(line.quantity_units) !== Number(input.expectedQuantityUnits))
+    throw new ValidationError('The ordered quantity changed after review. Ask again before revising it.');
+  const quantityUnits = positiveInteger(input.quantityUnits, 'Revised stock-unit quantity');
+  const unitsPer = positiveInteger(line.units_per_purchase_unit, 'Purchase pack size');
+  if (quantityUnits % unitsPer !== 0) throw new ValidationError(
+    `Order a multiple of ${unitsPer} stock units for this supplier pack.`);
+  const at = nowIso();
+  await client.query(`UPDATE purchase_order_lines SET quantity_units=$4::bigint,
+    quantity_purchase_units=$5::bigint,
+    line_total=CASE WHEN unit_cost IS NULL THEN NULL ELSE unit_cost*($4::bigint) END
+    WHERE workspace_id=$1 AND purchase_order_id=$2 AND id=$3`,
+  [ctx.workspaceId, purchaseOrderId, line.id, quantityUnits, quantityUnits / unitsPer]);
+  const hash = crypto.createHash('sha256').update(JSON.stringify({previous:order.integrity_hash,
+    lineId:line.id,from:Number(line.quantity_units),to:quantityUnits})).digest('hex');
+  await client.query(`UPDATE purchase_orders SET updated_at=$3,integrity_hash=$4
+    WHERE id=$1 AND workspace_id=$2`, [purchaseOrderId, ctx.workspaceId, at, hash]);
+  await event(client, 'purchase_order_events', null, { workspaceId:ctx.workspaceId,
+    recordId:purchaseOrderId, type:'draft_line_revised', actorId:ctx.actorId, at,
+    detail:{lineId:line.id,skuId:line.sku_id,from:Number(line.quantity_units),to:quantityUnits} });
+  const result={purchaseOrderId,lineId:line.id,quantityUnits,
+    unitCost:line.unit_cost==null?null:Number(line.unit_cost),
+    lineTotal:line.unit_cost==null?null:Number(line.unit_cost)*quantityUnits,status:order.status};
+  await completeOperation(client, operation, result);
+  return {...result,replayed:false};
+}
+
+function reviseDraftPurchaseOrderLine(database, ctx, purchaseOrderId, input) {
+  return transaction(database, (client) => reviseDraftPurchaseOrderLineInTransaction(client,ctx,purchaseOrderId,input));
+}
+
 async function approvePurchaseOrder(database, rawContext, purchaseOrderId, input) {
   const ctx = requireContext(rawContext);
   return transaction(database, async (client) => {
@@ -950,6 +998,8 @@ function recordSupplierPaymentInTransaction(client, ctx, input) {
 module.exports = {
   createPurchaseOrder,
   createPurchaseOrderInTransaction,
+  reviseDraftPurchaseOrderLine,
+  reviseDraftPurchaseOrderLineInTransaction,
   approvePurchaseOrder,
   placePurchaseOrder,
   cancelPurchaseOrder,
