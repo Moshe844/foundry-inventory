@@ -30,6 +30,7 @@ const PLANNING_RULES=[
   'Use zero-based dependsOn only for genuine prior-step dependencies. Use continuesPending only when the current message answers the pending question; otherwise prior turns are context, not commands. Preserve a supplied email address; a subject is optional.',
   'When the owner explicitly requests several business outcomes, retain every outcome. Creating a draft customer order does not reserve stock; if the same request also asks to confirm or reserve it, include sales_order.confirm as a dependent step after sales_order.create. Approval of the first step prepares the second for its own approval. Do not infer confirmation from a request for a draft alone.',
   'The currentPage record is reloaded from this workspace and can resolve “this product”, “this order”, or similar references. Use its matching entity when the owner did not name another; an explicitly named entity always wins. A lasting reorder point is a policy proposal, not a stock movement.',
+  'RecentChanges lists verified, approved changes in this inventory by this user. Resolve “the order I just created” and similar follow-ups from a unique matching recent result; never treat an older, different record as the target when the reference is ambiguous. Do not repeat a completed action.',
   'Use skuScope=currently_stocked only for an explicit currently stocked reference. Do not assume a linked order, bill, payment or policy exists. Prefer the valid contract requiring fewer unproven business facts.',
   'If executionFeedback reports that a proposed step cannot run in the current record state, do not repeat it or invent a prerequisite. Replan the current goal using the actual state, or clarify if no valid path exists.',
   'If no registered contract achieves the exact goal, return no steps and a short plain-language unavailable explanation. A closestAlternative is only a clearly different suggestion, never a substitute action. Do not invent facts, policies, authority or SQL.',
@@ -51,9 +52,17 @@ it is deliberately not given separate arguments. Do not mark it misaligned for e
 The currentPage record is verified from this workspace and supplied to the executor. When the owner says
 "this product" or an equivalent current-record reference, that verified record can identify the target;
 do not require the owner to restate its name or SKU. An explicitly named different record takes precedence.
+RecentChanges contains only verified completed changes by this actor in this workspace. It can identify a
+unique just-created record for a follow-up; do not reject a matching operation only because the owner used
+"that order" instead of restating its number. Ambiguity still requires clarification.
 The authenticated currentWorkspace is the inventory the owner is operating in. "This inventory" or
 "this business" refers to that workspace even when currentPage is null. The executor remains tenant-scoped;
 do not ask for another workspace name before a workspace-level setting or rename.
+Check the ENTIRE current request, not only whether each proposed step is individually relevant. If the owner
+asks for two independent effects and the plan includes only one, set aligned=false and name the omitted effect.
+In particular, creating a draft order does not commit or reserve inventory: when both creation and reservation
+are requested, the plan needs a dependent confirmation step. Do not pass a create-only plan on the grounds that
+the owner can ask for confirmation later. Conversely, do not add confirmation when the owner asked only for a draft.
 An owner stating a durable supplier term, stock threshold or operating preference is telling StockChief business information
 worth proposing as a rule. The proposal still requires explicit owner approval before any setting changes.
 Preparing a consequential operation for owner approval is StockChief's normal safety boundary: judge the effect
@@ -132,10 +141,11 @@ function parseSteps(raw,catalogue=registry){
 }
 
 async function plan(provider,message,{catalogue=registry,history=[],pending=null,page=null,workspace=null,
-  deferReadFit=false,feedback=null}={}){
+  recentChanges=[],deferReadFit=false,feedback=null}={}){
   if(!provider)return {steps:[],clarifyingQuestion:'StockChief cannot interpret free-form requests while its reasoning connection is unavailable. Nothing changed.'};
   const context={message,
     workspace,
+    recentChanges,
     conversation:history.slice(-6).map(({message,answer,status})=>({message,answer,status})),
     pending:pending?{capability:pending.capability,args:pending.args,question:pending.question,
       originalMessage:pending.originalMessage||null,
@@ -186,6 +196,7 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
   if(selected.steps.length){
     try{
       const candidate=()=>({message,currentWorkspace:workspace||null,currentPage:page||null,
+        recentChanges,
         pendingRequest:selected.steps.some((step)=>step.continuesPending)&&pending
           ?{originalMessage:pending.originalMessage||null,question:pending.question,
             capability:pending.capability,previousArguments:pending.args,

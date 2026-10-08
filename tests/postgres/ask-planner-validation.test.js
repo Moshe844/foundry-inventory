@@ -45,3 +45,25 @@ test('a short answer to a pending action is judged against the original goal',as
   assert.equal(result.steps[0].contract.name,'sales_order.create');
   assert.equal(result.steps[0].continuesPending,true);
 });
+
+test('fit rejects a draft-only answer to create-and-reserve and preserves verified recent records',async()=>{
+  let plans=0;let fits=0;
+  const recentChanges=[{action:'sales_order.create',summary:'Draft order SO-00002 for Eastside',
+    record:{salesOrderId:'so_verified',orderNumber:'SO-00002'}}];
+  const step=(capability,dependsOn=[])=>({capability,arguments:[],dependsOn,continuesPending:false});
+  const provider={async complete({schemaName,prompt,system}){
+    const context=JSON.parse(prompt);
+    assert.deepEqual(context.recentChanges,recentChanges);
+    if(schemaName==='stockchief_capability_fit'){
+      fits+=1;assert.match(system,/ENTIRE current request/);
+      return {data:{aligned:fits>1,reason:fits===1?'Reservation was omitted.':''}};
+    }
+    plans+=1;
+    return {data:{steps:plans===1?[step('sales_order.create')]:
+      [step('sales_order.create'),step('sales_order.confirm',[0])],clarifyingQuestion:''}};
+  }};
+  const result=await planner.plan(provider,'Create an order for two valves and reserve them.',{recentChanges});
+  assert.deepEqual(result.steps.map(({contract})=>contract.name),
+    ['sales_order.create','sales_order.confirm']);
+  assert.equal(fits,2);
+});

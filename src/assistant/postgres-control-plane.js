@@ -185,7 +185,7 @@ async function synthesizeReads(provider,message,executed){
 }
 
 async function run(service,database,ctx,message,{provider,rawProvider=null,history=[],pending=null,page=null,usageKey=''}){
-  let selected;let catalogue;let workspace;
+  let selected;let catalogue;let workspace;let recentChanges=[];
   try{
     const actor=await membership(database,ctx);
     catalogue=await planningCatalogue(database,ctx,actor);
@@ -194,7 +194,13 @@ async function run(service,database,ctx,message,{provider,rawProvider=null,histo
       (SELECT COUNT(*)::int FROM items WHERE workspace_id=w.id AND is_active=1) AS product_count,
       (SELECT COUNT(*)::int FROM purchase_orders WHERE workspace_id=w.id) AS purchase_order_count
       FROM workspaces w WHERE w.id=$1`,[ctx.workspaceId])).rows[0]||null;
-    selected=await planner.plan(provider,message,{catalogue,history,pending,page,workspace,
+    const recent=(await database.query(`SELECT action_type,summary,result FROM stockchief_runtime.assistant_action_proposals
+      WHERE workspace_id=$1 AND actor_user_id=$2 AND status='EXECUTED'
+      ORDER BY executed_at DESC,id DESC LIMIT 3`,[ctx.workspaceId,ctx.actorId])).rows;
+    recentChanges=recent.map((row)=>({action:row.action_type,summary:String(row.summary||'').slice(0,80),
+      record:Object.fromEntries(Object.entries(row.result||{}).filter(([key,value])=>
+        /(?:Id|Number)$/.test(key)&&typeof value==='string'))}));
+    selected=await planner.plan(provider,message,{catalogue,history,pending,page,workspace,recentChanges,
       deferReadFit:true});
   }
   catch(error){if(['entitlement_required','validation_error'].includes(error.code))throw error;
@@ -227,7 +233,7 @@ async function run(service,database,ctx,message,{provider,rawProvider=null,histo
     catch(error){
       const bridge=require('./postgres-workflow-capabilities').SPECS.some((spec)=>spec.name===step.contract.name);
       if(replanned||index!==0||!bridge||error.code!=='validation_error'||!provider)throw error;
-      const revised=await planner.plan(provider,message,{catalogue,history,pending,page,workspace,
+      const revised=await planner.plan(provider,message,{catalogue,history,pending,page,workspace,recentChanges,
         deferReadFit:true,feedback:{rejectedCapability:step.contract.name,rejectedArguments:step.args,
           reason:String(error.message).slice(0,240),state:'No business change was made. Choose a valid action for the current request.'}});
       if(!revised.steps.length||revised.steps[0].contract.name===step.contract.name&&
