@@ -383,6 +383,10 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
         }
       }
     }catch(error){if(error.code==='entitlement_required')throw error;
+      if(error.code==='rate_limited'&&process.env.STOCKCHIEF_ASK_DIAGNOSTICS==='1')
+        console.warn('[stockchief] Ask model bound stopped plan',JSON.stringify({
+          reason:String(error.message||'').slice(0,240),limitKind:error.limitKind||null,
+          proposedSteps:selected.steps.map((step)=>step.contract.name)}));
       if(error.code==='rate_limited')return {steps:[],clarifyingQuestion:error.limitKind==='daily_model_attempts'
         ?error.message:'This request exceeds the safe AI cost limit even with a shorter verification. Nothing changed. Try one part at a time.'};
       console.warn('[stockchief] Ask capability verification failed',error.code||error.name||'unknown');
