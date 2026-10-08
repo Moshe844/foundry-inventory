@@ -229,7 +229,7 @@ function sequenceApprovedMutations(steps){
 }
 
 async function plan(provider,message,{catalogue=registry,history=[],pending=null,page=null,workspace=null,
-  recentChanges=[],deferReadFit=false,feedback=null}={}){
+  recentChanges=[],deferReadFit=false,feedback=null,verificationProvider=null}={}){
   if(!provider)return {steps:[],clarifyingQuestion:'StockChief cannot interpret free-form requests while its reasoning connection is unavailable. Nothing changed.'};
   const context={message,
     workspace,
@@ -316,6 +316,12 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
       let fit=await provider.complete({system:FIT_SYSTEM,prompt:JSON.stringify(candidate()),
         schema:FIT_SCHEMA,schemaName:'stockchief_capability_fit'});
       if(fit.data?.aligned===false){
+        if(verificationProvider){
+          const stronger=await verificationProvider.complete({system:FIT_SYSTEM,
+            prompt:JSON.stringify(candidate()),schema:FIT_SCHEMA,
+            schemaName:'stockchief_capability_fit'});
+          if(stronger.data?.aligned===true)return selected;
+        }
         if(process.env.STOCKCHIEF_ASK_DIAGNOSTICS==='1')console.warn('[stockchief] Ask fit rejected',
           JSON.stringify({stage:'initial',steps:selected.steps.map((step)=>step.contract.name),
             reason:String(fit.data.reason||'').slice(0,240)}));
@@ -334,6 +340,12 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
           fit=await provider.complete({system:FIT_SYSTEM,prompt:JSON.stringify(candidate()),
             schema:FIT_SCHEMA,schemaName:'stockchief_capability_fit'});
           if(fit.data?.aligned===false){
+            if(verificationProvider){
+              const stronger=await verificationProvider.complete({system:FIT_SYSTEM,
+                prompt:JSON.stringify(candidate()),schema:FIT_SCHEMA,
+                schemaName:'stockchief_capability_fit'});
+              if(stronger.data?.aligned===true)return selected;
+            }
             if(process.env.STOCKCHIEF_ASK_DIAGNOSTICS==='1')console.warn('[stockchief] Ask fit rejected',
               JSON.stringify({stage:'repaired',steps:selected.steps.map((step)=>step.contract.name),
                 reason:String(fit.data.reason||'').slice(0,240)}));

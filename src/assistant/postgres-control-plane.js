@@ -269,11 +269,13 @@ async function run(service,database,ctx,message,{provider,rawProvider=null,histo
       record:Object.fromEntries(Object.entries(row.result||{}).filter(([key,value])=>
         /(?:Id|Number)$/.test(key)&&typeof value==='string'))}));
     selected=await planner.plan(provider,message,{catalogue,history,pending,page,workspace,recentChanges,
+      verificationProvider:provider?.verifyComplete?{complete:provider.verifyComplete}:null,
       deferReadFit:true});
     if(!selected.steps.length){
       const focused=await focusedRecordCatalogue(database,ctx,message,catalogue);
       if(focused){
         const retry=await planner.plan(provider,message,{catalogue:focused,history,pending,page,workspace,
+          verificationProvider:provider?.verifyComplete?{complete:provider.verifyComplete}:null,
           recentChanges,deferReadFit:true});
         if(retry.steps.length)selected=retry;
       }
@@ -315,6 +317,7 @@ async function run(service,database,ctx,message,{provider,rawProvider=null,histo
       if(index!==0||!bridge||error.code!=='validation_error')throw error;
       if(!replanned&&provider){
         const revised=await planner.plan(provider,message,{catalogue,history,pending,page,workspace,recentChanges,
+          verificationProvider:provider?.verifyComplete?{complete:provider.verifyComplete}:null,
           deferReadFit:true,feedback:{rejectedCapability:step.contract.name,rejectedArguments:step.args,
             reason:String(error.message).slice(0,240),state:'No business change was made. Choose a valid action for the current request.'}});
         if(revised.steps.length&&(revised.steps[0].contract.name!==step.contract.name||

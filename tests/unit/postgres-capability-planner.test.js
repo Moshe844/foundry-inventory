@@ -26,6 +26,32 @@ test('failed model attempt is not treated as funding for its retry',async()=>{
   ]);
 });
 
+test('strong verifier can rescue a valid plan without a second customer credit',async()=>{
+  const calls=[];
+  const provider=capabilityService.fundedAskProvider({}, {}, {name:'fast'},'ask:verify',
+    (_db,_ctx,model,_operation,key,options)=>({complete:async()=>{
+      calls.push({model:model.name,key,options});return {data:{aligned:true}};
+    }}),{name:'standard'});
+  await provider.complete({});
+  await provider.verifyComplete({});
+  assert.deepEqual(calls,[{model:'fast',key:'ask:verify:0',options:{}},
+    {model:'standard',key:'ask:verify:1',
+      options:{chargeCustomer:false,fundingKey:'ask:verify:0'}}]);
+});
+
+test('a stronger independent check rescues a concrete plan falsely rejected by the fast fit',async()=>{
+  const provider={complete:async(request)=>request.schemaName==='stockchief_capability_plan'
+    ?{data:{steps:[{capability:'policy.propose',arguments:[],dependsOn:[],continuesPending:false}],
+      clarifyingQuestion:''}}:{data:{aligned:false,reason:'A separate preview is needed.'}}};
+  const verificationProvider={complete:async(request)=>{
+    assert.equal(JSON.parse(request.prompt).proposedSteps[0].capability,'policy.propose');
+    return {data:{aligned:true,reason:'The policy capability prepares an approval proposal.'}};
+  }};
+  const selected=await planner.plan(provider,'Set a lasting stock warning for approval.',
+    {verificationProvider});
+  assert.deepEqual(selected.steps.map((step)=>step.contract.name),['policy.propose']);
+});
+
 test('post-approval reads are scoped to the one completed business record',()=>{
   const steps=[{capability:'sales_order.fulfill',state:'DONE',args:{recordReference:'SO-00009'}},
     {capability:'read.sales_orders',state:'BLOCKED',dependsOn:[0],args:{search:null}}];
