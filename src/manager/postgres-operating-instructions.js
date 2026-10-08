@@ -58,6 +58,10 @@ const PAGE_CONTEXT_RULE=`The optional currentRecord is a verified record from th
 Use its exact SKU or record identity only when the owner says "this product", "this item", or equivalent
 without naming a different record. An explicit identity in the owner's instruction always wins.
 Never treat the page as authority to create a setting the owner did not request.`;
+const PRIOR_CONTEXT_RULE=`The optional priorApprovedRule is a verified, approved rule from this same owner's current conversation.
+Use its identity and unchanged scope only when the owner's new instruction explicitly refers back to it (such as
+"that warning", "same warehouse", or "change it"). The new instruction overrides only what it changes.
+Do not carry an unrelated old rule into a new request. Never widen automation or purchasing authority by inference.`;
 
 function stable(value){if(value===null||typeof value!=='object')return JSON.stringify(value??null);
   if(Array.isArray(value))return `[${value.map(stable).join(',')}]`;
@@ -189,14 +193,18 @@ async function interpret(database,ctx,instruction,options={}){const clean=String
   };
   const currentRecord=options.currentPage?{sku:options.currentPage.sku||null,
     product:options.currentPage.product||null,recordReference:options.currentPage.recordReference||null}:null;
-  const evidence={instruction:clean,currentRecord,realSkus:catalogue.rows,
+  const priorApprovedRule=options.priorInstruction?.status==='APPROVED'
+    ?{summary:options.priorInstruction.summary,
+      changes:options.priorInstruction.resolvedChanges.map(({policyContract,skuId,itemId,locationId,
+        supplierId,...change})=>change)}:null;
+  const evidence={instruction:clean,currentRecord,priorApprovedRule,realSkus:catalogue.rows,
     realLocations:locations.rows,realSuppliers:suppliers.rows};
-  let response=await completeModel({system:`${SYSTEM}\n${PAGE_CONTEXT_RULE}`,prompt:JSON.stringify(evidence),
+  let response=await completeModel({system:`${SYSTEM}\n${PAGE_CONTEXT_RULE}\n${PRIOR_CONTEXT_RULE}`,prompt:JSON.stringify(evidence),
     schema:SCHEMA,schemaName:'postgres_operating_instruction'});
   if(options.onUsage&&response.usage)await options.onUsage(response.usage,{schemaName:'postgres_operating_instruction'});
   let read=response?.data||{};
   if(!read.understood||!Array.isArray(read.changes)||!read.changes.length){
-    response=await completeModel({system:`${SYSTEM}\n${PAGE_CONTEXT_RULE}`,prompt:JSON.stringify({...evidence,
+    response=await completeModel({system:`${SYSTEM}\n${PAGE_CONTEXT_RULE}\n${PRIOR_CONTEXT_RULE}`,prompt:JSON.stringify({...evidence,
       rejectedInterpretation:read,
       correction:'Recheck the registered rule domains. A missing optional scope is not a missing required input: an omitted location applies across the workspace. Extract the stated rule and let deterministic validation decide whether any required value remains missing. Never invent a rule or authority.'}),
     schema:SCHEMA,schemaName:'postgres_operating_instruction'});
@@ -214,7 +222,7 @@ async function interpret(database,ctx,instruction,options={}){const clean=String
   if(!questions.length){
     const effects=resolvedChanges.map(describe);
     const fit=await completeModel({system:EFFECT_FIT_SYSTEM,
-      prompt:JSON.stringify({ownerInstruction:clean,enforcedEffects:effects,
+      prompt:JSON.stringify({ownerInstruction:clean,priorApprovedRule,enforcedEffects:effects,
         resolvedEntities:resolvedChanges.map((change)=>({requestedSku:change.sku||null,
           verifiedSkuCode:change.skuCode||null,verifiedProductName:change.displayName||null,
           requestedLocation:change.location||null,verifiedLocationName:change.locationName||null,

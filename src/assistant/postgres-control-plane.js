@@ -87,7 +87,7 @@ function navigation(db,ctx,id){
 }
 
 async function executeStep(service,database,ctx,step,{actor,provider,rawProvider,sourceMessage,pending,page,usageKey,
-  dependencyArgs=null}){
+  dependencyArgs=null,priorInstruction=null}){
   const {contract}=step;
   const permission=contract.kind==='read'?READ_PERMISSIONS[contract.view]||contract.permission:contract.permission;
   permissions.assertCan(actor,permission,contract.name);
@@ -123,7 +123,8 @@ async function executeStep(service,database,ctx,step,{actor,provider,rawProvider
   }
   if(contract.kind==='policy'){
     const result=await contract.prepare(service,database,ctx,sourceMessage,{},
-      {provider:rawProvider, instructionUsageKey:`${usageKey}:instruction`,currentPage:page});
+      {provider:rawProvider,instructionUsageKey:`${usageKey}:instruction`,currentPage:page,
+        priorInstruction});
     return {result,args:{},provenance:{}};
   }
   if(contract.kind==='read'){
@@ -400,6 +401,17 @@ async function run(service,database,ctx,message,{provider,rawProvider=null,histo
     return {steps:[],outcomes:[{result:{status:'CLARIFY',answer,reason,rows:[],columns:[]},
       step:null,args:{},provenance:{}}]};
   }
+  let priorInstruction=null;
+  if(selected.steps.some((step)=>step.contract.kind==='policy')
+    &&/\b(?:that|same|this|it|previous|earlier)\b/i.test(message)){
+    const previous=[...history].reverse().find((turn)=>turn.intent?.intent==='instruction'
+      &&turn.intent?.proposalId);
+    if(previous){
+      const prior=await require('../manager/postgres-operating-instructions').get(
+        database,ctx.workspaceId,previous.intent.proposalId).catch(()=>null);
+      if(prior?.status==='APPROVED'&&prior.createdByUserId===ctx.actorId)priorInstruction=prior;
+    }
+  }
   const actor=await membership(database,ctx);const executed=[];let replanned=false;
   for(let index=0;index<selected.steps.length;index++){
     const step=selected.steps[index];
@@ -411,7 +423,7 @@ async function run(service,database,ctx,message,{provider,rawProvider=null,histo
     const dependencyArgs=Object.assign({},...step.dependsOn.map((index)=>executed[index]?.args||{}));
     let outcome;
     try{outcome=await executeStep(service,database,ctx,step,{actor,provider,rawProvider,
-      sourceMessage:message,pending,page,usageKey,dependencyArgs});}
+      sourceMessage:message,pending,page,usageKey,dependencyArgs,priorInstruction});}
     catch(error){
       const bridge=require('./postgres-workflow-capabilities').SPECS.some((spec)=>spec.name===step.contract.name);
       if(index!==0||!bridge||error.code!=='validation_error')throw error;

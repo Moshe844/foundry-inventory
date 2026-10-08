@@ -24,6 +24,14 @@ const provider={async complete(input){
   if(input.schemaName==='stockchief_postgres_request')return {data:{intent:'instruction',view:null,action:null,
     search:null,sku:null,location:null,fromLocation:null,toLocation:null,quantity:null,countedQuantity:null,reason:null,reference:null},
     usage:{provider:'fixture-ai',model:'fixture-model',inputTokens:20,outputTokens:10}};
+  if(input.schemaName==='postgres_operating_instruction'&&JSON.parse(input.prompt).instruction?.includes('Change that')){
+    const prompt=JSON.parse(input.prompt);
+    assert.equal(prompt.priorApprovedRule.changes[0].skuCode,'RULE-1');
+    return {data:{understood:true,summary:'Change the approved Rule Widget reorder point to six',
+      clarifyingQuestion:'',unsupportedReason:'',changes:[change('replenishment',
+        {sku:prompt.priorApprovedRule.changes[0].skuCode,reorderPoint:6})]},
+    usage:{provider:'fixture-ai',model:'fixture-model',inputTokens:40,outputTokens:20}};
+  }
   if(input.schemaName==='postgres_operating_instruction'&&JSON.parse(input.prompt).instruction?.includes('this product')){
     const prompt=JSON.parse(input.prompt);
     assert.equal(prompt.currentRecord.sku,'RULE-1');
@@ -94,6 +102,15 @@ test('real Chromium approves one free-form PostgreSQL standing instruction witho
         currentPage,instructionUsageKey:'contextual-reorder-rule'});
     assert.equal(contextual.resolvedChanges[0].skuCode,'RULE-1');
     assert.equal(Number(contextual.resolvedChanges[0].reorderPoint),4);
+    const approved=await require('../../src/manager/postgres-operating-instructions').get(database,
+      ctx.workspaceId,(await database.query(`SELECT id FROM operating_instruction_proposals
+        WHERE workspace_id=$1 AND status='APPROVED' ORDER BY created_at DESC LIMIT 1`,[ctx.workspaceId])).rows[0].id);
+    const correction=await require('../../src/manager/postgres-operating-instructions').interpret(database,ctx,
+      'Change that reorder point to 6; keep the same product.',
+      {provider:require('../helpers/postgres-model-fixture').fixture(provider),
+        priorInstruction:approved,instructionUsageKey:'contextual-rule-correction'});
+    assert.equal(correction.resolvedChanges[0].skuCode,'RULE-1');
+    assert.equal(Number(correction.resolvedChanges[0].reorderPoint),6);
     const supplierTerms=(await database.query(`SELECT lead_time_days,minimum_order_quantity FROM supplier_items
       WHERE workspace_id=$1 AND sku_id=$2`,[ctx.workspaceId,item.skuIds[0]])).rows[0];
     assert.equal(Number(supplierTerms.lead_time_days),12);
