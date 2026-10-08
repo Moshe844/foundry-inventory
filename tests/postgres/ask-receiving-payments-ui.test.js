@@ -27,10 +27,11 @@ const provider={name:'fixture',model:'fixture',async complete(request){
   if(message==='Receive the proven delivery')return {data:fields({intent:'action',view:null,action:'receive_purchase_order',
     purchaseOrder:'PO-00001',supplier:'Safe Supply',sku:'SHOE-9',quantity:6,location:'Main Warehouse',
     receiptReference:'DN-ASK-1'}),usage:{}};
-  if(message==='Pay the supplier without naming the bill')return {data:fields({intent:'action',view:null,
+  if(message==='Pay Safe Supply $18 by ACH without naming the bill')return {data:fields({intent:'action',view:null,
     action:'record_supplier_payment',supplier:'Safe Supply',amount:18,currency:'USD',paymentMethod:'ACH',
     paymentDate:PAYMENT_DATE}),usage:{}};
-  if(message==='Record the proven supplier payment')return {data:fields({intent:'action',view:null,
+  if(message===`Record $18 paid to Safe Supply against BILL-00001 on ${PAYMENT_DATE} by ACH, reference BANK-77`)
+    return {data:fields({intent:'action',view:null,
     action:'record_supplier_payment',supplier:'Safe Supply',supplierBill:'BILL-00001',amount:18,currency:'USD',
     paymentMethod:'ACH',paymentDate:PAYMENT_DATE,reference:'BANK-77'}),usage:{}};
   return {data:fields(),usage:{}};
@@ -86,7 +87,9 @@ test('real Chromium Ask StockChief safely receives a PO and records one supplier
     assert.match(text,/Needs your approval/);
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM movements WHERE workspace_id=$1`,[ctx.workspaceId])).rows[0].count,'0');
     let proposalHref=await page.locator('a',{hasText:'Review prepared change'}).last().getAttribute('href');
-    await page.goto(`${base}${proposalHref}`);assert.match(await page.locator('main').innerText(),/purchase_order\.receive/);
+    await page.goto(`${base}${proposalHref}`);
+    await page.locator('details.advanced-settings summary').click();
+    assert.match(await page.locator('main').innerText(),/purchase_order\.receive/);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve and execute'}).click()]);
     assert.equal(Number((await database.query(`SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3`,
       [ctx.workspaceId,skuId,location.id])).rows[0].on_hand),6);
@@ -108,7 +111,7 @@ test('real Chromium Ask StockChief safely receives a PO and records one supplier
     const onHandBeforePayment=Number((await database.query(`SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2
       AND location_id=$3`,[ctx.workspaceId,skuId,location.id])).rows[0].on_hand);
 
-    text=await ask(page,base,'Pay the supplier without naming the bill');
+    text=await ask(page,base,'Pay Safe Supply $18 by ACH without naming the bill');
     assert.match(text,/Record \$18\.00 paid to Safe Supply against BILL-00001/);
     assert.match(text,/Needs your approval/);
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM accounting_payments WHERE workspace_id=$1`,
@@ -117,11 +120,13 @@ test('real Chromium Ask StockChief safely receives a PO and records one supplier
       WHERE workspace_id=$1 AND status='PENDING' ORDER BY created_at DESC LIMIT 1`,[ctx.workspaceId])).rows[0];
     await require('../../src/assistant/postgres-service').cancelProposal(database,ctx,inferred.id);
 
-    text=await ask(page,base,'Record the proven supplier payment');
+    text=await ask(page,base,`Record $18 paid to Safe Supply against BILL-00001 on ${PAYMENT_DATE} by ACH, reference BANK-77`);
     assert.match(text,new RegExp(`Record \\$18\\.00 paid to Safe Supply against BILL-00001 on ${PAYMENT_DATE} by ACH`));
     assert.match(text,/Inventory will not change/);assert.match(text,/Needs your approval/);
     proposalHref=await page.locator('a',{hasText:'Review prepared change'}).last().getAttribute('href');
-    await page.goto(`${base}${proposalHref}`);assert.match(await page.locator('main').innerText(),/supplier_payment\.record/);
+    await page.goto(`${base}${proposalHref}`);
+    await page.locator('details.advanced-settings summary').click();
+    assert.match(await page.locator('main').innerText(),/supplier_payment\.record/);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve and execute'}).click()]);
     const payment=(await database.query(`SELECT * FROM accounting_payments WHERE workspace_id=$1`,[ctx.workspaceId])).rows[0];
     assert.deepEqual({supplier:payment.supplier_id,amount:Number(payment.amount_minor),method:payment.method,

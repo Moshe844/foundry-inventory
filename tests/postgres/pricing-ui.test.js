@@ -66,7 +66,9 @@ test('real Chromium previews and approves PostgreSQL selling prices and purchase
     assert.match(await page.locator('main').innerText(),/Set Pricing Widget selling price to \$28\.00[\s\S]*Nothing has changed yet/i);
     const actionHref=await page.locator('a[href^="/actions/"]').last().getAttribute('href');assert.ok(actionHref);
     assert.equal((await pricing.currentPrice(database,ctx.workspaceId,skuId)).amount_minor,2600);
-    await page.goto(`${base}${actionHref}`);assert.match(await page.locator('main').innerText(),/catalog\.set_price/);
+    await page.goto(`${base}${actionHref}`);
+    await page.locator('details.advanced-settings summary').click();
+    assert.match(await page.locator('main').innerText(),/catalog\.set_price/);
     await page.getByRole('button',{name:'Approve and execute'}).click();await page.waitForURL(`${base}${actionHref}`);
     assert.match(await page.locator('main').innerText(),/EXECUTED/);
     assert.equal((await pricing.currentPrice(database,ctx.workspaceId,skuId)).amount_minor,2800);
@@ -76,7 +78,9 @@ test('real Chromium previews and approves PostgreSQL selling prices and purchase
     assert.match(await page.locator('main').innerText(),/Set Pricing Widget purchase cost to \$14\.25[\s\S]*Nothing has changed yet/i);
     const costActionHref=await page.locator('a[href^="/actions/"]').last().getAttribute('href');assert.ok(costActionHref);
     assert.equal((await pricing.purchaseCost(database,ctx.workspaceId,skuId)).amount_minor,1275);
-    await page.goto(`${base}${costActionHref}`);assert.match(await page.locator('main').innerText(),/catalog\.set_purchase_cost/);
+    await page.goto(`${base}${costActionHref}`);
+    await page.locator('details.advanced-settings summary').click();
+    assert.match(await page.locator('main').innerText(),/catalog\.set_purchase_cost/);
     await page.getByRole('button',{name:'Approve and execute'}).click();await page.waitForURL(`${base}${costActionHref}`);
     assert.match(await page.locator('main').innerText(),/EXECUTED/);
     assert.equal((await pricing.purchaseCost(database,ctx.workspaceId,skuId)).amount_minor,1425);

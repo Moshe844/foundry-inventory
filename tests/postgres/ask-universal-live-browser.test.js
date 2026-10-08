@@ -78,7 +78,7 @@ test('real model and Chromium select new Ask lifecycle contracts and commit veri
         WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,latest.id])).rows[0];
       assert.equal(saved.status,'EXECUTED',`Approval: ${(await page.locator('body').innerText()).slice(0,1000)}`);
     }
-    await ask(`Harbor's ${order.orderNumber} is ready. Please commit the available units to it.`,
+    await ask(`Harbor's ${order.orderNumber} is ready. Confirm it and reserve available units; if stock is short, backorder the rest.`,
       'sales_order.confirm');
     assert.equal((await database.query('SELECT status FROM sales_orders WHERE workspace_id=$1 AND id=$2',
       [ctx.workspaceId,order.salesOrderId])).rows[0].status,'CONFIRMED');

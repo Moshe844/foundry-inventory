@@ -114,7 +114,7 @@ test('real Chromium Ask StockChief safely prepares and executes grounded custome
     await page.goto(`${base}/ask`);
 
     text=await ask(page,base,'Record the complete customer order');
-    assert.match(text,/Prepare a draft customer order for Builder Co/);assert.match(text,/10 Jobsite Road/);
+    assert.match(text,/Prepare (?:one )?draft customer order for Builder Co/);assert.match(text,/10 Jobsite Road/);
     assert.match(text,/Needs your approval/);
     assert.doesNotMatch(text,/999 Wrong Tenant Road/);
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM sales_orders WHERE workspace_id=$1`,

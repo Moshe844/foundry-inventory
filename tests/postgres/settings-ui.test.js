@@ -64,8 +64,13 @@ test('PostgreSQL account menu pages render truthful native settings and rename t
     process.env.RESEND_API_KEY='test-only-key';
     process.env.FOUNDRY_FROM_EMAIL='StockChief <alerts@example.test>';
     try{
-      await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Send a test email'}).click()]);
-      assert.match(await page.locator('main').innerText(),/Test email queued for settings@example\.test/);
+      await Promise.all([
+        page.waitForResponse((response)=>response.url()===`${base}/settings/email-alerts/test`
+          &&response.request().method()==='POST'&&response.status()===303),
+        page.waitForURL(`${base}/settings#email-alerts`),
+        page.getByRole('button',{name:'Send a test email'}).click(),
+      ]);
+      await page.getByText(/Test email queued for settings@example\.test/).waitFor();
       const queued=(await database.query(`SELECT payload FROM stockchief_runtime.jobs
         WHERE workspace_id=$1 AND kind='system.email-send' AND payload->>'messageType'='email_alert_test'`,
       [(await database.query(`SELECT id FROM workspaces WHERE name='Renamed Operation'`)).rows[0].id])).rows;
