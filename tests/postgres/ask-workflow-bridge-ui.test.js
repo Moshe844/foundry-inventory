@@ -373,6 +373,20 @@ test('Ask browser controls a real customer order, payment, and return through th
     assert.equal(transferState.status,'RECEIVED');
     assert.equal(Number((await database.query(`SELECT on_hand FROM balances WHERE workspace_id=$1
       AND sku_id=$2 AND location_id=$3`,[ctx.workspaceId,item.skuIds[0],destination.id])).rows[0].on_hand),2);
+    const departing=await transfers.request(database,ctx,{fromLocationId:place.id,toLocationId:destination.id,
+      idempotencyKey:'ask-workflow-depart',lines:[{skuId:item.skuIds[0],quantity:1}]});
+    await transfers.approve(database,ctx,departing.id,{idempotencyKey:'ask-workflow-depart-approve'});
+    const departedInstruction=`The unit on ${departing.transfer_number} physically left the source; record departure and in-transit custody, not arrival`;
+    plans.set(departedInstruction,step('transfer.depart',{recordReference:departing.transfer_number}));
+    await prepareAndApprove(page,base,database,ctx.workspaceId,departedInstruction,'transfer.depart');
+    const departedState=(await database.query(`SELECT status FROM inventory_transfers WHERE workspace_id=$1 AND id=$2`,
+      [ctx.workspaceId,departing.id])).rows[0];
+    assert.equal(departedState.status,'IN_TRANSIT');
+    assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM inventory_transfer_events
+      WHERE workspace_id=$1 AND transfer_id=$2 AND event_type IN ('PICKED','SHIPPED','IN_TRANSIT')`,
+    [ctx.workspaceId,departing.id])).rows[0].count,3);
+    assert.equal(Number((await database.query(`SELECT on_hand FROM balances WHERE workspace_id=$1
+      AND sku_id=$2 AND location_id=$3`,[ctx.workspaceId,item.skuIds[0],destination.id])).rows[0].on_hand),2);
     const supplier=await commerce.createSupplier(database,ctx,{name:'Safety Supply',email:'supply@example.test'});
     const bill='Record Safety Supply invoice SS-EXP-1 for one safety audit at $20 plus $2 tax';
     plans.set(bill,step('supplier_bill.create',{recordReference:'Safety Supply',

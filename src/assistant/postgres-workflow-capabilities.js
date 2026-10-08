@@ -866,6 +866,20 @@ const SPECS=Object.freeze([
     capability:'inventory.transfers',states:['PICKED'],verb:'Dispatch',
     execute:(client,ctx,p)=>transfers.dispatchInTransaction(client,ctx,p.recordId,p),
     verify:(client,ctx,_r,p)=>state(client,ctx,'inventory_transfers',p.recordId,['SHIPPED'])},
+  {name:'transfer.depart',description:'Confirm an approved transfer physically left its source. Use the canonical pick, dispatch, and in-transit transitions together, as the transfer page does. Do not mark goods received at destination.',
+    record:'transfer',fields:['recordReference'],permission:permissions.DISPATCH_TRANSFER,
+    capability:'inventory.transfers',states:['APPROVED','PICKED','SHIPPED'],verb:'Confirm departure of',
+    execute:async(client,ctx,p)=>{
+      let transfer=await transfers.get(client,ctx.workspaceId,p.recordId,{lock:true});
+      if(transfer.status==='APPROVED')transfer=await transfers.pickInTransaction(client,ctx,p.recordId,
+        {idempotencyKey:`${p.idempotencyKey}:pick`});
+      if(transfer.status==='PICKED')transfer=await transfers.dispatchInTransaction(client,ctx,p.recordId,
+        {idempotencyKey:`${p.idempotencyKey}:dispatch`});
+      if(transfer.status==='SHIPPED')transfer=await transfers.markInTransitInTransaction(client,ctx,p.recordId,
+        {idempotencyKey:`${p.idempotencyKey}:in-transit`});
+      return transfer;
+    },
+    verify:(client,ctx,_r,p)=>state(client,ctx,'inventory_transfers',p.recordId,['IN_TRANSIT'])},
   {name:'transfer.cancel',description:'Cancel a transfer only while the canonical transfer engine permits cancellation; never silently undo physically dispatched stock.',
     record:'transfer',fields:['recordReference','reason'],permission:permissions.APPROVE_TRANSFER,
     capability:'inventory.transfers',verb:'Cancel',
