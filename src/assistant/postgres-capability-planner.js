@@ -292,6 +292,9 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
       let fit=await provider.complete({system:FIT_SYSTEM,prompt:JSON.stringify(candidate()),
         schema:FIT_SCHEMA,schemaName:'stockchief_capability_fit'});
       if(fit.data?.aligned===false){
+        if(process.env.STOCKCHIEF_ASK_DIAGNOSTICS==='1')console.warn('[stockchief] Ask fit rejected',
+          JSON.stringify({stage:'initial',steps:selected.steps.map((step)=>step.contract.name),
+            reason:String(fit.data.reason||'').slice(0,240)}));
         const repaired=await completeRepair(provider,catalogue,{...context,rejectedPlan:response.data,
           validationErrors:[{issue:'The proposed capabilities do not address the current message.',
             reason:String(fit.data.reason||'').slice(0,240)}],
@@ -305,8 +308,13 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
         if(selected.steps.length){
           fit=await provider.complete({system:FIT_SYSTEM,prompt:JSON.stringify(candidate()),
             schema:FIT_SCHEMA,schemaName:'stockchief_capability_fit'});
-          if(fit.data?.aligned===false)return {steps:[],
+          if(fit.data?.aligned===false){
+            if(process.env.STOCKCHIEF_ASK_DIAGNOSTICS==='1')console.warn('[stockchief] Ask fit rejected',
+              JSON.stringify({stage:'repaired',steps:selected.steps.map((step)=>step.contract.name),
+                reason:String(fit.data.reason||'').slice(0,240)}));
+            return {steps:[],
             clarifyingQuestion:'I could not confidently match that request to the right business action. Nothing changed.'};
+          }
         }
       }
     }catch(error){if(error.code==='entitlement_required')throw error;
