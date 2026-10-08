@@ -53,3 +53,10 @@ test('return resolution normalizes an invoice credit without guessing an ambiguo
   assert.equal(workflow.returnResolution('NO_REFUND'), 'NO_REFUND');
   assert.throws(() => workflow.returnResolution('refund or exchange'), /Choose refund/);
 });
+
+test('refund destination recognizes unpaid receivables but rejects conflicting payment routes', () => {
+  assert.equal(workflow.normalizeRefundDestination('reduce the unpaid receivable'), 'AR');
+  assert.equal(workflow.normalizeRefundDestination('credit the invoice'), 'AR');
+  assert.equal(workflow.normalizeRefundDestination('return money already paid'), 'CASH');
+  assert.throws(() => workflow.normalizeRefundDestination('invoice credit or cash refund'), /Choose whether/);
+});

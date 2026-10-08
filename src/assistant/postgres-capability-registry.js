@@ -72,7 +72,7 @@ const FIELDS=Object.freeze({
   rate:{type:'string',description:'One exact quoted carrier rate ID or carrier and service name.'},
   paymentPurpose:{type:'string',description:'The requested payment-link purpose, such as balance or full.'},
   returnResolution:{type:'string',description:'One exact customer-return resolution: REFUND (also invoice credit), EXCHANGE, or NO_REFUND.'},
-  refundDestination:{type:'string',description:'Refund destination: the unpaid receivable (AR) or money paid back (CASH).'},
+  refundDestination:{type:'string',description:'Exact refund destination: AR to reduce an unpaid invoice, or CASH to return money already paid.'},
   disposition:{type:'string',description:'Physical return disposition: restock, scrap, or repair.'},
   handover:{type:'string',description:'Physical shipping handoff: carrier, collected, or delivered by us.'},
   trackingNumber:{type:'string',description:'Exact carrier tracking number, when provided.'},

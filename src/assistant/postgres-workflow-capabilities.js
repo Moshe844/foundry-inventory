@@ -327,9 +327,7 @@ async function returnInspect(database,ctx,customerReturn,args){
 
 async function returnRefund(database,ctx,customerReturn,args){
   requireState(customerReturn,['AWAITING_REFUND'],'This customer return');
-  const destination=String(args.refundDestination||'').toUpperCase();
-  if(!['AR','CASH'].includes(destination))throw new ValidationError(
-    'Choose whether to reduce an unpaid invoice balance or return money already paid.');
+  const destination=normalizeRefundDestination(args.refundDestination);
   const detail=await returns.getCustomerReturn(database,ctx.workspaceId,customerReturn.id);
   if(detail.resolution!=='REFUND')throw new ValidationError('This return does not have an approved refund resolution.');
   const amountMinor=detail.lines.reduce((sum,line)=>sum+(line.trackingEvidence.costAllocations||[])
@@ -341,6 +339,19 @@ async function returnRefund(database,ctx,customerReturn,args){
     `${pricing.formatMinor(amountMinor,detail.currency)} for ${customerReturn.return_number}. `+
     (destination==='CASH'?'An original provider payment is refunded through the verified provider first when one exists.':
       'No money is sent to the customer by this receivable adjustment.'));
+}
+
+function normalizeRefundDestination(value){
+  const raw=String(value||'').trim().toUpperCase();
+  if(['AR','CASH'].includes(raw))return raw;
+  const words=new Set(raw.split(/[^A-Z]+/).filter(Boolean));
+  const receivable=words.has('RECEIVABLE')||words.has('INVOICE')||words.has('CREDIT')
+    ||words.has('UNPAID');
+  const paidFunds=words.has('CASH')||words.has('MONEY')||words.has('PROVIDER')
+    ||words.has('PAID');
+  if(receivable&&!paidFunds)return 'AR';
+  if(paidFunds&&!receivable)return 'CASH';
+  throw new ValidationError('Choose whether to reduce an unpaid invoice balance or return money already paid.');
 }
 
 async function returnExchange(database,ctx,customerReturn){
@@ -1399,4 +1410,4 @@ async function prepare(database,ctx,message,name,args,createProposal){
 }
 
 const EXECUTORS=Object.fromEntries(SPECS.map((spec)=>[spec.name,{execute:spec.execute,verify:spec.verify}]));
-module.exports={SPECS,EXECUTORS,prepare,record,RECORDS,returnResolution};
+module.exports={SPECS,EXECUTORS,prepare,record,RECORDS,returnResolution,normalizeRefundDestination};
