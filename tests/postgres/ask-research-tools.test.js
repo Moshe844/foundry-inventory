@@ -71,6 +71,10 @@ test('Ask research reads real inventory positions, stock history and prices with
     assert.equal(prices.rows[0].sellingPrice,'Not recorded');
     const costs=await assistant.lookup(database,owner,{view:'purchase_costs',search:'Blue Work Glove'});
     assert.equal(costs.rows[0].purchaseCost,'Not recorded');
+    assert.equal(costs.rows[0].onHand,7);
+    assert.equal(costs.rows[0].costedUnits,7);
+    assert.equal(costs.rows[0].unitsMissingCost,0);
+    assert.match(costs.answer,/missing current purchase cost does not mean stock lacks book cost/);
     const valuation=await assistant.lookup(database,owner,{view:'inventory_valuation',search:'Blue Work Glove'});
     assert.equal(valuation.rows[0].inventoryBookCost,'$1.26');
     assert.equal(valuation.rows[0].averageRecordedUnitCost,'$0.18');

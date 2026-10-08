@@ -272,20 +272,26 @@ async function lookup(database,ctx,request,options={}) {
   }
   if(request.view==='purchase_costs'){
     const rows=(await database.query(`SELECT i.id AS item_id,i.name AS product,s.code AS sku,
-      COALESCE(s.variant_label,'') AS variant,c.amount_minor,c.currency,c.created_at
+      COALESCE(s.variant_label,'') AS variant,c.amount_minor,c.currency,c.created_at,
+      COALESCE(stock.on_hand,0) AS on_hand,COALESCE(costed.quantity_units,0) AS costed_units
       FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
       LEFT JOIN LATERAL (SELECT amount_minor,currency,created_at FROM sku_purchase_costs
         WHERE workspace_id=s.workspace_id AND sku_id=s.id ORDER BY created_at DESC,id DESC LIMIT 1) c ON true
+      LEFT JOIN (SELECT sku_id,SUM(on_hand) AS on_hand FROM balances
+        WHERE workspace_id=$1 GROUP BY sku_id) stock ON stock.sku_id=s.id
+      LEFT JOIN (SELECT sku_id,SUM(quantity_units) AS quantity_units FROM accounting_inventory_cost_balances
+        WHERE workspace_id=$1 GROUP BY sku_id) costed ON costed.sku_id=s.id
       WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1
       AND ($2::text IS NULL OR i.name ILIKE '%'||$2||'%' OR s.code ILIKE '%'||$2||'%'
         OR COALESCE(s.variant_label,'') ILIKE '%'||$2||'%')
       ORDER BY i.name,s.code LIMIT 100`,[ctx.workspaceId,search])).rows.map((row)=>
       evidenceRow({product:row.product,sku:row.sku,variant:row.variant,
         purchaseCost:row.amount_minor===null?'Not recorded':pricing.formatMinor(Number(row.amount_minor),row.currency),
-        costRecordedAt:row.created_at||''},`/inventory/${row.item_id}`));
-    return {answer:rows.length?`Showing current recorded purchase costs for ${rows.length}${rows.length===100?'+':''} SKUs.`:
+        costRecordedAt:row.created_at||'',onHand:Number(row.on_hand),costedUnits:Number(row.costed_units),
+        unitsMissingCost:Math.max(0,Number(row.on_hand)-Number(row.costed_units))},`/inventory/${row.item_id}`));
+    return {answer:rows.length?`Showing current recorded purchase costs for ${rows.length}${rows.length===100?'+':''} SKUs. A missing current purchase cost does not mean stock lacks book cost; costed units are shown separately.`:
       'No product or SKU matched that cost request.',rows,
-      columns:['product','sku','variant','purchaseCost','costRecordedAt']};
+      columns:['product','sku','variant','purchaseCost','costRecordedAt','onHand','costedUnits','unitsMissingCost']};
   }
   if(request.view==='supplier_items'){
     const rows=(await database.query(`SELECT i.id AS item_id,i.name AS product,sku.code AS sku,
