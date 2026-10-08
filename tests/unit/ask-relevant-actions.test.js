@@ -33,3 +33,13 @@ test('read synthesis shows applicable registered actions without executing one',
   assert.ok(prompt.availableActions.some((action) => action.name === 'customer_return.refund'));
   assert.equal(prompt.completedActions.length, 0);
 });
+
+test('explicit read-only intent removes every write from planning while preserving discovery', () => {
+  assert.equal(control.explicitlyReadOnly('Explain the return process. No change yet.'), true);
+  assert.equal(control.explicitlyReadOnly('Do not change anything; which step comes next?'), true);
+  assert.equal(control.explicitlyReadOnly('Create the return and do not change the shipping address.'), false);
+  const scoped = control.readOnlyCatalogue(registry);
+  assert.equal(scoped.get('customer_return.request'), null);
+  assert.ok(scoped.get('read.capabilities'));
+  assert.ok(scoped.get('read.locations'));
+});

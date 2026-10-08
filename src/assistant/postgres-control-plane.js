@@ -175,6 +175,23 @@ function relevantActions(catalogue,message,limit=12){
     approvalRequired:true}));
 }
 
+function explicitlyReadOnly(message){
+  const text=String(message||'').toLocaleLowerCase();
+  return /\b(?:no|without)\s+(?:business\s+|record\s+|data\s+)?changes?\s+(?:yet|now|please|for\s+now)\b/u.test(text)
+    ||/\b(?:no|without)\s+(?:business\s+|record\s+|data\s+)?changes?\s*[.!?]\s*$/u.test(text)
+    ||/\b(?:do\s+not|don['’]t|please\s+don['’]t|never)\s+(?:change|modify|create|record|send|execute|apply|perform)\s+(?:anything|any\s+changes?|anything\s+yet)\b/u.test(text)
+    ||/\b(?:just|only)\s+(?:explain|describe|tell\s+me|show\s+me)\b/u.test(text);
+}
+
+function nullIfReadOnly(pending,message){return explicitlyReadOnly(message)?null:pending;}
+
+function readOnlyCatalogue(catalogue){
+  const entries=catalogue.list().filter((entry)=>['read','navigation'].includes(entry.kind));
+  const names=new Map(entries.map((entry)=>[entry.name,entry]));
+  return {list:(kind=null)=>entries.filter((entry)=>!kind||entry.kind===kind),
+    get:(name)=>names.get(name)||null};
+}
+
 async function synthesizeReads(provider,message,executed,{completedActions=[],catalogue=null}={}){
   if(executed.some((entry)=>entry.result.status!=='ANSWERED'))return executed;
   // A completed multi-step order needs a current-state receipt, not another
@@ -280,6 +297,7 @@ async function run(service,database,ctx,message,{provider,rawProvider=null,histo
   try{
     const actor=await membership(database,ctx);
     catalogue=await planningCatalogue(database,ctx,actor);
+    const planningScope=explicitlyReadOnly(message)?readOnlyCatalogue(catalogue):catalogue;
     workspace=(await database.query(`SELECT w.name AS business_name,
       (SELECT COUNT(*)::int FROM locations WHERE workspace_id=w.id AND is_active=1) AS location_count,
       (SELECT COUNT(*)::int FROM items WHERE workspace_id=w.id AND is_active=1) AS product_count,
@@ -291,13 +309,13 @@ async function run(service,database,ctx,message,{provider,rawProvider=null,histo
     recentChanges=recent.map((row)=>({action:row.action_type,summary:String(row.summary||'').slice(0,80),
       record:Object.fromEntries(Object.entries(row.result||{}).filter(([key,value])=>
         /(?:Id|Number)$/.test(key)&&typeof value==='string'))}));
-    selected=await planner.plan(provider,message,{catalogue,history,pending,page,workspace,recentChanges,
+    selected=await planner.plan(provider,message,{catalogue:planningScope,history,pending:nullIfReadOnly(pending,message),page,workspace,recentChanges,
       verificationProvider:provider?.verifyComplete?{complete:provider.verifyComplete}:null,
       deferReadFit:true});
     if(!selected.steps.length){
-      const focused=await focusedRecordCatalogue(database,ctx,message,catalogue);
+      const focused=await focusedRecordCatalogue(database,ctx,message,planningScope);
       if(focused){
-        const retry=await planner.plan(provider,message,{catalogue:focused,history,pending,page,workspace,
+        const retry=await planner.plan(provider,message,{catalogue:focused,history,pending:nullIfReadOnly(pending,message),page,workspace,
           verificationProvider:provider?.verifyComplete?{complete:provider.verifyComplete}:null,
           recentChanges,deferReadFit:true});
         if(retry.steps.length)selected=retry;
@@ -339,7 +357,8 @@ async function run(service,database,ctx,message,{provider,rawProvider=null,histo
       const bridge=require('./postgres-workflow-capabilities').SPECS.some((spec)=>spec.name===step.contract.name);
       if(index!==0||!bridge||error.code!=='validation_error')throw error;
       if(!replanned&&provider){
-        const revised=await planner.plan(provider,message,{catalogue,history,pending,page,workspace,recentChanges,
+        const revised=await planner.plan(provider,message,{catalogue:explicitlyReadOnly(message)?readOnlyCatalogue(catalogue):catalogue,
+          history,pending:nullIfReadOnly(pending,message),page,workspace,recentChanges,
           verificationProvider:provider?.verifyComplete?{complete:provider.verifyComplete}:null,
           deferReadFit:true,feedback:{rejectedCapability:step.contract.name,rejectedArguments:step.args,
             reason:String(error.message).slice(0,240),state:'No business change was made. Choose a valid action for the current request.'}});
@@ -385,4 +404,4 @@ async function run(service,database,ctx,message,{provider,rawProvider=null,histo
 }
 
 module.exports={run,executeStep,normalizeForLegacy,questionFor,READ_PERMISSIONS,planningCatalogue,
-  focusedRecordCatalogue,synthesizeReads,relevantActions};
+  focusedRecordCatalogue,synthesizeReads,relevantActions,explicitlyReadOnly,readOnlyCatalogue};
