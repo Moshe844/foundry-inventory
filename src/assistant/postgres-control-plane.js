@@ -329,4 +329,4 @@ async function run(service,database,ctx,message,{provider,rawProvider=null,histo
 }
 
 module.exports={run,executeStep,normalizeForLegacy,questionFor,READ_PERMISSIONS,planningCatalogue,
-  focusedRecordCatalogue};
+  focusedRecordCatalogue,synthesizeReads};

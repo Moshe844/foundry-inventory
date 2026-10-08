@@ -6,6 +6,25 @@ const planner=require('../../src/assistant/postgres-capability-planner');
 const {registry}=require('../../src/assistant/postgres-capability-registry');
 const control=require('../../src/assistant/postgres-control-plane');
 
+test('a dependent order read can answer exact quantities after an approved write',async()=>{
+  let evidence;
+  const provider={complete:async(request)=>{
+    evidence=JSON.parse(request.prompt).evidence;
+    return {data:{supported:true,answer:'SO-00008 has 2 ordered, 1 fulfilled and 1 still held; $0.75 is invoiced and unpaid.',
+      usedSteps:[0],additionalReads:[]}};
+  }};
+  const rows=[{order:'SO-00008',orderedUnits:2,fulfilledUnits:1,heldUnits:1,
+    openUnits:1,invoiced:'$0.75',paid:'$0.00',outstanding:'$0.75'}];
+  const answered=await control.synthesizeReads(provider,
+    'Fulfill one unit and tell me the order’s fulfilled and committed quantities.',
+    [{step:{contract:registry.get('read.sales_orders')},args:{search:'SO-00008'},
+      result:{status:'ANSWERED',answer:'1 customer order matched; 1 units remain open.',rows,
+        columns:Object.keys(rows[0])}}]);
+  assert.deepEqual(evidence[0].rows,rows);
+  assert.match(answered[0].result.answer,/1 fulfilled and 1 still held/);
+  assert.equal(answered[0].result.status,'ANSWERED');
+});
+
 test('a failed broad plan can retry against the actual named record’s capabilities',async()=>{
   const database={query:async(sql)=>({rows:/FROM sales_orders\s/i.test(sql)?[{'?column?':1}]:[]})};
   const focused=await control.focusedRecordCatalogue(database,{workspaceId:'one'},

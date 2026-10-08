@@ -2,7 +2,7 @@
 
 const {newId}=require('../lib/util');
 const {registry}=require('./postgres-capability-registry');
-const {executeStep}=require('./postgres-control-plane');
+const {executeStep,synthesizeReads}=require('./postgres-control-plane');
 
 function serialized(steps,outcomes){
   return steps.map((step,index)=>{
@@ -87,10 +87,19 @@ async function resume(database,ctx,proposalId,{service,provider,rawProvider,reco
         // A planner-supplied guess for the not-yet-existing record cannot override it.
         const executionArgs=produced.length===1
           ?{...stored.args,recordReference:produced[0].args.recordReference}:stored.args;
-        const outcome=await executeStep(service,database,{...ctx,planStepKey:`plan:${claimed.id}:${next}`},
+        let outcome=await executeStep(service,database,{...ctx,planStepKey:`plan:${claimed.id}:${next}`},
           {contract,args:executionArgs,dependsOn:stored.dependsOn,continuesPending:false},
           {actor,provider,rawProvider,sourceMessage:claimed.source_message,pending:null,page:null,
             usageKey:`plan:${claimed.id}:${next}`,dependencyArgs});
+        // A read resumed after approval must answer the owner's original
+        // question from its rows, just like a standalone Ask read. The raw
+        // query's generic count is not an answer to requested measurements.
+        if(contract.kind==='read'&&outcome.result.status==='ANSWERED'
+          &&contract.answerMode!=='executor'){
+          const answered=await synthesizeReads(provider,claimed.source_message,
+            [{step:{contract},...outcome}]);
+          outcome={...outcome,result:answered[0].result};
+        }
         stored.args=outcome.args;stored.state=outcome.result.status==='ANSWERED'?'DONE':
           outcome.result.status==='PREPARED'?'WAITING':'BLOCKED';
         stored.reason=outcome.result.reason||null;stored.proposalId=outcome.result.proposal?.id||null;
