@@ -372,6 +372,21 @@ async function focusedRecordCatalogue(database,ctx,message,catalogue){
     get:(name)=>selected.get(name)||null};
 }
 
+async function focusedRecordState(database,ctx,message){
+  if(!/\b[A-Z]{2,8}-\d{2,}\b/i.test(message))return null;
+  const records=require('./postgres-workflow-capabilities').RECORDS;
+  const kinds=['sales_order','purchase_order','transfer','shipment','customer_return','supplier_return'];
+  const matches=(await Promise.all(kinds.map(async(kind)=>{
+    const source=records[kind];
+    const rows=(await database.query(`SELECT ${source.number} AS reference,status FROM ${source.table}
+      WHERE workspace_id=$1 AND length(${source.number})>=5
+        AND strpos(lower($2),lower(${source.number}))>0 LIMIT 2`,
+    [ctx.workspaceId,message])).rows;
+    return rows.map((row)=>({kind,reference:row.reference,status:row.status}));
+  }))).flat();
+  return matches.length===1?matches[0]:null;
+}
+
 async function run(service,database,ctx,message,{provider,rawProvider=null,history=[],pending=null,page=null,usageKey=''}){
   let selected;let catalogue;let workspace;let recentChanges=[];
   try{
@@ -384,6 +399,8 @@ async function run(service,database,ctx,message,{provider,rawProvider=null,histo
       (SELECT COUNT(*)::int FROM items WHERE workspace_id=w.id AND is_active=1) AS product_count,
       (SELECT COUNT(*)::int FROM purchase_orders WHERE workspace_id=w.id) AS purchase_order_count
       FROM workspaces w WHERE w.id=$1`,[ctx.workspaceId])).rows[0]||null;
+    const recordState=await focusedRecordState(database,ctx,message);
+    if(recordState)workspace={...workspace,focusedRecord:recordState};
     const recent=(await database.query(`SELECT action_type,summary,result FROM stockchief_runtime.assistant_action_proposals
       WHERE workspace_id=$1 AND actor_user_id=$2 AND status='EXECUTED'
       ORDER BY executed_at DESC,id DESC LIMIT 3`,[ctx.workspaceId,ctx.actorId])).rows;
@@ -497,4 +514,4 @@ async function run(service,database,ctx,message,{provider,rawProvider=null,histo
 
 module.exports={run,executeStep,normalizeForLegacy,questionFor,READ_PERMISSIONS,planningCatalogue,
   focusedRecordCatalogue,synthesizeReads,relevantActions,explicitlyReadOnly,readOnlyCatalogue,
-  selectedPendingChoice,focusNamedSkuCatalogue};
+  selectedPendingChoice,focusNamedSkuCatalogue,focusedRecordState};

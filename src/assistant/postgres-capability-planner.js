@@ -33,6 +33,7 @@ const PLANNING_RULES=[
   'One customer order with several product lines is one sales_order.create step using orderLines JSON, not several sales_order.create steps. Preserve each distinct line and each stated per-unit price; do not invent a price or silently omit a product.',
   'The currentPage record is reloaded from this workspace and can resolve “this product”, “this order”, or similar references. Use its matching entity when the owner did not name another; an explicitly named entity always wins. A lasting reorder point is a policy proposal, not a stock movement.',
   'RecentChanges contains this user’s verified changes. Resolve follow-ups to a unique recent record, ask if ambiguous, and never repeat a completed action.',
+  'currentWorkspace.focusedRecord, when present, is this workspace’s verified current record type, number and lifecycle status. For a requested final lifecycle transition, include registered required internal predecessor transitions in order, with dependsOn and separate owner approval for each; do not substitute only a predecessor for the final requested effect. Never add an external email, payment, shipment or provider action as a prerequisite unless expressly requested.',
   'Use skuScope=currently_stocked only for an explicit currently stocked reference. Do not assume a linked order, bill, payment or policy exists. Prefer the valid contract requiring fewer unproven business facts.',
   'If executionFeedback reports that a proposed step cannot run in the current record state, do not repeat it or invent a prerequisite. Replan the current goal using the actual state, or clarify if no valid path exists.',
   'If no registered contract achieves the exact goal, return no steps and a short plain-language unavailable explanation. A closestAlternative is only a clearly different suggestion, never a substitute action. Do not invent facts, policies, authority or SQL.',
@@ -57,6 +58,10 @@ do not require the owner to restate its name or SKU. An explicitly named differe
 RecentChanges contains only verified completed changes by this actor in this workspace. It can identify a
 unique just-created record for a follow-up; do not reject a matching operation only because the owner used
 "that order" instead of restating its number. Ambiguity still requires clarification.
+The currentWorkspace.focusedRecord is a verified lifecycle snapshot when the owner names one exact record.
+A documented internal prerequisite needed to reach the requested final state is not an unrequested extra
+effect when each step is separately prepared for owner review and the final transition remains in the plan.
+Do not treat internal placement as a supplier email or acceptance when the contract says it is not.
 The authenticated currentWorkspace is the inventory the owner is operating in. "This inventory" or
 "this business" refers to that workspace even when currentPage is null. The executor remains tenant-scoped;
 do not ask for another workspace name before a workspace-level setting or rename.

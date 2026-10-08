@@ -536,6 +536,9 @@ test('Ask browser controls a real customer order, payment, and return through th
     const purchase=await workflows.createPurchaseOrder(database,ctx,{supplierId:supplier.id,
       destinationLocationId:place.id,idempotencyKey:'ask-workflow-purchase',
       lines:[{skuId:item.skuIds[0],quantityUnits:5,unitCost:10,destinationLocationId:place.id}]});
+    const focused=await require('../../src/assistant/postgres-control-plane').focusedRecordState(
+      database,ctx,`Mark ${purchase.poNumber} as placed without sending an email`);
+    assert.deepEqual(focused,{kind:'purchase_order',reference:purchase.poNumber,status:'DRAFT'});
     const revisePurchase=`Change the draft quantity on ${purchase.poNumber} for ${skuCode} from five to seven units without approving or sending it`;
     plans.set(revisePurchase,step('purchase_order.revise_draft_line',{recordReference:purchase.poNumber,
       sku:skuCode,quantity:7}));
