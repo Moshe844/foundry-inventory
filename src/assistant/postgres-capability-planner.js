@@ -119,7 +119,7 @@ function systemFor(catalogue=registry,{compact=false}={}){return `${PLANNING_RUL
 async function completeRepair(provider,catalogue,prompt){
   const request={prompt:JSON.stringify(prompt),schema:schemaFor(catalogue),schemaName:'stockchief_capability_plan'};
   try{return await provider.complete({...request,system:systemFor(catalogue)});}
-  catch(error){if(error.code!=='rate_limited')throw error;
+  catch(error){if(error.code!=='rate_limited'||error.limitKind==='daily_model_attempts')throw error;
     return provider.complete({...request,system:systemFor(catalogue,{compact:true})});}
 }
 
@@ -219,7 +219,7 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
   let response;
   try{response=await provider.complete({system:systemFor(catalogue),prompt:JSON.stringify(context),
     schema:schemaFor(catalogue),schemaName:'stockchief_capability_plan'});}
-  catch(error){if(error.code!=='rate_limited')throw error;
+  catch(error){if(error.code!=='rate_limited'||error.limitKind==='daily_model_attempts')throw error;
     const smaller={...context,recentChanges:context.recentChanges.slice(0,2),
       conversation:context.conversation.slice(-2).map((entry)=>({
         ...entry,message:entry.message.slice(0,180),answer:entry.answer.slice(0,120)}))};
@@ -298,8 +298,8 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
         }
       }
     }catch(error){if(error.code==='entitlement_required')throw error;
-      if(error.code==='rate_limited')return {steps:[],clarifyingQuestion:
-        'This request exceeds the safe AI cost limit even with a shorter verification. Nothing changed. Try one part at a time.'};
+      if(error.code==='rate_limited')return {steps:[],clarifyingQuestion:error.limitKind==='daily_model_attempts'
+        ?error.message:'This request exceeds the safe AI cost limit even with a shorter verification. Nothing changed. Try one part at a time.'};
       console.warn('[stockchief] Ask capability verification failed',error.code||error.name||'unknown');
       return {steps:[],clarifyingQuestion:'I could not safely verify that I understood this request. Nothing changed.'};
     }

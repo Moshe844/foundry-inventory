@@ -34,6 +34,15 @@ test('an explicit per-unit quote survives a model typo and cannot fall back to a
   assert.equal(selected.steps[0].args.amount,'2.4');
 });
 
+test('daily model-attempt ceiling is not mistaken for a prompt-cost failure or retried',async()=>{
+  let calls=0;
+  const provider={async complete(){calls++;const error=new Error('Daily model-attempt safety limit reached.');
+    error.code='rate_limited';error.limitKind='daily_model_attempts';throw error;}};
+  await assert.rejects(planner.plan(provider,'What stock do I have?'),
+    (error)=>error.limitKind==='daily_model_attempts');
+  assert.equal(calls,1);
+});
+
 for(const initial of ['read.suppliers','communication.send_email'])test(`semantic fit check rejects ${initial} when it misses the current goal`,async()=>{
   const schemas=[];let planCalls=0;let fitCalls=0;
   const provider={async complete(request){schemas.push(request.schemaName);

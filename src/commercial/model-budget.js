@@ -11,7 +11,8 @@ async function begin(database,accountId){
   ON CONFLICT(account_id,day) DO UPDATE SET attempts=commercial_model_daily_attempts.attempts+1
   WHERE commercial_model_daily_attempts.attempts<$2 AND commercial_model_daily_attempts.failures<$3
   RETURNING day,attempts,failures`,[accountId,maxAttempts,maxFailures])).rows[0];
- if(!row)throw new RateLimitError('This inventory has reached its daily model-attempt safety limit. Try again tomorrow; no new model call was made.');
+ if(!row){const error=new RateLimitError('This inventory has reached its daily model-attempt safety limit. Try again after the UTC daily reset; no new model call was made.');
+  error.limitKind='daily_model_attempts';throw error;}
  return row.day;
 }
 async function failed(database,accountId,day){await database.query(`UPDATE commercial_model_daily_attempts

@@ -27,7 +27,8 @@ test('failed paid model attempts have an atomic durable ceiling even when custom
   {system:'fixture',prompt:'fixture',schema:{type:'object',properties:{answer:{type:'string'}}}}),/unusable output/);
  assert.equal((await entitlements.meterState(db,scope,'ai_work_credits')).used,0);
  await assert.rejects(()=>model.wrap(db,scope,provider,'ask','blocked-third').complete(
-  {system:'fixture',prompt:'fixture',schema:{type:'object',properties:{answer:{type:'string'}}}}),/daily model-attempt safety limit/);
+  {system:'fixture',prompt:'fixture',schema:{type:'object',properties:{answer:{type:'string'}}}}),
+ (error)=>error.limitKind==='daily_model_attempts'&&/daily model-attempt safety limit/.test(error.message));
  assert.equal(providerCalls,2);
  const attempts=(await db.query('SELECT attempts,failures FROM commercial_model_daily_attempts WHERE account_id=$1',
   [owner.accountId])).rows[0];assert.equal(attempts.attempts,2);assert.equal(attempts.failures,2);
