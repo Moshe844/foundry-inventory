@@ -18,3 +18,30 @@ test('a single navigation request cannot produce two competing page jumps',async
   assert.equal(attempts,2);
   assert.deepEqual(result.steps.map(({contract})=>contract.name),['navigate.connections']);
 });
+
+test('a short answer to a pending action is judged against the original goal',async()=>{
+  const original='Create a customer order for five valves for Northside, customer pickup.';
+  const provider={async complete({schemaName,prompt,system}){
+    const context=JSON.parse(prompt);
+    if(schemaName==='stockchief_capability_plan'){
+      assert.equal(context.pending.originalMessage,original);
+      return {data:{steps:[{capability:'sales_order.create',arguments:[
+        {name:'location',value:'Main Warehouse'}],dependsOn:[],continuesPending:true}],
+      clarifyingQuestion:''}};
+    }
+    assert.equal(schemaName,'stockchief_capability_fit');
+    assert.match(system,/short field answer need not restate the entire business action/);
+    assert.equal(context.pendingRequest.originalMessage,original);
+    assert.equal(context.pendingRequest.awaitingField,'location');
+    assert.equal(context.proposedSteps[0].continuesPending,true);
+    return {data:{aligned:true,reason:'The owner supplied the missing pickup location.'}};
+  }};
+  const result=await planner.plan(provider,'Use Main Warehouse.',{pending:{
+    capability:'sales_order.create',args:{customer:'Northside',sku:'VALVE',quantity:5,
+      deliveryMethod:'pickup'},question:'Which location will the customer pick this order up from?',
+    originalMessage:original,status:'CLARIFY',awaitingField:'location'},
+  history:[{message:original,answer:'Which location will the customer pick this order up from?',
+    status:'CLARIFY'}]});
+  assert.equal(result.steps[0].contract.name,'sales_order.create');
+  assert.equal(result.steps[0].continuesPending,true);
+});

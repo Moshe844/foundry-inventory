@@ -38,7 +38,7 @@ const FIT_SCHEMA={type:'object',additionalProperties:false,required:['aligned','
   aligned:{type:'boolean'},reason:{type:'string',maxLength:240},
 }};
 const FIT_SYSTEM=`Independently check whether the proposed StockChief capabilities accomplish the owner's CURRENT goal.
-The pending question is context only. Judge the exact business effect and timing, not wording or topical overlap.
+If a proposed step continuesPending, the current goal is the original pending request with the owner's latest answer applied. Check that the latest message actually answers the pending question and that the proposed capability fulfills the original request; a short field answer need not restate the entire business action. If no step continuesPending, the pending question is context only and the current message must stand on its own. Judge the exact business effect and timing, not wording or topical overlap.
 Reject extra steps the owner did not request; do not invent contact, product, order, purchase or stock movement creation
 as a precaution. The deterministic resolver checks existing records and asks only if an identity is missing.
 Reject a preliminary read used only as context for a mutation when the owner did not request that information separately;
@@ -137,6 +137,7 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
     workspace,
     conversation:history.slice(-6).map(({message,answer,status})=>({message,answer,status})),
     pending:pending?{capability:pending.capability,args:pending.args,question:pending.question,
+      originalMessage:pending.originalMessage||null,
       status:pending.status,awaitingField:pending.awaitingField||null,
       proposalPending:Boolean(pending.proposalId)}:null,
     executionFeedback:feedback||null,
@@ -184,8 +185,10 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
   if(selected.steps.length){
     try{
       const candidate=()=>({message,currentWorkspace:workspace||null,currentPage:page||null,
-        pendingQuestion:selected.steps.some((step)=>step.continuesPending)
-        ?pending?.question||null:null,
+        pendingRequest:selected.steps.some((step)=>step.continuesPending)&&pending
+          ?{originalMessage:pending.originalMessage||null,question:pending.question,
+            capability:pending.capability,previousArguments:pending.args,
+            awaitingField:pending.awaitingField||null}:null,
         proposedSteps:selected.steps.map((step)=>({capability:step.contract.name,
           description:step.contract.description,arguments:step.args,
           inputMode:step.contract.fields.length?'typed_arguments':'full_owner_message',

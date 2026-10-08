@@ -1006,7 +1006,7 @@ async function askCapabilities(database,ctx,message,options={}){
   const latest=history.at(-1);let pending=['CLARIFY','PREPARED'].includes(latest?.status)
     &&latest.intent?.controlPlane?.capability
     ?{capability:latest.intent.controlPlane.capability,args:latest.intent.controlPlane.args,
-      question:latest.answer,status:latest.status,
+      question:latest.answer,originalMessage:latest.message,status:latest.status,
       awaitingField:latest.intent.presentation?.awaitingField||null,
       proposalId:latest.intent.controlPlane.pendingProposalId||latest.intent.proposalId||null}:null;
   if(pending?.proposalId){
