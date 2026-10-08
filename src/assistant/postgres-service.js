@@ -1322,7 +1322,13 @@ async function executeProposal(database,ctx,id) {
     return {...changed.rows[0],replayed:false};
   },{isolation:'SERIALIZABLE',retrySafe:true});
   try{return {...committed,continued:await continueApprovedPlans(database,ctx,id)};}
-  catch(error){return {...committed,continuationError:error.message};}
+  catch(error){
+    console.warn('[stockchief] Ask plan continuation failed',JSON.stringify({
+      code:error.code||error.name||'unknown',
+      frame:String(error.stack||'').split('\n').slice(1,3).map((line)=>line.trim()).join(' | '),
+    }));
+    return {...committed,continuationError:error.message};
+  }
 }
 
 async function cancelProposal(database,ctx,id) {
