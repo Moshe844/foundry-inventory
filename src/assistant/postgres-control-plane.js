@@ -11,6 +11,7 @@ const READ_PERMISSIONS={payables:permissions.VIEW_ACCOUNTING,receivables:permiss
   accounting:permissions.VIEW_ACCOUNTING,payments:permissions.VIEW_ACCOUNTING,
   business_analysis:permissions.VIEW_ACCOUNTING,
   purchase_orders:permissions.VIEW_PURCHASING,replenishment:permissions.VIEW_PURCHASING,
+  transfers:permissions.VIEW_TRANSFERS,customer_returns:permissions.VIEW_SALES,
   supplier_items:permissions.VIEW_PURCHASING,suppliers:permissions.VIEW_PURCHASING,
   purchase_costs:permissions.VIEW_PURCHASING,connections:permissions.ADMIN,
   sales_orders:permissions.VIEW_SALES,sales_activity:permissions.VIEW_SALES,customers:permissions.VIEW_SALES};
@@ -263,7 +264,9 @@ async function synthesizeReads(provider,message,executed,{completedActions=[],ca
       registry.get(name)?.kind==='read'&&!executed.some((entry)=>entry.step.contract.name===name)).slice(0,2);
     const primary=executed[used[0]??0];
     return [{step:primary.step,args:primary.args,provenance:primary.provenance||{},result:{
-      status:answer.supported?'ANSWERED':'CLARIFY',answer:answer.answer.trim(),rows,
+      status:answer.supported?'ANSWERED':'CLARIFY',
+      answer:answer.supported?answer.answer.trim():
+        'I could not verify that conclusion from the records I checked. Nothing changed. Give me the specific record or open its page so I can check the right source.',rows,
       columns:original?original.columns:['source','record'],handoff:original?.handoff||null,
       researchViews:used.map((index)=>executed[index].step.contract.view),
       additionalReads:answer.supported?[]:additionalReads,

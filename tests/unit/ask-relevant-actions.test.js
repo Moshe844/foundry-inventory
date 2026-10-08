@@ -37,6 +37,18 @@ test('read synthesis shows applicable registered actions without executing one',
   assert.equal(prompt.completedActions.length, 0);
 });
 
+test('an unverified model answer cannot falsely claim a real record does not exist',async()=>{
+  const provider={async complete(){return {data:{answer:'TR-0004 does not exist.',
+    supported:false,usedSteps:[],additionalReads:[]}};}};
+  const executed=[{step:{contract:registry.get('read.inventory')},args:{},
+    result:{status:'ANSWERED',answer:'No matching inventory row.',rows:[],columns:[]}}];
+  const result=await control.synthesizeReads(provider,'What happened to TR-0004?',executed,
+    {catalogue:registry});
+  assert.equal(result[0].result.status,'CLARIFY');
+  assert.match(result[0].result.answer,/could not verify/i);
+  assert.doesNotMatch(result[0].result.answer,/does not exist/i);
+});
+
 test('explicit read-only intent removes every write from planning while preserving discovery', () => {
   assert.equal(control.explicitlyReadOnly('Explain the return process. No change yet.'), true);
   assert.equal(control.explicitlyReadOnly('Do not change anything; which step comes next?'), true);

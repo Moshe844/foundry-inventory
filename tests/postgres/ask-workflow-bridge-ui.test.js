@@ -254,6 +254,15 @@ test('Ask browser controls a real customer order, payment, and return through th
     assert.equal(refundState.status,'COMPLETED');
     assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM accounting_sale_refunds
       WHERE workspace_id=$1 AND refund_reference=$2`,[ctx.workspaceId,refundNumber])).rows[0].count,1);
+    const returnEvidence=await require('../../src/assistant/postgres-service').lookup(database,ctx,
+      {view:'customer_returns',search:refundNumber});
+    assert.equal(returnEvidence.rows.length,1);
+    assert.equal(returnEvidence.rows[0].status,'COMPLETED');
+    assert.equal(returnEvidence.rows[0].physicallyReceivedUnits,1);
+    assert.equal(returnEvidence.rows[0].restockedUnits,1);
+    assert.equal(returnEvidence.rows[0].refundDestination,'CASH');
+    assert.equal(returnEvidence.rows[0].cashReturned,true);
+    assert.equal(returnEvidence.rows[0].unpaidInvoiceCredited,false);
 
     const shipmentOrder=await workflows.createSalesOrder(database,ctx,{customerId:customer.id,
       deliveryMethod:'SHIP',fulfillmentLocationId:place.id,idempotencyKey:'ask-workflow-shipping-order',

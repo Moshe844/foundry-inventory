@@ -411,6 +411,50 @@ async function lookup(database,ctx,request,options={}) {
       'heldAtSource','pickedUnits','departedUnits','inTransitUnits','receivedUnits',
       'lostUnits','damagedUnits','products']};
   }
+  if(request.view==='customer_returns'){
+    const rows=(await database.query(`SELECT r.id,r.return_number,r.status,r.resolution,
+      so.order_number,c.name AS customer,q.name AS quarantine_location,
+      COALESCE(lines.authorized_units,0) AS authorized_units,
+      COALESCE(lines.received_units,0) AS received_units,
+      COALESCE(lines.restocked_units,0) AS restocked_units,
+      COALESCE(lines.scrapped_units,0) AS scrapped_units,
+      COALESCE(lines.repair_units,0) AS repair_units,
+      refund.destination AS refund_destination,
+      COALESCE(refund.revenue_minor,0)+COALESCE(refund.tax_minor,0) AS refund_minor,
+      so.currency
+      FROM customer_returns r
+      JOIN sales_orders so ON so.id=r.sales_order_id AND so.workspace_id=r.workspace_id
+      JOIN customers c ON c.id=so.customer_id AND c.workspace_id=r.workspace_id
+      JOIN locations q ON q.id=r.quarantine_location_id AND q.workspace_id=r.workspace_id
+      LEFT JOIN accounting_sale_refunds refund ON refund.id=r.refund_id AND refund.workspace_id=r.workspace_id
+      LEFT JOIN LATERAL (SELECT SUM(quantity_authorized) AS authorized_units,
+        SUM(quantity_received) AS received_units,SUM(quantity_restocked) AS restocked_units,
+        SUM(quantity_scrapped) AS scrapped_units,SUM(quantity_repair) AS repair_units
+        FROM customer_return_lines WHERE workspace_id=r.workspace_id AND customer_return_id=r.id) lines ON true
+      WHERE r.workspace_id=$1 AND ($2::text IS NULL OR r.return_number ILIKE '%'||$2||'%'
+        OR so.order_number ILIKE '%'||$2||'%' OR c.name ILIKE '%'||$2||'%'
+        OR r.status ILIKE '%'||$2||'%') ORDER BY r.created_at DESC LIMIT 100`,
+    [ctx.workspaceId,search])).rows.map((row)=>evidenceRow({return:row.return_number,
+      status:row.status,resolution:row.resolution,customer:row.customer,order:row.order_number,
+      quarantineLocation:row.quarantine_location,authorizedUnits:Number(row.authorized_units),
+      physicallyReceivedUnits:Number(row.received_units),restockedUnits:Number(row.restocked_units),
+      scrappedUnits:Number(row.scrapped_units),repairUnits:Number(row.repair_units),
+      refundDestination:row.refund_destination||null,
+      postedRefundOrCredit:row.refund_destination?pricing.formatMinor(Number(row.refund_minor),row.currency):null,
+      cashReturned:row.refund_destination==='CASH',
+      unpaidInvoiceCredited:row.refund_destination==='AR'},`/returns/${row.id}`));
+    const answer=rows.length===1?`${rows[0].return} is ${rows[0].status.toLowerCase().replace(/_/g,' ')}: `+
+      `${rows[0].authorizedUnits} authorized, ${rows[0].physicallyReceivedUnits} physically received, `+
+      `${rows[0].restockedUnits} restocked. `+
+      (rows[0].refundDestination==='CASH'?`${rows[0].postedRefundOrCredit} cash refund recorded.`:
+        rows[0].refundDestination==='AR'?`${rows[0].postedRefundOrCredit} unpaid-invoice credit recorded; no cash returned.`:
+          'No refund or invoice credit posted.'):
+      rows.length?`${rows.length} customer returns matched.`:'No customer return matched that request.';
+    return {answer,rows,columns:['return','status','resolution','customer','order',
+      'quarantineLocation','authorizedUnits','physicallyReceivedUnits','restockedUnits',
+      'scrappedUnits','repairUnits','refundDestination','postedRefundOrCredit',
+      'cashReturned','unpaidInvoiceCredited']};
+  }
   if(request.view==='purchase_orders'){
     const rows=(await database.query(`SELECT po.id,po.po_number,po.status,po.currency,s.name AS supplier,
       COALESCE(SUM(pol.quantity_units),0) AS ordered_units,
