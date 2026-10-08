@@ -163,13 +163,7 @@ async function brief(database,workspaceId){
       (SELECT COALESCE(SUM(a.quantity),0) FROM sales_order_allocations a WHERE a.workspace_id=$1) AS committed,
       (SELECT COALESCE(SUM(pol.quantity_units-pol.quantity_received_units),0) FROM purchase_order_lines pol
         JOIN purchase_orders po ON po.id=pol.purchase_order_id WHERE pol.workspace_id=$1
-        AND po.status IN ('APPROVED','ORDERED','PARTIALLY_RECEIVED'))
-      + (SELECT COALESCE(SUM(CASE t.status WHEN 'REQUESTED' THEN tl.requested_quantity
-          WHEN 'APPROVED' THEN tl.approved_quantity WHEN 'PICKED' THEN tl.picked_quantity
-          ELSE tl.shipped_quantity-tl.received_quantity-tl.lost_quantity-tl.damaged_quantity END),0)
-        FROM inventory_transfer_lines tl JOIN inventory_transfers t ON t.id=tl.transfer_id
-        WHERE tl.workspace_id=$1 AND t.status IN
-          ('REQUESTED','APPROVED','PICKED','SHIPPED','IN_TRANSIT','PARTIALLY_RECEIVED')) AS incoming`,[workspaceId]),
+        AND po.status IN ('ORDERED','PARTIALLY_RECEIVED')) AS incoming`,[workspaceId]),
     database.query(`SELECT l.id,l.name,COALESCE(SUM(b.on_hand),0) AS on_hand FROM locations l
       LEFT JOIN balances b ON b.location_id=l.id AND b.workspace_id=l.workspace_id
       WHERE l.workspace_id=$1 AND l.is_active=1 GROUP BY l.id,l.name ORDER BY l.name`,[workspaceId]),

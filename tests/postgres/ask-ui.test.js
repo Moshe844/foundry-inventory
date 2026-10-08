@@ -198,7 +198,8 @@ test('Ask StockChief grounds answers and executes only an approved PostgreSQL pr
     assert.equal(told.status,303);assert.equal(told.headers.location,'/ask#latest');
     const groundedAfterTransfer=(await agent.get('/ask')).text;
     assert.match(groundedAfterTransfer,/1 SKU matched with 7 units on hand/);
-    assert.match(groundedAfterTransfer,/3 incoming/);
+    assert.match(groundedAfterTransfer,/0 incoming/);
+    assert.match(groundedAfterTransfer,/Internal transfer planned 3/i);
     const multiLookup=await agent.post('/ask').type('form').send({_csrf:csrfFrom(groundedAfterTransfer),
       message:'How many items are in my inventory and show me locations'});
     assert.equal(multiLookup.status,303);
@@ -221,7 +222,7 @@ test('Ask StockChief grounds answers and executes only an approved PostgreSQL pr
     assert.equal(warehouseQuestion.status,303);
     const latestWarehouseAnswer=(await database.query(`SELECT answer FROM stockchief_runtime.assistant_interactions
       ORDER BY created_at DESC,id DESC LIMIT 1`)).rows[0].answer;
-    assert.match(latestWarehouseAnswer,/1 SKU matched with 7 units on hand, 0 committed, 7 available and 3 incoming/);
+    assert.match(latestWarehouseAnswer,/1 SKU matched with 7 units on hand, 0 committed, 7 available and 0 incoming/);
     assert.match(latestWarehouseAnswer,/Stock is in Main Warehouse/);
     const left=await agent.post('/ask/leave-the-rest').type('form').send({_csrf:csrfFrom((await agent.get('/ask')).text),back:'/'});
     assert.equal(left.status,303);assert.equal(left.headers.location,'/');

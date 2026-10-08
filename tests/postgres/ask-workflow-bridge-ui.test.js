@@ -537,6 +537,11 @@ test('Ask browser controls a real customer order, payment, and return through th
     const approvePurchase=`Approve supplier purchase order ${purchase.poNumber}`;
     plans.set(approvePurchase,step('purchase_order.approve',{recordReference:purchase.poNumber}));
     await prepareAndApprove(page,base,database,ctx.workspaceId,approvePurchase,'purchase_order.approve');
+    const approvedNotPlaced=(await assistant.lookup(database,ctx,{view:'inventory',search:skuCode})).rows[0];
+    assert.equal(approvedNotPlaced.incomingOnPurchaseOrders,0,
+      'approval alone is not a supplier order on its way');
+    assert.equal((await catalog.getItem(database,ctx.workspaceId,item.itemId)).onOrder,0);
+    assert.equal((await require('../../src/projections/postgres-service').brief(database,ctx.workspaceId)).stats.incoming,0);
     const placePurchase=`Record that ${purchase.poNumber} was placed with Safety Supply under reference SS-45`;
     plans.set(placePurchase,step('purchase_order.place',{recordReference:purchase.poNumber,reference:'SS-45'}));
     await prepareAndApprove(page,base,database,ctx.workspaceId,placePurchase,'purchase_order.place');
@@ -548,6 +553,8 @@ test('Ask browser controls a real customer order, payment, and return through th
     assert.equal(incomingBeforeCancel.incoming,incomingBeforeCancel.incomingOnPurchaseOrders);
     assert.ok(incomingBeforeCancel.internalTransferPlanned>=1);
     assert.ok(incomingBeforeCancel.internalTransferInTransit>=1);
+    assert.equal((await catalog.getItem(database,ctx.workspaceId,item.itemId)).onOrder,7);
+    assert.equal((await require('../../src/projections/postgres-service').brief(database,ctx.workspaceId)).stats.incoming,7);
     const cancelPurchase=`Cancel ${purchase.poNumber}; the supplier says it cannot ship`;
     plans.set(cancelPurchase,step('purchase_order.cancel',{recordReference:purchase.poNumber,
       reason:'Supplier cannot ship'}));
@@ -623,6 +630,19 @@ test('Ask browser controls a real customer order, payment, and return through th
       FROM accounting_supplier_bills WHERE workspace_id=$1 AND purchase_order_id=$2
       AND status IN ('OPEN','PARTIALLY_PAID')`,
     [ctx.workspaceId,invoicedPurchase.purchaseOrderId])).rows[0].owed,3000);
+    const payableEvidence=await assistant.lookup(database,ctx,{view:'payables',search:'Safety Supply'});
+    assert.match(payableEvidence.answer,/owe suppliers \$52\.00 USD across 2 open supplier bills/);
+    assert.match(payableEvidence.answer,/1 disputed supplier invoice document is excluded/);
+    assert.equal(payableEvidence.rows.filter((row)=>row.balanceMinor!==null)
+      .reduce((sum,row)=>sum+row.balanceMinor,0),5200);
+    assert.deepEqual(payableEvidence.rows.find((row)=>row.document===matchedBill.bill_number)?.balance,'$30.00');
+    const disputedEvidence=payableEvidence.rows.find((row)=>row.document==='SS-INVOICE-EXCEPTION');
+    assert.deepEqual({party:disputedEvidence?.party,status:disputedEvidence?.status,
+      balance:disputedEvidence?.balance,balanceMinor:disputedEvidence?.balanceMinor},
+    {party:'Safety Supply',status:'DISPUTED — not posted debt',
+      balance:'Excluded from payable',balanceMinor:null});
+    assert.equal((await assistant.lookup(database,{...ctx,workspaceId:two.workspace_id},
+      {view:'payables',search:'Safety Supply'})).rows.length,0);
     const invoiceEvidence=await require('../../src/assistant/postgres-service').lookup(database,ctx,
       {view:'purchase_orders',search:invoicedPurchase.poNumber});
     assert.equal(invoiceEvidence.rows.length,1);

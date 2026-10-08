@@ -257,7 +257,7 @@ const READS={
   sales_orders:'Read recorded customer orders, their product lines, per-unit prices and draft order total, ordered, held, fulfilled and open units, invoice and payment balances, and posted sale revenue, product cost and gross profit from fulfillment journals; answers do not change business records.',
   sales_activity:'Recorded customer order and sales activity for supported time windows.',
   suppliers:'Supplier records.',customers:'Customer records.',shipping:'Shipping records.',
-  payments:'Recorded payment transactions.',payables:'Open supplier bill balances.',
+  payments:'Recorded payment transactions.',payables:'Posted open supplier bill balances, with disputed supplier invoice documents shown separately as excluded from debt.',
   receivables:'Open customer invoice balances.',accounting:'Posted financial records and reports.',
   connections:'Connected business systems.',messages:'Business email records.',
   business_analysis:'Verified comparisons across multiple recorded business datasets.',

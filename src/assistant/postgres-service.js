@@ -718,15 +718,27 @@ async function lookup(database,ctx,request,options={}) {
       WHERE d.workspace_id=$1 AND d.status IN ('OPEN','PARTIALLY_PAID') AND d.balance_minor>0
       AND ($2::text IS NULL OR p.name ILIKE '%'||$2||'%' OR d.${documentColumn} ILIKE '%'||$2||'%')
       ORDER BY COALESCE(d.due_date,'9999-12-31'),d.created_at DESC LIMIT 100`,[ctx.workspaceId,search]);
-    const rows=result.rows.map((row)=>evidenceRow({party:row.party,document:row.document,status:row.status,
+    const postedRows=result.rows.map((row)=>evidenceRow({party:row.party,document:row.document,status:row.status,
       due:row.due_date||'Not set',balance:pricing.formatMinor(Number(row.balance_minor),row.currency),
       balanceMinor:Number(row.balance_minor),currency:row.currency},href));
+    const disputedRows=payable?(await database.query(`SELECT d.bill_number,d.supplier_invoice_number,d.currency,
+      p.name AS party,d.due_date FROM accounting_supplier_bills d
+      JOIN suppliers p ON p.id=d.supplier_id AND p.workspace_id=d.workspace_id
+      WHERE d.workspace_id=$1 AND d.status='DISPUTED'
+        AND ($2::text IS NULL OR p.name ILIKE '%'||$2||'%' OR d.bill_number ILIKE '%'||$2||'%'
+          OR COALESCE(d.supplier_invoice_number,'') ILIKE '%'||$2||'%')
+      ORDER BY d.created_at DESC LIMIT 100`,[ctx.workspaceId,search])).rows.map((row)=>
+      evidenceRow({party:row.party,document:row.supplier_invoice_number||row.bill_number,
+        status:'DISPUTED — not posted debt',due:row.due_date||'Not set',balance:'Excluded from payable',
+        balanceMinor:null,currency:row.currency},href)):[];
+    const rows=[...postedRows,...disputedRows];
     const totals=new Map();for(const row of result.rows)totals.set(row.currency,(totals.get(row.currency)||0)+Number(row.balance_minor));
     const totalText=[...totals.entries()].map(([currency,amount])=>`${pricing.formatMinor(amount,currency)} ${currency}`).join(' and ');
     const noun=payable?'open supplier bill':'open customer invoice';
-    const answer=rows.length
-      ?`${payable?'We currently owe suppliers':'Customers currently owe us'} ${totalText} across ${rows.length} ${noun}${rows.length===1?'':'s'}.`
-      :payable?'We currently owe suppliers nothing on open bills.':'Customers currently owe us nothing on open invoices.';
+    const answer=(postedRows.length
+      ?`${payable?'We currently owe suppliers':'Customers currently owe us'} ${totalText} across ${postedRows.length} ${noun}${postedRows.length===1?'':'s'}.`
+      :payable?'We currently owe suppliers nothing on open bills.':'Customers currently owe us nothing on open invoices.')+
+      (disputedRows.length?` ${disputedRows.length} disputed supplier invoice document${disputedRows.length===1?' is':'s are'} excluded from posted payables.`:'');
     return {answer,rows,columns:['party','document','status','due','balance','currency']};
   }
   const rows=(await database.query(`WITH committed AS (
@@ -735,7 +747,7 @@ async function lookup(database,ctx,request,options={}) {
     ), purchase_incoming AS (
       SELECT pol.sku_id,SUM(pol.quantity_units-pol.quantity_received_units) AS quantity FROM purchase_order_lines pol
       JOIN purchase_orders po ON po.id=pol.purchase_order_id WHERE pol.workspace_id=$1
-      AND po.status IN ('APPROVED','ORDERED','PARTIALLY_RECEIVED') GROUP BY pol.sku_id
+      AND po.status IN ('ORDERED','PARTIALLY_RECEIVED') GROUP BY pol.sku_id
     ), transfer_incoming AS (
       SELECT tl.sku_id,
         SUM(CASE t.status WHEN 'REQUESTED' THEN tl.requested_quantity

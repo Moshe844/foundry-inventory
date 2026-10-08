@@ -162,32 +162,22 @@ async function listItems(database, workspaceId, input = {}) {
       SELECT s.item_id,COALESCE(SUM(pol.quantity_units-pol.quantity_received_units),0) AS quantity
       FROM purchase_order_lines pol JOIN purchase_orders po ON po.id=pol.purchase_order_id
       JOIN skus s ON s.id=pol.sku_id
-      WHERE pol.workspace_id=$1 AND po.status IN ('APPROVED','ORDERED','PARTIALLY_RECEIVED') GROUP BY s.item_id
-    ), transfer_incoming AS (
-      SELECT s.item_id,COALESCE(SUM(CASE t.status WHEN 'REQUESTED' THEN tl.requested_quantity
-        WHEN 'APPROVED' THEN tl.approved_quantity WHEN 'PICKED' THEN tl.picked_quantity
-        ELSE tl.shipped_quantity-tl.received_quantity-tl.lost_quantity-tl.damaged_quantity END),0) AS quantity
-      FROM inventory_transfer_lines tl JOIN inventory_transfers t ON t.id=tl.transfer_id
-      JOIN skus s ON s.id=tl.sku_id WHERE tl.workspace_id=$1
-        AND t.status IN ('REQUESTED','APPROVED','PICKED','SHIPPED','IN_TRANSIT','PARTIALLY_RECEIVED') GROUP BY s.item_id
-    ), incoming AS (
-      SELECT item_id,SUM(quantity) AS quantity FROM (
-        SELECT * FROM purchase_incoming UNION ALL SELECT * FROM transfer_incoming
-      ) sources GROUP BY item_id
+      WHERE pol.workspace_id=$1 AND po.status IN ('ORDERED','PARTIALLY_RECEIVED') GROUP BY s.item_id
     ), history AS (
       SELECT item_id,1 AS has_history FROM movements WHERE workspace_id=$1 GROUP BY item_id
     )
     SELECT i.*,COALESCE(r.sku_count,0) AS sku_count,r.first_sku_code,
       COALESCE(stock.on_hand,0) AS on_hand,COALESCE(committed_item.quantity,0) AS committed,
-      COALESCE(incoming.quantity,0) AS on_order,COALESCE(history.has_history,0) AS has_history
+      COALESCE(purchase_incoming.quantity,0) AS on_order,COALESCE(history.has_history,0) AS has_history
     FROM items i LEFT JOIN item_catalog_rollups r ON r.item_id=i.id
     LEFT JOIN stock ON stock.item_id=i.id LEFT JOIN committed_item ON committed_item.item_id=i.id
-    LEFT JOIN incoming ON incoming.item_id=i.id LEFT JOIN history ON history.item_id=i.id
+    LEFT JOIN purchase_incoming ON purchase_incoming.item_id=i.id
+    LEFT JOIN history ON history.item_id=i.id
     WHERE i.workspace_id=$1 AND ($5 OR i.is_active=1) AND (NOT $6 OR i.is_active=0)
       AND ($3::text IS NULL OR i.tracking_mode=$3)
       AND ($9::text IS NULL OR ($9='shortage' AND COALESCE(committed_item.quantity,0)>COALESCE(stock.on_hand,0))
         OR ($9='empty' AND COALESCE(stock.on_hand,0)<=0)
-        OR ($9='incoming' AND COALESCE(incoming.quantity,0)>0)
+        OR ($9='incoming' AND COALESCE(purchase_incoming.quantity,0)>0)
         OR ($9='healthy' AND COALESCE(stock.on_hand,0)>0
           AND COALESCE(committed_item.quantity,0)<=COALESCE(stock.on_hand,0)))
       AND ($2::text IS NULL OR i.name ILIKE '%'||$2||'%' OR COALESCE(i.base_code,'') ILIKE '%'||$2||'%'
@@ -223,25 +213,14 @@ async function getItem(database, workspaceId, itemId, input = {}) {
     ), purchase_incoming AS (
       SELECT pol.sku_id,COALESCE(SUM(pol.quantity_units-pol.quantity_received_units),0) AS quantity
       FROM purchase_order_lines pol JOIN purchase_orders po ON po.id=pol.purchase_order_id
-      WHERE pol.workspace_id=$1 AND po.status IN ('APPROVED','ORDERED','PARTIALLY_RECEIVED') GROUP BY pol.sku_id
-    ), transfer_incoming AS (
-      SELECT tl.sku_id,COALESCE(SUM(CASE t.status WHEN 'REQUESTED' THEN tl.requested_quantity
-        WHEN 'APPROVED' THEN tl.approved_quantity WHEN 'PICKED' THEN tl.picked_quantity
-        ELSE tl.shipped_quantity-tl.received_quantity-tl.lost_quantity-tl.damaged_quantity END),0) AS quantity
-      FROM inventory_transfer_lines tl JOIN inventory_transfers t ON t.id=tl.transfer_id
-      WHERE tl.workspace_id=$1 AND t.status IN ('REQUESTED','APPROVED','PICKED','SHIPPED','IN_TRANSIT','PARTIALLY_RECEIVED')
-      GROUP BY tl.sku_id
-    ), incoming AS (
-      SELECT sku_id,SUM(quantity) AS quantity FROM (
-        SELECT * FROM purchase_incoming UNION ALL SELECT * FROM transfer_incoming
-      ) sources GROUP BY sku_id
+      WHERE pol.workspace_id=$1 AND po.status IN ('ORDERED','PARTIALLY_RECEIVED') GROUP BY pol.sku_id
     ), stock AS (
       SELECT sku_id,COALESCE(SUM(on_hand),0) AS on_hand FROM balances WHERE workspace_id=$1 GROUP BY sku_id
     )
     SELECT s.*,COALESCE(stock.on_hand,0) AS on_hand,COALESCE(committed.quantity,0) AS committed,
-      COALESCE(incoming.quantity,0) AS on_order
+      COALESCE(purchase_incoming.quantity,0) AS on_order
     FROM skus s LEFT JOIN stock ON stock.sku_id=s.id LEFT JOIN committed ON committed.sku_id=s.id
-    LEFT JOIN incoming ON incoming.sku_id=s.id
+    LEFT JOIN purchase_incoming ON purchase_incoming.sku_id=s.id
     WHERE s.workspace_id=$1 AND s.item_id=$2 ORDER BY s.position,s.id LIMIT $3 OFFSET $4`,
   [workspaceId, itemId, pageSize, (page - 1) * pageSize]);
   const skuIds = skuResult.rows.map((row) => row.id);
@@ -281,13 +260,8 @@ async function getItem(database, workspaceId, itemId, input = {}) {
         JOIN skus s ON s.id=sol.sku_id WHERE a.workspace_id=$1 AND s.item_id=$2),0) AS committed,
       COALESCE((SELECT SUM(pol.quantity_units-pol.quantity_received_units) FROM purchase_order_lines pol
         JOIN purchase_orders po ON po.id=pol.purchase_order_id JOIN skus s ON s.id=pol.sku_id
-        WHERE pol.workspace_id=$1 AND s.item_id=$2 AND po.status IN ('APPROVED','ORDERED','PARTIALLY_RECEIVED')),0)
-      + COALESCE((SELECT SUM(CASE t.status WHEN 'REQUESTED' THEN tl.requested_quantity
-          WHEN 'APPROVED' THEN tl.approved_quantity WHEN 'PICKED' THEN tl.picked_quantity
-          ELSE tl.shipped_quantity-tl.received_quantity-tl.lost_quantity-tl.damaged_quantity END)
-        FROM inventory_transfer_lines tl JOIN inventory_transfers t ON t.id=tl.transfer_id
-        JOIN skus s ON s.id=tl.sku_id WHERE tl.workspace_id=$1 AND s.item_id=$2
-          AND t.status IN ('REQUESTED','APPROVED','PICKED','SHIPPED','IN_TRANSIT','PARTIALLY_RECEIVED')),0) AS on_order`,
+        WHERE pol.workspace_id=$1 AND s.item_id=$2 AND po.status IN ('ORDERED','PARTIALLY_RECEIVED')),0)
+      AS on_order`,
   [workspaceId,itemId])).rows[0];
   const committedTotal = Number(positionTotal.committed || 0);
   const onOrderTotal = Number(positionTotal.on_order || 0);

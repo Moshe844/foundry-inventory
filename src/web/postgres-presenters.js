@@ -96,7 +96,7 @@ async function inventoryPosition(database,workspaceId){
         COALESCE((SELECT SUM(pol.quantity_units-pol.quantity_received_units) FROM purchase_order_lines pol
           JOIN purchase_orders po ON po.id=pol.purchase_order_id
           WHERE pol.workspace_id=s.workspace_id AND pol.sku_id=s.id
-            AND po.status IN ('APPROVED','ORDERED','PARTIALLY_RECEIVED')),0)::bigint AS incoming
+            AND po.status IN ('ORDERED','PARTIALLY_RECEIVED')),0)::bigint AS incoming
       FROM skus s LEFT JOIN balances b ON b.workspace_id=s.workspace_id AND b.sku_id=s.id
       JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
       WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 GROUP BY s.id,s.workspace_id
@@ -118,7 +118,7 @@ async function inventoryPosition(database,workspaceId){
     count:number(count),itemIds:[],href:`/inventory/table?group=${encodeURIComponent(key)}`});};
   add(row.shortage_count,'shortage','Promised but not available','Customer commitments exceed physical stock.','hot','alert');
   add(row.empty_count,'empty','Out of stock','No physical units are currently on hand.','hot','box');
-  add(row.incoming_count,'incoming','On the way','A purchase or transfer is already expected.','quiet','arrive');
+  add(row.incoming_count,'incoming','On the way','A placed supplier order has units outstanding.','quiet','arrive');
   add(row.healthy_count,'healthy','Available now','Physical stock covers current commitments.','ok','check');
   return {position:{tooLarge:number(row.skus)>250000,groups,productNames:names.rows.map((entry)=>entry.name),totals:{locations:number(locations.rows[0].count),
     skus:number(row.skus),onHand:number(row.on_hand),committed:number(row.committed),incoming:number(row.incoming)}},

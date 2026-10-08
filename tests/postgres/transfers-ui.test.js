@@ -88,8 +88,11 @@ test('real Chromium proves PostgreSQL transfer custody, partial outcomes, accoun
 
     await Promise.all([page.waitForNavigation(), page.getByRole('button', { name: 'Approve this move' }).click()]);
     assert.match(await page.locator('main').innerText(), /8 units are held at North Warehouse/);
-    assert.equal((await catalog.getItem(database, ctx.workspaceId, item.itemId)).onOrder, 8);
-    assert.equal((await projections.brief(database, ctx.workspaceId)).stats.incoming, 8);
+    assert.equal((await catalog.getItem(database, ctx.workspaceId, item.itemId)).onOrder, 0,
+      'an internal transfer is not new supplier stock on order');
+    assert.equal((await projections.brief(database, ctx.workspaceId)).stats.incoming, 0,
+      'business-wide incoming must not double-count relocated stock');
+    assert.equal((await catalog.listItems(database, ctx.workspaceId, {group:'incoming'})).items.length,0);
     await Promise.all([page.waitForNavigation(), page.getByRole('button', { name: /Confirm 8 units left/ }).click()]);
     assert.match(await page.locator('main').innerText(), /8 units in transit to South Store/);
     balances = (await database.query(`SELECT location_id,on_hand FROM balances
