@@ -248,12 +248,14 @@ const READS={
   business_analysis:'Verified comparisons across multiple recorded business datasets.',
   general_knowledge:'General business explanation that does not claim to read this workspace’s records.',
 };
+const READ_RECORD_KINDS={sales_orders:'sales_order',purchase_orders:'purchase_order'};
 for(const [view,description] of Object.entries(READS))add(`read.${view}`,description,
   ['search','timeframe'],'read',permissions.VIEW,'none',
   async(service,db,ctx,text,args,options)=>service.lookup(db,ctx,{view,search:args.search||null,
     timeframe:args.timeframe||'all_time'},{provider:options.answerProvider,question:text}),
   async(_service,_db,_ctx,result)=>Boolean(result&&Array.isArray(result.rows)),
-  {view,answerMode:['general_knowledge','business_analysis','inventory_summary'].includes(view)?'executor':'evidence'});
+  {view,recordKind:READ_RECORD_KINDS[view]||null,
+    answerMode:['general_knowledge','business_analysis','inventory_summary'].includes(view)?'executor':'evidence'});
 for(const [name,description,search] of [
   ['read.profit_and_loss','Read the current month’s posted profit and loss; never infer unrecorded activity.','profit_and_loss'],
   ['read.profit_change','Explain the change in posted profit against the comparable prior month when the accounting analysis entitlement allows it.','profit_change'],

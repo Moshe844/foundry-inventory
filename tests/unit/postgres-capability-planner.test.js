@@ -5,6 +5,16 @@ const assert=require('node:assert/strict');
 const planner=require('../../src/assistant/postgres-capability-planner');
 const {registry}=require('../../src/assistant/postgres-capability-registry');
 const control=require('../../src/assistant/postgres-control-plane');
+const capabilityPlans=require('../../src/assistant/postgres-capability-plans');
+
+test('post-approval reads are scoped to the one completed business record',()=>{
+  const steps=[{capability:'sales_order.fulfill',state:'DONE',args:{recordReference:'SO-00009'}},
+    {capability:'read.sales_orders',state:'BLOCKED',dependsOn:[0],args:{search:null}}];
+  assert.deepEqual(capabilityPlans.scopeReadToCompletedRecord(steps,1,
+    registry.get('read.sales_orders'),steps[1].args),{search:'SO-00009'});
+  assert.deepEqual(capabilityPlans.scopeReadToCompletedRecord(steps,1,
+    registry.get('read.receivables'),steps[1].args),{search:null});
+});
 
 test('a dependent order read can answer exact quantities after an approved write',async()=>{
   const provider={complete:async()=>{throw new Error('Exact post-action order evidence does not need a model guess.');}};

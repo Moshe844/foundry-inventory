@@ -29,6 +29,15 @@ function readyIndexes(steps){return steps.flatMap((step,index)=>step.state==='BL
   &&step.reason==='dependency_waiting'&&step.dependsOn.every((dependency)=>steps[dependency]?.state==='DONE')
   ?[index]:[]);}
 
+function scopeReadToCompletedRecord(steps,index,contract,args){
+  if(contract.kind!=='read'||!contract.recordKind||!steps[index].dependsOn.length)return args;
+  const references=[...new Set(steps.slice(0,index).filter((step)=>step.state==='DONE'
+    &&registry.get(step.capability)?.kind==='mutation'
+    &&registry.get(step.capability)?.recordKind===contract.recordKind
+    &&step.args?.recordReference).map((step)=>step.args.recordReference))];
+  return references.length===1?{...args,search:references[0]}:args;
+}
+
 async function refreshApprovals(database,workspaceId,steps){
   const ids=steps.filter((step)=>step.state==='WAITING'&&step.proposalId).map((step)=>step.proposalId);
   if(!ids.length)return;
@@ -85,8 +94,9 @@ async function resume(database,ctx,proposalId,{service,provider,rawProvider,reco
           parent?.args?.recordReference&&registry.get(parent.capability)?.resultRecordKind===contract.recordKind);
         // The identifier returned by an approved creation is authoritative.
         // A planner-supplied guess for the not-yet-existing record cannot override it.
-        const executionArgs=produced.length===1
+        const mutationArgs=produced.length===1
           ?{...stored.args,recordReference:produced[0].args.recordReference}:stored.args;
+        const executionArgs=scopeReadToCompletedRecord(steps,next,contract,mutationArgs);
         let outcome=await executeStep(service,database,{...ctx,planStepKey:`plan:${claimed.id}:${next}`},
           {contract,args:executionArgs,dependsOn:stored.dependsOn,continuesPending:false},
           {actor,provider,rawProvider,sourceMessage:claimed.source_message,pending:null,page:null,
@@ -124,4 +134,4 @@ async function resume(database,ctx,proposalId,{service,provider,rawProvider,reco
   return continued;
 }
 
-module.exports={serialized,save,readyIndexes,resume};
+module.exports={serialized,save,readyIndexes,scopeReadToCompletedRecord,resume};
