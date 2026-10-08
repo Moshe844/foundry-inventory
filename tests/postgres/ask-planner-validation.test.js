@@ -94,3 +94,38 @@ test('a request to leave an order as draft never gains a reservation step',async
     'Create a draft customer order only. Do not reserve inventory yet.');
   assert.deepEqual(result.steps.map(({contract})=>contract.name),['sales_order.create']);
 });
+
+test('planner bounds stale conversation text while preserving the full current request',async()=>{
+  const current='Create an order dated 2026-08-15 for four rolls and reserve the stock.';
+  const provider={async complete({schemaName,prompt}){
+    const context=JSON.parse(prompt);
+    if(schemaName==='stockchief_capability_plan'){
+      assert.equal(context.message,current);
+      assert.equal(context.conversation.length,3);
+      assert.ok(context.conversation.every((entry)=>entry.message.length<=260&&entry.answer.length<=180));
+      return {data:{steps:[{capability:'sales_order.create',arguments:[],dependsOn:[],
+        continuesPending:false}],clarifyingQuestion:''}};
+    }
+    return {data:{aligned:true,reason:''}};
+  }};
+  const history=Array.from({length:8},()=>({message:'M'.repeat(1000),answer:'A'.repeat(1000),status:'ANSWERED'}));
+  const result=await planner.plan(provider,current,{history});
+  assert.equal(result.steps.length,2);
+});
+
+test('a cost-bounded planner retries with a smaller catalogue and intact current goal',async()=>{
+  let attempts=0;let firstLength=0;
+  const provider={async complete({schemaName,system,prompt}){
+    if(schemaName==='stockchief_capability_fit')return {data:{aligned:true,reason:''}};
+    attempts+=1;
+    if(attempts===1){firstLength=system.length;throw Object.assign(new Error('cost bound'),{code:'rate_limited'});}
+    assert.ok(system.length<firstLength);
+    assert.equal(JSON.parse(prompt).message,'Create an order and reserve stock.');
+    return {data:{steps:[{capability:'sales_order.create',arguments:[],dependsOn:[],
+      continuesPending:false}],clarifyingQuestion:''}};
+  }};
+  const result=await planner.plan(provider,'Create an order and reserve stock.');
+  assert.equal(attempts,2);
+  assert.deepEqual(result.steps.map(({contract})=>contract.name),
+    ['sales_order.create','sales_order.confirm']);
+});

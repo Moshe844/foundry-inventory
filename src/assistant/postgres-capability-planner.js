@@ -94,27 +94,27 @@ function conciseClarification(value){
   return end?answer.slice(0,end.index+1):SAFE_CLARIFICATION;
 }
 
-function planningCatalogue(catalogue=registry){
+function planningCatalogue(catalogue=registry,{compact=false}={}){
   const entries=catalogue.list();
-  const summary=(entry)=>entry.description.slice(0,78);
+  const summary=(entry)=>entry.description.slice(0,compact?56:78);
   return {
     notation:'n=capability name; d=verified effect; a=allowed input names. All changes need approval.',
     mutations:entries.filter((entry)=>entry.kind==='mutation').map((entry)=>({
       n:entry.name,d:summary(entry),a:entry.fields.join(','),
       u:entry.commercialUnavailable?.length?'upgrade':undefined})),
     reads:entries.filter((entry)=>entry.kind==='read').map((entry)=>({
-      n:entry.name,d:entry.description.slice(0,190),
+      n:entry.name,d:entry.description.slice(0,compact?95:190),
       u:entry.commercialUnavailable?.length?'upgrade':undefined})),
     navigation:entries.filter((entry)=>entry.kind==='navigation').map((entry)=>({
-      n:entry.name,d:entry.description.slice(0,65)})),
+      n:entry.name,d:entry.description.slice(0,compact?42:65)})),
     policies:entries.filter((entry)=>entry.kind==='policy').map((entry)=>({
-      n:entry.name,d:entry.description.slice(0,85),
+      n:entry.name,d:entry.description.slice(0,compact?60:85),
       domains:Object.fromEntries(Object.entries(require('../manager/postgres-policy-contracts').DEFINITIONS)
-        .map(([domain,definition])=>[domain,definition.description.slice(0,55)]))})),
+        .map(([domain,definition])=>[domain,definition.description.slice(0,compact?35:55)]))})),
   };
 }
 
-function systemFor(catalogue=registry){return `${PLANNING_RULES}\nRegistered capability contracts: ${JSON.stringify(planningCatalogue(catalogue))}`;}
+function systemFor(catalogue=registry,{compact=false}={}){return `${PLANNING_RULES}\nRegistered capability contracts: ${JSON.stringify(planningCatalogue(catalogue,{compact}))}`;}
 
 function parseSteps(raw,catalogue=registry){
   if(!raw||!Array.isArray(raw.steps))return {steps:[],clarifyingQuestion:'I could not reliably understand that request. Nothing changed.'};
@@ -181,15 +181,24 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
   const context={message,
     workspace,
     recentChanges,
-    conversation:history.slice(-6).map(({message,answer,status})=>({message,answer,status})),
+    conversation:history.slice(-3).map(({message,answer,status})=>({
+      message:String(message||'').slice(0,260),answer:String(answer||'').slice(0,180),status})),
     pending:pending?{capability:pending.capability,args:pending.args,question:pending.question,
       originalMessage:pending.originalMessage||null,
       status:pending.status,awaitingField:pending.awaitingField||null,
       proposalPending:Boolean(pending.proposalId)}:null,
     executionFeedback:feedback||null,
     currentPage:page||null};
-  let response=await provider.complete({system:systemFor(catalogue),prompt:JSON.stringify(context),
-    schema:schemaFor(catalogue),schemaName:'stockchief_capability_plan'});
+  let response;
+  try{response=await provider.complete({system:systemFor(catalogue),prompt:JSON.stringify(context),
+    schema:schemaFor(catalogue),schemaName:'stockchief_capability_plan'});}
+  catch(error){if(error.code!=='rate_limited')throw error;
+    const smaller={...context,recentChanges:context.recentChanges.slice(0,2),
+      conversation:context.conversation.slice(-2).map((entry)=>({
+        ...entry,message:entry.message.slice(0,180),answer:entry.answer.slice(0,120)}))};
+    response=await provider.complete({system:systemFor(catalogue,{compact:true}),
+      prompt:JSON.stringify(smaller),schema:schemaFor(catalogue),schemaName:'stockchief_capability_plan'});
+  }
   const invalid=(response.data?.steps||[]).flatMap((step)=>{
     const contract=catalogue.get(step?.capability);
     return (contract?.fields.length?step?.arguments||[]:[]).filter((input)=>contract&&!contract.fields.includes(input?.name))

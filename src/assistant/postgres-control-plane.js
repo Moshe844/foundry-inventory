@@ -204,6 +204,9 @@ async function run(service,database,ctx,message,{provider,rawProvider=null,histo
       deferReadFit:true});
   }
   catch(error){if(['entitlement_required','validation_error'].includes(error.code))throw error;
+    if(error.code==='rate_limited')return {steps:[],outcomes:[{result:{status:'CLARIFY',
+      answer:'This request exceeds the safe AI cost limit even with a smaller planning context. Nothing changed. Try one part at a time.',
+      rows:[],columns:[],reason:'cost_bound'},step:null,args:{},provenance:{}}]};
     return {steps:[],outcomes:[{result:{status:'CLARIFY',answer:'StockChief could not reliably interpret that request just now. Nothing changed.',
       rows:[],columns:[],reason:'unavailable'},step:null,args:{},provenance:{}}]};}
   if(!selected.steps.length){
