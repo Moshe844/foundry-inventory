@@ -85,7 +85,7 @@ test('real Chromium runs PostgreSQL purchasing, receiving, supplier money, custo
     await page.locator('.owner-manual').first().locator('summary').click();
     await page.getByLabel('Supplier').selectOption({label:'Boot Supply'});
     await page.getByLabel('Product / SKU').selectOption(item.skuIds[0]);
-    await page.getByLabel('Destination').selectOption(location.id);await page.getByLabel('Units').fill('10');
+    await page.locator('select[name="destinationLocationId"]').selectOption(location.id);await page.getByLabel('Units').fill('10');
     await page.getByLabel('Cost per inventory unit').fill('8.00');
     await Promise.all([page.waitForURL(/\/purchasing\/orders\/po_/),page.getByRole('button',{name:'Prepare purchase order'}).click()]);
     const purchaseOrderId=page.url().split('/').pop();

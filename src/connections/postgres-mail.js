@@ -10,9 +10,19 @@ const providerEffects=require('../operations/postgres-provider-effects');
 const commercialUsage=require('../entitlements/postgres-service');
 const commercialControl=require('../commercial/control-service');
 const replyTriage=require('./reply-triage');
+const commerce=require('../operations/postgres-commerce');
+const jobs=require('../operations/postgres-job-queue');
 
 function contentHash(message){return crypto.createHash('sha256').update(JSON.stringify({sender:message.sender,
   subject:message.subject||'',body:message.bodyText||message.body||'',receivedAt:message.receivedAt||''})).digest('hex');}
+
+function initialReply(message,triage){
+  if(triage.state!=='NEEDS_REPLY')return null;
+  const subject=trimOrNull(message.subject)?.replace(/[\r\n\t]+/g,' ').slice(0,150);
+  const topic=subject&&subject.length<=120&&!/^re:/i.test(subject)?` about “${subject}”`:'';
+  return {subject:subject?(/^re:/i.test(subject)?subject:`Re: ${subject}`):'Re: Your message',
+    body:`Hello,\n\nThank you for your message${topic}. I am checking the details against our records before confirming an answer. I will follow up once I can verify them.\n\nBest,\nThe team`};
+}
 
 async function capture(database,connection,message){
   const sender=trimOrNull(message.sender)?.toLowerCase();
@@ -54,16 +64,20 @@ async function capture(database,connection,message){
     const triage=replyTriage.judge({sender,subject:message.subject,
       bodyText:message.bodyText||message.body,attachmentCount:(message.attachments||[]).length,
       classification:match.kind,knownCounterparty:true});
+    const draft=initialReply(message,triage);
     const inserted=await client.query(`INSERT INTO connection_email_messages
       (id,workspace_id,connector_id,external_message_id,sender,recipients,subject,body_text,received_at,
        supplier_id,trust_status,classification,external_thread_id,internet_message_id,content_hash,
-       processing_status,reply_state,reply_reason,reply_state_at,created_at)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'TRUSTED',$11,$12,$13,$14,'CAPTURED',$15,$16,$17,$17)
+       processing_status,reply_state,reply_reason,reply_state_at,created_at,
+       draft_subject,draft_body,draft_source,draft_at)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'TRUSTED',$11,$12,$13,$14,'CAPTURED',$15,$16,$17,$17,
+        $18,$19,$20,$21)
       ON CONFLICT(workspace_id,connector_id,external_message_id) DO NOTHING RETURNING id`,
     [id,connection.workspace_id,connection.id,externalId,sender,JSON.stringify(message.recipients||[]),
       trimOrNull(message.subject),trimOrNull(message.bodyText||message.body),message.receivedAt||at,
       match.kind==='supplier'?match.id:null,match.kind,threadId,message.internetMessageId||null,
-      contentHash(message),triage.state,triage.reason,at]);
+      contentHash(message),triage.state,triage.reason,at,draft?.subject||null,draft?.body||null,
+      draft?'records':null,draft?at:null]);
     if(!inserted.rows.length){
       const existing=(await client.query(`SELECT id FROM connection_email_messages WHERE workspace_id=$1
         AND connector_id=$2 AND external_message_id=$3`,[connection.workspace_id,connection.id,externalId])).rows[0];
@@ -82,6 +96,17 @@ async function capture(database,connection,message){
       workspaceId:connection.workspace_id},{id:newId('usage'),meter:'business_communications',units:1,
       idempotencyKey:`email:${connection.id}:${externalId}`,occurredAt:at,
       detail:{kind:'business_email',connectorId:connection.id}});
+    if(draft&&owner?.owner_account_id){
+      const scope={accountId:owner.owner_account_id,workspaceId:connection.workspace_id};
+      if((await commercialUsage.capabilityState(client,scope,'communications.ai_drafts')).enabled){
+        const actor=(await client.query(`SELECT id FROM users WHERE workspace_id=$1 AND account_id=$2
+          AND role='owner' ORDER BY id LIMIT 1`,[connection.workspace_id,owner.owner_account_id])).rows[0];
+        if(actor){const scoped={query:(sql,values)=>client.query(sql,values),transaction:(work)=>work(client)};
+          await jobs.enqueue(scoped,{workspaceId:connection.workspace_id,kind:'mail.reply-draft',
+            idempotencyKey:`mail-reply-draft:${id}`,payload:{messageId:id,actorId:actor.id},priority:55,
+            maxAttempts:2});}
+      }
+    }
     if(owner?.owner_account_id)await commercialControl.recordCost(client,{accountId:owner.owner_account_id,
       workspaceId:connection.workspace_id},{provider:connection.provider_type||'mailbox',operation:'message_ingestion',
       unit:'message',quantity:1,idempotencyKey:`email:${connection.id}:${externalId}`,occurredAt:message.receivedAt||at,
@@ -111,6 +136,56 @@ async function listSetAside(database,workspaceId){
       ON connector.workspace_id=aside.workspace_id AND connector.id=aside.connector_id
     WHERE aside.workspace_id=$1 AND aside.brought_in_at IS NULL
     ORDER BY aside.received_at DESC,aside.id DESC LIMIT 100`,[workspaceId])).rows;
+}
+
+async function adoptSetAside(database,ctx,id,input,options={}){
+  await requireOperator(database,ctx,'bring business mail into this inventory');
+  const kind=String(input.kind||'').toLowerCase();
+  if(!['customer','supplier'].includes(kind))throw new ValidationError('Choose customer or supplier.');
+  const name=trimOrNull(input.name);
+  if(!name)throw new ValidationError('Enter the contact name before bringing in this email.');
+  const aside=(await database.query(`SELECT * FROM connection_email_set_aside
+    WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,id])).rows[0];
+  if(!aside)throw new NotFoundError('That set-aside email was not found.');
+  if(aside.brought_in_message_id)return {messageId:aside.brought_in_message_id,replayed:true};
+  const connection=(await database.query(`SELECT * FROM workspace_connectors
+    WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,aside.connector_id])).rows[0];
+  if(!connection||connection.status!=='connected'||connection.paused_at)
+    throw new ValidationError('Reconnect or resume the mailbox before reading this email.');
+  const provider=(options.providers||defaultProviders).get(connection.provider_type);
+  if(!provider?.fetchMessage)throw new ValidationError('This mailbox cannot retrieve a set-aside message.');
+  const scope=await commercialUsage.ownerScopeForWorkspace(database,ctx.workspaceId);
+  await commercialUsage.assertCapability(database,scope,'communications.email_ingestion');
+  await commercialUsage.assertCapability(database,scope,kind==='customer'?'sales_orders.core':'purchasing.suppliers');
+  const fetched=await require('../commercial/operations').run(database,ctx.workspaceId,{
+    capability:'communications.email_ingestion',key:`set-aside-fetch:${id}:${newId('attempt')}`,
+    provider:connection.provider_type,operation:'mailbox_poll',unit:'operation'
+  },async()=>provider.fetchMessage({credentials:await providerService.loadProviderCredentials(database,connection,provider),
+    messageId:aside.external_message_id}));
+  if(!fetched||String(fetched.externalMessageId||fetched.messageId||fetched.id)!==aside.external_message_id||
+    String(fetched.sender||'').toLowerCase()!==String(aside.sender).toLowerCase())
+    throw new ValidationError('The provider did not return the exact set-aside message and sender. Nothing was added.');
+  return database.transaction(async(client)=>{
+    const locked=(await client.query(`SELECT * FROM connection_email_set_aside
+      WHERE workspace_id=$1 AND id=$2 FOR UPDATE`,[ctx.workspaceId,id])).rows[0];
+    if(!locked)throw new NotFoundError('That set-aside email was not found.');
+    if(locked.brought_in_message_id)return {messageId:locked.brought_in_message_id,replayed:true};
+    const existing=(await client.query(`SELECT 'customer' AS kind FROM customers WHERE workspace_id=$1
+      AND record_state='ACTIVE' AND lower(email)=lower($2) UNION ALL
+      SELECT 'supplier' AS kind FROM suppliers WHERE workspace_id=$1 AND status='active'
+      AND lower(email)=lower($2)`,[ctx.workspaceId,aside.sender])).rows;
+    if(existing.length)throw new ValidationError('This address already belongs to a business contact. Resolve the duplicate contact before bringing in the email.');
+    const contact=kind==='customer'
+      ?await commerce.createCustomerInTransaction(client,ctx,{name,email:aside.sender})
+      :await commerce.createSupplierInTransaction(client,ctx,{name,email:aside.sender});
+    const scoped={query:(sql,values)=>client.query(sql,values),transaction:(work)=>work(client)};
+    const captured=await capture(scoped,connection,fetched);
+    if(!captured.accepted||!captured.messageId)throw new InvariantError('The email was not safely captured; the contact was not added.');
+    await client.query(`UPDATE connection_email_set_aside SET brought_in_message_id=$3,
+      brought_in_by_user_id=$4,brought_in_at=$5 WHERE workspace_id=$1 AND id=$2`,
+    [ctx.workspaceId,id,captured.messageId,ctx.actorId,nowIso()]);
+    return {messageId:captured.messageId,contactId:contact.id,kind,replayed:false};
+  },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 
 async function list(database,workspaceId,state='NEEDS_REPLY'){
@@ -239,5 +314,5 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){const
     throw Object.assign(error,{code:ambiguous?'email_send_ambiguous':(error.code||'email_send_failed'),retryable:false});}
 }
 
-module.exports={capture,counts,setAsideCount,listSetAside,list,get,setState,saveDraft,queueSend,executeSendEffect};
+module.exports={capture,counts,setAsideCount,listSetAside,adoptSetAside,list,get,setState,saveDraft,queueSend,executeSendEffect};
 require('../commercial/enforcement').guardExports(module.exports,0,1,{queueSend:'communications.send_approved',executeSendEffect:'communications.send_approved'});

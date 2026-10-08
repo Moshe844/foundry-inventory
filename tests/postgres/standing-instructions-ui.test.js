@@ -22,11 +22,14 @@ const provider={async complete(input){
     search:null,sku:null,location:null,fromLocation:null,toLocation:null,quantity:null,countedQuantity:null,reason:null,reference:null},
     usage:{provider:'fixture-ai',model:'fixture-model',inputTokens:20,outputTokens:10}};
   if(input.schemaName==='postgres_operating_instruction')return {data:{understood:true,
-    summary:'Keep Rule Widget replenished within bounded automatic authority',clarifyingQuestion:'',unsupportedReason:'',changes:[
+    summary:'Keep Rule Widget replenished under approved supplier, transfer and stock limits',clarifyingQuestion:'',unsupportedReason:'',changes:[
       change('replenishment',{sku:'RULE-1',reorderPoint:8,targetStock:20,safetyStock:3}),
+      change('supplier_terms',{sku:'RULE-1',supplier:'Acme Supply',leadTimeDays:12,minimumOrderQuantity:4}),
       change('transfer_authority',{sourceLocation:'Main Warehouse',location:'Overflow Warehouse',maximumQuantity:5}),
       change('purchase_authority',{supplier:'Acme Supply',maximumValue:500,weeklyValue:1500}),
       change('operating_preference',{preferTransferBeforePurchasing:true}),
+      change('stock_protection',{sku:'RULE-1',guardMode:'block',guardComparator:'below',
+        guardThreshold:2,guardReleaseCondition:'stock_recovered'}),
     ]},usage:{provider:'fixture-ai',model:'fixture-model',inputTokens:40,outputTokens:20}};
   throw new Error(`Unexpected model schema ${input.schemaName}`);
 }};
@@ -55,7 +58,7 @@ test('real Chromium approves one free-form PostgreSQL standing instruction witho
       (id,workspace_id,name,status,currency,created_at,updated_at) VALUES('rule-supplier',$1,'Acme Supply','active','USD',$2,$2)`,
     [ctx.workspaceId,at]);
     await page.goto(`${base}/ask`);await page.getByLabel('Ask StockChief').fill(
-      'Keep Rule Widget replenished, transfer before buying, and automatically handle only the exact limits I stated.');
+      'Keep Rule Widget replenished, remember Acme Supply’s 12-day lead time and four-unit minimum, transfer before buying, block issues below two on hand until stock recovers, and automatically handle only the exact limits I stated.');
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Continue'}).click()]);
     assert.match(await page.locator('main').innerText(),/not in force yet/i);
     assert.ok(Number((await database.query(`SELECT COUNT(*) AS count FROM commercial_usage_events WHERE account_id=$1
@@ -73,6 +76,16 @@ test('real Chromium approves one free-form PostgreSQL standing instruction witho
     const reorder=(await database.query(`SELECT * FROM reorder_policies WHERE workspace_id=$1 AND sku_id=$2`,
       [ctx.workspaceId,item.skuIds[0]])).rows[0];
     assert.equal(Number(reorder.reorder_point),8);assert.equal(Number(reorder.target_stock),20);assert.equal(Number(reorder.safety_stock),3);
+    const supplierTerms=(await database.query(`SELECT lead_time_days,minimum_order_quantity FROM supplier_items
+      WHERE workspace_id=$1 AND sku_id=$2`,[ctx.workspaceId,item.skuIds[0]])).rows[0];
+    assert.equal(Number(supplierTerms.lead_time_days),12);
+    assert.equal(Number(supplierTerms.minimum_order_quantity),4);
+    const stockGuard=(await database.query(`SELECT enforcement_mode,comparator,threshold,release_condition
+      FROM operating_guards WHERE workspace_id=$1 AND sku_id=$2 AND is_active=1`,
+    [ctx.workspaceId,item.skuIds[0]])).rows[0];
+    assert.deepEqual({mode:stockGuard.enforcement_mode,comparator:stockGuard.comparator,
+      threshold:Number(stockGuard.threshold),release:stockGuard.release_condition},
+    {mode:'block',comparator:'below',threshold:2,release:'stock_recovered'});
     const policies=(await database.query(`SELECT allowed_action_types,maximum_quantity,maximum_value,thresholds
       FROM automation_policies WHERE workspace_id=$1 AND enabled=1 AND approved_at IS NOT NULL ORDER BY created_at`,[ctx.workspaceId])).rows;
     assert.equal(policies.length,2);assert.deepEqual(policies.map((row)=>json(row.allowed_action_types)),[['transfer'],['approve_purchase_order']]);
@@ -83,6 +96,6 @@ test('real Chromium approves one free-form PostgreSQL standing instruction witho
     assert.equal(JSON.parse((await database.query(`SELECT value FROM operational_preferences WHERE workspace_id=$1
       AND key='prefer_transfer_before_purchasing'`,[ctx.workspaceId])).rows[0].value),true);
     await page.goto(`${base}/what-you-told-me`);const transcript=await page.locator('main').innerText();
-    assert.match(transcript,/Keep Rule Widget replenished within bounded automatic authority/);
+    assert.match(transcript,/Keep Rule Widget replenished under approved supplier, transfer and stock limits/);
     assert.match(transcript,/1 standing rule/);assert.deepEqual(errors,[]);
   });

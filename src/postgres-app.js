@@ -166,7 +166,7 @@ function createPostgresApp({database,sessionStore,sessionSecret=config.sessionSe
   app.use(createPostgresConnectionsRouter(database,{providers:connectionProviders || undefined,
     publicOrigin:connectionPublicOrigin || (env==='test'?'request':undefined),
     paymentConnectOptions:paymentOptions?.connect||{},testMode:env==='test'}));
-  app.use(createPostgresMailRouter(database,{providers:connectionProviders || undefined}));
+  app.use(createPostgresMailRouter(database,{providers:connectionProviders || undefined,aiProvider}));
   app.use(createPostgresMessagesRouter(database));
   app.use(createPostgresShippingRouter(database,shippingOptions || {}));
   app.use(createPostgresImportsRouter(database,{provider:aiProvider}));

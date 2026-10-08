@@ -129,6 +129,12 @@ async function resolveArguments(database,ctx,contract,provided={},context={}){
     if(raw===null&&context.page?.[field]){
       raw=convert(field,context.page[field]);if(raw!==null)source='current_record';
     }
+    if(field==='recordReference'&&raw===null&&contract.recordKind&&context.message){
+      const mentioned=await require('./postgres-workflow-capabilities').record(database,ctx,
+        contract.recordKind,null,context.message);
+      if(mentioned.row){raw=mentioned.row[require('./postgres-workflow-capabilities').RECORDS[contract.recordKind].number];
+        source='verified_in_owner_message';}
+    }
     if(spec.entity&&ENTITIES[spec.entity]&&!(contract.name==='location.create'&&field==='location')){
       const list=await choices(database,ctx.workspaceId,spec.entity,
         {scope:provided.skuScope||context.previousArgs?.skuScope||null,wanted:raw});

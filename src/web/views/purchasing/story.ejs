@@ -282,7 +282,7 @@
 <% } %>
 
 <div class="rm-spine-foot">
-  <a class="rm-btn rm-btn--ghost" href="/ask?about=<%= encodeURIComponent(order.poNumber + ' from ' + order.supplierName) %>">Ask about this purchase</a>
+  <a class="rm-btn rm-btn--ghost" href="/ask?from=<%= encodeURIComponent('/purchasing/orders/' + order.id) %>&amp;about=<%= encodeURIComponent(order.poNumber + ' from ' + order.supplierName) %>">Ask about this purchase</a>
   <% if ((locals.receipts || []).length && permissions.landedCosts) { %>
     <a class="rm-btn rm-btn--wash" href="/purchasing/orders/<%= order.id %>/landed-costs"><%= awaitingLandedCostApproval ? 'Review landed-cost draft' : 'Add freight, duty or handling' %></a>
   <% } %>

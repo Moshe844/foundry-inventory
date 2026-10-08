@@ -61,6 +61,33 @@ async function mailboxPoll(job,client,providers=defaultProviders){
   return {accepted,setAside,replayed,ignoredOwn,checked:(result.messages||[]).length,cursor:result.cursor||null,at};
 }
 
+async function mailReplyDraft(job,database,options={}){
+  const messageId=job.payload?.messageId;
+  const actorId=job.payload?.actorId;
+  if(!job.workspaceId||!messageId||!actorId)throw Object.assign(new Error('A mail draft needs workspace, message and owner identity.'),
+    {code:'invalid_mail_reply_draft',retryable:false});
+  const row=(await database.query(`SELECT reply_state,reply_sent_at,draft_source FROM connection_email_messages
+    WHERE workspace_id=$1 AND id=$2`,[job.workspaceId,messageId])).rows[0];
+  if(!row)return {skipped:'message_missing'};
+  if(row.reply_state!=='NEEDS_REPLY'||row.reply_sent_at)return {skipped:'reply_no_longer_needed'};
+  if(row.draft_source==='owner'||row.draft_source==='model')return {skipped:'draft_already_prepared_or_edited'};
+  if(!options.aiProvider&&!config.ai.configured)return {skipped:'model_not_configured',holdingDraftRetained:true};
+  const scope=await entitlements.ownerScopeForWorkspace(database,job.workspaceId);
+  if(!(await entitlements.capabilityState(database,scope,'communications.ai_drafts')).enabled)
+    return {skipped:'draft_capability_unavailable',holdingDraftRetained:true};
+  try{
+    await require('../connections/postgres-reply-drafting').prepare(database,
+      {workspaceId:job.workspaceId,actorId},messageId,{provider:options.aiProvider,automatic:true,
+        key:`mail-reply:${messageId}:auto:${job.attemptCount}`});
+    return {prepared:true,messageId};
+  }catch(error){
+    if(error.code==='entitlement_required')throw error;
+    if(error.code==='validation_error'||error.name==='ValidationError')
+      return {skipped:'model_draft_rejected',holdingDraftRetained:true,reason:String(error.message).slice(0,300)};
+    throw error;
+  }
+}
+
 function pushExpiration(providerType,providerCredentials){
   if(providerType==='gmail')return Number(providerCredentials.watchExpiration||0);
   if(providerType==='microsoft365')return Date.parse(providerCredentials.subscriptionExpiresAt||0);
@@ -383,9 +410,38 @@ async function systemEmail(job,database,options={}){
 }
 
 function create(providers=defaultProviders,options={}){return {'system.runtime-sweep':(job,client)=>runtimeSweep(job,client,options),
+  'shipping.quote':external(async(job,database)=>{
+    const {shipmentId,actorId,fingerprint,provider}=job.payload||{};
+    if(!job.workspaceId||!shipmentId||!actorId||!fingerprint||!provider)throw Object.assign(
+      new Error('Carrier-rate job is missing its frozen parcel identity.'),
+      {code:'shipping_quote_job_invalid',retryable:false});
+    const view=await shipping.state(database,job.workspaceId,shipmentId);
+    if(!view.ready||view.account?.provider!==provider||shipping.quoteFingerprint(view)!==fingerprint||
+      !['PICKING','PACKED'].includes(view.shipment.status))throw Object.assign(
+      new Error('Parcel details changed after carrier rates were approved. Request fresh rates.'),
+      {code:'shipping_quote_changed',retryable:false});
+    const quoted=await shipping.quote(database,{workspaceId:job.workspaceId,actorId},shipmentId,
+      {idempotencyKey:job.idempotencyKey,
+        provider:options.shippingProviderResolver?options.shippingProviderResolver(provider):shippingProviders.get(provider)});
+    return {shipmentId,rateCount:quoted.rates?.length||0};
+  }),
+  'import.execute-approved':external(async(job,database)=>{
+    const {planId,actorId,integrityHash}=job.payload||{};
+    if(!job.workspaceId||!planId||!actorId||!integrityHash)throw Object.assign(
+      new Error('Approved import job is missing its frozen plan identity.'),
+      {code:'import_job_invalid',retryable:false});
+    const plan=(await database.query(`SELECT integrity_hash,approval_status,status FROM import_plans
+      WHERE workspace_id=$1 AND id=$2`,[job.workspaceId,planId])).rows[0];
+    if(!plan||plan.integrity_hash!==integrityHash||plan.approval_status!=='APPROVED')
+      throw Object.assign(new Error('The approved import changed after it was queued.'),
+        {code:'import_approval_changed',retryable:false});
+    return require('../imports/postgres-service').execute(database,
+      {workspaceId:job.workspaceId,actorId},planId);
+  }),
   'system.alert-delivery':external((job,database)=>alertDelivery(job,database,options)),
   'system.email-send':external((job,database)=>systemEmail(job,database,options)),
   'mailbox.poll':external((job,database)=>mailboxPoll(job,database,providers)),
+  'mail.reply-draft':external((job,database)=>mailReplyDraft(job,database,options)),
   'mailbox.renew-push':external((job,database)=>mailboxPushRenewal(job,database,providers,options)),
   'provider.catalog-sync':external((job,database)=>providerSync.sync(job,database,providers)),
   'commercial.auto-top-up':external((job,database)=>require('../commercial/addons').runTopup(database,
@@ -395,5 +451,5 @@ function create(providers=defaultProviders,options={}){return {'system.runtime-s
   'provider.effect':external((job,database)=>providerEffect(job,database,options,providers)),
   'autopilot.evaluate':autopilotEvaluate};}
 
-module.exports={create,runtimeSweep,mailboxPoll,mailboxPushRenewal,mailboxWebhookUrl,pushExpiration,autopilotEvaluate,
+module.exports={create,runtimeSweep,mailboxPoll,mailReplyDraft,mailboxPushRenewal,mailboxWebhookUrl,pushExpiration,autopilotEvaluate,
   providerEffect,alertDelivery,systemEmail};

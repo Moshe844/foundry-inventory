@@ -42,8 +42,8 @@ test('Home opens Ask immediately and shows the question there while the backend 
     assert.match(await page.locator('main').innerText(),/How many products do we have\?/);
     releaseModel();
     await page.waitForURL(`${base}/ask?latest=1#latest`);
-    await page.getByText(/0 active products in StockChief/).waitFor();
-    assert.match(await page.locator('main').innerText(),/0 active products in StockChief/);
+    await page.getByText(/No products have ever been recorded in StockChief; you have 0 units on hand/).waitFor();
+    assert.match(await page.locator('main').innerText(),/No products have ever been recorded in StockChief; you have 0 units on hand/);
     assert.equal(await page.locator('.rm-composer__attach').count(),0);
   });
 

@@ -79,6 +79,18 @@ test('candidate AI pack funds a bounded, grant-linked provider budget, including
  const funded=(await db.query(`SELECT a.source,a.grant_id,a.actual_minor FROM commercial_model_cost_hold_allocations a
   JOIN commercial_model_cost_holds h ON h.id=a.hold_id WHERE h.idempotency_key=$1`,[`${scope.workspaceId}:paid-success`])).rows;
  assert.equal(funded.length,1);assert.equal(funded[0].source,'PURCHASED');assert.ok(Number(funded[0].actual_minor)>0);
+ await model.wrap(db,scope,ai,'ask','paid-internal',
+  {chargeCustomer:false,fundingKey:'paid-success'}).complete(request);
+ assert.equal(calls,2);
+ const internal=(await db.query(`SELECT a.source,a.grant_id,a.actual_minor FROM commercial_model_cost_hold_allocations a
+  JOIN commercial_model_cost_holds h ON h.id=a.hold_id WHERE h.idempotency_key=$1`,
+ [`${scope.workspaceId}:paid-internal`])).rows;
+ assert.deepEqual(internal.map(row=>[row.source,row.grant_id]),[['PURCHASED',funded[0].grant_id]]);
+ assert.ok(Number(internal[0].actual_minor)>0);
+ assert.equal((await db.query(`SELECT COUNT(*)::int AS count FROM commercial_usage_events WHERE account_id=$1
+  AND idempotency_key IN ($2,$3)`,[scope.accountId,`${scope.workspaceId}:paid-success`,
+    `${scope.workspaceId}:paid-internal`])).rows[0].count,1,
+ 'A multi-call Ask request consumes one customer credit but records both provider costs.');
  const failedAi={...ai,complete:async()=>{calls++;throw Object.assign(Error('Provider failed'),{usage:providerUsage});}};
  await assert.rejects(()=>model.wrap(db,scope,failedAi,'ask','paid-failure').complete(request),/Provider failed/);
  assert.equal((await db.query('SELECT status FROM commercial_usage_events WHERE idempotency_key=$1',
@@ -111,5 +123,5 @@ test('candidate AI pack funds a bounded, grant-linked provider budget, including
  await db.transaction(client=>addons.receiveDispute(client,dispute));
  assert.equal(Number((await db.query('SELECT dispute_hold_units FROM commercial_usage_grants WHERE id=$1',[grant.id])).rows[0].dispute_hold_units),50);
  await assert.rejects(()=>usage.reserveUsage(db,scope,{meter:'ai_work_credits',units:1,idempotencyKey:'disputed'}),/limit/);
- assert.equal(calls,2);
+ assert.equal(calls,3);
 });

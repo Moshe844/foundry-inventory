@@ -69,6 +69,7 @@
         <button class="rm-btn rm-btn--wash rm-btn--sm" type="button" data-modal-open="modal-adjust"><%- helpers.icon('adjust', { size: 15 }) %> Fix the count</button>
       <% } %>
       <a class="rm-btn rm-btn--ghost rm-btn--sm" href="<%= skus.length === 1 ? '/purchasing/why/' + skus[0].id : '#reorder-settings' %>"><%- helpers.icon('purchasing', { size: 15 }) %> Reorder settings</a>
+      <a class="rm-btn rm-btn--ghost rm-btn--sm" href="/ask?from=<%= encodeURIComponent('/inventory/' + item.id) %>&amp;about=<%= encodeURIComponent(item.name) %>">Ask about this product</a>
       <button class="rm-btn rm-btn--ghost rm-btn--sm" type="button" data-modal-open="modal-edit"><%- helpers.icon('settings', { size: 15 }) %> Edit details</button>
     </div>
   </div>

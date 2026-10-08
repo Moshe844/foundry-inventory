@@ -29,9 +29,25 @@ const RECORDS=Object.freeze({
   transfer:{description:'A specific inventory transfer.',permission:permissions.VIEW_TRANSFERS,
     sql:`SELECT id,transfer_number AS title FROM inventory_transfers WHERE workspace_id=$1`,
     href:(row)=>`/transfers/${encodeURIComponent(row.id)}`},
+  shipment:{description:'A shipment or fulfillment record.',permission:permissions.VIEW_SALES,
+    sql:`SELECT id,shipment_number AS title FROM sales_shipments WHERE workspace_id=$1`,
+    href:(row)=>`/fulfilment/${encodeURIComponent(row.id)}`},
+  customer_return:{description:'A customer return.',permission:permissions.VIEW_SALES,
+    sql:`SELECT id,return_number AS title FROM customer_returns WHERE workspace_id=$1`,
+    href:(row)=>`/returns/${encodeURIComponent(row.id)}`},
+  supplier_return:{description:'A supplier return.',permission:permissions.VIEW_PURCHASING,
+    sql:`SELECT id,return_number AS title FROM supplier_returns WHERE workspace_id=$1`,
+    href:(row)=>`/supplier-returns/${encodeURIComponent(row.id)}`},
   connection:{description:'A specific connected system.',permission:permissions.ADMIN,
     sql:`SELECT id,display_name AS title FROM workspace_connectors WHERE workspace_id=$1`,
     href:(row)=>`/settings/connections/${encodeURIComponent(row.id)}`},
+  mail_message:{description:'A captured business email message.',permission:permissions.VIEW,
+    sql:`SELECT id,COALESCE(NULLIF(subject,''),external_message_id) AS title
+      FROM connection_email_messages WHERE workspace_id=$1`,
+    href:(row)=>`/mail/${encodeURIComponent(row.id)}`},
+  journal_entry:{description:'A posted accounting journal entry.',permission:permissions.VIEW_ACCOUNTING,
+    sql:`SELECT id,entry_number::text AS title FROM accounting_journal_entries WHERE workspace_id=$1`,
+    href:(row)=>`/accounting/entries/${encodeURIComponent(row.id)}`},
 });
 
 async function resolve(database,ctx,kind,reference){

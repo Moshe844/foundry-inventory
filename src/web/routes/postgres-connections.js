@@ -6,6 +6,7 @@ const { requireAuth,requireOwner,asyncRoute }=require('../middleware');
 const connections=require('../../connections/postgres-service');
 const providerService=require('../../connections/postgres-provider-service');
 const defaultProviders=require('../../connections/providers/registry');
+const launchPolicy=require('../../connections/launch-policy');
 const jobs=require('../../operations/postgres-job-queue');
 const accountingSync=require('../../accounting/postgres-integration-sync');
 const publicApi=require('../../connections/postgres-public-api');
@@ -58,7 +59,10 @@ function createPostgresConnectionsRouter(database,options={}){
     ]);
     return res.page('connections/index',{
       title:'Connections',nav:'connections',room:true,backTo:{href:'/settings',label:'Settings'},launchTicket,
-      postgresMode:true,connections:connectionRows,providerCatalog:registry.catalog(),apiToken,apiClients:clients,
+      postgresMode:true,connections:connectionRows,
+      providerCatalog:registry.catalog().filter(provider=>
+        (options.testMode===true&&registry!==defaultProviders)||!launchPolicy.reason(provider.type)),
+      apiToken,apiClients:clients,
       // Preserve existing merchant account details, but do not advertise new
       // self-service Connect or StockChief-funded guided shipping at launch.
       paymentAccount:{...payment,source:'connect',

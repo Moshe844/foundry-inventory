@@ -28,6 +28,11 @@ const {pricedUsage,PRICED_MODEL}=require('../helpers/postgres-model-fixture');
 const askPlanProvider={name:'anthropic',model:PRICED_MODEL,async complete(input){
   if(input.schemaName==='stockchief_capability_fit')
     return {data:{aligned:true,reason:''},usage:pricedUsage()};
+  if(input.schemaName==='stockchief_capability_answer'){
+    const evidence=JSON.parse(input.prompt).evidence||[];
+    return {data:{answer:evidence[0]?.recordedAnswer||'No verified accounting evidence.',
+      supported:Boolean(evidence.length),usedSteps:evidence.length?[0]:[],additionalReads:[]},usage:pricedUsage()};
+  }
   const message=JSON.parse(input.prompt).message;
   const email=message.startsWith('Email ');
   return {data:{steps:[{capability:email?'communication.send_email':'read.profit_change',

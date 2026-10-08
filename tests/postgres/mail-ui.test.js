@@ -27,6 +27,15 @@ test('real Chromium qualifies PostgreSQL business-mail filtering, exact replies 
           error.status=503;throw error;}
         delivered.push(message);return {externalMessageId:`sent-${providerCalls}`,externalThreadId:message.externalThreadId};
       },
+      async fetchMessage({credentials:providerCredentials,messageId}){
+        assert.equal(providerCredentials.accessToken,'encrypted-fixture-token');
+        if(messageId==='personal-message-1')return {externalMessageId:messageId,sender:'newsletter@example.test',
+          subject:'Weekend newsletter',bodyText:'This private body is now explicitly brought in by its owner.',
+          receivedAt:'2026-09-23T13:02:00.000Z'};
+        assert.equal(messageId,'new-supplier-1');
+        return {externalMessageId:messageId,sender:'new-supplier@example.test',subject:'Can you confirm the parts?',
+          bodyText:'Can you confirm the parts we should send?',receivedAt:'2026-09-23T13:02:30.000Z'};
+      },
     };
     const providers={get(type){return type==='gmail'?adapter:null;},catalog(){return [adapter.metadata()];}};
     const cluster=await startCluster();
@@ -71,6 +80,9 @@ test('real Chromium qualifies PostgreSQL business-mail filtering, exact replies 
     const unrelatedReplay=await mail.capture(database,connection,{externalMessageId:'personal-message-1',sender:'newsletter@example.test',
       subject:'Weekend newsletter',bodyText:'Different replay body also must not be stored.',receivedAt:'2026-09-23T13:02:00.000Z'});
     assert.equal(supplierMessage.accepted,true);assert.equal(customerMessage.accepted,true);
+    const draftJobs=(await database.query(`SELECT COUNT(*)::int AS total FROM stockchief_runtime.jobs
+      WHERE workspace_id=$1 AND kind='mail.reply-draft'`,[ctx.workspaceId])).rows[0].total;
+    assert.equal(draftJobs,2,'one idempotent draft job is queued per recognized message needing a reply');
     assert.deepEqual({setAside:unrelated.setAside,replayed:unrelated.replayed},{setAside:true,replayed:false});
     assert.deepEqual({id:unrelatedReplay.id,replayed:unrelatedReplay.replayed},{id:unrelated.id,replayed:true});
     assert.equal((await database.query('SELECT COUNT(*) AS count FROM connection_email_messages WHERE workspace_id=$1',
@@ -90,6 +102,7 @@ test('real Chromium qualifies PostgreSQL business-mail filtering, exact replies 
     assert.match(connectionText,/No mailbox check has completed yet/);
     assert.doesNotMatch(connectionText,/Read products and locations|Receive one real event/);
     assert.equal(await page.getByRole('link',{name:'View business emails'}).getAttribute('href'),'/mail');
+    assert.equal(await page.getByRole('link',{name:'Open Mail'}).getAttribute('href'),'/mail');
     assert.equal(await page.getByRole('link',{name:'Review set-aside senders'}).getAttribute('href'),'/mail/set-aside');
     await page.getByLabel('Check for new mail').selectOption('10');
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Save timing'}).click()]);
@@ -108,6 +121,28 @@ test('real Chromium qualifies PostgreSQL business-mail filtering, exact replies 
     assert.match(asideText,/Weekend newsletter/);
     assert.match(asideText,/Sender is not a customer or supplier/);
     assert.doesNotMatch(asideText,/private body|Different replay body/);
+    await page.getByLabel('Contact name for this sender').fill('Newsletter Customer');
+    await Promise.all([page.waitForURL(/\/mail\/emailmsg_/),
+      page.getByRole('button',{name:'Add as customer and read this email'}).click()]);
+    assert.match(await page.locator('main').innerText(),/private body is now explicitly brought in/);
+    assert.equal((await database.query(`SELECT COUNT(*)::int AS total FROM customers
+      WHERE workspace_id=$1 AND email='newsletter@example.test'`,[ctx.workspaceId])).rows[0].total,1);
+    assert.equal(await mail.setAsideCount(database,ctx.workspaceId),0);
+    await page.goto(`${base}/mail/set-aside`);
+    assert.doesNotMatch(await page.locator('main').innerText(),/Weekend newsletter/);
+    const supplierAside=await mail.capture(database,connection,{externalMessageId:'new-supplier-1',
+      sender:'new-supplier@example.test',subject:'Can you confirm the parts?',
+      bodyText:'Can you confirm the parts we should send?',receivedAt:'2026-09-23T13:02:30.000Z'});
+    assert.equal(supplierAside.setAside,true);
+    await page.reload();
+    await page.getByLabel('Contact name for this sender').fill('New Parts Supplier');
+    await Promise.all([page.waitForURL(/\/mail\/emailmsg_/),
+      page.getByRole('button',{name:'Add as supplier and read this email'}).click()]);
+    const supplierAdoption=await mail.adoptSetAside(database,ctx,supplierAside.id,
+      {kind:'supplier',name:'New Parts Supplier'},{providers});
+    assert.equal(supplierAdoption.replayed,true);
+    assert.equal((await database.query(`SELECT COUNT(*)::int AS total FROM suppliers
+      WHERE workspace_id=$1 AND email='new-supplier@example.test'`,[ctx.workspaceId])).rows[0].total,1);
     const other=await auth.createBusiness(database,{businessName:'Other Mail Business',name:'Other Owner',
       email:'other-mail@example.test',password:'other-mail-password'});
     const otherConnectorId=newId('con');
@@ -116,9 +151,11 @@ test('real Chromium qualifies PostgreSQL business-mail filtering, exact replies 
        expected_interval_minutes,setup_status,authorized_by_user_id,created_at,updated_at)
       VALUES($1,$2,$3,'Other Gmail','gmail','connected','[]','[]','{}',5,'CONNECTED',$4,$5,$5)`,
     [otherConnectorId,other.workspaceId,`gmail:${otherConnectorId}`,other.userId,at]);
-    await mail.capture(database,{id:otherConnectorId,workspace_id:other.workspaceId,provider_type:'gmail'},
+    const privateAside=await mail.capture(database,{id:otherConnectorId,workspace_id:other.workspaceId,provider_type:'gmail'},
       {externalMessageId:'private-other-message',sender:'other@example.test',subject:'Other owner only',
         bodyText:'Not for this owner',receivedAt:'2026-09-23T13:04:00.000Z'});
+    await assert.rejects(()=>mail.adoptSetAside(database,ctx,privateAside.id,
+      {kind:'customer',name:'Must Not Be Added'},{providers}),/not found/i);
     await page.reload();
     assert.doesNotMatch(await page.locator('main').innerText(),/Other owner only|other@example\.test/);
     assert.equal(await mail.setAsideCount(database,other.workspaceId),1);
@@ -180,6 +217,10 @@ test('real Chromium qualifies PostgreSQL business-mail filtering, exact replies 
     assert.equal(providerCalls,2);
     outbox=(await database.query('SELECT * FROM stockchief_runtime.email_reply_outbox WHERE message_id=$1',
       [uncertainMessage.messageId])).rows;assert.equal(outbox.length,1);
+    await page.goto(`${base}/mail/${customerMessage.messageId}`);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Dismiss — no reply needed'}).click()]);
+    assert.equal((await mail.get(database,ctx.workspaceId,customerMessage.messageId)).reply_state,'HANDLED');
+    assert.equal(providerCalls,2,'dismissing business mail must not send a reply');
     await page.goto(`${base}/needs-you`);assert.match(await page.locator('main').innerText(),/Email delivery could not be verified/);
     assert.deepEqual(errors,[]);
   });

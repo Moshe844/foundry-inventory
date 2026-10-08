@@ -100,6 +100,7 @@ const EXECUTORS=Object.freeze({
     verify:(client,ctx,result)=>exists(client,'purchase_order_receipts',ctx.workspaceId,result.receiptId)},
   'supplier_payment.record':{execute:(client,ctx,payload)=>workflows.recordSupplierPaymentInTransaction(client,ctx,payload),
     verify:(client,ctx,result)=>exists(client,'accounting_payments',ctx.workspaceId,result.paymentId)},
+  ...require('./postgres-workflow-capabilities').EXECUTORS,
 });
 
 module.exports={EXECUTORS};

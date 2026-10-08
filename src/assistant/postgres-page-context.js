@@ -21,6 +21,12 @@ const PAGES=[
     present:(rows)=>({customer:rows[0].name,recordReference:rows[0].name})},
   {route:/^\/transfers\/([^/]+)$/,sql:`SELECT transfer_number FROM inventory_transfers
     WHERE workspace_id=$1 AND id=$2`,present:(rows)=>({recordReference:rows[0].transfer_number})},
+  {route:/^\/fulfilment\/([^/]+)$/,sql:`SELECT shipment_number FROM sales_shipments
+    WHERE workspace_id=$1 AND id=$2`,present:(rows)=>({recordReference:rows[0].shipment_number})},
+  {route:/^\/returns\/([^/]+)$/,sql:`SELECT return_number FROM customer_returns
+    WHERE workspace_id=$1 AND id=$2`,present:(rows)=>({recordReference:rows[0].return_number})},
+  {route:/^\/supplier-returns\/([^/]+)$/,sql:`SELECT return_number FROM supplier_returns
+    WHERE workspace_id=$1 AND id=$2`,present:(rows)=>({recordReference:rows[0].return_number})},
 ];
 
 async function load(database,workspaceId,sourcePath){

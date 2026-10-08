@@ -36,6 +36,13 @@ function createPostgresMailRouter(database,options={}){
     return res.page('mail/postgres-set-aside',{title:'Set-aside mail',nav:'mail',messages,count,
       backTo:{href:'/mail',label:'Mail'}});
   }));
+  router.post('/mail/set-aside/:id/bring-in',requireOwner,asyncRoute(async(req,res)=>{
+    const result=await mail.adoptSetAside(database,req.ctx,req.params.id,
+      {kind:req.body.kind,name:req.body.name},{providers:options.providers});
+    req.flash('success',result.replayed?'This email was already brought in.':
+      `Added the sender as a ${result.kind}. StockChief brought in this one email; nothing was sent.`);
+    return res.redirect(303,`/mail/${result.messageId}`);
+  }));
   router.get('/mail/:id',requirePermission(permissions.VIEW,'read the mailbox'),asyncRoute(async(req,res)=>{
     const raw=await mail.get(database,req.ctx.workspaceId,req.params.id);const message=messageForView(raw);
     const [attachmentRows,orderRows]=await Promise.all([
@@ -49,7 +56,10 @@ function createPostgresMailRouter(database,options={}){
     const draft=message.draft_subject&&message.draft_body?{subject:message.draft_subject,body:message.draft_body,
       source:message.draft_source==='owner'?'person':message.draft_source,rejected:message.draft_rejected_because,
       sentAt:message.reply_sent_at}:null;
+    const canImproveDraft=(await entitlements.capabilityState(database,commercialScope(req),
+      'communications.ai_drafts')).enabled&&Boolean(options.aiProvider||require('../../config').ai.configured);
     return res.page('mail/message',{title:message.subject||'Message',nav:'mail',message,draft,productionMail:true,
+      canImproveDraft,
       prepared:{order:orderRows.rows[0]||null,because:message.order_draft_reason||null},
       attachments:attachmentRows.rows,drawers:DRAWERS});
   }));
@@ -72,6 +82,10 @@ function createPostgresMailRouter(database,options={}){
       await mail.saveDraft(database,req.ctx,req.params.id,{subject:`Re: ${message.subject||'Your message'}`,
         body:`Hi ${name},\n\nThank you for your message. We are reviewing it against our current records and will follow up with the confirmed details.\n\nBest,\n${req.workspace?.name||'The team'}`});
       req.flash('success','Standard holding reply template prepared for you to edit. Nothing was sent.');
+    }else if(req.body.action==='improve'){
+      await require('../../connections/postgres-reply-drafting').prepare(database,req.ctx,req.params.id,
+        {provider:options.aiProvider});
+      req.flash('success','StockChief prepared a reply from verified records. Check and edit it before sending.');
     }else{
       await mail.saveDraft(database,req.ctx,req.params.id,{subject:req.body.subject,body:req.body.body});
       req.flash('success','Draft saved exactly as written. Nothing was sent.');

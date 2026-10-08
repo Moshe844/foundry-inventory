@@ -13,7 +13,8 @@
     <h1><%= connection.display_name %></h1>
     <p class="page-sub"><%= providerName %><%= connection.provider_account_name?' · '+connection.provider_account_name:'' %> · <%= connection.provides.length?connection.provides.join(', '):'no business events proven yet' %></p>
   </div>
-  <span class="badge <%= connection.publicStatus==='Connected'?'badge--ok':connection.publicStatus==='Needs attention'?'badge--warn':'badge--muted' %>"><%= connection.publicStatus %></span>
+  <div class="form-actions"><% if(isMailbox){ %><a class="btn btn--primary" href="/mail">Open Mail</a><% } %>
+    <span class="badge <%= connection.publicStatus==='Connected'?'badge--ok':connection.publicStatus==='Needs attention'?'badge--warn':'badge--muted' %>"><%= connection.publicStatus %></span></div>
 </header>
 
 <% if(connection.last_error){ %><div class="notice notice--warn section"><div><strong>This connection needs attention.</strong><p><%= connection.last_error %></p></div></div><% } %>

@@ -2575,6 +2575,9 @@ a.rm-feed__row:hover { background: var(--surface-2); color: inherit; }
 .rm-feed__t { font-size: var(--t-md); font-weight: 500; line-height: 1.45; color: var(--ink); }
 .rm-feed__t small { display: block; font-size: var(--t-sm); font-weight: 400; color: var(--muted); margin-top: 1px; }
 .rm-feed__m { font-size: var(--t-xs); color: var(--ghost); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.mail-aside-contact { grid-column:2/-1; display:flex; align-items:end; flex-wrap:wrap; gap:8px 12px; margin:0; }
+.mail-aside-contact .field { flex:1 1 220px; margin:0; }
+.mail-aside-contact .form-actions { margin:0; }
 /* On a row that goes somewhere, the right-hand cell is not a timestamp — it is
    what pressing the row will do, and it has to be readable as such. */
 a.rm-feed__row .rm-feed__m { font-size: var(--t-sm); font-weight: 500; color: var(--ink-2); }

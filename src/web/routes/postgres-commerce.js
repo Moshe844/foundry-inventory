@@ -583,14 +583,8 @@ function createPostgresCommerceRouter(database,options={}){
   }));
 
   router.post('/purchasing/orders/:id/cancel',requirePermission(permissions.APPROVE_PO,'cancel purchase orders'),asyncRoute(async(req,res)=>{
-    const at=nowIso();
-    const changed=await database.query(`UPDATE purchase_orders SET status='CANCELLED',cancel_reason=$3,
-      cancelled_by_user_id=$4,cancelled_at=$5,updated_at=$5 WHERE workspace_id=$1 AND id=$2 AND status NOT IN ('RECEIVED','CANCELLED')`,
-    [req.ctx.workspaceId,req.params.id,trimOrNull(req.body.reason),req.ctx.actorId,at]);
-    if(!changed.rowCount)throw new ValidationError('That purchase order can no longer be cancelled.');
-    await database.query(`INSERT INTO purchase_order_events(id,workspace_id,purchase_order_id,event,data,created_at)
-      VALUES($1,$2,$3,'cancelled',$4,$5)`,[newId('poevt'),req.ctx.workspaceId,req.params.id,
-      JSON.stringify({reason:trimOrNull(req.body.reason)}),at]);
+    await workflows.cancelPurchaseOrder(database,req.ctx,req.params.id,
+      {reason:trimOrNull(req.body.reason),idempotencyKey:key(req,'purchase-order-cancel')});
     req.flash('success','Purchase order cancelled. Anything already received remains in inventory.');
     return res.redirect(303,`/purchasing/orders/${req.params.id}`);
   }));

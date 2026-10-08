@@ -37,7 +37,8 @@ function provenanceFor(turn){
 function goalFor(turn,index,position=0,proposal=null){
   const status=proposal&&proposal.status!=='PENDING'?'answered':STATUS[turn.status]||'answered';
   const provenance=provenanceFor(turn);const label=ledger.statusLabelFor(status,provenance);
-  const said=proposal?.status==='PENDING'&&turn.status==='PREPARED'?proposal.summary:
+  const said=proposal?.status==='PENDING'&&turn.status==='PREPARED'
+    ?`${proposal.summary} Nothing has changed yet.`:
     proposal?.status==='APPROVED'?`Rule in force: ${proposal.summary}`:
     proposal?.status==='EXECUTED'?proposal.actionType==='communication.send_email'
       ?`Email approved for ${proposal.payload.recipientEmail}; check delivery status.`:`Completed: ${proposal.summary}`:
@@ -75,7 +76,7 @@ function resultFor(turn,proposal=null){
   const proposalHref=turn.intent?.proposalHref||null;const storedHandoff=turn.intent?.presentation?.handoff||null;
   const emailProposal=proposal?.actionType==='communication.send_email'?proposal:null;
   let answer=turn.answer;
-  if(proposal?.status==='PENDING'&&turn.status==='PREPARED')answer=proposal.summary;
+  if(proposal?.status==='PENDING'&&turn.status==='PREPARED')answer=`${proposal.summary} Nothing has changed yet.`;
   if(proposal?.status==='EXECUTED'&&!emailProposal)answer=`Completed: ${proposal.summary}`;
   if(proposal?.status==='APPROVED')answer=`Rule in force: ${proposal.summary}`;
   if(['CANCELLED','SUPERSEDED'].includes(proposal?.status))answer='Discarded. Nothing was changed by this proposal.';
@@ -88,7 +89,7 @@ function resultFor(turn,proposal=null){
   return {question:turn.message,answer,spoken:null,progressiveDisclosure:false,rows,columns,
     rowCount:rows.length,totalMatches:rows.length,sections:[],supported:turn.status!=='CLARIFY',
     general:turn.intent?.view==='general_knowledge',answerReason:turn.intent?.presentation?.reason||null,isAction:false,
-    needsClarification:turn.status==='CLARIFY'&&!['unverified','unavailable'].includes(turn.intent?.presentation?.reason),
+    needsClarification:turn.status==='CLARIFY'&&!['unverified','unavailable','unsupported'].includes(turn.intent?.presentation?.reason),
     choices:turn.intent?.presentation?.choices||[],emailFlow:turn.intent?.presentation?.emailFlow||null,
     emailProposal,
     handoff:proposal&&proposal.status!=='PENDING'?null:emailProposal?null:
@@ -99,14 +100,8 @@ function resultFor(turn,proposal=null){
     semanticPlan:null};
 }
 
-async function askExamples(database,workspaceId){
-  const [item,location]=await Promise.all([
-    database.query('SELECT name FROM items WHERE workspace_id=$1 AND is_active=1 ORDER BY created_at LIMIT 1',[workspaceId]),
-    database.query('SELECT name FROM locations WHERE workspace_id=$1 AND is_active=1 ORDER BY created_at LIMIT 1',[workspaceId]),
-  ]);
-  return [item.rows[0]?`How many ${item.rows[0].name} do we have?`:'How many items are in my inventory?',
-    location.rows[0]?`What is held at ${location.rows[0].name}?`:'What is in stock?',
-    'What needs my attention?','Did the business make or lose money this month?'];
+async function askExamples(database,ctx,page=null){
+  return require('../../assistant/postgres-discovery').suggestions(database,ctx,4,page);
 }
 
 async function instructionLists(database,workspaceId){
@@ -138,6 +133,13 @@ function createPostgresAskRouter(database,options={}){
   const router=express.Router();
   router.use(['/ask','/actions'],requireAuth);
   router.get('/ask',asyncRoute(async(req,res)=>{
+    const remembered=req.session.postgresAskPageContext;
+    const requestedPath=req.query.from===undefined&&remembered?.workspaceId===req.ctx.workspaceId
+      ?remembered.path:req.query.from;
+    const sourcePage=await require('../../assistant/postgres-page-context').load(
+      database,req.ctx.workspaceId,requestedPath);
+    if(req.query.from!==undefined)req.session.postgresAskPageContext=sourcePage
+      ?{workspaceId:req.ctx.workspaceId,path:sourcePage.path}:null;
     const startedAt=req.session.postgresAskStartedAt||null;
     const interactions=await assistant.listInteractions(database,req.ctx.workspaceId,100,
       {actorId:req.ctx.actorId,startedAt});
@@ -157,22 +159,26 @@ function createPostgresAskRouter(database,options={}){
     const transcript=transcriptFor(visible,proposals);const rules=await instructionLists(database,req.ctx.workspaceId);
     return res.page('attention/ask',{title:'Ask StockChief',nav:'ask',room:true,suppressBack:true,postgresAsk:true,...rules,
       about:String(req.query.about||'').slice(0,2000),question:latest?.message||'',result:resultFor(latest,latestProposal),error:null,
+      prefill:String(req.query.q||'').slice(0,2000),
       conversation:null,transcript,currentGoalId:latest?.id||null,conversationId:`postgres:${req.ctx.workspaceId}`,
       aiConfigured:Boolean(options.provider||config.ai.configured),usageKey:newId('askusage'),
-      examples:await askExamples(database,req.ctx.workspaceId)});
+      sourcePath:sourcePage?.path||null,examples:await askExamples(database,req.ctx,sourcePage)});
   }));
   router.post('/ask/new',asyncRoute(async(req,res)=>{
     // Use the database clock that timestamps interactions, then persist the
     // boundary before redirecting so the next GET cannot resurrect old turns.
     const boundary=(await database.query('SELECT clock_timestamp()::text AS started_at')).rows[0].started_at;
     req.session.postgresAskStartedAt=boundary;
+    req.session.postgresAskPageContext=null;
     req.flash('success','New conversation started. Earlier conversations remain in the audit history.');
     await new Promise((resolve,reject)=>req.session.save((error)=>error?reject(error):resolve()));
     return res.redirect(303,'/ask');
   }));
   async function runAsk(req){
     const scope=commercialScope(req);await entitlements.assertCapability(database,scope,'ask.lookup');
-    const page=await require('../../assistant/postgres-page-context').load(database,req.ctx.workspaceId,req.body.sourcePath);
+    const remembered=req.session.postgresAskPageContext;
+    const page=await require('../../assistant/postgres-page-context').load(database,req.ctx.workspaceId,
+      req.body.sourcePath||(remembered?.workspaceId===req.ctx.workspaceId?remembered.path:null));
     return assistant.ask(database,req.ctx,req.body.message,{provider:options.provider,
       usageKey:String(req.body.usageKey||newId('askusage')),
       page,startedAt:req.session.postgresAskStartedAt||null});
@@ -226,7 +232,7 @@ function createPostgresAskRouter(database,options={}){
     return res.page('actions/list',{title:'StockChief actions',nav:'actions',pending:rows.filter((row)=>row.status==='PENDING').map(present),
       recent:rows.filter((row)=>row.status!=='PENDING').map(present),canOperate:permissions.can(req.user,permissions.OPERATE),
       aiConfigured:Boolean(options.provider||config.ai.configured),instruction:String(req.query.q||'').slice(0,500),
-      examples:await askExamples(database,req.ctx.workspaceId),question:null,unsupported:null,assistantGoal:null,where:null,
+      examples:await askExamples(database,req.ctx),question:null,unsupported:null,assistantGoal:null,where:null,
       blocked:null,physicalEventId:null,choices:null,continuationId:null,questionTone:null});
   }));
   router.get('/actions/:id',asyncRoute(async(req,res)=>{

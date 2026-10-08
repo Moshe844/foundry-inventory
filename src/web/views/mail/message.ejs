@@ -2,9 +2,8 @@
   /*
    * One message, and the only three things anybody does with it.
    *
-   * The body is shown as it arrived. StockChief offers no reply here, and the
-   * page says so plainly rather than leaving somebody hunting for a button
-   * that does not exist.
+   * The body is shown as it arrived. Replies remain editable and never send
+   * without the operator pressing Send.
    */
   var m = message;
   var productionMail = typeof productionMail !== 'undefined' && productionMail;
@@ -141,7 +140,7 @@
           <span class="t-xs t-muted">
             <%= draft.source === 'model' ? 'Written by StockChief from your records'
               : draft.source === 'person' ? 'Your words'
-              : 'Built from your records' %> · nothing has been sent
+              : 'Safe holding draft—verify the details' %> · nothing has been sent
           </span>
         <% } %>
       </div>
@@ -184,13 +183,16 @@
           </button>
           <button class="btn" type="submit" name="action" value="save">Save for later</button>
           <button class="btn btn--ghost" type="submit" name="action" value="write"><%= productionMail?'Use standard holding reply':'Write it again' %></button>
+          <% if(productionMail && canImproveDraft && draft.source !== 'person' && m.reply_state === 'NEEDS_REPLY'){ %>
+            <button class="btn btn--ghost" type="submit" name="action" value="improve">Prepare from verified records</button>
+          <% } %>
         </div>
       </form>
     <% } else { %>
       <div class="card-body">
         <p class="lede"><%= productionMail?'Write your reply to ':'StockChief can draft this from what it holds about ' %><%= m.sender %>.</p>
         <p class="hint">
-          <% if(productionMail){ %>Start with a fixed holding reply template, then edit it yourself. This is not AI drafting.
+          <% if(productionMail){ %>StockChief can prepare a safe editable reply. If your plan enables AI drafting, it can also use verified records.
           Nothing is sent until you approve sending.<% }else{ %>It reads their orders, shipments, tracking and balances first, and may only use
           figures and dates that are already there. Nothing is sent until you send it.<% } %>
         </p>
@@ -199,6 +201,9 @@
         <form method="post" action="/mail/<%= m.id %>/draft" data-busy>
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
           <button class="btn btn--primary" type="submit" name="action" value="write"><%= productionMail?'Use standard holding reply':'Draft a reply' %></button>
+          <% if(productionMail && canImproveDraft && m.reply_state === 'NEEDS_REPLY'){ %>
+            <button class="btn" type="submit" name="action" value="improve">Prepare from verified records</button>
+          <% } %>
         </form>
       </div>
     <% } %>
@@ -227,7 +232,7 @@
               type="submit" name="state" value="<%= entry.state %>">
               <%= entry.state === 'NEEDS_REPLY' ? 'Still needs a reply'
                 : entry.state === 'WAITING' ? 'I answered — waiting on them'
-                : 'Handled, nothing needed' %>
+                : 'Dismiss — no reply needed' %>
             </button>
           <% } %>
         <% }) %>

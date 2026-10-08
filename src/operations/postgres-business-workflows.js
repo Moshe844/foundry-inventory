@@ -242,6 +242,30 @@ async function placePurchaseOrder(database, rawContext, purchaseOrderId, input) 
   });
 }
 
+async function cancelPurchaseOrderInTransaction(client,rawContext,purchaseOrderId,input={}){
+  const ctx=requireContext(rawContext);
+  await requirePermission(client,ctx,access.APPROVE_PO,'cancel purchase orders');
+  const operation=await beginOperation(client,ctx,'purchase_order.cancel',input.idempotencyKey);
+  if(operation.replayed)return {...operation.result,replayed:true};
+  const order=await requireRow(client,`SELECT * FROM purchase_orders
+    WHERE id=$1 AND workspace_id=$2 FOR UPDATE`,[purchaseOrderId,ctx.workspaceId],
+  'That purchase order was not found.');
+  if(['RECEIVED','CANCELLED'].includes(order.status))throw new ValidationError(
+    'That purchase order can no longer be cancelled.');
+  const at=nowIso(),reason=trimOrNull(input.reason);
+  await client.query(`UPDATE purchase_orders SET status='CANCELLED',cancel_reason=$3,
+    cancelled_by_user_id=$4,cancelled_at=$5,updated_at=$5 WHERE workspace_id=$1 AND id=$2`,
+  [ctx.workspaceId,purchaseOrderId,reason,ctx.actorId,at]);
+  await event(client,'purchase_order_events',null,{workspaceId:ctx.workspaceId,
+    recordId:purchaseOrderId,type:'cancelled',detail:{reason},actorId:ctx.actorId,at});
+  const result={purchaseOrderId,status:'CANCELLED'};
+  await completeOperation(client,operation,result);
+  return {...result,replayed:false};
+}
+async function cancelPurchaseOrder(database,ctx,purchaseOrderId,input){
+  return transaction(database,(client)=>cancelPurchaseOrderInTransaction(client,ctx,purchaseOrderId,input));
+}
+
 async function receivePurchaseOrderInTransaction(client, rawContext, purchaseOrderId, input) {
   const ctx = requireContext(rawContext);
   if (!Array.isArray(input.lines) || !input.lines.length) throw new ValidationError('Select at least one purchase-order line to receive.');
@@ -926,6 +950,8 @@ module.exports = {
   createPurchaseOrderInTransaction,
   approvePurchaseOrder,
   placePurchaseOrder,
+  cancelPurchaseOrder,
+  cancelPurchaseOrderInTransaction,
   receivePurchaseOrder,
   receivePurchaseOrderInTransaction,
   recordSupplierInvoice,

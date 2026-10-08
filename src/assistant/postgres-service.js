@@ -623,6 +623,8 @@ async function draftBusinessEmail(request,businessName,provider){
 
 async function prepareAction(database,ctx,message,request,options={}) {
   if(!request.action)return {status:'CLARIFY',answer:'What would you like StockChief to change?'};
+  if(require('./postgres-workflow-capabilities').SPECS.some((spec)=>spec.name===request.action))
+    return require('./postgres-workflow-capabilities').prepare(database,ctx,message,request.action,request,createProposal);
   if(request.action==='create_contact'){
     const kind=trimOrNull(request.recipientKind)?.toLowerCase();
     if(!['supplier','customer'].includes(kind))return {status:'CLARIFY',
@@ -831,7 +833,12 @@ async function prepareAction(database,ctx,message,request,options={}) {
     const orderContext={...skuContext,[sales?'customer':'supplier']:party.row.name};
     if(request.neededBy&&!/^\d{4}-\d{2}-\d{2}$/.test(request.neededBy))return {status:'CLARIFY',answer:'What exact date is needed, in YYYY-MM-DD format?'};
     if(sales){
-      if(!request.deliveryMethod)return {status:'CLARIFY',answer:'Should the customer order be shipped, picked up, or delivered by your business?',awaitingField:'deliveryMethod',carryForward:orderContext};
+      const deliveryChoice=String(request.deliveryMethod||'').trim().toLowerCase().replace(/[\s-]+/g,'_');
+      const deliveryMethod={ship:'SHIP',shipping:'SHIP',carrier:'SHIP',carrier_shipping:'SHIP',
+        pickup:'PICKUP',pick_up:'PICKUP',customer_pickup:'PICKUP',customer_collection:'PICKUP',
+        collection:'PICKUP',own_delivery:'OWN_DELIVERY',business_delivery:'OWN_DELIVERY',
+        delivered_by_us:'OWN_DELIVERY'}[deliveryChoice]||null;
+      if(!deliveryMethod)return {status:'CLARIFY',answer:'Should the customer order be shipped, picked up, or delivered by your business?',awaitingField:'deliveryMethod',carryForward:orderContext};
       let fulfillmentLocationId=null;let fulfillmentLocationName=null;
       if(request.location){
         const place=await resolveOne(database,'locations',ctx.workspaceId,request.location,'name');
@@ -839,17 +846,18 @@ async function prepareAction(database,ctx,message,request,options={}) {
         if(place.ambiguous)return {status:'CLARIFY',answer:'More than one location matches that request. Use its exact name.'};
         fulfillmentLocationId=place.row?.id||null;fulfillmentLocationName=place.row?.name||null;
       }
-      if(request.deliveryMethod==='PICKUP'&&!fulfillmentLocationId)return {status:'CLARIFY',answer:'Which location will the customer pick this order up from?',awaitingField:'location',carryForward:orderContext};
-      const destination=trimOrNull(request.shipToAddress)||trimOrNull(party.row.shipping_address);
-      if(request.deliveryMethod!=='PICKUP'&&!destination)return {status:'CLARIFY',answer:`What is the delivery address for ${party.row.name}? Nothing will be prepared without a destination.`,awaitingField:'shipToAddress',carryForward:orderContext};
+      if(deliveryMethod==='PICKUP'&&!fulfillmentLocationId)return {status:'CLARIFY',answer:'Which location will the customer pick this order up from?',awaitingField:'location',carryForward:orderContext};
+      const destination=deliveryMethod==='PICKUP'?null:
+        trimOrNull(request.shipToAddress)||trimOrNull(party.row.shipping_address);
+      if(deliveryMethod!=='PICKUP'&&!destination)return {status:'CLARIFY',answer:`What is the delivery address for ${party.row.name}? Nothing will be prepared without a destination.`,awaitingField:'shipToAddress',carryForward:orderContext};
       const current=await pricing.currentPrice(database,ctx.workspaceId,sku.row.id);
       const amountMinor=request.amount===null?current.amount_minor:pricing.toMinor(String(request.amount),'Selling price');
       if(amountMinor===null)return {status:'CLARIFY',answer:`What selling price per unit should this order use for ${sku.row.name}?`,awaitingField:'amount',carryForward:orderContext};
       const currency=request.currency||current.currency||'USD';
       return createProposal(database,ctx,message,'sales_order.create',{customerId:party.row.id,
-        deliveryMethod:request.deliveryMethod,shipToAddress:destination,fulfillmentLocationId,neededBy:request.neededBy,
+        deliveryMethod,shipToAddress:destination,fulfillmentLocationId,neededBy:request.neededBy,
         currency,reference:request.reference,lines:[{skuId:sku.row.id,quantity:request.quantity,unitPriceMinor:amountMinor}]},
-      `Prepare a draft customer order for ${party.row.name}: ${request.quantity} × ${sku.row.name}${sku.row.variant_label?` · ${sku.row.variant_label}`:''} at ${pricing.formatMinor(amountMinor,currency)} each, ${request.deliveryMethod==='PICKUP'?`pickup from ${fulfillmentLocationName}`:`to ${destination}`}.`);
+      `Prepare a draft customer order for ${party.row.name}: ${request.quantity} × ${sku.row.name}${sku.row.variant_label?` · ${sku.row.variant_label}`:''} at ${pricing.formatMinor(amountMinor,currency)} each, ${deliveryMethod==='PICKUP'?`pickup from ${fulfillmentLocationName}`:`to ${destination}`}.`);
     }
     const place=await resolvePurchaseDestination(database,ctx.workspaceId,sku.row.id,request.location);
     if(place.missing)return {status:'CLARIFY',answer:'Which inventory location should receive this purchase order?',awaitingField:'location',carryForward:orderContext};
@@ -956,6 +964,7 @@ async function storeInteraction(database,ctx,message,intent,result) {
 }
 
 function capabilityService(){return {lookup,prepareAction,prepareInstruction,
+  discover:(db,scope)=>require('./postgres-discovery').describe(db,scope),
   verifyProposal:async(db,scope,result)=>{
     if(!result?.proposal?.id)return false;
     const saved=await getProposal(db,scope.workspaceId,result.proposal.id).catch(()=>null);
@@ -985,8 +994,11 @@ async function askCapabilities(database,ctx,message,options={}){
   const clean=String(message||'').trim();if(!clean)throw new ValidationError('Ask a question or describe what should happen.');
   const rawProvider=options.provider||(config.ai.configured?createProviderUnobserved(config.ai.provider,config.ai.tier('fast')):null);
   const usageKey=String(options.usageKey||newId('askusage'));let modelCall=0;
-  const provider=rawProvider?{...rawProvider,complete:(request)=>require('../commercial/model')
-    .wrap(database,ctx,rawProvider,'ask',`${usageKey}:capability:${modelCall++}`).complete(request)}:null;
+  const provider=rawProvider?{...rawProvider,complete:(request)=>{
+    const call=modelCall++;
+    return require('../commercial/model').wrap(database,ctx,rawProvider,'ask',
+      `${usageKey}:capability:${call}`,call?{chargeCustomer:false,fundingKey:`${usageKey}:capability:0`}:{})
+      .complete(request);}}:null;
   const history=(await database.query(`SELECT message,answer,status,intent FROM stockchief_runtime.assistant_interactions
     WHERE workspace_id=$1 AND actor_user_id=$2 AND ($3::timestamptz IS NULL OR created_at > $3::timestamptz)
     ORDER BY created_at DESC,id DESC LIMIT 6`,[ctx.workspaceId,ctx.actorId,options.startedAt||null])).rows.reverse();
@@ -1144,8 +1156,11 @@ async function supersedePendingProposal(database,ctx,oldId,newId,args){
 
 async function continueApprovedPlans(database,ctx,proposalId){
   const rawProvider=config.ai.configured?createProviderUnobserved(config.ai.provider,config.ai.tier('fast')):null;
-  let call=0;const provider=rawProvider?{...rawProvider,complete:(request)=>require('../commercial/model')
-    .wrap(database,ctx,rawProvider,'ask',`plan:${proposalId}:${call++}`).complete(request)}:null;
+  let call=0;const provider=rawProvider?{...rawProvider,complete:(request)=>{
+    const index=call++;
+    return require('../commercial/model').wrap(database,ctx,rawProvider,'ask',
+      `plan:${proposalId}:${index}`,index?{chargeCustomer:false,fundingKey:`plan:${proposalId}:0`}:{})
+      .complete(request);}}:null;
   return require('./postgres-capability-plans').resume(database,ctx,proposalId,{
     service:capabilityService(),provider,rawProvider,
     record:(plan,index,outcome)=>recordCapabilityOutcome(database,ctx,plan.source_message,outcome,
@@ -1165,6 +1180,12 @@ async function executeProposal(database,ctx,id) {
     const actor=(await client.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',
       [ctx.workspaceId,ctx.actorId])).rows[0];
     require('../actions/permissions').assertCan(actor,contract.permission,contract.name);
+    if(contract.ownerOnly&&actor.role!=='owner')throw new ValidationError(
+      'Only this inventory’s owner can approve that connection change.');
+    if(contract.commercialCapability)await entitlements.assertCapability(client,
+      await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId),contract.commercialCapability);
+    for(const capability of contract.additionalCommercialCapabilities||[])await entitlements.assertCapability(client,
+      await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId),capability);
     const payload={...proposal.payload,idempotencyKey:proposal.idempotency_key};
     const result=await contract.execute(client,ctx,payload);
     if(!await contract.verifyExecution(client,ctx,result,payload))

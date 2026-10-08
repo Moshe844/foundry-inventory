@@ -42,6 +42,35 @@ async function membership(database,ctx){
     [ctx.workspaceId,ctx.actorId])).rows[0]||null;
 }
 
+async function planningCatalogue(database,ctx,actor){
+  if(!actor)return {list:()=>[],get:()=>null};
+  const scope=await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId);
+  const state=new Map();
+  const enabled=async(capability)=>{
+    if(!state.has(capability))state.set(capability,(await entitlements.capabilityState(database,scope,capability)).enabled);
+    return state.get(capability);
+  };
+  const entries=[];
+  for(const contract of registry.list()){
+    const permission=contract.kind==='read'?READ_PERMISSIONS[contract.view]||contract.permission:contract.permission;
+    if(!permissions.can(actor,permission))continue;
+    if(contract.ownerOnly&&actor.role!=='owner')continue;
+    if(['mutation','policy'].includes(contract.kind)&&!await enabled('ask.prepare_actions'))continue;
+    const gated=[...(contract.additionalCommercialCapabilities||[]),contract.commercialCapability].filter(Boolean);
+    const unavailable=[];
+    for(const capability of gated)if(!await enabled(capability)){
+      const stateForCapability=await entitlements.capabilityState(database,scope,capability);
+      if(stateForCapability.definition.readiness==='DISABLED'){unavailable.length=0;unavailable.push('DISABLED');break;}
+      unavailable.push(capability);
+    }
+    if(unavailable.includes('DISABLED'))continue;
+    entries.push(unavailable.length?Object.freeze({...contract,commercialUnavailable:unavailable}):contract);
+  }
+  const names=new Map(entries.map((entry)=>[entry.name,entry]));
+  return {list:(kind=null)=>entries.filter((entry)=>!kind||entry.kind===kind),
+    get:(name)=>names.get(name)||null};
+}
+
 function normalizeForLegacy(contract,args){
   const request={...args};
   if(args.skuScope==='currently_stocked'&&!args.sku)request.skuReference='stocked';
@@ -61,6 +90,21 @@ async function executeStep(service,database,ctx,step,{actor,provider,rawProvider
   const {contract}=step;
   const permission=contract.kind==='read'?READ_PERMISSIONS[contract.view]||contract.permission:contract.permission;
   permissions.assertCan(actor,permission,contract.name);
+  if(contract.commercialUnavailable?.length){
+    const capability=contract.commercialUnavailable[0];
+    let recommended=null;
+    try{await entitlements.assertCapability(database,
+      await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId),capability);}
+    catch(error){if(error.code!=='entitlement_required')throw error;
+      recommended=error.details?.recommendedPlan?.public_name||null;}
+    const label=require('../commercial/catalog').capability(capability)?.label||contract.name.replace(/[._]/g,' ');
+    return {result:{status:'CLARIFY',answer:recommended
+      ?`${label} is available on ${recommended} and above. Nothing changed.`
+      :`${label} is not available on your current plan. Nothing changed.`,
+    handoff:{href:`/upgrade?capability=${encodeURIComponent(capability)}&return=/ask`,
+      label:'Review available plans'},rows:[],columns:[],reason:'entitlement'},
+    args:step.args,provenance:{}};
+  }
   if(contract.kind==='navigation'){
     if(contract.destinationId)return {result:navigation(database,ctx,contract.destinationId),args:{},provenance:{}};
     const resolved=await resolver.resolveArguments(database,ctx,contract,step.args,{page,
@@ -141,32 +185,55 @@ async function synthesizeReads(provider,message,executed){
 }
 
 async function run(service,database,ctx,message,{provider,rawProvider=null,history=[],pending=null,page=null,usageKey=''}){
-  let selected;
+  let selected;let catalogue;let workspace;
   try{
-    const workspace=(await database.query(`SELECT w.name AS business_name,
+    const actor=await membership(database,ctx);
+    catalogue=await planningCatalogue(database,ctx,actor);
+    workspace=(await database.query(`SELECT w.name AS business_name,
       (SELECT COUNT(*)::int FROM locations WHERE workspace_id=w.id AND is_active=1) AS location_count,
       (SELECT COUNT(*)::int FROM items WHERE workspace_id=w.id AND is_active=1) AS product_count,
       (SELECT COUNT(*)::int FROM purchase_orders WHERE workspace_id=w.id) AS purchase_order_count
       FROM workspaces w WHERE w.id=$1`,[ctx.workspaceId])).rows[0]||null;
-    selected=await planner.plan(provider,message,{catalogue:registry,history,pending,page,workspace,
+    selected=await planner.plan(provider,message,{catalogue,history,pending,page,workspace,
       deferReadFit:true});
   }
   catch(error){if(['entitlement_required','validation_error'].includes(error.code))throw error;
     return {steps:[],outcomes:[{result:{status:'CLARIFY',answer:'StockChief could not reliably interpret that request just now. Nothing changed.',
       rows:[],columns:[],reason:'unavailable'},step:null,args:{},provenance:{}}]};}
-  if(!selected.steps.length)return {steps:[],outcomes:[{result:{status:'CLARIFY',
-    answer:selected.clarifyingQuestion||'StockChief has no registered way to do that yet. Nothing changed.',
-    rows:[],columns:[]},step:null,args:{},provenance:{}}]};
-  const actor=await membership(database,ctx);const executed=[];
-  for(const step of selected.steps){
+  if(!selected.steps.length){
+    const alternative=selected.closestAlternative;
+    const offered=alternative?(await require('./postgres-discovery').available(database,ctx))
+      .find((entry)=>entry.name===alternative):null;
+    const answer=offered
+      ?`I cannot complete that exact request here. I can help with “${offered.label}”; that is a different result. Nothing changed.`
+      :selected.clarifyingQuestion||'StockChief has no registered way to do that yet. Nothing changed.';
+    const reason=/reasoning connection is unavailable|could not reliably interpret/i.test(answer)
+      ?'unavailable':'unsupported';
+    return {steps:[],outcomes:[{result:{status:'CLARIFY',answer,reason,rows:[],columns:[]},
+      step:null,args:{},provenance:{}}]};
+  }
+  const actor=await membership(database,ctx);const executed=[];let replanned=false;
+  for(let index=0;index<selected.steps.length;index++){
+    const step=selected.steps[index];
     if(step.dependsOn.some((index)=>!['ANSWERED'].includes(executed[index]?.result.status))){
       executed.push({step,args:step.args,provenance:{},result:{status:'CLARIFY',
         answer:'A prior step needs your approval or clarification before this dependent step can continue. Nothing else changed.',
         rows:[],columns:[],reason:'dependency_waiting'}});continue;
     }
     const dependencyArgs=Object.assign({},...step.dependsOn.map((index)=>executed[index]?.args||{}));
-    const outcome=await executeStep(service,database,ctx,step,{actor,provider,rawProvider,
-      sourceMessage:message,pending,page,usageKey,dependencyArgs});
+    let outcome;
+    try{outcome=await executeStep(service,database,ctx,step,{actor,provider,rawProvider,
+      sourceMessage:message,pending,page,usageKey,dependencyArgs});}
+    catch(error){
+      const bridge=require('./postgres-workflow-capabilities').SPECS.some((spec)=>spec.name===step.contract.name);
+      if(replanned||index!==0||!bridge||error.code!=='validation_error'||!provider)throw error;
+      const revised=await planner.plan(provider,message,{catalogue,history,pending,page,workspace,
+        deferReadFit:true,feedback:{rejectedCapability:step.contract.name,rejectedArguments:step.args,
+          reason:String(error.message).slice(0,240),state:'No business change was made. Choose a valid action for the current request.'}});
+      if(!revised.steps.length||revised.steps[0].contract.name===step.contract.name&&
+        JSON.stringify(revised.steps[0].args)===JSON.stringify(step.args))throw error;
+      selected=revised;replanned=true;index=-1;continue;
+    }
     executed.push({step,...outcome});
   }
   if(executed.length&&executed.every((entry)=>entry.step.contract.kind==='read')){
@@ -195,4 +262,4 @@ async function run(service,database,ctx,message,{provider,rawProvider=null,histo
   return {steps:selected.steps,outcomes:executed};
 }
 
-module.exports={run,executeStep,normalizeForLegacy,questionFor};
+module.exports={run,executeStep,normalizeForLegacy,questionFor,READ_PERMISSIONS,planningCatalogue};

@@ -73,6 +73,9 @@
       + '&label=' + encodeURIComponent('Open ' + label)
       + '&return=' + encodeURIComponent(askReturnHref);
   }
+  function suggestionHref(example) {
+    return '/ask?q=' + encodeURIComponent(example) + (locals.sourcePath ? '&from=' + encodeURIComponent(locals.sourcePath) : '');
+  }
 %>
 
 <div class="rm-chat<%= guidedEmailStep ? ' rm-chat--guided' : '' %>" data-conversation="<%= locals.conversationId || '' %>">
@@ -252,7 +255,7 @@
           <p class="rm-said__meta"><span>Things I can answer</span></p>
           <div class="rm-suggest">
             <% examples.slice(0, 4).forEach(function (example) { %>
-              <a href="/ask?q=<%= encodeURIComponent(example) %>"><%= example %></a>
+              <a href="<%= suggestionHref(example) %>"><%= example %></a>
             <% }) %>
           </div>
         <% } %>
@@ -380,10 +383,11 @@
   <%# ------------------------------------------------------------- composer %>
   <%- include('../partials/composer', {
     queryConversation: true,
-    composerPrefill: error ? question : about ? 'About ' + about + ': ' : '',
+    composerPrefill: error ? question : locals.prefill ? locals.prefill : about ? 'About ' + about + ': ' : '',
     composerPlaceholder: result && result.actionClarification ? 'Answer the question above…' : 'Ask what’s happening or tell StockChief what to do…',
     actionClarification: result && result.actionClarification ? result.actionClarification : null,
     usageKey: locals.usageKey,
+    sourcePath: locals.sourcePath,
     hideAttachment: !!locals.postgresAsk,
   }) %>
 
@@ -394,7 +398,7 @@
   <% } else if (!started) { %>
     <div class="rm-suggest">
       <% examples.forEach(function (example) { %>
-        <a href="/ask?q=<%= encodeURIComponent(example) %>"><%= example %></a>
+        <a href="<%= suggestionHref(example) %>"><%= example %></a>
       <% }) %>
     </div>
   <% } %>

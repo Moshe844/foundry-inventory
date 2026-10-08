@@ -20,6 +20,13 @@
             <small><%= message.reason %></small>
           </span>
           <span class="rm-feed__m"><%= message.received_at %></span>
+          <form method="post" action="/mail/set-aside/<%= message.id %>/bring-in" class="mail-aside-contact" data-busy>
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <label class="field"><span class="field-label">Contact name for this sender</span>
+              <input class="input" name="name" maxlength="160" required placeholder="Business or person name"></label>
+            <div class="form-actions"><button class="btn btn--sm" type="submit" name="kind" value="customer">Add as customer and read this email</button>
+              <button class="btn btn--sm" type="submit" name="kind" value="supplier">Add as supplier and read this email</button></div>
+          </form>
         </div>
       <% }) %>
     </div>

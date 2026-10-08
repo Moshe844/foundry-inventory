@@ -215,10 +215,12 @@ test('50 held-out semantic Ask scenarios across real PostgreSQL businesses',
           status:part.status,answer:part.answer,proposal:Boolean(part.proposal)}))||[];
         outcome={index,business,goal,utterance:spoken,expected,
           status:result.status,capability:result.intent?.controlPlane?.capability||null,
+          selectedArguments:result.intent?.controlPlane?.args||null,
           answer:result.answer,proposal:Boolean(result.proposal),resultSteps};
       }catch(error){outcome={index,business,goal,utterance:spoken,expected,error:error.message};}
       observed.push(outcome);
       console.log(JSON.stringify({index,expected,actual:outcome.capability||null,
+        selectedArguments:outcome.selectedArguments||null,
         resultSteps:outcome.resultSteps||[],status:outcome.status||'ERROR',
         answer:outcome.answer||outcome.error||''}));
     }

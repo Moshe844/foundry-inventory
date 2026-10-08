@@ -31,7 +31,7 @@ const CAPABILITIES = Object.freeze([
   ['ask.lookup','Ask StockChief business questions','intelligence','SELLABLE',true],
   ['ask.prepare_actions','Ask StockChief prepared actions','intelligence','SELLABLE',true],
   ['communications.email_ingestion','Business mailbox monitoring','communications','CONDITIONAL',true],
-  ['communications.ai_drafts','AI communication drafts','communications','DISABLED',true],
+  ['communications.ai_drafts','AI communication drafts','communications','SELLABLE',true],
   ['communications.send_approved','Approved email sending','communications','CONDITIONAL',true],
   ['communications.auto_send','Automatic sending within authority','communications','DISABLED',true],
   ['connections.commerce','Commerce connections','connections','CONDITIONAL',true],

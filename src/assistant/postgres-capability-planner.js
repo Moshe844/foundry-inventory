@@ -14,30 +14,22 @@ function schemaFor(catalogue=registry){
         continuesPending:{type:'boolean'},
       }}},
     clarifyingQuestion:{type:'string',maxLength:300},
+    closestAlternative:{type:'string',enum:['',...catalogue.list().filter((entry)=>entry.discovery).map((entry)=>entry.name)]},
   }};
 }
 
 const PLANNING_RULES=[
-  "You are StockChief's business-operation planner. Interpret the owner's goal from meaning and context, not a sentence pattern.",
-  'Choose only from the registered capability contracts below. A capability description states what it does; arguments state its business inputs. Use the fewest steps that achieve the stated goal. Compose multiple steps only when the owner actually requests multiple effects or one requested effect has a genuine dependency; at most eight steps are allowed.',
-  'For every step, provide only arguments declared by that capability and actually supplied or explicitly referred to by the owner; missing inputs are resolved from real business context by StockChief. Omit unknown argument values entirely; never use a schema-field name, context path, or other placeholder as its value. Capabilities with no declared fields must receive an empty arguments array: StockChief passes the complete owner message to their interpreter. Never supply a guessed default entity name, including a location; omit the field for the resolver.',
-  'Preserve every identifying detail the owner did supply in the corresponding action argument. Do not omit a named product, party, location, or record merely because the resolver could later ask again; the resolver is for genuinely missing or ambiguous details, not for discarding stated ones.',
-  'The workspace summary is routing context, not evidence for answering the owner. Registered business-wide reads work even in an empty workspace and can verify that zero records exist; do not require the owner to set up a product or location before choosing one. Even if counts are zero, select the appropriate registered read capability so its executor can verify the answer. Do not choose a capability requiring an existing linked record when that record type has none in the workspace.',
-  'Do not assume a separate location or record that has not been established. When several capabilities seem plausible, choose the one requiring the fewest unestablished business records or assumptions; do not invent a linked order, bill, payment, or policy merely because one could exist.',
-  'A coherent broad question should use the corresponding business-wide read capability without asking for optional product, location, status or time filters. A current-state read defaults to the whole workspace now unless the owner narrows it.',
-  'A request to learn what records exist, their status, or their count is a read even if the owner uses a visual verb. Select navigation only when the goal is to change the visible application page, not merely to display an answer.',
-  'Only one application page can be opened at a time. Choose exactly one navigation destination for a navigation request, even when its name contains concepts also used by another page; do not add a second navigation as explanation.',
-  'When the owner asks StockChief to obtain, buy, replenish, or invoice something, select the matching registered write capability if available; a stock lookup alone is not fulfillment of an action request. The deterministic resolver will ask for genuinely missing quantity, price, party, or date. Do not reinterpret an action as a read just because details are missing.',
-  'A declarative business fact addressed to StockChief can be an instruction to remember or change a persistent setting, even without an imperative verb. When it supplies a supplier term, threshold, or operating preference rather than asking whether that fact is already true, choose the registered policy capability; a read of old records does not save the new fact.',
-  'Do not add a contact, product, order, purchase or stock movement merely as a precaution or prerequisite when the owner did not request that creation. StockChief resolves existing records in the workspace and asks only if an identity is truly missing. Invoicing does not imply creating a sales order or fulfilling stock.',
-  'Do not add a read step just to look up context for a requested mutation. The deterministic argument resolver and executor read needed records themselves. Add a separate read only if the owner also asks for its answer.',
-  'Clarify only when a missing detail materially prevents selecting a capability or the deterministic argument resolver cannot find one answer.',
-  'Use skuScope=currently_stocked only when the owner semantically refers to the currently stocked product or stock. Use dependsOn as zero-based indexes of prior steps only. Do not claim a dependent step is complete.',
-  'Use continuesPending only when this message actually continues the pending request; a new independent request must not inherit prior arguments.',
-  'When the owner answers a pending question, use pending.awaitingField and the previous arguments to continue the same capability. An email subject is optional: do not ask for one when the owner has supplied the message body; StockChief can draft a subject for approval. Preserve an explicitly supplied recipient address and an explicit request to add a new supplier or customer.',
-  'Treat the current message as the primary goal. Prior turns are context, not a command to keep using their capability. Before returning a plan, check that every selected capability directly addresses the current message; if it does not, revise the plan. In particular, a read about one record type must not replace a different requested business action.',
-  'Match the requested real-world effect, not merely its topic. A capability that records an event after it happened cannot substitute for initiating the event; a draft cannot substitute for sending, placing, paying, fulfilling, or physically moving; and an internal status change cannot substitute for an external provider action. If the registered capability has a narrower or different effect than the owner requests, do not select it. Explain that the requested effect is unavailable and, if useful, distinguish any related capability as an alternative rather than carrying it out.',
-  'If the goal cannot be represented by registered capabilities, return no steps and one concise, plain-language clarifyingQuestion that names the requested effect and says it is unavailable. Do not expose internal capability names. Never present a different registered operation as though it fulfills the request; any alternative must be explicitly distinguished. Never invent a record, authority, policy limit, or business fact. Do not answer the owner or write SQL.',
+  "Plan the owner's CURRENT goal by meaning, not phrase matching. Use only registered contracts (n=name, d=effect, a=allowed inputs). At most eight steps; use the fewest that actually accomplish the goal.",
+  'Include only argument fields declared for each contract. Preserve every product, party, record, amount, location, date and address the owner supplied. Omit unknown values; never guess a default entity, fabricate a placeholder, or supply fields for a capability with no inputs. The resolver verifies unique records or asks for missing inputs.',
+  'A broad question uses a business-wide read even when the workspace is empty. Zero recorded products or stock is a verifiable answer, not a reason to refuse or offer a narrower lookup. Workspace counts route the question but are not answer evidence. Read recorded facts; navigate only when the owner asks to change the visible page, and open at most one destination.',
+  'A requested change needs its matching write, not a related read. A declarative lasting supplier term, threshold or operating preference may be a policy instruction. Do not create extra contacts, products, orders, purchases or movements as prerequisites. Invoicing does not imply fulfillment or payment.',
+  'The executor obtains context itself; do not add a preliminary read solely for a write. Add a read only if the owner separately asks its answer. Missing action inputs are clarified later; do not replace the action with a read.',
+  'When one contract already accepts and applies every stated input for the requested outcome, do not add another mutation that sets the same field or performs a preparatory version of that outcome. Plan independent business effects only when the owner separately requested each one.',
+  'Match exact real-world effect and timing. Recording a past event is not initiating it; a draft is not sending, buying, paying or fulfilling; internal status is not an external provider action. Never claim a dependent approval or physical event already happened.',
+  'Use zero-based dependsOn only for genuine prior-step dependencies. Use continuesPending only when the current message answers the pending question; otherwise prior turns are context, not commands. Preserve a supplied email address; a subject is optional.',
+  'Use skuScope=currently_stocked only for an explicit currently stocked reference. Do not assume a linked order, bill, payment or policy exists. Prefer the valid contract requiring fewer unproven business facts.',
+  'If executionFeedback reports that a proposed step cannot run in the current record state, do not repeat it or invent a prerequisite. Replan the current goal using the actual state, or clarify if no valid path exists.',
+  'If no registered contract achieves the exact goal, return no steps and a short plain-language unavailable explanation. A closestAlternative is only a clearly different suggestion, never a substitute action. Do not invent facts, policies, authority or SQL.',
 ].join(' ');
 
 const FIT_SCHEMA={type:'object',additionalProperties:false,required:['aligned','reason'],properties:{
@@ -49,6 +41,8 @@ Reject extra steps the owner did not request; do not invent contact, product, or
 as a precaution. The deterministic resolver checks existing records and asks only if an identity is missing.
 Reject a preliminary read used only as context for a mutation when the owner did not request that information separately;
 the deterministic resolver fetches required facts without showing an extra answer.
+Reject a redundant preparatory mutation if the final selected contract itself accepts and applies the same supplied
+measurement, setting, or identity. Do not infer a second business operation from a detail of the requested one.
 A capability marked full_owner_message receives the complete message, including every named product, value and limit;
 it is deliberately not given separate arguments. Do not mark it misaligned for empty arguments.
 An owner stating a durable supplier term, stock threshold or operating preference is telling StockChief business information
@@ -70,7 +64,7 @@ For a read, check that the contract description covers every measure and distinc
 reject a narrower read when a registered broader read is required to answer fully.
 If the desired effect has no registered capability, set aligned=false even when a proposed action concerns the same
 supplier, customer, product, or amount. Do not perform the operation or invent business facts.`;
-const SAFE_CLARIFICATION='StockChief cannot carry out or verify that outcome. Nothing changed.';
+const SAFE_CLARIFICATION='I could not safely match that request to a supported action. Nothing changed.';
 
 function conciseClarification(value){
   const answer=String(value||'').trim();
@@ -81,25 +75,21 @@ function conciseClarification(value){
 
 function planningCatalogue(catalogue=registry){
   const entries=catalogue.list();
+  const summary=(entry)=>entry.description.slice(0,78);
   return {
-    sharedContract:{contextSources:['workspace','current_page','conversation','applicable_settings'],
-      validation:'Resolve references and validate against the current workspace before execution.',
-      mutation:{authority:'explicit approval',confirmation:'owner review',
-        executor:'canonical deterministic business service',verification:'resulting records checked in the approval transaction'},
-      readInputs:['search','timeframe'],recordNavigationInput:['recordReference']},
-    fields:FIELDS,
+    notation:'n=capability name; d=verified effect; a=allowed input names. All changes need approval.',
     mutations:entries.filter((entry)=>entry.kind==='mutation').map((entry)=>({
-      name:entry.name,description:entry.description,required:entry.required||[],
-      optional:entry.fields.filter((field)=>!entry.required?.includes(field)),
-      permission:entry.permission,resultingRecords:entry.resultingRecords})),
+      n:entry.name,d:summary(entry),a:entry.fields.join(','),
+      u:entry.commercialUnavailable?.length?'upgrade':undefined})),
     reads:entries.filter((entry)=>entry.kind==='read').map((entry)=>({
-      name:entry.name,description:entry.description,permission:entry.permission})),
+      n:entry.name,d:entry.description.slice(0,190),
+      u:entry.commercialUnavailable?.length?'upgrade':undefined})),
     navigation:entries.filter((entry)=>entry.kind==='navigation').map((entry)=>({
-      name:entry.name,description:entry.description,permission:entry.permission})),
+      n:entry.name,d:entry.recordKind?entry.description.slice(0,65):undefined})),
     policies:entries.filter((entry)=>entry.kind==='policy').map((entry)=>({
-      name:entry.name,description:entry.description,permission:entry.permission,
-      authority:entry.authority,confirmation:entry.confirmation,
-      domains:require('../manager/postgres-policy-contracts').DEFINITIONS})),
+      n:entry.name,d:entry.description.slice(0,85),
+      domains:Object.fromEntries(Object.entries(require('../manager/postgres-policy-contracts').DEFINITIONS)
+        .map(([domain,definition])=>[domain,definition.description.slice(0,55)]))})),
   };
 }
 
@@ -124,11 +114,13 @@ function parseSteps(raw,catalogue=registry){
   }
   if(steps.filter((step)=>step.contract.kind==='navigation').length>1)
     return {steps:[],clarifyingQuestion:'I can open one area at a time. Which area should I open?'};
-  return {steps,clarifyingQuestion:conciseClarification(raw.clarifyingQuestion)};
+  const alternative=catalogue.get(raw.closestAlternative);
+  return {steps,clarifyingQuestion:conciseClarification(raw.clarifyingQuestion),
+    closestAlternative:alternative?.discovery?alternative.name:null};
 }
 
 async function plan(provider,message,{catalogue=registry,history=[],pending=null,page=null,workspace=null,
-  deferReadFit=false}={}){
+  deferReadFit=false,feedback=null}={}){
   if(!provider)return {steps:[],clarifyingQuestion:'StockChief cannot interpret free-form requests while its reasoning connection is unavailable. Nothing changed.'};
   const context={message,
     workspace,
@@ -136,6 +128,7 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
     pending:pending?{capability:pending.capability,args:pending.args,question:pending.question,
       status:pending.status,awaitingField:pending.awaitingField||null,
       proposalPending:Boolean(pending.proposalId)}:null,
+    executionFeedback:feedback||null,
     currentPage:page||null};
   let response=await provider.complete({system:systemFor(catalogue),prompt:JSON.stringify(context),
     schema:schemaFor(catalogue),schemaName:'stockchief_capability_plan'});
@@ -160,7 +153,8 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
   // Without a registered step, a model-authored explanation could silently
   // reinterpret an unavailable effect as a related operation. Never expose
   // that speculative explanation as an instruction to the owner.
-  if(!selected.steps.length)return {steps:[],clarifyingQuestion:SAFE_CLARIFICATION};
+  if(!selected.steps.length)return {steps:[],clarifyingQuestion:SAFE_CLARIFICATION,
+    closestAlternative:selected.closestAlternative||null};
   if(selected.steps.length){
     try{
       const candidate=()=>({message,pendingQuestion:selected.steps.some((step)=>step.continuesPending)

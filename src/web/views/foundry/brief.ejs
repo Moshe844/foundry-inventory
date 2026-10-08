@@ -64,17 +64,10 @@
   <% if (!empty && home.coverageErrors && home.coverageErrors.length) { %><p class="sc-home__warning" role="alert">StockChief could not check every source. This is not a complete all-clear. <a href="/settings/operations">See operational health</a></p><% } %>
   <% if (!empty && stale) { %><p class="sc-home__warning" role="status">The automatic check has not run in over a day. Current conditions may have changed since the last check.</p><% } %>
 
-  <section class="sc-home__ask" aria-labelledby="sc-home-ask-title">
-    <div class="sc-home__ask-intro"><span class="sc-home__ask-mark" aria-hidden="true"><%- helpers.icon('foundry', { size: 22 }) %></span><div><p class="sc-home__eyebrow">Your direct line</p><h2 id="sc-home-ask-title">Ask or tell StockChief.</h2><p>Ask about your business, describe a change, or say what you want done. StockChief checks the records and asks before consequential action.</p></div></div>
-    <%- include('../partials/composer', { composerPlaceholder: 'What would you like StockChief to know or do?', homeHandoff: !!locals.postgresAsk, hideAttachment: !!locals.postgresAsk }) %>
-    <% var suggestions = (home.guidance && home.guidance.examples) || []; %>
-    <% if (suggestions.length) { %><div class="sc-home__suggestions" aria-label="Things you can ask"><span>Try asking</span><% suggestions.slice(0, 3).forEach(function (line) { %><a href="/ask?q=<%= encodeURIComponent(line) %>"><%= line %></a><% }) %></div><% } %>
-  </section>
-
   <% if (!empty) { %>
     <a class="sc-home__inventory-line" href="/inventory" aria-label="Open inventory">
       <span class="sc-home__inventory-line-icon"><%- helpers.icon('inventory', { size: 17 }) %></span>
-      <span><small>Inventory now</small><strong><%= Number(stats.itemCount).toLocaleString() %> <%= stats.itemCount === 1 ? 'product' : 'products' %> · <%= Number(stats.unitsOnHand).toLocaleString() %> units on hand · <%= Number(stats.available).toLocaleString() %> available for orders</strong></span>
+      <span><small>Inventory now</small><strong><%= Number(stats.itemCount).toLocaleString() %> <%= stats.itemCount === 1 ? 'product' : 'products' %> · <%= Number(stats.unitsOnHand).toLocaleString() %> units on hand<% if (stats.available != null && Number.isFinite(Number(stats.available))) { %> · <%= Number(stats.available).toLocaleString() %> available for orders<% } %></strong></span>
       <%- helpers.icon('arrowRight', { size: 16 }) %>
     </a>
   <% } %>
@@ -121,4 +114,10 @@
   <% } %>
 
   <% if (!empty) { %><p class="sc-home__browse"><a href="/inventory">Inventory</a><a href="/orders">Customer orders</a><a href="/purchasing/orders">Purchases</a><a href="/money">Money</a><a href="/activity">Activity</a></p><% } %>
+  <section class="sc-home__ask" aria-labelledby="sc-home-ask-title">
+    <div class="sc-home__ask-intro"><span class="sc-home__ask-mark" aria-hidden="true"><%- helpers.icon('foundry', { size: 22 }) %></span><div><p class="sc-home__eyebrow">Your direct line</p><h2 id="sc-home-ask-title">Ask or tell StockChief.</h2><p>Ask about your business, describe a change, or say what you want done. StockChief checks the records and asks before consequential action.</p></div></div>
+    <%- include('../partials/composer', { composerPlaceholder: 'What would you like StockChief to know or do?', homeHandoff: !!locals.postgresAsk, hideAttachment: !!locals.postgresAsk }) %>
+    <% var suggestions = (home.guidance && home.guidance.examples) || []; %>
+    <% if (suggestions.length) { %><div class="sc-home__suggestions" aria-label="Things you can ask"><span>Try asking</span><% suggestions.slice(0, 3).forEach(function (line) { %><a href="/ask?q=<%= encodeURIComponent(line) %>"><%= line %></a><% }) %></div><% } %>
+  </section>
 </div>

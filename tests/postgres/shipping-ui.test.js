@@ -14,10 +14,11 @@ const workflows=require('../../src/operations/postgres-business-workflows');
 const shipping=require('../../src/shipping/postgres-service');
 const jobs=require('../../src/operations/postgres-job-queue');
 const runtimeHandlers=require('../../src/operations/postgres-runtime-handlers');
+const {pricedUsage,PRICED_MODEL}=require('../helpers/postgres-model-fixture');
 
-let buyCalls=0;let buyMode='success';
+let buyCalls=0;let quoteCalls=0;let buyMode='success';
 const fakeCarrier={
-  async quote(){return {providerShipmentIds:['provider-shipment-1'],rates:[
+  async quote(){quoteCalls+=1;return {providerShipmentIds:['provider-shipment-1'],rates:[
     {rateId:'rate-ground-a',carrier:'ups',service:'Ground',amountMinor:1299,currency:'USD',deliveryDays:3,deliveryDate:'2026-09-26'},
     {rateId:'rate-ground-b',carrier:'ups',service:'Ground',amountMinor:1399,currency:'USD',deliveryDays:3,deliveryDate:'2026-09-26'},
     {rateId:'rate-air',carrier:'fedex',service:'Two Day',amountMinor:2499,currency:'USD',deliveryDays:2,deliveryDate:'2026-09-25'},
@@ -40,11 +41,17 @@ const fakeCarrier={
 
 test('real Chromium qualifies PostgreSQL rates, label, handoff and idempotent delivery tracking',
   {timeout:180000},async(context)=>{
-    buyCalls=0;buyMode='success';
+    buyCalls=0;quoteCalls=0;buyMode='success';
     const cluster=await startCluster();
     const database=openPostgres(cluster.connectionString,{applicationName:'stockchief-postgres-shipping-ui'});
     await migratePostgres(database);
-    const app=createPostgresApp({database,env:'test',sessionSecret:'postgres-shipping-secret',shippingOptions:{
+    const aiProvider={name:'anthropic',model:PRICED_MODEL,async complete(input){
+      if(input.schemaName==='stockchief_capability_fit')return {data:{aligned:true,reason:''},usage:pricedUsage()};
+      assert.equal(input.schemaName,'stockchief_capability_plan');
+      return {data:{steps:[{capability:'shipping.quote',arguments:[],dependsOn:[],continuesPending:false}],
+        clarifyingQuestion:''},usage:pricedUsage()};
+    }};
+    const app=createPostgresApp({database,env:'test',sessionSecret:'postgres-shipping-secret',aiProvider,shippingOptions:{
       verifyAccount:async()=>({provider:'shipengine',testMode:true}),providerResolver:()=>fakeCarrier,
     }});
     const server=await new Promise((resolve)=>{const started=app.listen(0,'127.0.0.1',()=>resolve(started));});
@@ -210,5 +217,48 @@ test('real Chromium qualifies PostgreSQL rates, label, handoff and idempotent de
     assert.equal((needsText.match(/Verify shipping label purchase with shipengine/g)||[]).length,1);
     assert.equal((await database.query(`SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3`,
       [ctx.workspaceId,item.skuIds[0],location.id])).rows[0].on_hand,'8');
+    const askOrder=await workflows.createSalesOrder(database,ctx,{customerId:'shipping-customer',deliveryMethod:'SHIP',
+      fulfillmentLocationId:location.id,idempotencyKey:'shipping-ask-quote-order',
+      lines:[{skuId:item.skuIds[0],quantity:1,unitPriceMinor:1200}]});
+    await workflows.confirmSalesOrder(database,ctx,askOrder.salesOrderId,
+      {idempotencyKey:'shipping-ask-quote-confirm'});
+    const askParcel=await shipping.prepare(database,ctx,askOrder.salesOrderId,
+      {idempotencyKey:'shipping-ask-quote-parcel',
+        lines:[{lineId:askOrder.lineIds[0],locationId:location.id,quantity:1}]});
+    await shipping.setPackages(database,ctx,askParcel.shipmentId,
+      [{weightGrams:650,lengthMm:210,widthMm:160,heightMm:110}]);
+    const shipmentNumber=(await database.query(`SELECT shipment_number FROM sales_shipments
+      WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,askParcel.shipmentId])).rows[0].shipment_number;
+    await page.goto(`${base}/ask`);
+    await page.getByLabel('Ask StockChief').fill(`Get fresh carrier rates for shipment ${shipmentNumber}`);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Continue'}).click()]);
+    const quoteProposal=(await database.query(`SELECT id,action_type,status FROM stockchief_runtime.assistant_action_proposals
+      WHERE workspace_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1`,[ctx.workspaceId])).rows[0];
+    assert.equal(quoteProposal.action_type,'shipping.quote');
+    assert.equal(quoteProposal.status,'PENDING');
+    await page.goto(`${base}/actions/${quoteProposal.id}`);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve and execute'}).click()]);
+    assert.equal((await database.query(`SELECT status FROM stockchief_runtime.assistant_action_proposals
+      WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,quoteProposal.id])).rows[0].status,'EXECUTED');
+    const quoteHandlers=runtimeHandlers.create(undefined,{shippingProviderResolver:()=>fakeCarrier});
+    const quoteJob=await jobs.processOne(database,{'shipping.quote':quoteHandlers['shipping.quote']},
+      {owner:'ask-shipping-quote-worker'});
+    assert.equal(quoteJob.status,'COMPLETED');
+    assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM shipment_rates
+      WHERE workspace_id=$1 AND shipment_id=$2`,[ctx.workspaceId,askParcel.shipmentId])).rows[0].count,3);
+    await page.goto(`${base}/ask`);
+    await page.getByLabel('Ask StockChief').fill(`Refresh carrier rates for shipment ${shipmentNumber}`);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Continue'}).click()]);
+    const staleProposal=(await database.query(`SELECT id FROM stockchief_runtime.assistant_action_proposals
+      WHERE workspace_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1`,[ctx.workspaceId])).rows[0];
+    await page.goto(`${base}/actions/${staleProposal.id}`);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve and execute'}).click()]);
+    await shipping.setPackages(database,ctx,askParcel.shipmentId,
+      [{weightGrams:700,lengthMm:210,widthMm:160,heightMm:110}]);
+    const beforeStale=quoteCalls;
+    const staleJob=await jobs.processOne(database,{'shipping.quote':quoteHandlers['shipping.quote']},
+      {owner:'ask-shipping-quote-worker'});
+    assert.equal(staleJob.status,'DEAD');
+    assert.equal(quoteCalls,beforeStale,'a stale approved quote never reaches the carrier');
     assert.deepEqual(errors,[]);
   });

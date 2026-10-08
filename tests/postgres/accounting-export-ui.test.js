@@ -10,6 +10,7 @@ const {createPostgresApp}=require('../../src/postgres-app');
 const ledger=require('../../src/accounting/postgres-ledger');
 const jobs=require('../../src/operations/postgres-job-queue');
 const runtimeHandlers=require('../../src/operations/postgres-runtime-handlers');
+const {pricedUsage,PRICED_MODEL}=require('../helpers/postgres-model-fixture');
 
 test('real Chromium governs PostgreSQL accounting export and a worker posts each journal exactly once',
   {timeout:240000},async(context)=>{
@@ -35,8 +36,17 @@ test('real Chromium governs PostgreSQL accounting export and a worker posts each
     const cluster=await startCluster();
     const database=openPostgres(cluster.connectionString,{applicationName:'stockchief-postgres-accounting-export-ui'});
     await migratePostgres(database);
+    const askPlans=new Map();
+    const aiProvider={name:'anthropic',model:PRICED_MODEL,async complete(input){
+      if(input.schemaName==='stockchief_capability_fit')return {data:{aligned:true,reason:''},usage:pricedUsage()};
+      const message=JSON.parse(input.prompt).message;
+      assert.ok(askPlans.has(message),`No Ask fixture for ${message}`);
+      const {capability,args}=askPlans.get(message);
+      return {data:{steps:[{capability,arguments:Object.entries(args).map(([name,value])=>
+        ({name,value:String(value)})),dependsOn:[],continuesPending:false}],clarifyingQuestion:''},usage:pricedUsage()};
+    }};
     const app=createPostgresApp({database,env:'test',sessionSecret:'postgres-accounting-export-secret',
-      connectionProviders:providers});
+      connectionProviders:providers,aiProvider});
     app.get('/fixture-books-consent',(req,res)=>res.send(`<!doctype html><html><body><main><h1>Fixture Books</h1>
       <a href="${req.query.callback}?code=fixture-code&amp;state=${encodeURIComponent(req.query.state)}">Authorize Fixture Books</a>
       </main></body></html>`));
@@ -54,6 +64,20 @@ test('real Chromium governs PostgreSQL accounting export and a worker posts each
     const identity=(await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id FROM workspaces w
       JOIN users u ON u.workspace_id=w.id JOIN accounts a ON a.id=u.account_id WHERE a.email='books-pg@example.test'`)).rows[0];
     const ctx={workspaceId:identity.workspace_id,actorId:identity.actor_id};
+    async function askAndApprove(message,capability,args){
+      askPlans.set(message,{capability,args});
+      await page.goto(`${base}/ask`);await page.getByLabel('Ask StockChief').fill(message);
+      await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Continue'}).click()]);
+      const proposal=(await database.query(`SELECT * FROM stockchief_runtime.assistant_action_proposals
+        WHERE workspace_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1`,[ctx.workspaceId])).rows[0];
+      assert.equal(proposal?.action_type,capability,(await page.locator('main').innerText()).slice(0,1000));
+      assert.equal(proposal.status,'PENDING');
+      await page.goto(`${base}/actions/${proposal.id}`);
+      await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve and execute'}).click()]);
+      const saved=(await database.query(`SELECT status FROM stockchief_runtime.assistant_action_proposals
+        WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,proposal.id])).rows[0];
+      assert.equal(saved.status,'EXECUTED',(await page.locator('body').innerText()).slice(0,1200));
+    }
     await ledger.configure(database,ctx,{startDate:'2026-09-01',currency:'USD'});
     const journal=await ledger.post(database,ctx,{postingDate:'2026-09-23',sourceKey:'accounting-export-fixture',
       description:'Certification journal',sourceType:'manual_certification',createdByType:'USER',lines:[
@@ -64,8 +88,11 @@ test('real Chromium governs PostgreSQL accounting export and a worker posts each
     await page.getByRole('link',{name:'Connect QuickBooks Fixture'}).click();const popup=await popupPromise;
     await popup.waitForURL(/fixture-books-consent/);await popup.getByRole('link',{name:'Authorize Fixture Books'}).click();
     await page.waitForURL(/\/settings\/connections\/con_/);const connectionUrl=page.url();
+    const connectionId=connectionUrl.split('/').pop();
     assert.match(await page.locator('main').innerText(),/Accounting control/);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Request governed posting'}).click()]);
+    await askAndApprove('Request governed posting for Fixture Books','connection.accounting_authority',
+      {recordReference:connectionId,authority:'POST'});
+    await page.goto(connectionUrl);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Run read-only shadow comparison'}).click()]);
     assert.match(await page.locator('main').innerText(),/2 accounting difference/);
     const cashId=(await database.query(`SELECT id FROM accounting_accounts WHERE workspace_id=$1 AND system_key='CASH'`,
@@ -73,15 +100,20 @@ test('real Chromium governs PostgreSQL accounting export and a worker posts each
     const expenseId=(await database.query(`SELECT id FROM accounting_accounts WHERE workspace_id=$1 AND system_key='OPERATING_EXPENSE'`,
       [ctx.workspaceId])).rows[0].id;
     for(const [accountId,externalId] of [[cashId,'ext-cash'],[expenseId,'ext-expense']]){
-      await page.getByLabel('StockChief account').selectOption(accountId);
-      await page.getByLabel('Provider account').selectOption(externalId);
-      await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Save exact mapping'}).click()]);
+      const account=(await database.query('SELECT code FROM accounting_accounts WHERE id=$1',[accountId])).rows[0];
+      await askAndApprove(`Map StockChief account ${account.code} to ${externalId} on Fixture Books`,
+        'connection.map_account',{recordReference:connectionId,accountCode:account.code,externalId});
     }
+    await page.goto(connectionUrl);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Run read-only shadow comparison'}).click()]);
     assert.match(await page.locator('main').innerText(),/Shadow comparison matched exactly/);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Enable verified posting'}).click()]);
+    await askAndApprove('Enable verified accounting posting for Fixture Books',
+      'connection.accounting_enable',{recordReference:connectionId});
+    await page.goto(connectionUrl);
     assert.match(await page.locator('main').innerText(),/WRITE ENABLED/i);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Queue ready journals'}).click()]);
+    await askAndApprove('Queue the ready posted journals for Fixture Books',
+      'connection.accounting_export',{recordReference:connectionId});
+    await page.goto(connectionUrl);
     assert.equal(providerWrites,0);assert.match(await page.locator('main').innerText(),/PENDING/);
     const runtime=runtimeHandlers.create(providers,{accountingCredentials:{accessToken:'worker-only'}});
     const completed=await jobs.processOne(database,runtime,{owner:'accounting-export-worker',leaseMs:30000});

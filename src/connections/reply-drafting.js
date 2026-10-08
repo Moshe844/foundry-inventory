@@ -360,7 +360,7 @@ async function send(db, ctx, messageId) {
 }
 
 module.exports = {
-  SYSTEM, WHEN, OVERPROMISING,
+  SYSTEM, SCHEMA, WHEN, OVERPROMISING,
   factsFor, withoutModel, permittedFrom, datesAreGrounded, faultIn,
   draft, getDraft, saveDraft, send,
 };

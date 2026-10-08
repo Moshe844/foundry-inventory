@@ -54,6 +54,7 @@ const REASON_LABEL = {
   'clarify:no_match': 'Needs an answer from you — nothing on file by that name',
   'clarify:unverified': 'Could not verify from these records',
   'clarify:unavailable': 'Could not answer right now',
+  'clarify:unsupported': 'Not available — no action taken',
   'answered:no_match': 'Answered — nothing on file',
   'failed:lookup_failed': 'Not done — the lookup itself failed',
   'failed:execution_failed': 'Not done — the change failed',

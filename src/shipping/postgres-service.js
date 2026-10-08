@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto=require('node:crypto');
 const { ValidationError,NotFoundError,InvariantError }=require('../domain/errors');
 const { newId,nowIso }=require('../lib/util');
 const addresses=require('./address');
@@ -90,8 +91,12 @@ async function packagesFor(database,workspaceId,shipmentId){
 async function setPackages(database,ctx,shipmentId,boxes){
   if(!Array.isArray(boxes)||!boxes.length)throw new ValidationError('A shipment needs at least one package.');
   return database.transaction(async(client)=>{
-    await requireShipment(client,ctx.workspaceId,shipmentId,true);
+    const shipment=await requireShipment(client,ctx.workspaceId,shipmentId,true);
+    if(['SHIPPED','DELIVERED','CANCELLED'].includes(shipment.status)||
+      ['PURCHASED','PENDING'].includes(shipment.label_status))throw new ValidationError(
+      'Package measurements cannot change after shipment or while a label is being purchased.');
     await client.query('DELETE FROM shipment_packages WHERE workspace_id=$1 AND shipment_id=$2',[ctx.workspaceId,shipmentId]);
+    await client.query('DELETE FROM shipment_rates WHERE workspace_id=$1 AND shipment_id=$2',[ctx.workspaceId,shipmentId]);
     const now=nowIso();let total=0;
     for(const [index,box] of boxes.entries()){
       const weight=Math.round(Number(box.weightGrams));
@@ -136,6 +141,17 @@ async function state(database,workspaceId,shipmentId){
     WHERE transaction.workspace_id=$1 AND transaction.shipment_id=$2
     ORDER BY transaction.requested_at DESC,transaction.id DESC LIMIT 1`,[workspaceId,shipmentId])).rows[0]||null;
   return {shipment,to,from,boxes,account,blocked,ready:blocked.length===0,rates,events,labelOperation};
+}
+
+function quoteFingerprint(view){
+  const shipment=view.shipment||{};
+  const payload={status:shipment.status,labelStatus:shipment.label_status,
+    address:shipment.ship_to_address,locationId:shipment.ship_from_location_id,
+    to:view.to,from:view.from,boxes:view.boxes,
+    accountId:view.account?.connectorId,provider:view.account?.provider,
+    accountCredentialDigest:view.account?.apiKey?
+      crypto.createHash('sha256').update(view.account.apiKey).digest('hex'):null};
+  return crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex');
 }
 
 async function ratesFor(database,workspaceId,shipmentId){
@@ -412,7 +428,7 @@ async function refreshTracking(database,ctx,shipmentId,options={}){
   return latest;
 }
 
-module.exports={prepare,requireShipment,packagesFor,setPackages,state,ratesFor,quote,queueLabelPurchase,
+module.exports={prepare,requireShipment,packagesFor,setPackages,state,quoteFingerprint,ratesFor,quote,queueLabelPurchase,
   executeLabelPurchaseEffect,buyLabel,handoff,applyTracking,receiveProviderEvent,refreshTracking};
 require('../commercial/enforcement').guardExports(module.exports,0,1,{queueLabelPurchase:'shipping.labels',
   prepare:'shipping.workflow',setPackages:'shipping.workflow',handoff:'shipping.workflow',applyTracking:'shipping.workflow'});

@@ -40,7 +40,7 @@ async function pricedBound(database,provider,request,policy,operation){
  const outputRate=Number(prices[2].cost_per_unit_minor);
  const bound=estimateMaximumMinor(request,policy,inputRate,outputRate);
  return {...bound,provider:name,model,providerVersion:version,rateSources:prices.map(row=>row.source)};}
-async function reserve(database,scope,provider,request,policy,operation,idempotencyKey){
+async function reserve(database,scope,provider,request,policy,operation,idempotencyKey,fundingUsageKey=idempotencyKey){
  const bound=await pricedBound(database,provider,request,policy,operation);
  const operationCap=operationLimit(operation)*100;
  if(bound.maximumMinor>operationCap)throw new RateLimitError(
@@ -54,8 +54,13 @@ async function reserve(database,scope,provider,request,policy,operation,idempote
    [`commercial-model-cost:${scope.accountId}:${bounds.start.toISOString()}`]);
   const grantIds=(await client.query(`SELECT DISTINCT a.grant_id FROM commercial_usage_events e
     JOIN commercial_usage_allocations a ON a.event_id=e.id WHERE e.account_id=$1 AND e.workspace_id=$2
-    AND e.meter='ai_work_credits' AND e.idempotency_key=$3 AND e.status='RESERVED' AND a.grant_id IS NOT NULL`,
-   [scope.accountId,scope.workspaceId,idempotencyKey])).rows.map(row=>row.grant_id);
+    AND e.meter='ai_work_credits' AND e.idempotency_key=$3
+    AND e.status IN ('RESERVED','COMMITTED') AND a.grant_id IS NOT NULL`,
+   [scope.accountId,scope.workspaceId,fundingUsageKey])).rows.map(row=>row.grant_id);
+  const fundedRequest=(await client.query(`SELECT id FROM commercial_usage_events
+    WHERE account_id=$1 AND workspace_id=$2 AND meter='ai_work_credits'
+      AND idempotency_key=$3 AND status IN ('RESERVED','COMMITTED')`,
+   [scope.accountId,scope.workspaceId,fundingUsageKey])).rows[0];
   if(grantIds.length)await client.query('SELECT id FROM commercial_usage_grants WHERE id=ANY($1::text[]) ORDER BY id FOR UPDATE',[grantIds]);
   const usage=(await client.query(`SELECT a.grant_id,a.units,k.version AS pack_version,b.budget_minor,b.cost_model_key,
     b.approved_model_rate_ceiling,
@@ -67,8 +72,10 @@ async function reserve(database,scope,provider,request,policy,operation,idempote
     LEFT JOIN commercial_usage_packs k ON k.id=p.pack_id
     LEFT JOIN commercial_model_grant_budgets b ON b.grant_id=g.id
     WHERE e.account_id=$1 AND e.workspace_id=$2 AND e.meter='ai_work_credits'
-      AND e.idempotency_key=$3 AND e.status='RESERVED' ORDER BY a.grant_id NULLS FIRST`,
-   [scope.accountId,scope.workspaceId,idempotencyKey])).rows;
+      AND e.idempotency_key=$3 AND e.status IN ('RESERVED','COMMITTED') ORDER BY a.grant_id NULLS FIRST`,
+   [scope.accountId,scope.workspaceId,fundingUsageKey])).rows;
+  if(fundingUsageKey!==idempotencyKey&&!fundedRequest)
+   throw new ValidationError('This internal model call has no funded Ask request. No provider call was made.');
   const totalUnits=usage.reduce((sum,row)=>sum+Number(row.units),0);
   if(usage.some(row=>row.grant_id&&Number(row.pack_version)>=2&&!row.budget_minor))
    throw new RateLimitError('Purchased AI funding is not reconciled. No model call was made.');

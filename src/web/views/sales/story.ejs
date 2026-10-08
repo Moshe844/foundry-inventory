@@ -178,7 +178,7 @@
 <% } %>
 
 <div class="rm-spine-foot">
-  <a class="rm-btn rm-btn--ghost" href="/ask?about=<%= encodeURIComponent(order.order_number + ' for ' + (order.customer ? order.customer.name : '')) %>">Ask about this order</a>
+  <a class="rm-btn rm-btn--ghost" href="/ask?from=<%= encodeURIComponent('/orders/' + order.id) %>&amp;about=<%= encodeURIComponent(order.order_number + ' for ' + (order.customer ? order.customer.name : '')) %>">Ask about this order</a>
 </div>
 
 <%
