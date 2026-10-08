@@ -168,14 +168,15 @@ test('consequential writes in one instruction wait for earlier approved writes',
   assert.deepEqual(result.steps.map((step)=>step.dependsOn),[[],[0],[1]]);
 });
 
-test('a twice-rejected fast plan gets one independently verified registry replan',async()=>{
-  let fastPlans=0,strongFits=0,strongPlans=0;
+test('a twice-rejected fast plan gets one compact, independently verified registry replan',async()=>{
+  let fastPlans=0,strongFits=0;
   const step=(capability)=>({capability,arguments:[],dependsOn:[],continuesPending:false});
-  const fast={async complete({schemaName}){
+  const fast={async complete({schemaName,prompt}){
     if(schemaName==='stockchief_capability_fit')return {
       data:{aligned:false,reason:'A catalogue write cannot create the requested customer order.'}};
     fastPlans++;
-    return {data:{steps:[step('catalog.create_item')],clarifyingQuestion:''}};
+    return {data:{steps:[step(JSON.parse(prompt).validationErrors?.[0]?.independentReason
+      ?'sales_order.create':'catalog.create_item')],clarifyingQuestion:''}};
   }};
   const independent={async complete({schemaName,prompt}){
     if(schemaName==='stockchief_capability_fit'){
@@ -184,12 +185,10 @@ test('a twice-rejected fast plan gets one independently verified registry replan
       return {data:{aligned:names.length===1&&names[0]==='sales_order.create',
         reason:names[0]==='sales_order.create'?'':'Wrong business effect.'}};
     }
-    strongPlans++;
-    assert.match(JSON.parse(prompt).message,/customer order/);
-    return {data:{steps:[step('sales_order.create')],clarifyingQuestion:''}};
+    throw new Error('A full-registry stronger-model replan should not bypass the cost bound.');
   }};
   const result=await planner.plan(fast,'Create a customer order for a new account.',
     {verificationProvider:independent});
   assert.deepEqual(result.steps.map((row)=>row.contract.name),['sales_order.create']);
-  assert.equal(fastPlans,2);assert.equal(strongPlans,1);assert.equal(strongFits,3);
+  assert.equal(fastPlans,3);assert.equal(strongFits,3);
 });

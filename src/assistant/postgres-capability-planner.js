@@ -346,11 +346,11 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
                 schemaName:'stockchief_capability_fit'});
               if(stronger.data?.aligned===true)return selected;
               // Two fit checks rejected the fast plan. Before telling the owner
-              // a supported action is unavailable, let the bounded verifier
-              // choose a NEW plan from the same registry and check its effects.
+              // a supported action is unavailable, make one compact replan
+              // under the existing cost ceiling, then independently verify it.
               // The resolver and approval gate still validate every write.
               try{
-                const alternative=await verificationProvider.complete({system:systemFor(catalogue),
+                const alternative=await provider.complete({system:systemFor(catalogue,{compact:true}),
                   prompt:JSON.stringify({...context,rejectedPlan:repaired.data,
                     validationErrors:[{issue:'The proposed plan failed independent capability-fit checks.',
                       fastReason:String(fit.data.reason||'').slice(0,240),
