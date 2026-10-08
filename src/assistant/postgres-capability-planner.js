@@ -116,6 +116,13 @@ function planningCatalogue(catalogue=registry,{compact=false}={}){
 
 function systemFor(catalogue=registry,{compact=false}={}){return `${PLANNING_RULES}\nRegistered capability contracts: ${JSON.stringify(planningCatalogue(catalogue,{compact}))}`;}
 
+async function completeRepair(provider,catalogue,prompt){
+  const request={prompt:JSON.stringify(prompt),schema:schemaFor(catalogue),schemaName:'stockchief_capability_plan'};
+  try{return await provider.complete({...request,system:systemFor(catalogue)});}
+  catch(error){if(error.code!=='rate_limited')throw error;
+    return provider.complete({...request,system:systemFor(catalogue,{compact:true})});}
+}
+
 function parseSteps(raw,catalogue=registry){
   if(!raw||!Array.isArray(raw.steps))return {steps:[],clarifyingQuestion:'I could not reliably understand that request. Nothing changed.'};
   const steps=[];
@@ -207,10 +214,8 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
   if((response.data?.steps||[]).filter((step)=>catalogue.get(step?.capability)?.kind==='navigation').length>1)
     invalid.push({issue:'A single request can open only one destination. Keep the one page that best fulfills the owner’s navigation goal.'});
   if(invalid.length){
-    response=await provider.complete({system:systemFor(catalogue),
-      prompt:JSON.stringify({...context,rejectedPlan:response.data,validationErrors:invalid,
-        instruction:'Revise the plan to satisfy every validation error. Use only declared input fields, preserve the owner’s details, do not invent missing ones, and choose one final navigation destination.'}),
-      schema:schemaFor(catalogue),schemaName:'stockchief_capability_plan'});
+    response=await completeRepair(provider,catalogue,{...context,rejectedPlan:response.data,validationErrors:invalid,
+      instruction:'Revise the plan to satisfy every validation error. Use only declared input fields, preserve the owner’s details, do not invent missing ones, and choose one final navigation destination.'});
   }
   let selected=parseSteps(response.data,catalogue);
   let reconsidered=false;
@@ -219,10 +224,8 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
     // an unsupported feature. Reconsider once against the same contracts;
     // the independent fit check below still rejects a merely related action.
     try{
-      const retry=await provider.complete({system:systemFor(catalogue),
-        prompt:JSON.stringify({...context,rejectedPlan:response.data,
-          instruction:'Reconsider the current request independently. If an exact registered read or action can fulfill it, choose that contract. If none can, return no steps. Do not substitute a related but different effect.'}),
-        schema:schemaFor(catalogue),schemaName:'stockchief_capability_plan'});
+      const retry=await completeRepair(provider,catalogue,{...context,rejectedPlan:response.data,
+        instruction:'Reconsider the current request independently. If an exact registered read or action can fulfill it, choose that contract. If none can, return no steps. Do not substitute a related but different effect.'});
       selected=parseSteps(retry.data,catalogue);
       reconsidered=true;
     }catch(error){if(error.code==='entitlement_required')throw error;}
@@ -256,12 +259,10 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
       let fit=await provider.complete({system:FIT_SYSTEM,prompt:JSON.stringify(candidate()),
         schema:FIT_SCHEMA,schemaName:'stockchief_capability_fit'});
       if(fit.data?.aligned===false){
-        const repaired=await provider.complete({system:systemFor(catalogue),
-          prompt:JSON.stringify({...context,rejectedPlan:response.data,
-            validationErrors:[{issue:'The proposed capabilities do not address the current message.',
-              reason:String(fit.data.reason||'').slice(0,240)}],
-            instruction:'Choose capabilities that fulfill the current message. Treat the pending request only as context if this is a new goal.'}),
-          schema:schemaFor(catalogue),schemaName:'stockchief_capability_plan'});
+        const repaired=await completeRepair(provider,catalogue,{...context,rejectedPlan:response.data,
+          validationErrors:[{issue:'The proposed capabilities do not address the current message.',
+            reason:String(fit.data.reason||'').slice(0,240)}],
+          instruction:'Choose capabilities that fulfill the current message. Treat the pending request only as context if this is a new goal.'});
         selected=parseSteps(repaired.data,catalogue);
         if(selected.steps.length){
           groundedMoneyArguments(selected.steps,message,pending);
@@ -275,6 +276,9 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
         }
       }
     }catch(error){if(error.code==='entitlement_required')throw error;
+      if(error.code==='rate_limited')return {steps:[],clarifyingQuestion:
+        'This request exceeds the safe AI cost limit even with a shorter verification. Nothing changed. Try one part at a time.'};
+      console.warn('[stockchief] Ask capability verification failed',error.code||error.name||'unknown');
       return {steps:[],clarifyingQuestion:'I could not safely verify that I understood this request. Nothing changed.'};
     }
   }

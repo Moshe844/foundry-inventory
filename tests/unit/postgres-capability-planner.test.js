@@ -186,5 +186,5 @@ test('semantic review does not inherit a pending question for an independent req
   const result=await planner.plan(provider,'Open Purchasing.',{pending:{
     capability:'contact.create',args:{recipient:'Old Supplier'},question:'Should I add that supplier?'}});
   assert.equal(result.steps[0].contract.name,'navigate.purchasing');
-  assert.equal(reviewed.pendingQuestion,null);
+  assert.equal(reviewed.pendingRequest,null);
 });

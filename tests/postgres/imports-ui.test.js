@@ -156,11 +156,15 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
       [{label:'Large',units:4},{label:'Small',units:3}]);
     assert.equal(new Set(variants.map((row)=>row.code)).size,2);
 
+    await database.query('UPDATE accounting_settings SET enabled=0 WHERE workspace_id=$1',[identity.workspace_id]);
     const unconfiguredCost=await imports.analyse(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},{
       text:'Product,SKU,Location,Quantity,Unit Cost,Selling Price\nCosted Valve,COST-1,Main Warehouse,3,12.50,24.00\n',
       filename:'costed-opening.csv'});
     assert.equal(unconfiguredCost.fieldMappings.unitCost,4,
       `Unit Cost must be mapped, not silently dropped: ${JSON.stringify(unconfiguredCost.fieldMappings)}`);
+    assert.equal(unconfiguredCost.recordsInvalid,1);
+    assert.match((await imports.rowsFor(database,identity.workspace_id,unconfiguredCost.id))[0].problems
+      .map((entry)=>entry.message).join(' '),/Configure accounting/);
     await ledger.configure(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},
       {startDate:'2026-01-01',currency:'USD'});
     const costed=await imports.analyse(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},{

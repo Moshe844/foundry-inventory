@@ -129,3 +129,24 @@ test('a cost-bounded planner retries with a smaller catalogue and intact current
   assert.deepEqual(result.steps.map(({contract})=>contract.name),
     ['sales_order.create','sales_order.confirm']);
 });
+
+test('a cost-bounded semantic repair uses the compact catalogue and still verifies every effect',async()=>{
+  let plans=0;let firstRepairLength=0;let fitChecks=0;
+  const provider={async complete({schemaName,system,prompt}){
+    if(schemaName==='stockchief_capability_fit'){
+      fitChecks++;
+      return {data:{aligned:fitChecks>1,reason:fitChecks===1?'Reservation was omitted.':''}};
+    }
+    plans++;
+    if(plans===2){firstRepairLength=system.length;
+      throw Object.assign(new Error('cost bound'),{code:'rate_limited'});}
+    if(plans===3){assert.ok(system.length<firstRepairLength);
+      assert.match(JSON.parse(prompt).message,/create.*reserve/i);}
+    return {data:{steps:[{capability:'sales_order.create',arguments:[],dependsOn:[],continuesPending:false}],
+      clarifyingQuestion:''}};
+  }};
+  const result=await planner.plan(provider,'Create an order and reserve stock.');
+  assert.equal(plans,3);
+  assert.equal(fitChecks,2);
+  assert.deepEqual(result.steps.map((step)=>step.contract.name),['sales_order.create','sales_order.confirm']);
+});
