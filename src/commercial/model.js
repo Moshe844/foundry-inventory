@@ -12,8 +12,8 @@ function wrap(database,ctx,provider,operation,key,options={}){const policy=POLIC
   if(!configured||configured.category!=='ai_work_credits')throw new ValidationError('The model operation has no configured usage policy.');
   const idempotencyKey=`${ctx.workspaceId}:${key||newId('modeloperation')}`;
   const internal=options.chargeCustomer===false;
-  if(internal&&(!options.fundingKey||operation!=='ask'))
-    throw new ValidationError('An internal Ask model call needs its original funded request.');
+  if(internal&&(!options.fundingKey||!['ask','instruction'].includes(operation)))
+    throw new ValidationError('An internal model call needs its original funded request.');
   if(!internal){const reserved=await usage.reserveUsage(database,scope,{meter:'ai_work_credits',units:Number(configured.units),idempotencyKey,
     detail:{operation,model:provider.model,provisional:true}});
     if(!reserved.created)throw new ValidationError('This model operation is already recorded or in progress.');}
@@ -26,7 +26,8 @@ function wrap(database,ctx,provider,operation,key,options={}){const policy=POLIC
     await operations.modelUsage(database,scope,response.usage||{provider:provider.name,model:provider.model},idempotencyKey,{operation});
     const validated=require('../foundry/validator').validate(require('../foundry/schema-tools').toWireSchema(request.schema),response.data);
     if(!validated.ok)throw new (require('../ai/provider').ProviderOutputError)('The model response did not match the operation contract. No credits were consumed.',validated.errors);
-    if(operation==='instruction'&&(!response.data?.understood||!response.data?.changes?.length))
+    if(operation==='instruction'&&request.schemaName==='postgres_operating_instruction'
+      &&(!response.data?.understood||!response.data?.changes?.length))
       throw new ValidationError(response.data?.unsupportedReason||response.data?.clarifyingQuestion||'No supported operating instruction was produced.');
     if(typeof onValidated==='function')await onValidated(response.data);
     await require('./model-cost-budget').settle(database,scope,idempotencyKey);

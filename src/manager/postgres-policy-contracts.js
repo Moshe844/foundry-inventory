@@ -8,7 +8,7 @@
 const DEFINITIONS=Object.freeze({
   replenishment:{description:'Set a reorder point, target stock, or safety stock for a real SKU. This detects need but grants no purchase authority.',
     trigger:'inventory_position_evaluated',action:'recommend_replenishment',engine:'reorder_policies'},
-  stock_alert:{description:'Notify the owner in Needs You once when approved physical on-hand stock for a SKU reaches or falls below a stated level. A recovery rearms the rule; this does not order goods or send external email.',
+  stock_alert:{description:'Notify the owner in Needs You when a SKU reaches the exact approved stock threshold: physical on-hand or available-to-fulfill after customer commitments, below or at-or-below. A recovery rearms the rule; this does not order goods or send external email.',
     trigger:'scheduled_stock_position_evaluated',action:'notify_owner',engine:'stock_threshold_rules'},
   supplier_terms:{description:'Store supplier lead time, pack size, minimum quantity, or order multiple for a real supplier and SKU.',
     trigger:'purchase_planning',action:'apply_supplier_terms',engine:'supplier_items'},
@@ -32,7 +32,8 @@ function compile(change){
   let condition={};
   if(change.domain==='replenishment')condition={reorderPoint:change.reorderPoint,targetStock:change.targetStock,
     safetyStock:change.safetyStock};
-  else if(change.domain==='stock_alert')condition={onHandAtOrBelow:change.notificationThreshold};
+  else if(change.domain==='stock_alert')condition={metric:change.notificationMetric||'on_hand',
+    comparator:change.notificationComparator||'at_or_below',threshold:change.notificationThreshold};
   else if(change.domain==='supplier_terms')condition={leadTimeDays:change.leadTimeDays,
     unitsPerPurchaseUnit:change.unitsPerPurchaseUnit,minimumOrderQuantity:change.minimumOrderQuantity,
     orderMultiple:change.orderMultiple};

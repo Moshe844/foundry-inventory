@@ -14,10 +14,13 @@ function change(domain,values={}){return {domain,operation:'set',sku:'',supplier
   reorderPoint:-1,targetStock:-1,safetyStock:-1,leadTimeDays:-1,unitsPerPurchaseUnit:-1,
   minimumOrderQuantity:-1,orderMultiple:-1,maximumQuantity:-1,maximumValue:-1,weeklyValue:-1,daysOfStock:-1,
   preferTransferBeforePurchasing:false,guardMode:'',guardComparator:'',guardThreshold:-1,
-  guardReleaseCondition:'',notificationThreshold:-1,...values};}
+  guardReleaseCondition:'',notificationThreshold:-1,
+  notificationMetric:'on_hand',notificationComparator:'at_or_below',...values};}
 function json(value){return typeof value==='string'?JSON.parse(value):value;}
 
 const provider={async complete(input){
+  if(input.schemaName==='postgres_operating_instruction_effect_fit')return {data:{equivalent:true,difference:''},
+    usage:{provider:'fixture-ai',model:'fixture-model',inputTokens:20,outputTokens:10}};
   if(input.schemaName==='stockchief_postgres_request')return {data:{intent:'instruction',view:null,action:null,
     search:null,sku:null,location:null,fromLocation:null,toLocation:null,quantity:null,countedQuantity:null,reason:null,reference:null},
     usage:{provider:'fixture-ai',model:'fixture-model',inputTokens:20,outputTokens:10}};
@@ -111,6 +114,6 @@ test('real Chromium approves one free-form PostgreSQL standing instruction witho
     assert.equal(JSON.parse((await database.query(`SELECT value FROM operational_preferences WHERE workspace_id=$1
       AND key='prefer_transfer_before_purchasing'`,[ctx.workspaceId])).rows[0].value),true);
     await page.goto(`${base}/what-you-told-me`);const transcript=await page.locator('main').innerText();
-    assert.match(transcript,/Keep Rule Widget replenished under approved supplier, transfer and stock limits/);
+    assert.match(transcript,/Rule Widget.*reorder at 8/);
     assert.match(transcript,/1 standing rule/);assert.deepEqual(errors,[]);
   });

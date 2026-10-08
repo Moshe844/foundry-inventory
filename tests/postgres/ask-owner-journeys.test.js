@@ -13,6 +13,8 @@ const locations=require('../../src/domain/postgres-location-service');
 const inventory=require('../../src/domain/postgres-inventory-engine');
 const pricing=require('../../src/pricing/postgres-service');
 const stockAlerts=require('../../src/manager/postgres-stock-threshold-alerts');
+const instructions=require('../../src/manager/postgres-operating-instructions');
+const workflows=require('../../src/operations/postgres-business-workflows');
 const {registry}=require('../../src/assistant/postgres-capability-registry');
 const resolver=require('../../src/assistant/postgres-context-resolver');
 
@@ -23,7 +25,8 @@ const change=(values={})=>({domain:'stock_alert',operation:'set',sku:'',supplier
   reorderPoint:-1,targetStock:-1,safetyStock:-1,leadTimeDays:-1,unitsPerPurchaseUnit:-1,
   minimumOrderQuantity:-1,orderMultiple:-1,maximumQuantity:-1,maximumValue:-1,weeklyValue:-1,
   daysOfStock:-1,preferTransferBeforePurchasing:false,guardMode:'',guardComparator:'',
-  guardThreshold:-1,guardReleaseCondition:'',notificationThreshold:-1,...values});
+  guardThreshold:-1,guardReleaseCondition:'',notificationThreshold:-1,
+  notificationMetric:'on_hand',notificationComparator:'at_or_below',...values});
 
 test('Ask approvals update the conversation, invoices use the canonical ledger, and stock alerts really fire',
   {timeout:180000},async(context)=>{
@@ -42,6 +45,8 @@ test('Ask approvals update the conversation, invoices use the canonical ledger, 
       if(input.schemaName==='postgres_operating_instruction')return {data:{understood:true,
         summary:'Alert when Blue Shoe reaches four on hand',clarifyingQuestion:'',unsupportedReason:'',
         changes:[change({sku:'Blue Shoe',notificationThreshold:4})]},usage:pricedUsage()};
+      if(input.schemaName==='postgres_operating_instruction_effect_fit')return {
+        data:{equivalent:true,difference:''},usage:pricedUsage()};
       throw new Error(`Unexpected schema ${input.schemaName}`);
     }};
     const app=createPostgresApp({database,env:'test',sessionSecret:'ask-owner-journeys-secret',aiProvider:provider});
@@ -111,7 +116,7 @@ test('Ask approvals update the conversation, invoices use the canonical ledger, 
     const rule=(await database.query(`SELECT id,integrity_hash FROM operating_instruction_proposals
       WHERE workspace_id=$1 ORDER BY created_at DESC LIMIT 1`,[ctx.workspaceId])).rows[0];
     review=await agent.get(`/operating-instructions/${rule.id}`);
-    assert.match(review.text,/at or below 4 on hand/);
+    assert.match(review.text,/at or below 4 physically on hand/);
     assert.equal((await agent.post(`/operating-instructions/${rule.id}/approve`).type('form')
       .send({_csrf:token(review.text),integrityHash:rule.integrity_hash})).status,303);
     html=(await agent.get('/ask')).text;assert.match(html,/Rule in force:/);
@@ -143,4 +148,51 @@ test('Ask approvals update the conversation, invoices use the canonical ledger, 
       {checked:1,alerted:1,rearmed:0});
     assert.equal((await database.query(`SELECT status FROM attention_items WHERE workspace_id=$1
       AND fingerprint=$2`,[ctx.workspaceId,`stock-threshold:${stored.id}`])).rows[0].status,'OPEN');
+    // An available-to-fulfill warning must react to an allocation without a
+    // physical stock movement; "below" must not fire at the equal boundary.
+    const availableInstruction='Warn when Blue Shoe available to fulfill drops below 4; do not buy anything.';
+    const proposalCount=Number((await database.query(`SELECT COUNT(*) AS n FROM operating_instruction_proposals
+      WHERE workspace_id=$1`,[ctx.workspaceId])).rows[0].n);
+    const forMeasure=(metric,equivalent)=>({name:'anthropic',model:PRICED_MODEL,
+      async complete(input){if(input.schemaName==='postgres_operating_instruction')return {
+        data:{understood:true,summary:'A stock alert',clarifyingQuestion:'',unsupportedReason:'',
+          changes:[change({sku:'Blue Shoe',notificationThreshold:4,notificationMetric:metric,
+            notificationComparator:'below'})]},usage:pricedUsage()};
+        if(input.schemaName==='postgres_operating_instruction_effect_fit')return {
+          data:{equivalent,difference:equivalent?'':'Available-to-fulfill was changed to physical on-hand.'},
+          usage:pricedUsage()};
+        throw new Error(`Unexpected schema ${input.schemaName}`);}});
+    await assert.rejects(instructions.interpret(database,ctx,availableInstruction,
+      {provider:forMeasure('on_hand',false),instructionUsageKey:'mismatched-alert'}),
+    /won't propose a rule that changes your request/);
+    assert.equal(Number((await database.query(`SELECT COUNT(*) AS n FROM operating_instruction_proposals
+      WHERE workspace_id=$1`,[ctx.workspaceId])).rows[0].n),proposalCount);
+    const availableProposal=await instructions.interpret(database,ctx,availableInstruction,
+      {provider:forMeasure('available_to_fulfill',true),instructionUsageKey:'exact-available-alert'});
+    assert.match(availableProposal.summary,/below 4 available to fulfill after customer commitments/);
+    await instructions.approve(database,ctx,availableProposal.id,availableProposal.integrityHash);
+    const revised=(await database.query(`SELECT metric,comparator,threshold FROM stockchief_runtime.stock_threshold_rules
+      WHERE id=$1`,[stored.id])).rows[0];
+    assert.deepEqual([revised.metric,revised.comparator,Number(revised.threshold)],
+      ['available_to_fulfill','below',4]);
+    assert.deepEqual(await stockAlerts.evaluate(database,{workspaceId:ctx.workspaceId}),
+      {checked:1,alerted:0,rearmed:0});
+    const customer=(await database.query(`SELECT id FROM customers WHERE workspace_id=$1 AND name='River Market'`,
+      [ctx.workspaceId])).rows[0];
+    const order=await workflows.createSalesOrder(database,ctx,{customerId:customer.id,deliveryMethod:'PICKUP',
+      lines:[{skuId:product.skuIds[0],quantity:1,unitPriceMinor:2500}],idempotencyKey:'alert-availability-order'});
+    await workflows.confirmSalesOrder(database,ctx,order.salesOrderId,
+      {requireFullAllocation:true,idempotencyKey:'alert-availability-confirm'});
+    assert.deepEqual(await stockAlerts.evaluate(database,{workspaceId:ctx.workspaceId}),
+      {checked:1,alerted:1,rearmed:0});
+    const availableAlert=(await database.query(`SELECT title,metrics FROM attention_items WHERE workspace_id=$1
+      AND fingerprint=$2`,[ctx.workspaceId,`stock-threshold:${stored.id}`])).rows[0];
+    assert.match(availableAlert.title,/reached 3 available to fulfill/);
+    assert.equal(JSON.parse(availableAlert.metrics).metric,'available_to_fulfill');
+    assert.equal(Number((await database.query(`SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2`,
+      [ctx.workspaceId,product.skuIds[0]])).rows[0].on_hand),4);
+    await workflows.cancelSalesOrder(database,ctx,order.salesOrderId,
+      {reason:'Synthetic threshold test',idempotencyKey:'alert-availability-cancel'});
+    assert.deepEqual(await stockAlerts.evaluate(database,{workspaceId:ctx.workspaceId}),
+      {checked:1,alerted:0,rearmed:1});
   });
