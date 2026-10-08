@@ -110,6 +110,26 @@ test('full-reservation intent reaches independent fit as the strict dependent ac
     ['sales_order.create','sales_order.reserve_all']);
 });
 
+test('fit sees post-approval read dependencies and clears impossible pending flags',async()=>{
+  const provider={complete:async(request)=>{
+    if(request.schemaName==='stockchief_capability_plan')return {data:{steps:[
+      {capability:'sales_order.fulfill',arguments:[{name:'recordReference',value:'SO-00008'},
+        {name:'sku',value:'LAB-WASH-030'},{name:'quantity',value:'1'}],dependsOn:[],continuesPending:false},
+      {capability:'read.sales_orders',arguments:[{name:'search',value:'SO-00008'}],
+        dependsOn:[0],continuesPending:true}],clarifyingQuestion:''}};
+    const candidate=JSON.parse(request.prompt);
+    assert.deepEqual(candidate.proposedSteps[1].dependsOn,[0]);
+    assert.equal(candidate.proposedSteps[1].continuesPending,false);
+    assert.match(candidate.proposedSteps[1].description,/fulfilled and open units/);
+    assert.match(request.system,/AFTER approval/);
+    return {data:{aligned:true,reason:''}};
+  }};
+  const selected=await planner.plan(provider,
+    'Fulfill one unit on SO-00008, then tell me its ordered, fulfilled and held quantities.');
+  assert.deepEqual(selected.steps.map((step)=>step.contract.name),
+    ['sales_order.fulfill','read.sales_orders']);
+});
+
 test('daily model-attempt ceiling is not mistaken for a prompt-cost failure or retried',async()=>{
   let calls=0;
   const provider={async complete(){calls++;const error=new Error('Daily model-attempt safety limit reached.');

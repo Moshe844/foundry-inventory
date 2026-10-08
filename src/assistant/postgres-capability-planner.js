@@ -63,6 +63,11 @@ When the owner says an earlier answer was wrong and asks for the recorded facts 
 reads against the actual new question. Correcting an answer is not changing a business record.
 Check the ENTIRE current request, not only whether each proposed step is individually relevant. If the owner
 asks for two independent effects and the plan includes only one, set aligned=false and name the omitted effect.
+For a read that depends on an approved mutation, judge the read against its documented evidence fields as they
+will exist AFTER approval. Reading order quantities or money is how StockChief tells the owner the result;
+do not demand a separate "summary" capability. A negative request such as not recording payment is satisfied
+when no proposed step records payment; do not require a no-op step to prove absence.
+The dependsOn indices in proposedSteps are executable sequencing, not merely suggestions.
 If the owner requires all units reserved now, partial confirmation or backordering does not fulfill that goal;
 choose sales_order.reserve_all. Ordinary confirmation can create a truthful backorder.
 In particular, creating a draft order does not commit or reserve inventory: when both creation and reservation
@@ -250,6 +255,7 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
       instruction:'Revise the plan to satisfy every validation error. Use only declared input fields, preserve the owner’s details, do not invent missing ones, and choose one final navigation destination.'});
   }
   let selected=parseSteps(response.data,catalogue);
+  if(!pending)for(const step of selected.steps)step.continuesPending=false;
   let reconsidered=false;
   if(!selected.steps.length){
     if(process.env.STOCKCHIEF_ASK_DIAGNOSTICS==='1')console.warn('[stockchief] Ask plan empty',
@@ -262,6 +268,7 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
       const retry=await completeRepair(provider,catalogue,{...context,rejectedPlan:response.data,
         instruction:'Reconsider the current request independently. If an exact registered read or action can fulfill it, choose that contract. If none can, return no steps. Do not substitute a related but different effect.'});
       selected=parseSteps(retry.data,catalogue);
+      if(!pending)for(const step of selected.steps)step.continuesPending=false;
       reconsidered=true;
       if(!selected.steps.length&&process.env.STOCKCHIEF_ASK_DIAGNOSTICS==='1')
         console.warn('[stockchief] Ask plan empty',JSON.stringify({stage:'reconsidered',
@@ -295,6 +302,7 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
         proposedSteps:selected.steps.map((step)=>({capability:step.contract.name,
           description:step.contract.description,arguments:step.args,
           inputMode:step.contract.fields.length?'typed_arguments':'full_owner_message',
+          dependsOn:step.dependsOn,
           continuesPending:step.continuesPending}))});
       let fit=await provider.complete({system:FIT_SYSTEM,prompt:JSON.stringify(candidate()),
         schema:FIT_SCHEMA,schemaName:'stockchief_capability_fit'});
@@ -307,6 +315,7 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
             reason:String(fit.data.reason||'').slice(0,240)}],
           instruction:'Choose capabilities that fulfill the current message. Treat the pending request only as context if this is a new goal.'});
         selected=parseSteps(repaired.data,catalogue);
+        if(!pending)for(const step of selected.steps)step.continuesPending=false;
         if(selected.steps.length){
           groundedMoneyArguments(selected.steps,message,pending);
           coverExplicitOrderReservation(selected.steps,message,catalogue,pending);

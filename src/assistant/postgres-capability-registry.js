@@ -239,7 +239,7 @@ const READS={
   supplier_items:'Supplier-product links, purchasing terms, and costs.',needs_you:'Owner decisions awaiting attention.',
   replenishment:'Recorded replenishment recommendations and their state.',locations:'Inventory locations.',
   purchase_orders:'Answer questions about recorded supplier purchase orders and their status without changing the current page.',
-  sales_orders:'Answer questions about recorded customer orders and their status without changing the current page.',
+  sales_orders:'Read recorded customer orders with ordered, held, fulfilled and open units, plus invoice totals, paid and outstanding amounts, and shipments; answers do not change business records.',
   sales_activity:'Recorded customer order and sales activity for supported time windows.',
   suppliers:'Supplier records.',customers:'Customer records.',shipping:'Shipping records.',
   payments:'Recorded payment transactions.',payables:'Open supplier bill balances.',
