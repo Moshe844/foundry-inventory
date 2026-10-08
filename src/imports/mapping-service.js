@@ -70,6 +70,7 @@ The fields you may choose from:
   product — a size, a colour, a style. Put the thing they vary BY in axisName.
 - quantity: how many there are. Must be a column of numbers.
 - sellingPrice: the explicit retail, sale, list or customer price per unit.
+- unitCost: the supplier or purchase cost per unit, never the selling price.
 - currency: its three-letter currency code.
 - location: where the stock is.
 - serial: an individual unit's serial number, unique to one physical unit.
@@ -79,9 +80,10 @@ The fields you may choose from:
 - ignore: anything else. Use this generously.
 
 Rules:
-- Map an explicit selling/retail/list price to sellingPrice. Choose 'ignore'
-  for supplier cost, wholesale price, calculated margin, suppliers, categories,
-  reorder points and sales figures. Never turn supplier cost into selling price.
+- Map an explicit selling/retail/list price to sellingPrice and an explicit
+  supplier/unit/wholesale cost to unitCost. Choose 'ignore' for calculated
+  margin, suppliers, categories, reorder points and sales figures. Never turn
+  supplier cost into selling price.
 - Judge by the values as much as the header. A column headed "Qty" holding
   "box", "each", "case" is unitLabel, not quantity.
 - A column of values unique to every row is a serial number. A column whose

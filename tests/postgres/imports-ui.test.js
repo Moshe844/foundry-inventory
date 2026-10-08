@@ -8,6 +8,7 @@ const { openPostgres }=require('../../src/db/postgres');
 const { migratePostgres }=require('../../src/db/migrate-postgres');
 const { createPostgresApp }=require('../../src/postgres-app');
 const imports=require('../../src/imports/postgres-service');
+const ledger=require('../../src/accounting/postgres-ledger');
 const fs=require('node:fs');
 const path=require('node:path');
 
@@ -138,6 +139,49 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
     /unapproved preview/i);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Import and verify'}).click()]);
     assert.match(await page.locator('main').innerText(),/2 rows created 2 products, 2 SKUs and 10 opening units/);
+
+    const variantPlan=await imports.analyse(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},{
+      text:'Product,SKU,Size,Location,Quantity\nVariant Gloves,VG-400,Small,Main Warehouse,3\nVariant Gloves,VG-400,Large,Main Warehouse,4\n',
+      filename:'reused-base-code.csv'});
+    assert.equal(variantPlan.recordsValid,2);
+    await imports.approve(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},
+      variantPlan.id,variantPlan.integrityHash);
+    await imports.execute(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},variantPlan.id);
+    const variants=(await database.query(`SELECT s.variant_label,s.code,COALESCE(SUM(b.on_hand),0)::int AS units
+      FROM items i JOIN skus s ON s.item_id=i.id AND s.workspace_id=i.workspace_id
+      LEFT JOIN balances b ON b.sku_id=s.id AND b.workspace_id=s.workspace_id
+      WHERE i.workspace_id=$1 AND i.name='Variant Gloves'
+      GROUP BY s.id ORDER BY s.variant_label`,[identity.workspace_id])).rows;
+    assert.deepEqual(variants.map((row)=>({label:row.variant_label,units:row.units})),
+      [{label:'Large',units:4},{label:'Small',units:3}]);
+    assert.equal(new Set(variants.map((row)=>row.code)).size,2);
+
+    const unconfiguredCost=await imports.analyse(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},{
+      text:'Product,SKU,Location,Quantity,Unit Cost,Selling Price\nCosted Valve,COST-1,Main Warehouse,3,12.50,24.00\n',
+      filename:'costed-opening.csv'});
+    assert.equal(unconfiguredCost.fieldMappings.unitCost,4,
+      `Unit Cost must be mapped, not silently dropped: ${JSON.stringify(unconfiguredCost.fieldMappings)}`);
+    await ledger.configure(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},
+      {startDate:'2026-01-01',currency:'USD'});
+    const costed=await imports.analyse(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},{
+      text:'Product,SKU,Location,Quantity,Unit Cost,Selling Price\nCosted Valve,COST-1,Main Warehouse,3,12.50,24.00\n',
+      filename:'costed-opening-after-accounting.csv'});
+    assert.equal(costed.recordsValid,1);
+    await imports.approve(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},
+      costed.id,costed.integrityHash);
+    const costRun=await imports.execute(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},costed.id);
+    assert.equal(costRun.verified,true);
+    assert.deepEqual(costRun.checks.slice(-3).map((check)=>check.ok),[true,true,true]);
+    assert.equal(costRun.checks.at(-2).observed,3750);
+    assert.equal(costRun.checks.at(-1).observed,3750);
+    assert.equal((await database.query(`SELECT amount_minor::int AS price FROM sku_prices
+      WHERE workspace_id=$1 AND sku_id IN (SELECT sku_id FROM import_rows WHERE import_id=$2)`,
+    [identity.workspace_id,costed.id])).rows[0].price,2400);
+    const costReplay=await imports.execute(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},costed.id);
+    assert.equal(costReplay.duplicate,true);
+    assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM accounting_inventory_cost_movements
+      WHERE workspace_id=$1 AND cost_source_record_id IN
+        (SELECT id FROM import_rows WHERE import_id=$2)`,[identity.workspace_id,costed.id])).rows[0].count,1);
 
     const failing=await imports.analyse(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},{
       text:'Product,SKU,Location,Quantity\nRollback One,RB-1,Main Warehouse,3\nRollback Two,RB-2,Main Warehouse,4\n',

@@ -7,6 +7,10 @@ const fields = require('./fields');
 const rowValues = require('./row-validator');
 const catalog = require('../domain/postgres-catalog-service');
 const inventory = require('../domain/postgres-inventory-engine');
+const ledger = require('../accounting/postgres-ledger');
+const costing = require('../accounting/postgres-costing');
+const prices = require('../pricing/price-service');
+const postgresPrices = require('../pricing/postgres-service');
 const permissions = require('../actions/permissions');
 const { ValidationError, NotFoundError } = require('../domain/errors');
 const { newId, nowIso, trimOrNull } = require('../lib/util');
@@ -66,11 +70,12 @@ function problem(code, message) {
 }
 
 async function workspaceContext(database, workspaceId) {
-  const [locations, skus] = await Promise.all([
+  const [locations, skus, accounting] = await Promise.all([
     database.query(`SELECT id,name FROM locations WHERE workspace_id=$1 AND is_active=1 ORDER BY name,id`,[workspaceId]),
     database.query(`SELECT s.id,s.code,s.item_id,i.name,i.tracking_mode FROM skus s
       JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
       WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1`,[workspaceId]),
+    database.query(`SELECT enabled,base_currency FROM accounting_settings WHERE workspace_id=$1`,[workspaceId]),
   ]);
   const locationByName = new Map();
   for (const row of locations.rows) {
@@ -84,7 +89,9 @@ async function workspaceContext(database, workspaceId) {
     const matches=skuByCode.get(key) || [];
     matches.push(row);skuByCode.set(key,matches);
   }
-  return { locations:locations.rows,locationByName,skuByCode };
+  return { locations:locations.rows,locationByName,skuByCode,
+    accountingReady:Number(accounting.rows[0]?.enabled)===1,
+    accountingCurrency:accounting.rows[0]?.base_currency||null };
 }
 
 function validateRows(sheet, mappings, proposal, context, input = {}) {
@@ -101,6 +108,21 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     const quantityRead=rowValues.readQuantity(quantitySource);
     let quantity=quantityRead.ok ? quantityRead.value : null;
     if(!quantityRead.ok)problems.push(problem(quantityRead.problem,'Quantity must be a whole number of zero or more.'));
+    const costText=trimOrNull(textCell(row,mappings.unitCost));
+    const sellingText=trimOrNull(textCell(row,mappings.sellingPrice));
+    let sellingPriceMinor=null;
+    if(sellingText){try{sellingPriceMinor=prices.toMinor(sellingText,'Selling price');}
+      catch{problems.push(problem('bad_selling_price','Selling price must be a non-negative money amount.'));}}
+    let unitCostMinor=null;
+    if(costText){try{unitCostMinor=prices.toMinor(costText,'Unit cost');}
+      catch{problems.push(problem('bad_unit_cost','Unit cost must be a non-negative money amount.'));}}
+    const currency=(trimOrNull(textCell(row,mappings.currency))||context.accountingCurrency||'USD').toUpperCase();
+    if(unitCostMinor!==null&&quantity>0&&!context.accountingReady)
+      problems.push(problem('accounting_not_ready','Configure accounting before importing valued opening stock.'));
+    if(unitCostMinor!==null&&quantity>0&&context.accountingCurrency&&currency!==context.accountingCurrency)
+      problems.push(problem('cost_currency_mismatch','The source cost currency differs from the inventory accounting currency.'));
+    if(unitCostMinor!==null&&quantity>0&&!Number.isSafeInteger(unitCostMinor*quantity))
+      problems.push(problem('cost_overflow','This row’s total inventory cost exceeds the supported range.'));
     const locationText=trimOrNull(textCell(row,mappings.location));
     let location=defaultLocation;
     if(locationText){
@@ -128,10 +150,12 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     if(proposal.detectedType==='lots' && quantity > 0 && !lotCode)problems.push(problem('missing_lot','A lot or batch number is required.'));
     const existingMatches=code ? (context.skuByCode.get(code.toLowerCase()) || []) : [];
     if(existingMatches.length>1)problems.push(problem('ambiguous_existing_code','This SKU code matches more than one active record.'));
-    const blocking=new Set(['bad_quantity','negative_quantity','fractional_quantity','no_product','unknown_location','no_location',
+    const blocking=new Set(['bad_quantity','negative_quantity','fractional_quantity','bad_unit_cost','bad_selling_price',
+      'accounting_not_ready','cost_currency_mismatch','cost_overflow','no_product','unknown_location','no_location',
       'missing_serial','serial_quantity','missing_lot','ambiguous_existing_code']);
     const parsed={name,code,description:trimOrNull(textCell(row,mappings.description)),
       unitLabel:trimOrNull(textCell(row,mappings.unitLabel)) || 'unit',barcode:trimOrNull(textCell(row,mappings.barcode)),
+      unitCostMinor,sellingPriceMinor,currency,
       quantity,variants,locationId:location?.id || null,locationName:location?.name || null,locationText,
       serial,lotCode,expiresAt:trimOrNull(textCell(row,mappings.expiresAt)),
       receivedAt:trimOrNull(textCell(row,mappings.receivedAt)),notes:trimOrNull(textCell(row,mappings.notes)),
@@ -144,9 +168,20 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
   }
   return { rows,summary:{total:rows.length,valid:rows.filter((row)=>row.status==='VALID').length,
     invalid:rows.filter((row)=>row.status==='INVALID').length,
-    units:rows.filter((row)=>row.status==='VALID').reduce((sum,row)=>sum+(row.parsed.quantity || 0),0)},
+    units:rows.filter((row)=>row.status==='VALID').reduce((sum,row)=>sum+(row.parsed.quantity || 0),0),
+    unvaluedUnits:rows.filter((row)=>row.status==='VALID'&&row.parsed.unitCostMinor===null)
+      .reduce((sum,row)=>sum+(row.parsed.quantity||0),0),
+    valuedMinor:rows.filter((row)=>row.status==='VALID'&&row.parsed.unitCostMinor!==null)
+      .reduce((sum,row)=>sum+(row.parsed.quantity||0)*row.parsed.unitCostMinor,0)},
     conflicts:[...unknownLocations].map(([text,count])=>({kind:'unknown_location',text,count})),
     defaultLocationId:defaultLocation?.id || null };
+}
+
+function previewWarnings(summary) {
+  const warnings=[];
+  if(summary.invalid)warnings.push(`${summary.invalid} row(s) need correction before they can be imported.`);
+  if(summary.unvaluedUnits)warnings.push(`${summary.unvaluedUnits} opening unit(s) have no source unit cost. StockChief will retain their quantity but cannot certify their inventory value until cost evidence is supplied.`);
+  return warnings;
 }
 
 function integrityFor(plan, rows) {
@@ -197,7 +232,7 @@ async function analyse(database, ctx, input) {
       ignoredColumns:proposal.ignoredColumns,sheetCount:parsedWorkbook.sheets.length},trackingModel:{mode:'per-row'},
     locationMappings:{},defaultLocationId:validated.defaultLocationId,recordsDetected:validated.summary.total,
     recordsValid:validated.summary.valid,recordsInvalid:validated.summary.invalid,
-    warnings:validated.summary.invalid?[`${validated.summary.invalid} row(s) need correction before they can be imported.`]:[],
+    warnings:previewWarnings(validated.summary),
     conflicts:validated.conflicts,assumptions:proposal.assumptions || [],approvalStatus:'AWAITING_APPROVAL',
     status:'READY',planVersion:1,createdAt:at};
   plan.integrityHash=integrityFor(plan,validated.rows);
@@ -288,7 +323,7 @@ async function revise(database,ctx,id,input={}){
       {defaultLocationId:plan.defaultLocationId,locationMappings,quantityOverrides});
     const revised={...plan,locationMappings,transformations:{...plan.transformations,quantityOverrides},
       recordsValid:validated.summary.valid,recordsInvalid:validated.summary.invalid,
-      warnings:validated.summary.invalid?[`${validated.summary.invalid} row(s) need correction before they can be imported.`]:[],
+      warnings:previewWarnings(validated.summary),
       conflicts:validated.conflicts,planVersion:plan.planVersion+1};
     revised.integrityHash=integrityFor(revised,validated.rows);
     await client.query(`UPDATE import_plans SET location_mappings=$3::jsonb,transformations=$4::jsonb,
@@ -332,8 +367,8 @@ function productKey(parsed) {
 }
 
 function variantKey(parsed) {
-  if(parsed.code)return `code:${parsed.code.toLowerCase()}`;
   if(parsed.variants.length)return `options:${parsed.variants.map((part)=>`${part.name}:${part.value}`).join('|').toLowerCase()}`;
+  if(parsed.code)return `code:${parsed.code.toLowerCase()}`;
   return 'default';
 }
 
@@ -373,6 +408,7 @@ async function execute(database, ctx, id, options={}) {
         grouped.get(key).push(row);
       }
       let itemsCreated=0;let skusCreated=0;let units=0;let rowsImported=0;
+      const salePriceBySku=new Map();
       for(const [key,group] of grouped){
         if(options.beforeGroup)await options.beforeGroup({key,group,itemsCreated});
         const skuByVariant=new Map();
@@ -392,6 +428,17 @@ async function execute(database, ctx, id, options={}) {
           if(options.beforeRow)await options.beforeRow({row,rowsImported});
           const skuId=row.parsed.existingSkuId || skuByVariant.get(key.startsWith('existing:')?'existing':variantKey(row.parsed));
           const itemId=row.parsed.existingItemId || row.parsed.createdItemId;
+          if(row.parsed.sellingPriceMinor!==null){
+            const saleKey=`${row.parsed.currency}:${row.parsed.sellingPriceMinor}`;
+            if(salePriceBySku.has(skuId)&&salePriceBySku.get(skuId)!==saleKey)
+              throw new ValidationError(`Conflicting selling prices for ${row.parsed.name} in this import.`);
+            if(!salePriceBySku.has(skuId)){
+              await postgresPrices.setPriceInTransaction(client,ctx,{skuId,
+                amountMinor:row.parsed.sellingPriceMinor,currency:row.parsed.currency,
+                source:'opening_import',sourceDetail:{importId:id,importRowId:row.id}});
+              salePriceBySku.set(skuId,saleKey);
+            }
+          }
           const movementIds=[];
           if(row.parsed.quantity>0){
             const received=await inventory.receiveInTransaction(client,ctx,{skuId,locationId:row.parsed.locationId,
@@ -400,6 +447,24 @@ async function execute(database, ctx, id, options={}) {
               notes:row.parsed.notes,reference:`Import ${plan.sourceName} row ${row.rowNumber}`,
               idempotencyKey:`import:${id}:row:${row.id}`});
             movementIds.push(received.movementId);units+=row.parsed.quantity;
+            if(row.parsed.unitCostMinor!==null){
+              const totalCostMinor=row.parsed.quantity*row.parsed.unitCostMinor;
+              let journalEntryId=null;
+              if(totalCostMinor>0){
+                const posted=await ledger.postInTransaction(client,ctx,{
+                  postingDate:nowIso().slice(0,10),sourceKey:`import:${id}:row:${row.id}:opening-value`,
+                  sourceType:'opening_inventory',sourceRecordType:'import_row',sourceRecordId:row.id,
+                  description:`Opening inventory from ${plan.sourceName}, row ${row.rowNumber}`,
+                  currency:row.parsed.currency,
+                  lines:[{accountKey:'INVENTORY_ASSET',debitMinor:totalCostMinor,skuId,locationId:row.parsed.locationId},
+                    {accountKey:'OPENING_BALANCE_EQUITY',creditMinor:totalCostMinor}],
+                });
+                journalEntryId=posted.entry.id;
+              }
+              await costing.receiveInTransaction(client,ctx,{movementId:received.movementId,totalCostMinor,
+                unitCostMinor:row.parsed.unitCostMinor,journalEntryId,
+                sourceType:'opening_inventory',sourceRecordId:row.id});
+            }
           }
           await client.query(`UPDATE import_rows SET status='IMPORTED',item_id=$3,sku_id=$4,location_id=$5,
             movement_ids=$6,quantity=$7,imported_at=$8 WHERE workspace_id=$1 AND id=$2`,
@@ -411,6 +476,26 @@ async function execute(database, ctx, id, options={}) {
       const checks=[{name:'Rows imported',expected:sourceRows.length,observed:rowsImported,ok:sourceRows.length===rowsImported},
         {name:'Opening units',expected:sourceRows.reduce((sum,row)=>sum+(row.parsed.quantity || 0),0),observed:units,
           ok:sourceRows.reduce((sum,row)=>sum+(row.parsed.quantity || 0),0)===units}];
+      const valuedRows=sourceRows.filter((row)=>row.parsed.quantity>0&&row.parsed.unitCostMinor!==null);
+      const valuedIds=valuedRows.map((row)=>row.id);
+      const expectedValue=valuedRows.reduce((sum,row)=>sum+row.parsed.quantity*row.parsed.unitCostMinor,0);
+      const value=(await client.query(`SELECT COALESCE(SUM(cost_delta_minor),0)::bigint AS value,
+        COUNT(*)::int AS movements FROM accounting_inventory_cost_movements
+        WHERE workspace_id=$1 AND cost_source_type='opening_inventory' AND cost_source_record_id=ANY($2::text[])`,
+      [ctx.workspaceId,valuedIds])).rows[0];
+      const posted=(await client.query(`SELECT COALESCE(SUM(l.debit_minor),0)::bigint AS value
+        FROM accounting_journal_entries e JOIN accounting_journal_lines l
+          ON l.entry_id=e.id AND l.workspace_id=e.workspace_id
+        JOIN accounting_accounts a ON a.id=l.account_id AND a.workspace_id=l.workspace_id
+        WHERE e.workspace_id=$1 AND e.source_type='opening_inventory'
+          AND e.source_record_id=ANY($2::text[]) AND a.system_key='INVENTORY_ASSET'`,
+      [ctx.workspaceId,valuedIds])).rows[0];
+      checks.push({name:'Valued receipt records',expected:valuedRows.length,observed:Number(value.movements),
+        ok:valuedRows.length===Number(value.movements)},
+      {name:'Opening cost in cents',expected:expectedValue,observed:Number(value.value),
+        ok:expectedValue===Number(value.value)},
+      {name:'Inventory asset posted in cents',expected:expectedValue,observed:Number(posted.value),
+        ok:expectedValue===Number(posted.value)});
       const verified=checks.every((check)=>check.ok);
       const verificationId=newId('impverify');
       await client.query(`INSERT INTO import_verifications(id,workspace_id,import_id,execution_id,verified,checks,

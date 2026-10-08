@@ -14,9 +14,9 @@
 
 /**
  * The fields StockChief can actually import into. Deliberately short: every entry
- * corresponds to something Mission 1 stores. A file's "Unit Cost" or "Supplier"
- * column is recognised below as *ignorable* rather than mapped somewhere close,
- * because inventing a home for it would be pretending StockChief does purchasing.
+ * corresponds to a value StockChief can preserve. A supplier name is not an
+ * inventory value, but an explicit per-unit cost can be posted to the opening
+ * inventory cost ledger when accounting is configured.
  */
 const FIELDS = [
   { id: 'name', label: 'Product name' },
