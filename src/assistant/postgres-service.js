@@ -400,6 +400,8 @@ async function lookup(database,ctx,request,options={}) {
       COALESCE(invoices.invoiced_minor,0) AS invoiced_minor,
       COALESCE(invoices.outstanding_minor,0) AS outstanding_minor,
       COALESCE(payments.paid_minor,0) AS paid_minor,
+      COALESCE(posted.revenue_minor,0) AS posted_revenue_minor,
+      COALESCE(posted.cogs_minor,0) AS posted_cogs_minor,
       COALESCE(shipments.shipment_count,0) AS shipment_count
       FROM sales_orders so JOIN customers c ON c.id=so.customer_id AND c.workspace_id=so.workspace_id
       LEFT JOIN LATERAL (SELECT SUM(quantity_ordered) AS ordered_units,
@@ -417,6 +419,15 @@ async function lookup(database,ctx,request,options={}) {
         JOIN accounting_customer_invoices inv ON inv.id=a.customer_invoice_id AND inv.workspace_id=a.workspace_id
         JOIN accounting_payments pay ON pay.id=a.payment_id AND pay.workspace_id=a.workspace_id
         WHERE a.workspace_id=so.workspace_id AND inv.sales_order_id=so.id AND pay.status='POSTED') payments ON true
+      LEFT JOIN LATERAL (SELECT
+        SUM(CASE WHEN acct.system_key='SALES_REVENUE' THEN line.credit_minor-line.debit_minor ELSE 0 END) AS revenue_minor,
+        SUM(CASE WHEN acct.system_key='COST_OF_GOODS_SOLD' THEN line.debit_minor-line.credit_minor ELSE 0 END) AS cogs_minor
+        FROM accounting_journal_entries entry
+        JOIN accounting_journal_lines line ON line.entry_id=entry.id AND line.workspace_id=entry.workspace_id
+        JOIN accounting_accounts acct ON acct.id=line.account_id AND acct.workspace_id=line.workspace_id
+        WHERE entry.workspace_id=so.workspace_id AND entry.source_record_type='sales_order'
+          AND entry.source_record_id=so.id AND entry.source_type='sale_fulfillment'
+          AND entry.status='POSTED') posted ON true
       LEFT JOIN LATERAL (SELECT COUNT(*)::int AS shipment_count FROM sales_shipments
         WHERE workspace_id=so.workspace_id AND sales_order_id=so.id) shipments ON true
       WHERE so.workspace_id=$1 AND ($2::text IS NULL OR so.order_number ILIKE '%'||$2||'%' OR c.name ILIKE '%'||$2||'%'
@@ -427,11 +438,15 @@ async function lookup(database,ctx,request,options={}) {
       invoiceCount:Number(row.invoice_count),invoiced:pricing.formatMinor(Number(row.invoiced_minor),row.currency),
       paid:pricing.formatMinor(Number(row.paid_minor),row.currency),
       outstanding:pricing.formatMinor(Number(row.outstanding_minor),row.currency),
+      postedRevenue:pricing.formatMinor(Number(row.posted_revenue_minor),row.currency),
+      postedProductCost:pricing.formatMinor(Number(row.posted_cogs_minor),row.currency),
+      postedGrossProfit:pricing.formatMinor(Number(row.posted_revenue_minor)-Number(row.posted_cogs_minor),row.currency),
       shipments:Number(row.shipment_count)},`/orders/${row.id}`));
     return {answer:rows.length?`${rows.length===100?'Showing the first 100':rows.length} customer order${rows.length===1?'':'s'} ${search?'matched':'recorded'}; ${rows.reduce((sum,row)=>sum+row.openUnits,0).toLocaleString('en-US')} units remain open.`:
       search?'No customer order matched that request.':'No customer orders are recorded in StockChief. Sales through systems that are not connected or imported here would not appear in this list.',
       rows,columns:['order','status','customer','orderedUnits','heldUnits','fulfilledUnits','openUnits',
-        'invoiceCount','invoiced','paid','outstanding','shipments']};
+        'invoiceCount','invoiced','paid','outstanding','postedRevenue','postedProductCost',
+        'postedGrossProfit','shipments']};
   }
   if(['suppliers','customers'].includes(request.view)){
     const supplier=request.view==='suppliers';

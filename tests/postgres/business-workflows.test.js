@@ -223,6 +223,17 @@ test('PostgreSQL purchasing, receiving, sales and payments remain one reconciled
     assert.equal(await accountBalance(database, 'SALES_REVENUE'), -12000);
     assert.equal(await accountBalance(database, 'COST_OF_GOODS_SOLD'), 6400);
     assert.equal(await accountBalance(database, 'INVENTORY_ASSET'), 1600);
+    const orderEvidence = await assistant.lookup(database, ctx,
+      { view: 'sales_orders', search: order.orderNumber });
+    assert.equal(orderEvidence.rows.length, 1);
+    assert.deepEqual({ fulfilled: orderEvidence.rows[0].fulfilledUnits,
+      held: orderEvidence.rows[0].heldUnits,
+      postedRevenue: orderEvidence.rows[0].postedRevenue,
+      postedProductCost: orderEvidence.rows[0].postedProductCost,
+      postedGrossProfit: orderEvidence.rows[0].postedGrossProfit,
+      outstanding: orderEvidence.rows[0].outstanding },
+    { fulfilled: 8, held: 0, postedRevenue: '$120.00', postedProductCost: '$64.00',
+      postedGrossProfit: '$56.00', outstanding: '$120.00' });
 
     const customerPartPayment = await workflows.recordCustomerPayment(database, ctx, {
       customerId: 'customer', customerInvoiceId: invoice.id, salesOrderId: order.salesOrderId,
