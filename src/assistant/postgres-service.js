@@ -832,6 +832,8 @@ async function prepareAction(database,ctx,message,request,options={}) {
       choices:party.ambiguous.map((row)=>({label:`${row.name}${row.email?` · ${row.email}`:''}`,value:row.name}))};
     const orderContext={...skuContext,[sales?'customer':'supplier']:party.row.name};
     if(request.neededBy&&!/^\d{4}-\d{2}-\d{2}$/.test(request.neededBy))return {status:'CLARIFY',answer:'What exact date is needed, in YYYY-MM-DD format?'};
+    if(request.orderDate&&!/^\d{4}-\d{2}-\d{2}$/.test(request.orderDate))return {status:'CLARIFY',
+      answer:'What exact customer order date should be recorded, in YYYY-MM-DD format? Nothing changed.'};
     if(sales){
       const deliveryChoice=String(request.deliveryMethod||'').trim().toLowerCase().replace(/[\s-]+/g,'_');
       const deliveryMethod={ship:'SHIP',shipping:'SHIP',carrier:'SHIP',carrier_shipping:'SHIP',
@@ -855,7 +857,8 @@ async function prepareAction(database,ctx,message,request,options={}) {
       if(amountMinor===null)return {status:'CLARIFY',answer:`What selling price per unit should this order use for ${sku.row.name}?`,awaitingField:'amount',carryForward:orderContext};
       const currency=request.currency||current.currency||'USD';
       return createProposal(database,ctx,message,'sales_order.create',{customerId:party.row.id,
-        deliveryMethod,shipToAddress:destination,fulfillmentLocationId,neededBy:request.neededBy,
+        deliveryMethod,shipToAddress:destination,fulfillmentLocationId,orderDate:request.orderDate,
+        neededBy:request.neededBy,
         currency,reference:request.reference,lines:[{skuId:sku.row.id,quantity:request.quantity,unitPriceMinor:amountMinor}]},
       `Prepare a draft customer order for ${party.row.name}: ${request.quantity} × ${sku.row.name}${sku.row.variant_label?` · ${sku.row.variant_label}`:''} at ${pricing.formatMinor(amountMinor,currency)} each, ${deliveryMethod==='PICKUP'?`pickup from ${fulfillmentLocationName}`:`to ${destination}`}.`);
     }

@@ -52,6 +52,7 @@ const FIELDS=Object.freeze({
   supplier:{type:'string',entity:'supplier',description:'Supplier identity.'},
   deliveryMethod:{type:'string',description:'SHIP, PICKUP, or OWN_DELIVERY.'},
   shipToAddress:{type:'string',description:'Customer delivery address.'},
+  orderDate:{type:'string',description:'Customer order business date in YYYY-MM-DD format, only when explicitly stated.'},
   neededBy:{type:'string',description:'Requested date in YYYY-MM-DD format.'},
   allocationPriority:{type:'integer',description:'Customer-order stock allocation priority, a whole number from 0 to 1000.'},
   purchaseOrder:{type:'string',entity:'purchase_order',description:'Purchase order identity or number.'},
@@ -200,7 +201,7 @@ action('communication.send_email','Prepare a business email for review; sending 
   ['recipient','recipientKind','recipientEmail','recipientMode','subject','body','mailbox'],permissions.OPERATE,'send_email',
   {additionalCommercialCapabilities:['connection.email']});
 action('sales_order.create','Prepare a draft customer order without claiming it was fulfilled.',
-  ['customer','sku','skuScope','quantity','deliveryMethod','shipToAddress','location','neededBy','amount','currency','reference'],
+  ['customer','sku','skuScope','quantity','deliveryMethod','shipToAddress','location','orderDate','neededBy','amount','currency','reference'],
   permissions.MANAGE_SALES,'create_sales_order',{allowUnknownEntities:['customer'],
     resultReference:'salesOrderId',resultRecordKind:'sales_order'});
 action('customer_invoice.create','Prepare a customer invoice for review. Approval records and posts the invoice in StockChief; it does not create or fulfill a customer order, send the invoice, or collect payment.',

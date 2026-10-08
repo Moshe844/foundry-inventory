@@ -111,9 +111,9 @@ test('Ask browser controls a real customer order, payment, and return through th
     assert.deepEqual({method:pickupOrder.delivery_method,address:pickupOrder.ship_to_address,
       location:pickupOrder.fulfillment_location_id,status:pickupOrder.status},
     {method:'PICKUP',address:null,location:place.id,status:'DRAFT'});
-    const combined='Create another two-boot order for Builder Co, pickup at Main Warehouse, and reserve the stock';
+    const combined='Create another two-boot order for Builder Co dated 2026-08-14, pickup at Main Warehouse, and reserve the stock';
     plans.set(combined,[step('sales_order.create',{customer:'Builder Co',sku:'Work Boot',quantity:2,
-      deliveryMethod:'customer pickup',location:'Main Warehouse'}),
+      deliveryMethod:'customer pickup',location:'Main Warehouse',orderDate:'2026-08-14'}),
     {...step('sales_order.confirm',{recordReference:'Builder Co'}),dependsOn:[0]}]);
     const combinedCreate=await prepareAndApprove(page,base,database,ctx.workspaceId,combined,'sales_order.create');
     const combinedConfirm=(await database.query(`SELECT * FROM stockchief_runtime.assistant_action_proposals
@@ -125,9 +125,10 @@ test('Ask browser controls a real customer order, payment, and return through th
       [ctx.workspaceId,combinedCreate.result.salesOrderId])).rows[0].status,'DRAFT');
     await page.goto(`${base}/actions/${combinedConfirm.id}`);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve and execute'}).click()]);
-    const combinedOrder=(await database.query('SELECT status FROM sales_orders WHERE workspace_id=$1 AND id=$2',
+    const combinedOrder=(await database.query('SELECT status,order_date FROM sales_orders WHERE workspace_id=$1 AND id=$2',
       [ctx.workspaceId,combinedCreate.result.salesOrderId])).rows[0];
     assert.equal(combinedOrder.status,'CONFIRMED');
+    assert.equal(combinedOrder.order_date,'2026-08-14');
     const combinedAllocation=(await database.query(`SELECT a.quantity FROM sales_order_allocations a
       JOIN sales_order_lines l ON l.id=a.sales_order_line_id WHERE a.workspace_id=$1 AND l.sales_order_id=$2`,
     [ctx.workspaceId,combinedCreate.result.salesOrderId])).rows;

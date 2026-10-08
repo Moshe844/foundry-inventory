@@ -67,3 +67,30 @@ test('fit rejects a draft-only answer to create-and-reserve and preserves verifi
     ['sales_order.create','sales_order.confirm']);
   assert.equal(fits,2);
 });
+
+test('an explicit reservation becomes a dependent approved step and invented per-unit money is removed',async()=>{
+  const provider={async complete({schemaName}){
+    if(schemaName==='stockchief_capability_fit')return {data:{aligned:true,reason:''}};
+    return {data:{steps:[{capability:'sales_order.create',arguments:[
+      {name:'customer',value:'Northside'},{name:'sku',value:'Valve'},
+      {name:'quantity',value:'2'},{name:'amount',value:'37'}],dependsOn:[],continuesPending:false}],
+    clarifyingQuestion:''}};
+  }};
+  const result=await planner.plan(provider,
+    'Create a new order for 2 valves for Northside at the current price and reserve the stock.');
+  assert.deepEqual(result.steps.map(({contract})=>contract.name),
+    ['sales_order.create','sales_order.confirm']);
+  assert.deepEqual(result.steps[1].dependsOn,[0]);
+  assert.equal(Object.hasOwn(result.steps[0].args,'amount'),false);
+});
+
+test('a request to leave an order as draft never gains a reservation step',async()=>{
+  const provider={async complete({schemaName}){
+    if(schemaName==='stockchief_capability_fit')return {data:{aligned:true,reason:''}};
+    return {data:{steps:[{capability:'sales_order.create',arguments:[],dependsOn:[],
+      continuesPending:false}],clarifyingQuestion:''}};
+  }};
+  const result=await planner.plan(provider,
+    'Create a draft customer order only. Do not reserve inventory yet.');
+  assert.deepEqual(result.steps.map(({contract})=>contract.name),['sales_order.create']);
+});

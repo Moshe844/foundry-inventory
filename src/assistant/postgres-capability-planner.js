@@ -140,6 +140,41 @@ function parseSteps(raw,catalogue=registry){
     closestAlternative:alternative?.discovery?alternative.name:null};
 }
 
+function groundedMoneyArguments(steps,message,pending){
+  const moneyFields=new Set(['amount','tax','unitAmount','maxCost']);
+  const source=`${pending?.originalMessage||''} ${message}`;
+  const statedNumbers=[...source.matchAll(/(?:^|[^\w])(?:[$€£]\s*)?(\d[\d,]*(?:\.\d+)?)(?=$|[^\w])/g)]
+    .map((match)=>Number(match[1].replaceAll(',',''))).filter(Number.isFinite);
+  for(const step of steps)for(const [field,value] of Object.entries(step.args)){
+    if(field==='orderDate'&&!source.includes(String(value))){delete step.args[field];continue;}
+    if(!moneyFields.has(field))continue;
+    const planned=Number(String(value).replaceAll(',',''));
+    if(Number.isFinite(planned)&&!statedNumbers.some((stated)=>Math.abs(stated-planned)<.000001))
+      delete step.args[field];
+  }
+  return steps;
+}
+
+function coverExplicitOrderReservation(steps,message,catalogue,pending){
+  const goal=steps.some((step)=>step.continuesPending)&&pending?.originalMessage
+    ?pending.originalMessage:message;
+  const effect=/\b(?:reserv(?:e|ing|ation)|allocat(?:e|ing|ion)|hold|commit)\b/ig;
+  const requested=[...goal.matchAll(effect)].some((match)=>{
+    const before=goal.slice(Math.max(0,match.index-35),match.index);
+    const after=goal.slice(match.index+match[0].length,match.index+match[0].length+28);
+    if(/\b(?:do\s+not|don['’]t|never|without|no|not\s+yet)\b[^.!?]{0,28}$/i.test(before)
+      ||/^\s+(?:is\s+)?(?:not|unnecessary|optional)\b/i.test(after))return false;
+    if(/^hold$/i.test(match[0])&&!/\b(?:stock|inventory|units?|items?|products?)\b/i.test(after))return false;
+    return true;
+  });
+  if(!requested||steps.some((step)=>step.contract.name==='sales_order.confirm'))return steps;
+  const creates=steps.map((step,index)=>({step,index})).filter(({step})=>step.contract.name==='sales_order.create');
+  const confirm=catalogue.get('sales_order.confirm');
+  if(creates.length!==1||!confirm||steps.length>=8)return steps;
+  steps.push({contract:confirm,args:{},dependsOn:[creates[0].index],continuesPending:false});
+  return steps;
+}
+
 async function plan(provider,message,{catalogue=registry,history=[],pending=null,page=null,workspace=null,
   recentChanges=[],deferReadFit=false,feedback=null}={}){
   if(!provider)return {steps:[],clarifyingQuestion:'StockChief cannot interpret free-form requests while its reasoning connection is unavailable. Nothing changed.'};
@@ -183,6 +218,10 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
       reconsidered=true;
     }catch(error){if(error.code==='entitlement_required')throw error;}
   }
+  if(selected.steps.length){
+    groundedMoneyArguments(selected.steps,message,pending);
+    coverExplicitOrderReservation(selected.steps,message,catalogue,pending);
+  }
   // Read-only plans can be checked against actual evidence by the answer
   // stage, which can request a broader registered read when needed.
   if(deferReadFit&&!reconsidered&&!selected.clarifyingQuestion&&selected.steps.length
@@ -216,6 +255,10 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
           schema:schemaFor(catalogue),schemaName:'stockchief_capability_plan'});
         selected=parseSteps(repaired.data,catalogue);
         if(selected.steps.length){
+          groundedMoneyArguments(selected.steps,message,pending);
+          coverExplicitOrderReservation(selected.steps,message,catalogue,pending);
+        }
+        if(selected.steps.length){
           fit=await provider.complete({system:FIT_SYSTEM,prompt:JSON.stringify(candidate()),
             schema:FIT_SCHEMA,schemaName:'stockchief_capability_fit'});
           if(fit.data?.aligned===false)return {steps:[],
@@ -229,4 +272,5 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
   return selected.steps.length?selected:{steps:[],clarifyingQuestion:SAFE_CLARIFICATION};
 }
 
-module.exports={schemaFor,systemFor,planningCatalogue,parseSteps,plan};
+module.exports={schemaFor,systemFor,planningCatalogue,parseSteps,plan,
+  groundedMoneyArguments,coverExplicitOrderReservation};
