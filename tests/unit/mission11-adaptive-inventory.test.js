@@ -177,6 +177,7 @@ test('cash constraints reconcile posted cash, purchase commitments and owner res
   });
   let po = purchaseOrders.createOrder(db, workspace.ctx, membership, {
     supplierId:supplier.id, destinationLocationId:workspace.main.id,
+    orderDate:'2026-09-11', expectedDate:'2026-09-16',
     lines:[{ skuId:item.skuId, quantityUnits:10, unitCost:20 }],
   });
   po = purchaseOrders.approve(db, workspace.ctx, membership, po.id,

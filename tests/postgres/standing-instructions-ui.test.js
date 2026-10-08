@@ -21,6 +21,14 @@ const provider={async complete(input){
   if(input.schemaName==='stockchief_postgres_request')return {data:{intent:'instruction',view:null,action:null,
     search:null,sku:null,location:null,fromLocation:null,toLocation:null,quantity:null,countedQuantity:null,reason:null,reference:null},
     usage:{provider:'fixture-ai',model:'fixture-model',inputTokens:20,outputTokens:10}};
+  if(input.schemaName==='postgres_operating_instruction'&&JSON.parse(input.prompt).instruction?.includes('this product')){
+    const prompt=JSON.parse(input.prompt);
+    assert.equal(prompt.currentRecord.sku,'RULE-1');
+    return {data:{understood:true,summary:'Set the current product reorder point to four',
+      clarifyingQuestion:'',unsupportedReason:'',changes:[change('replenishment',
+        {sku:prompt.currentRecord.sku,reorderPoint:4})]},
+    usage:{provider:'fixture-ai',model:'fixture-model',inputTokens:40,outputTokens:20}};
+  }
   if(input.schemaName==='postgres_operating_instruction')return {data:{understood:true,
     summary:'Keep Rule Widget replenished under approved supplier, transfer and stock limits',clarifyingQuestion:'',unsupportedReason:'',changes:[
       change('replenishment',{sku:'RULE-1',reorderPoint:8,targetStock:20,safetyStock:3}),
@@ -76,6 +84,13 @@ test('real Chromium approves one free-form PostgreSQL standing instruction witho
     const reorder=(await database.query(`SELECT * FROM reorder_policies WHERE workspace_id=$1 AND sku_id=$2`,
       [ctx.workspaceId,item.skuIds[0]])).rows[0];
     assert.equal(Number(reorder.reorder_point),8);assert.equal(Number(reorder.target_stock),20);assert.equal(Number(reorder.safety_stock),3);
+    const currentPage=await require('../../src/assistant/postgres-page-context').load(database,ctx.workspaceId,
+      `/inventory/${item.itemId}`);
+    const contextual=await require('../../src/manager/postgres-operating-instructions').interpret(database,ctx,
+      'Set the reorder point to 4 units for this product.',{provider:require('../helpers/postgres-model-fixture').fixture(provider),
+        currentPage,instructionUsageKey:'contextual-reorder-rule'});
+    assert.equal(contextual.resolvedChanges[0].skuCode,'RULE-1');
+    assert.equal(Number(contextual.resolvedChanges[0].reorderPoint),4);
     const supplierTerms=(await database.query(`SELECT lead_time_days,minimum_order_quantity FROM supplier_items
       WHERE workspace_id=$1 AND sku_id=$2`,[ctx.workspaceId,item.skuIds[0]])).rows[0];
     assert.equal(Number(supplierTerms.lead_time_days),12);

@@ -112,7 +112,7 @@ test('a supplier bill rejected by ledger validation leaves no partial draft behi
   'a rejected post must roll back the draft, its lines and provenance');
 });
 
-test('Home shows money on a confirmed unpaid order before it becomes earned revenue', async () => {
+test('Home leads to Money, which separates a confirmed unpaid order from earned revenue', async () => {
   const env = await setup();
   const product = makeQuantityItem(env.db, env.workspace.ctx, { name: 'Customer Order Shoe' });
   prices.setPrice(env.db, env.workspace.ctx, {
@@ -129,17 +129,14 @@ test('Home shows money on a confirmed unpaid order before it becomes earned reve
 
   const homePage = await env.agent.get('/').expect(200);
   const home = plain(homePage.text);
-  assert.match(home, /Profit from fulfilled sales\s*\$0/i);
-  assert.match(home, /Customers still need to pay.*\$2,500/i);
-  assert.match(homePage.text, /href="\/accounting\/reports\/profit-and-loss\?from=[^"]+&(?:amp;)?to=[^"]+"/,
-    'the headline profit opens its exact report period');
-  for (const destination of ['cash', 'customers', 'suppliers']) {
-    assert.match(homePage.text, new RegExp(`href="/accounting#${destination}"`),
-      `the home money summary drills into ${destination} evidence`);
-  }
-
-  const money = plain((await env.agent.get('/money').expect(200)).text);
-  assert.match(money, /\$0\.00 earned this period.*You're owed.*\$2,500\.00.*1 confirmed order awaiting payment/i);
+  assert.match(homePage.text, /href="\/money"/, 'Home opens the current Money workspace');
+  assert.doesNotMatch(home, /NaN available for orders/i);
+  const moneyPage = await env.agent.get('/money').expect(200);
+  const moneyBefore = plain(moneyPage.text);
+  assert.match(moneyBefore, /No profit or loss recorded yet/i);
+  assert.match(moneyBefore, /You're owed.*\$2,500.*1 confirmed order awaiting payment/i);
+  assert.match(moneyPage.text, /href="\/accounting\/reports\/profit-and-loss\?from=[^"]+&(?:amp;)?to=[^"]+"/,
+    'Money opens the exact profit report period');
 
   const accounting = plain((await env.agent.get('/accounting').expect(200)).text);
   assert.match(accounting,
@@ -156,12 +153,14 @@ test('Home shows money on a confirmed unpaid order before it becomes earned reve
     amountMinor: 250000, method: 'card', sourceKey: `home-prepayment:${order.id}`,
   });
 
-  const paidHome = plain((await env.agent.get('/').expect(200)).text);
-  assert.match(paidHome, /Profit from fulfilled sales\s*\$0/i,
+  const paidMoney = plain((await env.agent.get('/money').expect(200)).text);
+  assert.match(paidMoney, /No profit or loss recorded yet/i,
     'prepayment is not called revenue or profit before fulfilment');
-  assert.match(paidHome, /Customer cash received this period.*\$2,500/i);
-  assert.match(paidHome, /Customers still need to pay.*\$0/i);
-  assert.match(paidHome, /\$2,500 was paid before delivery.*cash received.*not earned revenue or profit until the goods leave/i);
+  assert.match(paidMoney, /You're owed.*\$0\.00/i);
+  assert.match(paidMoney, /In the bank.*\$2,500\.00/i);
+  const paidAccounting = plain((await env.agent.get('/accounting').expect(200)).text);
+  assert.match(paidAccounting, /Customer cash received.*\$2,500\.00/i);
+  assert.match(paidAccounting, /goods have not left yet, so inventory and cost of sales are unchanged/i);
 
   const cashProof = await env.agent.get('/accounting').expect(200);
   assert.match(cashProof.text,

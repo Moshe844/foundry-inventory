@@ -122,7 +122,7 @@ async function executeStep(service,database,ctx,step,{actor,provider,rawProvider
   }
   if(contract.kind==='policy'){
     const result=await contract.prepare(service,database,ctx,sourceMessage,{},
-      {provider:rawProvider, instructionUsageKey:`${usageKey}:instruction`});
+      {provider:rawProvider, instructionUsageKey:`${usageKey}:instruction`,currentPage:page});
     return {result,args:{},provenance:{}};
   }
   if(contract.kind==='read'){
