@@ -180,6 +180,11 @@ test('Ask approvals update the conversation, invoices use the canonical ledger, 
       WHERE id=$1`,[stored.id])).rows[0];
     assert.deepEqual([revised.metric,revised.comparator,Number(revised.threshold)],
       ['available_to_fulfill','below',4]);
+    const ruleRead=await require('../../src/assistant/postgres-service').lookup(database,ctx,
+      {view:'operating_rules',search:'BLUE-SHOE'});
+    assert.equal(ruleRead.rows.find((row)=>row.kind==='stock_warning').threshold,4);
+    assert.equal(ruleRead.rows.find((row)=>row.kind==='stock_warning').metric,'available_to_fulfill');
+    assert.match(ruleRead.answer,/strictly below 4 available to fulfill; it does not email or purchase/);
     assert.deepEqual(await stockAlerts.evaluate(database,{workspaceId:ctx.workspaceId}),
       {checked:1,alerted:0,rearmed:0});
     const customer=(await database.query(`SELECT id FROM customers WHERE workspace_id=$1 AND name='River Market'`,

@@ -305,7 +305,7 @@ async function synthesizeReads(provider,message,executed,{completedActions=[],ca
 }
 
 async function groundNamedSkuReads(service,database,ctx,message,executed,catalogue,executionOptions){
-  if(!executed.some((entry)=>['inventory','inventory_positions','inventory_movements',
+  if(!executed.some((entry)=>['inventory','inventory_positions','inventory_movements','operating_rules',
     'inventory_valuation','inventory_cost_movements','inventory_summary','prices','purchase_costs']
     .includes(entry.step.contract.view)))return;
   const named=(await database.query(`SELECT s.code FROM skus s JOIN items i
@@ -315,15 +315,19 @@ async function groundNamedSkuReads(service,database,ctx,message,executed,catalog
     ORDER BY length(s.code) DESC LIMIT 2`,[ctx.workspaceId,message])).rows;
   if(named.length!==1)return;
   // A planner may omit the SKU search even when the customer named a unique
-  // SKU. Re-read those movement rows with the exact SKU to avoid mixing other
-  // products into both the displayed evidence and the numerical summary.
+  // SKU. Re-read stock-history and rule evidence with that exact SKU so other
+  // products cannot contaminate a numerical or policy answer.
   for(let index=0;index<executed.length;index++){
     const entry=executed[index];
-    if(entry.step.contract.view!=='inventory_movements'||entry.args.search===named[0].code)continue;
+    if(!['inventory_movements','operating_rules'].includes(entry.step.contract.view)
+      ||entry.args.search===named[0].code)continue;
     const step={...entry.step,args:{...entry.args,search:named[0].code}};
     const outcome=await executeStep(service,database,ctx,step,executionOptions);
     executed[index]={step,...outcome};
   }
+  if(!executed.some((entry)=>['inventory','inventory_positions','inventory_movements',
+    'inventory_valuation','inventory_cost_movements','inventory_summary','prices','purchase_costs']
+    .includes(entry.step.contract.view)))return;
   for(const view of ['inventory','inventory_valuation','inventory_cost_movements','prices']){
     if(executed.some((entry)=>entry.step.contract.view===view&&
       entry.args.search===named[0].code))continue;

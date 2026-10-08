@@ -250,6 +250,7 @@ const READS={
   inventory_summary:'Business-wide current and historical inventory setup evidence: active product and SKU counts, total on-hand units, and count of every product record ever created, including inactive records. Valid even when this business is empty; requires no product or location.',
   prices:'Current recorded selling prices.',purchase_costs:'Current supplier or owner-recorded unit purchase costs, with on-hand and costed inventory units shown separately. A missing current purchase quote does not mean inventory lacks book cost.',
   supplier_items:'Supplier-product links, purchasing terms, and costs.',needs_you:'Owner decisions awaiting attention.',
+  operating_rules:'Current approved operating rules and settings actually in force, including stock warnings, replenishment, outgoing-stock protection, automation authority and preferences. Use this to explain a specific approved rule or what a warning will do; do not substitute the general capability catalogue.',
   replenishment:'Recorded replenishment recommendations and their state.',locations:'Inventory locations.',
   purchase_orders:'Read supplier purchase orders, deliveries, linked invoice documents including disputes and exceptions, and the actually posted open payable; PO planned cost and disputed documents are not posted debt.',
   transfers:'Read tracked inventory transfers, their exact workflow state, source and destination, units held at source, departed/in transit, physically received, and unresolved loss or damage. An approved transfer has not physically left.',
@@ -339,7 +340,7 @@ for(const [name,discovery] of Object.entries(DISCOVERY)){
   if(!contract)throw new TypeError(`Discovery metadata has no executable contract: ${name}`);
   registry.entries.set(name,Object.freeze({...contract,discovery:Object.freeze(discovery)}));
 }
-add('read.capabilities','Explain what StockChief can actually do for this user in this workspace, based on registered executable capabilities, permissions, current plan, and connected systems. Use for questions about what you can do, how you can help, or how to get started. Never claim unsupported actions.',
+add('read.capabilities','Explain what StockChief can actually do for this user in this workspace, based on registered executable capabilities, permissions, current plan, and connected systems. Use for broad discovery questions about what you can do, how you can help, or how to get started. This does not read or explain a specific approved rule; use read.operating_rules for that. Never claim unsupported actions.',
   [],'read',permissions.VIEW,'none',
   (service,db,ctx)=>service.discover(db,ctx),
   async(_service,_db,_ctx,result)=>Boolean(result&&Array.isArray(result.rows)),

@@ -159,6 +159,66 @@ async function salesActivity(database,ctx,timeframe){
 
 async function lookup(database,ctx,request,options={}) {
   const search=trimOrNull(request.search);
+  if(request.view==='operating_rules'){
+    const [alerts,replenishment,guards,automation,preferences]=await Promise.all([
+      database.query(`SELECT s.code AS sku,i.name AS product,l.name AS location,r.threshold,r.metric,
+        r.comparator,r.armed,r.updated_at FROM stockchief_runtime.stock_threshold_rules r
+        JOIN skus s ON s.id=r.sku_id AND s.workspace_id=r.workspace_id
+        JOIN items i ON i.id=s.item_id AND i.workspace_id=r.workspace_id
+        LEFT JOIN locations l ON l.id=r.location_id AND l.workspace_id=r.workspace_id
+        WHERE r.workspace_id=$1 AND r.is_active=TRUE AND ($2::text IS NULL OR s.code ILIKE '%'||$2||'%'
+          OR i.name ILIKE '%'||$2||'%' OR l.name ILIKE '%'||$2||'%')
+        ORDER BY r.updated_at DESC LIMIT 100`,[ctx.workspaceId,search]),
+      database.query(`SELECT s.code AS sku,i.name AS product,l.name AS location,p.reorder_point,
+        p.target_stock,p.safety_stock,p.updated_at FROM reorder_policies p
+        JOIN skus s ON s.id=p.sku_id AND s.workspace_id=p.workspace_id
+        JOIN items i ON i.id=s.item_id AND i.workspace_id=p.workspace_id
+        LEFT JOIN locations l ON l.id=p.location_id AND l.workspace_id=p.workspace_id
+        WHERE p.workspace_id=$1 AND ($2::text IS NULL OR s.code ILIKE '%'||$2||'%'
+          OR i.name ILIKE '%'||$2||'%' OR l.name ILIKE '%'||$2||'%')
+        ORDER BY p.updated_at DESC LIMIT 100`,[ctx.workspaceId,search]),
+      database.query(`SELECT s.code AS sku,i.name AS product,l.name AS location,g.enforcement_mode,
+        g.metric,g.comparator,g.threshold,g.release_condition,g.updated_at FROM operating_guards g
+        JOIN skus s ON s.id=g.sku_id AND s.workspace_id=g.workspace_id
+        JOIN items i ON i.id=s.item_id AND i.workspace_id=g.workspace_id
+        LEFT JOIN locations l ON l.id=g.location_id AND l.workspace_id=g.workspace_id
+        WHERE g.workspace_id=$1 AND g.is_active=1 AND ($2::text IS NULL OR s.code ILIKE '%'||$2||'%'
+          OR i.name ILIKE '%'||$2||'%' OR l.name ILIKE '%'||$2||'%')
+        ORDER BY g.updated_at DESC LIMIT 100`,[ctx.workspaceId,search]),
+      database.query(`SELECT name,allowed_action_types,maximum_quantity,maximum_value,thresholds,updated_at
+        FROM automation_policies WHERE workspace_id=$1 AND enabled=1 AND approved_at IS NOT NULL
+        AND ($2::text IS NULL OR name ILIKE '%'||$2||'%') ORDER BY updated_at DESC LIMIT 100`,
+      [ctx.workspaceId,search]),
+      database.query(`SELECT key,value,updated_at FROM operational_preferences WHERE workspace_id=$1
+        AND ($2::text IS NULL OR key ILIKE '%'||$2||'%') ORDER BY updated_at DESC LIMIT 100`,
+      [ctx.workspaceId,search]),
+    ]);
+    const rows=[
+      ...alerts.rows.map((row)=>({kind:'stock_warning',sku:row.sku,product:row.product,
+        location:row.location||'All locations',threshold:Number(row.threshold),metric:row.metric,
+        comparator:row.comparator,armed:row.armed,externalEmail:false,automaticPurchase:false,
+        updatedAt:row.updated_at})),
+      ...replenishment.rows.map((row)=>({kind:'replenishment_setting',sku:row.sku,
+        product:row.product,location:row.location||'All locations',reorderPoint:row.reorder_point,
+        targetStock:row.target_stock,safetyStock:row.safety_stock,automaticPurchase:false,
+        updatedAt:row.updated_at})),
+      ...guards.rows.map((row)=>({kind:'outgoing_stock_protection',sku:row.sku,
+        product:row.product,location:row.location||'All locations',mode:row.enforcement_mode,
+        metric:row.metric,comparator:row.comparator,threshold:Number(row.threshold),
+        releaseCondition:row.release_condition,updatedAt:row.updated_at})),
+      ...automation.rows.map((row)=>({kind:'approved_automation_authority',name:row.name,
+        actions:row.allowed_action_types,maximumQuantity:row.maximum_quantity,
+        maximumValue:row.maximum_value,thresholds:row.thresholds,updatedAt:row.updated_at})),
+      ...preferences.rows.map((row)=>({kind:'operating_preference',name:row.key,value:row.value,
+        updatedAt:row.updated_at})),
+    ];
+    const detail=rows.map((row)=>row.kind==='stock_warning'
+      ?`${row.sku} ${row.location}: Needs You warning ${row.comparator==='below'?'strictly below':'at or below'} ${row.threshold} ${row.metric==='available_to_fulfill'?'available to fulfill':'physically on hand'}; it does not email or purchase. ${row.armed?'Armed':'Waiting to re-arm'}.`
+      :`${row.kind.replaceAll('_',' ')}: ${JSON.stringify(row)}`).join(' ');
+    return {answer:rows.length?`Current in-force settings: ${detail}`:
+      'No current approved operating rule matched that request.',rows,
+      columns:['kind','sku','product','location','threshold','metric','comparator','updatedAt']};
+  }
   if(request.view==='inventory_positions'){
     const rows=(await database.query(`SELECT i.id AS item_id,i.name AS product,s.code AS sku,
       COALESCE(s.variant_label,'') AS variant,l.name AS location,b.on_hand,b.updated_at
