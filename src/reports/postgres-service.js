@@ -222,4 +222,5 @@ async function load(database,ctx,actor,id){
   return {...row,definition:normalize(row.definition,actor)};
 }
 
-module.exports={normalize,queryFor,run,save,list,load,drilldownSpec,comparableGroupAmounts};
+module.exports={normalize,queryFor,run,save,list,load,drilldownSpec,comparableGroupAmounts,
+  aggregateColumn:AGGREGATE_COLUMN};

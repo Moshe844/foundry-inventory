@@ -103,6 +103,10 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     assert.equal(productOrders.rows[0].customer,'Report Buyer');
     assert.equal(Number(productOrders.rows[0].ordered_units),3);
     assert.equal(productOrders.rows[0].href,`/orders/${lineOrder.salesOrderId}`);
+    const measuredSort=reportAsk.normalizeProposal({dataset:'sales_order_lines',groups:['sku'],
+      aggregate:'sum',measure:'open_units',sort:'open_units',direction:'desc',chart:'bar'},actor);
+    assert.equal(measuredSort.sort,'total');
+    assert.equal(Number((await reports.run(database,ctx,actor,measuredSort)).rows[0].total),3);
     assert.throws(()=>reports.normalize({dataset:'sales_orders',groups:['customer'],
       aggregate:'sum',measure:'quoted_line_total_minor',filters:[{field:'currency',operator:'equals',value:'USD'}],
       sort:'total'},actor),/pricing complete/i);
