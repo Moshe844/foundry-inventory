@@ -50,7 +50,7 @@ const { requireOperationalSubscription } = require('./web/commercial-middleware'
 
 function createPostgresApp({database,sessionStore,sessionSecret=config.sessionSecret,env=config.env,aiProvider=null,
   connectionProviders=null,connectionPublicOrigin=null,shippingOptions=null,paymentOptions=null,
-  commercialOptions=null,probeCacheMs={health:5000,readiness:1000},
+  commercialOptions=null,probeCacheMs={health:5000,readiness:1000},probeNow=Date.now,
   assetVersion=process.env.FOUNDRY_ASSET_VERSION||config.operations.releaseRef}={}) {
   if(!database?.query)throw new TypeError('A PostgreSQL database is required.');
   const app=express();
@@ -83,14 +83,19 @@ function createPostgresApp({database,sessionStore,sessionSecret=config.sessionSe
   app.use('/api/v1/public',createPostgresPublicApi(database));
   const probes=new Map();
   const probe=(key,ttl,run)=>{
-    const prior=probes.get(key);const now=Date.now();
-    if(prior&&prior.expiresAt>now)return prior.promise;
-    const promise=Promise.resolve().then(run).catch((error)=>{
-      if(probes.get(key)?.promise===promise)probes.delete(key);
+    const prior=probes.get(key);
+    if(prior&&(prior.pending||prior.expiresAt>probeNow()))return prior.promise;
+    const state={pending:true,expiresAt:0,promise:null};
+    state.promise=Promise.resolve().then(run).then((result)=>{
+      state.pending=false;
+      state.expiresAt=probeNow()+Math.max(0,Number(ttl)||0);
+      return result;
+    },(error)=>{
+      if(probes.get(key)===state)probes.delete(key);
       throw error;
     });
-    probes.set(key,{expiresAt:now+Math.max(0,Number(ttl)||0),promise});
-    return promise;
+    probes.set(key,state);
+    return state.promise;
   };
   app.get('/healthz',async(req,res)=>{
     try {

@@ -7,6 +7,7 @@ const session=require('express-session');
 const { createPostgresApp }=require('../../src/postgres-app');
 
 test('concurrent PostgreSQL health probes share bounded database checks',async()=>{
+  let now=0;
   let healthQueries=0;let readinessQueries=0;
   const database={async query(sql){
     if(sql.includes('stale_jobs')){readinessQueries+=1;await new Promise((resolve)=>setTimeout(resolve,10));
@@ -16,7 +17,7 @@ test('concurrent PostgreSQL health probes share bounded database checks',async()
     throw new Error(`Unexpected query: ${sql}`);
   }};
   const app=createPostgresApp({database,sessionStore:new session.MemoryStore(),env:'test',
-    sessionSecret:'probe-test-secret',probeCacheMs:{health:30,readiness:30}});
+    sessionSecret:'probe-test-secret',probeCacheMs:{health:30,readiness:30},probeNow:()=>now});
   const responses=await Promise.all([
     ...Array.from({length:20},()=>request(app).get('/healthz')),
     ...Array.from({length:20},()=>request(app).get('/readyz')),
@@ -24,9 +25,26 @@ test('concurrent PostgreSQL health probes share bounded database checks',async()
   assert.ok(responses.every((response)=>response.status===200));
   assert.equal(healthQueries,1);
   assert.equal(readinessQueries,1);
-  await new Promise((resolve)=>setTimeout(resolve,35));
+  now=31;
   await request(app).get('/healthz').expect(200);
   await request(app).get('/readyz').expect(200);
   assert.equal(healthQueries,2);
   assert.equal(readinessQueries,2);
+});
+
+test('a slow health check stays shared even after its nominal cache window passes',async()=>{
+  let now=0,queries=0,releaseQuery,startedQuery;
+  const started=new Promise((resolve)=>{startedQuery=resolve;});
+  const gate=new Promise((resolve)=>{releaseQuery=resolve;});
+  const database={async query(){queries++;startedQuery();await gate;return {rows:[{count:'20'}]};}};
+  const app=createPostgresApp({database,sessionStore:new session.MemoryStore(),env:'test',
+    sessionSecret:'slow-probe-test-secret',probeCacheMs:{health:30,readiness:30},probeNow:()=>now});
+  const first=request(app).get('/healthz').then((response)=>response);
+  await started;
+  now=100;
+  const second=request(app).get('/healthz').then((response)=>response);
+  releaseQuery();
+  const responses=await Promise.all([first,second]);
+  assert.ok(responses.every((response)=>response.status===200));
+  assert.equal(queries,1);
 });

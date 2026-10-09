@@ -93,7 +93,9 @@ async function prepare(database,ctx,message,{provider,priorReport=null}){
         schemaName:'stockchief_governed_report_fit',maxOutputTokens:600});
       if(fit.data?.aligned!==true)throw new Error(`Report does not match the request: ${String(fit.data?.reason||'unverified').slice(0,180)}`);
       const result=await reports.run(database,ctx,actor,spec,{limit:51});
-      const visible=result.rows.slice(0,50),truncated=result.hasMore||result.rows.length>50;
+      const visible=result.displayRows.slice(0,50).map((row,index)=>({...row,
+        ...(result.rows[index]?.href?{href:result.rows[index].href}:{})}));
+      const truncated=result.hasMore||result.rows.length>50;
       const label=spec.groups.length?(visible.length===1?'group':'groups'):
         (visible.length===1?'record':'records');
       const answer=visible.length?`${spec.title}: ${visible.length}${truncated?' or more':''} matching ${label} from recorded PostgreSQL data.`:

@@ -15,7 +15,7 @@
     <div class="report-checks"><% for(const [field,type] of Object.entries(dataset.fields)){ %>
       <label><input type="checkbox" name="columns" value="<%= field %>"
         <%= (selection?.columns||Object.keys(dataset.fields).slice(0,5)).includes(field)?'checked':'' %>>
-        <%= field.replaceAll('_',' ') %> <small><%= type==='money_minor'?'cents':type %></small></label>
+        <%= field.replaceAll('_',' ') %> <small><%= type==='money_minor'?'money':type %></small></label>
     <% } %></div>
   </div>
   <div class="report-card"><h2>Filter records</h2><p>Up to eight exact, text or range filters. Blank rows are ignored.</p>

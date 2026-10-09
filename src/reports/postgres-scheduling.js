@@ -59,7 +59,9 @@ async function generateDelivery(database,job){
     throw new Error('The verified recipient email changed. Review this report schedule before sending.');
   const actor={role:template.role,permissions:template.permissions,email:template.email};
   const result=await reports.run(database,{workspaceId:job.workspaceId},actor,template.definition,{limit:101});
-  const visible=result.rows.slice(0,100),limited=result.hasMore||result.rows.length>100;
+  // Customer-facing email must use the same currency-formatted values as the
+  // report builder/export, never raw money_minor database integers.
+  const visible=result.displayRows.slice(0,100),limited=result.hasMore||result.rows.length>100;
   const origin=String(config.connections.publicOrigin||'').replace(/\/$/,'');
   const href=origin.startsWith('https://')?`${origin}/reports/saved/${encodeURIComponent(template.id)}`:null;
   const table=`<table border="1" cellpadding="5" cellspacing="0"><thead><tr>${result.columns.map((column)=>
