@@ -148,6 +148,23 @@ test('independent evidence check repairs a status-mixed business briefing',async
   assert.match(result[0].result.answer,/One confirmed order has 2 open units/);
 });
 
+test('a grounded multi-part business briefing is not rejected for length alone',async()=>{
+  const executed=[{step:{contract:registry.get('read.needs_you')},args:{},provenance:{},
+    result:{status:'ANSWERED',answer:'One decision needs attention.',rows:[
+      {decision:'Resolve disputed bill BILL-2',importance:'Important',
+        reason:'The supplier invoice differs from the purchase order.'}]}}];
+  const briefing='I can help you inspect stock, review orders, prepare purchases, and analyze recorded results. '
+    +'The one decision currently flagged is the disputed supplier bill BILL-2: its invoice differs from the purchase order. '
+    +'Review that discrepancy first; I can open the source record and help you decide the next step, but I will not change the bill without your approval. '
+    +'Other workflows depend on the data and permissions available in this inventory.';
+  assert.ok(briefing.length>350);
+  let checked=false;
+  const provider={async complete(){return {data:{answer:briefing,supported:true,usedSteps:[0],additionalReads:[]}};},
+    async verifyComplete(){checked=true;return {data:{grounded:true,reason:''}};}};
+  const result=await synthesizeReads(provider,'What can you help me do, and what should I tackle first?',executed);
+  assert.equal(checked,true);assert.equal(result[0].result.status,'ANSWERED');
+});
+
 test('a single navigation request cannot produce two competing page jumps',async()=>{
   let attempts=0;
   const step=(capability)=>({capability,arguments:[],dependsOn:[],continuesPending:false});

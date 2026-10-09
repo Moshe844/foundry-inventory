@@ -317,9 +317,7 @@ async function synthesizeReads(provider,message,executed,{completedActions=[],ca
     let answer=response.data;
     if(answer?.supported&&provider.verifyComplete){
       for(let attempt=0;attempt<2;attempt++){
-        const tooLong=typeof answer.answer==='string'&&answer.answer.length>350;
-        const fit=tooLong?{grounded:false,reason:'The answer exceeds 350 characters; make it concise.'}:
-          (await provider.verifyComplete({system:ANSWER_FIT_SYSTEM,
+        const fit=(await provider.verifyComplete({system:ANSWER_FIT_SYSTEM,
             prompt:JSON.stringify({question:message,evidence,verifiedStatusFacts,answer:answer.answer,
               usedSteps:answer.usedSteps,completedActions}),schema:ANSWER_FIT_SCHEMA,
             schemaName:'stockchief_capability_answer_fit',maxOutputTokens:500})).data;
