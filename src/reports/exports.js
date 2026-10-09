@@ -3,6 +3,12 @@
 const zlib=require('node:zlib');
 
 function cell(value){return value==null?'':String(value);}
+// The on-screen values are the governed, currency-aware representation of the
+// same verified rows. Exporting the raw minor-unit integers as unlabeled
+// spreadsheet numbers would make $17.40 look like 1740.
+function exportValue(result,rowIndex,column){
+  return result.displayRows?.[rowIndex]?.[column]??result.rows[rowIndex][column];
+}
 function csv(result){
   // Spreadsheet apps can execute formulas even inside a quoted CSV field.
   // Preserve the recorded text while forcing dangerous leading characters to
@@ -10,8 +16,8 @@ function csv(result){
   const quote=(value)=>{let text=cell(value);
     if(/^[\s\u0000-\u001f]*[=+\-@]/u.test(text))text=`'${text}`;
     return `"${text.replaceAll('"','""')}"`;};
-  return Buffer.from([result.columns.map(quote).join(','),...result.rows.map((row)=>
-    result.columns.map((column)=>quote(row[column])).join(','))].join('\r\n')+'\r\n','utf8');
+  return Buffer.from([result.columns.map(quote).join(','),...result.rows.map((_row,index)=>
+    result.columns.map((column)=>quote(exportValue(result,index,column))).join(','))].join('\r\n')+'\r\n','utf8');
 }
 function xml(value){return cell(value).replace(/[&<>"']/g,(character)=>({
   '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[character]));}
@@ -39,7 +45,8 @@ function zip(files){
   end.writeUInt32LE(offset,16);return Buffer.concat([...local,directory,end]);
 }
 function xlsx(result){
-  const rows=[result.columns,...result.rows.map((row)=>result.columns.map((column)=>row[column]))];
+  const rows=[result.columns,...result.rows.map((_row,index)=>result.columns.map((column)=>
+    exportValue(result,index,column)))];
   const worksheet=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
     <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${rows.map((row,index)=>
       `<row r="${index+1}">${row.map((value,column)=>{

