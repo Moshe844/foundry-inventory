@@ -9,6 +9,11 @@
   <div class="notice notice--warn section"><strong>This exact source was already imported.</strong>
     StockChief will not apply the same bytes twice. <a href="/imports/<%= duplicatePlans[0].id %>">See the completed import</a>.</div>
 <% } %>
+<% if(plan.detectedType==='unknown' && plan.status==='READY'){ %>
+  <div class="notice notice--warn section" role="alert"><strong>Help StockChief identify the products in this file.</strong>
+    The file was read, but its headings do not safely identify a product name or SKU. No inventory has changed.
+    <a href="#column-mapping">Choose the matching source column below</a>, then recalculate and review the rows before approving.</div>
+<% } %>
 <% if(run){ %>
   <div class="card section <%= run.verified?'':'card--warn' %>"><div class="card-head"><h2>Reconciliation</h2>
     <span class="spacer"></span><span class="badge badge--<%= run.verified?'ok':'danger' %>"><%= run.verified?'Verified':'Not verified' %></span></div>
@@ -32,7 +37,7 @@
   </div>
 <% } %>
 <% if(plan.status==='READY' && plan.approvalStatus==='AWAITING_APPROVAL'){ %>
-  <div class="card section"><div class="card-head"><h2>Check columns and correct the preview</h2></div>
+  <div class="card section" id="column-mapping"><div class="card-head"><h2>Check columns and correct the preview</h2></div>
     <div class="card-body"><p>No stock changes while you correct a column meaning, source location or invalid quantity. Review every recalculated row before approval.</p>
       <form method="post" action="/imports/<%= plan.id %>/revise" class="stack-form">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">

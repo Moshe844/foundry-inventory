@@ -84,6 +84,34 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
     assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM items WHERE workspace_id=$1
       AND name='Ask Imported Valve'`,[identity.workspace_id])).rows[0].count,1);
 
+    // A readable file with unfamiliar headings must reach the existing
+    // human-correctable preview instead of failing its Ask upload outright.
+    const unknownSource=Buffer.from('Alpha,Beta,Gamma\nOdd Widget,OW-1,5\nOther Widget,OW-2,3\n');
+    // Force an unresolved interpretation rather than relying on whichever AI
+    // provider happens to be configured in this test environment.
+    const unknownPlan=await imports.analyse(database,{workspaceId:identity.workspace_id,
+      actorId:identity.actor_id},{buffer:unknownSource,filename:'unfamiliar-columns.csv',
+      mappings:{notes:0}});
+    const unknownId=unknownPlan.id;
+    await page.goto(`${base}/imports/${unknownId}`);
+    assert.equal(unknownPlan.detectedType,'unknown');
+    assert.equal(unknownPlan.recordsValid,0);
+    assert.match(await page.locator('main').innerText(),/Help StockChief identify the products/);
+    assert.equal(await page.getByRole('button',{name:'Approve 0 rows'}).isDisabled(),true);
+    await assert.rejects(imports.approve(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},
+      unknownId,unknownPlan.integrityHash),/Map a product name or SKU/);
+    await page.getByLabel('Source column “Alpha”').selectOption('name');
+    await page.getByLabel('Source column “Beta”').selectOption('code');
+    await page.getByLabel('Source column “Gamma”').selectOption('quantity');
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Recalculate preview'}).click()]);
+    assert.match(await page.locator('main').innerText(),/2 rows read · 2 ready · 0 need correction/);
+    assert.equal((await imports.get(database,identity.workspace_id,unknownId)).detectedType,'inventory');
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve 2 rows'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Import and verify'}).click()]);
+    assert.match(await page.locator('main').innerText(),/8 opening units/);
+    assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM skus WHERE workspace_id=$1
+      AND code IN ('OW-1','OW-2')`,[identity.workspace_id])).rows[0].count,2);
+
     await page.goto(`${base}/ask`);
     const unusual=Buffer.from('Part reference,What we call it,How many are on shelf,Where we keep it\n'+
       'CERT-SEAL-1,Certification Seal One,12,Main Warehouse\n'+

@@ -185,8 +185,9 @@ function unmappedNumericColumns(sheet,mappings){
       return profile.filled>0&&profile.numericRate>=0.8;})()).map((column)=>column.name);
 }
 
-function previewWarnings(summary,{hasQuantity=true,unmappedNumeric=[]}={}) {
+function previewWarnings(summary,{hasQuantity=true,hasIdentity=true,unmappedNumeric=[]}={}) {
   const warnings=[];
+  if(!hasIdentity)warnings.push('StockChief could not safely identify which column names each product. Map a product name or SKU below, then recalculate the preview. Nothing can be imported until you do.');
   if(summary.invalid)warnings.push(`${summary.invalid} row(s) need correction before they can be imported.`);
   if(summary.unvaluedUnits)warnings.push(`${summary.unvaluedUnits} opening unit(s) have no source unit cost. StockChief will retain their quantity but cannot certify their inventory value until cost evidence is supplied.`);
   if(!hasQuantity)warnings.push('No quantity column is mapped. This preview would create or match products without establishing opening stock.');
@@ -228,7 +229,9 @@ async function analyse(database, ctx, input) {
     {provider:modelProvider?require('../commercial/model').wrap(database,ctx,modelProvider,'import_mapping',input.usageKey||require('./usage-key').analysisUsageKey(sourceHash)):null,
       mappings:input.mappings || json(prior?.field_mappings,null),detectedType:input.detectedType || prior?.detected_type,
       onBeforeAi:input.onBeforeAi,onUsage:input.onUsage});
-  if(proposal.detectedType==='unknown')throw new ValidationError('StockChief could not identify a product or SKU column. Name the columns and try again.');
+  // An uncertain interpretation is a review task, not an upload failure. Keep
+  // the source columns and rows in an unapproved preview so the operator can
+  // identify the product column without editing and re-uploading the file.
   const context=await workspaceContext(database,ctx.workspaceId);
   if(input.defaultLocationId && !context.locations.some((row)=>row.id===input.defaultLocationId))
     throw new ValidationError('That destination location is not in this inventory.');
@@ -245,7 +248,8 @@ async function analyse(database, ctx, input) {
       unmappedNumericColumns:unmappedNumeric,confirmCatalogOnly:false},trackingModel:{mode:'per-row'},
     locationMappings:{},defaultLocationId:validated.defaultLocationId,recordsDetected:validated.summary.total,
     recordsValid:validated.summary.valid,recordsInvalid:validated.summary.invalid,
-    warnings:previewWarnings(validated.summary,{hasQuantity:proposal.mappings.quantity!==undefined,unmappedNumeric}),
+    warnings:previewWarnings(validated.summary,{hasQuantity:proposal.mappings.quantity!==undefined,
+      hasIdentity:proposal.mappings.name!==undefined||proposal.mappings.code!==undefined,unmappedNumeric}),
     conflicts:validated.conflicts,assumptions:proposal.assumptions || [],approvalStatus:'AWAITING_APPROVAL',
     status:'READY',planVersion:1,createdAt:at};
   plan.integrityHash=integrityFor(plan,validated.rows);
@@ -356,7 +360,8 @@ async function revise(database,ctx,id,input={}){
       transformations:{...plan.transformations,axisNames,quantityOverrides,
         unmappedNumericColumns:unmappedNumeric,confirmCatalogOnly},
       recordsValid:validated.summary.valid,recordsInvalid:validated.summary.invalid,
-      warnings:previewWarnings(validated.summary,{hasQuantity:fieldMappings.quantity!==undefined,unmappedNumeric}),
+      warnings:previewWarnings(validated.summary,{hasQuantity:fieldMappings.quantity!==undefined,
+        hasIdentity:fieldMappings.name!==undefined||fieldMappings.code!==undefined,unmappedNumeric}),
       conflicts:validated.conflicts,planVersion:plan.planVersion+1};
     revised.integrityHash=integrityFor(revised,validated.rows);
     await client.query(`UPDATE import_plans SET location_mappings=$3::jsonb,transformations=$4::jsonb,
@@ -382,6 +387,8 @@ async function approve(database, ctx, id, expectedHash) {
     const plan=hydratePlan(result.rows[0]);
     if(plan.isExpired)throw new ValidationError('This preview is more than 24 hours old. Read the source again before importing.');
     if(plan.integrityHash!==expectedHash)throw new ValidationError('The preview changed. Review the current rows before approving.');
+    if(plan.fieldMappings.name===undefined&&plan.fieldMappings.code===undefined)
+      throw new ValidationError('Map a product name or SKU and recalculate the preview before approving.');
     if(!plan.recordsValid)throw new ValidationError('There are no valid rows to import.');
     if(plan.fieldMappings.quantity===undefined&&!plan.transformations.confirmCatalogOnly){
       const sourceRows=(await client.query(`SELECT raw FROM import_rows WHERE workspace_id=$1 AND import_id=$2`,
