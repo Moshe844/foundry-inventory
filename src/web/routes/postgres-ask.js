@@ -145,6 +145,20 @@ async function proposalStates(database,workspaceId,interactions){
 function createPostgresAskRouter(database,options={}){
   const router=express.Router();
   router.use(['/ask','/actions'],requireAuth);
+  router.get('/ask/capabilities',asyncRoute(async(req,res)=>{
+    const entries=await require('../../assistant/postgres-discovery').available(database,req.ctx);
+    const query=String(req.query.q||'').trim().slice(0,120).toLowerCase();
+    const visible=query?entries.filter((entry)=>
+      `${entry.label} ${entry.description} ${entry.name}`.toLowerCase().includes(query)):entries;
+    const groups=[
+      {kind:'read',title:'Understand your business'},
+      {kind:'mutation',title:'Prepare changes for approval'},
+      {kind:'policy',title:'Set standing instructions'},
+      {kind:'navigation',title:'Open the right place'},
+    ].map((group)=>({...group,entries:visible.filter((entry)=>entry.kind===group.kind)}));
+    return res.page('attention/ask-capabilities',{title:'What Ask StockChief can do',nav:'ask',room:true,
+      query,groups,total:entries.length,visibleCount:visible.length});
+  }));
   router.get('/ask',asyncRoute(async(req,res)=>{
     const remembered=req.session.postgresAskPageContext;
     const requestedPath=req.query.from===undefined&&remembered?.workspaceId===req.ctx.workspaceId
@@ -285,7 +299,9 @@ function createPostgresAskRouter(database,options={}){
   router.post('/actions/:id/cancel',asyncRoute(async(req,res)=>{
     await assistant.cancelProposal(database,req.ctx,req.params.id);
     req.flash('success','The prepared change was discarded. Nothing changed.');
-    return res.redirect(303,'/actions');
+    // The review originated in the owner's Ask conversation. Keep the same
+    // conversation visible so the owner can correct or continue the request.
+    return res.redirect(303,'/ask#latest');
   }));
   router.post('/actions/:id/continue',asyncRoute(async(req,res)=>{
     const proposal=await assistant.getProposal(database,req.ctx.workspaceId,req.params.id);

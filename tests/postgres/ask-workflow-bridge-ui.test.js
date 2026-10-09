@@ -175,6 +175,26 @@ test('Ask browser controls a real customer order, payment, and return through th
     assert.equal(resumedOrderProposal.status,'PENDING');
     assert.deepEqual(resumedOrderProposal.payload.lines.map(({quantity,unitPriceMinor})=>[quantity,unitPriceMinor]),
       [[2,2500],[1,500]]);
+    const threeTurnOrder=`Prepare one draft order for Builder Co with 3 ${skuCode} at $25 each `+
+      `and 2 ${hatCode} at $5 each; do not reserve or invoice`;
+    const methodAnswer='The customer will pick it up.';
+    const locationAnswer='Use Main Warehouse for pickup.';
+    plans.set(threeTurnOrder,step('sales_order.create',{customer:'Builder Co',orderLines:JSON.stringify([
+      {sku:skuCode,quantity:3,unitPrice:'25'},{sku:hatCode,quantity:2,unitPrice:'5'}])}));
+    plans.set(methodAnswer,{...step('sales_order.create',{deliveryMethod:'pickup'}),continuesPending:true});
+    plans.set(locationAnswer,{...step('sales_order.create',{location:'Main Warehouse'}),continuesPending:true});
+    for(const [message,expected] of [[threeTurnOrder,/shipped, picked up, or delivered/],
+      [methodAnswer,/Which location will the customer pick/],
+      [locationAnswer,/Nothing has changed yet/]]){
+      await page.getByLabel('Ask StockChief').fill(message);
+      await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Continue'}).click()]);
+      assert.match(await page.locator('main').innerText(),expected);
+    }
+    const threeTurnProposal=(await database.query(`SELECT payload FROM stockchief_runtime.assistant_action_proposals
+      WHERE workspace_id=$1 AND action_type='sales_order.create' ORDER BY created_at DESC,id DESC LIMIT 1`,
+    [ctx.workspaceId])).rows[0];
+    assert.deepEqual(threeTurnProposal.payload.lines.map(({quantity,unitPriceMinor})=>[quantity,unitPriceMinor]),
+      [[3,2500],[2,500]]);
     const aliasMessage=`Draft one pickup order for Builder Co: 1 ${skuCode} at $25 and 2 ${hatCode} at $5; `+
       'both lines on the same order, no reservation or invoice';
     plans.set(aliasMessage,step('sales_order.create',{customer:'Builder Co',deliveryMethod:'pickup',

@@ -1066,6 +1066,21 @@ async function draftBusinessEmail(request,businessName,provider){
 
 async function prepareAction(database,ctx,message,request,options={}) {
   if(!request.action)return {status:'CLARIFY',answer:'What would you like StockChief to change?'};
+  if(request.action==='save_report'){
+    let composed;
+    try{composed=await require('../reports/postgres-ask').composeForSave(database,ctx,message,
+      {provider:options.reportProvider});}
+    catch(error){if(error.code==='rate_limited'||error.code==='entitlement_required')throw error;
+      return {status:'CLARIFY',answer:'I could not safely build that report from the available data. Open Reports to choose the exact fields.'};}
+    if(composed.clarify)return {status:'CLARIFY',answer:composed.clarify,
+      handoff:{href:'/reports',label:'Open report builder'}};
+    const {definition,schedule}=composed;
+    const timing=schedule.frequency==='none'?'on demand':
+      schedule.frequency==='daily'?`daily at ${String(schedule.hour).padStart(2,'0')}:00 UTC`:
+        `Mondays at ${String(schedule.hour).padStart(2,'0')}:00 UTC`;
+    return createProposal(database,ctx,message,'report.template.create',{definition,schedule},
+      `Save “${definition.title}” as a private ${timing} report from ${definition.dataset} records.`);
+  }
   if(require('./postgres-workflow-capabilities').SPECS.some((spec)=>spec.name===request.action))
     return require('./postgres-workflow-capabilities').prepare(database,ctx,message,request.action,request,createProposal);
   if(request.action==='create_contact'){
@@ -1418,8 +1433,7 @@ async function createProposal(database,ctx,message,actionType,payload,summary) {
     proposal:{id:proposalId,summary,actionType}};
 }
 
-async function storeInteraction(database,ctx,message,intent,result) {
-  const id=newId('pgask');
+async function storeInteraction(database,ctx,message,intent,result,id=newId('pgask')) {
   const storedIntent={...intent,...(result.carryForward||{}),presentation:{columns:result.columns || [],choices:result.choices || [],handoff:result.handoff || null,
     reason:result.reason||null,awaitingField:result.awaitingField||null,emailFlow:result.emailFlow||null,
     researchViews:result.researchViews||[]}};
@@ -1439,18 +1453,25 @@ function capabilityService(){return {lookup,prepareAction,prepareInstruction,
   },navigate:(_db,_scope,id)=>require('../web/postgres-navigation').destinationById(id),
   navigateRecord:(db,scope,kind,reference)=>require('../web/postgres-record-destinations').resolve(db,scope,kind,reference)};}
 
-async function recordCapabilityOutcome(database,ctx,message,outcome,{batchId=null,planId=null,index=0,count=1}={}){
+async function recordCapabilityOutcome(database,ctx,message,outcome,{batchId=null,planId=null,index=0,count=1,
+  pending=null}={}){
   const {step,args,provenance}=outcome;const result=outcome.result;const contract=step?.contract;
   const intent={intent:contract?.kind==='mutation'?'action':contract?.kind==='policy'?'instruction':
     contract?.kind==='navigation'?'navigation':'lookup',
     view:contract?.view||null,action:contract?.legacyAction||null,...args,
     controlPlane:contract?{capability:contract.name,args,provenance,dependsOn:step.dependsOn,
-      continuesPending:step.continuesPending,...(planId?{planId}:{}),
+      continuesPending:step.continuesPending,
+      originalMessage:step.continuesPending&&pending?.capability===contract.name
+        ?pending.originalMessage||message:message,...(planId?{planId}:{}),
       ...(result.pendingProposalId?{pendingProposalId:result.pendingProposalId}:{})}:null,
     ...(batchId?{batchId,sourceMessage:message,requestIndex:index+1,requestCount:count}:{}),
+    ...(result.reportConfig?{reportConfig:result.reportConfig}:{}),
     ...(result.proposal?{proposalId:result.proposal.id,
       proposalHref:result.proposal.href||`/actions/${result.proposal.id}`}:{})};
-  result.interactionId=await storeInteraction(database,ctx,message,intent,result);
+  const interactionId=newId('pgask');
+  if(result.reportConfig)result.handoff={href:`/reports/from-ask/${interactionId}`,
+    label:'Customize, save or schedule this report'};
+  result.interactionId=await storeInteraction(database,ctx,message,intent,result,interactionId);
   result.intent=intent;return result;
 }
 
@@ -1488,7 +1509,8 @@ async function askCapabilities(database,ctx,message,options={}){
   const latest=history.at(-1);let pending=['CLARIFY','PREPARED'].includes(latest?.status)
     &&latest.intent?.controlPlane?.capability
     ?{capability:latest.intent.controlPlane.capability,args:latest.intent.controlPlane.args,
-      question:latest.answer,originalMessage:latest.message,status:latest.status,
+      question:latest.answer,originalMessage:latest.intent.controlPlane.originalMessage||latest.message,
+      status:latest.status,
       awaitingField:latest.intent.presentation?.awaitingField||null,
       choices:latest.intent.presentation?.choices||[],
       proposalId:latest.intent.controlPlane.pendingProposalId||latest.intent.proposalId||null}:null;
@@ -1516,7 +1538,7 @@ async function askCapabilities(database,ctx,message,options={}){
   for(const [index,outcome] of outcomes.entries()){
     if(outcome.result.reason==='dependency_waiting')continue;
     results.push(await recordCapabilityOutcome(database,ctx,clean,outcome,
-      {batchId,planId:plan?.id,index,count:steps.length||1}));
+      {batchId,planId:plan?.id,index,count:steps.length||1,pending}));
   }
   if(results.length===1)return results[0];
   return {status:results.some((row)=>row.status==='CLARIFY')?'CLARIFY':

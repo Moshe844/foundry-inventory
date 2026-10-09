@@ -36,7 +36,8 @@ test('PostgreSQL Home leads with the owner briefing and never credits a human mo
     assert.match(firstDay.text,/StockChief is ready\. Your inventory isn’t here yet/);
     assert.match(firstDay.text,/No business check yet/);
     assert.match(firstDay.text,/Add your inventory/);
-    assert.match(firstDay.text,/Ask or tell StockChief\./);
+    assert.match(firstDay.text,/id="sc-home-ask-title">Ask StockChief<\/h2>/);
+    assert.match(firstDay.text,/href="\/ask\/capabilities"/);
     assert.doesNotMatch(firstDay.text,/Everything is under control/);
     assert.doesNotMatch(firstDay.text,/Check overdue/);
     const identity=(await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id FROM workspaces w
@@ -50,7 +51,7 @@ test('PostgreSQL Home leads with the owner briefing and never credits a human mo
     const response=await agent.get('/');
     assert.equal(response.status,200,response.text.slice(0,700));
     assert.match(response.text,/Good (?:morning|afternoon|evening), Alex/);
-    assert.match(response.text,/Ask or tell StockChief\./);
+    assert.match(response.text,/id="sc-home-ask-title">Ask StockChief<\/h2>/);
     assert.match(response.text,/Needs you/);
     assert.match(response.text,/Coming up/);
     assert.match(response.text,/StockChief noticed/);

@@ -1,0 +1,15 @@
+<div class="page-head"><div><p class="eyebrow">Authoritative PostgreSQL data</p><h1>Reports</h1>
+<p class="lede">Build a view from governed business datasets. Figures link back to source records where a detail page exists.</p></div></div>
+<div class="report-grid">
+  <section class="report-card"><h2>New report</h2><p>Choose the records to analyze, then select columns, filters, grouping and a chart.</p>
+    <div class="report-datasets"><% for(const dataset of datasets){ %>
+      <a href="/reports/builder?dataset=<%= encodeURIComponent(dataset.key) %>"><%= dataset.label %> <span aria-hidden="true">→</span></a>
+    <% } %></div></section>
+  <section class="report-card"><h2>Saved reports</h2>
+    <% if(!saved.length){ %><p>No saved reports yet.</p><% } %>
+    <% for(const report of saved){ %><p><a href="/reports/saved/<%= report.id %>"><%= report.title %></a>
+      <small><%= report.schedule_frequency==='none'?'On demand':report.schedule_frequency+' delivery' %></small>
+      <% if(report.last_error){ %><small class="report-error">Delivery needs attention: <%= report.last_error %></small><% } %></p><% } %>
+  </section>
+</div>
+<link rel="stylesheet" href="/reports.css?v=<%= assetVersion %>">

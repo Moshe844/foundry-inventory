@@ -21,6 +21,17 @@
 .page-ask .rm-chat > .rm-composer .rm-composer__input { min-height: 52px; height: 52px; padding: 12px 10px; color: #24243a; font-size: 15px; }
 .page-ask .rm-chat > .rm-composer .rm-composer__input::placeholder { color: #838a9c; }
 .page-ask .rm-chat > .rm-composer .rm-composer__attach { color: #625e77; background: #f4f3fa; }
+.ask-capabilities { padding:22px; }
+.ask-capabilities__search { display:flex; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:18px; }
+.ask-capabilities__search label { font-weight:700; }
+.ask-capabilities__search input { flex:1 1 260px; min-height:40px; padding:8px 12px; border:1px solid #d6d3e8; border-radius:10px; }
+.ask-capabilities__group { margin-top:25px; }
+.ask-capabilities__group h2 { margin:0 0 12px; font-size:18px; }
+.ask-capabilities__grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(245px,1fr)); gap:11px; }
+.ask-capabilities__item { padding:15px; border:1px solid #e4e1ef; border-radius:12px; background:#fff; }
+.ask-capabilities__item h3 { margin:0 0 6px; font-size:15px; }
+.ask-capabilities__item p { margin:0 0 11px; color:#6a6980; font-size:12px; line-height:1.45; }
+.ask-capabilities__item a { font-size:12px; font-weight:700; }
 .page-ask .rm-chat > .rm-composer .rm-composer__send { border-radius: 11px; background: #5b4bd0; color: #fff; }
 .page-ask .rm-chat--guided > .rm-composer { position: relative; bottom: auto; z-index: 1; }
 .page-ask .rm-email-flow,.page-ask .rm-email-preview { margin: 2px 18px 18px; padding: 17px 18px; border: 1px solid #dcddea; border-radius: 14px; background: #f9f9fd; }

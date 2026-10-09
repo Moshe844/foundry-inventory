@@ -146,6 +146,7 @@ async function mailboxPushRenewal(job,client,providers=defaultProviders,options=
 
 async function runtimeSweep(job,client,options={}){
   const now=milliseconds(job.payload?.now);const at=new Date(now).toISOString();
+  await require('../reports/postgres-scheduling').enqueueDue(client,at);
   const staleImportAt=new Date(now-15*60_000).toISOString();
   const staleEmailAt=new Date(now-5*60_000).toISOString();
   const paused=(await client.query(`SELECT * FROM stockchief_runtime.jobs WHERE status='PAUSED'
@@ -410,6 +411,8 @@ async function systemEmail(job,database,options={}){
 }
 
 function create(providers=defaultProviders,options={}){return {'system.runtime-sweep':(job,client)=>runtimeSweep(job,client,options),
+  'report.generate-delivery':external((job,database)=>
+    require('../reports/postgres-scheduling').generateDelivery(database,job)),
   'shipping.quote':external(async(job,database)=>{
     const {shipmentId,actorId,fingerprint,provider}=job.payload||{};
     if(!job.workspaceId||!shipmentId||!actorId||!fingerprint||!provider)throw Object.assign(

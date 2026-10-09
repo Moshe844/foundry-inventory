@@ -162,6 +162,7 @@ const RESULT_RECORDS={
   'customer_invoice.create':['accounting_customer_invoices','accounting_journal_entries'],
   'purchase_order.receive':['purchase_order_receipts','movements','balances'],
   'supplier_payment.record':['accounting_payments','accounting_journal_entries'],
+  'report.template.create':['stockchief_runtime.report_templates'],
 };
 
 const action=(name,description,fields,permission,legacyAction,extra={})=>add(name,description,fields,'mutation',permission,
@@ -214,6 +215,8 @@ action('sales_order.create','Prepare ONE draft customer order without fulfillmen
   ['customer','sku','skuScope','quantity','orderLines','deliveryMethod','shipToAddress','location','orderDate','neededBy','amount','currency','reference'],
   permissions.MANAGE_SALES,'create_sales_order',{allowUnknownEntities:['customer'],
     resultReference:'salesOrderId',resultDisplayReference:'orderNumber',resultRecordKind:'sales_order'});
+action('report.template.create','Prepare a private saved report from governed PostgreSQL datasets. Can schedule verified-account email delivery daily at a stated UTC hour or weekly on Monday; no email is sent until approved. Use for a request to save or schedule a custom report, not for a one-time report answer.',
+  [],permissions.VIEW,'save_report');
 action('customer_invoice.create','Prepare a customer invoice for review. Approval records and posts the invoice in StockChief; it does not create or fulfill a customer order, send the invoice, or collect payment.',
   ['customer','sku','quantity','amount','tax','currency','description','issueDate','dueDate','reference'],
   permissions.MANAGE_ACCOUNTING,'create_customer_invoice',{allowUnknownEntities:['customer']});
@@ -279,6 +282,13 @@ for(const [name,description,search] of [
 ])add(name,description,[],'read',permissions.VIEW_ACCOUNTING,'none',
   (service,db,ctx,text)=>service.lookup(db,ctx,{view:'accounting',search},{question:text}),
   async(_service,_db,_ctx,result)=>Boolean(result&&Array.isArray(result.rows)),{view:'accounting'});
+
+add('read.custom_report','Compose a governed report from PostgreSQL business records with selected fields, filters, date ranges, grouping, calculations and chart data. Available datasets include inventory, movements, customer orders and invoices, supplier orders and bills, payments, business messages and shipments. Use for a request to generate, compare or customize a report; do not claim metrics absent from registered fields.',
+  [],'read',permissions.VIEW,'none',
+  (_service,db,ctx,text,_args,options)=>require('../reports/postgres-ask').prepare(db,ctx,text,{provider:options.answerProvider}),
+  async(_service,_db,_ctx,result)=>Boolean(result&&Array.isArray(result.rows)),
+  {view:'custom_report',answerMode:'executor',discovery:{label:'Build a custom business report',
+    prompt:'Help me build a report from my business records',rank:72}});
 
 add('policy.propose','Propose a lasting operating rule within StockChief’s registered policy domains and limits.',
   [],'policy',permissions.ADMIN,'owner_review',

@@ -136,8 +136,21 @@ function createPostgresProjectionsRouter(database){
   const router=express.Router();
   router.get(['/', '/overview'],requireAuth,asyncRoute(async(req,res)=>{
     const result=await presenters.home(database,req.ctx.workspaceId);
+    const available=await require('../../assistant/postgres-discovery').available(database,req.ctx);
+    const askSuggestions=[];
+    const offer=(entry)=>{if(entry&&!askSuggestions.some((current)=>current.name===entry.name))askSuggestions.push(entry);};
+    offer(available.find((entry)=>entry.name==='read.custom_report'));
+    for(const kind of ['read','mutation','mutation','policy']){
+      offer(available.find((entry)=>entry.kind===kind&&!askSuggestions.some((current)=>current.name===entry.name)
+        &&entry.name!=='read.capabilities'));
+    }
+    for(const entry of available){
+      if(askSuggestions.length>=6)break;
+      if(entry.kind!=='navigation'&&entry.name!=='read.capabilities')offer(entry);
+    }
     res.locals.attentionCount=result.brief.needs.length;
     return res.page('foundry/brief',{title:'StockChief',nav:'home',room:true,suppressBack:true,postgresAsk:true,...result,
+      askSuggestions,
       stats:result.brief.stats,brief:{body:'',source:'deterministic',createdAt:null},activeMigration:null,
       routineProposal:null,financialPulse:null,observedBrief:'',canOperate:permissions.can(req.user,permissions.OPERATE)});
   }));

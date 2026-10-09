@@ -39,6 +39,14 @@ test('Ask suggestions come only from registered, currently available capabilitie
     const page=await agent.get('/ask');
     assert.equal(page.status,200);
     assert.match(page.text,/What can you help me do here\?/);
+    const directory=await agent.get('/ask/capabilities');
+    assert.equal(directory.status,200);
+    assert.match(directory.text,/What StockChief can do for you/);
+    assert.match(directory.text,/Help me add a product/);
+    assert.doesNotMatch(directory.text,/Prepare an email for approval/);
+    const home=await agent.get('/');
+    assert.match(home.text,/href="\/ask\/capabilities"/);
+    assert.match(home.text,/Add a product to the catalog/);
     for(const example of examples)assert.match(page.text,new RegExp(example.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
     const item=await catalog.createItem(database,ctx,{name:'Discovery Clamp',trackingMode:'quantity'});
     const contextual=await agent.get(`/ask?from=${encodeURIComponent(`/inventory/${item.itemId}`)}`);
@@ -67,6 +75,9 @@ test('Ask suggestions come only from registered, currently available capabilitie
     const restricted=await discovery.available(database,ctx);
     assert.ok(restricted.every((entry)=>entry.kind==='read'||entry.kind==='navigation'));
     assert.ok(!restricted.some((entry)=>entry.name==='read.payables'||entry.name==='navigate.connections'));
+    const restrictedDirectory=await agent.get('/ask/capabilities');
+    assert.equal(restrictedDirectory.status,200);
+    assert.doesNotMatch(restrictedDirectory.text,/Help me add a product|Open my connections/);
   });
 
 test('Ask explains only verified registered capabilities and never changes business data',

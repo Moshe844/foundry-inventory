@@ -153,7 +153,8 @@ async function executeStep(service,database,ctx,step,{actor,provider,rawProvider
   // original instruction. A short answer to a clarification is not a new,
   // self-contained request; preserve both turns through the canonical engine.
   const result=await contract.prepare(service,database,ctx,resolutionMessage,args,
-    {emailDraftProvider:contract.name==='communication.send_email'?provider:null});
+    {emailDraftProvider:contract.name==='communication.send_email'?provider:null,
+      reportProvider:contract.name==='report.template.create'?provider:null});
   if(result?.status==='PREPARED'&&!await contract.verify(service,database,ctx,result))
     return {result:{status:'CLARIFY',answer:'StockChief could not verify the prepared change. Nothing changed.',
       rows:[],columns:[],reason:'unverified'},args,provenance:resolved.provenance};

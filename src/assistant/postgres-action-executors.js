@@ -79,6 +79,17 @@ const EXECUTORS=Object.freeze({
     }},
   'sales_order.create':{execute:(client,ctx,payload)=>workflows.createSalesOrderInTransaction(client,ctx,payload),
     verify:(client,ctx,result)=>exists(client,'sales_orders',ctx.workspaceId,result.salesOrderId)},
+  'report.template.create':{execute:async(client,ctx,payload)=>{
+    const actor=(await client.query(`SELECT u.role,u.permissions,a.email FROM users u
+      JOIN accounts a ON a.id=u.account_id WHERE u.workspace_id=$1 AND u.id=$2`,
+    [ctx.workspaceId,ctx.actorId])).rows[0];
+    if(!actor)throw new Error('Report owner is no longer in this inventory.');
+    const saved=await require('../reports/postgres-service').save(client,ctx,actor,payload.definition,
+      {schedule:payload.schedule});
+    return {reportId:saved.id,title:saved.title,href:`/reports/saved/${saved.id}`};
+  },verify:async(client,ctx,result)=>Boolean((await client.query(`SELECT 1
+    FROM stockchief_runtime.report_templates WHERE workspace_id=$1 AND owner_user_id=$2 AND id=$3`,
+  [ctx.workspaceId,ctx.actorId,result?.reportId||''])).rows.length)},
   'customer_invoice.create':{execute:async(client,ctx,payload)=>{
     const created=await invoices.createCustomerInvoiceInTransaction(client,ctx,{
       customerId:payload.customerId,description:payload.description,quantity:payload.quantity,

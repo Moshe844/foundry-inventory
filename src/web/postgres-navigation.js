@@ -6,7 +6,7 @@ const {destinations}=require('../product-brain/catalog');
 // can turn that ID into an actual PostgreSQL page URL.
 const postgresDestinations=Object.freeze({home:'/', 'needs-you':'/needs-you',ask:'/ask',
   inventory:'/inventory',locations:'/locations',warehouse:'/warehouse',transfers:'/transfers',
-  purchasing:'/purchasing',suppliers:'/suppliers',sales:'/orders',accounting:'/money',
+  purchasing:'/purchasing',suppliers:'/suppliers',sales:'/orders',accounting:'/money',reports:'/reports',
   planning:'/planning',connections:'/settings/connections',mail:'/mail',
   shipping:'/settings/shipping',autopilot:'/autopilot',imports:'/imports',
   actions:'/actions',activity:'/activity',settings:'/settings',workspaces:'/inventories',

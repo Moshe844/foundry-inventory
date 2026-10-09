@@ -32,6 +32,9 @@ test('real browser traverses every registered page and asks every registered rea
         return {data:{answer:evidence.map(row=>row.recordedAnswer||'No matching recorded evidence.').join(' '),
           supported:true,usedSteps:evidence.map((_,index)=>index)},usage:pricedUsage()};
       }
+      if(input.schemaName==='stockchief_governed_report')return {data:{dataset:'stock',title:'Current stock report',
+        columns:['product'],groups:[],aggregate:'count',measure:'',filters:[],sort:'product',
+        direction:'asc',chart:'table'},usage:pricedUsage()};
       assert.equal(input.schemaName,'stockchief_capability_plan');
       const message=JSON.parse(input.prompt).message;
       assert.ok(cases.has(message),`No browser fixture for ${message}`);

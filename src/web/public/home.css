@@ -135,3 +135,31 @@
 @media(max-width:720px) { .sc-home__ask { left:12px; right:12px; width:auto; bottom:12px; } }
 @media(max-width:620px) { .page-home .rm-canvas { padding-top:23px; } .sc-home { padding-bottom:155px; } .sc-home__hero { padding-bottom:26px; } .sc-home__hero h1 { font-size:38px; } .sc-home__sentence { font-size:15px; margin-top:15px; } .sc-home__ask { padding:10px 12px; border-radius:14px; } .sc-home__ask h2 { font-size:15px; } .sc-home__ask-mark,.sc-home__ask .sc-home__eyebrow,.sc-home__suggestions { display:none; } .sc-home__ask-intro { margin-bottom:6px; } .sc-home__ask .rm-composer__input { min-height:42px; } .sc-home__decision { grid-template-columns:32px minmax(0,1fr); gap:10px; padding:13px; } .sc-home__decision-icon { width:31px; height:31px; } .sc-home__decision-action { grid-column:2; margin-top:1px; } .sc-home__right-column,.sc-home__first-steps ol { grid-template-columns:1fr; } .sc-home__first-steps ol { gap:17px; } .sc-home__workline { align-items:flex-start; } .sc-home__workline > a { padding-top:3px; } .sc-home__working-body { min-width:min(300px,80vw); } }
 @media(prefers-reduced-motion:reduce) { .sc-home__status-dot,.sc-home__primary { animation:none; transition:none; } }
+
+/* The fixed home composer uses the same airy control-center shape as the
+   owner's reference, while its suggestions remain live capability metadata. */
+.sc-home__ask { width:min(1100px,calc(100vw - var(--rail-w) - 64px)); padding:17px 22px 18px; border:2px solid #b7a9ff; background:linear-gradient(135deg,#f8f7ff,#f2f0ff); box-shadow:0 22px 44px -20px rgba(61,48,140,.32),0 2px 4px rgba(61,48,140,.09); color:#211c47; }
+.sc-home__ask::after { display:none; }
+.sc-home__ask-mark { width:42px; height:42px; border:0; color:#6245ef; background:#ebe7ff; }
+.sc-home__ask h2 { color:#211c47; font-size:19px; font-weight:730; }
+.sc-home__ask-intro p:last-child { display:block; margin:3px 0 0; color:#756e99; font-size:12px; }
+.sc-home__ask-discover { margin-left:auto; padding:7px 12px; border-radius:999px; color:#6650de; background:#e7e2ff; font-size:11px; font-weight:750; white-space:nowrap; }
+.sc-home__ask .rm-composer { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:8px; border:1px solid #d5ccff; border-radius:14px; box-shadow:0 8px 18px -14px #5946cc; }
+.sc-home__ask .rm-composer:focus-within { border-color:#927cff; box-shadow:0 0 0 3px rgba(146,124,255,.19); }
+.sc-home__ask .rm-composer__input { flex:1 1 350px; min-height:46px; padding:10px 12px; font-size:15px; }
+.sc-home__ask .rm-composer__foot { flex:none; padding:0; }
+.sc-home__suggestions { gap:7px; margin-top:11px; }
+.sc-home__suggestions a { padding:7px 11px; border-color:#e4e0f6; color:#5d5681; background:#fff; font-weight:620; }
+.sc-home__suggestions a:hover { background:#f9f7ff; border-color:#a99bfd; }
+.sc-home__suggestions .sc-home__suggestions-more { color:#604bd3; }
+@media(max-width:720px) { .sc-home__ask { width:auto; } }
+@media(max-width:620px) {
+  .sc-home { padding-bottom:190px; }
+  .sc-home__ask { padding:10px 12px; }
+  .sc-home__ask h2 { font-size:15px; }
+  .sc-home__ask-intro p:last-child,.sc-home__ask-mark { display:none; }
+  .sc-home__ask-discover { font-size:10px; }
+  .sc-home__ask .rm-composer__input { min-height:42px; flex-basis:160px; }
+  .sc-home__suggestions { display:flex; flex-wrap:nowrap; overflow-x:auto; padding-bottom:2px; }
+  .sc-home__suggestions a { flex:none; }
+}

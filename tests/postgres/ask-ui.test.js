@@ -217,6 +217,17 @@ test('Ask StockChief grounds answers and executes only an approved PostgreSQL pr
     ['How many Trail Shoe do we have and move 2 SHOE-BLACK-8 from Main Warehouse to Overflow Store'])).rows;
     assert.equal(multiTurns.length,2);assert.deepEqual(multiTurns.map((turn)=>turn.status),['ANSWERED','PREPARED']);
     assert.deepEqual(multiTurns.map((turn)=>Number(turn.intent.requestIndex)),[1,2]);
+    const discardedId=(await database.query(`SELECT id FROM stockchief_runtime.assistant_action_proposals
+      WHERE workspace_id=$1 AND source_message=$2 ORDER BY created_at DESC,id DESC LIMIT 1`,
+    [owner.workspace_id,'How many Trail Shoe do we have and move 2 SHOE-BLACK-8 from Main Warehouse to Overflow Store'])).rows[0].id;
+    const discardReview=await agent.get(`/actions/${discardedId}`);
+    const discarded=await agent.post(`/actions/${discardedId}/cancel`).type('form')
+      .send({_csrf:csrfFrom(discardReview.text)});
+    assert.equal(discarded.status,303);assert.equal(discarded.headers.location,'/ask#latest');
+    assert.match((await agent.get('/ask')).text,/Discarded\. Nothing was changed by this proposal/);
+    assert.equal((await database.query(`SELECT status FROM stockchief_runtime.assistant_action_proposals
+      WHERE workspace_id=$1 AND id=$2`,[owner.workspace_id,discardedId])).rows[0].status,'CANCELLED');
+    assert.equal((await database.query('SELECT on_hand FROM balances')).rows[0].on_hand,'7');
     const warehouseQuestion=await agent.post('/ask').type('form').send({_csrf:csrfFrom(groundedAfterTransfer),
       message:'How many Trail Shoes are available, and in which warehouse?'});
     assert.equal(warehouseQuestion.status,303);

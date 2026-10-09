@@ -45,6 +45,7 @@ const sections=[
     {href:'/accounting/chart',label:'Chart of accounts'},{href:'/accounting/receivables',label:'What customers owe'},
     {href:'/accounting/payables',label:'What you owe'},{href:'/accounting/banking',label:'Banking and reconciliation'},
     {href:'/accounting/periods',label:'Closing a period'},{href:'/accounting/tax',label:'Tax rates'},
+    {href:'/reports',label:'Custom reports and scheduled delivery'},
     {href:'/accounting/reports/profit-and-loss',label:'Profit and loss'},
     {href:'/accounting/reports/balance-sheet',label:'Balance sheet'}]},
   {title:'Messages',why:'StockChief is not an email client. Supplier mail lives on the purchase, customer mail on the order, and anything waiting on a reply is on the desk. This is the whole mailbox, for when you want to look through it.',links:[

@@ -1,0 +1,29 @@
+<div class="rm-head"><a class="rm-head__back" href="/ask">← Ask StockChief</a><div class="rm-title"><div>
+  <p class="rm-stamp">Available in this inventory</p><h1>What StockChief can do for you</h1>
+  <p class="rm-prose">These are real, registered abilities available to your plan and permissions. StockChief reads current records before answering and asks you to approve consequential changes.</p>
+</div></div></div>
+<div class="card measure ask-capabilities">
+  <form method="get" action="/ask/capabilities" class="ask-capabilities__search">
+    <label for="capability-search">Find an ability</label>
+    <input id="capability-search" name="q" type="search" value="<%= query %>" placeholder="Search by task, record, or outcome">
+    <button class="rm-btn" type="submit">Search</button>
+    <% if (query) { %><a href="/ask/capabilities">Clear</a><% } %>
+  </form>
+  <p class="rm-prose"><%= visibleCount %> of <%= total %> available abilities shown. You can ask in your own words; these prompts are starting points, not commands you must memorize.</p>
+  <% groups.forEach(function(group){ if (!group.entries.length) return; %>
+    <section class="ask-capabilities__group" aria-label="<%= group.title %>">
+      <h2><%= group.title %></h2>
+      <div class="ask-capabilities__grid">
+        <% group.entries.forEach(function(entry){ %>
+          <article class="ask-capabilities__item">
+            <h3><%= entry.label %></h3>
+            <p><%= entry.description %></p>
+            <p class="ask-capabilities__prompt">Try: “<%= entry.prompt %>”</p>
+            <a href="/ask?q=<%= encodeURIComponent(entry.prompt) %>">Ask StockChief →</a>
+          </article>
+        <% }) %>
+      </div>
+    </section>
+  <% }) %>
+  <% if (!visibleCount) { %><p>No available ability matches that search. Try another outcome or ask StockChief directly.</p><% } %>
+</div>

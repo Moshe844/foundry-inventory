@@ -18,6 +18,7 @@ const { createPostgresOnboardingRouter } = require('./web/routes/postgres-onboar
 const { createPostgresLocationsRouter } = require('./web/routes/postgres-locations');
 const { createPostgresInventoryRouter } = require('./web/routes/postgres-inventory');
 const { createPostgresAskRouter } = require('./web/routes/postgres-ask');
+const { createPostgresReportsRouter } = require('./web/routes/postgres-reports');
 const { createPostgresConnectionsRouter } = require('./web/routes/postgres-connections');
 const { createPostgresShippingRouter } = require('./web/routes/postgres-shipping');
 const { createPostgresShippingWebhooks } = require('./web/routes/postgres-shipping-webhooks');
@@ -163,6 +164,7 @@ function createPostgresApp({database,sessionStore,sessionSecret=config.sessionSe
   app.use(createPostgresPlanningRouter(database));
   app.use(createPostgresRepairsRouter(database));
   app.use(createPostgresAskRouter(database,{provider:aiProvider}));
+  app.use(createPostgresReportsRouter(database));
   app.use(createPostgresConnectionsRouter(database,{providers:connectionProviders || undefined,
     publicOrigin:connectionPublicOrigin || (env==='test'?'request':undefined),
     paymentConnectOptions:paymentOptions?.connect||{},testMode:env==='test'}));
