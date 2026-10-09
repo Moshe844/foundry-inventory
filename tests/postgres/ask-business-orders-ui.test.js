@@ -27,6 +27,9 @@ const provider={name:'fixture',model:'fixture',async complete(request){
   if(message==='Prepare an order for a new customer')return {data:fields({intent:'action',view:null,
     action:'create_sales_order',customer:'Future Buyer',sku:'SHOE-9',quantity:1,deliveryMethod:'SHIP',
     shipToAddress:'20 Future Road'}),usage:{}};
+  if(message==='Create a draft for an existing customer and ask me which one')return {data:fields({
+    intent:'action',view:null,action:'create_sales_order',customer:'?',sku:'SHOE-9',quantity:1,
+    deliveryMethod:'SHIP'}),usage:{}};
   if(message==='Buy seventeen pairs from our supplier')return {data:fields({intent:'action',view:null,
     action:'create_purchase_order',supplier:'Safe Supply',sku:'SHOE-9',quantity:17,location:'Main Warehouse',
     amount:8,currency:'USD',neededBy:'2026-10-05'}),usage:{}};
@@ -89,7 +92,15 @@ test('real Chromium Ask StockChief safely prepares and executes grounded custome
     await commerce.createSupplier(database,{workspaceId:two.workspace_id,actorId:two.actor_id},
       {name:'Safe Supply',email:'wrong-supplier@example.test',currency:'USD'});
 
-    let text=await ask(page,base,'Record an order but I forgot the delivery method');
+    let text=await ask(page,base,'Create a draft for an existing customer and ask me which one');
+    assert.match(text,/More than one customer could be used\. Which one/);
+    assert.match(text,/Builder Co/);
+    assert.match(text,/No Address Buyer/);
+    assert.doesNotMatch(text,/Add \? as a customer/);
+    assert.equal((await database.query(`SELECT COUNT(*) AS count FROM sales_orders WHERE workspace_id=$1`,
+      [one.workspace_id])).rows[0].count,'0');
+
+    text=await ask(page,base,'Record an order but I forgot the delivery method');
     assert.match(text,/Should the customer order be shipped, picked up, or delivered by your business/);
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM sales_orders WHERE workspace_id=$1`,
       [one.workspace_id])).rows[0].count,'0');

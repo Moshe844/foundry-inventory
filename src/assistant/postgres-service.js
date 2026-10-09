@@ -1011,11 +1011,21 @@ async function resolvePurchaseDestination(database,workspaceId,skuId,locationNam
   return places.length?{ambiguous:places}:{missing:true};
 }
 
-async function resolveParty(database,kind,workspaceId,search){
-  if(!search)return {missing:true};
+async function resolveParty(database,kind,workspaceId,search,{inferUniqueWhenUnspecified=false}={}){
   const supplier=kind==='supplier';
   const table=supplier?'suppliers':'customers';
   const state=supplier?"status='active'":"record_state='ACTIVE'";
+  // A model can emit punctuation for an unspecified contact. Never turn that
+  // into a proposed new customer or supplier. For a draft order, an existing
+  // sole contact is unambiguous; otherwise present actual recorded choices.
+  if(!/[\p{L}\p{N}]/u.test(String(search||''))){
+    if(!inferUniqueWhenUnspecified)return {missing:true};
+    const available=(await database.query(`SELECT * FROM ${table} WHERE workspace_id=$1 AND ${state}
+      ORDER BY lower(name),id LIMIT 13`,[workspaceId])).rows;
+    if(available.length===1)return {row:available[0],inferred:true};
+    if(available.length>1&&available.length<=12)return {ambiguous:available};
+    return {missing:true};
+  }
   const exact=await database.query(`SELECT * FROM ${table} WHERE workspace_id=$1 AND ${state}
     AND (lower(name)=lower($2) OR lower(COALESCE(email,''))=lower($2)) ORDER BY lower(name),id LIMIT 12`,
   [workspaceId,search]);
@@ -1314,7 +1324,8 @@ async function prepareAction(database,ctx,message,request,options={}) {
     }
     const skuContext=multipleLines?{orderLines:request.orderLines}:{sku:sku.row.code,skuReference:''};
     if(!multipleLines&&(!request.quantity||request.quantity<1))return {status:'CLARIFY',answer:'How many units are needed?',awaitingField:'quantity',carryForward:skuContext};
-    const party=sales?await resolveParty(database,'customer',ctx.workspaceId,request.customer)
+    const party=sales?await resolveParty(database,'customer',ctx.workspaceId,request.customer,
+      {inferUniqueWhenUnspecified:true})
       :await resolvePurchaseSupplier(database,ctx.workspaceId,sku.row.id,request.supplier);
     if(party.missing)return {status:'CLARIFY',answer:sales?'Which customer is this for?'
       :`I found ${sku.row.name}${sku.row.variant_label?` · ${sku.row.variant_label}`:''} (${sku.row.code})${sku.row.stocked_units?` with ${sku.row.stocked_units} on hand`:''}. Which supplier should provide ${request.quantity} more? Nothing was prepared.`,awaitingField:sales?'customer':'supplier',carryForward:skuContext};
