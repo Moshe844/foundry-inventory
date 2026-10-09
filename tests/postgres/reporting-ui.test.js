@@ -103,6 +103,11 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     assert.equal(productOrders.rows[0].customer,'Report Buyer');
     assert.equal(Number(productOrders.rows[0].ordered_units),3);
     assert.equal(productOrders.rows[0].href,`/orders/${lineOrder.salesOrderId}`);
+    const hiddenSort=await reports.run(database,ctx,actor,{dataset:'sales_order_lines',
+      columns:['order_number','customer','ordered_units','fulfilled_units','open_units'],
+      filters:[{field:'sku',operator:'equals',value:'CLAMP'}],sort:'order_date',direction:'desc'});
+    assert.equal(hiddenSort.rows.length,1);
+    assert.equal(hiddenSort.rows[0].order_date,undefined);
     const measuredSort=reportAsk.normalizeProposal({dataset:'sales_order_lines',groups:['sku'],
       aggregate:'sum',measure:'open_units',sort:'open_units',direction:'desc',chart:'bar'},actor);
     assert.equal(measuredSort.sort,'total');
@@ -176,7 +181,7 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     const repaired=await reportAsk.prepare(database,ctx,'Group stock by location and sum units',{provider:{
       async complete(input){reportAttempts++;
         if(input.schemaName==='stockchief_governed_report_fit')return {data:{aligned:true,reason:''}};
-        if(reportAttempts===2)assert.match(input.prompt,/Choose a displayed field to sort/);
+        if(reportAttempts===2)assert.match(input.prompt,/Choose a registered field to sort/);
         return {data:{dataset:'stock',title:'Stock by location',columns:[],groups:['location'],
           aggregate:'sum',measure:'on_hand',filters:[],sort:reportAttempts===1?'nonexistent':'total',
           direction:'desc',chart:'bar'}};

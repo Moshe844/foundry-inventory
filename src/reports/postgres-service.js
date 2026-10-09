@@ -65,8 +65,8 @@ function normalize(spec,actor){
     columns.push('currency');
   }
   const sort=safeText(spec.sort,60)||groups[0]||columns[0]||'count';
-  const allowedSort=new Set(groups.length?[...groups,AGGREGATE_COLUMN[aggregate]]:columns);
-  if(!allowedSort.has(sort))invalid('Choose a displayed field to sort.');
+  const allowedSort=new Set(groups.length?[...groups,AGGREGATE_COLUMN[aggregate]]:Object.keys(dataset.fields));
+  if(!allowedSort.has(sort))invalid('Choose a registered field to sort.');
   const direction=spec.direction==='asc'?'asc':'desc';
   const chart=['table','bar','line'].includes(spec.chart)?spec.chart:'table';
   if(chart!=='table'&&!groups.length)invalid('Choose a grouping before drawing a chart.');
