@@ -20,6 +20,7 @@ const config = require('../config');
 const { validate } = require('../foundry/validator');
 const { toWireSchema } = require('../foundry/schema-tools');
 const fields = require('./fields');
+const prices = require('../pricing/price-service');
 
 const MAX_COLUMNS_ASKED = 40;
 const MAX_SAMPLES = 3;
@@ -156,6 +157,26 @@ function reconcile(proposed, { columns, deterministic, confident, profilesByInde
     if (!fields.FIELD_IDS.includes(entry.field) && entry.field !== 'ignore') continue;
 
     const held = fieldAt(index);
+    const profile = profilesByIndex[index] || {};
+    // Check the proposed meaning BEFORE releasing a weak deterministic match.
+    // Otherwise an implausible model suggestion can erase the right mapping
+    // even though the replacement is rejected a few lines later.
+    const moneyField=entry.field==='unitCost'||entry.field==='sellingPrice';
+    const moneySamples=profile.samples||[];
+    const moneyRate=moneySamples.length?moneySamples.filter((value)=>{
+      try{return prices.toMinor(value)!==null;}
+      catch{return false;}
+    }).length/moneySamples.length:0;
+    const incompatible=entry.field==='quantity'&&profile.filled>0&&profile.numericRate<0.6
+      ?'does not hold numbers'
+      :entry.field==='location'&&profile.filled>0&&profile.numericRate>=0.8
+        ?'contains numeric values rather than location names'
+        :entry.field==='name'&&profile.filled>0&&profile.numericRate>=0.8
+          ?'contains numbers rather than product names'
+          :moneyField&&profile.filled>0&&moneyRate<0.6
+            ?'does not contain valid per-unit money amounts':null;
+    if(incompatible){rejected.push({column:column.name,field:entry.field,
+      because:`“${column.name}” ${incompatible}. The existing column meaning was preserved.`});continue;}
     if (held && confident.includes(held)) {
       /*
        * Settled by its own heading, so the model does not get to move it.
@@ -202,21 +223,6 @@ function reconcile(proposed, { columns, deterministic, confident, profilesByInde
 
     // A quantity has to be a number. This is the one mapping that would put a
     // wrong figure into a real balance, so it is checked against the values.
-    const profile = profilesByIndex[index] || {};
-    if (entry.field === 'quantity' && profile.filled > 0 && profile.numericRate < 0.6) {
-      rejected.push({
-        column: column.name,
-        field: 'quantity',
-        because: `“${column.name}” does not hold numbers.`,
-      });
-      continue;
-    }
-    if (entry.field === 'location' && profile.filled > 0 && profile.numericRate >= 0.8) {
-      rejected.push({column:column.name,field:'location',
-        because:`“${column.name}” contains numeric values rather than a recognizable location. Review this column before importing.`});
-      continue;
-    }
-
     mappings[entry.field] = index;
     taken.add(index);
     applied.push({ column: column.name, field: entry.field });

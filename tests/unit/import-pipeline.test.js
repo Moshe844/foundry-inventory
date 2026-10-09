@@ -136,6 +136,25 @@ test('numeric selling prices cannot masquerade as locations; unclear costs reach
   assert.equal(corrected.mappings.sellingPrice,5);
 });
 
+test('business-language headers and value types keep the correct import meanings',()=>{
+  const sheet=sheetFrom('Part reference,What we call it,How many are on shelf,Where we keep it,Cost for one unit\n'+
+    'LAB-SEAL-1,Silicone Seal,12,Main Warehouse,1.45\n');
+  const guess=fields.guessMappings(sheet.columns,sheet.rows);
+  assert.equal(guess.mappings.code,0);
+  assert.equal(guess.mappings.name,1);
+  assert.equal(guess.mappings.quantity,2);
+  assert.equal(guess.mappings.location,3);
+  assert.equal(guess.mappings.unitCost,4);
+  const profilesByIndex=Object.fromEntries(guess.profiles.map((profile)=>[profile.index,profile]));
+  const result=mappingService.reconcile({columns:[
+    {index:3,field:'unitCost',axisName:''},{index:4,field:'name',axisName:''},
+    {index:1,field:'ignore',axisName:''}]},
+  {columns:sheet.columns,deterministic:guess.mappings,confident:guess.confident,profilesByIndex});
+  assert.deepEqual(result.mappings,guess.mappings);
+  assert.ok(result.rejected.some((entry)=>entry.field==='unitCost'));
+  assert.ok(result.rejected.some((entry)=>entry.field==='name'));
+});
+
 test('a column headed like a quantity but full of words is not a quantity', () => {
   const sheet = sheetFrom(['Product,Units,Count', 'Widget,box,12', 'Gadget,case,4'].join('\n'));
   const { mappings } = fields.guessMappings(sheet.columns, sheet.rows);

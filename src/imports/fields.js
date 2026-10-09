@@ -112,12 +112,14 @@ const PATTERNS = {
   ],
   name: [
     /\b(?:item|product|part|material)\s*(?:name|title|desc(?:ription)?)\b/,
+    /\b(?:what.{0,15}call|product\s+label|known\s+as)\b/,
     /\b(?:name|title)\b/,
     /^(?:item|product|part)$/,
   ],
   description: [/\b(?:description|descr?\.?|details?|long\s*desc)\b/],
   unitCost: [
     /\b(?:unit\s*cost|cost\s*(?:price|each|per\s*unit)|wholesale\s*(?:cost|price)|buy(?:ing)?\s*price|purchase\s*price|landed\s*cost)\b/,
+    /\bcost\b.{0,25}\b(?:unit|one|each)\b/,
     // A bare "Cost" usually is one, but "Line Cost" and "Total Cost" are the
     // row's arithmetic rather than the price of one unit, so they rank below.
     /^costs?$/,
@@ -130,6 +132,7 @@ const PATTERNS = {
   ],
   location: [
     /\b(?:location|warehouse|whse|wh|site|store|branch|bin|shelf|room|zone|area|facility)\b/,
+    /\bwhere\b.{0,25}\b(?:keep|store|held)\b/,
     // Plain English for the same column. Consolidation matches headings
     // deterministically rather than asking a model, so a file headed "Where"
     // had no location at all, and the same product counted in two files looked
