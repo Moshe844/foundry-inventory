@@ -8,6 +8,24 @@ const config=require('../config');
 function escapeHtml(value){return String(value??'').replace(/[&<>"']/g,(character)=>({
   '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character]));}
 function scoped(client){return {query:(sql,values)=>client.query(sql,values),transaction:(fn)=>fn(client)};}
+function deliveryMessage(template,result,origin){
+  const visible=result.displayRows.slice(0,100),limited=result.hasMore||result.rows.length>100;
+  const href=origin.startsWith('https://')?`${origin}/reports/saved/${encodeURIComponent(template.id)}`:null;
+  const table=`<table border="1" cellpadding="5" cellspacing="0"><thead><tr>${result.columns.map((column)=>
+    `<th>${escapeHtml(column.replaceAll('_',' '))}</th>`).join('')}</tr></thead><tbody>${visible.map((row)=>
+    `<tr>${result.columns.map((column)=>`<td>${escapeHtml(row[column])}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+  const summary=limited?'First 100 rows shown. Open the saved report for the full result.':
+    `${visible.length} matching rows.`;
+  const findings=(result.insights||[]).map((entry)=>entry.text);
+  const findingsHtml=findings.length?`<h2>What stands out</h2><ul>${findings.map((entry)=>
+    `<li>${escapeHtml(entry)}</li>`).join('')}</ul><p>These are comparisons of recorded rows, not causes or forecasts.</p>`:'';
+  const message={to:template.delivery_email,subject:`StockChief report: ${result.config.title}`,
+    html:`<h1>${escapeHtml(result.config.title)}</h1><p>Generated from your StockChief records at ${escapeHtml(result.asOf)}.</p>`+
+      `<p>${escapeHtml(summary)}</p>${findingsHtml}${table}${href?`<p><a href="${escapeHtml(href)}">Open saved report</a></p>`:''}`,
+    text:[result.config.title,`Generated ${result.asOf}`,summary,...findings,result.columns.join('\t'),
+      ...visible.map((row)=>result.columns.map((column)=>String(row[column]??'')).join('\t')),href||''].join('\n')};
+  return {message,visibleCount:visible.length,limited};
+}
 
 async function enqueueDue(client,at){
   const when=new Date(at),hour=when.getUTCHours(),day=when.toISOString().slice(0,10);
@@ -61,25 +79,14 @@ async function generateDelivery(database,job){
   const result=await reports.run(database,{workspaceId:job.workspaceId},actor,template.definition,{limit:101});
   // Customer-facing email must use the same currency-formatted values as the
   // report builder/export, never raw money_minor database integers.
-  const visible=result.displayRows.slice(0,100),limited=result.hasMore||result.rows.length>100;
   const origin=String(config.connections.publicOrigin||'').replace(/\/$/,'');
-  const href=origin.startsWith('https://')?`${origin}/reports/saved/${encodeURIComponent(template.id)}`:null;
-  const table=`<table border="1" cellpadding="5" cellspacing="0"><thead><tr>${result.columns.map((column)=>
-    `<th>${escapeHtml(column.replaceAll('_',' '))}</th>`).join('')}</tr></thead><tbody>${visible.map((row)=>
-    `<tr>${result.columns.map((column)=>`<td>${escapeHtml(row[column])}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
-  const summary=limited?'First 100 rows shown. Open the saved report for the full result.':
-    `${visible.length} matching rows.`;
-  const message={to:template.delivery_email,subject:`StockChief report: ${result.config.title}`,
-    html:`<h1>${escapeHtml(result.config.title)}</h1><p>Generated from your StockChief records at ${escapeHtml(result.asOf)}.</p>`+
-      `<p>${escapeHtml(summary)}</p>${table}${href?`<p><a href="${escapeHtml(href)}">Open saved report</a></p>`:''}`,
-    text:[result.config.title,`Generated ${result.asOf}`,summary,result.columns.join('\t'),
-      ...visible.map((row)=>result.columns.map((column)=>String(row[column]??'')).join('\t')),href||''].join('\n')};
+  const {message,visibleCount,limited}=deliveryMessage(template,result,origin);
   const mail=await jobs.enqueue(database,{workspaceId:job.workspaceId,kind:'system.email-send',
     idempotencyKey:`scheduled-report-email:${deliveryId}`,
     payload:{...message,accountId:template.account_id,messageType:'scheduled_report'},maxAttempts:3});
   await database.query(`UPDATE stockchief_runtime.report_deliveries
     SET email_job_id=$4,row_count=$5 WHERE workspace_id=$1 AND template_id=$2 AND id=$3
-      AND status='PENDING'`,[job.workspaceId,templateId,deliveryId,mail.job.id,visible.length]);
-  return {queued:true,rows:visible.length,limited,emailJobId:mail.job.id};
+      AND status='PENDING'`,[job.workspaceId,templateId,deliveryId,mail.job.id,visibleCount]);
+  return {queued:true,rows:visibleCount,limited,emailJobId:mail.job.id};
 }
-module.exports={enqueueDue,generateDelivery};
+module.exports={enqueueDue,generateDelivery,deliveryMessage};

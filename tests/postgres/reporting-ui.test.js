@@ -149,6 +149,14 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
       rows:[{occurred_on:'2026-08-01',total:4},{occurred_on:'2026-09-01',total:7}],
       displayRows:[{total:4},{total:7}],hasMore:false});
     assert.match(genericInsight[0].text,/rose from 4 to 7/);
+    const digest=scheduling.deliveryMessage({id:'report-safe',delivery_email:'owner@example.test'},
+      {config:{title:'Stock trend'},asOf:'2026-10-09T00:00:00Z',columns:['occurred_on','total'],
+        rows:[{occurred_on:'2026-08-01',total:4},{occurred_on:'2026-09-01',total:7}],
+        displayRows:[{occurred_on:'2026-08-01',total:4},{occurred_on:'2026-09-01',total:7}],
+        insights:[...genericInsight,{text:'<untrusted>'}],hasMore:false},'https://stockchief.example');
+    assert.match(digest.message.html,/rose from 4 to 7/);
+    assert.match(digest.message.html,/&lt;untrusted&gt;/);
+    assert.match(digest.message.text,/rose from 4 to 7/);
     assert.deepEqual(require('../../src/reports/postgres-insights').observations({
       config:{chart:'bar',groups:['currency']},columns:['currency','total'],
       rows:[{currency:'USD',total:100},{currency:'JPY',total:100}],
