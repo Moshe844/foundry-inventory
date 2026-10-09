@@ -54,7 +54,7 @@ function navigationTokens(value) {
     'where', 'how', 'is', 'are', 'find', 'located', 'section', 'page', 'screen', 'menu', 'tab', 'website',
     'place', 'area', 'part', 'i', 'me', 'my', 'we', 'our', 'us', 'you', 'your', 'could', 'would',
     'please', 'show', 'take', 'bring', 'open', 'go', 'navigate', 'point', 'toward', 'direct', 'lead',
-    'send', 'put', 'get', 'handle', 'manage', 'deal', 'care', 'from']);
+    'send', 'put', 'get', 'handle', 'manage', 'deal', 'care', 'from', 'please', 'now']);
   return String(value || '').toLowerCase().split(/[^a-z0-9]+/)
     .filter(Boolean).map((word) => word.length > 3 && word.endsWith('s') ? word.slice(0, -1) : word)
     .filter((word) => !ignored.has(word));

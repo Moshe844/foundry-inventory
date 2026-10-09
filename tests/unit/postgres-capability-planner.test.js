@@ -435,3 +435,27 @@ test('saving a verified prior report gives independent fit its actual report con
   assert.equal(reviewed.priorReport.title,'Gross profit trend');
   assert.deepEqual(reviewed.priorReport.groups,['posting_date']);
 });
+
+test('explicit page-opening request cannot be satisfied by a customer-record read',async()=>{
+  let plans=0;
+  const step=(capability)=>({capability,arguments:[],dependsOn:[],continuesPending:false});
+  const provider={async complete({schemaName}){
+    if(schemaName==='stockchief_capability_fit')return {data:{aligned:true,reason:''}};
+    plans++;
+    return {data:{steps:[step(plans===1?'read.customers':'navigate.customers')],clarifyingQuestion:''}};
+  }};
+  const result=await planner.plan(provider,'Open the Customers tab',{deferReadFit:true});
+  assert.equal(plans,2);
+  assert.deepEqual(result.steps.map(({contract})=>contract.name),['navigate.customers']);
+});
+
+test('repeated customer-read substitutions never claim a page-opening request was answered',async()=>{
+  const provider={async complete({schemaName}){
+    if(schemaName==='stockchief_capability_fit')return {data:{aligned:true,reason:''}};
+    return {data:{steps:[{capability:'read.customers',arguments:[],dependsOn:[],continuesPending:false}],
+      clarifyingQuestion:''}};
+  }};
+  const result=await planner.plan(provider,'Open the Customers tab',{deferReadFit:true});
+  assert.equal(result.steps.length,0);
+  assert.match(result.clarifyingQuestion,/page to open/i);
+});

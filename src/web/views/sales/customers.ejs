@@ -1,0 +1,33 @@
+<div class="page-head">
+  <div class="titles">
+    <a class="back-link" href="/orders">‹ Orders</a>
+    <h1>Customers</h1>
+    <p class="page-sub">The people and businesses you sell to. Open a customer to see their details and orders.</p>
+  </div>
+  <% if (canAddCustomer) { %><div class="page-actions"><a class="btn btn--primary" href="/sales/customers/new">Add customer</a></div><% } %>
+</div>
+
+<section class="card section">
+  <div class="card-head"><h2><%= customers.length %> active customer<%= customers.length === 1 ? '' : 's' %></h2></div>
+  <% if (!customers.length) { %>
+    <div class="empty-state">
+      <p class="empty-state__title">No customers yet</p>
+      <p class="empty-state__body">Customers you add or connect to an order will appear here.</p>
+      <% if (canAddCustomer) { %><a class="btn btn--primary" href="/sales/customers/new">Add a customer</a><% } %>
+    </div>
+  <% } else { %>
+    <table class="table table--tight">
+      <thead><tr><th>Customer</th><th>Contact</th><th class="num">Orders</th><th class="num"><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody>
+        <% customers.forEach(function (customer) { %>
+          <tr>
+            <td><a href="/sales/customers/<%= customer.id %>"><%= customer.name %></a><% if (customer.company) { %><span class="cell-sub"><%= customer.company %></span><% } %></td>
+            <td class="muted"><%= customer.email || customer.phone || '—' %></td>
+            <td class="num"><%= customer.order_count %></td>
+            <td class="num"><a href="/sales/customers/<%= customer.id %>">Open</a></td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  <% } %>
+</section>

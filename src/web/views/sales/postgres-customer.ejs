@@ -1,4 +1,4 @@
-<header class="page-head"><div class="titles"><a class="back-link" href="/orders#customers">‹ Customers</a><h1><%= customer.name %></h1><p class="page-sub"><%= customer.record_state==='ARCHIVED'?'Archived · ':'' %><%= orders.length %> recent order<%= orders.length===1?'':'s' %> · <%= helpers.money(balanceMinor,currency) %> outstanding</p></div>
+<header class="page-head"><div class="titles"><a class="back-link" href="/customers">‹ Customers</a><h1><%= customer.name %></h1><p class="page-sub"><%= customer.record_state==='ARCHIVED'?'Archived · ':'' %><%= orders.length %> recent order<%= orders.length===1?'':'s' %> · <%= helpers.money(balanceMinor,currency) %> outstanding</p></div>
   <div class="page-actions"><% if(customer.record_state==='ACTIVE'){ %><a class="btn btn--primary" href="/orders/new?customer=<%= customer.id %>">New order</a><% } %></div></header>
 <div class="grid grid--2 section">
   <form class="card" method="post" action="/sales/customers/<%= customer.id %>"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><div class="card-head"><h2>Customer details</h2></div><div class="card-body grid">

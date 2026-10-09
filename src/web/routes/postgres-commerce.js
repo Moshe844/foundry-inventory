@@ -711,6 +711,12 @@ function createPostgresCommerceRouter(database,options={}){
   };
   router.get(['/orders','/sales'],requirePermission(permissions.VIEW_SALES,'see customer orders'),asyncRoute(renderOrders));
 
+  router.get(['/customers','/sales/customers'],requirePermission(permissions.VIEW_SALES,'see customers'),asyncRoute(async(req,res)=>{
+    const customers=await commerce.customers(database,req.ctx.workspaceId);
+    return res.page('sales/customers',{title:'Customers',nav:'sales',customers,
+      canAddCustomer:permissions.can(req.user,permissions.OPERATE)});
+  }));
+
   router.get(['/orders/new','/sales/new'],requirePermission(permissions.OPERATE,'create sales orders'),asyncRoute(async(req,res)=>{
     const [customers,catalogue,locations]=await Promise.all([commerce.customers(database,req.ctx.workspaceId),
       commerce.catalogue(database,req.ctx.workspaceId),commerce.locations(database,req.ctx.workspaceId)]);
@@ -729,7 +735,7 @@ function createPostgresCommerceRouter(database,options={}){
   router.post('/sales/customers',requirePermission(permissions.OPERATE,'add customers'),asyncRoute(async(req,res)=>{
     const customer=await commerce.createCustomer(database,req.ctx,req.body);
     req.flash('success',`${customer.name} was added.`);
-    return res.redirect(303,'/orders');
+    return res.redirect(303,'/customers');
   }));
 
   router.get('/sales/customers/:id',requirePermission(permissions.VIEW,'view customers'),asyncRoute(async(req,res)=>{

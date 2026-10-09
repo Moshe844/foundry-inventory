@@ -6,6 +6,8 @@ const registry=require('./postgres-capability-registry').registry;
 const permissions=require('../actions/permissions');
 const entitlements=require('../entitlements/postgres-service');
 const {destinationById}=require('../web/postgres-navigation');
+const {destinations}=require('../product-brain/catalog');
+const {destinationMatch,navigationTokens}=require('../product-brain/navigation');
 
 const READ_PERMISSIONS={payables:permissions.VIEW_ACCOUNTING,receivables:permissions.VIEW_ACCOUNTING,
   accounting:permissions.VIEW_ACCOUNTING,payments:permissions.VIEW_ACCOUNTING,
@@ -87,6 +89,22 @@ function navigation(db,ctx,id){
   return destination?{status:'ANSWERED',answer:`Opening ${destination.label}.`,navigation:destination,
     rows:[],columns:[]}:{status:'CLARIFY',answer:'That area is not available in this workspace. Nothing changed.',
     rows:[],columns:[]};
+}
+
+// A plain request to open a registered page is an application command, not a
+// business-data question. Resolve exact page vocabulary before the model can
+// accidentally answer a related read. Compound goals still go through the
+// planner so this shortcut never swallows a requested write.
+function explicitPageNavigation(message,catalogue){
+  const text=String(message||'').trim();
+  if(!/^(?:(?:please|can you|could you|would you)\s+)?(?:open|navigate(?:\s+to)?|go\s+to|take\s+me\s+to|bring\s+up|jump\s+to)\b/i.test(text))return null;
+  const registered=destinations.filter((entry)=>catalogue.get(`navigate.${entry.id}`)&&destinationById(entry.id));
+  const match=destinationMatch(text,{listDestinations:()=>registered});
+  if(!match)return null;
+  const words=new Set(navigationTokens(text));
+  const vocabulary=new Set([match.label,...(match.aliases||[])].flatMap(navigationTokens));
+  if(!words.size||[...words].some((word)=>!vocabulary.has(word)))return null;
+  return catalogue.get(`navigate.${match.id}`);
 }
 
 async function executeStep(service,database,ctx,step,{actor,provider,rawProvider,sourceMessage,pending,page,usageKey,
@@ -487,6 +505,12 @@ async function run(service,database,ctx,message,{provider,rawProvider=null,histo
   try{
     const actor=await membership(database,ctx);
     catalogue=await planningCatalogue(database,ctx,actor);
+    const pageContract=explicitPageNavigation(message,catalogue);
+    if(pageContract){
+      const step={contract:pageContract,args:{},dependsOn:[],continuesPending:false};
+      return {steps:[step],outcomes:[{step,args:{},provenance:{},
+        result:navigation(database,ctx,pageContract.destinationId)}]};
+    }
     const focused=await focusNamedSkuCatalogue(database,ctx,message,catalogue);
     const planningScope=explicitlyReadOnly(message)?readOnlyCatalogue(focused):focused;
     workspace=(await database.query(`SELECT w.name AS business_name,
@@ -651,4 +675,4 @@ async function run(service,database,ctx,message,{provider,rawProvider=null,histo
 module.exports={run,executeStep,normalizeForLegacy,questionFor,READ_PERMISSIONS,planningCatalogue,
   focusedRecordCatalogue,focusedIntentCatalogue,synthesizeReads,relevantActions,
   explicitlyReadOnly,readOnlyCatalogue,
-  selectedPendingChoice,focusNamedSkuCatalogue,focusedRecordState};
+  selectedPendingChoice,focusNamedSkuCatalogue,focusedRecordState,explicitPageNavigation};

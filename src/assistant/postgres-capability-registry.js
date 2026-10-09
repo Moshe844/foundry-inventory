@@ -300,7 +300,7 @@ add('policy.propose','Propose a lasting operating rule within StockChief’s reg
 // The page catalogue is presentation metadata. Each destination is checked
 // against the real PostgreSQL router before it is offered by the navigator.
 const PAGE_PERMISSIONS={purchasing:permissions.VIEW_PURCHASING,suppliers:permissions.VIEW_PURCHASING,
-  sales:permissions.VIEW_SALES,accounting:permissions.VIEW_ACCOUNTING,transfers:permissions.VIEW_TRANSFERS,
+  sales:permissions.VIEW_SALES,customers:permissions.VIEW_SALES,accounting:permissions.VIEW_ACCOUNTING,transfers:permissions.VIEW_TRANSFERS,
   connections:permissions.ADMIN,settings:permissions.ADMIN,operations:permissions.ADMIN,
   autopilot:permissions.ADMIN,actions:permissions.OPERATE};
 for(const destination of destinations){

@@ -27,7 +27,7 @@ const prices = require('../../pricing/price-service');
  * renders differently depending on which one you arrive by.
  */
 const router = express.Router();
-router.use(['/sales', '/orders'], requireAuth);
+router.use(['/sales', '/orders', '/customers'], requireAuth);
 // Fulfilment lives on its own path because it is its own job, so it needs
 // the same guard stated separately rather than inherited from /sales.
 router.use('/fulfilment', requireAuth);
@@ -154,6 +154,12 @@ router.get(['/orders/new', '/sales/new'], requirePermission(permissions.OPERATE,
     // setup task above it creates two unrelated "next" actions.
     screenGuide: null, suppressBack: true,
   });
+}));
+
+router.get(['/customers', '/sales/customers'], requirePermission(permissions.VIEW_SALES, 'see customers'), asyncRoute(async (req, res) => {
+  res.page('sales/customers', { title: 'Customers', nav: 'sales',
+    customers: sales.listCustomers(req.db, req.ctx.workspaceId),
+    canAddCustomer: permissions.can(req.user, permissions.OPERATE) });
 }));
 
 router.get('/sales/customers/new', requirePermission(permissions.OPERATE, 'create customers'), asyncRoute(async (req, res) => {

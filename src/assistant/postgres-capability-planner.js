@@ -25,7 +25,7 @@ const PLANNING_RULES=[
   'A requested report, chart, graph, or customized tabular analysis needs read.custom_report; a normal stock, order, or finance lookup cannot create that report artifact. A request to save or schedule a report needs report.template.create and approval.',
   'When priorReport exists, save or schedule it via report.template.create without a report read.',
   'A request to correct your previous factual answer calls for fresh reads, not a business-data write. Changing a record still requires its matching approved write.',
-  'For navigation, match the requested page label and scope exactly. Prefer a specific destination to a similarly named parent or administrative page; do not turn a request to open a page into a financial or inventory answer.',
+  'For navigation, match the requested page exactly; prefer specific destinations. Never answer a page-opening request with records.',
   'A requested change needs its matching write, not a related read. A declarative lasting supplier term, threshold or operating preference may be a policy instruction. Do not create extra contacts, products, orders, purchases or movements as prerequisites. Invoicing does not imply fulfillment or payment.',
   'The executor obtains context itself; do not add a preliminary read solely for a write. Add a read only if the owner separately asks its answer. Missing action inputs are clarified later; do not replace the action with a read.',
   'When one contract already accepts and applies every stated input for the requested outcome, do not add another mutation that sets the same field or performs a preparatory version of that outcome. Plan independent business effects only when the owner separately requested each one.',
@@ -338,9 +338,13 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
     invalid.push({issue:'A single request can open only one destination. Keep the one page that best fulfills the owner’s navigation goal.'});
   const asksForFacts=/\b(?:verify|check|explain|why|what|which|whether|how|tell\s+me|summari[sz]e)\b/i.test(message);
   const explicitlyOpens=/\b(?:open|navigate|go\s+to|take\s+me\s+to|bring\s+up|jump\s+to)\b/i.test(message);
+  const requestsPage=explicitlyOpens&&/\b(?:page|tab|screen|section|menu)\b/i.test(message);
   if(asksForFacts&&!explicitlyOpens&&(response.data?.steps||[]).some((step)=>
     catalogue.get(step?.capability)?.kind==='navigation'))
     invalid.push({issue:'The owner asked for verified facts, not a page change. Use registered reads to answer; navigation alone does not answer this request.'});
+  if(requestsPage&&!(response.data?.steps||[]).some((step)=>
+    catalogue.get(step?.capability)?.kind==='navigation'))
+    invalid.push({issue:'The owner explicitly asked to open a page. A read answer does not open it. Choose its registered navigation destination or say the page is unavailable.'});
   if(invalid.length){
     response=await completeRepair(provider,catalogue,{...context,rejectedPlan:response.data,validationErrors:invalid,
       instruction:'Revise the plan to satisfy every validation error. Use only declared input fields, preserve the owner’s details, do not invent missing ones, and choose one final navigation destination.'});
@@ -349,7 +353,11 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
   const rejectUnaskedNavigation=(planned)=>asksForFacts&&!explicitlyOpens
     &&planned.steps.some((step)=>step.contract.kind==='navigation')
     ?{steps:[],clarifyingQuestion:SAFE_CLARIFICATION}:planned;
+  const rejectMissedNavigation=(planned)=>requestsPage
+    &&!planned.steps.some((step)=>step.contract.kind==='navigation')
+    ?{steps:[],clarifyingQuestion:'I could not safely identify the page to open. Nothing changed.'}:planned;
   selected=rejectUnaskedNavigation(selected);
+  selected=rejectMissedNavigation(selected);
   if(!pending)for(const step of selected.steps)step.continuesPending=false;
   let reconsidered=false;
   if(!selected.steps.length){
@@ -364,6 +372,7 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
         instruction:'Reconsider the current request independently. If an exact registered read or action can fulfill it, choose that contract. If none can, return no steps. Do not substitute a related but different effect.'});
       selected=parseSteps(retry.data,catalogue);
       selected=rejectUnaskedNavigation(selected);
+      selected=rejectMissedNavigation(selected);
       if(!pending)for(const step of selected.steps)step.continuesPending=false;
       reconsidered=true;
       if(!selected.steps.length&&process.env.STOCKCHIEF_ASK_DIAGNOSTICS==='1')
@@ -387,7 +396,7 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
   // Without a registered step, a model-authored explanation could silently
   // reinterpret an unavailable effect as a related operation. Never expose
   // that speculative explanation as an instruction to the owner.
-  if(!selected.steps.length)return {steps:[],clarifyingQuestion:SAFE_CLARIFICATION,
+  if(!selected.steps.length)return {steps:[],clarifyingQuestion:requestsPage?selected.clarifyingQuestion:SAFE_CLARIFICATION,
     closestAlternative:selected.closestAlternative||null};
   if(selected.steps.length){
     try{
@@ -486,7 +495,8 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
       return {steps:[],clarifyingQuestion:'I could not safely verify that I understood this request. Nothing changed.'};
     }
   }
-  return selected.steps.length?selected:{steps:[],clarifyingQuestion:SAFE_CLARIFICATION};
+  selected=rejectMissedNavigation(selected);
+  return selected.steps.length?selected:{steps:[],clarifyingQuestion:selected.clarifyingQuestion||SAFE_CLARIFICATION};
 }
 
 module.exports={schemaFor,systemFor,planningCatalogue,parseSteps,plan,

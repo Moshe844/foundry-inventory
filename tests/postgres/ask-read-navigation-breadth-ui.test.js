@@ -77,6 +77,31 @@ test('real browser traverses every registered page and asks every registered rea
       assert.ok((await page.locator('body').innerText()).length>0,`${contract.name} blank destination`);
       pagesChecked++;
     }
+    await page.goto(`${base}/sales/customers/new`);
+    await page.locator('input[name="name"]').fill('Browser Navigation Customer');
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Create customer'}).click()]);
+    assert.ok(page.url().startsWith(`${base}/customers`));
+    const savedCustomer=(await database.query(`SELECT id FROM customers WHERE workspace_id=$1 AND name=$2`,
+      [workspaceId,'Browser Navigation Customer'])).rows[0];
+    assert.ok(savedCustomer,'customer form did not persist the customer');
+    for(const [message,href] of [
+      ['Open customers tab','/customers'],
+      ['Please go to the customer directory page','/customers'],
+      ['Open the sales orders page','/orders'],
+      ['Open suppliers tab','/suppliers'],
+    ]){
+      await page.goto(`${base}/ask`);
+      await page.getByLabel('Ask StockChief').fill(message);
+      await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Continue'}).click()]);
+      assert.ok(page.url().startsWith(`${base}${href}`),`${message} went to ${page.url()}`);
+      if(href==='/customers')assert.match(await page.locator('main').innerText(),/Browser Navigation Customer/);
+      const interaction=(await database.query(`SELECT status,intent FROM stockchief_runtime.assistant_interactions
+        WHERE workspace_id=$1 AND message=$2 ORDER BY created_at DESC,id DESC LIMIT 1`,
+      [workspaceId,message])).rows[0];
+      assert.equal(interaction?.status,'ANSWERED');
+      assert.equal(interaction?.intent?.controlPlane?.capability,
+        href==='/customers'?'navigate.customers':href==='/orders'?'navigate.sales':'navigate.suppliers');
+    }
     let readsChecked=0;
     for(const contract of registry.list('read')){
       const message={
