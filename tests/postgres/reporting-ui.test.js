@@ -217,6 +217,23 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     assert.deepEqual(followup.reportConfig.filters,
       [{field:'location',operator:'equals',value:'Main'}]);
     assert.deepEqual(followup.reportConfig.groups,['location']);
+    let partialPlans=0;
+    const partialText=await reportAsk.prepare(database,ctx,
+      'Show stock at locations containing Mai',{provider:{async complete(input){
+        if(input.schemaName==='stockchief_governed_report_fit')
+          return {data:{aligned:true,reason:''}};
+        partialPlans++;
+        if(partialPlans===2)assert.match(input.prompt,/exact text filter returned no records/);
+        return {data:{dataset:'stock',title:'Stock at matching locations',
+          columns:['product','sku','location','on_hand'],groups:[],aggregate:'count',measure:'',
+          filters:[{field:'location',operator:partialPlans===1?'equals':'contains',value:'Mai'}],
+          sort:'location',direction:'asc',chart:'table'}};
+      }}});
+    assert.equal(partialPlans,2);
+    assert.equal(partialText.status,'ANSWERED');
+    assert.equal(partialText.rows.length,1);
+    assert.equal(partialText.rows[0].location,'Main');
+    assert.equal(partialText.reportConfig.filters[0].operator,'contains');
     assert.throws(()=>reports.normalize({dataset:'payments',groups:['status'],aggregate:'sum',
       measure:'amount_minor',sort:'total'},actor),/currency/i);
     const askPage=await owner.get('/ask');
