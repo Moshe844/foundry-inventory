@@ -15,11 +15,12 @@
 .page-ask .rm-said__text { padding: 17px 20px 10px; color: #25283d; font-size: 15px; line-height: 1.55; }
 .page-ask .rm-said__meta { padding: 0 20px 14px; font-size: 11px; }
 .page-ask .rm-chat-evidence > summary,.page-ask .rm-chat-reading > summary { padding: 11px 20px; color: #666c80; font-size: 12px; }
-.page-ask .rm-chat > .rm-composer { margin-top: 20px; padding: 8px 10px; border: 1px solid #c8c4e2; border-radius: 17px; background: #fff; box-shadow: 0 14px 38px -25px rgba(38,28,101,.62),0 1px 4px rgba(38,28,101,.1); }
+.page-ask .rm-chat > .rm-composer { position: relative; bottom: auto; z-index: 1; margin-top: 20px; margin-bottom: 24px; padding: 8px 10px; border: 1px solid #c8c4e2; border-radius: 17px; background: #fff; box-shadow: 0 14px 38px -25px rgba(38,28,101,.62),0 1px 4px rgba(38,28,101,.1); }
 .page-ask .rm-chat > .rm-composer:focus-within { border-color: #7868df; box-shadow: 0 0 0 3px rgba(116,100,224,.14),0 14px 38px -25px rgba(38,28,101,.62); }
 .page-ask .rm-chat > .rm-composer::before { background: transparent; }
 .page-ask .rm-chat > .rm-composer .rm-composer__input { min-height: 52px; height: 52px; padding: 12px 10px; color: #24243a; font-size: 15px; }
 .page-ask .rm-chat > .rm-composer .rm-composer__input::placeholder { color: #838a9c; }
+.page-ask .rm-chat > .rm-composer .rm-composer__context { grid-column: 1 / -1; margin: 2px 8px 0; color: #4e4869; font-size: 12px; line-height: 1.4; }
 .page-ask .rm-chat > .rm-composer .rm-composer__attach { color: #625e77; background: #f4f3fa; }
 .ask-capabilities { padding:22px; }
 .ask-capabilities__search { display:flex; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:18px; }

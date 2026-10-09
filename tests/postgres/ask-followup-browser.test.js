@@ -26,20 +26,15 @@ test('browser Ask retains contact details through a follow-up and does not route
         if(plans===1)return {data:{steps:[step('communication.send_email',{
           recipient:'Ada Source',recipientKind:'supplier',recipientEmail:'ada@example.test',
           recipientMode:'add_supplier'})],clarifyingQuestion:''},usage:pricedUsage()};
-        if(plans===2){
-          assert.equal(prompt.pending?.capability,'communication.send_email');
-          assert.equal(prompt.pending?.awaitingField,'body');
-          assert.equal(prompt.pending?.args?.recipientEmail,'ada@example.test');
-          return {data:{steps:[step('communication.send_email',{
-            body:'Please prepare another shipment next week.'},true)],clarifyingQuestion:''},usage:pricedUsage()};
-        }
-        if(plans===3){assert.equal(prompt.pending?.capability,'communication.send_email');
+        if(plans===2){assert.equal(prompt.pending?.capability,'communication.send_email');
           return {data:{steps:[step('read.inventory_summary')],clarifyingQuestion:''},usage:pricedUsage()};}
-        if(plans===4)return {data:{steps:[step('contact.create',{recipient:'Delta Supply',recipientKind:'supplier',
+        if(plans===3)return {data:{steps:[step('contact.create',{recipient:'Delta Supply',recipientKind:'supplier',
           recipientEmail:'delta@example.test'})],clarifyingQuestion:''},usage:pricedUsage()};
-        return {data:{steps:[step('contact.create',{recipient:'Willow Client',recipientKind:'customer',
+        if(plans===4)return {data:{steps:[step('contact.create',{recipient:'Willow Client',recipientKind:'customer',
           recipientEmail:'willow@example.test'}),{...step('communication.send_email',
             {body:'We will send the revised details tomorrow.'}),dependsOn:[0]}],
+          clarifyingQuestion:''},usage:pricedUsage()};
+        return {data:{steps:[step('communication.send_email',{recipient:'Hendel Ekstein'})],
           clarifyingQuestion:''},usage:pricedUsage()};
       }
       if(input.schemaName==='stockchief_postgres_email_draft'){
@@ -82,7 +77,9 @@ test('browser Ask retains contact details through a follow-up and does not route
       await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Continue'}).click()]);}
     await ask('Add Ada Source as a supplier at ada@example.test and email her. I will say what to write next.');
     assert.match(await page.locator('main').innerText(),/What would you like the email to Ada Source to say/);
+    assert.match(await page.locator('main').innerText(),/Your next message becomes an editable draft/);
     await ask('Please prepare another shipment next week.');
+    assert.equal(plans,1,'a pending email body follows the verified conversation state, not a new model plan');
     const prepared=(await database.query(`SELECT id,payload,status FROM stockchief_runtime.assistant_action_proposals
       WHERE workspace_id=$1 AND action_type='communication.send_email'`,[owner.workspace_id])).rows[0];
     assert.equal(prepared.status,'PENDING');
@@ -136,4 +133,34 @@ test('browser Ask retains contact details through a follow-up and does not route
     assert.equal(next.payload.recipientEmail,'willow@example.test');
     assert.equal((await database.query(`SELECT COUNT(*)::int AS total FROM customer_communications
       WHERE workspace_id=$1 AND recipient='willow@example.test'`,[owner.workspace_id])).rows[0].total,0);
+    await page.goto(`${base}/ask`);
+    await page.getByRole('button',{name:'New conversation'}).click();
+    await ask('Prepare an email for Hendel Ekstein. I will provide the wording after the address.');
+    assert.match(await page.locator('main').innerText(),/could not find (?:a customer or supplier|the contact) “Hendel Ekstein”/i);
+    await page.getByLabel('Email address').fill('hendel@example.test');
+    await page.getByRole('button',{name:/Prepare the email/}).click();
+    assert.match(await page.locator('main').innerText(),/What would you like the email to Hendel Ekstein to say/);
+    assert.match(await page.locator('main').innerText(),/Your next message becomes an editable draft/);
+    assert.equal(await page.locator('.rm-chat > .rm-composer').evaluate((node)=>getComputedStyle(node).position),
+      'relative','Ask’s composer must follow the conversation instead of covering messages');
+    const continuationId=await page.locator('input[name="continueInteractionId"]').getAttribute('value');
+    await ask('That I need to get more shoes ASAP.');
+    assert.equal(plans,5,'the body reply must not become a new inventory question');
+    const oneOff=(await database.query(`SELECT payload,status FROM stockchief_runtime.assistant_action_proposals
+      WHERE workspace_id=$1 AND action_type='communication.send_email'
+        AND payload->>'recipientName'=$2`,[owner.workspace_id,'Hendel Ekstein'])).rows[0];
+    assert.ok(oneOff,`the reply should prepare Hendel’s draft instead of another contact’s: ${await page.locator('main').innerText()}`);
+    assert.equal(oneOff.status,'PENDING');
+    assert.equal(oneOff.payload.recipientName,'Hendel Ekstein');
+    assert.equal(oneOff.payload.recipientEmail,'hendel@example.test');
+    assert.equal(oneOff.payload.body,'That I need to get more shoes ASAP.');
+    assert.equal(oneOff.payload.addContactKind,null);
+    assert.equal((await database.query(`SELECT COUNT(*)::int AS total FROM supplier_communications
+      WHERE workspace_id=$1 AND recipient='hendel@example.test'`,[owner.workspace_id])).rows[0].total,0);
+    await assert.rejects(()=>require('../../src/assistant/postgres-service').ask(database,
+      {workspaceId:owner.workspace_id,actorId:owner.actor_id},'A duplicate draft must not be created.',
+      {provider,continueInteractionId:continuationId}),/no longer current/);
+    assert.equal((await database.query(`SELECT COUNT(*)::int AS total FROM stockchief_runtime.assistant_action_proposals
+      WHERE workspace_id=$1 AND action_type='communication.send_email'
+        AND payload->>'recipientName'=$2`,[owner.workspace_id,'Hendel Ekstein'])).rows[0].total,1);
   });

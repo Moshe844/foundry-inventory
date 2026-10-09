@@ -22,6 +22,10 @@
   <% if (locals.sourcePath || (locals.homeHandoff && locals.currentPath)) { %><input type="hidden" name="sourcePath" value="<%= locals.sourcePath || locals.currentPath %>"><% } %>
   <% if (locals.usageKey) { %><input type="hidden" name="usageKey" value="<%= locals.usageKey %>"><% } %>
   <% if (locals.queryConversation) { %><input type="hidden" name="queryConversation" value="1"><% } %>
+  <% if (locals.emailBodyContinuation) { %>
+    <input type="hidden" name="continueInteractionId" value="<%= locals.emailBodyContinuation.interactionId %>">
+    <p class="rm-composer__context">Replying to the email for <strong><%= locals.emailBodyContinuation.recipient %></strong>. Your next message becomes an editable draft, not a new stock question. To ask something else, start a new conversation.</p>
+  <% } %>
   <% if (locals.actionClarification) { %>
     <input type="hidden" name="original" value="<%= locals.actionClarification.original %>">
     <input type="hidden" name="answerAction" value="1">

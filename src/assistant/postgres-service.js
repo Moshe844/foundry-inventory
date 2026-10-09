@@ -1068,6 +1068,16 @@ function boundedEmailRewrite(original,drafted){
     ||(word.length>3&&candidate.length>3&&candidate[0]===word[0]&&editDistanceAtMostTwo(word,candidate)))))return false;
   return noNewBusinessWords(original,drafted);
 }
+function emailOwnerWords(body,recipientName){
+  const original=trimOrNull(body)||'';
+  // A reply to "what should the email say?" may itself repeat the mailing
+  // instruction. Remove only a leading instruction addressed to this exact
+  // resolved contact; the remaining words are the owner's message to edit.
+  const instruction=/^(?:please\s+)?(?:send|write|email|message)\b([\s\S]{0,200}?)\b(?:that|saying)\s+([\s\S]+)$/i.exec(original);
+  if(!instruction||!recipientName||!instruction[1].toLocaleLowerCase().includes(recipientName.toLocaleLowerCase()))
+    return original;
+  return instruction[2].trim()||original;
+}
 async function draftBusinessEmail(request,businessName,provider){
   const fallback={subject:request.subject||`Message from ${businessName}`,body:request.body,polished:false};
   if(!provider)return fallback;
@@ -1161,7 +1171,8 @@ async function prepareAction(database,ctx,message,request,options={}) {
     if(mailbox.ambiguous)return {status:'CLARIFY',answer:'More than one business mailbox can send this. Name the exact mailbox to use.',awaitingField:'mailbox',
       choices:mailbox.ambiguous.map((row)=>({label:`${row.display_name}${row.provider_account_name?` · ${row.provider_account_name}`:''}`,value:row.display_name}))};
     const business=(await database.query('SELECT name FROM workspaces WHERE id=$1',[ctx.workspaceId])).rows[0];
-    const drafted=await draftBusinessEmail(request,business.name,options.emailDraftProvider);
+    const ownerBody=emailOwnerWords(request.body,resolved.row.name);
+    const drafted=await draftBusinessEmail({...request,body:ownerBody},business.name,options.emailDraftProvider);
     const recipientEmail=request.recipientEmail||resolved.row.email;
     if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(recipientEmail||'')))
       return {status:'CLARIFY',answer:'Enter a valid email address before I prepare the message.',awaitingField:'recipientEmail',
@@ -1169,7 +1180,7 @@ async function prepareAction(database,ctx,message,request,options={}) {
           recipientKind:request.recipientKind||null}};
     return createProposal(database,ctx,message,'communication.send_email',{recipientKind:resolved.row.kind,
       recipientId:resolved.row.id,recipientName:resolved.row.name,recipientEmail,subject:drafted.subject,body:drafted.body,
-      originalBody:request.body,draftPolished:drafted.polished,addContactKind,addContactName:addContactKind?request.recipient:null,
+      originalBody:ownerBody,draftPolished:drafted.polished,addContactKind,addContactName:addContactKind?request.recipient:null,
       saveEmailToContact:request.saveEmailToContact===true,
       connectorId:mailbox.row.id,mailboxName:mailbox.row.display_name},
     `Email ${resolved.row.name} at ${recipientEmail} from ${mailbox.row.display_name}.`);
@@ -1531,7 +1542,7 @@ async function askCapabilities(database,ctx,message,options={}){
   const usageKey=String(options.usageKey||newId('askusage'));
   const provider=fundedAskProvider(database,ctx,rawProvider,`${usageKey}:capability`,
     require('../commercial/model').wrap,strongVerifier);
-  const history=(await database.query(`SELECT message,answer,status,intent FROM stockchief_runtime.assistant_interactions
+  const history=(await database.query(`SELECT id,message,answer,status,intent FROM stockchief_runtime.assistant_interactions
     WHERE workspace_id=$1 AND actor_user_id=$2 AND ($3::timestamptz IS NULL OR created_at > $3::timestamptz)
     ORDER BY created_at DESC,id DESC LIMIT 6`,[ctx.workspaceId,ctx.actorId,options.startedAt||null])).rows.reverse();
   const latest=history.at(-1);let pending=['CLARIFY','PREPARED'].includes(latest?.status)
@@ -1545,6 +1556,19 @@ async function askCapabilities(database,ctx,message,options={}){
   if(pending?.proposalId){
     const active=await getProposal(database,ctx.workspaceId,pending.proposalId).catch(()=>null);
     if(!active||active.status!=='PENDING')pending=null;
+  }
+  if(options.continueInteractionId){
+    if(latest?.id!==options.continueInteractionId||pending?.status!=='CLARIFY'
+      ||pending.capability!=='communication.send_email'||pending.awaitingField!=='body')
+      throw new ValidationError('That email question is no longer current. Reload this conversation before replying. Nothing was sent.');
+    const contract=require('./postgres-capability-registry').registry.get(pending.capability);
+    const actor=(await database.query(`SELECT role,permissions FROM users
+      WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,ctx.actorId])).rows[0];
+    if(!actor)throw new ValidationError('This inventory membership is unavailable. Nothing was sent.');
+    const step={contract,args:{...pending.args,body:clean},dependsOn:[],continuesPending:true};
+    const outcome=await require('./postgres-control-plane').executeStep(capabilityService(),database,ctx,step,
+      {actor,provider,rawProvider,sourceMessage:clean,pending,page:options.page||null,usageKey});
+    return recordCapabilityOutcome(database,ctx,clean,{step,...outcome},{pending});
   }
   const selection=await require('./postgres-control-plane').run(capabilityService(),database,ctx,clean,
     {provider,rawProvider,history,pending,page:options.page||null,usageKey});
@@ -1614,10 +1638,10 @@ async function continueEmail(database,ctx,input,options={}){
   if(flow.kind==='missing_email'&&!['once','save'].includes(mode))
     throw new ValidationError('Choose whether to save the email on this contact.');
   const original=latest.intent.resolvedRequestText||latest.message;
-  const request={...latest.intent.controlPlane?.args,...latest.intent,action:'send_email'};
-  request.recipientEmail=email;
-  request.recipientMode=flow.kind==='missing_contact'?mode:null;
-  request.saveEmailToContact=flow.kind==='missing_email'&&mode==='save';
+  const continuationArgs={...latest.intent.controlPlane?.args,recipientEmail:email,
+    recipientMode:flow.kind==='missing_contact'?mode:null,
+    saveEmailToContact:flow.kind==='missing_email'&&mode==='save'};
+  const request={...latest.intent,...continuationArgs,action:'send_email'};
   const message=flow.kind==='missing_contact'
     ?`${mode==='one_off'?'Send once without adding':`Add ${flow.name} as a ${mode.slice(4)} and send`} to ${email}`
     :`${mode==='save'?'Save and use':'Use once'} ${email} for ${flow.name}`;
@@ -1626,6 +1650,7 @@ async function continueEmail(database,ctx,input,options={}){
     emailDraftProvider:provider?require('../commercial/model').wrap(database,ctx,provider,'ask',
       `${options.usageKey||newId('askusage')}:email-draft`):null});
   const storedIntent={...request,intent:'action',resolvedRequestText:original,
+    controlPlane:{...latest.intent.controlPlane,args:continuationArgs,originalMessage:original},
     ...(result.proposal?{proposalId:result.proposal.id,
       proposalHref:result.proposal.href||`/actions/${result.proposal.id}`}:{})};
   result.interactionId=await storeInteraction(database,ctx,message,storedIntent,result);

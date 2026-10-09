@@ -418,8 +418,9 @@
   <%# ------------------------------------------------------------- composer %>
   <%- include('../partials/composer', {
     queryConversation: true,
+    emailBodyContinuation: locals.emailBodyContinuation,
     composerPrefill: error ? question : locals.prefill ? locals.prefill : about ? 'About ' + about + ': ' : '',
-    composerPlaceholder: result && result.actionClarification ? 'Answer the question above…' : 'Ask what’s happening or tell StockChief what to do…',
+    composerPlaceholder: locals.emailBodyContinuation ? 'Write the email message to ' + locals.emailBodyContinuation.recipient + '…' : result && result.actionClarification ? 'Answer the question above…' : 'Ask what’s happening or tell StockChief what to do…',
     actionClarification: result && result.actionClarification ? result.actionClarification : null,
     usageKey: locals.usageKey,
     sourcePath: locals.sourcePath,

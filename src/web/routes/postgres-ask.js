@@ -174,6 +174,10 @@ function createPostgresAskRouter(database,options={}){
     const interactions=await assistant.listInteractions(database,req.ctx.workspaceId,100,
       {actorId:req.ctx.actorId,startedAt});
     const visible=interactions.slice(-12);const latest=visible.at(-1)||null;
+    const emailBodyContinuation=latest?.status==='CLARIFY'
+      &&latest.intent?.controlPlane?.capability==='communication.send_email'
+      &&latest.intent?.presentation?.awaitingField==='body'
+      ?{interactionId:latest.id,recipient:latest.intent.controlPlane.args?.recipient||'this contact'}:null;
     const proposals=await proposalStates(database,req.ctx.workspaceId,visible);
     const latestProposal=proposals.get(latest?.intent?.proposalId);
     if(latestProposal?.actionType==='communication.send_email'){
@@ -192,7 +196,8 @@ function createPostgresAskRouter(database,options={}){
       prefill:String(req.query.q||'').slice(0,2000),
       conversation:null,transcript,currentGoalId:latest?.id||null,conversationId:`postgres:${req.ctx.workspaceId}`,
       aiConfigured:Boolean(options.provider||config.ai.configured),usageKey:newId('askusage'),
-      sourcePath:sourcePage?.path||null,examples:await askExamples(database,req.ctx,sourcePage)});
+      sourcePath:sourcePage?.path||null,emailBodyContinuation,
+      examples:await askExamples(database,req.ctx,sourcePage)});
   }));
   router.post('/ask/new',asyncRoute(async(req,res)=>{
     // Use the database clock that timestamps interactions, then persist the
@@ -223,7 +228,8 @@ function createPostgresAskRouter(database,options={}){
       req.body.sourcePath||(remembered?.workspaceId===req.ctx.workspaceId?remembered.path:null));
     return assistant.ask(database,req.ctx,req.body.message,{provider:options.provider,
       usageKey:String(req.body.usageKey||newId('askusage')),
-      page,startedAt:req.session.postgresAskStartedAt||null});
+      page,startedAt:req.session.postgresAskStartedAt||null,
+      continueInteractionId:String(req.body.continueInteractionId||'')});
   }
   router.post('/ask',asyncRoute(async(req,res)=>{
     const result=await runAsk(req);
