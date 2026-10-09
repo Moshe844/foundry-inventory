@@ -93,6 +93,17 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     assert.equal(detail.rows.length,1);
     assert.equal(detail.rows[0].product,'Copper Clamp');
     assert.equal(detail.rows[0].href,`/inventory/${product.itemId}`);
+    const monthly=await reports.run(database,ctx,actor,{dataset:'movements',groups:['occurred_on'],
+      dateGrain:'month',aggregate:'sum',measure:'quantity_delta',sort:'occurred_on',
+      direction:'asc',chart:'line'});
+    assert.equal(Number(monthly.rows[0].total),12);
+    assert.match(monthly.rows[0].occurred_on,/^\d{4}-\d{2}-01$/);
+    const monthDetail=await reports.run(database,ctx,actor,
+      reports.drilldownSpec(monthly.config,[monthly.rows[0].occurred_on],actor));
+    assert.equal(monthDetail.rows.length,1);
+    assert.equal(monthDetail.rows[0].sku,'CLAMP');
+    assert.throws(()=>reports.normalize({dataset:'stock',groups:['location'],
+      dateGrain:'month',aggregate:'sum',measure:'on_hand'},actor),/date grouping/i);
     assert.throws(()=>reports.drilldownSpec(grouped.config,['Main','other'],actor),/one exact report group/i);
     let reportAttempts=0;
     const repaired=await reportAsk.prepare(database,ctx,'Group stock by location and sum units',{provider:{

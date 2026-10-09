@@ -16,7 +16,7 @@ function source(body){
   for(const row of Object.values(body.filters||{}))if(row&&row.field&&(row.value||row.operator==='is_null'))filters.push(row);
   const groups=Array.isArray(body.groups)?body.groups.filter(Boolean):body.groups?[body.groups]:body.group?[body.group]:[];
   return {dataset:body.dataset,title:body.title||dataset?.label,columns:rawColumns,
-    groups,aggregate:body.aggregate,measure:body.measure,
+    groups,dateGrain:body.dateGrain,aggregate:body.aggregate,measure:body.measure,
     filters,sort:body.sort,direction:body.direction,chart:body.chart};
 }
 async function actorFor(database,ctx){

@@ -7,6 +7,7 @@ const {newId}=require('../lib/util');
 
 const OPERATORS=new Set(['equals','contains','at_least','at_most','after','before','is_null']);
 const AGGREGATES=new Set(['count','sum','average','minimum','maximum']);
+const DATE_GRAINS=new Set(['exact','day','week','month','quarter','year']);
 const AGGREGATE_COLUMN=Object.freeze({count:'count',sum:'total',average:'average',minimum:'minimum',maximum:'maximum'});
 function invalid(message){throw new ValidationError(message);}
 function ensureActor(actor,dataset){permissions.assertCan(actor,dataset.permission,'view this report');}
@@ -24,6 +25,9 @@ function normalize(spec,actor){
   ensureActor(actor,dataset);
   const columns=fieldList(spec.columns,dataset.fields,12);
   const groups=fieldList(spec.groups,dataset.fields,3);
+  const dateGrain=DATE_GRAINS.has(spec.dateGrain)?spec.dateGrain:'exact';
+  if(dateGrain!=='exact'&&!groups.some((field)=>dataset.fields[field]==='date'))
+    invalid('Choose a date grouping before selecting a date interval.');
   if(!columns.length&&!groups.length)invalid('Choose at least one column or grouping.');
   const aggregate=AGGREGATES.has(spec.aggregate)?spec.aggregate:'count';
   const measure=safeText(spec.measure,60);
@@ -65,7 +69,7 @@ function normalize(spec,actor){
   if(chart==='line'&&(groups.length!==1||dataset.fields[groups[0]]!=='date'||sort!==groups[0]
     ||direction!=='asc'))invalid('A trend line needs one date grouping sorted oldest to newest.');
   const title=safeText(spec.title,100)||dataset.label;
-  return {dataset:datasetKey,columns:groups.length?[]:columns,groups,aggregate,
+  return {dataset:datasetKey,columns:groups.length?[]:columns,groups,dateGrain,aggregate,
     measure:aggregate==='count'?'':measure,filters:cleanFilters,sort,direction,chart,title};
 }
 function quote(field){return `"${field}"`;}
@@ -84,11 +88,19 @@ function queryFor(config,workspaceId,{limit=201,offset=0}={}){
   const where=clauses.length?`WHERE ${clauses.join(' AND ')}`:'';
   let select,group='';
   if(config.groups.length){
-    const groupFields=config.groups.map(quote);const expression=config.aggregate==='count'?'COUNT(*)::bigint':
+    const groupFields=config.groups.map((field)=>config.dateGrain!=='exact'&&dataset.fields[field]==='date'
+      ?`date_trunc('${config.dateGrain}',${quote(field)}::timestamp)::date`:quote(field));
+    const selectGroups=groupFields.map((expression,index)=>{
+      const field=config.groups[index];
+      return config.dateGrain!=='exact'&&dataset.fields[field]==='date'
+        ?`to_char(${expression},'YYYY-MM-DD') AS ${quote(field)}`
+        :`${expression} AS ${quote(field)}`;
+    });
+    const expression=config.aggregate==='count'?'COUNT(*)::bigint':
       config.aggregate==='sum'?`SUM(${quote(config.measure)})`:
         config.aggregate==='average'?`AVG(${quote(config.measure)})`:
           config.aggregate==='minimum'?`MIN(${quote(config.measure)})`:`MAX(${quote(config.measure)})`;
-    select=`${groupFields.join(',')},${expression} AS ${quote(AGGREGATE_COLUMN[config.aggregate])}`;
+    select=`${selectGroups.join(',')},${expression} AS ${quote(AGGREGATE_COLUMN[config.aggregate])}`;
     group=`GROUP BY ${groupFields.join(',')}`;
   }else select=`record_id,${config.columns.map(quote).join(',')}`;
   const direction=config.direction==='asc'?'ASC':'DESC';
@@ -134,13 +146,30 @@ function drilldownSpec(spec,values,actor){
   const config=normalize(spec,actor);
   if(!config.groups.length)invalid('Only a grouped report can be drilled into.');
   if(!Array.isArray(values)||values.length!==config.groups.length)invalid('Choose one exact report group.');
-  if(config.filters.length+values.length>12)invalid('This report has too many filters for a safe drill-down.');
   const dataset=registry.get(config.dataset);
   const columns=[...new Set([...config.groups,...Object.keys(dataset.fields)])].slice(0,12);
-  return normalize({...config,title:`${config.title} - source records`,groups:[],columns,
-    filters:[...config.filters,...config.groups.map((field,index)=>({field,
-      operator:values[index]==null?'is_null':'equals',value:safeText(values[index],120)}))],
-    sort:config.groups[0],chart:'table'},actor);
+  const groupFilters=config.groups.flatMap((field,index)=>{
+    const value=values[index];
+    if(value==null)return [{field,operator:'is_null',value:''}];
+    if(config.dateGrain==='exact'||dataset.fields[field]!=='date')
+      return [{field,operator:'equals',value:safeText(value,120)}];
+    const start=new Date(`${safeText(value,10)}T00:00:00.000Z`);
+    if(!Number.isFinite(start.valueOf())||start.toISOString().slice(0,10)!==value)
+      invalid('Choose one exact date group.');
+    const end=new Date(start);
+    if(config.dateGrain==='day')end.setUTCDate(end.getUTCDate()+1);
+    else if(config.dateGrain==='week')end.setUTCDate(end.getUTCDate()+7);
+    else if(config.dateGrain==='month')end.setUTCMonth(end.getUTCMonth()+1);
+    else if(config.dateGrain==='quarter')end.setUTCMonth(end.getUTCMonth()+3);
+    else end.setUTCFullYear(end.getUTCFullYear()+1);
+    end.setUTCDate(end.getUTCDate()-1);
+    return [{field,operator:'at_least',value:start.toISOString().slice(0,10)},
+      {field,operator:'at_most',value:end.toISOString().slice(0,10)}];
+  });
+  if(config.filters.length+groupFilters.length>12)
+    invalid('This report has too many filters for a safe drill-down.');
+  return normalize({...config,title:`${config.title} - source records`,groups:[],dateGrain:'exact',columns,
+    filters:[...config.filters,...groupFilters],sort:config.groups[0],chart:'table'},actor);
 }
 async function save(database,ctx,actor,spec,{id=null,schedule=null}={}){
   const config=normalize(spec,actor);const delivery=schedule||{};

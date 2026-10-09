@@ -37,6 +37,10 @@
         <% for(const field of Object.keys(dataset.fields)){ %><option value="<%= field %>"
           <%= selection?.groups?.[position]===field?'selected':'' %>><%= field.replaceAll('_',' ') %></option><% } %>
       </select></label><% } %>
+    <label>Date grouping<select name="dateGrain">
+      <% for(const option of ['exact','day','week','month','quarter','year']){ %>
+        <option value="<%= option %>" <%= (selection?.dateGrain||'exact')===option?'selected':'' %>><%= option==='exact'?'Exact dates':option %></option>
+      <% } %></select></label>
     <label>Calculation<select name="aggregate"><% for(const option of ['count','sum','average','minimum','maximum']){ %>
       <option value="<%= option %>" <%= (selection?.aggregate||'count')===option?'selected':'' %>><%= option %></option><% } %></select></label>
     <label>Numeric measure<select name="measure"><option value="">Count rows</option>
@@ -53,10 +57,10 @@
     <label>Direction<select name="direction"><option value="desc">High to low / newest</option>
       <option value="asc" <%= selection?.direction==='asc'?'selected':'' %>>Low to high / oldest</option></select></label>
   </div></div>
-  <div class="report-card"><h2>Automatic delivery</h2><p>Delivery goes only to your verified account email.</p>
+  <div class="report-card"><h2>Automatic delivery</h2><p>Delivery goes only to your verified account email. Weekly reports run on Monday at the selected UTC hour.</p>
     <div class="report-controls"><label>Frequency<select name="frequency">
       <% for(const option of ['none','daily','weekly']){ %><option value="<%= option %>"
-        <%= (saved?.schedule_frequency||'none')===option?'selected':'' %>><%= option %></option><% } %></select></label>
+        <%= (saved?.schedule_frequency||'none')===option?'selected':'' %>><%= option==='weekly'?'Weekly · Monday':option %></option><% } %></select></label>
       <label>Hour (UTC)<input type="number" name="hour" min="0" max="23" value="<%= saved?.schedule_hour_utc??9 %>"></label>
     </div></div>
   <div class="report-actions"><button class="button" type="submit">Run report</button>
