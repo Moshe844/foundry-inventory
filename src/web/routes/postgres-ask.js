@@ -212,7 +212,7 @@ function createPostgresAskRouter(database,options={}){
       await entitlements.assertCapability(database,scope,'imports.spreadsheet');
       const hash=crypto.createHash('sha256').update(file.buffer).digest('hex');
       const plan=await imports.analyse(database,req.ctx,{buffer:file.buffer,filename:file.filename,
-        provider:options.provider,usageKey:`import-analysis:${hash}`});
+        provider:options.provider,usageKey:require('../../imports/usage-key').analysisUsageKey(hash,req.body.usageKey)});
       return {navigation:{href:`/imports/${plan.id}`}};
     }
     const remembered=req.session.postgresAskPageContext;

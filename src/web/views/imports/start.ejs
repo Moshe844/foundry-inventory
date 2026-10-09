@@ -20,6 +20,7 @@
     <form method="post" action="/imports" enctype="multipart/form-data" data-busy>
       <div class="card-body">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="usageKey" value="<%= usageKey %>:file">
         <label class="field">
           <span class="field-label">Spreadsheet, CSV or text PDF</span>
           <input class="input" type="file" name="file" accept=".csv,.tsv,.txt,.xlsx,.pdf" required>
@@ -46,6 +47,7 @@
     <form method="post" action="/imports" data-busy>
       <div class="card-body">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="usageKey" value="<%= usageKey %>:paste">
         <label class="field">
           <span class="field-label">Paste rows here</span>
           <textarea class="input" name="pasted" rows="8" placeholder="Copper Elbow 1/2in	CE-050	Main Warehouse	140

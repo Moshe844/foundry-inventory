@@ -214,7 +214,7 @@ async function analyse(database, ctx, input) {
   const modelProvider=input.provider||(require('../config').ai.configured?
     require('../ai/provider').createProviderUnobserved(require('../config').ai.provider,require('../config').ai.tier('fast')):null);
   const proposal=await mappingService.proposeMappings({...sheet,sourceName:input.filename || 'pasted data'},
-    {provider:modelProvider?require('../commercial/model').wrap(database,ctx,modelProvider,'import_mapping',input.usageKey||`import-analysis:${sourceHash}`):null,
+    {provider:modelProvider?require('../commercial/model').wrap(database,ctx,modelProvider,'import_mapping',input.usageKey||require('./usage-key').analysisUsageKey(sourceHash)):null,
       mappings:input.mappings || json(prior?.field_mappings,null),detectedType:input.detectedType || prior?.detected_type,
       onBeforeAi:input.onBeforeAi,onUsage:input.onUsage});
   if(proposal.detectedType==='unknown')throw new ValidationError('StockChief could not identify a product or SKU column. Name the columns and try again.');

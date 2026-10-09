@@ -24,6 +24,7 @@ function createPostgresImportsRouter(database,{provider=null}={}){
   async function renderStart(req,res){return res.page('imports/start',{
     title:'Bring your data in',nav:'imports',recent:await imports.list(database,req.ctx.workspaceId,10),
     locations:await locations(database,req.ctx.workspaceId),aiConfigured:Boolean(provider||config.ai.configured),canOperate:true,
+    usageKey:newId('importpreview'),
   });}
   router.get('/imports/start',asyncRoute(renderStart));
   router.get('/imports',asyncRoute(renderStart));
@@ -36,7 +37,8 @@ function createPostgresImportsRouter(database,{provider=null}={}){
     if(!file && !pasted)throw new ValidationError('Choose a file, or paste your data.');
     const source=file?.buffer||Buffer.from(pasted,'utf8');const sourceHash=crypto.createHash('sha256').update(source).digest('hex');
     const plan=await imports.analyse(database,req.ctx,{buffer:file?.buffer,text:file?undefined:pasted,
-      filename:file?.filename,defaultLocationId:trimOrNull(req.body.defaultLocationId),provider,usageKey:`import-analysis:${sourceHash}`});
+      filename:file?.filename,defaultLocationId:trimOrNull(req.body.defaultLocationId),provider,
+      usageKey:require('../../imports/usage-key').analysisUsageKey(sourceHash,req.body.usageKey)});
     if(wantsJson)return res.status(201).json({ok:true,location:`/imports/${plan.id}`});
     return res.redirect(303,`/imports/${plan.id}`);
   }));
