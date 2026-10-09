@@ -82,10 +82,11 @@
   <% if (started) { %>
   <div class="rm-chat__bar">
     <div><p class="rm-stamp">Your direct line</p><h1 class="rm-chat__title">Ask StockChief</h1></div>
-      <form method="post" action="/ask/new" class="rm-chat__new">
-        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-        <button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">New conversation</button>
-      </form>
+      <div class="rm-chat__new"><a class="rm-btn rm-btn--ghost rm-btn--sm" href="/ask/capabilities">What I can do here</a>
+        <form method="post" action="/ask/new">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">New conversation</button>
+        </form></div>
   </div>
   <% } %>
 
@@ -98,6 +99,7 @@
         <p class="rm-prose">
           Ask about the business or tell me what should happen. I will find the records and show any change before it is made.
         </p>
+        <p><a class="rm-btn rm-btn--ghost rm-btn--sm" href="/ask/capabilities">See everything I can do in this inventory</a></p>
       </div>
     </header>
   <% } %>

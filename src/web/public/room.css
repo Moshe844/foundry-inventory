@@ -63,7 +63,8 @@
   margin-bottom: 2px;
 }
 .rm-chat__bar .rm-stamp { margin: 0; }
-.rm-chat__new { margin: 0; }
+.rm-chat__new { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; margin: 0; }
+.rm-chat__new form { margin: 0; }
 .rm-chat__new .rm-btn { min-height: 32px; padding: 5px 12px; border-radius: var(--pill); font-size: 12.5px; }
 .rm-chat__intro {
   display: grid;
