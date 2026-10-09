@@ -65,8 +65,17 @@ function createPostgresImportsRouter(database,{provider=null}={}){
         [conflict.text,trimOrNull(req.body[`location_${index}`])]).filter((entry)=>entry[1]));
       const quantityOverrides=Object.fromEntries(Object.entries(req.body).filter(([key,value])=>
         /^quantity_\d+$/.test(key)&&trimOrNull(value)).map(([key,value])=>[key.slice(9),String(value).trim()]));
+      const hasFieldMappings=plan.sourceColumns.some((column)=>
+        Object.hasOwn(req.body,`mapping_${column.index}`));
+      const choices=hasFieldMappings?plan.sourceColumns
+        .map((column)=>[trimOrNull(req.body[`mapping_${column.index}`]),column.index])
+        .filter(([field])=>field):[];
+      if(new Set(choices.map(([field])=>field)).size!==choices.length)
+        throw new ValidationError('Two source columns cannot have the same import meaning.');
+      const fieldMappings=hasFieldMappings?Object.fromEntries(choices):undefined;
       await imports.revise(database,req.ctx,plan.id,{expectedHash:trimOrNull(req.body.integrityHash),
-        locationMappings,quantityOverrides});
+        locationMappings,quantityOverrides,fieldMappings,
+        confirmCatalogOnly:req.body.confirmCatalogOnly==='yes'});
       req.flash('success','Preview corrected and recalculated. Review all rows again before approving.');
     }catch(error){if(!(error instanceof ValidationError))throw error;req.flash('error',error.message);}
     return res.redirect(303,`/imports/${req.params.id}`);

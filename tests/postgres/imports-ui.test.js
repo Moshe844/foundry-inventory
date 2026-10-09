@@ -82,6 +82,49 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
     assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM items WHERE workspace_id=$1
       AND name='Ask Imported Valve'`,[identity.workspace_id])).rows[0].count,1);
 
+    await page.goto(`${base}/ask`);
+    const unusual=Buffer.from('Part reference,What we call it,How many are on shelf,Where we keep it\n'+
+      'CERT-SEAL-1,Certification Seal One,12,Main Warehouse\n'+
+      'CERT-SEAL-2,Certification Seal Two,7,Main Warehouse\n');
+    await page.locator('input[type="file"][name="file"]').setInputFiles({
+      name:'unusual-headings.csv',mimeType:'text/csv',buffer:unusual});
+    await Promise.all([page.waitForURL(/\/imports\/imp_/),page.getByRole('button',{name:'Continue'}).click()]);
+    const unusualPlan=await imports.get(database,identity.workspace_id,page.url().split('/').at(-1));
+    assert.equal(unusualPlan.fieldMappings.quantity,2);
+    assert.equal(unusualPlan.recordsValid,2,JSON.stringify({mappings:unusualPlan.fieldMappings,
+      rows:await imports.rowsFor(database,identity.workspace_id,unusualPlan.id)}));
+    assert.match(await page.locator('main').innerText(),/12.*7/s);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve 2 rows'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Import and verify'}).click()]);
+    assert.match(await page.locator('main').innerText(),/19 opening units/);
+    assert.equal(Number((await database.query(`SELECT COALESCE(SUM(b.on_hand),0) AS units
+      FROM balances b JOIN skus s ON s.id=b.sku_id AND s.workspace_id=b.workspace_id
+      WHERE b.workspace_id=$1 AND s.code IN ('CERT-SEAL-1','CERT-SEAL-2')`,
+    [identity.workspace_id])).rows[0].units),19);
+
+    const ambiguous=Buffer.from('SKU,Product,Metric X,Location\nCERT-COUNT-1,Certification Count One,8,Main Warehouse\n');
+    const ambiguousPlan=await imports.analyse(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},
+      {text:ambiguous.toString('utf8'),filename:'ambiguous-metric.csv',
+        mappings:{code:0,name:1,location:3}});
+    const ambiguousId=ambiguousPlan.id;
+    await page.goto(`${base}/imports/${ambiguousId}`);
+    assert.equal(ambiguousPlan.fieldMappings.quantity,undefined);
+    assert.deepEqual(ambiguousPlan.transformations.unmappedNumericColumns,['Metric X']);
+    assert.equal(await page.getByRole('button',{name:'Approve 1 row'}).isDisabled(),true);
+    await assert.rejects(imports.approve(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},
+      ambiguousId,ambiguousPlan.integrityHash),/numeric source column was not mapped/i);
+    await database.query(`UPDATE import_plans SET transformations=(transformations::jsonb-'unmappedNumericColumns')::text
+      WHERE workspace_id=$1 AND id=$2`,[identity.workspace_id,ambiguousId]);
+    await assert.rejects(imports.approve(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},
+      ambiguousId,ambiguousPlan.integrityHash),/numeric source column was not mapped/i);
+    await page.getByLabel('Source column “Metric X”').selectOption('quantity');
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Recalculate preview'}).click()]);
+    assert.equal((await imports.get(database,identity.workspace_id,ambiguousId)).fieldMappings.quantity,2);
+    assert.equal(await page.getByRole('button',{name:'Approve 1 row'}).isEnabled(),true);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve 1 row'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Import and verify'}).click()]);
+    assert.match(await page.locator('main').innerText(),/8 opening units/);
+
     for(const [name,kind] of [['Lab Main Warehouse','warehouse'],['Lab Overflow Shelf','shelf']]){
       await page.goto(`${base}/locations`);
       await page.getByRole('button',{name:'Add location',exact:true}).first().click();

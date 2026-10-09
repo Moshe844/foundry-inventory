@@ -25,17 +25,25 @@
     </div>
     <div class="card-foot"><div class="btn-row">
       <% if(plan.approvalStatus==='APPROVED'){ %><form method="post" action="/imports/<%= plan.id %>/run"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Import and verify</button></form>
-      <% } else { %><form method="post" action="/imports/<%= plan.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><button class="btn btn--primary" type="submit" <%= !plan.recordsValid || duplicatePlans.length?'disabled':'' %>>Approve <%= plan.recordsValid %> <%= helpers.plural(plan.recordsValid, 'row') %></button></form><% } %>
+      <% } else { %><form method="post" action="/imports/<%= plan.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><button class="btn btn--primary" type="submit" <%= !plan.recordsValid || duplicatePlans.length || (plan.fieldMappings.quantity===undefined && plan.transformations.unmappedNumericColumns?.length && !plan.transformations.confirmCatalogOnly)?'disabled':'' %>>Approve <%= plan.recordsValid %> <%= helpers.plural(plan.recordsValid, 'row') %></button></form><% } %>
       <form method="post" action="/imports/<%= plan.id %>/cancel"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost" type="submit">Cancel</button></form>
     </div></div>
   </div>
 <% } %>
-<% if(plan.status==='READY' && plan.approvalStatus==='AWAITING_APPROVAL' && plan.recordsInvalid){ %>
-  <div class="card section"><div class="card-head"><h2>Correct the preview</h2></div>
-    <div class="card-body"><p>No stock changes while you correct source locations or invalid quantities. Review the recalculated rows before approval.</p>
+<% if(plan.status==='READY' && plan.approvalStatus==='AWAITING_APPROVAL'){ %>
+  <div class="card section"><div class="card-head"><h2>Check columns and correct the preview</h2></div>
+    <div class="card-body"><p>No stock changes while you correct a column meaning, source location or invalid quantity. Review every recalculated row before approval.</p>
       <form method="post" action="/imports/<%= plan.id %>/revise" class="stack-form">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>">
+        <% mappingRows.forEach(function(column){ %><label class="field"><span class="field-label">Source column “<%= column.column %>”</span>
+          <select class="select" name="mapping_<%= column.index %>"><option value="">Not imported</option>
+            <% fieldOptions.forEach(function(field){ %><option value="<%= field.id %>" <%= column.field===field.id?'selected':'' %>><%= field.label %></option><% }) %>
+          </select></label><% }) %>
+        <% if(plan.fieldMappings.quantity===undefined && plan.transformations.unmappedNumericColumns?.length){ %>
+          <label class="field"><input type="checkbox" name="confirmCatalogOnly" value="yes" <%= plan.transformations.confirmCatalogOnly?'checked':'' %>>
+            I checked the unmapped numeric columns and intend to import products without opening stock.</label>
+        <% } %>
         <% plan.conflicts.forEach(function(conflict,index){ %><label class="field"><span class="field-label">Source location “<%= conflict.text %>” (<%= conflict.count %> <%= helpers.plural(conflict.count,'row') %>)</span>
           <select name="location_<%= index %>" class="select"><option value="">Leave unresolved</option>
             <% locations.forEach(function(location){ %><option value="<%= location.id %>" <%= plan.locationMappings[conflict.text]===location.id?'selected':'' %>><%= location.name %></option><% }) %>

@@ -177,10 +177,20 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     defaultLocationId:defaultLocation?.id || null };
 }
 
-function previewWarnings(summary) {
+function unmappedNumericColumns(sheet,mappings){
+  if(mappings.quantity!==undefined)return [];
+  const claimed=new Set(Object.values(mappings));
+  return sheet.columns.filter((column)=>!claimed.has(column.index)&&
+    (()=>{const profile=fields.profileColumn(sheet.rows,column.index);
+      return profile.filled>0&&profile.numericRate>=0.8;})()).map((column)=>column.name);
+}
+
+function previewWarnings(summary,{hasQuantity=true,unmappedNumeric=[]}={}) {
   const warnings=[];
   if(summary.invalid)warnings.push(`${summary.invalid} row(s) need correction before they can be imported.`);
   if(summary.unvaluedUnits)warnings.push(`${summary.unvaluedUnits} opening unit(s) have no source unit cost. StockChief will retain their quantity but cannot certify their inventory value until cost evidence is supplied.`);
+  if(!hasQuantity)warnings.push('No quantity column is mapped. This preview would create or match products without establishing opening stock.');
+  if(unmappedNumeric.length)warnings.push(`Unmapped numeric column${unmappedNumeric.length===1?'':'s'}: ${unmappedNumeric.join(', ')}. Map any stock quantity before approval, or explicitly confirm this is catalog-only data.`);
   return warnings;
 }
 
@@ -223,6 +233,7 @@ async function analyse(database, ctx, input) {
   if(input.defaultLocationId && !context.locations.some((row)=>row.id===input.defaultLocationId))
     throw new ValidationError('That destination location is not in this inventory.');
   const validated=validateRows(sheet,proposal.mappings,proposal,context,input);
+  const unmappedNumeric=unmappedNumericColumns(sheet,proposal.mappings);
   const at=nowIso();
   const plan={id:newId('imp'),workspaceId:ctx.workspaceId,createdByUserId:ctx.actorId,
     sourceName:input.filename || 'Pasted inventory data',sourceKind:buffer?parsedWorkbook.format==='pdf'
@@ -230,10 +241,11 @@ async function analyse(database, ctx, input) {
     sourceHash,sourceBytes:bytes.length,detectedType:proposal.detectedType,sheetName:sheet.name,
     sheetIndex,sourceColumns:sheet.columns.map((column)=>({index:column.index,name:column.name})),
     fieldMappings:proposal.mappings,transformations:{axisNames:proposal.axisNames,aiUsed:proposal.aiUsed,
-      ignoredColumns:proposal.ignoredColumns,sheetCount:parsedWorkbook.sheets.length},trackingModel:{mode:'per-row'},
+      ignoredColumns:proposal.ignoredColumns,sheetCount:parsedWorkbook.sheets.length,
+      unmappedNumericColumns:unmappedNumeric,confirmCatalogOnly:false},trackingModel:{mode:'per-row'},
     locationMappings:{},defaultLocationId:validated.defaultLocationId,recordsDetected:validated.summary.total,
     recordsValid:validated.summary.valid,recordsInvalid:validated.summary.invalid,
-    warnings:previewWarnings(validated.summary),
+    warnings:previewWarnings(validated.summary,{hasQuantity:proposal.mappings.quantity!==undefined,unmappedNumeric}),
     conflicts:validated.conflicts,assumptions:proposal.assumptions || [],approvalStatus:'AWAITING_APPROVAL',
     status:'READY',planVersion:1,createdAt:at};
   plan.integrityHash=integrityFor(plan,validated.rows);
@@ -303,13 +315,27 @@ async function revise(database,ctx,id,input={}){
     if(plan.integrityHash!==input.expectedHash)throw new ValidationError('The preview changed. Review it before correcting rows.');
     const current=(await client.query(`SELECT * FROM import_rows WHERE workspace_id=$1 AND import_id=$2
       ORDER BY row_number,id FOR UPDATE`,[ctx.workspaceId,id])).rows.map(hydrateRow);
+    let fieldMappings=plan.fieldMappings;
+    if(input.fieldMappings!==undefined){
+      const sourceIndexes=new Set(plan.sourceColumns.map((column)=>column.index));
+      const entries=Object.entries(input.fieldMappings);
+      if(entries.some(([field,index])=>!fields.FIELD_IDS.includes(field)||!sourceIndexes.has(index))||
+        new Set(entries.map(([,index])=>index)).size!==entries.length)
+        throw new ValidationError('Each registered import field must map to one source column, and each column may have only one meaning.');
+      fieldMappings=Object.fromEntries(entries);
+      if(fieldMappings.name===undefined&&fieldMappings.code===undefined)
+        throw new ValidationError('Map a product name or SKU before recalculating this preview.');
+    }
+    const detectedType=fields.detectType(fieldMappings);
+    if(detectedType==='unknown')throw new ValidationError('The selected columns do not identify products.');
     const allowedLocations=new Set(plan.conflicts.map((entry)=>entry.text));
     const locationMappings={...plan.locationMappings};
     for(const [source,value] of Object.entries(input.locationMappings||{})){
       if(!allowedLocations.has(source))throw new ValidationError('That source location is not in this preview.');
       if(value)locationMappings[source]=String(value);
     }
-    const quantityOverrides={...(plan.transformations.quantityOverrides||{})};
+    const mappingChanged=stable(fieldMappings)!==stable(plan.fieldMappings);
+    const quantityOverrides=mappingChanged?{}:{...(plan.transformations.quantityOverrides||{})};
     const rowNumbers=new Set(current.map((row)=>String(row.rowNumber)));
     for(const [number,value] of Object.entries(input.quantityOverrides||{})){
       if(!rowNumbers.has(String(number)))throw new ValidationError('That row is not in this preview.');
@@ -318,21 +344,28 @@ async function revise(database,ctx,id,input={}){
     const context=await workspaceContext(client,ctx.workspaceId);
     if(Object.values(locationMappings).some((value)=>!context.locations.some((row)=>row.id===value)))
       throw new ValidationError('Choose a location in this inventory for each correction.');
-    const sheet={rows:current.map((row)=>({cells:row.raw,sourceRow:row.rowNumber}))};
-    const validated=validateRows(sheet,plan.fieldMappings,
-      {detectedType:plan.detectedType,axisNames:plan.transformations.axisNames||{}},context,
+    const sheet={columns:plan.sourceColumns,rows:current.map((row)=>({cells:row.raw,sourceRow:row.rowNumber}))};
+    const axisNames=Object.fromEntries(fields.VARIANT_FIELDS.filter((field)=>fieldMappings[field]!==undefined)
+      .map((field)=>[field,plan.sourceColumns.find((column)=>column.index===fieldMappings[field])?.name||field]));
+    const validated=validateRows(sheet,fieldMappings,
+      {detectedType,axisNames},context,
       {defaultLocationId:plan.defaultLocationId,locationMappings,quantityOverrides});
-    const revised={...plan,locationMappings,transformations:{...plan.transformations,quantityOverrides},
+    const unmappedNumeric=unmappedNumericColumns(sheet,fieldMappings);
+    const confirmCatalogOnly=fieldMappings.quantity===undefined&&input.confirmCatalogOnly===true;
+    const revised={...plan,fieldMappings,detectedType,locationMappings,
+      transformations:{...plan.transformations,axisNames,quantityOverrides,
+        unmappedNumericColumns:unmappedNumeric,confirmCatalogOnly},
       recordsValid:validated.summary.valid,recordsInvalid:validated.summary.invalid,
-      warnings:previewWarnings(validated.summary),
+      warnings:previewWarnings(validated.summary,{hasQuantity:fieldMappings.quantity!==undefined,unmappedNumeric}),
       conflicts:validated.conflicts,planVersion:plan.planVersion+1};
     revised.integrityHash=integrityFor(revised,validated.rows);
     await client.query(`UPDATE import_plans SET location_mappings=$3::jsonb,transformations=$4::jsonb,
       records_valid=$5,records_invalid=$6,warnings=$7::jsonb,conflicts=$8::jsonb,
-      plan_version=$9,integrity_hash=$10 WHERE workspace_id=$1 AND id=$2`,
+      plan_version=$9,integrity_hash=$10,field_mappings=$11::jsonb,detected_type=$12
+      WHERE workspace_id=$1 AND id=$2`,
     [ctx.workspaceId,id,JSON.stringify(locationMappings),JSON.stringify(revised.transformations),
       revised.recordsValid,revised.recordsInvalid,JSON.stringify(revised.warnings),JSON.stringify(revised.conflicts),
-      revised.planVersion,revised.integrityHash]);
+      revised.planVersion,revised.integrityHash,JSON.stringify(fieldMappings),detectedType]);
     for(const row of validated.rows)await client.query(`UPDATE import_rows SET parsed=$4::jsonb,status=$5,
       problems=$6::jsonb,location_id=$7,quantity=$8 WHERE workspace_id=$1 AND import_id=$2 AND row_number=$3`,
     [ctx.workspaceId,id,row.rowNumber,JSON.stringify(row.parsed),row.status,JSON.stringify(row.problems),
@@ -350,6 +383,12 @@ async function approve(database, ctx, id, expectedHash) {
     if(plan.isExpired)throw new ValidationError('This preview is more than 24 hours old. Read the source again before importing.');
     if(plan.integrityHash!==expectedHash)throw new ValidationError('The preview changed. Review the current rows before approving.');
     if(!plan.recordsValid)throw new ValidationError('There are no valid rows to import.');
+    if(plan.fieldMappings.quantity===undefined&&!plan.transformations.confirmCatalogOnly){
+      const sourceRows=(await client.query(`SELECT raw FROM import_rows WHERE workspace_id=$1 AND import_id=$2`,
+        [ctx.workspaceId,id])).rows.map((row)=>({cells:json(row.raw,[])}));
+      if(unmappedNumericColumns({columns:plan.sourceColumns,rows:sourceRows},plan.fieldMappings).length)
+        throw new ValidationError('A numeric source column was not mapped. Map the stock quantity or explicitly confirm a catalog-only import first.');
+    }
     if((await client.query(`SELECT 1 FROM import_plans WHERE workspace_id=$1 AND source_hash=$2 AND id<>$3
       AND status='SUCCEEDED' LIMIT 1`,[ctx.workspaceId,plan.sourceHash,id])).rows.length)
       throw new ValidationError('This exact source has already been imported. StockChief will not apply it twice.');

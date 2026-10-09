@@ -123,6 +123,7 @@ const PATTERNS = {
     /^costs?$/,
   ],
   quantity: [
+    /\b(?:how\s+many|number\s+of)\b/,
     /\b(?:qty|quantity)\b/,
     /\b(?:on\s*hand|onhand|in\s*stock|stock\s*(?:level|count)|available|balance|count(?:ed)?)\b/,
     /\b(?:units?|pieces?|pcs)\b/,
