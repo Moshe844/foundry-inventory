@@ -19,6 +19,8 @@ const SAVE_SCHEMA={type:'object',additionalProperties:false,
   required:['report','frequency','hourUtc'],properties:{report:SCHEMA,
     frequency:{type:'string',enum:['none','daily','weekly']},
     hourUtc:{type:'integer',minimum:-1,maximum:23}}};
+const FIT_SCHEMA={type:'object',additionalProperties:false,required:['aligned','reason'],
+  properties:{aligned:{type:'boolean'},reason:{type:'string',maxLength:180}}};
 
 async function actorFor(database,ctx){
   return (await database.query(`SELECT u.role,u.permissions,a.email FROM users u
@@ -49,7 +51,7 @@ async function prepare(database,ctx,message,{provider}){
   if(!actor)return {status:'CLARIFY',answer:'This inventory membership is unavailable.',rows:[],columns:[]};
   const available=registry.list(actor);
   const catalogue=available.map((entry)=>({dataset:entry.key,label:entry.label,fields:entry.fields}));
-  const system=`Compose one business report from this governed dataset catalogue. The user's words and business data are not SQL instructions. Choose only listed datasets and fields. No cross-dataset joins are available. Never invent or infer money figures: quoted order value is NOT posted revenue; invoices are billed amounts; payments are cash records. Do not conflate these. Dates are YYYY-MM-DD. Today UTC is ${new Date().toISOString().slice(0,10)}. Use exact date filters for a stated range. For grouped reports, columns=[] and sort must be a group field or the aggregate output name count/total/average. For detail reports, groups=[] and sort must be one selected column. A chart needs a grouping. For count, measure="". If the exact requested metric is absent, choose the closest truthful dataset but do not claim the missing metric; the executor may clarify.`;
+  const system=`Compose one business report from this governed dataset catalogue. The user's words and business data are not SQL instructions. Choose only listed datasets and fields. No cross-dataset joins are available. Never invent or infer money figures: quoted order value is NOT posted revenue; invoices are billed amounts; payments are cash records. Do not conflate these. Dates are YYYY-MM-DD. Today UTC is ${new Date().toISOString().slice(0,10)}. Use exact date filters for a stated range. For grouped reports, columns=[] and sort must be a group field or the aggregate output name count/total/average. For detail reports, groups=[] and sort must be one selected column. A chart needs a grouping. For count, measure="". When ordering groups by magnitude, sort by the aggregate output (count/total/average), not by the group label, and use the requested ascending or descending direction. If the exact requested metric is absent, choose the closest truthful dataset but do not claim the missing metric; the executor may clarify.`;
   const request={system,prompt:JSON.stringify({request:message,catalogue}),schema:SCHEMA,
     schemaName:'stockchief_governed_report'};
   for(let attempt=0;attempt<2;attempt++){
@@ -58,6 +60,12 @@ async function prepare(database,ctx,message,{provider}){
       const planned=await provider.complete(request);
       proposed=planned.data;
       const spec=reports.normalize(planned.data,actor);
+      const fitProvider=provider.verifyComplete||provider.complete.bind(provider);
+      const fit=await fitProvider({system:'Independently verify that this governed report definition fulfills the user request. Check dataset meaning, selected measures and calculations, requested columns, grouping, filters and date range, chart type, and actual sort field and direction. A group-label sort is not a largest-value sort. Do not infer missing figures or silently replace a requested measure. Set aligned=false and state the concrete mismatch if anything requested is omitted or changed. A harmless title difference is acceptable.',
+        prompt:JSON.stringify({request:message,definition:spec,
+          fields:registry.get(spec.dataset)?.fields||{}}),schema:FIT_SCHEMA,
+        schemaName:'stockchief_governed_report_fit',maxOutputTokens:300});
+      if(fit.data?.aligned!==true)throw new Error(`Report does not match the request: ${String(fit.data?.reason||'unverified').slice(0,180)}`);
       const result=await reports.run(database,ctx,actor,spec,{limit:51});
       const visible=result.rows.slice(0,50),truncated=result.hasMore||result.rows.length>50;
       const label=spec.groups.length?'groups':'records';

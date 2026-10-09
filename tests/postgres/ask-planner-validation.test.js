@@ -212,6 +212,23 @@ test('an explicit reservation becomes a dependent approved step and invented per
   assert.equal(Object.hasOwn(result.steps[0].args,'amount'),false);
 });
 
+test('available-stock confirmation with backorder fallback cannot add a strict second reservation',async()=>{
+  const step=(capability,dependsOn=[])=>({capability,
+    arguments:[{name:'recordReference',value:'SO-00001'}],dependsOn,continuesPending:false});
+  const provider={async complete({schemaName,prompt}){
+    if(schemaName==='stockchief_capability_fit'){
+      assert.deepEqual(JSON.parse(prompt).proposedSteps.map((row)=>row.capability),
+        ['sales_order.confirm']);
+      return {data:{aligned:true,reason:''}};
+    }
+    return {data:{steps:[step('sales_order.confirm'),step('sales_order.reserve_all',[0])],
+      clarifyingQuestion:''}};
+  }};
+  const result=await planner.plan(provider,
+    'Confirm SO-00001 and reserve available units; if stock is short, backorder the rest.');
+  assert.deepEqual(result.steps.map((row)=>row.contract.name),['sales_order.confirm']);
+});
+
 test('a request to leave an order as draft never gains a reservation step',async()=>{
   const provider={async complete({schemaName}){
     if(schemaName==='stockchief_capability_fit')return {data:{aligned:true,reason:''}};

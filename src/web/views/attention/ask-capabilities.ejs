@@ -9,10 +9,10 @@
     <button class="rm-btn" type="submit">Search</button>
     <% if (query) { %><a href="/ask/capabilities">Clear</a><% } %>
   </form>
-  <p class="rm-prose"><%= visibleCount %> of <%= total %> registered abilities shown. Ask in your own words; these prompts are starting points, not commands to memorize.</p>
+  <p class="rm-prose"><%= visibleCount %> of <%= total %> registered abilities match. Search for an outcome or open a category. These prompts are starting points, not commands to memorize.</p>
   <% groups.forEach(function(group){ if (!group.entries.length) return; %>
-    <section class="ask-capabilities__group" aria-label="<%= group.title %>">
-      <h2><%= group.title %></h2>
+    <details class="ask-capabilities__group" <%= query?'open':'' %>>
+      <summary><%= group.title %> <span><%= group.entries.length %> abilities</span></summary>
       <div class="ask-capabilities__grid">
         <% group.entries.forEach(function(entry){ %>
           <article class="ask-capabilities__item">
@@ -23,7 +23,7 @@
           </article>
         <% }) %>
       </div>
-    </section>
+    </details>
   <% }) %>
   <% if (!visibleCount) { %><p>No available ability matches that search. Try another outcome or ask StockChief directly.</p><% } %>
 </div>

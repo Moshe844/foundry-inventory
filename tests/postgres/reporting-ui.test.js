@@ -37,10 +37,15 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     const modelCalls=[];
     const provider={name:'anthropic',model:PRICED_MODEL,async complete(input){
       modelCalls.push(input.schemaName);
-      if(input.schemaName==='stockchief_capability_plan')return {data:{steps:[{capability:
-        /save|schedule/i.test(JSON.parse(input.prompt).message)?'report.template.create':'read.custom_report',
-        arguments:[],dependsOn:[],continuesPending:false}],clarifyingQuestion:''},usage:pricedUsage()};
+      if(input.schemaName==='stockchief_capability_plan'){
+        const saving=/save|schedule/i.test(JSON.parse(input.prompt).message);
+        const step=(capability)=>({capability,arguments:[],dependsOn:[],continuesPending:false});
+        return {data:{steps:saving?[step('report.template.create')]:
+          [step('read.inventory_positions'),step('read.custom_report')],clarifyingQuestion:''},
+        usage:pricedUsage()};
+      }
       if(input.schemaName==='stockchief_capability_fit')return {data:{aligned:true,reason:''},usage:pricedUsage()};
+      if(input.schemaName==='stockchief_governed_report_fit')return {data:{aligned:true,reason:''},usage:pricedUsage()};
       if(input.schemaName==='stockchief_governed_report')return {data:{dataset:'stock',title:'Units by location',
         columns:[],groups:['location'],aggregate:'sum',measure:'on_hand',filters:[],sort:'total',
         direction:'desc',chart:'bar'},usage:pricedUsage()};
@@ -77,12 +82,26 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     let reportAttempts=0;
     const repaired=await reportAsk.prepare(database,ctx,'Group stock by location and sum units',{provider:{
       async complete(input){reportAttempts++;
+        if(input.schemaName==='stockchief_governed_report_fit')return {data:{aligned:true,reason:''}};
         if(reportAttempts===2)assert.match(input.prompt,/Choose a displayed field to sort/);
         return {data:{dataset:'stock',title:'Stock by location',columns:[],groups:['location'],
           aggregate:'sum',measure:'on_hand',filters:[],sort:reportAttempts===1?'nonexistent':'total',
           direction:'desc',chart:'bar'}};
       }}});
-    assert.equal(reportAttempts,2);assert.equal(repaired.status,'ANSWERED');
+    assert.equal(reportAttempts,3);assert.equal(repaired.status,'ANSWERED');
+    let semanticPlans=0;
+    const corrected=await reportAsk.prepare(database,ctx,
+      'Show stock by location, largest on-hand total first in a bar chart',{provider:{
+        async complete(input){if(input.schemaName==='stockchief_governed_report_fit')
+          return {data:{aligned:input.prompt.includes('"sort":"total"'),
+            reason:'The first plan sorts the location label, not the total.'}};
+        semanticPlans++;
+        if(semanticPlans===2)assert.match(input.prompt,/sorts the location label/);
+        return {data:{dataset:'stock',title:'Stock by location',columns:[],groups:['location'],
+          aggregate:'sum',measure:'on_hand',filters:[],sort:semanticPlans===1?'location':'total',
+          direction:'desc',chart:'bar'}};
+      }}});
+    assert.equal(semanticPlans,2);assert.equal(corrected.status,'ANSWERED');
     assert.throws(()=>reports.normalize({dataset:'payments',groups:['status'],aggregate:'sum',
       measure:'amount_minor',sort:'total'},actor),/currency/i);
     const askPage=await owner.get('/ask');

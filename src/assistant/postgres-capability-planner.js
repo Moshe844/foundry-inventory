@@ -223,14 +223,24 @@ function coverExplicitOrderReservation(steps,message,catalogue,pending){
   });
   const fullReservation=/\b(?:all|every|entire|fully|both)\b[^.!?]{0,45}\b(?:reserv\w*|allocat\w*|hold|commit)\b|\b(?:reserv\w*|allocat\w*|hold|commit)\b[^.!?]{0,45}\b(?:all|every|entire|fully|both)\b/i.test(goal);
   if(!requested)return steps;
-  if(fullReservation){
+  // Partial allocation and a shortage/backorder fallback are one canonical
+  // confirmation effect. A strict all-or-nothing reservation is incompatible
+  // with that goal and must not become a second dependent approval.
+  const acceptsShortage=/\bbackorder\b/i.test(goal)
+    &&!/\b(?:no|never|without|do\s+not|don['’]t)\s+backorder\b/i.test(goal);
+  const reservesAvailable=/\b(?:reserv\w*|allocat\w*)\s+(?:the\s+)?available\b/i.test(goal);
+  if(acceptsShortage||reservesAvailable){
+    const partial=catalogue.get('sales_order.confirm');
+    if(partial)for(const step of steps)if(step.contract.name==='sales_order.reserve_all')step.contract=partial;
+  }else if(fullReservation){
     const strict=catalogue.get('sales_order.reserve_all');
     if(strict)for(const step of steps)if(step.contract.name==='sales_order.confirm')step.contract=strict;
   }
   if(steps.some((step)=>['sales_order.confirm','sales_order.reserve_all']
     .includes(step.contract.name)))return steps;
   const creates=steps.map((step,index)=>({step,index})).filter(({step})=>step.contract.name==='sales_order.create');
-  const confirm=catalogue.get(fullReservation?'sales_order.reserve_all':'sales_order.confirm');
+  const confirm=catalogue.get(fullReservation&&!acceptsShortage&&!reservesAvailable
+    ?'sales_order.reserve_all':'sales_order.confirm');
   if(creates.length!==1||!confirm||steps.length>=8)return steps;
   steps.push({contract:confirm,args:{},dependsOn:[creates[0].index],continuesPending:false});
   return steps;

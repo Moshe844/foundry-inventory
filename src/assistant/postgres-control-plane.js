@@ -522,6 +522,11 @@ async function run(service,database,ctx,message,{provider,rawProvider=null,histo
   if(executed.length&&executed.every((entry)=>entry.step.contract.kind==='read')){
     await groundNamedSkuReads(service,database,ctx,message,executed,catalogue,
       {actor,provider,rawProvider,sourceMessage:message,pending,page,usageKey});
+    // A composed report is already a verified, sorted PostgreSQL result with
+    // its own chart and editable definition. A generic evidence synthesizer
+    // must not re-count or reorder its rows from a preliminary broad read.
+    const structured=executed.filter((entry)=>entry.result.reportConfig);
+    if(structured.length)return {steps:selected.steps,outcomes:structured};
     if(executed.length===1&&executed[0].step.contract.answerMode==='executor')
       return {steps:selected.steps,outcomes:executed};
     let answered=await synthesizeReads(provider,message,executed,{catalogue,recentChanges});
