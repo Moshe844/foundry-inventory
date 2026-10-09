@@ -40,6 +40,11 @@ const provider={async complete(input){
         {sku:prompt.currentRecord.sku,reorderPoint:4})]},
     usage:{provider:'fixture-ai',model:'fixture-model',inputTokens:40,outputTokens:20}};
   }
+  if(input.schemaName==='postgres_operating_instruction'&&JSON.parse(input.prompt).instruction?.includes('warehouse-specific')){
+    return {data:{understood:true,summary:'Main Warehouse reorder point',clarifyingQuestion:'',unsupportedReason:'',
+      changes:[change('replenishment',{sku:'RULE-1',location:'Main Warehouse',reorderPoint:4,targetStock:15})]},
+    usage:{provider:'fixture-ai',model:'fixture-model',inputTokens:40,outputTokens:20}};
+  }
   if(input.schemaName==='postgres_operating_instruction')return {data:{understood:true,
     summary:'Keep Rule Widget replenished under approved supplier, transfer and stock limits',clarifyingQuestion:'',unsupportedReason:'',changes:[
       change('replenishment',{sku:'RULE-1',reorderPoint:8,targetStock:20,safetyStock:3}),
@@ -95,6 +100,18 @@ test('real Chromium approves one free-form PostgreSQL standing instruction witho
     const reorder=(await database.query(`SELECT * FROM reorder_policies WHERE workspace_id=$1 AND sku_id=$2`,
       [ctx.workspaceId,item.skuIds[0]])).rows[0];
     assert.equal(Number(reorder.reorder_point),8);assert.equal(Number(reorder.target_stock),20);assert.equal(Number(reorder.safety_stock),3);
+    const scoped=await require('../../src/manager/postgres-operating-instructions').interpret(database,ctx,
+      'Set a warehouse-specific reorder point for RULE-1 in Main Warehouse.',
+      {provider:require('../helpers/postgres-model-fixture').fixture(provider),instructionUsageKey:'scoped-reorder-rule'});
+    assert.match(scoped.summary,/at Main Warehouse/);
+    await require('../../src/manager/postgres-operating-instructions').approve(database,ctx,scoped.id,scoped.integrityHash);
+    const locationId=(await database.query(`SELECT id FROM locations WHERE workspace_id=$1 AND name='Main Warehouse'`,
+      [ctx.workspaceId])).rows[0].id;
+    const policies=(await database.query(`SELECT location_id,reorder_point,target_stock FROM reorder_policies
+      WHERE workspace_id=$1 AND sku_id=$2 ORDER BY location_id NULLS FIRST`,
+      [ctx.workspaceId,item.skuIds[0]])).rows;
+    assert.deepEqual(policies.map((row)=>({location:row.location_id,reorder:Number(row.reorder_point),target:Number(row.target_stock)})),
+      [{location:null,reorder:8,target:20},{location:locationId,reorder:4,target:15}]);
     const currentPage=await require('../../src/assistant/postgres-page-context').load(database,ctx.workspaceId,
       `/inventory/${item.itemId}`);
     const contextual=await require('../../src/manager/postgres-operating-instructions').interpret(database,ctx,
@@ -121,16 +138,21 @@ test('real Chromium approves one free-form PostgreSQL standing instruction witho
     assert.deepEqual({mode:stockGuard.enforcement_mode,comparator:stockGuard.comparator,
       threshold:Number(stockGuard.threshold),release:stockGuard.release_condition},
     {mode:'block',comparator:'below',threshold:2,release:'stock_recovered'});
-    const policies=(await database.query(`SELECT allowed_action_types,maximum_quantity,maximum_value,thresholds
+    const automationPolicies=(await database.query(`SELECT allowed_action_types,maximum_quantity,maximum_value,thresholds
       FROM automation_policies WHERE workspace_id=$1 AND enabled=1 AND approved_at IS NOT NULL ORDER BY created_at`,[ctx.workspaceId])).rows;
-    assert.equal(policies.length,2);assert.deepEqual(policies.map((row)=>json(row.allowed_action_types)),[['transfer'],['approve_purchase_order']]);
-    assert.equal(Number(policies[0].maximum_quantity),5);assert.equal(Number(policies[1].maximum_value),500);
-    assert.equal(Number(json(policies[1].thresholds).maxValuePerWeek),1500);
+    assert.equal(automationPolicies.length,2);assert.deepEqual(automationPolicies.map((row)=>json(row.allowed_action_types)),[['transfer'],['approve_purchase_order']]);
+    assert.equal(Number(automationPolicies[0].maximum_quantity),5);assert.equal(Number(automationPolicies[1].maximum_value),500);
+    assert.equal(Number(json(automationPolicies[1].thresholds).maxValuePerWeek),1500);
     assert.equal((await database.query(`SELECT mode FROM workspace_autopilot WHERE workspace_id=$1`,[ctx.workspaceId])).rows[0].mode,
       'POLICY_AUTOMATED');
     assert.equal(JSON.parse((await database.query(`SELECT value FROM operational_preferences WHERE workspace_id=$1
       AND key='prefer_transfer_before_purchasing'`,[ctx.workspaceId])).rows[0].value),true);
     await page.goto(`${base}/what-you-told-me`);const transcript=await page.locator('main').innerText();
     assert.match(transcript,/Rule Widget.*reorder at 8/);
-    assert.match(transcript,/1 standing rule/);assert.deepEqual(errors,[]);
+    assert.match(transcript,/2 standing rules/);
+    await page.goto(`${base}/operating-instructions/${correction.id}?from=ask`);
+    await Promise.all([page.waitForURL(/\/ask(?:\?.*)?(?:#latest)?$/),
+      page.getByRole('button',{name:'Discard'}).click()]);
+    assert.match(await page.locator('main').innerText(),/Ask StockChief/);
+    assert.deepEqual(errors,[]);
   });

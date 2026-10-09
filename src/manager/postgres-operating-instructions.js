@@ -33,6 +33,8 @@ const EFFECT_FIT_SCHEMA={type:'object',additionalProperties:false,required:['equ
 const EFFECT_FIT_SYSTEM=`Compare the owner's instruction with the exact effects the application will enforce after approval.
 Reject any changed measure, comparator, threshold, named SKU/location/supplier, authority, automatic action,
 notification channel or timing. A requested prohibition is satisfied only if no proposed effect violates it.
+Replenishment recommendations do not notify the owner. If the owner requested a stock warning or alert,
+the effects need a separate Needs You stock_alert; a reorder point alone is not equivalent.
 The effects are authoritative descriptions of the business engines, not suggestions. Do not infer an
 additional effect from the owner's intent. The resolvedEntities mapping is verified by this workspace's
 database: a supplied SKU code and its product display name identify the SAME record, not different targets.
@@ -42,7 +44,7 @@ concrete plain-language difference. Missing optional scope is not a difference.`
 const SYSTEM=`Translate one owner's lasting StockChief operating instruction into typed settings. Return only the schema.
 Extract only facts and limits explicitly stated. Never invent a product, supplier, location, threshold, authority or default.
 An omitted location means the rule applies across this inventory; do not ask which location unless the owner explicitly refers to one ambiguously. Set clarifyingQuestion only when a required fact is missing or the requested effect is semantically ambiguous, not to seek an optional narrower scope.
-Use replenishment for reorder point, target stock and safety stock. These settings detect need but grant no authority.
+Use replenishment for reorder point, target stock and safety stock. These settings detect need but grant no authority. If the owner names a location, retain that location as the rule's scope. If one instruction requests both a reorder target and a Needs You warning, return separate replenishment and stock_alert changes; neither effect implies the other.
 Use stock_alert for an owner's request to be notified in Needs You at a SKU threshold. It needs a SKU, notificationThreshold, notificationMetric and notificationComparator. Physical units in the warehouse are on_hand; units available to fulfill after customer commitments are available_to_fulfill. "Below" means strictly below; "at or below", "or less", and "reaches" mean at_or_below. Never substitute one metric or comparator for another. It neither sends external email nor orders goods. A replenishment rule alone does not notify.
 Use supplier_terms for lead time, units per purchase unit, MOQ or order multiple for one real supplier and SKU.
 Use transfer_authority only when the owner explicitly permits automatic transfers without approval; maximumQuantity is required.
@@ -154,7 +156,7 @@ async function resolveChange(database,workspaceId,raw){const change=cleanChange(
   }
   return {...change,questions};}
 
-function describe(change){if(change.domain==='replenishment')return `${change.displayName}: ${change.operation==='remove'?'remove its taught replenishment settings':[
+function describe(change){if(change.domain==='replenishment')return `${change.displayName}${change.locationName?` at ${change.locationName}`:''}: ${change.operation==='remove'?'remove its taught replenishment settings':[
     number(change.reorderPoint)!==null?`reorder at ${change.reorderPoint}`:null,number(change.targetStock)!==null?`target ${change.targetStock}`:null,
     number(change.safetyStock)!==null?`safety stock ${change.safetyStock}`:null].filter(Boolean).join(', ')}`;
   if(change.domain==='stock_alert')return change.operation==='remove'
@@ -213,16 +215,17 @@ async function interpret(database,ctx,instruction,options={}){const clean=String
   }
   if(!read.understood||!Array.isArray(read.changes)||!read.changes.length)
     throw new ValidationError(read.unsupportedReason||read.clarifyingQuestion||'StockChief could not turn that into a safe standing rule.');
-  const resolved=await Promise.all(read.changes.map((change)=>resolveChange(database,ctx.workspaceId,change)));
-  // The deterministic contracts decide which fields actually block approval.
-  // Model-authored questions about optional scope must not create owner work.
-  const questions=[...new Set(resolved.flatMap((change)=>change.questions).filter(Boolean))];
-  const resolvedChanges=resolved.map(({questions:unused,...change})=>({
-    ...change,policyContract:policyContracts.compile(change)}));
-  if(!questions.length){
-    const effects=resolvedChanges.map(describe);
+  let resolvedChanges,questions;
+  for(let pass=0;pass<2;pass++){
+    const resolved=await Promise.all(read.changes.map((change)=>resolveChange(database,ctx.workspaceId,change)));
+    // The deterministic contracts decide which fields actually block approval.
+    // Model-authored questions about optional scope must not create owner work.
+    questions=[...new Set(resolved.flatMap((change)=>change.questions).filter(Boolean))];
+    resolvedChanges=resolved.map(({questions:unused,...change})=>({
+      ...change,policyContract:policyContracts.compile(change)}));
+    if(questions.length)break;
     const fit=await completeModel({system:EFFECT_FIT_SYSTEM,
-      prompt:JSON.stringify({ownerInstruction:clean,priorApprovedRule,enforcedEffects:effects,
+      prompt:JSON.stringify({ownerInstruction:clean,priorApprovedRule,enforcedEffects:resolvedChanges.map(describe),
         resolvedEntities:resolvedChanges.map((change)=>({requestedSku:change.sku||null,
           verifiedSkuCode:change.skuCode||null,verifiedProductName:change.displayName||null,
           requestedLocation:change.location||null,verifiedLocationName:change.locationName||null,
@@ -230,9 +233,17 @@ async function interpret(database,ctx,instruction,options={}){const clean=String
       schema:EFFECT_FIT_SCHEMA,schemaName:'postgres_operating_instruction_effect_fit'});
     if(options.onUsage&&fit.usage)await options.onUsage(fit.usage,
       {schemaName:'postgres_operating_instruction_effect_fit'});
-    if(fit.data?.equivalent!==true)throw new ValidationError(
-      `I won't propose a rule that changes your request. ${String(fit.data?.difference||
-        'The requested effect does not match the available rule.').slice(0,240)} Nothing changed.`);
+    if(fit.data?.equivalent===true)break;
+    const difference=String(fit.data?.difference||'The requested effect does not match the available rule.').slice(0,240);
+    if(pass===1)throw new ValidationError(`I won't propose a rule that changes your request. ${difference} Nothing changed.`);
+    response=await completeModel({system:`${SYSTEM}\n${PAGE_CONTEXT_RULE}\n${PRIOR_CONTEXT_RULE}`,
+      prompt:JSON.stringify({...evidence,rejectedInterpretation:read,effectMismatch:difference,
+        correction:'Revise the typed changes to cover every requested effect. Keep named entities and scopes exact. A reorder point and a Needs You warning are independent effects. Never invent authority.'}),
+      schema:SCHEMA,schemaName:'postgres_operating_instruction'});
+    if(options.onUsage&&response.usage)await options.onUsage(response.usage,{schemaName:'postgres_operating_instruction'});
+    read=response?.data||{};
+    if(!read.understood||!Array.isArray(read.changes)||!read.changes.length)
+      throw new ValidationError(read.unsupportedReason||read.clarifyingQuestion||difference);
   }
   const snapshot={statedAs:clean,resolvedChanges};
   const id=newId('oin');const at=nowIso();await database.query(`INSERT INTO operating_instruction_proposals
@@ -281,17 +292,18 @@ async function applyChange(client,ctx,change){const at=nowIso();
     return {kind:'stock_threshold_rule',id,skuId:change.skuId,threshold:change.notificationThreshold};
   }
   if(change.domain==='replenishment'){
-    if(change.operation==='remove'){await client.query('DELETE FROM reorder_policies WHERE workspace_id=$1 AND sku_id=$2 AND location_id IS NULL',
-      [ctx.workspaceId,change.skuId]);return {kind:'reorder_policy',skuId:change.skuId,removed:true};}
-    const prior=(await client.query(`SELECT * FROM reorder_policies WHERE workspace_id=$1 AND sku_id=$2 AND location_id IS NULL`,
-      [ctx.workspaceId,change.skuId])).rows[0];const id=prior?.id||newId('rpol');const values=[number(change.reorderPoint)??prior?.reorder_point??null,
+    const locationId=change.locationId||null;
+    if(change.operation==='remove'){await client.query('DELETE FROM reorder_policies WHERE workspace_id=$1 AND sku_id=$2 AND location_id IS NOT DISTINCT FROM $3',
+      [ctx.workspaceId,change.skuId,locationId]);return {kind:'reorder_policy',skuId:change.skuId,locationId,removed:true};}
+    const prior=(await client.query(`SELECT * FROM reorder_policies WHERE workspace_id=$1 AND sku_id=$2 AND location_id IS NOT DISTINCT FROM $3`,
+      [ctx.workspaceId,change.skuId,locationId])).rows[0];const id=prior?.id||newId('rpol');const values=[number(change.reorderPoint)??prior?.reorder_point??null,
       number(change.targetStock)??prior?.target_stock??null,number(change.safetyStock)??prior?.safety_stock??null];
     if(prior)await client.query(`UPDATE reorder_policies SET reorder_point=$3,target_stock=$4,safety_stock=$5,
       source='foundry',notes='Approved through Ask StockChief.',updated_at=$6 WHERE workspace_id=$1 AND id=$2`,
     [ctx.workspaceId,id,...values,at]);else await client.query(`INSERT INTO reorder_policies
       (id,workspace_id,sku_id,location_id,reorder_point,target_stock,safety_stock,source,notes,created_at,updated_at)
-      VALUES($1,$2,$3,NULL,$4,$5,$6,'foundry','Approved through Ask StockChief.',$7,$7)`,
-    [id,ctx.workspaceId,change.skuId,...values,at]);return {kind:'reorder_policy',id,skuId:change.skuId};}
+      VALUES($1,$2,$3,$4,$5,$6,$7,'foundry','Approved through Ask StockChief.',$8,$8)`,
+    [id,ctx.workspaceId,change.skuId,locationId,...values,at]);return {kind:'reorder_policy',id,skuId:change.skuId,locationId};}
   if(change.domain==='supplier_terms'){
     if(change.operation==='remove'){await client.query(`UPDATE supplier_items SET is_active=0,updated_at=$4
       WHERE workspace_id=$1 AND supplier_id=$2 AND sku_id=$3`,[ctx.workspaceId,change.supplierId,change.skuId,at]);
@@ -341,7 +353,7 @@ async function applyChange(client,ctx,change){const at=nowIso();
     return {kind:'stock_guard',id,skuId:change.skuId};}
   throw new ValidationError('That instruction domain is not supported by the PostgreSQL runtime.');}
 
-function target(change){if(change.domain==='replenishment')return `replenishment:${change.skuId}`;
+function target(change){if(change.domain==='replenishment')return `replenishment:${change.skuId}:${change.locationId||'*'}`;
   if(change.domain==='stock_alert')return `stock_alert:${change.skuId}:${change.locationId||'*'}`;
   if(change.domain==='supplier_terms')return `supplier:${change.supplierId}:${change.skuId}`;
   if(change.domain==='transfer_authority')return 'authority:transfer';if(change.domain==='purchase_authority')return 'authority:purchase';

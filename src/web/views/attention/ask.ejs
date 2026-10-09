@@ -370,7 +370,7 @@
           <p class="rm-rule__k">Waiting for you · not in force yet</p>
           <p class="rm-rule__t"><%= rule.summary || rule.statedAs %></p>
           <p class="rm-rule__m">
-            <a href="/operating-instructions/<%= rule.id %>">Check it and turn it on</a>
+            <a href="/operating-instructions/<%= rule.id %>?from=ask">Check it and turn it on</a>
             <% if (rule.questions && rule.questions.length) { %>
               <span class="rm-quiet">— <%= rule.questions[0] %></span>
             <% } %>

@@ -138,23 +138,24 @@ function createPostgresSettingsRouter(database,options={}){const router=express.
     return res.redirect(303,'/onboarding');
   }));
   router.get('/operating-instructions/:id',requireAuth,asyncRoute(async(req,res)=>{const proposal=await operatingInstructions.get(
-    database,req.ctx.workspaceId,req.params.id);return res.page('settings/postgres-operating-instruction',{
-      title:'Review standing instruction',nav:'settings',room:true,backTo:{href:'/what-you-told-me',label:"What you've told me"},
-      proposal,descriptions:proposal.resolvedChanges.map(operatingInstructions.describe),usageKey:newId('instructionusage')});}));
+    database,req.ctx.workspaceId,req.params.id);const fromAsk=req.query.from==='ask';return res.page('settings/postgres-operating-instruction',{
+      title:'Review standing instruction',nav:'settings',room:true,
+      backTo:fromAsk?{href:'/ask#latest',label:'Ask StockChief'}:{href:'/what-you-told-me',label:"What you've told me"},
+      fromAsk,proposal,descriptions:proposal.resolvedChanges.map(operatingInstructions.describe),usageKey:newId('instructionusage')});}));
   router.post('/operating-instructions/:id/answer',requireOwner,asyncRoute(async(req,res)=>{
     const scope={accountId:req.workspace.owner_account_id,workspaceId:req.ctx.workspaceId};
     await entitlements.assertCapability(database,scope,'ask.prepare_actions');
     const replacement=await operatingInstructions.answer(database,req.ctx,req.params.id,req.body.answer,
       {provider:options.provider,instructionUsageKey:String(req.body.usageKey||newId('instructionusage'))});
     req.flash('success','The same instruction was read again with your answer.');
-    return res.redirect(303,`/operating-instructions/${replacement.id}`);}));
+    return res.redirect(303,`/operating-instructions/${replacement.id}${req.body.fromAsk==='1'?'?from=ask':''}`);}));
   router.post('/operating-instructions/:id/approve',requireOwner,asyncRoute(async(req,res)=>{const result=await operatingInstructions.approve(
     database,req.ctx,req.params.id,req.body.integrityHash);req.flash('success',result.replayed?'That rule was already in force.':
       'Standing rule approved. Its exact settings and authority limits are now in force.');
-    return res.redirect(303,`/operating-instructions/${req.params.id}`);}));
+    return res.redirect(303,req.body.fromAsk==='1'?'/ask#latest':`/operating-instructions/${req.params.id}`);}));
   router.post('/operating-instructions/:id/cancel',requireOwner,asyncRoute(async(req,res)=>{await operatingInstructions.cancel(
     database,req.ctx,req.params.id);req.flash('success','Discarded. That standing rule never took effect.');
-    return res.redirect(303,'/what-you-told-me');}));
+    return res.redirect(303,req.body.fromAsk==='1'?'/ask#latest':'/what-you-told-me');}));
   router.post('/settings/workspace',requireOwner,asyncRoute(async(req,res)=>{const name=String(req.body.name||'').trim();
     if(!name||name.length>120)throw new ValidationError('Inventory name must be between 1 and 120 characters.');
     await database.query('UPDATE workspaces SET name=$3 WHERE id=$1 AND owner_account_id=$2',
