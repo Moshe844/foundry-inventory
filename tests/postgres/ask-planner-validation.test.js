@@ -165,6 +165,24 @@ test('a grounded multi-part business briefing is not rejected for length alone',
   assert.equal(checked,true);assert.equal(result[0].result.status,'ANSWERED');
 });
 
+test('a rejected synthesis retains verified source findings rather than a generic refusal',async()=>{
+  const executed=[{step:{contract:registry.get('read.inventory_summary')},args:{},provenance:{},
+    result:{status:'ANSWERED',answer:'There are 4 products and 18 units on hand.',
+      rows:[{products:4,onHand:18}]}},
+  {step:{contract:registry.get('read.needs_you')},args:{},provenance:{},
+    result:{status:'ANSWERED',answer:'One decision needs your attention: review bill BILL-2.',
+      rows:[{decision:'Review bill BILL-2'}]}}];
+  const provider={async complete(){return {data:{answer:'There are 99 orders.',supported:true,
+    usedSteps:[0,1],additionalReads:[]}};},async verifyComplete(){return {data:{grounded:false,
+      reason:'No order evidence was supplied.'}};}};
+  const result=await synthesizeReads(provider,'Summarize my business and next step',executed);
+  assert.equal(result[0].result.status,'CLARIFY');
+  assert.match(result[0].result.answer,/4 products and 18 units/);
+  assert.match(result[0].result.answer,/review bill BILL-2/);
+  assert.doesNotMatch(result[0].result.answer,/99 orders/);
+  assert.equal(result[0].result.rows.length,2);
+});
+
 test('a single navigation request cannot produce two competing page jumps',async()=>{
   let attempts=0;
   const step=(capability)=>({capability,arguments:[],dependsOn:[],continuesPending:false});

@@ -331,18 +331,23 @@ async function synthesizeReads(provider,message,executed,{completedActions=[],ca
     }
     const used=[...new Set(answer?.usedSteps||[])].filter((index)=>Number.isInteger(index)&&index>=0&&index<executed.length);
     if(typeof answer?.answer!=='string'||!answer.answer.trim()||answer.supported&&!used.length)throw new Error('Unverified answer');
+    const fallbackSummaries=answer.supported?[]:[...new Set(executed.map((entry)=>
+      String(entry.result.answer||'').trim()).filter(Boolean))].slice(0,4);
+    const partialAnswer=fallbackSummaries.length
+      ?`Here is what the checked records show: ${fallbackSummaries.join(' ')} I cannot verify a broader conclusion from these records yet.`
+      :'I could not verify that conclusion from the records I checked. Nothing changed.';
+    const evidenceSteps=answer.supported?used:executed.map((_,index)=>index);
     const original=executed.length===1?executed[0].result:null;
-    const rows=original?original.rows:used.flatMap((index)=>evidence[index].rows.map((row)=>({source:evidence[index].capability,
+    const rows=original?original.rows:evidenceSteps.flatMap((index)=>evidence[index].rows.map((row)=>({source:evidence[index].capability,
       record:JSON.stringify(row).slice(0,900)}))).slice(0,60);
     const additionalReads=[...new Set(answer.additionalReads||[])].filter((name)=>
       registry.get(name)?.kind==='read'&&!executed.some((entry)=>entry.step.contract.name===name)).slice(0,2);
-    const primary=executed[used[0]??0];
+    const primary=executed[evidenceSteps[0]??0];
     return [{step:primary.step,args:primary.args,provenance:primary.provenance||{},result:{
       status:answer.supported?'ANSWERED':'CLARIFY',
-      answer:answer.supported?answer.answer.trim():
-        'I could not verify that conclusion from the records I checked. Nothing changed. Give me the specific record or open its page so I can check the right source.',rows,
+      answer:answer.supported?answer.answer.trim():partialAnswer,rows,
       columns:original?original.columns:['source','record'],handoff:original?.handoff||null,
-      researchViews:used.map((index)=>executed[index].step.contract.view),
+      researchViews:evidenceSteps.map((index)=>executed[index].step.contract.view),
       additionalReads:answer.supported?[]:additionalReads,
       reason:answer.supported?null:'unverified'}}];
   }catch(error){if(error.code==='entitlement_required')throw error;
