@@ -3,7 +3,9 @@
     <%= result.provenance.source %> · checked <%= result.asOf %></p></div>
   <div><a href="<%= saved?'/reports/builder?dataset='+encodeURIComponent(result.config.dataset)+'&saved='+encodeURIComponent(saved.id):'/reports/builder?draft=1' %>">Customize</a></div></div>
 <% if(result.config.chart!=='table'&&result.config.groups.length&&result.rows.length){
-  const values=result.rows.map(row=>Number(row[result.columns.at(-1)])||0);
+  const values=result.rows.map(row=>Number(row[result.columns.at(-1)]));
+  const chartSafe=values.every(value=>Number.isFinite(value)&&Math.abs(value)<=Number.MAX_SAFE_INTEGER);
+  if(chartSafe){
   const maximum=Math.max(1,...values.map(Math.abs)); %>
   <section class="report-card"><h2><%= result.config.chart==='line'?'Trend':'Comparison' %></h2>
     <% if(result.config.chart==='line'){
@@ -15,9 +17,9 @@
     <% }else{ %><div class="report-bars"><% for(let index=0;index<Math.min(40,result.rows.length);index++){
       const row=result.rows[index],value=values[index]; %>
       <div class="report-bar"><span><%= result.config.groups.map(field=>row[field]).join(' · ') %></span>
-        <i style="width:<%= Math.max(1,Math.round(Math.abs(value)/maximum*100)) %>%"></i><strong><%= value %></strong></div>
+        <i style="width:<%= Math.max(1,Math.round(Math.abs(value)/maximum*100)) %>%"></i><strong><%= result.displayRows[index][result.columns.at(-1)] %></strong></div>
     <% } %></div><% } %><p><small>Chart shows the first 40 displayed groups. The table below contains the exact values.</small></p>
-  </section><% } %>
+  </section><% }else{ %><p class="report-error">This chart cannot safely plot these values. The exact figures remain in the verified table.</p><% } %><% } %>
 <section class="report-card report-results"><h2>Verified rows</h2>
   <% if(!result.rows.length){ %><p>No matching records. Try a wider date or different filter.</p><% }else{ %>
     <div class="report-table-wrap"><table><thead><tr><% for(const column of result.columns){ %>

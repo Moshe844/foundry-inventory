@@ -49,6 +49,11 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
       }
       if(input.schemaName==='stockchief_capability_fit')return {data:{aligned:true,reason:''},usage:pricedUsage()};
       if(input.schemaName==='stockchief_governed_report_fit')return {data:{aligned:true,reason:''},usage:pricedUsage()};
+      if(input.schemaName==='stockchief_governed_report'&&
+        /monthly line-chart report/i.test(JSON.parse(input.prompt).request))
+        return {data:{dataset:'movements',title:'Monthly inventory movement',dateGrain:'month',
+          columns:[],groups:['occurred_on'],aggregate:'sum',measure:'quantity_delta',filters:[],
+          sort:'occurred_on',direction:'asc',chart:'line'},usage:pricedUsage()};
       if(input.schemaName==='stockchief_governed_report')return {data:{dataset:'stock',title:'Units by location',
         columns:[],groups:['location'],aggregate:'sum',measure:'on_hand',filters:[],sort:'total',
         direction:'desc',chart:'bar'},usage:pricedUsage()};
@@ -182,6 +187,12 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
       stockchief_runtime.report_templates WHERE workspace_id=$1 AND owner_user_id=$2
       AND title='Weekly stock by location'`,[ctx.workspaceId,ctx.actorId])).rows[0];
     assert.equal(askSaved.schedule_frequency,'weekly');assert.equal(askSaved.schedule_hour_utc,9);
+    const lineAsk=await owner.post('/ask').type('form').send({_csrf:csrf(askResult.text),
+      message:'Make a monthly line-chart report of net inventory movement units'});
+    assert.equal(lineAsk.status,303);
+    const linePage=await owner.get('/ask');
+    assert.match(linePage.text,/Report line chart/);
+    assert.match(linePage.text,/Monthly inventory movement/);
     assert.ok(modelCalls.includes('stockchief_governed_report'));
     assert.rejects(()=>reports.run(database,ctx,actor,{dataset:'stock',columns:['product'],
       filters:[{field:'secret_sql',operator:'contains',value:'x'}]}),/valid report filters/i);
