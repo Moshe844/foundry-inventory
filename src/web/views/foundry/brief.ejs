@@ -64,6 +64,13 @@
   <% if (!empty && home.coverageErrors && home.coverageErrors.length) { %><p class="sc-home__warning" role="alert">StockChief could not check every source. This is not a complete all-clear. <a href="/settings/operations">See operational health</a></p><% } %>
   <% if (!empty && stale) { %><p class="sc-home__warning" role="status">The automatic check has not run in over a day. Current conditions may have changed since the last check.</p><% } %>
 
+  <section class="sc-home__ask" aria-labelledby="sc-home-ask-title">
+    <div class="sc-home__ask-intro"><span class="sc-home__ask-mark" aria-hidden="true"><%- helpers.icon('foundry', { size: 22 }) %></span><div><h2 id="sc-home-ask-title">Ask StockChief</h2><p>Your inventory, orders, purchasing and business assistant</p></div><a class="sc-home__ask-discover" href="/ask/capabilities">✦ AI control center</a></div>
+    <%- include('../partials/composer', { composerPlaceholder: 'What would you like StockChief to know, find, or do?', homeHandoff: !!locals.postgresAsk, hideAttachment: !!locals.postgresAsk }) %>
+    <% var suggestions = locals.askSuggestions || []; %>
+    <div class="sc-home__suggestions" aria-label="Available things StockChief can do"><% suggestions.forEach(function (entry) { %><a href="/ask?q=<%= encodeURIComponent(entry.prompt) %>" title="<%= entry.description %>"><%= entry.label %></a><% }) %><a class="sc-home__suggestions-more" href="/ask/capabilities">More · <%= suggestions.length ? 'see all abilities' : 'what can you do?' %></a></div>
+  </section>
+
   <% if (!empty) { %>
     <a class="sc-home__inventory-line" href="/inventory" aria-label="Open inventory">
       <span class="sc-home__inventory-line-icon"><%- helpers.icon('inventory', { size: 17 }) %></span>
@@ -133,10 +140,4 @@
   <% } %>
 
   <% if (!empty) { %><p class="sc-home__browse"><a href="/inventory">Inventory</a><a href="/orders">Customer orders</a><a href="/purchasing/orders">Purchases</a><a href="/money">Money</a><a href="/activity">Activity</a></p><% } %>
-  <section class="sc-home__ask" aria-labelledby="sc-home-ask-title">
-    <div class="sc-home__ask-intro"><span class="sc-home__ask-mark" aria-hidden="true"><%- helpers.icon('foundry', { size: 22 }) %></span><div><h2 id="sc-home-ask-title">Ask StockChief</h2><p>Your inventory, orders, purchasing and business assistant</p></div><a class="sc-home__ask-discover" href="/ask/capabilities">✦ AI control center</a></div>
-    <%- include('../partials/composer', { composerPlaceholder: 'What would you like StockChief to know, find, or do?', homeHandoff: !!locals.postgresAsk, hideAttachment: !!locals.postgresAsk }) %>
-    <% var suggestions = locals.askSuggestions || []; %>
-    <div class="sc-home__suggestions" aria-label="Available things StockChief can do"><% suggestions.forEach(function (entry) { %><a href="/ask?q=<%= encodeURIComponent(entry.prompt) %>" title="<%= entry.description %>"><%= entry.label %></a><% }) %><a class="sc-home__suggestions-more" href="/ask/capabilities">More · <%= suggestions.length ? 'see all abilities' : 'what can you do?' %></a></div>
-  </section>
 </div>

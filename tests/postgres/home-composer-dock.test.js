@@ -8,7 +8,7 @@ const {openPostgres}=require('../../src/db/postgres');
 const {migratePostgres}=require('../../src/db/migrate-postgres');
 const {createPostgresApp}=require('../../src/postgres-app');
 
-test('Home Ask stays fixed at the bottom while scrolling on desktop and mobile',
+test('Home Ask stays in document flow without covering later sections on desktop and mobile',
   {timeout:120000},async(context)=>{
     const cluster=await startCluster();
     const database=openPostgres(cluster.connectionString,{applicationName:'stockchief-home-dock'});
@@ -32,18 +32,21 @@ test('Home Ask stays fixed at the bottom while scrolling on desktop and mobile',
       const before=await page.locator('.sc-home__ask').evaluate((element)=>({
         position:getComputedStyle(element).position,top:element.getBoundingClientRect().top,
         bottom:element.getBoundingClientRect().bottom,viewport:innerHeight,
+        heroBottom:document.querySelector('.sc-home__hero').getBoundingClientRect().bottom,
+        nextTop:element.nextElementSibling.getBoundingClientRect().top,
         documentWidth:document.documentElement.scrollWidth,viewportWidth:innerWidth}));
       await page.evaluate(()=>window.scrollTo(0,document.body.scrollHeight));
       const after=await page.locator('.sc-home__ask').evaluate((element)=>({
         top:element.getBoundingClientRect().top,bottom:element.getBoundingClientRect().bottom,
         scrollY:scrollY}));
       context.diagnostic(JSON.stringify({width,before,after}));
-      assert.equal(before.position,'fixed');
-      assert.ok(Math.abs(before.bottom-after.bottom)<2,'the composer must not move with the document');
-      assert.ok(before.viewport-before.bottom<=20,'the composer must stay near the viewport bottom');
-      assert.ok(before.documentWidth<=before.viewportWidth+1,'the dock must not create horizontal scrolling');
+      assert.notEqual(before.position,'fixed');
+      assert.ok(before.top>=before.heroBottom-1,'the composer must follow the Home introduction');
+      assert.ok(before.bottom<=before.nextTop+1,'the composer must not cover the next Home section');
+      assert.ok(after.top<before.top-20,'the composer must scroll away with the document');
+      assert.ok(before.documentWidth<=before.viewportWidth+1,'the composer must not create horizontal scrolling');
       assert.ok(after.scrollY>0,'the page should actually scroll in the test');
-      context.diagnostic(`${width}px viewport: dock bottom ${Math.round(after.bottom)}px, scroll ${Math.round(after.scrollY)}px`);
+      context.diagnostic(`${width}px viewport: composer moved with scroll ${Math.round(after.scrollY)}px`);
       await page.evaluate(()=>window.scrollTo(0,0));
     }
   });
