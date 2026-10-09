@@ -16,6 +16,13 @@ function setup() {
   return { ...store, workspace, app };
 }
 
+test('legacy app does not advertise PostgreSQL-only governed reports', async () => {
+  const { app } = setup();
+  assert.equal(app.locals.productBrain.destination('reports'),null);
+  assert.equal(app.locals.productBrain.capability('reporting.compose'),null);
+  assert.equal((await request(app).get('/reports')).status,404);
+});
+
 test('Take me navigation redirects, verifies arrival, and preserves return context', async () => {
   const { app, workspace } = setup();
   const agent = request.agent(app);

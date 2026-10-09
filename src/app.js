@@ -51,6 +51,7 @@ const warehouseRoutes = require('./web/routes/warehouse');
 const transferRoutes = require('./web/routes/transfers');
 const readiness = require('./operations/readiness');
 const { ProductBrain } = require('./product-brain/registry');
+const productCatalogue = require('./product-brain/catalog');
 
 /**
  * Builds the Express application around an already-open database handle.
@@ -61,7 +62,14 @@ function createApp(options = {}) {
   const isProduction = (options.env || config.env) === 'production';
 
   const app = express();
-  const productBrain = new ProductBrain();
+  // Governed custom reports are implemented in the production PostgreSQL app.
+  // The legacy SQLite app must neither advertise their destination nor fail
+  // route validation because it intentionally has no /reports handler.
+  const productBrain = new ProductBrain({
+    ...productCatalogue,
+    capabilities:productCatalogue.capabilities.filter((entry)=>entry.id!=='reporting.compose'),
+    destinations:productCatalogue.destinations.filter((entry)=>entry.id!=='reports'),
+  });
   app.locals.db = db;
   app.locals.productBrain = productBrain;
   app.locals.assetVersion = options.assetVersion || process.env.FOUNDRY_ASSET_VERSION || Date.now().toString(36);
