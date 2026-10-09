@@ -9,6 +9,7 @@ const { migratePostgres }=require('../../src/db/migrate-postgres');
 const { createPostgresApp }=require('../../src/postgres-app');
 const imports=require('../../src/imports/postgres-service');
 const assistant=require('../../src/assistant/postgres-service');
+const reports=require('../../src/reports/postgres-service');
 const ledger=require('../../src/accounting/postgres-ledger');
 const fs=require('node:fs');
 const path=require('node:path');
@@ -232,6 +233,18 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
     assert.equal(costEvidence.rows[0].inventoryBookCost,'$37.50');
     assert.equal(costEvidence.rows[0].openingImportCost,'$37.50');
     assert.equal(costEvidence.rows[0].openingImportUnits,3);
+    const reportActor=(await database.query(`SELECT u.role,u.permissions,a.email FROM users u
+      JOIN accounts a ON a.id=u.account_id WHERE u.workspace_id=$1 AND u.id=$2`,
+    [identity.workspace_id,identity.actor_id])).rows[0];
+    const bookReport=await reports.run(database,{workspaceId:identity.workspace_id},reportActor,{
+      dataset:'inventory_valuation',groups:['sku','currency'],aggregate:'sum',measure:'book_cost_minor',
+      filters:[{field:'sku',operator:'equals',value:'COST-1'}],sort:'total'});
+    assert.equal(bookReport.displayRows[0].total,'$37.50');
+    const openingReport=await reports.run(database,{workspaceId:identity.workspace_id},reportActor,{
+      dataset:'inventory_cost_movements',groups:['sku','currency'],aggregate:'sum',
+      measure:'book_cost_change_minor',filters:[{field:'sku',operator:'equals',value:'COST-1'},
+        {field:'source_kind',operator:'equals',value:'opening_inventory'}],sort:'total'});
+    assert.equal(openingReport.displayRows[0].total,'$37.50');
     const costReplay=await imports.execute(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},costed.id);
     assert.equal(costReplay.duplicate,true);
     assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM accounting_inventory_cost_movements
