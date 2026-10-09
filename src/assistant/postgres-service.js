@@ -1069,7 +1069,7 @@ async function prepareAction(database,ctx,message,request,options={}) {
   if(request.action==='save_report'){
     let composed;
     try{composed=await require('../reports/postgres-ask').composeForSave(database,ctx,message,
-      {provider:options.reportProvider});}
+      {provider:options.reportProvider,priorReport:options.reportContext});}
     catch(error){if(error.code==='rate_limited'||error.code==='entitlement_required')throw error;
       return {status:'CLARIFY',answer:'I could not safely build that report from the available data. Open Reports to choose the exact fields.'};}
     if(composed.clarify)return {status:'CLARIFY',answer:composed.clarify,

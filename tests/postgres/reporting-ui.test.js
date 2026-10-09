@@ -53,6 +53,8 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
         title:'Morning units by location',columns:[],groups:['location'],aggregate:'sum',
         measure:'on_hand',filters:[],sort:'total',direction:'desc',chart:'bar'},
       frequency:'weekly',hourUtc:9},usage:pricedUsage()};
+      if(input.schemaName==='stockchief_governed_report_followup_save')return {data:{
+        title:'Weekly stock by location',frequency:'weekly',hourUtc:9},usage:pricedUsage()};
       throw new Error(`Unexpected report model request ${input.schemaName}`);
     }};
     const app=createPostgresApp({database,env:'test',sessionSecret:'report-test-secret',aiProvider:provider});
@@ -119,19 +121,23 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     assert.match(askBuilder.text,/Customize Ask report/);
     assert.match(askBuilder.text,/value="on_hand" selected/);
     const saveAsk=await owner.post('/ask').type('form').send({_csrf:csrf(askResult.text),
-      message:'Save a stock-by-location report and schedule it Mondays at 09:00 UTC'});
+      message:'Save that exact report as Weekly stock by location and schedule it Mondays at 09:00 UTC'});
     assert.equal(saveAsk.status,303);
     const proposal=(await database.query(`SELECT id,status,payload FROM stockchief_runtime.assistant_action_proposals
       WHERE workspace_id=$1 AND action_type='report.template.create'
       ORDER BY created_at DESC,id DESC LIMIT 1`,[ctx.workspaceId])).rows[0];
     assert.equal(proposal.status,'PENDING');
     assert.equal(proposal.payload.schedule.hour,9);
+    assert.equal(proposal.payload.definition.sort,'total');
+    assert.equal(proposal.payload.definition.direction,'desc');
+    assert.equal(proposal.payload.definition.chart,'bar');
+    assert.deepEqual(proposal.payload.definition.groups,['location']);
     const review=await owner.get(`/actions/${proposal.id}`);assert.equal(review.status,200);
     const approval=await owner.post(`/actions/${proposal.id}/approve`).type('form').send({_csrf:csrf(review.text)});
     assert.equal(approval.status,303);
     const askSaved=(await database.query(`SELECT id,schedule_frequency,schedule_hour_utc FROM
       stockchief_runtime.report_templates WHERE workspace_id=$1 AND owner_user_id=$2
-      AND title='Morning units by location'`,[ctx.workspaceId,ctx.actorId])).rows[0];
+      AND title='Weekly stock by location'`,[ctx.workspaceId,ctx.actorId])).rows[0];
     assert.equal(askSaved.schedule_frequency,'weekly');assert.equal(askSaved.schedule_hour_utc,9);
     assert.ok(modelCalls.includes('stockchief_governed_report'));
     assert.rejects(()=>reports.run(database,ctx,actor,{dataset:'stock',columns:['product'],

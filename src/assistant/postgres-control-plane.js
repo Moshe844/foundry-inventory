@@ -87,7 +87,7 @@ function navigation(db,ctx,id){
 }
 
 async function executeStep(service,database,ctx,step,{actor,provider,rawProvider,sourceMessage,pending,page,usageKey,
-  dependencyArgs=null,priorInstruction=null}){
+  dependencyArgs=null,priorInstruction=null,priorReport=null}){
   const {contract}=step;
   const permission=contract.kind==='read'?READ_PERMISSIONS[contract.view]||contract.permission:contract.permission;
   permissions.assertCan(actor,permission,contract.name);
@@ -154,7 +154,8 @@ async function executeStep(service,database,ctx,step,{actor,provider,rawProvider
   // self-contained request; preserve both turns through the canonical engine.
   const result=await contract.prepare(service,database,ctx,resolutionMessage,args,
     {emailDraftProvider:contract.name==='communication.send_email'?provider:null,
-      reportProvider:contract.name==='report.template.create'?provider:null});
+      reportProvider:contract.name==='report.template.create'?provider:null,
+      reportContext:contract.name==='report.template.create'?priorReport:null});
   if(result?.status==='PREPARED'&&!await contract.verify(service,database,ctx,result))
     return {result:{status:'CLARIFY',answer:'StockChief could not verify the prepared change. Nothing changed.',
       rows:[],columns:[],reason:'unverified'},args,provenance:resolved.provenance};
@@ -486,6 +487,7 @@ async function run(service,database,ctx,message,{provider,rawProvider=null,histo
     }
   }
   const actor=await membership(database,ctx);const executed=[];let replanned=false;
+  const priorReport=[...history].reverse().find((entry)=>entry.intent?.reportConfig)?.intent.reportConfig||null;
   for(let index=0;index<selected.steps.length;index++){
     const step=selected.steps[index];
     if(step.dependsOn.some((index)=>!['ANSWERED'].includes(executed[index]?.result.status))){
@@ -496,7 +498,7 @@ async function run(service,database,ctx,message,{provider,rawProvider=null,histo
     const dependencyArgs=Object.assign({},...step.dependsOn.map((index)=>executed[index]?.args||{}));
     let outcome;
     try{outcome=await executeStep(service,database,ctx,step,{actor,provider,rawProvider,
-      sourceMessage:message,pending,page,usageKey,dependencyArgs,priorInstruction});}
+      sourceMessage:message,pending,page,usageKey,dependencyArgs,priorInstruction,priorReport});}
     catch(error){
       const bridge=require('./postgres-workflow-capabilities').SPECS.some((spec)=>spec.name===step.contract.name);
       if(index!==0||!bridge||error.code!=='validation_error')throw error;
