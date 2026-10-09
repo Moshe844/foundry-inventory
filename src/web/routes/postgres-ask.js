@@ -100,6 +100,7 @@ function resultFor(turn,proposal=null){
   if(emailProposal?.status==='CANCELLED')answer='Draft discarded. No email was sent and no contact was added.';
   return {question:turn.message,answer,spoken:null,progressiveDisclosure:false,rows,columns,
     reportConfig:turn.intent?.reportConfig||null,
+    comparisonSafe:turn.intent?.comparisonSafe!==false,
     rowCount:rows.length,totalMatches:rows.length,sections:[],supported:turn.status!=='CLARIFY',
     general:turn.intent?.view==='general_knowledge',answerReason:turn.intent?.presentation?.reason||null,isAction:false,
     needsClarification:turn.status==='CLARIFY'&&

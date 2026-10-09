@@ -136,11 +136,17 @@ async function run(database,ctx,actor,spec,options={}){
     return [column,currency?require('../pricing/postgres-service').formatMinor(value,currency):
       `${value} minor units (currency not recorded)`];
   })));
-  return {config,columns,rows:rows.map((row)=>({...row,
+  const output={config,columns,rows:rows.map((row)=>({...row,
     href:grouped?null:dataset.recordHref(row)})),displayRows,
   hasMore:rows.length===limit,asOf:new Date().toISOString(),
   provenance:{dataset:config.dataset,workspaceId:ctx.workspaceId,source:'PostgreSQL',grouped,
     currency:currencyFilter}};
+  // Totals from different currencies are individually valid, but their raw minor
+  // units cannot be ranked or plotted on one numeric scale.
+  output.comparisonSafe=!(grouped&&config.aggregate!=='count'
+    &&dataset.fields[config.measure]==='money_minor'&&!currencyFilter);
+  output.insights=require('./postgres-insights').observations(output);
+  return output;
 }
 function drilldownSpec(spec,values,actor){
   const config=normalize(spec,actor);

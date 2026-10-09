@@ -28,7 +28,9 @@ function wrap(database,ctx,provider,operation,key,options={}){const policy=POLIC
     if(!validated.ok)throw new (require('../ai/provider').ProviderOutputError)('The model response did not match the operation contract. No credits were consumed.',validated.errors);
     if(operation==='instruction'&&request.schemaName==='postgres_operating_instruction'
       &&(!response.data?.understood||!response.data?.changes?.length))
-      throw new ValidationError(response.data?.unsupportedReason||response.data?.clarifyingQuestion||'No supported operating instruction was produced.');
+      throw new (require('../ai/provider').ProviderOutputError)(
+        'The model did not produce a usable operating instruction. No credits were consumed.',
+        {reason:String(response.data?.unsupportedReason||response.data?.clarifyingQuestion||'').slice(0,240)});
     if(typeof onValidated==='function')await onValidated(response.data);
     await require('./model-cost-budget').settle(database,scope,idempotencyKey);
     if(!internal)await usage.commitUsage(database,scope,{meter:'ai_work_credits',idempotencyKey});return response;

@@ -45,6 +45,7 @@ An unchanged effect from priorApprovedRule that the owner explicitly said to kee
 its omission from enforcedEffects is faithful, not a missing change.`;
 const SYSTEM=`Translate one owner's lasting StockChief operating instruction into typed settings. Return only the schema.
 Extract only facts and limits explicitly stated. Never invent a product, supplier, location, threshold, authority or default.
+Preparing a rule for approval is the normal workflow: extract its intended changes now. The application will not apply them until the owner separately approves the proposal. Never ask the owner about JSON, arrays, schema shape, or approval-workflow formatting.
 An omitted location means the rule applies across this inventory; do not ask which location unless the owner explicitly refers to one ambiguously. Set clarifyingQuestion only when a required fact is missing or the requested effect is semantically ambiguous, not to seek an optional narrower scope.
 Use replenishment for reorder point, target stock and safety stock. These settings detect need but grant no authority. If the owner names a location, retain that location as the rule's scope. If one instruction requests both a reorder target and a Needs You warning, return separate replenishment and stock_alert changes; neither effect implies the other.
 Use stock_alert for an owner's request to be notified in Needs You at a SKU threshold. It needs a SKU, notificationThreshold, notificationMetric and notificationComparator. Physical units in the warehouse are on_hand; units available to fulfill after customer commitments are available_to_fulfill. "Below" means strictly below; "at or below", "or less", and "reaches" mean at_or_below. Never substitute one metric or comparator for another. It neither sends external email nor orders goods. A replenishment rule alone does not notify.
@@ -197,6 +198,17 @@ async function interpret(database,ctx,instruction,options={}){const clean=String
     if(!fundedKey)fundedKey=key;
     return result;
   };
+  const completeExtraction=async(request)=>{
+    try{return await completeModel(request);}
+    catch(error){
+      if(error.code!=='ai_invalid_output')throw error;
+      // A paid provider attempt can fail semantic validation before the
+      // interpreter sees its structured reply. Retry with a new funded attempt;
+      // the failed attempt remains in StockChief's internal cost ledger.
+      return {data:{understood:false,changes:[],clarifyingQuestion:'',
+        unsupportedReason:String(error.details?.reason||'').slice(0,240)}};
+    }
+  };
   const currentRecord=options.currentPage?{sku:options.currentPage.sku||null,
     product:options.currentPage.product||null,recordReference:options.currentPage.recordReference||null}:null;
   const priorApprovedRule=options.priorInstruction?.status==='APPROVED'
@@ -205,14 +217,14 @@ async function interpret(database,ctx,instruction,options={}){const clean=String
         supplierId,...change})=>change)}:null;
   const evidence={instruction:clean,currentRecord,priorApprovedRule,realSkus:catalogue.rows,
     realLocations:locations.rows,realSuppliers:suppliers.rows};
-  let response=await completeModel({system:`${SYSTEM}\n${PAGE_CONTEXT_RULE}\n${PRIOR_CONTEXT_RULE}`,prompt:JSON.stringify(evidence),
+  let response=await completeExtraction({system:`${SYSTEM}\n${PAGE_CONTEXT_RULE}\n${PRIOR_CONTEXT_RULE}`,prompt:JSON.stringify(evidence),
     schema:SCHEMA,schemaName:'postgres_operating_instruction'});
   if(options.onUsage&&response.usage)await options.onUsage(response.usage,{schemaName:'postgres_operating_instruction'});
   let read=response?.data||{};
   if(!read.understood||!Array.isArray(read.changes)||!read.changes.length){
-    response=await completeModel({system:`${SYSTEM}\n${PAGE_CONTEXT_RULE}\n${PRIOR_CONTEXT_RULE}`,prompt:JSON.stringify({...evidence,
+    response=await completeExtraction({system:`${SYSTEM}\n${PAGE_CONTEXT_RULE}\n${PRIOR_CONTEXT_RULE}`,prompt:JSON.stringify({...evidence,
       rejectedInterpretation:read,
-      correction:'Recheck the registered rule domains. A missing optional scope is not a missing required input: an omitted location applies across the workspace. Extract the stated rule and let deterministic validation decide whether any required value remains missing. Never invent a rule or authority.'}),
+      correction:'Recheck the registered rule domains. A request to prepare a rule for later approval still requires the proposed typed change now; this call does not apply it. A missing optional scope is not a missing required input: an omitted location applies across the workspace. Extract the stated rule and let deterministic validation decide whether any required value remains missing. Never ask the owner about the response schema, and never invent a rule or authority.'}),
     schema:SCHEMA,schemaName:'postgres_operating_instruction'});
     if(options.onUsage&&response.usage)await options.onUsage(response.usage,{schemaName:'postgres_operating_instruction'});
     read=response?.data||{};

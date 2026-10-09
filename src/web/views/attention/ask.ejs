@@ -278,7 +278,7 @@
           <% if (section.handoff) { %><p class="rm-said__meta"><a href="<%= evidenceHref(section.handoff.href, section.handoff.label) %>"><%= section.handoff.label %> →</a></p><% } %>
         <% }); %>
 
-        <% if (hasRows && result.reportConfig && result.reportConfig.chart === 'bar' &&
+        <% if (hasRows && result.comparisonSafe !== false && result.reportConfig && result.reportConfig.chart === 'bar' &&
           result.reportConfig.groups.length === 1 && result.columns.length === 2 &&
           result.rows.slice(0,12).every(function(row){return Number.isFinite(Number(row[result.columns[1]])) && Number(row[result.columns[1]]) >= 0;}) ) {
             var reportMax=Math.max(1,...result.rows.slice(0,12).map(function(row){return Number(row[result.columns[1]]);})); %>
@@ -291,7 +291,7 @@
             <% if(result.rows.length>12){ %><small>First 12 groups shown. Open the report for every value.</small><% } %>
           </section>
         <% } %>
-        <% if (hasRows && result.reportConfig && result.reportConfig.chart === 'line' &&
+        <% if (hasRows && result.comparisonSafe !== false && result.reportConfig && result.reportConfig.chart === 'line' &&
           result.reportConfig.groups.length === 1 && result.columns.length === 2 &&
           result.rows.slice(0,40).every(function(row){return Number.isFinite(Number(row[result.columns[1]])) &&
             Math.abs(Number(row[result.columns[1]])) <= Number.MAX_SAFE_INTEGER;}) ) {

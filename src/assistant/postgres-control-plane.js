@@ -524,6 +524,15 @@ async function run(service,database,ctx,message,{provider,rawProvider=null,histo
     try{outcome=await executeStep(service,database,ctx,step,{actor,provider,rawProvider,
       sourceMessage:message,pending,page,usageKey,dependencyArgs,priorInstruction,priorReport});}
     catch(error){
+      if(step.contract.kind==='policy'&&error.code==='validation_error'){
+        const detail=String(error.message||'').trim();
+        executed.push({step,args:step.args,provenance:{},result:{status:'CLARIFY',
+          answer:/\b(?:schema|array|json|format(?:ting)?)\b/i.test(detail)
+            ?'I could not safely prepare that exact rule yet. Nothing changed. Please restate the business setting and value you want.'
+            :detail,
+          rows:[],columns:[],reason:'clarification_required'}});
+        continue;
+      }
       const bridge=require('./postgres-workflow-capabilities').SPECS.some((spec)=>spec.name===step.contract.name);
       if(index!==0||!bridge||error.code!=='validation_error')throw error;
       if(!replanned&&provider){

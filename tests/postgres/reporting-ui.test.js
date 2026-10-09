@@ -90,6 +90,7 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
       measure:'on_hand',sort:'total',direction:'desc',chart:'bar'});
     assert.equal(Number(grouped.rows[0].total),12);
     assert.deepEqual(grouped.columns,['location','total']);
+    assert.equal(grouped.insights.length,0);
     const extremes=await reports.run(database,ctx,actor,{dataset:'stock',groups:['location'],
       aggregate:'maximum',measure:'on_hand',sort:'maximum',direction:'desc',chart:'bar'});
     assert.equal(Number(extremes.rows[0].maximum),12);
@@ -107,6 +108,15 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
       reports.drilldownSpec(monthly.config,[monthly.rows[0].occurred_on],actor));
     assert.equal(monthDetail.rows.length,1);
     assert.equal(monthDetail.rows[0].sku,'CLAMP');
+    const genericInsight=require('../../src/reports/postgres-insights').observations({
+      config:{chart:'line',groups:['occurred_on']},columns:['occurred_on','total'],
+      rows:[{occurred_on:'2026-08-01',total:4},{occurred_on:'2026-09-01',total:7}],
+      displayRows:[{total:4},{total:7}],hasMore:false});
+    assert.match(genericInsight[0].text,/rose from 4 to 7/);
+    assert.deepEqual(require('../../src/reports/postgres-insights').observations({
+      config:{chart:'bar',groups:['currency']},columns:['currency','total'],
+      rows:[{currency:'USD',total:100},{currency:'JPY',total:100}],
+      displayRows:[{total:'$1.00'},{total:'¥100'}],comparisonSafe:false}),[]);
     assert.throws(()=>reports.normalize({dataset:'stock',groups:['location'],
       dateGrain:'month',aggregate:'sum',measure:'on_hand'},actor),/date grouping/i);
     assert.throws(()=>reports.drilldownSpec(grouped.config,['Main','other'],actor),/one exact report group/i);
@@ -160,9 +170,11 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     const askResult=await owner.get('/ask');assert.equal(askResult.status,200);
     assert.match(askResult.text,/Units by location/);assert.match(askResult.text,/12/);
     assert.match(askResult.text,/Report bar chart/);
-    const askReportId=(await database.query(`SELECT id FROM stockchief_runtime.assistant_interactions
+    const askStored=(await database.query(`SELECT id,intent FROM stockchief_runtime.assistant_interactions
       WHERE workspace_id=$1 AND actor_user_id=$2 AND intent ? 'reportConfig'
-      ORDER BY created_at DESC,id DESC LIMIT 1`,[ctx.workspaceId,ctx.actorId])).rows[0].id;
+      ORDER BY created_at DESC,id DESC LIMIT 1`,[ctx.workspaceId,ctx.actorId])).rows[0];
+    const askReportId=askStored.id;
+    assert.equal(askStored.intent.comparisonSafe,true);
     assert.match(askResult.text,new RegExp(`/reports/from-ask/${askReportId}`));
     const askBuilder=await owner.get(`/reports/from-ask/${askReportId}`);
     assert.equal(askBuilder.status,200);

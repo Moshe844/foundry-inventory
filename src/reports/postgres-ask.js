@@ -99,11 +99,12 @@ async function prepare(database,ctx,message,{provider,priorReport=null}){
       const truncated=result.hasMore||result.rows.length>50;
       const label=spec.groups.length?(visible.length===1?'group':'groups'):
         (visible.length===1?'record':'records');
-      const answer=visible.length?`${spec.title}: ${visible.length}${truncated?' or more':''} matching ${label} from recorded PostgreSQL data.`:
+      const findings=result.insights||[];
+      const answer=visible.length?`${spec.title}: ${visible.length}${truncated?' or more':''} matching ${label} from recorded PostgreSQL data.${findings[0]?` ${findings[0].text}`:''}`:
         `No recorded rows matched ${spec.title}. Try changing the filters.`;
       return {status:'ANSWERED',answer,rows:visible,columns:result.columns,
         handoff:{href:`/reports/builder?dataset=${encodeURIComponent(spec.dataset)}`,label:'Customize this report'},
-        reportConfig:spec};
+        reportConfig:spec,comparisonSafe:result.comparisonSafe};
     }catch(error){
       if(error.code==='entitlement_required'||error.code==='rate_limited')throw error;
       if(attempt===0){request.prompt=JSON.stringify({...contextPrompt,rejectedPlan:proposed,

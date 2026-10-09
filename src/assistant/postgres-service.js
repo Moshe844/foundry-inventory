@@ -1466,6 +1466,7 @@ async function recordCapabilityOutcome(database,ctx,message,outcome,{batchId=nul
       ...(result.pendingProposalId?{pendingProposalId:result.pendingProposalId}:{})}:null,
     ...(batchId?{batchId,sourceMessage:message,requestIndex:index+1,requestCount:count}:{}),
     ...(result.reportConfig?{reportConfig:result.reportConfig}:{}),
+    ...(result.reportConfig?{comparisonSafe:result.comparisonSafe!==false}:{}),
     ...(result.proposal?{proposalId:result.proposal.id,
       proposalHref:result.proposal.href||`/actions/${result.proposal.id}`}:{})};
   const interactionId=newId('pgask');

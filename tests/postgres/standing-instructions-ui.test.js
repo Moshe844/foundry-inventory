@@ -112,6 +112,27 @@ test('real Chromium approves one free-form PostgreSQL standing instruction witho
       [ctx.workspaceId,item.skuIds[0]])).rows;
     assert.deepEqual(policies.map((row)=>({location:row.location_id,reorder:Number(row.reorder_point),target:Number(row.target_stock)})),
       [{location:null,reorder:8,target:20},{location:locationId,reorder:4,target:15}]);
+    let extractionAttempts=0;
+    const recoveringProvider=require('../helpers/postgres-model-fixture').fixture({async complete(input){
+      const usage={provider:'fixture-ai',model:'fixture-model',inputTokens:40,outputTokens:20};
+      if(input.schemaName==='postgres_operating_instruction_effect_fit')
+        return {data:{equivalent:true,difference:''},usage};
+      extractionAttempts++;
+      if(extractionAttempts===1)return {data:{understood:false,summary:'',changes:[],
+        clarifyingQuestion:'Should I return an empty changes array for approval?',unsupportedReason:''},usage};
+      assert.match(JSON.parse(input.prompt).correction,/still requires the proposed typed change/);
+      return {data:{understood:true,summary:'Prepare a Main Warehouse reorder point of eight',
+        clarifyingQuestion:'',unsupportedReason:'',changes:[change('replenishment',
+          {sku:'RULE-1',location:'Main Warehouse',reorderPoint:8})]},usage};
+    }});
+    const prepared=await require('../../src/manager/postgres-operating-instructions').interpret(database,ctx,
+      'Prepare to change the reorder point for RULE-1 at Main Warehouse to 8; do not apply until I approve.',
+      {provider:recoveringProvider,instructionUsageKey:'prepare-only-rule'});
+    assert.equal(extractionAttempts,2);
+    assert.equal(prepared.status,'PENDING');
+    assert.equal(Number((await database.query(`SELECT reorder_point FROM reorder_policies
+      WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3`,
+    [ctx.workspaceId,item.skuIds[0],locationId])).rows[0].reorder_point),4);
     await page.goto(`${base}/inventory/${item.itemId}`);
     assert.match(await page.locator('main').innerText(),/Main Warehouse: reorder at 4, up to 15/);
     await page.getByRole('link',{name:'Reorder settings'}).click();
