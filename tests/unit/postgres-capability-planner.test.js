@@ -337,6 +337,34 @@ test('a tentative read cannot replace a requested change when semantic fit rejec
   assert.equal(fits,2);
 });
 
+test('an unresolved write cannot silently turn into a read on a retry follow-up',async()=>{
+  let plans=0;let fits=0;
+  const provider={async complete(request){
+    if(request.schemaName==='stockchief_capability_plan'){
+      plans++;
+      return {data:{steps:[plans===1
+        ?{capability:'read.sales_orders',arguments:[],dependsOn:[],continuesPending:false}
+        :{capability:'sales_order.create',arguments:[{name:'sku',value:'SHOES'},
+          {name:'quantity',value:'1'}],dependsOn:[],continuesPending:true}],
+      clarifyingQuestion:''}};
+    }
+    if(request.schemaName==='stockchief_capability_fit'){
+      fits++;
+      return {data:{aligned:fits>1,reason:fits===1?'The owner asked to retry the draft order, not list orders.':''}};
+    }
+    throw new Error(`Unexpected request ${request.schemaName}`);
+  }};
+  const pending={capability:'sales_order.create',args:{sku:'SHOES',quantity:'1'},
+    question:'Which customer?',originalMessage:'Create a draft order for one SHOES.',
+    status:'CLARIFY',awaitingField:'customer'};
+  const result=await planner.plan(provider,'Please retry that draft order and ask which customer.',
+    {pending,deferReadFit:true});
+  assert.deepEqual(result.steps.map((step)=>step.contract.name),['sales_order.create']);
+  assert.equal(result.steps[0].continuesPending,true);
+  assert.equal(plans,2);
+  assert.equal(fits,2);
+});
+
 test('independent fit treats this inventory as the authenticated workspace',async()=>{
   const workspace={business_name:'Current Business',location_count:1,product_count:2,purchase_order_count:0};
   const provider={async complete(request){

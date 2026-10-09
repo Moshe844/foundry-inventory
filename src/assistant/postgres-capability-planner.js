@@ -380,7 +380,8 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
   }
   // Read-only plans can be checked against actual evidence by the answer
   // stage, which can request a broader registered read when needed.
-  if(deferReadFit&&!reconsidered&&!selected.clarifyingQuestion&&selected.steps.length
+  const pendingWrite=['mutation','policy'].includes(catalogue.get(pending?.capability)?.kind);
+  if(deferReadFit&&!pendingWrite&&!reconsidered&&!selected.clarifyingQuestion&&selected.steps.length
     &&selected.steps.every((step)=>step.contract.kind==='read'))
     return selected;
   // Without a registered step, a model-authored explanation could silently
