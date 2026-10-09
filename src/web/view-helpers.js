@@ -167,6 +167,12 @@ const COLUMN_LABELS = {
   // "Units on hand" names the column instead of answering the question.
   measure: '',
   value: '',
+  sku: 'SKU',
+  source_kind: 'Source',
+  quantity_delta: 'Quantity change',
+  book_cost_change_minor: 'Book cost change',
+  book_cost_minor: 'Book value',
+  recorded_on: 'Recorded on',
 };
 
 /*
@@ -198,6 +204,7 @@ function figures(text) {
 function columnLabel(key) {
   if (Object.prototype.hasOwnProperty.call(COLUMN_LABELS, key)) return COLUMN_LABELS[key];
   return String(key)
+    .replaceAll('_', ' ')
     .replace(/([a-z])([A-Z])/g, '$1 $2')
     .replace(/^./, (c) => c.toUpperCase());
 }

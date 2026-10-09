@@ -32,7 +32,7 @@
 <section class="report-card report-results"><h2>Verified rows</h2>
   <% if(!result.rows.length){ %><p>No matching records. Try a wider date or different filter.</p><% }else{ %>
     <div class="report-table-wrap"><table><thead><tr><% for(const column of result.columns){ %>
-      <th scope="col"><%= column.replaceAll('_',' ') %></th><% } %><th scope="col">Source</th></tr></thead>
+      <th scope="col"><%= helpers.columnLabel(column) %></th><% } %><th scope="col">Source</th></tr></thead>
       <tbody><% for(const [index,row] of result.rows.slice(0,200).entries()){ %><tr><% for(const column of result.columns){ %>
         <td><%= result.displayRows[index][column]??'—' %></td><% } %><td><% if(row.href){ %><a href="<%= row.href %>">Open record</a><% }else if(result.config.groups.length){ %>
           <form method="post" action="/reports/drilldown"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
