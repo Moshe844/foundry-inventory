@@ -118,6 +118,36 @@ test('read synthesis retries one invalid model output without discarding verifie
   assert.match(result[0].result.answer,/verified return was restocked/);
 });
 
+test('independent evidence check repairs a status-mixed business briefing',async()=>{
+  const executed=[
+    {step:{contract:registry.get('read.sales_orders')},args:{},provenance:{},result:{status:'ANSWERED',
+      answer:'Recorded customer orders.',rows:[
+        {order:'SO-1',status:'DRAFT',openUnits:3},
+        {order:'SO-2',status:'CONFIRMED',openUnits:2},
+        {order:'SO-3',status:'FULFILLED',openUnits:0}]}},
+    {step:{contract:registry.get('read.purchase_orders')},args:{},provenance:{},result:{status:'ANSWERED',
+      answer:'Recorded supplier orders.',rows:[{order:'PO-1',status:'DRAFT',outstandingUnits:20},
+        {order:'PO-2',status:'ORDERED',outstandingUnits:4}]}}
+  ];
+  let plans=0,fits=0;
+  const provider={async complete(input){
+    plans++;
+    const prompt=JSON.parse(input.prompt);
+    assert.equal(prompt.verifiedStatusFacts[0].byStatus.CONFIRMED.openUnits,2);
+    assert.equal(prompt.verifiedStatusFacts[1].byStatus.ORDERED.outstandingUnits,4);
+    return {data:{answer:plans===1?'Three confirmed orders need shipping; 24 supplier units are incoming.':
+      'One confirmed order has 2 open units. One placed supplier order has 4 units outstanding.',
+    supported:true,usedSteps:[0,1],additionalReads:[]}};
+  },async verifyComplete(input){
+    assert.equal(input.schemaName,'stockchief_capability_answer_fit');fits++;
+    return {data:{grounded:fits===2,reason:fits===1?'Draft and fulfilled orders were counted as confirmed.':''}};
+  }};
+  const result=await synthesizeReads(provider,'What needs doing first?',executed);
+  assert.equal(plans,2);assert.equal(fits,2);
+  assert.equal(result[0].result.status,'ANSWERED');
+  assert.match(result[0].result.answer,/One confirmed order has 2 open units/);
+});
+
 test('a single navigation request cannot produce two competing page jumps',async()=>{
   let attempts=0;
   const step=(capability)=>({capability,arguments:[],dependsOn:[],continuesPending:false});
