@@ -117,6 +117,14 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
       config:{chart:'bar',groups:['currency']},columns:['currency','total'],
       rows:[{currency:'USD',total:100},{currency:'JPY',total:100}],
       displayRows:[{total:'$1.00'},{total:'¥100'}],comparisonSafe:false}),[]);
+    const moneyGroups={groups:['currency'],aggregate:'sum',measure:'amount_minor'};
+    const moneyDataset={fields:{amount_minor:'money_minor'}};
+    assert.equal(reports.comparableGroupAmounts(moneyGroups,moneyDataset,[{currency:'USD'}],false,null),true);
+    assert.equal(reports.comparableGroupAmounts(moneyGroups,moneyDataset,
+      [{currency:'USD'},{currency:'JPY'}],false,null),false);
+    assert.equal(reports.comparableGroupAmounts(moneyGroups,moneyDataset,[{currency:'USD'}],true,null),false);
+    assert.equal(reports.comparableGroupAmounts(moneyGroups,moneyDataset,
+      [{currency:'USD'}],true,'USD'),true);
     assert.throws(()=>reports.normalize({dataset:'stock',groups:['location'],
       dateGrain:'month',aggregate:'sum',measure:'on_hand'},actor),/date grouping/i);
     assert.throws(()=>reports.drilldownSpec(grouped.config,['Main','other'],actor),/one exact report group/i);

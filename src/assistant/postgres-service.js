@@ -1550,9 +1550,9 @@ async function askCapabilities(database,ctx,message,options={}){
 async function prepareInstruction(database,ctx,message,options={}){
   const proposal=await operatingInstructions.interpret(database,ctx,message,options);
   if(proposal.questions.length)return {status:'CLARIFY',answer:proposal.questions[0],proposal:{id:proposal.id,
-    summary:proposal.summary,actionType:'operating.instruction',href:`/operating-instructions/${proposal.id}`}};
+    summary:proposal.summary,actionType:'operating.instruction',href:`/operating-instructions/${proposal.id}?from=ask`}};
   return {status:'PREPARED',answer:`${proposal.summary} Nothing is in force yet. Review the exact limits and approve once.`,
-    proposal:{id:proposal.id,summary:proposal.summary,actionType:'operating.instruction',href:`/operating-instructions/${proposal.id}`}};
+    proposal:{id:proposal.id,summary:proposal.summary,actionType:'operating.instruction',href:`/operating-instructions/${proposal.id}?from=ask`}};
 }
 
 async function listInteractions(database,workspaceId,limit=20,{actorId=null,startedAt=null}={}) {

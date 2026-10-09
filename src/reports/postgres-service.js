@@ -73,6 +73,11 @@ function normalize(spec,actor){
     measure:aggregate==='count'?'':measure,filters:cleanFilters,sort,direction,chart,title};
 }
 function quote(field){return `"${field}"`;}
+function comparableGroupAmounts(config,dataset,rows,hasMore,currencyFilter){
+  if(!config.groups.length||config.aggregate==='count'||dataset.fields[config.measure]!=='money_minor'
+    ||currencyFilter)return true;
+  return !hasMore&&new Set(rows.map((row)=>row.currency)).size<=1;
+}
 function condition(filter,index){
   const field=quote(filter.field),value=`$${index}`;
   if(filter.operator==='is_null')return `${field} IS NULL`;
@@ -143,8 +148,7 @@ async function run(database,ctx,actor,spec,options={}){
     currency:currencyFilter}};
   // Totals from different currencies are individually valid, but their raw minor
   // units cannot be ranked or plotted on one numeric scale.
-  output.comparisonSafe=!(grouped&&config.aggregate!=='count'
-    &&dataset.fields[config.measure]==='money_minor'&&!currencyFilter);
+  output.comparisonSafe=comparableGroupAmounts(config,dataset,rows,output.hasMore,currencyFilter);
   output.insights=require('./postgres-insights').observations(output);
   return output;
 }
@@ -214,4 +218,4 @@ async function load(database,ctx,actor,id){
   return {...row,definition:normalize(row.definition,actor)};
 }
 
-module.exports={normalize,queryFor,run,save,list,load,drilldownSpec};
+module.exports={normalize,queryFor,run,save,list,load,drilldownSpec,comparableGroupAmounts};

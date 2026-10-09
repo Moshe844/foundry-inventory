@@ -91,6 +91,7 @@ test('real Chromium approves one free-form PostgreSQL standing instruction witho
       AND provider='anthropic'`,[identity.account_id])).rows[0].count)>=4);
     assert.equal((await database.query('SELECT COUNT(*) AS count FROM reorder_policies WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].count,'0');
     assert.equal((await database.query('SELECT COUNT(*) AS count FROM automation_policies WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].count,'0');
+    assert.match(await page.getByRole('link',{name:'Review prepared change'}).getAttribute('href'),/\?from=ask$/);
     await Promise.all([page.waitForURL(/\/operating-instructions\/oin_/),page.getByRole('link',{name:'Review prepared change'}).click()]);
     const review=await page.locator('main').innerText();assert.match(review,/reorder at 8, target 20, safety stock 3/);
     assert.match(review,/automatic transfers up to 5 units/);assert.match(review,/\$500\.00 each and \$1500\.00 per rolling seven days/);
@@ -133,6 +134,12 @@ test('real Chromium approves one free-form PostgreSQL standing instruction witho
       {provider:recoveringProvider,instructionUsageKey:'prepare-only-rule'});
     assert.equal(extractionAttempts,2);
     assert.equal(prepared.status,'PENDING');
+    assert.equal(Number((await database.query(`SELECT reorder_point FROM reorder_policies
+      WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3`,
+    [ctx.workspaceId,item.skuIds[0],locationId])).rows[0].reorder_point),4);
+    await page.goto(`${base}/operating-instructions/${prepared.id}?from=ask`);
+    await Promise.all([page.waitForURL(/\/ask(?:#latest)?$/),page.getByRole('button',{name:'Discard'}).click()]);
+    assert.match(await page.locator('main').innerText(),/Ask StockChief/);
     assert.equal(Number((await database.query(`SELECT reorder_point FROM reorder_policies
       WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3`,
     [ctx.workspaceId,item.skuIds[0],locationId])).rows[0].reorder_point),4);

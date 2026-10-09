@@ -22,7 +22,7 @@
       <div class="report-bar"><span><%= result.config.groups.map(field=>row[field]).join(' · ') %></span>
         <i style="width:<%= Math.max(1,Math.round(Math.abs(value)/maximum*100)) %>%"></i><strong><%= result.displayRows[index][result.columns.at(-1)] %></strong></div>
     <% } %></div><% } %><p><small>Chart shows the first 40 displayed groups. The table below contains the exact values.</small></p>
-  </section><% }else{ %><p class="report-error"><%= result.comparisonSafe===false?'Amounts in different currencies cannot be compared on one chart. Filter to a single currency.':'This chart cannot safely plot these values.' %> The exact figures remain in the verified table.</p><% } %><% } %>
+  </section><% }else{ %><p class="report-error"><%= result.comparisonSafe===false?'This report may include different currencies. Filter to one currency before comparing amounts.':'This chart cannot safely plot these values.' %> The exact figures remain in the verified table.</p><% } %><% } %>
 <% var insights=result.insights||[]; if(insights.length){ %>
   <section class="report-card"><h2>What stands out</h2>
     <% insights.forEach(function(insight){ %><p><strong><%= insight.title %>.</strong> <%= insight.text %></p><% }); %>
