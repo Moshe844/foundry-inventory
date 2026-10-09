@@ -19,3 +19,20 @@ test('a legacy staged import with absent money fields never presents NaN as a pr
   assert.doesNotMatch(html,/NaN|undefined/);
   assert.match(html,/Not provided/);
 });
+
+test('a quantity-only interpretation still prompts for an identity column and cannot be approved',()=>{
+  const template=fs.readFileSync(path.join(__dirname,'../../src/web/views/imports/postgres-preview.ejs'),'utf8');
+  const html=ejs.render(template,{
+    plan:{id:'quantity-only',sourceName:'opaque.csv',detectedType:'inventory',fieldMappings:{quantity:1},
+      transformations:{},recordsDetected:1,recordsValid:0,recordsInvalid:1,status:'READY',warnings:[],
+      conflicts:[],approvalStatus:'AWAITING_APPROVAL',integrityHash:'test'},
+    duplicatePlans:[],run:null,csrfToken:'test',mappingRows:[{index:0,column:'Alpha',field:null},
+      {index:1,column:'Beta',field:'quantity'}],fieldOptions:[{id:'name',label:'Product name'},
+      {id:'quantity',label:'Quantity'}],locations:[],counts:{INVALID:1},rows:[],page:1,pageSize:25,
+    helpers:{plural:(count,singular)=>count===1?singular:`${singular}s`},
+  });
+  assert.match(html,/Help StockChief identify the products/);
+  assert.match(html,/Choose the matching source column/);
+  assert.match(html,/Approve 0 rows<\/button>/);
+  assert.match(html,/disabled[^>]*>Approve 0 rows/);
+});

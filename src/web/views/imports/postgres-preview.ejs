@@ -9,7 +9,7 @@
   <div class="notice notice--warn section"><strong>This exact source was already imported.</strong>
     StockChief will not apply the same bytes twice. <a href="/imports/<%= duplicatePlans[0].id %>">See the completed import</a>.</div>
 <% } %>
-<% if(plan.detectedType==='unknown' && plan.status==='READY'){ %>
+<% if(sourceMappings.name===undefined && sourceMappings.code===undefined && plan.status==='READY'){ %>
   <div class="notice notice--warn section" role="alert"><strong>Help StockChief identify the products in this file.</strong>
     The file was read, but its headings do not safely identify a product name or SKU. No inventory has changed.
     <a href="#column-mapping">Choose the matching source column below</a>, then recalculate and review the rows before approving.</div>
@@ -31,7 +31,7 @@
     </div>
     <div class="card-foot"><div class="btn-row">
       <% if(plan.approvalStatus==='APPROVED'){ %><form method="post" action="/imports/<%= plan.id %>/run"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Import and verify</button></form>
-      <% } else { %><form method="post" action="/imports/<%= plan.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><button class="btn btn--primary" type="submit" <%= !plan.recordsValid || duplicatePlans.length || (sourceMappings.quantity===undefined && sourceTransforms.unmappedNumericColumns?.length && !sourceTransforms.confirmCatalogOnly)?'disabled':'' %>>Approve <%= plan.recordsValid %> <%= helpers.plural(plan.recordsValid, 'row') %></button></form><% } %>
+      <% } else { %><form method="post" action="/imports/<%= plan.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><button class="btn btn--primary" type="submit" <%= !plan.recordsValid || (sourceMappings.name===undefined && sourceMappings.code===undefined) || duplicatePlans.length || (sourceMappings.quantity===undefined && sourceTransforms.unmappedNumericColumns?.length && !sourceTransforms.confirmCatalogOnly)?'disabled':'' %>>Approve <%= plan.recordsValid %> <%= helpers.plural(plan.recordsValid, 'row') %></button></form><% } %>
       <form method="post" action="/imports/<%= plan.id %>/cancel"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost" type="submit">Cancel</button></form>
     </div></div>
   </div>
