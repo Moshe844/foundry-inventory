@@ -8,6 +8,7 @@ const { openPostgres }=require('../../src/db/postgres');
 const { migratePostgres }=require('../../src/db/migrate-postgres');
 const { createPostgresApp }=require('../../src/postgres-app');
 const imports=require('../../src/imports/postgres-service');
+const assistant=require('../../src/assistant/postgres-service');
 const ledger=require('../../src/accounting/postgres-ledger');
 const fs=require('node:fs');
 const path=require('node:path');
@@ -224,6 +225,13 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
     assert.equal((await database.query(`SELECT amount_minor::int AS price FROM sku_prices
       WHERE workspace_id=$1 AND sku_id IN (SELECT sku_id FROM import_rows WHERE import_id=$2)`,
     [identity.workspace_id,costed.id])).rows[0].price,2400);
+    const costEvidence=await assistant.lookup(database,{workspaceId:identity.workspace_id,
+      actorId:identity.actor_id},{view:'purchase_costs',search:'COST-1'});
+    assert.equal(costEvidence.rows.length,1);
+    assert.equal(costEvidence.rows[0].purchaseCost,'Not recorded');
+    assert.equal(costEvidence.rows[0].inventoryBookCost,'$37.50');
+    assert.equal(costEvidence.rows[0].openingImportCost,'$37.50');
+    assert.equal(costEvidence.rows[0].openingImportUnits,3);
     const costReplay=await imports.execute(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},costed.id);
     assert.equal(costReplay.duplicate,true);
     assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM accounting_inventory_cost_movements

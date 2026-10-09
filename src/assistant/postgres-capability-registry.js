@@ -248,7 +248,7 @@ const READS={
   inventory_valuation:'Current recorded inventory book cost by product and location; distinct from supplier purchase quotes.',
   inventory_cost_movements:'Recorded changes in inventory book cost with import file and row provenance.',
   inventory_summary:'Business-wide current and historical inventory setup evidence: active product and SKU counts, total on-hand units, and count of every product record ever created, including inactive records. Valid even when this business is empty; requires no product or location.',
-  prices:'Current recorded selling prices.',purchase_costs:'Current supplier or owner-recorded unit purchase costs, with on-hand and costed inventory units shown separately. A missing current purchase quote does not mean inventory lacks book cost.',
+  prices:'Current recorded selling prices.',purchase_costs:'Purchase quotes, current inventory book cost, and historical opening-import cost by SKU; all are separate. Missing quote does not imply uncosted stock.',
   supplier_items:'Supplier-product links, purchasing terms, and costs.',needs_you:'Owner decisions awaiting attention.',
   operating_rules:'Current approved operating rules and settings actually in force, including stock warnings, replenishment, outgoing-stock protection, automation authority and preferences. Use this to explain a specific approved rule or what a warning will do; do not substitute the general capability catalogue.',
   replenishment:'Recorded replenishment recommendations and their state.',locations:'Inventory locations.',

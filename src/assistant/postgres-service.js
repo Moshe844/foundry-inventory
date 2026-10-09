@@ -379,14 +379,23 @@ async function lookup(database,ctx,request,options={}) {
   if(request.view==='purchase_costs'){
     const rows=(await database.query(`SELECT i.id AS item_id,i.name AS product,s.code AS sku,
       COALESCE(s.variant_label,'') AS variant,c.amount_minor,c.currency,c.created_at,
-      COALESCE(stock.on_hand,0) AS on_hand,COALESCE(costed.quantity_units,0) AS costed_units
+      COALESCE(stock.on_hand,0) AS on_hand,COALESCE(costed.quantity_units,0) AS costed_units,
+      COALESCE(costed.total_cost_minor,0) AS inventory_book_minor,
+      COALESCE(opening.quantity_units,0) AS opening_import_units,
+      COALESCE(opening.total_cost_minor,0) AS opening_import_minor,
+      settings.base_currency AS accounting_currency
       FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
       LEFT JOIN LATERAL (SELECT amount_minor,currency,created_at FROM sku_purchase_costs
         WHERE workspace_id=s.workspace_id AND sku_id=s.id ORDER BY created_at DESC,id DESC LIMIT 1) c ON true
       LEFT JOIN (SELECT sku_id,SUM(on_hand) AS on_hand FROM balances
         WHERE workspace_id=$1 GROUP BY sku_id) stock ON stock.sku_id=s.id
-      LEFT JOIN (SELECT sku_id,SUM(quantity_units) AS quantity_units FROM accounting_inventory_cost_balances
+      LEFT JOIN (SELECT sku_id,SUM(quantity_units) AS quantity_units,
+        SUM(total_cost_minor) AS total_cost_minor FROM accounting_inventory_cost_balances
         WHERE workspace_id=$1 GROUP BY sku_id) costed ON costed.sku_id=s.id
+      LEFT JOIN (SELECT sku_id,SUM(quantity_delta) AS quantity_units,
+        SUM(cost_delta_minor) AS total_cost_minor FROM accounting_inventory_cost_movements
+        WHERE workspace_id=$1 AND cost_source_type='opening_inventory' GROUP BY sku_id) opening ON opening.sku_id=s.id
+      LEFT JOIN accounting_settings settings ON settings.workspace_id=s.workspace_id
       WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1
       AND ($2::text IS NULL OR i.name ILIKE '%'||$2||'%' OR s.code ILIKE '%'||$2||'%'
         OR COALESCE(s.variant_label,'') ILIKE '%'||$2||'%')
@@ -394,10 +403,17 @@ async function lookup(database,ctx,request,options={}) {
       evidenceRow({product:row.product,sku:row.sku,variant:row.variant,
         purchaseCost:row.amount_minor===null?'Not recorded':pricing.formatMinor(Number(row.amount_minor),row.currency),
         costRecordedAt:row.created_at||'',onHand:Number(row.on_hand),costedUnits:Number(row.costed_units),
-        unitsMissingCost:Math.max(0,Number(row.on_hand)-Number(row.costed_units))},`/inventory/${row.item_id}`));
-    return {answer:rows.length?`Showing current recorded purchase costs for ${rows.length}${rows.length===100?'+':''} SKUs. A missing current purchase cost does not mean stock lacks book cost; costed units are shown separately.`:
+        unitsMissingCost:Math.max(0,Number(row.on_hand)-Number(row.costed_units)),
+        inventoryBookCost:Number(row.costed_units)>0
+          ?pricing.formatMinor(Number(row.inventory_book_minor),row.accounting_currency||row.currency||'USD'):'Not recorded',
+        openingImportUnits:Number(row.opening_import_units),
+        openingImportCost:Number(row.opening_import_units)>0
+          ?pricing.formatMinor(Number(row.opening_import_minor),row.accounting_currency||row.currency||'USD'):'Not recorded'},
+      `/inventory/${row.item_id}`));
+    return {answer:rows.length?`Showing current purchase quotes, recorded inventory book cost, and historical opening-import cost separately for ${rows.length}${rows.length===100?'+':''} SKUs. A missing purchase quote does not erase recorded book value.`:
       'No product or SKU matched that cost request.',rows,
-      columns:['product','sku','variant','purchaseCost','costRecordedAt','onHand','costedUnits','unitsMissingCost']};
+      columns:['product','sku','variant','purchaseCost','costRecordedAt','onHand','costedUnits','unitsMissingCost',
+        'inventoryBookCost','openingImportUnits','openingImportCost']};
   }
   if(request.view==='supplier_items'){
     const rows=(await database.query(`SELECT i.id AS item_id,i.name AS product,sku.code AS sku,
