@@ -319,6 +319,11 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     const otherAsk=await other.get(`/reports/from-ask/${askReportId}`);assert.notEqual(otherAsk.status,200);
     const absent=await other.get(`/reports/saved/${reportId}`);assert.notEqual(absent.status,200);
     const otherExport=await other.get(`/reports/saved/${reportId}/export.csv`);assert.notEqual(otherExport.status,200);
+    await catalog.createItem(database,ctx,{name:'Second report SKU',baseCode:'RPT-2',trackingMode:'quantity'});
+    const firstPage=await reports.run(database,ctx,actor,{dataset:'catalogue',columns:['sku'],
+      sort:'sku',direction:'asc'},{limit:2});
+    assert.equal(firstPage.rows.length,1);
+    assert.equal(firstPage.hasMore,true);
     await database.query('UPDATE users SET role=$2,permissions=$3 WHERE id=$1',
       [ctx.actorId,'staff',JSON.stringify(['VIEW'])]);
     const restricted=await owner.get('/reports/builder?dataset=payments');assert.equal(restricted.status,404);

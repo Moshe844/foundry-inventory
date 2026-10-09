@@ -120,15 +120,17 @@ function queryFor(config,workspaceId,{limit=201,offset=0}={}){
   return {sql,values};
 }
 async function run(database,ctx,actor,spec,options={}){
-  const config=normalize(spec,actor);const limit=Math.min(5001,Math.max(1,Number(options.limit)||201));
+  const config=normalize(spec,actor);const limit=Math.min(5001,Math.max(2,Number(options.limit)||201));
   const dataset=registry.get(config.dataset);
   if(dataset.commercialCapability){const entitlements=require('../commercial/entitlements');
     const scope=await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId);
     await entitlements.assertCapability(database,scope,dataset.commercialCapability,{allowReadOnly:true});}
   const offset=Math.max(0,Number(options.offset)||0);
   const {sql,values}=queryFor(config,ctx.workspaceId,{limit,offset});
-  const rows=(await database.transaction((client)=>client.query(sql,values),
+  const fetched=(await database.transaction((client)=>client.query(sql,values),
     {isolation:'READ COMMITTED',readOnly:true,statementTimeoutMs:10000,lockTimeoutMs:2000})).rows;
+  const hasMore=fetched.length===limit;
+  const rows=hasMore?fetched.slice(0,-1):fetched;
   if(config.groups.includes('currency')&&config.aggregate!=='count'&&dataset.fields[config.measure]==='money_minor'
     &&rows.some((row)=>!row.currency))invalid('A monetary row has no verified currency; its total cannot be certified.');
   const grouped=Boolean(config.groups.length);
@@ -147,7 +149,7 @@ async function run(database,ctx,actor,spec,options={}){
   })));
   const output={config,columns,rows:rows.map((row)=>({...row,
     href:grouped?null:dataset.recordHref(row)})),displayRows,
-  hasMore:rows.length===limit,asOf:new Date().toISOString(),
+  hasMore,asOf:new Date().toISOString(),
   provenance:{dataset:config.dataset,workspaceId:ctx.workspaceId,source:'PostgreSQL',grouped,
     currency:currencyFilter}};
   // Totals from different currencies are individually valid, but their raw minor
