@@ -22,6 +22,7 @@ const PLANNING_RULES=[
   "Plan the owner's CURRENT goal by meaning, not phrase matching. Use only registered contracts (n=name, d=effect, a=allowed inputs). At most eight steps; use the fewest that actually accomplish the goal.",
   'Include only argument fields declared for each contract. Preserve every product, party, record, amount, location, date and address the owner supplied. Omit unknown values; never guess a default entity, fabricate a placeholder, or supply fields for a capability with no inputs. The resolver verifies unique records or asks for missing inputs.',
   'Broad questions use business-wide reads, even in empty workspaces; zero stock is an answer. Workspace counts route but do not prove facts. Read records; navigate only when asked, to one destination.',
+  'A requested report, chart, graph, or customized tabular analysis needs read.custom_report; a normal stock, order, or finance lookup cannot create that report artifact. A request to save or schedule a report needs report.template.create and approval.',
   'A request to correct your previous factual answer calls for fresh reads, not a business-data write. Changing a record still requires its matching approved write.',
   'For navigation, match the requested page label and scope exactly. Prefer a specific destination to a similarly named parent or administrative page; do not turn a request to open a page into a financial or inventory answer.',
   'A requested change needs its matching write, not a related read. A declarative lasting supplier term, threshold or operating preference may be a policy instruction. Do not create extra contacts, products, orders, purchases or movements as prerequisites. Invoicing does not imply fulfillment or payment.',
@@ -103,10 +104,14 @@ Never mark an otherwise fitting capability misaligned merely because quantity, c
 or another required input is genuinely missing. A clarification is the expected next result.
 For a read, check that the contract description covers every measure and distinction the owner asks for;
 reject a narrower read when a registered broader read is required to answer fully.
+When the owner requests a report, chart, graph, grouping or customized table, an ordinary factual read
+is not the requested artifact; use the governed custom-report read. A grouped report can provide source
+records through its drill-down, so the source data need not be duplicated as detail columns.
 If the desired effect has no registered capability, set aligned=false even when a proposed action concerns the same
 supplier, customer, product, or amount. Do not perform the operation or invent business facts.
 FINAL DECISION RULE: set aligned=false only for a CONCRETE mismatch supported by the supplied contract descriptions:
-a wrong or extra write, a missing requested write, an unsafe external effect, or a read-only plan for a write request.
+a wrong or extra write, a missing requested write, an unsafe external effect, a read-only plan for a write request,
+or a selected read incapable of producing the report or measures explicitly requested.
 Do not reject based on hypothetical missing data, guessed field semantics, or redundant read steps. If no concrete
 mutation/effect mismatch is demonstrable, set aligned=true; the deterministic resolver and explicit owner approval
 still gate every write.`;

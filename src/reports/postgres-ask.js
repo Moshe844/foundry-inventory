@@ -26,6 +26,12 @@ const FOLLOWUP_SAVE_SCHEMA={type:'object',additionalProperties:false,
 const FIT_SCHEMA={type:'object',additionalProperties:false,required:['aligned','reason'],
   properties:{aligned:{type:'boolean'},reason:{type:'string',maxLength:180}}};
 
+async function completeWithOutputRetry(complete,request){
+  try{return await complete(request);}
+  catch(error){if(error.code!=='ai_invalid_output')throw error;
+    return complete({...request,maxOutputTokens:Math.max(1200,(request.maxOutputTokens||1200)*2)});}
+}
+
 async function actorFor(database,ctx){
   return (await database.query(`SELECT u.role,u.permissions,a.email FROM users u
     JOIN accounts a ON a.id=u.account_id WHERE u.workspace_id=$1 AND u.id=$2`,
@@ -77,14 +83,14 @@ async function prepare(database,ctx,message,{provider,priorReport=null}){
   for(let attempt=0;attempt<2;attempt++){
     let proposed=null;
     try{
-      const planned=await provider.complete(request);
+      const planned=await completeWithOutputRetry(provider.complete.bind(provider),request);
       proposed=planned.data;
       const spec=reports.normalize(planned.data,actor);
       const fitProvider=provider.verifyComplete||provider.complete.bind(provider);
-      const fit=await fitProvider({system:'Independently verify that this governed report definition fulfills the user request. Check dataset meaning, selected measures and calculations, requested columns, grouping, filters and date range, chart type, and actual sort field and direction. A group-label sort is not a largest-value sort. Do not infer missing figures or silently replace a requested measure. Set aligned=false and state the concrete mismatch if anything requested is omitted or changed. A harmless title difference is acceptable.',
+      const fit=await completeWithOutputRetry(fitProvider,{system:'Independently verify that this governed report definition fulfills the user request. Check dataset meaning, selected measures and calculations, requested columns, grouping, filters and date range, chart type, and actual sort field and direction. A group-label sort is not a largest-value sort. A grouped result offers source-record drilldown; this can satisfy a request to show source records without adding detail columns to the grouped result. Do not infer missing figures or silently replace a requested measure. Set aligned=false and state the concrete mismatch if anything requested is omitted or changed. A harmless title difference is acceptable.',
         prompt:JSON.stringify({request:message,previousReport:verifiedPrior,definition:spec,
           fields:registry.get(spec.dataset)?.fields||{}}),schema:FIT_SCHEMA,
-        schemaName:'stockchief_governed_report_fit',maxOutputTokens:300});
+        schemaName:'stockchief_governed_report_fit',maxOutputTokens:600});
       if(fit.data?.aligned!==true)throw new Error(`Report does not match the request: ${String(fit.data?.reason||'unverified').slice(0,180)}`);
       const result=await reports.run(database,ctx,actor,spec,{limit:51});
       const visible=result.rows.slice(0,50),truncated=result.hasMore||result.rows.length>50;
@@ -101,7 +107,7 @@ async function prepare(database,ctx,message,{provider,priorReport=null}){
         correction:'Repair the previous plan against the exact validation error. Use only compatible registered fields, measures, filters, chart and sort. For grouped reports use columns=[]. Preserve the user request.'});
         continue;}
       console.warn('[stockchief] governed Ask report failed',error.code||error.name||'unknown',
-        String(error.message||'').slice(0,180));
+        String(error.details?.technical||error.message||'').slice(0,180));
       return {status:'CLARIFY',answer:'I cannot build that exact report from the governed data currently available. Nothing was invented or changed.',
         rows:[],columns:[],handoff:{href:'/reports',label:'Browse available datasets'}};
     }

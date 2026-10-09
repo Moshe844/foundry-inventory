@@ -398,6 +398,19 @@ function focusedIntentCatalogue(message,catalogue,{alternative=null,limit=24}={}
     get:(name)=>names.get(name)||null};
 }
 
+function requiresReportArtifact(message){
+  return /\b(?:report|chart|graph|visualization|visualisation|pivot|plot)\b/i.test(message);
+}
+
+function focusedReportCatalogue(catalogue){
+  const entries=catalogue.list().filter((entry)=>
+    entry.name==='read.custom_report'||entry.name==='report.template.create');
+  if(!entries.some((entry)=>entry.name==='read.custom_report'))return null;
+  const selected=new Map(entries.map((entry)=>[entry.name,entry]));
+  return {list:(kind=null)=>entries.filter((entry)=>!kind||entry.kind===kind),
+    get:(name)=>selected.get(name)||null};
+}
+
 async function focusedRecordState(database,ctx,message){
   if(!/\b[A-Z]{2,8}-\d{2,}\b/i.test(message))return null;
   const records=require('./postgres-workflow-capabilities').RECORDS;
@@ -436,6 +449,16 @@ async function run(service,database,ctx,message,{provider,rawProvider=null,histo
     selected=selectedPendingChoice(pending,message,planningScope)||await planner.plan(provider,message,{catalogue:planningScope,history,pending:nullIfReadOnly(pending,message),page,workspace,recentChanges,
       verificationProvider:provider?.verifyComplete?{complete:provider.verifyComplete}:null,
       deferReadFit:true});
+    if(requiresReportArtifact(message)&&selected.steps.length&&
+      selected.steps.every((step)=>step.contract.kind==='read')&&
+      !selected.steps.some((step)=>step.contract.name==='read.custom_report')){
+      const reportScope=focusedReportCatalogue(planningScope);
+      if(reportScope){const retry=await planner.plan(provider,message,{catalogue:reportScope,history,
+        pending:nullIfReadOnly(pending,message),page,workspace,recentChanges,
+        verificationProvider:provider?.verifyComplete?{complete:provider.verifyComplete}:null,
+        deferReadFit:true});
+        if(retry.steps.length)selected=retry;}
+    }
     if(!selected.steps.length){
       const focused=await focusedRecordCatalogue(database,ctx,message,planningScope);
       if(focused){

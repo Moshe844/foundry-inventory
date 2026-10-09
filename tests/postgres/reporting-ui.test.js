@@ -34,14 +34,17 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     const cluster=await startCluster();
     const database=openPostgres(cluster.connectionString,{applicationName:'stockchief-report-test'});
     await migratePostgres(database);
-    const modelCalls=[];
+    const modelCalls=[];let reportPlanCalls=0;
     const provider={name:'anthropic',model:PRICED_MODEL,async complete(input){
       modelCalls.push(input.schemaName);
       if(input.schemaName==='stockchief_capability_plan'){
-        const saving=/save|schedule/i.test(JSON.parse(input.prompt).message);
+        const message=JSON.parse(input.prompt).message;
+        const saving=/save|schedule/i.test(message);
         const step=(capability)=>({capability,arguments:[],dependsOn:[],continuesPending:false});
+        if(/bar chart report/i.test(message)&&++reportPlanCalls===1)
+          return {data:{steps:[step('read.inventory_positions')],clarifyingQuestion:''},usage:pricedUsage()};
         return {data:{steps:saving?[step('report.template.create')]:
-          [step('read.inventory_positions'),step('read.custom_report')],clarifyingQuestion:''},
+          [step('read.custom_report')],clarifyingQuestion:''},
         usage:pricedUsage()};
       }
       if(input.schemaName==='stockchief_capability_fit')return {data:{aligned:true,reason:''},usage:pricedUsage()};
@@ -135,8 +138,9 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
       measure:'amount_minor',sort:'total'},actor),/currency/i);
     const askPage=await owner.get('/ask');
     const ask=await owner.post('/ask').type('form').send({_csrf:csrf(askPage.text),
-      message:'Show stock by location and sum units'});
+      message:'Build a bar chart report of stock by location and sum units'});
     assert.equal(ask.status,303);
+    assert.equal(reportPlanCalls,2);
     const askResult=await owner.get('/ask');assert.equal(askResult.status,200);
     assert.match(askResult.text,/Units by location/);assert.match(askResult.text,/12/);
     const askReportId=(await database.query(`SELECT id FROM stockchief_runtime.assistant_interactions
