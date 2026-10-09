@@ -79,16 +79,26 @@ function createPostgresInventoryRouter(database) {
     const detail=await catalog.getItem(database,req.ctx.workspaceId,req.params.id,{page:req.query.page});
     const priceState=await pricing.listForSkus(database,req.ctx.workspaceId,detail.skus.map((sku)=>sku.id));
     detail.skus=detail.skus.map((sku)=>({...sku,...priceState.get(sku.id)}));
-    const purchasingRows=detail.skus.length?(await database.query(`SELECT sku.id AS sku_id,policy.reorder_point,
-      policy.target_stock,policy.safety_stock,policy.preferred_supplier_id,supplier.name AS supplier_name
+    const purchasingRows=detail.skus.length?(await database.query(`SELECT sku.id AS sku_id,policy.location_id,
+      location.name AS location_name,policy.reorder_point,policy.target_stock,policy.safety_stock,
+      policy.preferred_supplier_id,supplier.name AS supplier_name
       FROM skus sku LEFT JOIN reorder_policies policy ON policy.workspace_id=sku.workspace_id AND policy.sku_id=sku.id
+      LEFT JOIN locations location ON location.id=policy.location_id AND location.workspace_id=policy.workspace_id
       LEFT JOIN suppliers supplier ON supplier.id=policy.preferred_supplier_id
       WHERE sku.workspace_id=$1 AND sku.id=ANY($2::text[])`,[req.ctx.workspaceId,detail.skus.map((sku)=>sku.id)])).rows:[];
-    const policyBySku=new Map(purchasingRows.map((row)=>[row.sku_id,row]));
-    const purchasingLines=detail.skus.map((sku)=>{const row=policyBySku.get(sku.id);return {skuId:sku.id,
-      label:sku.variant_label||detail.item.name,total:sku.total,policy:row&&row.reorder_point!==null?{
-        reorderPoint:Number(row.reorder_point),targetStock:Number(row.target_stock),safetyStock:Number(row.safety_stock),
-        preferredSupplierId:row.preferred_supplier_id,supplierName:row.supplier_name}:null,suppliers:[]};});
+    const supplierRows=detail.skus.length?(await database.query(`SELECT si.sku_id,s.name AS supplier_name
+      FROM supplier_items si JOIN suppliers s ON s.id=si.supplier_id AND s.workspace_id=si.workspace_id
+      WHERE si.workspace_id=$1 AND si.sku_id=ANY($2::text[]) AND si.is_active=1 AND s.status='active'
+      ORDER BY si.is_preferred DESC,s.name`,[req.ctx.workspaceId,detail.skus.map((sku)=>sku.id)])).rows:[];
+    const purchasingLines=detail.skus.map((sku)=>{const policies=purchasingRows.filter((row)=>
+      row.sku_id===sku.id&&row.reorder_point!==null).map((row)=>({isSet:true,
+      locationName:row.location_name||'All locations',reorderPoint:Number(row.reorder_point),
+      targetStock:row.target_stock==null?null:Number(row.target_stock),
+      safetyStock:row.safety_stock==null?null:Number(row.safety_stock),
+      preferredSupplierId:row.preferred_supplier_id,supplierName:row.supplier_name}));
+      return {skuId:sku.id,label:sku.variant_label||detail.item.name,total:sku.total,
+        policy:policies[0]||null,policies,suppliers:supplierRows.filter((row)=>row.sku_id===sku.id)
+          .map((row)=>({supplierName:row.supplier_name}))};});
     return res.page('inventory/item',{title:detail.item.name,nav:'inventory',room:true,...detail,attention:[],findingTotal:0,
       purchasingLines,commitments:[],outlook:[],canOperate:permissions.can(req.user,permissions.OPERATE),
       kitDefinitions:Object.fromEntries(detail.skus.map((sku)=>[sku.id,{isKit:false,components:[]}]))});

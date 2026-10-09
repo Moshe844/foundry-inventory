@@ -152,6 +152,11 @@ test('Ask browser controls a real customer order, payment, and return through th
       quantity:Number(afterRevision.quantity_ordered),price:Number(afterRevision.unit_price_minor),
       allocations:Number(afterRevision.allocations)},
     {status:'DRAFT',delivery:'PICKUP',quantity:3,price:2500,allocations:0});
+    await assert.rejects(workflows.reviseDraftSalesOrderLine(database,ctx,pickupProposal.result.salesOrderId,
+      {...revised.payload,idempotencyKey:'stale-draft-revision'}),/changed after review/);
+    assert.equal(Number((await database.query(`SELECT quantity_ordered FROM sales_order_lines
+      WHERE workspace_id=$1 AND sales_order_id=$2 AND sku_id=$3`,
+    [ctx.workspaceId,pickupProposal.result.salesOrderId,item.skuIds[0]])).rows[0].quantity_ordered),3);
     const hat=await catalog.createItem(database,ctx,{name:'Safety Hat',trackingMode:'quantity'});
     const hatCode=(await database.query('SELECT code FROM skus WHERE workspace_id=$1 AND id=$2',
       [ctx.workspaceId,hat.skuIds[0]])).rows[0].code;

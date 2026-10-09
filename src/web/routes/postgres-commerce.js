@@ -12,7 +12,7 @@ const presenters=require('../postgres-presenters');
 const permissions=require('../../actions/permissions');
 const {requireAuth,requirePermission,asyncRoute}=require('../middleware');
 const {newId,nowIso,trimOrNull,requireText}=require('../../lib/util');
-const {ValidationError}=require('../../domain/errors');
+const {ValidationError,NotFoundError}=require('../../domain/errors');
 
 function key(req,kind){return trimOrNull(req.body.idempotencyKey)||`${kind}:${newId('form')}`;}
 
@@ -440,6 +440,27 @@ function createPostgresCommerceRouter(database,options={}){
     return res.page('purchasing/setup',{title:'Set up purchasing',nav:'purchasing',assessment,
       suppliers:supplierRows.map((row)=>supplierForView(row)),canManage:permissions.can(req.user,permissions.MANAGE_REPLENISHMENT),
       canManageSuppliers:permissions.can(req.user,permissions.MANAGE_SUPPLIERS)});
+  }));
+  router.get('/purchasing/why/:skuId',requirePermission(permissions.VIEW_PURCHASING,'see replenishment settings'),asyncRoute(async(req,res)=>{
+    const sku=(await database.query(`SELECT s.id,s.code,i.id AS item_id,i.name AS product
+      FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
+      WHERE s.workspace_id=$1 AND s.id=$2`,[req.ctx.workspaceId,req.params.skuId])).rows[0];
+    if(!sku)throw new NotFoundError('That product is not in this inventory.');
+    const [policyResult,positionResult,supplierResult]=await Promise.all([
+      database.query(`SELECT p.reorder_point,p.target_stock,p.safety_stock,p.source,
+        COALESCE(l.name,'All locations') AS location_name
+        FROM reorder_policies p LEFT JOIN locations l ON l.id=p.location_id AND l.workspace_id=p.workspace_id
+        WHERE p.workspace_id=$1 AND p.sku_id=$2 ORDER BY p.location_id NULLS FIRST`,
+      [req.ctx.workspaceId,sku.id]),
+      database.query(`SELECT l.name AS location_name,b.on_hand FROM balances b
+        JOIN locations l ON l.id=b.location_id AND l.workspace_id=b.workspace_id
+        WHERE b.workspace_id=$1 AND b.sku_id=$2 ORDER BY l.name`,[req.ctx.workspaceId,sku.id]),
+      database.query(`SELECT s.name AS supplier_name,si.lead_time_days,si.minimum_order_quantity
+        FROM supplier_items si JOIN suppliers s ON s.id=si.supplier_id AND s.workspace_id=si.workspace_id
+        WHERE si.workspace_id=$1 AND si.sku_id=$2 AND si.is_active=1 AND s.status='active'
+        ORDER BY si.is_preferred DESC,s.name`,[req.ctx.workspaceId,sku.id])]);
+    return res.page('purchasing/postgres-why',{title:`Reorder settings · ${sku.product}`,nav:'purchasing',
+      sku,policies:policyResult.rows,positions:positionResult.rows,suppliers:supplierResult.rows});
   }));
   router.post('/purchasing/setup/policies',requirePermission(permissions.MANAGE_REPLENISHMENT,'set reorder policies'),asyncRoute(async(req,res)=>{
     const skuIds=Array.isArray(req.body.skuIds)?req.body.skuIds:[req.body.skuIds].filter(Boolean);const rows=await planning.position(database,req.ctx.workspaceId);

@@ -114,6 +114,23 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
           direction:'desc',chart:'bar'}};
       }}});
     assert.equal(semanticPlans,2);assert.equal(corrected.status,'ANSWERED');
+    const followup=await reportAsk.prepare(database,ctx,
+      'For that report, keep the same stock totals by location but only include Main',{provider:{
+        async complete(input){
+          const prompt=JSON.parse(input.prompt);
+          if(input.schemaName==='stockchief_governed_report_fit'){
+            assert.deepEqual(prompt.previousReport.groups,['location']);
+            return {data:{aligned:true,reason:''}};
+          }
+          assert.equal(prompt.previousReport.dataset,'stock');
+          assert.equal(prompt.previousReport.measure,'on_hand');
+          return {data:{...prompt.previousReport,
+            filters:[{field:'location',operator:'equals',value:'Main'}]}};
+        }},priorReport:corrected.reportConfig});
+    assert.equal(followup.status,'ANSWERED');
+    assert.deepEqual(followup.reportConfig.filters,
+      [{field:'location',operator:'equals',value:'Main'}]);
+    assert.deepEqual(followup.reportConfig.groups,['location']);
     assert.throws(()=>reports.normalize({dataset:'payments',groups:['status'],aggregate:'sum',
       measure:'amount_minor',sort:'total'},actor),/currency/i);
     const askPage=await owner.get('/ask');

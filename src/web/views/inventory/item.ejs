@@ -183,6 +183,7 @@
             <%
               var line = policyBySku[sku.id];
               var policy = line && line.policy;
+              var policies = line && line.policies ? line.policies : policy && policy.isSet ? [policy] : [];
               var held = sku.perLocation.filter(function (p) { return p.onHand !== 0; });
             %>
             <tr id="sku-<%= sku.id %>">
@@ -223,8 +224,10 @@
                 <% } %>
               </td>
               <td class="vt-rule">
-                <% if (policy && policy.isSet) { %>
-                  <strong>Reorder at <%= policy.reorderPoint === null ? '—' : policy.reorderPoint %><%= policy.targetStock === null ? '' : ', up to ' + policy.targetStock %></strong>
+                <% if (policies.length) { %>
+                  <% policies.forEach(function(rule) { %>
+                    <strong><%= rule.locationName || 'All locations' %>: reorder at <%= rule.reorderPoint === null ? '—' : rule.reorderPoint %><%= rule.targetStock === null ? '' : ', up to ' + rule.targetStock %></strong>
+                  <% }) %>
                 <% } else { %>
                   <span class="vt-nil">No reorder level set</span>
                 <% } %>

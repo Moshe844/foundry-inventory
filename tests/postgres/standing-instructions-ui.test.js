@@ -112,6 +112,12 @@ test('real Chromium approves one free-form PostgreSQL standing instruction witho
       [ctx.workspaceId,item.skuIds[0]])).rows;
     assert.deepEqual(policies.map((row)=>({location:row.location_id,reorder:Number(row.reorder_point),target:Number(row.target_stock)})),
       [{location:null,reorder:8,target:20},{location:locationId,reorder:4,target:15}]);
+    await page.goto(`${base}/inventory/${item.itemId}`);
+    assert.match(await page.locator('main').innerText(),/Main Warehouse: reorder at 4, up to 15/);
+    await page.getByRole('link',{name:'Reorder settings'}).click();
+    assert.match(page.url(),/\/purchasing\/why\//);
+    assert.match(await page.locator('main').innerText(),/Main Warehouse\s+4\s+15/);
+    assert.match(await page.locator('main').innerText(),/All locations\s+8\s+20/);
     let interpretations=0;
     const mixedProvider=require('../helpers/postgres-model-fixture').fixture({async complete(request){
       if(request.schemaName==='postgres_operating_instruction'){

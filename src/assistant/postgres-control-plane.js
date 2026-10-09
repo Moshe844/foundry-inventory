@@ -129,7 +129,8 @@ async function executeStep(service,database,ctx,step,{actor,provider,rawProvider
   }
   if(contract.kind==='read'){
     const args={search:step.args.search||null,timeframe:step.args.timeframe||'all_time'};
-    const result=await contract.prepare(service,database,ctx,sourceMessage,args,{answerProvider:provider});
+    const result=await contract.prepare(service,database,ctx,sourceMessage,args,
+      {answerProvider:provider,priorReport:contract.name==='read.custom_report'?priorReport:null});
     if(!await contract.verify(service,database,ctx,result))return {result:{status:'CLARIFY',
       answer:'StockChief could not verify an answer from those records. Nothing changed.',rows:[],columns:[],reason:'unverified'},args,provenance:{}};
     return {result:{status:result.status||'ANSWERED',...result},args,provenance:{}};

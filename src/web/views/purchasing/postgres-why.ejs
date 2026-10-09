@@ -1,0 +1,30 @@
+<div class="page-head"><div>
+  <a class="back-link" href="/inventory/<%= sku.item_id %>">Back to <%= sku.product %></a>
+  <h1>Reorder settings · <%= sku.product %></h1>
+  <p class="lede"><%= sku.code %> · Settings saved in this inventory, shown separately for each location.</p>
+</div></div>
+
+<section class="card"><div class="card-head"><h2>Current stock</h2></div><div class="card-body">
+  <% if(!positions.length){ %><p>No physical stock positions have been recorded for this SKU.</p><% } else { %>
+  <table><thead><tr><th>Location</th><th>On hand</th></tr></thead><tbody>
+    <% positions.forEach(function(row){ %><tr><td><%= row.location_name %></td><td><%= row.on_hand %></td></tr><% }) %>
+  </tbody></table><% } %>
+</div></section>
+
+<section class="card"><div class="card-head"><h2>Approved reorder rules</h2></div><div class="card-body">
+  <% if(!policies.length){ %><p>No reorder point or target is set for this SKU.</p><% } else { %>
+  <table><thead><tr><th>Scope</th><th>Reorder at</th><th>Target</th><th>Safety stock</th><th>Source</th></tr></thead><tbody>
+    <% policies.forEach(function(row){ %><tr><td><%= row.location_name %></td>
+      <td><%= row.reorder_point===null?'—':row.reorder_point %></td>
+      <td><%= row.target_stock===null?'—':row.target_stock %></td>
+      <td><%= row.safety_stock===null?'—':row.safety_stock %></td>
+      <td><%= row.source||'Recorded setting' %></td></tr><% }) %>
+  </tbody></table><% } %>
+  <p>These levels identify replenishment needs. They do not authorize an automatic purchase or send an email.</p>
+</div></section>
+
+<section class="card"><div class="card-head"><h2>Linked suppliers</h2></div><div class="card-body">
+  <% if(!suppliers.length){ %><p>No active supplier is linked to this SKU.</p><% } else { %>
+  <ul><% suppliers.forEach(function(row){ %><li><%= row.supplier_name %><% if(row.lead_time_days!=null){ %> · <%= row.lead_time_days %>-day lead time<% } %><% if(row.minimum_order_quantity!=null){ %> · minimum <%= row.minimum_order_quantity %><% } %></li><% }) %></ul><% } %>
+  <a class="button button--secondary" href="/ask?from=<%= encodeURIComponent('/inventory/'+sku.item_id) %>&amp;about=<%= encodeURIComponent(sku.product) %>">Ask StockChief to change a rule</a>
+</div></section>

@@ -235,10 +235,7 @@ for(const spec of require('./postgres-workflow-capabilities').SPECS)action(spec.
     resultingRecords:spec.record?[spec.record]:spec.resultingRecords||[],recordKind:spec.record||null,
     singleEffectPerTarget:Boolean(spec.singleEffectPerTarget),
     satisfiesCapabilities:spec.satisfiesCapabilities||[],
-    ownerOnly:Boolean(spec.ownerOnly),
-    discovery:{label:spec.name.replace(/[._]/g,' ').replace(/^./,(letter)=>letter.toUpperCase()),
-      prompt:`Help me ${spec.name.replace(/[._]/g,' ')}`,rank:160,
-      commercialCapability:spec.capability||null}});
+    ownerOnly:Boolean(spec.ownerOnly)});
 for(const [name,required] of Object.entries(REQUIRED)){
   const current=registry.get(name);
   registry.entries.set(name,Object.freeze({...current,required:Object.freeze(required)}));
@@ -285,7 +282,8 @@ for(const [name,description,search] of [
 
 add('read.custom_report','Compose a governed report from PostgreSQL business records with selected fields, filters, date ranges, grouping, calculations and chart data. Available datasets include inventory, movements, customer orders and invoices, supplier orders and bills, payments, business messages and shipments. Use for a request to generate, compare or customize a report; do not claim metrics absent from registered fields.',
   [],'read',permissions.VIEW,'none',
-  (_service,db,ctx,text,_args,options)=>require('../reports/postgres-ask').prepare(db,ctx,text,{provider:options.answerProvider}),
+  (_service,db,ctx,text,_args,options)=>require('../reports/postgres-ask').prepare(db,ctx,text,
+    {provider:options.answerProvider,priorReport:options.priorReport}),
   async(_service,_db,_ctx,result)=>Boolean(result&&Array.isArray(result.rows)),
   {view:'custom_report',answerMode:'executor',discovery:{label:'Build a custom business report',
     prompt:'Help me build a report from my business records',rank:72}});
