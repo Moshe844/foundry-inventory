@@ -6,6 +6,16 @@ const permissions=require('../actions/permissions');
 // builder never accepts SQL, table names, expressions, or joins from a user or
 // model. Adding a field here is a deliberate product/permission decision.
 const datasets=Object.freeze({
+  catalogue:{label:'Product and SKU catalogue',permission:permissions.VIEW,
+    source:`SELECT i.id AS record_id,i.name AS product,s.code AS sku,
+      COALESCE(s.variant_label,'') AS variant,COALESCE(s.barcode,'') AS barcode,
+      i.unit_label AS unit,i.tracking_mode AS tracking,
+      CASE WHEN i.is_active=1 AND s.is_active=1 THEN 'active' ELSE 'inactive' END AS status,
+      LEFT(i.created_at,10) AS created_on
+      FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
+      WHERE s.workspace_id=$1`,recordHref:(row)=>`/inventory/${row.record_id}`,
+    fields:{product:'text',sku:'text',variant:'text',barcode:'text',unit:'text',tracking:'text',
+      status:'text',created_on:'date'}},
   stock:{label:'Stock by product and location',permission:permissions.VIEW,
     source:`SELECT i.id AS record_id,i.name AS product,s.code AS sku,l.name AS location,
       b.on_hand::bigint AS on_hand,LEFT(b.updated_at,10) AS as_of
@@ -26,14 +36,30 @@ const datasets=Object.freeze({
   sales_orders:{label:'Customer orders',permission:permissions.VIEW_SALES,
     source:`SELECT o.id AS record_id,o.order_number,c.name AS customer,o.status,o.currency,
       o.order_date,o.needed_by,COALESCE(lines.units,0)::bigint AS ordered_units,
-      COALESCE(lines.quoted_minor,0)::bigint AS quoted_line_total_minor
+      CASE WHEN COALESCE(lines.unpriced,0)=0 THEN COALESCE(lines.quoted_minor,0)::bigint
+        ELSE NULL END AS quoted_line_total_minor,
+      CASE WHEN COALESCE(lines.unpriced,0)=0 THEN 'yes' ELSE 'no' END AS pricing_complete
       FROM sales_orders o JOIN customers c ON c.id=o.customer_id AND c.workspace_id=o.workspace_id
       LEFT JOIN LATERAL (SELECT SUM(quantity_ordered) AS units,
-        SUM(quantity_ordered*COALESCE(unit_price_minor,0)) AS quoted_minor
+        SUM(quantity_ordered*unit_price_minor) AS quoted_minor,
+        COUNT(*) FILTER (WHERE unit_price_minor IS NULL) AS unpriced
         FROM sales_order_lines WHERE workspace_id=o.workspace_id AND sales_order_id=o.id) lines ON TRUE
       WHERE o.workspace_id=$1`,recordHref:(row)=>`/orders/${row.record_id}`,
+    moneyCompleteness:{quoted_line_total_minor:{field:'pricing_complete',value:'yes'}},
     fields:{order_number:'text',customer:'text',status:'text',currency:'text',order_date:'date',needed_by:'date',
-      ordered_units:'number',quoted_line_total_minor:'money_minor'}},
+      ordered_units:'number',quoted_line_total_minor:'money_minor',pricing_complete:'text'}},
+  sales_order_lines:{label:'Customer order lines by product',permission:permissions.VIEW_SALES,
+    source:`SELECT o.id AS record_id,o.order_number,c.name AS customer,o.status,
+      o.order_date,o.needed_by,i.name AS product,s.code AS sku,
+      l.quantity_ordered::bigint AS ordered_units,l.quantity_fulfilled::bigint AS fulfilled_units,
+      (l.quantity_ordered-l.quantity_fulfilled)::bigint AS open_units
+      FROM sales_order_lines l JOIN sales_orders o ON o.id=l.sales_order_id AND o.workspace_id=l.workspace_id
+      JOIN customers c ON c.id=o.customer_id AND c.workspace_id=l.workspace_id
+      JOIN skus s ON s.id=l.sku_id AND s.workspace_id=l.workspace_id
+      JOIN items i ON i.id=s.item_id AND i.workspace_id=l.workspace_id
+      WHERE l.workspace_id=$1`,recordHref:(row)=>`/orders/${row.record_id}`,
+    fields:{order_number:'text',customer:'text',status:'text',order_date:'date',needed_by:'date',
+      product:'text',sku:'text',ordered_units:'number',fulfilled_units:'number',open_units:'number'}},
   purchase_orders:{label:'Supplier purchase orders',permission:permissions.VIEW_PURCHASING,
     source:`SELECT o.id AS record_id,o.po_number,s.name AS supplier,o.status,
       o.order_date,o.expected_date,COALESCE(lines.units,0)::bigint AS ordered_units,
@@ -44,6 +70,18 @@ const datasets=Object.freeze({
       WHERE o.workspace_id=$1`,recordHref:(row)=>`/purchasing/orders/${row.record_id}`,
     fields:{po_number:'text',supplier:'text',status:'text',order_date:'date',expected_date:'date',
       ordered_units:'number',received_units:'number'}},
+  purchase_order_lines:{label:'Supplier purchase order lines by product',permission:permissions.VIEW_PURCHASING,
+    source:`SELECT o.id AS record_id,o.po_number,v.name AS supplier,o.status,
+      o.order_date,o.expected_date,i.name AS product,s.code AS sku,
+      l.quantity_units::bigint AS ordered_units,l.quantity_received_units::bigint AS received_units,
+      (l.quantity_units-l.quantity_received_units)::bigint AS outstanding_units
+      FROM purchase_order_lines l JOIN purchase_orders o ON o.id=l.purchase_order_id AND o.workspace_id=l.workspace_id
+      JOIN suppliers v ON v.id=o.supplier_id AND v.workspace_id=l.workspace_id
+      JOIN skus s ON s.id=l.sku_id AND s.workspace_id=l.workspace_id
+      JOIN items i ON i.id=s.item_id AND i.workspace_id=l.workspace_id
+      WHERE l.workspace_id=$1`,recordHref:(row)=>`/purchasing/orders/${row.record_id}`,
+    fields:{po_number:'text',supplier:'text',status:'text',order_date:'date',expected_date:'date',
+      product:'text',sku:'text',ordered_units:'number',received_units:'number',outstanding_units:'number'}},
   customer_invoices:{label:'Customer invoices',permission:permissions.VIEW_ACCOUNTING,
     commercialCapability:'accounting.reports',
     source:`SELECT v.id AS record_id,v.invoice_number,c.name AS customer,v.status,v.currency,
@@ -81,12 +119,14 @@ const datasets=Object.freeze({
   shipments:{label:'Shipment progress',permission:permissions.VIEW_SALES,
     source:`SELECT s.id AS record_id,s.shipment_number,o.order_number,s.status,s.currency,
       COALESCE(s.carrier,'') AS carrier,COALESCE(s.tracking_number,'') AS tracking_number,
-      COALESCE(s.shipping_cost_minor,0)::bigint AS shipping_cost_minor,
+      s.shipping_cost_minor::bigint AS shipping_cost_minor,
+      CASE WHEN s.shipping_cost_minor IS NULL THEN 'no' ELSE 'yes' END AS cost_recorded,
       LEFT(s.created_at,10) AS created_on
       FROM sales_shipments s JOIN sales_orders o ON o.id=s.sales_order_id AND o.workspace_id=s.workspace_id
       WHERE s.workspace_id=$1`,recordHref:(row)=>`/fulfilment/${row.record_id}`,
+    moneyCompleteness:{shipping_cost_minor:{field:'cost_recorded',value:'yes'}},
     fields:{shipment_number:'text',order_number:'text',status:'text',currency:'text',carrier:'text',tracking_number:'text',
-      shipping_cost_minor:'money_minor',created_on:'date'}},
+      shipping_cost_minor:'money_minor',cost_recorded:'text',created_on:'date'}},
   transfers:{label:'Inventory transfers',permission:permissions.VIEW_TRANSFERS,
     source:`SELECT t.id AS record_id,t.transfer_number,t.status,
       origin.name AS source_location,destination.name AS destination_location,

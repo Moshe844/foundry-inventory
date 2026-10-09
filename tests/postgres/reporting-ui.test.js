@@ -10,6 +10,8 @@ const {createPostgresApp}=require('../../src/postgres-app');
 const catalog=require('../../src/domain/postgres-catalog-service');
 const locations=require('../../src/domain/postgres-location-service');
 const inventory=require('../../src/domain/postgres-inventory-engine');
+const commerce=require('../../src/operations/postgres-commerce');
+const workflows=require('../../src/operations/postgres-business-workflows');
 const reports=require('../../src/reports/postgres-service');
 const reportAsk=require('../../src/reports/postgres-ask');
 const reportRegistry=require('../../src/reports/postgres-registry');
@@ -74,6 +76,10 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     const product=await catalog.createItem(database,ctx,{name:'Copper Clamp',baseCode:'CLAMP',trackingMode:'quantity'});
     await inventory.receive(database,ctx,{skuId:product.skuIds[0],locationId:location.id,quantity:12,
       idempotencyKey:'report-fixture-receive',reference:'RPT-1'});
+    const buyer=await commerce.createCustomer(database,ctx,{name:'Report Buyer',email:'report-buyer@example.test'});
+    const lineOrder=await workflows.createSalesOrder(database,ctx,{customerId:buyer.id,
+      deliveryMethod:'PICKUP',lines:[{skuId:product.skuIds[0],quantity:3,unitPriceMinor:250}],
+      idempotencyKey:'report-fixture-order'});
     const actor=(await database.query(`SELECT u.role,u.permissions,a.email FROM users u JOIN accounts a ON a.id=u.account_id
       WHERE u.workspace_id=$1 AND u.id=$2`,[ctx.workspaceId,ctx.actorId])).rows[0];
     for(const entry of reportRegistry.list(actor)){
@@ -86,6 +92,32 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     assert.equal(stock.rows.length,1);assert.equal(Number(stock.rows[0].on_hand),12);
     assert.equal(stock.rows[0].href,`/inventory/${product.itemId}`);
     assert.equal((await owner.get(stock.rows[0].href)).status,200);
+    const productCatalogue=await reports.run(database,ctx,actor,{dataset:'catalogue',
+      columns:['product','sku','status','tracking'],sort:'sku'});
+    assert.equal(productCatalogue.rows.length,1);
+    assert.equal(productCatalogue.rows[0].sku,'CLAMP');
+    assert.equal(productCatalogue.rows[0].href,`/inventory/${product.itemId}`);
+    const productOrders=await reports.run(database,ctx,actor,{dataset:'sales_order_lines',
+      columns:['order_number','customer','sku','ordered_units','open_units'],sort:'order_number'});
+    assert.equal(productOrders.rows.length,1);
+    assert.equal(productOrders.rows[0].customer,'Report Buyer');
+    assert.equal(Number(productOrders.rows[0].ordered_units),3);
+    assert.equal(productOrders.rows[0].href,`/orders/${lineOrder.salesOrderId}`);
+    assert.throws(()=>reports.normalize({dataset:'sales_orders',groups:['customer'],
+      aggregate:'sum',measure:'quoted_line_total_minor',filters:[{field:'currency',operator:'equals',value:'USD'}],
+      sort:'total'},actor),/pricing complete/i);
+    const quoted=await reports.run(database,ctx,actor,{dataset:'sales_orders',groups:['customer'],
+      aggregate:'sum',measure:'quoted_line_total_minor',filters:[
+        {field:'currency',operator:'equals',value:'USD'},
+        {field:'pricing_complete',operator:'equals',value:'yes'}],sort:'total'});
+    assert.equal(Number(quoted.rows[0].total),750);
+    await database.query(`UPDATE sales_order_lines SET unit_price_minor=NULL
+      WHERE workspace_id=$1 AND sales_order_id=$2`,[ctx.workspaceId,lineOrder.salesOrderId]);
+    const unpriced=await reports.run(database,ctx,actor,{dataset:'sales_orders',
+      columns:['order_number','pricing_complete','quoted_line_total_minor','currency'],sort:'order_number'});
+    assert.equal(unpriced.rows[0].pricing_complete,'no');
+    assert.equal(unpriced.rows[0].quoted_line_total_minor,null);
+    assert.equal(unpriced.displayRows[0].quoted_line_total_minor,null);
     const grouped=await reports.run(database,ctx,actor,{dataset:'stock',groups:['location'],aggregate:'sum',
       measure:'on_hand',sort:'total',direction:'desc',chart:'bar'});
     assert.equal(Number(grouped.rows[0].total),12);

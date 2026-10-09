@@ -52,6 +52,10 @@ function normalize(spec,actor){
   });
   const exactCurrency=cleanFilters.find((filter)=>filter.field==='currency'
     &&filter.operator==='equals'&&/^[A-Z]{3}$/u.test(filter.value));
+  const completeness=groups.length&&aggregate!=='count'?dataset.moneyCompleteness?.[measure]:null;
+  if(completeness&&!cleanFilters.some((filter)=>filter.field===completeness.field
+    &&filter.operator==='equals'&&filter.value===completeness.value))
+    invalid(`This amount is not known for every record. Filter ${completeness.field.replaceAll('_',' ')} to ${completeness.value} before calculating a total.`);
   if(groups.length&&aggregate!=='count'&&dataset.fields[measure]==='money_minor'
     &&(!Object.hasOwn(dataset.fields,'currency')||(!groups.includes('currency')&&!exactCurrency)))
     invalid('Group monetary totals by currency or filter to one exact currency.');
