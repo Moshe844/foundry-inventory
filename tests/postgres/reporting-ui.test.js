@@ -143,6 +143,7 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     assert.equal(reportPlanCalls,2);
     const askResult=await owner.get('/ask');assert.equal(askResult.status,200);
     assert.match(askResult.text,/Units by location/);assert.match(askResult.text,/12/);
+    assert.match(askResult.text,/Report bar chart/);
     const askReportId=(await database.query(`SELECT id FROM stockchief_runtime.assistant_interactions
       WHERE workspace_id=$1 AND actor_user_id=$2 AND intent ? 'reportConfig'
       ORDER BY created_at DESC,id DESC LIMIT 1`,[ctx.workspaceId,ctx.actorId])).rows[0].id;

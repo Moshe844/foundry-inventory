@@ -278,8 +278,21 @@
           <% if (section.handoff) { %><p class="rm-said__meta"><a href="<%= evidenceHref(section.handoff.href, section.handoff.label) %>"><%= section.handoff.label %> →</a></p><% } %>
         <% }); %>
 
+        <% if (hasRows && result.reportConfig && result.reportConfig.chart === 'bar' &&
+          result.reportConfig.groups.length === 1 && result.columns.length === 2 &&
+          result.rows.slice(0,12).every(function(row){return Number.isFinite(Number(row[result.columns[1]])) && Number(row[result.columns[1]]) >= 0;}) ) {
+            var reportMax=Math.max(1,...result.rows.slice(0,12).map(function(row){return Number(row[result.columns[1]]);})); %>
+          <section class="rm-report-bars" aria-label="Report bar chart">
+            <% result.rows.slice(0,12).forEach(function(row){var amount=Number(row[result.columns[1]]); %>
+              <div class="rm-report-bars__row"><span><%= row[result.columns[0]] %></span>
+                <div class="rm-report-bars__track"><div class="rm-report-bars__fill" style="width:<%= Math.max(2,Math.round(amount/reportMax*100)) %>%"></div></div>
+                <strong><%= row[result.columns[1]] %></strong></div>
+            <% }); %>
+            <% if(result.rows.length>12){ %><small>First 12 groups shown. Open the report for every value.</small><% } %>
+          </section>
+        <% } %>
         <% if (hasRows) { %>
-          <details class="rm-chat-evidence">
+          <details class="rm-chat-evidence" <%= result.reportConfig ? 'open' : '' %>>
             <summary>
               <span><%- helpers.icon('layers', { size: 15 }) %> <%= answerIsSummary ? 'Answer details' : 'The records behind this' %></span>
               <small>

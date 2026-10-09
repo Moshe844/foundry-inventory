@@ -94,7 +94,8 @@ async function prepare(database,ctx,message,{provider,priorReport=null}){
       if(fit.data?.aligned!==true)throw new Error(`Report does not match the request: ${String(fit.data?.reason||'unverified').slice(0,180)}`);
       const result=await reports.run(database,ctx,actor,spec,{limit:51});
       const visible=result.rows.slice(0,50),truncated=result.hasMore||result.rows.length>50;
-      const label=spec.groups.length?'groups':'records';
+      const label=spec.groups.length?(visible.length===1?'group':'groups'):
+        (visible.length===1?'record':'records');
       const answer=visible.length?`${spec.title}: ${visible.length}${truncated?' or more':''} matching ${label} from recorded PostgreSQL data.`:
         `No recorded rows matched ${spec.title}. Try changing the filters.`;
       return {status:'ANSWERED',answer,rows:visible,columns:result.columns,

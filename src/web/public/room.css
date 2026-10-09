@@ -372,6 +372,12 @@ details[open].rm-said__text > summary::after { content: ' Show less'; }
 .rm-chat-evidence__row:nth-child(odd) { border-right: 1px solid var(--line-2); }
 .rm-chat-evidence__row span { overflow: hidden; color: var(--ink); font-size: 13px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .rm-chat-evidence__row small { color: var(--muted); font-size: 12px; line-height: 1.4; }
+.rm-report-bars { display:grid;gap:8px;margin:12px 0;padding:12px;border:1px solid var(--line-2);border-radius:12px; }
+.rm-report-bars__row { display:grid;grid-template-columns:minmax(90px,1fr) minmax(80px,2fr) auto;align-items:center;gap:9px;font-size:12px; }
+.rm-report-bars__row > span { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.rm-report-bars__row > strong { font-variant-numeric:tabular-nums; }
+.rm-report-bars__track { height:10px;border-radius:999px;background:var(--line-2);overflow:hidden; }
+.rm-report-bars__fill { height:100%;border-radius:999px;background:#6355ee; }
 .rm-chat .rm-chat-reading { display: block; background: var(--surface); }
 .rm-chat .rm-chat-reading > summary::marker { content: ''; }
 .rm-chat .rm-chat-reading > summary::-webkit-details-marker { display: none; }
