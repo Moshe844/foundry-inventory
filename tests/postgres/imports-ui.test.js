@@ -13,6 +13,7 @@ const reports=require('../../src/reports/postgres-service');
 const ledger=require('../../src/accounting/postgres-ledger');
 const fs=require('node:fs');
 const path=require('node:path');
+const {scannedTablePdf,scannedTableImage}=require('../helpers/scanned-table-pdf');
 
 test('real Chromium previews, approves, imports and reconciles PostgreSQL inventory with duplicate and rollback safety',
   {timeout:180000},async(context)=>{
@@ -96,11 +97,13 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
     await page.goto(`${base}/imports/${unknownId}`);
     assert.equal(unknownPlan.detectedType,'unknown');
     assert.equal(unknownPlan.recordsValid,0);
-    assert.match(await page.locator('main').innerText(),/Help StockChief identify the products/);
+    assert.match(await page.locator('main').innerText(),/which values identify your products/);
     assert.equal(await page.getByRole('button',{name:'Approve 0 rows'}).isDisabled(),true);
     await assert.rejects(imports.approve(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},
       unknownId,unknownPlan.integrityHash),/Map a product name or SKU/);
-    await page.getByLabel('Source column “Alpha”').selectOption('name');
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'These are product names'}).first().click()]);
+    assert.equal((await imports.get(database,identity.workspace_id,unknownId)).fieldMappings.name,0);
+    await page.getByText('Advanced: change how StockChief read a column').click();
     await page.getByLabel('Source column “Beta”').selectOption('code');
     await page.getByLabel('Source column “Gamma”').selectOption('quantity');
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Recalculate preview'}).click()]);
@@ -147,8 +150,7 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
       WHERE workspace_id=$1 AND id=$2`,[identity.workspace_id,ambiguousId]);
     await assert.rejects(imports.approve(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},
       ambiguousId,ambiguousPlan.integrityHash),/numeric source column was not mapped/i);
-    await page.getByLabel('Source column “Metric X”').selectOption('quantity');
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Recalculate preview'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'These are stock quantities'}).click()]);
     assert.equal((await imports.get(database,identity.workspace_id,ambiguousId)).fieldMappings.quantity,2);
     assert.equal(await page.getByRole('button',{name:'Approve 1 row'}).isEnabled(),true);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve 1 row'}).click()]);
@@ -178,11 +180,43 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
       AND code IN ('LAB-PT-012','LAB-BN-015','LAB-PC-022')`,[identity.workspace_id])).rows[0].count,3);
 
     await page.goto(`${base}/ask`);
+    await page.locator('input[type="file"][name="file"]').setInputFiles({
+      name:'scanned-opening-stock.pdf',mimeType:'application/pdf',buffer:await scannedTablePdf()});
+    await Promise.all([page.waitForURL(/\/imports\/imp_/),page.getByRole('button',{name:'Continue'}).click()]);
+    assert.match(await page.locator('main').innerText(),/2 rows read · Answer the question below before import/);
+    assert.match(await page.locator('main').innerText(),/Where is this stock kept\?/);
+    await Promise.all([page.waitForNavigation(),page.locator('section[aria-labelledby="import-location-question"]')
+      .getByRole('button',{name:'Main Warehouse',exact:true}).click()]);
+    assert.match(await page.locator('main').innerText(),/2 rows read · 2 ready · 0 need correction/);
+    assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM skus WHERE workspace_id=$1
+      AND code IN ('LAMP-10','LIGHT-20')`,[identity.workspace_id])).rows[0].count,0);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve 2 rows'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Import and verify'}).click()]);
+    assert.match(await page.locator('main').innerText(),/7 opening units/);
+    assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM skus WHERE workspace_id=$1
+      AND code IN ('LAMP-10','LIGHT-20')`,[identity.workspace_id])).rows[0].count,2);
+
+    await page.goto(`${base}/ask`);
+    await page.locator('input[type="file"][name="file"]').setInputFiles({
+      name:'phone-inventory-photo.png',mimeType:'image/png',
+      buffer:scannedTableImage({items:[['Desk Fan','FAN-10','5'],['Desk Clock','CLOCK-20','6']]})});
+    await Promise.all([page.waitForURL(/\/imports\/imp_/),page.getByRole('button',{name:'Continue'}).click()]);
+    assert.match(await page.locator('main').innerText(),/2 rows read · Answer the question below before import/);
+    await Promise.all([page.waitForNavigation(),page.locator('section[aria-labelledby="import-location-question"]')
+      .getByRole('button',{name:'Main Warehouse',exact:true}).click()]);
+    assert.match(await page.locator('main').innerText(),/2 rows read · 2 ready · 0 need correction/);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve 2 rows'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Import and verify'}).click()]);
+    assert.match(await page.locator('main').innerText(),/11 opening units/);
+    assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM skus WHERE workspace_id=$1
+      AND code IN ('FAN-10','CLOCK-20')`,[identity.workspace_id])).rows[0].count,2);
+
+    await page.goto(`${base}/ask`);
     const correctionSource=Buffer.from('Product,SKU,Location,Quantity\nCorrected Tape,CORR-TAPE,Old Warehouse,6\nCorrected Valve,CORR-VALVE,Old Warehouse,invalid\n');
     await page.locator('input[type="file"][name="file"]').setInputFiles({
       name:'needs-correction.csv',mimeType:'text/csv',buffer:correctionSource});
     await Promise.all([page.waitForURL(/\/imports\/imp_/),page.getByRole('button',{name:'Continue'}).click()]);
-    assert.match(await page.locator('main').innerText(),/2 rows read · 0 ready · 2 need correction/);
+    assert.match(await page.locator('main').innerText(),/2 rows read · Answer the question below before import/);
     const correctionId=page.url().split('/').at(-1);
     const staleHash=(await imports.get(database,identity.workspace_id,correctionId)).integrityHash;
     const other=await browser.newPage();
@@ -197,6 +231,7 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
       WHERE a.email='other-imports-pg@example.test'`)).rows[0];
     await assert.rejects(imports.revise(database,{workspaceId:otherIdentity.workspace_id,
       actorId:otherIdentity.actor_id},correctionId,{expectedHash:staleHash}),/not be found/i);
+    await page.getByText('Advanced: change how StockChief read a column').click();
     await page.getByLabel(/Source location “Old Warehouse”/).selectOption({label:'Main Warehouse'});
     await page.getByLabel(/Row 3 · Corrected Valve quantity/).fill('4');
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Recalculate preview'}).click()]);
@@ -240,6 +275,15 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
       .map((entry)=>entry.message).join(' '),/Configure accounting/);
     await ledger.configure(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},
       {startDate:'2026-01-01',currency:'USD'});
+    const costWithoutStock=await imports.analyse(database,{workspaceId:identity.workspace_id,
+      actorId:identity.actor_id},{text:'Product,SKU,Unit Cost\nCosted Part,COST-NO-STOCK,12.50\n',
+      filename:'cost-without-stock.csv',mappings:{name:0,code:1,unitCost:2}});
+    assert.equal(costWithoutStock.recordsInvalid,1,JSON.stringify({mappings:costWithoutStock.fieldMappings,
+      rows:await imports.rowsFor(database,identity.workspace_id,costWithoutStock.id)}));
+    assert.match((await imports.rowsFor(database,identity.workspace_id,costWithoutStock.id))[0].problems
+      .map((entry)=>entry.message).join(' '),/No cost will be silently discarded/);
+    await assert.rejects(imports.approve(database,{workspaceId:identity.workspace_id,
+      actorId:identity.actor_id},costWithoutStock.id,costWithoutStock.integrityHash),/no valid rows/i);
     const costed=await imports.analyse(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},{
       text:'Product,SKU,Location,Quantity,Unit Cost,Selling Price\nCosted Valve,COST-1,Main Warehouse,3,12.50,24.00\n',
       filename:'costed-opening-after-accounting.csv'});

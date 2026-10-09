@@ -22,18 +22,9 @@
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <input type="hidden" name="usageKey" value="<%= usageKey %>:file">
         <label class="field">
-          <span class="field-label">Spreadsheet, CSV or text PDF</span>
-          <input class="input" type="file" name="file" accept=".csv,.tsv,.txt,.xlsx,.pdf" required>
-          <span class="field-help">.xlsx, .csv, .tsv or PDF with selectable table text, up to 32MB. Extra title rows, blank lines and stray columns are fine. Scanned PDFs need separate OCR review.</span>
-        </label>
-        <label class="field">
-          <span class="field-label">If the file has no location column, put the stock in</span>
-          <select class="input" name="defaultLocationId">
-            <option value="">— nowhere; just create the products —</option>
-            <% locations.forEach(function (location) { %>
-              <option value="<%= location.id %>"><%= location.name %></option>
-            <% }) %>
-          </select>
+          <span class="field-label">Your inventory file</span>
+          <input class="input" type="file" name="file" accept=".csv,.tsv,.txt,.xlsx,.pdf,.png,.jpg,.jpeg" required>
+          <span class="field-help">Upload an inventory table as XLSX, CSV, TSV, text, PDF or a clear PNG/JPEG image. No need to rename columns. Scanned PDF pages and images are read with OCR; nothing changes until you approve the preview.</span>
         </label>
       </div>
       <div class="card-foot">

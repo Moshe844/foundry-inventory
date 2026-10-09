@@ -216,8 +216,8 @@ function createPostgresAskRouter(database,options={}){
     if(files.length){
       if(files.length!==1)throw new ValidationError('Attach one inventory file at a time so its preview can be checked.');
       const file=files[0];
-      if(!/\.(csv|tsv|txt|xlsx|pdf)$/i.test(file.filename||''))
-        throw new ValidationError('Ask can preview inventory CSV, TSV, Excel and text-layer PDF files here. This file type was not imported.');
+      if(!/\.(csv|tsv|txt|xlsx|pdf|png|jpe?g)$/i.test(file.filename||''))
+        throw new ValidationError('Ask can preview inventory tables in CSV, TSV, XLSX, PDF, PNG or JPEG. This file type was not imported.');
       await entitlements.assertCapability(database,scope,'imports.spreadsheet');
       const hash=crypto.createHash('sha256').update(file.buffer).digest('hex');
       const plan=await imports.analyse(database,req.ctx,{buffer:file.buffer,filename:file.filename,

@@ -1,7 +1,12 @@
-<% const sourceMappings=plan.fieldMappings||{}; const sourceTransforms=plan.transformations||{}; %>
+<% const sourceMappings=plan.fieldMappings||{}; const sourceTransforms=plan.transformations||{};
+   const needsIdentity=sourceMappings.name===undefined&&sourceMappings.code===undefined;
+   const numberQuestions=sourceMappings.quantity===undefined?(mappingRows||[]).filter(function(row){return (sourceTransforms.unmappedNumericColumns||[]).includes(row.column);}):[];
+   const needsNumberAnswer=numberQuestions.length>0&&!sourceTransforms.confirmCatalogOnly;
+   const needsLocation=!plan.defaultLocationId && Boolean(locals.missingLocationRows || rows.some(function(row){return row.problems.some(function(problem){return problem.code==='no_location';});}));
+   const needsAnswer=needsIdentity||needsNumberAnswer||needsLocation||plan.conflicts.length>0; %>
 <div class="page-head">
   <div class="titles"><a class="back-link" href="/imports">Bring data in</a><h1><%= plan.sourceName %></h1>
-    <div class="page-sub"><%= plan.recordsDetected %> <%= helpers.plural(plan.recordsDetected, 'row') %> read · <%= plan.recordsValid %> ready · <%= plan.recordsInvalid %> need correction</div>
+    <div class="page-sub"><%= plan.recordsDetected %> <%= helpers.plural(plan.recordsDetected, 'row') %> read · <% if(needsAnswer){ %>Answer the question below before import<% } else { %><%= plan.recordsValid %> ready · <%= plan.recordsInvalid %> need correction<% } %></div>
   </div>
   <div class="page-actions"><span class="badge badge--<%= plan.status==='SUCCEEDED'?'ok':'muted' %>"><%= plan.status %></span></div>
 </div>
@@ -9,10 +14,57 @@
   <div class="notice notice--warn section"><strong>This exact source was already imported.</strong>
     StockChief will not apply the same bytes twice. <a href="/imports/<%= duplicatePlans[0].id %>">See the completed import</a>.</div>
 <% } %>
-<% if(sourceMappings.name===undefined && sourceMappings.code===undefined && plan.status==='READY'){ %>
-  <div class="notice notice--warn section" role="alert"><strong>Help StockChief identify the products in this file.</strong>
-    The file was read, but its headings do not safely identify a product name or SKU. No inventory has changed.
-    <a href="#column-mapping">Choose the matching source column below</a>, then recalculate and review the rows before approving.</div>
+<% if(plan.status==='READY' && plan.approvalStatus==='AWAITING_APPROVAL' && needsLocation && !needsIdentity && !needsNumberAnswer){ %>
+  <section class="card section" aria-labelledby="import-location-question"><div class="card-head"><h2 id="import-location-question">Where is this stock kept?</h2></div>
+    <div class="card-body"><p>The file has stock quantities but does not say which location holds them. Pick one location for these rows. StockChief will recalculate the preview; nothing changes until you approve it.</p>
+      <% if(locations.length){ %><div class="btn-row"><% locations.forEach(function(location){ %>
+        <form method="post" action="/imports/<%= plan.id %>/revise"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>">
+          <button class="btn btn--sm" type="submit" name="defaultLocationId" value="<%= location.id %>"><%= location.name %></button></form>
+      <% }) %></div><% } else { %><p><a href="/locations">Add a stock location</a> first, then return to this preview.</p><% } %>
+    </div>
+  </section>
+<% } %>
+<% if(plan.status==='READY' && plan.approvalStatus==='AWAITING_APPROVAL' && plan.conflicts.length && !needsIdentity && !needsNumberAnswer && !needsLocation){ %>
+  <section class="card section" aria-labelledby="import-location-conflicts"><div class="card-head"><h2 id="import-location-conflicts">Help me match the location names in this file</h2></div>
+    <div class="card-body"><p>These names do not match your current locations. Choose where each belongs; StockChief will recalculate before approval.</p>
+      <% plan.conflicts.forEach(function(conflict,index){ %><div class="section"><strong><%= conflict.text %></strong> · <%= conflict.count %> <%= helpers.plural(conflict.count,'row') %>
+        <div class="btn-row"><% locations.forEach(function(location){ %><form method="post" action="/imports/<%= plan.id %>/revise"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>">
+          <button class="btn btn--sm" type="submit" name="location_<%= index %>" value="<%= location.id %>"><%= location.name %></button></form><% }) %></div></div>
+      <% }) %>
+    </div>
+  </section>
+<% } %>
+<% if(plan.status==='READY' && plan.approvalStatus==='AWAITING_APPROVAL' && needsIdentity){ %>
+  <section class="card section" aria-labelledby="import-identity-question"><div class="card-head"><h2 id="import-identity-question">One quick question: which values identify your products?</h2></div>
+    <div class="card-body"><p>I read the file, but I do not want to guess which values are product names or SKUs. Pick the matching example below. You do not need to change or re-upload your file; no inventory has changed.</p>
+      <div class="grid grid--2">
+      <% mappingRows.filter(function(row){return (row.samples||[]).length>0;}).forEach(function(candidate){ %>
+        <div class="card"><div class="card-body"><strong><%= candidate.column %></strong><p class="muted">Examples: <%= candidate.samples.join(' · ') %></p>
+          <% ['name','code'].forEach(function(answer){ %><form method="post" action="/imports/<%= plan.id %>/revise">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>">
+            <% mappingRows.filter(function(row){return row.index!==candidate.index&&row.field;}).forEach(function(row){ %><input type="hidden" name="mapping_<%= row.index %>" value="<%= row.field %>"><% }) %>
+            <button class="btn btn--sm" type="submit" name="mapping_<%= candidate.index %>" value="<%= answer %>"><%= answer==='name'?'These are product names':'These are SKUs / product codes' %></button>
+          </form><% }) %>
+        </div></div>
+      <% }) %></div>
+    </div>
+  </section>
+<% } %>
+<% if(plan.status==='READY' && plan.approvalStatus==='AWAITING_APPROVAL' && !needsIdentity && needsNumberAnswer){ %>
+  <section class="card section" aria-labelledby="import-number-question"><div class="card-head"><h2 id="import-number-question">One quick question: what do these numbers mean?</h2></div>
+    <div class="card-body"><p>I found your products, but the file does not label its numbers clearly enough to safely change stock. Choose what the numbers mean. No inventory has changed.</p>
+      <% numberQuestions.forEach(function(candidate){ %><div class="card section"><div class="card-body"><strong><%= candidate.column %></strong><p class="muted">Examples: <%= candidate.samples.join(' · ') %></p>
+        <div class="btn-row"><% [['quantity','These are stock quantities'],['sellingPrice','These are selling prices']].forEach(function(answer){ %>
+          <form method="post" action="/imports/<%= plan.id %>/revise"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>">
+            <% mappingRows.filter(function(row){return row.index!==candidate.index&&row.field;}).forEach(function(row){ %><input type="hidden" name="mapping_<%= row.index %>" value="<%= row.field %>"><% }) %>
+            <button class="btn btn--sm" type="submit" name="mapping_<%= candidate.index %>" value="<%= answer[0] %>"><%= answer[1] %></button></form>
+        <% }) %></div></div></div><% }) %>
+      <form method="post" action="/imports/<%= plan.id %>/revise"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>">
+        <% mappingRows.filter(function(row){return row.field;}).forEach(function(row){ %><input type="hidden" name="mapping_<%= row.index %>" value="<%= row.field %>"><% }) %>
+        <button class="btn btn--ghost" type="submit" name="confirmCatalogOnly" value="yes">This is a product list only; do not change stock</button>
+      </form>
+    </div>
+  </section>
 <% } %>
 <% if(run){ %>
   <div class="card section <%= run.verified?'':'card--warn' %>"><div class="card-head"><h2>Reconciliation</h2>
@@ -25,8 +77,8 @@
 <% } else { %>
   <div class="card section"><div class="card-head"><h2>What will happen</h2><span class="spacer"></span>
     <span class="badge badge--muted">No inventory changed yet</span></div>
-    <div class="card-body"><p class="lede">StockChief will create or match <%= plan.recordsValid %> valid <%= helpers.plural(plan.recordsValid, 'row') %> and establish only the quantities shown below through the inventory ledger.</p>
-      <% if(plan.warnings.length){ %><ul class="plain-list"><% plan.warnings.forEach(function(warning){ %><li class="is-warn"><%= warning %></li><% }) %></ul><% } %>
+    <div class="card-body"><p class="lede"><% if(needsIdentity){ %>I read <%= plan.recordsDetected %> <%= helpers.plural(plan.recordsDetected,'row') %>. Answer the product question above before anything can be imported.<% } else if(needsNumberAnswer){ %>I found the products. Answer the number question above before StockChief changes stock.<% } else if(needsLocation||plan.conflicts.length){ %>Answer the location question above so StockChief knows where to put this stock.<% } else { %>StockChief will create or match <%= plan.recordsValid %> valid <%= helpers.plural(plan.recordsValid, 'row') %> and establish only the quantities shown below through the inventory ledger.<% } %></p>
+      <% if(plan.warnings.length){ %><details><summary>Review notes about this file</summary><ul class="plain-list"><% plan.warnings.forEach(function(warning){ %><li class="is-warn"><%= warning %></li><% }) %></ul></details><% } %>
       <% if(plan.conflicts.length){ %><p><strong>Missing setup:</strong> Add or correct these locations before importing: <%= plan.conflicts.map(function(c){return c.text;}).join(', ') %>.</p><% } %>
     </div>
     <div class="card-foot"><div class="btn-row">
@@ -37,7 +89,7 @@
   </div>
 <% } %>
 <% if(plan.status==='READY' && plan.approvalStatus==='AWAITING_APPROVAL'){ %>
-  <div class="card section" id="column-mapping"><div class="card-head"><h2>Check columns and correct the preview</h2></div>
+  <details class="card section" id="column-mapping"><summary class="card-head">Advanced: change how StockChief read a column</summary>
     <div class="card-body"><p>No stock changes while you correct a column meaning, source location or invalid quantity. Review every recalculated row before approval.</p>
       <form method="post" action="/imports/<%= plan.id %>/revise" class="stack-form">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -61,13 +113,13 @@
         <button class="btn btn--primary" type="submit">Recalculate preview</button>
       </form>
     </div>
-  </div>
+  </details>
 <% } %>
-<div class="card section"><div class="card-head"><h2>How the columns were read</h2></div>
+<details class="card section"><summary class="card-head">See how the file was read</summary>
   <table class="table table--tight"><thead><tr><th>Source column</th><th>Meaning</th></tr></thead><tbody>
     <% mappingRows.forEach(function(row){ %><tr><td><%= row.column %></td><td><%= row.field ? (fieldOptions.find(function(field){return field.id===row.field;}) || {}).label : 'Not imported' %></td></tr><% }) %>
   </tbody></table>
-</div>
+</details>
 <div class="card section"><div class="card-head"><h2>Every row</h2><span class="spacer"></span>
   <div class="btn-row"><a class="btn btn--sm" href="/imports/<%= plan.id %>">All <%= plan.recordsDetected %></a>
     <% Object.keys(counts).forEach(function(status){ %><a class="btn btn--sm" href="/imports/<%= plan.id %>?rows=<%= status %>"><%= status %> <%= counts[status] %></a><% }) %></div></div>

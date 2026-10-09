@@ -116,6 +116,8 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     let unitCostMinor=null;
     if(costText){try{unitCostMinor=prices.toMinor(costText,'Unit cost');}
       catch{problems.push(problem('bad_unit_cost','Unit cost must be a non-negative money amount.'));}}
+    if(unitCostMinor!==null&&!(quantity>0))
+      problems.push(problem('cost_without_stock','Unit cost cannot be recorded without a positive opening stock quantity. No cost will be silently discarded.'));
     const currency=(trimOrNull(textCell(row,mappings.currency))||context.accountingCurrency||'USD').toUpperCase();
     if(unitCostMinor!==null&&quantity>0&&!context.accountingReady)
       problems.push(problem('accounting_not_ready','Configure accounting before importing valued opening stock.'));
@@ -150,7 +152,7 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     if(proposal.detectedType==='lots' && quantity > 0 && !lotCode)problems.push(problem('missing_lot','A lot or batch number is required.'));
     const existingMatches=code ? (context.skuByCode.get(code.toLowerCase()) || []) : [];
     if(existingMatches.length>1)problems.push(problem('ambiguous_existing_code','This SKU code matches more than one active record.'));
-    const blocking=new Set(['bad_quantity','negative_quantity','fractional_quantity','bad_unit_cost','bad_selling_price',
+    const blocking=new Set(['bad_quantity','negative_quantity','fractional_quantity','bad_unit_cost','cost_without_stock','bad_selling_price',
       'accounting_not_ready','cost_currency_mismatch','cost_overflow','no_product','unknown_location','no_location',
       'missing_serial','serial_quantity','missing_lot','ambiguous_existing_code']);
     const parsed={name,code,description:trimOrNull(textCell(row,mappings.description)),
@@ -214,8 +216,10 @@ async function analyse(database, ctx, input) {
   const bytes=buffer || Buffer.from(text,'utf8');
   const sourceHash=digest(bytes);
   const isPdf=Boolean(buffer)&&buffer.subarray(0,5).toString('ascii')==='%PDF-';
+  const isImage=Boolean(buffer)&&Boolean(require('./image-table').dimensions(buffer));
   const parsedWorkbook=isPdf?await require('./pdf-table').parse(buffer):
-    parser.parse(buffer?{buffer,filename:input.filename}:{text,filename:input.filename});
+    isImage?await require('./image-table').parse(buffer):
+      parser.parse(buffer?{buffer,filename:input.filename}:{text,filename:input.filename});
   const sheetIndex=Number.isInteger(input.sheetIndex)?input.sheetIndex:parsedWorkbook.primarySheet;
   const sheet=parsedWorkbook.sheets[sheetIndex];
   if(!sheet?.rows.length)throw new ValidationError('That source has no inventory rows.');
@@ -240,7 +244,7 @@ async function analyse(database, ctx, input) {
   const at=nowIso();
   const plan={id:newId('imp'),workspaceId:ctx.workspaceId,createdByUserId:ctx.actorId,
     sourceName:input.filename || 'Pasted inventory data',sourceKind:buffer?parsedWorkbook.format==='pdf'
-      ?'pdf':parsedWorkbook.format==='xlsx'?'xlsx':'csv':'paste',
+      ?'pdf':parsedWorkbook.format==='image'?'image':parsedWorkbook.format==='xlsx'?'xlsx':'csv':'paste',
     sourceHash,sourceBytes:bytes.length,detectedType:proposal.detectedType,sheetName:sheet.name,
     sheetIndex,sourceColumns:sheet.columns.map((column)=>({index:column.index,name:column.name})),
     fieldMappings:proposal.mappings,transformations:{axisNames:proposal.axisNames,aiUsed:proposal.aiUsed,
@@ -348,15 +352,19 @@ async function revise(database,ctx,id,input={}){
     const context=await workspaceContext(client,ctx.workspaceId);
     if(Object.values(locationMappings).some((value)=>!context.locations.some((row)=>row.id===value)))
       throw new ValidationError('Choose a location in this inventory for each correction.');
+    const defaultLocationId=input.defaultLocationId===undefined
+      ?plan.defaultLocationId:String(input.defaultLocationId||'');
+    if(defaultLocationId&&!context.locations.some((row)=>row.id===defaultLocationId))
+      throw new ValidationError('Choose a location in this inventory for this stock.');
     const sheet={columns:plan.sourceColumns,rows:current.map((row)=>({cells:row.raw,sourceRow:row.rowNumber}))};
     const axisNames=Object.fromEntries(fields.VARIANT_FIELDS.filter((field)=>fieldMappings[field]!==undefined)
       .map((field)=>[field,plan.sourceColumns.find((column)=>column.index===fieldMappings[field])?.name||field]));
     const validated=validateRows(sheet,fieldMappings,
       {detectedType,axisNames},context,
-      {defaultLocationId:plan.defaultLocationId,locationMappings,quantityOverrides});
+      {defaultLocationId,locationMappings,quantityOverrides});
     const unmappedNumeric=unmappedNumericColumns(sheet,fieldMappings);
     const confirmCatalogOnly=fieldMappings.quantity===undefined&&input.confirmCatalogOnly===true;
-    const revised={...plan,fieldMappings,detectedType,locationMappings,
+    const revised={...plan,fieldMappings,detectedType,locationMappings,defaultLocationId,
       transformations:{...plan.transformations,axisNames,quantityOverrides,
         unmappedNumericColumns:unmappedNumeric,confirmCatalogOnly},
       recordsValid:validated.summary.valid,recordsInvalid:validated.summary.invalid,
@@ -366,11 +374,12 @@ async function revise(database,ctx,id,input={}){
     revised.integrityHash=integrityFor(revised,validated.rows);
     await client.query(`UPDATE import_plans SET location_mappings=$3::jsonb,transformations=$4::jsonb,
       records_valid=$5,records_invalid=$6,warnings=$7::jsonb,conflicts=$8::jsonb,
-      plan_version=$9,integrity_hash=$10,field_mappings=$11::jsonb,detected_type=$12
+      plan_version=$9,integrity_hash=$10,field_mappings=$11::jsonb,detected_type=$12,
+      default_location_id=$13
       WHERE workspace_id=$1 AND id=$2`,
     [ctx.workspaceId,id,JSON.stringify(locationMappings),JSON.stringify(revised.transformations),
       revised.recordsValid,revised.recordsInvalid,JSON.stringify(revised.warnings),JSON.stringify(revised.conflicts),
-      revised.planVersion,revised.integrityHash,JSON.stringify(fieldMappings),detectedType]);
+      revised.planVersion,revised.integrityHash,JSON.stringify(fieldMappings),detectedType,defaultLocationId||null]);
     for(const row of validated.rows)await client.query(`UPDATE import_rows SET parsed=$4::jsonb,status=$5,
       problems=$6::jsonb,location_id=$7,quantity=$8 WHERE workspace_id=$1 AND import_id=$2 AND row_number=$3`,
     [ctx.workspaceId,id,row.rowNumber,JSON.stringify(row.parsed),row.status,JSON.stringify(row.problems),

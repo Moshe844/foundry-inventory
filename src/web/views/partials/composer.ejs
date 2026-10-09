@@ -35,8 +35,8 @@
   <textarea class="rm-composer__input" id="ask-question" data-ask-input name="<%= locals.actionClarification ? 'answer' : 'message' %>" rows="2"
     maxlength="2000" aria-label="Ask StockChief" placeholder="<%= prompt %>"><%= prefill %></textarea>
   <div class="rm-composer__foot">
-    <% if (!locals.hideAttachment) { %><label class="rm-composer__attach" title="<%= locals.postgresAsk ? 'Attach inventory CSV, Excel or text-layer PDF' : 'Attach a file or a photo of a document' %>">
-      <input type="file" name="file" accept="<%= locals.postgresAsk ? '.csv,.tsv,.xlsx,.txt,.pdf' : '.csv,.tsv,.xlsx,.xls,.txt,.pdf,.docx,image/*' %>" data-operator-attachment>
+  <% if (!locals.hideAttachment) { %><label class="rm-composer__attach" title="<%= locals.postgresAsk ? 'Attach an inventory table (CSV, Excel, PDF or image)' : 'Attach a file or a photo of a document' %>">
+      <input type="file" name="file" accept="<%= locals.postgresAsk ? '.csv,.tsv,.xlsx,.txt,.pdf,.png,.jpg,.jpeg' : '.csv,.tsv,.xlsx,.xls,.txt,.pdf,.docx,image/*' %>" data-operator-attachment>
       <%- helpers.icon('paperclip', { size: 16 }) %><span>Attach</span>
     </label><% } %>
     <span class="right"><button class="rm-btn rm-btn--sm rm-composer__send" type="submit" aria-label="Continue" data-ask-submit><span>Send</span><%- helpers.icon('send', { size: 16 }) %></button></span>

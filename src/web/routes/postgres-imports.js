@@ -47,15 +47,23 @@ function createPostgresImportsRouter(database,{provider=null}={}){
     const page=Math.max(1,Number(req.query.page)||1);
     const allowed=['VALID','INVALID','IMPORTED','FAILED'];
     const filter=allowed.includes(req.query.rows)?req.query.rows:null;
-    const [rows,counts,duplicatePlans,run,locationRows]=await Promise.all([
+    const [rows,counts,duplicatePlans,run,locationRows,sampleRows,missingLocation]=await Promise.all([
       imports.rowsFor(database,req.ctx.workspaceId,plan.id,{status:filter,limit:PAGE_SIZE,offset:(page-1)*PAGE_SIZE}),
       imports.counts(database,req.ctx.workspaceId,plan.id),imports.duplicates(database,req.ctx.workspaceId,plan),
       imports.report(database,req.ctx.workspaceId,plan.id),locations(database,req.ctx.workspaceId),
+      imports.rowsFor(database,req.ctx.workspaceId,plan.id,{limit:8,offset:0}),
+      plan.status==='READY'&&!plan.defaultLocationId&&plan.recordsInvalid>0
+        ?database.query(`SELECT 1 FROM import_rows WHERE workspace_id=$1 AND import_id=$2
+          AND problems::jsonb @> '[{"code":"no_location"}]'::jsonb LIMIT 1`,
+        [req.ctx.workspaceId,plan.id]):Promise.resolve({rows:[]}),
     ]);
     const mappingRows=plan.sourceColumns.map((column)=>({index:column.index,column:column.name,
-      field:Object.keys(plan.fieldMappings).find((key)=>plan.fieldMappings[key]===column.index) || null}));
+      field:Object.keys(plan.fieldMappings).find((key)=>plan.fieldMappings[key]===column.index) || null,
+      samples:[...new Set(sampleRows.map((row)=>String(row.raw?.[column.index]??'').trim())
+        .filter(Boolean))].slice(0,3).map((value)=>value.slice(0,80))}));
     return res.page('imports/postgres-preview',{title:`Import ${plan.sourceName}`,nav:'imports',plan,rows,counts,
       duplicatePlans,run,locations:locationRows,mappingRows,fieldOptions:fields.FIELDS,page,pageSize:PAGE_SIZE,filter,
+      missingLocationRows:missingLocation.rows.length>0,
     });
   }));
   router.post('/imports/:id/revise',asyncRoute(async(req,res)=>{
@@ -75,6 +83,7 @@ function createPostgresImportsRouter(database,{provider=null}={}){
       const fieldMappings=hasFieldMappings?Object.fromEntries(choices):undefined;
       await imports.revise(database,req.ctx,plan.id,{expectedHash:trimOrNull(req.body.integrityHash),
         locationMappings,quantityOverrides,fieldMappings,
+        defaultLocationId:Object.hasOwn(req.body,'defaultLocationId')?trimOrNull(req.body.defaultLocationId):undefined,
         confirmCatalogOnly:req.body.confirmCatalogOnly==='yes'});
       req.flash('success','Preview corrected and recalculated. Review all rows again before approving.');
     }catch(error){if(!(error instanceof ValidationError))throw error;req.flash('error',error.message);}

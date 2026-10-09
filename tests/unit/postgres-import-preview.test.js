@@ -31,8 +31,8 @@ test('a quantity-only interpretation still prompts for an identity column and ca
       {id:'quantity',label:'Quantity'}],locations:[],counts:{INVALID:1},rows:[],page:1,pageSize:25,
     helpers:{plural:(count,singular)=>count===1?singular:`${singular}s`},
   });
-  assert.match(html,/Help StockChief identify the products/);
-  assert.match(html,/Choose the matching source column/);
+  assert.match(html,/which values identify your products/);
+  assert.match(html,/You do not need to change or re-upload your file/);
   assert.match(html,/Approve 0 rows<\/button>/);
   assert.match(html,/disabled[^>]*>Approve 0 rows/);
 });
