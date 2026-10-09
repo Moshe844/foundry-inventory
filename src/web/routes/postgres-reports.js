@@ -58,10 +58,22 @@ function createPostgresReportsRouter(database){
     return res.page('reports/builder',{title:saved?'Edit report':'Build a report',nav:'accounting',
       datasets,dataset,saved,draft});
   }));
+  router.get('/reports/run',asyncRoute(async(req,res)=>{
+    const actor=await actorFor(database,req.ctx);
+    const prior=req.session.reportParentDraft?.workspaceId===req.ctx.workspaceId
+      ?req.session.reportParentDraft:req.session.reportDraft;
+    if(prior?.workspaceId!==req.ctx.workspaceId)return res.redirect(303,'/reports');
+    const result=await reports.run(database,req.ctx,actor,prior.definition,{limit:201});
+    req.session.reportDraft={workspaceId:req.ctx.workspaceId,definition:result.config};
+    req.session.reportParentDraft=null;
+    return res.page('reports/result',{title:result.config.title,nav:'accounting',result,saved:null,
+      backTo:{href:'/reports',label:'Reports'}});
+  }));
   router.post('/reports/run',asyncRoute(async(req,res)=>{
     const actor=await actorFor(database,req.ctx);const spec=source(req.body);
     const result=await reports.run(database,req.ctx,actor,spec,{limit:201});
     req.session.reportDraft={workspaceId:req.ctx.workspaceId,definition:result.config};
+    req.session.reportParentDraft=null;
     return res.page('reports/result',{title:result.config.title,nav:'accounting',result,saved:null});
   }));
   router.post('/reports/drilldown',asyncRoute(async(req,res)=>{
@@ -70,8 +82,11 @@ function createPostgresReportsRouter(database){
     catch{throw new ValidationError('Choose a valid report group.');}
     const spec=reports.drilldownSpec(source(req.body),values,actor);
     const result=await reports.run(database,req.ctx,actor,spec,{limit:201});
+    req.session.reportParentDraft={workspaceId:req.ctx.workspaceId,
+      definition:reports.normalize(source(req.body),actor)};
     req.session.reportDraft={workspaceId:req.ctx.workspaceId,definition:result.config};
-    return res.page('reports/result',{title:result.config.title,nav:'accounting',result,saved:null});
+    return res.page('reports/result',{title:result.config.title,nav:'accounting',result,saved:null,
+      backTo:{href:'/reports/run',label:'Report'}});
   }));
   router.post('/reports/save',asyncRoute(async(req,res)=>{
     const actor=await actorFor(database,req.ctx);permissions.assertCan(actor,permissions.VIEW,'save a report');

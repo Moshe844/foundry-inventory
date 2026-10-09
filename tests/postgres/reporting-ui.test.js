@@ -270,6 +270,10 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     assert.equal(drilled.status,200);
     assert.match(drilled.text,/Copper Clamp/);
     assert.match(drilled.text,/Open record/);
+    assert.match(drilled.text,/href="\/reports\/run"/);
+    const backToReport=await owner.get('/reports/run');
+    assert.equal(backToReport.status,200);
+    assert.match(backToReport.text,/See source records/);
     const saved=await owner.post('/reports/save').type('form').send({_csrf:token,dataset:'stock',
       title:'Warehouse stock',columns:['product','sku','location','on_hand'],sort:'product',direction:'asc',
       frequency:'daily',hour:'9'});
