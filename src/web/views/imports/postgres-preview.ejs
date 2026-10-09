@@ -1,3 +1,4 @@
+<% const sourceMappings=plan.fieldMappings||{}; const sourceTransforms=plan.transformations||{}; %>
 <div class="page-head">
   <div class="titles"><a class="back-link" href="/imports">Bring data in</a><h1><%= plan.sourceName %></h1>
     <div class="page-sub"><%= plan.recordsDetected %> <%= helpers.plural(plan.recordsDetected, 'row') %> read · <%= plan.recordsValid %> ready · <%= plan.recordsInvalid %> need correction</div>
@@ -25,7 +26,7 @@
     </div>
     <div class="card-foot"><div class="btn-row">
       <% if(plan.approvalStatus==='APPROVED'){ %><form method="post" action="/imports/<%= plan.id %>/run"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Import and verify</button></form>
-      <% } else { %><form method="post" action="/imports/<%= plan.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><button class="btn btn--primary" type="submit" <%= !plan.recordsValid || duplicatePlans.length || (plan.fieldMappings.quantity===undefined && plan.transformations.unmappedNumericColumns?.length && !plan.transformations.confirmCatalogOnly)?'disabled':'' %>>Approve <%= plan.recordsValid %> <%= helpers.plural(plan.recordsValid, 'row') %></button></form><% } %>
+      <% } else { %><form method="post" action="/imports/<%= plan.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><button class="btn btn--primary" type="submit" <%= !plan.recordsValid || duplicatePlans.length || (sourceMappings.quantity===undefined && sourceTransforms.unmappedNumericColumns?.length && !sourceTransforms.confirmCatalogOnly)?'disabled':'' %>>Approve <%= plan.recordsValid %> <%= helpers.plural(plan.recordsValid, 'row') %></button></form><% } %>
       <form method="post" action="/imports/<%= plan.id %>/cancel"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost" type="submit">Cancel</button></form>
     </div></div>
   </div>
@@ -40,8 +41,8 @@
           <select class="select" name="mapping_<%= column.index %>"><option value="">Not imported</option>
             <% fieldOptions.forEach(function(field){ %><option value="<%= field.id %>" <%= column.field===field.id?'selected':'' %>><%= field.label %></option><% }) %>
           </select></label><% }) %>
-        <% if(plan.fieldMappings.quantity===undefined && plan.transformations.unmappedNumericColumns?.length){ %>
-          <label class="field"><input type="checkbox" name="confirmCatalogOnly" value="yes" <%= plan.transformations.confirmCatalogOnly?'checked':'' %>>
+        <% if(sourceMappings.quantity===undefined && sourceTransforms.unmappedNumericColumns?.length){ %>
+          <label class="field"><input type="checkbox" name="confirmCatalogOnly" value="yes" <%= sourceTransforms.confirmCatalogOnly?'checked':'' %>>
             I checked the unmapped numeric columns and intend to import products without opening stock.</label>
         <% } %>
         <% plan.conflicts.forEach(function(conflict,index){ %><label class="field"><span class="field-label">Source location “<%= conflict.text %>” (<%= conflict.count %> <%= helpers.plural(conflict.count,'row') %>)</span>
@@ -50,7 +51,7 @@
           </select></label><% }) %>
         <% rows.filter(function(row){return row.status==='INVALID' && row.problems.some(function(item){return ['bad_quantity','negative_quantity','fractional_quantity'].includes(item.code);});}).forEach(function(row){ %>
           <label class="field"><span class="field-label">Row <%= row.rowNumber %> · <%= row.parsed.name || row.parsed.code || 'product' %> quantity</span>
-            <input class="input" name="quantity_<%= row.rowNumber %>" type="number" min="0" step="1" value="<%= plan.transformations.quantityOverrides?.[row.rowNumber] || '' %>" placeholder="Whole units"></label>
+            <input class="input" name="quantity_<%= row.rowNumber %>" type="number" min="0" step="1" value="<%= sourceTransforms.quantityOverrides?.[row.rowNumber] || '' %>" placeholder="Whole units"></label>
         <% }) %>
         <button class="btn btn--primary" type="submit">Recalculate preview</button>
       </form>

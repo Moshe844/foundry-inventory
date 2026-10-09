@@ -120,6 +120,19 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
         {field:'currency',operator:'equals',value:'USD'},
         {field:'pricing_complete',operator:'equals',value:'yes'}],sort:'total'});
     assert.equal(Number(quoted.rows[0].total),750);
+    const moneyChart=await reportAsk.prepare(database,ctx,
+      'Make a bar chart of fully priced quoted order value by customer in USD',{provider:{
+        async complete(input){if(input.schemaName==='stockchief_governed_report_fit')
+          return {data:{aligned:true,reason:''}};
+          return {data:{dataset:'sales_orders',title:'Quoted value by customer',columns:[],
+            groups:['customer'],aggregate:'sum',measure:'quoted_line_total_minor',filters:[
+              {field:'currency',operator:'equals',value:'USD'},
+              {field:'pricing_complete',operator:'equals',value:'yes'}],
+            sort:'total',direction:'desc',chart:'bar'}};
+        }}});
+    assert.equal(moneyChart.status,'ANSWERED');
+    assert.equal(moneyChart.rows[0].total,'$7.50');
+    assert.deepEqual(moneyChart.chartAmounts,[750]);
     await database.query(`UPDATE sales_order_lines SET unit_price_minor=NULL
       WHERE workspace_id=$1 AND sales_order_id=$2`,[ctx.workspaceId,lineOrder.salesOrderId]);
     const unpriced=await reports.run(database,ctx,actor,{dataset:'sales_orders',
@@ -262,6 +275,7 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
       ORDER BY created_at DESC,id DESC LIMIT 1`,[ctx.workspaceId,ctx.actorId])).rows[0];
     const askReportId=askStored.id;
     assert.equal(askStored.intent.comparisonSafe,true);
+    assert.deepEqual(askStored.intent.presentation.chartAmounts,[12]);
     assert.match(askResult.text,new RegExp(`/reports/from-ask/${askReportId}`));
     const askBuilder=await owner.get(`/reports/from-ask/${askReportId}`);
     assert.equal(askBuilder.status,200);

@@ -139,6 +139,10 @@ async function prepare(database,ctx,message,{provider,priorReport=null}){
         throw new Error('The exact text filter returned no records. Reconsider whether the owner gave a partial text/category label; use contains only if that preserves the requested meaning. Never fabricate matching rows.');
       const visible=result.displayRows.slice(0,50).map((row,index)=>({...row,
         ...(result.rows[index]?.href?{href:result.rows[index].href}:{})}));
+      const chartAmounts=spec.groups.length===1&&result.columns.length===2
+        ?result.rows.slice(0,50).map((row)=>Number(row[result.columns[1]])):null;
+      const safeChartAmounts=chartAmounts?.every((value)=>
+        Number.isFinite(value)&&Math.abs(value)<=Number.MAX_SAFE_INTEGER)?chartAmounts:null;
       const truncated=result.hasMore||result.rows.length>50;
       const label=spec.groups.length?(visible.length===1?'group':'groups'):
         (visible.length===1?'record':'records');
@@ -147,7 +151,7 @@ async function prepare(database,ctx,message,{provider,priorReport=null}){
         `No recorded rows matched ${spec.title}. Try changing the filters.`;
       return {status:'ANSWERED',answer,rows:visible,columns:result.columns,
         handoff:{href:`/reports/builder?dataset=${encodeURIComponent(spec.dataset)}`,label:'Customize this report'},
-        reportConfig:spec,comparisonSafe:result.comparisonSafe};
+        reportConfig:spec,comparisonSafe:result.comparisonSafe,chartAmounts:safeChartAmounts};
     }catch(error){
       if(error.code==='entitlement_required'||error.code==='rate_limited')throw error;
       if(attempt===0){request.prompt=JSON.stringify({...contextPrompt,rejectedPlan:proposed,

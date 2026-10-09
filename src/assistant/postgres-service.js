@@ -1463,7 +1463,7 @@ async function createProposal(database,ctx,message,actionType,payload,summary) {
 async function storeInteraction(database,ctx,message,intent,result,id=newId('pgask')) {
   const storedIntent={...intent,...(result.carryForward||{}),presentation:{columns:result.columns || [],choices:result.choices || [],handoff:result.handoff || null,
     reason:result.reason||null,awaitingField:result.awaitingField||null,emailFlow:result.emailFlow||null,
-    researchViews:result.researchViews||[]}};
+    researchViews:result.researchViews||[],chartAmounts:result.chartAmounts||null}};
   await database.query(`INSERT INTO stockchief_runtime.assistant_interactions
     (id,workspace_id,actor_user_id,message,intent,answer,evidence,status)
     VALUES($1,$2,$3,$4,$5::jsonb,$6,$7::jsonb,$8)`,[id,ctx.workspaceId,ctx.actorId,message,JSON.stringify(storedIntent),
