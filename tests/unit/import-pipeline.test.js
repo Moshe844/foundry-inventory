@@ -15,6 +15,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const fields = require('../../src/imports/fields');
 const mappingService = require('../../src/imports/mapping-service');
@@ -108,6 +110,30 @@ test('AI-assisted mapping reports provider usage exactly once', async () => {
     onBeforeAi:async()=>{before+=1;},onUsage:async(value,detail)=>usage.push({value,detail})});
   assert.equal(result.aiUsed,true);assert.equal(before,1);assert.equal(usage.length,1);
   assert.equal(usage[0].value.inputTokens,40);assert.equal(usage[0].detail.schemaName,'inventory_import_mapping');
+});
+
+test('numeric selling prices cannot masquerade as locations; unclear costs reach mapping review',async()=>{
+  const sheet=sheetFrom(fs.readFileSync(path.join(__dirname,
+    '../fixtures/ask-browser-messy-2026-10-08.csv'),'utf8'));
+  const guess=fields.guessMappings(sheet.columns,sheet.rows);
+  assert.notEqual(guess.mappings.location,5);
+  assert.ok(guess.unnamed.some((column)=>column.index===4),
+    'A vague per-unit cost must be reviewed, not silently ignored');
+  const wrong=await mappingService.proposeMappings({...sheet,sourceName:'mixed.csv'},{provider:{
+    complete:async()=>({data:{detectedType:'inventory',columns:[
+      {index:5,field:'location',axisName:''}],note:''}})}});
+  assert.notEqual(wrong.mappings.location,5);
+  assert.ok(wrong.aiRejected.some((entry)=>entry.field==='location'));
+  const corrected=await mappingService.proposeMappings({...sheet,sourceName:'mixed.csv'},{provider:{
+    complete:async()=>({data:{detectedType:'inventory',columns:[
+      {index:0,field:'location',axisName:''},{index:1,field:'code',axisName:''},
+      {index:2,field:'name',axisName:''},{index:4,field:'unitCost',axisName:''},
+      {index:5,field:'sellingPrice',axisName:''}],note:''}})}});
+  assert.equal(corrected.mappings.location,0);
+  assert.equal(corrected.mappings.code,1);
+  assert.equal(corrected.mappings.name,2);
+  assert.equal(corrected.mappings.unitCost,4);
+  assert.equal(corrected.mappings.sellingPrice,5);
 });
 
 test('a column headed like a quantity but full of words is not a quantity', () => {

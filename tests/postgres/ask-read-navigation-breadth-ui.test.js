@@ -18,7 +18,7 @@ test('real browser traverses every registered page and asks every registered rea
     await migratePostgres(database);
     const cases=new Map();
     const provider={name:'anthropic',model:PRICED_MODEL,async complete(input){
-      if(input.schemaName==='stockchief_capability_fit')
+      if(['stockchief_capability_fit','stockchief_governed_report_fit'].includes(input.schemaName))
         return {data:{aligned:true,reason:''},usage:pricedUsage()};
       if(['stockchief_postgres_evidence_answer','stockchief_postgres_general_answer'].includes(input.schemaName)){
         const evidence=JSON.parse(input.prompt).evidence||[];

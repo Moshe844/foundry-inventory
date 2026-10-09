@@ -187,7 +187,9 @@ function chargeKindFor(text) {
 }
 
 const IGNORED_PATTERNS = [
-  { label: 'supplier cost or calculated pricing', pattern: /\b(?:unit\s*cost|purchase\s*price|cost|wholesale|margin|value|amount|total|tax|vat)\b/ },
+  // A vague cost heading must reach the mapping model; only a clearly
+  // calculated/line total is outside the importable per-unit cost field.
+  { label: 'calculated pricing or tax', pattern: /\b(?:(?:line|extended|total)\s*(?:cost|price|amount)|margin|tax|vat)\b/ },
   { label: 'suppliers', pattern: /\b(?:supplier|vendor|manufacturer|brand|purchase\s*order|\bpo\b)\b/ },
   { label: 'categories', pattern: /\b(?:category|categories|class|group|department|dept|type|family|collection)\b/ },
   { label: 'reorder settings', pattern: /\b(?:reorder|min(?:imum)?\s*(?:qty|level|stock)|max(?:imum)?\s*(?:qty|level)|safety\s*stock|lead\s*time)\b/ },
@@ -343,6 +345,14 @@ function guessMappings(columns, rows) {
         else weight += 0.15;
       }
       if (candidate.field === 'unitLabel' && profile.numericRate > 0.5) weight -= 0.6;
+      // A numeric price or amount can have a location-looking word in its
+      // heading (for example a shelf price). Never confidently turn those
+      // dollars into a warehouse name. Numeric location codes need review.
+      if (candidate.field === 'location' && profile.filled && profile.numericRate >= 0.8)
+        weight = 0;
+      // A single location-looking word buried in a longer question/description
+      // is not enough to claim the whole column. Let the model inspect samples.
+      if (candidate.field === 'location' && candidate.score < 0.35) weight = 0;
       // A serial column that repeats itself is not serial numbers.
       if (candidate.field === 'serial' && profile.filled > 2 && profile.distinct < profile.filled * 0.9) {
         weight -= 0.4;

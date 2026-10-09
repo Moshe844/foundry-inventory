@@ -211,6 +211,11 @@ function reconcile(proposed, { columns, deterministic, confident, profilesByInde
       });
       continue;
     }
+    if (entry.field === 'location' && profile.filled > 0 && profile.numericRate >= 0.8) {
+      rejected.push({column:column.name,field:'location',
+        because:`“${column.name}” contains numeric values rather than a recognizable location. Review this column before importing.`});
+      continue;
+    }
 
     mappings[entry.field] = index;
     taken.add(index);
