@@ -152,7 +152,8 @@ test('real Ask browser approves supplier return, warehouse scans and bank eviden
       lines:[{skuId:item.skuIds[0],quantity:2,unitPriceMinor:2500}]});
     await workflows.confirmSalesOrder(database,ctx,order.salesOrderId,{idempotencyKey:'ask-physical-confirm'});
     const waveMessage=`Release order ${order.orderNumber} as a warehouse pick wave`;
-    plans.set(waveMessage,step('warehouse.wave.create',{recordReference:order.orderNumber}));
+    plans.set(waveMessage,step('warehouse.wave.create',{
+      recordReference:order.orderNumber,strategy:'pick_by_order'}));
     const waveResult=await ask(page,base,database,ctx.workspaceId,plans,waveMessage,'warehouse.wave.create');
     const waveId=waveResult.result.waveId;
     const wave=(await database.query('SELECT title FROM fulfillment_waves WHERE id=$1',[waveId])).rows[0];

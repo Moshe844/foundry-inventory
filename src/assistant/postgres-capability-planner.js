@@ -23,6 +23,7 @@ const PLANNING_RULES=[
   'Include only argument fields declared for each contract. Preserve every product, party, record, amount, location, date and address the owner supplied. Omit unknown values; never guess a default entity, fabricate a placeholder, or supply fields for a capability with no inputs. The resolver verifies unique records or asks for missing inputs.',
   'Broad questions use business-wide reads, even in empty workspaces; zero stock is an answer. Workspace counts route but do not prove facts. Read records; navigate only when asked, to one destination.',
   'A requested report, chart, graph, or customized tabular analysis needs read.custom_report; a normal stock, order, or finance lookup cannot create that report artifact. A request to save or schedule a report needs report.template.create and approval.',
+  'When priorReport exists, save or schedule it via report.template.create without a report read.',
   'A request to correct your previous factual answer calls for fresh reads, not a business-data write. Changing a record still requires its matching approved write.',
   'For navigation, match the requested page label and scope exactly. Prefer a specific destination to a similarly named parent or administrative page; do not turn a request to open a page into a financial or inventory answer.',
   'A requested change needs its matching write, not a related read. A declarative lasting supplier term, threshold or operating preference may be a policy instruction. Do not create extra contacts, products, orders, purchases or movements as prerequisites. Invoicing does not imply fulfillment or payment.',
@@ -107,6 +108,10 @@ reject a narrower read when a registered broader read is required to answer full
 When the owner requests a report, chart, graph, grouping or customized table, an ordinary factual read
 is not the requested artifact; use the governed custom-report read. A grouped report can provide source
 records through its drill-down, so the source data need not be duplicated as detail columns.
+The verified priorReport, when supplied, is available to report.template.create. A request to save or
+schedule that exact report needs only report.template.create; its executor preserves the prior definition
+and proposes the new title and schedule for approval. Do not require a second one-time report read or
+reject the save because RecentChanges contains only executed mutations.
 If the desired effect has no registered capability, set aligned=false even when a proposed action concerns the same
 supplier, customer, product, or amount. Do not perform the operation or invent business facts.
 FINAL DECISION RULE: set aligned=false only for a CONCRETE mismatch supported by the supplied contract descriptions:
@@ -299,8 +304,12 @@ function collapseRepeatedEffects(steps){
 async function plan(provider,message,{catalogue=registry,history=[],pending=null,page=null,workspace=null,
   recentChanges=[],deferReadFit=false,feedback=null,verificationProvider=null}={}){
   if(!provider)return {steps:[],clarifyingQuestion:'StockChief cannot interpret free-form requests while its reasoning connection is unavailable. Nothing changed.'};
+  const priorReport=[...history].reverse().find((entry)=>entry.intent?.reportConfig)?.intent.reportConfig||null;
   const context={message,
     workspace,
+    priorReport:priorReport?{title:priorReport.title,dataset:priorReport.dataset,
+      groups:priorReport.groups,aggregate:priorReport.aggregate,measure:priorReport.measure,
+      dateGrain:priorReport.dateGrain,chart:priorReport.chart}:null,
     recentChanges,
     conversation:history.slice(-3).map(({message,answer,status})=>({
       message:String(message||'').slice(0,260),answer:String(answer||'').slice(0,180),status})),
@@ -382,6 +391,7 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
   if(selected.steps.length){
     try{
       const candidate=()=>({message,currentWorkspace:workspace||null,currentPage:page||null,
+        priorReport:context.priorReport,
         recentChanges,
         pendingRequest:selected.steps.some((step)=>step.continuesPending)&&pending
           ?{originalMessage:pending.originalMessage||null,question:pending.question,

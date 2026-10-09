@@ -2,6 +2,7 @@
 <p class="lede">Build a view from governed business datasets. Figures link back to source records where a detail page exists.</p></div></div>
 <div class="report-grid">
   <section class="report-card"><h2>New report</h2><p>Choose the records to analyze, then select columns, filters, grouping and a chart.</p>
+    <% if(compositions.length){ %><p><a class="button" href="/reports/compose">Combine governed datasets</a></p><% } %>
     <div class="report-datasets"><% for(const dataset of datasets){ %>
       <a href="/reports/builder?dataset=<%= encodeURIComponent(dataset.key) %>"><%= dataset.label %> <span aria-hidden="true">→</span></a>
     <% } %></div></section>

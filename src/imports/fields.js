@@ -191,6 +191,9 @@ function chargeKindFor(text) {
 }
 
 const IGNORED_PATTERNS = [
+  // A bare "Amount" is not evidence of units. It often means money on an
+  // invoice, so ask the owner to map it explicitly instead of guessing stock.
+  { label: 'ambiguous amount', pattern: /^(?:amount|value)$/ },
   // A vague cost heading must reach the mapping model; only a clearly
   // calculated/line total is outside the importable per-unit cost field.
   { label: 'calculated pricing or tax', pattern: /\b(?:(?:line|extended|total)\s*(?:cost|price|amount)|margin|tax|vat)\b/ },

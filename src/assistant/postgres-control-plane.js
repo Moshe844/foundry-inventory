@@ -505,9 +505,14 @@ async function run(service,database,ctx,message,{provider,rawProvider=null,histo
     selected=selectedPendingChoice(pending,message,planningScope)||await planner.plan(provider,message,{catalogue:planningScope,history,pending:nullIfReadOnly(pending,message),page,workspace,recentChanges,
       verificationProvider:provider?.verifyComplete?{complete:provider.verifyComplete}:null,
       deferReadFit:true});
-    if(requiresReportArtifact(message)&&selected.steps.length&&
+    // A composed report already owns its source-record drill-down. The broad
+    // capability catalogue can cause a model to add unrelated finance reads,
+    // or miss the report altogether, even when the governed report can fulfill
+    // the whole request. Replan within the report contracts before execution;
+    // the report compiler still validates every requested field and metric.
+    if(requiresReportArtifact(message)&&
       selected.steps.every((step)=>step.contract.kind==='read')&&
-      !selected.steps.some((step)=>step.contract.name==='read.custom_report')){
+      (selected.steps.length!==1||selected.steps[0].contract.name!=='read.custom_report')){
       const reportScope=focusedReportCatalogue(planningScope);
       if(reportScope){const retry=await planner.plan(provider,message,{catalogue:reportScope,history,
         pending:nullIfReadOnly(pending,message),page,workspace,recentChanges,

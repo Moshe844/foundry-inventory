@@ -1,0 +1,1425 @@
+{
+  "evidence": "OFFLINE_PROPOSED_COMMERCIAL_MODEL_NOT_LIVE",
+  "checkoutEnabled": false,
+  "pricingApproved": false,
+  "assumptions": {
+    "renderOfficialPriceUsd": {
+      "web": 25,
+      "worker": 25,
+      "postgres": 19,
+      "diskPerGb": 0.3,
+      "egressPerGb": 0.15
+    },
+    "renderObservedForecastUsd": 73.5,
+    "infrastructure": {
+      "webUsd": 25,
+      "workerUsd": 25,
+      "postgresUsd": 19,
+      "capacityReserveFactor": 1.5,
+      "activeWorkspaces": 5,
+      "mix": {
+        "starter": 2,
+        "growth": 2,
+        "pro": 1
+      },
+      "loadWeights": {
+        "starter": 1,
+        "growth": 3,
+        "pro": 8
+      },
+      "diskUsdPerGb": 0.3,
+      "sharedIncludedEgressGb": 5,
+      "egressUsdPerGb": 0.15,
+      "marginalCapacityReserveUsdPerOperation": 0.0005,
+      "systemEmailReserveUsdPerMessage": 0.001,
+      "stripeBillingFeeFraction": 0.036,
+      "stripeBillingFeeFixedUsd": 0.3
+    },
+    "confidence": {
+      "renderUnitPrices": "HIGH_OFFICIAL_AND_INVOICE_CROSSCHECK",
+      "tenantAllocation": "LOW_UNVALIDATED_TENANT_MIX_AND_CAPACITY",
+      "marginalConnectedCapacity": "LOW_OPERATOR_RESERVE_NOT_PROVIDER_TARIFF",
+      "aiOperationCost": "MEDIUM_REAL_SYNTHETIC_CALLS_VERIFIED_PUBLIC_RATES",
+      "merchantPassThrough": "MEDIUM_CODE_CONFIRMED_CONDITIONAL_ON_ACCOUNT_CONTRACT",
+      "unknownPlatformFees": "UNKNOWN_NOT_ASSUMED_ZERO"
+    }
+  },
+  "weights": {
+    "ask": 1,
+    "instruction": 7,
+    "import_mapping": 5
+  },
+  "plans": {
+    "starter": {
+      "priceUsd": 199,
+      "ai": 650,
+      "connected": 2000,
+      "modelCapUsd": 25,
+      "structure": {
+        "workspaces": 1,
+        "members": 3,
+        "locations": 3,
+        "connections": 2
+      }
+    },
+    "growth": {
+      "priceUsd": 499,
+      "ai": 2500,
+      "connected": 20000,
+      "modelCapUsd": 75,
+      "structure": {
+        "workspaces": 3,
+        "members": 15,
+        "locations": 10,
+        "connections": 8
+      }
+    },
+    "pro": {
+      "priceUsd": 999,
+      "ai": 8500,
+      "connected": 70000,
+      "modelCapUsd": 100,
+      "structure": {
+        "workspaces": 10,
+        "members": 50,
+        "locations": 50,
+        "connections": 25
+      }
+    }
+  },
+  "packs": [
+    {
+      "category": "ai",
+      "units": 500,
+      "priceUsd": 49,
+      "autoTopUp": true,
+      "fullUseP95Stress": {
+        "costUsd": 10.5537,
+        "contributionMarginPercent": 78.4618,
+        "meets60PercentTarget": true
+      },
+      "plus50PercentCost": {
+        "costUsd": 14.7986,
+        "contributionMarginPercent": 69.7988,
+        "meets60PercentTarget": true
+      },
+      "doubleExpensiveAiOrInfrastructure": {
+        "costUsd": 19.0434,
+        "contributionMarginPercent": 61.1359,
+        "meets60PercentTarget": true
+      },
+      "maximumUnknownStockChiefFeeUsdPerUnitAt60Percent": null,
+      "unknownContractFeeUsd": null
+    },
+    {
+      "category": "ai",
+      "units": 2500,
+      "priceUsd": 239,
+      "autoTopUp": false,
+      "fullUseP95Stress": {
+        "costUsd": 51.3526,
+        "contributionMarginPercent": 78.5136,
+        "meets60PercentTarget": true
+      },
+      "plus50PercentCost": {
+        "costUsd": 72.5769,
+        "contributionMarginPercent": 69.6331,
+        "meets60PercentTarget": true
+      },
+      "doubleExpensiveAiOrInfrastructure": {
+        "costUsd": 93.8011,
+        "contributionMarginPercent": 60.7527,
+        "meets60PercentTarget": true
+      },
+      "maximumUnknownStockChiefFeeUsdPerUnitAt60Percent": null,
+      "unknownContractFeeUsd": null
+    },
+    {
+      "category": "connected",
+      "units": 10000,
+      "priceUsd": 79,
+      "autoTopUp": true,
+      "fullUseP95Stress": {
+        "costUsd": 13.144,
+        "contributionMarginPercent": 83.362,
+        "meets60PercentTarget": true
+      },
+      "plus50PercentCost": {
+        "costUsd": 18.144,
+        "contributionMarginPercent": 77.0329,
+        "meets60PercentTarget": true
+      },
+      "doubleExpensiveAiOrInfrastructure": {
+        "costUsd": 23.144,
+        "contributionMarginPercent": 70.7038,
+        "meets60PercentTarget": true
+      },
+      "maximumUnknownStockChiefFeeUsdPerUnitAt60Percent": 0.0018,
+      "unknownContractFeeUsd": null
+    },
+    {
+      "category": "connected",
+      "units": 50000,
+      "priceUsd": 349,
+      "autoTopUp": false,
+      "fullUseP95Stress": {
+        "costUsd": 62.864,
+        "contributionMarginPercent": 81.9874,
+        "meets60PercentTarget": true
+      },
+      "plus50PercentCost": {
+        "costUsd": 87.864,
+        "contributionMarginPercent": 74.8241,
+        "meets60PercentTarget": true
+      },
+      "doubleExpensiveAiOrInfrastructure": {
+        "costUsd": 112.864,
+        "contributionMarginPercent": 67.6607,
+        "meets60PercentTarget": true
+      },
+      "maximumUnknownStockChiefFeeUsdPerUnitAt60Percent": 0.0015,
+      "unknownContractFeeUsd": null
+    }
+  ],
+  "profiles": [
+    {
+      "plan": "starter",
+      "kind": "normal",
+      "workloadId": "starter-light",
+      "aiCredits": 93,
+      "connectedOperations": 245,
+      "included": {
+        "ai": 650,
+        "connected": 2000
+      },
+      "requiresOptInBuyMore": false,
+      "aiPacks": {
+        "units": 0,
+        "revenueUsd": 0,
+        "purchases": 0
+      },
+      "connectedPacks": {
+        "units": 0,
+        "revenueUsd": 0,
+        "purchases": 0
+      },
+      "infrastructure": {
+        "sharedComputeAndDbUsd": 13.5844,
+        "diskUsd": 0.3,
+        "allocatedEgressUsd": 0.0196,
+        "totalUsd": 13.904,
+        "basis": "5 active workspaces; 50% equal + 50% load weighted; shared 5GB egress credit"
+      },
+      "currentEstimatedCostScenario": {
+        "revenueUsd": 199,
+        "modelUsd": 0.3976,
+        "connectedInfrastructureUsd": 0.1225,
+        "sharedStorageEgressUsd": 13.904,
+        "emailReserveUsd": 0.02,
+        "stockchiefBillingFeeReserveUsd": 7.464,
+        "projectedCostUsd": 21.9081,
+        "contributionUsd": 177.0919,
+        "contributionMarginPercent": 88.9909,
+        "certified": false,
+        "unknownContractFeeUsd": null
+      },
+      "measuredP95ModelDemandUsd": 0.648,
+      "modelP95WouldHitDollarCap": false,
+      "noPurchaseBehavior": "CONTINUE_WITHIN_INCLUDED"
+    },
+    {
+      "plan": "starter",
+      "kind": "heavy",
+      "workloadId": "starter-heavy",
+      "aiCredits": 635,
+      "connectedOperations": 1550,
+      "included": {
+        "ai": 650,
+        "connected": 2000
+      },
+      "requiresOptInBuyMore": false,
+      "aiPacks": {
+        "units": 0,
+        "revenueUsd": 0,
+        "purchases": 0
+      },
+      "connectedPacks": {
+        "units": 0,
+        "revenueUsd": 0,
+        "purchases": 0
+      },
+      "infrastructure": {
+        "sharedComputeAndDbUsd": 16.4382,
+        "diskUsd": 1.5,
+        "allocatedEgressUsd": 0.1007,
+        "totalUsd": 18.0389,
+        "basis": "5 active workspaces; 50% equal + 50% load weighted; shared 5GB egress credit"
+      },
+      "currentEstimatedCostScenario": {
+        "revenueUsd": 199,
+        "modelUsd": 3.1339,
+        "connectedInfrastructureUsd": 0.775,
+        "sharedStorageEgressUsd": 18.0389,
+        "emailReserveUsd": 0.07,
+        "stockchiefBillingFeeReserveUsd": 7.464,
+        "projectedCostUsd": 29.4818,
+        "contributionUsd": 169.5182,
+        "contributionMarginPercent": 85.185,
+        "certified": false,
+        "unknownContractFeeUsd": null
+      },
+      "measuredP95ModelDemandUsd": 4.6644,
+      "modelP95WouldHitDollarCap": false,
+      "noPurchaseBehavior": "CONTINUE_WITHIN_INCLUDED"
+    },
+    {
+      "plan": "growth",
+      "kind": "normal",
+      "workloadId": "growth-normal",
+      "aiCredits": 1360,
+      "connectedOperations": 15740,
+      "included": {
+        "ai": 2500,
+        "connected": 20000
+      },
+      "requiresOptInBuyMore": false,
+      "aiPacks": {
+        "units": 0,
+        "revenueUsd": 0,
+        "purchases": 0
+      },
+      "connectedPacks": {
+        "units": 0,
+        "revenueUsd": 0,
+        "purchases": 0
+      },
+      "infrastructure": {
+        "sharedComputeAndDbUsd": 20.0531,
+        "diskUsd": 2.4,
+        "allocatedEgressUsd": 0.1958,
+        "totalUsd": 22.649,
+        "basis": "5 active workspaces; 50% equal + 50% load weighted; shared 5GB egress credit"
+      },
+      "currentEstimatedCostScenario": {
+        "revenueUsd": 499,
+        "modelUsd": 6.772,
+        "connectedInfrastructureUsd": 7.87,
+        "sharedStorageEgressUsd": 22.649,
+        "emailReserveUsd": 0.15,
+        "stockchiefBillingFeeReserveUsd": 18.264,
+        "projectedCostUsd": 55.705,
+        "contributionUsd": 443.295,
+        "contributionMarginPercent": 88.8367,
+        "certified": false,
+        "unknownContractFeeUsd": null
+      },
+      "measuredP95ModelDemandUsd": 9.887,
+      "modelP95WouldHitDollarCap": false,
+      "noPurchaseBehavior": "CONTINUE_WITHIN_INCLUDED"
+    },
+    {
+      "plan": "growth",
+      "kind": "heavy",
+      "workloadId": "growth-heavy",
+      "aiCredits": 3340,
+      "connectedOperations": 38280,
+      "included": {
+        "ai": 2500,
+        "connected": 20000
+      },
+      "requiresOptInBuyMore": true,
+      "aiPacks": {
+        "units": 1000,
+        "revenueUsd": 98,
+        "purchases": 2
+      },
+      "connectedPacks": {
+        "units": 20000,
+        "revenueUsd": 158,
+        "purchases": 2
+      },
+      "infrastructure": {
+        "sharedComputeAndDbUsd": 26.6921,
+        "diskUsd": 6,
+        "allocatedEgressUsd": 0.6554,
+        "totalUsd": 33.3475,
+        "basis": "5 active workspaces; 50% equal + 50% load weighted; shared 5GB egress credit"
+      },
+      "currentEstimatedCostScenario": {
+        "revenueUsd": 755,
+        "modelUsd": 17.7383,
+        "connectedInfrastructureUsd": 19.14,
+        "sharedStorageEgressUsd": 33.3475,
+        "emailReserveUsd": 0.5,
+        "stockchiefBillingFeeReserveUsd": 28.68,
+        "projectedCostUsd": 99.4058,
+        "contributionUsd": 655.5942,
+        "contributionMarginPercent": 86.8337,
+        "certified": false,
+        "unknownContractFeeUsd": null
+      },
+      "measuredP95ModelDemandUsd": 24.725,
+      "modelP95WouldHitDollarCap": false,
+      "noPurchaseBehavior": "PAUSE_AT_INCLUDED_EXHAUSTION"
+    },
+    {
+      "plan": "pro",
+      "kind": "normal",
+      "workloadId": "pro-normal",
+      "aiCredits": 7700,
+      "connectedOperations": 68920,
+      "included": {
+        "ai": 8500,
+        "connected": 70000
+      },
+      "requiresOptInBuyMore": false,
+      "aiPacks": {
+        "units": 0,
+        "revenueUsd": 0,
+        "purchases": 0
+      },
+      "connectedPacks": {
+        "units": 0,
+        "revenueUsd": 0,
+        "purchases": 0
+      },
+      "infrastructure": {
+        "sharedComputeAndDbUsd": 36.225,
+        "diskUsd": 9,
+        "allocatedEgressUsd": 0.9792,
+        "totalUsd": 46.2042,
+        "basis": "5 active workspaces; 50% equal + 50% load weighted; shared 5GB egress credit"
+      },
+      "currentEstimatedCostScenario": {
+        "revenueUsd": 999,
+        "modelUsd": 35.8175,
+        "connectedInfrastructureUsd": 34.46,
+        "sharedStorageEgressUsd": 46.2042,
+        "emailReserveUsd": 0.6,
+        "stockchiefBillingFeeReserveUsd": 36.264,
+        "projectedCostUsd": 153.3457,
+        "contributionUsd": 845.6543,
+        "contributionMarginPercent": 84.6501,
+        "certified": false,
+        "unknownContractFeeUsd": null
+      },
+      "measuredP95ModelDemandUsd": 48.0712,
+      "modelP95WouldHitDollarCap": false,
+      "noPurchaseBehavior": "CONTINUE_WITHIN_INCLUDED"
+    },
+    {
+      "plan": "pro",
+      "kind": "heavy",
+      "workloadId": "pro-heavy",
+      "aiCredits": 14200,
+      "connectedOperations": 146200,
+      "included": {
+        "ai": 8500,
+        "connected": 70000
+      },
+      "requiresOptInBuyMore": true,
+      "aiPacks": {
+        "units": 6000,
+        "revenueUsd": 576,
+        "purchases": 4
+      },
+      "connectedPacks": {
+        "units": 80000,
+        "revenueUsd": 586,
+        "purchases": 4
+      },
+      "infrastructure": {
+        "sharedComputeAndDbUsd": 44.85,
+        "diskUsd": 22.5,
+        "allocatedEgressUsd": 3.8459,
+        "totalUsd": 71.1959,
+        "basis": "5 active workspaces; 50% equal + 50% load weighted; shared 5GB egress credit"
+      },
+      "currentEstimatedCostScenario": {
+        "revenueUsd": 2161,
+        "modelUsd": 75.3178,
+        "connectedInfrastructureUsd": 73.1,
+        "sharedStorageEgressUsd": 71.1959,
+        "emailReserveUsd": 1.5,
+        "stockchiefBillingFeeReserveUsd": 80.496,
+        "projectedCostUsd": 301.6097,
+        "contributionUsd": 1859.3903,
+        "contributionMarginPercent": 86.0431,
+        "certified": false,
+        "unknownContractFeeUsd": null
+      },
+      "measuredP95ModelDemandUsd": 96.0376,
+      "modelP95WouldHitDollarCap": false,
+      "noPurchaseBehavior": "PAUSE_AT_INCLUDED_EXHAUSTION"
+    }
+  ],
+  "guarded": [
+    {
+      "plan": "starter",
+      "allowance": {
+        "ai": 650,
+        "connected": 2000
+      },
+      "modelPeriodCapUsd": 25,
+      "fullAllowanceP95Stress": {
+        "revenueUsd": 199,
+        "modelUsd": 11.3932,
+        "connectedInfrastructureUsd": 2,
+        "sharedStorageEgressUsd": 27.0584,
+        "emailReserveUsd": 0.14,
+        "stockchiefBillingFeeReserveUsd": 7.464,
+        "projectedCostUsd": 48.0555,
+        "contributionUsd": 150.9445,
+        "contributionMarginPercent": 75.8515,
+        "certified": false,
+        "unknownContractFeeUsd": null,
+        "modelExecutionPausedAtDollarCap": false,
+        "maximumAdditionalUnknownStockChiefFeeUsdPerConnectedOperationAt60Percent": 0.0158,
+        "meets60PercentTarget": true
+      },
+      "plus25PercentProviderAndInfrastructure": {
+        "revenueUsd": 199,
+        "modelUsd": 14.2415,
+        "connectedInfrastructureUsd": 2.5,
+        "sharedStorageEgressUsd": 33.8229,
+        "emailReserveUsd": 0.175,
+        "stockchiefBillingFeeReserveUsd": 7.464,
+        "projectedCostUsd": 58.2034,
+        "contributionUsd": 140.7966,
+        "contributionMarginPercent": 70.752,
+        "certified": false,
+        "unknownContractFeeUsd": null,
+        "modelExecutionPausedAtDollarCap": false,
+        "maximumAdditionalUnknownStockChiefFeeUsdPerConnectedOperationAt60Percent": 0.0107,
+        "meets60PercentTarget": true
+      },
+      "plus50PercentProviderAndInfrastructure": {
+        "revenueUsd": 199,
+        "modelUsd": 17.0898,
+        "connectedInfrastructureUsd": 3,
+        "sharedStorageEgressUsd": 40.5875,
+        "emailReserveUsd": 0.21,
+        "stockchiefBillingFeeReserveUsd": 7.464,
+        "projectedCostUsd": 68.3513,
+        "contributionUsd": 130.6487,
+        "contributionMarginPercent": 65.6526,
+        "certified": false,
+        "unknownContractFeeUsd": null,
+        "modelExecutionPausedAtDollarCap": false,
+        "maximumAdditionalUnknownStockChiefFeeUsdPerConnectedOperationAt60Percent": 0.0056,
+        "meets60PercentTarget": true
+      },
+      "doubleExpensiveAiAndProvider": {
+        "revenueUsd": 199,
+        "modelUsd": 22.7864,
+        "connectedInfrastructureUsd": 2,
+        "sharedStorageEgressUsd": 27.0584,
+        "emailReserveUsd": 0.28,
+        "stockchiefBillingFeeReserveUsd": 7.464,
+        "projectedCostUsd": 59.5887,
+        "contributionUsd": 139.4113,
+        "contributionMarginPercent": 70.0559,
+        "certified": false,
+        "unknownContractFeeUsd": null,
+        "modelExecutionPausedAtDollarCap": false,
+        "maximumAdditionalUnknownStockChiefFeeUsdPerConnectedOperationAt60Percent": 0.01,
+        "meets60PercentTarget": true
+      },
+      "firstJointProviderAndInfrastructureCostMultiplierBelow60Percent": 1.7771,
+      "costAt50PercentAllowance": {
+        "revenueUsd": 199,
+        "modelUsd": 2.8483,
+        "connectedInfrastructureUsd": 0.5,
+        "sharedStorageEgressUsd": 13.904,
+        "emailReserveUsd": 0.035,
+        "stockchiefBillingFeeReserveUsd": 7.464,
+        "projectedCostUsd": 24.7513,
+        "contributionUsd": 174.2487,
+        "contributionMarginPercent": 87.5622,
+        "certified": false,
+        "unknownContractFeeUsd": null
+      },
+      "costAt100PercentAllowance": {
+        "revenueUsd": 199,
+        "modelUsd": 5.6966,
+        "connectedInfrastructureUsd": 1,
+        "sharedStorageEgressUsd": 13.904,
+        "emailReserveUsd": 0.07,
+        "stockchiefBillingFeeReserveUsd": 7.464,
+        "projectedCostUsd": 28.1346,
+        "contributionUsd": 170.8654,
+        "contributionMarginPercent": 85.862,
+        "certified": false,
+        "unknownContractFeeUsd": null
+      }
+    },
+    {
+      "plan": "growth",
+      "allowance": {
+        "ai": 2500,
+        "connected": 20000
+      },
+      "modelPeriodCapUsd": 75,
+      "fullAllowanceP95Stress": {
+        "revenueUsd": 499,
+        "modelUsd": 44.8257,
+        "connectedInfrastructureUsd": 20,
+        "sharedStorageEgressUsd": 50.0212,
+        "emailReserveUsd": 1,
+        "stockchiefBillingFeeReserveUsd": 18.264,
+        "projectedCostUsd": 134.1109,
+        "contributionUsd": 364.8891,
+        "contributionMarginPercent": 73.1241,
+        "certified": false,
+        "unknownContractFeeUsd": null,
+        "modelExecutionPausedAtDollarCap": false,
+        "maximumAdditionalUnknownStockChiefFeeUsdPerConnectedOperationAt60Percent": 0.0033,
+        "meets60PercentTarget": true
+      },
+      "plus25PercentProviderAndInfrastructure": {
+        "revenueUsd": 499,
+        "modelUsd": 56.0321,
+        "connectedInfrastructureUsd": 25,
+        "sharedStorageEgressUsd": 62.5266,
+        "emailReserveUsd": 1.25,
+        "stockchiefBillingFeeReserveUsd": 18.264,
+        "projectedCostUsd": 163.0727,
+        "contributionUsd": 335.9273,
+        "contributionMarginPercent": 67.3201,
+        "certified": false,
+        "unknownContractFeeUsd": null,
+        "modelExecutionPausedAtDollarCap": false,
+        "maximumAdditionalUnknownStockChiefFeeUsdPerConnectedOperationAt60Percent": 0.0018,
+        "meets60PercentTarget": true
+      },
+      "plus50PercentProviderAndInfrastructure": {
+        "revenueUsd": 499,
+        "modelUsd": 67.2385,
+        "connectedInfrastructureUsd": 30,
+        "sharedStorageEgressUsd": 75.0319,
+        "emailReserveUsd": 1.5,
+        "stockchiefBillingFeeReserveUsd": 18.264,
+        "projectedCostUsd": 192.0344,
+        "contributionUsd": 306.9656,
+        "contributionMarginPercent": 61.5161,
+        "certified": false,
+        "unknownContractFeeUsd": null,
+        "modelExecutionPausedAtDollarCap": false,
+        "maximumAdditionalUnknownStockChiefFeeUsdPerConnectedOperationAt60Percent": 0.0004,
+        "meets60PercentTarget": true
+      },
+      "doubleExpensiveAiAndProvider": {
+        "revenueUsd": 499,
+        "modelUsd": 75,
+        "connectedInfrastructureUsd": 20,
+        "sharedStorageEgressUsd": 50.0212,
+        "emailReserveUsd": 2,
+        "stockchiefBillingFeeReserveUsd": 18.264,
+        "projectedCostUsd": 165.2853,
+        "contributionUsd": 333.7148,
+        "contributionMarginPercent": 66.8767,
+        "certified": false,
+        "unknownContractFeeUsd": null,
+        "modelExecutionPausedAtDollarCap": true,
+        "maximumAdditionalUnknownStockChiefFeeUsdPerConnectedOperationAt60Percent": 0.0017,
+        "meets60PercentTarget": true
+      },
+      "firstJointProviderAndInfrastructureCostMultiplierBelow60Percent": 1.5653,
+      "costAt50PercentAllowance": {
+        "revenueUsd": 499,
+        "modelUsd": 11.2064,
+        "connectedInfrastructureUsd": 5,
+        "sharedStorageEgressUsd": 22.649,
+        "emailReserveUsd": 0.25,
+        "stockchiefBillingFeeReserveUsd": 18.264,
+        "projectedCostUsd": 57.3694,
+        "contributionUsd": 441.6306,
+        "contributionMarginPercent": 88.5031,
+        "certified": false,
+        "unknownContractFeeUsd": null
+      },
+      "costAt100PercentAllowance": {
+        "revenueUsd": 499,
+        "modelUsd": 22.4128,
+        "connectedInfrastructureUsd": 10,
+        "sharedStorageEgressUsd": 22.649,
+        "emailReserveUsd": 0.5,
+        "stockchiefBillingFeeReserveUsd": 18.264,
+        "projectedCostUsd": 73.8258,
+        "contributionUsd": 425.1742,
+        "contributionMarginPercent": 85.2052,
+        "certified": false,
+        "unknownContractFeeUsd": null
+      }
+    },
+    {
+      "plan": "pro",
+      "allowance": {
+        "ai": 8500,
+        "connected": 70000
+      },
+      "modelPeriodCapUsd": 100,
+      "fullAllowanceP95Stress": {
+        "revenueUsd": 999,
+        "modelUsd": 100,
+        "connectedInfrastructureUsd": 70,
+        "sharedStorageEgressUsd": 106.7939,
+        "emailReserveUsd": 3,
+        "stockchiefBillingFeeReserveUsd": 36.264,
+        "projectedCostUsd": 316.0579,
+        "contributionUsd": 682.9422,
+        "contributionMarginPercent": 68.3626,
+        "certified": false,
+        "unknownContractFeeUsd": null,
+        "modelExecutionPausedAtDollarCap": true,
+        "maximumAdditionalUnknownStockChiefFeeUsdPerConnectedOperationAt60Percent": 0.0012,
+        "meets60PercentTarget": true
+      },
+      "plus25PercentProviderAndInfrastructure": {
+        "revenueUsd": 999,
+        "modelUsd": 100,
+        "connectedInfrastructureUsd": 87.5,
+        "sharedStorageEgressUsd": 133.4923,
+        "emailReserveUsd": 3.75,
+        "stockchiefBillingFeeReserveUsd": 36.264,
+        "projectedCostUsd": 361.0063,
+        "contributionUsd": 637.9937,
+        "contributionMarginPercent": 63.8632,
+        "certified": false,
+        "unknownContractFeeUsd": null,
+        "modelExecutionPausedAtDollarCap": true,
+        "maximumAdditionalUnknownStockChiefFeeUsdPerConnectedOperationAt60Percent": 0.0006,
+        "meets60PercentTarget": true
+      },
+      "plus50PercentProviderAndInfrastructure": {
+        "revenueUsd": 999,
+        "modelUsd": 100,
+        "connectedInfrastructureUsd": 105,
+        "sharedStorageEgressUsd": 160.1908,
+        "emailReserveUsd": 4.5,
+        "stockchiefBillingFeeReserveUsd": 36.264,
+        "projectedCostUsd": 405.9548,
+        "contributionUsd": 593.0452,
+        "contributionMarginPercent": 59.3639,
+        "certified": false,
+        "unknownContractFeeUsd": null,
+        "modelExecutionPausedAtDollarCap": true,
+        "maximumAdditionalUnknownStockChiefFeeUsdPerConnectedOperationAt60Percent": 0,
+        "meets60PercentTarget": false
+      },
+      "doubleExpensiveAiAndProvider": {
+        "revenueUsd": 999,
+        "modelUsd": 100,
+        "connectedInfrastructureUsd": 70,
+        "sharedStorageEgressUsd": 106.7939,
+        "emailReserveUsd": 6,
+        "stockchiefBillingFeeReserveUsd": 36.264,
+        "projectedCostUsd": 319.0579,
+        "contributionUsd": 679.9422,
+        "contributionMarginPercent": 68.0623,
+        "certified": false,
+        "unknownContractFeeUsd": null,
+        "modelExecutionPausedAtDollarCap": true,
+        "maximumAdditionalUnknownStockChiefFeeUsdPerConnectedOperationAt60Percent": 0.0012,
+        "meets60PercentTarget": true
+      },
+      "firstJointProviderAndInfrastructureCostMultiplierBelow60Percent": 1.4647,
+      "costAt50PercentAllowance": {
+        "revenueUsd": 999,
+        "modelUsd": 37.8641,
+        "connectedInfrastructureUsd": 17.5,
+        "sharedStorageEgressUsd": 46.2042,
+        "emailReserveUsd": 0.75,
+        "stockchiefBillingFeeReserveUsd": 36.264,
+        "projectedCostUsd": 138.5823,
+        "contributionUsd": 860.4177,
+        "contributionMarginPercent": 86.1279,
+        "certified": false,
+        "unknownContractFeeUsd": null
+      },
+      "costAt100PercentAllowance": {
+        "revenueUsd": 999,
+        "modelUsd": 75.7283,
+        "connectedInfrastructureUsd": 35,
+        "sharedStorageEgressUsd": 46.2042,
+        "emailReserveUsd": 1.5,
+        "stockchiefBillingFeeReserveUsd": 36.264,
+        "projectedCostUsd": 194.6965,
+        "contributionUsd": 804.3035,
+        "contributionMarginPercent": 80.5109,
+        "certified": false,
+        "unknownContractFeeUsd": null
+      }
+    }
+  ],
+  "occupancySensitivity": [
+    {
+      "activeWorkspaces": 1,
+      "plan": "starter",
+      "profileId": "starter-light",
+      "infrastructureUsd": 103.8,
+      "currentNormalEstimatedCost": {
+        "revenueUsd": 199,
+        "modelUsd": 0.3976,
+        "connectedInfrastructureUsd": 0.1225,
+        "sharedStorageEgressUsd": 103.8,
+        "emailReserveUsd": 0.02,
+        "stockchiefBillingFeeReserveUsd": 7.464,
+        "projectedCostUsd": 111.8041,
+        "contributionUsd": 87.1959,
+        "contributionMarginPercent": 43.817,
+        "certified": false,
+        "unknownContractFeeUsd": null
+      }
+    },
+    {
+      "activeWorkspaces": 1,
+      "plan": "growth",
+      "profileId": "growth-normal",
+      "infrastructureUsd": 105.9,
+      "currentNormalEstimatedCost": {
+        "revenueUsd": 499,
+        "modelUsd": 6.772,
+        "connectedInfrastructureUsd": 7.87,
+        "sharedStorageEgressUsd": 105.9,
+        "emailReserveUsd": 0.15,
+        "stockchiefBillingFeeReserveUsd": 18.264,
+        "projectedCostUsd": 138.956,
+        "contributionUsd": 360.044,
+        "contributionMarginPercent": 72.1531,
+        "certified": false,
+        "unknownContractFeeUsd": null
+      }
+    },
+    {
+      "activeWorkspaces": 1,
+      "plan": "pro",
+      "profileId": "pro-normal",
+      "infrastructureUsd": 113.25,
+      "currentNormalEstimatedCost": {
+        "revenueUsd": 999,
+        "modelUsd": 35.8175,
+        "connectedInfrastructureUsd": 34.46,
+        "sharedStorageEgressUsd": 113.25,
+        "emailReserveUsd": 0.6,
+        "stockchiefBillingFeeReserveUsd": 36.264,
+        "projectedCostUsd": 220.3915,
+        "contributionUsd": 778.6085,
+        "contributionMarginPercent": 77.9388,
+        "certified": false,
+        "unknownContractFeeUsd": null
+      }
+    },
+    {
+      "activeWorkspaces": 3,
+      "plan": "starter",
+      "profileId": "starter-light",
+      "infrastructureUsd": 21.8802,
+      "currentNormalEstimatedCost": {
+        "revenueUsd": 199,
+        "modelUsd": 0.3976,
+        "connectedInfrastructureUsd": 0.1225,
+        "sharedStorageEgressUsd": 21.8802,
+        "emailReserveUsd": 0.02,
+        "stockchiefBillingFeeReserveUsd": 7.464,
+        "projectedCostUsd": 29.8843,
+        "contributionUsd": 169.1157,
+        "contributionMarginPercent": 84.9827,
+        "certified": false,
+        "unknownContractFeeUsd": null
+      }
+    },
+    {
+      "activeWorkspaces": 3,
+      "plan": "growth",
+      "profileId": "growth-normal",
+      "infrastructureUsd": 32.7645,
+      "currentNormalEstimatedCost": {
+        "revenueUsd": 499,
+        "modelUsd": 6.772,
+        "connectedInfrastructureUsd": 7.87,
+        "sharedStorageEgressUsd": 32.7645,
+        "emailReserveUsd": 0.15,
+        "stockchiefBillingFeeReserveUsd": 18.264,
+        "projectedCostUsd": 65.8205,
+        "contributionUsd": 433.1795,
+        "contributionMarginPercent": 86.8095,
+        "certified": false,
+        "unknownContractFeeUsd": null
+      }
+    },
+    {
+      "activeWorkspaces": 3,
+      "plan": "pro",
+      "profileId": "pro-normal",
+      "infrastructureUsd": 61.6352,
+      "currentNormalEstimatedCost": {
+        "revenueUsd": 999,
+        "modelUsd": 35.8175,
+        "connectedInfrastructureUsd": 34.46,
+        "sharedStorageEgressUsd": 61.6352,
+        "emailReserveUsd": 0.6,
+        "stockchiefBillingFeeReserveUsd": 36.264,
+        "projectedCostUsd": 168.7767,
+        "contributionUsd": 830.2233,
+        "contributionMarginPercent": 83.1054,
+        "certified": false,
+        "unknownContractFeeUsd": null
+      }
+    },
+    {
+      "activeWorkspaces": 5,
+      "plan": "starter",
+      "profileId": "starter-light",
+      "infrastructureUsd": 13.904,
+      "currentNormalEstimatedCost": {
+        "revenueUsd": 199,
+        "modelUsd": 0.3976,
+        "connectedInfrastructureUsd": 0.1225,
+        "sharedStorageEgressUsd": 13.904,
+        "emailReserveUsd": 0.02,
+        "stockchiefBillingFeeReserveUsd": 7.464,
+        "projectedCostUsd": 21.9081,
+        "contributionUsd": 177.0919,
+        "contributionMarginPercent": 88.9909,
+        "certified": false,
+        "unknownContractFeeUsd": null
+      }
+    },
+    {
+      "activeWorkspaces": 5,
+      "plan": "growth",
+      "profileId": "growth-normal",
+      "infrastructureUsd": 22.649,
+      "currentNormalEstimatedCost": {
+        "revenueUsd": 499,
+        "modelUsd": 6.772,
+        "connectedInfrastructureUsd": 7.87,
+        "sharedStorageEgressUsd": 22.649,
+        "emailReserveUsd": 0.15,
+        "stockchiefBillingFeeReserveUsd": 18.264,
+        "projectedCostUsd": 55.705,
+        "contributionUsd": 443.295,
+        "contributionMarginPercent": 88.8367,
+        "certified": false,
+        "unknownContractFeeUsd": null
+      }
+    },
+    {
+      "activeWorkspaces": 5,
+      "plan": "pro",
+      "profileId": "pro-normal",
+      "infrastructureUsd": 46.2042,
+      "currentNormalEstimatedCost": {
+        "revenueUsd": 999,
+        "modelUsd": 35.8175,
+        "connectedInfrastructureUsd": 34.46,
+        "sharedStorageEgressUsd": 46.2042,
+        "emailReserveUsd": 0.6,
+        "stockchiefBillingFeeReserveUsd": 36.264,
+        "projectedCostUsd": 153.3457,
+        "contributionUsd": 845.6543,
+        "contributionMarginPercent": 84.6501,
+        "certified": false,
+        "unknownContractFeeUsd": null
+      }
+    },
+    {
+      "activeWorkspaces": 10,
+      "plan": "starter",
+      "profileId": "starter-light",
+      "infrastructureUsd": 7.117,
+      "currentNormalEstimatedCost": {
+        "revenueUsd": 199,
+        "modelUsd": 0.3976,
+        "connectedInfrastructureUsd": 0.1225,
+        "sharedStorageEgressUsd": 7.117,
+        "emailReserveUsd": 0.02,
+        "stockchiefBillingFeeReserveUsd": 7.464,
+        "projectedCostUsd": 15.1211,
+        "contributionUsd": 183.8789,
+        "contributionMarginPercent": 92.4014,
+        "certified": false,
+        "unknownContractFeeUsd": null
+      }
+    },
+    {
+      "activeWorkspaces": 10,
+      "plan": "growth",
+      "profileId": "growth-normal",
+      "infrastructureUsd": 12.6745,
+      "currentNormalEstimatedCost": {
+        "revenueUsd": 499,
+        "modelUsd": 6.772,
+        "connectedInfrastructureUsd": 7.87,
+        "sharedStorageEgressUsd": 12.6745,
+        "emailReserveUsd": 0.15,
+        "stockchiefBillingFeeReserveUsd": 18.264,
+        "projectedCostUsd": 45.7305,
+        "contributionUsd": 453.2695,
+        "contributionMarginPercent": 90.8356,
+        "certified": false,
+        "unknownContractFeeUsd": null
+      }
+    },
+    {
+      "activeWorkspaces": 10,
+      "plan": "pro",
+      "profileId": "pro-normal",
+      "infrastructureUsd": 28.3521,
+      "currentNormalEstimatedCost": {
+        "revenueUsd": 999,
+        "modelUsd": 35.8175,
+        "connectedInfrastructureUsd": 34.46,
+        "sharedStorageEgressUsd": 28.3521,
+        "emailReserveUsd": 0.6,
+        "stockchiefBillingFeeReserveUsd": 36.264,
+        "projectedCostUsd": 135.4936,
+        "contributionUsd": 863.5064,
+        "contributionMarginPercent": 86.4371,
+        "certified": false,
+        "unknownContractFeeUsd": null
+      }
+    }
+  ],
+  "providerResponsibilityCount": 20,
+  "limitations": [
+    "Unknown platform/API contractual fees are null, excluded from numeric margins, and must be confirmed before a final certified launch.",
+    "Capacity reserve and five-workspace mix are explicit hypotheses, not measured production saturation.",
+    "Stripe billing fees are a scenario reserve; actual balance transactions replace them.",
+    "Model period caps shown here are proposed configuration and are not changed in live billing."
+  ],
+  "providerCostClassification": [
+    {
+      "provider": "shopify",
+      "scope": "merchant store",
+      "category": "MERCHANT_PAID_PASS_THROUGH",
+      "cost": "Shopify subscription, merchant transaction/payment charges",
+      "productionEnabled": true,
+      "evidence": [
+        "https://shopify.dev/docs/api/usage/limits",
+        "https://shopify.dev/docs/apps/launch/billing"
+      ]
+    },
+    {
+      "provider": "shopify",
+      "scope": "merchant store",
+      "category": "UNKNOWN_REQUIRES_PROVIDER_CONFIRMATION",
+      "cost": "StockChief app/distribution terms until partner account verified",
+      "productionEnabled": true,
+      "evidence": [
+        "https://shopify.dev/docs/api/usage/limits",
+        "https://shopify.dev/docs/apps/launch/billing"
+      ],
+      "contractRateUsd": null
+    },
+    {
+      "provider": "square",
+      "scope": "merchant commerce",
+      "category": "MERCHANT_PAID_PASS_THROUGH",
+      "cost": "merchant processing and POS charges",
+      "productionEnabled": true,
+      "evidence": [
+        "https://developer.squareup.com/us/en/online-payment-apis",
+        "https://developer.squareup.com/reference/square/orders-api"
+      ]
+    },
+    {
+      "provider": "square",
+      "scope": "merchant commerce",
+      "category": "NO_INCREMENTAL_PROVIDER_FEE",
+      "cost": "standard Square API/SDK use",
+      "productionEnabled": true,
+      "evidence": [
+        "https://developer.squareup.com/us/en/online-payment-apis",
+        "https://developer.squareup.com/reference/square/orders-api"
+      ]
+    },
+    {
+      "provider": "square",
+      "scope": "merchant commerce",
+      "category": "UNKNOWN_REQUIRES_PROVIDER_CONFIRMATION",
+      "cost": "Orders API non-Square-payment transaction fee if that feature is used",
+      "productionEnabled": true,
+      "evidence": [
+        "https://developer.squareup.com/us/en/online-payment-apis",
+        "https://developer.squareup.com/reference/square/orders-api"
+      ],
+      "contractRateUsd": null
+    },
+    {
+      "provider": "clover",
+      "scope": "merchant commerce",
+      "category": "MERCHANT_PAID_PASS_THROUGH",
+      "cost": "merchant processing and POS charges",
+      "productionEnabled": true,
+      "evidence": []
+    },
+    {
+      "provider": "clover",
+      "scope": "merchant commerce",
+      "category": "UNKNOWN_REQUIRES_PROVIDER_CONFIRMATION",
+      "cost": "StockChief app or API-specific fees",
+      "productionEnabled": true,
+      "evidence": [],
+      "contractRateUsd": null
+    },
+    {
+      "provider": "woocommerce",
+      "scope": "merchant store",
+      "category": "MERCHANT_PAID_PASS_THROUGH",
+      "cost": "hosting, plugins and merchant payment processing",
+      "productionEnabled": true,
+      "evidence": []
+    },
+    {
+      "provider": "woocommerce",
+      "scope": "merchant store",
+      "category": "UNKNOWN_REQUIRES_PROVIDER_CONFIRMATION",
+      "cost": "StockChief plugin or API-specific fees",
+      "productionEnabled": true,
+      "evidence": [],
+      "contractRateUsd": null
+    },
+    {
+      "provider": "gmail",
+      "scope": "merchant mailbox",
+      "category": "MERCHANT_PAID_PASS_THROUGH",
+      "cost": "Google Workspace/mailbox subscription",
+      "productionEnabled": true,
+      "evidence": [
+        "https://developers.google.com/workspace/gmail/api/reference/quota"
+      ]
+    },
+    {
+      "provider": "gmail",
+      "scope": "merchant mailbox",
+      "category": "NO_INCREMENTAL_PROVIDER_FEE",
+      "cost": "standard Gmail API use below the 80M quota-units/day project threshold",
+      "productionEnabled": true,
+      "evidence": [
+        "https://developers.google.com/workspace/gmail/api/reference/quota"
+      ]
+    },
+    {
+      "provider": "gmail",
+      "scope": "merchant mailbox",
+      "category": "UNKNOWN_REQUIRES_PROVIDER_CONFIRMATION",
+      "cost": "future over-threshold Google charge; pricing not yet published",
+      "productionEnabled": true,
+      "evidence": [
+        "https://developers.google.com/workspace/gmail/api/reference/quota"
+      ],
+      "contractRateUsd": null
+    },
+    {
+      "provider": "microsoft365",
+      "scope": "merchant mailbox",
+      "category": "MERCHANT_PAID_PASS_THROUGH",
+      "cost": "Microsoft 365/mailbox subscription",
+      "productionEnabled": true,
+      "evidence": [
+        "https://learn.microsoft.com/en-us/graph/metered-api-overview"
+      ]
+    },
+    {
+      "provider": "microsoft365",
+      "scope": "merchant mailbox",
+      "category": "NO_INCREMENTAL_PROVIDER_FEE",
+      "cost": "standard Graph mail endpoints within reasonable-access limits",
+      "productionEnabled": true,
+      "evidence": [
+        "https://learn.microsoft.com/en-us/graph/metered-api-overview"
+      ]
+    },
+    {
+      "provider": "microsoft365",
+      "scope": "merchant mailbox",
+      "category": "UNKNOWN_REQUIRES_PROVIDER_CONFIRMATION",
+      "cost": "metered/high-capacity Graph endpoints if introduced",
+      "productionEnabled": true,
+      "evidence": [
+        "https://learn.microsoft.com/en-us/graph/metered-api-overview"
+      ],
+      "contractRateUsd": null
+    },
+    {
+      "provider": "quickbooks",
+      "scope": "merchant accounting",
+      "category": "MERCHANT_PAID_PASS_THROUGH",
+      "cost": "QuickBooks subscription and merchant payment charges",
+      "productionEnabled": true,
+      "evidence": [
+        "https://static.developer.intuit.com/resources/Intuit_App_Partner_Program_Guide.pdf"
+      ]
+    },
+    {
+      "provider": "quickbooks",
+      "scope": "merchant accounting",
+      "category": "STOCKCHIEF_PAID_VARIABLE",
+      "cost": "Intuit partner tier fee and CorePlus overage when applicable",
+      "productionEnabled": true,
+      "evidence": [
+        "https://static.developer.intuit.com/resources/Intuit_App_Partner_Program_Guide.pdf"
+      ]
+    },
+    {
+      "provider": "quickbooks",
+      "scope": "merchant accounting",
+      "category": "UNKNOWN_REQUIRES_PROVIDER_CONFIRMATION",
+      "cost": "StockChief developer account tier and Core/CorePlus endpoint classification",
+      "productionEnabled": true,
+      "evidence": [
+        "https://static.developer.intuit.com/resources/Intuit_App_Partner_Program_Guide.pdf"
+      ],
+      "contractRateUsd": null
+    },
+    {
+      "provider": "xero",
+      "scope": "merchant accounting",
+      "category": "MERCHANT_PAID_PASS_THROUGH",
+      "cost": "Xero subscription and merchant payment charges",
+      "productionEnabled": true,
+      "evidence": [
+        "https://developer.xero.com/faq/pricing-and-policy-updates"
+      ]
+    },
+    {
+      "provider": "xero",
+      "scope": "merchant accounting",
+      "category": "STOCKCHIEF_PAID_VARIABLE",
+      "cost": "Xero developer-platform tier fee and API egress overage after included GB",
+      "productionEnabled": true,
+      "evidence": [
+        "https://developer.xero.com/faq/pricing-and-policy-updates"
+      ]
+    },
+    {
+      "provider": "xero",
+      "scope": "merchant accounting",
+      "category": "UNKNOWN_REQUIRES_PROVIDER_CONFIRMATION",
+      "cost": "StockChief app tier/connection count and actual API egress",
+      "productionEnabled": true,
+      "evidence": [
+        "https://developer.xero.com/faq/pricing-and-policy-updates"
+      ],
+      "contractRateUsd": null
+    },
+    {
+      "provider": "supplier_email",
+      "scope": "merchant-connected mail",
+      "category": "MERCHANT_PAID_PASS_THROUGH",
+      "cost": "merchant mailbox subscription",
+      "productionEnabled": true,
+      "evidence": []
+    },
+    {
+      "provider": "supplier_email",
+      "scope": "merchant-connected mail",
+      "category": "UNKNOWN_REQUIRES_PROVIDER_CONFIRMATION",
+      "cost": "mail provider API-specific fee, if any",
+      "productionEnabled": true,
+      "evidence": [],
+      "contractRateUsd": null
+    },
+    {
+      "provider": "reference_webhook",
+      "scope": "merchant-owned sender",
+      "category": "MERCHANT_PAID_PASS_THROUGH",
+      "cost": "merchant source-system subscription and sending costs",
+      "productionEnabled": true,
+      "evidence": []
+    },
+    {
+      "provider": "erp_future",
+      "scope": "custom contract only",
+      "category": "UNKNOWN_REQUIRES_PROVIDER_CONFIRMATION",
+      "cost": "every fee and payer until a signed custom contract",
+      "productionEnabled": false,
+      "evidence": [],
+      "contractRateUsd": null
+    },
+    {
+      "provider": "shipengine",
+      "scope": "workspace seller key",
+      "category": "MERCHANT_PAID_PASS_THROUGH",
+      "cost": "postage, labels, carrier charges and seller-account fees",
+      "productionEnabled": true,
+      "evidence": []
+    },
+    {
+      "provider": "shipengine",
+      "scope": "workspace seller key",
+      "category": "UNKNOWN_REQUIRES_PROVIDER_CONFIRMATION",
+      "cost": "StockChief partner/API-specific fees",
+      "productionEnabled": true,
+      "evidence": [],
+      "contractRateUsd": null
+    },
+    {
+      "provider": "shipstation",
+      "scope": "workspace carrier key",
+      "category": "MERCHANT_PAID_PASS_THROUGH",
+      "cost": "postage, labels, carrier charges and seller-account fees, including eligible per-shipment account fees",
+      "productionEnabled": true,
+      "evidence": [
+        "https://help.shipstation.com/hc/en-us/articles/22354433862555-Shipment-Fees-by-Plan"
+      ]
+    },
+    {
+      "provider": "shipstation",
+      "scope": "workspace carrier key",
+      "category": "UNKNOWN_REQUIRES_PROVIDER_CONFIRMATION",
+      "cost": "StockChief partner/API-specific fees",
+      "productionEnabled": true,
+      "evidence": [
+        "https://help.shipstation.com/hc/en-us/articles/22354433862555-Shipment-Fees-by-Plan"
+      ],
+      "contractRateUsd": null
+    },
+    {
+      "provider": "easypost",
+      "scope": "workspace account key",
+      "category": "MERCHANT_PAID_PASS_THROUGH",
+      "cost": "postage, labels, carrier charges and seller-account fees",
+      "productionEnabled": true,
+      "evidence": []
+    },
+    {
+      "provider": "easypost",
+      "scope": "workspace account key",
+      "category": "UNKNOWN_REQUIRES_PROVIDER_CONFIRMATION",
+      "cost": "StockChief referral/partner/API-specific fees",
+      "productionEnabled": true,
+      "evidence": [],
+      "contractRateUsd": null
+    },
+    {
+      "provider": "shippo",
+      "scope": "workspace account key",
+      "category": "MERCHANT_PAID_PASS_THROUGH",
+      "cost": "postage, labels, carrier charges and seller-account fees, including rate/tracking API charges on the merchant key",
+      "productionEnabled": true,
+      "evidence": [
+        "https://goshippo.com/pricing/api",
+        "https://docs.goshippo.com/docs/guides_general/authentication/"
+      ]
+    },
+    {
+      "provider": "shippo",
+      "scope": "workspace account key",
+      "category": "UNKNOWN_REQUIRES_PROVIDER_CONFIRMATION",
+      "cost": "StockChief partner/API-specific fees",
+      "productionEnabled": true,
+      "evidence": [
+        "https://goshippo.com/pricing/api",
+        "https://docs.goshippo.com/docs/guides_general/authentication/"
+      ],
+      "contractRateUsd": null
+    },
+    {
+      "provider": "stripe_merchant",
+      "scope": "direct charges on merchant connected account",
+      "category": "MERCHANT_PAID_PASS_THROUGH",
+      "cost": "customer-payment processing, refunds, disputes and negative balances when Stripe confirms merchant fee/loss responsibility",
+      "productionEnabled": true,
+      "evidence": []
+    },
+    {
+      "provider": "stripe_merchant",
+      "scope": "direct charges on merchant connected account",
+      "category": "UNKNOWN_REQUIRES_PROVIDER_CONFIRMATION",
+      "cost": "Connect platform-specific fees or a changed fee/loss collector",
+      "productionEnabled": true,
+      "evidence": [],
+      "contractRateUsd": null
+    },
+    {
+      "provider": "stripe_stockchief_billing",
+      "scope": "StockChief subscriptions and Buy More",
+      "category": "STOCKCHIEF_PAID_VARIABLE",
+      "cost": "actual Stripe balance-transaction fees, refunds and disputes on StockChief charges",
+      "productionEnabled": true,
+      "evidence": [
+        "https://stripe.com/billing/pricing",
+        "https://stripe.com/pricing"
+      ]
+    },
+    {
+      "provider": "stripe_stockchief_billing",
+      "scope": "StockChief subscriptions and Buy More",
+      "category": "STOCKCHIEF_PAID_VARIABLE",
+      "cost": "Stripe Billing volume fee or contracted equivalent",
+      "productionEnabled": true,
+      "evidence": [
+        "https://stripe.com/billing/pricing",
+        "https://stripe.com/pricing"
+      ]
+    },
+    {
+      "provider": "stripe_stockchief_billing",
+      "scope": "StockChief subscriptions and Buy More",
+      "category": "NO_INCREMENTAL_PROVIDER_FEE",
+      "cost": "ordinary Billing/Payments REST HTTP request itself",
+      "productionEnabled": true,
+      "evidence": [
+        "https://stripe.com/billing/pricing",
+        "https://stripe.com/pricing"
+      ]
+    },
+    {
+      "provider": "stripe_stockchief_billing",
+      "scope": "StockChief subscriptions and Buy More",
+      "category": "UNKNOWN_REQUIRES_PROVIDER_CONFIRMATION",
+      "cost": "live negotiated Billing/Tax fee schedule until actual account statement is verified",
+      "productionEnabled": true,
+      "evidence": [
+        "https://stripe.com/billing/pricing",
+        "https://stripe.com/pricing"
+      ],
+      "contractRateUsd": null
+    },
+    {
+      "provider": "anthropic",
+      "scope": "StockChief model account",
+      "category": "STOCKCHIEF_PAID_VARIABLE",
+      "cost": "input/output/cache token charges, including failed attempts",
+      "productionEnabled": true,
+      "evidence": []
+    },
+    {
+      "provider": "resend",
+      "scope": "StockChief system email account",
+      "category": "STOCKCHIEF_PAID_VARIABLE",
+      "cost": "StockChief transactional email delivery or overage",
+      "productionEnabled": true,
+      "evidence": []
+    },
+    {
+      "provider": "resend",
+      "scope": "StockChief system email account",
+      "category": "UNKNOWN_REQUIRES_PROVIDER_CONFIRMATION",
+      "cost": "paid plan and contracted overage rate",
+      "productionEnabled": true,
+      "evidence": [],
+      "contractRateUsd": null
+    },
+    {
+      "provider": "render",
+      "scope": "shared web, worker, Postgres, storage and egress",
+      "category": "STOCKCHIEF_INFRASTRUCTURE",
+      "cost": "shared compute, Postgres, disk, backup capacity and outbound bandwidth",
+      "productionEnabled": true,
+      "evidence": []
+    },
+    {
+      "provider": "render",
+      "scope": "shared web, worker, Postgres, storage and egress",
+      "category": "UNKNOWN_REQUIRES_PROVIDER_CONFIRMATION",
+      "cost": "production load/capacity and external object-storage contract",
+      "productionEnabled": true,
+      "evidence": [],
+      "contractRateUsd": null
+    }
+  ]
+}

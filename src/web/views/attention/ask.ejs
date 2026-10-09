@@ -56,13 +56,13 @@
    * a column with a heading is written "Heading value"; a column whose heading
    * is deliberately empty — a summary's figure — is just the figure.
    */
-  function cellText(column, value) {
+  function cellText(column, value, labels) {
     if (value === null || value === undefined) return null;
     if (column === 'occurredAt') value = helpers.dateTime(value);
     if (column === 'operation') value = helpers.operationLabel(value);
     if (column === 'expiresAt') value = helpers.shortDate(value);
     if (typeof value === 'number' && Number.isFinite(value)) value = helpers.qty(value);
-    var heading = helpers.columnLabel(column);
+    var heading = labels?.[column] || helpers.columnLabel(column);
     return heading ? heading + ' ' + value : String(value);
   }
   function evidenceHref(href, label) {
@@ -314,13 +314,14 @@
           </section>
         <% } %>
         <% if (hasRows) { %>
+          <% var reportGroups = Boolean(result.reportConfig?.groups?.length); %>
           <details class="rm-chat-evidence" <%= result.reportConfig ? 'open' : '' %>>
             <summary>
-              <span><%- helpers.icon('layers', { size: 15 }) %> <%= answerIsSummary ? 'Answer details' : 'The records behind this' %></span>
+              <span><%- helpers.icon('layers', { size: 15 }) %> <%= answerIsSummary ? 'Answer details' : reportGroups ? 'Report groups · open full report for source records' : 'The records behind this' %></span>
               <small>
                 <%# The count under an answer must never contradict the sentence above it: a page says it is a page ("first 25 of 70"), a summary counts its lines, and a full list counts its records. %>
                 <% var shown = Math.min(result.rows.length, 60); var known = Number(result.rowCount || result.rows.length); %>
-                <% if (known > shown) { %>first <%= helpers.qty(shown) %> of <%= helpers.qty(known) %><% } else if (answerIsSummary) { %><%= helpers.qty(shown) %> <%= helpers.plural(shown, 'line') %><% } else { %><%= helpers.qty(shown) %> <%= helpers.plural(shown, 'record') %><% } %>
+                <% if (known > shown) { %>first <%= helpers.qty(shown) %> of <%= helpers.qty(known) %><% } else if (answerIsSummary) { %><%= helpers.qty(shown) %> <%= helpers.plural(shown, 'line') %><% } else if (reportGroups) { %><%= helpers.qty(shown) %> <%= helpers.plural(shown, 'group') %><% } else { %><%= helpers.qty(shown) %> <%= helpers.plural(shown, 'record') %><% } %>
               </small>
             </summary>
             <div class="rm-chat-evidence__rows">
@@ -330,7 +331,7 @@
                   var first = result.columns[0];
                   var label = row[first] === null || row[first] === undefined ? '—' : row[first];
                   var rest = result.columns.slice(1).map(function (column) {
-                    return cellText(column, row[column]);
+                    return cellText(column, row[column], result.columnLabels);
                   }).filter(Boolean).join(' · ');
                   var linkHref = evidenceHref(row.href, label);
                 %>

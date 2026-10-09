@@ -12,7 +12,7 @@ function deliveryMessage(template,result,origin){
   const visible=result.displayRows.slice(0,100),limited=result.hasMore||result.rows.length>100;
   const href=origin.startsWith('https://')?`${origin}/reports/saved/${encodeURIComponent(template.id)}`:null;
   const table=`<table border="1" cellpadding="5" cellspacing="0"><thead><tr>${result.columns.map((column)=>
-    `<th>${escapeHtml(column.replaceAll('_',' '))}</th>`).join('')}</tr></thead><tbody>${visible.map((row)=>
+    `<th>${escapeHtml((result.columnLabels?.[column]||column).replaceAll('_',' '))}</th>`).join('')}</tr></thead><tbody>${visible.map((row)=>
     `<tr>${result.columns.map((column)=>`<td>${escapeHtml(row[column])}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
   const summary=limited?'First 100 rows shown. Open the saved report for the full result.':
     `${visible.length} matching rows.`;
@@ -22,7 +22,8 @@ function deliveryMessage(template,result,origin){
   const message={to:template.delivery_email,subject:`StockChief report: ${result.config.title}`,
     html:`<h1>${escapeHtml(result.config.title)}</h1><p>Generated from your StockChief records at ${escapeHtml(result.asOf)}.</p>`+
       `<p>${escapeHtml(summary)}</p>${findingsHtml}${table}${href?`<p><a href="${escapeHtml(href)}">Open saved report</a></p>`:''}`,
-    text:[result.config.title,`Generated ${result.asOf}`,summary,...findings,result.columns.join('\t'),
+    text:[result.config.title,`Generated ${result.asOf}`,summary,...findings,
+      result.columns.map((column)=>result.columnLabels?.[column]||column).join('\t'),
       ...visible.map((row)=>result.columns.map((column)=>String(row[column]??'')).join('\t')),href||''].join('\n')};
   return {message,visibleCount:visible.length,limited};
 }
@@ -30,20 +31,25 @@ function deliveryMessage(template,result,origin){
 async function enqueueDue(client,at){
   const when=new Date(at),hour=when.getUTCHours(),day=when.toISOString().slice(0,10);
   const monday=when.getUTCDay()===1;
-  const due=(await client.query(`SELECT id,workspace_id FROM stockchief_runtime.report_templates
-    WHERE schedule_hour_utc=$1 AND (schedule_frequency='daily'
-      OR (schedule_frequency='weekly' AND $2::boolean)) ORDER BY id LIMIT 500`,[hour,monday])).rows;
-  let queued=0;
-  for(const template of due){
-    const inserted=await client.query(`INSERT INTO stockchief_runtime.report_deliveries
-      (id,workspace_id,template_id,schedule_key,status)
-      VALUES($1,$2,$3,$4,'PENDING') ON CONFLICT(template_id,schedule_key) DO NOTHING RETURNING id`,
-    [newId('reportdelivery'),template.workspace_id,template.id,day]);
-    if(!inserted.rows.length)continue;
-    await jobs.enqueue(scoped(client),{workspaceId:template.workspace_id,kind:'report.generate-delivery',
-      idempotencyKey:`report-delivery:${template.id}:${day}`,
-      payload:{templateId:template.id,deliveryId:inserted.rows[0].id},maxAttempts:3});
-    queued++;
+  let queued=0,cursor='';
+  while(true){
+    const due=(await client.query(`SELECT id,workspace_id FROM stockchief_runtime.report_templates
+      WHERE schedule_hour_utc=$1 AND (schedule_frequency='daily'
+        OR (schedule_frequency='weekly' AND $2::boolean)) AND id>$3
+      ORDER BY id LIMIT 500`,[hour,monday,cursor])).rows;
+    for(const template of due){
+      const inserted=await client.query(`INSERT INTO stockchief_runtime.report_deliveries
+        (id,workspace_id,template_id,schedule_key,status)
+        VALUES($1,$2,$3,$4,'PENDING') ON CONFLICT(template_id,schedule_key) DO NOTHING RETURNING id`,
+      [newId('reportdelivery'),template.workspace_id,template.id,day]);
+      if(!inserted.rows.length)continue;
+      await jobs.enqueue(scoped(client),{workspaceId:template.workspace_id,kind:'report.generate-delivery',
+        idempotencyKey:`report-delivery:${template.id}:${day}`,
+        payload:{templateId:template.id,deliveryId:inserted.rows[0].id},maxAttempts:3});
+      queued++;
+    }
+    if(due.length<500)break;
+    cursor=due.at(-1).id;
   }
   await client.query(`UPDATE stockchief_runtime.report_deliveries d SET
       status=CASE WHEN j.status='COMPLETED' THEN 'SENT' ELSE 'FAILED' END,

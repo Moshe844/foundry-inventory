@@ -31,7 +31,11 @@
     <% } %>
     <button class="button button--secondary" type="button" data-report-add-filter>Add another filter</button>
   </div>
-  <div class="report-card"><h2>Summarize and visualize</h2><div class="report-controls">
+  <div class="report-card"><h2>Summarize and visualize</h2>
+    <label><input type="checkbox" name="summary" value="on" <%= selection?.summary?'checked':'' %>>
+      One whole-dataset total (the detail columns above will not be used)</label>
+    <p><small>For a breakdown, choose grouping below instead. Weighted ratios use the full recorded numerator and denominator, not an average of percentages.</small></p>
+    <div class="report-controls">
     <% for(let position=0;position<3;position++){ %><label><%= position===0?'Group by':'Then group by' %>
       <select name="groups"><option value="">No <%= position===0?'grouping':'additional grouping' %></option>
         <% for(const field of Object.keys(dataset.fields)){ %><option value="<%= field %>"
@@ -41,18 +45,23 @@
       <% for(const option of ['exact','day','week','month','quarter','year']){ %>
         <option value="<%= option %>" <%= (selection?.dateGrain||'exact')===option?'selected':'' %>><%= option==='exact'?'Exact dates':option %></option>
       <% } %></select></label>
-    <label>Calculation<select name="aggregate"><% for(const option of ['count','sum','average','minimum','maximum']){ %>
-      <option value="<%= option %>" <%= (selection?.aggregate||'count')===option?'selected':'' %>><%= option %></option><% } %></select></label>
-    <label>Numeric measure<select name="measure"><option value="">Count rows</option>
+    <label>Calculation<select name="aggregate"><% for(const option of ['count','sum','average','minimum','maximum','ratio']){ %>
+      <option value="<%= option %>" <%= (selection?.aggregate||'count')===option?'selected':'' %>><%= option==='ratio'?'weighted percentage':option %></option><% } %></select></label>
+    <label>Measure<select name="measure"><option value="">Count rows</option>
       <% for(const [field,type] of Object.entries(dataset.fields)){if(type==='number'||type==='money_minor'){ %>
         <option value="<%= field %>" <%= selection?.measure===field?'selected':'' %>><%= field.replaceAll('_',' ') %></option>
-      <% }} %></select></label>
+      <% }} %>
+      <% for(const [key,metric] of Object.entries(dataset.metrics||{})){ %>
+        <option value="<%= key %>" <%= selection?.measure===key?'selected':'' %>><%= metric.label %> · weighted ratio</option>
+      <% } %></select></label>
     <label>Display<select name="chart"><% for(const option of ['table','bar','line']){ %>
       <option value="<%= option %>" <%= (selection?.chart||'table')===option?'selected':'' %>><%= option==='line'?'line (date trend)':option %></option><% } %></select></label>
+    <label>Layout<select name="layout"><% for(const option of ['chart_first','table_first','dashboard']){ %>
+      <option value="<%= option %>" <%= (selection?.layout||'chart_first')===option?'selected':'' %>><%= option.replaceAll('_',' ') %></option><% } %></select></label>
     <label>Sort<select name="sort"><option value="">Default</option>
       <% for(const field of Object.keys(dataset.fields)){ %><option value="<%= field %>"
           <%= selection?.sort===field?'selected':'' %>><%= field.replaceAll('_',' ') %></option><% } %>
-      <% for(const field of ['count','total','average','minimum','maximum']){ %><option value="<%= field %>"
+      <% for(const field of ['count','total','average','minimum','maximum','ratio']){ %><option value="<%= field %>"
         <%= selection?.sort===field?'selected':'' %>><%= field %></option><% } %></select></label>
     <label>Direction<select name="direction"><option value="desc">High to low / newest</option>
       <option value="asc" <%= selection?.direction==='asc'?'selected':'' %>>Low to high / oldest</option></select></label>
@@ -60,8 +69,8 @@
   <div class="report-card"><h2>Automatic delivery</h2><p>Delivery goes only to your verified account email. Weekly reports run on Monday at the selected UTC hour.</p>
     <div class="report-controls"><label>Frequency<select name="frequency">
       <% for(const option of ['none','daily','weekly']){ %><option value="<%= option %>"
-        <%= (saved?.schedule_frequency||'none')===option?'selected':'' %>><%= option==='weekly'?'Weekly · Monday':option %></option><% } %></select></label>
-      <label>Hour (UTC)<input type="number" name="hour" min="0" max="23" value="<%= saved?.schedule_hour_utc??9 %>"></label>
+        <%= (saved?.schedule_frequency||draftSchedule?.frequency||'none')===option?'selected':'' %>><%= option==='weekly'?'Weekly · Monday':option %></option><% } %></select></label>
+      <label>Hour (UTC)<input type="number" name="hour" min="0" max="23" value="<%= saved?.schedule_hour_utc??draftSchedule?.hour??9 %>"></label>
     </div></div>
   <div class="report-actions"><button class="button" type="submit">Run report</button>
     <button class="button button--secondary" type="submit" formaction="/reports/save">Save template</button></div>

@@ -386,3 +386,24 @@ test('semantic review does not inherit a pending question for an independent req
   assert.equal(result.steps[0].contract.name,'navigate.purchasing');
   assert.equal(reviewed.pendingRequest,null);
 });
+
+test('saving a verified prior report gives independent fit its actual report context',async()=>{
+  let reviewed=null;
+  const provider={async complete(request){
+    if(request.schemaName==='stockchief_capability_plan')return {data:{steps:[{
+      capability:'report.template.create',arguments:[],dependsOn:[],continuesPending:false}],
+    clarifyingQuestion:''}};
+    if(request.schemaName==='stockchief_capability_fit'){
+      reviewed=JSON.parse(request.prompt);
+      return {data:{aligned:Boolean(reviewed.priorReport?.dataset==='posted_sales_activity'),reason:''}};
+    }
+    throw new Error(`Unexpected request ${request.schemaName}`);
+  }};
+  const result=await planner.plan(provider,'Save that report and schedule Mondays at 09:00 UTC.',{
+    history:[{message:'Show gross profit by month',status:'ANSWERED',intent:{reportConfig:{
+      title:'Gross profit trend',dataset:'posted_sales_activity',groups:['posting_date'],
+      aggregate:'sum',measure:'gross_profit_minor',dateGrain:'month',chart:'line'}}}]});
+  assert.deepEqual(result.steps.map((step)=>step.contract.name),['report.template.create']);
+  assert.equal(reviewed.priorReport.title,'Gross profit trend');
+  assert.deepEqual(reviewed.priorReport.groups,['posting_date']);
+});

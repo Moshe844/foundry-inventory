@@ -1383,11 +1383,14 @@ const SPECS=Object.freeze([
     verify:async(client,ctx,r,p)=>Boolean(r.supplierCreditId&&r.amountMinor===p.amountMinor&&
       (await client.query(`SELECT 1 FROM accounting_supplier_credits WHERE workspace_id=$1 AND id=$2
         AND amount_minor=$3`,[ctx.workspaceId,r.supplierCreditId,p.amountMinor])).rows.length)},
-  {name:'warehouse.wave.create',description:'Release one exact confirmed, allocated order as a warehouse picking wave. Stock remains on hand until actual shipping handoff.',
+  {name:'warehouse.wave.create',description:'Release one exact confirmed, allocated order as a warehouse picking wave. Strategy WAVE (one order, default), BATCH or CLUSTER. Stock remains on hand until actual shipping handoff.',
     record:'sales_order',fields:['recordReference','strategy'],permission:permissions.MANAGE_FULFILLMENT_WAVES,
     capability:'warehouse.advanced',build:(_database,_ctx,row,args)=>{
       requireState(row,['CONFIRMED','PARTIALLY_FULFILLED'],'This order');
-      const strategy=String(args.strategy||'WAVE').toUpperCase();
+      const requestedStrategy=String(args.strategy||'WAVE').toUpperCase();
+      // Model phrasing for the single-order default is not the canonical
+      // warehouse enum. Keep the warehouse engine's three actual strategies.
+      const strategy=requestedStrategy==='PICK_BY_ORDER'?'WAVE':requestedStrategy;
       if(!['WAVE','BATCH','CLUSTER'].includes(strategy))throw new ValidationError('Choose a wave, batch, or cluster picking strategy.');
       return prepareResult({orderIds:[row.id],strategy,title:`${strategy} pick for ${row.order_number}`},
         `Release ${row.order_number} to a ${strategy.toLowerCase()} pick. No stock leaves yet.`);},

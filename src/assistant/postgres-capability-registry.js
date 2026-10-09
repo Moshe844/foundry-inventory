@@ -10,6 +10,7 @@ const {destinations}=require('../product-brain/catalog');
 const {EXECUTORS}=require('./postgres-action-executors');
 const {RECORDS}=require('../web/postgres-record-destinations');
 const {destinationById}=require('../web/postgres-navigation');
+const governedReports=require('../reports/postgres-registry');
 
 const FIELDS=Object.freeze({
   search:{type:'string',description:'Name, code, or status explicitly being sought.'},
@@ -280,7 +281,7 @@ for(const [name,description,search] of [
   (service,db,ctx,text)=>service.lookup(db,ctx,{view:'accounting',search},{question:text}),
   async(_service,_db,_ctx,result)=>Boolean(result&&Array.isArray(result.rows)),{view:'accounting'});
 
-add('read.custom_report','Compose a governed report from PostgreSQL business records with selected fields, filters, date ranges, grouping, calculations and chart data. Available datasets include inventory, movements, customer orders and invoices, supplier orders and bills, payments, business messages and shipments. Use for a request to generate, compare or customize a report; do not claim metrics absent from registered fields.',
+add('read.custom_report',`Compose governed PostgreSQL reports with fields, filters, grouping, charts, and safe formulas across approved dataset joins. Datasets: ${Object.keys(governedReports.datasets).join(', ')}. Weighted metrics: ${[...new Set(Object.values(governedReports.datasets).flatMap((dataset)=>Object.values(dataset.metrics||{}).map((metric)=>metric.label)))].join(', ')}. Groups drill down to source records; detail rows link to canonical records. Use for report generation, comparison and customization, never unregistered metrics.`,
   [],'read',permissions.VIEW,'none',
   (_service,db,ctx,text,_args,options)=>require('../reports/postgres-ask').prepare(db,ctx,text,
     {provider:options.answerProvider,priorReport:options.priorReport}),

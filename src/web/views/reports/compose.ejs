@@ -1,0 +1,100 @@
+<% var selection=saved?.definition||draft||{};
+   if(selection.dimension&&selection.dimension!==dimension.key)selection={title:selection.title};
+   var sourceOptions=dimension.sources;
+   var numericSources=sourceOptions.filter((option)=>Object.values(option.fields).includes('number'));
+   var defaultSources=[...numericSources,...sourceOptions.filter((option)=>!numericSources.includes(option))].slice(0,2);
+   var selectedMetrics=selection.metrics||[]; %>
+<div class="page-head"><div><a class="back-link" href="/reports">Reports</a>
+  <h1><%= saved?'Edit combined report':draft?'Customize Ask report':'Combine governed datasets' %></h1>
+  <p class="lede">Join reviewed business sources on a workspace-unique identifier. Each source is summarized before joining, so line items cannot multiply totals.</p></div></div>
+<form class="report-builder" method="post" action="/reports/run">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <input type="hidden" name="dataset" value="composed">
+  <% if(saved){ %><input type="hidden" name="id" value="<%= saved.id %>"><% } %>
+  <section class="report-card"><h2>Shared identifier</h2>
+    <label>Combine by <select name="dimension" id="report-composition-dimension" onchange="location.href='/reports/compose?dimension='+encodeURIComponent(this.value)<%= saved?`+'&saved='+encodeURIComponent('${saved.id}')`:'' %>">
+      <% for(const option of dimensions){ %><option value="<%= option.key %>" <%= option.key===dimension.key?'selected':'' %>><%= option.label %></option><% } %>
+    </select></label>
+    <label>Report title <input name="title" maxlength="100" value="<%= selection.title||`Combined ${dimension.label} report` %>" required></label>
+    <p><small>Only sources with this same verified identifier can be combined. Customer or supplier display names are never treated as join keys.</small></p>
+  </section>
+  <section class="report-card"><h2>Measures from different sources</h2>
+    <p>Choose two to four measures. For monetary measures, filter each source to the same exact currency. Missing source values remain unrecorded—not zero.</p>
+    <% for(let index=0;index<4;index++){const metric=selectedMetrics[index]||{};
+      const fallback=index<2?defaultSources[index]?.key||'':'';
+      const selectedSource=metric.dataset||fallback;
+      const fallbackMeasure=Object.entries(sourceOptions.find((option)=>option.key===selectedSource)?.fields||{})
+        .find(([,type])=>type==='number')?.[0]||'';
+      const selectedMeasure=metric.aggregate==='count'?'':metric.measure||fallbackMeasure;
+      const selectedAggregate=metric.aggregate|| (selectedMeasure?'sum':'count'); %>
+      <fieldset class="report-measure" data-report-measure><legend>Measure <%= index+1 %><%= index<2?' · required':'' %></legend>
+        <div class="report-controls">
+          <label>Source<select name="metrics[<%= index %>][dataset]" data-report-source>
+            <option value="">None</option>
+            <% for(const option of sourceOptions){ %><option value="<%= option.key %>" <%= option.key===selectedSource?'selected':'' %>><%= option.label %></option><% } %>
+          </select></label>
+          <label>Short name for formulas<input name="metrics[<%= index %>][alias]" maxlength="24"
+            value="<%= metric.alias||`m${index+1}` %>" pattern="[a-z][a-z0-9_]*" required></label>
+          <label>Calculation<select name="metrics[<%= index %>][aggregate]">
+            <% for(const operation of ['count','sum','average','minimum','maximum','ratio']){ %>
+              <option value="<%= operation %>" <%= selectedAggregate===operation?'selected':'' %>><%= operation==='ratio'?'Registered weighted percentage':operation %></option>
+            <% } %></select></label>
+          <label>Recorded measure<select name="metrics[<%= index %>][measure]" data-report-measure-field>
+            <option value="">None · count rows</option>
+            <% for(const option of sourceOptions){ %><optgroup label="<%= option.label %>">
+              <% for(const [field,type] of Object.entries(option.fields)){if(type==='number'||type==='money_minor'){ %>
+                <option data-source="<%= option.key %>" value="<%= field %>" <%= option.key===selectedSource&&selectedMeasure===field?'selected':'' %>><%= field.replaceAll('_',' ') %><%= type==='money_minor'?' · money':'' %></option>
+              <% }} for(const [field,definition] of Object.entries(option.metrics||{})){ %>
+                <option data-source="<%= option.key %>" value="<%= field %>" <%= option.key===selectedSource&&metric.measure===field?'selected':'' %>><%= definition.label %></option>
+              <% } %></optgroup><% } %>
+          </select></label>
+        </div>
+        <details <%= metric.filters?.length?'open':'' %>><summary>Filters for this source</summary>
+          <% for(let position=0;position<3;position++){const filter=metric.filters?.[position]||{}; %>
+            <div class="report-filter"><select name="metrics[<%= index %>][filters][<%= position %>][field]" aria-label="Measure <%= index+1 %> filter <%= position+1 %> field" data-report-filter-field>
+              <option value="">No filter</option><% for(const option of sourceOptions){ for(const field of Object.keys(option.fields)){ %>
+                <option data-source="<%= option.key %>" value="<%= field %>" <%= option.key===selectedSource&&filter.field===field?'selected':'' %>><%= option.label %> · <%= field.replaceAll('_',' ') %></option>
+              <% }} %></select>
+              <select name="metrics[<%= index %>][filters][<%= position %>][operator]" aria-label="Filter comparison">
+                <% for(const operation of ['equals','contains','at_least','at_most','after','before','is_null']){ %>
+                  <option value="<%= operation %>" <%= filter.operator===operation?'selected':'' %>><%= operation.replaceAll('_',' ') %></option>
+                <% } %></select>
+              <input name="metrics[<%= index %>][filters][<%= position %>][value]" value="<%= filter.value||'' %>" placeholder="Value or YYYY-MM-DD" aria-label="Filter value">
+            </div>
+          <% } %>
+        </details>
+      </fieldset>
+    <% } %>
+  </section>
+  <section class="report-card"><h2>Custom calculation and layout</h2>
+    <p>Optional formula using your measure names, numbers, +, −, ×, ÷ and parentheses. Division by zero is shown as unavailable. No code or SQL is accepted.</p>
+    <div class="report-controls">
+      <label>Formula<input name="formula" maxlength="160" value="<%= selection.formula||'' %>" placeholder="(m1 - m2) / m1 * 100"></label>
+      <label>Calculated column name<input name="formulaLabel" maxlength="60" value="<%= selection.formulaLabel||'Calculated' %>"></label>
+      <label>Calculated display<select name="formulaUnit"><option value="number">Number</option>
+        <option value="percent" <%= selection.formulaUnit==='percent'?'selected':'' %>>Percentage</option>
+        <option value="money" <%= selection.formulaUnit==='money'?'selected':'' %>>Money</option></select></label>
+      <label>Display<select name="chart"><option value="table">Table</option>
+        <option value="bar" <%= selection.chart==='bar'?'selected':'' %>>Bar chart</option></select></label>
+      <label>Chart measure name<input name="chartMeasure" maxlength="24" value="<%= selection.chartMeasure||'' %>" placeholder="First measure, or calculated"></label>
+      <label>Layout<select name="layout"><% for(const option of ['chart_first','table_first','dashboard']){ %>
+        <option value="<%= option %>" <%= (selection.layout||'chart_first')===option?'selected':'' %>><%= option.replaceAll('_',' ') %></option>
+      <% } %></select></label>
+      <label>Sort by<input name="sort" maxlength="24" value="<%= selection.sort||dimension.key %>" placeholder="Identifier or measure name"></label>
+      <label>Direction<select name="direction"><option value="desc">High to low</option>
+        <option value="asc" <%= selection.direction==='asc'?'selected':'' %>>Low to high</option></select></label>
+    </div>
+  </section>
+  <section class="report-card"><h2>Automatic delivery</h2>
+    <p>Only your verified account email can receive scheduled reports. Weekly reports run on Monday.</p>
+    <div class="report-controls"><label>Frequency<select name="frequency">
+      <% for(const option of ['none','daily','weekly']){ %><option value="<%= option %>"
+        <%= (saved?.schedule_frequency||draftSchedule?.frequency||'none')===option?'selected':'' %>><%= option %></option><% } %>
+    </select></label><label>Hour (UTC)<input type="number" name="hour" min="0" max="23"
+      value="<%= saved?.schedule_hour_utc??draftSchedule?.hour??9 %>"></label></div>
+  </section>
+  <div class="report-actions"><button class="button" type="submit">Run combined report</button>
+    <button class="button button--secondary" type="submit" formaction="/reports/save">Save template</button></div>
+</form>
+<link rel="stylesheet" href="/reports.css?v=<%= assetVersion %>">
+<script defer src="/reports.js?v=<%= assetVersion %>"></script>

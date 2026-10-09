@@ -9,16 +9,16 @@ function cell(value){return value==null?'':String(value);}
 function exportValue(result,rowIndex,column){
   return result.displayRows?.[rowIndex]?.[column]??result.rows[rowIndex][column];
 }
-function csv(result){
-  // Spreadsheet apps can execute formulas even inside a quoted CSV field.
-  // Preserve the recorded text while forcing dangerous leading characters to
-  // remain text when a customer opens the export in Excel or Sheets.
-  const quote=(value)=>{let text=cell(value);
-    if(/^[\s\u0000-\u001f]*[=+\-@]/u.test(text))text=`'${text}`;
-    return `"${text.replaceAll('"','""')}"`;};
-  return Buffer.from([result.columns.map(quote).join(','),...result.rows.map((_row,index)=>
-    result.columns.map((column)=>quote(exportValue(result,index,column))).join(','))].join('\r\n')+'\r\n','utf8');
-}
+// Spreadsheet apps can execute formulas even inside quoted CSV fields.
+// Preserve the recorded text while forcing dangerous leading characters to
+// remain text when a customer opens the export in Excel or Sheets.
+function csvCell(value){let text=cell(value);
+  if(/^[\s\u0000-\u001f]*[=+\-@]/u.test(text))text=`'${text}`;
+  return `"${text.replaceAll('"','""')}"`;}
+function csvHeader(result){return `${result.columns.map((column)=>csvCell(result.columnLabels?.[column]||column)).join(',')}\r\n`;}
+function csvRows(result){return result.rows.map((_row,index)=>
+  `${result.columns.map((column)=>csvCell(exportValue(result,index,column))).join(',')}\r\n`).join('');}
+function csv(result){return Buffer.from(csvHeader(result)+csvRows(result),'utf8');}
 function xml(value){return cell(value).replace(/[&<>"']/g,(character)=>({
   '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[character]));}
 function crc32(buffer){let crc=~0;for(const byte of buffer){crc^=byte;for(let bit=0;bit<8;bit++)
@@ -45,7 +45,8 @@ function zip(files){
   end.writeUInt32LE(offset,16);return Buffer.concat([...local,directory,end]);
 }
 function xlsx(result){
-  const rows=[result.columns,...result.rows.map((_row,index)=>result.columns.map((column)=>
+  const rows=[result.columns.map((column)=>result.columnLabels?.[column]||column),
+    ...result.rows.map((_row,index)=>result.columns.map((column)=>
     exportValue(result,index,column)))];
   const worksheet=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
     <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${rows.map((row,index)=>
@@ -80,7 +81,8 @@ async function pdf(result){
   const PDFDocument=require('pdfkit');
   const fontPath=require.resolve('pdfjs-dist/standard_fonts/LiberationSans-Regular.ttf');
   const font=require('fontkit').openSync(fontPath);
-  const values=[result.config.title,...result.columns,...result.rows.flatMap((row,index)=>
+  const values=[result.config.title,...result.columns.map((column)=>result.columnLabels?.[column]||column),
+    ...result.rows.flatMap((row,index)=>
     result.columns.map((column)=>cell(result.displayRows?.[index]?.[column]??row[column])))];
   for(const value of values)for(const character of String(value)){
     const code=character.codePointAt(0);
@@ -106,10 +108,10 @@ async function pdf(result){
         doc.y+=15;const top=doc.y;
         doc.fontSize(fontSize);
         const headerHeight=Math.max(23,...result.columns.map((column)=>
-          doc.heightOfString(column.replaceAll('_',' '),{width:width-8})+10));
+          doc.heightOfString((result.columnLabels?.[column]||column).replaceAll('_',' '),{width:width-8})+10));
         doc.rect(margin,top,usable,headerHeight).fill('#eceafd');
         doc.fillColor('#302b62').fontSize(fontSize);
-        result.columns.forEach((column,index)=>doc.text(column.replaceAll('_',' '),margin+index*width+4,top+5,
+        result.columns.forEach((column,index)=>doc.text((result.columnLabels?.[column]||column).replaceAll('_',' '),margin+index*width+4,top+5,
           {width:width-8}));
         doc.y=top+headerHeight;return doc.y;
       };
@@ -137,4 +139,4 @@ async function pdf(result){
     }catch(error){doc.destroy();reject(error);}
   });
 }
-module.exports={csv,xlsx,pdf};
+module.exports={csv,csvHeader,csvRows,xlsx,pdf};

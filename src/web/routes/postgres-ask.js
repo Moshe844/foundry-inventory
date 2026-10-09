@@ -99,6 +99,7 @@ function resultFor(turn,proposal=null){
       :`Approved. StockChief queued the email to ${emailProposal.payload.recipientEmail} and is checking delivery.`;
   if(emailProposal?.status==='CANCELLED')answer='Draft discarded. No email was sent and no contact was added.';
   return {question:turn.message,answer,spoken:null,progressiveDisclosure:false,rows,columns,
+    columnLabels:turn.intent?.presentation?.columnLabels||{},
     reportConfig:turn.intent?.reportConfig||null,
     comparisonSafe:turn.intent?.comparisonSafe!==false,
     chartAmounts:turn.intent?.presentation?.chartAmounts||null,

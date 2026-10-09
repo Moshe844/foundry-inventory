@@ -21,7 +21,7 @@ const config = require('../../config');
 const managerEvents = require('../../manager/events');
 const reactions = require('../../manager/reactions');
 const { requireAuth, asyncRoute } = require('../middleware');
-const { trimOrNull } = require('../../lib/util');
+const { trimOrNull, newId } = require('../../lib/util');
 const { ValidationError } = require('../../domain/errors');
 
 const router = express.Router();
@@ -57,6 +57,7 @@ router.get(
       locations: locationsFor(req.db, req.ctx.workspaceId),
       canOperate: permissions.can(req.user, permissions.OPERATE),
       aiConfigured: config.ai.configured,
+      usageKey: newId('importpreview'),
     });
   })
 );

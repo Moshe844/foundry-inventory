@@ -410,7 +410,7 @@ async function lookup(database,ctx,request,options={}) {
         openingImportCost:Number(row.opening_import_units)>0
           ?pricing.formatMinor(Number(row.opening_import_minor),row.accounting_currency||row.currency||'USD'):'Not recorded'},
       `/inventory/${row.item_id}`));
-    return {answer:rows.length?`Showing current purchase quotes, recorded inventory book cost, and historical opening-import cost separately for ${rows.length}${rows.length===100?'+':''} SKUs. A missing purchase quote does not erase recorded book value.`:
+    return {answer:rows.length?`Showing current purchase quotes, recorded inventory book cost, and historical opening-import cost separately for ${rows.length}${rows.length===100?'+':''} SKUs. A missing current purchase cost does not mean stock lacks book cost.`:
       'No product or SKU matched that cost request.',rows,
       columns:['product','sku','variant','purchaseCost','costRecordedAt','onHand','costedUnits','unitsMissingCost',
         'inventoryBookCost','openingImportUnits','openingImportCost']};
@@ -1472,7 +1472,8 @@ async function createProposal(database,ctx,message,actionType,payload,summary) {
 }
 
 async function storeInteraction(database,ctx,message,intent,result,id=newId('pgask')) {
-  const storedIntent={...intent,...(result.carryForward||{}),presentation:{columns:result.columns || [],choices:result.choices || [],handoff:result.handoff || null,
+  const storedIntent={...intent,...(result.carryForward||{}),presentation:{columns:result.columns || [],
+    columnLabels:result.columnLabels||{},choices:result.choices || [],handoff:result.handoff || null,
     reason:result.reason||null,awaitingField:result.awaitingField||null,emailFlow:result.emailFlow||null,
     researchViews:result.researchViews||[],chartAmounts:result.chartAmounts||null}};
   await database.query(`INSERT INTO stockchief_runtime.assistant_interactions
@@ -1508,8 +1509,8 @@ async function recordCapabilityOutcome(database,ctx,message,outcome,{batchId=nul
     ...(result.proposal?{proposalId:result.proposal.id,
       proposalHref:result.proposal.href||`/actions/${result.proposal.id}`}:{})};
   const interactionId=newId('pgask');
-  if(result.reportConfig)result.handoff={href:`/reports/from-ask/${interactionId}`,
-    label:'Customize, save or schedule this report'};
+  if(result.reportConfig)result.handoff={href:`/reports/from-ask/${interactionId}/run`,
+    label:'Open full report and source records'};
   result.interactionId=await storeInteraction(database,ctx,message,intent,result,interactionId);
   result.intent=intent;return result;
 }

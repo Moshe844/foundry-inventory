@@ -60,6 +60,13 @@ const datasets=Object.freeze({
     enumFields:['source_kind'],fields:{product:'text',sku:'text',location:'text',quantity_delta:'number',
       book_cost_change_minor:'money_minor',source_kind:'text',currency:'text',
       recorded_on:'date',reference:'text'}},
+  customers:{label:'Customer directory',permission:permissions.VIEW_SALES,
+    source:`SELECT c.id AS record_id,c.name AS customer,COALESCE(c.company,'') AS company,
+      COALESCE(c.email,'') AS email,c.record_state,LEFT(c.created_at,10) AS created_on
+      FROM customers c WHERE c.workspace_id=$1`,
+    recordHref:(row)=>`/sales/customers/${row.record_id}`,
+    enumFields:['record_state'],
+    fields:{customer:'text',company:'text',email:'text',record_state:'text',created_on:'date'}},
   sales_orders:{label:'Customer orders',permission:permissions.VIEW_SALES,
     source:`SELECT o.id AS record_id,o.order_number,c.name AS customer,o.status,o.currency,
       o.order_date,o.needed_by,COALESCE(lines.units,0)::bigint AS ordered_units,
@@ -84,9 +91,19 @@ const datasets=Object.freeze({
       JOIN customers c ON c.id=o.customer_id AND c.workspace_id=l.workspace_id
       JOIN skus s ON s.id=l.sku_id AND s.workspace_id=l.workspace_id
       JOIN items i ON i.id=s.item_id AND i.workspace_id=l.workspace_id
-      WHERE l.workspace_id=$1`,recordHref:(row)=>`/orders/${row.record_id}`,
+    WHERE l.workspace_id=$1`,recordHref:(row)=>`/orders/${row.record_id}`,
+    metrics:{fulfillment_percent:{label:'Fulfilled units %',kind:'ratio',numerator:'fulfilled_units',
+      denominator:'ordered_units'}},
     fields:{order_number:'text',customer:'text',status:'text',order_date:'date',needed_by:'date',
       product:'text',sku:'text',ordered_units:'number',fulfilled_units:'number',open_units:'number'}},
+  suppliers:{label:'Supplier directory',permission:permissions.VIEW_PURCHASING,
+    source:`SELECT s.id AS record_id,s.name AS supplier,COALESCE(s.code,'') AS supplier_code,
+      COALESCE(s.email,'') AS email,s.status,s.currency,
+      s.default_lead_time_days::bigint AS lead_time_days,LEFT(s.created_at,10) AS created_on
+      FROM suppliers s WHERE s.workspace_id=$1`,
+    recordHref:(row)=>`/suppliers/${row.record_id}`,
+    enumFields:['status'],fields:{supplier:'text',supplier_code:'text',email:'text',
+      status:'text',currency:'text',lead_time_days:'number',created_on:'date'}},
   purchase_orders:{label:'Supplier purchase orders',permission:permissions.VIEW_PURCHASING,
     source:`SELECT o.id AS record_id,o.po_number,s.name AS supplier,o.status,
       o.order_date,o.expected_date,COALESCE(lines.units,0)::bigint AS ordered_units,
@@ -106,7 +123,9 @@ const datasets=Object.freeze({
       JOIN suppliers v ON v.id=o.supplier_id AND v.workspace_id=l.workspace_id
       JOIN skus s ON s.id=l.sku_id AND s.workspace_id=l.workspace_id
       JOIN items i ON i.id=s.item_id AND i.workspace_id=l.workspace_id
-      WHERE l.workspace_id=$1`,recordHref:(row)=>`/purchasing/orders/${row.record_id}`,
+    WHERE l.workspace_id=$1`,recordHref:(row)=>`/purchasing/orders/${row.record_id}`,
+    metrics:{receipt_percent:{label:'Received units %',kind:'ratio',numerator:'received_units',
+      denominator:'ordered_units'}},
     fields:{po_number:'text',supplier:'text',status:'text',order_date:'date',expected_date:'date',
       product:'text',sku:'text',ordered_units:'number',received_units:'number',outstanding_units:'number'}},
   customer_invoices:{label:'Customer invoices',permission:permissions.VIEW_ACCOUNTING,
@@ -135,6 +154,21 @@ const datasets=Object.freeze({
       LEFT JOIN suppliers s ON s.id=p.supplier_id AND s.workspace_id=p.workspace_id
       WHERE p.workspace_id=$1`,recordHref:()=>'/accounting/transactions',
     fields:{payment_number:'text',direction:'text',status:'text',payment_date:'date',currency:'text',amount_minor:'money_minor',counterparty:'text'}},
+  payment_requests:{label:'Customer payment requests',permission:permissions.VIEW_ACCOUNTING,
+    commercialCapability:'accounting.reports',
+    source:`SELECT p.id AS record_id,COALESCE(v.invoice_number,'') AS invoice_number,
+      COALESCE(o.order_number,'') AS order_number,COALESCE(c.name,'') AS customer,
+      p.provider,p.purpose,p.status,p.currency,p.amount_minor::bigint AS requested_minor,
+      p.paid_minor::bigint AS confirmed_paid_minor,LEFT(p.created_at,10) AS created_on,
+      LEFT(p.paid_at,10) AS paid_on
+      FROM payment_requests p
+      LEFT JOIN accounting_customer_invoices v ON v.id=p.invoice_id AND v.workspace_id=p.workspace_id
+      LEFT JOIN sales_orders o ON o.id=p.sales_order_id AND o.workspace_id=p.workspace_id
+      LEFT JOIN customers c ON c.id=p.customer_id AND c.workspace_id=p.workspace_id
+      WHERE p.workspace_id=$1`,recordHref:()=>'/accounting/receivables',
+    fields:{invoice_number:'text',order_number:'text',customer:'text',provider:'text',purpose:'text',
+      status:'text',currency:'text',requested_minor:'money_minor',confirmed_paid_minor:'money_minor',
+      created_on:'date',paid_on:'date'}},
   mail:{label:'Business messages',permission:permissions.VIEW,
     source:`SELECT m.id AS record_id,m.sender,COALESCE(m.subject,'') AS subject,
       LEFT(m.received_at,10) AS received_on,m.trust_status,m.classification,
@@ -154,6 +188,41 @@ const datasets=Object.freeze({
     moneyCompleteness:{shipping_cost_minor:{field:'cost_recorded',value:'yes'}},
     fields:{shipment_number:'text',order_number:'text',status:'text',currency:'text',carrier:'text',tracking_number:'text',
       shipping_cost_minor:'money_minor',cost_recorded:'text',created_on:'date'}},
+  shipment_rates:{label:'Recorded carrier rate quotes',permission:permissions.VIEW_SALES,
+    source:`SELECT r.shipment_id AS record_id,s.shipment_number,o.order_number,
+      r.provider,r.carrier,r.service,r.amount_minor::bigint AS quoted_charge_minor,
+      r.currency,r.delivery_days,LEFT(r.delivery_date,10) AS estimated_delivery_on,
+      LEFT(r.quoted_at,10) AS quoted_on
+      FROM shipment_rates r
+      JOIN sales_shipments s ON s.id=r.shipment_id AND s.workspace_id=r.workspace_id
+      JOIN sales_orders o ON o.id=s.sales_order_id AND o.workspace_id=s.workspace_id
+      WHERE r.workspace_id=$1`,recordHref:(row)=>`/fulfilment/${row.record_id}`,
+    fields:{shipment_number:'text',order_number:'text',provider:'text',carrier:'text',service:'text',
+      quoted_charge_minor:'money_minor',currency:'text',delivery_days:'number',
+      estimated_delivery_on:'date',quoted_on:'date'}},
+  shipping_label_activity:{label:'Shipping label purchases and adjustments',permission:permissions.VIEW_SALES,
+    source:`SELECT t.shipment_id AS record_id,s.shipment_number,t.provider,t.operation,t.status,
+      t.amount_minor::bigint AS recorded_charge_minor,t.currency,
+      CASE WHEN t.amount_minor IS NULL THEN 'no' ELSE 'yes' END AS charge_recorded,
+      LEFT(t.requested_at,10) AS requested_on,LEFT(t.completed_at,10) AS completed_on
+      FROM shipping_label_transactions t
+      JOIN sales_shipments s ON s.id=t.shipment_id AND s.workspace_id=t.workspace_id
+      WHERE t.workspace_id=$1`,recordHref:(row)=>`/fulfilment/${row.record_id}`,
+    moneyCompleteness:{recorded_charge_minor:{field:'charge_recorded',value:'yes'}},
+    fields:{shipment_number:'text',provider:'text',operation:'text',status:'text',
+      recorded_charge_minor:'money_minor',currency:'text',charge_recorded:'text',
+      requested_on:'date',completed_on:'date'}},
+  shipment_tracking:{label:'Carrier tracking events',permission:permissions.VIEW_SALES,
+    source:`SELECT t.shipment_id AS record_id,s.shipment_number,o.order_number,
+      t.provider,COALESCE(s.carrier,'') AS carrier,t.status,
+      COALESCE(t.location,'') AS location,COALESCE(t.detail,'') AS detail,
+      LEFT(t.occurred_at,10) AS occurred_on
+      FROM shipment_tracking_events t
+      JOIN sales_shipments s ON s.id=t.shipment_id AND s.workspace_id=t.workspace_id
+      JOIN sales_orders o ON o.id=s.sales_order_id AND o.workspace_id=s.workspace_id
+      WHERE t.workspace_id=$1`,recordHref:(row)=>`/fulfilment/${row.record_id}`,
+    fields:{shipment_number:'text',order_number:'text',provider:'text',carrier:'text',status:'text',
+      location:'text',detail:'text',occurred_on:'date'}},
   transfers:{label:'Inventory transfers',permission:permissions.VIEW_TRANSFERS,
     source:`SELECT t.id AS record_id,t.transfer_number,t.status,
       origin.name AS source_location,destination.name AS destination_location,
@@ -202,7 +271,7 @@ const datasets=Object.freeze({
   journal_lines:{label:'Posted general ledger lines',permission:permissions.VIEW_ACCOUNTING,
     commercialCapability:'accounting.reports',
     source:`SELECT e.id AS record_id,e.entry_number::text AS entry_number,e.posting_date,
-      a.code AS account_code,a.name AS account_name,a.account_type,
+      a.code AS account_code,a.name AS account_name,a.account_type,l.currency,
       e.source_type,e.description,l.debit_minor::bigint AS debit_minor,
       l.credit_minor::bigint AS credit_minor
       FROM accounting_journal_entries e JOIN accounting_journal_lines l
@@ -211,7 +280,41 @@ const datasets=Object.freeze({
       WHERE e.workspace_id=$1 AND e.status='POSTED'`,
     recordHref:(row)=>`/accounting/entries/${row.record_id}`,
     fields:{entry_number:'text',posting_date:'date',account_code:'text',account_name:'text',
-      account_type:'text',source_type:'text',description:'text',debit_minor:'money_minor',credit_minor:'money_minor'}},
+      account_type:'text',currency:'text',source_type:'text',description:'text',
+      debit_minor:'money_minor',credit_minor:'money_minor'}},
+  posted_sales_activity:{label:'Posted sales revenue and product cost',permission:permissions.VIEW_ACCOUNTING,
+    commercialCapability:'accounting.reports',
+    // Aggregate canonical journal lines at the entry/SKU grain before the
+    // report builder applies user-selected dimensions. Contra revenue and
+    // returned product cost retain their ledger signs; unassigned SKU lines
+    // remain visible instead of being silently attributed to a product.
+    source:`SELECT e.id AS record_id,e.entry_number::text AS entry_number,e.posting_date,
+      e.source_type,COALESCE(s.code,'Unattributed') AS sku,
+      COALESCE(i.name,'Unattributed') AS product,COALESCE(c.name,'Unattributed') AS customer,
+      l.currency,
+      SUM(CASE WHEN a.system_key IN ('SALES_REVENUE','SALES_RETURNS')
+        THEN l.credit_minor-l.debit_minor ELSE 0 END)::bigint AS revenue_minor,
+      SUM(CASE WHEN a.system_key='COST_OF_GOODS_SOLD'
+        THEN l.debit_minor-l.credit_minor ELSE 0 END)::bigint AS cogs_minor,
+      SUM(CASE WHEN a.system_key IN ('SALES_REVENUE','SALES_RETURNS')
+        THEN l.credit_minor-l.debit_minor
+        WHEN a.system_key='COST_OF_GOODS_SOLD' THEN l.credit_minor-l.debit_minor
+        ELSE 0 END)::bigint AS gross_profit_minor
+      FROM accounting_journal_entries e
+      JOIN accounting_journal_lines l ON l.entry_id=e.id AND l.workspace_id=e.workspace_id
+      JOIN accounting_accounts a ON a.id=l.account_id AND a.workspace_id=l.workspace_id
+      LEFT JOIN skus s ON s.id=l.sku_id AND s.workspace_id=l.workspace_id
+      LEFT JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
+      LEFT JOIN customers c ON c.id=l.customer_id AND c.workspace_id=l.workspace_id
+      WHERE e.workspace_id=$1 AND e.status='POSTED'
+        AND a.system_key IN ('SALES_REVENUE','SALES_RETURNS','COST_OF_GOODS_SOLD')
+      GROUP BY e.id,e.entry_number,e.posting_date,e.source_type,s.code,i.name,c.name,l.currency`,
+    recordHref:(row)=>`/accounting/entries/${row.record_id}`,
+    metrics:{gross_margin_percent:{label:'Gross margin %',kind:'ratio',numerator:'gross_profit_minor',
+      denominator:'revenue_minor',currencySensitive:true}},
+    fields:{entry_number:'text',posting_date:'date',source_type:'text',sku:'text',product:'text',
+      customer:'text',currency:'text',revenue_minor:'money_minor',cogs_minor:'money_minor',
+      gross_profit_minor:'money_minor'}},
   imports:{label:'Import history',permission:permissions.VIEW,
     source:`SELECT p.id AS record_id,p.source_name,p.source_kind,p.detected_type,p.status,
       p.approval_status,p.records_detected::bigint AS records_detected,
@@ -239,6 +342,7 @@ const datasets=Object.freeze({
 });
 
 function list(actor){return Object.entries(datasets).filter(([,dataset])=>permissions.can(actor,dataset.permission))
-  .map(([key,dataset])=>({key,label:dataset.label,fields:dataset.fields}));}
+  .map(([key,dataset])=>({key,label:dataset.label,fields:dataset.fields,
+    metrics:dataset.metrics||{},moneyCompleteness:dataset.moneyCompleteness||null}));}
 function get(key){return datasets[key]||null;}
 module.exports={datasets,list,get};

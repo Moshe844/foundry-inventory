@@ -1,0 +1,174 @@
+{
+  "evidence": "REAL_MODEL_COST_DISTRIBUTION",
+  "checkoutEnabled": false,
+  "generatedFrom": "2026-10-06T00:23:07.513Z",
+  "sampleLimitations": [
+    "Synthetic catalogue and requests, not observed customer mix.",
+    "Nearest-rank P95 from 21-24 model-backed attempts per operation is exploratory, not an SLA or tail guarantee.",
+    "24 long-catalogue Pro instruction probes deliberately stress the observed tail; this is not a production percentile.",
+    "Failed model-backed attempts incur cost even when customer credits reverse.",
+    "Provider API price/version is dated and must be reverified before paid launch."
+  ],
+  "operations": {
+    "ask": {
+      "count": 28,
+      "typicalUsd": 0.002914,
+      "medianUsd": 0.002914,
+      "p90Usd": 0.005730999999999999,
+      "p95Usd": 0.0067410000000000005,
+      "mostExpensiveUsd": 0.007826,
+      "attempts": 28,
+      "modelBackedAttempts": 28,
+      "failedAttempts": 0,
+      "syntheticLongCatalogueProbeCount": 0,
+      "syntheticLongCatalogueProbeMaxUsd": null,
+      "deterministicOnly": 0,
+      "missingCostRates": 0,
+      "models": [
+        "anthropic/claude-haiku-4-5-20251001/2023-06-01"
+      ],
+      "committedCredits": 28,
+      "costUsdPerCommittedCredit": 0.0034577857142857145,
+      "totalMeasuredCostUsd": 0.096818,
+      "perPlan": {
+        "starter": {
+          "count": 8,
+          "typicalUsd": 0.002912,
+          "medianUsd": 0.002912,
+          "p90Usd": null,
+          "p95Usd": null,
+          "mostExpensiveUsd": 0.0035719999999999997,
+          "attempts": 8,
+          "failedAttempts": 0
+        },
+        "growth": {
+          "count": 8,
+          "typicalUsd": 0.002912,
+          "medianUsd": 0.002912,
+          "p90Usd": null,
+          "p95Usd": null,
+          "mostExpensiveUsd": 0.0035719999999999997,
+          "attempts": 8,
+          "failedAttempts": 0
+        },
+        "pro": {
+          "count": 12,
+          "typicalUsd": 0.00292,
+          "medianUsd": 0.00292,
+          "p90Usd": 0.0067410000000000005,
+          "p95Usd": null,
+          "mostExpensiveUsd": 0.007826,
+          "attempts": 12,
+          "failedAttempts": 0
+        }
+      }
+    },
+    "instruction": {
+      "count": 45,
+      "typicalUsd": 0.055286,
+      "medianUsd": 0.055286,
+      "p90Usd": 0.059418,
+      "p95Usd": 0.059428,
+      "mostExpensiveUsd": 0.060618,
+      "attempts": 45,
+      "modelBackedAttempts": 45,
+      "failedAttempts": 15,
+      "syntheticLongCatalogueProbeCount": 24,
+      "syntheticLongCatalogueProbeMaxUsd": 0.060618,
+      "deterministicOnly": 0,
+      "missingCostRates": 0,
+      "models": [
+        "anthropic/claude-sonnet-5/2023-06-01"
+      ],
+      "committedCredits": 90,
+      "costUsdPerCommittedCredit": 0.022861777777777773,
+      "totalMeasuredCostUsd": 2.0575599999999996,
+      "perPlan": {
+        "starter": {
+          "count": 7,
+          "typicalUsd": 0.013334000000000002,
+          "medianUsd": 0.013334000000000002,
+          "p90Usd": null,
+          "p95Usd": null,
+          "mostExpensiveUsd": 0.013594000000000002,
+          "attempts": 7,
+          "failedAttempts": 0
+        },
+        "growth": {
+          "count": 7,
+          "typicalUsd": 0.039734000000000005,
+          "medianUsd": 0.039734000000000005,
+          "p90Usd": null,
+          "p95Usd": null,
+          "mostExpensiveUsd": 0.039954,
+          "attempts": 7,
+          "failedAttempts": 0
+        },
+        "pro": {
+          "count": 31,
+          "typicalUsd": 0.057328000000000004,
+          "medianUsd": 0.057328000000000004,
+          "p90Usd": 0.059428,
+          "p95Usd": 0.060328,
+          "mostExpensiveUsd": 0.060618,
+          "attempts": 31,
+          "failedAttempts": 15
+        }
+      }
+    },
+    "import_mapping": {
+      "count": 25,
+      "typicalUsd": 0.001645,
+      "medianUsd": 0.001645,
+      "p90Usd": 0.005841000000000001,
+      "p95Usd": 0.0058460000000000005,
+      "mostExpensiveUsd": 0.0058460000000000005,
+      "attempts": 25,
+      "modelBackedAttempts": 25,
+      "failedAttempts": 0,
+      "syntheticLongCatalogueProbeCount": 0,
+      "syntheticLongCatalogueProbeMaxUsd": null,
+      "deterministicOnly": 0,
+      "missingCostRates": 0,
+      "models": [
+        "anthropic/claude-haiku-4-5-20251001/2023-06-01"
+      ],
+      "committedCredits": 125,
+      "costUsdPerCommittedCredit": 0.00045587200000000007,
+      "totalMeasuredCostUsd": 0.05698400000000001,
+      "perPlan": {
+        "starter": {
+          "count": 7,
+          "typicalUsd": 0.00165,
+          "medianUsd": 0.00165,
+          "p90Usd": null,
+          "p95Usd": null,
+          "mostExpensiveUsd": 0.00169,
+          "attempts": 7,
+          "failedAttempts": 0
+        },
+        "growth": {
+          "count": 7,
+          "typicalUsd": 0.0016,
+          "medianUsd": 0.0016,
+          "p90Usd": null,
+          "p95Usd": null,
+          "mostExpensiveUsd": 0.00168,
+          "attempts": 7,
+          "failedAttempts": 0
+        },
+        "pro": {
+          "count": 11,
+          "typicalUsd": 0.00165,
+          "medianUsd": 0.00165,
+          "p90Usd": 0.0058460000000000005,
+          "p95Usd": null,
+          "mostExpensiveUsd": 0.0058460000000000005,
+          "attempts": 11,
+          "failedAttempts": 0
+        }
+      }
+    }
+  },
+  "sourceSha256": "f74d72ef99679093941e1e972a7c86b02540c4b0eaf9eed6fd35d3f6a161da5a"
+}
