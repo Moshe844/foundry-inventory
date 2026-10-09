@@ -31,6 +31,7 @@ const SCHEMA={type:'object',additionalProperties:false,required:['understood','s
 const EFFECT_FIT_SCHEMA={type:'object',additionalProperties:false,required:['equivalent','difference'],
   properties:{equivalent:{type:'boolean'},difference:{type:'string',maxLength:240}}};
 const EFFECT_FIT_SYSTEM=`Compare the owner's instruction with the exact effects the application will enforce after approval.
+The listed effects are hypothetical post-approval effects, NOT currently active settings. This call only creates a pending proposal; it never applies a rule. An instruction to prepare now and wait for approval is satisfied by that lifecycle, so compare the business effect, not whether the effect already happened.
 Reject any changed measure, comparator, threshold, named SKU/location/supplier, authority, automatic action,
 notification channel or timing. A requested prohibition is satisfied only if no proposed effect violates it.
 Replenishment recommendations do not notify the owner. If the owner requested a stock warning or alert,
@@ -248,7 +249,8 @@ async function interpret(database,ctx,instruction,options={}){const clean=String
     }
     if(questions.length)break;
     const fit=await completeModel({system:EFFECT_FIT_SYSTEM,
-      prompt:JSON.stringify({ownerInstruction:clean,priorApprovedRule,enforcedEffects:resolvedChanges.map(describe),
+      prompt:JSON.stringify({ownerInstruction:clean,proposalLifecycle:'PENDING_UNTIL_SEPARATE_OWNER_APPROVAL',
+        priorApprovedRule,enforcedEffects:resolvedChanges.map(describe),
         resolvedEntities:resolvedChanges.map((change)=>({requestedSku:change.sku||null,
           verifiedSkuCode:change.skuCode||null,verifiedProductName:change.displayName||null,
           requestedLocation:change.location||null,verifiedLocationName:change.locationName||null,

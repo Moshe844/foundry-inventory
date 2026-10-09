@@ -17,13 +17,12 @@ function wrap(database,ctx,provider,operation,key,options={}){const policy=POLIC
   if(!internal){const reserved=await usage.reserveUsage(database,scope,{meter:'ai_work_credits',units:Number(configured.units),idempotencyKey,
     detail:{operation,model:provider.model,provisional:true}});
     if(!reserved.created)throw new ValidationError('This model operation is already recorded or in progress.');}
-  let response;let modelAttemptDay=null;let providerStarted=false;let costHold=null;
+  let response;let modelAttemptDay=null;let providerStarted=false;let costHold=null;let usageRecorded=false;
   try{costHold=await require('./model-cost-budget').reserve(database,scope,provider,request,policy,operation,
     idempotencyKey,internal?`${ctx.workspaceId}:${options.fundingKey}`:idempotencyKey);
     modelAttemptDay=await require('./model-budget').begin(database,scope.accountId);
     const {onValidated,...providerRequest}=request;
     providerStarted=true;response=await provider.complete({...providerRequest,maxOutputTokens:costHold.outputTokenLimit,commercial:true});
-    await operations.modelUsage(database,scope,response.usage||{provider:provider.name,model:provider.model},idempotencyKey,{operation});
     const validated=require('../foundry/validator').validate(require('../foundry/schema-tools').toWireSchema(request.schema),response.data);
     if(!validated.ok)throw new (require('../ai/provider').ProviderOutputError)('The model response did not match the operation contract. No credits were consumed.',validated.errors);
     if(operation==='instruction'&&request.schemaName==='postgres_operating_instruction'
@@ -32,10 +31,13 @@ function wrap(database,ctx,provider,operation,key,options={}){const policy=POLIC
         'The model did not produce a usable operating instruction. No credits were consumed.',
         {reason:String(response.data?.unsupportedReason||response.data?.clarifyingQuestion||'').slice(0,240)});
     if(typeof onValidated==='function')await onValidated(response.data);
+    await operations.modelUsage(database,scope,response.usage||{provider:provider.name,model:provider.model},
+      idempotencyKey,{operation});usageRecorded=true;
     await require('./model-cost-budget').settle(database,scope,idempotencyKey);
     if(!internal)await usage.commitUsage(database,scope,{meter:'ai_work_credits',idempotencyKey});return response;
   }catch(error){if(modelAttemptDay)await require('./model-budget').failed(database,scope.accountId,modelAttemptDay);
-    if(error.usage)await operations.modelUsage(database,scope,error.usage,idempotencyKey,{operation,failed:true});
+    if(!usageRecorded&&(error.usage||response?.usage))await operations.modelUsage(database,scope,
+      error.usage||response.usage,idempotencyKey,{operation,failed:true});
     else if(providerStarted&&!response)await require('./control-service').recordCost(database,scope,{provider:provider.name||'unknown',model:provider.model||'',
       operation:'unknown_model_outcome',unit:'request',quantity:1,idempotencyKey,detail:{operation,errorCode:error.code}});
     if(costHold){if(providerStarted)await require('./model-cost-budget').settle(database,scope,idempotencyKey,{failed:true});

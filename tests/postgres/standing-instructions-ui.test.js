@@ -115,8 +115,11 @@ test('real Chromium approves one free-form PostgreSQL standing instruction witho
     let extractionAttempts=0;
     const recoveringProvider=require('../helpers/postgres-model-fixture').fixture({async complete(input){
       const usage={provider:'fixture-ai',model:'fixture-model',inputTokens:40,outputTokens:20};
-      if(input.schemaName==='postgres_operating_instruction_effect_fit')
+      if(input.schemaName==='postgres_operating_instruction_effect_fit'){
+        assert.equal(JSON.parse(input.prompt).proposalLifecycle,'PENDING_UNTIL_SEPARATE_OWNER_APPROVAL');
+        assert.match(input.system,/NOT currently active settings/);
         return {data:{equivalent:true,difference:''},usage};
+      }
       extractionAttempts++;
       if(extractionAttempts===1)return {data:{understood:false,summary:'',changes:[],
         clarifyingQuestion:'Should I return an empty changes array for approval?',unsupportedReason:''},usage};

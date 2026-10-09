@@ -98,6 +98,20 @@ test('candidate AI pack funds a bounded, grant-linked provider budget, including
  assert.ok(Number((await db.query(`SELECT a.actual_minor FROM commercial_model_cost_hold_allocations a
   JOIN commercial_model_cost_holds h ON h.id=a.hold_id WHERE h.idempotency_key=$1`,
   [`${scope.workspaceId}:paid-failure`])).rows[0].actual_minor)>0);
+ const invalidInstruction={...ai,complete:async()=>({data:{understood:false,changes:[],
+  clarifyingQuestion:'Should I return an empty changes array?',unsupportedReason:''},usage:providerUsage})};
+ await assert.rejects(()=>model.wrap(db,scope,invalidInstruction,'instruction','invalid-instruction')
+   .complete({system:'Prepare a rule.',prompt:'Set reorder point to eight.',
+     schemaName:'postgres_operating_instruction',schema:{type:'object',additionalProperties:false,
+       required:['understood','changes','clarifyingQuestion','unsupportedReason'],properties:{
+         understood:{type:'boolean'},changes:{type:'array',items:{type:'object'}},
+         clarifyingQuestion:{type:'string'},unsupportedReason:{type:'string'}}}}),
+ /did not produce a usable operating instruction/);
+ assert.equal((await db.query('SELECT status FROM commercial_usage_events WHERE idempotency_key=$1',
+   [`${scope.workspaceId}:invalid-instruction`])).rows[0].status,'REVERSED');
+ assert.equal((await db.query(`SELECT detail->>'failed' AS failed FROM commercial_cost_events
+   WHERE idempotency_key=$1 AND operation='model_input'`,
+ [`${scope.workspaceId}:invalid-instruction:model_input`])).rows[0].failed,'true');
  const refund={id:'evt_refund_paid_budget',type:'refund.created',created:Math.floor(Date.now()/1000)+1,data:{object:{id:'re_paid_budget',
   status:'succeeded',payment_intent:`pi_${purchase.id}`,amount:4410,currency:'usd'}}};
  await db.transaction(client=>addons.receiveRefund(client,refund));
