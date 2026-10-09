@@ -5,6 +5,19 @@ const assert=require('node:assert/strict');
 const planner=require('../../src/assistant/postgres-capability-planner');
 const {selectedPendingChoice,synthesizeReads,focusedIntentCatalogue}=require('../../src/assistant/postgres-control-plane');
 const {registry}=require('../../src/assistant/postgres-capability-registry');
+const {summarizeCustomerOrders}=require('../../src/assistant/postgres-service');
+
+test('customer-order evidence separates drafts from active unfulfilled units and bounds truncated lists',()=>{
+  const rows=[{status:'DRAFT',openUnits:9},{status:'CONFIRMED',openUnits:3},
+    {status:'PARTIALLY_FULFILLED',openUnits:14},{status:'FULFILLED',openUnits:0}];
+  const answer=summarizeCustomerOrders(rows,null);
+  assert.match(answer,/2 confirmed or partially fulfilled orders have 17 units/);
+  assert.match(answer,/1 draft order is separate/);
+  assert.doesNotMatch(answer,/26 units/);
+  const limited=summarizeCustomerOrders(Array.from({length:100},()=>({status:'DRAFT',openUnits:1})),null);
+  assert.match(limited,/first 100 matching/);
+  assert.match(limited,/0 confirmed or partially fulfilled orders have 0 units/);
+});
 
 test('registry-derived fallback focuses an overlooked exact action without executing a lexical guess',()=>{
   const focused=focusedIntentCatalogue('Rename this inventory to a new name, after my approval.',

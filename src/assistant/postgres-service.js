@@ -20,6 +20,18 @@ const EMAIL_DRAFT_SYSTEM=`Copyedit the owner's email words. Return only the sche
 This is a grammar and spelling correction, not a composition task. Keep the same business nouns, verbs, dates, quantities, names, amounts, commitments, and uncertainties. Do not infer what a vague word such as "confirm" refers to.
 Do not add a greeting, thanks, sign-off, explanation, promise, fact, deadline, price, order status, shipment claim, receipt claim, or attachment claim unless the owner explicitly supplied it. Do not invent the sender's name.
 Use a short subject made only from concepts the owner explicitly stated; if there is no safe subject, return an empty string. The body should contain only the corrected version of the supplied message, ready for the owner to review before sending.`;
+function summarizeCustomerOrders(rows,search){
+  if(!rows.length)return search?'No customer order matched that request.':
+    'No customer orders are recorded in StockChief. Sales through systems that are not connected or imported here would not appear in this list.';
+  const active=rows.filter((row)=>['CONFIRMED','PARTIALLY_FULFILLED'].includes(row.status));
+  const activeUnits=active.reduce((sum,row)=>sum+Number(row.openUnits||0),0);
+  const drafts=rows.filter((row)=>row.status==='DRAFT').length;
+  const scope=rows.length===100?'Showing the first 100 matching customer orders':
+    `${rows.length} customer order${rows.length===1?'':'s'} ${search?'matched':'recorded'}`;
+  return `${scope}. ${active.length} confirmed or partially fulfilled order${active.length===1?'':'s'} `+
+    `have ${activeUnits.toLocaleString('en-US')} units not yet fulfilled.`+
+    (drafts?` ${drafts} draft order${drafts===1?' is':'s are'} separate from that active total.`:'');
+}
 function recordHandoff(kind,name,extras={}) {
   const params=new URLSearchParams({name:String(name||'').trim()});
   if(kind==='customer'&&trimOrNull(extras.shippingAddress))params.set('shippingAddress',trimOrNull(extras.shippingAddress));
@@ -739,8 +751,7 @@ async function lookup(database,ctx,request,options={}) {
       postedProductCost:pricing.formatMinor(Number(row.posted_cogs_minor),row.currency),
       postedGrossProfit:pricing.formatMinor(Number(row.posted_revenue_minor)-Number(row.posted_cogs_minor),row.currency),
       shipments:Number(row.shipment_count)},`/orders/${row.id}`));
-    return {answer:rows.length?`${rows.length===100?'Showing the first 100':rows.length} customer order${rows.length===1?'':'s'} ${search?'matched':'recorded'}; ${rows.reduce((sum,row)=>sum+row.openUnits,0).toLocaleString('en-US')} units remain open.`:
-      search?'No customer order matched that request.':'No customer orders are recorded in StockChief. Sales through systems that are not connected or imported here would not appear in this list.',
+    return {answer:summarizeCustomerOrders(rows,search),
       rows,columns:['order','status','customer','lineCount','lineItems','orderTotal',
         'orderedUnits','heldUnits','fulfilledUnits','openUnits',
         'invoiceCount','invoiced','paid','outstanding','postedRevenue','postedProductCost',
@@ -1721,4 +1732,4 @@ async function cancelProposal(database,ctx,id) {
 
 module.exports={lookup,prepareAction,ask:askCapabilities,listInteractions,
   continueEmail,reviseEmailProposal,getProposal,executeProposal,cancelProposal,
-  fundedAskProvider};
+  fundedAskProvider,summarizeCustomerOrders};

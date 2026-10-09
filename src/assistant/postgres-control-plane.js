@@ -332,9 +332,9 @@ async function synthesizeReads(provider,message,executed,{completedActions=[],ca
     const used=[...new Set(answer?.usedSteps||[])].filter((index)=>Number.isInteger(index)&&index>=0&&index<executed.length);
     if(typeof answer?.answer!=='string'||!answer.answer.trim()||answer.supported&&!used.length)throw new Error('Unverified answer');
     const fallbackSummaries=answer.supported?[]:[...new Set(executed.map((entry)=>
-      String(entry.result.answer||'').trim()).filter(Boolean))].slice(0,4);
+      String(entry.result.answer||'').trim()).filter(Boolean))].slice(0,3);
     const partialAnswer=fallbackSummaries.length
-      ?`Here is what the checked records show: ${fallbackSummaries.join(' ')} I cannot verify a broader conclusion from these records yet.`
+      ?`Here is what the checked records show: ${fallbackSummaries.join(' ')} Ask me to check a specific area for more detail.`
       :'I could not verify that conclusion from the records I checked. Nothing changed.';
     const evidenceSteps=answer.supported?used:executed.map((_,index)=>index);
     const original=executed.length===1?executed[0].result:null;
@@ -349,7 +349,7 @@ async function synthesizeReads(provider,message,executed,{completedActions=[],ca
       columns:original?original.columns:['source','record'],handoff:original?.handoff||null,
       researchViews:evidenceSteps.map((index)=>executed[index].step.contract.view),
       additionalReads:answer.supported?[]:additionalReads,
-      reason:answer.supported?null:'unverified'}}];
+      reason:answer.supported?null:fallbackSummaries.length?'partial_evidence':'unverified'}}];
   }catch(error){if(error.code==='entitlement_required')throw error;
     if(error.code==='rate_limited')return [{step:executed[0].step,args:executed[0].args,
       provenance:{},result:{status:'CLARIFY',answer:error.limitKind==='daily_model_attempts'

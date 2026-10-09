@@ -53,6 +53,7 @@ const REASON_LABEL = {
   'clarify:ambiguous': 'Needs an answer from you — more than one fits',
   'clarify:no_match': 'Needs an answer from you — nothing on file by that name',
   'clarify:unverified': 'Could not verify from these records',
+  'clarify:partial_evidence': 'Verified starting points · ask for more detail',
   'clarify:unavailable': 'Could not answer right now',
   'clarify:unsupported': 'Not available — no action taken',
   'clarify:daily_safety_limit': 'Paused until the daily AI reset',
