@@ -373,6 +373,29 @@ async function focusedRecordCatalogue(database,ctx,message,catalogue){
     get:(name)=>selected.get(name)||null};
 }
 
+// A large registry can make the model overlook an exact contract and call it
+// merely a "closest alternative". Retry against a small, derived catalogue;
+// the model, independent fit check, resolver and approval gate still decide.
+// This never promotes a lexical match directly into an executable action.
+function focusedIntentCatalogue(message,catalogue,{alternative=null,limit=24}={}){
+  const ignored=new Set(['this','that','then','with','without','from','into','your','my',
+    'please','now','here','there','would','could','should','stockchief','inventory',
+    'business','record','records','approval','approve','before','after']);
+  const requested=new Set(resolver.tokens(message).filter((token)=>token.length>2&&!ignored.has(token)));
+  const ranked=catalogue.list().map((entry)=>{
+    const named=new Set(resolver.tokens(entry.name));
+    const described=new Set(resolver.tokens(entry.description));
+    const score=[...requested].reduce((sum,token)=>sum+(named.has(token)?5:0)
+      +(described.has(token)?1:0),0)+(entry.name===alternative?12:0);
+    return {entry,score};
+  }).filter((row)=>row.score>0).sort((a,b)=>b.score-a.score||a.entry.name.localeCompare(b.entry.name));
+  if(!ranked.length||ranked.length===catalogue.list().length)return null;
+  const entries=ranked.slice(0,limit).map((row)=>row.entry);
+  const names=new Map(entries.map((entry)=>[entry.name,entry]));
+  return {list:(kind=null)=>entries.filter((entry)=>!kind||entry.kind===kind),
+    get:(name)=>names.get(name)||null};
+}
+
 async function focusedRecordState(database,ctx,message){
   if(!/\b[A-Z]{2,8}-\d{2,}\b/i.test(message))return null;
   const records=require('./postgres-workflow-capabilities').RECORDS;
@@ -417,6 +440,17 @@ async function run(service,database,ctx,message,{provider,rawProvider=null,histo
         const retry=await planner.plan(provider,message,{catalogue:focused,history,pending:nullIfReadOnly(pending,message),page,workspace,
           verificationProvider:provider?.verifyComplete?{complete:provider.verifyComplete}:null,
           recentChanges,deferReadFit:true});
+        if(retry.steps.length)selected=retry;
+      }
+    }
+    if(!selected.steps.length){
+      const focused=focusedIntentCatalogue(message,planningScope,
+        {alternative:selected.closestAlternative});
+      if(focused){
+        const retry=await planner.plan(provider,message,{catalogue:focused,history,
+          pending:nullIfReadOnly(pending,message),page,workspace,recentChanges,
+          verificationProvider:provider?.verifyComplete?{complete:provider.verifyComplete}:null,
+          deferReadFit:true});
         if(retry.steps.length)selected=retry;
       }
     }
@@ -514,5 +548,6 @@ async function run(service,database,ctx,message,{provider,rawProvider=null,histo
 }
 
 module.exports={run,executeStep,normalizeForLegacy,questionFor,READ_PERMISSIONS,planningCatalogue,
-  focusedRecordCatalogue,synthesizeReads,relevantActions,explicitlyReadOnly,readOnlyCatalogue,
+  focusedRecordCatalogue,focusedIntentCatalogue,synthesizeReads,relevantActions,
+  explicitlyReadOnly,readOnlyCatalogue,
   selectedPendingChoice,focusNamedSkuCatalogue,focusedRecordState};

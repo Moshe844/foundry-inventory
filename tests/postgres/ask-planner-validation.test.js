@@ -3,8 +3,19 @@
 const test=require('node:test');
 const assert=require('node:assert/strict');
 const planner=require('../../src/assistant/postgres-capability-planner');
-const {selectedPendingChoice,synthesizeReads}=require('../../src/assistant/postgres-control-plane');
+const {selectedPendingChoice,synthesizeReads,focusedIntentCatalogue}=require('../../src/assistant/postgres-control-plane');
 const {registry}=require('../../src/assistant/postgres-capability-registry');
+
+test('registry-derived fallback focuses an overlooked exact action without executing a lexical guess',()=>{
+  const focused=focusedIntentCatalogue('Rename this inventory to a new name, after my approval.',
+    registry,{alternative:'workspace.rename'});
+  assert.ok(focused);
+  assert.equal(focused.get('workspace.rename')?.name,'workspace.rename');
+  assert.ok(focused.list().length<registry.list().length);
+  assert.equal(focused.get('shipping.label.create'),null);
+  const report=focusedIntentCatalogue('Build a report grouping on-hand units by location.',registry);
+  assert.equal(report.get('read.custom_report')?.name,'read.custom_report');
+});
 
 test('a selected clarification choice resumes the original authorized capability, not an unrelated read',()=>{
   const pending={status:'CLARIFY',capability:'supplier_payment.record',awaitingField:'supplier',

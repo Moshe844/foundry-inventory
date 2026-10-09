@@ -20,7 +20,7 @@
   </div>
   <div class="report-card"><h2>Filter records</h2><p>Up to eight exact, text or range filters. Blank rows are ignored.</p>
     <% for(let index=0;index<8;index++){const filter=selection?.filters?.[index]||{}; %>
-      <div class="report-filter"><select name="filters[<%= index %>][field]" aria-label="Filter field <%= index+1 %>">
+      <div class="report-filter" data-report-filter <%= index<=(selection?.filters?.length||0)?'':'hidden' %>><select name="filters[<%= index %>][field]" aria-label="Filter field <%= index+1 %>">
         <option value="">Field</option><% for(const field of Object.keys(dataset.fields)){ %>
           <option value="<%= field %>" <%= filter.field===field?'selected':'' %>><%= field.replaceAll('_',' ') %></option>
         <% } %></select><select name="filters[<%= index %>][operator]" aria-label="Filter comparison <%= index+1 %>">
@@ -29,6 +29,7 @@
         <% } %></select><input name="filters[<%= index %>][value]" value="<%= filter.value||'' %>"
           aria-label="Filter value <%= index+1 %>" placeholder="Value or YYYY-MM-DD"></div>
     <% } %>
+    <button class="button button--secondary" type="button" data-report-add-filter>Add another filter</button>
   </div>
   <div class="report-card"><h2>Summarize and visualize</h2><div class="report-controls">
     <% for(let position=0;position<3;position++){ %><label><%= position===0?'Group by':'Then group by' %>
@@ -62,3 +63,4 @@
     <button class="button button--secondary" type="submit" formaction="/reports/save">Save template</button></div>
 </form>
 <link rel="stylesheet" href="/reports.css?v=<%= assetVersion %>">
+<script defer src="/reports.js?v=<%= assetVersion %>"></script>

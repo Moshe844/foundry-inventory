@@ -31,7 +31,10 @@ test('Ask suggestions come only from registered, currently available capabilitie
     const examples=await discovery.suggestions(database,ctx);
     assert.equal(examples[0],'What can you help me do here?');
     assert.ok(capabilities.length>0);
-    assert.ok(capabilities.every((entry)=>registry.get(entry.name)?.discovery?.prompt===entry.prompt));
+    assert.ok(capabilities.every((entry)=>registry.get(entry.name)&&entry.prompt&&entry.label),
+      'every suggestion must resolve to a registered executable capability');
+    assert.ok(capabilities.some((entry)=>entry.name==='navigate.reports'),
+      'the report builder must be discoverable through the same registry');
     assert.ok(!capabilities.some((entry)=>entry.name==='communication.send_email'),
       'an unconnected mailbox must not be advertised');
     assert.ok(!capabilities.some((entry)=>entry.name==='shipping.labels'),
@@ -73,7 +76,9 @@ test('Ask suggestions come only from registered, currently available capabilitie
     await database.query('UPDATE users SET role=$2,permissions=$3 WHERE id=$1',
       [ctx.actorId,'staff',JSON.stringify(['VIEW'])]);
     const restricted=await discovery.available(database,ctx);
-    assert.ok(restricted.every((entry)=>entry.kind==='read'||entry.kind==='navigation'));
+    assert.ok(restricted.every((entry)=>entry.kind==='read'||entry.kind==='navigation'
+      ||entry.name==='report.template.create'),
+    'VIEW-only staff can save a private report, not mutate business records');
     assert.ok(!restricted.some((entry)=>entry.name==='read.payables'||entry.name==='navigate.connections'));
     const restrictedDirectory=await agent.get('/ask/capabilities');
     assert.equal(restrictedDirectory.status,200);

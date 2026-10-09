@@ -53,8 +53,10 @@ async function prepare(database,ctx,message,{provider}){
   const request={system,prompt:JSON.stringify({request:message,catalogue}),schema:SCHEMA,
     schemaName:'stockchief_governed_report'};
   for(let attempt=0;attempt<2;attempt++){
+    let proposed=null;
     try{
       const planned=await provider.complete(request);
+      proposed=planned.data;
       const spec=reports.normalize(planned.data,actor);
       const result=await reports.run(database,ctx,actor,spec,{limit:51});
       const visible=result.rows.slice(0,50),truncated=result.hasMore||result.rows.length>50;
@@ -66,9 +68,12 @@ async function prepare(database,ctx,message,{provider}){
         reportConfig:spec};
     }catch(error){
       if(error.code==='entitlement_required'||error.code==='rate_limited')throw error;
-      if(attempt===0){request.prompt=JSON.stringify({request:message,catalogue,
-        correction:'The previous plan failed validation. Choose only compatible registered fields, measures and sort.'});
+      if(attempt===0){request.prompt=JSON.stringify({request:message,catalogue,rejectedPlan:proposed,
+        validationError:String(error.message||'Report validation failed').slice(0,240),
+        correction:'Repair the previous plan against the exact validation error. Use only compatible registered fields, measures, filters, chart and sort. For grouped reports use columns=[]. Preserve the user request.'});
         continue;}
+      console.warn('[stockchief] governed Ask report failed',error.code||error.name||'unknown',
+        String(error.message||'').slice(0,180));
       return {status:'CLARIFY',answer:'I cannot build that exact report from the governed data currently available. Nothing was invented or changed.',
         rows:[],columns:[],handoff:{href:'/reports',label:'Browse available datasets'}};
     }

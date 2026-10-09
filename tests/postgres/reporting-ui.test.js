@@ -11,6 +11,7 @@ const catalog=require('../../src/domain/postgres-catalog-service');
 const locations=require('../../src/domain/postgres-location-service');
 const inventory=require('../../src/domain/postgres-inventory-engine');
 const reports=require('../../src/reports/postgres-service');
+const reportAsk=require('../../src/reports/postgres-ask');
 const reportRegistry=require('../../src/reports/postgres-registry');
 const scheduling=require('../../src/reports/postgres-scheduling');
 const reportExports=require('../../src/reports/exports');
@@ -73,6 +74,15 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
       measure:'on_hand',sort:'total',direction:'desc',chart:'bar'});
     assert.equal(Number(grouped.rows[0].total),12);
     assert.deepEqual(grouped.columns,['location','total']);
+    let reportAttempts=0;
+    const repaired=await reportAsk.prepare(database,ctx,'Group stock by location and sum units',{provider:{
+      async complete(input){reportAttempts++;
+        if(reportAttempts===2)assert.match(input.prompt,/Choose a displayed field to sort/);
+        return {data:{dataset:'stock',title:'Stock by location',columns:[],groups:['location'],
+          aggregate:'sum',measure:'on_hand',filters:[],sort:reportAttempts===1?'nonexistent':'total',
+          direction:'desc',chart:'bar'}};
+      }}});
+    assert.equal(reportAttempts,2);assert.equal(repaired.status,'ANSWERED');
     assert.throws(()=>reports.normalize({dataset:'payments',groups:['status'],aggregate:'sum',
       measure:'amount_minor',sort:'total'},actor),/currency/i);
     const askPage=await owner.get('/ask');
@@ -114,6 +124,9 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     const preview=await owner.post('/reports/run').type('form').send({_csrf:token,dataset:'stock',
       title:'Warehouse stock',columns:['product','sku','location','on_hand'],sort:'product',direction:'asc'});
     assert.equal(preview.status,200);assert.match(preview.text,/Copper Clamp/);
+    assert.match(preview.text,/href="\/reports\/builder\?draft=1"/);
+    const customize=await owner.get('/reports/builder?draft=1');assert.equal(customize.status,200);
+    assert.match(customize.text,/value="Warehouse stock"/);
     const saved=await owner.post('/reports/save').type('form').send({_csrf:token,dataset:'stock',
       title:'Warehouse stock',columns:['product','sku','location','on_hand'],sort:'product',direction:'asc',
       frequency:'daily',hour:'9'});

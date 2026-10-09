@@ -1,7 +1,7 @@
 <div class="page-head"><div><a class="back-link" href="/reports">Reports</a><h1><%= result.config.title %></h1>
   <p class="lede"><%= result.rows.length %><%= result.hasMore?' or more':'' %> displayed ·
     <%= result.provenance.source %> · checked <%= result.asOf %></p></div>
-  <div><a href="/reports/builder?dataset=<%= result.config.dataset %><%= saved?'&saved='+encodeURIComponent(saved.id):'' %>">Customize</a></div></div>
+  <div><a href="<%= saved?'/reports/builder?dataset='+encodeURIComponent(result.config.dataset)+'&saved='+encodeURIComponent(saved.id):'/reports/builder?draft=1' %>">Customize</a></div></div>
 <% if(result.config.chart!=='table'&&result.config.groups.length&&result.rows.length){
   const values=result.rows.map(row=>Number(row[result.columns.at(-1)])||0);
   const maximum=Math.max(1,...values.map(Math.abs)); %>

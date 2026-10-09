@@ -1,6 +1,6 @@
 <div class="rm-head"><a class="rm-head__back" href="/ask">← Ask StockChief</a><div class="rm-title"><div>
   <p class="rm-stamp">Available in this inventory</p><h1>What StockChief can do for you</h1>
-  <p class="rm-prose">These are real, registered abilities available to your plan and permissions. StockChief reads current records before answering and asks you to approve consequential changes.</p>
+  <p class="rm-prose">These are real, registered abilities permitted by your plan and role. Some need a matching business record or connected provider before they can run. StockChief checks that context and asks you to approve consequential changes.</p>
 </div></div></div>
 <div class="card measure ask-capabilities">
   <form method="get" action="/ask/capabilities" class="ask-capabilities__search">
@@ -9,7 +9,7 @@
     <button class="rm-btn" type="submit">Search</button>
     <% if (query) { %><a href="/ask/capabilities">Clear</a><% } %>
   </form>
-  <p class="rm-prose"><%= visibleCount %> of <%= total %> available abilities shown. You can ask in your own words; these prompts are starting points, not commands you must memorize.</p>
+  <p class="rm-prose"><%= visibleCount %> of <%= total %> registered abilities shown. Ask in your own words; these prompts are starting points, not commands to memorize.</p>
   <% groups.forEach(function(group){ if (!group.entries.length) return; %>
     <section class="ask-capabilities__group" aria-label="<%= group.title %>">
       <h2><%= group.title %></h2>

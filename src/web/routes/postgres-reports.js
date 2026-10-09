@@ -48,17 +48,20 @@ function createPostgresReportsRouter(database){
   }));
   router.get('/reports/builder',asyncRoute(async(req,res)=>{
     const actor=await actorFor(database,req.ctx);
-    const datasets=registry.list(actor),key=String(req.query.dataset||datasets[0]?.key||'');
+    const draft=req.query.draft==='1'&&req.session.reportDraft?.workspaceId===req.ctx.workspaceId
+      ?reports.normalize(req.session.reportDraft.definition,actor):null;
+    const datasets=registry.list(actor),key=String(draft?.dataset||req.query.dataset||datasets[0]?.key||'');
     const dataset=datasets.find((entry)=>entry.key===key);
     if(!dataset)return res.status(404).page('error',{title:'Dataset unavailable',status:404,
       message:'This report dataset is unavailable to your account.'});
     const saved=req.query.saved?await reports.load(database,req.ctx,actor,String(req.query.saved)):null;
     return res.page('reports/builder',{title:saved?'Edit report':'Build a report',nav:'accounting',
-      datasets,dataset,saved,draft:null});
+      datasets,dataset,saved,draft});
   }));
   router.post('/reports/run',asyncRoute(async(req,res)=>{
     const actor=await actorFor(database,req.ctx);const spec=source(req.body);
     const result=await reports.run(database,req.ctx,actor,spec,{limit:201});
+    req.session.reportDraft={workspaceId:req.ctx.workspaceId,definition:result.config};
     return res.page('reports/result',{title:result.config.title,nav:'accounting',result,saved:null});
   }));
   router.post('/reports/save',asyncRoute(async(req,res)=>{

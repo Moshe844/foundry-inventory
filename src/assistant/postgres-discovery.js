@@ -4,12 +4,32 @@ const registry=require('./postgres-capability-registry').registry;
 const permissions=require('../actions/permissions');
 const entitlements=require('../entitlements/postgres-service');
 
-function humanize(name){return name.split('.').at(-1).replace(/_/g,' ');}
+function humanize(name){return name.replaceAll('_',' ');}
+const SUBJECT=Object.freeze({sales_order:'customer order',purchase_order:'purchase order',
+  customer_return:'customer return',supplier_return:'supplier return',
+  customer_payment:'customer payment',customer_invoice:'customer invoice',
+  shipping:'shipment',warehouse:'warehouse work',catalog:'product',
+  connection:'connection',autopilot:'automatic work',accounting:'accounting',
+  settings:'settings',mail:'business message',inventory:'inventory',
+  transfer:'inventory transfer',report:'report'});
 function discoveryFor(contract){
   if(contract.discovery)return contract.discovery;
+  if(contract.kind==='navigation'){
+    const destination=require('../web/postgres-navigation').destinationById(contract.destinationId);
+    if(destination)return {label:`Open ${destination.label}`,prompt:`Open ${destination.label}`,rank:300};
+    if(contract.recordKind){const subject=SUBJECT[contract.recordKind]||humanize(contract.recordKind);
+      return {label:`Open a ${subject} record`,prompt:`Open my ${subject} record`,rank:340};}
+    return null;
+  }
+  if(contract.kind==='read'){
+    const subject=SUBJECT[contract.view]||humanize(contract.view||contract.name.split('.').at(-1));
+    return {label:`Review ${subject}`,prompt:`Show me ${subject}`,rank:150};
+  }
   if(contract.kind!=='mutation')return null;
-  const label=`${humanize(contract.name)} ${contract.recordKind?.replace(/_/g,' ')||contract.name.split('.')[0].replace(/_/g,' ')}`;
-  return {label:label[0].toUpperCase()+label.slice(1),prompt:`Help me ${label.toLowerCase()}`,
+  const [domain,operation]=contract.name.split('.');
+  const verb=humanize(operation),object=SUBJECT[domain]||humanize(contract.recordKind||domain);
+  const label=`${verb[0].toUpperCase()+verb.slice(1)} ${object}`;
+  return {label,prompt:`Help me ${verb} ${object}`,
     rank:160,commercialCapability:contract.commercialCapability||null};
 }
 
