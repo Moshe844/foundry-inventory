@@ -209,7 +209,8 @@ async function analyse(database, ctx, input) {
   const sheet=parsedWorkbook.sheets[sheetIndex];
   if(!sheet?.rows.length)throw new ValidationError('That source has no inventory rows.');
   const prior=(await database.query(`SELECT field_mappings,detected_type FROM import_plans
-    WHERE workspace_id=$1 AND source_hash=$2 AND status<>'CANCELLED' ORDER BY created_at DESC,id DESC LIMIT 1`,
+    WHERE workspace_id=$1 AND source_hash=$2 AND approval_status='APPROVED' AND status<>'CANCELLED'
+    ORDER BY created_at DESC,id DESC LIMIT 1`,
   [ctx.workspaceId,sourceHash])).rows[0];
   const modelProvider=input.provider||(require('../config').ai.configured?
     require('../ai/provider').createProviderUnobserved(require('../config').ai.provider,require('../config').ai.tier('fast')):null);

@@ -8,6 +8,16 @@ const control=require('../../src/assistant/postgres-control-plane');
 const capabilityPlans=require('../../src/assistant/postgres-capability-plans');
 const capabilityService=require('../../src/assistant/postgres-service');
 
+test('one multi-effect standing instruction is interpreted once, not as duplicate funded steps',()=>{
+  const selected=planner.parseSteps({steps:[
+    {capability:'policy.propose',arguments:[],dependsOn:[],continuesPending:false},
+    {capability:'policy.propose',arguments:[],dependsOn:[0],continuesPending:false}],
+  clarifyingQuestion:''});
+  planner.collapseRepeatedEffects(selected.steps);
+  assert.deepEqual(selected.steps.map((step)=>step.contract.name),['policy.propose']);
+  assert.deepEqual(selected.steps[0].dependsOn,[]);
+});
+
 test('failed model attempt is not treated as funding for its retry',async()=>{
   const attempts=[];
   const provider=capabilityService.fundedAskProvider({}, {}, {name:'test'},'ask:test',

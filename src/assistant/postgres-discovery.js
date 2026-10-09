@@ -5,6 +5,12 @@ const permissions=require('../actions/permissions');
 const entitlements=require('../entitlements/postgres-service');
 
 function humanize(name){return name.replaceAll('_',' ');}
+function outcomeFromDescription(description){
+  const clause=String(description||'').split(/[.;]/,1)[0].trim();
+  if(!clause)return '';
+  if(clause.length<=92)return clause;
+  return `${clause.slice(0,89).replace(/\s+\S*$/,'')}…`;
+}
 const SUBJECT=Object.freeze({sales_order:'customer order',purchase_order:'purchase order',
   customer_return:'customer return',supplier_return:'supplier return',
   customer_payment:'customer payment',customer_invoice:'customer invoice',
@@ -28,8 +34,8 @@ function discoveryFor(contract){
   if(contract.kind!=='mutation')return null;
   const [domain,operation]=contract.name.split('.');
   const verb=humanize(operation),object=SUBJECT[domain]||humanize(contract.recordKind||domain);
-  const label=`${verb[0].toUpperCase()+verb.slice(1)} ${object}`;
-  return {label,prompt:`Help me ${verb} ${object}`,
+  const label=outcomeFromDescription(contract.description)||`${verb[0].toUpperCase()+verb.slice(1)} ${object}`;
+  return {label,prompt:`Help me ${label[0].toLowerCase()+label.slice(1)}`,
     rank:160,commercialCapability:contract.commercialCapability||null};
 }
 

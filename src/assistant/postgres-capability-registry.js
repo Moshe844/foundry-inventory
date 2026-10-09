@@ -211,7 +211,7 @@ action('contact.create','Add a new supplier or customer business contact to this
 action('communication.send_email','Prepare a business email for review; sending requires a connected verified mailbox and explicit approval.',
   ['recipient','recipientKind','recipientEmail','recipientMode','subject','body','mailbox'],permissions.OPERATE,'send_email',
   {additionalCommercialCapabilities:['connection.email']});
-action('sales_order.create','Prepare ONE draft customer order without fulfillment or payment. For several products use orderLines JSON, preserving every SKU, quantity and per-unit price; for one product use sku, quantity and amount. Do not create separate orders for separate lines.',
+action('sales_order.create','Prepare ONE draft customer order without fulfillment or payment. For several products use orderLines JSON, preserving every SKU, quantity and price PER UNIT; for one product use sku, quantity and amount. Do not create separate orders for separate lines.',
   ['customer','sku','skuScope','quantity','orderLines','deliveryMethod','shipToAddress','location','orderDate','neededBy','amount','currency','reference'],
   permissions.MANAGE_SALES,'create_sales_order',{allowUnknownEntities:['customer'],
     resultReference:'salesOrderId',resultDisplayReference:'orderNumber',resultRecordKind:'sales_order'});
@@ -293,7 +293,10 @@ add('read.custom_report','Compose a governed report from PostgreSQL business rec
 add('policy.propose','Propose a lasting operating rule within StockChief’s registered policy domains and limits.',
   [],'policy',permissions.ADMIN,'owner_review',
   (service,db,ctx,text,_args,options)=>service.prepareInstruction(db,ctx,text,options),
-  async(_service,_db,_ctx,result)=>Boolean(result?.proposal?.id||result?.status==='CLARIFY'));
+  async(_service,_db,_ctx,result)=>Boolean(result?.proposal?.id||result?.status==='CLARIFY'),
+  // One typed instruction can contain several rule changes. Planning it twice
+  // would create duplicate proposals and reuse the same funded model request.
+  {singleEffectPerTarget:true});
 
 // The page catalogue is presentation metadata. Each destination is checked
 // against the real PostgreSQL router before it is offered by the navigator.

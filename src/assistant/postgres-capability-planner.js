@@ -121,17 +121,19 @@ function conciseClarification(value){
 
 function planningCatalogue(catalogue=registry,{compact=false}={}){
   const entries=catalogue.list();
-  const summary=(entry)=>entry.description.slice(0,compact?56:78);
+  const summary=(entry)=>entry.description.slice(0,compact?56:67);
   return {
     notation:'n=capability name; d=verified effect; a=allowed input names. All changes need approval.',
     mutations:entries.filter((entry)=>entry.kind==='mutation').map((entry)=>({
       n:entry.name,d:summary(entry),a:entry.fields.join(','),
       u:entry.commercialUnavailable?.length?'upgrade':undefined})),
     reads:entries.filter((entry)=>entry.kind==='read').map((entry)=>({
-      n:entry.name,d:entry.description.slice(0,compact?95:190),
+      n:entry.name,d:entry.description.slice(0,compact?95:105),
       u:entry.commercialUnavailable?.length?'upgrade':undefined})),
     navigation:entries.filter((entry)=>entry.kind==='navigation').map((entry)=>({
-      n:entry.name,d:entry.description.slice(0,compact?42:65)})),
+      n:entry.name,d:entry.destinationId
+        ?require('../web/postgres-navigation').destinationById(entry.destinationId)?.label||entry.name
+        :entry.recordKind?`Open ${entry.recordKind.replaceAll('_',' ')}`:entry.description.slice(0,42)})),
     policies:entries.filter((entry)=>entry.kind==='policy').map((entry)=>({
       n:entry.name,d:entry.description.slice(0,compact?60:85),
       domains:Object.fromEntries(Object.entries(require('../manager/postgres-policy-contracts').DEFINITIONS)
