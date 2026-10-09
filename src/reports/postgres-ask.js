@@ -41,6 +41,14 @@ const FOLLOWUP_SAVE_SCHEMA={type:'object',additionalProperties:false,
     hourUtc:{type:'integer',minimum:-1,maximum:23}}};
 const FIT_SCHEMA={type:'object',additionalProperties:false,required:['aligned','reason'],
   properties:{aligned:{type:'boolean'},reason:{type:'string',maxLength:180}}};
+const COMPOSED_EDIT_SCHEMA={type:'object',additionalProperties:false,
+  required:['chart','sort','direction','resultFilters'],properties:{
+    chart:{type:'string',enum:['table','bar','line']},sort:{type:'string'},
+    direction:{type:'string',enum:['asc','desc']},
+    resultFilters:{type:'array',maxItems:4,items:{type:'object',additionalProperties:false,
+      required:['field','operator','value'],properties:{field:{type:'string'},
+        operator:{type:'string',enum:['equals','greater_than','at_least','less_than','at_most','is_null','not_null']},
+        value:{type:'string'}}}}}};
 
 async function completeWithOutputRetry(complete,request){
   try{return await complete(request);}
@@ -164,6 +172,28 @@ async function prepare(database,ctx,message,{provider,priorReport=null}){
           prompt:JSON.stringify({request:message,definition:spec,initialObjection:fit.data?.reason||'',
             renderer:{sourceRecordDrilldown:Boolean(spec.groups.length||spec.summary),
               detailSourceLinks:!spec.groups.length&&!spec.summary,
+              exportAfterSave:['csv','xlsx','pdf']}})});
+      }
+      if(fit.data?.aligned!==true&&spec.dataset==='composed'){
+        // A full-catalogue replan can repeatedly omit a small follow-up edit.
+        // Ask for only the bounded presentation and post-aggregation fields,
+        // then normalize and independently verify the complete report again.
+        const allowedFields=[...spec.metrics.map((metric)=>metric.alias),
+          ...(spec.formula?['calculated']:[])];
+        const edited=await completeWithOutputRetry(provider.complete.bind(provider),{
+          schema:COMPOSED_EDIT_SCHEMA,schemaName:'stockchief_governed_report_composed_edit',
+          system:'Repair only the presentation and post-aggregation result filters of this governed composed report. Return all four required fields. A request limiting grouped results by a calculated or aggregated measure requires a resultFilter on that exact selected alias; source filters do not replace it. Preserve existing result filters unless the owner changes them. Sort by calculated for the formula value, or by a selected metric alias for that measure; sorting by the dimension orders labels. Use only allowed fields and a numeric filter value. Do not alter datasets, source metrics, formula, currency, or business data.',
+          prompt:JSON.stringify({request:message,previousReport:verifiedPrior,
+            currentReport:spec,verifierObjection:fit.data?.reason||'',
+            allowedSortFields:[spec.dimension,...allowedFields],allowedResultFields:allowedFields}),
+          maxOutputTokens:1000});
+        spec=reports.normalize({...spec,chart:edited.data?.chart,
+          sort:edited.data?.sort,direction:edited.data?.direction,
+          resultFilters:edited.data?.resultFilters},actor);
+        fit=await completeWithOutputRetry(fitProvider,{...fitRequest,
+          prompt:JSON.stringify({request:message,previousReport:verifiedPrior,definition:spec,
+            composition:compositions.find((entry)=>entry.dimension===spec.dimension),
+            renderer:{sourceRecordDrilldown:true,detailSourceLinks:false,
               exportAfterSave:['csv','xlsx','pdf']}})});
       }
       if(fit.data?.aligned!==true)throw new Error(`Report does not match the request: ${String(fit.data?.reason||'unverified').slice(0,180)}`);

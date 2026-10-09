@@ -206,6 +206,32 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
       {field:'ordered',operator:'greater_than',value:'3'}]};
     assert.equal((await reports.run(database,ctx,actor,excluded)).rows.length,0);
     assert.equal(await reports.countAtMost(database,ctx,actor,excluded,10),0);
+    let composedEditCalls=0;
+    const editProvider={async complete(input){
+      const data=JSON.parse(input.prompt);
+      if(input.schemaName==='stockchief_governed_report')return {data:{...combinedDefinition,
+        chart:'table',sort:'sku',resultFilters:[]}};
+      if(input.schemaName==='stockchief_governed_report_fit')return {data:{
+        aligned:data.definition.chart==='bar'&&data.definition.sort==='calculated'
+          &&data.definition.resultFilters?.some((filter)=>filter.field==='ordered'
+            &&filter.operator==='greater_than'&&filter.value==='2'),
+        reason:'The requested measure sort and post-aggregation filter are missing.'}};
+      if(input.schemaName==='stockchief_governed_report_composed_edit'){
+        composedEditCalls++;
+        assert.deepEqual(data.allowedResultFields,['ordered','profit','calculated']);
+        return {data:{chart:'bar',sort:'calculated',direction:'desc',resultFilters:[
+          {field:'ordered',operator:'greater_than',value:'2'}]}};
+      }
+      throw new Error(`Unexpected model request ${input.schemaName}`);
+    }};
+    const repairedFollowup=await reportAsk.prepare(database,ctx,
+      'Make that same report a bar chart, sort by calculated total high to low, and show only groups with more than two ordered units.',
+      {provider:editProvider,priorReport:combinedDefinition});
+    assert.equal(repairedFollowup.status,'ANSWERED');
+    assert.equal(repairedFollowup.reportConfig.sort,'calculated');
+    assert.deepEqual(repairedFollowup.reportConfig.resultFilters,[
+      {field:'ordered',operator:'greater_than',value:'2'}]);
+    assert.equal(composedEditCalls,1);
     assert.throws(()=>reports.normalize({...combinedDefinition,resultFilters:[
       {field:'sku',operator:'greater_than',value:'0'}]},actor),/selected measure/i);
     assert.throws(()=>reports.normalize({...combinedDefinition,resultFilters:[
