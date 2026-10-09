@@ -133,6 +133,15 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     assert.equal(moneyChart.status,'ANSWERED');
     assert.equal(moneyChart.rows[0].total,'$7.50');
     assert.deepEqual(moneyChart.chartAmounts,[750]);
+    const savedChart=await reportAsk.composeForSave(database,ctx,
+      'Save that exact value-by-customer bar chart and schedule it Mondays at 09:00 UTC',{
+        priorReport:moneyChart.reportConfig,provider:{async complete(input){
+          assert.equal(input.schemaName,'stockchief_governed_report_followup_save');
+          return {data:{title:'Weekly quoted value',frequency:'weekly',hourUtc:9}};
+        }}});
+    assert.deepEqual(savedChart.definition,{...moneyChart.reportConfig,title:'Weekly quoted value'});
+    assert.equal(savedChart.schedule.frequency,'weekly');
+    assert.equal(savedChart.schedule.hour,9);
     await database.query(`UPDATE sales_order_lines SET unit_price_minor=NULL
       WHERE workspace_id=$1 AND sales_order_id=$2`,[ctx.workspaceId,lineOrder.salesOrderId]);
     const unpriced=await reports.run(database,ctx,actor,{dataset:'sales_orders',

@@ -76,7 +76,8 @@ async function composeForSave(database,ctx,message,{provider,priorReport=null}){
   if(!provider?.complete)return {clarify:'I cannot interpret a new report request while AI is unavailable. Open Reports to build it visually.'};
   const actor=await actorFor(database,ctx);
   if(!actor)return {clarify:'This inventory membership is unavailable.'};
-  const refersBack=/\b(?:this|that|same|previous|earlier|last|exact)\b[^.!?]{0,55}\breport\b/i.test(message);
+  const refersBack=/\b(?:this|that|same|previous|earlier|last|exact)\b[^.!?]{0,80}\b(?:report|chart|graph|analysis|table|visualization)\b/i.test(message)
+    ||Boolean(priorReport&&/\b(?:save|schedule)\s+(?:it|this|that)\b/i.test(message));
   if(refersBack&&!priorReport)return {clarify:'Which earlier report should I save? Please open it or describe its dataset, calculation and layout. Nothing was scheduled.'};
   let definition;let planned;
   const schedulingRules='Set frequency=none when no delivery was requested. Daily delivery needs an explicitly stated UTC hour; use hourUtc=-1 if absent or only local time was stated. Weekly delivery is currently Monday only; if another day was requested set hourUtc=-1 so the executor clarifies. A valid unscheduled report uses hourUtc=0.';
