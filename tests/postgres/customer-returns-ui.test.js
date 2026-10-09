@@ -37,7 +37,7 @@ test('real Chromium completes a PostgreSQL customer return without splitting inv
     await page.goto(`${base}/register`); await page.getByLabel('Business name').fill('Return Certification Business');
     await page.getByLabel('Your name').fill('Return Owner');
     await page.getByLabel('Work email').fill('returns-ui@example.test');
-    await page.getByLabel('Password').fill('returns-password');
+    await page.locator('input[name="password"]').fill('returns-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('returns-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`), page.getByRole('button', { name: 'Create account' }).click()]);
     const identity = (await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id FROM workspaces w
       JOIN users u ON u.workspace_id=w.id JOIN accounts a ON a.id=u.account_id

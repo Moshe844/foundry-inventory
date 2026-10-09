@@ -17,7 +17,7 @@ async function register(page, base, business, email) {
   await page.getByLabel('Business name').fill(business);
   await page.getByLabel('Your name').fill(`${business} Owner`);
   await page.getByLabel('Work email').fill(email);
-  await page.getByLabel('Password').fill('planning-password');
+  await page.locator('input[name="password"]').fill('planning-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('planning-password');
   await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
 }
 

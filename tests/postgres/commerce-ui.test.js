@@ -25,7 +25,7 @@ test('real Chromium runs PostgreSQL purchasing, receiving, supplier money, custo
     const base=`http://127.0.0.1:${server.address().port}`;
     await page.goto(`${base}/register`);await page.getByLabel('Business name').fill('Commerce UI Business');
     await page.getByLabel('Your name').fill('Commerce Owner');await page.getByLabel('Work email').fill('commerce-ui@example.test');
-    await page.getByLabel('Password').fill('commerce-password');
+    await page.locator('input[name="password"]').fill('commerce-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('commerce-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
     const identity=(await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id FROM workspaces w
       JOIN users u ON u.workspace_id=w.id JOIN accounts a ON a.id=u.account_id WHERE a.email='commerce-ui@example.test'`)).rows[0];
@@ -37,7 +37,7 @@ test('real Chromium runs PostgreSQL purchasing, receiving, supplier money, custo
     await page.getByLabel('Name',{exact:true}).fill('Address Required Customer');
     await page.getByLabel('Email for order and shipping messages').fill('address-required@example.test');
     await page.getByLabel(/Default shipping address/).fill('20 Default Road, Albany, NY 12207, United States');
-    await Promise.all([page.waitForURL(`${base}/orders`),page.getByRole('button',{name:'Create customer'}).click()]);
+    await Promise.all([page.waitForURL(`${base}/customers`),page.getByRole('button',{name:'Create customer'}).click()]);
     const addressCustomer=(await database.query(`SELECT id FROM customers WHERE workspace_id=$1 AND name=$2`,
       [ctx.workspaceId,'Address Required Customer'])).rows[0];
     await page.goto(`${base}/orders/new?customer=${addressCustomer.id}`);
@@ -137,6 +137,7 @@ test('real Chromium runs PostgreSQL purchasing, receiving, supplier money, custo
     assert.ok(Math.abs(customerInputWidths[0]-customerInputWidths[1])<=2,'Customer form columns must align.');
     await customerForm.getByLabel('Name').fill('Pickup Customer');await customerForm.getByLabel('Email').fill('pickup@example.test');
     await Promise.all([page.waitForNavigation(),customerForm.getByRole('button',{name:'Add customer'}).click()]);
+    await page.goto(`${base}/orders`);
     await page.locator('.owner-manual').first().locator('summary').click();
     await page.getByLabel('Customer',{exact:true}).selectOption({label:'Pickup Customer'});
     await page.getByLabel('Product / SKU').selectOption(item.skuIds[0]);await page.getByLabel('Quantity').fill('4');

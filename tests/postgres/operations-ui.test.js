@@ -14,7 +14,7 @@ const request=require('supertest');
 async function register(page,base,business,email){
   await page.goto(`${base}/register`);await page.getByLabel('Business name').fill(business);
   await page.getByLabel('Your name').fill(`${business} Owner`);await page.getByLabel('Work email').fill(email);
-  await page.getByLabel('Password').fill('operations-password');
+  await page.locator('input[name="password"]').fill('operations-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('operations-password');
   await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
 }
 

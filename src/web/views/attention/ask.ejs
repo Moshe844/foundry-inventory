@@ -432,7 +432,8 @@
     <p class="rm-stamp" style="margin-top:14px;color:var(--copper)">
       Broader free-form language needs a model connection. Grounded questions and deterministic workflows still work without one.
     </p>
-  <% } else if (!started) { %>
+  <% } %>
+  <% if (!started) { %>
     <div class="rm-suggest">
       <% examples.forEach(function (example) { %>
         <a href="<%= suggestionHref(example) %>"><%= example %></a>

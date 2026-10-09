@@ -82,15 +82,18 @@ test('real Chromium completes PostgreSQL password recovery without revealing whe
     const job=(await database.query(`SELECT payload FROM stockchief_runtime.jobs WHERE kind='system.email-send'`)).rows[0];
     const message=email.unseal(job.payload);const token=new URL(message.text.match(/https:\/\/\S+/)[0]).searchParams.get('token');
     await page.goto(`${base}/reset-password?token=${encodeURIComponent(token)}`);
-    await page.getByLabel('New password').evaluate((element)=>element.removeAttribute('minlength'));
-    await page.getByLabel('New password').fill('12345677');
+    await page.locator('input[name="password"]').evaluate((element)=>element.removeAttribute('minlength'));
+    await page.locator('input[name="password"]').fill('12345677');
+    await page.getByLabel('Confirm new password').evaluate((element)=>element.removeAttribute('minlength'));
+    await page.getByLabel('Confirm new password').fill('12345677');
     await page.getByRole('button',{name:'Change password'}).click();
     assert.match(await page.locator('body').innerText(),/at least 12 characters/i);
     assert.ok(await recovery.inspect(database,token));
-    await page.getByLabel('New password').fill('new-browser-password');
+    await page.locator('input[name="password"]').fill('new-browser-password');
+    await page.getByLabel('Confirm new password').fill('new-browser-password');
     await Promise.all([page.waitForURL(`${base}/login`),page.getByRole('button',{name:'Change password'}).click()]);
     assert.match(await page.locator('body').innerText(),/password has been changed/i);
-    await page.getByLabel('Email').fill(business.email);await page.getByLabel('Password').fill('new-browser-password');
+    await page.getByLabel('Email').fill(business.email);await page.locator('input[name="password"]').fill('new-browser-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('new-browser-password');
     const [response]=await Promise.all([page.waitForResponse((candidate)=>candidate.url()===`${base}/`),
       page.waitForURL(`${base}/`),page.getByRole('button',{name:'Sign in'}).click()]);
     assert.equal(response.status(),200);assert.match(await page.locator('body').innerText(),/Your inventory is ready|Home/i);

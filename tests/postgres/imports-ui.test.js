@@ -34,7 +34,7 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
     await page.getByLabel('Business name').fill('Import Business');
     await page.getByLabel('Your name').fill('Import Owner');
     await page.getByLabel('Work email').fill('imports-pg@example.test');
-    await page.getByLabel('Password').fill('imports-password');
+    await page.locator('input[name="password"]').fill('imports-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('imports-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
     await page.goto(`${base}/locations`);
     await page.getByRole('button',{name:'Add your first location'}).click();
@@ -60,6 +60,30 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
       FROM items i JOIN skus s ON s.item_id=i.id LEFT JOIN balances b ON b.sku_id=s.id
       LEFT JOIN movements m ON m.sku_id=s.id WHERE i.workspace_id=$1`,[identity.workspace_id])).rows[0];
     assert.deepEqual(truth,{items:'1',skus:'2',units:'12',ledger_units:'12'});
+
+    // A supplier contact CSV named like inventory must create suppliers, never products.
+    await page.goto(`${base}/imports`);
+    const supplierSource=Buffer.from('Vendor,Contact,Email,Phone,Terms\nVoltEdge Supply,Ada,ada@example.test,555-1000,Net 30\nDailyCraft Wholesale,Ben,ben@example.test,555-2000,Net 15\n');
+    await page.locator('input[type="file"][name="file"]').setInputFiles({
+      name:'small_inventory.csv',mimeType:'text/csv',buffer:supplierSource});
+    await Promise.all([page.waitForURL(/\/imports\/imp_/),page.getByRole('button',{name:'Read the file'}).click()]);
+    assert.match(await page.locator('main').innerText(),/recognized a supplier directory/i);
+    assert.doesNotMatch(await page.locator('main').innerText(),/opening units|create or match 2 valid rows/i);
+    assert.equal((await database.query('SELECT COUNT(*)::int AS count FROM suppliers WHERE workspace_id=$1',
+      [identity.workspace_id])).rows[0].count,0);
+    const supplierPlanId=page.url().split('/').at(-1);
+    // Older previews that misclassified Vendor as Product are safely repaired in place.
+    await database.query(`UPDATE import_plans SET transformations='{}'::jsonb,field_mappings='{"name":0}'::jsonb
+      WHERE id=$1`,[supplierPlanId]);
+    await page.reload();
+    assert.match(await page.locator('main').innerText(),/recognized a supplier directory/i);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve 2 suppliers'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Import and verify suppliers'}).click()]);
+    assert.match(await page.locator('main').innerText(),/2 supplier records created/i);
+    assert.equal((await database.query('SELECT COUNT(*)::int AS count FROM suppliers WHERE workspace_id=$1',
+      [identity.workspace_id])).rows[0].count,2);
+    assert.equal((await database.query('SELECT COUNT(*)::int AS count FROM items WHERE workspace_id=$1',
+      [identity.workspace_id])).rows[0].count,1);
 
     await page.goto(`${base}/onboarding?add=1`);
     await page.getByLabel('Inventory spreadsheets').setInputFiles({name:'opening-stock.csv',mimeType:'text/csv',buffer:source});
@@ -224,7 +248,7 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
     await other.getByLabel('Business name').fill('Other Import Business');
     await other.getByLabel('Your name').fill('Other Owner');
     await other.getByLabel('Work email').fill('other-imports-pg@example.test');
-    await other.getByLabel('Password').fill('other-import-password');
+    await other.locator('input[name="password"]').fill('other-import-password');if(await other.locator('input[name="confirmPassword"]').count())await other.locator('input[name="confirmPassword"]').fill('other-import-password');
     await Promise.all([other.waitForURL(`${base}/onboarding`),other.getByRole('button',{name:'Create account'}).click()]);
     const otherIdentity=(await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id FROM workspaces w
       JOIN users u ON u.workspace_id=w.id JOIN accounts a ON a.id=u.account_id

@@ -45,7 +45,7 @@ test('PostgreSQL provider discovery exact-maps safe records, queues signed chang
     const base=`http://127.0.0.1:${server.address().port}`;
     await page.goto(`${base}/register`);await page.getByLabel('Business name').fill('Provider Sync Business');
     await page.getByLabel('Your name').fill('Provider Owner');await page.getByLabel('Work email').fill('provider-sync@example.test');
-    await page.getByLabel('Password').fill('provider-sync-password');
+    await page.locator('input[name="password"]').fill('provider-sync-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('provider-sync-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
     const identity=(await database.query(`SELECT workspace.id AS workspace_id,user_record.id AS actor_id
       FROM workspaces workspace JOIN users user_record ON user_record.workspace_id=workspace.id

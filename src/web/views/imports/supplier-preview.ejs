@@ -1,0 +1,37 @@
+<div class="page-head"><div class="titles"><a class="back-link" href="/imports">Bring data in</a>
+  <h1>Review suppliers from <%= plan.sourceName %></h1>
+  <div class="page-sub"><%= plan.recordsDetected %> rows read · <%= plan.recordsValid %> ready · <%= plan.recordsInvalid %> need attention</div>
+</div><div class="page-actions"><span class="badge badge--<%= plan.status==='SUCCEEDED'?'ok':'muted' %>"><%= plan.status %></span></div></div>
+<div class="notice section"><strong>StockChief recognized a supplier directory.</strong>
+  Names, contacts and payment terms will create supplier records, not products or stock. Nothing changes until you approve and run this preview.</div>
+<% if(duplicatePlans.length&&plan.status!=='SUCCEEDED'){ %><div class="notice notice--warn section">
+  This exact file was already imported. <a href="/imports/<%= duplicatePlans[0].id %>">See the completed import</a>.</div><% } %>
+<% if(run){ %><div class="card section"><div class="card-head"><h2>Reconciliation</h2>
+  <span class="badge badge--<%= run.verified?'ok':'danger' %>"><%= run.verified?'Verified':'Not verified' %></span></div>
+  <div class="card-body"><p><%= run.rowsImported %> supplier records created.</p>
+  <% run.checks.forEach(function(check){ %><p><%= check.name %>: expected <%= check.expected %>, found <%= check.observed %>.</p><% }) %></div>
+  <div class="card-foot"><a class="btn btn--primary" href="/suppliers">See suppliers</a></div></div><% }else{ %>
+  <div class="card section"><div class="card-head"><h2>What will happen</h2></div><div class="card-body">
+    <p>StockChief will add <%= plan.recordsValid %> new suppliers. Existing or invalid rows will not be changed. Review the names and contact details below.</p>
+    <% plan.warnings.forEach(function(warning){ %><p class="muted"><%= warning %></p><% }) %>
+  </div><div class="card-foot"><div class="btn-row">
+    <% if(plan.approvalStatus==='APPROVED'){ %><form method="post" action="/imports/<%= plan.id %>/run">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Import and verify suppliers</button></form>
+    <% }else{ %><form method="post" action="/imports/<%= plan.id %>/approve">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>">
+      <button class="btn btn--primary" type="submit" <%= !plan.recordsValid||duplicatePlans.length?'disabled':'' %>>Approve <%= plan.recordsValid %> suppliers</button></form><% } %>
+    <form method="post" action="/imports/<%= plan.id %>/cancel"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <button class="btn btn--ghost" type="submit">Cancel</button></form>
+  </div></div></div>
+<% } %>
+<div class="card section"><div class="card-head"><h2>Every supplier row</h2></div>
+  <div class="table-scroll"><table class="table table--tight"><thead><tr><th>Row</th><th>Supplier</th><th>Contact</th><th>Email</th><th>Phone</th><th>Terms</th><th>Result</th></tr></thead><tbody>
+  <% rows.forEach(function(row){ %><tr class="<%= row.status==='INVALID'?'is-warn-row':'' %>">
+    <td><%= row.rowNumber %></td><td><%= row.parsed.name||'—' %></td><td><%= row.parsed.contactName||'—' %></td>
+    <td><%= row.parsed.email||'—' %></td><td><%= row.parsed.phone||'—' %></td><td><%= row.parsed.paymentTerms||'—' %></td>
+    <td><span class="badge badge--<%= row.status==='IMPORTED'?'ok':row.status==='INVALID'?'danger':'muted' %>"><%= row.status %></span>
+      <% row.problems.forEach(function(problem){ %><div class="muted"><%= problem.message %></div><% }) %></td>
+  </tr><% }) %></tbody></table></div>
+  <% if(plan.recordsDetected>pageSize){ %><div class="card-foot"><div class="btn-row"><% if(page>1){ %><a class="btn btn--sm" href="?page=<%= page-1 %>">Previous</a><% } %>
+    <span>Page <%= page %></span><% if(rows.length===pageSize){ %><a class="btn btn--sm" href="?page=<%= page+1 %>">Next</a><% } %></div></div><% } %>
+</div>

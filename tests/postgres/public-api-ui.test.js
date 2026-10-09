@@ -25,7 +25,7 @@ test('real Chromium creates, exercises and revokes a scoped PostgreSQL inventory
     await page.getByLabel('Business name').fill('API Business');
     await page.getByLabel('Your name').fill('API Owner');
     await page.getByLabel('Work email').fill('api-owner@example.test');
-    await page.getByLabel('Password').fill('api-owner-password');
+    await page.locator('input[name="password"]').fill('api-owner-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('api-owner-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
     await page.goto(`${base}/locations`);await page.getByRole('button',{name:'Add your first location'}).click();
     await page.getByLabel('Name').fill('API Warehouse');

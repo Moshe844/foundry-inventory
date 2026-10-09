@@ -233,6 +233,8 @@ function requireConfigured(db) {
  */
 function requireAuth(req, res, next) {
   if (!req.user) {
+    if(req.account?.plan==='commercial_pending'&&req.accepts('html'))
+      return res.redirect(req.account.email_verified_at?'/complete-signup':'/verify-email/pending');
     if (req.account && req.accepts('html')) return res.redirect('/inventories');
     if (req.accepts('html')) {
       const target = encodeURIComponent(req.originalUrl || '/');

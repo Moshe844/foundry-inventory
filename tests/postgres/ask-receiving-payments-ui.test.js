@@ -40,7 +40,7 @@ const provider={name:'fixture',model:'fixture',async complete(request){
 async function register(page,base){
   await page.goto(`${base}/register`);await page.getByLabel('Business name').fill('Ask Receiving Business');
   await page.getByLabel('Your name').fill('Receiving Owner');await page.getByLabel('Work email').fill('ask-receiving@example.test');
-  await page.getByLabel('Password').fill('ask-receiving-password');
+  await page.locator('input[name="password"]').fill('ask-receiving-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('ask-receiving-password');
   await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
 }
 

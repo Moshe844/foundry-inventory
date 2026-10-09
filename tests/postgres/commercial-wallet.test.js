@@ -293,7 +293,7 @@ test('approved commercial foundation: real PostgreSQL, concurrency, ledger and C
   try{const page=await browser.newPage();const base=`http://127.0.0.1:${server.address().port}`;
    await page.goto(`${base}/pricing`);assert.equal(await page.getByText('View usage details',{exact:true}).count(),4);
    assert.doesNotMatch(await page.locator('body').innerText(),/AI communication drafts|Routine auto-send|Business-email understanding/);
-   await page.goto(`${base}/login`);await page.getByLabel('Email').fill('wallet@example.test');await page.getByLabel('Password').fill('wallet-password-long');
+   await page.goto(`${base}/login`);await page.getByLabel('Email').fill('wallet@example.test');await page.locator('input[name="password"]').fill('wallet-password-long');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('wallet-password-long');
    await Promise.all([page.waitForURL(`${base}/`),page.getByRole('button',{name:'Sign in'}).click()]);await page.goto(`${base}/billing`);
    assert.equal(await page.locator('[data-usage-category]').count(),2);assert.match(await page.locator('body').innerText(),/Plan & Usage/);
    const buy=page.locator('form[action="/billing/buy-more"] button').first();await buy.locator('..').locator('..').evaluate(e=>e.open=true);assert.equal(await buy.isDisabled(),true);

@@ -27,7 +27,7 @@ test('Connections browser shows launch-qualified providers and retains excluded 
     await page.getByLabel('Business name').fill('Visible Connections');
     await page.getByLabel('Your name').fill('Connection Owner');
     await page.getByLabel('Work email').fill('visible-connections@example.test');
-    await page.getByLabel('Password').fill('connections-password');
+    await page.locator('input[name="password"]').fill('connections-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('connections-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
     const owner=(await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id FROM workspaces w
       JOIN users u ON u.workspace_id=w.id WHERE w.name='Visible Connections'`)).rows[0];

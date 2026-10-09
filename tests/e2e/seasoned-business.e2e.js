@@ -72,7 +72,7 @@ test('a six-month business is managed through real screens as the calendar moves
   page.on('pageerror',(error)=>errors.push(error.message));
   await page.goto(`${base}/login`);
   await page.getByLabel('Email',{exact:true}).fill(state.email);
-  await page.getByLabel('Password',{exact:true}).fill(state.password);
+  await page.locator('input[name="password"]').fill(state.password);
   await submit(page,page.getByRole('button',{name:'Sign in',exact:true}));
 
   let orderUrl;
@@ -293,7 +293,7 @@ test('a stalled instruction reader fails visibly without guessing stock or losin
   page.setDefaultTimeout(15000);
   await page.goto(`${base}/login`);
   await page.getByLabel('Email',{exact:true}).fill(state.email);
-  await page.getByLabel('Password',{exact:true}).fill(state.password);
+  await page.locator('input[name="password"]').fill(state.password);
   await submit(page,page.getByRole('button',{name:'Sign in',exact:true}));
   await page.goto(`${base}/actions`);
   const instruction='Receive some Weekend Bestseller stock into Main Warehouse';

@@ -50,7 +50,7 @@ test('PostgreSQL core pages render and expose only live local navigation and for
     await page.getByLabel('Business name').fill('Surface Audit');
     await page.getByLabel('Your name').fill('Surface Owner');
     await page.getByLabel('Work email').fill('surface-audit@example.test');
-    await page.getByLabel('Password').fill('surface-audit-password');
+    await page.locator('input[name="password"]').fill('surface-audit-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('surface-audit-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
     const missing=[];
     await page.goto(`${base}/everything`);

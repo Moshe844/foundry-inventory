@@ -17,7 +17,7 @@ const {newId,nowIso}=require('../../src/lib/util');
 async function register(page,base,business,email){
   await page.goto(`${base}/register`);await page.getByLabel('Business name').fill(business);
   await page.getByLabel('Your name').fill(`${business} Owner`);await page.getByLabel('Work email').fill(email);
-  await page.getByLabel('Password').fill('ask-mail-password');
+  await page.locator('input[name="password"]').fill('ask-mail-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('ask-mail-password');
   await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
 }
 

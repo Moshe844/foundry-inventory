@@ -39,7 +39,7 @@ test('weekly purchasing decisions and 150-order allocation use complete real bus
   page.on('pageerror',(error) => errors.push(error.message));
   await page.goto(`${base}/login`);
   await page.getByLabel('Email',{exact:true}).fill(state.email);
-  await page.getByLabel('Password',{exact:true}).fill(state.password);
+  await page.locator('input[name="password"]').fill(state.password);
   await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Sign in',exact:true}).click()]);
 
   await context.test('the supplier screen includes more than twelve orders, overdue non-delivery and late full completion',async () => {
@@ -219,7 +219,7 @@ test('weekly purchasing decisions and 150-order allocation use complete real bus
     const stale = await browser.newPage();
     await stale.goto(`${base}/login`);
     await stale.getByLabel('Email',{exact:true}).fill(state.email);
-    await stale.getByLabel('Password',{exact:true}).fill(state.password);
+    await stale.locator('input[name="password"]').fill(state.password);
     await Promise.all([stale.waitForNavigation(),stale.getByRole('button',{name:'Sign in',exact:true}).click()]);
     await stale.goto(`${base}${reviewHref}`);
     await page.getByLabel('Corrected quantity — Allocation Acceptance Stock',{exact:true}).fill('59');

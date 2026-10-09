@@ -48,7 +48,7 @@ test('real Chromium queues hosted payments, posts signed results once, and fence
 
     await page.goto(`${base}/register`);await page.getByLabel('Business name').fill('Payment Certification');
     await page.getByLabel('Your name').fill('Payment Owner');await page.getByLabel('Work email').fill('payments-pg@example.test');
-    await page.getByLabel('Password').fill('payments-password');
+    await page.locator('input[name="password"]').fill('payments-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('payments-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
     const identity=(await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id FROM workspaces w
       JOIN users u ON u.workspace_id=w.id JOIN accounts a ON a.id=u.account_id WHERE a.email='payments-pg@example.test'`)).rows[0];

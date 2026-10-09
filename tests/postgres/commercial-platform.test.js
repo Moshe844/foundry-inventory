@@ -381,7 +381,8 @@ test('public, auth and invitation journeys work in desktop and mobile Chromium',
     assert.doesNotMatch(await page.locator('.plan-ladder').innerText(),/\b(?:kits|SSO|EDI)\b|document understanding|AI email drafting/i);
     assert.equal(await page.getByRole('button',{name:/Annual/}).count(),0);
     assert.match(await page.locator('.plan-card').nth(1).innerText(),/billed monthly/i);
-    assert.match(await page.getByRole('link',{name:'Choose Growth'}).getAttribute('href'),/plan=growth.*interval=monthly/);
+    assert.equal(await page.getByRole('link',{name:'Choose Growth'}).count(),0);
+    assert.match(await page.locator('#growth .plan-card__action').innerText(),/Signup coming soon/);
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),true);
     await page.goto(`${base}/contact`);assert.match(await page.locator('body').innerText(),/person building the product/i);
     assert.equal(await page.getByText(/Talk to sales/i).count(),0);
@@ -410,7 +411,7 @@ test('public, auth and invitation journeys work in desktop and mobile Chromium',
     email:'starter-owner@example.test',password:'starter-password'});await subscribe(database,gated.accountId,'starter');
   const gatedContext=await browser.newContext();const gatedPage=await gatedContext.newPage();
   await gatedPage.goto(`${base}/login?next=${encodeURIComponent('//attacker.example/steal-session')}`);
-  await gatedPage.getByLabel('Email').fill('starter-owner@example.test');await gatedPage.getByLabel('Password').fill('starter-password');
+  await gatedPage.getByLabel('Email').fill('starter-owner@example.test');await gatedPage.locator('input[name="password"]').fill('starter-password');if(await gatedPage.locator('input[name="confirmPassword"]').count())await gatedPage.locator('input[name="confirmPassword"]').fill('starter-password');
   await Promise.all([gatedPage.waitForURL(`${base}/`),gatedPage.getByRole('button',{name:'Sign in'}).click()]);
   await gatedPage.goto(`${base}/register?plan=pro`);await gatedPage.waitForURL(`${base}/settings`);
   // Redirect identity and durable account state are the security contract;
@@ -473,7 +474,7 @@ test('public, auth and invitation journeys work in desktop and mobile Chromium',
   await Promise.all([gatedPage.waitForURL(/\/login$/),confirmation.getByRole('button',{name:'Sign out all devices'}).click()]);
   assert.equal(Number((await database.query(`SELECT COUNT(*) AS count FROM stockchief_runtime.sessions
     WHERE data->>'accountId'=$1`,[gated.accountId])).rows[0].count),0);
-  await gatedPage.getByLabel('Email').fill('starter-owner@example.test');await gatedPage.getByLabel('Password').fill('starter-password');
+  await gatedPage.getByLabel('Email').fill('starter-owner@example.test');await gatedPage.locator('input[name="password"]').fill('starter-password');if(await gatedPage.locator('input[name="confirmPassword"]').count())await gatedPage.locator('input[name="confirmPassword"]').fill('starter-password');
   await Promise.all([gatedPage.waitForURL(`${base}/`),gatedPage.getByRole('button',{name:'Sign in'}).click()]);
   await database.query(`UPDATE stockchief_runtime.sessions SET expires_at=$2 WHERE data->>'accountId'=$1`,[gated.accountId,Date.now()-1000]);
   await gatedPage.goto(`${base}/billing`);assert.match(gatedPage.url(),/\/login\?next=%2Fbilling$/);
@@ -512,7 +513,7 @@ test('paid-workspace signup verifies email before checkout and never provisions 
     const unselectedContext=await browser.newContext();const unselected=await unselectedContext.newPage();
     await unselected.goto(`${base}/register`);await unselected.getByLabel('Business name').fill('No Plan Business');
     await unselected.getByLabel('Your name').fill('No Plan Owner');await unselected.getByLabel('Work email').fill('no-plan-owner@example.test');
-    await unselected.getByLabel('Password').fill('No-plan-password!');
+    await unselected.locator('input[name="password"]').fill('No-plan-password!');if(await unselected.locator('input[name="confirmPassword"]').count())await unselected.locator('input[name="confirmPassword"]').fill('No-plan-password!');
     await Promise.all([unselected.waitForURL(`${base}/verify-email/pending`),unselected.getByRole('button',{name:'Create account'}).click()]);
     const unselectedAccount=(await database.query('SELECT pending_commercial_plan_id FROM accounts WHERE email=$1',
       ['no-plan-owner@example.test'])).rows[0];assert.equal(unselectedAccount.pending_commercial_plan_id,null);
@@ -521,16 +522,18 @@ test('paid-workspace signup verifies email before checkout and never provisions 
     assert.equal(await page.locator('input[name="planId"]').inputValue(),'pro');assert.match(await page.locator('aside').innerText(),/YOUR SELECTION[\s\S]*Pro/i);
     assert.equal(await page.locator('input[name="interval"]').inputValue(),'monthly');
     await page.getByLabel('Business name').fill('Paid Workspace');await page.getByLabel('Your name').fill('Paid Owner');
-    await page.getByLabel('Work email').fill('paid-owner@example.test');await page.getByLabel('Password').fill('paid-owner-password');
+    await page.getByLabel('Work email').fill('paid-owner@example.test');await page.locator('input[name="password"]').fill('paid-owner-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('paid-owner-password');
     await Promise.all([page.waitForURL(`${base}/verify-email/pending`),page.getByRole('button',{name:'Create account'}).click()]);
     const account=(await database.query('SELECT * FROM accounts WHERE email=$1',['paid-owner@example.test'])).rows[0];
     assert.equal(account.email_verified_at,null);assert.equal(Number((await database.query('SELECT COUNT(*) AS count FROM workspaces WHERE owner_account_id=$1',
       [account.id])).rows[0].count),0);
+    await page.goto(`${base}/inventories`);
+    assert.equal(page.url(),`${base}/verify-email/pending`);
     const queued=(await database.query(`SELECT payload FROM stockchief_runtime.jobs WHERE kind='system.email-send'
       ORDER BY created_at DESC LIMIT 1`)).rows[0];const message=systemEmail.unseal(queued.payload);
     const token=new URL(message.text.match(/https:\/\/\S+/)[0]).searchParams.get('token');assert.ok(token);
     const beforeVerify=await browser.newPage();await beforeVerify.goto(`${base}/login`);await beforeVerify.getByLabel('Email').fill(account.email);
-    await beforeVerify.getByLabel('Password').fill('paid-owner-password');await beforeVerify.getByLabel(/signed in for 30 days/i).check();
+    await beforeVerify.locator('input[name="password"]').fill('paid-owner-password');if(await beforeVerify.locator('input[name="confirmPassword"]').count())await beforeVerify.locator('input[name="confirmPassword"]').fill('paid-owner-password');await beforeVerify.getByLabel(/signed in for 30 days/i).check();
     await Promise.all([beforeVerify.waitForURL(`${base}/verify-email/pending`),beforeVerify.getByRole('button',{name:'Sign in'}).click()]);
     const remembered=(await beforeVerify.context().cookies(base)).find((cookie)=>cookie.name==='foundry.sid');assert.ok(remembered.expires>Date.now()/1000+20*86400);
     await page.goto(`${base}/verify-email?token=${encodeURIComponent(token)}`);assert.match(await page.locator('body').innerText(),/Verify your email/i);
@@ -538,15 +541,17 @@ test('paid-workspace signup verifies email before checkout and never provisions 
       'Opening or scanning the link must not consume it');
     const scanner=await browser.newPage();await scanner.goto(`${base}/verify-email?token=${encodeURIComponent(token)}`);
     assert.match(await scanner.locator('body').innerText(),/Verify and continue/i);await scanner.close();
-    await page.getByRole('button',{name:'Verify and continue'}).click();assert.match(await page.locator('body').innerText(),/Choose your plan/i);
-    assert.equal(await page.getByLabel('Plan').inputValue(),'');assert.ok((await database.query('SELECT email_verified_at FROM accounts WHERE id=$1',
+    await page.getByRole('button',{name:'Verify and continue'}).click();assert.match(await page.locator('body').innerText(),/Review your plan/i);
+    assert.equal(await page.getByLabel('Plan').inputValue(),'pro');assert.ok((await database.query('SELECT email_verified_at FROM accounts WHERE id=$1',
       [account.id])).rows[0].email_verified_at);
+    await page.goto(`${base}/inventories`);
+    assert.equal(page.url(),`${base}/complete-signup`);
     await beforeVerify.reload();await beforeVerify.waitForURL(`${base}/complete-signup`);
-    assert.match(await beforeVerify.locator('body').innerText(),/Choose your plan/i);assert.equal(await beforeVerify.getByLabel('Plan').inputValue(),'');await beforeVerify.close();
+    assert.match(await beforeVerify.locator('body').innerText(),/Review your plan/i);assert.equal(await beforeVerify.getByLabel('Plan').inputValue(),'pro');await beforeVerify.close();
     const returningContext=await browser.newContext();const returning=await returningContext.newPage();await returning.goto(`${base}/login`);
-    await returning.getByLabel('Email').fill(account.email);await returning.getByLabel('Password').fill('paid-owner-password');
+    await returning.getByLabel('Email').fill(account.email);await returning.locator('input[name="password"]').fill('paid-owner-password');if(await returning.locator('input[name="confirmPassword"]').count())await returning.locator('input[name="confirmPassword"]').fill('paid-owner-password');
     await Promise.all([returning.waitForURL(`${base}/complete-signup`),returning.getByRole('button',{name:'Sign in'}).click()]);
-    assert.match(await returning.locator('body').innerText(),/Choose your plan/i);assert.equal(await returning.getByLabel('Plan').inputValue(),'');await returningContext.close();
+    assert.match(await returning.locator('body').innerText(),/Review your plan/i);assert.equal(await returning.getByLabel('Plan').inputValue(),'pro');await returningContext.close();
     await page.getByLabel('Plan').selectOption('pro');assert.equal(await page.locator('input[name="interval"]').inputValue(),'monthly');
     await commercial.trackOnce(database,{eventName:'subscription_activated',accountId:account.id,planId:'pro',sourcePath:'stripe_webhook'});
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:/Continue to secure checkout/i}).click()]);

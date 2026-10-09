@@ -24,7 +24,7 @@ test('Home Ask stays in document flow without covering later sections on desktop
     await page.getByLabel('Business name').fill('Dock Business');
     await page.getByLabel('Your name').fill('Dock Owner');
     await page.getByLabel('Work email').fill('dock@example.test');
-    await page.getByLabel('Password').fill('dock-test-password');
+    await page.locator('input[name="password"]').fill('dock-test-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('dock-test-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
     await page.goto(base);
     for(const width of [1440,390]){

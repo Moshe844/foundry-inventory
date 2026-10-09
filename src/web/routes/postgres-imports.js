@@ -32,7 +32,7 @@ function createPostgresImportsRouter(database,{provider=null}={}){
     const wantsJson=String(req.get('accept') || '').includes('application/json');
     const files=(req.files || []).filter((entry)=>['file','files'].includes(entry.field));
     const pasted=trimOrNull(req.body.pasted);
-    if(files.length>1)throw new ValidationError('Choose one inventory file at a time so each preview can be reconciled independently.');
+    if(files.length>1)throw new ValidationError('Choose one business file at a time so each preview can be reconciled independently.');
     const file=files[0] || null;
     if(!file && !pasted)throw new ValidationError('Choose a file, or paste your data.');
     const source=file?.buffer||Buffer.from(pasted,'utf8');const sourceHash=crypto.createHash('sha256').update(source).digest('hex');
@@ -61,7 +61,8 @@ function createPostgresImportsRouter(database,{provider=null}={}){
       field:Object.keys(plan.fieldMappings).find((key)=>plan.fieldMappings[key]===column.index) || null,
       samples:[...new Set(sampleRows.map((row)=>String(row.raw?.[column.index]??'').trim())
         .filter(Boolean))].slice(0,3).map((value)=>value.slice(0,80))}));
-    return res.page('imports/postgres-preview',{title:`Import ${plan.sourceName}`,nav:'imports',plan,rows,counts,
+    return res.page(plan.transformations.dataset==='suppliers'?'imports/supplier-preview':'imports/postgres-preview',
+      {title:`Import ${plan.sourceName}`,nav:'imports',plan,rows,counts,
       duplicatePlans,run,locations:locationRows,mappingRows,fieldOptions:fields.FIELDS,page,pageSize:PAGE_SIZE,filter,
       missingLocationRows:missingLocation.rows.length>0,
     });
@@ -100,7 +101,9 @@ function createPostgresImportsRouter(database,{provider=null}={}){
       const result=await imports.execute(database,req.ctx,req.params.id);
       if(result.duplicate){req.flash('warning','This exact source was already imported. StockChief did not apply it again.');
         return res.redirect(303,`/imports/${result.planId}`);}
-      req.flash('success',`Imported and verified ${result.rowsImported} rows and ${result.units} opening units.`);
+      req.flash('success',result.suppliersCreated!==undefined
+        ?`Imported and verified ${result.suppliersCreated} suppliers.`
+        :`Imported and verified ${result.rowsImported} rows and ${result.units} opening units.`);
     } catch(error){if(!(error instanceof ValidationError))throw error;req.flash('error',error.message);}
     return res.redirect(303,`/imports/${req.params.id}`);
   }));

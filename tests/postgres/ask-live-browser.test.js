@@ -31,7 +31,7 @@ test('live reasoning model and Chromium prepare, approve, and verify a supplier 
     await page.getByLabel('Business name').fill('Meadow Fixtures');
     await page.getByLabel('Your name').fill('Meadow Owner');
     await page.getByLabel('Work email').fill('meadow-owner@example.test');
-    await page.getByLabel('Password').fill('isolated-test-password');
+    await page.locator('input[name="password"]').fill('isolated-test-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('isolated-test-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
     const workspaceId=(await database.query("SELECT id FROM workspaces WHERE name='Meadow Fixtures'")).rows[0].id;
     await page.goto(`${base}/ask`);

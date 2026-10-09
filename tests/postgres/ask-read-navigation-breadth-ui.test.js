@@ -52,7 +52,7 @@ test('real browser traverses every registered page and asks every registered rea
     await page.getByLabel('Business name').fill('Ask Breadth Business');
     await page.getByLabel('Your name').fill('Ask Breadth Owner');
     await page.getByLabel('Work email').fill('ask-breadth@example.test');
-    await page.getByLabel('Password').fill('ask-breadth-password');
+    await page.locator('input[name="password"]').fill('ask-breadth-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('ask-breadth-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),
       page.getByRole('button',{name:'Create account'}).click()]);
     const workspaceId=(await database.query(`SELECT w.id FROM workspaces w JOIN users u ON u.workspace_id=w.id

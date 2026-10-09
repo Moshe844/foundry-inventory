@@ -32,7 +32,7 @@ async function register(page,base,business,email){
   await page.getByLabel('Business name').fill(business);
   await page.getByLabel('Your name').fill(`${business} Owner`);
   await page.getByLabel('Work email').fill(email);
-  await page.getByLabel('Password').fill('ask-workflow-password');
+  await page.locator('input[name="password"]').fill('ask-workflow-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('ask-workflow-password');
   await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
 }
 async function prepareAndApprove(page,base,database,workspaceId,message,capability){

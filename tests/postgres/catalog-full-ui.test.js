@@ -50,7 +50,7 @@ test('real Chromium certifies complete PostgreSQL onboarding and tracked-catalog
     await page.getByLabel('Business name').fill('Catalog Certification');
     await page.getByLabel('Your name').fill('Catalog Owner');
     await page.getByLabel('Work email').fill('catalog-full-pg@example.test');
-    await page.getByLabel('Password').fill('catalog-full-password');
+    await page.locator('input[name="password"]').fill('catalog-full-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('catalog-full-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
     assert.equal(await page.locator('.rm-source-grid > *').count(),3);
     const onboardingText=await page.locator('main').innerText();

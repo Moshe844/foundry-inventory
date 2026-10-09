@@ -41,7 +41,7 @@ const provider={name:'fixture',model:'fixture',async complete(request){
 async function register(page,base,business,email){
   await page.goto(`${base}/register`);await page.getByLabel('Business name').fill(business);
   await page.getByLabel('Your name').fill(`${business} Owner`);await page.getByLabel('Work email').fill(email);
-  await page.getByLabel('Password').fill('ask-orders-password');
+  await page.locator('input[name="password"]').fill('ask-orders-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('ask-orders-password');
   await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
 }
 

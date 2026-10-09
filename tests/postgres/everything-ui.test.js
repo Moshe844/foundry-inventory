@@ -27,7 +27,7 @@ test('real Chromium opens every Everything else destination without migration su
     const base=`http://127.0.0.1:${server.address().port}`;
     await page.goto(`${base}/register`);await page.getByLabel('Business name').fill('Everything Certification');
     await page.getByLabel('Your name').fill('Everything Owner');await page.getByLabel('Work email').fill('everything@example.test');
-    await page.getByLabel('Password').fill('everything-password');
+    await page.locator('input[name="password"]').fill('everything-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('everything-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
     await page.goto(`${base}/everything`);
     const destinations=await page.locator('.rm-vault__links a').evaluateAll((links)=>links.map((link)=>({

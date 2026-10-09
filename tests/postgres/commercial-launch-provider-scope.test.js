@@ -74,7 +74,7 @@ test('PostgreSQL launch connection page does not market excluded providers or sh
  await page.getByLabel('Business name').fill('Launch Scope Business');
  await page.getByLabel('Your name').fill('Launch Scope Owner');
  await page.getByLabel('Work email').fill('launch-scope@example.test');
- await page.getByLabel('Password').fill('launch-scope-password');
+ await page.locator('input[name="password"]').fill('launch-scope-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('launch-scope-password');
  await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
  await page.goto(`${base}/settings/connections`);const body=await page.locator('main').innerText();
  assert.doesNotMatch(body,/QuickBooks|Xero|Shopify|Clover|Microsoft 365|Set up Stripe for this business/);

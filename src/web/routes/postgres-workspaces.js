@@ -11,6 +11,8 @@ function createPostgresWorkspacesRouter(database){
   const router=express.Router();
   const allowance={unlimited:true,exceeded:false,used:0,limit:null,planId:null};
   router.use('/inventories',requireAccount);
+  router.use('/inventories',(req,res,next)=>req.account.plan==='commercial_pending'
+    ?res.redirect(req.account.email_verified_at?'/complete-signup':'/verify-email/pending'):next());
   router.get('/inventories',asyncRoute(async(req,res)=>res.page('workspaces/list',{
     title:'Your inventories',nav:'inventories',suppressBack:true,workspaces:res.locals.workspaces,
     currentWorkspaceId:req.workspace?.id||null,layoutOnboardingEntry:null,

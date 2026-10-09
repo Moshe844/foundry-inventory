@@ -72,6 +72,15 @@ test('PostgreSQL browser authentication shares a real tenant session across web 
     assert.match(weakPassword.text,/at least 12 characters/i);
     assert.equal((await firstDatabase.query("SELECT COUNT(*) AS count FROM accounts WHERE name='Weak Owner'"))
       .rows[0].count,'0');
+    const mismatchPage=await agent.get('/register');
+    const mismatch=await agent.post('/register').type('form').send({
+      _csrf:csrfFrom(mismatchPage.text),name:'Mismatch Owner',businessName:'Mismatch Business',
+      email:'mismatch@example.test',password:'strong-password!',confirmPassword:'different-password!',
+    });
+    assert.equal(mismatch.status,400);
+    assert.match(mismatch.text,/Passwords do not match/i);
+    assert.equal((await firstDatabase.query("SELECT COUNT(*) AS count FROM accounts WHERE name='Mismatch Owner'"))
+      .rows[0].count,'0');
     const registrationAfterError=await agent.get('/register');
     const registered=await agent.post('/register').type('form').send({
       _csrf:csrfFrom(registrationAfterError.text),name:'Browser Owner',businessName:'Shared Postgres Inventory',

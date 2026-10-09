@@ -31,7 +31,7 @@ test('Home opens Ask immediately and shows the question there while the backend 
     await page.getByLabel('Business name').fill('Handoff Business');
     await page.getByLabel('Your name').fill('Handoff Owner');
     await page.getByLabel('Work email').fill('handoff-owner@example.test');
-    await page.getByLabel('Password').fill('handoff-password');
+    await page.locator('input[name="password"]').fill('handoff-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('handoff-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
     await page.goto(base);
     await page.getByRole('textbox',{name:'Ask StockChief'}).fill('How many products do we have?');
@@ -45,7 +45,7 @@ test('Home opens Ask immediately and shows the question there while the backend 
     await page.getByText(/No products have ever been recorded in StockChief; you have 0 units on hand/).waitFor();
     assert.match(await page.locator('main').innerText(),/No products have ever been recorded in StockChief; you have 0 units on hand/);
     assert.equal(await page.locator('.rm-composer__attach').count(),1);
-    assert.match(await page.locator('.rm-composer__attach').getAttribute('title'),/Attach inventory CSV, Excel or text-layer PDF/);
+    assert.match(await page.locator('.rm-composer__attach').getAttribute('title'),/Attach an inventory table \(CSV, Excel, PDF or image\)/);
   });
 
 test('Home Ask follows the server-selected destination for a navigation request',
@@ -67,7 +67,7 @@ test('Home Ask follows the server-selected destination for a navigation request'
     await page.getByLabel('Business name').fill('Navigation Business');
     await page.getByLabel('Your name').fill('Navigation Owner');
     await page.getByLabel('Work email').fill('navigation-owner@example.test');
-    await page.getByLabel('Password').fill('navigation-password');
+    await page.locator('input[name="password"]').fill('navigation-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('navigation-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
     await page.goto(base);
     await page.getByRole('textbox',{name:'Ask StockChief'}).fill('Could you open the supplier directory for me?');

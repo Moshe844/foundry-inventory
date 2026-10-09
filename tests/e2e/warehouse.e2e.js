@@ -53,7 +53,7 @@ async function stopServer(child) {
 async function signIn(page) {
   await page.goto(`${BASE}/login`);
   await page.getByLabel('Email').fill(ACCOUNT.email);
-  await page.getByLabel('Password').fill(ACCOUNT.password);
+  await page.locator('input[name="password"]').fill(ACCOUNT.password);if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill(ACCOUNT.password);
   await page.getByRole('button', { name: 'Sign in' }).click();
   await page.waitForURL(`${BASE}/`);
 }

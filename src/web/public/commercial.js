@@ -115,6 +115,14 @@
   });
 
   document.querySelectorAll('form[data-loading]').forEach(function(form){
+    var confirmation=form.querySelector('[data-confirm-password]');
+    if(confirmation){
+      var original=document.getElementById(confirmation.dataset.confirmPassword);
+      var check=function(){confirmation.setCustomValidity(original&&confirmation.value!==original.value?'Passwords do not match.':'');};
+      confirmation.addEventListener('input',check);
+      if(original)original.addEventListener('input',check);
+      form.addEventListener('submit',check);
+    }
     form.addEventListener('submit',function(){
       var button=form.querySelector('button[type="submit"]');
       if(button){button.disabled=true;button.dataset.label=button.textContent;button.textContent=button.dataset.loadingLabel||'Working…';}

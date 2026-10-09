@@ -19,7 +19,7 @@ test('Chromium creates and switches isolated PostgreSQL inventories without a su
     const errors=[];page.on('pageerror',(error)=>errors.push(error.message));const base=`http://127.0.0.1:${server.address().port}`;
     await page.goto(`${base}/register`);await page.getByLabel('Business name').fill('First Operation');
     await page.getByLabel('Your name').fill('Workspace Owner');await page.getByLabel('Work email').fill('workspaces@example.test');
-    await page.getByLabel('Password').fill('workspace-password');
+    await page.locator('input[name="password"]').fill('workspace-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('workspace-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
     const first=(await database.query(`SELECT w.id FROM workspaces w JOIN accounts a ON a.id=w.owner_account_id
       WHERE a.email='workspaces@example.test'`)).rows[0].id;

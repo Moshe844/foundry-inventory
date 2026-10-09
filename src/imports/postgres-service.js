@@ -4,6 +4,8 @@ const crypto = require('node:crypto');
 const parser = require('./parser');
 const mappingService = require('./mapping-service');
 const fields = require('./fields');
+const supplierDataset=require('./supplier-dataset');
+const commerce=require('../operations/postgres-commerce');
 const rowValues = require('./row-validator');
 const catalog = require('../domain/postgres-catalog-service');
 const inventory = require('../domain/postgres-inventory-engine');
@@ -208,6 +210,46 @@ async function assertOperator(database, ctx) {
   permissions.assertCan(result.rows[0],permissions.OPERATE,'import inventory data');
 }
 
+async function supplierRows(database,ctx,sheet,mappings){
+  const actor=(await database.query('SELECT role,permissions FROM users WHERE id=$1 AND workspace_id=$2',
+    [ctx.actorId,ctx.workspaceId])).rows[0];
+  permissions.assertCan(actor,permissions.MANAGE_SUPPLIERS,'import suppliers');
+  const existing=(await database.query('SELECT name FROM suppliers WHERE workspace_id=$1',[ctx.workspaceId])).rows;
+  return supplierDataset.validate(sheet,mappings,existing.map((row)=>row.name));
+}
+
+async function saveSupplierPreview(database,ctx,{bytes,sourceHash,filename,sheet,sheetIndex=0,format,mappings}){
+  const rows=await supplierRows(database,ctx,sheet,mappings);
+  const at=nowIso();const valid=rows.filter((row)=>row.status==='VALID').length;
+  const plan={id:newId('imp'),workspaceId:ctx.workspaceId,createdByUserId:ctx.actorId,
+    sourceName:filename||'Pasted supplier data',sourceKind:format==='xlsx'?'xlsx':format==='pdf'?'pdf':
+      format==='image'?'image':filename?'csv':'paste',sourceHash,sourceBytes:bytes.length,
+    detectedType:'unknown',sheetName:sheet.name,sheetIndex,
+    sourceColumns:sheet.columns.map((column)=>({index:column.index,name:column.name})),
+    fieldMappings:mappings,transformations:{dataset:'suppliers'},trackingModel:{mode:'per-row'},
+    locationMappings:{},defaultLocationId:null,recordsDetected:rows.length,recordsValid:valid,
+    recordsInvalid:rows.length-valid,warnings:valid<rows.length
+      ?[`${rows.length-valid} supplier row(s) need correction or already exist and will not be created.`]:[],
+    conflicts:[],assumptions:[],approvalStatus:'AWAITING_APPROVAL',status:'READY',planVersion:1,createdAt:at};
+  plan.integrityHash=integrityFor(plan,rows);
+  await database.transaction(async(client)=>{
+    await client.query(`INSERT INTO import_plans(id,workspace_id,created_by_user_id,source_name,source_kind,source_hash,
+      source_bytes,detected_type,sheet_name,sheet_index,source_columns,field_mappings,transformations,tracking_model,
+      location_mappings,default_location_id,records_detected,records_valid,records_invalid,warnings,conflicts,assumptions,
+      approval_status,status,plan_version,integrity_hash,created_at)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)`,
+    [plan.id,ctx.workspaceId,ctx.actorId,plan.sourceName,plan.sourceKind,plan.sourceHash,plan.sourceBytes,
+      plan.detectedType,plan.sheetName,plan.sheetIndex,JSON.stringify(plan.sourceColumns),JSON.stringify(mappings),
+      JSON.stringify(plan.transformations),JSON.stringify(plan.trackingModel),'{}',null,plan.recordsDetected,
+      valid,plan.recordsInvalid,JSON.stringify(plan.warnings),'[]','[]',plan.approvalStatus,plan.status,1,plan.integrityHash,at]);
+    for(const row of rows)await client.query(`INSERT INTO import_rows(id,import_id,workspace_id,row_number,raw,parsed,
+      status,problems,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+    [row.id,plan.id,ctx.workspaceId,row.rowNumber,JSON.stringify(row.raw),JSON.stringify(row.parsed),row.status,
+      JSON.stringify(row.problems),at]);
+  },{isolation:'SERIALIZABLE'});
+  return get(database,ctx.workspaceId,plan.id);
+}
+
 async function analyse(database, ctx, input) {
   await assertOperator(database,ctx);
   const buffer=input.buffer || null;
@@ -223,6 +265,9 @@ async function analyse(database, ctx, input) {
   const sheetIndex=Number.isInteger(input.sheetIndex)?input.sheetIndex:parsedWorkbook.primarySheet;
   const sheet=parsedWorkbook.sheets[sheetIndex];
   if(!sheet?.rows.length)throw new ValidationError('That source has no inventory rows.');
+  const supplierMapping=supplierDataset.classify(sheet.columns);
+  if(supplierMapping)return saveSupplierPreview(database,ctx,{bytes,sourceHash,filename:input.filename,
+    sheet,sheetIndex,format:parsedWorkbook.format,mappings:supplierMapping});
   const prior=(await database.query(`SELECT field_mappings,detected_type FROM import_plans
     WHERE workspace_id=$1 AND source_hash=$2 AND approval_status='APPROVED' AND status<>'CANCELLED'
     ORDER BY created_at DESC,id DESC LIMIT 1`,
@@ -276,10 +321,45 @@ async function analyse(database, ctx, input) {
   return get(database,ctx.workspaceId,plan.id);
 }
 
+async function repairSupplierPreview(database,workspaceId,id,plan,mappings){
+  await database.transaction(async(client)=>{
+    const saved=(await client.query('SELECT * FROM import_plans WHERE workspace_id=$1 AND id=$2 FOR UPDATE',
+      [workspaceId,id])).rows[0];
+    if(!saved||saved.status!=='READY'||json(saved.transformations,{}).dataset==='suppliers')return;
+    const raw=(await client.query(`SELECT * FROM import_rows WHERE workspace_id=$1 AND import_id=$2
+      ORDER BY row_number,id FOR UPDATE`,[workspaceId,id])).rows.map(hydrateRow);
+    const sheet={rows:raw.map((row)=>({sourceRow:row.rowNumber,cells:row.raw}))};
+    const existing=(await client.query('SELECT name FROM suppliers WHERE workspace_id=$1',[workspaceId])).rows;
+    const converted=supplierDataset.validate(sheet,mappings,existing.map((row)=>row.name));
+    const valid=converted.filter((row)=>row.status==='VALID').length;
+    const revised={...plan,fieldMappings:mappings,detectedType:'unknown',defaultLocationId:null,
+      recordsValid:valid,recordsInvalid:converted.length-valid,transformations:{dataset:'suppliers'},
+      planVersion:plan.planVersion+1};
+    revised.integrityHash=integrityFor(revised,converted);
+    await client.query(`UPDATE import_plans SET field_mappings=$3::jsonb,transformations=$4::jsonb,
+      detected_type='unknown',default_location_id=NULL,records_valid=$5,records_invalid=$6,
+      warnings=$7::jsonb,approval_status='AWAITING_APPROVAL',approved_by_user_id=NULL,approved_at=NULL,
+      plan_version=$8,integrity_hash=$9 WHERE workspace_id=$1 AND id=$2`,
+    [workspaceId,id,JSON.stringify(mappings),JSON.stringify(revised.transformations),valid,revised.recordsInvalid,
+      JSON.stringify(valid===converted.length?[]:[`${revised.recordsInvalid} supplier row(s) need correction or already exist.`]),
+      revised.planVersion,revised.integrityHash]);
+    for(let i=0;i<raw.length;i++)await client.query(`UPDATE import_rows SET parsed=$3::jsonb,status=$4,
+      problems=$5::jsonb,location_id=NULL,quantity=NULL WHERE workspace_id=$1 AND id=$2`,
+    [workspaceId,raw[i].id,JSON.stringify(converted[i].parsed),converted[i].status,
+      JSON.stringify(converted[i].problems)]);
+  },{isolation:'SERIALIZABLE',retrySafe:true});
+}
+
 async function get(database, workspaceId, id) {
   const result=await database.query('SELECT * FROM import_plans WHERE workspace_id=$1 AND id=$2',[workspaceId,id]);
   if(!result.rows.length)throw new NotFoundError('That import could not be found.');
-  return hydratePlan(result.rows[0]);
+  const plan=hydratePlan(result.rows[0]);
+  const supplierMapping=plan.status==='READY'&&!plan.transformations.dataset
+    ?supplierDataset.classify(plan.sourceColumns):null;
+  if(supplierMapping){await repairSupplierPreview(database,workspaceId,id,plan,supplierMapping);
+    return hydratePlan((await database.query('SELECT * FROM import_plans WHERE workspace_id=$1 AND id=$2',
+      [workspaceId,id])).rows[0]);}
+  return plan;
 }
 
 async function list(database, workspaceId, limit=10) {
@@ -320,6 +400,8 @@ async function revise(database,ctx,id,input={}){
     const plan=hydratePlan(saved);
     if(plan.status!=='READY'||plan.approvalStatus!=='AWAITING_APPROVAL')
       throw new ValidationError('Only an unapproved preview can be corrected.');
+    if(plan.transformations.dataset==='suppliers')
+      throw new ValidationError('This is a supplier directory, not an inventory catalog. Review supplier rows on the preview.');
     if(plan.integrityHash!==input.expectedHash)throw new ValidationError('The preview changed. Review it before correcting rows.');
     const current=(await client.query(`SELECT * FROM import_rows WHERE workspace_id=$1 AND import_id=$2
       ORDER BY row_number,id FOR UPDATE`,[ctx.workspaceId,id])).rows.map(hydrateRow);
@@ -394,12 +476,14 @@ async function approve(database, ctx, id, expectedHash) {
     const result=await client.query('SELECT * FROM import_plans WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,id]);
     if(!result.rows.length)throw new NotFoundError('That import could not be found.');
     const plan=hydratePlan(result.rows[0]);
+    if(!plan.transformations.dataset&&supplierDataset.classify(plan.sourceColumns))
+      throw new ValidationError('This is a supplier directory. Reopen its preview so StockChief can safely classify it before approval.');
     if(plan.isExpired)throw new ValidationError('This preview is more than 24 hours old. Read the source again before importing.');
     if(plan.integrityHash!==expectedHash)throw new ValidationError('The preview changed. Review the current rows before approving.');
     if(plan.fieldMappings.name===undefined&&plan.fieldMappings.code===undefined)
       throw new ValidationError('Map a product name or SKU and recalculate the preview before approving.');
     if(!plan.recordsValid)throw new ValidationError('There are no valid rows to import.');
-    if(plan.fieldMappings.quantity===undefined&&!plan.transformations.confirmCatalogOnly){
+    if(plan.transformations.dataset!=='suppliers'&&plan.fieldMappings.quantity===undefined&&!plan.transformations.confirmCatalogOnly){
       const sourceRows=(await client.query(`SELECT raw FROM import_rows WHERE workspace_id=$1 AND import_id=$2`,
         [ctx.workspaceId,id])).rows.map((row)=>({cells:json(row.raw,[])}));
       if(unmappedNumericColumns({columns:plan.sourceColumns,rows:sourceRows},plan.fieldMappings).length)
@@ -457,6 +541,29 @@ async function execute(database, ctx, id, options={}) {
         throw new ValidationError('The approved import is no longer executable.');
       const sourceRows=(await client.query(`SELECT * FROM import_rows WHERE workspace_id=$1 AND import_id=$2
         AND status IN ('VALID','NEEDS_REVIEW') ORDER BY row_number,id FOR UPDATE`,[ctx.workspaceId,id])).rows.map(hydrateRow);
+      if(plan.transformations.dataset==='suppliers'){
+        let created=0;
+        for(const row of sourceRows){
+          await commerce.createSupplierInTransaction(client,ctx,row.parsed);
+          await client.query(`UPDATE import_rows SET status='IMPORTED',imported_at=$3
+            WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,row.id,nowIso()]);
+          created++;
+        }
+        const finishedAt=nowIso();
+        const checks=[{name:'Suppliers created',expected:sourceRows.length,observed:created,
+          ok:created===sourceRows.length}];
+        const verificationId=newId('impverify');
+        await client.query(`INSERT INTO import_verifications(id,workspace_id,import_id,execution_id,verified,checks,
+          observed,problems,created_at) VALUES($1,$2,$3,$4,1,$5,$6,'[]',$7)`,
+        [verificationId,ctx.workspaceId,id,executionId,JSON.stringify(checks),JSON.stringify({suppliersCreated:created}),finishedAt]);
+        await client.query(`UPDATE import_executions SET status='SUCCEEDED',stage='verified',
+          rows_imported=$2,result=$3,finished_at=$4 WHERE id=$1`,
+        [executionId,created,JSON.stringify({verificationId,verified:true,checks}),finishedAt]);
+        await client.query(`UPDATE import_plans SET status='SUCCEEDED',completed_at=$3 WHERE workspace_id=$1 AND id=$2`,
+          [ctx.workspaceId,id,finishedAt]);
+        return {executionId,verificationId,verified:true,checks,itemsCreated:0,skusCreated:0,
+          rowsImported:created,suppliersCreated:created,units:0};
+      }
       const grouped=new Map();
       for(const row of sourceRows){
         const key=productKey(row.parsed);

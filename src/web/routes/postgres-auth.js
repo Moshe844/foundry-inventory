@@ -6,6 +6,7 @@ const passwordRecovery=require('../../domain/postgres-password-recovery');
 const monitoring=require('../../operations/postgres-monitoring');
 const accountLifecycle=require('../../domain/postgres-account-lifecycle');
 const commercial=require('../../commercial/service');
+const commercialRelease=require('../../commercial/release');
 const config=require('../../config');
 const { ValidationError }=require('../../domain/errors');
 
@@ -26,10 +27,20 @@ function pendingSelection(account,sessionSelection={}){return {
   promoCode:account?.pending_promo_code||sessionSelection.promoCode||'',
 };}
 
-function createPostgresAuthRouter(database) {
+function matchingPasswords(body){
+  // Legacy API/test clients do not send confirmation; the browser form requires it.
+  // Whenever a confirmation is supplied, the server must reject a mismatch.
+  if(Object.hasOwn(body,'confirmPassword')&&String(body.password||'')!==String(body.confirmPassword||''))
+    throw new ValidationError('Passwords do not match. Enter the same password twice.');
+}
+
+function createPostgresAuthRouter(database,options={}) {
   const router = express.Router();
+  const checkoutAvailable=()=>options.testMode===true&&process.env.NODE_ENV==='test'
+    ?Promise.resolve(true):commercialRelease.isOpen(database);
   router.get('/login', (req,res) => {
-    if (req.account) return res.redirect(req.user ? '/' : '/inventories');
+    if (req.account) return res.redirect(req.account.plan==='commercial_pending'
+      ?(req.account.email_verified_at?'/complete-signup':'/verify-email/pending'):(req.user?'/':'/inventories'));
     return res.render('auth/login', { title:'Sign in',csrfToken:res.locals.csrfToken,flash:res.locals.flash,
       next:safeNext(req.query.next),email:'',appName:res.locals.appName,origin:res.locals.origin });
   });
@@ -61,7 +72,8 @@ function createPostgresAuthRouter(database) {
   router.get('/register', async (req,res,next) => {
     try {
     if(req.account){
-      if(req.account.plan==='commercial_pending')return res.redirect(req.account.email_verified_at?'/complete-signup':'/verify-email/pending');
+      if(req.account.plan==='commercial_pending')return res.redirect(req.account.email_verified_at
+        ?`/complete-signup${req.query.plan?`?plan=${encodeURIComponent(req.query.plan)}`:''}`:'/verify-email/pending');
       if(req.user){
         req.flash('info',`You are already signed in as ${req.account.email} on ${req.user.workspace_name||'this inventory'}. Sign out before creating a different StockChief account.`);
         return res.redirect('/settings');
@@ -76,12 +88,16 @@ function createPostgresAuthRouter(database) {
     return res.render('auth/register', { title:'Create your account',csrfToken:res.locals.csrfToken,
       flash:res.locals.flash,form:{},appName:res.locals.appName,origin:res.locals.origin,
       selectedPlan:selected?.id||'',selectedInterval:'monthly',
-      selectedPromo:String(req.query.promo||'').trim().toUpperCase(),plans });
+      selectedPromo:String(req.query.promo||'').trim().toUpperCase(),plans,
+      checkoutOpen:!config.commercial.requirePaidWorkspace||await checkoutAvailable() });
     } catch(error) { return next(error); }
   });
   router.post('/register', async (req,res,next) => {
     try {
+      matchingPasswords(req.body);
       const paidRequired=config.commercial.requirePaidWorkspace;
+      if(paidRequired&&!await checkoutAvailable())
+        throw new ValidationError('New paid signups are not open yet. No payment or inventory has been activated.');
       if(paidRequired)require('../../commercial/launch-interval').assertMonthly(req.body.interval);
       const requestedPlanId=String(req.body.planId||'').trim();
       if(paidRequired&&requestedPlanId)await commercial.getSelfServicePlan(database,requestedPlanId);
@@ -108,6 +124,7 @@ function createPostgresAuthRouter(database) {
         flash:[{ type:'error',message:error.message }],form:req.body,appName:res.locals.appName,origin:res.locals.origin,
         selectedPlan:selected?.id||'',selectedInterval:'monthly',
         selectedPromo:String(req.body.promoCode||'').trim().toUpperCase(),plans,
+        checkoutOpen:!config.commercial.requirePaidWorkspace||await checkoutAvailable(),
       });}
       return next(error);
     }
@@ -118,15 +135,21 @@ function createPostgresAuthRouter(database) {
       flash:res.locals.flash,account:req.account,origin:res.locals.origin});
   });
   router.get('/complete-signup',async(req,res)=>{if(!req.account)return res.redirect('/login');if(req.user)return res.redirect('/');
-    if(!req.account.email_verified_at)return res.redirect('/verify-email/pending');const plans=await commercial.listPlans(database);return res.render('auth/verified',{
+    if(!req.account.email_verified_at)return res.redirect('/verify-email/pending');const plans=await commercial.listPlans(database);
+    const selection=pendingSelection(req.account,req.session.commercialSelection);
+    const requested=selfServiceSelection(plans,String(req.query.plan||''));
+    if(requested)selection.planId=requested.id;
+    return res.render('auth/verified',{
       title:'Activate your StockChief plan',csrfToken:res.locals.csrfToken,flash:res.locals.flash,origin:res.locals.origin,
-      selection:pendingSelection(req.account,req.session.commercialSelection),lastSelection:req.session.checkoutSelection||null,plans});});
+      selection,lastSelection:req.session.checkoutSelection||null,plans,checkoutOpen:await checkoutAvailable()});});
   router.post('/verify-email/resend',async(req,res,next)=>{try{if(req.account)await accountLifecycle.requestVerification(database,req.account.id,
       {origin:config.connections.publicOrigin||res.locals.origin});req.flash('success','A new verification link is on its way.');return res.redirect(303,'/verify-email/pending');}
     catch(error){return next(error);}});
   router.get('/verify-email',async(req,res,next)=>{try{const verification=await accountLifecycle.inspectVerification(database,req.query.token||'');
     return res.render('auth/verify-confirm',{title:'Verify your email',csrfToken:res.locals.csrfToken,flash:res.locals.flash,
-      origin:res.locals.origin,token:req.query.token||'',verification});}catch(error){if(error.status&&error.status<500)return res.status(error.status).render('auth/verify-pending',{
+      origin:res.locals.origin,token:req.query.token||'',verification});}catch(error){
+      if(req.account?.plan==='commercial_pending'&&req.account.email_verified_at)return res.redirect('/complete-signup');
+      if(error.status&&error.status<500)return res.status(error.status).render('auth/verify-pending',{
       title:'Verification link expired',csrfToken:res.locals.csrfToken,flash:[{type:'error',message:error.message}],account:req.account,
       origin:res.locals.origin});return next(error);}});
   router.post('/verify-email',async(req,res,next)=>{try{const verified=await accountLifecycle.consumeVerification(database,req.body.token||'');
@@ -134,7 +157,7 @@ function createPostgresAuthRouter(database) {
     const account=await auth.getAccount(database,verified.accountId);
     const selection=pendingSelection(account,req.session.commercialSelection);const plans=await commercial.listPlans(database);await sessionCall(req,'save');
     return res.render('auth/verified',{title:'Email verified',csrfToken:res.locals.csrfToken,flash:res.locals.flash,
-      origin:res.locals.origin,selection,lastSelection:null,plans});}catch(error){if(error.status&&error.status<500)return res.status(error.status).render('auth/verify-pending',{
+      origin:res.locals.origin,selection,lastSelection:null,plans,checkoutOpen:await checkoutAvailable()});}catch(error){if(error.status&&error.status<500)return res.status(error.status).render('auth/verify-pending',{
       title:'Verification link expired',csrfToken:res.locals.csrfToken,flash:[{type:'error',message:error.message}],account:req.account,
       origin:res.locals.origin});return next(error);}});
   router.get('/invite',async(req,res,next)=>{try{const invitation=await accountLifecycle.inspectInvitation(database,req.query.token||'');
@@ -162,7 +185,8 @@ function createPostgresAuthRouter(database) {
   router.get('/reset-password',async(req,res,next)=>{try{const valid=await passwordRecovery.inspect(database,req.query.token||'');
     return res.status(valid?200:400).render('auth/reset-password',{title:'Choose a new password',csrfToken:res.locals.csrfToken,
       flash:res.locals.flash,token:req.query.token||'',valid:Boolean(valid),appName:res.locals.appName});}catch(error){return next(error);}});
-  router.post('/reset-password',async(req,res,next)=>{try{await passwordRecovery.consume(database,req.body.token||'',req.body.password||'');
+  router.post('/reset-password',async(req,res,next)=>{try{matchingPasswords(req.body);
+    await passwordRecovery.consume(database,req.body.token||'',req.body.password||'');
     req.flash('success','Your password has been changed. Sign in with the new password.');return res.redirect(303,'/login');}
   catch(error){if(error.status&&error.status<500)return res.status(error.status).render('auth/reset-password',{
     title:'Choose a new password',csrfToken:res.locals.csrfToken,flash:[{type:'error',message:error.message}],

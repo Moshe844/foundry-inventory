@@ -39,7 +39,7 @@ test('real model and Chromium select new Ask lifecycle contracts and commit veri
     await page.getByLabel('Business name').fill('Live Ask Workflow');
     await page.getByLabel('Your name').fill('Live Workflow Owner');
     await page.getByLabel('Work email').fill('live-workflow@example.test');
-    await page.getByLabel('Password').fill('ask-live-workflow-password');
+    await page.locator('input[name="password"]').fill('ask-live-workflow-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('ask-live-workflow-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
     const owner=(await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id
       FROM workspaces w JOIN users u ON u.workspace_id=w.id AND u.role='owner'

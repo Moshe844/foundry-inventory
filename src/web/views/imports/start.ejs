@@ -2,8 +2,8 @@
   <div class="titles">
     <h1>Bring your data in</h1>
     <div class="page-sub">
-      Upload the spreadsheet you already keep your stock in, or paste it straight out of one.
-      StockChief works out what the columns mean, shows you, and creates nothing until you say so.
+      Upload a product, stock or supplier file—or paste rows from one.
+      StockChief identifies what it contains, shows the exact records it would create, and changes nothing until you approve.
     </div>
   </div>
 </div>
@@ -22,9 +22,9 @@
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <input type="hidden" name="usageKey" value="<%= usageKey %>:file">
         <label class="field">
-          <span class="field-label">Your inventory file</span>
+          <span class="field-label">Your business file</span>
           <input class="input" type="file" name="file" accept=".csv,.tsv,.txt,.xlsx,.pdf,.png,.jpg,.jpeg" required>
-          <span class="field-help">Upload an inventory table as XLSX, CSV, TSV, text, PDF or a clear PNG/JPEG image. No need to rename columns. Scanned PDF pages and images are read with OCR; nothing changes until you approve the preview.</span>
+          <span class="field-help">Product, stock and supplier tables are supported as XLSX, CSV, TSV, text, PDF or a clear PNG/JPEG image. No need to rename columns. Scanned pages and images use OCR; verify the preview before approval.</span>
         </label>
       </div>
       <div class="card-foot">

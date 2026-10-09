@@ -42,7 +42,7 @@ test('Chromium operates PostgreSQL onboarding, catalog, inventory movement and A
     await page.getByLabel('Business name').fill('Browser Business');
     await page.getByLabel('Your name').fill('Browser Owner');
     await page.getByLabel('Work email').fill('browser-pg@example.test');
-    await page.getByLabel('Password').fill('browser-password');
+    await page.locator('input[name="password"]').fill('browser-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('browser-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
     assert.equal(await page.locator('.rm-source-grid > *').count(),3);
     await Promise.all([page.waitForURL(`${base}/inventory/new`),page.getByRole('button',{name:/Enter it manually/}).click()]);

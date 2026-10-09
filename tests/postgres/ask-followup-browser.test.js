@@ -59,7 +59,7 @@ test('browser Ask retains contact details through a follow-up and does not route
     await page.getByLabel('Business name').fill('Followup Business');
     await page.getByLabel('Your name').fill('Followup Owner');
     await page.getByLabel('Work email').fill('followup-owner@example.test');
-    await page.getByLabel('Password').fill('followup-password');
+    await page.locator('input[name="password"]').fill('followup-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('followup-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
     const owner=(await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id FROM workspaces w
       JOIN users u ON u.workspace_id=w.id WHERE w.name='Followup Business'`)).rows[0];

@@ -1,1 +1,15 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title><%= title %> · StockChief</title><link rel="stylesheet" href="/commercial.css?v=auth"></head><body class="commercial-auth"><main class="auth-centered"><a class="pub-brand" href="/"><span class="pub-brand__mark">◇</span><span>StockChief</span></a><div class="auth-centered__card"><span class="auth-mail">✉</span><h1><%= title %></h1><p>We sent a secure verification link<% if(account){ %> to <strong><%= account.email %></strong><% } %>. Open the message and select <strong>Verify my email</strong>. On the confirmation page, select <strong>Verify and continue</strong>.</p><% if(flash&&flash.length){flash.forEach(function(message){%><div class="auth-message auth-message--<%= message.type %>"><%= message.message %></div><%});}%><form method="post" action="/verify-email/resend"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="pub-btn pub-btn--secondary pub-btn--block" type="submit">Send a new verification link</button></form><p class="auth-help">For security, sending a new link makes older links stop working.</p><p class="auth-foot"><a href="/login">Use a different account</a></p></div></main></body></html>
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title><%= title %> · StockChief</title><link rel="stylesheet" href="/commercial.css?v=auth"></head>
+<body class="commercial-auth"><main class="auth-centered">
+<a class="pub-brand" href="/"><span class="pub-brand__mark">◇</span><span>StockChief</span></a>
+<div class="auth-centered__card"><span class="auth-mail">✉</span><h1><%= title %></h1>
+<p>We sent a secure verification link<% if(account){ %> to <strong><%= account.email %></strong><% } %>.
+  Open the message and select <strong>Verify my email</strong>. On the confirmation page, select <strong>Verify and continue</strong>.</p>
+<% if(flash&&flash.length){flash.forEach(function(message){%><div class="auth-message auth-message--<%= message.type %>" role="alert"><%= message.message %></div><%});}%>
+<form method="post" action="/verify-email/resend"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <button class="pub-btn pub-btn--secondary pub-btn--block" type="submit">Send a new verification link</button></form>
+<p class="auth-help">If you requested another link, open the newest email. Older links stop working.</p>
+<form method="post" action="/logout" class="auth-foot"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <button class="pub-link" type="submit">Use a different account</button></form>
+</div></main></body></html>

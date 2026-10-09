@@ -21,7 +21,7 @@ test('PostgreSQL account menu pages render truthful native settings and rename t
     page.on('pageerror',(error)=>errors.push(`${page.url()}: ${error.message}`));const base=`http://127.0.0.1:${server.address().port}`;
     await page.goto(`${base}/register`);await page.getByLabel('Business name').fill('Settings Operation');
     await page.getByLabel('Your name').fill('Settings Owner');await page.getByLabel('Work email').fill('settings@example.test');
-    await page.getByLabel('Password').fill('settings-password');
+    await page.locator('input[name="password"]').fill('settings-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('settings-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
     await page.goto(`${base}/what-you-told-me`);assert.match(await page.locator('main').innerText(),/haven't told me any standing rules yet/i);
     await page.goto(`${base}/everything`);const directory=await page.locator('main').innerText();

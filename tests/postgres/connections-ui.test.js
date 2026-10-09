@@ -58,7 +58,7 @@ test('real Chromium qualifies PostgreSQL OAuth popup ownership, encryption, repl
     await page.getByLabel('Business name').fill('Connection Business');
     await page.getByLabel('Your name').fill('Connection Owner');
     await page.getByLabel('Work email').fill('connection-pg@example.test');
-    await page.getByLabel('Password').fill('connection-password');
+    await page.locator('input[name="password"]').fill('connection-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('connection-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
     await page.goto(`${base}/settings/connections`);
     assert.match(await page.locator('main').innerText(),/Each inventory has its own accounts/);

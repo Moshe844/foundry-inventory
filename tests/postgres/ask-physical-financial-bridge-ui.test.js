@@ -58,7 +58,7 @@ test('real Ask browser approves supplier return, warehouse scans and bank eviden
     await page.getByLabel('Business name').fill('Ask Physical Financial');
     await page.getByLabel('Your name').fill('Ask Owner');
     await page.getByLabel('Work email').fill('ask-physical-financial@example.test');
-    await page.getByLabel('Password').fill('ask-physical-financial-password');
+    await page.locator('input[name="password"]').fill('ask-physical-financial-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('ask-physical-financial-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
     const ctx=(await database.query(`SELECT w.id AS "workspaceId",u.id AS "actorId" FROM workspaces w
       JOIN users u ON u.workspace_id=w.id JOIN accounts a ON a.id=u.account_id
@@ -68,7 +68,7 @@ test('real Ask browser approves supplier return, warehouse scans and bank eviden
     await other.getByLabel('Business name').fill('Ask Isolated Business');
     await other.getByLabel('Your name').fill('Other Owner');
     await other.getByLabel('Work email').fill('ask-isolated@example.test');
-    await other.getByLabel('Password').fill('ask-isolated-password');
+    await other.locator('input[name="password"]').fill('ask-isolated-password');if(await other.locator('input[name="confirmPassword"]').count())await other.locator('input[name="confirmPassword"]').fill('ask-isolated-password');
     await Promise.all([other.waitForURL(`${base}/onboarding`),
       other.getByRole('button',{name:'Create account'}).click()]);
     const otherWorkspace=(await database.query(`SELECT w.id FROM workspaces w JOIN users u ON u.workspace_id=w.id

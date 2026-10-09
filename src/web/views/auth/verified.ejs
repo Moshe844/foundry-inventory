@@ -11,22 +11,22 @@
     <a class="pub-brand" href="/"><span class="pub-brand__mark">◇</span><span>StockChief</span></a>
     <div class="auth-centered__card">
       <span class="auth-mail auth-mail--ok">✓</span>
-      <h1>Choose your plan.</h1>
-      <p>Your email is verified. Choose the plan and billing period you want before StockChief opens Stripe's secure checkout.</p>
+      <h1><%= selection.planId?'Review your plan.':'Choose your plan.' %></h1>
+      <p>Your email is verified, but your business workspace is not active yet. Initial launch is monthly only.</p>
       <% if(flash&&flash.length){flash.forEach(function(message){ %>
         <div class="auth-message auth-message--<%= message.type %>" role="alert"><%= message.message %></div>
       <% });} %>
-      <form method="post" action="/billing/checkout">
+      <% if(checkoutOpen){ %><form method="post" action="/billing/checkout">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <input type="hidden" name="promoCode" value="<%= selection.promoCode||'' %>">
         <label class="auth-field" for="activation-plan">
           <span>Plan</span>
           <select id="activation-plan" name="planId" required>
-            <option value="" selected disabled>Choose a plan</option>
+            <option value="" <%= !(lastSelection?.planId||selection.planId)?'selected':'' %> disabled>Choose a plan</option>
             <% plans.filter(function(plan){return !plan.sales_only;}).forEach(function(plan){
               const monthly=Number(plan.monthly_amount_minor||0)/100;
             %>
-              <option value="<%= plan.id %>" <%= lastSelection&&lastSelection.planId===plan.id?'selected':'' %>><%= plan.public_name %> — <%= monthly.toLocaleString('en-US',{style:'currency',currency:plan.currency,maximumFractionDigits:0}) %>/month</option>
+              <option value="<%= plan.id %>" <%= (lastSelection?.planId||selection.planId)===plan.id?'selected':'' %>><%= plan.public_name %><%= checkoutOpen?' — '+monthly.toLocaleString('en-US',{style:'currency',currency:plan.currency,maximumFractionDigits:0})+'/month':'' %></option>
             <% }); %>
           </select>
         </label>
@@ -37,8 +37,14 @@
         </label>
         <button class="pub-btn pub-btn--block" type="submit">Continue to secure checkout</button>
       </form>
-      <p class="auth-help">Stripe handles payment details. StockChief never receives your card number.</p>
-      <p class="auth-foot"><a href="/pricing">Review plans first</a></p>
+      <p class="auth-help">Stripe handles payment details. StockChief never receives your card number.</p><% }else{ %>
+        <% const chosen=plans.find(function(plan){return plan.id===(lastSelection?.planId||selection.planId);}); %>
+        <p><%= chosen?'You selected '+chosen.public_name+' with monthly billing.':'No plan has been selected yet.' %></p>
+        <div class="auth-message auth-message--warning" role="status">Checkout is not open yet. Your email is verified, but no payment has been taken and no inventory has been activated. We will not send you to a checkout that cannot complete.</div>
+      <% } %>
+      <p class="auth-foot"><a href="/pricing#<%= lastSelection?.planId||selection.planId||'starter' %>">Compare monthly plans</a></p>
+      <form method="post" action="/logout" class="auth-foot"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <button class="pub-link" type="submit">Use a different account</button></form>
     </div>
   </main>
 </body>

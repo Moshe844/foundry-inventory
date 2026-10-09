@@ -41,7 +41,7 @@ test('real Chromium connects each inventory to its own Stripe account without re
     const base=`http://127.0.0.1:${server.address().port}`;
     await page.goto(`${base}/register`);await page.getByLabel('Business name').fill('Stripe Owner Business');
     await page.getByLabel('Your name').fill('Stripe Owner');await page.getByLabel('Work email').fill('stripe-owner@example.test');
-    await page.getByLabel('Password').fill('stripe-owner-password');
+    await page.locator('input[name="password"]').fill('stripe-owner-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('stripe-owner-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
     await page.goto(`${base}/settings/connections#payments`);
     assert.match(await page.locator('main').innerText(),/Each inventory uses the business’s own Stripe account/);
@@ -75,7 +75,7 @@ test('real Chromium connects each inventory to its own Stripe account without re
     const otherContext=await browser.newContext();const other=await otherContext.newPage();
     await other.goto(`${base}/register`);await other.getByLabel('Business name').fill('Other Business');
     await other.getByLabel('Your name').fill('Other Owner');await other.getByLabel('Work email').fill('other-stripe@example.test');
-    await other.getByLabel('Password').fill('other-stripe-password');
+    await other.locator('input[name="password"]').fill('other-stripe-password');if(await other.locator('input[name="confirmPassword"]').count())await other.locator('input[name="confirmPassword"]').fill('other-stripe-password');
     await Promise.all([other.waitForURL(`${base}/onboarding`),other.getByRole('button',{name:'Create account'}).click()]);
     await other.goto(`${base}/settings/connections#payments`);
     assert.equal(await other.getByText('Owner Stripe Sandbox').count(),0);

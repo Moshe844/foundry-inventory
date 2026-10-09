@@ -57,7 +57,7 @@ test('real Chromium proves PostgreSQL transfer custody, partial outcomes, accoun
     await page.getByLabel('Business name').fill('Transfer Custody Business');
     await page.getByLabel('Your name').fill('Transfer Owner');
     await page.getByLabel('Work email').fill('transfers-ui@example.test');
-    await page.getByLabel('Password').fill('transfer-password');
+    await page.locator('input[name="password"]').fill('transfer-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('transfer-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`), page.getByRole('button', { name: 'Create account' }).click()]);
     const identity = (await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id FROM workspaces w
       JOIN users u ON u.workspace_id=w.id JOIN accounts a ON a.id=u.account_id

@@ -29,7 +29,7 @@ test('real Chromium and reasoning model discover actual capabilities without bus
     await page.getByLabel('Business name').fill('Discovery Browser Business');
     await page.getByLabel('Your name').fill('Discovery Owner');
     await page.getByLabel('Work email').fill('discovery-browser@example.test');
-    await page.getByLabel('Password').fill('isolated-discovery-password');
+    await page.locator('input[name="password"]').fill('isolated-discovery-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('isolated-discovery-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
     await page.goto(`${base}/ask`);
     assert.equal(await page.getByText('What can you help me do here?',{exact:true}).count(),1);

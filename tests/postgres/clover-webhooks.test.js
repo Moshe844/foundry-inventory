@@ -40,7 +40,7 @@ test('real Chromium qualifies Clover merchant fan-out, unknown isolation, signat
     const base=`http://127.0.0.1:${server.address().port}`;
     await page.goto(`${base}/register`);await page.getByLabel('Business name').fill('Clover Webhook Business');
     await page.getByLabel('Your name').fill('Clover Owner');await page.getByLabel('Work email').fill('clover-webhook@example.test');
-    await page.getByLabel('Password').fill('clover-webhook-password');
+    await page.locator('input[name="password"]').fill('clover-webhook-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('clover-webhook-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
     const identity=(await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id FROM workspaces w
       JOIN users u ON u.workspace_id=w.id JOIN accounts a ON a.id=u.account_id WHERE a.email='clover-webhook@example.test'`)).rows[0];

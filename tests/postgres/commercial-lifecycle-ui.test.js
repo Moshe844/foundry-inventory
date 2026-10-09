@@ -54,7 +54,7 @@ test('real Chromium completes upgrade, scheduled downgrade, cancellation and rea
   const browser=await chromium.launch();context.after(async()=>{await browser.close();await new Promise((resolve)=>server.close(resolve));
     await app.locals.sessionStore.close();await database.close();cluster.stop();});const base=`http://127.0.0.1:${server.address().port}`;
   const page=await browser.newPage({viewport:{width:1360,height:900}});await page.goto(`${base}/login`);
-  await page.getByLabel('Email').fill('lifecycle@example.test');await page.getByLabel('Password').fill('Lifecycle-password!');
+  await page.getByLabel('Email').fill('lifecycle@example.test');await page.locator('input[name="password"]').fill('Lifecycle-password!');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('Lifecycle-password!');
   await Promise.all([page.waitForURL(`${base}/`),page.getByRole('button',{name:'Sign in'}).click()]);
 
   await page.goto(`${base}/billing`);await page.getByRole('link',{name:'Pro',exact:true}).click();

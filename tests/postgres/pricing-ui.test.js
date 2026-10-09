@@ -26,7 +26,7 @@ test('real Chromium previews and approves PostgreSQL selling prices and purchase
     const base=`http://127.0.0.1:${server.address().port}`;
     await page.goto(`${base}/register`);await page.getByLabel('Business name').fill('Pricing Certification');
     await page.getByLabel('Your name').fill('Pricing Owner');await page.getByLabel('Work email').fill('pricing-pg@example.test');
-    await page.getByLabel('Password').fill('pricing-password');
+    await page.locator('input[name="password"]').fill('pricing-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('pricing-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
     const identity=(await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id FROM workspaces w JOIN users u ON u.workspace_id=w.id
       JOIN accounts account ON account.id=u.account_id WHERE account.email='pricing-pg@example.test'`)).rows[0];

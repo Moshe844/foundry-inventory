@@ -30,7 +30,7 @@ test('real Chromium runs a PostgreSQL fulfillment wave without moving stock befo
     const base=`http://127.0.0.1:${server.address().port}`;
     await page.goto(`${base}/register`);await page.getByLabel('Business name').fill('Wave Business');
     await page.getByLabel('Your name').fill('Wave Owner');await page.getByLabel('Work email').fill('wave-owner@example.test');
-    await page.getByLabel('Password').fill('wave-password');
+    await page.locator('input[name="password"]').fill('wave-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('wave-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
     const identity=(await database.query(`SELECT workspace.id AS workspace_id,user_record.id AS actor_id
       FROM workspaces workspace JOIN users user_record ON user_record.workspace_id=workspace.id

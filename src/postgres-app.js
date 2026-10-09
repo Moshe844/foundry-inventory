@@ -158,7 +158,7 @@ function createPostgresApp({database,sessionStore,sessionSecret=config.sessionSe
   app.use(postgresPageRenderer);
   app.use(createPostgresCommercialRouter(database,{publicOrigin:connectionPublicOrigin || config.connections.publicOrigin,
     ...(commercialOptions||{})}));
-  app.use(createPostgresAuthRouter(database));
+  app.use(createPostgresAuthRouter(database,commercialOptions||{}));
   app.use(createPostgresWorkspacesRouter(database));
   app.use(createPostgresSettingsRouter(database,{provider:aiProvider}));
   app.use(createPostgresOnboardingRouter(database));
@@ -187,7 +187,8 @@ function createPostgresApp({database,sessionStore,sessionSecret=config.sessionSe
   app.get('/',async(req,res,next)=>{
     try {
     if(!req.account)return res.redirect('/login');
-    if(!req.user)return res.redirect('/inventories');
+    if(!req.user)return res.redirect(req.account.plan==='commercial_pending'
+      ?(req.account.email_verified_at?'/complete-signup':'/verify-email/pending'):'/inventories');
     const products=await database.query('SELECT 1 FROM items WHERE workspace_id=$1 AND is_active=1 LIMIT 1',
       [req.ctx.workspaceId]);
     return res.redirect(products.rows.length?'/inventory':'/onboarding');
