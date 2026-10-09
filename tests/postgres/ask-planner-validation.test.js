@@ -161,6 +161,24 @@ test('independent evidence check repairs a status-mixed business briefing',async
   assert.match(result[0].result.answer,/One confirmed order has 2 open units/);
 });
 
+test('capability discovery with ranked attention composes canonical source answers without invented priorities',async()=>{
+  const answered=(name,answer,rows)=>({step:{contract:registry.get(name)},args:{},provenance:{},
+    result:{status:'ANSWERED',answer,rows}});
+  const executed=[answered('read.capabilities','I can prepare orders and reports for approval.',
+    [{help:'Prepare an order'}]),
+  answered('read.needs_you','One decision needs attention. First: Review bill BILL-2.',
+    [{decision:'Review bill BILL-2'}]),
+  answered('read.inventory_summary','There are 4 products with 18 units on hand.',
+    [{products:4,onHand:18}])];
+  const provider={async complete(){throw new Error('Canonical source answers need no model synthesis');}};
+  const result=await synthesizeReads(provider,'What can you do and what should I tackle first?',executed);
+  assert.equal(result[0].result.status,'ANSWERED');
+  assert.match(result[0].result.answer,/First: Review bill BILL-2/);
+  assert.match(result[0].result.answer,/4 products with 18 units/);
+  assert.equal(result[0].result.handoff.href,'/ask/capabilities');
+  assert.equal(result[0].result.rows.length,3);
+});
+
 test('a grounded multi-part business briefing is not rejected for length alone',async()=>{
   const executed=[{step:{contract:registry.get('read.needs_you')},args:{},provenance:{},
     result:{status:'ANSWERED',answer:'One decision needs attention.',rows:[

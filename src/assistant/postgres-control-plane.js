@@ -300,6 +300,23 @@ async function synthesizeReads(provider,message,executed,{completedActions=[],ca
     truncated:(entry.result.rows||[]).length>30}));
   const verifiedStatusFacts=statusFacts(evidence);
   if(!provider)return executed;
+  // Capability discovery and the ranked Needs You projection are already
+  // canonical, human-readable answers. Joining those two verified reads is
+  // safer than asking a model to invent a priority from unrelated order rows.
+  const abilityIndex=executed.findIndex((entry)=>entry.step.contract.name==='read.capabilities');
+  const attentionIndex=executed.findIndex((entry)=>entry.step.contract.name==='read.needs_you');
+  if(abilityIndex>=0&&attentionIndex>=0&&executed.length<=5){
+    const ability=executed[abilityIndex],attention=executed[attentionIndex];
+    const ordered=[ability,attention,...executed.filter((entry)=>entry!==ability&&entry!==attention)];
+    const rows=ordered.flatMap((entry)=>evidence[executed.indexOf(entry)].rows.map((row)=>({
+      source:entry.step.contract.name,record:JSON.stringify(row).slice(0,900)}))).slice(0,60);
+    return [{step:ability.step,args:ability.args,provenance:ability.provenance||{},result:{
+      status:'ANSWERED',answer:ordered.map((entry)=>String(entry.result.answer||'').trim())
+        .filter(Boolean).join(' '),
+      rows,columns:['source','record'],handoff:{href:'/ask/capabilities',label:'See every available ability'},
+      researchViews:ordered.map((entry)=>entry.step.contract.view),
+      additionalReads:[],reason:null}}];
+  }
   try{
     const context={question:message,evidence,verifiedStatusFacts,
       completedActions,recentChanges,
