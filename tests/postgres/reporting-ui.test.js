@@ -65,6 +65,15 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
           columns:[],groups:['occurred_on'],aggregate:'sum',measure:'quantity_delta',filters:[],
           sort:'occurred_on',direction:'asc',chart:'line'},usage:pricedUsage()};
       if(input.schemaName==='stockchief_governed_report'&&
+        /more than two ordered units/i.test(JSON.parse(input.prompt).request)){
+        const previous=JSON.parse(input.prompt).previousReport;
+        assert.equal(previous?.dataset,'composed');
+        return {data:{...previous,title:'Filtered recorded profit per ordered unit',
+          columns:[],groups:['sku'],aggregate:'sum',measure:'',filters:[],
+          sort:'calculated',direction:'desc',resultFilters:[
+            {field:'ordered',operator:'greater_than',value:'2'}]},usage:pricedUsage()};
+      }
+      if(input.schemaName==='stockchief_governed_report'&&
         /combine posted gross profit and ordered units/i.test(JSON.parse(input.prompt).request))
         return {data:{...combinedDefinition,columns:[],groups:['sku'],aggregate:'sum',measure:'',
           filters:[],direction:'desc'},usage:pricedUsage()};
@@ -189,6 +198,18 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     assert.equal(combined.chartColumn,'calculated');
     assert.equal(combined.config.layout,'dashboard');
     assert.equal(await reports.countAtMost(database,ctx,actor,combinedDefinition,10),1);
+    const qualifying=await reports.run(database,ctx,actor,{...combinedDefinition,sort:'calculated',
+      resultFilters:[{field:'ordered',operator:'greater_than',value:'2'}]});
+    assert.equal(qualifying.rows.length,1);
+    assert.equal(qualifying.config.sort,'calculated');
+    const excluded={...combinedDefinition,resultFilters:[
+      {field:'ordered',operator:'greater_than',value:'3'}]};
+    assert.equal((await reports.run(database,ctx,actor,excluded)).rows.length,0);
+    assert.equal(await reports.countAtMost(database,ctx,actor,excluded,10),0);
+    assert.throws(()=>reports.normalize({...combinedDefinition,resultFilters:[
+      {field:'sku',operator:'greater_than',value:'0'}]},actor),/selected measure/i);
+    assert.throws(()=>reports.normalize({...combinedDefinition,resultFilters:[
+      {field:'ordered',operator:'greater_than',value:'0; DROP TABLE products'}]},actor),/numeric result/i);
     const byOrder=await reports.run(database,ctx,actor,{dataset:'composed',
       title:'Recorded order line units',dimension:'order_number',metrics:[
         {alias:'orders',dataset:'sales_orders',aggregate:'count',measure:'quoted_line_total_minor',filters:[]},
@@ -232,7 +253,9 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
       'metrics[1][filters][0][operator]':'equals','metrics[1][filters][0][value]':'USD',
       formula:combinedDefinition.formula,
       formulaLabel:combinedDefinition.formulaLabel,formulaUnit:'money',chart:'bar',
-      chartMeasure:'calculated',sort:'sku',layout:'dashboard'});
+      chartMeasure:'calculated',sort:'calculated',layout:'dashboard',
+      'resultFilters[0][field]':'ordered','resultFilters[0][operator]':'greater_than',
+      'resultFilters[0][value]':'2'});
     if(combinedPreview.status!==200){const redirected=await owner.get(combinedPreview.headers.location||'/reports');
       assert.equal(combinedPreview.status,200,redirected.text.match(/flash--error[^]*?<\/span>/)?.[0]||redirected.text.slice(0,400));}
     assert.match(combinedPreview.text,/Gross profit per ordered unit/);
@@ -248,13 +271,15 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     assert.match(sourcePage.text,/Open record/);
     assert.match(sourcePage.text,/Back to Report/);
     const combinedSave=await owner.post('/reports/save').type('form').send({
-      _csrf:csrf(combinedPreview.text),definition:JSON.stringify(combined.config),
+      _csrf:csrf(combinedPreview.text),definition:JSON.stringify(qualifying.config),
       frequency:'weekly',hour:'14'});
     assert.equal(combinedSave.status,303);
     const combinedId=combinedSave.headers.location.split('/').at(-1);
     const combinedStored=await reports.load(database,ctx,actor,combinedId);
     assert.equal(combinedStored.definition.formula,'profit / ordered');
     assert.equal(combinedStored.definition.layout,'dashboard');
+    assert.deepEqual(combinedStored.definition.resultFilters,[
+      {field:'ordered',operator:'greater_than',value:'2'}]);
     assert.equal(combinedStored.schedule_frequency,'weekly');
     const changedJoinKey=await owner.get(`/reports/compose?dimension=order_number&saved=${combinedId}`);
     assert.equal(changedJoinKey.status,200);
@@ -278,6 +303,12 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     const combinedAskResult=await owner.get('/ask');
     assert.match(combinedAskResult.text,/Recorded profit per ordered unit/);
     assert.match(combinedAskResult.text,/\$2\.10/);
+    const followupResponse=await owner.post('/ask').type('form').send({_csrf:csrf(combinedAskResult.text),
+      message:'Now show only groups with more than two ordered units and sort by calculated value, high to low.'});
+    assert.equal(followupResponse.status,303);
+    const followupResult=await owner.get('/ask');
+    assert.match(followupResult.text,/Filtered recorded profit per ordered unit/);
+    assert.match(followupResult.text,/\$2\.10/);
     const combinedInteraction=(await database.query(`SELECT id FROM stockchief_runtime.assistant_interactions
       WHERE workspace_id=$1 AND actor_user_id=$2 AND intent->'reportConfig'->>'dataset'='composed'
       ORDER BY created_at DESC,id DESC LIMIT 1`,[ctx.workspaceId,ctx.actorId])).rows[0];

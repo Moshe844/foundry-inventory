@@ -85,6 +85,22 @@
         <option value="asc" <%= selection.direction==='asc'?'selected':'' %>>Low to high</option></select></label>
     </div>
   </section>
+  <section class="report-card"><h2>Filter calculated results</h2>
+    <p>Apply these after each source is totaled by the shared identifier. Enter a selected measure name above, or <code>calculated</code> for the formula. An unrecorded value does not pass a numeric comparison.</p>
+    <% for(let position=0;position<4;position++){const filter=selection.resultFilters?.[position]||{}; %>
+      <div class="report-filter">
+        <input name="resultFilters[<%= position %>][field]" maxlength="24" pattern="[a-z][a-z0-9_]*"
+          value="<%= filter.field||'' %>" placeholder="Measure name" aria-label="Result filter <%= position+1 %> measure">
+        <select name="resultFilters[<%= position %>][operator]" aria-label="Result filter <%= position+1 %> comparison">
+          <% for(const operation of ['equals','greater_than','at_least','less_than','at_most','is_null','not_null']){ %>
+            <option value="<%= operation %>" <%= filter.operator===operation?'selected':'' %>><%= operation.replaceAll('_',' ') %></option>
+          <% } %>
+        </select>
+        <input name="resultFilters[<%= position %>][value]" value="<%= filter.value||'' %>"
+          placeholder="Number" aria-label="Result filter <%= position+1 %> value">
+      </div>
+    <% } %>
+  </section>
   <section class="report-card"><h2>Automatic delivery</h2>
     <p>Only your verified account email can receive scheduled reports. Weekly reports run on Monday.</p>
     <div class="report-controls"><label>Frequency<select name="frequency">

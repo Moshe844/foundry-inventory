@@ -17,6 +17,8 @@ function source(body){
       filters:Object.values(row.filters||{}).filter((filter)=>filter?.field
         &&(filter.value||filter.operator==='is_null'))})),
     formula:body.formula,formulaLabel:body.formulaLabel,formulaUnit:body.formulaUnit,
+    resultFilters:Object.values(body.resultFilters||{}).filter((filter)=>filter?.field
+      &&(filter.value||['is_null','not_null'].includes(filter.operator))),
     chart:body.chart,chartMeasure:body.chartMeasure,sort:body.sort,
     direction:body.direction,layout:body.layout};
   const dataset=registry.get(body.dataset);

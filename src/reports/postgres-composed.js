@@ -12,6 +12,7 @@ const DIMENSIONS=Object.freeze({
 });
 const AGGREGATES=new Set(['count','sum','average','minimum','maximum','ratio']);
 const OPERATORS=new Set(['equals','contains','at_least','at_most','after','before','is_null']);
+const RESULT_OPERATORS=new Set(['equals','greater_than','at_least','less_than','at_most','is_null','not_null']);
 const IDENTIFIER=/^[a-z][a-z0-9_]{0,23}$/u;
 const FORMULA_LIMIT=160;
 function invalid(message){throw new ValidationError(message);}
@@ -136,10 +137,22 @@ function normalize(spec,actor){
   const sort=text(spec.sort,24)||dimension;
   if(sort!==dimension&&sort!=='calculated'&&!aliases.has(sort)||sort==='calculated'&&!formula)
     invalid('Sort by the identifier or a selected measure.');
+  const rawResultFilters=Array.isArray(spec.resultFilters)?spec.resultFilters:[];
+  if(rawResultFilters.length>4)invalid('Use at most four filters on report results.');
+  const resultFilters=rawResultFilters.map((filter)=>{
+    const field=text(filter.field,24),operator=text(filter.operator,24),value=text(filter.value,40);
+    if(!aliases.has(field)&&!(field==='calculated'&&formula))
+      invalid('Filter report results by a selected measure or calculation.');
+    if(!RESULT_OPERATORS.has(operator))invalid('Choose a supported result comparison.');
+    if(!['is_null','not_null'].includes(operator)
+      &&(!/^-?(?:\d+(?:\.\d*)?|\.\d+)$/u.test(value)||!Number.isFinite(Number(value))))
+      invalid('Use a finite numeric result filter.');
+    return {field,operator,value:['is_null','not_null'].includes(operator)?'':value};
+  });
   const layout=['chart_first','table_first','dashboard'].includes(spec.layout)?spec.layout:'chart_first';
   const title=text(spec.title,100)||`Combined ${DIMENSIONS[dimension]} report`;
   return {dataset:'composed',dimension,metrics,formula,formulaLabel,formulaUnit,chart,chartMeasure,sort,
-    direction:spec.direction==='asc'?'asc':'desc',layout,title,groups:[dimension],summary:false};
+    resultFilters,direction:spec.direction==='asc'?'asc':'desc',layout,title,groups:[dimension],summary:false};
 }
 function filterSql(filter,index){const field=quote(filter.field),param=`$${index}`;
   if(filter.operator==='is_null')return `${field} IS NULL`;
@@ -187,11 +200,20 @@ function queryFor(config,workspaceId,{limit=201,offset=0,count=false}={}){
   ctes.push(`computed AS (SELECT *,${parsed?`ROUND((${parsed.sql})::numeric,2)`:'NULL::numeric'}
     AS calculated FROM combined)`);
   const prefix=`WITH ${ctes.join(',')}`;
+  const resultConditions=config.resultFilters.map((filter)=>{
+    const field=quote(filter.field);
+    if(filter.operator==='is_null')return `${field} IS NULL`;
+    if(filter.operator==='not_null')return `${field} IS NOT NULL`;
+    values.push(filter.value);
+    const comparison={equals:'=',greater_than:'>',at_least:'>=',less_than:'<',at_most:'<='}[filter.operator];
+    return `${field}${comparison}$${values.length}::numeric`;
+  });
+  const resultWhere=resultConditions.length?`WHERE ${resultConditions.join(' AND ')}`:'';
   if(count){values.push(limit);return {sql:`${prefix} SELECT COUNT(*)::bigint AS count FROM
-    (SELECT 1 FROM computed LIMIT $${values.length}) bounded`,values};}
+    (SELECT 1 FROM computed ${resultWhere} LIMIT $${values.length}) bounded`,values};}
   values.push(limit,offset);
   return {sql:`${prefix} SELECT ${quote(config.dimension)},${config.metrics.map((metric)=>quote(metric.alias)).join(',')}
-    ${config.formula?',calculated':''} FROM computed
+    ${config.formula?',calculated':''} FROM computed ${resultWhere}
     ORDER BY ${quote(config.sort)} ${config.direction==='asc'?'ASC':'DESC'} NULLS LAST,
       ${quote(config.dimension)} ASC NULLS LAST LIMIT $${values.length-1} OFFSET $${values.length}`,values};
 }
