@@ -234,6 +234,19 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     assert.equal(partialText.rows.length,1);
     assert.equal(partialText.rows[0].location,'Main');
     assert.equal(partialText.reportConfig.filters[0].operator,'contains');
+    const canonicalCategory=await reportAsk.prepare(database,ctx,
+      'Show active products in the catalogue',{provider:{async complete(input){
+        if(input.schemaName==='stockchief_governed_report_fit')
+          return {data:{aligned:true,reason:''}};
+        return {data:{dataset:'catalogue',title:'Active products',
+          columns:['product','sku','status'],groups:[],aggregate:'count',measure:'',
+          filters:[{field:'status',operator:'equals',value:'act'}],
+          sort:'sku',direction:'asc',chart:'table'}};
+      }}});
+    assert.equal(canonicalCategory.status,'ANSWERED');
+    assert.equal(canonicalCategory.rows.length,1);
+    assert.equal(canonicalCategory.reportConfig.filters[0].value,'active');
+    assert.match(canonicalCategory.answer,/only recorded category/);
     assert.throws(()=>reports.normalize({dataset:'payments',groups:['status'],aggregate:'sum',
       measure:'amount_minor',sort:'total'},actor),/currency/i);
     const askPage=await owner.get('/ask');

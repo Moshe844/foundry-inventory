@@ -14,7 +14,7 @@ const datasets=Object.freeze({
       LEFT(i.created_at,10) AS created_on
       FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
       WHERE s.workspace_id=$1`,recordHref:(row)=>`/inventory/${row.record_id}`,
-    fields:{product:'text',sku:'text',variant:'text',barcode:'text',unit:'text',tracking:'text',
+    enumFields:['status'],fields:{product:'text',sku:'text',variant:'text',barcode:'text',unit:'text',tracking:'text',
       status:'text',created_on:'date'}},
   stock:{label:'Stock by product and location',permission:permissions.VIEW,
     source:`SELECT i.id AS record_id,i.name AS product,s.code AS sku,l.name AS location,
@@ -57,7 +57,7 @@ const datasets=Object.freeze({
       JOIN movements m ON m.id=cm.inventory_movement_id AND m.workspace_id=cm.workspace_id
       JOIN accounting_settings a ON a.workspace_id=cm.workspace_id AND a.enabled=1
       WHERE cm.workspace_id=$1`,recordHref:(row)=>`/inventory/${row.record_id}`,
-    fields:{product:'text',sku:'text',location:'text',quantity_delta:'number',
+    enumFields:['source_kind'],fields:{product:'text',sku:'text',location:'text',quantity_delta:'number',
       book_cost_change_minor:'money_minor',source_kind:'text',currency:'text',
       recorded_on:'date',reference:'text'}},
   sales_orders:{label:'Customer orders',permission:permissions.VIEW_SALES,

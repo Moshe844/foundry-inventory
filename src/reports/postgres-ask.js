@@ -44,6 +44,28 @@ function normalizeProposal(proposed,actor){
   return reports.normalize(translated,actor);
 }
 
+async function resolveUniqueCategory(database,ctx,actor,spec){
+  const enumerated=registry.get(spec.dataset)?.enumFields||[];
+  for(const [index,filter] of spec.filters.entries()){
+    if(filter.operator!=='equals'||!enumerated.includes(filter.field))continue;
+    const matchingFilters=spec.filters.map((entry,entryIndex)=>entryIndex===index
+      ?{...entry,operator:'contains'}:entry);
+    const distinct=await reports.run(database,ctx,actor,{dataset:spec.dataset,
+      title:'Recorded category check',columns:[],groups:[filter.field],aggregate:'count',
+      measure:'',filters:matchingFilters,sort:filter.field,direction:'asc',chart:'table'},
+    {limit:3});
+    if(distinct.hasMore||distinct.rows.length!==1)continue;
+    const recorded=String(distinct.rows[0][filter.field]||'');
+    if(!recorded||recorded===filter.value)continue;
+    const resolved=reports.normalize({...spec,filters:spec.filters.map((entry,entryIndex)=>
+      entryIndex===index?{...entry,value:recorded}:entry)},actor);
+    const result=await reports.run(database,ctx,actor,resolved,{limit:51});
+    if(result.rows.length)return {spec:resolved,result,
+      interpretation:`Matched the partial ${filter.field.replaceAll('_',' ')} “${filter.value}” to the only recorded category “${recorded}”.`};
+  }
+  return null;
+}
+
 async function actorFor(database,ctx){
   return (await database.query(`SELECT u.role,u.permissions,a.email FROM users u
     JOIN accounts a ON a.id=u.account_id WHERE u.workspace_id=$1 AND u.id=$2`,
@@ -99,14 +121,19 @@ async function prepare(database,ctx,message,{provider,priorReport=null}){
     try{
       const planned=await completeWithOutputRetry(provider.complete.bind(provider),request);
       proposed=planned.data;
-      const spec=normalizeProposal(planned.data,actor);
+      let spec=normalizeProposal(planned.data,actor);
       const fitProvider=provider.verifyComplete||provider.complete.bind(provider);
       const fit=await completeWithOutputRetry(fitProvider,{system:'Independently verify that this governed report definition fulfills the user request. Check dataset meaning, selected measures and calculations, requested columns, grouping, filters and date range, chart type, and actual sort field and direction. A group-label sort is not a largest-value sort. A grouped result offers source-record drilldown; this can satisfy a request to show source records without adding detail columns to the grouped result. Do not infer missing figures or silently replace a requested measure. Set aligned=false and state the concrete mismatch if anything requested is omitted or changed. A harmless title difference is acceptable.',
         prompt:JSON.stringify({request:message,previousReport:verifiedPrior,definition:spec,
           fields:registry.get(spec.dataset)?.fields||{}}),schema:FIT_SCHEMA,
         schemaName:'stockchief_governed_report_fit',maxOutputTokens:600});
       if(fit.data?.aligned!==true)throw new Error(`Report does not match the request: ${String(fit.data?.reason||'unverified').slice(0,180)}`);
-      const result=await reports.run(database,ctx,actor,spec,{limit:51});
+      let result=await reports.run(database,ctx,actor,spec,{limit:51});
+      let interpretation='';
+      if(!result.rows.length){
+        const resolved=await resolveUniqueCategory(database,ctx,actor,spec);
+        if(resolved){({spec,result,interpretation}=resolved);}
+      }
       if(attempt===0&&!result.rows.length&&spec.filters.some((filter)=>
         filter.operator==='equals'&&registry.get(spec.dataset)?.fields[filter.field]==='text'))
         throw new Error('The exact text filter returned no records. Reconsider whether the owner gave a partial text/category label; use contains only if that preserves the requested meaning. Never fabricate matching rows.');
@@ -116,7 +143,7 @@ async function prepare(database,ctx,message,{provider,priorReport=null}){
       const label=spec.groups.length?(visible.length===1?'group':'groups'):
         (visible.length===1?'record':'records');
       const findings=result.insights||[];
-      const answer=visible.length?`${spec.title}: ${visible.length}${truncated?' or more':''} matching ${label} from recorded PostgreSQL data.${findings[0]?` ${findings[0].text}`:''}`:
+      const answer=visible.length?`${spec.title}: ${visible.length}${truncated?' or more':''} matching ${label} from recorded PostgreSQL data.${interpretation?` ${interpretation}`:''}${findings[0]?` ${findings[0].text}`:''}`:
         `No recorded rows matched ${spec.title}. Try changing the filters.`;
       return {status:'ANSWERED',answer,rows:visible,columns:result.columns,
         handoff:{href:`/reports/builder?dataset=${encodeURIComponent(spec.dataset)}`,label:'Customize this report'},
