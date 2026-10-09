@@ -34,6 +34,9 @@ const classification=Object.freeze({
  'payments/providers/stripe.js':'METERED',
  'product-brain/navigation.js':'NOT_PG_ENABLED',
  'purchasing/supplier-document-extractor.js':'NOT_PG_ENABLED',
+ // Governed report composition and its independent fit check receive the
+ // funded Ask provider from postgres-control-plane/postgres-service.
+ 'reports/postgres-ask.js':'METERED',
  'sales/order-from-email.js':'NOT_PG_ENABLED',
  'shipping/providers/easypost-partner.js':'METERED',
  'shipping/providers/easypost.js':'METERED',

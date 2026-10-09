@@ -207,7 +207,7 @@ test('the permanent task guide uses this inventory in examples and points to rea
   assert.match(page, /How do I use StockChief\?/);
 });
 
-test('Tell StockChief examples change with the actual operating state', async () => {
+test('Home gives state-specific opening-inventory guidance without fixed Ask phrases', async () => {
   const env = setup();
   configure(env.db, env.workspace.workspaceId);
   itemService.createItem(env.db, env.ctx, {
@@ -216,9 +216,11 @@ test('Tell StockChief examples change with the actual operating state', async ()
   const agent = await ownerAgent(env);
 
   const emptyLedger = plain((await agent.get('/')).text);
-  assert.match(emptyLedger, /I want to enter opening inventory for Canvas Tote/);
+  assert.match(emptyLedger, /Tell StockChief how much you have now/);
+  assert.match(emptyLedger, /no opening quantities have been recorded/);
+  assert.match(emptyLedger, /Ask StockChief/);
   const actions = plain((await agent.get('/actions')).text);
-  assert.match(actions, /I want to enter opening inventory for Canvas Tote/);
+  assert.match(actions, /Tell StockChief/);
 });
 
 test('the next action reuses the real Needs you decision and links to the exact count', async () => {
