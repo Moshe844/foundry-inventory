@@ -714,6 +714,49 @@ async function accountMapping(database,ctx,row,args){
 }
 
 const SPECS=Object.freeze([
+  {name:'sales_order.revise_draft_line',description:'Change the exact quantity and optionally per-unit price of one product already on an existing DRAFT customer order. Preserve customer, date, pickup or shipping method and every other line. Do not confirm, reserve, invoice, fulfill, send or charge anything.',
+    singleEffectPerTarget:true,record:'sales_order',fields:['recordReference','sku','quantity','amount'],
+    permission:permissions.MANAGE_SALES,capability:'sales_orders.core',
+    build:async(database,ctx,row,args)=>{
+      requireState(row,['DRAFT'],'This customer order');
+      const wanted=String(args.sku||'').trim().toLowerCase();
+      if(!wanted)throw new ValidationError('Which product on this draft order should change?');
+      const matches=(await database.query(`SELECT l.id,l.sku_id,l.quantity_ordered,l.unit_price_minor,
+        s.code,i.name FROM sales_order_lines l JOIN skus s ON s.id=l.sku_id AND s.workspace_id=l.workspace_id
+        JOIN items i ON i.id=s.item_id AND i.workspace_id=l.workspace_id
+        WHERE l.workspace_id=$1 AND l.sales_order_id=$2 AND
+          (lower(s.code)=lower($3) OR lower(i.name)=lower($3))`,
+      [ctx.workspaceId,row.id,wanted])).rows;
+      if(matches.length!==1)throw new ValidationError(matches.length
+        ?'More than one order line matches that product. Give its exact SKU code.':
+          'That product is not on this draft customer order.');
+      const line=matches[0],quantity=positive(args.quantity,'Draft order quantity');
+      const changedPrice=args.amount!=null;
+      const amount=changedPrice?Number(args.amount):null;
+      if(changedPrice&&(!Number.isFinite(amount)||amount<0||
+        Math.abs(Math.round(amount*100)-amount*100)>0.000001))
+        throw new ValidationError('State a valid per-unit selling price with at most two decimal places.');
+      const unitPriceMinor=changedPrice?Math.round(amount*100):
+        line.unit_price_minor==null?NaN:Number(line.unit_price_minor);
+      if(!Number.isSafeInteger(unitPriceMinor)||unitPriceMinor<0)
+        throw new ValidationError('This order line needs a verified per-unit price before changing it.');
+      return prepareResult({recordId:row.id,skuId:line.sku_id,quantity,unitPriceMinor,
+        expectedVersion:Number(row.version),expectedQuantity:Number(line.quantity_ordered),
+        expectedUnitPriceMinor:Number(line.unit_price_minor)},
+      `Change only ${line.name} (${line.code}) on draft ${row.order_number} from ${line.quantity_ordered} to ${quantity} units `+
+        `at ${pricing.formatMinor(unitPriceMinor,row.currency)} each. `+
+        `Needed by ${row.needed_by||'not set'}; ${String(row.delivery_method||'delivery method not set').toLowerCase()}. `+
+        'The order remains a draft; no stock is reserved, invoice is posted, or message is sent.');
+    },
+    execute:(client,ctx,p)=>workflows.reviseDraftSalesOrderLineInTransaction(client,ctx,p.recordId,p),
+    verify:async(client,ctx,result,p)=>Boolean(result.status==='DRAFT'&&result.quantity===p.quantity&&
+      (await client.query(`SELECT 1 FROM sales_orders o JOIN sales_order_lines l
+        ON l.sales_order_id=o.id AND l.workspace_id=o.workspace_id
+        WHERE o.workspace_id=$1 AND o.id=$2 AND o.status='DRAFT' AND o.version=$3
+          AND l.sku_id=$4 AND l.quantity_ordered=$5 AND l.unit_price_minor=$6
+          AND NOT EXISTS (SELECT 1 FROM sales_order_allocations a WHERE a.workspace_id=o.workspace_id
+            AND a.sales_order_line_id=l.id)`,
+      [ctx.workspaceId,p.recordId,p.expectedVersion+1,p.skuId,p.quantity,p.unitPriceMinor])).rows.length)},
   {name:'sales_order.confirm',description:'Confirm an existing draft customer order and reserve available stock; report a real shortage rather than invent stock.',
     singleEffectPerTarget:true,
     record:'sales_order',fields:['recordReference'],permission:permissions.MANAGE_SALES,capability:'sales_orders.core',

@@ -13,7 +13,7 @@ function source(body){
   const dataset=registry.get(body.dataset);
   const rawColumns=Array.isArray(body.columns)?body.columns:body.columns?[body.columns]:[];
   const filters=[];
-  for(const row of Object.values(body.filters||{}))if(row&&row.field&&row.value)filters.push(row);
+  for(const row of Object.values(body.filters||{}))if(row&&row.field&&(row.value||row.operator==='is_null'))filters.push(row);
   const groups=Array.isArray(body.groups)?body.groups.filter(Boolean):body.groups?[body.groups]:body.group?[body.group]:[];
   return {dataset:body.dataset,title:body.title||dataset?.label,columns:rawColumns,
     groups,aggregate:body.aggregate,measure:body.measure,
@@ -64,6 +64,15 @@ function createPostgresReportsRouter(database){
     req.session.reportDraft={workspaceId:req.ctx.workspaceId,definition:result.config};
     return res.page('reports/result',{title:result.config.title,nav:'accounting',result,saved:null});
   }));
+  router.post('/reports/drilldown',asyncRoute(async(req,res)=>{
+    const actor=await actorFor(database,req.ctx);
+    let values;try{values=JSON.parse(String(req.body.groupValues||''));}
+    catch{throw new ValidationError('Choose a valid report group.');}
+    const spec=reports.drilldownSpec(source(req.body),values,actor);
+    const result=await reports.run(database,req.ctx,actor,spec,{limit:201});
+    req.session.reportDraft={workspaceId:req.ctx.workspaceId,definition:result.config};
+    return res.page('reports/result',{title:result.config.title,nav:'accounting',result,saved:null});
+  }));
   router.post('/reports/save',asyncRoute(async(req,res)=>{
     const actor=await actorFor(database,req.ctx);permissions.assertCan(actor,permissions.VIEW,'save a report');
     const saved=await reports.save(database,req.ctx,actor,source(req.body),{
@@ -84,7 +93,7 @@ function createPostgresReportsRouter(database){
     if(!['csv','xlsx','pdf'].includes(format))throw new ValidationError('That export format is unavailable.');
     const result=await reports.run(database,req.ctx,actor,saved.definition,{limit:5001});
     if(result.hasMore)throw new ValidationError('This export exceeds 5,000 rows. Narrow its filters first.');
-    const output=reportExports[format](result);
+    const output=await reportExports[format](result);
     const mime={csv:'text/csv; charset=utf-8',
       xlsx:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',pdf:'application/pdf'};
     res.set('Content-Type',mime[format]);

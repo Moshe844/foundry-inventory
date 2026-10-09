@@ -7,7 +7,7 @@ const permissions=require('../actions/permissions');
 // model. Adding a field here is a deliberate product/permission decision.
 const datasets=Object.freeze({
   stock:{label:'Stock by product and location',permission:permissions.VIEW,
-    source:`SELECT s.id AS record_id,i.name AS product,s.code AS sku,l.name AS location,
+    source:`SELECT i.id AS record_id,i.name AS product,s.code AS sku,l.name AS location,
       b.on_hand::bigint AS on_hand,LEFT(b.updated_at,10) AS as_of
       FROM balances b JOIN skus s ON s.id=b.sku_id AND s.workspace_id=b.workspace_id
       JOIN items i ON i.id=s.item_id AND i.workspace_id=b.workspace_id

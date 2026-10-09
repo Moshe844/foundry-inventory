@@ -23,7 +23,11 @@
     <div class="report-table-wrap"><table><thead><tr><% for(const column of result.columns){ %>
       <th scope="col"><%= column.replaceAll('_',' ') %></th><% } %><th scope="col">Source</th></tr></thead>
       <tbody><% for(const [index,row] of result.rows.slice(0,200).entries()){ %><tr><% for(const column of result.columns){ %>
-        <td><%= result.displayRows[index][column]??'—' %></td><% } %><td><% if(row.href){ %><a href="<%= row.href %>">Open record</a><% } %></td></tr><% } %></tbody>
+        <td><%= result.displayRows[index][column]??'—' %></td><% } %><td><% if(row.href){ %><a href="<%= row.href %>">Open record</a><% }else if(result.config.groups.length){ %>
+          <form method="post" action="/reports/drilldown"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <input type="hidden" name="definition" value="<%= JSON.stringify(result.config) %>">
+            <input type="hidden" name="groupValues" value="<%= JSON.stringify(result.config.groups.map(field=>row[field])) %>">
+            <button class="report-link" type="submit">See source records</button></form><% } %></td></tr><% } %></tbody>
     </table></div>
     <% if(result.hasMore){ %><p>More rows match. Narrow the filters or export the saved report to inspect more.</p><% } %>
   <% } %>

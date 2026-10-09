@@ -133,10 +133,30 @@ test('real Chromium approves one free-form PostgreSQL standing instruction witho
       {provider:mixedProvider,instructionUsageKey:'combined-scoped-rule'});
     assert.equal(interpretations,2);
     assert.deepEqual(mixed.resolvedChanges.map((entry)=>entry.domain),['replenishment','stock_alert']);
-    await require('../../src/manager/postgres-operating-instructions').approve(database,ctx,mixed.id,mixed.integrityHash);
+    const approvedMixed=await require('../../src/manager/postgres-operating-instructions').approve(database,ctx,mixed.id,mixed.integrityHash);
     assert.equal(Number((await database.query(`SELECT threshold FROM stockchief_runtime.stock_threshold_rules
       WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3`,
       [ctx.workspaceId,item.skuIds[0],locationId])).rows[0].threshold),5);
+    const correctionProvider=require('../helpers/postgres-model-fixture').fixture({async complete(request){
+      if(request.schemaName==='postgres_operating_instruction')return {data:{understood:true,
+        summary:'Change only the alert',clarifyingQuestion:'',unsupportedReason:'',changes:[
+          change('replenishment',{sku:'RULE-1',location:'Main Warehouse',reorderPoint:5,targetStock:18}),
+          change('stock_alert',{sku:'RULE-1',location:'Main Warehouse',notificationThreshold:2,
+            notificationMetric:'on_hand',notificationComparator:'at_or_below'})]},
+      usage:{provider:'fixture-ai',model:'fixture-model',inputTokens:40,outputTokens:20}};
+      const effects=JSON.parse(request.prompt).enforcedEffects;
+      assert.equal(effects.length,1);assert.match(effects[0],/at or below 2/);
+      return {data:{equivalent:true,difference:''},
+        usage:{provider:'fixture-ai',model:'fixture-model',inputTokens:20,outputTokens:10}};
+    }});
+    const onlyAlert=await require('../../src/manager/postgres-operating-instructions').interpret(database,ctx,
+      'Change only that warning to two; keep the reorder point and target unchanged.',
+      {provider:correctionProvider,priorInstruction:approvedMixed,instructionUsageKey:'alert-only-correction'});
+    assert.deepEqual(onlyAlert.resolvedChanges.map((entry)=>entry.domain),['stock_alert']);
+    await require('../../src/manager/postgres-operating-instructions').approve(database,ctx,onlyAlert.id,onlyAlert.integrityHash);
+    assert.equal(Number((await database.query(`SELECT reorder_point FROM reorder_policies
+      WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3`,
+      [ctx.workspaceId,item.skuIds[0],locationId])).rows[0].reorder_point),5);
     const currentPage=await require('../../src/assistant/postgres-page-context').load(database,ctx.workspaceId,
       `/inventory/${item.itemId}`);
     const contextual=await require('../../src/manager/postgres-operating-instructions').interpret(database,ctx,

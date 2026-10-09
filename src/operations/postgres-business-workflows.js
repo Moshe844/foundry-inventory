@@ -851,6 +851,42 @@ async function synchronizeSalesOrder(database,rawContext,salesOrderId,input){
   return transaction(database,(client)=>synchronizeSalesOrderInTransaction(client,rawContext,salesOrderId,input));
 }
 
+async function reviseDraftSalesOrderLineInTransaction(client,rawContext,salesOrderId,input){
+  const ctx=requireContext(rawContext);
+  await requirePermission(client,ctx,access.OPERATE,'revise a draft sales order');
+  const operation=await beginOperation(client,ctx,'sales_order.revise_draft_line',input.idempotencyKey);
+  if(operation.replayed)return {...operation.result,replayed:true};
+  const order=await requireRow(client,`SELECT id,status,version FROM sales_orders
+    WHERE workspace_id=$1 AND id=$2 FOR UPDATE`,[ctx.workspaceId,salesOrderId],
+  'That sales order was not found.');
+  if(order.status!=='DRAFT')throw new ValidationError('Only a draft customer order can be revised without reallocating stock.');
+  if(Number(order.version)!==Number(input.expectedVersion))
+    throw new ValidationError('This order changed after review. Ask again before changing it.');
+  const line=await requireRow(client,`SELECT id,quantity_ordered,unit_price_minor FROM sales_order_lines
+    WHERE workspace_id=$1 AND sales_order_id=$2 AND sku_id=$3 FOR UPDATE`,
+  [ctx.workspaceId,salesOrderId,input.skuId],'That product is not on this draft customer order.');
+  if(Number(line.quantity_ordered)!==Number(input.expectedQuantity)||
+    Number(line.unit_price_minor)!==Number(input.expectedUnitPriceMinor))
+    throw new ValidationError('This order line changed after review. Ask again before changing it.');
+  const quantity=positiveInteger(input.quantity,'Draft order quantity');
+  const unitPriceMinor=nonNegativeMinor(input.unitPriceMinor,'Draft order unit price');
+  const at=nowIso();
+  await client.query(`UPDATE sales_order_lines SET quantity_ordered=$2,unit_price_minor=$3,updated_at=$4
+    WHERE id=$1`,[line.id,quantity,unitPriceMinor,at]);
+  await client.query(`UPDATE sales_orders SET version=version+1,updated_at=$3
+    WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,salesOrderId,at]);
+  await event(client,'sales_order_events',null,{workspaceId:ctx.workspaceId,recordId:salesOrderId,
+    type:'draft_line_revised',detail:{skuId:input.skuId,quantity,unitPriceMinor},actorId:ctx.actorId,
+    key:`${input.idempotencyKey}:event`,at});
+  const result={salesOrderId,lineId:line.id,skuId:input.skuId,quantity,unitPriceMinor,status:'DRAFT'};
+  await completeOperation(client,operation,result);
+  return {...result,replayed:false};
+}
+
+async function reviseDraftSalesOrderLine(database,rawContext,salesOrderId,input){
+  return transaction(database,(client)=>reviseDraftSalesOrderLineInTransaction(client,rawContext,salesOrderId,input));
+}
+
 async function recordPaymentInTransaction(client, rawContext, input) {
   const providerSystem=rawContext?.systemSource==='payment_provider';
   const ctx=providerSystem
@@ -1017,6 +1053,8 @@ module.exports = {
   cancelSalesOrderInTransaction,
   synchronizeSalesOrder,
   synchronizeSalesOrderInTransaction,
+  reviseDraftSalesOrderLine,
+  reviseDraftSalesOrderLineInTransaction,
   recordCustomerPayment,
   recordCustomerDeposit,
   recordSupplierPayment,

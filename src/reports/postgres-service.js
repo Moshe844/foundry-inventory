@@ -5,8 +5,9 @@ const permissions=require('../actions/permissions');
 const {ValidationError}=require('../domain/errors');
 const {newId}=require('../lib/util');
 
-const OPERATORS=new Set(['equals','contains','at_least','at_most','after','before']);
-const AGGREGATES=new Set(['count','sum','average']);
+const OPERATORS=new Set(['equals','contains','at_least','at_most','after','before','is_null']);
+const AGGREGATES=new Set(['count','sum','average','minimum','maximum']);
+const AGGREGATE_COLUMN=Object.freeze({count:'count',sum:'total',average:'average',minimum:'minimum',maximum:'maximum'});
 function invalid(message){throw new ValidationError(message);}
 function ensureActor(actor,dataset){permissions.assertCan(actor,dataset.permission,'view this report');}
 function safeText(value,max=120){const text=String(value??'').trim();if(text.length>max)invalid('A report value is too long.');return text;}
@@ -29,17 +30,20 @@ function normalize(spec,actor){
   if(aggregate!=='count'&&(!Object.hasOwn(dataset.fields,measure)
     ||!['number','money_minor'].includes(dataset.fields[measure])))invalid('Choose a numeric measure.');
   const filters=Array.isArray(spec.filters)?spec.filters:[];
-  if(filters.length>8)invalid('Use at most eight filters.');
+  if(filters.length>12)invalid('Use at most twelve filters.');
   const cleanFilters=filters.map((filter)=>{
     const field=safeText(filter.field,60),operator=safeText(filter.operator,30),value=safeText(filter.value);
-    if(!Object.hasOwn(dataset.fields,field)||!OPERATORS.has(operator)||!value)invalid('Choose valid report filters.');
+    if(!Object.hasOwn(dataset.fields,field)||!OPERATORS.has(operator)||(!value&&operator!=='is_null'))
+      invalid('Choose valid report filters.');
     const type=dataset.fields[field];
     if(['at_least','at_most'].includes(operator)&&!['number','money_minor','date'].includes(type))
       invalid('This field cannot be compared numerically.');
     if(['after','before'].includes(operator)&&type!=='date')invalid('This field is not a date.');
     if(operator==='contains'&&type!=='text')invalid('Only text fields support contains.');
-    if(type==='date'&&!/^\d{4}-\d{2}-\d{2}$/.test(value))invalid('Use dates in YYYY-MM-DD format.');
-    if(['number','money_minor'].includes(type)&&!Number.isFinite(Number(value)))invalid('Use a valid numeric filter.');
+    if(operator!=='is_null'&&type==='date'&&!/^\d{4}-\d{2}-\d{2}$/.test(value))
+      invalid('Use dates in YYYY-MM-DD format.');
+    if(operator!=='is_null'&&['number','money_minor'].includes(type)&&!Number.isFinite(Number(value)))
+      invalid('Use a valid numeric filter.');
     return {field,operator,value};
   });
   const exactCurrency=cleanFilters.find((filter)=>filter.field==='currency'
@@ -53,7 +57,7 @@ function normalize(spec,actor){
     columns.push('currency');
   }
   const sort=safeText(spec.sort,60)||groups[0]||columns[0]||'count';
-  const allowedSort=new Set(groups.length?[...groups,aggregate==='count'?'count':aggregate==='sum'?'total':'average']:columns);
+  const allowedSort=new Set(groups.length?[...groups,AGGREGATE_COLUMN[aggregate]]:columns);
   if(!allowedSort.has(sort))invalid('Choose a displayed field to sort.');
   const direction=spec.direction==='asc'?'asc':'desc';
   const chart=['table','bar','line'].includes(spec.chart)?spec.chart:'table';
@@ -67,6 +71,7 @@ function normalize(spec,actor){
 function quote(field){return `"${field}"`;}
 function condition(filter,index){
   const field=quote(filter.field),value=`$${index}`;
+  if(filter.operator==='is_null')return `${field} IS NULL`;
   if(filter.operator==='equals')return `${field}=${value}`;
   if(filter.operator==='contains')return `${field} ILIKE '%'||${value}||'%'`;
   if(filter.operator==='at_least'||filter.operator==='after')return `${field}>=${value}`;
@@ -74,14 +79,16 @@ function condition(filter,index){
 }
 function queryFor(config,workspaceId,{limit=201,offset=0}={}){
   const dataset=registry.get(config.dataset);const values=[workspaceId];
-  const clauses=config.filters.map((filter)=>{values.push(filter.value);return condition(filter,values.length);});
+  const clauses=config.filters.map((filter)=>{if(filter.operator!=='is_null')values.push(filter.value);
+    return condition(filter,values.length);});
   const where=clauses.length?`WHERE ${clauses.join(' AND ')}`:'';
   let select,group='';
   if(config.groups.length){
     const groupFields=config.groups.map(quote);const expression=config.aggregate==='count'?'COUNT(*)::bigint':
-      config.aggregate==='sum'?`SUM(${quote(config.measure)})`:`AVG(${quote(config.measure)})`;
-    select=`${groupFields.join(',')},${expression} AS ${quote(config.aggregate==='count'?'count':
-      config.aggregate==='sum'?'total':'average')}`;
+      config.aggregate==='sum'?`SUM(${quote(config.measure)})`:
+        config.aggregate==='average'?`AVG(${quote(config.measure)})`:
+          config.aggregate==='minimum'?`MIN(${quote(config.measure)})`:`MAX(${quote(config.measure)})`;
+    select=`${groupFields.join(',')},${expression} AS ${quote(AGGREGATE_COLUMN[config.aggregate])}`;
     group=`GROUP BY ${groupFields.join(',')}`;
   }else select=`record_id,${config.columns.map(quote).join(',')}`;
   const direction=config.direction==='asc'?'ASC':'DESC';
@@ -104,7 +111,7 @@ async function run(database,ctx,actor,spec,options={}){
   if(config.groups.includes('currency')&&config.aggregate!=='count'&&dataset.fields[config.measure]==='money_minor'
     &&rows.some((row)=>!row.currency))invalid('A monetary row has no verified currency; its total cannot be certified.');
   const grouped=Boolean(config.groups.length);
-  const columns=grouped?[...config.groups,config.aggregate==='count'?'count':config.aggregate==='sum'?'total':'average']
+  const columns=grouped?[...config.groups,AGGREGATE_COLUMN[config.aggregate]]
     :config.columns;
   const currencyFilter=config.filters.find((filter)=>filter.field==='currency'
     &&filter.operator==='equals')?.value||null;
@@ -122,6 +129,18 @@ async function run(database,ctx,actor,spec,options={}){
   hasMore:rows.length===limit,asOf:new Date().toISOString(),
   provenance:{dataset:config.dataset,workspaceId:ctx.workspaceId,source:'PostgreSQL',grouped,
     currency:currencyFilter}};
+}
+function drilldownSpec(spec,values,actor){
+  const config=normalize(spec,actor);
+  if(!config.groups.length)invalid('Only a grouped report can be drilled into.');
+  if(!Array.isArray(values)||values.length!==config.groups.length)invalid('Choose one exact report group.');
+  if(config.filters.length+values.length>12)invalid('This report has too many filters for a safe drill-down.');
+  const dataset=registry.get(config.dataset);
+  const columns=[...new Set([...config.groups,...Object.keys(dataset.fields)])].slice(0,12);
+  return normalize({...config,title:`${config.title} - source records`,groups:[],columns,
+    filters:[...config.filters,...config.groups.map((field,index)=>({field,
+      operator:values[index]==null?'is_null':'equals',value:safeText(values[index],120)}))],
+    sort:config.groups[0],chart:'table'},actor);
 }
 async function save(database,ctx,actor,spec,{id=null,schedule=null}={}){
   const config=normalize(spec,actor);const delivery=schedule||{};
@@ -160,4 +179,4 @@ async function load(database,ctx,actor,id){
   return {...row,definition:normalize(row.definition,actor)};
 }
 
-module.exports={normalize,queryFor,run,save,list,load};
+module.exports={normalize,queryFor,run,save,list,load,drilldownSpec};

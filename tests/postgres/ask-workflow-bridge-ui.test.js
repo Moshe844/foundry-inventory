@@ -130,12 +130,28 @@ test('Ask browser controls a real customer order, payment, and return through th
     plans.set(pickup,step('sales_order.create',{customer:'Builder Co',sku:'Work Boot',quantity:1,
       deliveryMethod:'customer pickup',location:'Main Warehouse',shipToAddress:'Main Warehouse'}));
     const pickupProposal=await prepareAndApprove(page,base,database,ctx.workspaceId,pickup,'sales_order.create');
-    const pickupOrder=(await database.query(`SELECT delivery_method,ship_to_address,fulfillment_location_id,status
+    const pickupOrder=(await database.query(`SELECT order_number,delivery_method,ship_to_address,fulfillment_location_id,status
       FROM sales_orders WHERE workspace_id=$1 AND id=$2`,
     [ctx.workspaceId,pickupProposal.result.salesOrderId])).rows[0];
     assert.deepEqual({method:pickupOrder.delivery_method,address:pickupOrder.ship_to_address,
       location:pickupOrder.fulfillment_location_id,status:pickupOrder.status},
     {method:'PICKUP',address:null,location:place.id,status:'DRAFT'});
+    const reviseMessage=`Change ${pickupOrder.order_number} from one to three ${skuCode} at $25 each; `+
+      'keep customer pickup and draft status, and do not reserve or invoice';
+    plans.set(reviseMessage,step('sales_order.revise_draft_line',{
+      recordReference:pickupOrder.order_number,sku:skuCode,quantity:3,amount:25}));
+    const revised=await prepareAndApprove(page,base,database,ctx.workspaceId,reviseMessage,
+      'sales_order.revise_draft_line');
+    assert.equal(revised.result.quantity,3);
+    const afterRevision=(await database.query(`SELECT o.status,o.delivery_method,l.quantity_ordered,
+      l.unit_price_minor,(SELECT COUNT(*)::int FROM sales_order_allocations a
+        WHERE a.workspace_id=o.workspace_id AND a.sales_order_line_id=l.id) AS allocations
+      FROM sales_orders o JOIN sales_order_lines l ON l.sales_order_id=o.id AND l.workspace_id=o.workspace_id
+      WHERE o.workspace_id=$1 AND o.id=$2`,[ctx.workspaceId,pickupProposal.result.salesOrderId])).rows[0];
+    assert.deepEqual({status:afterRevision.status,delivery:afterRevision.delivery_method,
+      quantity:Number(afterRevision.quantity_ordered),price:Number(afterRevision.unit_price_minor),
+      allocations:Number(afterRevision.allocations)},
+    {status:'DRAFT',delivery:'PICKUP',quantity:3,price:2500,allocations:0});
     const hat=await catalog.createItem(database,ctx,{name:'Safety Hat',trackingMode:'quantity'});
     const hatCode=(await database.query('SELECT code FROM skus WHERE workspace_id=$1 AND id=$2',
       [ctx.workspaceId,hat.skuIds[0]])).rows[0].code;

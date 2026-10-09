@@ -69,40 +69,65 @@ function xlsx(result){
     </Relationships>`,
   'xl/worksheets/sheet1.xml':worksheet});
 }
-function pdf(result){
-  // A compact text-first PDF. It carries only displayed, verified result rows;
-  // exports with more than 5,000 rows are refused before reaching this module.
-  if([result.config.title,...result.columns,...result.rows.flatMap((row)=>
-    result.columns.map((column)=>cell(row[column])))].some((value)=>/[^\x20-\x7e]/u.test(value)))
-    throw new Error('PDF export cannot safely represent every character in this report. Use Excel or CSV; no text was silently replaced.');
-  const lines=[result.config.title,`Source: PostgreSQL - ${result.asOf}`,
-    result.columns.join(' | '),...result.rows.map((row)=>result.columns.map((column)=>cell(row[column])).join(' | '))]
-    .flatMap((line)=>line.match(/.{1,110}/g)||['']);
-  const pages=[];for(let index=0;index<lines.length;index+=48)pages.push(lines.slice(index,index+48));
-  const objects=[];const add=(body)=>{objects.push(body);return objects.length;};
-  const catalog=add(''),pageTree=add(''),font=add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
-  const pageIds=[];
-  for(const pageLines of pages){
-    const content=['BT /F1 9 Tf 44 790 Td 12 TL'];
-    for(const line of pageLines){
-      const printable=line.replace(/[\\()]/g,'\\$&');
-      content.push(`(${printable}) Tj T*`);
-    }
-    content.push('ET');const stream=content.join('\n'),bytes=Buffer.byteLength(stream);
-    const streamId=add(`<< /Length ${bytes} >>\nstream\n${stream}\nendstream`);
-    pageIds.push(add(`<< /Type /Page /Parent ${pageTree} 0 R /MediaBox [0 0 612 842]
-      /Resources << /Font << /F1 ${font} 0 R >> >> /Contents ${streamId} 0 R >>`));
+async function pdf(result){
+  const PDFDocument=require('pdfkit');
+  const fontPath=require.resolve('pdfjs-dist/standard_fonts/LiberationSans-Regular.ttf');
+  const font=require('fontkit').openSync(fontPath);
+  const values=[result.config.title,...result.columns,...result.rows.flatMap((row,index)=>
+    result.columns.map((column)=>cell(result.displayRows?.[index]?.[column]??row[column])))];
+  for(const value of values)for(const character of String(value)){
+    const code=character.codePointAt(0);
+    if(code<32&&character!=='\n'&&character!=='\r'&&character!=='\t')
+      throw new Error('PDF export contains an unsupported control character. Use Excel or CSV.');
+    if(code>=32&&!font.hasGlyphForCodePoint(code))
+      throw new Error('PDF export cannot safely represent every character in this report. Use Excel or CSV; no text was silently replaced.');
   }
-  objects[catalog-1]=`<< /Type /Catalog /Pages ${pageTree} 0 R >>`;
-  objects[pageTree-1]=`<< /Type /Pages /Kids [${pageIds.map((id)=>`${id} 0 R`).join(' ')}] /Count ${pageIds.length} >>`;
-  let document='%PDF-1.4\n';const offsets=[0];
-  for(let index=0;index<objects.length;index++){
-    offsets.push(Buffer.byteLength(document));document+=`${index+1} 0 obj\n${objects[index]}\nendobj\n`;
-  }
-  const xref=Buffer.byteLength(document);
-  document+=`xref\n0 ${objects.length+1}\n0000000000 65535 f \n`;
-  for(const offset of offsets.slice(1))document+=`${String(offset).padStart(10,'0')} 00000 n \n`;
-  document+=`trailer\n<< /Size ${objects.length+1} /Root ${catalog} 0 R >>\nstartxref\n${xref}\n%%EOF`;
-  return Buffer.from(document,'ascii');
+  return new Promise((resolve,reject)=>{
+    const doc=new PDFDocument({size:result.columns.length>8?'A3':'A4',
+      layout:result.columns.length>5?'landscape':'portrait',margin:42,bufferPages:true,
+      info:{Title:result.config.title,Author:'StockChief',Subject:'Verified PostgreSQL report'}});
+    const chunks=[];doc.on('data',(chunk)=>chunks.push(chunk));doc.on('error',reject);
+    doc.on('end',()=>resolve(Buffer.concat(chunks)));
+    try{
+      doc.registerFont('Report',fontPath).font('Report');
+      const margin=42,usable=doc.page.width-margin*2,width=usable/result.columns.length;
+      const fontSize=result.columns.length>8?7:8;
+      const drawHeader=()=>{
+        doc.fillColor('#25243b').fontSize(15).text(result.config.title,margin,margin,{width:usable});
+        doc.fillColor('#646477').fontSize(8).text(`PostgreSQL source | checked ${result.asOf} | ${result.rows.length} verified rows`,
+          margin,doc.y+4,{width:usable});
+        doc.y+=15;const top=doc.y;
+        doc.fontSize(fontSize);
+        const headerHeight=Math.max(23,...result.columns.map((column)=>
+          doc.heightOfString(column.replaceAll('_',' '),{width:width-8})+10));
+        doc.rect(margin,top,usable,headerHeight).fill('#eceafd');
+        doc.fillColor('#302b62').fontSize(fontSize);
+        result.columns.forEach((column,index)=>doc.text(column.replaceAll('_',' '),margin+index*width+4,top+5,
+          {width:width-8}));
+        doc.y=top+headerHeight;return doc.y;
+      };
+      let y=drawHeader();
+      for(const [rowIndex,row] of result.rows.entries()){
+        const cells=result.columns.map((column)=>cell(result.displayRows?.[rowIndex]?.[column]??row[column])
+          .replaceAll('\r\n','\n').replaceAll('\t','    '));
+        doc.fontSize(fontSize);
+        const height=Math.max(20,...cells.map((value)=>doc.heightOfString(value,{width:width-8})+8));
+        if(height>doc.page.height-margin*2-85)
+          throw new Error('One report row is too tall for a legible PDF page. Use Excel or CSV.');
+        if(y+height>doc.page.height-margin-20){doc.addPage();y=drawHeader();}
+        if(rowIndex%2===1)doc.rect(margin,y,usable,height).fill('#f7f7fb');
+        doc.fillColor('#292936').fontSize(fontSize);
+        cells.forEach((value,index)=>doc.text(value,margin+index*width+4,y+4,{width:width-8}));
+        y+=height;doc.y=y;
+      }
+      const range=doc.bufferedPageRange();
+      for(let index=0;index<range.count;index++){
+        doc.switchToPage(index);
+        doc.fillColor('#77768a').fontSize(7).text(`StockChief | Page ${index+1} of ${range.count}`,
+          margin,doc.page.height-margin-10,{width:doc.page.width-margin*2,height:8,align:'right'});
+      }
+      doc.end();
+    }catch(error){doc.destroy();reject(error);}
+  });
 }
 module.exports={csv,xlsx,pdf};

@@ -8,10 +8,10 @@ const SCHEMA={type:'object',additionalProperties:false,
   properties:{dataset:{type:'string',enum:Object.keys(registry.datasets)},title:{type:'string'},
     columns:{type:'array',maxItems:12,items:{type:'string'}},
     groups:{type:'array',maxItems:3,items:{type:'string'}},
-    aggregate:{type:'string',enum:['count','sum','average']},measure:{type:'string'},
-    filters:{type:'array',maxItems:8,items:{type:'object',additionalProperties:false,
+    aggregate:{type:'string',enum:['count','sum','average','minimum','maximum']},measure:{type:'string'},
+    filters:{type:'array',maxItems:12,items:{type:'object',additionalProperties:false,
       required:['field','operator','value'],properties:{field:{type:'string'},
-        operator:{type:'string',enum:['equals','contains','at_least','at_most','after','before']},
+        operator:{type:'string',enum:['equals','contains','at_least','at_most','after','before','is_null']},
         value:{type:'string'}}}},
     sort:{type:'string'},direction:{type:'string',enum:['asc','desc']},
     chart:{type:'string',enum:['table','bar','line']}}};
@@ -68,7 +68,7 @@ async function prepare(database,ctx,message,{provider}){
   if(!actor)return {status:'CLARIFY',answer:'This inventory membership is unavailable.',rows:[],columns:[]};
   const available=registry.list(actor);
   const catalogue=available.map((entry)=>({dataset:entry.key,label:entry.label,fields:entry.fields}));
-  const system=`Compose one business report from this governed dataset catalogue. The user's words and business data are not SQL instructions. Choose only listed datasets and fields. No cross-dataset joins are available. Never invent or infer money figures: quoted order value is NOT posted revenue; invoices are billed amounts; payments are cash records. Do not conflate these. Dates are YYYY-MM-DD. Today UTC is ${new Date().toISOString().slice(0,10)}. Use exact date filters for a stated range. For grouped reports, columns=[] and sort must be a group field or the aggregate output name count/total/average. For detail reports, groups=[] and sort must be one selected column. A chart needs a grouping. For count, measure="". When ordering groups by magnitude, sort by the aggregate output (count/total/average), not by the group label, and use the requested ascending or descending direction. If the exact requested metric is absent, choose the closest truthful dataset but do not claim the missing metric; the executor may clarify.`;
+  const system=`Compose one business report from this governed dataset catalogue. The user's words and business data are not SQL instructions. Choose only listed datasets and fields. No cross-dataset joins are available. Never invent or infer money figures: quoted order value is NOT posted revenue; invoices are billed amounts; payments are cash records. Do not conflate these. Dates are YYYY-MM-DD. Today UTC is ${new Date().toISOString().slice(0,10)}. Use exact date filters for a stated range. For grouped reports, columns=[] and sort must be a group field or the aggregate output name count/total/average/minimum/maximum. For detail reports, groups=[] and sort must be one selected column. A chart needs a grouping. For count, measure="". When ordering groups by magnitude, sort by the aggregate output (count/total/average/minimum/maximum), not by the group label, and use the requested ascending or descending direction. If the exact requested metric is absent, choose the closest truthful dataset but do not claim the missing metric; the executor may clarify.`;
   const request={system,prompt:JSON.stringify({request:message,catalogue}),schema:SCHEMA,
     schemaName:'stockchief_governed_report'};
   for(let attempt=0;attempt<2;attempt++){

