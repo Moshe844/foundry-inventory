@@ -8,11 +8,15 @@
   <form method="post" action="/settings/operations/certify"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <button class="rm-btn" type="submit">Record this certification result</button></form></section>
 
-<section class="rm-card" id="dead-letters"><div class="rm-card__head"><div><h2>Dead-letter review</h2><p>Only jobs belonging to this inventory appear here.</p></div></div>
+<section class="rm-card" id="dead-letters"><div class="rm-card__head"><div><h2>Failed background work</h2><p><%= deadJobs.length %> failed attempt<%= deadJobs.length === 1 ? '' : 's' %> from <%= jobGroups.length %> distinct cause<%= jobGroups.length === 1 ? '' : 's' %>. These are not separate business decisions. Only jobs belonging to this inventory appear here.</p></div></div>
   <% if (!deadJobs.length) { %><div class="rm-empty"><h3>No failed jobs need review</h3></div><% } %>
-  <div class="rm-stack"><% deadJobs.forEach(function(job){ %><div class="rm-row"><span><strong><%= job.kind %></strong>
-    <small><%= job.lastError && job.lastError.message %></small></span><form method="post" action="/settings/operations/jobs/<%= job.id %>/retry">
-      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost" type="submit">Retry safely</button></form></div><% }) %></div></section>
+  <div class="rm-stack"><% jobGroups.forEach(function(group){ %><details class="rm-row"><summary><strong><%= group.kind %></strong> · <%= group.jobs.length %> attempt<%= group.jobs.length === 1 ? '' : 's' %>
+    <small><%= group.error && group.error.message || 'The retry limit was reached.' %></small></summary>
+    <p>Review the cause before retrying. A retry may resume authorized business work; it does not grant new authority.</p>
+    <% group.jobs.forEach(function(job){ %><div class="rm-row"><span><strong><%= job.id %></strong></span>
+      <form method="post" action="/settings/operations/jobs/<%= job.id %>/retry">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost" type="submit">Retry this job</button></form></div><% }) %>
+  </details><% }) %></div></section>
 
 <section class="rm-card" id="alerts"><div class="rm-card__head"><div><h2>Operational alerts</h2><p>Alerts are isolated to this inventory. Resolving one preserves its history.</p></div></div>
   <% if (!alerts.length) { %><div class="rm-empty"><h3>No open alerts</h3></div><% } %>

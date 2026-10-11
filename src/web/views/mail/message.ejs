@@ -7,7 +7,8 @@
    */
   var m = message;
   var productionMail = typeof productionMail !== 'undefined' && productionMail;
-  var badge = { NEEDS_REPLY: 'warn', WAITING: 'info', HANDLED: 'ok' }[m.reply_state];
+  var sending = m.outbox_status === 'PENDING' || m.outbox_status === 'SENDING';
+  var badge = sending ? 'info' : { NEEDS_REPLY: 'warn', WAITING: 'info', HANDLED: 'ok' }[m.reply_state];
 %>
 <div class="breadcrumb">
   <a href="/mail">Mail</a>
@@ -24,15 +25,15 @@
       · arrived in <%= m.connector_name %>
     </p>
   </div>
-  <% if (m.reply_state === 'NEEDS_REPLY' && !(draft && draft.sentAt)) { %>
+  <% if (m.reply_state === 'NEEDS_REPLY' && !sending && m.outbox_status !== 'AMBIGUOUS' && !(draft && draft.sentAt)) { %>
     <a class="btn btn--primary" href="#reply">Reply now</a>
   <% } %>
 </div>
 
-<div class="notice notice--<%= m.reply_state === 'NEEDS_REPLY' ? 'warn' : 'info' %>">
+<div class="notice notice--<%= m.reply_state === 'NEEDS_REPLY' && !sending ? 'warn' : 'info' %>">
   <div>
-    <strong><%= m.decidedByPerson ? 'You put this in ' + m.stateWords.toLowerCase() + '.' : m.stateWords + '.' %></strong><br>
-    <%= m.reply_reason %>
+    <strong><%= sending ? 'StockChief is sending your approved reply.' : m.decidedByPerson ? 'You put this in ' + m.stateWords.toLowerCase() + '.' : m.stateWords + '.' %></strong><br>
+    <%= sending ? 'No second reply or manual filing is needed. The conversation will move to Waiting on them after provider verification.' : m.reply_reason %>
   </div>
 </div>
 
@@ -41,7 +42,7 @@
 <% } else if (m.outbox_status === 'AMBIGUOUS') { %>
   <div class="notice notice--warn"><div><strong>Delivery could not be verified.</strong><br>StockChief did not retry and will not send another copy. Check the mailbox Sent folder, then mark the conversation appropriately.</div></div>
 <% } else if (m.outbox_status === 'FAILED') { %>
-  <div class="notice notice--warn"><div><strong>The mailbox provider refused the last send.</strong><br>Nothing was reported as sent. Review the connection before trying again.</div></div>
+  <div class="notice notice--warn"><div><strong>The mailbox provider refused the last send.</strong><br>Nothing was reported as sent. Review the connection and revise the draft before trying again.</div></div>
 <% } else if (m.reply_sent_at) { %>
   <div class="notice notice--ok"><div><strong>Reply sent and verified.</strong><br>This conversation is waiting on them.</div></div>
 <% } %>
@@ -161,7 +162,7 @@
         <p class="t-sm"><strong><%= draft.subject %></strong></p>
         <pre class="message-body"><%= draft.body %></pre>
       </div>
-    <% } else if (draft) { %>
+    <% } else if (draft && !sending && m.outbox_status !== 'AMBIGUOUS') { %>
       <form method="post" action="/mail/<%= m.id %>/draft" data-busy>
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <div class="card-body">
@@ -188,7 +189,7 @@
           <% } %>
         </div>
       </form>
-    <% } else { %>
+    <% } else if (!sending && m.outbox_status !== 'AMBIGUOUS') { %>
       <div class="card-body">
         <p class="lede"><%= productionMail?'Write your reply to ':'StockChief can draft this from what it holds about ' %><%= m.sender %>.</p>
         <p class="hint">
@@ -210,7 +211,7 @@
   </div>
 </section>
 
-<section class="section">
+<% if (!sending) { %><section class="section">
   <div class="panel">
     <div class="panel-head"><div><h2>Where this belongs</h2></div></div>
     <form method="post" action="/mail/<%= m.id %>/state" data-busy>
@@ -226,7 +227,7 @@
         </label>
       </div>
       <div class="card-foot">
-        <% drawers.forEach(function (entry) { %>
+        <% drawers.filter(function (entry) { return entry.state !== 'SENDING' && entry.state !== 'UNCERTAIN'; }).forEach(function (entry) { %>
           <% if (entry.state !== m.reply_state) { %>
             <button class="btn <%= entry.state === 'NEEDS_REPLY' ? '' : 'btn--primary' %>"
               type="submit" name="state" value="<%= entry.state %>">
@@ -247,3 +248,4 @@
     answered somewhere else, or when nothing is owed.
   </p>
 </section>
+<% } %>

@@ -155,9 +155,13 @@ function createPostgresProjectionsRouter(database){
       routineProposal:null,financialPulse:null,observedBrief:'',canOperate:permissions.can(req.user,permissions.OPERATE)});
   }));
   router.get(['/needs-you','/needs-you/all'],requireAuth,asyncRoute(async(req,res)=>{
-    const items=await projections.needs(database,req.ctx.workspaceId);res.locals.attentionCount=items.length;
+    const [items,failures]=await Promise.all([projections.needs(database,req.ctx.workspaceId),
+      req.user.role==='owner'?projections.runtimeFailures(database,req.ctx.workspaceId):Promise.resolve(null)]);
+    res.locals.attentionCount=items.length;
     items.coverageErrors=[];
-    return res.page('manager/needs-you',{title:'Needs you',nav:'attention',room:true,inbox:items,at:zeroBasedIndex(req.query.at)});
+    return res.page(req.path==='/needs-you/all'?'manager/needs-you-all':'manager/needs-you',
+      {title:'Needs you',nav:'attention',room:true,suppressBack:true,
+        inbox:items,failures,at:zeroBasedIndex(req.query.at)});
   }));
   router.get('/activity',requireAuth,asyncRoute(async(req,res)=>{
     return res.page('activity/list',{title:'Activity',nav:'history',backToFallback:{href:'/everything',label:'Everything else'},

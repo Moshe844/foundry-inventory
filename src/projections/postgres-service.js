@@ -13,7 +13,10 @@ async function needsCount(database,workspaceId){
     (SELECT COUNT(*) FROM accounting_supplier_bills WHERE workspace_id=$1 AND status='DISPUTED')+
     (SELECT COUNT(*) FROM supplier_returns WHERE workspace_id=$1 AND status='CREDIT_MISMATCH')+
     (SELECT COUNT(*) FROM sales_shipments WHERE workspace_id=$1 AND tracking_status IN ('FAILURE','RETURNED'))+
-    (SELECT COUNT(*) FROM connection_email_messages WHERE workspace_id=$1 AND reply_state='NEEDS_REPLY')+
+    (SELECT COUNT(*) FROM connection_email_messages message WHERE message.workspace_id=$1 AND message.reply_state='NEEDS_REPLY'
+      AND NOT EXISTS (SELECT 1 FROM stockchief_runtime.email_reply_outbox outbox
+        WHERE outbox.workspace_id=message.workspace_id AND outbox.message_id=message.id
+        AND outbox.status IN ('PENDING','SENDING','AMBIGUOUS')))+
     (SELECT COUNT(*) FROM (SELECT so.id FROM sales_orders so
       JOIN sales_order_lines sol ON sol.sales_order_id=so.id
       LEFT JOIN (SELECT sales_order_line_id,SUM(quantity) AS allocated FROM sales_order_allocations
@@ -25,20 +28,37 @@ async function needsCount(database,workspaceId){
       AND po.expected_date IS NOT NULL AND po.expected_date<CURRENT_DATE::text)+
     (SELECT COUNT(*) FROM repair_cases WHERE workspace_id=$1
       AND status IN ('NEEDS_AUTHORITY','AUTHORIZED','FAILED','INCONCLUSIVE'))+
-    (SELECT COUNT(*) FROM stockchief_runtime.provider_effects WHERE workspace_id=$1 AND status='AMBIGUOUS')+
-    (SELECT COUNT(*) FROM stockchief_runtime.jobs job WHERE job.workspace_id=$1 AND job.status='DEAD'
-      AND NOT (job.kind='provider.effect' AND EXISTS (SELECT 1 FROM stockchief_runtime.provider_effects effect
-        WHERE effect.id=job.payload->>'effectId' AND effect.status='AMBIGUOUS'))) AS count`,[workspaceId]);
+    (SELECT COUNT(*) FROM stockchief_runtime.provider_effects effect WHERE effect.workspace_id=$1 AND effect.status='AMBIGUOUS'
+      AND NOT (effect.aggregate_type IN ('email_message','supplier_communication','customer_communication')
+        AND EXISTS (SELECT 1 FROM connection_issues issue
+        WHERE issue.workspace_id=effect.workspace_id AND issue.issue_type='EMAIL_SEND_AMBIGUOUS'
+        AND issue.external_event_id=effect.aggregate_id AND issue.status='OPEN'))) AS count`,[workspaceId]);
   return number(result.rows[0].count);
+}
+
+async function runtimeFailures(database,workspaceId){
+  const rows=(await database.query(`SELECT kind,last_error->>'code' AS error_code,
+    last_error->>'message' AS error_message,COUNT(*)::integer AS attempts
+    FROM stockchief_runtime.jobs WHERE workspace_id=$1 AND status='DEAD'
+    GROUP BY kind,last_error->>'code',last_error->>'message'
+    ORDER BY attempts DESC,kind`,[workspaceId])).rows;
+  return {attempts:rows.reduce((sum,row)=>sum+number(row.attempts),0),causes:rows};
 }
 
 async function needs(database,workspaceId){
   const [attention,connections,work,imports,bills,supplierReturns,shippingExceptions,mail,orders,purchases,
-    repairs,ambiguousEffects,deadJobs]=await Promise.all([
+    repairs,ambiguousEffects]=await Promise.all([
     database.query(`SELECT id,title,concise_summary,explanation,recommendation,severity,priority_score,item_id,first_detected_at
       FROM attention_items WHERE workspace_id=$1 AND status='OPEN' ORDER BY priority_score DESC,first_detected_at`,[workspaceId]),
-    database.query(`SELECT i.id,i.title,i.detail,i.resolution_hint,i.updated_at,i.connector_id,c.provider_type
+    database.query(`SELECT i.id,i.title,i.detail,i.resolution_hint,i.updated_at,i.connector_id,
+      i.issue_type,i.external_event_id,c.provider_type,
+      message.id AS reply_message_id,related_effect.id AS provider_effect_id
       FROM connection_issues i JOIN workspace_connectors c ON c.id=i.connector_id
+      LEFT JOIN connection_email_messages message ON message.workspace_id=i.workspace_id AND message.id=i.external_event_id
+      LEFT JOIN LATERAL (SELECT effect.id FROM stockchief_runtime.provider_effects effect
+        WHERE effect.workspace_id=i.workspace_id AND effect.aggregate_id=i.external_event_id
+        AND effect.aggregate_type IN ('email_message','supplier_communication','customer_communication')
+        AND effect.status='AMBIGUOUS' ORDER BY effect.created_at DESC LIMIT 1) related_effect ON true
       WHERE i.workspace_id=$1 AND i.status='OPEN' ORDER BY i.updated_at DESC`,[workspaceId]),
     database.query(`SELECT id,category,source,recommended_action,policy_evaluation,urgency,confidence,priority,created_at,error_message
       FROM work_items WHERE workspace_id=$1 AND approval_requirement<>'NONE'
@@ -59,8 +79,11 @@ async function needs(database,workspaceId){
       FROM sales_shipments sh JOIN sales_orders so ON so.id=sh.sales_order_id
       JOIN customers c ON c.id=so.customer_id WHERE sh.workspace_id=$1
       AND sh.tracking_status IN ('FAILURE','RETURNED') ORDER BY sh.tracked_at DESC`,[workspaceId]),
-    database.query(`SELECT id,subject,sender,reply_reason,received_at FROM connection_email_messages
-      WHERE workspace_id=$1 AND reply_state='NEEDS_REPLY' ORDER BY received_at ASC`,[workspaceId]),
+    database.query(`SELECT message.id,message.subject,message.sender,message.reply_reason,message.received_at
+      FROM connection_email_messages message WHERE message.workspace_id=$1 AND message.reply_state='NEEDS_REPLY'
+      AND NOT EXISTS (SELECT 1 FROM stockchief_runtime.email_reply_outbox outbox
+        WHERE outbox.workspace_id=message.workspace_id AND outbox.message_id=message.id
+        AND outbox.status IN ('PENDING','SENDING','AMBIGUOUS')) ORDER BY message.received_at ASC`,[workspaceId]),
     database.query(`SELECT so.id,so.order_number,so.needed_by,c.name AS customer_name,
       SUM(sol.quantity_ordered-sol.quantity_fulfilled) AS remaining,
       COALESCE(SUM(a.allocated),0) AS allocated
@@ -86,20 +109,24 @@ async function needs(database,workspaceId){
       FROM stockchief_runtime.provider_effects effect
       LEFT JOIN payment_requests request ON effect.aggregate_type='payment_request' AND request.id=effect.aggregate_id
       WHERE effect.workspace_id=$1 AND effect.status='AMBIGUOUS'
+      AND NOT (effect.aggregate_type IN ('email_message','supplier_communication','customer_communication')
+        AND EXISTS (SELECT 1 FROM connection_issues issue
+        WHERE issue.workspace_id=effect.workspace_id AND issue.issue_type='EMAIL_SEND_AMBIGUOUS'
+        AND issue.external_event_id=effect.aggregate_id AND issue.status='OPEN'))
       ORDER BY effect.completed_at DESC,effect.id`,[workspaceId]),
-    database.query(`SELECT job.id,job.kind,job.last_error,job.completed_at FROM stockchief_runtime.jobs job
-      WHERE job.workspace_id=$1 AND job.status='DEAD'
-      AND NOT (job.kind='provider.effect' AND EXISTS (SELECT 1 FROM stockchief_runtime.provider_effects effect
-        WHERE effect.id=job.payload->>'effectId' AND effect.status='AMBIGUOUS'))
-      ORDER BY job.completed_at DESC`,[workspaceId]),
   ]);
   const items=[];
   for(const row of attention.rows)items.push({kind:'inventory',importance:row.severity==='critical'?'Urgent':row.severity==='important'?'Important':'Watch',
     priority:number(row.priority_score),title:row.title,happened:row.concise_summary,why:row.explanation,
     recommendation:row.recommendation,href:row.item_id?`/inventory/${row.item_id}`:'/inventory',actionLabel:'Review inventory',at:row.first_detected_at});
   for(const row of connections.rows)items.push({kind:'connection',importance:'Important',priority:85,title:row.title,
-    happened:row.detail,why:`${row.provider_type} cannot currently provide complete business data.`,recommendation:row.resolution_hint,
-    href:`/settings/connections/${row.connector_id}`,actionLabel:'Fix connection',at:row.updated_at});
+    happened:row.detail,why:row.issue_type==='EMAIL_SEND_AMBIGUOUS'
+      ?'The provider may have accepted the email before StockChief could verify delivery. Sending it again could create a duplicate.'
+      :`${row.provider_type} cannot currently provide complete business data.`,recommendation:row.resolution_hint,
+    href:row.issue_type==='EMAIL_SEND_AMBIGUOUS' && row.reply_message_id
+      ?`/mail/${row.reply_message_id}`:row.issue_type==='EMAIL_SEND_AMBIGUOUS' && row.provider_effect_id
+        ?`/settings/operations/provider-effects/${row.provider_effect_id}`:`/settings/connections/${row.connector_id}`,
+    actionLabel:row.issue_type==='EMAIL_SEND_AMBIGUOUS'?'Verify email':'Fix connection',at:row.updated_at});
   for(const row of work.rows){const action=object(row.recommended_action);const authority=object(row.policy_evaluation);items.push({kind:'approval',
     importance:row.urgency==='immediate'?'Urgent':'Important',priority:70+number(row.priority),
     title:action.title || `${action.type==='transfer'?'Transfer':'Replenish'} ${action.displayName || String(row.category).replaceAll('_',' ')}`,
@@ -151,12 +178,10 @@ async function needs(database,workspaceId){
     why:'Repeating a consequential provider call could create a duplicate charge or external record.',
     recommendation:'Check the provider account and reconcile the existing request. StockChief has stopped automatic retries.',
     href:row.aggregate_type==='shipment'?`/fulfilment/${row.aggregate_id}`:
-      row.payment_order_id?`/orders/${row.payment_order_id}`:'/needs-you',
+      row.aggregate_type==='email_message'?`/mail/${row.aggregate_id}`:
+        row.payment_order_id?`/orders/${row.payment_order_id}`:
+          `/settings/operations/provider-effects/${row.id}`,
     actionLabel:'Verify provider outcome',at:row.completed_at});
-  for(const row of deadJobs.rows){const failure=object(row.last_error);items.push({kind:'worker',importance:'Urgent',priority:96,
-    title:`Automatic work stopped: ${String(row.kind).replaceAll('.',' ')}`,happened:failure.message || 'The retry limit was reached.',
-    why:'StockChief stopped rather than claiming the action completed.',recommendation:'Review the failed operation before retrying it.',
-    href:'/ask',actionLabel:'Review with StockChief',at:row.completed_at});}
   return items.sort((a,b)=>b.priority-a.priority || String(a.at||'').localeCompare(String(b.at||'')));
 }
 
@@ -195,4 +220,4 @@ async function brief(database,workspaceId){
     activity:activity.rows.map((entry)=>({...entry,quantityDelta:number(entry.quantity_delta)})),needs:needItems};
 }
 
-module.exports={brief,needs,needsCount};
+module.exports={brief,needs,needsCount,runtimeFailures};

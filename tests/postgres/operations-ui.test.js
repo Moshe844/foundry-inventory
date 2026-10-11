@@ -9,6 +9,8 @@ const {migratePostgres}=require('../../src/db/migrate-postgres');
 const {createPostgresApp}=require('../../src/postgres-app');
 const jobs=require('../../src/operations/postgres-job-queue');
 const monitoring=require('../../src/operations/postgres-monitoring');
+const projections=require('../../src/projections/postgres-service');
+const {newId}=require('../../src/lib/util');
 const request=require('supertest');
 
 async function register(page,base,business,email){
@@ -35,14 +37,29 @@ test('real Chromium operates tenant-scoped PostgreSQL release readiness and dead
     const claimed=await jobs.claim(database,{owner:'fixture-worker'});
     assert.equal(claimed.id,queued.job.id);
     await jobs.fail(database,claimed.id,claimed.leaseToken,new Error('fixture stopped'),{retryable:false});
+    const repeat=await jobs.enqueue(database,{workspaceId:firstWorkspace,kind:'fixture.failure',idempotencyKey:'fixture-dead-repeat',payload:{}});
+    const repeatClaim=await jobs.claim(database,{owner:'fixture-worker'});
+    assert.equal(repeatClaim.id,repeat.job.id);
+    await jobs.fail(database,repeatClaim.id,repeatClaim.leaseToken,new Error('fixture stopped'),{retryable:false});
     await monitoring.raise(database,{workspaceId:firstWorkspace,severity:'ERROR',kind:'fixture.alert',
       title:'First inventory alert',detail:'Visible only in the first inventory.',fingerprint:'fixture:first'});
     await monitoring.raise(database,{workspaceId:secondWorkspace,severity:'ERROR',kind:'fixture.alert',
       title:'Second inventory alert',detail:'Must not cross inventories.',fingerprint:'fixture:second'});
     await page.goto(`${base}/settings/operations`);const text=await page.locator('main').innerText();
     assert.match(text,/Production gate is blocked/);assert.match(text,/fixture\.failure/);assert.match(text,/First inventory alert/);
+    assert.match(text,/2 failed attempts from 1 distinct cause/);
     assert.doesNotMatch(text,/Second inventory alert/);assert.match(text,/Inventory identity and journals reconcile/);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Retry safely'}).click()]);
+    await page.goto(`${base}/needs-you`);
+    assert.equal(await projections.needsCount(database,firstWorkspace),
+      (await projections.needs(database,firstWorkspace)).length);
+    assert.match(await page.locator('main').innerText(),/2 failed background attempts need operator review/);
+    assert.doesNotMatch(await page.locator('main').innerText(),/Automatic work stopped|Decision 1 of 2/);
+    assert.equal(await page.locator('main a.page-back').count(),0,'Needs You must not link back to another Needs You cursor');
+    assert.equal(await page.locator('a[href="/needs-you"] .nav-count').count(),0,
+      'failed internal jobs must not inflate the human-decision badge');
+    await page.getByRole('link',{name:'Review the grouped failures and retry controls'}).click();
+    await page.locator('#dead-letters details').first().evaluate((element)=>{element.open=true;});
+    await Promise.all([page.waitForNavigation(),page.locator(`form[action="/settings/operations/jobs/${queued.job.id}/retry"] button`).click()]);
     assert.equal((await jobs.get(database,queued.job.id,firstWorkspace)).status,'RETRY');
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Mark resolved'}).click()]);
     assert.equal((await database.query('SELECT status FROM operational_alerts WHERE workspace_id=$1',[firstWorkspace])).rows[0].status,'RESOLVED');
@@ -50,6 +67,19 @@ test('real Chromium operates tenant-scoped PostgreSQL release readiness and dead
     const run=(await database.query('SELECT * FROM production_certification_runs WHERE workspace_id=$1',[firstWorkspace])).rows[0];
     assert.equal(run.status,'FAILED');
     assert.equal((await database.query('SELECT COUNT(*) AS count FROM production_certification_runs WHERE workspace_id=$1',[secondWorkspace])).rows[0].count,'0');
+    const effectId=newId('peff');
+    await database.query(`INSERT INTO stockchief_runtime.provider_effects
+      (id,workspace_id,kind,provider,aggregate_type,aggregate_id,idempotency_key,status,error_message)
+      VALUES($1,$2,'fixture.external','fixture','record','external-record-1',$3,'AMBIGUOUS','Provider response was interrupted.')`,
+    [effectId,firstWorkspace,`fixture-review:${effectId}`]);
+    await page.goto(`${base}/needs-you`);
+    assert.equal(await projections.needsCount(database,firstWorkspace),
+      (await projections.needs(database,firstWorkspace)).length);
+    const reviewLink=page.getByRole('link',{name:'Verify provider outcome'}).first();
+    assert.equal(await reviewLink.getAttribute('href'),`/settings/operations/provider-effects/${effectId}`);
+    await reviewLink.click();
+    assert.match(await page.locator('main').innerText(),/Provider response was interrupted/);
+    assert.doesNotMatch(page.url(),/\/needs-you(?:$|\?)/);
   });
 
 test('PostgreSQL responder API rejects invalid tokens and acknowledges an alert once',{timeout:120000},async(context)=>{

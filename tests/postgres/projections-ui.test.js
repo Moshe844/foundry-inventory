@@ -72,11 +72,15 @@ test('real Chromium renders PostgreSQL Brief, proactive Needs You count, activit
       last_error='{"message":"Certification worker failure"}'::jsonb,completed_at=now()
       WHERE id=ANY($1::text[])`,[failedJobs]);
     await page.goto(`${base}/needs-you`);
-    assert.equal(await page.locator('a[href="/needs-you"] .nav-count').innerText(),'26');
-    assert.match(await page.locator('main').innerText(),/Decision 1 of 26/);
+    assert.equal(await page.locator('a[href="/needs-you"] .nav-count').innerText(),'1');
+    assert.match(await page.locator('main').innerText(),/25 failed background attempts need operator review/);
+    assert.match(await page.locator('main').innerText(),/Decision 1 of 1/);
     await page.goto(`${base}/needs-you?at=25`);
-    assert.match(await page.locator('main').innerText(),/Decision 26 of 26/);
+    assert.match(await page.locator('main').innerText(),/Decision 1 of 1/);
     assert.match(await page.locator('main').innerText(),/Store feed stopped updating/);
+    assert.equal(await page.locator('main a.page-back').count(),0);
+    await page.getByRole('link',{name:'Review the grouped failures and retry controls'}).click();
+    assert.match(await page.locator('main').innerText(),/25 failed attempts from 1 distinct cause/);
     await page.goto(`${base}/activity`);const activity=await page.locator('main').innerText();
     assert.match(activity,/Activity/);assert.match(activity,/Received 12 × Projection Widget into Main Warehouse/);
     assert.match(activity,/raw movement ledger/i);await page.getByLabel('Search activity').fill('OPENING-PROJECTION');

@@ -4,6 +4,7 @@ const express=require('express');
 const config=require('../../config');
 const readiness=require('../../operations/postgres-readiness');
 const jobs=require('../../operations/postgres-job-queue');
+const providerEffects=require('../../operations/postgres-provider-effects');
 const monitoring=require('../../operations/postgres-monitoring');
 const {requireOwner,asyncRoute}=require('../middleware');
 const {NotFoundError}=require('../../domain/errors');
@@ -19,8 +20,20 @@ function createPostgresOperationsRouter(database){
       database.query(`SELECT * FROM production_certification_runs WHERE workspace_id=$1
         ORDER BY started_at DESC,id DESC LIMIT 20`,[req.ctx.workspaceId]),
     ]);
+    const byCause=new Map();
+    for(const job of deadJobs){
+      const key=JSON.stringify([job.kind,job.lastError?.code||'',job.lastError?.message||'']);
+      if(!byCause.has(key))byCause.set(key,{kind:job.kind,error:job.lastError,jobs:[]});
+      byCause.get(key).jobs.push(job);
+    }
     return res.page('settings/postgres-operations',{title:'Production operations',nav:'settings',room:true,
-      backTo:{href:'/settings',label:'Settings'},readiness:state,deadJobs,alerts:alerts.rows,runs:runs.rows});
+      backTo:{href:'/settings',label:'Settings'},readiness:state,deadJobs,jobGroups:[...byCause.values()],
+      alerts:alerts.rows,runs:runs.rows});
+  }));
+  router.get('/settings/operations/provider-effects/:id',asyncRoute(async(req,res)=>{
+    const effect=await providerEffects.get(database,req.ctx.workspaceId,req.params.id);
+    return res.page('settings/postgres-provider-effect',{title:'Provider outcome review',nav:'settings',room:true,
+      backTo:{href:'/needs-you',label:'Needs you'},effect});
   }));
   router.post('/settings/operations/jobs/:id/retry',asyncRoute(async(req,res)=>{
     const job=await jobs.retryDead(database,req.params.id,req.ctx.workspaceId,{by:req.user.id});

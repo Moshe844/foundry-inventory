@@ -1,6 +1,6 @@
 <%
   /*
-   * Three drawers, and nothing else to learn.
+   * Mail is separated by who owns the next step, including provider delivery.
    *
    * StockChief sorted this mail on arrival and every message carries the reason
    * it landed where it did, shown in the list rather than hidden behind the
@@ -23,7 +23,7 @@
     <a class="tab <%= entry.key === drawer.key ? 'is-active' : '' %>"
        href="/mail?show=<%= entry.key %>">
       <%= entry.label %>
-      <span class="tab-count"><%= counts[entry.state] %></span>
+      <span class="tab-count"><%= counts[entry.state] || 0 %></span>
     </a>
   <% }) %>
 </div>
@@ -37,6 +37,8 @@
     <%- helpers.icon('send', { size: 32 }) %>
     <h2>
       <% if (drawer.state === 'NEEDS_REPLY') { %>Nobody is waiting on you
+      <% } else if (drawer.state === 'SENDING') { %>No replies are being sent
+      <% } else if (drawer.state === 'UNCERTAIN') { %>No uncertain deliveries
       <% } else if (drawer.state === 'WAITING') { %>You are not waiting on anybody
       <% } else { %>Nothing filed here yet<% } %>
     </h2>
@@ -44,6 +46,10 @@
       <% if (drawer.state === 'NEEDS_REPLY') { %>
         Every message that arrived either answered itself or was dealt with. When one
         asks a question, it appears here.
+      <% } else if (drawer.state === 'SENDING') { %>
+        Approved replies appear here until the mailbox provider confirms delivery. No second reply is needed.
+      <% } else if (drawer.state === 'UNCERTAIN') { %>
+        StockChief will not resend an uncertain delivery. Check the provider mailbox before deciding what happened.
       <% } else if (drawer.state === 'WAITING') { %>
         When you answer somebody and the ball is with them, move it here so it stops
         asking for your attention without disappearing.
@@ -52,7 +58,7 @@
         nobody needs to answer — collects here.
       <% } %>
     </p>
-    <% if (!counts.NEEDS_REPLY && !counts.WAITING && !counts.HANDLED) { %>
+    <% if (!counts.NEEDS_REPLY && !counts.SENDING && !counts.UNCERTAIN && !counts.WAITING && !counts.HANDLED) { %>
       <a class="btn" href="/settings/connections">Connect a mailbox</a>
     <% } %>
   </div>
@@ -94,10 +100,12 @@
                 <button class="btn btn--sm" type="submit" name="state" value="HANDLED">
                   Nothing needed
                 </button>
-              <% } else { %>
+              <% } else if (drawer.state !== 'SENDING' && drawer.state !== 'UNCERTAIN') { %>
                 <button class="btn btn--sm" type="submit" name="state" value="NEEDS_REPLY">
                   Still needs a reply
                 </button>
+              <% } else { %>
+                <span class="t-xs t-muted"><%= drawer.state === 'SENDING' ? 'Waiting for delivery verification' : 'Check Sent mail before acting' %></span>
               <% } %>
             </form>
           </li>

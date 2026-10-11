@@ -9,6 +9,8 @@ const entitlements=require('../../entitlements/postgres-service');
 const {commercialScope}=require('../commercial-middleware');
 
 const DRAWERS=[{key:'needs-reply',state:'NEEDS_REPLY',label:'Needs a reply'},
+  {key:'sending',state:'SENDING',label:'Sending'},
+  {key:'uncertain',state:'UNCERTAIN',label:'Delivery uncertain'},
   {key:'waiting',state:'WAITING',label:'Waiting on them'},{key:'handled',state:'HANDLED',label:'Handled'}];
 
 const STATE_WORDS={NEEDS_REPLY:'Needs a reply',WAITING:'Waiting on them',HANDLED:'Handled'};
@@ -17,7 +19,9 @@ function inboxMessage(row){return {...row,counterpartyName:row.supplier_name||ro
   preview:String(row.body_text||'').replace(/\s+/g,' ').slice(0,180),attachment_count:Number(row.attachment_count||0),
   decidedByPerson:Boolean(row.reply_state_by_user_id)};}
 
-function messageForView(row){return {...row,connector_name:row.display_name,stateWords:STATE_WORDS[row.reply_state]||row.reply_state,
+function messageForView(row){return {...row,connector_name:row.display_name,
+  stateWords:['PENDING','SENDING'].includes(row.outbox_status)?'Sending reply':
+    row.outbox_status==='AMBIGUOUS'?'Delivery uncertain':STATE_WORDS[row.reply_state]||row.reply_state,
   decidedByPerson:Boolean(row.reply_state_by_user_id)};}
 
 function createPostgresMailRouter(database,options={}){

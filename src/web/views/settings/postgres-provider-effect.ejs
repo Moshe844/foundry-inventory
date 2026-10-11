@@ -1,0 +1,12 @@
+<section class="rm-head"><div><p class="rm-eyebrow">External operation</p><h1>Provider outcome review</h1>
+  <p class="rm-lede">StockChief stopped before repeating an external action whose outcome could not be verified.</p></div></section>
+
+<section class="rm-card"><div class="rm-card__head"><div><h2><%= effect.kind.replaceAll('.', ' ') %></h2>
+  <p><%= effect.provider %> · <%= effect.status %></p></div></div>
+  <div class="rm-stack">
+    <div class="rm-row"><span><strong>Business record</strong><small><%= effect.aggregateType.replaceAll('_', ' ') %> · <%= effect.aggregateId %></small></span></div>
+    <div class="rm-row"><span><strong>What happened</strong><small><%= effect.errorMessage || 'The outside provider has not confirmed the result.' %></small></span></div>
+    <div class="rm-row"><span><strong>What to check</strong><small>Inspect the provider account for this exact operation before any new attempt. This review does not resend or claim success.</small></span></div>
+  </div>
+  <p class="rm-disclose"><a href="/settings/operations#dead-letters">Open operations</a><a href="/needs-you">Back to Needs you</a></p>
+</section>

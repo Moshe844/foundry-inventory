@@ -25,6 +25,8 @@ test('real Chromium qualifies PostgreSQL business-mail filtering, exact replies 
         providerCalls+=1;assert.equal(providerCredentials.accessToken,'encrypted-fixture-token');
         if(message.subject.includes('Ambiguous')){const error=new Error('Provider connection ended before delivery was confirmed.');
           error.status=503;throw error;}
+        if(message.subject.includes('Rejected')){const error=new Error('Provider refused this reply.');
+          error.status=400;throw error;}
         delivered.push(message);return {externalMessageId:`sent-${providerCalls}`,externalThreadId:message.externalThreadId};
       },
       async fetchMessage({credentials:providerCredentials,messageId}){
@@ -172,12 +174,24 @@ test('real Chromium qualifies PostgreSQL business-mail filtering, exact replies 
     assert.equal(stored.draft_subject,'Re: Friday shipment');
     assert.equal(stored.draft_body,'Friday works. Please send the remaining units and share tracking.');
     assert.equal(stored.reply_sent_at,null);assert.equal(providerCalls,0);
+    const decisionsBeforeSend=Number(await page.locator('a[href="/needs-you"] .nav-count').innerText());
     await page.locator('textarea[name="body"]').fill('Friday works. Send the remaining units and email the tracking number.');
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Send to supplier@example.test'}).click()]);
     assert.equal(providerCalls,0);assert.match(await page.locator('main').innerText(),/Reply queued securely/);
+    assert.match(await page.locator('main').innerText(),/No second reply or manual filing is needed/);
+    assert.equal(Number(await page.locator('a[href="/needs-you"] .nav-count').innerText()),decisionsBeforeSend-1,
+      'a queued reply is not another human decision');
+    assert.equal(await page.getByRole('button',{name:'Send to supplier@example.test'}).count(),0);
+    await page.goto(`${base}/mail?show=sending`);
+    assert.match(await page.locator('main').innerText(),/Can we ship the balance Friday/);
+    await page.goto(`${base}/mail?show=needs-reply`);
+    assert.doesNotMatch(await page.locator('main').innerText(),/Can we ship the balance Friday/);
     assert.equal((await database.query(`SELECT status FROM stockchief_runtime.email_reply_outbox
       WHERE message_id=$1`,[supplierMessage.messageId])).rows[0].status,'PENDING');
-    await jobs.processOne(database,runtimeHandlers.create(providers),{owner:'mail-provider-worker'});await page.reload();
+    await assert.rejects(()=>mail.setState(database,ctx,supplierMessage.messageId,'WAITING','Filed early'),
+      /Wait for provider verification/);
+    await jobs.processOne(database,runtimeHandlers.create(providers),{owner:'mail-provider-worker'});
+    await page.goto(`${base}/mail/${supplierMessage.messageId}`);
     assert.equal(providerCalls,1);assert.equal(delivered.length,1);
     assert.deepEqual({recipient:delivered[0].recipient,subject:delivered[0].subject,body:delivered[0].body},
       {recipient:'supplier@example.test',subject:'Re: Friday shipment',
@@ -217,10 +231,35 @@ test('real Chromium qualifies PostgreSQL business-mail filtering, exact replies 
     assert.equal(providerCalls,2);
     outbox=(await database.query('SELECT * FROM stockchief_runtime.email_reply_outbox WHERE message_id=$1',
       [uncertainMessage.messageId])).rows;assert.equal(outbox.length,1);
+    await page.goto(`${base}/mail?show=uncertain`);
+    assert.match(await page.locator('main').innerText(),/Second shipment question/);
+    await page.goto(`${base}/mail?show=needs-reply`);
+    assert.doesNotMatch(await page.locator('main').innerText(),/Second shipment question/);
     await page.goto(`${base}/mail/${customerMessage.messageId}`);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Dismiss — no reply needed'}).click()]);
     assert.equal((await mail.get(database,ctx.workspaceId,customerMessage.messageId)).reply_state,'HANDLED');
     assert.equal(providerCalls,2,'dismissing business mail must not send a reply');
-    await page.goto(`${base}/needs-you`);assert.match(await page.locator('main').innerText(),/Email delivery could not be verified/);
+    await page.goto(`${base}/needs-you`);
+    const uncertainNeed=await page.locator('main').innerText();
+    assert.match(uncertainNeed,/Email delivery could not be verified/);
+    assert.equal((uncertainNeed.match(/Email delivery could not be verified/g)||[]).length,1,
+      'one uncertain delivery is one decision, not a mail + connection + provider triplicate');
+    assert.equal(await page.getByRole('link',{name:'Verify email'}).getAttribute('href'),`/mail/${uncertainMessage.messageId}`);
+    const rejectedMessage=await mail.capture(database,connection,{externalMessageId:'supplier-message-rejected',
+      sender:'supplier@example.test',recipients:['business@example.test'],subject:'Another supplier question',
+      bodyText:'Please confirm the next delivery.',receivedAt:'2026-09-23T15:00:00.000Z'});
+    await page.goto(`${base}/mail/${rejectedMessage.messageId}`);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Use standard holding reply'}).click()]);
+    await page.getByLabel('Subject').fill('Rejected by provider');
+    await page.locator('textarea[name="body"]').fill('Please confirm the next delivery.');
+    const countBeforeReject=Number(await page.locator('a[href="/needs-you"] .nav-count').innerText());
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Send to supplier@example.test'}).click()]);
+    assert.equal(Number(await page.locator('a[href="/needs-you"] .nav-count').innerText()),countBeforeReject-1);
+    await jobs.processOne(database,runtimeHandlers.create(providers),{owner:'mail-definite-reject-worker'});
+    await page.reload();
+    assert.match(await page.locator('main').innerText(),/mailbox provider refused the last send/i);
+    assert.equal((await mail.get(database,ctx.workspaceId,rejectedMessage.messageId)).reply_state,'NEEDS_REPLY');
+    assert.equal(Number(await page.locator('a[href="/needs-you"] .nav-count').innerText()),countBeforeReject,
+      'a definite provider failure must restore the human decision');
     assert.deepEqual(errors,[]);
   });

@@ -36,11 +36,19 @@
 %>
 
 <%- include('coverage-warning') %>
+<% if (locals.failures && failures.attempts) { %>
+  <div class="quiet-note">
+    <strong><%= failures.attempts %> failed background attempt<%= failures.attempts === 1 ? '' : 's' %> need operator review.</strong>
+    These are system failures, not <%= failures.attempts %> business decisions.
+    <a href="/settings/operations#dead-letters">Review the grouped failures and retry controls</a>.
+  </div>
+<% } %>
 
 <% if (!total) { %>
 
   <p class="rm-stamp">Nothing on the desk</p>
-  <h1 class="rm-verdict"><%= (locals.inbox && inbox.coverageErrors || []).length ? 'No known decisions; review is incomplete.' : 'Nothing is waiting for you.' %></h1>
+  <h1 class="rm-verdict"><%= (locals.inbox && inbox.coverageErrors || []).length ? 'No known decisions; review is incomplete.' :
+    locals.failures && failures.attempts ? 'No business decisions are waiting for you.' : 'Nothing is waiting for you.' %></h1>
   <p class="rm-prose">
     You do not have to watch StockChief. Only what it cannot settle by itself reaches you — a number
     it cannot know, a difference it cannot explain, or permission it does not have — and when that

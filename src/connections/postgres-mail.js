@@ -128,9 +128,15 @@ async function capture(database,connection,message){
 }
 
 async function counts(database,workspaceId){
-  const rows=(await database.query(`SELECT reply_state,COUNT(*)::integer AS count FROM connection_email_messages
-    WHERE workspace_id=$1 GROUP BY reply_state`,[workspaceId])).rows;
-  return Object.fromEntries(rows.map((row)=>[row.reply_state,Number(row.count)]));
+  const rows=(await database.query(`SELECT CASE WHEN EXISTS (SELECT 1 FROM stockchief_runtime.email_reply_outbox outbox
+      WHERE outbox.workspace_id=message.workspace_id AND outbox.message_id=message.id
+      AND outbox.status IN ('PENDING','SENDING')) THEN 'SENDING'
+      WHEN EXISTS (SELECT 1 FROM stockchief_runtime.email_reply_outbox outbox
+        WHERE outbox.workspace_id=message.workspace_id AND outbox.message_id=message.id
+        AND outbox.status='AMBIGUOUS') THEN 'UNCERTAIN' ELSE message.reply_state END AS drawer,
+      COUNT(*)::integer AS count FROM connection_email_messages message
+    WHERE message.workspace_id=$1 GROUP BY drawer`,[workspaceId])).rows;
+  return Object.fromEntries(rows.map((row)=>[row.drawer,Number(row.count)]));
 }
 
 async function setAsideCount(database,workspaceId){
@@ -205,7 +211,13 @@ async function list(database,workspaceId,state='NEEDS_REPLY'){
         WHERE attachment.workspace_id=message.workspace_id AND attachment.message_id=message.id),0)::integer AS attachment_count
     FROM connection_email_messages message JOIN workspace_connectors connector ON connector.id=message.connector_id
     LEFT JOIN suppliers supplier ON supplier.id=message.supplier_id AND supplier.workspace_id=message.workspace_id
-    WHERE message.workspace_id=$1 AND message.reply_state=$2 ORDER BY message.received_at ASC,message.id ASC`,
+    WHERE message.workspace_id=$1 AND (CASE WHEN EXISTS (SELECT 1 FROM stockchief_runtime.email_reply_outbox outbox
+      WHERE outbox.workspace_id=message.workspace_id AND outbox.message_id=message.id
+      AND outbox.status IN ('PENDING','SENDING')) THEN 'SENDING'
+      WHEN EXISTS (SELECT 1 FROM stockchief_runtime.email_reply_outbox outbox
+        WHERE outbox.workspace_id=message.workspace_id AND outbox.message_id=message.id
+        AND outbox.status='AMBIGUOUS') THEN 'UNCERTAIN' ELSE message.reply_state END)=$2
+    ORDER BY message.received_at ASC,message.id ASC`,
   [workspaceId,state])).rows;
 }
 
@@ -231,6 +243,11 @@ async function requireOperator(database,ctx,what){
 async function setState(database,ctx,id,state,reason){
   await requireOperator(database,ctx,'sort the mailbox');
   if(!['NEEDS_REPLY','WAITING','HANDLED'].includes(state))throw new ValidationError('Choose a valid mailbox state.');
+  const sending=(await database.query(`SELECT 1 FROM stockchief_runtime.email_reply_outbox
+    WHERE workspace_id=$1 AND message_id=$2 AND status IN ('PENDING','SENDING') LIMIT 1`,
+  [ctx.workspaceId,id])).rows.length>0;
+  if(sending)throw new InvariantError('StockChief is sending this reply. Wait for provider verification before filing the conversation.',
+    'email_reply_in_progress');
   const result=await database.query(`UPDATE connection_email_messages SET reply_state=$3,reply_reason=$4,
     reply_state_by_user_id=$5,reply_state_at=$6 WHERE workspace_id=$1 AND id=$2 RETURNING id`,
   [ctx.workspaceId,id,state,trimOrNull(reason),ctx.actorId,nowIso()]);
