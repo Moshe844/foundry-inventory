@@ -160,12 +160,18 @@ async function scopeReadToRelatedParty(database,ctx,steps,index,contract,args){
   return rows.length===1?{...args,search:rows[0].name}:args;
 }
 
-async function externalState(database,workspaceId,result={}){
+async function externalState(database,workspaceId,result={},options={}){
   if(result.effectId){const row=(await database.query(`SELECT status,error_code,error_message
       FROM stockchief_runtime.provider_effects WHERE workspace_id=$1 AND id=$2`,
     [workspaceId,result.effectId])).rows[0];
     if(!row)return {state:'BLOCKED',reason:'external_effect_missing'};
-    if(row.status==='SUCCEEDED')return {state:'DONE'};
+    if(row.status==='SUCCEEDED'){
+      if(options.step?.capability==='communication.send_email'
+        &&options.step.args?.supplierAcceptance==='required')
+        return require('./postgres-supplier-acceptance').evaluate(database,workspaceId,result,
+          options.steps,options.index,options.provider);
+      return {state:'DONE'};
+    }
     if(['FAILED','AMBIGUOUS','CANCELLED'].includes(row.status))return {state:'BLOCKED',
       reason:row.status==='AMBIGUOUS'?'external_outcome_ambiguous':'external_effect_failed',detail:row};
     return {state:'WAITING_EVENT',condition:{kind:'provider_effect',id:result.effectId,status:row.status}};}
@@ -178,7 +184,7 @@ async function externalState(database,workspaceId,result={}){
   return {state:'DONE'};
 }
 
-async function refreshApprovals(database,workspaceId,steps){
+async function refreshApprovals(database,workspaceId,steps,provider=null){
   const ids=steps.filter((step)=>['WAITING','WAITING_USER'].includes(step.state)&&step.proposalId)
     .map((step)=>step.proposalId);
   const eventIds=steps.filter((step)=>step.state==='WAITING_EVENT'&&step.proposalId).map((step)=>step.proposalId);
@@ -186,11 +192,13 @@ async function refreshApprovals(database,workspaceId,steps){
   const rows=(await database.query(`SELECT id,status,result FROM stockchief_runtime.assistant_action_proposals
     WHERE workspace_id=$1 AND id=ANY($2::text[])`,[workspaceId,allIds])).rows;
   const byId=new Map(rows.map((row)=>[row.id,row]));
-  for(const step of steps){
+  for(const [index,step] of steps.entries()){
     const completed=byId.get(step.proposalId);
     if(['WAITING','WAITING_USER','WAITING_EVENT'].includes(step.state)&&completed?.status==='EXECUTED'){
-      const external=await externalState(database,workspaceId,completed.result||{});
+      const external=await externalState(database,workspaceId,completed.result||{},
+        {step,steps,index,provider});
       step.state=external.state;step.reason=external.reason||null;step.waitingCondition=external.condition||null;
+      if(external.evidence)step.acceptanceEvidence=external.evidence;
       const resultReference=registry.get(step.capability)?.resultReference;
       if(resultReference&&completed.result?.[resultReference])
         step.args={...step.args,recordReference:completed.result[resultReference]};
@@ -249,7 +257,11 @@ async function resume(database,ctx,proposalId,{service,provider,rawProvider,reco
     const steps=claimed.steps;
     try{
       const beforeRefresh=steps.map((step)=>step.state);
-      await refreshApprovals(database,ctx.workspaceId,steps);
+      if(claimed.approval_status==='REVOKED'){
+        for(const step of steps)if(step.state!=='DONE'){step.state='BLOCKED';step.reason='mission_authority_revoked';}
+        await update(database,claimed,token,steps,'BLOCKED');continue;
+      }
+      await refreshApprovals(database,ctx.workspaceId,steps,provider);
       let metrics=claimed.metrics||{};
       if(steps.some((step,index)=>['WAITING_EVENT','WAITING_USER'].includes(beforeRefresh[index])
         &&step.state==='DONE'))
@@ -321,9 +333,11 @@ async function resume(database,ctx,proposalId,{service,provider,rawProvider,reco
             break;
           }
           const executedProposal=await executeAuthorizedProposal(stored.proposalId,claimed.id);
-          const external=await externalState(database,ctx.workspaceId,executedProposal.result||{});
+          const external=await externalState(database,ctx.workspaceId,executedProposal.result||{},
+            {step:stored,steps,index:next,provider});
           stored.state=external.state;stored.reason=external.reason||null;
           stored.waitingCondition=external.condition||null;
+          if(external.evidence)stored.acceptanceEvidence=external.evidence;
           const resultReference=contract.resultReference;
           if(resultReference&&executedProposal.result?.[resultReference])
             stored.args={...stored.args,recordReference:executedProposal.result[resultReference]};

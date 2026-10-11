@@ -13,6 +13,7 @@ const expected={
  'assistant/calls.js':1,'assistant/mail-draft.js':1,'assistant/postgres-capability-planner.js':2,
  'assistant/postgres-control-plane.js':3,'assistant/postgres-service.js':1,
  'assistant/postgres-evidence-answer.js':1,
+ 'assistant/postgres-supplier-acceptance.js':1,
  'assistant/understand.js':1,'attention/interpretation-service.js':1,'commercial/model.js':1,
  'commercial/stripe-billing.js':1,'connections/postgres-reply-drafting.js':1,
  'connections/providers/common.js':1,'connections/reply-drafting.js':1,

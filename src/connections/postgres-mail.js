@@ -39,11 +39,11 @@ async function capture(database,connection,message){
       AND lower(email)=lower($2) ORDER BY id LIMIT 2`,[connection.workspace_id,sender])).rows;
     const matches=[...supplier.map((row)=>({...row,kind:'supplier'})),...customer.map((row)=>({...row,kind:'customer'}))];
     const threadId=trimOrNull(message.externalThreadId||message.threadId);
-    const sentThread=threadId?(await client.query(`SELECT id FROM (
-      SELECT id FROM supplier_communications WHERE workspace_id=$1 AND connector_id=$2 AND status='SENT'
+    const sentThread=threadId?(await client.query(`SELECT id,kind FROM (
+      SELECT id,'supplier' AS kind FROM supplier_communications WHERE workspace_id=$1 AND connector_id=$2 AND status='SENT'
         AND lower(recipient)=lower($3) AND external_thread_id=$4
       UNION ALL
-      SELECT id FROM customer_communications WHERE workspace_id=$1 AND connector_id=$2 AND status='SENT'
+      SELECT id,'customer' AS kind FROM customer_communications WHERE workspace_id=$1 AND connector_id=$2 AND status='SENT'
         AND lower(recipient)=lower($3) AND external_thread_id=$4
     ) sent LIMIT 1`,[connection.workspace_id,connection.id,sender,threadId])).rows[0]:null;
     if(matches.length!==1&&!sentThread){
@@ -92,6 +92,16 @@ async function capture(database,connection,message){
     }
     await client.query('UPDATE workspace_connectors SET last_activity_at=$3,updated_at=$3 WHERE workspace_id=$1 AND id=$2',
       [connection.workspace_id,connection.id,at]);
+    if(match.kind==='supplier'&&sentThread?.kind==='supplier'){
+      const missions=(await client.query(`SELECT id,actor_user_id FROM stockchief_runtime.assistant_capability_plans
+        WHERE workspace_id=$1 AND status='WAITING_EVENT'
+          AND waiting_condition->>'kind'='supplier_acceptance'
+          AND waiting_condition->>'id'=$2`,[connection.workspace_id,sentThread.id])).rows;
+      const scoped={query:(sql,values)=>client.query(sql,values),transaction:(work)=>work(client)};
+      for(const mission of missions)await jobs.enqueue(scoped,{workspaceId:connection.workspace_id,
+        kind:'assistant.resume-mission',idempotencyKey:`supplier-reply:${mission.id}:${externalId}`,
+        payload:{missionId:mission.id,actorId:mission.actor_user_id},priority:15,maxAttempts:5});
+    }
     if(owner?.owner_account_id)await commercialUsage.recordUsage(client,{accountId:owner.owner_account_id,
       workspaceId:connection.workspace_id},{id:newId('usage'),meter:'business_communications',units:1,
       idempotencyKey:`email:${connection.id}:${externalId}`,occurredAt:at,

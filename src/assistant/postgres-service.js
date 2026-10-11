@@ -1154,6 +1154,8 @@ async function prepareAction(database,ctx,message,request,options={}) {
     `Add ${name} as a ${kind}${details.length?` with ${details.join(' and ')}`:''}.`);
   }
   if(request.action==='send_email'){
+    if(request.supplierAcceptance&&request.supplierAcceptance!=='required')return {status:'CLARIFY',
+      answer:'I could not verify the requested supplier-acceptance condition. Nothing was prepared or sent.'};
     const commercialScope=await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId);
     const emailAccess=await entitlements.capabilityState(database,commercialScope,'connection.email');
     if(!emailAccess.enabled)return {status:'CLARIFY',answer:'Connected supplier and customer email is available on Growth and above. Nothing was prepared or sent.',
@@ -1172,6 +1174,8 @@ async function prepareAction(database,ctx,message,request,options={}) {
     }
     if(recipient.ambiguous)return {status:'CLARIFY',answer:`“${request.recipient}” matches more than one business contact. Say whether this is the customer or supplier.`,
       choices:recipient.ambiguous.map((row)=>({label:`${row.name} · ${row.kind}`,value:`the ${row.kind} named ${row.name}`}))};
+    if(request.supplierAcceptance==='required'&&(resolved.row.kind!=='supplier'||addContactKind))
+      return {status:'CLARIFY',answer:'A supplier-acceptance wait needs one existing, verified supplier contact. Nothing was prepared or sent.'};
     if(!resolved.row.email&&!request.recipientEmail)return {status:'CLARIFY',answer:`I found ${resolved.row.name}, but no email address is recorded. Enter the address to use below. Nothing was sent.`,
       awaitingField:'recipientEmail',emailFlow:{kind:'missing_email',name:resolved.row.name,recipientKind:resolved.row.kind}};
     if(!request.body)return {status:'CLARIFY',answer:`What would you like the email to ${resolved.row.name} to say? I’ll polish it before you approve it.`,awaitingField:'body'};
@@ -1800,9 +1804,13 @@ async function executeMission(database,ctx,proposalId){
     code:error.code||error.name||'unknown'}));return {...committed,missionId:plan.id,continuationError:error.message};}
 }
 
-async function resumeMission(database,ctx,missionId){
-  const rawProvider=config.ai.configured?createProviderUnobserved(config.ai.provider,config.ai.tier('fast')):null;
-  const provider=fundedAskProvider(database,ctx,rawProvider,`mission:${missionId}`);
+async function resumeMission(database,ctx,missionId,options={}){
+  const rawProvider=options.provider||
+    (config.ai.configured?createProviderUnobserved(config.ai.provider,config.ai.tier('fast')):null);
+  // A mission can be woken by several distinct external events. Each model
+  // assessment is a new bounded operation; reusing the mission ID as its
+  // commercial idempotency key would reject the second supplier reply.
+  const provider=fundedAskProvider(database,ctx,rawProvider,`mission:${missionId}:${newId('wake')}`);
   return require('./postgres-capability-plans').resume(database,ctx,null,{missionId,
     service:capabilityService(),provider,rawProvider,
     executeAuthorizedProposal:(id,planId)=>executeProposalCore(database,ctx,id,{missionPlanId:planId}),

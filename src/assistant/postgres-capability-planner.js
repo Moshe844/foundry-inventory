@@ -31,6 +31,7 @@ const PLANNING_RULES=[
   'The executor obtains context itself; do not add a preliminary read solely for a write. Add a read only if the owner separately asks its answer. Missing action inputs are clarified later; do not replace the action with a read.',
   'When one contract already accepts and applies every stated input for the requested outcome, do not add another mutation that sets the same field or performs a preparatory version of that outcome. Plan independent business effects only when the owner separately requested each one.',
   'Match exact real-world effect and timing. Recording a past event is not initiating it; a draft is not sending, buying, paying or fulfilling; internal status is not an external provider action. Never claim a dependent approval or physical event already happened.',
+  'Only when the owner requires supplier acceptance before PO placement, set supplierAcceptance=required on the supplier email step. Sending and provider delivery are not supplier acceptance.',
   'Use zero-based dependsOn only for genuine prior-step dependencies. Use continuesPending only when the current message answers the pending question; otherwise prior turns are context, not commands. Preserve a supplied email address; a subject is optional.',
   'Retain every requested outcome. A draft order does not reserve stock. For creation plus confirmation, follow sales_order.create with sales_order.confirm; for creation plus full reservation, use sales_order.reserve_all. Both need separate approvals. A draft-only request needs no confirmation.',
   'One customer order with several product lines is one sales_order.create step using orderLines JSON, not several sales_order.create steps. Preserve each distinct line and each stated per-unit price; do not invent a price or silently omit a product.',
@@ -79,7 +80,7 @@ will exist AFTER approval. Reading order quantities or money is how StockChief t
 do not demand a separate "summary" capability. A negative request such as not recording payment is satisfied
 when no proposed step records payment; do not require a no-op step to prove absence.
 The dependsOn indices in proposedSteps are executable sequencing, not merely suggestions.
-The mission executor also sequences all mutations and suspends at WAITING_EVENT when a provider-backed step queues an external effect. It resumes dependent steps only after the durable provider effect is SUCCEEDED; FAILED or AMBIGUOUS blocks them. For communication.send_email, successful provider acceptance requires a nonempty external message ID. There is no separate acceptance-check capability to add. Judge a dependent internal transition against this actual wait-and-verify behavior, not as if it ran immediately after queuing the email.
+The mission executor sequences all mutations and suspends at WAITING_EVENT for external effects. For communication.send_email, provider delivery requires a verifiable external message ID. When the owner explicitly requires supplier acceptance, the email step must carry supplierAcceptance=required and dependent placement remains suspended until StockChief verifies a matching trusted supplier reply in the sent thread. Provider delivery alone never satisfies that gate. FAILED or AMBIGUOUS effects block dependent steps. Judge the requested timing against the actual gate selected in the plan.
 Use each contract's own input semantics; never reinterpret a documented per-unit amount as a line total.
 Read steps are non-mutating evidence gathering. A broad or redundant read is not a reason to block an otherwise
 correct mutation plan: its answer is checked against live evidence later, and an irrelevant read can be omitted
@@ -135,15 +136,15 @@ function conciseClarification(value){
 
 function planningCatalogue(catalogue=registry,{compact=false}={}){
   const entries=catalogue.list();
-  const summary=(entry)=>entry.description.slice(0,compact?56:
-    entry.name==='purchase_order.place'?70:63);
+  const summary=(entry)=>entry.description.slice(0,compact?43:
+    entry.name==='purchase_order.place'?70:60);
   return {
     notation:'n=capability name; d=verified effect; a=allowed input names. All changes need approval.',
     mutations:entries.filter((entry)=>entry.kind==='mutation').map((entry)=>({
       n:entry.name,d:summary(entry),a:entry.fields.join(','),
       u:entry.commercialUnavailable?.length?'upgrade':undefined})),
     reads:entries.filter((entry)=>entry.kind==='read').map((entry)=>({
-      n:entry.name,d:entry.description.slice(0,compact?95:105),
+      n:entry.name,d:entry.description.slice(0,compact?75:105),
       u:entry.commercialUnavailable?.length?'upgrade':undefined})),
     navigation:entries.filter((entry)=>entry.kind==='navigation').map((entry)=>({
       n:entry.name,d:entry.destinationId
@@ -198,6 +199,12 @@ function parseSteps(raw,catalogue=registry){
   }
   if(steps.filter((step)=>step.contract.kind==='navigation').length>1)
     return {steps:[],clarifyingQuestion:'I can open one area at a time. Which area should I open?'};
+  const acceptanceEmails=steps.map((step,index)=>({step,index})).filter(({step})=>
+    step.contract.name==='communication.send_email'&&step.args.supplierAcceptance);
+  if(acceptanceEmails.some(({step})=>step.args.supplierAcceptance!=='required')
+    ||acceptanceEmails.length>1||acceptanceEmails.some(({index})=>
+      !steps.slice(index+1).some((step)=>step.contract.name==='purchase_order.place')))
+    return {steps:[],clarifyingQuestion:'A supplier-acceptance wait needs one matching purchase order and a dependent placement step. Nothing changed.'};
   const alternative=catalogue.get(raw.closestAlternative);
   return {steps,clarifyingQuestion:conciseClarification(raw.clarifyingQuestion),
     closestAlternative:alternative?.discovery?alternative.name:null};

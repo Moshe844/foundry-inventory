@@ -8,6 +8,15 @@
         <p class="muted">Plan integrity: <%= String(mission.plan_hash || '').slice(0, 12) %> · <%= (mission.approved_steps || []).length %> registered step<%= (mission.approved_steps || []).length === 1 ? '' : 's' %></p>
       </section>
     <% } %>
+    <% if (typeof mission !== 'undefined' && mission && proposal.status === 'EXECUTED') { %>
+      <% if (mission.status === 'WAITING_EVENT' && mission.waiting_condition && mission.waiting_condition.kind === 'supplier_acceptance') { %>
+        <div class="notice"><strong>Waiting for the supplier’s acceptance.</strong> The email was sent, but the purchase order has not been placed. StockChief will check replies in the sent thread and resume this approved mission automatically when acceptance is verified.</div>
+      <% } else if (mission.status === 'DONE' && mission.verification_status === 'VERIFIED') { %>
+        <div class="notice notice--ok"><strong>Mission completed and verified.</strong> All approved steps finished; no further approval was required.</div>
+      <% } else if (mission.status === 'BLOCKED') { %>
+        <div class="notice"><strong>Mission stopped safely.</strong> StockChief could not verify the next step. Review the supplier reply or changed terms before starting another action.</div>
+      <% } %>
+    <% } %>
     <% if (proposal.status === 'PENDING') { %><p class="muted">Nothing has changed yet. Check the business result above before approving.</p><% } %>
     <details class="advanced-settings"><summary>Technical record details</summary><p class="muted">Action: <%= proposal.action_type %></p>
     <dl class="summary-list"><% Object.entries(proposal.payload || {}).filter(function(entry){return entry[1] !== null && entry[1] !== undefined;}).forEach(function(entry){ %><div><dt><%= helpers.columnLabel(entry[0]) %></dt><dd><% if (typeof entry[1] === 'object') { %><pre style="white-space:pre-wrap;overflow-wrap:anywhere;margin:0"><%= JSON.stringify(entry[1], null, 2) %></pre><% } else { %><%= entry[1] %><% } %></dd></div><% }) %></dl></details>

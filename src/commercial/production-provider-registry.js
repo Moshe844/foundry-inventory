@@ -14,6 +14,8 @@ const classification=Object.freeze({
  'assistant/postgres-control-plane.js':'METERED',
  'assistant/postgres-evidence-answer.js':'METERED',
  'assistant/postgres-service.js':'METERED',
+ // Mission resumption passes a funded Ask provider to the supplier evidence assessor.
+ 'assistant/postgres-supplier-acceptance.js':'METERED',
  'assistant/understand.js':'NOT_PG_ENABLED',
  'attention/interpretation-service.js':'NOT_PG_ENABLED',
  'commercial/model.js':'METERED',

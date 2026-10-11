@@ -49,6 +49,7 @@ const FIELDS=Object.freeze({
   subject:{type:'string',description:'Email subject supplied by the owner.'},
   body:{type:'string',description:'Message content supplied by the owner.'},
   mailbox:{type:'string',entity:'mailbox',description:'Connected sending mailbox.'},
+  supplierAcceptance:{type:'string',description:'Set to required only when the owner explicitly requires a matching supplier reply accepting the purchase order before dependent mission steps. Otherwise omit.'},
   customer:{type:'string',entity:'customer',description:'Customer identity.'},
   supplier:{type:'string',entity:'supplier',description:'Supplier identity.'},
   supplierSku:{type:'string',description:'The code this supplier uses for the named product, only when stated.'},
@@ -209,8 +210,8 @@ action('catalog.set_purchase_cost','Change the SKU-wide current per-unit purchas
   ['sku','amount','currency'],permissions.ADMIN,'set_purchase_cost');
 action('contact.create','Add a new supplier or customer business contact to this inventory. This creates only the contact record; it does not send email, order goods, or move money.',
   ['recipient','recipientKind','recipientEmail','phone','notes'],permissions.OPERATE,'create_contact');
-action('communication.send_email','After approval, send a business email through a connected mailbox. A dependent mission step waits for the provider effect to return a verifiable external message ID; failed or ambiguous sends block it.',
-  ['recipient','recipientKind','recipientEmail','recipientMode','subject','body','mailbox'],permissions.OPERATE,'send_email',
+action('communication.send_email','After approval, send a business email through a connected mailbox. Dependent steps wait for verified provider delivery; when supplierAcceptance=required, they instead wait for a trusted reply in that sent thread explicitly accepting the related purchase order without changed terms. An unclear or failed outcome never counts as acceptance.',
+  ['recipient','recipientKind','recipientEmail','recipientMode','subject','body','mailbox','supplierAcceptance'],permissions.OPERATE,'send_email',
   {additionalCommercialCapabilities:['connection.email'],completionGate:'provider_effect_succeeded'});
 action('sales_order.create','Prepare ONE draft customer order without fulfillment or payment. For several products use orderLines JSON, preserving every SKU, quantity and price PER UNIT; for one product use sku, quantity and amount. Do not create separate orders for separate lines.',
   ['customer','sku','skuScope','quantity','orderLines','deliveryMethod','shipToAddress','location','orderDate','neededBy','amount','currency','reference'],
