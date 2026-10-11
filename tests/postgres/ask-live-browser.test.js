@@ -12,6 +12,8 @@ const {createPostgresApp}=require('../../src/postgres-app');
 const catalog=require('../../src/domain/postgres-catalog-service');
 const locations=require('../../src/domain/postgres-location-service');
 const inventory=require('../../src/domain/postgres-inventory-engine');
+const crypto=require('node:crypto');
+const missionPlans=require('../../src/assistant/postgres-capability-plans');
 
 test('live reasoning model and Chromium prepare, approve, and verify a supplier through Ask',
   {skip:process.env.STOCKCHIEF_ASK_LIVE_BROWSER!=='1',timeout:180000},async(context)=>{
@@ -34,29 +36,36 @@ test('live reasoning model and Chromium prepare, approve, and verify a supplier 
     await page.locator('input[name="password"]').fill('isolated-test-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('isolated-test-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
     const workspaceId=(await database.query("SELECT id FROM workspaces WHERE name='Meadow Fixtures'")).rows[0].id;
+    const supplierName=`Meadow Materials ${10000+crypto.randomInt(80000)}`;
     await page.goto(`${base}/ask`);
     await page.getByLabel('Ask StockChief').fill('Has this new business ever recorded any inventory products?');
     await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Continue'}).click()]);
     const firstAnswer=await page.locator('.rm-turn--latest + .rm-turn--foundry').innerText();
-    assert.match(firstAnswer,/no (?:inventory )?products|0 products|never recorded any inventory products/i);
+    assert.match(firstAnswer,/no (?:inventory )?products|0 products|(?:never|not) recorded any inventory products/i);
     assert.doesNotMatch(firstAnswer,/productsEver|inventory_summary/i);
     await Promise.all([page.waitForURL(`${base}/ask`),page.getByRole('button',{name:'New conversation'}).click()]);
-    await page.getByLabel('Ask StockChief').fill('Put Meadow Materials in our supplier contacts. Their email is meadow@example.test.');
+    await page.getByLabel('Ask StockChief').fill(`Put ${supplierName} in our supplier contacts. Their email is meadow@example.test.`);
     await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Continue'}).click()]);
     const proposal=(await database.query(`SELECT id,status,payload FROM stockchief_runtime.assistant_action_proposals
       WHERE workspace_id=$1 AND action_type='contact.create'`,[workspaceId])).rows[0];
     assert.ok(proposal,'Ask should prepare a supplier proposal in the browser.');
     assert.equal(proposal.status,'PENDING');
     assert.deepEqual({kind:proposal.payload.kind,name:proposal.payload.name,email:proposal.payload.email},
-      {kind:'supplier',name:'Meadow Materials',email:'meadow@example.test'});
+      {kind:'supplier',name:supplierName,email:'meadow@example.test'});
     assert.equal((await database.query('SELECT COUNT(*)::int AS count FROM suppliers WHERE workspace_id=$1',
       [workspaceId])).rows[0].count,0,'Preparation must not create the supplier.');
     await page.goto(`${base}/actions/${proposal.id}`);
     await page.getByRole('button',{name:/approve/i}).click();
     assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM suppliers WHERE workspace_id=$1
-      AND name='Meadow Materials' AND email='meadow@example.test'`,[workspaceId])).rows[0].count,1);
+      AND name=$2 AND email='meadow@example.test'`,[workspaceId,supplierName])).rows[0].count,1);
     await page.goto(`${base}/ask`);
-    assert.match(await page.locator('main').innerText(),/Completed: Add Meadow Materials as a supplier/);
+    const rendered=await page.locator('main').innerText();
+    assert.ok(rendered.includes(`Completed: Add ${supplierName} as a supplier`),rendered);
+    assert.ok(!rendered.includes(supplierName.replace(/(\d)(?=(\d{3})+$)/g,'$1,')),
+      'a numeric supplier name must not be formatted as a quantity');
+    const contactMetrics=await missionPlans.metricsSummary(database,workspaceId);
+    assert.deepEqual(contactMetrics.breakdown.singleStep,{outcomes:1,completed:1});
+    assert.equal(contactMetrics.humanInteractionsPerCompleted,2);
     assert.doesNotMatch(await page.locator('main').innerText(),/Needs your approval/);
 
     const actorId=(await database.query('SELECT id FROM users WHERE workspace_id=$1 ORDER BY created_at LIMIT 1',

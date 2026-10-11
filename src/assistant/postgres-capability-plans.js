@@ -24,15 +24,13 @@ async function save(database,ctx,message,batchId,steps,outcomes){
   if(!steps.some((step)=>step.dependsOn.length)||!outcomes.some((entry)=>entry.result?.status==='PREPARED'))return null;
   const records=serialized(steps,outcomes);const waiting=records.find((step)=>step.state==='WAITING');
   const id=newId('pgplan');const shape=planShape(records);const hash=planHash(shape);
-  const clarificationInteractions=outcomes.filter((entry)=>entry.result?.status==='CLARIFY'
-    &&entry.result?.reason!=='dependency_waiting').length;
   await database.query(`INSERT INTO stockchief_runtime.assistant_capability_plans
     (id,workspace_id,actor_user_id,batch_id,source_message,outcome,steps,approved_steps,plan_hash,
       status,waiting_proposal_id,approval_status,metrics)
     VALUES($1,$2,$3,$4,$5,$5,$6::jsonb,$7::jsonb,$8,$9,$10,'PENDING',$11::jsonb)`,
   [id,ctx.workspaceId,ctx.actorId,batchId||id,message,JSON.stringify(records),JSON.stringify(shape),hash,
     waiting?'WAITING':'BLOCKED',waiting?.proposalId||null,JSON.stringify({outcomeSpecifications:1,
-      approvalInteractions:0,clarificationInteractions,automaticSteps:0,userInterventions:clarificationInteractions,
+      approvalInteractions:0,clarificationInteractions:0,automaticSteps:0,userInterventions:0,
       externalWaits:0,resumptions:0})]);
   return {id,batchId:batchId||id};
 }
@@ -82,10 +80,52 @@ async function metricsSummary(database,workspaceId){const row=(await database.qu
     COALESCE(SUM((metrics->>'externalWaits')::int),0)::int AS external_waits,
     COALESCE(SUM((metrics->>'resumptions')::int),0)::int AS resumptions
   FROM stockchief_runtime.assistant_capability_plans WHERE workspace_id=$1`,[workspaceId])).rows[0];
-  const human=Number(row.outcome_specifications)+Number(row.approvals)+Number(row.clarifications)+Number(row.user_interventions);
-  return {...row,humanInteractions:human,humanInteractionsPerCompleted:Number(row.completed)
-    ?Math.round((human/Number(row.completed))*100)/100:null,
-  completionRate:Number(row.missions)?Math.round((Number(row.completed)/Number(row.missions))*1000)/10:null};}
+  // These are completed, canonical outcomes, not merely proposed tools. An Ask
+  // proposal already owned by a capability plan must not be counted twice.
+  const standalone=(await database.query(`SELECT
+      COUNT(*)::int AS outcomes,
+      COUNT(*) FILTER (WHERE action.status='EXECUTED')::int AS completed
+    FROM stockchief_runtime.assistant_action_proposals action
+    WHERE action.workspace_id=$1
+      AND EXISTS (SELECT 1 FROM stockchief_runtime.assistant_interactions interaction
+        WHERE interaction.workspace_id=action.workspace_id AND interaction.intent->>'proposalId'=action.id)
+      AND NOT EXISTS (SELECT 1 FROM stockchief_runtime.assistant_capability_plans plan
+        WHERE plan.workspace_id=action.workspace_id
+          AND plan.steps @> jsonb_build_array(jsonb_build_object('proposalId',action.id)))`,
+  [workspaceId])).rows[0];
+  const rules=(await database.query(`SELECT COUNT(*)::int AS outcomes,
+      COUNT(*) FILTER (WHERE rule.approved_at IS NOT NULL)::int AS completed
+    FROM operating_instruction_proposals rule WHERE rule.workspace_id=$1
+      AND EXISTS (SELECT 1 FROM stockchief_runtime.assistant_interactions interaction
+        WHERE interaction.workspace_id=rule.workspace_id AND interaction.intent->>'proposalId'=rule.id)
+      AND NOT EXISTS (SELECT 1 FROM stockchief_runtime.assistant_capability_plans plan
+        WHERE plan.workspace_id=rule.workspace_id
+          AND plan.steps @> jsonb_build_array(jsonb_build_object('proposalId',rule.id)))`,
+  [workspaceId])).rows[0];
+  const autonomous=(await database.query(`SELECT COUNT(*)::int AS outcomes,
+      COUNT(*) FILTER (WHERE execution_status='COMPLETED' AND verification_status='VERIFIED')::int AS completed
+    FROM work_items WHERE workspace_id=$1 AND purchase_order_id IS NOT NULL`,[workspaceId])).rows[0];
+  const clarificationReplies=(await database.query(`SELECT COUNT(DISTINCT COALESCE(intent->>'batchId',id))::int AS replies
+    FROM stockchief_runtime.assistant_interactions WHERE workspace_id=$1
+      AND intent #>> '{controlPlane,continuesPending}'='true'
+      AND NULLIF(intent #>> '{controlPlane,originalMessage}','') IS DISTINCT FROM message
+      AND status IN ('CLARIFY','PREPARED','ANSWERED')`,[workspaceId])).rows[0];
+  const missions=Number(row.missions)+Number(standalone.outcomes)+Number(rules.outcomes)+Number(autonomous.outcomes);
+  const completed=Number(row.completed)+Number(standalone.completed)+Number(rules.completed)+Number(autonomous.completed);
+  // Asking a clarification or showing a Needs You item is not a human action.
+  // Only owner messages and committed approvals contribute to the numerator.
+  const specifications=Number(row.outcome_specifications)+Number(standalone.outcomes)+Number(rules.outcomes);
+  const approvals=Number(row.approvals)+Number(standalone.completed)+Number(rules.completed);
+  const replies=Number(clarificationReplies.replies);
+  const human=specifications+approvals+replies;
+  return {...row,missions,completed,outcome_specifications:specifications,approvals,
+    clarifications:replies,user_interventions:0,humanInteractions:human,
+    humanInteractionsPerCompleted:completed?Math.round((human/completed)*100)/100:null,
+    completionRate:missions?Math.round((completed/missions)*1000)/10:null,
+    breakdown:{multiStep:{outcomes:Number(row.missions),completed:Number(row.completed)},
+      singleStep:{outcomes:Number(standalone.outcomes),completed:Number(standalone.completed)},
+      standingRules:{outcomes:Number(rules.outcomes),completed:Number(rules.completed)},
+      autonomousPurchases:{outcomes:Number(autonomous.outcomes),completed:Number(autonomous.completed)}}};}
 
 function readyIndexes(steps){return steps.flatMap((step,index)=>step.state==='BLOCKED'
   &&step.reason==='dependency_waiting'&&step.dependsOn.every((dependency)=>steps[dependency]?.state==='DONE')
@@ -277,7 +317,6 @@ async function resume(database,ctx,proposalId,{service,provider,rawProvider,reco
           &&claimed.approval_status==='APPROVED'&&executeAuthorizedProposal){
           if(!approvedStepSafe({...claimed,steps},next,outcome.args,dependencyArgs)){
             stored.state='WAITING_USER';stored.reason='mission_scope_incomplete';
-            metrics=metric(metrics,'userInterventions');
             await update(database,claimed,token,steps,'WAITING_USER');
             break;
           }

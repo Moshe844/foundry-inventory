@@ -513,3 +513,14 @@ test('repeated customer-read substitutions never claim a page-opening request wa
   assert.equal(result.steps.length,0);
   assert.match(result.clarifyingQuestion,/page to open/i);
 });
+
+test('a literal numeric suffix in a contact name survives model abbreviation',()=>{
+  const contact={contract:registry.get('contact.create'),args:{recipient:'Meadow Materials',
+    recipientKind:'supplier',recipientEmail:'meadow@example.test'}};
+  planner.groundedMoneyArguments([contact],
+    'Put Meadow Materials 70624 in our supplier contacts. Their email is meadow@example.test.');
+  assert.equal(contact.args.recipient,'Meadow Materials 70624');
+  planner.groundedMoneyArguments([contact],
+    'Put Meadow Materials 70624 in our supplier contacts. Their email is meadow@example.test.');
+  assert.equal(contact.args.recipient,'Meadow Materials 70624','replay cannot append the suffix twice');
+});

@@ -26,7 +26,8 @@ const PLANNING_RULES=[
   'When priorReport exists, save or schedule it via report.template.create without a report read.',
   'A request to correct your previous factual answer calls for fresh reads, not a business-data write. Changing a record still requires its matching approved write.',
   'For navigation, match the requested page exactly; prefer specific destinations. Never answer a page-opening request with records.',
-  'A requested change needs its matching write, not a related read. A declarative lasting supplier term, threshold or operating preference may be a policy instruction. Do not create extra contacts, products, orders, purchases or movements as prerequisites. Invoicing does not imply fulfillment or payment.',
+  'A change needs its matching write, not a read. A lasting supplier term, threshold or preference may be a policy. Do not invent prerequisite contacts, products, orders or movements. Invoicing does not imply fulfillment or payment.',
+  'A supplier-specific cost is a supplier-product term, not a SKU-wide quote. Use that term operation; ask if the supplier is unknown.',
   'The executor obtains context itself; do not add a preliminary read solely for a write. Add a read only if the owner separately asks its answer. Missing action inputs are clarified later; do not replace the action with a read.',
   'When one contract already accepts and applies every stated input for the requested outcome, do not add another mutation that sets the same field or performs a preparatory version of that outcome. Plan independent business effects only when the owner separately requested each one.',
   'Match exact real-world effect and timing. Recording a past event is not initiating it; a draft is not sending, buying, paying or fulfilling; internal status is not an external provider action. Never claim a dependent approval or physical event already happened.',
@@ -52,6 +53,8 @@ Reject a preliminary read used only as context for a mutation when the owner did
 the deterministic resolver fetches required facts without showing an extra answer.
 Reject a redundant preparatory mutation if the final selected contract itself accepts and applies the same supplied
 measurement, setting, or identity. Do not infer a second business operation from a detail of the requested one.
+A cost stated for a particular supplier is not the SKU-wide quote. Reject a generic SKU-cost change as a substitute
+for the supplier-product term; if the supplier or relationship cannot be identified, the resolver must ask.
 A capability marked full_owner_message receives the complete message, including every named product, value and limit;
 it is deliberately not given separate arguments. Do not mark it misaligned for empty arguments.
 The currentPage record is verified from this workspace and supplied to the executor. When the owner says
@@ -212,6 +215,13 @@ function groundedMoneyArguments(steps,message,pending){
   const statedNumbers=[...source.matchAll(/(?:^|[^\w])(?:[$€£]\s*)?(\d[\d,]*(?:\.\d+)?)(?=$|[^\w])/g)]
     .map((match)=>Number(match[1].replaceAll(',',''))).filter(Number.isFinite);
   for(const step of steps){
+    if(step.contract.name==='contact.create'&&step.args.recipient){
+      const named=String(step.args.recipient).trim();
+      const escaped=named.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+      const exactSuffix=new RegExp(`(?:^|[^\\p{L}\\p{N}])${escaped}\\s+(\\d{4,})(?=$|[^\\p{L}\\p{N}])`,'iu');
+      const literal=source.match(exactSuffix);
+      if(literal)step.args.recipient=`${named} ${literal[1]}`;
+    }
     if(step.args.recipientEmail&&!source.toLocaleLowerCase().includes(
       String(step.args.recipientEmail).toLocaleLowerCase()))delete step.args.recipientEmail;
     if(unitPriceContracts.has(step.contract.name)&&!step.args.orderLines&&quotedUnitPrices.length===1)
@@ -450,6 +460,14 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
           continuesPending:step.continuesPending}))});
       let fit=await completeWithOutputRetry(provider,{system:FIT_SYSTEM,prompt:JSON.stringify(candidate()),
         schema:FIT_SCHEMA,schemaName:'stockchief_capability_fit',maxOutputTokens:384});
+      const consequential=selected.steps.some((step)=>['mutation','policy'].includes(step.contract.kind));
+      if(consequential&&verificationProvider&&fit.data?.aligned===true){
+        const independent=await completeWithOutputRetry(verificationProvider,{system:FIT_SYSTEM,
+          prompt:JSON.stringify(candidate()),schema:FIT_SCHEMA,
+          schemaName:'stockchief_capability_fit',maxOutputTokens:384});
+        if(independent.data?.aligned!==true)fit={data:{aligned:false,
+          reason:independent.data?.reason||'Independent verification did not confirm the whole outcome.'}};
+      }
       if(fit.data?.aligned===false){
         if(verificationProvider){
           const stronger=await completeWithOutputRetry(verificationProvider,{system:FIT_SYSTEM,
@@ -476,6 +494,13 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
         if(selected.steps.length){
           fit=await completeWithOutputRetry(provider,{system:FIT_SYSTEM,prompt:JSON.stringify(candidate()),
             schema:FIT_SCHEMA,schemaName:'stockchief_capability_fit',maxOutputTokens:384});
+          if(consequential&&verificationProvider&&fit.data?.aligned===true){
+            const independent=await completeWithOutputRetry(verificationProvider,{system:FIT_SYSTEM,
+              prompt:JSON.stringify(candidate()),schema:FIT_SCHEMA,
+              schemaName:'stockchief_capability_fit',maxOutputTokens:384});
+            if(independent.data?.aligned!==true)fit={data:{aligned:false,
+              reason:independent.data?.reason||'Independent verification did not confirm the whole outcome.'}};
+          }
           if(fit.data?.aligned===false){
             if(verificationProvider){
               const stronger=await completeWithOutputRetry(verificationProvider,{system:FIT_SYSTEM,

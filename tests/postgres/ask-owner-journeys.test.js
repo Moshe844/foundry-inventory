@@ -68,6 +68,16 @@ test('Ask approvals update the conversation, invoices use the canonical ledger, 
       {message:'Five Blue Shoes arrived into Main Room with delivery reference BX-27.'});
     assert.equal(recovered.args.sku,'BLUE-SHOE');
     assert.equal(recovered.provenance.sku.source,'verified_in_owner_message');
+    const inferredPlace=await resolver.resolveArguments(database,ctx,registry.get('inventory.receive'),
+      {sku:'Blue Shoe',location:'unrecorded label',quantity:'2'},
+      {message:'Two Blue Shoes arrived.'});
+    assert.equal(inferredPlace.args.location,'Main Room');
+    assert.equal(inferredPlace.provenance.location.source,'single_valid_candidate');
+    const ownerNamedPlace=await resolver.resolveArguments(database,ctx,registry.get('inventory.receive'),
+      {sku:'Blue Shoe',location:'Unrecorded Room',quantity:'2'},
+      {message:'Two Blue Shoes arrived at Unrecorded Room.'});
+    assert.equal(ownerNamedPlace.args.location,null);
+    assert.equal(ownerNamedPlace.unresolved.find((entry)=>entry.field==='location').reason,'not_found');
     await locations.createLocation(database,ctx,{name:'Side Room',kind:'warehouse'});
     const omitted=await resolver.resolveArguments(database,ctx,registry.get('inventory.receive'),
       {sku:'Blue Shoe',quantity:'2'},

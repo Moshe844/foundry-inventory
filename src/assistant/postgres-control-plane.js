@@ -97,11 +97,16 @@ function navigation(db,ctx,id){
 // planner so this shortcut never swallows a requested write.
 function explicitPageNavigation(message,catalogue){
   const text=String(message||'').trim();
-  if(!/^(?:(?:please|can you|could you|would you)\s+)?(?:open|navigate(?:\s+to)?|go\s+to|take\s+me\s+to|bring\s+up|jump\s+to)\b/i.test(text))return null;
+  const imperative=/^(?:(?:please|can you|could you|would you)\s+)?(?:open|navigate(?:\s+to)?|go\s+to|take\s+me\s+to|bring\s+up|jump\s+to)\b/i;
+  const pageRequest=/^(?:(?:please\s+)?(?:show\s+me|view)|i\s+(?:want|need|would\s+like)\s+to\s+(?:see|view))\b/i;
+  const pageTarget=/\b(?:section|page|screen|tab|area)\b/i;
+  const target=imperative.test(text)?text:pageRequest.test(text)&&pageTarget.test(text)
+    ?text.replace(pageRequest,'').trim():null;
+  if(!target)return null;
   const registered=destinations.filter((entry)=>catalogue.get(`navigate.${entry.id}`)&&destinationById(entry.id));
-  const match=destinationMatch(text,{listDestinations:()=>registered});
+  const match=destinationMatch(target,{listDestinations:()=>registered});
   if(!match)return null;
-  const words=new Set(navigationTokens(text));
+  const words=new Set(navigationTokens(target));
   const vocabulary=new Set([match.label,...(match.aliases||[])].flatMap(navigationTokens));
   if(!words.size||[...words].some((word)=>!vocabulary.has(word)))return null;
   return catalogue.get(`navigate.${match.id}`);

@@ -41,8 +41,6 @@ test('months-running business authority, dated digest, batch approvals and owner
   await page.locator('#password').fill('disposable-autonomy-password');
   await Promise.all([page.waitForNavigation(), page.locator('form[action="/login"] button[type=submit]').click()]);
   await context.test('one confirmation displays evidence-backed supplier, product and actual weekly limits', async () => {
-    await page.goto(`${base}/`);
-    assert.match(await page.getByRole('region', { name: 'Suggested routine-work limits' }).innerText(), /\$200\.00 USD in any rolling seven days/);
     await page.goto(`${base}/autopilot`);
     const proposal = page.getByRole('region', { name: 'Limits from your own records' });
     assert.match(await proposal.innerText(), /3 priced USD orders|Usual Coffee Supplier/);

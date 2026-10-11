@@ -12,6 +12,7 @@ const catalog=require('../../src/domain/postgres-catalog-service');
 const inventory=require('../../src/domain/postgres-inventory-engine');
 const ledger=require('../../src/accounting/postgres-ledger');
 const connections=require('../../src/connections/postgres-service');
+const jobs=require('../../src/operations/postgres-job-queue');
 const { newId,nowIso }=require('../../src/lib/util');
 
 test('real Chromium renders PostgreSQL Brief, proactive Needs You count, activity and balanced financial reports',
@@ -61,6 +62,21 @@ test('real Chromium renders PostgreSQL Brief, proactive Needs You count, activit
     await page.locator('.rm-rail__nav a[href="/needs-you"]').click();
     assert.match(await page.locator('main').innerText(),/Store feed stopped updating/);
     assert.match(await page.locator('main').innerText(),/Reconnect the store feed/);
+    const failedJobs=[];
+    for(let index=0;index<25;index+=1){
+      const queued=await jobs.enqueue(database,{workspaceId:ctx.workspaceId,kind:'certification.failed-work',
+        idempotencyKey:`projection-failed-work:${index}`,payload:{index}});
+      failedJobs.push(queued.job.id);
+    }
+    await database.query(`UPDATE stockchief_runtime.jobs SET status='DEAD',
+      last_error='{"message":"Certification worker failure"}'::jsonb,completed_at=now()
+      WHERE id=ANY($1::text[])`,[failedJobs]);
+    await page.goto(`${base}/needs-you`);
+    assert.equal(await page.locator('a[href="/needs-you"] .nav-count').innerText(),'26');
+    assert.match(await page.locator('main').innerText(),/Decision 1 of 26/);
+    await page.goto(`${base}/needs-you?at=25`);
+    assert.match(await page.locator('main').innerText(),/Decision 26 of 26/);
+    assert.match(await page.locator('main').innerText(),/Store feed stopped updating/);
     await page.goto(`${base}/activity`);const activity=await page.locator('main').innerText();
     assert.match(activity,/Activity/);assert.match(activity,/Received 12 × Projection Widget into Main Warehouse/);
     assert.match(activity,/raw movement ledger/i);await page.getByLabel('Search activity').fill('OPENING-PROJECTION');

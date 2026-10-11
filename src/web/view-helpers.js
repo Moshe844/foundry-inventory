@@ -193,12 +193,24 @@ const COLUMN_LABELS = {
  * quantity of exactly 1,900–2,099 units and saves "Sep 14, 2,026".
  */
 const thousands = new Intl.NumberFormat('en-US');
-function figures(text) {
+function figures(text, protectedNames = []) {
   if (text === null || text === undefined) return '';
-  return String(text).replace(/(?<![\w.,#/-])(\d{4,})(?![\w.,/-])/g, (run) => {
+  const format = (part) => part.replace(/(?<![\w.,#/-])(\d{4,})(?![\w.,/-])/g, (run) => {
     if (run.length === 4 && Number(run) >= 1900 && Number(run) <= 2099) return run;
     return thousands.format(Number(run));
   });
+  const names = [...new Set(protectedNames.map((name) => String(name || '').trim()).filter(Boolean))]
+    .sort((left, right) => right.length - left.length);
+  if (!names.length) return format(String(text));
+  const escape = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const expression = new RegExp(names.map(escape).join('|'), 'gi');
+  let result = ''; let cursor = 0;
+  const source = String(text);
+  for (const match of source.matchAll(expression)) {
+    result += format(source.slice(cursor, match.index)) + match[0];
+    cursor = match.index + match[0].length;
+  }
+  return result + format(source.slice(cursor));
 }
 
 function columnLabel(key) {

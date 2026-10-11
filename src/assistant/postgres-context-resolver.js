@@ -186,6 +186,15 @@ async function resolveArguments(database,ctx,contract,provided={},context={}){
             value:mention.value,rejectedValue:raw};continue;
         }
       }
+      // An inferred location label that the owner never said must not turn a
+      // single real location into an unnecessary question. Never override an
+      // unmatched location that the owner actually named.
+      if(field==='location'&&raw&&matched.notFound&&context.message
+        &&!normalize(context.message).includes(normalize(raw))){
+        const available=await choices(database,ctx.workspaceId,spec.entity,{scope});
+        if(available.length===1){args[field]=available[0].value;
+          provenance[field]={source:'single_valid_candidate',value:available[0].value,rejectedValue:raw};continue;}
+      }
       if(raw&&matched.notFound&&contract.allowUnknownEntities?.includes(field)){
         args[field]=raw;provenance[field]={source:'unverified_reference',value:raw};continue;
       }

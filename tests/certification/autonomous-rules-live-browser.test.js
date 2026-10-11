@@ -84,6 +84,9 @@ test('real browser and model grant, remember, revoke, and reject conflicting sup
       WHERE workspace_id=$1 AND capability='supplier_emails'`,[workspaceId])).rows[0].granted),0);
     assert.equal(pending.length,0,'A contradictory standing instruction must not prepare a unilateral grant.');
     const measured=await plans.metricsSummary(database,workspaceId);
+    assert.deepEqual(measured.breakdown.standingRules,{outcomes:2,completed:2});
+    assert.equal(measured.humanInteractions,4);
+    assert.equal(measured.humanInteractionsPerCompleted,2);
     t.diagnostic(`Mission metric after two completed standing-rule outcomes and four browser interactions: `+
       `${JSON.stringify({missions:measured.missions,completed:measured.completed,
         humanInteractionsPerCompleted:measured.humanInteractionsPerCompleted})}`);

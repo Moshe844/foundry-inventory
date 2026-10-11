@@ -448,9 +448,9 @@ async function systemEmail(job,database,options={}){
 }
 
 function create(providers=defaultProviders,options={}){return {'system.runtime-sweep':(job,client)=>runtimeSweep(job,client,options),
-  'system.reconcile-business':(job,database)=>reconciliation.run(database,job.workspaceId),
-  'assistant.resume-mission':(job,database)=>require('../assistant/postgres-service').resumeMission(database,
-    {workspaceId:job.workspaceId,actorId:job.payload.actorId},job.payload.missionId),
+  'system.reconcile-business':(job,client)=>reconciliation.run(scopedDatabase(client),job.workspaceId),
+  'assistant.resume-mission':external((job,database)=>require('../assistant/postgres-service').resumeMission(database,
+    {workspaceId:job.workspaceId,actorId:job.payload.actorId},job.payload.missionId)),
   'report.generate-delivery':external((job,database)=>
     require('../reports/postgres-scheduling').generateDelivery(database,job)),
   'shipping.quote':external(async(job,database)=>{

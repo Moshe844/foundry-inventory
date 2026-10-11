@@ -13,3 +13,13 @@ test('Ask and report rows present governed fields as human-readable labels',()=>
   assert.equal(helpers.columnLabel('pricing_complete'),'Pricing complete');
   assert.equal(helpers.columnLabel('onHand'),'On hand');
 });
+
+test('Ask formats measured quantities without rewriting numeric business names',()=>{
+  const supplier='Parts 12345';
+  assert.equal(helpers.figures(`Order 12000 units from ${supplier}.`,[supplier]),
+    `Order 12,000 units from ${supplier}.`);
+  assert.equal(helpers.figures('Supplier 12345 has 10000 units.', ['Supplier 12345']),
+    'Supplier 12345 has 10,000 units.');
+  assert.equal(helpers.figures('Use 0012345 for 12000 units.',['0012345']),
+    'Use 0012345 for 12,000 units.');
+});

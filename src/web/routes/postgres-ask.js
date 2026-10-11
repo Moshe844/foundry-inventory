@@ -192,12 +192,21 @@ function createPostgresAskRouter(database,options={}){
         proposal.deliveryStatus=deliveryStatus;
     }
     const transcript=transcriptFor(visible,proposals);const rules=await instructionLists(database,req.ctx.workspaceId);
+    const protectedNames=(await database.query(`SELECT name FROM suppliers WHERE workspace_id=$1
+        AND name ~ '[0-9]{4,}'
+      UNION SELECT name FROM customers WHERE workspace_id=$1
+        AND name ~ '[0-9]{4,}'
+      UNION SELECT name FROM items WHERE workspace_id=$1
+        AND name ~ '[0-9]{4,}'
+      UNION SELECT name FROM locations WHERE workspace_id=$1
+        AND name ~ '[0-9]{4,}'`,
+    [req.ctx.workspaceId])).rows.map((row)=>row.name);
     return res.page('attention/ask',{title:'Ask StockChief',nav:'ask',room:true,suppressBack:true,postgresAsk:true,...rules,
       about:String(req.query.about||'').slice(0,2000),question:latest?.message||'',result:resultFor(latest,latestProposal),error:null,
       prefill:String(req.query.q||'').slice(0,2000),
       conversation:null,transcript,currentGoalId:latest?.id||null,conversationId:`postgres:${req.ctx.workspaceId}`,
       aiConfigured:Boolean(options.provider||config.ai.configured),usageKey:newId('askusage'),
-      sourcePath:sourcePage?.path||null,emailBodyContinuation,
+      sourcePath:sourcePage?.path||null,emailBodyContinuation,protectedNames,
       examples:await askExamples(database,req.ctx,sourcePage)});
   }));
   router.post('/ask/new',asyncRoute(async(req,res)=>{

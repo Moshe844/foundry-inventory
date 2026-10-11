@@ -46,6 +46,14 @@ test('real Chromium proves one-approval missions, verified memory, supplier foll
       if(input.schemaName==='stockchief_capability_plan'){
         const message=JSON.parse(input.prompt).message;
         const planned=/email suppliers automatically/i.test(message)?[step('policy.propose')]:
+          /order two Follow Through Parts/i.test(message)?[
+            step('purchase_order.create',{supplier:'Mission Supply',sku:'FOLLOW-MISSION',quantity:2,
+              location:'Mission Warehouse',amount:'2.50',currency:'USD'}),
+            step('purchase_order.approve',{},[0]),
+            step('communication.send_email',{recipient:'Mission Supply',recipientKind:'supplier',
+              subject:'Follow Through Part purchase order',body:'Please accept two Follow Through Parts.'},[1]),
+            step('purchase_order.place',{},[2]),
+          ]:
           /add Resume Supply/i.test(message)?[
             step('contact.create',{recipient:'Resume Supply',recipientKind:'supplier',
               recipientEmail:'resume@mission-supply.example'}),
@@ -117,6 +125,9 @@ test('real Chromium proves one-approval missions, verified memory, supplier foll
       WHERE workspace_id=$1 AND memory_type='PREFERENCE' AND memory_key='authority:capability:supplier_emails'
         AND retired_at IS NULL`,[ctx.workspaceId])).rows[0];
     assert.equal(authorityMemory.confidence,'OWNER_STATED');
+    const ruleMetrics=await missionPlans.metricsSummary(database,ctx.workspaceId);
+    assert.deepEqual(ruleMetrics.breakdown.standingRules,{outcomes:1,completed:1});
+    assert.equal(ruleMetrics.humanInteractionsPerCompleted,2);
 
     const connectorId=newId('con');const at=nowIso();
     await database.query(`INSERT INTO workspace_connectors
@@ -157,12 +168,57 @@ test('real Chromium proves one-approval missions, verified memory, supplier foll
       units_per_purchase_unit,last_unit_cost,lead_time_days,minimum_order_quantity,order_multiple,is_preferred,is_active,created_at,updated_at)
       VALUES($1,$2,$3,$4,'FOLLOW-CASE','case',6,2.50,5,1,1,1,1,$5,$5)`,
     [newId('supi'),ctx.workspaceId,supplier.id,purchaseItem.skuIds[0],at]);
+    const missionPurchaseItem=await catalog.createItem(database,ctx,
+      {name:'Follow Through Mission Part',baseCode:'FOLLOW-MISSION',trackingMode:'quantity'});
+    await database.query(`INSERT INTO supplier_items(id,workspace_id,supplier_id,sku_id,supplier_sku,purchase_unit,
+      units_per_purchase_unit,last_unit_cost,lead_time_days,minimum_order_quantity,order_multiple,is_preferred,is_active,created_at,updated_at)
+      VALUES($1,$2,$3,$4,'FOLLOW-MISSION','each',1,2.50,5,1,1,1,1,$5,$5)`,
+    [newId('supi'),ctx.workspaceId,supplier.id,missionPurchaseItem.skuIds[0],at]);
+    await page.goto(`${base}/ask`);await page.getByLabel('Ask StockChief').fill(
+      'Order two Follow Through Parts from Mission Supply, approve the order, email it, and mark it ordered only after delivery is verified.');
+    await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Continue'}).click()]);
+    await page.getByRole('link',{name:'Review prepared change'}).click();
+    assert.match(await page.locator('main').innerText(),/purchase order create[\s\S]*purchase order approve[\s\S]*communication send email[\s\S]*purchase order place/i);
+    await Promise.all([page.waitForURL(/\/ask#latest$/),
+      page.getByRole('button',{name:'Approve the whole mission'}).click()]);
+    let purchaseMission=(await database.query(`SELECT * FROM stockchief_runtime.assistant_capability_plans
+      WHERE workspace_id=$1 AND source_message LIKE 'Order two Follow Through Parts%' ORDER BY created_at DESC LIMIT 1`,
+    [ctx.workspaceId])).rows[0];
+    assert.equal(purchaseMission.status,'WAITING_EVENT');
+    const missionPo=(await database.query(`SELECT id,status FROM purchase_orders
+      WHERE workspace_id=$1 AND source<>'foundry_recommendation' ORDER BY created_at DESC LIMIT 1`,
+    [ctx.workspaceId])).rows[0];
+    assert.equal(missionPo.status,'APPROVED');
+    await jobs.processOne(database,runtimeHandlers.create(providers),{owner:'mission-purchase-mail-worker'});
+    const purchaseSweep=await database.transaction((client)=>runtimeHandlers.runtimeSweep({payload:{now:Date.now()}},client));
+    assert.equal(purchaseSweep.scheduledMissionResumes,1);
+    const placed=await jobs.processOne(database,runtimeHandlers.create(providers),
+      {owner:'mission-purchase-resume-worker',now:Date.now()+1});
+    assert.equal(placed.kind,'assistant.resume-mission');assert.equal(placed.status,'COMPLETED');
+    purchaseMission=(await database.query(`SELECT * FROM stockchief_runtime.assistant_capability_plans
+      WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,purchaseMission.id])).rows[0];
+    assert.equal(purchaseMission.status,'DONE');assert.equal(purchaseMission.verification_status,'VERIFIED');
+    assert.equal((await database.query(`SELECT status FROM purchase_orders WHERE workspace_id=$1 AND id=$2`,
+      [ctx.workspaceId,missionPo.id])).rows[0].status,'ORDERED');
+    assert.equal(delivered.filter((message)=>message.recipient==='orders@mission-supply.example').length,1);
+    await jobs.enqueue(database,{workspaceId:ctx.workspaceId,kind:'assistant.resume-mission',
+      idempotencyKey:`certification:resume-replay:${purchaseMission.id}`,
+      payload:{missionId:purchaseMission.id,actorId:ctx.actorId}});
+    const duplicateResume=await jobs.processOne(database,
+      {'assistant.resume-mission':runtimeHandlers.create(providers)['assistant.resume-mission']},
+      {owner:'mission-purchase-duplicate-resume-worker'});
+    assert.equal(duplicateResume.status,'COMPLETED');
+    assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM purchase_order_events
+      WHERE workspace_id=$1 AND purchase_order_id=$2 AND event='ordered'`,
+    [ctx.workspaceId,missionPo.id])).rows[0].count,1);
+    assert.equal(delivered.filter((message)=>message.recipient==='orders@mission-supply.example').length,1);
     await database.query(`INSERT INTO reorder_policies(id,workspace_id,sku_id,location_id,reorder_point,target_stock,
       safety_stock,preferred_supplier_id,lead_time_days,source,created_at,updated_at)
       VALUES($1,$2,$3,$4,2,12,1,$5,5,'manual',$6,$6)`,
     [newId('rpol'),ctx.workspaceId,purchaseItem.skuIds[0],warehouse.id,supplier.id,at]);
     const actor=(await database.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',
       [ctx.workspaceId,ctx.actorId])).rows[0];
+    const priorSupplierDeliveries=delivered.filter((message)=>message.recipient==='orders@mission-supply.example').length;
     await autonomy.configureRoutine(database,ctx,actor,{purchaseEnabled:true,transferEnabled:false,
       supplierIds:[supplier.id],maximumValue:'100',weeklyValue:'500'});
     const autonomous=await autonomy.run(database,ctx);assert.equal(autonomous.executed,0);
@@ -176,9 +232,11 @@ test('real Chromium proves one-approval missions, verified memory, supplier foll
     order=(await database.query('SELECT * FROM purchase_orders WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,order.id])).rows[0];
     assert.equal(work.execution_status,'COMPLETED');assert.equal(work.verification_status,'VERIFIED');
     const supplierDeliveries=()=>delivered.filter((message)=>message.recipient==='orders@mission-supply.example').length;
-    assert.equal(order.status,'ORDERED');assert.equal(supplierDeliveries(),1);
+    assert.equal(order.status,'ORDERED');assert.equal(supplierDeliveries(),priorSupplierDeliveries+1);
+    const purchaseMetrics=await missionPlans.metricsSummary(database,ctx.workspaceId);
+    assert.deepEqual(purchaseMetrics.breakdown.autonomousPurchases,{outcomes:1,completed:1});
     await jobs.processOne(database,runtimeHandlers.create(providers),{owner:'mission-mail-replay-worker'});
-    assert.equal(supplierDeliveries(),1,'provider-confirmed supplier delivery is never sent twice');
+    assert.equal(supplierDeliveries(),priorSupplierDeliveries+1,'provider-confirmed supplier delivery is never sent twice');
 
     const uncertainSupplier=await commerce.createSupplier(database,ctx,
       {name:'Uncertain Supply',email:'uncertain@mission-supply.example'});
@@ -227,4 +285,47 @@ test('real Chromium proves one-approval missions, verified memory, supplier foll
       [ctx.workspaceId,missionSku,warehouse.id]);
     const restored=await reconciliation.run(database,ctx.workspaceId);assert.equal(restored.status,'VERIFIED');
     assert.equal((await autonomy.getState(database,ctx.workspaceId)).suspended,false);
+
+    const reconcileHandler=runtimeHandlers.create(providers)['system.reconcile-business'];
+    const processReconciliation=async(jobId,owner)=>{
+      for(let attempt=0;attempt<10;attempt++){
+        const processed=await jobs.processOne(database,{'system.reconcile-business':reconcileHandler},{owner});
+        if(!processed)break;
+        if(processed.id===jobId)return processed;
+      }
+      return jobs.get(database,jobId,ctx.workspaceId);
+    };
+    const scheduled=await jobs.enqueue(database,{workspaceId:ctx.workspaceId,kind:'system.reconcile-business',
+      idempotencyKey:`certification:reconcile:${newId('run')}`});
+    const processed=await processReconciliation(scheduled.job.id,'mission-reconcile-worker');
+    assert.equal(processed.id,scheduled.job.id);assert.equal(processed.status,'COMPLETED');
+    assert.equal(processed.result.status,'VERIFIED');
+    assert.equal((await database.query(`SELECT status FROM stockchief_runtime.workspace_reconciliation_state
+      WHERE workspace_id=$1`,[ctx.workspaceId])).rows[0].status,'VERIFIED');
+
+    await database.query(`UPDATE balances SET on_hand=on_hand+1 WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3`,
+      [ctx.workspaceId,missionSku,warehouse.id]);
+    const mismatch=await jobs.enqueue(database,{workspaceId:ctx.workspaceId,kind:'system.reconcile-business',
+      idempotencyKey:`certification:reconcile:${newId('run')}`});
+    const stopped=await processReconciliation(mismatch.job.id,'mission-reconcile-stop-worker');
+    assert.equal(stopped.id,mismatch.job.id);assert.equal(stopped.status,'COMPLETED');
+    assert.equal(stopped.result.status,'FAILED');
+    assert.equal((await autonomy.getState(database,ctx.workspaceId)).suspended,true);
+    await database.query(`UPDATE balances SET on_hand=on_hand-1 WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3`,
+      [ctx.workspaceId,missionSku,warehouse.id]);
+    const retry=await jobs.enqueue(database,{workspaceId:ctx.workspaceId,kind:'system.reconcile-business',
+      idempotencyKey:`certification:reconcile:${newId('run')}`});
+    const recovered=await processReconciliation(retry.job.id,'mission-reconcile-recovery-worker');
+    assert.equal(recovered.id,retry.job.id);assert.equal(recovered.result.status,'VERIFIED');
+    assert.equal((await autonomy.getState(database,ctx.workspaceId)).suspended,false);
+    const beforeReply=await missionPlans.metricsSummary(database,ctx.workspaceId);
+    await database.query(`INSERT INTO stockchief_runtime.assistant_interactions
+      (id,workspace_id,actor_user_id,message,intent,answer,evidence,status)
+      VALUES($1,$2,$3,'The missing quantity is two',$4::jsonb,'How many units?','[]'::jsonb,'CLARIFY')`,
+    [newId('pgask'),ctx.workspaceId,ctx.actorId,JSON.stringify({controlPlane:{continuesPending:true,
+      originalMessage:'Please record the delivered stock'}})]);
+    const afterReply=await missionPlans.metricsSummary(database,ctx.workspaceId);
+    assert.equal(afterReply.clarifications,beforeReply.clarifications+1);
+    assert.equal(afterReply.humanInteractions,beforeReply.humanInteractions+1,
+      'an actual owner follow-up counts; StockChief asking the question does not');
   });

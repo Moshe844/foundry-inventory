@@ -85,6 +85,24 @@ test('a truncated capability-fit response retries with a bounded larger output b
   assert.equal(result.steps[0].contract.name,'sales_order.create');
 });
 
+test('a consequential plan cannot pass when independent fit finds a missing effect',async()=>{
+  let independentChecks=0;
+  const provider={async complete({schemaName}){
+    if(schemaName==='stockchief_capability_fit')return {data:{aligned:true,reason:''}};
+    return {data:{steps:[{capability:'purchase_order.create',arguments:[
+      {name:'sku',value:'PART-1'},{name:'quantity',value:'2'}],dependsOn:[],continuesPending:false}],
+    clarifyingQuestion:''}};
+  }};
+  const verificationProvider={async complete(){independentChecks++;
+    return {data:{aligned:false,reason:'The proposed draft omits the requested supplier email.'}};
+  }};
+  const result=await planner.plan(provider,'Create an order for two PART-1 units and email the supplier.',
+    {verificationProvider});
+  assert.equal(result.steps.length,0);
+  assert.match(result.clarifyingQuestion,/could not confidently match/i);
+  assert.ok(independentChecks>=2);
+});
+
 test('PO placement no-transmission guarantee survives planner catalogue compaction',()=>{
   const brief=planner.planningCatalogue(registry).mutations.find((entry)=>entry.n==='purchase_order.place');
   assert.match(brief.d,/Approved PO only/);

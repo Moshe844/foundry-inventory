@@ -14,6 +14,15 @@ async function needsCount(database,workspaceId){
     (SELECT COUNT(*) FROM supplier_returns WHERE workspace_id=$1 AND status='CREDIT_MISMATCH')+
     (SELECT COUNT(*) FROM sales_shipments WHERE workspace_id=$1 AND tracking_status IN ('FAILURE','RETURNED'))+
     (SELECT COUNT(*) FROM connection_email_messages WHERE workspace_id=$1 AND reply_state='NEEDS_REPLY')+
+    (SELECT COUNT(*) FROM (SELECT so.id FROM sales_orders so
+      JOIN sales_order_lines sol ON sol.sales_order_id=so.id
+      LEFT JOIN (SELECT sales_order_line_id,SUM(quantity) AS allocated FROM sales_order_allocations
+        WHERE workspace_id=$1 GROUP BY sales_order_line_id) a ON a.sales_order_line_id=sol.id
+      WHERE so.workspace_id=$1 AND so.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')
+      GROUP BY so.id HAVING SUM(sol.quantity_ordered-sol.quantity_fulfilled)>COALESCE(SUM(a.allocated),0)) short_orders)+
+    (SELECT COUNT(*) FROM purchase_orders po WHERE po.workspace_id=$1
+      AND po.status IN ('ORDERED','PARTIALLY_RECEIVED')
+      AND po.expected_date IS NOT NULL AND po.expected_date<CURRENT_DATE::text)+
     (SELECT COUNT(*) FROM repair_cases WHERE workspace_id=$1
       AND status IN ('NEEDS_AUTHORITY','AUTHORIZED','FAILED','INCONCLUSIVE'))+
     (SELECT COUNT(*) FROM stockchief_runtime.provider_effects WHERE workspace_id=$1 AND status='AMBIGUOUS')+
@@ -27,31 +36,31 @@ async function needs(database,workspaceId){
   const [attention,connections,work,imports,bills,supplierReturns,shippingExceptions,mail,orders,purchases,
     repairs,ambiguousEffects,deadJobs]=await Promise.all([
     database.query(`SELECT id,title,concise_summary,explanation,recommendation,severity,priority_score,item_id,first_detected_at
-      FROM attention_items WHERE workspace_id=$1 AND status='OPEN' ORDER BY priority_score DESC,first_detected_at LIMIT 30`,[workspaceId]),
+      FROM attention_items WHERE workspace_id=$1 AND status='OPEN' ORDER BY priority_score DESC,first_detected_at`,[workspaceId]),
     database.query(`SELECT i.id,i.title,i.detail,i.resolution_hint,i.updated_at,i.connector_id,c.provider_type
       FROM connection_issues i JOIN workspace_connectors c ON c.id=i.connector_id
-      WHERE i.workspace_id=$1 AND i.status='OPEN' ORDER BY i.updated_at DESC LIMIT 20`,[workspaceId]),
+      WHERE i.workspace_id=$1 AND i.status='OPEN' ORDER BY i.updated_at DESC`,[workspaceId]),
     database.query(`SELECT id,category,source,recommended_action,policy_evaluation,urgency,confidence,priority,created_at,error_message
       FROM work_items WHERE workspace_id=$1 AND approval_requirement<>'NONE'
-      AND execution_status NOT IN ('COMPLETED','CANCELLED','FAILED') ORDER BY priority DESC,created_at LIMIT 30`,[workspaceId]),
+      AND execution_status NOT IN ('COMPLETED','CANCELLED','FAILED') ORDER BY priority DESC,created_at`,[workspaceId]),
     database.query(`SELECT e.id,e.import_id,e.error_message,e.finished_at,p.source_name FROM import_executions e
       JOIN import_plans p ON p.id=e.import_id WHERE e.workspace_id=$1 AND e.status='FAILED'
-      ORDER BY e.finished_at DESC LIMIT 20`,[workspaceId]),
+      ORDER BY e.finished_at DESC`,[workspaceId]),
     database.query(`SELECT b.id,b.bill_number,b.balance_minor,b.currency,b.exception_detail,b.updated_at,s.name AS supplier_name
       FROM accounting_supplier_bills b JOIN suppliers s ON s.id=b.supplier_id
-      WHERE b.workspace_id=$1 AND b.status='DISPUTED' ORDER BY b.updated_at DESC LIMIT 20`,[workspaceId]),
+      WHERE b.workspace_id=$1 AND b.status='DISPUTED' ORDER BY b.updated_at DESC`,[workspaceId]),
     database.query(`SELECT r.id,r.return_number,r.expected_credit_minor,r.actual_credit_minor,r.created_at,
       s.name AS supplier_name,COALESCE(b.currency,'USD') AS currency
       FROM supplier_returns r JOIN suppliers s ON s.id=r.supplier_id
       LEFT JOIN accounting_supplier_bills b ON b.id=r.supplier_bill_id
-      WHERE r.workspace_id=$1 AND r.status='CREDIT_MISMATCH' ORDER BY r.created_at DESC LIMIT 20`,[workspaceId]),
+      WHERE r.workspace_id=$1 AND r.status='CREDIT_MISMATCH' ORDER BY r.created_at DESC`,[workspaceId]),
     database.query(`SELECT sh.id,sh.shipment_number,sh.tracking_status,sh.tracking_status_detail,
       sh.exception_reason,sh.tracked_at,so.order_number,c.name AS customer_name
       FROM sales_shipments sh JOIN sales_orders so ON so.id=sh.sales_order_id
       JOIN customers c ON c.id=so.customer_id WHERE sh.workspace_id=$1
-      AND sh.tracking_status IN ('FAILURE','RETURNED') ORDER BY sh.tracked_at DESC LIMIT 20`,[workspaceId]),
+      AND sh.tracking_status IN ('FAILURE','RETURNED') ORDER BY sh.tracked_at DESC`,[workspaceId]),
     database.query(`SELECT id,subject,sender,reply_reason,received_at FROM connection_email_messages
-      WHERE workspace_id=$1 AND reply_state='NEEDS_REPLY' ORDER BY received_at ASC LIMIT 30`,[workspaceId]),
+      WHERE workspace_id=$1 AND reply_state='NEEDS_REPLY' ORDER BY received_at ASC`,[workspaceId]),
     database.query(`SELECT so.id,so.order_number,so.needed_by,c.name AS customer_name,
       SUM(sol.quantity_ordered-sol.quantity_fulfilled) AS remaining,
       COALESCE(SUM(a.allocated),0) AS allocated
@@ -62,27 +71,27 @@ async function needs(database,workspaceId){
       WHERE so.workspace_id=$1 AND so.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')
       GROUP BY so.id,so.order_number,so.needed_by,c.name
       HAVING SUM(sol.quantity_ordered-sol.quantity_fulfilled)>COALESCE(SUM(a.allocated),0)
-      ORDER BY so.needed_by NULLS LAST,so.created_at LIMIT 20`,[workspaceId]),
+      ORDER BY so.needed_by NULLS LAST,so.created_at`,[workspaceId]),
     database.query(`SELECT po.id,po.po_number,po.expected_date,s.name AS supplier_name
       FROM purchase_orders po JOIN suppliers s ON s.id=po.supplier_id
       WHERE po.workspace_id=$1 AND po.status IN ('ORDERED','PARTIALLY_RECEIVED')
       AND po.expected_date IS NOT NULL AND po.expected_date<CURRENT_DATE::text
-      ORDER BY po.expected_date LIMIT 20`,[workspaceId]),
+      ORDER BY po.expected_date`,[workspaceId]),
     database.query(`SELECT id,symptom,failed_invariant,status,materiality,confidence,error_message,updated_at
       FROM repair_cases WHERE workspace_id=$1
       AND status IN ('NEEDS_AUTHORITY','AUTHORIZED','FAILED','INCONCLUSIVE')
-      ORDER BY CASE materiality WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,updated_at DESC LIMIT 20`,[workspaceId]),
+      ORDER BY CASE materiality WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,updated_at DESC`,[workspaceId]),
     database.query(`SELECT effect.id,effect.kind,effect.provider,effect.aggregate_type,effect.aggregate_id,
       effect.error_message,effect.completed_at,request.sales_order_id AS payment_order_id
       FROM stockchief_runtime.provider_effects effect
       LEFT JOIN payment_requests request ON effect.aggregate_type='payment_request' AND request.id=effect.aggregate_id
       WHERE effect.workspace_id=$1 AND effect.status='AMBIGUOUS'
-      ORDER BY effect.completed_at DESC,effect.id LIMIT 20`,[workspaceId]),
+      ORDER BY effect.completed_at DESC,effect.id`,[workspaceId]),
     database.query(`SELECT job.id,job.kind,job.last_error,job.completed_at FROM stockchief_runtime.jobs job
       WHERE job.workspace_id=$1 AND job.status='DEAD'
       AND NOT (job.kind='provider.effect' AND EXISTS (SELECT 1 FROM stockchief_runtime.provider_effects effect
         WHERE effect.id=job.payload->>'effectId' AND effect.status='AMBIGUOUS'))
-      ORDER BY job.completed_at DESC LIMIT 20`,[workspaceId]),
+      ORDER BY job.completed_at DESC`,[workspaceId]),
   ]);
   const items=[];
   for(const row of attention.rows)items.push({kind:'inventory',importance:row.severity==='critical'?'Urgent':row.severity==='important'?'Important':'Watch',

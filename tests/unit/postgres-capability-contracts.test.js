@@ -5,6 +5,7 @@ const assert=require('node:assert/strict');
 const {Registry,registry}=require('../../src/assistant/postgres-capability-registry');
 const planner=require('../../src/assistant/postgres-capability-planner');
 const resolver=require('../../src/assistant/postgres-context-resolver');
+const controlPlane=require('../../src/assistant/postgres-control-plane');
 const {destinationById}=require('../../src/web/postgres-navigation');
 
 test('the planner contract grows from a registered capability, not a sentence list',()=>{
@@ -82,4 +83,7 @@ test('ambiguous entities never become arbitrary IDs or names',async()=>{
 test('navigation uses registered destination IDs and a server URL builder',()=>{
   assert.deepEqual(destinationById('accounting'),{href:'/money',label:'Money'});
   assert.equal(destinationById('unregistered-destination'),null);
+  assert.equal(controlPlane.explicitPageNavigation('I want to see the customer orders section.',registry)?.name,
+    'navigate.sales');
+  assert.equal(controlPlane.explicitPageNavigation('Show me customer orders with their totals.',registry),null);
 });

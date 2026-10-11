@@ -174,7 +174,7 @@
         var hasRows = result.rows && result.rows.length;
       %>
       <div class="rm-said">
-        <p class="rm-said__text" style="white-space:pre-line"><%= helpers.figures(said) %></p>
+        <p class="rm-said__text" style="white-space:pre-line"><%= helpers.figures(said, locals.protectedNames || []) %></p>
         <p class="rm-said__meta"><span class="rm-pill rm-pill--<%= goal.statusTone %>"><%= goal.statusLabel %></span><% if (result.general) { %><span class="rm-pill rm-pill--muted">General knowledge — not read from your records</span><% } %><% if (result.needsClarification && goal.status === 'clarify' && !result.emailFlow) { %><span><%= result.choices && result.choices.length ? 'Pick one, or reply below.' : 'Reply below to continue this question.' %> Nothing has changed.</span><% } %></p>
         <% if (result.emailFlow && result.needsClarification) { %>
           <form method="post" action="/ask/email/continue" class="rm-email-flow" data-busy>
@@ -354,7 +354,7 @@
             <summary>Why this answer?</summary>
             <div class="rm-chat-reading__body">
               <% if (record) { %>
-                <p class="rm-chat-reading__record"><%= helpers.figures(record) %></p>
+                <p class="rm-chat-reading__record"><%= helpers.figures(record, locals.protectedNames || []) %></p>
               <% } %>
               <p>
                 Read as “<%= result.interpretation || result.plan.intent.replace(/_/g, ' ') %>”<%
@@ -377,8 +377,8 @@
         <% var saidText = goal.said || (goal.status === 'pending' ? 'Not started yet — it is waiting behind the part before it.' : ''); %>
         <% if (turn.goals.length > 1) { %><p class="rm-said__goal">“<%= goal.text.length > 160 ? goal.text.slice(0, 160) + '…' : goal.text %>”</p><% } %>
         <% if (saidText.length > 600) { %>
-          <details class="rm-said__text"><summary><%= saidText.slice(0, 220) %>…</summary><p style="white-space:pre-line;margin:8px 0 0"><%= helpers.figures(saidText) %></p></details>
-        <% } else if (saidText) { %><p class="rm-said__text" style="white-space:pre-line"><%= helpers.figures(saidText) %></p><% } %>
+          <details class="rm-said__text"><summary><%= saidText.slice(0, 220) %>…</summary><p style="white-space:pre-line;margin:8px 0 0"><%= helpers.figures(saidText, locals.protectedNames || []) %></p></details>
+        <% } else if (saidText) { %><p class="rm-said__text" style="white-space:pre-line"><%= helpers.figures(saidText, locals.protectedNames || []) %></p><% } %>
         <p class="rm-said__meta">
           <span class="rm-pill rm-pill--<%= goal.statusTone %>"><%= goal.statusLabel %></span>
           <% if (goal.resultHref) { %><a href="<%= goal.resultHref %>"><%= goal.resultLabel || 'Open' %> →</a><% } %>
