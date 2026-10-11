@@ -54,6 +54,15 @@ test('generic location language shapes structure but never creates a production 
     'Every device is kept in a storage location.', 'Storage Location'), false);
   assert.equal(realBusinessGrounding.locationIsGrounded(
     'We have warehouses in Brooklyn and New Jersey.', 'Brooklyn'), true);
+  assert.equal(realBusinessGrounding.locationIsGrounded(
+    'We manage laptops and tablets. Every device is assigned to a person or kept in a storage location.',
+    'Device Storage'), false);
+  assert.equal(realBusinessGrounding.locationIsGrounded(
+    'We have a warehouse in Brooklyn.', 'Brooklyn Warehouse'), true);
+  assert.equal(realBusinessGrounding.locationIsGrounded(
+    'Parts are kept at Loading Dock.', 'Loading Dock'), true);
+  assert.equal(realBusinessGrounding.locationIsGrounded(
+    'Parts are kept in a loading dock.', 'Loading Dock'), false);
 });
 
 function setup() {

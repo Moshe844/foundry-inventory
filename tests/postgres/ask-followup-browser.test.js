@@ -95,7 +95,7 @@ test('browser Ask retains contact details through a follow-up and does not route
       WHERE workspace_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1`,[owner.workspace_id])).rows[0];
     assert.equal(latest.intent.controlPlane.capability,'read.inventory_summary');
     await page.goto(`${base}/actions/${prepared.id}`);
-    await page.getByRole('button',{name:/approve/i}).click();
+    await page.getByRole('button',{name:/Approve (?:and execute|only this step)/}).click();
     assert.equal((await database.query(`SELECT COUNT(*)::int AS total FROM suppliers
       WHERE workspace_id=$1 AND name='Ada Source' AND email='ada@example.test'`,[owner.workspace_id])).rows[0].total,1);
     assert.equal((await database.query(`SELECT COUNT(*)::int AS total FROM supplier_communications
@@ -110,7 +110,7 @@ test('browser Ask retains contact details through a follow-up and does not route
     assert.equal((await database.query(`SELECT COUNT(*)::int AS total FROM suppliers
       WHERE workspace_id=$1 AND name='Delta Supply'`,[owner.workspace_id])).rows[0].total,0);
     await page.goto(`${base}/actions/${supplierProposal.id}`);
-    await page.getByRole('button',{name:/approve/i}).click();
+    await page.getByRole('button',{name:/Approve (?:and execute|only this step)/}).click();
     assert.equal((await database.query(`SELECT COUNT(*)::int AS total FROM suppliers
       WHERE workspace_id=$1 AND name='Delta Supply' AND email='delta@example.test'`,[owner.workspace_id])).rows[0].total,1);
     await page.goto(`${base}/ask`);
@@ -122,7 +122,7 @@ test('browser Ask retains contact details through a follow-up and does not route
     assert.equal((await database.query(`SELECT COUNT(*)::int AS total FROM customers
       WHERE workspace_id=$1 AND name='Willow Client'`,[owner.workspace_id])).rows[0].total,0);
     await page.goto(`${base}/actions/${customerProposal.id}`);
-    await page.getByRole('button',{name:/approve/i}).click();
+    await page.getByRole('button',{name:/Approve (?:and execute|only this step)/}).click();
     assert.equal((await database.query(`SELECT COUNT(*)::int AS total FROM customers
       WHERE workspace_id=$1 AND name='Willow Client' AND email='willow@example.test'`,
     [owner.workspace_id])).rows[0].total,1);

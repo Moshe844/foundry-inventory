@@ -6,6 +6,7 @@ const {createProviderUnobserved}=require('../ai/provider');
 const {newId,nowIso}=require('../lib/util');
 const {ValidationError,NotFoundError,InvariantError}=require('../domain/errors');
 const autonomy=require('../autopilot/postgres-service');
+const capabilityDefinitions=require('../autopilot/capabilities');
 const policyContracts=require('./postgres-policy-contracts');
 
 const DOMAINS=policyContracts.NAMES;
@@ -13,7 +14,7 @@ const CHANGE_SCHEMA={type:'object',additionalProperties:false,required:['domain'
   'sourceLocation','reorderPoint','targetStock','safetyStock','leadTimeDays','unitsPerPurchaseUnit',
   'minimumOrderQuantity','orderMultiple','maximumQuantity','maximumValue','weeklyValue','daysOfStock',
   'preferTransferBeforePurchasing','guardMode','guardComparator','guardThreshold','guardReleaseCondition',
-  'notificationThreshold','notificationMetric','notificationComparator'],properties:{
+  'notificationThreshold','notificationMetric','notificationComparator','capabilityName'],properties:{
   domain:{type:'string',enum:DOMAINS},operation:{type:'string',enum:['set','remove']},sku:{type:'string'},
   supplier:{type:'string'},location:{type:'string'},sourceLocation:{type:'string'},reorderPoint:{type:'integer'},
   targetStock:{type:'integer'},safetyStock:{type:'integer'},leadTimeDays:{type:'integer'},
@@ -24,7 +25,8 @@ const CHANGE_SCHEMA={type:'object',additionalProperties:false,required:['domain'
   guardReleaseCondition:{type:'string',enum:['','on_order','stock_recovered','manual']},
   notificationThreshold:{type:'integer'},
   notificationMetric:{type:'string',enum:['','on_hand','available_to_fulfill']},
-  notificationComparator:{type:'string',enum:['','below','at_or_below']}}};
+  notificationComparator:{type:'string',enum:['','below','at_or_below']},
+  capabilityName:{type:'string',enum:['',...capabilityDefinitions.NAMES]}}};
 const SCHEMA={type:'object',additionalProperties:false,required:['understood','summary','changes','clarifyingQuestion','unsupportedReason'],
   properties:{understood:{type:'boolean'},summary:{type:'string'},changes:{type:'array',minItems:0,maxItems:12,items:CHANGE_SCHEMA},
     clarifyingQuestion:{type:'string'},unsupportedReason:{type:'string'}}};
@@ -57,6 +59,7 @@ per order and weeklyValue are required. Preparing a purchase order is not automa
 Use operating_preference for target days of stock or an explicit preference to transfer before purchasing. This is a workspace-wide preference by design; it has no SKU, supplier, or location scope. Do not ask the owner to choose those optional scopes. A clear request for this preference is understood even when no product or supplier is named.
 Use stock_protection only for blocking or warning about outgoing stock at a threshold. It requires a SKU, guardMode,
 guardComparator, guardThreshold and guardReleaseCondition. A supplier reorder threshold is replenishment, not protection.
+Use capability_authority only when the owner explicitly grants or revokes one existing autonomous job. Choose exactly one closed capabilityName from: ${capabilityDefinitions.NAMES.join(', ')}. This grant never supplies missing transfer, purchase, postage, payment, email, or other policy limits; it only enables the named existing job when its own engine and the workspace mode also allow it.
 Use operation remove only when the owner explicitly revokes that exact setting or authority.
 For a correction to a prior approved rule, return only the effects being changed. Do not reapply
 other effects the owner explicitly says to keep unchanged.
@@ -109,7 +112,8 @@ function cleanChange(raw={}){return {domain:DOMAINS.includes(raw.domain)?raw.dom
   guardComparator:String(raw.guardComparator||''),guardThreshold:Number(raw.guardThreshold),
   guardReleaseCondition:String(raw.guardReleaseCondition||''),notificationThreshold:Number(raw.notificationThreshold),
   notificationMetric:String(raw.notificationMetric||'on_hand'),
-  notificationComparator:String(raw.notificationComparator||'at_or_below')};}
+  notificationComparator:String(raw.notificationComparator||'at_or_below'),
+  capabilityName:capabilityDefinitions.NAMES.includes(raw.capabilityName)?raw.capabilityName:''};}
 
 async function resolveChange(database,workspaceId,raw){const change=cleanChange(raw);const questions=[];
   if(!change.domain){questions.push('Which lasting inventory rule should StockChief set?');return {...change,questions};}
@@ -160,6 +164,8 @@ async function resolveChange(database,workspaceId,raw){const change=cleanChange(
     if(!['on_order','stock_recovered','manual'].includes(change.guardReleaseCondition))
       questions.push('Should the rule release when supply is ordered, stock recovers, or only manually?');
   }
+  if(change.domain==='capability_authority'&&!capabilityDefinitions.NAMES.includes(change.capabilityName))
+    questions.push('Which existing StockChief job should this authority change?');
   return {...change,questions};}
 
 function describe(change){if(change.domain==='replenishment')return `${change.displayName}${change.locationName?` at ${change.locationName}`:''}: ${change.operation==='remove'?'remove its taught replenishment settings':[
@@ -179,6 +185,9 @@ function describe(change){if(change.domain==='replenishment')return `${change.di
     `Allow automatic purchase orders from ${change.supplierName} up to $${change.maximumValue.toFixed(2)} each and $${change.weeklyValue.toFixed(2)} per rolling seven days.`;
   if(change.domain==='operating_preference')return change.operation==='remove'?'Remove the taught replenishment preference.':
     number(change.daysOfStock,{positive:true})!==null?`Target ${change.daysOfStock} days of stock.`:'Prefer transfers before purchasing.';
+  if(change.domain==='capability_authority'){const label=capabilityDefinitions.CAPABILITIES[change.capabilityName]?.label||change.capabilityName;
+    return change.operation==='remove'?`Revoke StockChief authority to ${String(label).toLowerCase()}.`:
+      `Authorize StockChief to ${String(label).toLowerCase()} when the registered engine and its separate limits allow it.`;}
   return `${change.displayName}: ${change.guardMode} outgoing stock ${change.guardComparator.replaceAll('_',' ')} ${change.guardThreshold}; release ${change.guardReleaseCondition.replaceAll('_',' ')}.`;}
 
 async function interpret(database,ctx,instruction,options={}){const clean=String(instruction||'').trim().slice(0,2000);
@@ -376,6 +385,11 @@ async function applyChange(client,ctx,change){const at=nowIso();
       change.guardComparator,change.guardThreshold,change.guardReleaseCondition,
       change.guardReleaseCondition==='stock_recovered'?change.guardThreshold:null,change.statedAs,ctx.actorId,at]);
     return {kind:'stock_guard',id,skuId:change.skuId};}
+  if(change.domain==='capability_authority'){
+    const membership=(await client.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',
+      [ctx.workspaceId,ctx.actorId])).rows[0];
+    await autonomy.setCapability(client,ctx,membership,change.capabilityName,change.operation!=='remove');
+    return {kind:'autopilot_capability',capability:change.capabilityName,granted:change.operation!=='remove'};}
   throw new ValidationError('That instruction domain is not supported by the PostgreSQL runtime.');}
 
 function target(change){if(change.domain==='replenishment')return `replenishment:${change.skuId}:${change.locationId||'*'}`;
@@ -383,9 +397,10 @@ function target(change){if(change.domain==='replenishment')return `replenishment
   if(change.domain==='supplier_terms')return `supplier:${change.supplierId}:${change.skuId}`;
   if(change.domain==='transfer_authority')return 'authority:transfer';if(change.domain==='purchase_authority')return 'authority:purchase';
   if(change.domain==='operating_preference')return `preference:${number(change.daysOfStock,{positive:true})!==null?'days':'transfer'}`;
+  if(change.domain==='capability_authority')return `authority:capability:${change.capabilityName}`;
   if(change.domain==='stock_protection')return `guard:${change.skuId}:${change.locationId||'*'}`;return null;}
 
-async function approve(database,ctx,id,expectedHash){return database.transaction(async(client)=>{await assertOwner(client,ctx);
+async function approve(database,ctx,id,expectedHash){const approved=await database.transaction(async(client)=>{await assertOwner(client,ctx);
   const proposal=await get(client,ctx.workspaceId,id,true);if(proposal.status==='APPROVED')return {...proposal,replayed:true};
   if(proposal.status!=='PENDING')throw new InvariantError('That standing instruction is no longer waiting for approval.','instruction_not_pending');
   if(proposal.questions.length)throw new ValidationError(proposal.questions[0]);
@@ -395,7 +410,7 @@ async function approve(database,ctx,id,expectedHash){return database.transaction
   for(const change of proposal.resolvedChanges)if(stable(change.policyContract)!==stable(policyContracts.compile(change)))
     throw new InvariantError('That standing rule no longer matches a registered policy engine.',
       'instruction_policy_contract_changed');
-  for(const change of proposal.resolvedChanges){if(['transfer_authority','purchase_authority'].includes(change.domain))
+  for(const change of proposal.resolvedChanges){if(['transfer_authority','purchase_authority','capability_authority'].includes(change.domain))
     await require('../commercial/enforcement').workspace(client,ctx.workspaceId,'authority.advanced');}
   const applied=[];for(const change of proposal.resolvedChanges)applied.push(await applyChange(client,ctx,{...change,statedAs:proposal.statedAs}));
   if(proposal.resolvedChanges.some((change)=>change.domain==='stock_alert'))
@@ -408,7 +423,13 @@ async function approve(database,ctx,id,expectedHash){return database.transaction
   const at=nowIso();const changed=(await client.query(`UPDATE operating_instruction_proposals SET status='APPROVED',
     applied_records=$3,approved_by_user_id=$4,approved_at=$5,updated_at=$5 WHERE workspace_id=$1 AND id=$2 RETURNING *`,
   [ctx.workspaceId,id,JSON.stringify(applied),ctx.actorId,at])).rows[0];return {...hydrate(changed),replayed:false};
-  },{isolation:'SERIALIZABLE',retrySafe:true});}
+  },{isolation:'SERIALIZABLE',retrySafe:true});
+  const memory=require('../assistant/postgres-business-memory');
+  for(const change of approved.resolvedChanges||[]){const key=target(change);if(!key)continue;
+    if(change.operation==='remove')await memory.retire(database,ctx,'PREFERENCE',key);
+    else await memory.rememberPreference(database,ctx,{key,value:Object.fromEntries(Object.entries(change)
+      .filter(([name])=>!['policyContract','statedAs'].includes(name))),proposalId:approved.id,ruleDomain:change.domain});}
+  return approved;}
 
 async function cancel(database,ctx,id){const row=(await database.query(`UPDATE operating_instruction_proposals SET status='CANCELLED',
   updated_at=$3 WHERE workspace_id=$1 AND id=$2 AND status='PENDING' RETURNING *`,[ctx.workspaceId,id,nowIso()])).rows[0];

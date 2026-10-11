@@ -258,7 +258,7 @@ test('Ask StockChief reports completed sales orders without relabelling open-ord
   const order = sales.createOrder(db, workspace.ctx, {
     customerName: 'Completed Order Customer',
     deliveryMethod: 'PICKUP',
-    orderDate: '2026-09-09',
+    orderDate: new Date(Date.now()-24*60*60_000).toISOString().slice(0,10),
     lines: [{ skuId: scenario.skuId, quantity: 1 }],
   });
   sales.confirm(db, workspace.ctx, order.id, { idempotencyKey: `confirm:${order.id}` });

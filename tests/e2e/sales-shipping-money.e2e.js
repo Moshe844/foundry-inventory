@@ -61,8 +61,8 @@ test('sales, fulfilment, tracking and Money tell one browser-visible story', { t
   });
 
   await page.goto(`${base}/login`);
-  await page.getByLabel('Email', { exact:true }).fill(workspace.account.email);
-  await page.getByLabel('Password', { exact:true }).fill(workspace.account.password);
+  await page.locator('#email').fill(workspace.account.email);
+  await page.locator('#password').fill(workspace.account.password);
   await submit(page, page.getByRole('button', { name:'Sign in', exact:true }));
 
   await context.test('a carrier order cannot be created without its own destination', async () => {
@@ -92,7 +92,8 @@ test('sales, fulfilment, tracking and Money tell one browser-visible story', { t
     let body = await page.locator('main').innerText();
     assert.match(body, /Partly gone|Partly fulfilled|10 collected/i);
     assert.match(body, /20\s+committed to this customer/i);
-    await page.getByText('Change or cancel this order', { exact:true }).click();
+    await page.locator('details.sales-secondary-actions')
+      .filter({ hasText:'Change or cancel this order' }).locator('summary').click();
     await page.locator('form[action$="/cancel"] input[name="reason"]').fill('Customer reduced the order during UI certification.');
     await page.getByRole('button', { name:'Cancel unshipped remainder', exact:true }).click();
     await submit(page, page.locator('dialog[open]').getByRole('button', { name:'Cancel unshipped remainder', exact:true }));
@@ -160,7 +161,8 @@ test('sales, fulfilment, tracking and Money tell one browser-visible story', { t
     assert.match(body, /deposit of \$50\.00 is due/i);
     assert.doesNotMatch(body, /Start picking 4 units/i);
 
-    await page.locator('#money > summary').click();
+    if (!await page.locator('#money').evaluate((element) => element.open))
+      await page.locator('#money > summary').click();
     await page.getByText('Record another payment — cash, cheque, transfer, card machine', { exact:true }).click();
     const paymentForm = page.locator(`form[action="/sales/orders/${orderId}/payment"]`);
     assert.equal(await paymentForm.locator('input[name="amount"]').inputValue(), '50.00');

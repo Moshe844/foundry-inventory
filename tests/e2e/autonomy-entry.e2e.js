@@ -38,7 +38,7 @@ test('months-running business authority, dated digest, batch approvals and owner
   page.on('pageerror', (error) => errors.push(error.message));
   await page.goto(`${base}/login`);
   await page.getByLabel('Email').fill('autonomy-owner@example.test');
-  await page.getByLabel('Password', { exact: true }).fill('disposable-autonomy-password');
+  await page.locator('#password').fill('disposable-autonomy-password');
   await Promise.all([page.waitForNavigation(), page.locator('form[action="/login"] button[type=submit]').click()]);
   await context.test('one confirmation displays evidence-backed supplier, product and actual weekly limits', async () => {
     await page.goto(`${base}/`);
@@ -112,7 +112,7 @@ test('months-running business authority, dated digest, batch approvals and owner
     connectedPage.on('pageerror', (error) => errors.push(error.message));
     await connectedPage.goto(`${base}/login`);
     await connectedPage.getByLabel('Email').fill('connected-authority-owner@example.test');
-    await connectedPage.getByLabel('Password', { exact: true }).fill('disposable-autonomy-password');
+    await connectedPage.locator('#password').fill('disposable-autonomy-password');
     await Promise.all([connectedPage.waitForNavigation(), connectedPage.locator('form[action="/login"] button[type=submit]').click()]);
     await connectedPage.goto(`${base}/autopilot`);
     const proposal = connectedPage.getByRole('region', { name: 'Limits from your own records' });

@@ -20,6 +20,8 @@ const DEFINITIONS=Object.freeze({
     trigger:'planning_evaluation',action:'apply_preference',engine:'operational_preferences'},
   stock_protection:{description:'Block or warn about an outgoing stock issue at a SKU threshold using the existing stock guard.',
     trigger:'inventory_issue_requested',action:'enforce_stock_guard',engine:'operating_guards'},
+  capability_authority:{description:'Grant or revoke one closed, existing StockChief autonomous job without widening any other job or its domain policy limits.',
+    trigger:'registered_operation_ready',action:'grant_registered_autonomous_job',engine:'autopilot_capabilities'},
 });
 const NAMES=Object.keys(DEFINITIONS);
 
@@ -47,11 +49,12 @@ function compile(change){
   else if(change.domain==='stock_protection')condition={mode:change.guardMode,
     comparator:change.guardComparator,threshold:change.guardThreshold,
     releaseCondition:change.guardReleaseCondition};
+  else if(change.domain==='capability_authority')condition={capability:change.capabilityName};
   return {version:1,domain:change.domain,trigger:definition.trigger,scope,condition,
     action:definition.action,authority:{approval:'owner_required',automatic:
-      ['transfer_authority','purchase_authority'].includes(change.domain)&&!removing},
+      ['transfer_authority','purchase_authority','capability_authority'].includes(change.domain)&&!removing},
     notification:{kind:change.domain==='stock_alert'?'needs_you':
-      ['transfer_authority','purchase_authority'].includes(change.domain)?'existing_work_item':'none'},
+      ['transfer_authority','purchase_authority','capability_authority'].includes(change.domain)?'existing_work_item':'none'},
     lifecycle:{state:removing?'revoke_on_approval':'activate_on_approval',
       supersession:'versioned_by_scope'},engine:definition.engine};
 }

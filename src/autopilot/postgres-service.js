@@ -7,6 +7,7 @@ const permissions = require('../actions/permissions');
 const capabilityDefinitions = require('./capabilities');
 const transfers = require('../transfers/postgres-transfer-service');
 const workflows = require('../operations/postgres-business-workflows');
+const outboundMail=require('../connections/postgres-outbound-mail');
 const commercial=require('../commercial/service');
 const entitlements=require('../entitlements/postgres-service');
 
@@ -96,6 +97,20 @@ async function capabilityMay(database,workspaceId,capability){if(!capabilityDefi
     WHERE workspace_id=$1 AND capability=$2`,[workspaceId,capability])).rows[0];
   return Number(row?.granted)===1?{allowed:true,because:null}:{allowed:false,
     because:`Nobody has authorised StockChief to ${capabilityDefinitions.CAPABILITIES[capability].label.toLowerCase()} on its own.`};}
+
+async function supplierDeliveryReadiness(database,workspaceId,supplierId){
+  const supplier=(await database.query(`SELECT id,name,email,contact_name,watched_connector_id FROM suppliers
+    WHERE workspace_id=$1 AND id=$2 AND status='active'`,[workspaceId,supplierId])).rows[0];
+  if(!supplier||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(supplier.email||'')))return {ready:false,
+    reason:'The selected supplier has no verified order email address.'};
+  const mailboxes=await outboundMail.mailboxes(database,workspaceId);let mailbox=null;
+  if(supplier.watched_connector_id)mailbox=mailboxes.find((entry)=>entry.id===supplier.watched_connector_id)||null;
+  else if(mailboxes.length===1)mailbox=mailboxes[0];
+  if(!mailbox)return {ready:false,reason:mailboxes.length>1
+    ?'Choose the supplier’s sending mailbox before automatic purchasing.'
+    :'Connect one active supplier mailbox before automatic purchasing.'};
+  return {ready:true,supplier,mailbox};
+}
 
 async function replacePolicy(client,ctx,input){await ensure(client,ctx.workspaceId);const prior=(await client.query(`SELECT * FROM automation_policies
   WHERE workspace_id=$1 AND enabled=1 AND approved_at IS NOT NULL AND disabled_at IS NULL ORDER BY version DESC`,[ctx.workspaceId])).rows
@@ -209,6 +224,10 @@ async function evaluate(database,workspaceId,candidate,state){if(state.mode===MO
       return {decision:'needs_approval',reason:'The transfer uses a location outside the approved scope.',policy};
     if(candidate.quantity>policy.maximumQuantity)return {decision:'needs_approval',reason:`The transfer needs ${candidate.quantity} units; the approved limit is ${policy.maximumQuantity}.`,policy};
   }else{if(!policy.supplierScope.includes(candidate.supplierId))return {decision:'needs_approval',reason:'The selected supplier is outside the approved scope.',policy};
+    const supplierEmail=await capabilityMay(database,workspaceId,'supplier_emails');
+    if(!supplierEmail.allowed)return {decision:'needs_approval',reason:supplierEmail.because,policy};
+    const delivery=await supplierDeliveryReadiness(database,workspaceId,candidate.supplierId);
+    if(!delivery.ready)return {decision:'needs_approval',reason:delivery.reason,policy};
     if(candidate.value===null)return {decision:'needs_approval',reason:'The supplier price is missing, so value authority cannot be checked.',policy};
     if(candidate.value>policy.maximumValue)return {decision:'needs_approval',reason:`The order is $${candidate.value.toFixed(2)}; the approved limit is $${policy.maximumValue.toFixed(2)}.`,policy};
     const since=new Date(Date.now()-7*86400000).toISOString();const spent=Number((await database.query(`SELECT COALESCE(SUM((outcome::jsonb->>'value')::numeric),0) AS total
@@ -299,6 +318,22 @@ async function revalidate(database,workspaceId,action){
   if(incoming>Number(action.incoming||0))throw new ValidationError('New incoming stock now covers this need. StockChief did not order twice.');
 }
 
+async function queueSupplierPurchaseOrder(client,ctx,item,purchase){const scoped=scopedDatabase(client);
+  const delivery=await supplierDeliveryReadiness(scoped,ctx.workspaceId,item.recommendedAction.supplierId);
+  if(!delivery.ready)throw new ValidationError(delivery.reason);
+  const lines=(await client.query(`SELECT sku.code,line.quantity_units,line.unit_cost FROM purchase_order_lines line
+    JOIN skus sku ON sku.id=line.sku_id AND sku.workspace_id=line.workspace_id
+    WHERE line.workspace_id=$1 AND line.purchase_order_id=$2 ORDER BY line.line_number,line.id`,
+  [ctx.workspaceId,purchase.purchaseOrderId])).rows;
+  const body=[`Hello${delivery.supplier.contact_name?` ${delivery.supplier.contact_name}`:''},`,'',
+    `Purchase order ${purchase.poNumber}:`,...lines.map((line)=>
+      `${line.quantity_units} × ${line.code}${line.unit_cost===null?'':` at ${item.recommendedAction.currency} ${Number(line.unit_cost).toFixed(2)}`}`),
+    '',`Please confirm acceptance and expected delivery for ${purchase.poNumber}.`].join('\n');
+  return outboundMail.queueInTransaction(client,ctx,{recipientKind:'supplier',recipientId:delivery.supplier.id,
+    recipientEmail:delivery.supplier.email,connectorId:delivery.mailbox.id,
+    subject:`Purchase order ${purchase.poNumber}`,body},`work:${item.id}:supplier-order`);
+}
+
 async function execute(database,ctx,workId,{approvedBy=null}={}){
   return database.transaction(async(client)=>{const scoped=scopedDatabase(client);const item=await getWork(scoped,ctx.workspaceId,workId);
   if(item.execution_status===STATUSES.COMPLETED)return item;if(![STATUSES.AUTHORIZED,STATUSES.WAITING].includes(item.execution_status))
@@ -338,7 +373,22 @@ async function execute(database,ctx,workId,{approvedBy=null}={}){
         quantityPurchaseUnits:action.purchaseUnits,unitsPerPurchaseUnit:action.unitsPerPurchaseUnit,unitCost:action.unitCost,
         destinationLocationId:action.destinationLocationId,supplierSku:action.supplierSku}],idempotencyKey:`work:${item.id}:po`});
       const approved=await workflows.approvePurchaseOrder(scoped,ctx,purchase.purchaseOrderId,{idempotencyKey:`work:${item.id}:approve-po`});
-      result={kind:'purchase',purchaseOrderId:purchase.purchaseOrderId,poNumber:purchase.poNumber,status:approved.status,value:action.value,verified:true};}
+      const delivery=await queueSupplierPurchaseOrder(client,ctx,item,purchase);
+      result={kind:'purchase',purchaseOrderId:purchase.purchaseOrderId,poNumber:purchase.poNumber,status:approved.status,
+        value:action.value,verified:true,phase:'SUPPLIER_DELIVERY_PENDING',effectId:delivery.effectId,
+        communicationId:delivery.communicationId};}
+    if(result.phase==='SUPPLIER_DELIVERY_PENDING'){
+      await client.query(`UPDATE work_items SET execution_status='EXECUTING',verification_status='PENDING',
+        purchase_order_id=$3,outcome=$4,error_message=NULL WHERE workspace_id=$1 AND id=$2`,
+      [ctx.workspaceId,item.id,result.purchaseOrderId,JSON.stringify(result)]);
+      await client.query(`INSERT INTO work_item_events(id,workspace_id,work_item_id,event,detail,actor_user_id,created_at)
+        VALUES($1,$2,$3,'waiting_for_supplier_delivery',$4,$5,$6)`,[newId('wievt'),ctx.workspaceId,item.id,
+        JSON.stringify({effectId:result.effectId,purchaseOrderId:result.purchaseOrderId}),ctx.actorId,nowIso()]);
+      if(automatic){await entitlements.commitUsage(client,scope,{meter:'connected_operations',idempotencyKey:usageKey});
+        await require('../commercial/control-service').recordCost(client,scope,{provider:'stockchief',operation:'autopilot_action',
+          unit:'operation',quantity:1,idempotencyKey:usageKey});}
+      return getWork(scoped,ctx.workspaceId,item.id);
+    }
     await client.query(`UPDATE work_items SET execution_status='COMPLETED',verification_status='VERIFIED',movement_ids=$3,
       purchase_order_id=$4,outcome=$5,error_message=NULL,completed_at=$6 WHERE workspace_id=$1 AND id=$2`,
     [ctx.workspaceId,item.id,JSON.stringify(result.movementIds||[]),result.purchaseOrderId||null,JSON.stringify(result),nowIso()]);
@@ -352,11 +402,48 @@ async function execute(database,ctx,workId,{approvedBy=null}={}){
       sourcePath:'autopilot',detail:{workItemId:item.id,actionType:action.type}});
     return getWork(scoped,ctx.workspaceId,item.id);},{isolation:'SERIALIZABLE',retrySafe:true});}
 
-async function run(database,ctx){const planned=await plan(database,ctx.workspaceId);let executed=0;
+async function reconcileSupplierFollowThrough(database,workspaceId,{actorId=null}={}){
+  const pending=(await database.query(`SELECT item.id,item.outcome,effect.status AS effect_status,effect.error_message
+    FROM work_items item LEFT JOIN stockchief_runtime.provider_effects effect
+      ON effect.workspace_id=item.workspace_id AND effect.id=(item.outcome::jsonb)->>'effectId'
+    WHERE item.workspace_id=$1 AND item.source='postgres_autopilot' AND item.execution_status='EXECUTING'
+      AND (item.outcome::jsonb)->>'phase'='SUPPLIER_DELIVERY_PENDING' ORDER BY item.created_at,item.id`,[workspaceId])).rows;
+  if(!pending.length)return {completed:0,failed:0,pending:0};
+  const ownerId=actorId||(await database.query(`SELECT id FROM users WHERE workspace_id=$1 AND role='owner'
+    ORDER BY created_at,id LIMIT 1`,[workspaceId])).rows[0]?.id;
+  if(!ownerId)throw new ValidationError('Automatic supplier follow-through needs an inventory owner.');
+  let completed=0,failed=0,waiting=0;
+  for(const row of pending){const outcome=parse(row.outcome,{});
+    if(row.effect_status==='SUCCEEDED'){
+      const placed=await workflows.placePurchaseOrder(database,{workspaceId,actorId:ownerId},outcome.purchaseOrderId,
+        {idempotencyKey:`work:${row.id}:place-after-delivery`});
+      await database.transaction(async(client)=>{await client.query(`UPDATE work_items SET execution_status='COMPLETED',
+          verification_status='VERIFIED',outcome=$3::jsonb,error_message=NULL,completed_at=$4
+          WHERE workspace_id=$1 AND id=$2 AND execution_status='EXECUTING'`,[workspaceId,row.id,
+          JSON.stringify({...outcome,status:placed.status,phase:'SUPPLIER_DELIVERED_AND_ORDERED',verified:true}),nowIso()]);
+        await client.query(`INSERT INTO work_item_events(id,workspace_id,work_item_id,event,detail,actor_user_id,created_at)
+          VALUES($1,$2,$3,'supplier_delivery_verified',$4,$5,$6)`,[newId('wievt'),workspaceId,row.id,
+          JSON.stringify({effectId:outcome.effectId,purchaseOrderId:outcome.purchaseOrderId,status:placed.status}),ownerId,nowIso()]);
+      },{isolation:'SERIALIZABLE',retrySafe:true});completed+=1;
+    }else if(['FAILED','AMBIGUOUS','CANCELLED'].includes(row.effect_status)||!row.effect_status){
+      const reason=row.effect_status==='AMBIGUOUS'
+        ?'Supplier delivery is uncertain. Check the Sent folder before taking further action.'
+        :row.error_message||'Supplier delivery could not be verified.';
+      await database.query(`UPDATE work_items SET execution_status='FAILED',verification_status='FAILED',error_message=$3,
+        outcome=$4::jsonb,completed_at=$5 WHERE workspace_id=$1 AND id=$2 AND execution_status='EXECUTING'`,
+      [workspaceId,row.id,reason,JSON.stringify({...outcome,phase:'SUPPLIER_DELIVERY_FAILED',verified:false}),nowIso()]);failed+=1;
+    }else waiting+=1;
+  }
+  return {completed,failed,pending:waiting};
+}
+
+async function run(database,ctx){const followThrough=await reconcileSupplierFollowThrough(database,ctx.workspaceId,{actorId:ctx.actorId});
+  const planned=await plan(database,ctx.workspaceId);let executed=0;
   for(const item of planned.created.filter((entry)=>entry.approval_requirement==='NONE')){
     const completed=await execute(database,ctx,item.id);if(completed.execution_status===STATUSES.COMPLETED)executed+=1;
   }
-  return {planned:planned.created.length,executed,waiting:planned.created.length-executed,considered:planned.considered.length};}
+  return {planned:planned.created.length,executed,waiting:planned.created.length-executed,
+    considered:planned.considered.length,followThrough};}
 async function approve(database,ctx,membership,id){assertOperate(membership);return execute(database,ctx,id,{approvedBy:ctx.actorId});}
 async function cancel(database,ctx,membership,id){assertOperate(membership);const item=await getWork(database,ctx.workspaceId,id);
   if([STATUSES.COMPLETED,STATUSES.FAILED].includes(item.execution_status))throw new ValidationError('Completed work cannot be discarded.');
@@ -374,6 +461,7 @@ async function dashboard(database,workspaceId){const [state,policies,capabilitie
     purchasePolicy:policies.find((policy)=>policy.active&&policy.actions.includes(ACTIONS.PURCHASE))||null};}
 
 module.exports={MODES,ACTIONS,STATUSES,ensure,getState,setMode,pause,resume,configureRoutine,replacePolicy,listPolicies,dashboard,plan,run,
-  listCapabilities,setCapability,capabilityMay,getWork,approve,cancel,execute,evaluate,revalidate};
+  listCapabilities,setCapability,capabilityMay,getWork,approve,cancel,execute,evaluate,revalidate,
+  supplierDeliveryReadiness,reconcileSupplierFollowThrough};
 require('../commercial/enforcement').guardExports(module.exports,0,1,{configureRoutine:'authority.advanced',
  setCapability:'authority.advanced',plan:'planning.basic',run:'planning.basic'});

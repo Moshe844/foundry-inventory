@@ -38,11 +38,22 @@ function locationIsGrounded(description, name) {
     // two claims.
     return new RegExp(`\\b(?:at|in|from|to|into)\\s+(?!a\\s|an\\s|the\\s)${phrase}\\b`, 'i').test(source);
   }
-  if (containsPhrase(description, name)) return true;
-  const sourceTokens = new Set(normalise(description).split(' ').filter(Boolean));
-  const distinctive = normalise(name).split(' ')
-    .filter((token) => token && !GENERIC_LOCATION_WORDS.has(token));
-  return distinctive.length > 0 && distinctive.every((token) => sourceTokens.has(token));
+  // A model can title-case ordinary words from unrelated parts of the owner's
+  // description ("device" and "storage", for example). Scattered word overlap
+  // is not evidence of a named place. The only non-contiguous exception is a
+  // proper place name supplied by the owner, with an optional place type added
+  // by the model ("warehouse in Brooklyn" -> "Brooklyn Warehouse").
+  const properNames = nameTokens.filter((token) => {
+    if (GENERIC_LOCATION_WORDS.has(token)) return false;
+    const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`\\b(?:${escaped[0].toUpperCase()}${escaped.slice(1)}|${escaped.toUpperCase()})\\b`).test(description);
+  });
+  if (containsPhrase(description, name)) {
+    const phrase = nameTokens.join(' ').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const indefinite = new RegExp(`\\b(?:a|an)\\s+${phrase}\\b`, 'i').test(normalise(description));
+    return !indefinite || properNames.length > 0;
+  }
+  return properNames.length > 0;
 }
 
 function axisIsGrounded(description, name) {

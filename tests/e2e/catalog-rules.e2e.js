@@ -44,8 +44,8 @@ test('an owner applies replenishment rules to a selected product group in one br
   const page = await browser.newPage({ viewport:{ width:1440, height:1000 } });
   try {
     await page.goto(`${base}/login`);
-    await page.getByLabel('Email', { exact:true }).fill(workspace.account.email);
-    await page.getByLabel('Password', { exact:true }).fill(workspace.account.password);
+    await page.locator('#email').fill(workspace.account.email);
+    await page.locator('#password').fill(workspace.account.password);
     await submit(page, page.getByRole('button', { name:'Sign in', exact:true }));
     await page.goto(`${base}/purchasing/setup`);
     const body = await page.locator('main').innerText();

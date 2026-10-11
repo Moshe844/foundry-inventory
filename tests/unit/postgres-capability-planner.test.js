@@ -8,6 +8,32 @@ const control=require('../../src/assistant/postgres-control-plane');
 const capabilityPlans=require('../../src/assistant/postgres-capability-plans');
 const capabilityService=require('../../src/assistant/postgres-service');
 
+test('an existing location satisfies only a redundant mission prerequisite',async()=>{
+  const calls=[];
+  const database={query:async(sql,args)=>{calls.push({sql,args});
+    return {rows:args[1]==='Known Room'?[{id:'loc_existing'}]:[]};}};
+  const steps=[
+    {contract:{name:'catalog.create_item'},args:{search:'Part'},dependsOn:[]},
+    {contract:{name:'location.create'},args:{location:'Known Room'},dependsOn:[0]},
+    {contract:{name:'inventory.receive'},args:{location:'Known Room'},dependsOn:[0,1]},
+  ];
+  const selected=await control.__removeSatisfiedLocationPrerequisites(
+    database,{workspaceId:'workspace_one'},{steps});
+  assert.deepEqual(selected.steps.map((step)=>step.contract.name),
+    ['catalog.create_item','inventory.receive']);
+  assert.deepEqual(selected.steps[1].dependsOn,[0]);
+  assert.equal(calls[0].args[0],'workspace_one');
+  const standalone=await control.__removeSatisfiedLocationPrerequisites(database,
+    {workspaceId:'workspace_one'},{steps:[steps[1]]});
+  assert.equal(standalone.steps.length,1,'an explicit standalone create is not silently removed');
+  const unknown=await control.__removeSatisfiedLocationPrerequisites(database,
+    {workspaceId:'workspace_one'},{steps:[
+      {...steps[1],args:{location:'Other Room'},dependsOn:[]},
+      {...steps[2],dependsOn:[0]},
+    ]});
+  assert.equal(unknown.steps.length,2,'an unsatisfied prerequisite still needs approval');
+});
+
 test('one multi-effect standing instruction is interpreted once, not as duplicate funded steps',()=>{
   const selected=planner.parseSteps({steps:[
     {capability:'policy.propose',arguments:[],dependsOn:[],continuesPending:false},
@@ -146,6 +172,33 @@ test('an explicit per-unit quote survives a model typo and cannot fall back to a
   assert.equal(selected.steps[0].args.amount,'2.4');
 });
 
+test('supplier order mail is grounded in the approved purchase inputs, never an invented attachment',()=>{
+  const planned=planner.parseSteps({steps:[
+    {capability:'purchase_order.create',arguments:[{name:'supplier',value:'North Parts'},
+      {name:'sku',value:'BRAKE-7'},{name:'quantity',value:'8'},{name:'amount',value:'3.25'}],
+    dependsOn:[],continuesPending:false},
+    {capability:'communication.send_email',arguments:[{name:'recipient',value:'North Parts'},
+      {name:'body',value:'Please see the attached purchase order.'},
+      {name:'recipientMode',value:'wait_for_provider'}],dependsOn:[0],continuesPending:false}],
+    clarifyingQuestion:''});
+  planner.groundedSupplierOrderEmail(planned.steps,
+    'Order 8 BRAKE-7 from North Parts at 3.25 each and email the supplier.');
+  assert.match(planned.steps[1].args.body,/8 × BRAKE-7 at 3\.25 per unit/);
+  assert.doesNotMatch(planned.steps[1].args.body,/attach/i);
+  assert.equal(planned.steps[1].args.recipientMode,undefined);
+  assert.deepEqual(capabilityPlans.ancestorIndexes([
+    {dependsOn:[]},{dependsOn:[0]},{dependsOn:[1]},{dependsOn:[2]}],3),[0,1,2]);
+});
+
+test('a model cannot redirect business email to an address absent from the owner request',()=>{
+  const selected=planner.parseSteps({steps:[{capability:'communication.send_email',arguments:[
+    {name:'recipient',value:'North Parts'},{name:'recipientEmail',value:'other@outside.example'},
+    {name:'body',value:'Please confirm our order.'}],dependsOn:[],continuesPending:false}],
+  clarifyingQuestion:''});
+  planner.groundedMoneyArguments(selected.steps,'Email North Parts about our order.');
+  assert.equal(selected.steps[0].args.recipientEmail,undefined);
+});
+
 test('a complete-order reservation stays one dependent step, not a duplicate partial confirmation',()=>{
   const planned=planner.parseSteps({steps:[
     {capability:'sales_order.create',arguments:[{name:'customer',value:'Field Buyer'},
@@ -261,7 +314,8 @@ test('first-turn creation cannot be accepted as a supplier lookup after fit reje
   }};
   const result=await planner.plan(provider,'Please add North Supply to my contacts as a supplier.',{});
   assert.equal(result.steps[0].contract.name,'contact.create');
-  assert.equal(result.steps[0].args.recipientEmail,'north@example.test');
+  assert.equal(result.steps[0].args.recipientEmail,undefined,
+    'The model may not invent a contact address the owner did not supply.');
 });
 
 test('a no-step reply cannot steer an unsupported goal into a different operation',async()=>{

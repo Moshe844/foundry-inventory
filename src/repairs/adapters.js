@@ -234,10 +234,15 @@ function inventoryAccountingMismatch() {
       const eventId = repairCase.proposedRepair.eventId;
       const inbox = eventId && require('../accounting/operational-adapter').inbox(db, repairCase.workspaceId, eventId);
       const reconciliation = require('../accounting/reports').inventoryReconciliation(db, repairCase.workspaceId);
-      const passed = Boolean(inbox && inbox.status === 'POSTED' && reconciliation.reconciled);
+      // A mismatch can also disappear through a later, separately verified
+      // business transaction. When no failed event was ever identified, the
+      // current invariant itself is sufficient to retire this diagnosis;
+      // never invent or replay a journal entry to close the case.
+      const posted = !eventId || Boolean(inbox && inbox.status === 'POSTED');
+      const passed = Boolean(posted && reconciliation.reconciled);
       return { passed, checks: [
-        { name: 'Operational event posted through Accounting', passed: Boolean(inbox && inbox.status === 'POSTED'),
-          observed: inbox && inbox.status },
+        { name: 'No failed source event remains outstanding', passed: posted,
+          observed: eventId ? inbox && inbox.status : 'No failed event identified' },
         { name: 'Inventory value agrees with the ledger', passed: reconciliation.reconciled,
           observed: reconciliation.differenceMinor },
       ] };

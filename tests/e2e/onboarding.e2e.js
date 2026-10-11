@@ -117,6 +117,7 @@ async function register(page, account) {
   await page.fill('#businessName', account.workspaceName);
   await page.fill('#email', account.email);
   await page.fill('#password', account.password);
+  await page.fill('#confirmPassword', account.password);
   await Promise.all([page.waitForURL(`${BASE}/onboarding`), page.click('form[action="/register"] button[type=submit]')]);
   await page.fill('#inventory-name', account.workspaceName);
   await Promise.all([page.waitForNavigation(), page.getByRole('button', { name: 'Save name', exact: true }).click()]);

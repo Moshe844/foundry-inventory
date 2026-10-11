@@ -3,6 +3,12 @@
 const {newId}=require('../lib/util');
 const {registry}=require('./postgres-capability-registry');
 const {executeStep,synthesizeReads}=require('./postgres-control-plane');
+const memory=require('./postgres-business-memory');
+
+function planShape(steps){return steps.map((step)=>({capability:step.capability||step.contract?.name,
+  args:step.args||{},dependsOn:step.dependsOn||[],continuesPending:Boolean(step.continuesPending)}));}
+function planHash(steps){return memory.digest(planShape(steps));}
+function metric(metrics,key,amount=1){return {...(metrics||{}),[key]:Number(metrics?.[key]||0)+amount};}
 
 function serialized(steps,outcomes){
   return steps.map((step,index)=>{
@@ -17,17 +23,79 @@ function serialized(steps,outcomes){
 async function save(database,ctx,message,batchId,steps,outcomes){
   if(!steps.some((step)=>step.dependsOn.length)||!outcomes.some((entry)=>entry.result?.status==='PREPARED'))return null;
   const records=serialized(steps,outcomes);const waiting=records.find((step)=>step.state==='WAITING');
-  const id=newId('pgplan');
+  const id=newId('pgplan');const shape=planShape(records);const hash=planHash(shape);
+  const clarificationInteractions=outcomes.filter((entry)=>entry.result?.status==='CLARIFY'
+    &&entry.result?.reason!=='dependency_waiting').length;
   await database.query(`INSERT INTO stockchief_runtime.assistant_capability_plans
-    (id,workspace_id,actor_user_id,batch_id,source_message,steps,status,waiting_proposal_id)
-    VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8)`,[id,ctx.workspaceId,ctx.actorId,batchId||id,message,
-    JSON.stringify(records),waiting?'WAITING':'BLOCKED',waiting?.proposalId||null]);
+    (id,workspace_id,actor_user_id,batch_id,source_message,outcome,steps,approved_steps,plan_hash,
+      status,waiting_proposal_id,approval_status,metrics)
+    VALUES($1,$2,$3,$4,$5,$5,$6::jsonb,$7::jsonb,$8,$9,$10,'PENDING',$11::jsonb)`,
+  [id,ctx.workspaceId,ctx.actorId,batchId||id,message,JSON.stringify(records),JSON.stringify(shape),hash,
+    waiting?'WAITING':'BLOCKED',waiting?.proposalId||null,JSON.stringify({outcomeSpecifications:1,
+      approvalInteractions:0,clarificationInteractions,automaticSteps:0,userInterventions:clarificationInteractions,
+      externalWaits:0,resumptions:0})]);
   return {id,batchId:batchId||id};
 }
+
+async function missionForProposal(database,workspaceId,actorId,proposalId,{lock=false,client=database}={}){
+  const row=(await client.query(`SELECT * FROM stockchief_runtime.assistant_capability_plans
+    WHERE workspace_id=$1 AND actor_user_id=$2 AND steps @> $3::jsonb
+    ORDER BY created_at DESC LIMIT 1${lock?' FOR UPDATE':''}`,[workspaceId,actorId,
+    JSON.stringify([{proposalId}])])).rows[0]||null;
+  return row?{...row,planHash:row.plan_hash,approvalStatus:row.approval_status,
+    authorizationMode:row.authorization_mode}:null;
+}
+
+async function authorize(database,ctx,proposalId){return database.transaction(async(client)=>{
+  const plan=await missionForProposal(client,ctx.workspaceId,ctx.actorId,proposalId,{lock:true,client});
+  if(!plan)throw new Error('That prepared change is not part of a multi-step mission.');
+  if(!['WAITING','ADVANCING'].includes(plan.status)||plan.waiting_proposal_id!==proposalId)
+    throw new Error('That mission is no longer waiting on this exact step.');
+  if(plan.plan_hash!==planHash(plan.approved_steps||[]))throw new Error('The mission plan changed before approval. Ask again.');
+  const actor=(await client.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',
+    [ctx.workspaceId,ctx.actorId])).rows[0];
+  if(!actor)throw new Error('The mission owner no longer belongs to this inventory.');
+  const permissions=require('../actions/permissions');
+  for(const step of plan.approved_steps||[]){const contract=registry.get(step.capability);
+    if(!contract)throw new Error(`Mission capability ${step.capability} is no longer registered.`);
+    if(['mutation','policy'].includes(contract.kind))permissions.assertCan(actor,contract.permission,contract.name);
+    if(contract.ownerOnly&&actor.role!=='owner')throw new Error('Only the inventory owner can approve this mission.');
+  }
+  const metrics=metric(plan.metrics,'approvalInteractions');
+  const changed=(await client.query(`UPDATE stockchief_runtime.assistant_capability_plans
+    SET authorization_mode='MISSION',approval_status='APPROVED',approved_by_user_id=$3,approved_at=now(),
+      metrics=$4::jsonb,updated_at=now()
+    WHERE workspace_id=$1 AND id=$2 AND approval_status IN ('PENDING','APPROVED') RETURNING *`,
+  [ctx.workspaceId,plan.id,ctx.actorId,JSON.stringify(metrics)])).rows[0];
+  return changed;
+},{isolation:'SERIALIZABLE',retrySafe:true});}
+
+async function metricsSummary(database,workspaceId){const row=(await database.query(`SELECT
+    COUNT(*)::int AS missions,
+    COUNT(*) FILTER (WHERE status='DONE')::int AS completed,
+    COUNT(*) FILTER (WHERE status IN ('WAITING_USER','BLOCKED'))::int AS interventions,
+    COALESCE(SUM((metrics->>'outcomeSpecifications')::int),0)::int AS outcome_specifications,
+    COALESCE(SUM((metrics->>'approvalInteractions')::int),0)::int AS approvals,
+    COALESCE(SUM((metrics->>'clarificationInteractions')::int),0)::int AS clarifications,
+    COALESCE(SUM((metrics->>'userInterventions')::int),0)::int AS user_interventions,
+    COALESCE(SUM((metrics->>'automaticSteps')::int),0)::int AS automatic_steps,
+    COALESCE(SUM((metrics->>'externalWaits')::int),0)::int AS external_waits,
+    COALESCE(SUM((metrics->>'resumptions')::int),0)::int AS resumptions
+  FROM stockchief_runtime.assistant_capability_plans WHERE workspace_id=$1`,[workspaceId])).rows[0];
+  const human=Number(row.outcome_specifications)+Number(row.approvals)+Number(row.clarifications)+Number(row.user_interventions);
+  return {...row,humanInteractions:human,humanInteractionsPerCompleted:Number(row.completed)
+    ?Math.round((human/Number(row.completed))*100)/100:null,
+  completionRate:Number(row.missions)?Math.round((Number(row.completed)/Number(row.missions))*1000)/10:null};}
 
 function readyIndexes(steps){return steps.flatMap((step,index)=>step.state==='BLOCKED'
   &&step.reason==='dependency_waiting'&&step.dependsOn.every((dependency)=>steps[dependency]?.state==='DONE')
   ?[index]:[]);}
+
+function ancestorIndexes(steps,index){
+  const seen=new Set();const visit=(position)=>{for(const parent of steps[position]?.dependsOn||[]){
+    if(seen.has(parent))continue;seen.add(parent);visit(parent);
+  }};visit(index);return [...seen].sort((a,b)=>a-b);
+}
 
 function scopeReadToCompletedRecord(steps,index,contract,args){
   if(contract.kind!=='read'||!contract.recordKind||!steps[index].dependsOn.length)return args;
@@ -52,40 +120,84 @@ async function scopeReadToRelatedParty(database,ctx,steps,index,contract,args){
   return rows.length===1?{...args,search:rows[0].name}:args;
 }
 
+async function externalState(database,workspaceId,result={}){
+  if(result.effectId){const row=(await database.query(`SELECT status,error_code,error_message
+      FROM stockchief_runtime.provider_effects WHERE workspace_id=$1 AND id=$2`,
+    [workspaceId,result.effectId])).rows[0];
+    if(!row)return {state:'BLOCKED',reason:'external_effect_missing'};
+    if(row.status==='SUCCEEDED')return {state:'DONE'};
+    if(['FAILED','AMBIGUOUS','CANCELLED'].includes(row.status))return {state:'BLOCKED',
+      reason:row.status==='AMBIGUOUS'?'external_outcome_ambiguous':'external_effect_failed',detail:row};
+    return {state:'WAITING_EVENT',condition:{kind:'provider_effect',id:result.effectId,status:row.status}};}
+  if(result.jobId||result.job?.id){const id=result.jobId||result.job.id;const row=(await database.query(`SELECT status,last_error
+      FROM stockchief_runtime.jobs WHERE workspace_id=$1 AND id=$2`,[workspaceId,id])).rows[0];
+    if(!row)return {state:'BLOCKED',reason:'external_job_missing'};
+    if(row.status==='COMPLETED')return {state:'DONE'};
+    if(['DEAD','CANCELLED'].includes(row.status))return {state:'BLOCKED',reason:'external_job_failed',detail:row};
+    return {state:'WAITING_EVENT',condition:{kind:'job',id,status:row.status}};}
+  return {state:'DONE'};
+}
+
 async function refreshApprovals(database,workspaceId,steps){
-  const ids=steps.filter((step)=>step.state==='WAITING'&&step.proposalId).map((step)=>step.proposalId);
-  if(!ids.length)return;
+  const ids=steps.filter((step)=>['WAITING','WAITING_USER'].includes(step.state)&&step.proposalId)
+    .map((step)=>step.proposalId);
+  const eventIds=steps.filter((step)=>step.state==='WAITING_EVENT'&&step.proposalId).map((step)=>step.proposalId);
+  const allIds=[...new Set([...ids,...eventIds])];if(!allIds.length)return;
   const rows=(await database.query(`SELECT id,status,result FROM stockchief_runtime.assistant_action_proposals
-    WHERE workspace_id=$1 AND id=ANY($2::text[])`,[workspaceId,ids])).rows;
+    WHERE workspace_id=$1 AND id=ANY($2::text[])`,[workspaceId,allIds])).rows;
   const byId=new Map(rows.map((row)=>[row.id,row]));
   for(const step of steps){
     const completed=byId.get(step.proposalId);
-    if(step.state==='WAITING'&&completed?.status==='EXECUTED'){
-      step.state='DONE';
+    if(['WAITING','WAITING_USER','WAITING_EVENT'].includes(step.state)&&completed?.status==='EXECUTED'){
+      const external=await externalState(database,workspaceId,completed.result||{});
+      step.state=external.state;step.reason=external.reason||null;step.waitingCondition=external.condition||null;
       const resultReference=registry.get(step.capability)?.resultReference;
       if(resultReference&&completed.result?.[resultReference])
         step.args={...step.args,recordReference:completed.result[resultReference]};
     }
-    if(step.state==='WAITING'&&completed?.status==='CANCELLED'){
+    if(['WAITING','WAITING_USER'].includes(step.state)&&completed?.status==='CANCELLED'){
       step.state='BLOCKED';step.reason='dependency_cancelled';
     }
   }
 }
 
 async function update(database,plan,token,steps,status){
-  const waiting=steps.find((step)=>step.state==='WAITING');
+  const waiting=steps.find((step)=>['WAITING','WAITING_USER'].includes(step.state));
+  const waitingEvent=steps.find((step)=>step.state==='WAITING_EVENT');
+  const verification=status==='DONE'?'VERIFIED':status==='BLOCKED'?'FAILED':'PENDING';
   await database.query(`UPDATE stockchief_runtime.assistant_capability_plans
-    SET steps=$4::jsonb,status=$5,waiting_proposal_id=$6,updated_at=now()
+    SET steps=$4::jsonb,status=$5,waiting_proposal_id=$6,waiting_condition=$7::jsonb,
+      verification_status=$8,completed_at=CASE WHEN $5='DONE' THEN COALESCE(completed_at,now()) ELSE completed_at END,
+      updated_at=now()
     WHERE workspace_id=$1 AND id=$2 AND run_token=$3`,[plan.workspace_id,plan.id,token,
-    JSON.stringify(steps),status,waiting?.proposalId||null]);
+    JSON.stringify(steps),status,waiting?.proposalId||null,JSON.stringify(waitingEvent?.waitingCondition||null),verification]);
+}
+
+const DEPENDENCY_FIELDS=new Set(['recordReference','sku','skuScope','supplier','customer','location',
+  'fromLocation','toLocation','purchaseOrder','salesOrder','shipment','transfer']);
+function present(value){return value!==null&&value!==undefined&&String(value).trim()!=='';}
+function approvedStepSafe(plan,index,resolvedArgs,dependencyArgs){
+  const approved=plan.approved_steps?.[index];const contract=registry.get(approved?.capability);
+  if(!approved||!contract||contract.name!==plan.steps[index]?.capability)return false;
+  for(const field of contract.required||[]){
+    if(present(approved.args?.[field]))continue;
+    if(DEPENDENCY_FIELDS.has(field)&&present(dependencyArgs?.[field]))continue;
+    return false;
+  }
+  for(const [field,value] of Object.entries(approved.args||{})){
+    if(!present(value)||DEPENDENCY_FIELDS.has(field))continue;
+    if(present(resolvedArgs?.[field])&&String(resolvedArgs[field])!==String(value))return false;
+  }
+  return true;
 }
 
 /** Resume only the stored plan, never reinterpret the original wording after approval. */
-async function resume(database,ctx,proposalId,{service,provider,rawProvider,record}){
+async function resume(database,ctx,proposalId,{service,provider,rawProvider,record=async()=>{},executeAuthorizedProposal=null,
+  missionId=null}={}){
   const candidates=(await database.query(`SELECT id FROM stockchief_runtime.assistant_capability_plans
-    WHERE workspace_id=$1 AND actor_user_id=$2 AND status IN ('WAITING','ADVANCING')
-      AND steps @> $3::jsonb ORDER BY created_at`,[ctx.workspaceId,ctx.actorId,
-    JSON.stringify([{proposalId}])])).rows;
+    WHERE workspace_id=$1 AND actor_user_id=$2 AND status IN ('WAITING','ADVANCING','WAITING_EVENT','WAITING_USER')
+      AND (($4::text IS NOT NULL AND id=$4) OR ($4::text IS NULL AND steps @> $3::jsonb)) ORDER BY created_at`,
+  [ctx.workspaceId,ctx.actorId,JSON.stringify([{proposalId}]),missionId])).rows;
   const continued=[];
   for(const candidate of candidates){
     const token=newId('pgclaim');
@@ -96,7 +208,12 @@ async function resume(database,ctx,proposalId,{service,provider,rawProvider,reco
     if(!claimed)continue;
     const steps=claimed.steps;
     try{
+      const beforeRefresh=steps.map((step)=>step.state);
       await refreshApprovals(database,ctx.workspaceId,steps);
+      let metrics=claimed.metrics||{};
+      if(steps.some((step,index)=>['WAITING_EVENT','WAITING_USER'].includes(beforeRefresh[index])
+        &&step.state==='DONE'))
+        metrics=metric(metrics,'resumptions');
       const actor=(await database.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',
         [ctx.workspaceId,ctx.actorId])).rows[0]||null;
       while(true){
@@ -115,8 +232,9 @@ async function resume(database,ctx,proposalId,{service,provider,rawProvider,reco
           await update(database,claimed,token,steps,'ADVANCING');
           continue;
         }
-        const dependencyArgs=Object.assign({},...stored.dependsOn.map((index)=>steps[index]?.args||{}));
-        const produced=stored.dependsOn.map((index)=>steps[index]).filter((parent)=>
+        const ancestors=ancestorIndexes(steps,next);
+        const dependencyArgs=Object.assign({},...ancestors.map((index)=>steps[index]?.args||{}));
+        const produced=ancestors.map((index)=>steps[index]).filter((parent)=>
           parent?.args?.recordReference&&registry.get(parent.capability)?.resultRecordKind===contract.recordKind);
         // The identifier returned by an approved creation is authoritative.
         // A planner-supplied guess for the not-yet-existing record cannot override it.
@@ -155,11 +273,41 @@ async function resume(database,ctx,proposalId,{service,provider,rawProvider,reco
         await update(database,claimed,token,steps,'ADVANCING');
         await record(claimed,next,{step:{contract,dependsOn:stored.dependsOn,continuesPending:false},...outcome});
         continued.push(outcome.result);
+        if(stored.state==='WAITING'&&claimed.authorization_mode==='MISSION'
+          &&claimed.approval_status==='APPROVED'&&executeAuthorizedProposal){
+          if(!approvedStepSafe({...claimed,steps},next,outcome.args,dependencyArgs)){
+            stored.state='WAITING_USER';stored.reason='mission_scope_incomplete';
+            metrics=metric(metrics,'userInterventions');
+            await update(database,claimed,token,steps,'WAITING_USER');
+            break;
+          }
+          const executedProposal=await executeAuthorizedProposal(stored.proposalId,claimed.id);
+          const external=await externalState(database,ctx.workspaceId,executedProposal.result||{});
+          stored.state=external.state;stored.reason=external.reason||null;
+          stored.waitingCondition=external.condition||null;
+          const resultReference=contract.resultReference;
+          if(resultReference&&executedProposal.result?.[resultReference])
+            stored.args={...stored.args,recordReference:executedProposal.result[resultReference]};
+          metrics=metric(metrics,'automaticSteps');
+          if(stored.state==='WAITING_EVENT')metrics=metric(metrics,'externalWaits');
+          await database.query(`UPDATE stockchief_runtime.assistant_capability_plans SET metrics=$3::jsonb
+            WHERE workspace_id=$1 AND id=$2 AND run_token=$4`,[ctx.workspaceId,claimed.id,JSON.stringify(metrics),token]);
+          await update(database,claimed,token,steps,stored.state==='WAITING_EVENT'?'WAITING_EVENT':
+            stored.state==='DONE'?'ADVANCING':'BLOCKED');
+          if(stored.state==='DONE')continue;
+          break;
+        }
         if(stored.state!=='DONE')break;
       }
       const status=steps.some((step)=>step.state==='WAITING')?'WAITING':
+        steps.some((step)=>step.state==='WAITING_USER')?'WAITING_USER':
+        steps.some((step)=>step.state==='WAITING_EVENT')?'WAITING_EVENT':
         steps.every((step)=>step.state==='DONE')?'DONE':'BLOCKED';
       await update(database,claimed,token,steps,status);
+      await database.query(`UPDATE stockchief_runtime.assistant_capability_plans SET metrics=$3::jsonb,
+        result=$4::jsonb WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,claimed.id,JSON.stringify(metrics),
+        JSON.stringify({completedSteps:steps.filter((step)=>step.state==='DONE').length,totalSteps:steps.length,
+          outcome:claimed.outcome,status})]);
     }finally{
       await database.query(`UPDATE stockchief_runtime.assistant_capability_plans
         SET run_token=NULL,run_started_at=NULL,updated_at=now() WHERE workspace_id=$1 AND id=$2 AND run_token=$3`,
@@ -170,4 +318,4 @@ async function resume(database,ctx,proposalId,{service,provider,rawProvider,reco
 }
 
 module.exports={serialized,save,readyIndexes,scopeReadToCompletedRecord,
-  scopeReadToRelatedParty,resume};
+  scopeReadToRelatedParty,ancestorIndexes,resume,missionForProposal,authorize,planHash,externalState,approvedStepSafe,metricsSummary};

@@ -109,8 +109,8 @@ test('authorized routine payment requests send automatically while unauthorized 
   });
 
   await page.goto(`${base}/login`);
-  await page.getByLabel('Email', { exact:true }).fill(workspace.account.email);
-  await page.getByLabel('Password', { exact:true }).fill(workspace.account.password);
+    await page.locator('#email').fill(workspace.account.email);
+    await page.locator('#password').fill(workspace.account.password);
   await submit(page, page.getByRole('button', { name:'Sign in', exact:true }));
 
   await context.test('explicit authority creates one provider request and sends one grounded email', async () => {
@@ -138,7 +138,8 @@ test('authorized routine payment requests send automatically while unauthorized 
     const message = store.db.prepare(`SELECT * FROM customer_communications WHERE workspace_id = ?
       AND customer_id = ? AND message_kind = 'payment_request'`).get(workspace.workspaceId, waitingCustomer.id);
     assert.equal(message.status, 'PREPARED');
-    await page.locator('#money > summary').click();
+    assert.equal(await page.locator('#money').getAttribute('open'), '',
+      'payment due now opens the Money panel on arrival');
     assert.equal(await page.getByRole('link', { name:'Read the email and send it' }).count(), 1);
   });
 

@@ -116,8 +116,8 @@ test('customer and supplier payments and a refund reconcile through Money screen
     await new Promise((resolve) => server.close(resolve));
   });
   await page.goto(`${base}/login`);
-  await page.getByLabel('Email', { exact:true }).fill(workspace.account.email);
-  await page.getByLabel('Password', { exact:true }).fill(workspace.account.password);
+  await page.locator('#email').fill(workspace.account.email);
+  await page.locator('#password').fill(workspace.account.password);
   await submit(page, page.getByRole('button', { name:'Sign in', exact:true }));
 
   await context.test('a supplier partial payment leaves exactly six hundred payable', async () => {

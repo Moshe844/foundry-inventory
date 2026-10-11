@@ -7,9 +7,11 @@ const os = require('node:os');
 const path = require('node:path');
 const { fork } = require('node:child_process');
 const { chromium } = require('playwright');
+const { installBrowserBusinessClock } = require('../helpers/browser-business-clock');
 
 const ROOT = path.resolve(__dirname,'../..');
 const SHOTS = path.join(ROOT,'artifacts/screenshots/seasoned-business');
+let activeBrowserClock;
 
 function messageFrom(child,type,timeoutMs=90000) {
   return new Promise((resolve,reject)=>{
@@ -25,6 +27,7 @@ async function advance(child,at) {
   const ack=messageFrom(child,'stockchief.test.advanced');
   child.send({type:'stockchief.test.advance',at});
   await ack;
+  if (activeBrowserClock) await activeBrowserClock.setFixedTime(at);
 }
 
 async function submit(page,button) {
@@ -66,19 +69,28 @@ test('a six-month business is managed through real screens as the calendar moves
   const base=`http://127.0.0.1:${state.port}`;
   browser=await chromium.launch();
   const context=await browser.newContext({viewport:{width:1400,height:1000}});
+  const browserTime=await installBrowserBusinessClock(context,'2026-09-11T12:00:00.000Z');
+  activeBrowserClock=context.clock;
   page=await context.newPage();
   page.setDefaultTimeout(15000);
   const errors=[];
   page.on('pageerror',(error)=>errors.push(error.message));
   await page.goto(`${base}/login`);
-  await page.getByLabel('Email',{exact:true}).fill(state.email);
+  await browserTime.settle();
+  await page.locator('#email').fill(state.email);
   await page.locator('input[name="password"]').fill(state.password);
   await submit(page,page.getByRole('button',{name:'Sign in',exact:true}));
+  await browserTime.settle();
+  await page.goto(`${base}/`);
+  assert.doesNotMatch(page.url(), /\/login(?:\?|$)/,
+    'The browser must retain its signed-in session under the business clock.');
 
   let orderUrl;
   let orderedBestseller;
   await t.test('Friday: StockChief autonomously prepares one supplier draft, not just a work record',async()=>{
     await page.goto(`${base}/purchasing/orders`);
+    assert.match(page.url(), /\/purchasing\/orders/,
+      'The signed-in session must survive navigation to purchasing.');
     await eventually(page,async()=>await page.locator('a.rm-u[href^="/purchasing/orders/po_"]').count()>0);
     const links=page.locator('a.rm-u[href^="/purchasing/orders/po_"]');
     assert.equal(await links.count(),1,'Requirements for two products share one supplier order.');
@@ -106,7 +118,10 @@ test('a six-month business is managed through real screens as the calendar moves
     assert.match(await page.locator('main').innerText(),/Day-of-week pattern|day.of.week|weekday/i);
     await page.screenshot({path:path.join(SHOTS,'weekday-evidence.png'),fullPage:true});
     await page.goto(`${base}/`);
-    assert.match(await page.locator('main').innerText(),/2 products have insufficient outbound history/);
+    const home = await page.locator('main').innerText();
+    assert.match(home,/Prepared PO-1001 for Calendar Supplier/);
+    assert.doesNotMatch(home,/Buy from .*Unobserved New Product/);
+    assert.doesNotMatch(home,/StockChief found that Inventory value agrees with accounting/);
     await page.screenshot({path:path.join(SHOTS,'measured-history-and-gaps.png'),fullPage:true});
   });
 
@@ -168,7 +183,7 @@ test('a six-month business is managed through real screens as the calendar moves
   await t.test('Ask reads actual current quantities without using a model to invent figures',async()=>{
     await page.goto(`${base}/ask`);
     await page.locator('#ask-question').fill('How many Weekend Bestseller do we have?');
-    await submit(page,page.getByRole('button',{name:'Send',exact:true}));
+    await submit(page,page.locator('[data-ask-submit]'));
     await page.getByText('Weekend Bestseller: 8 units on hand.',{exact:true}).waitFor();
     await page.screenshot({path:path.join(SHOTS,'ask-grounded-stock.png'),fullPage:true});
   });
@@ -289,12 +304,17 @@ test('a stalled instruction reader fails visibly without guessing stock or losin
   const state=await messageFrom(child,'stockchief.test.ready');
   const base=`http://127.0.0.1:${state.port}`;
   browser=await chromium.launch();
-  const page=await browser.newPage();
+  const browserContext=await browser.newContext();
+  const browserTime=await installBrowserBusinessClock(browserContext,'2026-09-11T12:00:00.000Z');
+  const page=await browserContext.newPage();
   page.setDefaultTimeout(15000);
   await page.goto(`${base}/login`);
-  await page.getByLabel('Email',{exact:true}).fill(state.email);
+  await browserTime.settle();
+  await page.locator('#email').fill(state.email);
   await page.locator('input[name="password"]').fill(state.password);
   await submit(page,page.getByRole('button',{name:'Sign in',exact:true}));
+  await browserTime.settle();
+  await page.goto(`${base}/`);
   await page.goto(`${base}/actions`);
   const instruction='Receive some Weekend Bestseller stock into Main Warehouse';
   await page.locator('#action-instruction').fill(instruction);

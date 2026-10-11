@@ -15,7 +15,7 @@ function change(domain,values={}){return {domain,operation:'set',sku:'',supplier
   minimumOrderQuantity:-1,orderMultiple:-1,maximumQuantity:-1,maximumValue:-1,weeklyValue:-1,daysOfStock:-1,
   preferTransferBeforePurchasing:false,guardMode:'',guardComparator:'',guardThreshold:-1,
   guardReleaseCondition:'',notificationThreshold:-1,
-  notificationMetric:'on_hand',notificationComparator:'at_or_below',...values};}
+  notificationMetric:'on_hand',notificationComparator:'at_or_below',capabilityName:'',...values};}
 function json(value){return typeof value==='string'?JSON.parse(value):value;}
 
 const provider={async complete(input){

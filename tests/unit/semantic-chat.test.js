@@ -87,6 +87,23 @@ test('actions never execute and reads never write business records',async()=>{
  await planner.ask(db,w.workspaceId,'Count everything',{provider:provider(reply([part(query())]))});
  assert.equal(db.prepare('SELECT total_changes() n').get().n,before);
 });
+test('an information question misclassified as work is replanned read-only without mutating records',async()=>{
+ const {db,w}=setup();const before=db.prepare('SELECT total_changes() n').get().n;
+ const calls=[];
+ const result=await planner.ask(db,w.workspaceId,'Which catalogue entries are active?',{
+  provider:{async complete(request){
+   calls.push(request);
+   return {data:calls.length===1
+    ?{decision:'action',interpretation:'Change catalogue',clarification:'',parts:[]}
+    :reply([part(query())])};
+  }},
+ });
+ assert.equal(calls.length,2);
+ assert.equal(calls[1].schema.properties.decision.enum.includes('action'),false);
+ assert.equal(result.isAction,false);
+ assert.equal(result.rows[0].value,3);
+ assert.equal(db.prepare('SELECT total_changes() n').get().n,before);
+});
 test('ambiguous singular product references are not silently combined',()=>{
  const {db,w}=setup();
  const result=semantic.executePart(db,w.workspaceId,{intent:'stock_level',entityQuery:'Sleeve',question:'How many of that sleeve?'},{});

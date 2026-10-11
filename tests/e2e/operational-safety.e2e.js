@@ -64,8 +64,8 @@ test('operational safety and mailbox pagination are verified through screens', {
   let explicitMessageUrl;
   page.on('pageerror',(error) => errors.push(error.message));
   await page.goto(`${base}/login`);
-  await page.getByLabel('Email',{ exact:true }).fill(state.email);
-  await page.getByLabel('Password',{ exact:true }).fill(state.password);
+  await page.locator('#email').fill(state.email);
+  await page.locator('#password').fill(state.password);
   await submit(page,page.getByRole('button',{ name:'Sign in',exact:true }));
 
   await context.test('paused timers neither replay a repair nor apply an already granted learning change',async () => {
@@ -116,10 +116,12 @@ test('operational safety and mailbox pagination are verified through screens', {
 
   await context.test('Ask preserves explicit subject, body and Gmail sender instead of substituting another mailbox',async () => {
     await page.goto(`${base}/ask`);
-    await page.getByLabel('Tell StockChief what happened, or ask it something',{ exact:true }).fill(
+    await page.locator('#ask-question').fill(
       'Draft an email from the connected Gmail mailbox to recipient@fixture.test.\nSubject: Controlled UI verification\nBody: No operational action is requested.');
-    await submit(page,page.getByRole('button',{ name:'Send',exact:true }));
-    assert.match(page.url(),/\/messages\/ccom_/);
+    await Promise.all([
+      page.waitForURL(/\/messages\/ccom_/),
+      page.locator('[data-ask-submit]').click(),
+    ]);
     explicitMessageUrl = page.url();
     assert.equal(await page.getByLabel('Subject',{ exact:true }).inputValue(),'Controlled UI verification');
     assert.equal(await page.locator('textarea[name="body"]').inputValue(),'No operational action is requested.');

@@ -6,6 +6,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { fork } = require('node:child_process');
 const { chromium } = require('playwright');
+const { installBrowserBusinessClock } = require('../helpers/browser-business-clock');
 const root = path.resolve(__dirname, '../..');
 
 test('the cross-domain briefing and shared sessions work in the UI against actual PostgreSQL', { timeout: 180000 }, async (context) => {
@@ -30,13 +31,18 @@ test('the cross-domain briefing and shared sessions work in the UI against actua
     child.once('exit', (code) => { clearTimeout(timer); reject(new Error(`PostgreSQL frontend fixture exited ${code}.`)); });
   });
   browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage();
+  const browserContext = await browser.newContext();
+  const browserTime = await installBrowserBusinessClock(browserContext, '2026-09-21T12:00:00.000Z');
+  const page = await browserContext.newPage();
   const base = `http://127.0.0.1:${state.ports[0]}`;
   const second = `http://127.0.0.1:${state.ports[1]}`;
   await page.goto(`${base}/login`);
-  await page.getByLabel('Email', { exact: true }).fill(state.email);
-  await page.getByLabel('Password', { exact: true }).fill(state.password);
+  await browserTime.settle();
+  await page.locator('#email').fill(state.email);
+  await page.locator('#password').fill(state.password);
   await Promise.all([page.waitForNavigation(), page.getByRole('button', { name: 'Sign in', exact: true }).click()]);
+  await browserTime.settle();
+  await page.goto(`${base}/`);
   await context.test('a second app instance reads the real shared PostgreSQL login session', async () => {
     await page.goto(`${second}/foundry/briefing`);
     assert.match(await page.locator('main').innerText(), /Operations briefing/);
@@ -64,9 +70,9 @@ test('the cross-domain briefing and shared sessions work in the UI against actua
   });
   await context.test('Ask offers the real briefing without pretending requested execution happened', async () => {
     await page.goto(`${base}/ask`);
-    await page.getByLabel('Tell StockChief what happened, or ask it something', { exact: true })
+    await page.locator('#ask-question')
       .fill('Monday morning operations briefing since Friday. Handle everything and send supplier messages.');
-    await Promise.all([page.waitForNavigation(), page.getByRole('button', { name: 'Send', exact: true }).click()]);
+    await Promise.all([page.waitForNavigation(), page.locator('[data-ask-submit]').click()]);
     assert.match(await page.locator('main').innerText(), /requested actions have not been completed/);
     assert.match(await page.locator('main').innerText(), /Physical inventory ledger: 31 records/);
     assert.match(await page.locator('main').innerText(), /Recorded payments: 4 records/);

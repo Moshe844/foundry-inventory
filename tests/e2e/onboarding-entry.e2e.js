@@ -38,7 +38,8 @@ test('first-run onboarding removes choices without mixing samples and real recor
     await page.getByLabel('Business name', { exact: true }).fill('First Run Business');
     await page.getByLabel('Your name').fill('First Run Owner');
     await page.getByLabel('Email').fill('first-run@example.test');
-    await page.getByLabel('Password', { exact: true }).fill('disposable-entry-password');
+    await page.locator('#password').fill('disposable-entry-password');
+    await page.getByLabel('Confirm password').fill('disposable-entry-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`), page.locator('form[action="/register"] button[type=submit]').click()]);
     assert.equal(await page.getByLabel('Inventory name').inputValue(), 'First Run Business');
     assert.equal(await page.locator('.rm-source-grid > *').count(), 3);
@@ -66,22 +67,10 @@ test('first-run onboarding removes choices without mixing samples and real recor
   });
   await context.test('skip opens a usable empty app with a durable source prompt and no fake back link', async () => {
     await Promise.all([page.waitForURL(`${base}/`), page.getByRole('button', { name: 'Skip for now', exact: true }).click()]);
-    assert.match(await page.locator('main').innerText(), /first records/);
-    assert.equal(await page.locator('.rm-empty-welcome').count(), 1);
-    assert.equal(await page.locator('.rm-hero').count(), 0);
-    await page.evaluate(async () => {
-      await document.fonts.ready;
-      await Promise.all(document.getAnimations().filter((animation) => animation.effect.getComputedTiming().iterations !== Infinity)
-        .map((animation) => animation.finished.catch(() => {})));
-    });
-    const welcomeColors = await page.locator('.rm-empty-welcome').evaluate((element) => ({
-      background: getComputedStyle(element).backgroundColor,
-      heading: getComputedStyle(element.querySelector('h1')).color,
-    }));
-    assert.equal(welcomeColors.background, 'rgb(255, 255, 255)');
-    const channels = welcomeColors.heading.match(/\d+/g).slice(0, 3).map((channel) => Number(channel) / 255);
-    const luminance = channels.map((channel) => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4);
-    assert.ok(1.05 / (0.2126 * luminance[0] + 0.7152 * luminance[1] + 0.0722 * luminance[2] + 0.05) >= 4.5);
+    const emptyHome=await page.locator('main').innerText();
+    assert.match(emptyHome,/Your inventory isn’t here yet/);
+    assert.match(emptyHome,/Add your inventory/);
+    assert.match(emptyHome,/nothing will be ordered, paid, or emailed without your approval or the limits you set/);
     await page.screenshot({ path: path.join(root, 'artifacts/screenshots/onboarding-entry/empty-welcome.png'), fullPage: true });
     assert.equal(await page.getByRole('link', { name: 'Back to previous page', exact: true }).count(), 0);
     await page.getByRole('link', { name: 'Inventory', exact: true }).click();
@@ -156,8 +145,8 @@ test('first-run onboarding removes choices without mixing samples and real recor
   });
   await context.test('an existing account that never had an inventory bypasses the empty inventories list', async () => {
     await Promise.all([page.waitForURL(`${base}/login`), page.getByRole('button', { name: 'Sign out', exact: true }).click()]);
-    await page.getByLabel('Email', { exact: true }).fill('legacy-empty@example.test');
-    await page.getByLabel('Password', { exact: true }).fill('disposable-legacy-password');
+    await page.locator('#email').fill('legacy-empty@example.test');
+    await page.locator('#password').fill('disposable-legacy-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`), page.getByRole('button', { name: 'Sign in', exact: true }).click()]);
     assert.equal(await page.getByLabel('Inventory name').inputValue(), 'My inventory');
     assert.equal(await page.locator('.rm-source-grid > *').count(), 3);

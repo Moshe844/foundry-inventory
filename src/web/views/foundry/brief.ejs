@@ -3,6 +3,7 @@
   var greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
   var firstName = currentUser && currentUser.name ? currentUser.name.split(/\s+/)[0] : '';
   var needs = home.needsYou || [];
+  var coverageErrors = home.coverageErrors || [];
   var needsCount = Number(home.needsYouTotal || needs.length);
   var urgentCount = needs.filter(function (item) { return item.importance === 'Urgent'; }).length;
   var handled = (home.did && home.did.actions) || [];
@@ -15,7 +16,8 @@
   var firstCheck = !empty && !home.status.lastLookedAt;
   var stale = !paused && !empty && home.status.checkStale;
   var migration = locals.activeMigration || null;
-  var headline = paused ? 'StockChief is paused.'
+  var headline = coverageErrors.length ? 'Operations review is incomplete.'
+    : paused ? 'StockChief is paused.'
     : empty ? (migration ? 'Your inventory is being prepared.' : 'StockChief is ready. Your inventory isn’t here yet.')
     : urgentCount ? (urgentCount === 1 ? 'One urgent thing needs you.' : urgentCount + ' urgent things need you.')
     : firstCheck ? 'Your inventory is here. Let’s do the first check.'
@@ -23,12 +25,15 @@
     : needsCount ? 'Everything else is under control.'
     : 'Everything is under control.';
 %>
-<div class="sc-home <%= urgentCount ? 'sc-home--urgent' : '' %>">
+<div class="sc-home <%= urgentCount || coverageErrors.length ? 'sc-home--urgent' : '' %>">
+  <%- include('../manager/coverage-warning', { inbox:home }) %>
   <header class="sc-home__hero" aria-labelledby="sc-home-title">
     <div class="sc-home__hero-main">
       <p class="sc-home__greeting"><%= greeting %><%= firstName ? ', ' + firstName : '' %></p>
       <h1 id="sc-home-title"><%= headline %></h1>
-      <% if (paused) { %>
+      <% if (coverageErrors.length) { %>
+        <p class="sc-home__sentence">StockChief could not check every exception source. The known decisions below are not a complete all-clear.</p>
+      <% } else if (paused) { %>
         <p class="sc-home__sentence"><%= home.status.suspendedReason || home.status.pausedReason || 'Automatic work is stopped until you resume it.' %><%= firstCheck ? ' No business check has run yet.' : '' %></p>
       <% } else if (empty) { %>
         <p class="sc-home__sentence"><%= migration ? 'Your source is saved; StockChief will not switch it live until the records reconcile and you approve them.' : 'Bring in the products and quantities you already have. StockChief has not checked your business yet, and nothing will be ordered, paid, or emailed without your approval or the limits you set.' %></p>

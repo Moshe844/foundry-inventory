@@ -221,6 +221,7 @@ test('Mission 1 end to end, from a clean database', { timeout: 240000 }, async (
     await page.fill('#businessName', ACCOUNT.workspaceName);
     await page.fill('#email', ACCOUNT.email);
     await page.fill('#password', ACCOUNT.password);
+    await page.fill('#confirmPassword', ACCOUNT.password);
     await page.click('button[type=submit]');
     await page.waitForURL(`${BASE}/onboarding`);
       await page.fill('#inventory-name', ACCOUNT.workspaceName);

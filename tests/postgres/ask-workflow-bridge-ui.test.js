@@ -46,7 +46,8 @@ async function prepareAndApprove(page,base,database,workspaceId,message,capabili
     `Ask did not prepare ${capability}: ${(await page.locator('main').innerText()).slice(0,1000)}`);
   assert.equal(proposal.status,'PENDING');
   await page.goto(`${base}/actions/${proposal.id}`);
-  await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve and execute'}).click()]);
+  await Promise.all([page.waitForNavigation(),page.getByRole('button',
+    {name:/Approve (?:and execute|only this step)/}).click()]);
   const saved=(await database.query(`SELECT * FROM stockchief_runtime.assistant_action_proposals
     WHERE workspace_id=$1 AND id=$2`,[workspaceId,proposal.id])).rows[0];
   assert.equal(saved.status,'EXECUTED',`Approval failed: ${(await page.locator('body').innerText()).slice(0,1200)}`);
@@ -193,7 +194,8 @@ test('Ask browser controls a real customer order, payment, and return through th
     const resumedOrderProposal=(await database.query(`SELECT * FROM stockchief_runtime.assistant_action_proposals
       WHERE workspace_id=$1 AND action_type='sales_order.create' ORDER BY created_at DESC,id DESC LIMIT 1`,
     [ctx.workspaceId])).rows[0];
-    assert.equal(resumedOrderProposal.status,'PENDING');
+    assert.equal(resumedOrderProposal.status,'PENDING',
+      `Ask did not resume the pending sales order: ${(await page.locator('main').innerText()).slice(0,1000)}`);
     assert.deepEqual(resumedOrderProposal.payload.lines.map(({quantity,unitPriceMinor})=>[quantity,unitPriceMinor]),
       [[2,2500],[1,500]]);
     const threeTurnOrder=`Prepare one draft order for Builder Co with 3 ${skuCode} at $25 each `+
@@ -255,7 +257,8 @@ test('Ask browser controls a real customer order, payment, and return through th
     await page.goto(`${base}/ask`);
     assert.match(await page.locator('main').innerText(),/1 of 2 parts settled/);
     await page.goto(`${base}/actions/${combinedConfirm.id}`);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve and execute'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',
+      {name:/Approve (?:and execute|only this step)/}).click()]);
     const combinedOrder=(await database.query('SELECT status,order_date FROM sales_orders WHERE workspace_id=$1 AND id=$2',
       [ctx.workspaceId,combinedCreate.result.salesOrderId])).rows[0];
     assert.equal(combinedOrder.status,'CONFIRMED');

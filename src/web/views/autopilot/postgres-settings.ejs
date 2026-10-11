@@ -1,6 +1,7 @@
 <div class="rm-head"><div class="rm-title"><div><p class="rm-stamp">Standing authority</p><h1>Decide what StockChief may handle without you</h1>
   <p class="rm-prose">StockChief uses inventory, commitments, incoming supply, supplier packs, lead times and explicit reorder rules. A model never grants authority.</p></div></div></div>
 
+<% if(state.suspended){ %><div class="notice notice--warn"><div><strong>Automatic work is stopped.</strong><p><%= state.suspendedReason || 'A business check needs attention before automatic work can continue.' %></p></div></div><% } %>
 <% if(state.paused){ %><div class="notice notice--warn"><div><strong>Automatic work is paused.</strong><p><%= state.pausedReason || 'Read-only monitoring continues.' %></p></div>
   <form method="post" action="/autopilot/resume"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary">Resume safely</button></form></div><% } %>
 
@@ -29,7 +30,7 @@
     <label class="choice"><input type="checkbox" name="transferEnabled" value="1" <%= transferPolicy?'checked':'' %>><span><strong>Balance stock between locations</strong><small>Prefer a safe internal transfer before buying more.</small></span></label>
     <label>Most units in one automatic transfer<input name="maximumQuantity" inputmode="numeric" value="<%= transferPolicy?.maximumQuantity || 25 %>"></label>
     <fieldset><legend>Locations StockChief may use</legend><div class="grid grid--2"><% locations.forEach(function(location){ %><label class="choice"><input type="checkbox" name="locationIds" value="<%= location.id %>" <%= !transferPolicy || !transferPolicy.locationScope.length || transferPolicy.locationScope.includes(location.id)?'checked':'' %>><span><strong><%= location.name %></strong></span></label><% }) %></div></fieldset>
-    <label class="choice"><input type="checkbox" name="purchaseEnabled" value="1" <%= purchasePolicy?'checked':'' %>><span><strong>Approve routine replenishment</strong><small>Prepare an approved PO; supplier sending remains a separate verified step.</small></span></label>
+    <label class="choice"><input type="checkbox" name="purchaseEnabled" value="1" <%= purchasePolicy?'checked':'' %>><span><strong>Complete routine replenishment</strong><small>Create and approve the PO, deliver it through the supplier mailbox, verify provider acceptance, then mark it ordered. The separate Email suppliers grant is also required.</small></span></label>
     <div class="grid grid--2"><label>Most per purchase order ($)<input name="maximumValue" inputmode="decimal" value="<%= purchasePolicy?.maximumValue || 500 %>"></label>
       <label>Most across seven days ($)<input name="weeklyValue" inputmode="decimal" value="<%= purchasePolicy?.thresholds?.maxValuePerWeek || 2000 %>"></label></div>
     <fieldset><legend>Usual suppliers StockChief may use</legend><div class="grid grid--2"><% suppliers.forEach(function(supplier){ %><label class="choice"><input type="checkbox" name="supplierIds" value="<%= supplier.id %>" <%= purchasePolicy?.supplierScope.includes(supplier.id)?'checked':'' %>><span><strong><%= supplier.name %></strong></span></label><% }) %></div></fieldset>

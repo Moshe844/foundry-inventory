@@ -147,10 +147,14 @@ async function executeSendEffect(database,workspaceId,effectId,options={}){
     },{isolation:'SERIALIZABLE',retrySafe:true});
     if(!provider?.send)throw Object.assign(new ValidationError('This mailbox connection cannot send messages.'),{code:'email_send_unavailable'});
     const providerCredentials=await providerService.loadProviderCredentials(database,loaded.connection,provider);
+    if(options.beforeSend)await options.beforeSend({effect,message:loaded.message,connection:loaded.connection});
     providerCalled=true;
     const result=await require('../commercial/operations').run(database,workspaceId,{capability:'communications.send_approved',
       key:effect.idempotencyKey,provider:effect.provider,operation:'outbound_email',unit:'message'},()=>provider.send({credentials:providerCredentials,message:{id:loaded.message.id,
       recipient:loaded.message.recipient,subject:loaded.message.subject,body:loaded.message.body},idempotencyKey:effect.idempotencyKey}));
+    if(!result||typeof result.externalMessageId!=='string'||!result.externalMessageId.trim())
+      throw Object.assign(new Error('The mailbox provider did not return a verifiable message ID.'),
+        {code:'email_provider_acceptance_unverified'});
     await providerEffects.succeed(database,workspaceId,effectId,effect.claimToken,{providerReference:{messageId:result.externalMessageId||null},
       result:{externalMessageId:result.externalMessageId||null,externalThreadId:result.externalThreadId||null},apply:async(client)=>{
         const at=nowIso();await client.query(`UPDATE ${table} SET status='SENT',external_message_id=$3,

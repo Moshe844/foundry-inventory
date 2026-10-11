@@ -169,6 +169,7 @@ test(
       await page.fill('#businessName', ACCOUNT.workspaceName);
       await page.fill('#email', ACCOUNT.email);
       await page.fill('#password', ACCOUNT.password);
+      await page.fill('#confirmPassword', ACCOUNT.password);
       // The register page has no sidebar, so this is unambiguous.
       await page.click('form[action="/register"] button[type=submit]');
       await page.waitForURL(`${BASE}/onboarding`);
@@ -439,7 +440,7 @@ test(
           .get(state.workspaceId, state.valveSku.id).n
       );
       assert.match(body, new RegExp(String(total)), 'the answer is the engine\'s number');
-      assert.match(body, /How StockChief read this/);
+      assert.match(body, /Why this answer\?/);
       assert.match(body, /on hand/i);
     });
 

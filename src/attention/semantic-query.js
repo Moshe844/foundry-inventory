@@ -354,6 +354,30 @@ async function ask(db,workspaceId,question,options){
  }
  if(!validate(ACCEPTED_SCHEMA,data,{key:'semantic-query-plan'}).ok)return empty(clean,'I could not settle on one reading of that question. Say which records you want and what about them — for example “list customers called Smith” or “total on hand of Copper Elbow”.');
  data=liftMinimums(data);
+ // An information question is not authorization to mutate records. If a
+ // model contradicts that boundary, retry under a read-only contract rather
+ // than hand the question to an action workflow. This is domain-independent:
+ // no example question or chosen report is wired into the decision.
+ const informationQuestion=/^(?:what|which|who|where|when|why|how|any|anything|is|are|was|were|do|does|did|has|have)\b/i.test(clean);
+ if(data.decision==='action'&&informationQuestion){
+  const readOnlySchema={...schema,properties:{...schema.properties,
+   decision:{type:'string',enum:['answer','clarify','unavailable','not_supported']}}};
+  try{
+   const retry=await boundedComplete(options.provider,{
+    system:system+'\nThe message is an information question, not authorization to change records. The prior action classification was rejected. Produce a verified read-only lookup, or clarify if the requested information cannot be identified.',
+    prompt:JSON.stringify({question:clean,context:guard.deep(options.context||{}),
+     referents:options.referentNote?guard.recordValue(options.referentNote,{max:600}):null,
+     previous:context?{question:context.question,plan:guard.deep(context.semanticPlan),
+      clarification:guard.recordValue(context.clarification,{max:600})||null}:null}),
+    schema:readOnlySchema,schemaName:'stockchief_semantic_query_read_only',maxTokens:2200
+   },options.timeoutMs||20000);
+   data=validate(ACCEPTED_SCHEMA,retry.data,{key:'semantic-query-read-only-plan'}).ok
+    ?liftMinimums(retry.data):{decision:'clarify',clarification:'Which records would you like me to check?',parts:[]};
+  }catch{
+   data={decision:'clarify',clarification:'Which records would you like me to check?',parts:[]};
+  }
+  if(data.decision==='action')data={decision:'clarify',clarification:'Which records would you like me to check?',parts:[]};
+ }
  if(data.decision==='not_supported'){
   const reason=String(data.unsupportedReason||'').trim()||'StockChief does not do that.';
   // The nearest thing is written for the person. A capability id such as

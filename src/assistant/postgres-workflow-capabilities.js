@@ -19,6 +19,7 @@ const mail=require('../connections/postgres-mail');
 const accountLifecycle=require('../domain/postgres-account-lifecycle');
 const config=require('../config');
 const imports=require('../imports/postgres-service');
+const repairs=require('../repairs/postgres-service');
 const jobQueue=require('../operations/postgres-job-queue');
 const {ValidationError}=require('../domain/errors');
 const {nowIso,newId}=require('../lib/util');
@@ -45,6 +46,7 @@ const RECORDS=Object.freeze({
   fulfillment_wave:{table:'fulfillment_waves',number:'title',label:'fulfillment wave'},
   bank_account:{table:'accounting_bank_accounts',number:'name',label:'financial account'},
   bank_transaction:{table:'accounting_bank_transactions',number:'external_id',sort:'imported_at',label:'bank transaction'},
+  repair_case:{table:'repair_cases',number:'id',label:'repair case'},
 });
 function sameClient(client){return {query:(sql,values)=>client.query(sql,values),transaction:(work)=>work(client)};}
 async function record(database,ctx,kind,reference,message=''){
@@ -1525,6 +1527,16 @@ const SPECS=Object.freeze([
       }
       return true;
     }},
+  {name:'repair.approve',description:'Approve the frozen simulation for one existing governed PostgreSQL repair case. Approval alone changes no mapped business record.',
+    record:'repair_case',fields:['recordReference'],permission:permissions.ADMIN,states:['NEEDS_AUTHORITY'],
+    verb:'Approve the simulated repair for',execute:(client,ctx,p)=>repairs.approve(sameClient(client),ctx,p.recordId),
+    verify:async(client,ctx,_r,p)=>state(client,ctx,'repair_cases',p.recordId,['AUTHORIZED'])},
+  {name:'repair.execute',description:'Execute one already-approved native PostgreSQL repair through its registered adapter and verify the repaired invariant before resolving the case.',
+    record:'repair_case',fields:['recordReference'],permission:permissions.ADMIN,
+    states:['AUTHORIZED','FAILED'],verb:'Execute and verify',
+    execute:(client,ctx,p)=>repairs.execute(sameClient(client),ctx,p.recordId),
+    verify:async(client,ctx,r,p)=>Boolean(r.repairCase?.status==='RESOLVED'
+      &&await state(client,ctx,'repair_cases',p.recordId,['RESOLVED']))},
 ]);
 const byName=new Map(SPECS.map((spec)=>[spec.name,spec]));
 if(byName.size!==SPECS.length)throw new TypeError('Duplicate workflow capability.');

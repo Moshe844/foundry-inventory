@@ -18,6 +18,7 @@ const middleware = require('../../src/web/middleware');
 const backups = require('../../src/operations/backup');
 const reconciliation = require('../../src/manager/reconciliation');
 const investigations = require('../../src/manager/investigations');
+const repairs = require('../../src/repairs/service');
 const needsYouInbox = require('../../src/manager/needs-you-inbox');
 const workItems = require('../../src/autopilot/work-items');
 const { makeDatabase, cleanupAll, seedWorkspace, seedAnotherWorkspace,
@@ -78,6 +79,32 @@ test('missing cost evidence cannot remain as a false urgent consistency investig
   assert.equal(investigations.list(db, workspace.workspaceId,
     { statuses: ['OPEN','NEEDS_HUMAN','INCONCLUSIVE'] })
     .some((entry) => entry.trigger === 'business_consistency_inventory-cost-coverage'), false);
+});
+
+test('a stale unprovable inventory-accounting repair clears only after the invariant agrees', () => {
+  const { db } = makeDatabase();
+  const workspace = seedWorkspace(db);
+  automatic.ensure(db, workspace.workspaceId, { actorId: workspace.ownerId });
+  const repair = repairs.openAndAssess(db, workspace.ctx, {
+    kind: 'inventory_accounting_mismatch',
+    symptom: 'Inventory value and Accounting do not agree',
+    failedInvariant: 'Inventory value agrees with accounting',
+    affectedRecords: {},
+  }).repairCase;
+  assert.equal(repair.status, 'INCONCLUSIVE');
+  const waiting = needsYouInbox.inbox(db, workspace.workspaceId)
+    .find((entry) => entry.id === `repair:${repair.id}`);
+  assert.match(waiting.happened, /could not verify that Inventory value agrees with accounting/);
+  const journalsBefore = db.prepare(`SELECT COUNT(*) AS n FROM accounting_journal_entries
+    WHERE workspace_id = ?`).get(workspace.workspaceId).n;
+
+  reconciliation.reconcileUnifiedBusinessState(db, workspace.workspaceId);
+
+  const resolved = repairs.get(db, workspace.workspaceId, repair.id);
+  assert.equal(resolved.status, 'RESOLVED');
+  assert.equal(resolved.attempts, 0, 'retiring a stale diagnosis must not execute an accounting repair');
+  assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM accounting_journal_entries
+    WHERE workspace_id = ?`).get(workspace.workspaceId).n, journalsBefore);
 });
 
 test('Needs You cleans a legacy missing-cost investigation without showing a dead resolution action', () => {

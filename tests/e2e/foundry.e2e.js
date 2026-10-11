@@ -144,6 +144,7 @@ test(
       await page.fill('#businessName', ACCOUNT.workspaceName);
       await page.fill('#email', ACCOUNT.email);
       await page.fill('#password', ACCOUNT.password);
+      await page.fill('#confirmPassword', ACCOUNT.password);
       await page.click('button[type=submit]');
       await page.waitForURL(`${BASE}/onboarding`);
       await page.fill('#inventory-name', ACCOUNT.workspaceName);
@@ -369,8 +370,9 @@ test(
       // A zero-cost opening balance is valid evidence, not an invented mismatch.
       // The lifecycle transfer preserves that valuation and must not manufacture
       // a Needs You exception merely because this fixture supplied no unit cost.
-      assert.match(home, /Everything is under control/i);
-      assert.match(home, /Needs you\s+0\s+nothing is waiting/i);
+      assert.match(home, /1 product · 40 units on hand/i);
+      assert.match(home, /Nothing needs you right now/i);
+      assert.match(home, /Add who supplies Harbour Runner/i);
       assert.doesNotMatch(home, /Transferred stock has no established source cost/i);
       assert.doesNotMatch(home, /Getting StockChief ready/i);
       await shot(page, 'foundry-home');

@@ -217,6 +217,7 @@ test(
       await page.fill('#businessName', CLOTHING.name);
       await page.fill('#email', ACCOUNT.email);
       await page.fill('#password', ACCOUNT.password);
+      await page.fill('#confirmPassword', ACCOUNT.password);
       await page.click('form[action="/register"] button[type=submit]');
       await page.waitForURL(`${BASE}/onboarding`);
       await page.fill('#inventory-name', CLOTHING.name);

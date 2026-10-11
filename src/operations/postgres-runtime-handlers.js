@@ -21,6 +21,7 @@ const monitoring=require('./postgres-monitoring');
 const checkpoints=require('./postgres-checkpoints');
 const commercialNotifications=require('../commercial/notifications');
 const entitlements=require('../entitlements/postgres-service');
+const reconciliation=require('./postgres-reconciliation');
 
 function milliseconds(value){return Number(value || Date.now());}
 function scopedDatabase(client){return {query:(statement,values=[])=>client.query(statement,values),
@@ -311,11 +312,30 @@ async function runtimeSweep(job,client,options={}){
       maxAttempts:3,availableAt:now,now});
     if(scheduled.created)scheduledAutopilotChecks+=1;
   }
+  let scheduledReconciliations=0;
+  for(const workspaceId of await reconciliation.dueWorkspaces(client,at)){
+    const bucket=Math.floor(now/(15*60_000));
+    const scheduled=await jobs.enqueue(scopedDatabase(client),{workspaceId,kind:'system.reconcile-business',
+      idempotencyKey:`business-reconciliation:${workspaceId}:${bucket}`,payload:{},priority:80,
+      maxAttempts:3,availableAt:now,now});
+    if(scheduled.created)scheduledReconciliations+=1;
+  }
+  let scheduledMissionResumes=0;
+  const waitingMissions=(await client.query(`SELECT id,workspace_id,actor_user_id,waiting_condition
+    FROM stockchief_runtime.assistant_capability_plans WHERE status='WAITING_EVENT'
+    ORDER BY updated_at,id LIMIT 100`)).rows;
+  for(const mission of waitingMissions){const condition=mission.waiting_condition||{};
+    const key=`mission-resume:${mission.id}:${condition.kind||'event'}:${condition.id||'unknown'}:${Math.floor(now/60_000)}`;
+    const scheduled=await jobs.enqueue(scopedDatabase(client),{workspaceId:mission.workspace_id,kind:'assistant.resume-mission',
+      idempotencyKey:key,payload:{missionId:mission.id,actorId:mission.actor_user_id},priority:20,
+      maxAttempts:5,availableAt:now,now});
+    if(scheduled.created)scheduledMissionResumes+=1;}
   const stockAlerts=await require('../manager/postgres-stock-threshold-alerts').evaluate(client);
   return {expiredSessions:sessions.rowCount,suspendedSubscriptions:suspendedSubscriptions.rowCount,recoveredImports:staleImports.rowCount,
     ambiguousEmails:uncertainEmails.rowCount,ambiguousProviderEffects:staleProviderEffects.rowCount,
     staleConnectors,recoveredConnectors,scheduledMailboxPolls,
-    scheduledMailboxRenewals,scheduledAlertDeliveries,scheduledAutopilotChecks,stockAlerts,at};
+    scheduledMailboxRenewals,scheduledAlertDeliveries,scheduledAutopilotChecks,scheduledReconciliations,
+    scheduledMissionResumes,stockAlerts,at};
 }
 
 async function autopilotEvaluate(job,client){
@@ -349,7 +369,24 @@ async function providerEffect(job,database,options={},providers=defaultProviders
     provider:options.shippingProviderResolver?options.shippingProviderResolver(effect.provider):shippingProviders.get(effect.provider),
   });
   if(effect.kind==='mail.reply.send')return mail.executeSendEffect(database,job.workspaceId,effectId,{provider:providers.get(effect.provider)});
-  if(effect.kind==='mail.outbound.send')return outboundMail.executeSendEffect(database,job.workspaceId,effectId,{provider:providers.get(effect.provider)});
+  if(effect.kind==='mail.outbound.send'){
+    try{return await outboundMail.executeSendEffect(database,job.workspaceId,effectId,{
+      provider:providers.get(effect.provider),beforeSend:async()=>{
+        const work=(await database.query(`SELECT id,approval_requirement FROM work_items
+          WHERE workspace_id=$1 AND source='postgres_autopilot' AND execution_status='EXECUTING'
+            AND outcome::jsonb->>'effectId'=$2 LIMIT 1`,[job.workspaceId,effectId])).rows[0];
+        if(work?.approval_requirement==='NONE'){
+          const current=await autonomy.getWork(database,job.workspaceId,work.id);
+          const state=await autonomy.getState(database,job.workspaceId);
+          const authority=await autonomy.evaluate(database,job.workspaceId,current.recommendedAction,state);
+          if(authority.decision!=='authorized'||authority.policy?.id!==current.policy_id||
+            authority.policy?.integrityHash!==current.policyEvaluation.policyHash)
+            throw Object.assign(new Error(authority.reason||'Standing supplier authority changed before delivery.'),
+              {code:'supplier_email_authority_revoked',status:403,retryable:false});
+        }
+      }});
+    }finally{await autonomy.reconcileSupplierFollowThrough(database,job.workspaceId);}
+  }
   if(effect.kind==='payment.request.create')return payments.executeRequestEffect(database,job.workspaceId,effectId,{
     provider:options.paymentProviderResolver?options.paymentProviderResolver(effect.provider):paymentProviders.get(effect.provider),
     accountContext:options.paymentAccountContext,
@@ -411,6 +448,9 @@ async function systemEmail(job,database,options={}){
 }
 
 function create(providers=defaultProviders,options={}){return {'system.runtime-sweep':(job,client)=>runtimeSweep(job,client,options),
+  'system.reconcile-business':(job,database)=>reconciliation.run(database,job.workspaceId),
+  'assistant.resume-mission':(job,database)=>require('../assistant/postgres-service').resumeMission(database,
+    {workspaceId:job.workspaceId,actorId:job.payload.actorId},job.payload.missionId),
   'report.generate-delivery':external((job,database)=>
     require('../reports/postgres-scheduling').generateDelivery(database,job)),
   'shipping.quote':external(async(job,database)=>{

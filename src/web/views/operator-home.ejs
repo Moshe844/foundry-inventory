@@ -18,6 +18,7 @@
   var greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
   var firstName = currentUser && currentUser.name ? currentUser.name.split(/\s+/)[0] : '';
   var needsCount = home.needsYou.length;
+  var coverageErrors = home.coverageErrors || [];
   var handlingCount = home.handling.length;
   var isSettingUp = !!home.setup || !!(home.guidance && !home.guidance.operationalReady);
   var paused = home.status.paused || home.status.suspended;
@@ -30,7 +31,9 @@
   // StockChief does not yet know what they hold — is the friendliest possible way
   // to be wrong. Setup gets its own verdict until it is finished.
   var checkStale = !paused && !isSettingUp && home.status.checkStale;
-  var verdict = paused
+  var verdict = coverageErrors.length
+    ? 'Operations review is incomplete'
+    : paused
     ? 'StockChief is paused'
     : needsCount > 0
       ? needsCount + (needsCount === 1 ? ' thing needs you' : ' things need you')
@@ -40,7 +43,9 @@
           ? 'Nothing needs you — as of the last check'
           : 'Everything is under control';
 
-  var subVerdict = paused
+  var subVerdict = coverageErrors.length
+    ? 'StockChief could not check every exception source. Known decisions are shown below, but this is not an all-clear.'
+    : paused
     ? (home.status.suspendedReason || home.status.pausedReason || 'Nothing happens automatically until you resume.')
     : needsCount > 0
       ? (isSettingUp ? 'Finish the setup step below, then settle the decisions StockChief has already found.' : 'Everything else, StockChief is getting on with.')
@@ -60,7 +65,8 @@
 <div data-live-home data-signature="<%= homeSignature %>" hidden></div>
 
 <%# ---------------------------------------------------------- The briefing %>
-<header class="briefing <%= paused ? 'briefing--paused' : needsCount ? 'briefing--attention' : 'briefing--clear' %>">
+<%- include('manager/coverage-warning', { inbox:home }) %>
+<header class="briefing <%= paused ? 'briefing--paused' : coverageErrors.length || needsCount ? 'briefing--attention' : 'briefing--clear' %>">
   <div class="briefing__copy">
     <p class="briefing__greeting"><%= greeting %><%= firstName ? ', ' + firstName : '' %></p>
     <h1 class="briefing__verdict"><%= verdict %></h1>

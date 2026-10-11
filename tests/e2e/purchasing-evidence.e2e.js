@@ -70,8 +70,8 @@ test('supplier discrepancies and documents remain controlled in the browser', { 
   });
 
   await page.goto(`${base}/login`);
-  await page.getByLabel('Email', { exact:true }).fill(workspace.account.email);
-  await page.getByLabel('Password', { exact:true }).fill(workspace.account.password);
+  await page.locator('#email').fill(workspace.account.email);
+  await page.locator('#password').fill(workspace.account.password);
   await submit(page, page.getByRole('button', { name:'Sign in', exact:true }));
 
   await context.test('an over-receipt asks before changing stock and records the approved excess', async () => {
@@ -142,7 +142,7 @@ test('supplier discrepancies and documents remain controlled in the browser', { 
     assert.match(body, /shipment notice from orders@evidence\.test/i);
     assert.match(body, /Matched to this order/i);
     assert.match(body, /expected 2026-10-03/i);
-    assert.match(body, /Nothing is booked in until you report that it arrived/i);
+    assert.match(body, /Nothing is booked in until you say it arrived/i);
     assert.equal(repository.getBalance(store.db, workspace.workspaceId, item.skuId, workspace.store.id), before);
   });
 

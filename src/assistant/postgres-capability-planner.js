@@ -76,6 +76,7 @@ will exist AFTER approval. Reading order quantities or money is how StockChief t
 do not demand a separate "summary" capability. A negative request such as not recording payment is satisfied
 when no proposed step records payment; do not require a no-op step to prove absence.
 The dependsOn indices in proposedSteps are executable sequencing, not merely suggestions.
+The mission executor also sequences all mutations and suspends at WAITING_EVENT when a provider-backed step queues an external effect. It resumes dependent steps only after the durable provider effect is SUCCEEDED; FAILED or AMBIGUOUS blocks them. For communication.send_email, successful provider acceptance requires a nonempty external message ID. There is no separate acceptance-check capability to add. Judge a dependent internal transition against this actual wait-and-verify behavior, not as if it ran immediately after queuing the email.
 Use each contract's own input semantics; never reinterpret a documented per-unit amount as a line total.
 Read steps are non-mutating evidence gathering. A broad or redundant read is not a reason to block an otherwise
 correct mutation plan: its answer is checked against live evidence later, and an irrelevant read can be omitted
@@ -131,7 +132,8 @@ function conciseClarification(value){
 
 function planningCatalogue(catalogue=registry,{compact=false}={}){
   const entries=catalogue.list();
-  const summary=(entry)=>entry.description.slice(0,compact?56:67);
+  const summary=(entry)=>entry.description.slice(0,compact?56:
+    entry.name==='purchase_order.place'?70:63);
   return {
     notation:'n=capability name; d=verified effect; a=allowed input names. All changes need approval.',
     mutations:entries.filter((entry)=>entry.kind==='mutation').map((entry)=>({
@@ -184,6 +186,8 @@ function parseSteps(raw,catalogue=registry){
         return {steps:[],clarifyingQuestion:'The planned action contained an invalid business input. Nothing changed.'};
       args[entry.name]=entry.value.trim().slice(0,2000);
     }
+    if(args.recipientMode&&!['add_supplier','add_customer'].includes(args.recipientMode))
+      delete args.recipientMode;
     const dependsOn=[...new Set(step.dependsOn||[])];
     if(dependsOn.some((position)=>!Number.isInteger(position)||position<0||position>=index))
       return {steps:[],clarifyingQuestion:'The request contained an invalid step dependency. Nothing changed.'};
@@ -208,6 +212,8 @@ function groundedMoneyArguments(steps,message,pending){
   const statedNumbers=[...source.matchAll(/(?:^|[^\w])(?:[$€£]\s*)?(\d[\d,]*(?:\.\d+)?)(?=$|[^\w])/g)]
     .map((match)=>Number(match[1].replaceAll(',',''))).filter(Number.isFinite);
   for(const step of steps){
+    if(step.args.recipientEmail&&!source.toLocaleLowerCase().includes(
+      String(step.args.recipientEmail).toLocaleLowerCase()))delete step.args.recipientEmail;
     if(unitPriceContracts.has(step.contract.name)&&!step.args.orderLines&&quotedUnitPrices.length===1)
       step.args.amount=String(quotedUnitPrices[0]);
     for(const [field,value] of Object.entries(step.args)){
@@ -217,6 +223,31 @@ function groundedMoneyArguments(steps,message,pending){
     if(Number.isFinite(planned)&&!statedNumbers.some((stated)=>Math.abs(stated-planned)<.000001))
       delete step.args[field];
     }
+  }
+  return steps;
+}
+
+function groundedSupplierOrderEmail(steps,message){
+  for(const [index,step] of steps.entries()){
+    if(step.contract.name!=='communication.send_email')continue;
+    const order=[...steps.slice(0,index)].reverse().find((prior)=>
+      prior.contract.name==='purchase_order.create'&&prior.args.supplier&&prior.args.sku&&
+      prior.args.quantity&&prior.args.supplier.toLocaleLowerCase()===
+        String(step.args.recipient||'').toLocaleLowerCase());
+    if(!order)continue;
+    // A user-authored email remains authoritative. A model-invented body is
+    // replaced by a factual order message built from the frozen PO inputs;
+    // in particular there is no claim that an attachment was sent.
+    if(step.args.body&&String(message).includes(step.args.body))continue;
+    const quantity=Number(order.args.quantity);
+    if(!Number.isSafeInteger(quantity)||quantity<1)continue;
+    const price=Number(order.args.amount);
+    const item=`${quantity} × ${order.args.sku}`;
+    const cost=Number.isFinite(price)&&price>0
+      ?` at ${order.args.currency?`${order.args.currency} `:''}${price.toFixed(2)} per unit`:'';
+    step.args.subject=`Purchase order for ${order.args.sku}`;
+    step.args.body=`Please accept our purchase order for ${item}${cost}. `+
+      'Please confirm acceptance and the expected delivery date.';
   }
   return steps;
 }
@@ -383,6 +414,7 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
   }
   if(selected.steps.length){
     groundedMoneyArguments(selected.steps,message,pending);
+    groundedSupplierOrderEmail(selected.steps,message);
     coverExplicitOrderReservation(selected.steps,message,catalogue,pending);
     collapseRepeatedEffects(selected.steps);
     sequenceApprovedMutations(selected.steps);
@@ -403,12 +435,16 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
       const candidate=()=>({message,currentWorkspace:workspace||null,currentPage:page||null,
         priorReport:context.priorReport,
         recentChanges,
+        executionSemantics:{mutationsRunInOrder:true,dependentProviderEffectsWaitForVerifiedSuccess:true,
+          uncertainOrFailedProviderEffectsBlockDependents:true,
+          outboundEmailAcceptanceRequiresExternalMessageId:true},
         pendingRequest:selected.steps.some((step)=>step.continuesPending)&&pending
           ?{originalMessage:pending.originalMessage||null,question:pending.question,
             capability:pending.capability,previousArguments:pending.args,
             awaitingField:pending.awaitingField||null}:null,
         proposedSteps:selected.steps.map((step)=>({capability:step.contract.name,
           description:step.contract.description,arguments:step.args,
+          completionGate:step.contract.completionGate||'verified_business_transaction',
           inputMode:step.contract.fields.length?'typed_arguments':'full_owner_message',
           dependsOn:step.dependsOn,
           continuesPending:step.continuesPending}))});
@@ -423,7 +459,7 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
         }
         if(process.env.STOCKCHIEF_ASK_DIAGNOSTICS==='1')console.warn('[stockchief] Ask fit rejected',
           JSON.stringify({stage:'initial',steps:selected.steps.map((step)=>step.contract.name),
-            reason:String(fit.data.reason||'').slice(0,240)}));
+            reason:String(fit.data.reason||'').slice(0,1000)}));
         const repaired=await completeRepair(provider,catalogue,{...context,rejectedPlan:response.data,
           validationErrors:[{issue:'The proposed capabilities do not address the current message.',
             reason:String(fit.data.reason||'').slice(0,240)}],
@@ -432,6 +468,7 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
         if(!pending)for(const step of selected.steps)step.continuesPending=false;
         if(selected.steps.length){
           groundedMoneyArguments(selected.steps,message,pending);
+          groundedSupplierOrderEmail(selected.steps,message);
           coverExplicitOrderReservation(selected.steps,message,catalogue,pending);
           collapseRepeatedEffects(selected.steps);
           sequenceApprovedMutations(selected.steps);
@@ -461,6 +498,7 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
                 if(retry.steps.length){
                   if(!pending)for(const step of retry.steps)step.continuesPending=false;
                   groundedMoneyArguments(retry.steps,message,pending);
+                  groundedSupplierOrderEmail(retry.steps,message);
                   coverExplicitOrderReservation(retry.steps,message,catalogue,pending);
                   collapseRepeatedEffects(retry.steps);
                   sequenceApprovedMutations(retry.steps);
@@ -477,7 +515,7 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
             }
             if(process.env.STOCKCHIEF_ASK_DIAGNOSTICS==='1')console.warn('[stockchief] Ask fit rejected',
               JSON.stringify({stage:'repaired',steps:selected.steps.map((step)=>step.contract.name),
-                reason:String(fit.data.reason||'').slice(0,240)}));
+                reason:String(fit.data.reason||'').slice(0,1000)}));
             return {steps:[],
             clarifyingQuestion:'I could not confidently match that request to the right business action. Nothing changed.'};
           }
@@ -500,4 +538,4 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
 }
 
 module.exports={schemaFor,systemFor,planningCatalogue,parseSteps,plan,
-  groundedMoneyArguments,coverExplicitOrderReservation,collapseRepeatedEffects,sequenceApprovedMutations};
+  groundedMoneyArguments,groundedSupplierOrderEmail,coverExplicitOrderReservation,collapseRepeatedEffects,sequenceApprovedMutations};

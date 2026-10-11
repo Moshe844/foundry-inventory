@@ -8,6 +8,17 @@
   </div>
 </div>
 
+<% if (typeof missionMetrics !== 'undefined' && missionMetrics && missionMetrics.missions) { %>
+  <section class="card section" aria-labelledby="mission-outcomes"><div class="card-head"><div><h2 id="mission-outcomes">Operating outcomes</h2><p class="muted">Measured from durable missions, not registered-tool counts.</p></div></div>
+    <div class="card-body"><div class="rm-grid rm-grid--4">
+      <div><span class="muted">Verified completion</span><strong style="display:block;font-size:1.4rem"><%= missionMetrics.completionRate %>%</strong><small><%= missionMetrics.completed %> of <%= missionMetrics.missions %> outcomes</small></div>
+      <div><span class="muted">Human interactions</span><strong style="display:block;font-size:1.4rem"><%= missionMetrics.humanInteractionsPerCompleted === null ? '—' : missionMetrics.humanInteractionsPerCompleted %></strong><small>per completed outcome</small></div>
+      <div><span class="muted">Automatic steps</span><strong style="display:block;font-size:1.4rem"><%= missionMetrics.automatic_steps %></strong><small>after bounded authority</small></div>
+      <div><span class="muted">Wait and resume</span><strong style="display:block;font-size:1.4rem"><%= missionMetrics.resumptions %></strong><small><%= missionMetrics.external_waits %> external waits</small></div>
+    </div></div>
+  </section>
+<% } %>
+
 <div class="card section">
   <div class="card-body">
     <%# This is a new, general Tell StockChief request. Send it through the same

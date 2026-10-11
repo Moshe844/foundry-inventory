@@ -209,9 +209,9 @@ action('catalog.set_purchase_cost','Change the recorded current per-unit purchas
   ['sku','amount','currency'],permissions.ADMIN,'set_purchase_cost');
 action('contact.create','Add a new supplier or customer business contact to this inventory. This creates only the contact record; it does not send email, order goods, or move money.',
   ['recipient','recipientKind','recipientEmail','phone','notes'],permissions.OPERATE,'create_contact');
-action('communication.send_email','Prepare a business email for review; sending requires a connected verified mailbox and explicit approval.',
+action('communication.send_email','After approval, send a business email through a connected mailbox. A dependent mission step waits for the provider effect to return a verifiable external message ID; failed or ambiguous sends block it.',
   ['recipient','recipientKind','recipientEmail','recipientMode','subject','body','mailbox'],permissions.OPERATE,'send_email',
-  {additionalCommercialCapabilities:['connection.email']});
+  {additionalCommercialCapabilities:['connection.email'],completionGate:'provider_effect_succeeded'});
 action('sales_order.create','Prepare ONE draft customer order without fulfillment or payment. For several products use orderLines JSON, preserving every SKU, quantity and price PER UNIT; for one product use sku, quantity and amount. Do not create separate orders for separate lines.',
   ['customer','sku','skuScope','quantity','orderLines','deliveryMethod','shipToAddress','location','orderDate','neededBy','amount','currency','reference'],
   permissions.MANAGE_SALES,'create_sales_order',{allowUnknownEntities:['customer'],

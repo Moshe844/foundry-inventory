@@ -280,18 +280,31 @@ function createPostgresAskRouter(database,options={}){
       createdAt:proposal.created_at,completedAt:proposal.executed_at||proposal.cancelled_at||null,unverified:false});
     return res.page('actions/list',{title:'StockChief actions',nav:'actions',pending:rows.filter((row)=>row.status==='PENDING').map(present),
       recent:rows.filter((row)=>row.status!=='PENDING').map(present),canOperate:permissions.can(req.user,permissions.OPERATE),
+      missionMetrics:await require('../../assistant/postgres-capability-plans').metricsSummary(database,req.ctx.workspaceId),
       aiConfigured:Boolean(options.provider||config.ai.configured),instruction:String(req.query.q||'').slice(0,500),
       examples:await askExamples(database,req.ctx),question:null,unsupported:null,assistantGoal:null,where:null,
       blocked:null,physicalEventId:null,choices:null,continuationId:null,questionTone:null});
   }));
   router.get('/actions/:id',asyncRoute(async(req,res)=>{
     const proposal=await assistant.getProposal(database,req.ctx.workspaceId,req.params.id);
+    const mission=await require('../../assistant/postgres-capability-plans').missionForProposal(
+      database,req.ctx.workspaceId,req.ctx.actorId,proposal.id);
     const resuming=(await database.query(`SELECT 1 FROM stockchief_runtime.assistant_capability_plans
       WHERE workspace_id=$1 AND actor_user_id=$2 AND status='ADVANCING'
         AND steps @> $3::jsonb LIMIT 1`,[req.ctx.workspaceId,req.ctx.actorId,
       JSON.stringify([{proposalId:proposal.id}])])).rows.length>0;
-    return res.page('attention/postgres-proposal',{title:'Review prepared change',nav:'ask',proposal,
+    return res.page('attention/postgres-proposal',{title:mission?'Review operating mission':'Review prepared change',nav:'ask',proposal,mission,
       resumeAvailable:proposal.status==='EXECUTED'&&resuming});
+  }));
+  router.post('/actions/:id/approve-mission',asyncRoute(async(req,res)=>{
+    await entitlements.assertCapability(database,commercialScope(req),'ask.prepare_actions');
+    const result=await assistant.executeMission(database,req.ctx,req.params.id);
+    if(result.continuationError)req.flash('error',
+      'The first verified step completed, but the mission stopped safely before further work. Review the recorded reason.');
+    else req.flash('success',result.continued?.some((part)=>part.status==='PREPARED')
+      ?'Mission approved. StockChief completed every currently authorized step and is waiting only where evidence is required.'
+      :'Mission approved and completed without another approval.');
+    return res.redirect(303,'/ask#latest');
   }));
   router.post('/actions/:id/approve',asyncRoute(async(req,res)=>{
     await entitlements.assertCapability(database,commercialScope(req),'ask.prepare_actions');

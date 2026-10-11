@@ -226,10 +226,10 @@ test('Mission 8 end to end: StockChief runs the operation, investigates, and sto
   await t.test('0. the home page is what StockChief is doing, not a table of counts', async () => {
     await signIn(page);
     const text = await page.locator('body').innerText();
-    assert.match(text, /StockChief is ready/i);
-    assert.match(text, /Ready for the first operations check\. No all-clear has been issued yet\./i);
+    assert.match(text, /Your inventory is here\. Let’s do the first check\./i);
+    assert.match(text, /No business check yet/i);
     assert.match(text, /Do this next/i);
-    assert.match(text, /The business/i);
+    assert.match(text, /Inventory now/i);
     await shot(page, 'operator-home');
   });
 
@@ -334,7 +334,7 @@ test('Mission 8 end to end: StockChief runs the operation, investigates, and sto
   await t.test('8. the history page says what happened, in words', async () => {
     await page.goto(`${BASE}/autopilot/history`);
     const text = await page.locator('body').innerText();
-    assert.match(text, /Completed automatically/);
+    assert.match(text, /Handled automatically/);
     assert.match(text, /Prepared transfer for 12 Kids Tights/);
     assert.match(text, /TR-\d+ is ready for warehouse execution/);
     assert.match(text, /stock stays at the source until dispatch/i);
@@ -368,11 +368,8 @@ test('Mission 8 end to end: StockChief runs the operation, investigates, and sto
 
   await t.test('10. the kill switch stops everything, immediately', async () => {
     await page.goto(`${BASE}/`);
-    await page.click('form[action="/autopilot/pause"] button[type=submit]');
-    await Promise.all([
-      page.waitForURL(`${BASE}/`),
-      page.click('[data-ask-yes]'),
-    ]);
+    await Promise.all([page.waitForNavigation(),
+      page.click('form[action="/autopilot/pause"] button[type=submit]')]);
 
     const text = await page.locator('body').innerText();
     assert.match(text, /StockChief is paused/);

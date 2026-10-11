@@ -1730,12 +1730,13 @@ async function continueApprovedPlans(database,ctx,proposalId){
   const provider=fundedAskProvider(database,ctx,rawProvider,`plan:${proposalId}`);
   return require('./postgres-capability-plans').resume(database,ctx,proposalId,{
     service:capabilityService(),provider,rawProvider,
+    executeAuthorizedProposal:(id,missionId)=>executeProposalCore(database,ctx,id,{missionPlanId:missionId}),
     record:(plan,index,outcome)=>recordCapabilityOutcome(database,ctx,plan.source_message,outcome,
       {batchId:plan.batch_id,planId:plan.id,index,count:plan.steps.length}),
   });
 }
 
-async function executeProposal(database,ctx,id) {
+async function executeProposalCore(database,ctx,id,{missionPlanId=null}={}){
   await entitlements.assertCapability(database,await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId),'ask.prepare_actions');
   const committed=await database.transaction(async(client)=>{
     const proposal=await getProposal(database,ctx.workspaceId,id,true,client);
@@ -1744,6 +1745,16 @@ async function executeProposal(database,ctx,id) {
       'proposal_not_pending');
     const contract=require('./postgres-capability-registry').registry.get(proposal.action_type);
     if(!contract||contract.kind!=='mutation')throw new InvariantError('That prepared action is not registered.','proposal_action_unknown');
+    if(missionPlanId){const plan=(await client.query(`SELECT * FROM stockchief_runtime.assistant_capability_plans
+        WHERE workspace_id=$1 AND id=$2 FOR UPDATE`,[ctx.workspaceId,missionPlanId])).rows[0];
+      if(!plan||plan.actor_user_id!==ctx.actorId||plan.authorization_mode!=='MISSION'
+        ||plan.approval_status!=='APPROVED')throw new InvariantError(
+        'This mission no longer has authority for automatic execution.','mission_authority_missing');
+      const step=(plan.steps||[]).find((entry)=>entry.proposalId===id);
+      if(!step||step.capability!==proposal.action_type)throw new InvariantError(
+        'The prepared action is outside the frozen mission plan.','mission_action_mismatch');
+      if(plan.plan_hash!==require('./postgres-capability-plans').planHash(plan.approved_steps||[]))
+        throw new InvariantError('The frozen mission plan failed its integrity check.','mission_plan_changed');}
     const actor=(await client.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',
       [ctx.workspaceId,ctx.actorId])).rows[0];
     require('../actions/permissions').assertCan(actor,contract.permission,contract.name);
@@ -1764,6 +1775,13 @@ async function executeProposal(database,ctx,id) {
     if(!changed.rows.length)throw new InvariantError('That prepared change was updated by another request.','proposal_changed');
     return {...changed.rows[0],replayed:false};
   },{isolation:'SERIALIZABLE',retrySafe:true});
+  await require('./postgres-business-memory').rememberProposal(database,ctx,committed).catch((error)=>
+    console.warn('[stockchief] verified outcome memory failed',error.code||error.message));
+  return committed;
+}
+
+async function executeProposal(database,ctx,id) {
+  const committed=await executeProposalCore(database,ctx,id);
   try{return {...committed,continued:await continueApprovedPlans(database,ctx,id)};}
   catch(error){
     console.warn('[stockchief] Ask plan continuation failed',JSON.stringify({
@@ -1772,6 +1790,25 @@ async function executeProposal(database,ctx,id) {
     }));
     return {...committed,continuationError:error.message};
   }
+}
+
+async function executeMission(database,ctx,proposalId){
+  const plan=await require('./postgres-capability-plans').authorize(database,ctx,proposalId);
+  const committed=await executeProposalCore(database,ctx,proposalId,{missionPlanId:plan.id});
+  try{return {...committed,missionId:plan.id,continued:await continueApprovedPlans(database,ctx,proposalId)};}
+  catch(error){console.warn('[stockchief] mission continuation failed',JSON.stringify({missionId:plan.id,
+    code:error.code||error.name||'unknown'}));return {...committed,missionId:plan.id,continuationError:error.message};}
+}
+
+async function resumeMission(database,ctx,missionId){
+  const rawProvider=config.ai.configured?createProviderUnobserved(config.ai.provider,config.ai.tier('fast')):null;
+  const provider=fundedAskProvider(database,ctx,rawProvider,`mission:${missionId}`);
+  return require('./postgres-capability-plans').resume(database,ctx,null,{missionId,
+    service:capabilityService(),provider,rawProvider,
+    executeAuthorizedProposal:(id,planId)=>executeProposalCore(database,ctx,id,{missionPlanId:planId}),
+    record:(plan,index,outcome)=>recordCapabilityOutcome(database,ctx,plan.source_message,outcome,
+      {batchId:plan.batch_id,planId:plan.id,index,count:plan.steps.length}),
+  });
 }
 
 async function cancelProposal(database,ctx,id) {
@@ -1784,5 +1821,5 @@ async function cancelProposal(database,ctx,id) {
 }
 
 module.exports={lookup,prepareAction,ask:askCapabilities,listInteractions,
-  continueEmail,reviseEmailProposal,getProposal,executeProposal,cancelProposal,
+  continueEmail,reviseEmailProposal,getProposal,executeProposal,executeMission,resumeMission,cancelProposal,
   fundedAskProvider,summarizeCustomerOrders};

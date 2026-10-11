@@ -182,8 +182,8 @@ test('one complete business day stays linked from customer demand through books 
     });
 
     await page.goto(`${base}/login`);
-    await page.getByLabel('Email', { exact:true }).fill(workspace.account.email);
-    await page.getByLabel('Password', { exact:true }).fill(workspace.account.password);
+    await page.locator('#email').fill(workspace.account.email);
+    await page.locator('#password').fill(workspace.account.password);
     await submit(page, page.getByRole('button', { name:'Sign in', exact:true }));
 
     let purchaseOrder;

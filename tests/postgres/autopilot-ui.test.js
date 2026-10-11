@@ -94,27 +94,26 @@ test('real Chromium proves native PostgreSQL transfer-versus-buy planning, appro
 
     await page.goto(`${base}/autopilot`);const authority=page.locator('form[action="/autopilot/routine-authority"]');
     await authority.getByLabel('Balance stock between locations').check();
-    await authority.getByLabel('Approve routine replenishment').check();
+    await authority.getByLabel('Complete routine replenishment').check();
     await authority.getByLabel('Most units in one automatic transfer').fill('25');
     await authority.getByLabel('Most per purchase order ($)').fill('100');
     await authority.getByLabel('Most across seven days ($)').fill('500');
     await authority.getByLabel('Routine Supply').check();
     await Promise.all([page.waitForNavigation(),authority.getByRole('button',{name:'Confirm these limits'}).click()]);
     assert.equal(await page.getByLabel('Handle routine work').isChecked(),true);
-    assert.equal(await page.getByLabel('Approve routine replenishment').isChecked(),true);
+    assert.equal(await page.getByLabel('Complete routine replenishment').isChecked(),true);
     grants=(await database.query(`SELECT capability,granted FROM autopilot_capabilities
       WHERE workspace_id=$1 AND granted=1 ORDER BY capability`,[ctx.workspaceId])).rows;
     assert.deepEqual(grants.map((row)=>row.capability),['inventory_transfers','payment_requests','replenishment']);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Check the operation now'}).click()]);
-    assert.match(await page.locator('main').innerText(),/Purchase Widget[\s\S]*completed/);
-    const order=(await database.query(`SELECT po.status,pol.quantity_units,pol.quantity_purchase_units,pol.units_per_purchase_unit,
-      po.source FROM purchase_orders po JOIN purchase_order_lines pol ON pol.purchase_order_id=po.id
-      WHERE po.workspace_id=$1 AND po.source='foundry_recommendation'`,[ctx.workspaceId])).rows[0];
-    assert.deepEqual({status:order.status,units:Number(order.quantity_units),purchaseUnits:Number(order.quantity_purchase_units),
-      pack:Number(order.units_per_purchase_unit),source:order.source},
-    {status:'APPROVED',units:24,purchaseUnits:2,pack:12,source:'foundry_recommendation'});
+    assert.match(await page.locator('main').innerText(),/Purchase Widget[\s\S]*waiting for approval/);
+    assert.equal((await database.query(`SELECT COUNT(*) AS count FROM purchase_orders
+      WHERE workspace_id=$1 AND source='foundry_recommendation'`,[ctx.workspaceId])).rows[0].count,'0',
+    'automatic purchasing does not create a half-finished PO without separate supplier-email authority');
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM work_items WHERE workspace_id=$1
-      AND source='postgres_autopilot' AND execution_status='COMPLETED'`,[ctx.workspaceId])).rows[0].count,'2');
+      AND source='postgres_autopilot' AND execution_status='COMPLETED'`,[ctx.workspaceId])).rows[0].count,'1');
+    assert.equal((await database.query(`SELECT COUNT(*) AS count FROM work_items WHERE workspace_id=$1
+      AND source='postgres_autopilot' AND execution_status='WAITING_FOR_APPROVAL'`,[ctx.workspaceId])).rows[0].count,'1');
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM inventory_transfers WHERE workspace_id=$1`,
       [ctx.workspaceId])).rows[0].count,'1');
     assert.deepEqual(errors,[]);

@@ -193,7 +193,15 @@ function reconcileUnifiedBusinessState(db, workspaceId) {
           idempotencyKey: `repair:inventory-accounting:${result.id}`,
         });
       }
-      else investigations.resolveByTrigger(db, workspaceId, `business_consistency_${check.key}`,
+      if (check.passed && check.key === 'inventory-value') {
+        for (const repairCase of repairs.list(db, workspaceId, { statuses: repairs.ACTIVE })) {
+          if (repairCase.kind === 'inventory_accounting_mismatch'
+            && !repairCase.proposedRepair.eventId)
+            repairs.verify(db, workspaceId, repairCase.id);
+        }
+      }
+      if (check.passed) investigations.resolveByTrigger(db, workspaceId,
+        `business_consistency_${check.key}`,
         check.complete === false
           ? 'StockChief reclassified this as missing financial evidence, not a contradiction in the business records.'
           : 'The related records now agree.');

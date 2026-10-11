@@ -7,6 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { fork } = require('node:child_process');
 const { chromium } = require('playwright');
+const { installBrowserBusinessClock } = require('../helpers/browser-business-clock');
 const root = path.resolve(__dirname,'../..');
 const screenshots = path.join(root,'artifacts/screenshots/weekly-operations');
 
@@ -33,14 +34,19 @@ test('weekly purchasing decisions and 150-order allocation use complete real bus
   });
   fs.mkdirSync(screenshots,{recursive:true});
   browser = await chromium.launch({headless:process.env.UI_VISIBLE!=='1'});
-  const page = await browser.newPage({viewport:{width:1400,height:1000}});
+  const browserContext = await browser.newContext({viewport:{width:1400,height:1000}});
+  const browserTime = await installBrowserBusinessClock(browserContext,'2026-09-18T12:00:00.000Z');
+  const page = await browserContext.newPage();
   const base = `http://127.0.0.1:${state.port}`;
   const errors = [];
   page.on('pageerror',(error) => errors.push(error.message));
   await page.goto(`${base}/login`);
-  await page.getByLabel('Email',{exact:true}).fill(state.email);
+  await browserTime.settle();
+  await page.locator('#email').fill(state.email);
   await page.locator('input[name="password"]').fill(state.password);
   await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Sign in',exact:true}).click()]);
+  await browserTime.settle();
+  await page.goto(`${base}/`);
 
   await context.test('the supplier screen includes more than twelve orders, overdue non-delivery and late full completion',async () => {
     await page.goto(`${base}/suppliers/${state.supplierId}`);
@@ -55,8 +61,8 @@ test('weekly purchasing decisions and 150-order allocation use complete real bus
 
   await context.test('Ask honors six actual calendar months and distinguishes completion from first delivery',async () => {
     await page.goto(`${base}/ask`);
-    await page.getByLabel('Tell StockChief what happened, or ask it something',{exact:true}).fill('Which supplier is most reliable in the last six months?');
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Send',exact:true}).click()]);
+    await page.locator('#ask-question').fill('Which supplier is most reliable in the last six months?');
+    await Promise.all([page.waitForNavigation(),page.locator('[data-ask-submit]').click()]);
     const body = await page.locator('main').innerText();
     assert.match(body,/2026-03-18 through 2026-09-18/);
     assert.match(body,/15 committed orders, 13 complete and 1 overdue unfinished/);
@@ -95,8 +101,8 @@ test('weekly purchasing decisions and 150-order allocation use complete real bus
     ['supplier spend',[/2026-04-01 through 2026-06-30/,/purchases from suppliers are \$91\.00/,/cash payments are \$55\.00/]],
   ]) await context.test(`Ask ${report} honors the calendar quarter and includes records beyond the display limit`,async () => {
     await page.goto(`${base}/ask`);
-    await page.getByLabel('Tell StockChief what happened, or ask it something',{exact:true}).fill(`Show ${report} for last calendar quarter.`);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Send',exact:true}).click()]);
+    await page.locator('#ask-question').fill(`Show ${report} for last calendar quarter.`);
+    await Promise.all([page.waitForNavigation(),page.locator('[data-ask-submit]').click()]);
     const body = await page.locator('main').innerText();
     for (const pattern of expected) assert.match(body,pattern);
     if (report==='profit and loss') {
@@ -107,8 +113,8 @@ test('weekly purchasing decisions and 150-order allocation use complete real bus
   });
   await context.test('a preparation request keeps an order draft even when existing policy permits approval',async () => {
     await page.goto(`${base}/ask`);
-    await page.getByLabel('Tell StockChief what happened, or ask it something',{exact:true}).fill('Order what we need. Prepare only.');
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Send',exact:true}).click()]);
+    await page.locator('#ask-question').fill('Order what we need. Prepare only.');
+    await Promise.all([page.waitForNavigation(),page.locator('[data-ask-submit]').click()]);
     assert.match(await page.locator('main').innerText(),/did not approve orders, send messages or move stock/);
     await page.goto(`${base}/purchasing/orders`);
     const draft = page.locator('.rm-told__row').filter({hasText:'Practical Cases'});
@@ -216,11 +222,7 @@ test('weekly purchasing decisions and 150-order allocation use complete real bus
     assert.equal(await page.getByLabel('Corrected quantity — Allocation Acceptance Stock',{exact:true}).inputValue(),'60');
   });
   await context.test('corrections cannot override matching rules or approve stale evidence',async () => {
-    const stale = await browser.newPage();
-    await stale.goto(`${base}/login`);
-    await stale.getByLabel('Email',{exact:true}).fill(state.email);
-    await stale.locator('input[name="password"]').fill(state.password);
-    await Promise.all([stale.waitForNavigation(),stale.getByRole('button',{name:'Sign in',exact:true}).click()]);
+    const stale = await page.context().newPage();
     await stale.goto(`${base}${reviewHref}`);
     await page.getByLabel('Corrected quantity — Allocation Acceptance Stock',{exact:true}).fill('59');
     await page.getByLabel('Evidence and reason for this review',{exact:true}).fill('Supplier correction still bills nine units above the approved order.');
@@ -286,7 +288,8 @@ test('weekly purchasing decisions and 150-order allocation use complete real bus
     child.send({type:'projection-failure',enabled:true});
     await changed;
     await page.goto(`${base}/needs-you`);
-    assert.match(await page.getByRole('alert').innerText(),/Operations review is incomplete/);
+    assert.match(await page.getByRole('alert').filter({hasText:'Operations review is incomplete'}).innerText(),
+      /Operations review is incomplete/);
     await page.goto(`${base}/`);
     assert.match(await page.getByRole('heading',{level:1}).innerText(),/Operations review is incomplete/);
     await page.screenshot({path:path.join(screenshots,'incomplete-review-not-all-clear.png'),fullPage:true});

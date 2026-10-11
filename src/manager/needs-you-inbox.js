@@ -178,7 +178,7 @@ function fromRepairCases(db, workspaceId) {
     id: `repair:${repairCase.id}`,
     kind: 'repair',
     title: repairCase.symptom,
-    happened: `StockChief found that ${repairCase.failed_invariant}.`,
+    happened: `StockChief could not verify that ${repairCase.failed_invariant}.`,
     why: repairCase.status === 'FAILED'
       ? 'The domain repair ran or resumed, but its post-repair checks did not all pass. StockChief has not called it fixed.'
       : repairCase.status === 'INCONCLUSIVE'
