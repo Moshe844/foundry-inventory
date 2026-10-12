@@ -29,6 +29,26 @@
 .rm-turn__said { font-size: 15.5px; line-height: 1.6; margin: 0; color: var(--ink); }
 .rm-turn__said + .rm-turn__said { margin-top: 8px; }
 
+/* Real agent progress stays readable as one conversation response. */
+.rm-agent { display: block; min-width: 0; padding: 16px 18px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); margin: 0 0 16px; }
+.rm-agent__header { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; }
+.rm-agent__header form { margin: 0 0 0 auto; }
+.rm-agent__phase { display: flex; align-items: center; gap: 9px; flex: 1 1 220px; margin: 0; font-size: 14px; font-weight: 650; color: var(--ink); }
+.rm-agent__dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--brand-2); }
+.rm-agent__elapsed { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.rm-agent__hint { margin: 8px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--muted); }
+.rm-agent__hint:empty { display: none; }
+.rm-agent__answer { white-space: pre-line; margin: 12px 0 0; font-size: 15px; line-height: 1.6; }
+.rm-agent__details { margin-top: 10px; font-size: 12px; color: var(--muted); }
+.rm-agent__details ol { margin: 10px 0 0; padding-left: 20px; line-height: 1.7; }
+.rm-agent__details summary { cursor: pointer; }
+.rm-agent__approval { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
+.rm-agent__approval p { margin: 0 0 8px; line-height: 1.5; }
+.rm-agent__approval form { display: flex; flex-wrap: wrap; gap: 8px; }
+.rm-agent-results { margin: 0 0 16px; }
+.rm-agent-results > summary { font-size: 12px; color: var(--muted); cursor: pointer; }
+.rm-turn--latest { scroll-margin-top: 24px; }
+
 .rm-rule {
   border: 1px solid var(--brand-line);
   background: linear-gradient(180deg, var(--brand-wash) 0%, #fff 120%);

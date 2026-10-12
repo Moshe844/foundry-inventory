@@ -101,7 +101,6 @@
   </div>
   <% } %>
 
-  <% if(locals.adaptiveGoal){ %><%- include('../partials/adaptive-goal',{goal:locals.adaptiveGoal}) %><% } %>
   <% if (!started && !question) { %>
     <header class="rm-chat__intro">
       <span class="rm-chat__mark" aria-hidden="true"><%- helpers.icon('spark', { size: 18 }) %></span>
@@ -142,7 +141,6 @@
      * and the page does not have to be scrolled back up to find it.
      */
     var latestIndex = transcript.length - 1;
-    transcript.forEach(function (t, i) { if (t.goals.some(function (g) { return g.id === currentGoalId; })) latestIndex = i; });
     var earlier = latestIndex;
   %>
   <% transcript.forEach(function (turn, turnIndex) { %>
@@ -155,14 +153,16 @@
       </div>
     </details>
     <% } %>
-    <div class="rm-turn rm-turn--you<%= turn.goals.some(function (g) { return g.id === currentGoalId; }) ? '' : ' rm-turn--past' %><%= turnIndex === latestIndex ? ' rm-turn--latest' : '' %>">
+    <div <%- turnIndex === latestIndex ? 'id="latest"' : '' %> class="rm-turn rm-turn--you<%= turnIndex === latestIndex ? ' rm-turn--latest' : ' rm-turn--past' %>">
       <p class="rm-turn__who">You<%
         /* Several parts: how many are settled, so a half-done message never reads as done. */
-        if (turn.goals.length > 1) { var waitingStates = turn.coveragePendingStatuses || ['pending']; var settledParts = turn.goals.filter(function (g) { return !waitingStates.includes(g.status); }).length; %> · <span class="rm-turn__coverage<%= settledParts === turn.goals.length ? '' : ' rm-turn__coverage--open' %>"><%= settledParts === turn.goals.length ? 'all ' + turn.goals.length + ' parts settled' : settledParts + ' of ' + turn.goals.length + ' parts settled' %></span><% } %></p>
+        if (!turn.agentGoal && turn.goals.length > 1) { var waitingStates = turn.coveragePendingStatuses || ['pending']; var settledParts = turn.goals.filter(function (g) { return !waitingStates.includes(g.status); }).length; %> · <span class="rm-turn__coverage<%= settledParts === turn.goals.length ? '' : ' rm-turn__coverage--open' %>"><%= settledParts === turn.goals.length ? 'all ' + turn.goals.length + ' parts settled' : settledParts + ' of ' + turn.goals.length + ' parts settled' %></span><% } %></p>
       <% if (turn.message.length > 400) { %>
         <details class="rm-turn__said"><summary><%= turn.message.slice(0, 160) %>…</summary><p style="white-space:pre-line;margin:8px 0 0"><%= turn.message %></p></details>
       <% } else { %><p class="rm-turn__said"><%= turn.message %></p><% } %>
     </div>
+    <% if(turn.agentGoal){ %><%- include('../partials/adaptive-goal',{goal:turn.agentGoal,codexApprovals:turn.agentGoal.approvalCards||[],isLatest:turnIndex===latestIndex}) %><% } %>
+    <% if(turn.agentGoal&&turn.goals.length){ %><details class="rm-agent-results"><summary>Recorded steps · <%= turn.goals.length %></summary><% } %>
     <% turn.goals.forEach(function (goal) { %>
       <% if (goal.id === currentGoalId && error) { %>
     <div class="rm-turn rm-turn--foundry">
@@ -407,6 +407,7 @@
     </div>
       <% } %>
     <% }) %>
+    <% if(turn.agentGoal&&turn.goals.length){ %></details><% } %>
   <% }) %>
 
   <%
@@ -475,4 +476,5 @@
   <% } %>
 
 </div>
+<% if(locals.adaptiveGoal){ %><script src="/adaptive-goal.js" defer></script><% } %>
 <% if (currentUser && ['owner','manager','staff'].includes(currentUser.role)) { %><p class="rm-disclose"><a href="/autopilot/misses">Report a wrong answer or missing requirement</a></p><% } %>

@@ -57,4 +57,7 @@ async function enqueue(db,goal){return require('../operations/postgres-job-queue
 async function latest(db,ctx,startedAt=null){return (await db.query(`SELECT * FROM ${TABLE}
  WHERE workspace_id=$1 AND actor_user_id=$2 AND ($3::timestamptz IS NULL OR created_at>$3)
  ORDER BY created_at DESC LIMIT 1`,[ctx.workspaceId,ctx.actorId,startedAt])).rows[0]||null;}
-module.exports={enabled,get,create,claim,save,cancel,reply,enqueue,latest};
+async function recent(db,ctx,startedAt=null){return (await db.query(`SELECT * FROM ${TABLE}
+ WHERE workspace_id=$1 AND actor_user_id=$2 AND ($3::timestamptz IS NULL OR created_at>$3)
+ ORDER BY created_at DESC,id DESC LIMIT 12`,[ctx.workspaceId,ctx.actorId,startedAt])).rows.reverse();}
+module.exports={enabled,get,create,claim,save,cancel,reply,enqueue,latest,recent};

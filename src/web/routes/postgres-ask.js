@@ -74,7 +74,7 @@ function transcriptFor(interactions,proposals=new Map()){
     let batch=batches.get(batchId);
     if(!batch){batch={id:`turn-${batchId}`,conversationId:'postgres',channel:'ask',message:turn.intent.sourceMessage||turn.message,
       coveragePendingStatuses:['pending','needs_approval','clarify'],
-      understanding:{intent:'multi_request'},createdAt:turn.created_at,goals:[],referents:[]};batches.set(batchId,batch);transcript.push(batch);}
+      understanding:{intent:'multi_request',batchId},createdAt:turn.created_at,goals:[],referents:[]};batches.set(batchId,batch);transcript.push(batch);}
     batch.goals.push(goalFor(turn,index,Math.max(0,Number(turn.intent.requestIndex||1)-1),
       proposals.get(turn.intent?.proposalId)));
     batch.goals.sort((left,right)=>left.position-right.position);
@@ -179,7 +179,7 @@ function createPostgresAskRouter(database,options={}){
     if(isPilot)await pilot.access(database,req.ctx);
     const events=isPilot?(await database.query(`SELECT sequence,kind,detail,created_at FROM stockchief_runtime.assistant_goal_events
       WHERE goal_id=$1 AND kind IN ('agent_activity','approval_ready') ORDER BY sequence DESC LIMIT 20`,[goal.id])).rows:[];
-    return res.json({id:goal.id,status:goal.status,answer:goal.answer,turns:goal.turns,tools:goal.tool_calls,events});
+    return res.json({id:goal.id,status:goal.status,answer:goal.answer,createdAt:goal.created_at,updatedAt:goal.updated_at,turns:goal.turns,tools:goal.tool_calls,events});
   }));
   router.post('/ask/goals/:id/reply',asyncRoute(async(req,res)=>{
     const existing=await goalStore.get(database,req.ctx,req.params.id);
@@ -234,7 +234,7 @@ function createPostgresAskRouter(database,options={}){
         }
         proposal.deliveryStatus=deliveryStatus;
     }
-    const transcript=transcriptFor(visible,proposals);const rules=await instructionLists(database,req.ctx.workspaceId);
+    let transcript=transcriptFor(visible,proposals);const rules=await instructionLists(database,req.ctx.workspaceId);
     const protectedNames=(await database.query(`SELECT name FROM suppliers WHERE workspace_id=$1
         AND name ~ '[0-9]{4,}'
       UNION SELECT name FROM customers WHERE workspace_id=$1
@@ -245,12 +245,13 @@ function createPostgresAskRouter(database,options={}){
         AND name ~ '[0-9]{4,}'`,
     [req.ctx.workspaceId])).rows.map((row)=>row.name);
     const pilotView=options.agentInspection?null:await pilot.view(database,req.ctx);
-    const activeGoal=goalStore.enabled(req.ctx)||pilotView?await goalStore.latest(database,req.ctx,startedAt):null;
-    const pilotGoal=activeGoal?.checkpoint.runtime==='codex-staging'?activeGoal:null;
-    const approvalCards=pilotGoal&&!['COMPLETED','CANCELLED','BLOCKED'].includes(pilotGoal.status)
-      ?(await pilot.inbox(database,req.ctx,pilotGoal.id)).approvals:[];
+    const recentGoals=goalStore.enabled(req.ctx)||pilotView?await goalStore.recent(database,req.ctx,startedAt):[];
+    const activeGoal=recentGoals.at(-1)||null;
+    for(const goal of recentGoals)goal.approvalCards=goal.checkpoint.runtime==='codex-staging'&&!['COMPLETED','CANCELLED','BLOCKED'].includes(goal.status)
+      ?(await pilot.inbox(database,req.ctx,goal.id)).approvals:[];
+    transcript=require('../../assistant/goal-transcript').mergeGoalTranscript(transcript,recentGoals);
     return res.page('attention/ask',{title:'Ask StockChief',nav:'ask',room:true,suppressBack:true,postgresAsk:true,...rules,
-      codexPilot:pilotView,codexApprovals:approvalCards,adaptiveGoal:activeGoal,
+      codexPilot:pilotView,adaptiveGoal:activeGoal,
       about:String(req.query.about||'').slice(0,2000),stockActivity:req.query.task==='stock-activity'&&sourcePage?.path==='/inventory',
       question:latest?.message||'',result:resultFor(latest,latestProposal),error:null,
       prefill:String(req.query.q||'').slice(0,2000),

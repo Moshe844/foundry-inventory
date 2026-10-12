@@ -1,14 +1,21 @@
-<section class="rm-note" aria-label="Goal progress" data-adaptive-goal="<%= goal.id %>" data-goal-status="<%= goal.status %>">
-  <% if(goal.status!=='COMPLETED'){ %>
-    <p><strong><%= goal.original_request %></strong></p>
-    <p class="rm-prose" role="status" data-goal-answer><%= goal.answer || 'Investigating your goal…' %></p>
-  <% } %>
-  <p data-goal-phase><%= ({READY:'Queued',RUNNING:'Investigating',WAITING_APPROVAL:'Ready for review',WAITING_EVENT:'Waiting for a confirmed outcome',WAITING_USER:'Your input is needed',COMPLETED:'Verified',BLOCKED:'Stopped for review',CANCELLED:'Stopped'})[goal.status] %></p>
+<%
+ const phase=({READY:'Getting started',RUNNING:'Working on your request',WAITING_APPROVAL:'Ready for your approval',WAITING_EVENT:'Waiting for confirmation',WAITING_USER:'Your input is needed',COMPLETED:'Completed and verified',BLOCKED:'Could not finish',CANCELLED:'Stopped'})[goal.status]||'Checking progress';
+ const active=['READY','RUNNING'].includes(goal.status);
+%>
+<section class="rm-agent" aria-label="Goal progress" data-adaptive-goal="<%= goal.id %>" data-goal-status="<%= goal.status %>" data-goal-created="<%= new Date(goal.created_at).toISOString() %>" data-goal-updated="<%= new Date(goal.updated_at).toISOString() %>" data-goal-latest="<%= locals.isLatest?'true':'false' %>">
+  <div class="rm-agent__header">
+    <p class="rm-agent__phase" role="status" data-goal-phase><span class="rm-agent__dot" aria-hidden="true"></span><span data-goal-phase-text><%= phase %></span></p>
+    <span class="rm-agent__elapsed" data-goal-elapsed></span>
+    <% if(!['COMPLETED','CANCELLED','BLOCKED'].includes(goal.status)){ %>
+      <form method="post" action="/ask/goals/<%= goal.id %>/cancel"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">Stop</button></form>
+    <% } %>
+  </div>
+  <p class="rm-agent__answer" data-goal-answer <%= goal.answer?'':'hidden' %>><%= goal.answer||'' %></p>
+  <p class="rm-agent__hint" data-goal-hint><%= active?'You can leave this page. I’ll keep working and show any required approval here.':'' %></p>
   <% if(goal.checkpoint.runtime==='codex-staging'){ %>
-    <% if(goal.status==='COMPLETED'){ %><p class="rm-prose" data-goal-answer><%= goal.answer %></p><% } %>
-    <ol data-goal-timeline aria-label="Agent activity"></ol>
+    <details class="rm-agent__details"><summary>Activity details</summary><ol data-goal-timeline aria-label="Agent activity"></ol></details>
     <% for(const card of locals.codexApprovals||[]){ %>
-      <article class="rm-note" data-approval-id="<%= card.id %>">
+      <article class="rm-agent__approval" data-approval-id="<%= card.id %>">
         <p><strong>Approval required</strong></p><p><%= card.summary %></p>
         <p>Prepared only. Nothing has changed yet.</p>
         <form method="post" action="/ask/goals/<%= goal.id %>/approval">
@@ -29,8 +36,4 @@
       <label>Your answer<input name="message" maxlength="4000" required></label><button class="rm-btn rm-btn--sm" type="submit">Continue this goal</button>
     </form>
   <% } %>
-  <% if(!['COMPLETED','CANCELLED','BLOCKED'].includes(goal.status)){ %>
-    <form method="post" action="/ask/goals/<%= goal.id %>/cancel"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">Stop this goal</button></form>
-  <% } %>
 </section>
-<script src="/adaptive-goal.js" defer></script>

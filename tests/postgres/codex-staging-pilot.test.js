@@ -45,7 +45,7 @@ test('Staging website pilot is scoped, delivers durable approvals, executes cano
  const steps=[{capability:'inventory.receive',arguments:[{name:'sku',value:skus[0].code},{name:'location',value:location},{name:'quantity',value:3},{name:'reference',value:'STAGE-SMOKE'}],dependsOn:[]}];
  await session.execute('business_operations',{steps},callId=>gateway.operate({steps,callId}));
  const ready=await session.handoffApprovals();assert.equal(ready.approvals.length,1);
- await page.reload();assert.equal(await page.getByRole('button',{name:'Approve exact operation'}).count(),1);
+ await page.reload();assert.equal(await page.getByRole('button',{name:'Approve exact operation'}).count(),1,(await page.locator('body').innerText()).slice(-3500));
  assert.equal((await db.query('SELECT count(*) AS n FROM movements WHERE workspace_id=$1 AND reference=$2',[ctx.workspaceId,'STAGE-SMOKE'])).rows[0].n,'0');
  const card=ready.approvals[0];
  const handoff=await agent.get('/ask');
