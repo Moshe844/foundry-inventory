@@ -26,6 +26,8 @@ async function run(database,ctx,id,options={}){
  };
  try{
   const budget=require('./postgres-codex-budget').createBudget(database,ctx,id);
+  audit({kind:'runtime_starting',status:'Checking model pricing and permissions'});
+  await require('./codex-staging-readiness').verifyPricing(database);
   const image=options.image||process.env.STOCKCHIEF_CODEX_PILOT_IMAGE;
   const permit=await require('./codex-staging-permit').issue({database,ctx,goalId:id,budget,image});
   const provider={name:'openai',model:'gpt-6.1-sol',complete:async()=>{throw Error('UNAPPROVED_HELPER_MODEL_CALL');}};
@@ -48,9 +50,11 @@ async function run(database,ctx,id,options={}){
    wireProfile:'codex',livePermit:permit,requestGate:()=>session.codexRequest()});
   const connectionString=process.env.FOUNDRY_DATABASE_URL||process.env.DATABASE_URL;
   const token=await pilot.readAuthorization(database,ctx,connectionString);
+  audit({kind:'runtime_starting',status:'Opening the isolated business browser'});
   const server=await require(base+'inspection').createInspectionServer({cluster:{connectionString},database,ctx,stagingAuthorization:token});cleanup.push(()=>server.close());
   const browser=await require('playwright').chromium.launch({headless:true});cleanup.push(()=>browser.close());
   const ui=await require(base+'browser').createBrowserTools(browser,{origin:server.origin,audit});cleanup.push(()=>ui.close());
+  audit({kind:'runtime_starting',status:'Starting the Codex SDK session'});
   const result=await require(base+'worker').run({candidate:'codex',session,gateway:{...gateway,authorize},browser:ui,budget,transport,
    credentials:{openai:key},codexLivePermit:permit,codexImage:image,privateHarnessDirectory:directory,audit,
    finalReportInstructions:require('./postgres-codex-verification').instructions});
@@ -61,11 +65,13 @@ async function run(database,ctx,id,options={}){
   }
   return store.get(database,ctx,id);
  }catch(error){
+  audit({kind:'runtime_failed',code:error.code||'STAGING_RUNTIME_STOPPED'});
   if(session){const ready=await session.handoffApprovals().catch(()=>null);if(ready)return ready;
    return session.stop({code:error.code||error.message||'STAGING_RUNTIME_STOPPED'});}
   await database.query(`UPDATE stockchief_runtime.assistant_goals SET status='BLOCKED',run_token=NULL,lease_until=NULL,
-   answer='The Staging runtime could not start. No business operation was executed.',updated_at=now()
-   WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 AND run_token=$4`,[ctx.workspaceId,ctx.actorId,id,goal.run_token]);
+   answer=$5,updated_at=now()
+   WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 AND run_token=$4`,[ctx.workspaceId,ctx.actorId,id,goal.run_token,
+    error.code==='STAGING_MODEL_PRICE_UNVERIFIED'?error.message:'The Staging runtime could not start. No business operation was executed.']);
   throw error;
  }finally{await auditQueue.catch(()=>{});for(const close of cleanup.reverse())await close();}
 }

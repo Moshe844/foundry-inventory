@@ -12,6 +12,8 @@
    if(timeline&&goal.events){timeline.replaceChildren();for(const event of [...goal.events].reverse()){
     const row=document.createElement('li'),d=event.detail||{};
     row.textContent=event.kind==='approval_ready'?'Prepared an operation for your approval':
+     d.kind==='runtime_starting'?d.status:
+     d.kind==='runtime_failed'?`Agent startup stopped (${d.code||'runtime error'})`:
      d.kind==='agent_tool_started'?`Investigating with ${(d.tool||'a tool').replaceAll('_',' ')}`:
      d.kind==='agent_tool_completed'?`Completed ${(d.tool||'a step').replaceAll('_',' ')}`:
      d.kind==='browser_action'?`Browser: ${d.action}`:d.kind==='model_call'?'Reasoning step completed':

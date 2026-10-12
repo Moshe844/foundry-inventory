@@ -11,6 +11,7 @@ async function main(){
  try{await sandbox.certify();}finally{await sandbox.close();}
  const db=require('../src/db/postgres').openPostgres(process.env.FOUNDRY_DATABASE_URL||process.env.DATABASE_URL,{max:5,applicationName:'stockchief-codex-staging-worker'});
  await require('../src/db/migrate-postgres').migratePostgres(db);
+ await require('../src/assistant/codex-staging-readiness').verifyPricing(db);
  const handler=async job=>require('../src/assistant/postgres-codex-pilot').run(db,{workspaceId:job.workspaceId,actorId:job.payload.actorId},job.payload.goalId);
  handler.externalEffect=true;
  const worker=require('../src/operations/postgres-worker').start(db,{handlers:{'assistant.run-codex-goal':handler},leaseMs:10*60000});
