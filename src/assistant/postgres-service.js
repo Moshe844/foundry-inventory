@@ -1741,10 +1741,17 @@ async function supersedePendingProposal(database,ctx,oldId,newId,args){
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 
+async function continuationProvider(database,ctx,provider){
+  if(ctx.goalId){const goal=await require('./postgres-goal-store').get(database,ctx,ctx.goalId);
+    if(goal?.checkpoint.runtime==='codex-staging')return {name:'openai',model:'gpt-6.1-sol',
+      complete:async()=>{throw new ValidationError('UNAPPROVED_HELPER_MODEL_CALL');}};
+  }
+  return provider||(config.ai.configured?createProviderUnobserved(config.ai.provider,config.ai.tier('fast')):null);
+}
 async function continueApprovedPlans(database,ctx,proposalId,options={}){
   const linked=(await require('./postgres-capability-plans').missionForProposal(database,ctx.workspaceId,ctx.actorId,proposalId));
   if(linked?.goal_id)ctx={...ctx,goalId:linked.goal_id};
-  const rawProvider=options.provider||(config.ai.configured?createProviderUnobserved(config.ai.provider,config.ai.tier('fast')):null);
+  const rawProvider=await continuationProvider(database,ctx,options.provider);
   const provider=fundedAskProvider(database,ctx,rawProvider,`plan:${proposalId}`);
   return require('./postgres-capability-plans').resume(database,ctx,proposalId,{
     service:capabilityService(),provider,rawProvider,
@@ -1822,8 +1829,7 @@ async function resumeMission(database,ctx,missionId,options={}){
   const linkedGoal=(await database.query(`SELECT goal_id FROM stockchief_runtime.assistant_capability_plans
     WHERE id=$1 AND workspace_id=$2 AND actor_user_id=$3`,[missionId,ctx.workspaceId,ctx.actorId])).rows[0]?.goal_id;
   if(linkedGoal)ctx={...ctx,goalId:linkedGoal};
-  const rawProvider=options.provider||
-    (config.ai.configured?createProviderUnobserved(config.ai.provider,config.ai.tier('fast')):null);
+  const rawProvider=await continuationProvider(database,ctx,options.provider);
   // A mission can be woken by several distinct external events. Each model
   // assessment is a new bounded operation; reusing the mission ID as its
   // commercial idempotency key would reject the second supplier reply.

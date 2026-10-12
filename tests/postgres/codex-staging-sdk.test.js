@@ -47,5 +47,21 @@ test('actual Staging SDK lifecycle uses the real renderer, website approval and 
  const ledger=(await db.query('SELECT state FROM stockchief_runtime.codex_pilot_calls WHERE workspace_id=$1',[ctx.workspaceId])).rows;
  assert.equal(ledger.length,3);assert(ledger.every(c=>c.state==='SETTLED'));
  assert.equal(completed.checkpoint.harness.codexRequests,3);
+ // A standard background mission worker must not inherit the configured
+ // provider and spend outside this native goal's shared relay ledger.
+ const missionId='offline-continuation-'+randomUUID();
+ await db.query(`INSERT INTO stockchief_runtime.assistant_capability_plans
+  (id,workspace_id,actor_user_id,batch_id,source_message,steps,status,goal_id)
+  VALUES($1,$2,$3,$4,$5,'[]'::jsonb,'DONE',$6)`,[missionId,ctx.workspaceId,ctx.actorId,missionId,completed.original_request,completed.id]);
+ const plans=require('../../src/assistant/postgres-capability-plans'),originalResume=plans.resume;
+ let helperCalls=0;
+ try{plans.resume=async(_db,_ctx,_proposal,options)=>{
+   await assert.rejects(options.rawProvider.complete({}),/UNAPPROVED_HELPER_MODEL_CALL/);
+   return {blocked:true};
+  };
+  await require('../../src/assistant/postgres-service').resumeMission(db,ctx,missionId,
+   {provider:{name:'unfunded-helper',model:'unfunded',complete:async()=>{helperCalls++;}}});
+ }finally{plans.resume=originalResume;}
+ assert.equal(helperCalls,0,'Background continuations cannot bypass the native shared spending gate');
  assert.equal((await db.query("SELECT count(*) AS n FROM pg_roles WHERE rolname LIKE 'demo_read_%' OR rolname LIKE 'demo_metrics_%'")).rows[0].n,'0','Temporary renderer privileges are removed');
 });
