@@ -26,6 +26,25 @@ function allowedSources(actor,dimension){return Object.entries(registry.datasets
     commercialCapability:dataset.commercialCapability||null}));}
 function dimensions(actor){return Object.entries(DIMENSIONS).map(([key,label])=>({key,label,
   sources:allowedSources(actor,key)})).filter((entry)=>entry.sources.length>=2);}
+function queryContract(actor){
+ const available=dimensions(actor);if(!available.length)return null;
+ const sources=[...new Map(available.flatMap(d=>d.sources).map(s=>[s.key,s])).values()];
+ const metrics=sources.map(s=>({type:'object',additionalProperties:false,required:['dataset','alias','aggregate'],properties:{
+  dataset:{const:s.key},alias:{type:'string',pattern:IDENTIFIER.source},aggregate:{enum:[...AGGREGATES]},
+  measure:{enum:['',...Object.keys(s.fields),...Object.keys(s.metrics)]},filters:{type:'array',maxItems:6,items:{type:'object',additionalProperties:false,
+   required:['field','operator'],properties:{field:{enum:Object.keys(s.fields)},operator:{enum:[...OPERATORS]},value:{type:['string','number','boolean']}}}}
+ }}));
+ return {schema:{type:'object',additionalProperties:false,required:['dataset','dimension','metrics'],properties:{
+  dataset:{const:'composed'},dimension:{enum:available.map(d=>d.key)},metrics:{type:'array',minItems:2,maxItems:4,items:{anyOf:metrics}},
+  formula:{type:'string',maxLength:FORMULA_LIMIT},formulaLabel:{type:'string',maxLength:60},formulaUnit:{enum:['number','money','percent']},
+  chart:{enum:['table','bar']},chartMeasure:{type:'string'},sort:{type:'string'},direction:{enum:['asc','desc']},
+  resultFilters:{type:'array',maxItems:4,items:{type:'object',additionalProperties:false,required:['field','operator'],properties:{
+   field:{type:'string'},operator:{enum:[...RESULT_OPERATORS]},value:{type:['string','number']}}}},
+  layout:{enum:['chart_first','table_first','dashboard']},title:{type:'string',maxLength:100}
+ }},dimensions:available.map(d=>({key:d.key,sources:d.sources.map(s=>s.key)})),rules:[
+  'Combine two to four measures from at least two datasets sharing the selected registered dimension. Use distinct simple aliases.',
+  'Only selected aliases, numbers and arithmetic are permitted in formulas. Money must use one matching currency and registered completeness filters.']};
+}
 
 // A small expression grammar. Identifiers are selected metric aliases only;
 // numbers are literals. No functions, property access, SQL, or JavaScript.
@@ -286,4 +305,4 @@ function drilldownSpec(spec,values,actor,alias){
     filters:[...metric.filters,{field:config.dimension,operator:value==null?'is_null':'equals',
       value:value==null?'':text(value,120)}],sort:config.dimension,direction:'asc',chart:'table'};
 }
-module.exports={DIMENSIONS,dimensions,normalize,queryFor,run,countAtMost,drilldownSpec,parseFormula};
+module.exports={DIMENSIONS,dimensions,queryContract,normalize,queryFor,run,countAtMost,drilldownSpec,parseFormula};

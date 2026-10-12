@@ -102,8 +102,12 @@ test('browser Ask retains contact details through a follow-up and does not route
       WHERE workspace_id=$1 AND recipient='ada@example.test' AND status='QUEUED'`,[owner.workspace_id])).rows[0].total,1);
     await page.goto(`${base}/ask`);
     await ask('Please put Delta Supply in my suppliers with delta@example.test as its email.');
+    console.log('CONTACT_PROPOSALS_DEBUG',JSON.stringify((await database.query(`SELECT id,payload,status,created_at
+      FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1 AND action_type='contact.create'
+      ORDER BY created_at DESC,id DESC`,[owner.workspace_id])).rows));
     const supplierProposal=(await database.query(`SELECT id,payload,status FROM stockchief_runtime.assistant_action_proposals
       WHERE workspace_id=$1 AND action_type='contact.create'`,[owner.workspace_id])).rows[0];
+    console.log('CONTACT_SELECTED_DEBUG',JSON.stringify(supplierProposal));
     assert.equal(supplierProposal.status,'PENDING');
     assert.deepEqual({kind:supplierProposal.payload.kind,name:supplierProposal.payload.name,
       email:supplierProposal.payload.email},{kind:'supplier',name:'Delta Supply',email:'delta@example.test'});

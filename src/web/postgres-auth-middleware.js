@@ -18,7 +18,7 @@ function workspaceSummary(row, accountId) {
   };
 }
 
-function loadUser(database) {
+function loadUser(database,{readonly=false}={}) {
   return async function postgresLoadUser(req, res, next) {
     try {
       res.locals.currentUser = null;
@@ -45,7 +45,7 @@ function loadUser(database) {
         if (resolved) req.session.workspaceId = workspaceId;
       }
       if (!resolved) return next();
-      if (account.last_workspace_id !== workspaceId) await auth.rememberWorkspace(database, account.id, workspaceId);
+      if (!readonly&&account.last_workspace_id !== workspaceId) await auth.rememberWorkspace(database, account.id, workspaceId);
 
       const { workspace,membership } = resolved;
       req.user = { ...membership,email:account.email,plan:account.plan };

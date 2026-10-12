@@ -164,9 +164,14 @@ test('real Chromium qualifies PostgreSQL business-mail filtering, exact replies 
     await page.goto(`${base}/needs-you`);const needsText=await page.locator('main').innerText();
     assert.match(needsText,/supplier@example\.test is waiting for a response/);
     assert.match(needsText,/customer@example\.test is waiting for a response/);
+    const needsReadHref=await page.getByRole('link',{name:'Read email'}).first().getAttribute('href');
+    assert.ok([`/mail/${supplierMessage.messageId}`,`/mail/${customerMessage.messageId}`].includes(needsReadHref),
+      'Needs You should open the actual message for reading, not jump into a reply');
     await page.goto(`${base}/mail/${supplierMessage.messageId}`);
     assert.match(await page.locator('main').innerText(),/Please confirm whether Friday works/);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Use standard holding reply'}).click()]);
+    assert.match(await page.locator('main').innerText(),/StockChief is preparing a reply/);
+    assert.equal(await page.locator('textarea[name="body"]').inputValue(),'');
+    assert.equal(await page.getByRole('link',{name:'Read only—back to mail'}).getAttribute('href'),'/mail');
     await page.getByLabel('Subject').fill('Re: Friday shipment');
     await page.locator('textarea[name="body"]').fill('Friday works. Please send the remaining units and share tracking.');
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Save for later'}).click()]);
@@ -209,12 +214,16 @@ test('real Chromium qualifies PostgreSQL business-mail filtering, exact replies 
     const replay=await mail.queueSend(database,ctx,supplierMessage.messageId,{subject:'Re: Friday shipment',
       body:'Friday works. Send the remaining units and email the tracking number.'},{providers});
     assert.equal(replay.replayed,true);assert.equal(providerCalls,1);
+    await assert.rejects(()=>mail.queueSend(database,ctx,supplierMessage.messageId,{subject:'Re: Friday shipment',
+      body:'Different text after delivery.'},{providers}),/already been sent/);
+    assert.equal((await mail.get(database,ctx.workspaceId,supplierMessage.messageId)).draft_body,
+      'Friday works. Send the remaining units and email the tracking number.',
+      'a later request must not rewrite verified sent correspondence');
 
     const uncertainMessage=await mail.capture(database,connection,{externalMessageId:'supplier-message-2',
       sender:'supplier@example.test',recipients:['business@example.test'],subject:'Second shipment question',
       bodyText:'Should we send the second carton?',receivedAt:'2026-09-23T13:03:00.000Z'});
     await page.goto(`${base}/mail/${uncertainMessage.messageId}`);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Use standard holding reply'}).click()]);
     await page.getByLabel('Subject').fill('Ambiguous provider outcome');
     await page.locator('textarea[name="body"]').fill('Please send the second carton.');
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Send to supplier@example.test'}).click()]);
@@ -228,6 +237,8 @@ test('real Chromium qualifies PostgreSQL business-mail filtering, exact replies 
       body:'Please send the second carton.'},{providers}),/will not send another reply/);
     await assert.rejects(()=>mail.queueSend(database,ctx,uncertainMessage.messageId,{subject:'Different wording',
       body:'This changed text must not bypass the uncertain outcome.'},{providers}),/will not send another reply/);
+    assert.equal((await mail.get(database,ctx.workspaceId,uncertainMessage.messageId)).draft_body,
+      'Please send the second carton.','an uncertain provider outcome must preserve the exact approved draft');
     assert.equal(providerCalls,2);
     outbox=(await database.query('SELECT * FROM stockchief_runtime.email_reply_outbox WHERE message_id=$1',
       [uncertainMessage.messageId])).rows;assert.equal(outbox.length,1);
@@ -249,7 +260,6 @@ test('real Chromium qualifies PostgreSQL business-mail filtering, exact replies 
       sender:'supplier@example.test',recipients:['business@example.test'],subject:'Another supplier question',
       bodyText:'Please confirm the next delivery.',receivedAt:'2026-09-23T15:00:00.000Z'});
     await page.goto(`${base}/mail/${rejectedMessage.messageId}`);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Use standard holding reply'}).click()]);
     await page.getByLabel('Subject').fill('Rejected by provider');
     await page.locator('textarea[name="body"]').fill('Please confirm the next delivery.');
     const countBeforeReject=Number(await page.locator('a[href="/needs-you"] .nav-count').innerText());
@@ -261,5 +271,21 @@ test('real Chromium qualifies PostgreSQL business-mail filtering, exact replies 
     assert.equal((await mail.get(database,ctx.workspaceId,rejectedMessage.messageId)).reply_state,'NEEDS_REPLY');
     assert.equal(Number(await page.locator('a[href="/needs-you"] .nav-count').innerText()),countBeforeReject,
       'a definite provider failure must restore the human decision');
+    await database.query('UPDATE users SET role=$2,permissions=$3 WHERE id=$1',
+      [ctx.actorId,'staff',JSON.stringify(['VIEW'])]);
+    await page.goto(`${base}/mail/${rejectedMessage.messageId}`);
+    assert.match(await page.locator('main').innerText(),/Please confirm the next delivery/);
+    assert.match(await page.locator('main').innerText(),/You can read this message/);
+    assert.match(await page.locator('main').innerText(),/Rejected by provider/,
+      'a view-only member can inspect the existing draft without editing it');
+    assert.equal(await page.getByRole('button',{name:/Send to|Save for later|Dismiss/}).count(),0,
+      'a view-only member must see the email without reply or filing controls');
+    await page.goto(`${base}/mail`);
+    assert.equal(await page.getByRole('link',{name:'Read email'}).count()>0,true);
+    assert.equal(await page.locator('.mail-row-action form, form.mail-row-action').count(),0);
+    await assert.rejects(()=>mail.saveDraft(database,ctx,rejectedMessage.messageId,
+      {subject:'Unauthorized',body:'This must not replace the owner draft.'}),/permission/i);
+    assert.equal((await mail.get(database,ctx.workspaceId,rejectedMessage.messageId)).draft_body,
+      'Please confirm the next delivery.');
     assert.deepEqual(errors,[]);
   });

@@ -43,6 +43,15 @@ test('Ask research reads real inventory positions, stock history and prices with
     const summary=await assistant.lookup(database,owner,{view:'inventory_summary'});
     assert.deepEqual(summary.rows,[{products:1,skus:1,onHand:7,productsEver:1}]);
     assert.match(summary.answer,/7 units on hand/);
+    const skuCount=await assistant.lookup(database,owner,{view:'inventory_summary'},
+      {question:'How many distinct active SKUs are tracked?'});
+    assert.match(skuCount.answer,/^You have 1 active SKU recorded\.$/);
+    const productCount=await assistant.lookup(database,owner,{view:'inventory_summary'},
+      {question:'How many active products are recorded?'});
+    assert.match(productCount.answer,/^You have 1 active product recorded\.$/);
+    const unitCount=await assistant.lookup(database,owner,{view:'inventory_summary'},
+      {question:'How many units are on hand across the business?'});
+    assert.match(unitCount.answer,/^You have 7 units on hand across the business\.$/);
     const otherSummary=await assistant.lookup(database,other,{view:'inventory_summary'});
     assert.deepEqual(otherSummary.rows,[{products:0,skus:0,onHand:0,productsEver:0}]);
     const grounded=await research.research(database,owner,'How many units are on hand in this inventory?',{

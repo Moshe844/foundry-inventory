@@ -1,0 +1,82 @@
+'use strict';
+
+const control=require('../../src/assistant/postgres-control-plane');
+const planner=require('../../src/assistant/postgres-capability-planner');
+const plans=require('../../src/assistant/postgres-capability-plans');
+const service=require('../../src/assistant/postgres-service');
+const {FIELDS}=require('../../src/assistant/postgres-capability-registry');
+const {randomUUID}=require('node:crypto');
+
+function describe(c){return {name:c.name,kind:c.kind,description:c.description,required:c.required||[],
+  fields:Object.fromEntries(c.fields.map(name=>[name,{type:FIELDS[name]?.type||'string',description:c.agentHints?.[name]||FIELDS[name]?.description||name}])),
+  authority:c.authority,unavailable:c.commercialUnavailable||[]};}
+
+// ctx, original goal and database are host-bound. Models cannot supply tenant,
+// actor, approval, SQL, provider credentials or an alternative source message.
+function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=provider,audit=()=>{}}){
+  async function access(){
+    const state=(await database.query(`SELECT original_request,status,run_token,lease_until,expires_at FROM stockchief_runtime.assistant_goals
+      WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,goalId])).rows[0];
+    if(!state||state.original_request!==goal||state.status!=='RUNNING'||state.run_token!==runToken||
+      new Date(state.lease_until).getTime()<=Date.now()||new Date(state.expires_at).getTime()<=Date.now())throw new Error('Goal is not held by this agent run.');
+    const actor=(await database.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',
+      [ctx.workspaceId,ctx.actorId])).rows[0];
+    if(!actor)throw new Error('Actor no longer belongs to this business.');
+    await require('../../src/commercial/enforcement').workspace(database,ctx.workspaceId,'ask.lookup');
+    return {actor,catalogue:await control.planningCatalogue(database,{...ctx,goalId},actor)};
+  }
+  return {
+    authorize:access,
+    async interfaces({search='',offset=0,names=[]}={}){const {actor,catalogue}=await access();
+      const matches=c=>`${c.name} ${c.description||c.label||''}`.toLowerCase().includes(search.toLowerCase());
+      const all=catalogue.list().filter(matches);
+      const datasets=require('../../src/reports/postgres-registry').list(actor).map(d=>({...d,name:d.key}));
+      if(require('../../src/reports/postgres-composed').dimensions(actor).length)datasets.push({name:'composed',label:'Combine governed measures across datasets'});
+      const matchedDatasets=datasets.filter(matches);return {
+      operations:names.length?catalogue.list().filter(c=>names.includes(c.name)).map(describe):
+       all.slice(offset,offset+12).map(c=>({name:c.name,kind:c.kind,description:c.description})),
+      total:all.length,nextOffset:offset+12<all.length?offset+12:null,
+      datasets:names.length?matchedDatasets.filter(d=>names.includes(d.name)).map(d=>({...d,queryContract:require('../../src/reports/postgres-service').queryContract(d.name,actor)})):
+       matchedDatasets.slice(offset,offset+12).map(d=>({name:d.name,label:d.label})),
+      datasetTotal:matchedDatasets.length,datasetNextOffset:offset+12<matchedDatasets.length?offset+12:null,
+      coverage:'These are governed execution contracts and curated report projections, not exhaustive environment discovery. Unlisted application screens, forms and rendered records remain discoverable through the browser. A missing execution contract is a reported execution limitation, never authority to bypass the gateway.',
+      policy:'Browser inspection cannot commit changes. Operations use canonical engines. Prepared means awaiting authority, never completed. No approval tool is available.'};},
+    async operate({steps,callId=randomUUID()}){
+      let effectsStarted=false;
+      try{
+      if(!Array.isArray(steps)||!steps.length||steps.length>8)throw new Error('Provide one to eight dependent canonical operations.');
+      const {actor,catalogue}=await access();
+      const parsed=planner.parseSteps({steps:require('./contracts').operationSteps(steps,catalogue)},catalogue);
+      if(!parsed.steps?.length||parsed.clarifyingQuestion)throw new Error(parsed.clarifyingQuestion||'Invalid operation contract.');
+      planner.sequenceApprovedMutations(parsed.steps);
+      const outcomes=[];const call=callId;
+      for(const [index,step]of parsed.steps.entries()){
+        const current=await access();
+        if(JSON.stringify(current.actor)!==JSON.stringify(actor))throw new Error('Authority changed during the operation.');
+        if(step.dependsOn.some(i=>outcomes[i]?.result.status!=='ANSWERED')){
+          outcomes.push({step,args:step.args,provenance:{},result:{status:'CLARIFY',reason:'dependency_waiting'}});continue;
+        }
+        effectsStarted||=step.contract.kind!=='read';
+        const result=await control.executeStep(service.capabilityService(),database,{...ctx,goalId,
+          planStepKey:`environment:${goalId}:${call}:${index}`},step,{actor,provider,rawProvider,
+          sourceMessage:goal,usageKey:`environment:${goalId}:${call}:${index}`});
+        outcomes.push({...result,step});
+        audit({kind:'canonical_operation',capability:step.contract.name,status:result.result.status});
+      }
+      const mission=await plans.save(database,ctx,goal,goalId,parsed.steps,outcomes);
+      if(mission)await database.query('UPDATE stockchief_runtime.assistant_capability_plans SET goal_id=$1 WHERE id=$2 AND workspace_id=$3',
+        [goalId,mission.id,ctx.workspaceId]);
+      for(const [index,outcome]of outcomes.entries())if(outcome.result.reason!=='dependency_waiting')
+        await service.recordCapabilityOutcome(database,ctx,goal,outcome,{batchId:`${goalId}:${call}`,planId:mission?.id,index,count:outcomes.length});
+      return {missionId:mission?.id||null,outcomes:outcomes.map(o=>({capability:o.step.contract.name,result:o.result}))};
+      }catch(error){error.effectMayHaveOccurred=effectsStarted;throw error;}
+    },
+    async dataset({spec,offset=0}){
+      const {actor}=await access();
+      if(spec?.filters!==undefined&&!Array.isArray(spec.filters))throw Object.assign(new Error('Dataset filters must be an array of field/operator/value conditions; discover the dataset contract before retrying.'),{code:'TOOL_CONTRACT_INVALID'});
+      require('./contracts').datasetSpec(spec,actor);
+      return require('../../src/reports/postgres-service').run(database,ctx,actor,spec,{limit:101,offset});
+    }
+  };
+}
+module.exports={createGateway};

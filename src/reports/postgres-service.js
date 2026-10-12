@@ -10,6 +10,24 @@ const OPERATORS=new Set(['equals','contains','at_least','at_most','after','befor
 const AGGREGATES=new Set(['count','sum','average','minimum','maximum','ratio']);
 const DATE_GRAINS=new Set(['exact','day','week','month','quarter','year']);
 const AGGREGATE_COLUMN=Object.freeze({count:'count',sum:'total',average:'average',minimum:'minimum',maximum:'maximum',ratio:'ratio'});
+// Discovery and execution share the same registered fields and validator enums.
+function queryContract(key,actor){
+ if(key==='composed')return composed.queryContract(actor);
+ const dataset=registry.get(key);
+ if(!dataset||!permissions.can(actor,dataset.permission))return null;
+ const fields=Object.keys(dataset.fields),field={type:'string',enum:fields};
+ return {schema:{type:'object',additionalProperties:false,required:['dataset'],properties:{
+  dataset:{const:key},columns:{type:'array',maxItems:12,items:field},groups:{type:'array',maxItems:3,items:field},
+  summary:{type:'boolean'},aggregate:{enum:[...AGGREGATES]},measure:{enum:['',...fields,...Object.keys(dataset.metrics||{})]},dateGrain:{enum:[...DATE_GRAINS]},
+  filters:{type:'array',maxItems:12,items:{type:'object',additionalProperties:false,required:['field','operator'],properties:{
+   field,operator:{enum:[...OPERATORS]},value:{type:['string','number','boolean']}}}},
+  sort:{type:'string',enum:[...fields,...Object.values(AGGREGATE_COLUMN)]},direction:{enum:['asc','desc']},
+  chart:{enum:['table','bar','line']},layout:{enum:['chart_first','table_first','dashboard']},title:{type:'string',maxLength:100}
+ }},rules:['Choose columns, groups, or summary:true. Grouped and whole-dataset summaries require a valid aggregate and numeric measure except count.',
+  'Date filters use YYYY-MM-DD. contains requires text; after/before require dates; numeric comparisons require numeric or date fields.',
+  'Money is in minor currency units. Monetary aggregation requires an exact currency filter or currency grouping, and any registered completeness filter.'],
+  fields:dataset.fields,metrics:dataset.metrics||{},moneyCompleteness:dataset.moneyCompleteness||{}};
+}
 function invalid(message){throw new ValidationError(message);}
 function ensureActor(actor,dataset){permissions.assertCan(actor,dataset.permission,'view this report');}
 function safeText(value,max=120){const text=String(value??'').trim();if(text.length>max)invalid('A report value is too long.');return text;}
@@ -286,5 +304,5 @@ async function load(database,ctx,actor,id){
   return {...row,definition:normalize(row.definition,actor)};
 }
 
-module.exports={normalize,queryFor,run,countAtMost,save,list,load,drilldownSpec,comparableGroupAmounts,
+module.exports={normalize,queryContract,queryFor,run,countAtMost,save,list,load,drilldownSpec,comparableGroupAmounts,
   aggregateColumn:AGGREGATE_COLUMN};

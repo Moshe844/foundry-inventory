@@ -2,6 +2,8 @@
 
 const test=require('node:test');
 const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const path=require('node:path');
 const request=require('supertest');
 const {startCluster}=require('../helpers/postgres-cluster');
 const {openPostgres}=require('../../src/db/postgres');
@@ -9,6 +11,7 @@ const {migratePostgres}=require('../../src/db/migrate-postgres');
 const {createPostgresApp}=require('../../src/postgres-app');
 const commerce=require('../../src/operations/postgres-commerce');
 const mail=require('../../src/connections/postgres-mail');
+const reply=require('../../src/connections/postgres-reply-drafting');
 const jobs=require('../../src/operations/postgres-job-queue');
 const runtimeHandlers=require('../../src/operations/postgres-runtime-handlers');
 const {newId,nowIso}=require('../../src/lib/util');
@@ -25,6 +28,8 @@ test('business mail gets a safe editable draft, with metered record-grounded imp
     const aiProvider={name:'anthropic',model:PRICED_MODEL,async complete(input){
       assert.equal(input.schemaName,'prepared_reply');calls+=1;
       assert.equal(Object.hasOwn(input,'onValidated'),false,'internal validation callbacks never reach providers');
+      assert.match(input.prompt,calls<=2?/Can you confirm what is available\?/:/Can you confirm the delivery date\?/);
+      assert.match(input.prompt,/The sender is supplier Parts Supplier\./);
       return {data:calls===1
         ?{subject:'Re: Stock availability',body:'Hello,\n\nI am checking the stock availability and will follow up with confirmed details.\n\nBest,\nThe team'}
         :{subject:'Re: Stock availability',body:'We guarantee 999 units will arrive tomorrow.'},usage:pricedUsage()};
@@ -53,8 +58,8 @@ test('business mail gets a safe editable draft, with metered record-grounded imp
       subject:'Stock availability',bodyText:'Can you confirm what is available?',receivedAt:at});
     assert.equal(captured.accepted,true);
     let row=await mail.get(database,ctx.workspaceId,captured.messageId);
-    assert.equal(row.reply_state,'NEEDS_REPLY');assert.equal(row.draft_source,'records');
-    assert.match(row.draft_body,/checking the details against our records/);
+    assert.equal(row.reply_state,'NEEDS_REPLY');assert.equal(row.draft_source,null);
+    assert.equal(row.draft_body,null,'mail intake must not insert a canned reply before reading the message');
     const queued=(await database.query(`SELECT id FROM stockchief_runtime.jobs WHERE workspace_id=$1
       AND kind='mail.reply-draft' AND payload->>'messageId'=$2`,[ctx.workspaceId,row.id])).rows;
     assert.equal(queued.length,1,'one durable automatic draft job is queued');
@@ -81,4 +86,42 @@ test('business mail gets a safe editable draft, with metered record-grounded imp
     [ctx.workspaceId,`${ctx.workspaceId}:mail-reply:${row.id}:%`])).rows;
     assert.deepEqual(usage.map((event)=>event.status).sort(),['COMMITTED','REVERSED'],
       'unsafe output costs StockChief but must not consume customer credits');
+    const unsafe=await mail.capture(database,connection,{externalMessageId:'draft-unsafe',
+      sender:'parts@example.test',subject:'Delivery date',bodyText:'Can you confirm the delivery date?',receivedAt:at});
+    const unsafeJob=await jobs.processOne(database,runtimeHandlers.create(undefined,{aiProvider}),
+      {owner:'reply-draft-unsafe-test',kinds:['mail.reply-draft']});
+    assert.equal(unsafeJob.status,'COMPLETED',JSON.stringify(unsafeJob));
+    const unsafeRow=await mail.get(database,ctx.workspaceId,unsafe.messageId);
+    assert.equal(unsafeRow.draft_body,null,'rejected model output must not fall back to a canned reply');
+    const unsafePage=await agent.get(`/mail/${unsafe.messageId}`);
+    assert.match(unsafePage.text,/Automatic drafting stopped without a verified reply/);
+    assert.doesNotMatch(unsafePage.text,/We guarantee 999 units will arrive tomorrow/);
+    const former=await mail.capture(database,connection,{externalMessageId:'draft-legacy',sender:'parts@example.test',
+      subject:'Different question',bodyText:'Please check the next shipment.',receivedAt:at});
+    const sent=await mail.capture(database,connection,{externalMessageId:'draft-sent',sender:'parts@example.test',
+      subject:'Already answered',bodyText:'Can you confirm receipt?',receivedAt:at});
+    const edited=await mail.capture(database,connection,{externalMessageId:'draft-owner',sender:'parts@example.test',
+      subject:'Owner reply',bodyText:'What was agreed?',receivedAt:at});
+    await database.query(`UPDATE connection_email_messages SET draft_subject='Re: Different question',
+      draft_body='Legacy generic holding text',draft_source='records',draft_at=$2 WHERE id=$1`,
+    [former.messageId,at]);
+    await database.query(`UPDATE connection_email_messages SET draft_subject='Re: Already answered',
+      draft_body='A previously sent reply',draft_source='records',draft_at=$2,reply_sent_at=$2 WHERE id=$1`,
+    [sent.messageId,at]);
+    await mail.saveDraft(database,ctx,edited.messageId,
+      {subject:'Re: Owner reply',body:'The owner wrote this exact reply.'});
+    assert.deepEqual(await reply.prepare(database,ctx,edited.messageId,{automatic:true,provider:aiProvider}),
+      {skipped:'owner_draft'},'automatic drafting must finish quietly when the owner wrote first');
+    assert.deepEqual(await reply.prepare(database,ctx,sent.messageId,{automatic:true,provider:aiProvider}),
+      {skipped:'already_sent'},'automatic drafting must not reopen sent mail');
+    await database.query(fs.readFileSync(path.join(__dirname,
+      '../../src/db/postgres-migrations/050-remove-unverified-mail-replies.sql'),'utf8'));
+    const cleared=await mail.get(database,ctx.workspaceId,former.messageId);
+    const preserved=await mail.get(database,ctx.workspaceId,sent.messageId);
+    assert.equal(cleared.draft_body,null,'unsent generic drafts from before the fix must be removed');
+    assert.equal(preserved.draft_body,'A previously sent reply','sent correspondence must remain intact');
+    assert.equal((await mail.get(database,ctx.workspaceId,edited.messageId)).draft_body,
+      'The owner wrote this exact reply.','owner edits must remain intact');
+    assert.equal((await mail.get(database,ctx.workspaceId,row.id)).draft_source,'model',
+      'verified model drafts must remain intact');
   });

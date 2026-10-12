@@ -150,15 +150,29 @@ test('real Chromium proves one-approval missions, verified memory, supplier foll
     await database.transaction((client)=>credentials.put(client,ctx.workspaceId,connectorId,'provider',{accessToken:'mission-mail-token'}));
 
     await page.goto(`${base}/ask`);await page.getByLabel('Ask StockChief').fill(
-      'Add Resume Supply as a supplier at resume@mission-supply.example and email them the approved mission follow-through.');
+      'Add Resume Supply as a supplier at resume@mission-supply.example and email them this exact message: This is the approved mission follow-through.');
     await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Continue'}).click()]);
     await page.getByRole('link',{name:'Review prepared change'}).click();
     await Promise.all([page.waitForURL(/\/ask#latest$/),
-      page.getByRole('button',{name:'Approve the whole mission'}).click()]);
+      page.getByRole('button',{name:'Approve the whole mission'}).click()]).catch(async error=>{
+        throw new Error(`Mission approval failed: ${await page.locator('main').innerText()}`,{cause:error});});
     let waitingMission=(await database.query(`SELECT * FROM stockchief_runtime.assistant_capability_plans
       WHERE workspace_id=$1 AND source_message LIKE 'Add Resume Supply%' ORDER BY created_at DESC LIMIT 1`,
     [ctx.workspaceId])).rows[0];
     assert.equal(waitingMission.status,'WAITING_EVENT');assert.equal(waitingMission.metrics.externalWaits,1);
+    // A new adaptive owner can persist through an external wait while the existing
+    // mission and delivery engines retain all authority and retry semantics.
+    const goalStore=require('../../src/assistant/postgres-goal-store');
+    const goalResume=require('../../src/assistant/postgres-goal-resume');
+    process.env.STOCKCHIEF_ADAPTIVE_ASK='1';process.env.STOCKCHIEF_ADAPTIVE_ASK_WORKSPACES=ctx.workspaceId;
+    const linkedGoal=await goalStore.create(database,ctx,waitingMission.source_message);
+    const claimedGoal=await goalStore.claim(database,ctx,linkedGoal.id);
+    claimedGoal.status='WAITING_EVENT';claimedGoal.checkpoint.waiting={missionId:waitingMission.id,proposalIds:[]};
+    await goalStore.save(database,ctx,claimedGoal,'external_wait');
+    await database.query('UPDATE stockchief_runtime.assistant_capability_plans SET goal_id=$1 WHERE id=$2',[linkedGoal.id,waitingMission.id]);
+    const holdsBefore=(await database.query('SELECT count(*)::int AS n FROM commercial_model_cost_holds')).rows[0].n;
+    assert.equal((await goalResume.refresh(database,ctx,linkedGoal.id)).status,'WAITING_EVENT');
+    assert.equal((await database.query('SELECT count(*)::int AS n FROM commercial_model_cost_holds')).rows[0].n,holdsBefore);
     await jobs.processOne(database,runtimeHandlers.create(providers),{owner:'mission-external-effect-worker'});
     const sweep=await database.transaction((client)=>runtimeHandlers.runtimeSweep({payload:{now:Date.now()}},client));
     assert.equal(sweep.scheduledMissionResumes,1);
@@ -170,6 +184,10 @@ test('real Chromium proves one-approval missions, verified memory, supplier foll
     assert.equal(waitingMission.status,'DONE');assert.equal(waitingMission.verification_status,'VERIFIED');
     assert.equal(waitingMission.metrics.resumptions,1);
     assert.ok(delivered.some((message)=>message.recipient==='resume@mission-supply.example'));
+    const readyGoal=await goalResume.refresh(database,ctx,linkedGoal.id);
+    assert.equal(readyGoal.status,'READY');assert.equal(readyGoal.checkpoint.observations.length,2);
+    assert.ok(readyGoal.checkpoint.observations.every(o=>o.result.externalStatus==='DONE'));
+    await goalStore.cancel(database,ctx,linkedGoal.id);process.env.STOCKCHIEF_ADAPTIVE_ASK='0';
 
     const supplier=await commerce.createSupplier(database,ctx,{name:'Mission Supply',email:'orders@mission-supply.example'});
     await database.query('UPDATE suppliers SET watched_connector_id=$3 WHERE workspace_id=$1 AND id=$2',

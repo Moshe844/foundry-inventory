@@ -149,6 +149,49 @@ async function proposalStates(database,workspaceId,interactions){
 function createPostgresAskRouter(database,options={}){
   const router=express.Router();
   router.use(['/ask','/actions'],requireAuth);
+  const goalStore=require('../../assistant/postgres-goal-store');
+  const pilot=require('../../assistant/postgres-codex-pilot');
+  async function pilotProposalGuard(req,res){
+    const native=(await database.query(`SELECT id FROM stockchief_runtime.assistant_goals g WHERE workspace_id=$1
+      AND checkpoint->>'runtime'='codex-staging' AND EXISTS(SELECT 1 FROM jsonb_each(COALESCE(checkpoint#>'{harness,approvalDeliveries}','{}'::jsonb)) d
+      WHERE d.value->>'proposalId'=$2) LIMIT 1`,[req.ctx.workspaceId,req.params.id])).rows[0];
+    if(!native)return false;
+    req.flash('error','Review the exact Staging agent approval card in Ask before executing.');res.redirect(303,'/ask');return true;
+  }
+  router.post('/ask/agent-pilot',asyncRoute(async(req,res)=>{
+    if(!['enable','disable'].includes(req.body.mode))throw new ValidationError('Choose enable or disable.');
+    await pilot.toggle(database,req.ctx,req.body.mode==='enable');
+    req.flash('success',req.body.mode==='enable'?'Staging agent enabled for this test business.':'Staging agent disabled. The existing Ask experience is restored.');
+    return res.redirect(303,'/ask');
+  }));
+  router.post('/ask/goals/:id/approval',asyncRoute(async(req,res)=>{
+    if(!['approve','reject'].includes(req.body.decision))throw new ValidationError('Choose approve or reject.');
+    await entitlements.assertCapability(database,commercialScope(req),'ask.prepare_actions');
+    await pilot.decide(database,req.ctx,req.params.id,String(req.body.deliveryId||''),String(req.body.sha256||''),req.body.decision==='approve',
+      {responseReference:`Authenticated website ${req.body.decision} by ${req.ctx.actorId} at ${new Date().toISOString()}`});
+    req.flash('success',req.body.decision==='approve'?'Approved. StockChief is checking the recorded outcome.':'The proposal was rejected.');
+    return res.redirect(303,'/ask');
+  }));
+  router.get('/ask/goals/:id',asyncRoute(async(req,res)=>{
+    const goal=await goalStore.get(database,req.ctx,req.params.id);
+    if(!goal)return res.status(404).json({error:'Goal not found.'});
+    const isPilot=goal.checkpoint.runtime==='codex-staging';
+    if(isPilot)await pilot.access(database,req.ctx);
+    const events=isPilot?(await database.query(`SELECT sequence,kind,detail,created_at FROM stockchief_runtime.assistant_goal_events
+      WHERE goal_id=$1 AND kind IN ('agent_activity','approval_ready') ORDER BY sequence DESC LIMIT 20`,[goal.id])).rows:[];
+    return res.json({id:goal.id,status:goal.status,answer:goal.answer,turns:goal.turns,tools:goal.tool_calls,events});
+  }));
+  router.post('/ask/goals/:id/reply',asyncRoute(async(req,res)=>{
+    const existing=await goalStore.get(database,req.ctx,req.params.id);
+    if(existing?.checkpoint.runtime==='codex-staging')await pilot.access(database,req.ctx,{enabled:true});
+    else if(!goalStore.enabled(req.ctx))throw new ValidationError('Adaptive Ask is disabled.');
+    const goal=await goalStore.reply(database,req.ctx,req.params.id,req.body.message);
+    if(!goal)throw new ValidationError('This goal is not waiting for an answer.');
+    await goalStore.enqueue(database,goal);return res.redirect(303,'/ask');
+  }));
+  router.post('/ask/goals/:id/cancel',asyncRoute(async(req,res)=>{
+    await goalStore.cancel(database,req.ctx,req.params.id);return res.redirect(303,'/ask');
+  }));
   router.get('/ask/capabilities',asyncRoute(async(req,res)=>{
     const entries=await require('../../assistant/postgres-discovery').available(database,req.ctx);
     const query=String(req.query.q||'').trim().slice(0,120).toLowerCase();
@@ -201,8 +244,15 @@ function createPostgresAskRouter(database,options={}){
       UNION SELECT name FROM locations WHERE workspace_id=$1
         AND name ~ '[0-9]{4,}'`,
     [req.ctx.workspaceId])).rows.map((row)=>row.name);
+    const pilotView=options.agentInspection?null:await pilot.view(database,req.ctx);
+    const activeGoal=goalStore.enabled(req.ctx)||pilotView?await goalStore.latest(database,req.ctx,startedAt):null;
+    const pilotGoal=activeGoal?.checkpoint.runtime==='codex-staging'?activeGoal:null;
+    const approvalCards=pilotGoal&&!['COMPLETED','CANCELLED','BLOCKED'].includes(pilotGoal.status)
+      ?(await pilot.inbox(database,req.ctx,pilotGoal.id)).approvals:[];
     return res.page('attention/ask',{title:'Ask StockChief',nav:'ask',room:true,suppressBack:true,postgresAsk:true,...rules,
-      about:String(req.query.about||'').slice(0,2000),question:latest?.message||'',result:resultFor(latest,latestProposal),error:null,
+      codexPilot:pilotView,codexApprovals:approvalCards,adaptiveGoal:activeGoal,
+      about:String(req.query.about||'').slice(0,2000),stockActivity:req.query.task==='stock-activity'&&sourcePage?.path==='/inventory',
+      question:latest?.message||'',result:resultFor(latest,latestProposal),error:null,
       prefill:String(req.query.q||'').slice(0,2000),
       conversation:null,transcript,currentGoalId:latest?.id||null,conversationId:`postgres:${req.ctx.workspaceId}`,
       aiConfigured:Boolean(options.provider||config.ai.configured),usageKey:newId('askusage'),
@@ -237,6 +287,7 @@ function createPostgresAskRouter(database,options={}){
     const page=await require('../../assistant/postgres-page-context').load(database,req.ctx.workspaceId,
       req.body.sourcePath||(remembered?.workspaceId===req.ctx.workspaceId?remembered.path:null));
     return assistant.ask(database,req.ctx,req.body.message,{provider:options.provider,
+      background:goalStore.enabled(req.ctx)||await pilot.selected(database,req.ctx),
       usageKey:String(req.body.usageKey||newId('askusage')),
       page,startedAt:req.session.postgresAskStartedAt||null,
       continueInteractionId:String(req.body.continueInteractionId||'')});
@@ -306,8 +357,9 @@ function createPostgresAskRouter(database,options={}){
       resumeAvailable:proposal.status==='EXECUTED'&&resuming});
   }));
   router.post('/actions/:id/approve-mission',asyncRoute(async(req,res)=>{
+    if(await pilotProposalGuard(req,res))return;
     await entitlements.assertCapability(database,commercialScope(req),'ask.prepare_actions');
-    const result=await assistant.executeMission(database,req.ctx,req.params.id);
+    const result=await assistant.executeMission(database,req.ctx,req.params.id,{provider:options.provider});
     if(result.continuationError)req.flash('error',
       'The first verified step completed, but the mission stopped safely before further work. Review the recorded reason.');
     else req.flash('success',result.continued?.some((part)=>part.status==='PREPARED')
@@ -316,8 +368,9 @@ function createPostgresAskRouter(database,options={}){
     return res.redirect(303,'/ask#latest');
   }));
   router.post('/actions/:id/approve',asyncRoute(async(req,res)=>{
+    if(await pilotProposalGuard(req,res))return;
     await entitlements.assertCapability(database,commercialScope(req),'ask.prepare_actions');
-    const result=await assistant.executeProposal(database,req.ctx,req.params.id);
+    const result=await assistant.executeProposal(database,req.ctx,req.params.id,{provider:options.provider});
     if(result.continuationError)req.flash('error',
       'The approved change completed, but StockChief could not continue the remaining steps. Nothing further was approved.');
     else req.flash('success',result.replayed?'That change had already been completed.':
@@ -339,7 +392,7 @@ function createPostgresAskRouter(database,options={}){
     const proposal=await assistant.getProposal(database,req.ctx.workspaceId,req.params.id);
     if(proposal.status!=='EXECUTED')throw new (require('../../domain/errors').ValidationError)(
       'Approve the prepared change before continuing its dependent steps.');
-    const result=await assistant.executeProposal(database,req.ctx,proposal.id);
+    const result=await assistant.executeProposal(database,req.ctx,proposal.id,{provider:options.provider});
     req.flash(result.continuationError?'error':'success',result.continuationError
       ?'The completed change is safe, but the remaining steps still need another try.'
       :'StockChief continued the remaining request from the completed step.');

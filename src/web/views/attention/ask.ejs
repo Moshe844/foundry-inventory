@@ -26,7 +26,7 @@
   var transcript = locals.transcript || [];
   var currentGoalId = locals.currentGoalId || '';
   var showingCurrent = !!(result || error);
-  var started = transcript.length > 0 || showingCurrent;
+  var started = transcript.length > 0 || showingCurrent || Boolean(locals.adaptiveGoal);
   /* A guided email step owns the next interaction. Keep the general composer
      available, but place it after the step instead of floating over its fields. */
   var guidedEmailStep = !!(result && (result.emailFlow || (result.emailProposal && result.emailProposal.status === 'PENDING')));
@@ -79,6 +79,17 @@
 %>
 
 <div class="rm-chat<%= guidedEmailStep ? ' rm-chat--guided' : '' %>" data-conversation="<%= locals.conversationId || '' %>">
+  <% if(locals.codexPilot){ %>
+    <section class="rm-note" aria-label="Staging agent controls">
+      <p><strong>Staging agent pilot</strong> · <%= locals.codexPilot.enabled?'Codex SDK · Sol High':'Existing Ask' %></p>
+      <% if(locals.codexPilot.enabled&&!locals.codexPilot.funded){ %><p>Agent spending is locked until a pilot budget is approved.</p><% } %>
+      <% if(locals.codexPilot.canToggle){ %><form method="post" action="/ask/agent-pilot">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="mode" value="<%= locals.codexPilot.enabled?'disable':'enable' %>">
+        <button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit"><%= locals.codexPilot.enabled?'Disable pilot · use existing Ask':'Enable Staging agent' %></button>
+      </form><% } %>
+    </section>
+  <% } %>
   <% if (started) { %>
   <div class="rm-chat__bar">
     <div><p class="rm-stamp">Your direct line</p><h1 class="rm-chat__title">Ask StockChief</h1></div>
@@ -90,6 +101,7 @@
   </div>
   <% } %>
 
+  <% if(locals.adaptiveGoal){ %><%- include('../partials/adaptive-goal',{goal:locals.adaptiveGoal}) %><% } %>
   <% if (!started && !question) { %>
     <header class="rm-chat__intro">
       <span class="rm-chat__mark" aria-hidden="true"><%- helpers.icon('spark', { size: 18 }) %></span>
@@ -106,6 +118,13 @@
 
   <% if (about) { %>
     <p class="rm-stamp">About: <%= about %></p>
+  <% } %>
+  <% if (locals.stockActivity) { %>
+    <section class="rm-note" aria-label="Record a stock change">
+      <strong>Record a stock change</strong>
+      <p>Tell StockChief what arrived, left, moved, or was counted. Include the product, quantity, and location if you know them. It will check the records, ask for missing facts, and show the proposed change before recording anything.</p>
+      <p>If you only want to check quantities, <a href="/inventory/table">open the stock table</a>.</p>
+    </section>
   <% } %>
 
   <%#

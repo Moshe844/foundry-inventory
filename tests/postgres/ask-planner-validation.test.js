@@ -3,7 +3,8 @@
 const test=require('node:test');
 const assert=require('node:assert/strict');
 const planner=require('../../src/assistant/postgres-capability-planner');
-const {selectedPendingChoice,synthesizeReads,focusedIntentCatalogue}=require('../../src/assistant/postgres-control-plane');
+const {selectedPendingChoice,synthesizeReads,focusedIntentCatalogue,
+  __emptyWorkspaceStockRead}=require('../../src/assistant/postgres-control-plane');
 const {registry}=require('../../src/assistant/postgres-capability-registry');
 const {summarizeCustomerOrders}=require('../../src/assistant/postgres-service');
 
@@ -63,6 +64,59 @@ test('malformed model output retries once without turning a supported read into 
   const result=await planner.plan(provider,'Which inventory locations exist?',{deferReadFit:true});
   assert.equal(attempts,2);
   assert.equal(result.steps[0].contract.name,'read.locations');
+});
+
+test('empty-workspace stock inquiry reads verified counts despite a speculative location objection',async()=>{
+  let calls=0;
+  const provider={async complete({schemaName}){
+    assert.equal(schemaName,'stockchief_capability_plan');calls++;
+    return {data:{steps:calls===1?[]:[{capability:'read.inventory',arguments:[],
+      dependsOn:[],continuesPending:false}],clarifyingQuestion:'Please name a location.'}};
+  }};
+  const result=await planner.plan(provider,'Which products do we have on hand?',
+    {workspace:{product_count:0,location_count:0},deferReadFit:true});
+  assert.equal(result.steps[0].contract.name,'read.inventory_summary');
+  assert.equal(calls,2);
+});
+
+test('a missed empty-workspace stock read cannot become a write or an unrelated answer',()=>{
+  assert.equal(__emptyWorkspaceStockRead('Does this startup have any inventory recorded yet?',
+    {product_count:0},registry)?.name,'read.inventory_summary');
+  assert.equal(__emptyWorkspaceStockRead('Buy inventory for this startup now',
+    {product_count:0},registry),null);
+  assert.equal(__emptyWorkspaceStockRead('Does this startup have a bank connection?',
+    {product_count:0},registry),null);
+  assert.equal(__emptyWorkspaceStockRead('Does this startup have any inventory recorded yet?',
+    {product_count:2},registry),null);
+});
+
+test('explicit pickup is preserved for a customer order, without guessing conflicting methods',()=>{
+  const pickup=[{contract:registry.get('sales_order.create'),args:{customer:'Field Buyer'},
+    dependsOn:[],continuesPending:false}];
+  planner.groundedMoneyArguments(pickup,'Create a pickup order for Field Buyer.',null);
+  assert.equal(pickup[0].args.deliveryMethod,'pickup');
+  const ambiguous=[{contract:registry.get('sales_order.create'),args:{customer:'Field Buyer'},
+    dependsOn:[],continuesPending:false}];
+  planner.groundedMoneyArguments(ambiguous,'Should we ship or offer pickup for Field Buyer?',null);
+  assert.equal(ambiguous[0].args.deliveryMethod,undefined);
+});
+
+test('a contact address cannot silently become a model-authored outbound email',async()=>{
+  const provider={async complete({schemaName}){
+    assert.equal(schemaName,'stockchief_capability_plan');
+    return {data:{steps:[
+      {capability:'contact.create',arguments:[{name:'recipient',value:'North Ridge Goods'},
+        {name:'recipientKind',value:'supplier'},
+        {name:'recipientEmail',value:'north-ridge@example.test'}],dependsOn:[],continuesPending:false},
+      {capability:'communication.send_email',arguments:[{name:'recipient',value:'North Ridge Goods'},
+        {name:'recipientEmail',value:'north-ridge@example.test'},
+        {name:'body',value:'Welcome to our supplier network.'}],dependsOn:[0],continuesPending:false},
+    ],clarifyingQuestion:''}};
+  }};
+  const result=await planner.plan(provider,
+    'Add North Ridge Goods as a supplier; their email is north-ridge@example.test.');
+  assert.deepEqual(result.steps.map((step)=>step.contract.name),['contact.create']);
+  assert.equal(result.steps[0].args.recipientEmail,'north-ridge@example.test');
 });
 
 test('a truncated capability-fit response retries with a bounded larger output budget',async()=>{

@@ -59,6 +59,7 @@ async function available(database,ctx){
   };
   const entries=[];
   for(const contract of registry.list()){
+    if(contract.adaptiveOnly&&(!ctx.goalId||!require('./postgres-goal-store').enabled(ctx)))continue;
     const discovery=discoveryFor(contract);
     if(!discovery)continue;
     const permission=contract.kind==='read'?readPermissions[contract.view]||contract.permission:contract.permission;

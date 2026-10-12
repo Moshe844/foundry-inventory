@@ -42,7 +42,14 @@ async function ensure(database,workspaceId){const at=nowIso();
   await database.query(`INSERT INTO autopilot_limits(workspace_id,updated_at) VALUES($1,$2)
     ON CONFLICT(workspace_id) DO NOTHING`,[workspaceId,at]);
   return stateFrom((await database.query('SELECT * FROM workspace_autopilot WHERE workspace_id=$1',[workspaceId])).rows[0]);}
-async function getState(database,workspaceId){return ensure(database,workspaceId);}
+async function getState(database,workspaceId){
+  // Reading a new workspace must not initialize automation or require INSERT
+  // privileges. Write paths still call ensure() before changing persisted state.
+  const row=(await database.query(`SELECT a.*,w.id AS workspace_id FROM workspaces w
+    LEFT JOIN workspace_autopilot a ON a.workspace_id=w.id WHERE w.id=$1`,[workspaceId])).rows[0];
+  if(!row)throw new NotFoundError('That inventory could not be found.');
+  return stateFrom({...row,mode:row.mode||MODES.SUPERVISED,paused:row.paused??0,suspended:row.suspended??0});
+}
 
 async function setMode(database,ctx,membership,mode){if(!Object.values(MODES).includes(mode))
   throw new ValidationError('Choose watch only, ask first, or bounded automatic work.');
@@ -451,7 +458,7 @@ async function cancel(database,ctx,membership,id){assertOperate(membership);cons
     [ctx.workspaceId,id,nowIso()]);return getWork(database,ctx.workspaceId,id);}
 
 async function dashboard(database,workspaceId){const [state,policies,capabilities,locations,suppliers,recent]=await Promise.all([
-  ensure(database,workspaceId),listPolicies(database,workspaceId),
+  getState(database,workspaceId),listPolicies(database,workspaceId),
   listCapabilities(database,workspaceId),
   database.query(`SELECT id,name FROM locations WHERE workspace_id=$1 AND is_active=1 ORDER BY name`,[workspaceId]),
   database.query(`SELECT id,name FROM suppliers WHERE workspace_id=$1 AND status='active' ORDER BY name`,[workspaceId]),

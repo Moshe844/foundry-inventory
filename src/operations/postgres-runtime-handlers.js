@@ -330,12 +330,13 @@ async function runtimeSweep(job,client,options={}){
       idempotencyKey:key,payload:{missionId:mission.id,actorId:mission.actor_user_id},priority:20,
       maxAttempts:5,availableAt:now,now});
     if(scheduled.created)scheduledMissionResumes+=1;}
+  const scheduledGoals=await require('../assistant/postgres-goal-resume').sweep(scopedDatabase(client));
   const stockAlerts=await require('../manager/postgres-stock-threshold-alerts').evaluate(client);
   return {expiredSessions:sessions.rowCount,suspendedSubscriptions:suspendedSubscriptions.rowCount,recoveredImports:staleImports.rowCount,
     ambiguousEmails:uncertainEmails.rowCount,ambiguousProviderEffects:staleProviderEffects.rowCount,
     staleConnectors,recoveredConnectors,scheduledMailboxPolls,
     scheduledMailboxRenewals,scheduledAlertDeliveries,scheduledAutopilotChecks,scheduledReconciliations,
-    scheduledMissionResumes,stockAlerts,at};
+    scheduledMissionResumes,scheduledGoals,stockAlerts,at};
 }
 
 async function autopilotEvaluate(job,client){
@@ -448,6 +449,13 @@ async function systemEmail(job,database,options={}){
 }
 
 function create(providers=defaultProviders,options={}){return {'system.runtime-sweep':(job,client)=>runtimeSweep(job,client,options),
+  'assistant.run-goal':external(async(job,database)=>{
+    const ctx={workspaceId:job.workspaceId,actorId:job.payload.actorId};
+    const goal=await require('../assistant/postgres-goal-store').get(database,ctx,job.payload.goalId);
+    return goal?.checkpoint.runtime==='codex-staging'
+      ?require('../assistant/postgres-codex-pilot').run(database,ctx,job.payload.goalId,options.codexPilot||{})
+      :require('../assistant/postgres-goal-controller').run(database,ctx,job.payload.goalId,{provider:options.aiProvider});
+  }),
   'system.reconcile-business':(job,client)=>reconciliation.run(scopedDatabase(client),job.workspaceId),
   'assistant.resume-mission':external((job,database)=>require('../assistant/postgres-service').resumeMission(database,
     {workspaceId:job.workspaceId,actorId:job.payload.actorId},job.payload.missionId,

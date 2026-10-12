@@ -58,6 +58,7 @@ async function planningCatalogue(database,ctx,actor){
   };
   const entries=[];
   for(const contract of registry.list()){
+    if(contract.adaptiveOnly&&(!ctx.goalId||!require('./postgres-goal-store').enabled(ctx)))continue;
     const permission=contract.kind==='read'?READ_PERMISSIONS[contract.view]||contract.permission:contract.permission;
     if(!permissions.can(actor,permission))continue;
     if(contract.ownerOnly&&actor.role!=='owner')continue;
@@ -117,6 +118,7 @@ async function executeStep(service,database,ctx,step,{actor,provider,rawProvider
   const {contract}=step;
   const permission=contract.kind==='read'?READ_PERMISSIONS[contract.view]||contract.permission:contract.permission;
   permissions.assertCan(actor,permission,contract.name);
+  if(contract.ownerOnly&&actor.role!=='owner')throw new (require('../domain/errors').ValidationError)('This operation requires the business owner.');
   if(contract.commercialUnavailable?.length){
     const capability=contract.commercialUnavailable[0];
     let recommended=null;
@@ -131,6 +133,11 @@ async function executeStep(service,database,ctx,step,{actor,provider,rawProvider
     handoff:{href:`/upgrade?capability=${encodeURIComponent(capability)}&return=/ask`,
       label:'Review available plans'},rows:[],columns:[],reason:'entitlement'},
     args:step.args,provenance:{}};
+  }
+  if(contract.kind==='authority'){
+    if(!contract.validate(step.args)||contract.required.some(field=>!step.args[field]))
+      throw new (require('../domain/errors').ValidationError)('An exact recorded work item is required.');
+    return {result:await contract.prepare(service,database,ctx,sourceMessage,step.args,{provider,sourceMessage}),args:step.args,provenance:{}};
   }
   if(contract.kind==='navigation'){
     if(contract.destinationId)return {result:navigation(database,ctx,contract.destinationId),args:{},provenance:{}};
@@ -475,6 +482,16 @@ async function focusedRecordCatalogue(database,ctx,message,catalogue){
     get:(name)=>selected.get(name)||null};
 }
 
+function emptyWorkspaceStockRead(message,workspace,catalogue){
+  if(workspace?.product_count!==0)return null;
+  const text=String(message||'');
+  if(!/\b(?:inventory|stock|products?|items?|SKUs?|catalog(?:ue)?)\b/i.test(text)
+    ||/\b(?:add|create|set|adjust|receive|transfer|buy|purchase|order|sell|ship|invoice|pay|change|delete|remove|import)\b/i.test(text)
+    ||!(/\?/.test(text)||/\b(?:what|which|how|any|whether|have|show|list|tell|count|number|recorded)\b/i.test(text)))
+    return null;
+  return catalogue.get('read.inventory_summary');
+}
+
 // A large registry can make the model overlook an exact contract and call it
 // merely a "closest alternative". Retry against a small, derived catalogue;
 // the model, independent fit check, resolver and approval gate still decide.
@@ -624,6 +641,14 @@ async function run(service,database,ctx,message,{provider,rawProvider=null,histo
         if(retry.steps.length)selected=retry;
       }
     }
+    // A model can miss an ordinary read in a brand-new workspace. Zero active
+    // products is verified, so a clearly read-only stock question needs no
+    // guessed location or mutation: the canonical summary query proves it.
+    if(!selected.steps.length&&!pending){
+      const emptyStock=emptyWorkspaceStockRead(message,workspace,planningScope);
+      if(emptyStock)selected={steps:[{contract:emptyStock,args:{},dependsOn:[],
+        continuesPending:false}],clarifyingQuestion:''};
+    }
   }
   catch(error){if(['entitlement_required','validation_error'].includes(error.code))throw error;
     if(error.code==='rate_limited')return {steps:[],outcomes:[{result:{status:'CLARIFY',
@@ -739,4 +764,5 @@ module.exports={run,executeStep,normalizeForLegacy,questionFor,READ_PERMISSIONS,
   focusedRecordCatalogue,focusedIntentCatalogue,synthesizeReads,relevantActions,
   explicitlyReadOnly,readOnlyCatalogue,
   selectedPendingChoice,focusNamedSkuCatalogue,focusedRecordState,explicitPageNavigation,
-  __removeSatisfiedLocationPrerequisites:removeSatisfiedLocationPrerequisites};
+  __removeSatisfiedLocationPrerequisites:removeSatisfiedLocationPrerequisites,
+  __emptyWorkspaceStockRead:emptyWorkspaceStockRead};

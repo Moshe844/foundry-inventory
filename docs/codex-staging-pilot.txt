@@ -1,0 +1,52 @@
+Controlled Codex SDK Staging pilot
+
+The pilot uses the actual Codex SDK 0.162.1 and GPT-6.1 Sol with High reasoning.
+It retains native context handling and the existing restricted Docker sandbox,
+application renderer, governed gateway, canonical engines and durable approvals.
+
+Access requires ALL of: STOCKCHIEF_RUNTIME_ENV=staging, the pilot feature flag,
+an exact workspace ID, an exact authorized account email, a matching database
+pilot membership, current commercial access and the workspace enable switch.
+Other workspaces retain the existing Ask runtime. Disable Staging agent restores
+that path and invalidates unfinished native goal leases. Approved effects retain
+their recorded canonical status.
+
+Paid work starts locked: the shared PostgreSQL pilot ledger has a zero ceiling
+and no spending approval. Enabling the UI does not unlock money. A separately
+approved numerical budget must be recorded by the trusted operator; the agent
+and website cannot top up, borrow, reset the period or authorize spending.
+Native requests retain the $0.30 per-request maximum; goals retain their existing
+bounded commercial holds and $1 maximum. Unknown provider outcomes retain the
+entire reservation and block subsequent spending.
+
+The temporary worker runs on the operator's existing Docker computer. It has no
+inbound public listener or host mount inside the native sandbox. Its Staging
+database connection requires sslmode=verify-full and certificate verification.
+It is available only while the computer, Docker and the worker are running.
+The worker must use the same release as the Staging web service. Model and
+database credentials stay in ignored local environment files, outside tools,
+prompts, browser observations and Docker.
+
+Durable approvals are delivered by the host without another model call. Exact
+proposal revisions are checked again in the canonical transaction. Authenticated
+human decisions, idempotent execution, dependency resumption and fresh evidence
+support final reporting. The timeline contains actual sanitized execution events,
+not private reasoning or invented browser clicks.
+
+Offline preparation completed using synthetic provider responses: the actual
+SDK inspected the renderer, prepared a receipt, stopped for durable approval,
+resumed, read fresh state and reported a independently checked PostgreSQL result.
+Website smoke tests checked actor/tenant exclusion, immutable approval cards,
+one canonical effect on duplicate approval, disable rollback and zero-budget
+admission. This verifies integration; it is not proof of new real-model reasoning
+or production readiness.
+
+Pilot limitations: general browser exploration can discover the application,
+but consequential changes still require an existing governed execution contract.
+No browser POST or unrestricted SQL is allowed. Hidden helper model calls remain
+blocked; an operation that depends on one must report that limitation rather than
+spend outside the shared ledger. External connector execution requires its normal
+configured service credentials. The premium live-streaming view is not included;
+the pilot uses real progress events and durable approval cards.
+
+No production deployment, checkout activation or pricing publication is authorized.

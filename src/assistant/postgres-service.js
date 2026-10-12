@@ -537,7 +537,18 @@ async function lookup(database,ctx,request,options={}) {
         WHERE b.workspace_id=$1 AND s.is_active=1 AND i.is_active=1) AS on_hand`,[ctx.workspaceId])).rows[0];
     const products=Number(count.products),productsEver=Number(count.products_ever),
       skus=Number(count.skus),onHand=Number(count.on_hand);
+    const question=String(options.question||'');
+    const asksSkus=/\bSKUs?\b/i.test(question);
+    const asksProducts=/\b(?:products?|items?)\b/i.test(question);
+    const asksUnits=/\b(?:units?|on[ -]?hand|stock)\b/i.test(question);
+    const asksHistory=/\b(?:ever|historical|previously|before|set up)\b/i.test(question);
     const answer=productsEver===0?'No products have ever been recorded in StockChief; you have 0 units on hand.':
+      asksSkus&&!asksProducts&&!asksUnits&&!asksHistory
+        ?`You have ${skus.toLocaleString('en-US')} active ${skus===1?'SKU':'SKUs'} recorded.`:
+      asksProducts&&!asksSkus&&!asksUnits&&!asksHistory
+        ?`You have ${products.toLocaleString('en-US')} active ${products===1?'product':'products'} recorded.`:
+      asksUnits&&!asksSkus&&!asksProducts&&!asksHistory
+        ?`You have ${onHand.toLocaleString('en-US')} units on hand across the business.`:
       `You have ${products.toLocaleString('en-US')} active ${products===1?'product':'products'} in StockChief, across ${skus.toLocaleString('en-US')} ${skus===1?'SKU':'SKUs'}, with ${onHand.toLocaleString('en-US')} units on hand.${productsEver>products?` ${productsEver.toLocaleString('en-US')} products have been recorded here over time.`:''}`;
     return {answer,
       rows:[{products,skus,onHand,productsEver}],columns:['products','skus','onHand','productsEver'],
@@ -1151,7 +1162,7 @@ async function prepareAction(database,ctx,message,request,options={}) {
     const details=[email?`email ${email}`:null,phone?`phone ${phone}`:null].filter(Boolean);
     return createProposal(database,ctx,message,'contact.create',{kind,name,email,
       phone,notes:trimOrNull(request.notes)},
-    `Add ${name} as a ${kind}${details.length?` with ${details.join(' and ')}`:''}.`);
+    `Add ${name} as a ${kind}${details.length?` with ${details.join(' and ')}`:''}. This stores contact details; it does not send email.`);
   }
   if(request.action==='send_email'){
     if(request.supplierAcceptance&&request.supplierAcceptance!=='required')return {status:'CLARIFY',
@@ -1395,9 +1406,10 @@ async function prepareAction(database,ctx,message,request,options={}) {
       ?null:Number(supplierItem.last_unit_cost)):request.amount;
     const currency=request.currency||party.row.currency||'USD';
     return createProposal(database,ctx,message,'purchase_order.create',{supplierId:party.row.id,
+      ...(request.poNumber?{poNumber:request.poNumber}:{}),
       destinationLocationId:place.row.id,currency,expectedDate:request.neededBy,reference:request.reference,
       lines:[{skuId:sku.row.id,quantityUnits:request.quantity,unitCost,destinationLocationId:place.row.id}]},
-    `Prepare a draft purchase order to ${party.row.name}: ${request.quantity} × ${sku.row.name}${sku.row.variant_label?` · ${sku.row.variant_label}`:''} for ${place.row.name}${unitCost===null?'. Supplier cost is not recorded; the draft cannot be placed until it is priced':` at ${pricing.formatMinor(Math.round(unitCost*100),currency)} per inventory unit`}.`);
+    `Prepare a draft purchase order${request.poNumber?` ${request.poNumber}`:''} to ${party.row.name}: ${request.quantity} × ${sku.row.name}${sku.row.variant_label?` · ${sku.row.variant_label}`:''} for ${place.row.name}${unitCost===null?'. Supplier cost is not recorded; the draft cannot be placed until it is priced':` at ${pricing.formatMinor(Math.round(unitCost*100),currency)} per inventory unit`}.`);
   }
   if(request.action==='create_item'){
     if(!request.search && !request.sku)return {status:'CLARIFY',answer:'What is the product name?',awaitingField:'search'};
@@ -1729,8 +1741,10 @@ async function supersedePendingProposal(database,ctx,oldId,newId,args){
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 
-async function continueApprovedPlans(database,ctx,proposalId){
-  const rawProvider=config.ai.configured?createProviderUnobserved(config.ai.provider,config.ai.tier('fast')):null;
+async function continueApprovedPlans(database,ctx,proposalId,options={}){
+  const linked=(await require('./postgres-capability-plans').missionForProposal(database,ctx.workspaceId,ctx.actorId,proposalId));
+  if(linked?.goal_id)ctx={...ctx,goalId:linked.goal_id};
+  const rawProvider=options.provider||(config.ai.configured?createProviderUnobserved(config.ai.provider,config.ai.tier('fast')):null);
   const provider=fundedAskProvider(database,ctx,rawProvider,`plan:${proposalId}`);
   return require('./postgres-capability-plans').resume(database,ctx,proposalId,{
     service:capabilityService(),provider,rawProvider,
@@ -1784,9 +1798,9 @@ async function executeProposalCore(database,ctx,id,{missionPlanId=null}={}){
   return committed;
 }
 
-async function executeProposal(database,ctx,id) {
+async function executeProposal(database,ctx,id,options={}) {
   const committed=await executeProposalCore(database,ctx,id);
-  try{return {...committed,continued:await continueApprovedPlans(database,ctx,id)};}
+  try{return {...committed,continued:await continueApprovedPlans(database,ctx,id,options)};}
   catch(error){
     console.warn('[stockchief] Ask plan continuation failed',JSON.stringify({
       code:error.code||error.name||'unknown',
@@ -1796,15 +1810,18 @@ async function executeProposal(database,ctx,id) {
   }
 }
 
-async function executeMission(database,ctx,proposalId){
+async function executeMission(database,ctx,proposalId,options={}){
   const plan=await require('./postgres-capability-plans').authorize(database,ctx,proposalId);
   const committed=await executeProposalCore(database,ctx,proposalId,{missionPlanId:plan.id});
-  try{return {...committed,missionId:plan.id,continued:await continueApprovedPlans(database,ctx,proposalId)};}
+  try{return {...committed,missionId:plan.id,continued:await continueApprovedPlans(database,ctx,proposalId,options)};}
   catch(error){console.warn('[stockchief] mission continuation failed',JSON.stringify({missionId:plan.id,
     code:error.code||error.name||'unknown'}));return {...committed,missionId:plan.id,continuationError:error.message};}
 }
 
 async function resumeMission(database,ctx,missionId,options={}){
+  const linkedGoal=(await database.query(`SELECT goal_id FROM stockchief_runtime.assistant_capability_plans
+    WHERE id=$1 AND workspace_id=$2 AND actor_user_id=$3`,[missionId,ctx.workspaceId,ctx.actorId])).rows[0]?.goal_id;
+  if(linkedGoal)ctx={...ctx,goalId:linkedGoal};
   const rawProvider=options.provider||
     (config.ai.configured?createProviderUnobserved(config.ai.provider,config.ai.tier('fast')):null);
   // A mission can be woken by several distinct external events. Each model
@@ -1828,6 +1845,14 @@ async function cancelProposal(database,ctx,id) {
   return result.rows[0];
 }
 
-module.exports={lookup,prepareAction,ask:askCapabilities,listInteractions,
+async function ask(database,ctx,message,options={}){
+    if(options.legacy!==true&&await require('./postgres-codex-pilot').selected(database,ctx))
+      return require('./postgres-codex-pilot').start(database,ctx,message,options);
+  if(require('./postgres-goal-store').enabled(ctx)&&options.legacy!==true)
+    return require('./postgres-goal-controller').start(database,ctx,message,options);
+  return askCapabilities(database,ctx,message,options);
+}
+
+module.exports={lookup,prepareAction,ask,askLegacy:askCapabilities,listInteractions,capabilityService,recordCapabilityOutcome,
   continueEmail,reviseEmailProposal,getProposal,executeProposal,executeMission,resumeMission,cancelProposal,
   fundedAskProvider,summarizeCustomerOrders};

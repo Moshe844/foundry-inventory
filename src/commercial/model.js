@@ -19,7 +19,8 @@ function wrap(database,ctx,provider,operation,key,options={}){const policy=POLIC
     if(!reserved.created)throw new ValidationError('This model operation is already recorded or in progress.');}
   let response;let modelAttemptDay=null;let providerStarted=false;let costHold=null;let usageRecorded=false;
   try{costHold=await require('./model-cost-budget').reserve(database,scope,provider,request,policy,operation,
-    idempotencyKey,internal?`${ctx.workspaceId}:${options.fundingKey}`:idempotencyKey);
+    idempotencyKey,internal?`${ctx.workspaceId}:${options.fundingKey}`:idempotencyKey,
+    ctx.goalId?{goalId:ctx.goalId,actorId:ctx.actorId}:{});
     modelAttemptDay=await require('./model-budget').begin(database,scope.accountId);
     const {onValidated,...providerRequest}=request;
     providerStarted=true;response=await provider.complete({...providerRequest,maxOutputTokens:costHold.outputTokenLimit,commercial:true});

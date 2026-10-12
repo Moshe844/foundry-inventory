@@ -11,6 +11,7 @@ artifacts/
 *.sqlite-wal
 *.sqlite.*
 .env
+.env.codex-staging.local
 .DS_Store
 
 # Generated certification databases can contain synthetic or copied business

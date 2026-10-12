@@ -103,6 +103,18 @@ test('a draft that invents a figure is refused, and the reason names the fault',
   assert.doesNotMatch(result.body, /40 shirts/);
 });
 
+test('identifier digits cannot launder an invented quantity into a reply', () => {
+  const message={subject:'Our order',body_text:'Where is it?'};
+  const facts=['Order SO-00040: 12 ordered, 12 shipped.',
+    'Tracking number 1Z40AA10123456784; expected 2026-09-08.',
+    'Payment page https://pay.example.test/invoice/40'];
+  assert.equal(drafting.faultIn({subject:'Re: Our order',body:'Your 40 shirts shipped.'},message,facts),
+    'it used a figure that is not in your records');
+  assert.equal(drafting.faultIn({subject:'Re: Our order',
+    body:'Your 12 shirts shipped with tracking number 1Z40AA10123456784.'},message,facts),null);
+  assert.equal(drafting.datesAreGrounded('Expected 2026-09-09.',message,facts),false);
+});
+
 test('a draft that names a date nobody committed to is refused', async () => {
   const env = setup();
   shippedOrderFor(env);

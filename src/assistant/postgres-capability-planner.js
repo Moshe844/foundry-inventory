@@ -21,13 +21,14 @@ function schemaFor(catalogue=registry){
 const PLANNING_RULES=[
   "Plan the owner's CURRENT goal by meaning, not phrase matching. Use only registered contracts (n=name, d=effect, a=allowed inputs). At most eight steps; use the fewest that actually accomplish the goal.",
   'Include only argument fields declared for each contract. Preserve every product, party, record, amount, location, date and address the owner supplied. Omit unknown values; never guess a default entity, fabricate a placeholder, or supply fields for a capability with no inputs. The resolver verifies unique records or asks for missing inputs.',
-  'Broad questions use business-wide reads, even in empty workspaces; zero stock is an answer. Workspace counts route but do not prove facts. Read records; navigate only when asked, to one destination.',
+  'Broad stock reads work in empty workspaces; zero products means zero stock anywhere. Counts only route; read records. Navigate only when asked.',
   'A requested report, chart, graph, or customized tabular analysis needs read.custom_report; a normal stock, order, or finance lookup cannot create that report artifact. A request to save or schedule a report needs report.template.create and approval.',
   'When priorReport exists, save or schedule it via report.template.create without a report read.',
   'A request to correct your previous factual answer calls for fresh reads, not a business-data write. Changing a record still requires its matching approved write.',
   'For navigation, match the requested page exactly; prefer specific destinations. Never answer a page-opening request with records.',
-  'A change needs its matching write, not a read. A lasting supplier term, threshold or preference may be a policy. Do not invent prerequisite contacts, products, orders or movements. Invoicing does not imply fulfillment or payment.',
-  'A supplier-specific cost is a supplier-product term, not a SKU-wide quote. Use that term operation; ask if the supplier is unknown.',
+  'A change needs its matching write, not a read. A lasting supplier term may use a policy or the direct supplier-item contract; both need approval. Thresholds and preferences use policies. Do not invent prerequisites. Invoicing does not imply fulfillment or payment.',
+  'A contact address is data, not mail authority. Supplier SKUs must be explicitly supplied.',
+  'Supplier-specific cost uses supplier-item terms, not the SKU-wide quote; clarify unknown suppliers.',
   'The executor obtains context itself; do not add a preliminary read solely for a write. Add a read only if the owner separately asks its answer. Missing action inputs are clarified later; do not replace the action with a read.',
   'When one contract already accepts and applies every stated input for the requested outcome, do not add another mutation that sets the same field or performs a preparatory version of that outcome. Plan independent business effects only when the owner separately requested each one.',
   'Match exact real-world effect and timing. Recording a past event is not initiating it; a draft is not sending, buying, paying or fulfilling; internal status is not an external provider action. Never claim a dependent approval or physical event already happened.',
@@ -71,6 +72,10 @@ Do not treat internal placement as a supplier email or acceptance when the contr
 The authenticated currentWorkspace is the inventory the owner is operating in. "This inventory" or
 "this business" refers to that workspace even when currentPage is null. The executor remains tenant-scoped;
 do not ask for another workspace name before a workspace-level setting or rename.
+When currentWorkspace.product_count is zero, a question asking what stock exists can be answered from
+read.inventory_summary or read.inventory even if the owner calls their new business a location. No
+product can be in stock there. Do not require a named location unless the owner clearly names or
+distinguishes a particular location, or asks to change its records.
 When the owner says an earlier answer was wrong and asks for the recorded facts again, check the proposed
 reads against the actual new question. Correcting an answer is not changing a business record.
 Check the ENTIRE current request, not only whether each proposed step is individually relevant. If the owner
@@ -92,10 +97,21 @@ are requested, the plan needs a dependent confirmation step. Do not pass a creat
 the owner can ask for confirmation later. Conversely, do not add confirmation when the owner asked only for a draft.
 An owner stating a durable supplier term, stock threshold or operating preference is telling StockChief business information
 worth proposing as a rule. The proposal still requires explicit owner approval before any setting changes.
+Supplier lead-time and pack rules can be stored through the typed supplier_terms policy or the direct
+supplier-product term contract: both require owner approval and use the same supplier_items engine.
+Neither operation sends an order. Do not add a supplier SKU merely because a product was named.
+An email address given as part of a new contact is a field to store, not by itself authority to send mail.
+If a contact-creation request gives only a bare address without independently specifying a message or
+business purpose, do not reinterpret that address as a second send-email operation. If sending is
+separately requested but content is missing, the executor can clarify; missing body or mailbox alone
+is not evidence that the contact creation is unsupported. Supplier acceptance is required only when
+the owner expressly makes acceptance a gate, never merely because the recipient is a supplier.
 Preparing a consequential operation for owner approval is StockChief's normal safety boundary: judge the effect
 the registered executor has after approval, not whether it happens without approval.
 Creating and posting a customer invoice is billing in StockChief, even though separately sending the invoice or
 collecting payment is not included; only require those effects when the owner actually asks for them.
+The manual customer invoice posts receivable and revenue but does not remove inventory or post cost of
+goods sold. Missing inventory book cost blocks sale fulfillment, not preparation of this separate invoice.
 Reject a plan that substitutes a related but narrower action: recording an event is not initiating it, a draft is not
 sending or completing it, and changing internal state is not performing an external provider action.
 A read-only lookup does not fulfill a request to change business state. Reject a plan that continues an old goal
@@ -222,6 +238,14 @@ function groundedMoneyArguments(steps,message,pending){
   const statedNumbers=[...source.matchAll(/(?:^|[^\w])(?:[$€£]\s*)?(\d[\d,]*(?:\.\d+)?)(?=$|[^\w])/g)]
     .map((match)=>Number(match[1].replaceAll(',',''))).filter(Number.isFinite);
   for(const step of steps){
+    if(step.contract.name==='sales_order.create'&&!step.args.deliveryMethod){
+      const mentioned=[
+        /\b(?:pick[\s-]?up|customer\s+collect(?:ion|s)?)\b/i.test(source)?'pickup':null,
+        /\b(?:ship|shipping|shipped|carrier)\b/i.test(source)?'shipping':null,
+        /\b(?:our\s+delivery|deliver(?:ed|y)?\s+by\s+(?:us|our\s+business))\b/i.test(source)?'own_delivery':null,
+      ].filter(Boolean);
+      if(mentioned.length===1)step.args.deliveryMethod=mentioned[0];
+    }
     if(step.contract.name==='contact.create'&&step.args.recipient){
       const named=String(step.args.recipient).trim();
       const escaped=named.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
@@ -314,6 +338,24 @@ function sequenceApprovedMutations(steps){
     prior=index;
   }
   return steps;
+}
+
+function safeContactOnlyWhenEmailIsUnspecified(steps,message){
+  if(steps.length!==2||steps.some((step)=>
+    !['contact.create','communication.send_email'].includes(step.contract.name)))return null;
+  const contact=steps.find((step)=>step.contract.name==='contact.create');
+  const mail=steps.find((step)=>step.contract.name==='communication.send_email');
+  if(!contact||!mail||!['supplier','customer'].includes(contact.args.recipientKind))return null;
+  const name=String(contact.args.recipient||'').trim();
+  const email=String(contact.args.recipientEmail||'').trim();
+  if(!name||!email||!message.toLocaleLowerCase().includes(name.toLocaleLowerCase())
+    ||!message.toLocaleLowerCase().includes(email.toLocaleLowerCase()))return null;
+  // The planner may have treated a supplied contact address as permission to
+  // send mail. Never keep a model-authored message that the owner did not
+  // specify; preparing only the reversible contact addition is safe and the
+  // proposal makes the non-send effect explicit.
+  if(mail.args.body&&message.includes(mail.args.body))return null;
+  return {steps:[{...contact,dependsOn:[]}],clarifyingQuestion:''};
 }
 
 function collapseRepeatedEffects(steps){
@@ -435,6 +477,19 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
     coverExplicitOrderReservation(selected.steps,message,catalogue,pending);
     collapseRepeatedEffects(selected.steps);
     sequenceApprovedMutations(selected.steps);
+  }
+  const contactOnlyFallback=safeContactOnlyWhenEmailIsUnspecified(selected.steps,message);
+  if(contactOnlyFallback)return contactOnlyFallback;
+  // The model has classified this as a stock read, and the verified workspace
+  // has no products. A location clarification cannot improve the answer:
+  // there is no stocked item at any place. Read the canonical counts instead
+  // of letting a speculative location objection erase this safe read.
+  if(deferReadFit&&!pending&&!requestsPage&&workspace?.product_count===0
+    &&selected.steps.length===1
+    &&['read.inventory','read.inventory_summary'].includes(selected.steps[0].contract.name)){
+    const summary=catalogue.get('read.inventory_summary');
+    if(summary)return {steps:[{contract:summary,args:{},dependsOn:[],continuesPending:false}],
+      clarifyingQuestion:''};
   }
   // Read-only plans can be checked against actual evidence by the answer
   // stage, which can request a broader registered read when needed.

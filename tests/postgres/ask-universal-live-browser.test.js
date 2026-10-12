@@ -66,7 +66,7 @@ test('real model and Chromium select new Ask lifecycle contracts and commit veri
     async function ask(message,expected){
       await page.goto(`${base}/ask`);
       await page.getByLabel('Ask StockChief').fill(message);
-      await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Continue'}).click()]);
+      await Promise.all([page.waitForNavigation({timeout:90000}),page.getByRole('button',{name:'Continue'}).click()]);
       const latest=(await database.query(`SELECT action_type,id,status FROM stockchief_runtime.assistant_action_proposals
         WHERE workspace_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1`,[ctx.workspaceId])).rows[0];
       assert.equal(latest?.action_type,expected,`Ask: ${(await page.locator('main').innerText()).slice(0,1000)}\n`+

@@ -65,6 +65,7 @@ const FIELDS=Object.freeze({
   neededBy:{type:'string',description:'Requested date in YYYY-MM-DD format.'},
   allocationPriority:{type:'integer',description:'Customer-order stock allocation priority, a whole number from 0 to 1000.'},
   purchaseOrder:{type:'string',entity:'purchase_order',description:'Purchase order identity or number.'},
+  poNumber:{type:'string',description:'Exact identifier for a new draft purchase order when explicitly supplied; otherwise omit for canonical numbering.'},
   supplierBill:{type:'string',entity:'supplier_bill',description:'Supplier bill identity or number.'},
   orderLines:{type:'string',description:'For a customer order with multiple products: a JSON array of distinct line objects, each with exact sku/product name, integer quantity, and optional unitPrice decimal from the owner. Preserve every requested line in ONE order; never invent a price.'},
   receiptReference:{type:'string',description:'Delivery note or receipt reference.'},
@@ -223,7 +224,7 @@ action('customer_invoice.create','Prepare a customer invoice for review. Approva
   ['customer','sku','quantity','amount','tax','currency','description','issueDate','dueDate','reference'],
   permissions.MANAGE_ACCOUNTING,'create_customer_invoice',{allowUnknownEntities:['customer']});
 action('purchase_order.create','Prepare a draft supplier order; amount is cost PER UNIT, not total. Unit cost may remain unknown in draft but must be priced before placement; no on-hand stock changes.',
-  ['supplier','sku','skuScope','quantity','location','amount','currency','neededBy','reference'],
+  ['supplier','sku','skuScope','quantity','location','amount','currency','neededBy','reference','poNumber'],
   permissions.CREATE_PO,'create_purchase_order',{allowUnknownEntities:['supplier'],
     resultReference:'purchaseOrderId',resultDisplayReference:'poNumber',resultRecordKind:'purchase_order'});
 action('purchase_order.receive','Receive physically arrived goods against an existing placed purchase order. Requires the owner or context to identify the purchase order; an arrival alone does not establish one.',
@@ -274,6 +275,8 @@ for(const [view,description] of Object.entries(READS))add(`read.${view}`,descrip
     timeframe:args.timeframe||'all_time'},{provider:options.answerProvider,question:text}),
   async(_service,_db,_ctx,result)=>Boolean(result&&Array.isArray(result.rows)),
   {view,recordKind:READ_RECORD_KINDS[view]||null,
+    agentHints:['inventory_positions','inventory_valuation','inventory_cost_movements','purchase_costs','prices'].includes(view)
+      ?{search:'Optional literal name or code filter. Omit it to inspect all records and resolve spelling, pluralization, or location comparisons. Empty filtered results are not proof that an entity is absent.'}:null,
     answerMode:['general_knowledge','business_analysis','inventory_summary'].includes(view)?'executor':'evidence'});
 for(const [name,description,search] of [
   ['read.profit_and_loss','Read the current month’s posted profit and loss; never infer unrecorded activity.','profit_and_loss'],
@@ -378,5 +381,14 @@ for(const contract of registry.list('mutation')){
     prompt:`Help me ${label.toLowerCase()}`,rank:160,commercialCapability});
   registry.entries.set(contract.name,Object.freeze({...contract,commercialCapability,discovery}));
 }
+
+add('read.authorized_work','Inspect existing recorded replenishment work and its current standing-authority requirements.',[],
+  'read',permissions.ADMIN,'none',(_service,db,ctx)=>require('./postgres-goal-authority').inspect(db,ctx),
+  async()=>true,{ownerOnly:true,adaptiveOnly:true,commercialCapability:'authority.advanced'});
+add('authority.execute_work','Execute one existing work item already covered by a current bounded standing rule. Never grants authority or confirms physical events.',
+  ['recordReference'],'authority',permissions.ADMIN,'existing_standing_rule',
+  (_service,db,ctx,_message,args,options)=>require('./postgres-goal-authority').execute(db,ctx,args,options),
+  async()=>true,{required:['recordReference'],ownerOnly:true,adaptiveOnly:true,commercialCapability:'authority.advanced',
+    authority:{mode:'existing_standing_rule'},resultingRecords:['work_items']});
 
 module.exports={FIELDS,Registry,registry};

@@ -48,8 +48,8 @@ const postgresProjections = require('./projections/postgres-service');
 const postgresExploration = require('./onboarding/postgres-exploration');
 const { requireOperationalSubscription } = require('./web/commercial-middleware');
 
-function createPostgresApp({database,sessionStore,sessionSecret=config.sessionSecret,env=config.env,aiProvider=null,
-  connectionProviders=null,connectionPublicOrigin=null,shippingOptions=null,paymentOptions=null,
+function createPostgresApp({database,resourceDatabase=database,sessionStore,sessionSecret=config.sessionSecret,env=config.env,aiProvider=null,
+  connectionProviders=null,connectionPublicOrigin=null,shippingOptions=null,paymentOptions=null,agentInspection=false,
   commercialOptions=null,probeCacheMs={health:5000,readiness:1000},probeNow=Date.now,
   assetVersion=process.env.FOUNDRY_ASSET_VERSION||config.operations.releaseRef}={}) {
   if(!database?.query)throw new TypeError('A PostgreSQL database is required.');
@@ -63,7 +63,7 @@ function createPostgresApp({database,sessionStore,sessionSecret=config.sessionSe
   app.set('views',path.join(__dirname,'web','views'));
   app.set('trust proxy',1);
   app.disable('x-powered-by');
-  app.use(require('./commercial/resource-metrics').middleware(database));
+  app.use(require('./commercial/resource-metrics').middleware(resourceDatabase));
   app.use(express.static(path.join(__dirname,'web','public'),{maxAge:env==='production'?'7d':0}));
   // Webhooks and token APIs run before cookie authentication, but still need a
   // database context so an unscoped external request cannot escape accounting.
@@ -135,7 +135,7 @@ function createPostgresApp({database,sessionStore,sessionSecret=config.sessionSe
   });
   app.use(commonMiddleware.flash);
   app.use(commonMiddleware.csrf);
-  app.use(authMiddleware.loadUser(database));
+  app.use(authMiddleware.loadUser(database,{readonly:agentInspection}));
   app.use(require('./commercial/enforcement').contextMiddleware(database));
   app.use(async(req,res,next)=>{try{const commercialAccountId=req.workspace?.owner_account_id||req.account?.id;
     res.locals.commercial=req.account
@@ -168,7 +168,7 @@ function createPostgresApp({database,sessionStore,sessionSecret=config.sessionSe
   app.use(createPostgresSearchRouter(database));
   app.use(createPostgresPlanningRouter(database));
   app.use(createPostgresRepairsRouter(database));
-  app.use(createPostgresAskRouter(database,{provider:aiProvider}));
+  app.use(createPostgresAskRouter(database,{provider:aiProvider,agentInspection}));
   app.use(createPostgresReportsRouter(database));
   app.use(createPostgresConnectionsRouter(database,{providers:connectionProviders || undefined,
     publicOrigin:connectionPublicOrigin || (env==='test'?'request':undefined),

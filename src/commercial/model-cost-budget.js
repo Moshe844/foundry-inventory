@@ -2,7 +2,7 @@
 const {newId}=require('../lib/util');const entitlements=require('./entitlements');
 const {ValidationError,RateLimitError}=require('../domain/errors');
 const paidBudget=require('./paid-model-budget');
-const VERSION={anthropic:'2023-06-01'};
+const VERSION={anthropic:'2023-06-01',openai:'responses-2026-10-11'};
 const DEFAULTS={operation:{ask:.30,instruction:1.50,import_mapping:.30},
  period:{starter:25,growth:75,pro:100,enterprise:250}};
 const MAX_PROVIDER_EXECUTIONS=3; // Initial request plus SDK's two transport retries.
@@ -27,7 +27,7 @@ async function rate(database,provider,model,operation,version){return (await dat
  pricing_basis,confidence,source FROM commercial_cost_rates WHERE provider=$1 AND model=$2 AND provider_version=$3
  AND operation=$4 AND unit='token' AND effective_from<=now() AND (effective_until IS NULL OR effective_until>now())
  ORDER BY effective_from DESC LIMIT 1`,[provider,model,version,operation])).rows[0]||null;}
-async function pricedBound(database,provider,request,policy,operation){
+async function pricedBound(database,provider,request,policy,operation,nativeBound=null){
  const name=String(provider.name||'').toLowerCase();const model=String(provider.model||'');const version=VERSION[name];
  if(!version||!model)throw new ValidationError('This model has no approved cost-bound pricing version.');
  const prices=await Promise.all(['model_input','cache_write_1h','model_output']
@@ -40,13 +40,40 @@ async function pricedBound(database,provider,request,policy,operation){
   throw new ValidationError('This model version has no verified price bound. No provider call was made.');}
  const inputRate=Math.max(Number(prices[0].cost_per_unit_minor),Number(prices[1].cost_per_unit_minor));
  const outputRate=Number(prices[2].cost_per_unit_minor);
- const bound=estimateMaximumMinor(request,policy,inputRate,outputRate);
- return {...bound,provider:name,model,providerVersion:version,rateSources:prices.map(row=>row.source)};}
-async function reserve(database,scope,provider,request,policy,operation,idempotencyKey,fundingUsageKey=idempotencyKey){
+ const bound=nativeBound?{
+  maximumMinor:Math.ceil((nativeBound.inputTokens*inputRate+nativeBound.outputTokens*outputRate)*1e6)/1e6,
+  inputTokens:nativeBound.inputTokens,outputTokens:nativeBound.outputTokens,providerExecutions:1
+ }:estimateMaximumMinor(request,policy,inputRate,outputRate);
+ return {...bound,provider:name,model,providerVersion:version,inputRateMinor:inputRate,rateSources:prices.map(row=>row.source)};}
+async function promptByteAllowance(database,provider,request,operation='ask'){
+ const policy=require('./model').POLICIES[operation];
+ const empty=await pricedBound(database,provider,{...request,prompt:''},policy,operation);
+ return Math.max(0,Math.floor((operationLimit(operation)*100-empty.maximumMinor)/
+  (empty.inputRateMinor*MAX_PROVIDER_EXECUTIONS)));
+}
+async function nativeInputTokenAllowance(database,provider,outputTokens,operation='ask'){
+ const empty=await pricedBound(database,provider,{},require('./model').POLICIES[operation],operation,{inputTokens:0,outputTokens});
+ return Math.max(0,Math.floor((operationLimit(operation)*100-empty.maximumMinor)/empty.inputRateMinor));
+}
+async function reserve(database,scope,provider,request,policy,operation,idempotencyKey,fundingUsageKey=idempotencyKey,goalScope={}){
  const bound=await pricedBound(database,provider,request,policy,operation);
+ return reserveBound(database,scope,bound,operation,idempotencyKey,fundingUsageKey,goalScope);
+}
+// A trusted transport reserves each actual SDK HTTP request separately, including
+// retries. Existing complete() callers retain their three-execution allowance.
+// Token bounds come from the validated native wire protocol, never model text.
+async function reserveNative(database,scope,provider,{inputTokens,outputTokens},operation,idempotencyKey,fundingUsageKey,goalScope={}){
+ if(!Number.isSafeInteger(inputTokens)||inputTokens<1||inputTokens>1100000||
+   !Number.isSafeInteger(outputTokens)||outputTokens<1||outputTokens>3000)
+   throw new ValidationError('Invalid native model request bound.');
+ const policy=require('./model').POLICIES[operation];if(!policy)throw new ValidationError('Unregistered model operation.');
+ const bound=await pricedBound(database,provider,{},policy,operation,{inputTokens,outputTokens});
+ return reserveBound(database,scope,bound,operation,idempotencyKey,fundingUsageKey,goalScope);
+}
+async function reserveBound(database,scope,bound,operation,idempotencyKey,fundingUsageKey,goalScope){
  const operationCap=operationLimit(operation)*100;
- if(bound.maximumMinor>operationCap)throw new RateLimitError(
-  'This request exceeds the approved per-operation model-cost bound. Shorten its context or use a smaller batch; no model call was made.');
+ if(bound.maximumMinor>operationCap)throw Object.assign(new RateLimitError(
+  'This request exceeds the approved per-operation model-cost bound. Shorten its context or use a smaller batch; no model call was made.'),{limitKind:'operation_cost'});
  const subscription=await entitlements.subscriptionFor(database,scope.accountId);
  const plan=subscription?.plan_id||'starter';const accountCap=periodLimit(plan)*100;
  const workspaceCap=configuredUsd('STOCKCHIEF_AI_WORKSPACE_PERIOD_COST_CAP_USD',accountCap/100)*100;
@@ -54,6 +81,18 @@ async function reserve(database,scope,provider,request,policy,operation,idempote
  const transaction=async client=>{
   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
    [`commercial-model-cost:${scope.accountId}:${bounds.start.toISOString()}`]);
+  if(goalScope.goalId){
+   const goal=(await client.query(`SELECT budget_minor,status,expires_at FROM stockchief_runtime.assistant_goals
+    WHERE id=$1 AND workspace_id=$2 AND actor_user_id=$3 FOR UPDATE`,
+    [goalScope.goalId,scope.workspaceId,goalScope.actorId])).rows[0];
+   if(!goal||['CANCELLED','COMPLETED','BLOCKED'].includes(goal.status)||new Date(goal.expires_at)<=new Date())
+    throw new ValidationError('This goal is no longer authorized to use a model.');
+   const exposure=(await client.query(`SELECT COALESCE(SUM(CASE WHEN status IN ('RESERVED','UNKNOWN')
+    THEN maximum_minor WHEN status='SETTLED' THEN actual_minor ELSE 0 END),0) AS amount
+    FROM commercial_model_cost_holds WHERE goal_id=$1`,[goalScope.goalId])).rows[0];
+   if(Number(exposure.amount)+bound.maximumMinor>Number(goal.budget_minor))
+    throw new RateLimitError('This goal reached its cumulative model-cost ceiling. No model call was made.');
+  }
   const grantIds=(await client.query(`SELECT DISTINCT a.grant_id FROM commercial_usage_events e
     JOIN commercial_usage_allocations a ON a.event_id=e.id WHERE e.account_id=$1 AND e.workspace_id=$2
     AND e.meter='ai_work_credits' AND e.idempotency_key=$3
@@ -125,14 +164,14 @@ async function reserve(database,scope,provider,request,policy,operation,idempote
     throw new RateLimitError('This purchased AI pack reached its provider-cost safety budget. No model call was made.');
   }
   const hold=(await client.query(`INSERT INTO commercial_model_cost_holds
-   (id,account_id,workspace_id,idempotency_key,period_start,period_end,provider,model,operation,maximum_minor,detail)
-   VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb) RETURNING *`,
+   (id,account_id,workspace_id,idempotency_key,period_start,period_end,provider,model,operation,maximum_minor,detail,goal_id)
+   VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12) RETURNING *`,
    [newId('modelhold'),scope.accountId,scope.workspaceId,idempotencyKey,bounds.start.toISOString(),bounds.end.toISOString(),
     bound.provider,bound.model,operation,bound.maximumMinor,
     JSON.stringify({inputTokenUpperBound:bound.inputTokens,outputTokenLimit:bound.outputTokens,
       providerExecutions:bound.providerExecutions,providerVersion:bound.providerVersion,rateSources:bound.rateSources,
       operationCapMinor:operationCap,accountPeriodCapMinor:accountCap,workspacePeriodCapMinor:workspaceCap,
-      funding:sources.map(row=>({source:row.source,grantId:row.grantId,maximumMinor:row.maximumMinor}))})])).rows[0];
+      funding:sources.map(row=>({source:row.source,grantId:row.grantId,maximumMinor:row.maximumMinor}))}),goalScope.goalId||null])).rows[0];
   for(const source of sources)await client.query(`INSERT INTO commercial_model_cost_hold_allocations
    (id,hold_id,source,grant_id,maximum_minor) VALUES($1,$2,$3,$4,$5)`,
    [newId('modelallocation'),hold.id,source.source,source.grantId,source.maximumMinor]);
@@ -187,4 +226,4 @@ async function settle(database,scope,idempotencyKey,{failed=false}={}){
  }
  return {known,actualMinor:actual,maximumMinor:Number(row.maximum_minor)};
 }
-module.exports={reserve,release,settle,estimateMaximumMinor,operationLimit,periodLimit,DEFAULTS};
+module.exports={reserve,reserveNative,release,settle,estimateMaximumMinor,promptByteAllowance,nativeInputTokenAllowance,operationLimit,periodLimit,DEFAULTS};

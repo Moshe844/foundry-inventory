@@ -1,0 +1,27 @@
+'use strict';
+process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
+test('shared Staging spending serializes requests and retains uncertainty without borrowing or refilling',{timeout:90000},async t=>{
+ const cluster=await require('../helpers/postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString);
+ const keys=['STOCKCHIEF_RUNTIME_ENV','STOCKCHIEF_CODEX_PILOT','STOCKCHIEF_CODEX_PILOT_WORKSPACES','STOCKCHIEF_CODEX_PILOT_EMAILS'];
+ const old=Object.fromEntries(keys.map(k=>[k,process.env[k]]));t.after(async()=>{for(const [k,v]of Object.entries(old))if(v===undefined)delete process.env[k];else process.env[k]=v;await db.close();cluster.stop();});
+ await require('../../src/db/migrate-postgres').migratePostgres(db);
+ const email=randomUUID()+'@example.test',owner=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'Budget owner',businessName:'Budget test',email,password:'Fake!'+randomUUID()});
+ const ctx={workspaceId:owner.workspaceId,actorId:owner.userId};process.env.STOCKCHIEF_RUNTIME_ENV='staging';
+ Object.assign(process.env,(await require('../../scripts/provision-codex-staging').provision(db,{businessName:'Budget test',emails:[email]})).environment);
+ await db.query(`UPDATE stockchief_runtime.codex_pilots SET enabled=true,stopped=false,ceiling_micro_usd=100000,approval_reference='OFFLINE ONLY' WHERE workspace_id=$1`,[ctx.workspaceId]);
+ const store=require('../../src/assistant/postgres-goal-store'),g=await store.create(db,ctx,'Offline goal');
+ const budget=require('../../src/assistant/postgres-codex-budget').createBudget(db,ctx,g.id);
+ const args={candidate:'codex',task:g.id,upperBoundMicroUsd:70000};
+ const parallel=await Promise.allSettled([budget.reserve(args),budget.reserve(args)]);
+ assert.equal(parallel.filter(p=>p.status==='fulfilled').length,1);assert.equal((await budget.status()).unresolved,1);
+ const id=parallel.find(p=>p.status==='fulfilled').value;
+ await budget.settle(id,60000,{offline:true});
+ await assert.rejects(budget.reserve(args),/SHARED_SPENDING_CEILING/);
+ await assert.rejects(budget.reserve({...args,upperBoundMicroUsd:300001}),/INVALID_PILOT_RESERVATION/);
+ const unknown=await budget.reserve({...args,upperBoundMicroUsd:30000});await budget.unknown(unknown,'offline interruption');
+ assert.equal((await budget.status()).committed,90000);assert.equal((await budget.status()).unresolved,1);
+ await assert.rejects(budget.reserve({...args,upperBoundMicroUsd:1000}),/UNRESOLVED_MODEL_CALL/);
+ await budget.stop();assert((await budget.status()).stopped);
+ await assert.rejects(budget.reserve({...args,upperBoundMicroUsd:1000}),/PAID_TESTING_LOCKED/);
+});

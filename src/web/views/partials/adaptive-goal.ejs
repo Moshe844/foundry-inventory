@@ -1,0 +1,36 @@
+<section class="rm-note" aria-label="Goal progress" data-adaptive-goal="<%= goal.id %>" data-goal-status="<%= goal.status %>">
+  <% if(goal.status!=='COMPLETED'){ %>
+    <p><strong><%= goal.original_request %></strong></p>
+    <p class="rm-prose" role="status" data-goal-answer><%= goal.answer || 'Investigating your goal…' %></p>
+  <% } %>
+  <p data-goal-phase><%= ({READY:'Queued',RUNNING:'Investigating',WAITING_APPROVAL:'Ready for review',WAITING_EVENT:'Waiting for a confirmed outcome',WAITING_USER:'Your input is needed',COMPLETED:'Verified',BLOCKED:'Stopped for review',CANCELLED:'Stopped'})[goal.status] %></p>
+  <% if(goal.checkpoint.runtime==='codex-staging'){ %>
+    <% if(goal.status==='COMPLETED'){ %><p class="rm-prose" data-goal-answer><%= goal.answer %></p><% } %>
+    <ol data-goal-timeline aria-label="Agent activity"></ol>
+    <% for(const card of locals.codexApprovals||[]){ %>
+      <article class="rm-note" data-approval-id="<%= card.id %>">
+        <p><strong>Approval required</strong></p><p><%= card.summary %></p>
+        <p>Prepared only. Nothing has changed yet.</p>
+        <form method="post" action="/ask/goals/<%= goal.id %>/approval">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="deliveryId" value="<%= card.id %>">
+          <input type="hidden" name="sha256" value="<%= card.sha256 %>">
+          <button class="rm-btn rm-btn--sm" name="decision" value="approve">Approve exact operation</button>
+          <button class="rm-btn rm-btn--ghost rm-btn--sm" name="decision" value="reject">Reject</button>
+        </form>
+      </article>
+    <% } %>
+  <% } %>
+  <% for(const id of goal.checkpoint.waiting?.proposalIds||[]){ %>
+    <p><a href="<%= goal.checkpoint.observations.find(o=>o.result.proposal?.id===id)?.result.proposal?.href || '/actions/'+encodeURIComponent(id) %>">Review prepared operation</a></p>
+  <% } %>
+  <% if(goal.status==='WAITING_USER'){ %>
+    <form method="post" action="/ask/goals/<%= goal.id %>/reply"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <label>Your answer<input name="message" maxlength="4000" required></label><button class="rm-btn rm-btn--sm" type="submit">Continue this goal</button>
+    </form>
+  <% } %>
+  <% if(!['COMPLETED','CANCELLED','BLOCKED'].includes(goal.status)){ %>
+    <form method="post" action="/ask/goals/<%= goal.id %>/cancel"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">Stop this goal</button></form>
+  <% } %>
+</section>
+<script src="/adaptive-goal.js" defer></script>
