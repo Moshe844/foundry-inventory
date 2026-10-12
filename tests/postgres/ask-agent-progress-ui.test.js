@@ -24,6 +24,7 @@ test('agent conversation keeps requests in order with compact responsive progres
  const cookie=signed.headers['set-cookie'].find(value=>value.startsWith('foundry.sid='));
  await page.context().addCookies([{name:'foundry.sid',value:cookie.split(';')[0].slice('foundry.sid='.length),url:`http://127.0.0.1:${server.address().port}`}]);
  await page.goto(`http://127.0.0.1:${server.address().port}/ask#latest`);
+ assert.equal(await page.locator('script[src^="/adaptive-goal.js?v="]').count(),1,'Progress uses the release version so a cached old script cannot drive the new UI');
  assert.deepEqual((await page.locator('.rm-turn--you .rm-turn__said').allTextContents()).map(s=>s.trim()),[first.original_request,second.original_request]);
  const panel=page.locator(`[data-adaptive-goal="${second.id}"]`);
  await panel.getByRole('status').filter({hasText:'Looking through your StockChief screens'}).waitFor();

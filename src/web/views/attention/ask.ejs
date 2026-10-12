@@ -476,5 +476,5 @@
   <% } %>
 
 </div>
-<% if(locals.adaptiveGoal){ %><script src="/adaptive-goal.js" defer></script><% } %>
+<% if(locals.adaptiveGoal){ %><script src="/adaptive-goal.js?v=<%= assetVersion %>" defer></script><% } %>
 <% if (currentUser && ['owner','manager','staff'].includes(currentUser.role)) { %><p class="rm-disclose"><a href="/autopilot/misses">Report a wrong answer or missing requirement</a></p><% } %>
