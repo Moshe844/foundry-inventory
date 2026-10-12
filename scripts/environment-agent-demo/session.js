@@ -15,7 +15,7 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
   }
   return result;
  }
- async function authority(){const access=await authorize();
+ async function authority({catalogue=true}={}){const access=await authorize({catalogue});
   if(access?.actor)await update(h=>{const stamp=createHash('sha256').update(JSON.stringify(stable(access.actor))).digest('hex');
    if(h.authorityStamp&&h.authorityStamp!==stamp)throw new Error('SESSION_AUTHORITY_CHANGED');h.authorityStamp=stamp;});
   return access;
@@ -54,27 +54,27 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    if(h.receipt?.requestHash!==require('./receipts').requestHash(goal))throw new Error('COMPLETION_REQUEST_MISMATCH');
    return {answer:goal.answer,completionSource:h.completionSource,checkedAt:h.receipt.checkedAt};
   },
-  async load(){await authority();return update((h,goal)=>({...structuredClone(h),goalContext:{
+  async load(){await authority({catalogue:false});return update((h,goal)=>({...structuredClone(h),goalContext:{
    originalRequest:goal.original_request,messages:structuredClone(goal.checkpoint.messages||[])}}));},
-  async checkpoint(native){await authority();return update(h=>{h.native={...h.native,...native};});},
+  async checkpoint(native){await authority({catalogue:false});return update(h=>{h.native={...h.native,...native};});},
   async workingMemory(){await authority();return update(h=>require('./memory').working(h));},
-  async codexRequest(){await authority();return update(h=>{
+  async codexRequest(){await authority({catalogue:false});return update(h=>{
    if(candidate!=='codex')throw new Error('NOT_A_CODEX_SESSION');
    h.codexRequests||=0;
    if(h.codexRequests>=24)throw new Error('DURABLE_MODEL_REQUEST_LIMIT');
    h.codexRequests++;
    return {request:h.codexRequests};
   });},
-  async codexReplay(hash){await authority();return update(h=>{
+  async codexReplay(hash){await authority({catalogue:false});return update(h=>{
    if(candidate!=='codex')throw new Error('NOT_A_CODEX_SESSION');
    if(h.codexDelivery?.state==='PENDING')throw new Error('CODEX_RESPONSE_RECONCILIATION_REQUIRED');
    return h.codexDelivery?.hash===hash?structuredClone(h.codexDelivery.packet):null;
   });},
-  async codexPending(hash){await authority();return update(h=>{
+  async codexPending(hash){await authority({catalogue:false});return update(h=>{
    if(candidate!=='codex'||h.codexDelivery?.state==='PENDING')throw new Error('CODEX_RESPONSE_RECONCILIATION_REQUIRED');
    h.codexDelivery={hash,state:'PENDING'};
   });},
-  async codexDelivered(hash,packet,outcome){await authority();return update(h=>{
+  async codexDelivered(hash,packet,outcome){await authority({catalogue:false});return update(h=>{
    if(candidate!=='codex'||h.codexDelivery?.hash!==hash||h.codexDelivery.state!=='PENDING')throw new Error('CODEX_RESPONSE_SEQUENCE_MISMATCH');
    h.codexDelivery={hash,state:'SETTLED',packet};h.lastCodexResponse={...outcome,request:h.codexRequests};
   });},
@@ -93,15 +93,15 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
     visible:Boolean(outcome.visible),tool:Boolean(outcome.tool),empty:Boolean(outcome.empty),stopReason:outcome.stopReason,
     usageSettled:Boolean(outcome.usageSettled)};
   });},
-  async evidenceIndex(){await authority();return update(h=>require('./observations').index(h));},
-  async present(output,{full=false}={}){await authority();return update(h=>{
+  async evidenceIndex(){await authority({catalogue:false});return update(h=>require('./observations').index(h));},
+  async present(output,{full=false}={}){await authority({catalogue:false});return update(h=>{
    const text=JSON.stringify(output)??'null',legacyText=JSON.stringify(output?.image?output.screen:output)??'null';
    const entry=require('./observations').ordered(Object.values(h.evidence||{})).findLast(e=>e.text===text||e.text===legacyText||e.truncated&&e.text===text.slice(0,128000));
    if(full&&entry){const reference={evidenceId:entry.id,sha256:entry.sha256,observedAt:entry.at,untrusted:true};
     return output?.image?{...output,screen:{...output.screen,_stockchiefEvidence:reference}}:{...output,_stockchiefEvidence:reference};}
    return entry?require('./context').preview(output,entry.id):output;
   });},
-  async evidence(input){await authority();return update(h=>require('./observations').retrieve(h,input));},
+  async evidence(input){await authority({catalogue:false});return update(h=>require('./observations').retrieve(h,input));},
   async execute(name,input,operation){
    const access=await authority();
    const business=name==='business_operations';

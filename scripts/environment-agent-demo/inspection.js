@@ -18,8 +18,10 @@ async function inspectionDatabase(cluster,admin,ctx,stagingAuthorization=null){
   const password=randomBytes(32).toString('hex');const identifier=escapeIdentifier(role);
   await admin.query(`CREATE ROLE ${identifier} LOGIN PASSWORD ${escapeLiteral(password)} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS`);
   await admin.query(`ALTER ROLE ${identifier} SET default_transaction_read_only=on`);
-  const tables=(await admin.query(`SELECT table_schema,table_name,array_agg(column_name::text) AS columns FROM information_schema.columns
-    WHERE table_schema IN ('public','stockchief_runtime') GROUP BY table_schema,table_name`)).rows;
+  const tables=(await admin.query(`SELECT c.table_schema,c.table_name,array_agg(c.column_name::text) AS columns
+    FROM information_schema.columns c JOIN pg_namespace n ON n.nspname=c.table_schema
+    JOIN pg_class t ON t.relnamespace=n.oid AND t.relname=c.table_name AND t.relkind IN ('r','p')
+    WHERE c.table_schema IN ('public','stockchief_runtime') GROUP BY c.table_schema,c.table_name`)).rows;
   const accountId=(await admin.query('SELECT account_id FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0].account_id;
   const foreignKeys=(await admin.query(`SELECT n.nspname AS schema,c.relname AS child,pn.nspname AS parent_schema,p.relname AS parent,
    array_agg(a.attname::text ORDER BY k.ordinality) AS child_columns,array_agg(pa.attname::text ORDER BY k.ordinality) AS parent_columns
@@ -34,18 +36,17 @@ async function inspectionDatabase(cluster,admin,ctx,stagingAuthorization=null){
    table.table_name==='workspaces'?`id=${escapeLiteral(ctx.workspaceId)}`:
    table.table_name==='accounts'?`id=${escapeLiteral(accountId)}`:
    table.columns.includes('account_id')?`account_id=${escapeLiteral(accountId)}`:null;
-  await admin.query(`GRANT USAGE ON SCHEMA public,stockchief_runtime TO ${identifier}`);
+  const statements=[`GRANT USAGE ON SCHEMA public,stockchief_runtime TO ${identifier}`];
   const guardedTables=[];
   for(const table of tables){
     const name=`${escapeIdentifier(table.table_schema)}.${escapeIdentifier(table.table_name)}`;
     // Owner-executed views can bypass underlying RLS. Never grant them merely
     // because metadata discovery found them; they need a reviewed safe boundary.
-    const kind=(await admin.query('SELECT relkind FROM pg_class WHERE oid=$1::regclass',[name])).rows[0].relkind;
-    if(!['r','p'].includes(kind))continue;
+    // Base-table kinds were resolved in the metadata query above.
     guardedTables.push(table);
     // No ownership, sequence, INSERT, UPDATE, DELETE, CREATE or arbitrary SQL
     // interface is given to the renderer. Canonical gateway has its own handle.
-    await admin.query(`GRANT SELECT ON ${name} TO ${identifier}`);
+    statements.push(`GRANT SELECT ON ${name} TO ${identifier}`);
     let predicate=direct(table);
     if(!predicate){
      // Junction tables such as SKU option values inherit their parent's scope.
@@ -59,13 +60,16 @@ async function inspectionDatabase(cluster,admin,ctx,stagingAuthorization=null){
       'commercial_usage_packs','commercial_operation_policies']).has(table.table_name))predicate='false';
     }
     if(predicate){
-      await admin.query(`ALTER TABLE ${name} ENABLE ROW LEVEL SECURITY`);
+      statements.push(`ALTER TABLE ${name} ENABLE ROW LEVEL SECURITY`);
       // Restrictive policy remains effective even if another permissive policy
       // exists. A separate permissive policy grants only this tenant's rows.
-      await admin.query(`CREATE POLICY ${escapeIdentifier(role+'_allow')} ON ${name} FOR SELECT TO ${identifier} USING (${predicate})`);
-      await admin.query(`CREATE POLICY ${escapeIdentifier(role+'_restrict')} ON ${name} AS RESTRICTIVE FOR SELECT TO ${identifier} USING (${predicate})`);
+      statements.push(`CREATE POLICY ${escapeIdentifier(role+'_allow')} ON ${name} FOR SELECT TO ${identifier} USING (${predicate})`);
+      statements.push(`CREATE POLICY ${escapeIdentifier(role+'_restrict')} ON ${name} AS RESTRICTIVE FOR SELECT TO ${identifier} USING (${predicate})`);
     }
   }
+  // Same escaped host-generated grants and restrictive tenant policies, one
+  // atomic installation. Avoid hundreds of remote PostgreSQL round trips.
+  await admin.transaction(client=>client.query(statements.join(';\n')));
   connection.username=role;connection.password=password;
   const pool=new Pool(require('../../src/db/postgres').connectionOptions(connection.toString(),{max:4,
     privateNetwork:process.env.FOUNDRY_DATABASE_PRIVATE_NETWORK==='true'}));
@@ -76,11 +80,13 @@ async function inspectionDatabase(cluster,admin,ctx,stagingAuthorization=null){
     }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
   }
   return {query,transaction,close:async()=>{await pool.end();if(stagingAuthorization){
+    const cleanupStatements=[];
     for(const table of guardedTables){const name=`${escapeIdentifier(table.table_schema)}.${escapeIdentifier(table.table_name)}`;
-      await admin.query(`DROP POLICY IF EXISTS ${escapeIdentifier(role+'_allow')} ON ${name}`);
-      await admin.query(`DROP POLICY IF EXISTS ${escapeIdentifier(role+'_restrict')} ON ${name}`);
-      await admin.query(`REVOKE ALL PRIVILEGES ON ${name} FROM ${identifier}`);}
-    await admin.query(`REVOKE USAGE ON SCHEMA public,stockchief_runtime FROM ${identifier}`);await admin.query(`DROP ROLE ${identifier}`);
+      cleanupStatements.push(`DROP POLICY IF EXISTS ${escapeIdentifier(role+'_allow')} ON ${name}`);
+      cleanupStatements.push(`DROP POLICY IF EXISTS ${escapeIdentifier(role+'_restrict')} ON ${name}`);
+      cleanupStatements.push(`REVOKE ALL PRIVILEGES ON ${name} FROM ${identifier}`);}
+    cleanupStatements.push(`REVOKE USAGE ON SCHEMA public,stockchief_runtime FROM ${identifier}`,`DROP ROLE ${identifier}`);
+    await admin.transaction(client=>client.query(cleanupStatements.join(';\n')));
   }},accountId,topology:{engine:'postgresql',shared:true,multiWriter:false}};
 }
 

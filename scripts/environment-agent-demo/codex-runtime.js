@@ -38,7 +38,7 @@ async function run(options){
   if(message.kind==='failed'){failed||=Error(message.message);return;}
   let result;
   try{
-   await options.gateway.authorize();
+   await options.gateway.authorize({catalogue:false});
    if(message.kind==='checkpoint'){
     if(message.resources)audit({kind:'codex_resources',...message.resources});
     const native={version:policy.VERSION,model:policy.MODEL,effort:policy.EFFORT,threadId:message.threadId,files:message.files,encoding:message.encoding,

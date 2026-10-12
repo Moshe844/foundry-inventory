@@ -33,7 +33,7 @@ async function run(database,ctx,id,options={}){
   const provider={name:'openai',model:'gpt-6.1-sol',complete:async()=>{throw Error('UNAPPROVED_HELPER_MODEL_CALL');}};
   const gateway=require(base+'gateway').createGateway({database,ctx:{...ctx,goalRunToken:goal.run_token},goal:goal.original_request,goalId:id,
    runToken:goal.run_token,provider,rawProvider:provider,audit});
-  const authorize=async()=>{await pilot.access(database,ctx,{enabled:true});return gateway.authorize();};
+  const authorize=async settings=>{await pilot.access(database,ctx,{enabled:true});return gateway.authorize(settings);};
   session=require(base+'session').createSession({database,ctx,goalId:id,runToken:goal.run_token,candidate:'codex',authorize});
   // Publish is durable in the shared goal outbox. There is no file-review loop
   // and no test operator; the authenticated website owns the human stage.
@@ -46,7 +46,7 @@ async function run(database,ctx,id,options={}){
   const counter=options.countInput||require(base+'codex-token-counter').createTokenCounter({apiKey:key});
   const relay=await require(base+'relay').createRelay({budget,credentials:{openai:key},commercial:require(base+'commercial').createCommercialAccounting(database),
    allowedProviders:['openai'],countCodexInput:counter,audit,...(options.fetchImpl?{fetchImpl:options.fetchImpl}:{})});cleanup.push(()=>relay.close());
-  const transport=relay.grant({candidate:'codex',provider:'openai',task:id,ctx,goalId:id,budget,fundingKey,authorize,
+  const transport=relay.grant({candidate:'codex',provider:'openai',task:id,ctx,goalId:id,budget,fundingKey,authorize:()=>authorize({catalogue:false}),
    wireProfile:'codex',livePermit:permit,requestGate:()=>session.codexRequest()});
   const connectionString=process.env.FOUNDRY_DATABASE_URL||process.env.DATABASE_URL;
   const token=await pilot.readAuthorization(database,ctx,connectionString);

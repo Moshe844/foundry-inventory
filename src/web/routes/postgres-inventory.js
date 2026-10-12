@@ -43,7 +43,7 @@ function createPostgresInventoryRouter(database) {
       sort:req.query.sort || 'name',includeArchived:req.query.archived==='1' || req.query.archived==='only',
       archivedOnly:req.query.archived==='only',group:req.query.group || ''};
     const result=await catalog.listItems(database,req.ctx.workspaceId,{...filters,page:req.query.page});
-    const state=await onboarding.ensure(database,req.ctx.workspaceId);
+    const state=await onboarding.get(database,req.ctx.workspaceId);
     return res.page('inventory/list',{title:'Inventory',nav:'inventory',items:result.items,page:result.page,
       hasMore:result.hasMore,filters,locations:await locations.listHierarchy(database,req.ctx.workspaceId),
       returnTo:null,returnLabel:null,fromConnection:null,fromMessage:null,sourceDocument:null,sourceLabel:null,

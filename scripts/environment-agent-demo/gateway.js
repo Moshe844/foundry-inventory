@@ -14,7 +14,7 @@ function describe(c){return {name:c.name,kind:c.kind,description:c.description,r
 // ctx, original goal and database are host-bound. Models cannot supply tenant,
 // actor, approval, SQL, provider credentials or an alternative source message.
 function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=provider,audit=()=>{}}){
-  async function access(){
+  async function access({catalogue=true}={}){
     const state=(await database.query(`SELECT original_request,status,run_token,lease_until,expires_at FROM stockchief_runtime.assistant_goals
       WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,goalId])).rows[0];
     if(!state||state.original_request!==goal||state.status!=='RUNNING'||state.run_token!==runToken||
@@ -23,7 +23,11 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
       [ctx.workspaceId,ctx.actorId])).rows[0];
     if(!actor)throw new Error('Actor no longer belongs to this business.');
     await require('../../src/commercial/enforcement').workspace(database,ctx.workspaceId,'ask.lookup');
-    return {actor,catalogue:await control.planningCatalogue(database,{...ctx,goalId},actor)};
+    // Native checkpoint/transport bookkeeping needs current lease, membership,
+    // permissions and Ask entitlement, not every business execution contract.
+    // Actual interface discovery, operations and verification retain the full
+    // fresh catalogue; this does not cache authority or commercial decisions.
+    return {actor,...(catalogue?{catalogue:await control.planningCatalogue(database,{...ctx,goalId},actor)}:{})};
   }
   return {
     authorize:access,

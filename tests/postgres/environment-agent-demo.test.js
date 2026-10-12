@@ -137,6 +137,6 @@ test('real UI exploration uses discovered controls; browser cannot write or cros
   assert.equal((await database.query('SELECT status FROM stockchief_runtime.assistant_action_proposals WHERE id=$1',[pending.outcomes[0].result.proposal.id])).rows[0].status,'PENDING');
   assert.equal((await database.query("SELECT count(*)::int n FROM items WHERE workspace_id=$1 AND base_code='PENDING-DEMO'",[ctx.workspaceId])).rows[0].n,0);
   await store.cancel(database,ctx,pendingGoal.id);
-  await assert.rejects(()=>pendingSession.stop(),/LEASE_LOST/);
+  assert.equal((await pendingSession.stop()).status,'CANCELLED','Cleanup observes cancellation without overwriting it');
   assert.equal((await store.get(database,ctx,pendingGoal.id)).status,'CANCELLED');
 });
