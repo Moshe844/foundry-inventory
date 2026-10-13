@@ -39,22 +39,25 @@ function createPostgresInventoryRouter(database) {
   const router=express.Router();
   router.use('/inventory',requireAuth);
   const renderList=async(req,res)=>{
+    const activeGroup=presenters.STOCK_GROUPS.find((group)=>group.key===req.query.group)||null;
     const filters={q:String(req.query.q || ''),trackingMode:req.query.tracking || '',locationId:req.query.location || '',
       sort:req.query.sort || 'name',includeArchived:req.query.archived==='1' || req.query.archived==='only',
-      archivedOnly:req.query.archived==='only',group:req.query.group || ''};
+      archivedOnly:req.query.archived==='only',group:activeGroup?.key||''};
     const result=await catalog.listItems(database,req.ctx.workspaceId,{...filters,page:req.query.page});
+    // Rendering must work with a read-only business connection. Authorized
+    // onboarding choices initialize state; browsing never creates it.
     const state=await onboarding.get(database,req.ctx.workspaceId);
     return res.page('inventory/list',{title:'Inventory',nav:'inventory',items:result.items,page:result.page,
       hasMore:result.hasMore,filters,locations:await locations.listHierarchy(database,req.ctx.workspaceId),
       returnTo:null,returnLabel:null,fromConnection:null,fromMessage:null,sourceDocument:null,sourceLabel:null,
-      stockGroups:[],activeGroup:filters.group||null,query:{...req.query},postgresNative:true,
+      stockGroups:presenters.STOCK_GROUPS,activeGroup,query:{...req.query},postgresNative:true,
       layoutOnboardingEntry:{...res.locals.globalOnboardingEntry,state}});
   };
   router.get('/inventory',asyncRoute(async(req,res)=>{
     const hasFilters=['q','location','tracking','archived','sort','page','sourceDocument','fromConnection','fromMessage','group']
       .some((key)=>req.query[key]!==undefined&&req.query[key]!=='');
     if(hasFilters)return renderList(req,res);
-    return res.page('inventory/position',{title:'Inventory',nav:'inventory',room:true,
+    return res.page('inventory/position',{title:'Inventory',nav:'inventory',room:true,postgresNative:true,
       ...(await presenters.inventoryPosition(database,req.ctx.workspaceId))});
   }));
   router.get('/inventory/table',asyncRoute(renderList));

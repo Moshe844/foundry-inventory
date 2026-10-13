@@ -123,7 +123,7 @@ async function run(options){
     const checkpointStarted=Date.now();
     if(message.terminal===true){if(!completed||failed)throw Error('CODEX_COMPLETION_SEQUENCE_MISMATCH');settledFinal();}
     if(message.resources)audit({kind:'codex_resources',...message.resources});
-    const native={version:policy.VERSION,model:policy.MODEL,effort:policy.EFFORT,threadId:message.threadId,files:message.files,encoding:message.encoding,
+    const native={version:policy.VERSION,model:policy.MODEL,effort:policy.EFFORT,profile:policy.PROFILE.id,serviceTier:policy.PROFILE.serviceTier||'default',threadId:message.threadId,files:message.files,encoding:message.encoding,
      workspaceFiles:message.workspaceFiles,digest:digest(message.files),deliveredMessages:messages.length};
     await session.checkpoint({codex:native});result={saved:true};
     if(message.terminal===true&&durableFinal(message.files,message.encoding,message.threadId,answer)){

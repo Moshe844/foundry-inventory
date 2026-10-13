@@ -42,11 +42,16 @@ function normalize(input){
  // Reuse the established feature/image/output bounds without changing old Ask.
  const result=wire.normalize('openai',{...input,model:wire.MODELS.openai},{nativeTokenPreflight:true});
  result.body.model=MODEL;
+ // Processing speed belongs to the host-approved priced profile, never an
+ // agent argument. Input/history, tools, reasoning and output limits are intact.
+ result.body.service_tier=PROFILE.serviceTier||'default';
  return result;
 }
 function receipt(value){
  if(value.returnedModel!==MODEL)throw new Error('CODEX_RETURNED_MODEL_MISMATCH');
- if(value.returnedServiceTier&&!['default','standard'].includes(value.returnedServiceTier))throw new Error('CODEX_RETURNED_SERVICE_TIER_MISMATCH');
+ const tiers=PROFILE.serviceTier==='fast'?['fast','priority','default','standard']:['default','standard'];
+ if(value.returnedServiceTier&&!tiers.includes(value.returnedServiceTier))throw new Error('CODEX_RETURNED_SERVICE_TIER_MISMATCH');
+ if(PROFILE.serviceTier==='fast'&&!value.returnedServiceTier)throw new Error('CODEX_RETURNED_SERVICE_TIER_MISSING');
  return {...value,conservativeMicroUsd:Math.ceil(value.inputTokens*PRICES.input+value.outputTokens*PRICES.output)};
 }
 const result=Object.freeze({MODEL,EFFORT,PROFILE,VERSION,PRICES,source,normalize,receipt,countRequest,counted,MAX_INPUT_TOKENS,REQUEST_CEILING_MICRO_USD,nativeCompactionTokenLimit});

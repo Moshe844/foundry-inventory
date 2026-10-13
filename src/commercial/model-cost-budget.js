@@ -28,8 +28,12 @@ async function rate(database,provider,model,operation,version){return (await dat
  AND operation=$4 AND unit='token' AND effective_from<=now() AND (effective_until IS NULL OR effective_until>now())
  ORDER BY effective_from DESC LIMIT 1`,[provider,model,version,operation])).rows[0]||null;}
 async function pricedBound(database,provider,request,policy,operation,nativeBound=null){
- const name=String(provider.name||'').toLowerCase();const model=String(provider.model||'');const version=VERSION[name];
- if(!version||!model)throw new ValidationError('This model has no approved cost-bound pricing version.');
+ const name=String(provider.name||'').toLowerCase();const model=String(provider.model||'');
+ // A native host profile may select another verified processing price version.
+ // Legacy wrappers keep their original version; no rate can be supplied by a
+ // model or inferred from a cheaper tier. Every selected rate is read fresh.
+ const version=nativeBound?String(provider.providerVersion||VERSION[name]||''):VERSION[name];
+ if(!VERSION[name]||!version||!model)throw new ValidationError('This model has no approved cost-bound pricing version.');
  const prices=await Promise.all(['model_input','cache_write_1h','model_output']
   .map(operationName=>rate(database,name,model,operationName,version)));
  if(prices.some(row=>!row||!['VERIFIED_PUBLIC','VERIFIED_CONTRACT'].includes(row.pricing_basis))){

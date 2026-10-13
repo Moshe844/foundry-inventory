@@ -131,6 +131,7 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
     const settlementStarted=Date.now();await commercial.complete(held,receipt);
     timings.commercialSettlementMs=Date.now()-settlementStarted;
     await budget.settle(id,receipt.conservativeMicroUsd,{provider:grant.provider,model:normalized.body.model,
+     requestedServiceTier:normalized.body.service_tier,returnedServiceTier:receipt.returnedServiceTier||null,
      usage:receipt.raw,latencyMs:Date.now()-start,timings,accounting:'conservative standard-price charge'});
     settled=true;
     audit({kind:'model_call',id,candidate:grant.candidate,task:grant.task,usage:receipt,

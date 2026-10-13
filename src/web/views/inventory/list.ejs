@@ -57,8 +57,8 @@
     <div class="empty">
       <div class="icon-wrap"><%- helpers.icon('empty', { size: 22 }) %></div>
       <% if (activeGroup && !filters.q && !filters.trackingMode && !filters.locationId) { %>
-        <h3>Nothing is <%= activeGroup.name.replace(/^[0-9]+ /, '') %> right now</h3>
-        <p>Every product StockChief has judged is in another group. <a href="/inventory/table">See all products</a> or <a href="/inventory">go back to the stock room</a>.</p>
+        <h3>No products match “<%= activeGroup.name %>” right now</h3>
+        <p><a href="/inventory/table">See all products</a> or <a href="/inventory">go back to the stock overview</a>.</p>
       <% } else if (filters.q || filters.trackingMode || filters.locationId) { %>
         <h3><% if (filters.q) { %>Nothing called “<%= filters.q %>”<% } else { %>Nothing matches those filters<% } %></h3>
         <p><% if (filters.q) { %>Check the spelling, try part of the name or the code, or add it if it is new.<% } else { %>Clear the filters to see everything you track.<% } %></p>

@@ -5,7 +5,7 @@ async function verifyPricing(database,profile=null) {
  const rows=(await database.query(`SELECT DISTINCT ON (operation) operation,cost_per_unit_minor,pricing_basis
   FROM commercial_cost_rates WHERE provider='openai' AND model=$1 AND provider_version=$2
   AND unit='token' AND effective_from<=now() AND (effective_until IS NULL OR effective_until>now())
-  ORDER BY operation,effective_from DESC`,[wire.MODEL,'responses-2026-10-11'])).rows;
+  ORDER BY operation,effective_from DESC`,[wire.MODEL,wire.PROFILE.providerVersion||'responses-2026-10-11'])).rows;
  const prices=new Map(rows.map(row=>[row.operation,row]));
  for(const [operation,dollars]of Object.entries(wire.PROFILE.rates)){
   const rate=prices.get(operation);

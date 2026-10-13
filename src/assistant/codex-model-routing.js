@@ -24,6 +24,10 @@ async function context(database,ctx){
  return {...ctx,plan:subscription?.plan_id||null};
 }
 function nativeProfile(native){
+ if(native?.profile){
+  const profile=models.getProfile(native.profile);
+  return profile.model===native.model&&profile.effort===native.effort?profile.id:null;
+ }
  return Object.values(models.profiles).find(p=>p.model===native?.model&&p.effort===native?.effort)?.id||null;
 }
 function selected(goal,ctx){

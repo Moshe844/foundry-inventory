@@ -23,8 +23,11 @@ function createCommercialAccounting(database){return {
   const scope=await entitlements.ownerScopeForWorkspace(database,call.ctx.workspaceId);
   await entitlements.assertCapability(database,scope,'ask.lookup');
   const key=`${scope.workspaceId}:environment:${call.id}`;
-  const provider={name:call.provider,model:call.body?.model||MODELS[call.provider]};
-  const held={scope,key,provider};
+  const provider={name:call.provider,model:call.body?.model||MODELS[call.provider],
+   ...(call.codexPolicy?.PROFILE.providerVersion?{providerVersion:call.codexPolicy.PROFILE.providerVersion}:{})};
+  const providerVersion=call.codexPolicy?.PROFILE.providerVersion||
+    (call.provider==='openai'?'responses-2026-10-11':'2023-06-01');
+  const held={scope,key,provider,providerVersion};
   if(call.accountingMode==='existing'){
    // Bind one HTTP request to the unchanged controller's ALREADY reserved
    // canonical hold. Do not double-charge its goal/account dollar exposure.
@@ -54,7 +57,8 @@ function createCommercialAccounting(database){return {
   const openai=held.provider.name==='openai';
   const input=openai?Math.max(0,receipt.inputTokens-receipt.cacheReadTokens-receipt.cacheWrite5mTokens):receipt.raw.input_tokens;
   await operations.modelUsage(database,held.scope,{provider:held.provider.name,model:held.provider.model,
-   providerVersion:openai?'responses-2026-10-11':'2023-06-01',inputTokens:input,outputTokens:receipt.outputTokens,
+   providerVersion:openai&&['default','standard'].includes(receipt.returnedServiceTier)?'responses-2026-10-11':held.providerVersion,
+   inputTokens:input,outputTokens:receipt.outputTokens,
    cacheReadTokens:receipt.cacheReadTokens,cacheWrite5mTokens:receipt.cacheWrite5mTokens,cacheWrite1hTokens:receipt.cacheWrite1hTokens},held.key,{operation:'ask',nativeSdk:true});
   if(receipt.inputTokens===0&&receipt.outputTokens===0)await control.recordCost(database,held.scope,{
    provider:held.provider.name,model:held.provider.model,operation:'zero_token_response',unit:'request',quantity:1,

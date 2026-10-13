@@ -20,6 +20,13 @@ function checkedText(value){
 
 function json(value){if(value&&typeof value==='object')return value;try{return JSON.parse(value||'{}');}catch{return {};}}
 
+const STOCK_GROUPS=Object.freeze([
+  Object.freeze({key:'shortage',name:'Promised but not available',detail:'Customer orders need more units than you have.',tone:'hot',icon:'alert'}),
+  Object.freeze({key:'empty',name:'Nothing on hand',detail:'No physical units are here yet, or the stock has run out.',tone:'hot',icon:'box'}),
+  Object.freeze({key:'incoming',name:'On the way',detail:'A placed supplier order still has units to arrive.',tone:'quiet',icon:'arrive'}),
+  Object.freeze({key:'healthy',name:'Available now',detail:'Physical stock covers the units promised to customers.',tone:'ok',icon:'check'}),
+]);
+
 async function home(database,workspaceId){
   const [brief,state,completed,executing,upcoming]=await Promise.all([
     projections.brief(database,workspaceId),autonomy.getState(database,workspaceId),
@@ -89,7 +96,7 @@ async function home(database,workspaceId){
 
 async function inventoryPosition(database,workspaceId){
   const result=await database.query(`WITH sku_position AS (
-      SELECT s.id,COALESCE(SUM(b.on_hand),0)::bigint AS on_hand,
+      SELECT s.id,s.item_id,COALESCE(SUM(b.on_hand),0)::bigint AS on_hand,
         COALESCE((SELECT SUM(a.quantity) FROM sales_order_allocations a
           JOIN sales_order_lines sol ON sol.id=a.sales_order_line_id
           WHERE a.workspace_id=s.workspace_id AND sol.sku_id=s.id),0)::bigint AS committed,
@@ -99,29 +106,30 @@ async function inventoryPosition(database,workspaceId){
             AND po.status IN ('ORDERED','PARTIALLY_RECEIVED')),0)::bigint AS incoming
       FROM skus s LEFT JOIN balances b ON b.workspace_id=s.workspace_id AND b.sku_id=s.id
       JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
-      WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 GROUP BY s.id,s.workspace_id
-    ) SELECT COUNT(*)::bigint AS skus,COALESCE(SUM(on_hand),0)::bigint AS on_hand,
+      WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 GROUP BY s.id,s.item_id,s.workspace_id
+    ), item_position AS (
+      SELECT item_id,SUM(on_hand) AS on_hand,SUM(committed) AS committed,SUM(incoming) AS incoming
+      FROM sku_position GROUP BY item_id
+    ) SELECT COUNT(*)::bigint AS products,
+      (SELECT COUNT(*)::bigint FROM sku_position) AS skus,COALESCE(SUM(on_hand),0)::bigint AS on_hand,
       COALESCE(SUM(committed),0)::bigint AS committed,COALESCE(SUM(incoming),0)::bigint AS incoming,
       COUNT(*) FILTER (WHERE on_hand<=0)::bigint AS empty_count,
       COUNT(*) FILTER (WHERE committed>on_hand)::bigint AS shortage_count,
       COUNT(*) FILTER (WHERE incoming>0)::bigint AS incoming_count,
       COUNT(*) FILTER (WHERE on_hand>0 AND committed<=on_hand)::bigint AS healthy_count
-    FROM sku_position`,[workspaceId]);
+    FROM item_position`,[workspaceId]);
   const [locations,cost,names]=await Promise.all([
     database.query('SELECT COUNT(*)::bigint AS count FROM locations WHERE workspace_id=$1 AND is_active=1',[workspaceId]),
     database.query(`SELECT COALESCE(SUM(quantity_units),0)::bigint AS units,
       COALESCE(SUM(total_cost_minor),0)::bigint AS cost FROM accounting_inventory_cost_balances WHERE workspace_id=$1`,[workspaceId]),
     database.query(`SELECT name FROM items WHERE workspace_id=$1 AND is_active=1 ORDER BY lower(name) LIMIT 12`,[workspaceId]),
   ]);
-  const row=result.rows[0];const groups=[];
-  const add=(count,key,name,detail,tone,icon)=>{if(number(count)>0)groups.push({key,name,detail,tone,icon,
-    count:number(count),itemIds:[],href:`/inventory/table?group=${encodeURIComponent(key)}`});};
-  add(row.shortage_count,'shortage','Promised but not available','Customer commitments exceed physical stock.','hot','alert');
-  add(row.empty_count,'empty','Out of stock','No physical units are currently on hand.','hot','box');
-  add(row.incoming_count,'incoming','On the way','A placed supplier order has units outstanding.','quiet','arrive');
-  add(row.healthy_count,'healthy','Available now','Physical stock covers current commitments.','ok','check');
-  return {position:{tooLarge:number(row.skus)>250000,groups,productNames:names.rows.map((entry)=>entry.name),totals:{locations:number(locations.rows[0].count),
-    skus:number(row.skus),onHand:number(row.on_hand),committed:number(row.committed),incoming:number(row.incoming)}},
+  const row=result.rows[0];const groups=STOCK_GROUPS.flatMap((group)=>{
+    const count=number(row[`${group.key}_count`]);
+    return count?[{...group,count,itemIds:[],href:`/inventory/table?group=${encodeURIComponent(group.key)}`}]:[];
+  });
+  return {position:{tooLarge:number(row.products)>250000,groups,productNames:names.rows.map((entry)=>entry.name),totals:{locations:number(locations.rows[0].count),
+    products:number(row.products),skus:number(row.skus),onHand:number(row.on_hand),committed:number(row.committed),incoming:number(row.incoming)}},
     stockValue:{totalUnits:number(cost.rows[0].units),totalCostMinor:number(cost.rows[0].cost)}};
 }
 
@@ -211,4 +219,4 @@ async function money(database,workspaceId,input={}){
     fees:{totalMinor:0,needsPlacingMinor:0,documents:[]}}};
 }
 
-module.exports={home,inventoryPosition,purchasing,sales,money};
+module.exports={home,inventoryPosition,purchasing,sales,money,STOCK_GROUPS};
