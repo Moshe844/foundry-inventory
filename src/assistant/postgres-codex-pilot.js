@@ -18,8 +18,14 @@ async function access(db,ctx,{enabled=false,owner=false}={}){
  return {actor,pilot};
 }
 async function selected(db,ctx){if(!configured(ctx))return false;try{await access(db,ctx,{enabled:true});return true;}catch(e){if(e instanceof AuthorizationError)return false;throw e;}}
+function spendingLockMessage(pilot){
+ if(!pilot.approval_reference||Number(pilot.ceiling_micro_usd)<=0)return 'The pilot is enabled, but paid agent work is locked until a Staging budget is approved.';
+ if(new Date(pilot.period_ends_at)<=new Date())return 'Your approved Staging budget period has expired. Paid agent work is locked.';
+ if(pilot.stopped)return 'Agent spending is paused. Your Staging budget is already approved.';
+ return null;
+}
 async function view(db,ctx){if(!configured(ctx))return null;try{const {actor,pilot}=await access(db,ctx);return {
- enabled:pilot.enabled,canToggle:actor.role==='owner',funded:!pilot.stopped&&Number(pilot.ceiling_micro_usd)>0&&new Date(pilot.period_ends_at)>new Date(),
+ enabled:pilot.enabled,canToggle:actor.role==='owner',funded:!spendingLockMessage(pilot),lockMessage:spendingLockMessage(pilot),
  model:'GPT-6.1 Sol',reasoning:'High'};}catch(e){if(e instanceof AuthorizationError)return null;throw e;}}
 async function toggle(db,ctx,enabled){await access(db,ctx,{owner:true});
  return db.transaction(async client=>{
@@ -31,8 +37,7 @@ async function toggle(db,ctx,enabled){await access(db,ctx,{owner:true});
 }
 async function start(db,ctx,message,options={}){
  const {pilot}=await access(db,ctx,{enabled:true});
- if(pilot.stopped||Number(pilot.ceiling_micro_usd)<=0||new Date(pilot.period_ends_at)<=new Date())
-  throw new ValidationError('The pilot is enabled, but paid agent work is locked until a Staging budget is approved.');
+ const locked=spendingLockMessage(pilot);if(locked)throw new ValidationError(locked);
  const goal=await store.create(db,ctx,message,{...options,budgetMinor:Math.min(options.budgetMinor||100,100)});
  if(goal.checkpoint.runtime&&goal.checkpoint.runtime!=='codex-staging')throw new ValidationError('That request already belongs to another Ask runtime.');
  await db.query(`UPDATE stockchief_runtime.assistant_goals SET checkpoint=checkpoint||$4::jsonb WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,

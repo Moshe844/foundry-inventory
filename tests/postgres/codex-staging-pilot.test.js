@@ -29,8 +29,12 @@ test('Staging website pilot is scoped, delivers durable approvals, executes cano
  await page.goto(`http://127.0.0.1:${server.address().port}/ask`);
  assert.equal(await page.getByRole('button',{name:'Enable Staging agent',exact:true}).count(),1);
  await page.getByRole('button',{name:'Enable Staging agent',exact:true}).click();
- assert(await pilot.selected(db,ctx));assert.match(await page.locator('body').innerText(),/spending is locked/);
+ assert(await pilot.selected(db,ctx));assert.match(await page.locator('body').innerText(),/paid agent work is locked/);
  await assert.rejects(pilot.start(db,ctx,'Investigate current stock'),/budget is approved/);
+ await db.query("UPDATE stockchief_runtime.codex_pilots SET ceiling_micro_usd=500000,approval_reference='OFFLINE ONLY',stopped=true WHERE workspace_id=$1",[ctx.workspaceId]);
+ await page.reload();assert.match(await page.locator('body').innerText(),/spending is paused.*budget is already approved/);
+ await assert.rejects(pilot.start(db,ctx,'Investigate current stock'),/spending is paused/);
+ assert.equal((await pilot.view(db,ctx)).funded,false,'Correct wording does not unlock spending');
  const sku='STAGE-'+randomUUID().slice(0,8),location='Pilot shelf';
  const loc=await require('../../src/domain/postgres-location-service').createLocation(db,ctx,{name:location,kind:'warehouse'});
  const item=await require('../../src/domain/postgres-catalog-service').createItem(db,ctx,{name:'Pilot stock',baseCode:sku,trackingMode:'quantity'});

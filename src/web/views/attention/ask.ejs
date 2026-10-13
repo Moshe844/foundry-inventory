@@ -82,7 +82,7 @@
   <% if(locals.codexPilot){ %>
     <section class="rm-note" aria-label="Staging agent controls">
       <p><strong>Staging agent pilot</strong> · <%= locals.codexPilot.enabled?'Codex SDK · Sol High':'Existing Ask' %></p>
-      <% if(locals.codexPilot.enabled&&!locals.codexPilot.funded){ %><p>Agent spending is locked until a pilot budget is approved.</p><% } %>
+      <% if(locals.codexPilot.enabled&&!locals.codexPilot.funded){ %><p><%= locals.codexPilot.lockMessage %></p><% } %>
       <% if(locals.codexPilot.canToggle){ %><form method="post" action="/ask/agent-pilot">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <input type="hidden" name="mode" value="<%= locals.codexPilot.enabled?'disable':'enable' %>">
