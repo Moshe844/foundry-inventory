@@ -21,7 +21,7 @@
 <% if(connection.last_error){ %><div class="notice notice--warn section"><div><strong>This connection needs attention.</strong><p><%= connection.last_error %></p></div></div><% } %>
 <% if(needsAuthorization&&currentUser.role==='owner'&&provider?.available){ %>
   <section class="rm-note" aria-label="Restore provider authorization"><p><strong>Sign in again to <%= providerName %></strong></p><p>This restores the existing connection. Its records, mappings and history are kept.</p>
-    <form method="post" action="/settings/connections/connect"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="providerType" value="<%= connection.provider_type %>"><input type="hidden" name="connectorId" value="<%= connection.id %>">
+    <form method="post" action="/settings/connections/<%= encodeURIComponent(connection.provider_type) %>/authorize"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="connectorId" value="<%= connection.id %>">
       <% if(connection.config.shop){ %><input type="hidden" name="shop" value="<%= connection.config.shop %>"><% } %><% if(connection.config.storeUrl){ %><input type="hidden" name="storeUrl" value="<%= connection.config.storeUrl %>"><% } %>
       <button class="btn btn--primary" type="submit">Sign in again to <%= providerName %></button>
     </form>
