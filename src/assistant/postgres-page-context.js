@@ -32,15 +32,20 @@ const PAGES=[
 async function load(database,workspaceId,sourcePath){
   const path=require('./agent-navigation-path').localPath(sourcePath);
   if(!path||path.length>300)return null;
+  // The location is general environment context, independent of these optional
+  // legacy record hints. A list, form or unfamiliar screen may share a detail
+  // route's prefix without being a record ID. Missing record enrichment must
+  // never erase its valid location or limit what the native browser discovers.
+  const location={path};
   const pathname=new URL(path,'https://stockchief.invalid').pathname;
   for(const page of PAGES){
     const matched=page.route.exec(pathname);if(!matched)continue;
-    let id;try{id=decodeURIComponent(matched[1]);}catch{return null;}
-    if(id.length>150)return null;
+    let id;try{id=decodeURIComponent(matched[1]);}catch{return location;}
+    if(id.length>150)return location;
     const rows=(await database.query(page.sql,[workspaceId,id])).rows;
-    return rows.length?{path,...page.present(rows)}:null;
+    return rows.length?{path,...page.present(rows)}:location;
   }
-  return {path};
+  return location;
 }
 
 module.exports={load};
