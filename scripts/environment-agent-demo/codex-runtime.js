@@ -32,7 +32,7 @@ function durableFinal(files,encoding,threadId,answer){
  return false;
 }
 async function initialObservation(options,saved,state){
- if(state?.threadId||!saved.goalContext.page?.path)return null;
+ if(state?.threadId)return null;
  const initialTools=require('./candidates').sharedTools({...options,sandbox:null,fullEvidence:true});
  try{return await initialTools.find(t=>t.name==='environment_browser').execute(
   {action:'inspect',ref:null,value:null},{source:'host_initial_observation'});}
