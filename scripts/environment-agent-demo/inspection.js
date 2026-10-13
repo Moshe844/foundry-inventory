@@ -16,12 +16,10 @@ async function inspectionDatabase(cluster,admin,ctx,stagingAuthorization=null){
   if(!stagingAuthorization&&connection.hostname!=='127.0.0.1')throw new Error('Inspection must use the isolated local fixture.');
   const role=`demo_read_${randomBytes(8).toString('hex')}`;
   const password=randomBytes(32).toString('hex');const identifier=escapeIdentifier(role);
-  await admin.query(`CREATE ROLE ${identifier} LOGIN PASSWORD ${escapeLiteral(password)} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS`);
-  await admin.query(`ALTER ROLE ${identifier} SET default_transaction_read_only=on`);
   const tables=(await admin.query(`SELECT c.table_schema,c.table_name,array_agg(c.column_name::text) AS columns
     FROM information_schema.columns c JOIN pg_namespace n ON n.nspname=c.table_schema
     JOIN pg_class t ON t.relnamespace=n.oid AND t.relname=c.table_name AND t.relkind IN ('r','p')
-    WHERE c.table_schema IN ('public','stockchief_runtime') GROUP BY c.table_schema,c.table_name`)).rows;
+    WHERE c.table_schema IN ('public','stockchief_runtime') GROUP BY c.table_schema,c.table_name ORDER BY c.table_schema,c.table_name`)).rows;
   const accountId=(await admin.query('SELECT account_id FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0].account_id;
   const foreignKeys=(await admin.query(`SELECT n.nspname AS schema,c.relname AS child,pn.nspname AS parent_schema,p.relname AS parent,
    array_agg(a.attname::text ORDER BY k.ordinality) AS child_columns,array_agg(pa.attname::text ORDER BY k.ordinality) AS parent_columns
@@ -36,7 +34,9 @@ async function inspectionDatabase(cluster,admin,ctx,stagingAuthorization=null){
    table.table_name==='workspaces'?`id=${escapeLiteral(ctx.workspaceId)}`:
    table.table_name==='accounts'?`id=${escapeLiteral(accountId)}`:
    table.columns.includes('account_id')?`account_id=${escapeLiteral(accountId)}`:null;
-  const statements=[`GRANT USAGE ON SCHEMA public,stockchief_runtime TO ${identifier}`];
+  const statements=[`CREATE ROLE ${identifier} LOGIN PASSWORD ${escapeLiteral(password)} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS`,
+    `ALTER ROLE ${identifier} SET default_transaction_read_only=on`,
+    `GRANT USAGE ON SCHEMA public,stockchief_runtime TO ${identifier}`];
   const guardedTables=[];
   for(const table of tables){
     const name=`${escapeIdentifier(table.table_schema)}.${escapeIdentifier(table.table_name)}`;
@@ -69,7 +69,7 @@ async function inspectionDatabase(cluster,admin,ctx,stagingAuthorization=null){
   }
   // Same escaped host-generated grants and restrictive tenant policies, one
   // atomic installation. Avoid hundreds of remote PostgreSQL round trips.
-  await admin.transaction(client=>client.query(statements.join(';\n')));
+  await admin.transaction(client=>client.query(statements.join(';\n')),{retrySafe:true});
   connection.username=role;connection.password=password;
   const pool=new Pool(require('../../src/db/postgres').connectionOptions(connection.toString(),{max:4,
     privateNetwork:process.env.FOUNDRY_DATABASE_PRIVATE_NETWORK==='true'}));
@@ -86,7 +86,7 @@ async function inspectionDatabase(cluster,admin,ctx,stagingAuthorization=null){
       cleanupStatements.push(`DROP POLICY IF EXISTS ${escapeIdentifier(role+'_restrict')} ON ${name}`);
       cleanupStatements.push(`REVOKE ALL PRIVILEGES ON ${name} FROM ${identifier}`);}
     cleanupStatements.push(`REVOKE USAGE ON SCHEMA public,stockchief_runtime FROM ${identifier}`,`DROP ROLE ${identifier}`);
-    await admin.transaction(client=>client.query(cleanupStatements.join(';\n')));
+    await admin.transaction(client=>client.query(cleanupStatements.join(';\n')),{retrySafe:true});
   }},accountId,topology:{engine:'postgresql',shared:true,multiWriter:false}};
 }
 
@@ -101,7 +101,7 @@ async function createInspectionServer({cluster,database,ctx,beforeRead=()=>{},st
   const password=randomBytes(32).toString('hex');const identifier=escapeIdentifier(role);
   // Install the identical restricted telemetry role/policies atomically,
   // instead of seven serial trips to the remote Staging database.
-  await database.transaction(client=>client.query(`CREATE ROLE ${identifier} LOGIN PASSWORD ${escapeLiteral(password)} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+  try{await database.transaction(client=>client.query(`CREATE ROLE ${identifier} LOGIN PASSWORD ${escapeLiteral(password)} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
     GRANT USAGE ON SCHEMA public TO ${identifier};
     GRANT INSERT ON commercial_resource_measurements TO ${identifier};
     GRANT SELECT(id) ON commercial_resource_measurements TO ${identifier};
@@ -110,7 +110,8 @@ async function createInspectionServer({cluster,database,ctx,beforeRead=()=>{},st
       OR (workspace_id IS NULL AND (account_id IS NULL OR account_id=${escapeLiteral(readonly.accountId)})));
     CREATE POLICY ${escapeIdentifier(role+'_conflict')} ON commercial_resource_measurements FOR SELECT TO ${identifier}
     USING ((workspace_id=${escapeLiteral(ctx.workspaceId)} AND account_id=${escapeLiteral(readonly.accountId)})
-      OR (workspace_id IS NULL AND (account_id IS NULL OR account_id=${escapeLiteral(readonly.accountId)})));`));
+      OR (workspace_id IS NULL AND (account_id IS NULL OR account_id=${escapeLiteral(readonly.accountId)})));`),{retrySafe:true});}
+  catch(error){await readonly.close().catch(()=>{});throw error;}
   const connection=new URL(cluster.connectionString);connection.username=role;connection.password=password;
   const telemetry=new Pool(require('../../src/db/postgres').connectionOptions(connection.toString(),{max:2,
     privateNetwork:process.env.FOUNDRY_DATABASE_PRIVATE_NETWORK==='true'}));
@@ -143,6 +144,6 @@ async function createInspectionServer({cluster,database,ctx,beforeRead=()=>{},st
         DROP POLICY IF EXISTS ${escapeIdentifier(role+'_conflict')} ON commercial_resource_measurements;
         REVOKE SELECT(id) ON commercial_resource_measurements FROM ${identifier};
         REVOKE ALL PRIVILEGES ON commercial_resource_measurements FROM ${identifier};
-        REVOKE USAGE ON SCHEMA public FROM ${identifier};DROP ROLE ${identifier};`));}};
+        REVOKE USAGE ON SCHEMA public FROM ${identifier};DROP ROLE ${identifier};`),{retrySafe:true});}};
 }
 module.exports={inspectionDatabase,createInspectionServer};

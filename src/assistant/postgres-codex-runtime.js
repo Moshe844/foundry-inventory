@@ -55,8 +55,14 @@ async function run(database,ctx,id,options={}){
   const ui=require(base+'lazy-browser').lazyBrowser(async firstAction=>{
    audit({kind:'runtime_starting',status:'Opening the isolated business browser'});
    const connectionString=process.env.FOUNDRY_DATABASE_URL||process.env.DATABASE_URL;
-   const token=await pilot.readAuthorization(database,ctx,connectionString);
-   const server=await require(base+'inspection').createInspectionServer({cluster:{connectionString},database,ctx,stagingAuthorization:token});cleanup.push(()=>server.close());
+   let server;
+   if(options.inspectionPool){
+    const lease=await options.inspectionPool.acquire({database,ctx,connectionString});
+    server=lease.server;cleanup.push(()=>lease.release());
+   }else{
+    const token=await pilot.readAuthorization(database,ctx,connectionString);
+    server=await require(base+'inspection').createInspectionServer({cluster:{connectionString},database,ctx,stagingAuthorization:token});cleanup.push(()=>server.close());
+   }
    const browser=await require('playwright').chromium.launch({headless:true});cleanup.push(()=>browser.close());
    const observedPaths=goal.checkpoint.conversation?.environment?.pages?.map(p=>p.path)||[];
    const openedPath=firstAction?.action==='open'?require('./agent-navigation-path').localPath(firstAction.value):null;
@@ -110,6 +116,14 @@ async function run(database,ctx,id,options={}){
    WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 AND run_token=$4`,[ctx.workspaceId,ctx.actorId,id,goal.run_token,
     error.code==='STAGING_MODEL_PRICE_UNVERIFIED'?error.message:'The Staging runtime could not start. No business operation was executed.']);
   throw error;
- }finally{await Promise.allSettled(preparations);await auditQueue.catch(()=>{});for(const close of cleanup.reverse())await close();}
+ }finally{
+  await Promise.allSettled(preparations);await auditQueue.catch(()=>{});
+  // Attempt every independent cleanup. One transient resource failure must
+  // not leak the remaining resources or overwrite a durable business outcome.
+  for(const close of cleanup.reverse())try{await close();}catch(error){
+   audit({kind:'runtime_cleanup_failed',code:require(base+'tool-error').code(error)});
+  }
+  await auditQueue.catch(()=>{});
+ }
 }
 module.exports={run};
