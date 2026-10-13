@@ -44,7 +44,7 @@ function sharedTools({browser,gateway,sandbox,session,audit=()=>{}}){
     audit({kind:'agent_tool_started',name:t.name,input,...source});
     try{const output=await (session?session.execute(t.name,input,callId=>t.execute(input,callId)):t.execute(input));
       audit({kind:'agent_tool_completed',name:t.name,...source});return session?.present?session.present(output):output;
-    }catch(error){audit({kind:'agent_tool_failed',name:t.name,message:error.message,...source});
+    }catch(error){audit({kind:'agent_tool_failed',name:t.name,code:require('./tool-error').code(error),message:error.message,...source});
       if(error.code==='TOOL_CONTRACT_INVALID')return {error:{code:error.code,message:error.message},effectMayHaveOccurred:false};
       throw error;}
   }}));

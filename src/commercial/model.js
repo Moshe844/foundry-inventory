@@ -10,6 +10,18 @@ function wrap(database,ctx,provider,operation,key,options={}){const policy=POLIC
   if(String(request.system||'').length+String(request.prompt||'').length>policy.maxPromptCharacters)throw new ValidationError('This request is too large for the approved operation budget.');
   const configured=(await database.query('SELECT * FROM commercial_operation_policies WHERE operation=$1',[operation])).rows[0];
   if(!configured||configured.category!=='ai_work_credits')throw new ValidationError('The model operation has no configured usage policy.');
+  if(require('./relay-provider').ownsAccounting(provider)){
+    // Keep entitlement and structured/semantic validation here. The funded
+    // goal relay owns the ONE financial reservation and usage receipt.
+    const {onValidated,...input}=request;
+    const response=await provider.complete({...input,maxOutputTokens:Math.min(policy.maxOutputTokens,3000)});
+    const validated=require('../foundry/validator').validate(require('../foundry/schema-tools').toWireSchema(request.schema),response.data);
+    if(!validated.ok)throw new (require('../ai/provider').ProviderOutputError)('The model response did not match the operation contract.',validated.errors);
+    if(operation==='instruction'&&request.schemaName==='postgres_operating_instruction'&&(!response.data?.understood||!response.data?.changes?.length))
+      throw new (require('../ai/provider').ProviderOutputError)('The model did not produce a usable operating instruction.',{reason:String(response.data?.unsupportedReason||response.data?.clarifyingQuestion||'').slice(0,240)});
+    if(typeof onValidated==='function')await onValidated(response.data);
+    return response;
+  }
   const idempotencyKey=`${ctx.workspaceId}:${key||newId('modeloperation')}`;
   const internal=options.chargeCustomer===false;
   if(internal&&(!options.fundingKey||!['ask','instruction'].includes(operation)))

@@ -6,6 +6,9 @@ function enabled(ctx){return process.env.STOCKCHIEF_ADAPTIVE_ASK==='1'&&
  String(process.env.STOCKCHIEF_ADAPTIVE_ASK_WORKSPACES||'').split(',').map(x=>x.trim()).includes(ctx.workspaceId);}
 async function get(db,ctx,id){return (await db.query(`SELECT * FROM ${TABLE}
  WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,id])).rows[0]||null;}
+async function progress(db,ctx,id){return (await db.query(`SELECT id,status,answer,created_at,updated_at,turns,tool_calls,
+ jsonb_build_object('runtime',checkpoint->'runtime') AS checkpoint FROM ${TABLE}
+ WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,id])).rows[0]||null;}
 async function create(db,ctx,message,{usageKey=newId('goalrequest'),budgetMinor=75,page=null}={}){
  const clean=String(message||'').trim();
  if(!clean||clean.length>12000)throw new ValidationError('Describe a goal in at most 12,000 characters.');
@@ -60,4 +63,4 @@ async function latest(db,ctx,startedAt=null){return (await db.query(`SELECT * FR
 async function recent(db,ctx,startedAt=null){return (await db.query(`SELECT * FROM ${TABLE}
  WHERE workspace_id=$1 AND actor_user_id=$2 AND ($3::timestamptz IS NULL OR created_at>$3)
  ORDER BY created_at DESC,id DESC LIMIT 12`,[ctx.workspaceId,ctx.actorId,startedAt])).rows.reverse();}
-module.exports={enabled,get,create,claim,save,cancel,reply,enqueue,latest,recent};
+module.exports={enabled,get,progress,create,claim,save,cancel,reply,enqueue,latest,recent};

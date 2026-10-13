@@ -78,6 +78,23 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    if(candidate!=='codex'||h.codexDelivery?.hash!==hash||h.codexDelivery.state!=='PENDING')throw new Error('CODEX_RESPONSE_SEQUENCE_MISMATCH');
    h.codexDelivery={hash,state:'SETTLED',packet};h.lastCodexResponse={...outcome,request:h.codexRequests};
   });},
+  // A helper's delivery must never overwrite the SDK response/checkpoint.
+  // Its own durable slot still prevents spending again on an unknown outcome.
+  helperDelivery(){return {
+   identity:Object.freeze({workspaceId:ctx.workspaceId,actorId:ctx.actorId,goalId,candidate}),
+   codexReplay:async hash=>{await authority({catalogue:false});return update(h=>{
+    if(h.helperDelivery?.state==='PENDING')throw Error('CODEX_RESPONSE_RECONCILIATION_REQUIRED');
+    return h.helperDelivery?.hash===hash?structuredClone(h.helperDelivery.packet):null;
+   });},
+   codexPending:async hash=>{await authority({catalogue:false});return update(h=>{
+    if(h.helperDelivery?.state==='PENDING')throw Error('CODEX_RESPONSE_RECONCILIATION_REQUIRED');
+    h.helperDelivery={hash,state:'PENDING'};
+   });},
+   codexDelivered:async(hash,packet)=>{await authority({catalogue:false});return update(h=>{
+    if(h.helperDelivery?.hash!==hash||h.helperDelivery.state!=='PENDING')throw Error('CODEX_RESPONSE_SEQUENCE_MISMATCH');
+    h.helperDelivery={hash,state:'SETTLED',packet};
+   });}
+  };},
   async modelControl({budgetFinal=false}={}){await authority();return update(h=>{
    h.modelRequests||=0;
    if(h.lastModelResponse?.empty)throw Object.assign(new Error(require('./finalization').EMPTY_MESSAGE),{code:'EMPTY_MODEL_FINAL'});
@@ -153,9 +170,9 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
     await notifyApprovals(approvals);return result;
    }catch(error){
     await update((h,goal)=>{
+     h.lastToolError={name,code:require('./tool-error').code(error),effectMayHaveOccurred:error.effectMayHaveOccurred!==false};
      if(consequential&&error.effectMayHaveOccurred!==false){goal.status='BLOCKED';goal.answer='An operation was interrupted. Reconcile its canonical records before retrying.';}
-     else {h.inflight=null;h.lastToolError={name,code:error.code||'TOOL_FAILED',
-      message:error.code==='TOOL_CONTRACT_INVALID'?String(error.message).slice(0,1500):'Tool failed; inspect current state before trying again.'};}
+     else {h.inflight=null;h.lastToolError.message=error.code==='TOOL_CONTRACT_INVALID'?String(error.message).slice(0,1500):'This step failed before making a business change.';}
     });throw error;
    }
   },

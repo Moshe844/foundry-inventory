@@ -60,10 +60,12 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
         if(step.dependsOn.some(i=>outcomes[i]?.result.status!=='ANSWERED')){
           outcomes.push({step,args:step.args,provenance:{},result:{status:'CLARIFY',reason:'dependency_waiting'}});continue;
         }
-        effectsStarted||=step.contract.kind!=='read';
-        const result=await control.executeStep(service.capabilityService(),database,{...ctx,goalId,
+        let result;
+        try{result=await control.executeStep(service.capabilityService(),database,{...ctx,goalId,
           planStepKey:`environment:${goalId}:${call}:${index}`},step,{actor,provider,rawProvider,
-          sourceMessage:goal,usageKey:`environment:${goalId}:${call}:${index}`});
+          sourceMessage:goal,usageKey:`environment:${goalId}:${call}:${index}`});}
+        catch(error){effectsStarted||=step.contract.kind!=='read'&&error.effectMayHaveOccurred!==false;throw error;}
+        effectsStarted||=step.contract.kind!=='read';
         outcomes.push({...result,step});
         audit({kind:'canonical_operation',capability:step.contract.name,status:result.result.status});
       }

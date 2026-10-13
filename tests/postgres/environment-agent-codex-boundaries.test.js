@@ -52,6 +52,29 @@ test('native admission, delivery, termination and accounting reject safely witho
   await x.session.finish({answer:JSON.stringify({status:'needs_user',question:'Allow me to continue?',missingInformation:'More tool calls'})});
   const g=await goals.get(db,ctx,x.goal.id);assert.equal(g.status,'BLOCKED');assert.equal(g.checkpoint.harness.failure.code,'DURABLE_TOOL_LIMIT');
  });
+ await t.test('canonical helpers cannot bypass request, goal, period, turn or unknown-outcome gates',async()=>{
+  const helperRequest={system:'Check the proposed business effect.',prompt:'Read-only fixture',schemaName:'effect',schema:{type:'object',additionalProperties:false,required:['ok'],properties:{ok:{type:'boolean'}}}};
+  async function helper(){const x=await attach();x.transport.setNativeSession(x.session.helperDelivery());return {...x,provider:require(base+'codex-helper-provider').create({transport:x.transport})};}
+  const before=providerCalls;
+  let x=await helper();count=108001;
+  await assert.rejects(x.provider.complete(helperRequest),e=>e.code==='CODEX_REQUEST_COST_CEILING');assert.equal(providerCalls,before);count=10000;
+  x=await helper();await db.query('UPDATE stockchief_runtime.assistant_goals SET budget_minor=0.01 WHERE id=$1',[x.goal.id]);
+  await assert.rejects(x.provider.complete(helperRequest));assert.equal(providerCalls,before);
+  x=await helper();await db.query(`UPDATE stockchief_runtime.assistant_goals SET checkpoint=jsonb_set(checkpoint,'{harness}', '{"candidate":"codex","sequence":0,"calls":{},"native":{},"codexRequests":24}'::jsonb) WHERE id=$1`,[x.goal.id]);
+  await assert.rejects(x.provider.complete(helperRequest),e=>e.code==='DURABLE_MODEL_REQUEST_LIMIT');assert.equal(providerCalls,before);
+  x=await helper();await x.session.helperDelivery().codexPending('unknown-helper');
+  await assert.rejects(x.provider.complete(helperRequest),e=>e.code==='CODEX_RESPONSE_RECONCILIATION_REQUIRED');assert.equal(providerCalls,before);
+ });
+ await t.test('recorded policy helper rejection is known to precede effects and remains accurately journaled',async()=>{
+  const x=await attach();
+  const guarded=require('../../src/commercial/relay-provider').register({name:'openai',model:wire.MODEL,complete:async()=>{throw Error('UNAPPROVED_HELPER_MODEL_CALL');}});
+  const gateway=require(base+'gateway').createGateway({database:db,ctx,goal:x.goal.original_request,goalId:x.goal.id,runToken:x.goal.run_token,provider:guarded});
+  const steps=[{capability:'policy.propose',arguments:[],dependsOn:[]}];
+  await assert.rejects(x.session.execute('business_operations',{stepsJson:JSON.stringify(steps)},callId=>gateway.operate({steps,callId})),e=>e.message==='UNAPPROVED_HELPER_MODEL_CALL'&&e.effectMayHaveOccurred===false);
+  const goal=await goals.get(db,ctx,x.goal.id);assert.equal(goal.status,'RUNNING');assert.equal(goal.checkpoint.harness.inflight,null);
+  assert.equal(goal.checkpoint.harness.lastToolError.code,'UNAPPROVED_HELPER_MODEL_CALL');
+  assert.equal((await db.query('SELECT count(*) AS n FROM operating_instruction_proposals WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,'0');
+ });
  await t.test('expired-lease cleanup records the precise stop and cannot overwrite cancellation',async()=>{
   let x=await attach();await db.query("UPDATE stockchief_runtime.assistant_goals SET lease_until=now()-interval '1 second' WHERE id=$1",[x.goal.id]);
   assert.equal((await x.session.stop({code:'CODEX_RUNTIME_TIMEOUT'})).status,'BLOCKED');assert.equal((await goals.get(db,ctx,x.goal.id)).checkpoint.harness.interruption.code,'CODEX_RUNTIME_TIMEOUT');
@@ -67,5 +90,11 @@ test('native admission, delivery, termination and accounting reject safely witho
   const exposure=budget.status().committed,before=[providerCalls,counterCalls];assert.equal(budget.status().unresolved,1);
   assert.equal((await call(x)).status,403);assert.deepEqual([providerCalls,counterCalls],before);assert.equal(budget.status().committed,exposure);
   assert.equal((await db.query('SELECT status FROM commercial_model_cost_holds WHERE goal_id=$1',[x.goal.id])).rows[0].status,'UNKNOWN');
+ });
+ await t.test('a stopped period blocks canonical helpers before counting or generation',async()=>{
+  const x=await attach();x.transport.setNativeSession(x.session.helperDelivery());const before=[providerCalls,counterCalls];budget.stop();
+  const helper=require(base+'codex-helper-provider').create({transport:x.transport});
+  await assert.rejects(helper.complete({system:'Check effect',prompt:'Offline fixture',schemaName:'effect',schema:{type:'object',properties:{},additionalProperties:false}}),e=>e.code==='PAID_TESTING_LOCKED');
+  assert.deepEqual([providerCalls,counterCalls],before);
  });
 });

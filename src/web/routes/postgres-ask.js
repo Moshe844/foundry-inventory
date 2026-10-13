@@ -173,7 +173,8 @@ function createPostgresAskRouter(database,options={}){
     return res.redirect(303,'/ask');
   }));
   router.get('/ask/goals/:id',asyncRoute(async(req,res)=>{
-    const goal=await goalStore.get(database,req.ctx,req.params.id);
+    res.set('Cache-Control','no-store');
+    const goal=await goalStore.progress(database,req.ctx,req.params.id);
     if(!goal)return res.status(404).json({error:'Goal not found.'});
     const isPilot=goal.checkpoint.runtime==='codex-staging';
     if(isPilot)await pilot.access(database,req.ctx);

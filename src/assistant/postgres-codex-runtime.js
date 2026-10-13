@@ -30,7 +30,9 @@ async function run(database,ctx,id,options={}){
   await require('./codex-staging-readiness').verifyPricing(database);
   const image=options.image||process.env.STOCKCHIEF_CODEX_PILOT_IMAGE;
   const permit=await require('./codex-staging-permit').issue({database,ctx,goalId:id,budget,image});
-  const provider={name:'openai',model:'gpt-6.1-sol',complete:async()=>{throw Error('UNAPPROVED_HELPER_MODEL_CALL');}};
+  let helper;
+  const provider=require('../commercial/relay-provider').register({name:'openai',model:require(base+'codex-wire').MODEL,
+   complete:request=>{if(!helper)throw Error('GOVERNED_HELPER_NOT_READY');return helper.complete(request);}});
   const gateway=require(base+'gateway').createGateway({database,ctx:{...ctx,goalRunToken:goal.run_token},goal:goal.original_request,goalId:id,
    runToken:goal.run_token,provider,rawProvider:provider,audit});
   const authorize=async settings=>{await pilot.access(database,ctx,{enabled:true});return gateway.authorize(settings);};
@@ -48,6 +50,10 @@ async function run(database,ctx,id,options={}){
    allowedProviders:['openai'],countCodexInput:counter,audit,...(options.fetchImpl?{fetchImpl:options.fetchImpl}:{})});cleanup.push(()=>relay.close());
   const transport=relay.grant({candidate:'codex',provider:'openai',task:id,ctx,goalId:id,budget,fundingKey,authorize:()=>authorize({catalogue:false}),
    wireProfile:'codex',livePermit:permit,requestGate:()=>session.codexRequest()});
+  const helperTransport=relay.grant({candidate:'codex',provider:'openai',task:id,ctx,goalId:id,budget,fundingKey,authorize:()=>authorize({catalogue:false}),
+   wireProfile:'codex',livePermit:permit,requestGate:()=>session.codexRequest()});
+  helperTransport.setNativeSession(session.helperDelivery());
+  helper=require(base+'codex-helper-provider').create({transport:helperTransport});
   const connectionString=process.env.FOUNDRY_DATABASE_URL||process.env.DATABASE_URL;
   const token=await pilot.readAuthorization(database,ctx,connectionString);
   audit({kind:'runtime_starting',status:'Opening the isolated business browser'});

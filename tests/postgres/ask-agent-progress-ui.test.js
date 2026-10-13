@@ -35,7 +35,13 @@ test('agent conversation keeps requests in order with compact responsive progres
  await db.query("UPDATE stockchief_runtime.assistant_goals SET created_at=created_at-interval '2 minutes' WHERE id=ANY($1::text[])",[[first.id,second.id]]);
  await page.reload();await panel.getByText('This is taking longer than usual.',{exact:false}).waitFor();
  assert.match(await panel.locator('[data-goal-elapsed]').innerText(),/\d+m \d+s/);
- await panel.getByRole('button',{name:'Stop',exact:true}).click();
- assert.equal((await store.get(db,ctx,second.id)).status,'CANCELLED');
+ let navigations=0;page.on('framenavigated',()=>navigations++);
+ await db.query("UPDATE stockchief_runtime.assistant_goals SET status='BLOCKED',answer='Rule preparation failed before any business change.',updated_at=now() WHERE id=$1",[second.id]);
+ await panel.getByRole('status').filter({hasText:'Could not finish'}).waitFor();
+ assert.equal(navigations,0,'Terminal state does not depend on a reload');
+ assert.equal(await panel.getAttribute('data-active'),'false');
+ assert.equal(await panel.getByRole('button',{name:'Stop',exact:true}).isVisible(),false);
+ assert.equal(await panel.locator('[data-goal-hint]').innerText(),'');
+ assert.match(await panel.locator('[data-goal-answer]').innerText(),/failed before any business change/);
  assert.equal(Number((await db.query('SELECT count(*) AS n FROM stockchief_runtime.codex_pilot_calls')).rows[0].n),0);
 });

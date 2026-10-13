@@ -204,7 +204,9 @@ async function interpret(database,ctx,instruction,options={}){const clean=String
     const key=attempt++?`${usageBase}:internal:${attempt}`:usageBase;
     const metered=require('../commercial/model').wrap(database,ctx,provider,'instruction',key,
       fundedKey?{chargeCustomer:false,fundingKey:fundedKey}:{});
-    const result=await metered.complete(request);
+    let result;
+    try{result=await metered.complete(request);}
+    catch(error){error.effectMayHaveOccurred=false;throw error;} // No proposal or business write precedes interpretation.
     if(!fundedKey)fundedKey=key;
     return result;
   };
