@@ -153,6 +153,37 @@ function createPostgresAskRouter(database,options={}){
   const pilot=require('../../assistant/postgres-codex-pilot');
   const agentNavigation=require('../../assistant/postgres-agent-navigation');
   const conversation=require('../../assistant/agent-conversation');
+  const delivery=require('../../assistant/agent-delivery');
+  router.use('/ask',(req,res,next)=>{res.locals.agentDelivery=delivery.visible;next();});
+  async function deliveredGoal(req){
+    await pilot.access(database,req.ctx);
+    const goal=await goalStore.get(database,req.ctx,req.params.id);
+    if(goal?.checkpoint.runtime!=='codex-staging'||!delivery.visible(goal))throw new ValidationError('This saved result is not available.');
+    await require('../../../scripts/environment-agent-demo/waits').authority(database,req.ctx,goal.checkpoint.harness);
+    return goal;
+  }
+  router.get('/ask/goals/:id/work/:workId',asyncRoute(async(req,res)=>{
+    const goal=await deliveredGoal(req),work=delivery.visible(goal).workProducts.find(p=>p.id===req.params.workId);
+    if(!work)throw new ValidationError('That work product is not available.');
+    res.set({'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Type':'text/plain; charset=utf-8',
+      'Content-Disposition':`attachment; filename="stockchief-${work.id.slice(0,16)}.txt"`});
+    return res.send(work.content);
+  }));
+  router.post('/ask/goals/:id/next',asyncRoute(async(req,res)=>{
+    const goal=await deliveredGoal(req),saved=delivery.visible(goal);
+    if(saved.id!==req.body.deliveryId)throw new ValidationError('The saved result changed. Reload before continuing.');
+    const action=saved.nextActions.find(a=>a.id===req.body.actionId);
+    if(!action)throw new ValidationError('That next step is not available.');
+    if(req.session.postgresAskStartedAt&&new Date(goal.created_at)<=new Date(req.session.postgresAskStartedAt))
+      throw new ValidationError('That result belongs to an earlier conversation.');
+    // This is a human-selected follow-up, not a tool, planner or approval. The
+    // embedded SDK chooses how to perform it under the existing gateway.
+    const next=await pilot.start(database,req.ctx,action.instruction,{usageKey:`next:${goal.id}:${action.id}`,
+      page:goal.checkpoint.page,startedAt:req.session.postgresAskStartedAt||null,
+      continuation:{sourceGoalId:goal.id,deliveryId:saved.id,workProducts:saved.workProducts}});
+    req.session.postgresAskNavigationGoal=next.goalId;
+    return res.redirect(303,'/ask#latest');
+  }));
   router.post('/ask/goals/:id/navigate',asyncRoute(async(req,res)=>{
     const automatic=req.body.automatic==='1';
     if(automatic&&req.session.postgresAskNavigationGoal!==req.params.id)
@@ -204,7 +235,7 @@ function createPostgresAskRouter(database,options={}){
     const safeEvents=events.map(e=>({sequence:e.sequence,kind:e.kind,created_at:e.created_at,
       detail:{kind:e.detail.kind,tool:typeof e.detail.tool==='string'?e.detail.tool:null,status:e.detail.kind==='runtime_starting'?e.detail.status:null}}));
     return res.json({id:goal.id,status:goal.status,answer:state.message,conversation:state,createdAt:goal.created_at,updatedAt:goal.updated_at,runStartedAt:goal.checkpoint.runStartedAt,turns:goal.turns,tools:goal.tool_calls,events:safeEvents,
-      navigation:navigation?{...navigation,automatic:req.session.postgresAskNavigationGoal===goal.id}:null});
+      delivery:delivery.visible(goal),navigation:navigation?{...navigation,automatic:req.session.postgresAskNavigationGoal===goal.id}:null});
   }));
   router.post('/ask/goals/:id/reply',asyncRoute(async(req,res)=>{
     const existing=await goalStore.get(database,req.ctx,req.params.id);

@@ -2,13 +2,15 @@
 const {z}=require('zod'),{createHash}=require('node:crypto');
 const text=z.string().trim().min(1).max(20000);
 const missing=z.preprocess(value=>typeof value==='string'?[value]:value,z.array(z.string().trim().min(1).max(1000)).min(1).max(30));
+const WorkProducts=z.array(z.object({title:z.string().trim().min(1).max(120),content:z.string().min(1).max(12000)})).max(3);
+const NextActions=z.array(z.object({label:z.string().trim().min(1).max(80),instruction:z.string().trim().min(1).max(4000)})).max(3);
 // One wire contract for all domains. Model reports express intent, never an
 // approval, an execution grant, or proof that a business outcome occurred.
 const Report=z.discriminatedUnion('status',[
  z.object({version:z.literal(1).optional(),status:z.literal('needs_user'),question:text.refine(q=>publicText(q,'')===q),missingInformation:missing}),
  z.object({version:z.literal(1).optional(),status:z.literal('completed'),outcome:z.enum(['answer','navigation']).optional(),answer:text,
   claims:z.array(z.object({evidenceId:z.string(),path:z.string(),value:z.unknown(),historical:z.boolean().optional()})).max(50),
-  navigation:z.object({evidenceId:z.string(),path:z.string()}).optional()}),
+  navigation:z.object({evidenceId:z.string(),path:z.string()}).optional(),workProducts:WorkProducts.optional(),nextActions:NextActions.optional()}),
  z.object({version:z.literal(1).optional(),status:z.literal('blocked'),answer:text})
 ]);
 function parse(raw){
@@ -67,7 +69,8 @@ function sync(goal){
 }
 const instructions=`\nStockChief conversation contract v1: End a turn with ONE JSON report matching a variant below. This report is consumed by the host, never displayed as JSON.
 Clarification: {version:1,status:"needs_user",question:string,missingInformation:string[]}. Ask only the smallest set of genuinely missing user choices needed for the next step. First use authorized records, existing conversation, form defaults and business settings to derive facts safely. Do not ask the user to repeat known information, supply internal IDs, or fill every possible field. Resolve a selected record's prices, currency, contact details and other stored defaults from evidence before asking about absent values. Do not infer a user's choice from multiple possible records. Internal errors, unavailable tools, loops and budget limits are not user questions.
-Completion: {version:1,status:"completed",outcome:"answer"|"navigation",answer:string,claims:[{evidenceId:string,path:string,value:any,historical?:boolean}],navigation?:{evidenceId:string,path:string}}. Only the host verifier can mark completion.
+Completion: {version:1,status:"completed",outcome:"answer"|"navigation",answer:string,claims:[{evidenceId:string,path:string,value:any,historical?:boolean}],navigation?:{evidenceId:string,path:string},workProducts?:[{title:string,content:string}],nextActions?:[{label:string,instruction:string}]}. Only the host verifier can mark completion.
+When the requested result is something the user can use or edit, deliver its full content as a workProduct, not merely prose describing it. The host durably saves each workProduct and offers a downloadable copy. Keep answer a short outcome summary; do not repeat the workProduct there. Include useful nextActions when further work is optional: these are natural-language follow-up requests chosen by you, not execution grants or approval. Choose their labels honestly and their instructions precisely; clicking one starts the same governed agent workflow under fresh authority, limits and approvals. Discover applicable operations when needed. Do not invent capabilities, imply a downloadable work product is a canonical business record, or claim a draft was sent. If the requested scope includes an actual business operation, prepare/execute its canonical contract rather than returning a workProduct as a substitute.
 Blocked: {version:1,status:"blocked",answer:string}. Describe the limitation in ordinary language without internal error codes, stack traces or protocol data.
 Clarification does not complete or abandon the goal. The next human reply continues this same goal with its durable evidence, canonical proposals, limits and original instructions. Human input alone is never approval of a business operation.`;
-module.exports={Report,ConversationState,parse,classify,state,sync,publicText,instructions,FAILED};
+module.exports={Report,ConversationState,WorkProducts,NextActions,parse,classify,state,sync,publicText,instructions,FAILED};

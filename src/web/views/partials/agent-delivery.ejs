@@ -1,0 +1,21 @@
+<% if(delivery){ %>
+  <div class="rm-agent__delivery" data-delivery-id="<%= delivery.id %>">
+    <% for(const work of delivery.workProducts){ %>
+      <article class="rm-agent__work" aria-label="<%= work.title %>">
+        <div class="rm-agent__work-header"><h3><%= work.title %></h3><span class="rm-agent__saved">Saved in this conversation</span></div>
+        <div class="rm-agent__work-content"><%= work.content %></div>
+        <a class="rm-btn rm-btn--ghost rm-btn--sm" href="/ask/goals/<%= encodeURIComponent(goal.id) %>/work/<%= work.id %>" download>Save a copy</a>
+      </article>
+    <% } %>
+    <% if(delivery.nextActions.length){ %>
+      <div class="rm-agent__next"><p><strong>What would you like to do next?</strong></p><div class="rm-agent__next-actions">
+        <% for(const next of delivery.nextActions){ %>
+          <div><form method="post" action="/ask/goals/<%= encodeURIComponent(goal.id) %>/next">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="deliveryId" value="<%= delivery.id %>"><input type="hidden" name="actionId" value="<%= next.id %>">
+            <button class="rm-btn rm-btn--sm" type="submit"><%= next.label %></button>
+          </form><details><summary>What this does</summary><p><%= next.instruction %></p></details></div>
+        <% } %>
+      </div><p class="rm-agent__next-note">Next steps continue with StockChief. Any consequential action still requires its usual authorization and approval.</p></div>
+    <% } %>
+  </div>
+<% } %>

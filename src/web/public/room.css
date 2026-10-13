@@ -1398,3 +1398,13 @@ dialog.rm-ask::backdrop { background: rgba(20, 18, 31, .38); backdrop-filter: bl
 .rm-empty-welcome .rm-stamp { display: inline-block; color: #4338ca; background: transparent; }
 .rm-empty-welcome .rm-btn--ghost, .rm-sample-prompt .rm-btn--ghost { color: #374151; background: #fff; }
 .rm-empty-note { margin-top: 24px; font-size: 13px; }
+.rm-agent__delivery { display:grid; gap:18px; margin-top:20px; }
+.rm-agent__work { padding:20px; border:1px solid var(--brand-line,#dedcf2); border-radius:16px; background:#fff; }
+.rm-agent__work-header { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; margin-bottom:16px; }
+.rm-agent__work-header h3 { margin:0; font-size:16px; }
+.rm-agent__saved { font-size:12px; color:#5d687a; }
+.rm-agent__work-content { white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.65; margin-bottom:18px; }
+.rm-agent__next-actions { display:flex; flex-wrap:wrap; gap:12px; }
+.rm-agent__next-actions form { margin:0; }
+.rm-agent__next-actions details { margin-top:8px; max-width:480px; font-size:13px; }
+.rm-agent__next-note { color:#5d687a; font-size:12px; margin-top:12px; }

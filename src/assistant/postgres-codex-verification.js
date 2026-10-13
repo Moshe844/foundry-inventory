@@ -63,7 +63,7 @@ async function verify(database,ctx,goal,raw,catalogue){
   navigation={href,label:String(label||'the requested page').replace(/\s+·\s+StockChief$/,'').slice(0,120),
    evidenceId:entry.id,evidenceHash:entry.sha256};
  }
- return {verified:true,answer:report.answer,receipt,claims:verified,navigation};
+ return {verified:true,answer:report.answer,receipt,claims:verified,navigation,delivery:require('./agent-delivery').create(report)};
 }
 const instructions=`\nFor your final report return JSON with status "completed", outcome ("answer" or "navigation"), answer, and claims: [{evidenceId,path,value}].
 The browser tool controls a private inspection browser, NOT the user's website. When the user asks to open a page, use outcome "navigation" and navigation: {evidenceId,path:"/url"} referencing an actual successful applicationPage observation (use /screen/url if wrapped). The host will deliver that page to the user's browser and verify its arrival without another model call. Do not claim it has already opened for the user. Do not return outcome "answer" to fulfill a navigation request. For questions or completed business changes that do not request moving the user's browser, use outcome "answer".

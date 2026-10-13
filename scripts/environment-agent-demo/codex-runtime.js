@@ -41,6 +41,12 @@ async function initialObservation(options,saved,state){
  }
 }
 const preparedSandboxes=new WeakSet();
+const preparedContexts=new WeakSet();
+async function prepareContext(options){
+ const saved=await options.session.load();
+ const prepared={session:options.session,saved,initialView:await initialObservation(options,saved,saved.native.codex)};
+ preparedContexts.add(prepared);return prepared;
+}
 async function prepareSandbox(image){
  const sandbox=await require('./sandbox').createSandbox({image});
  try{const prepared={sandbox,isolation:await sandbox.certify(),image};preparedSandboxes.add(prepared);return prepared;}
@@ -55,7 +61,10 @@ async function run(options){
  }
  const allowance=await budget.status();if(!allowance.approval||allowance.stopped)throw Error('PAID_TESTING_LOCKED');
  if(signal?.aborted)throw Object.assign(Error('CODEX_RUNTIME_INTERRUPTED'),{code:'CODEX_RUNTIME_INTERRUPTED'});
- const saved=await session.load();const state=saved.native.codex;
+ const context=await (options.preparedCodexContext||prepareContext(options));
+ if(!preparedContexts.has(context)||context.session!==session)throw Error('INVALID_PREPARED_CODEX_CONTEXT');
+ preparedContexts.delete(context);
+ const {saved,initialView}=context,state=saved.native.codex;
  transport.setNativeSession?.(session);
  if(state&&(state.version!==policy.VERSION||state.model!==policy.MODEL||state.effort!==policy.EFFORT||state.digest!==digest(state.files)))throw Error('CODEX_NATIVE_STATE_MISMATCH');
  // Both preparations are independent and credential-free. Join every result
@@ -64,11 +73,11 @@ async function run(options){
   Promise.resolve(options.preparedCodexSandbox||prepareSandbox(options.codexImage)).then(prepared=>{
    if(!preparedSandboxes.has(prepared)||prepared.image!==options.codexImage)throw Error('INVALID_PREPARED_SANDBOX');
    audit({kind:'codex_isolation',...prepared.isolation});return prepared;
-  }),initialObservation(options,saved,state)
+  })
  ]);
  const rejection=preparations.find(r=>r.status==='rejected');
  if(rejection){if(!options.preparedCodexSandbox&&preparations[0].status==='fulfilled')await preparations[0].value.sandbox.close();throw rejection.reason;}
- const prepared=preparations[0].value,initialView=preparations[1].value;preparedSandboxes.delete(prepared);
+ const prepared=preparations[0].value;preparedSandboxes.delete(prepared);
  const {sandbox}=prepared;
  const common=require('./candidates').sharedTools({...options,sandbox,session,fullEvidence:true});
  // Supply the actual current application view as environment context, like an
@@ -169,4 +178,4 @@ async function run(options){
   return {answer,reportedUsage:usage,threadId,runtime:{sdk:'@openai/codex-sdk',version:policy.VERSION,requestedModel:policy.MODEL,reasoningEffort:policy.EFFORT}};
  }finally{clearTimeout(timer);signal?.removeEventListener('abort',interrupt);stop();lines.close();if(!options.preparedCodexSandbox)await sandbox.close();}
 }
-module.exports={run,INSTRUCTIONS,digest,prepareSandbox};
+module.exports={run,INSTRUCTIONS,digest,prepareSandbox,prepareContext};

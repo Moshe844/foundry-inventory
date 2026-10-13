@@ -7,9 +7,14 @@ async function run(options){
   const previous=await session.completed?.();if(previous)return previous;
   const handoff=await session.handoffApprovals?.();if(handoff)return handoff;
   const completed=await session.completeIfVerified();if(completed)return completed;
-  const saved=await session.load();
-  if(saved.native.browserUrl&&options.browser.restore)await session.execute('environment_browser',
-   {action:'restore'},()=>options.browser.restore(saved.native.browserUrl));
+  // Native Codex owns context loading and restoration. Its prepared context
+  // has already been freshly authorized; a second load/inspection duplicates
+  // the same work before the SDK even starts. Other runtimes retain their path.
+  if(candidate!=='codex'){
+   const saved=await session.load();
+   if(saved.native.browserUrl&&options.browser.restore)await session.execute('environment_browser',
+    {action:'restore'},()=>options.browser.restore(saved.native.browserUrl));
+  }
   const result=candidate==='codex'?await require('./codex-runtime').run(options):await require('./candidates')[candidate](options);
   // Also cover an SDK ending locally without a visible result. A success flag
   // or a private reasoning block is never a user-visible final answer.

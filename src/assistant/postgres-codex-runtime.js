@@ -8,7 +8,7 @@ async function run(database,ctx,id,options={}){
  await pilot.access(database,ctx,{enabled:true});
  await require(base+'waits').recover(database,ctx,id);
  const goal=await store.claim(database,ctx,id);if(!goal)return store.get(database,ctx,id);
- const cleanup=[],directory=fs.mkdtempSync(path.join(os.tmpdir(),'stockchief-codex-staging-'));
+ const cleanup=[],preparations=[],directory=fs.mkdtempSync(path.join(os.tmpdir(),'stockchief-codex-staging-'));
  cleanup.push(()=>fs.rmSync(directory,{recursive:true,force:true}));
  let session;
  let auditQueue=Promise.resolve();
@@ -30,9 +30,7 @@ async function run(database,ctx,id,options={}){
  try{
   const budget=require('./postgres-codex-budget').createBudget(database,ctx,id);
   audit({kind:'runtime_starting',status:'Checking model pricing and permissions'});
-  await require('./codex-staging-readiness').verifyPricing(database);
   const image=options.image||process.env.STOCKCHIEF_CODEX_PILOT_IMAGE;
-  const permit=await require('./codex-staging-permit').issue({database,ctx,goalId:id,budget,image});
   let helper;
   const provider=require('../commercial/relay-provider').register({name:'openai',model:require(base+'codex-wire').MODEL,
    complete:request=>{if(!helper)throw Error('GOVERNED_HELPER_NOT_READY');return helper.complete(request);}});
@@ -44,9 +42,39 @@ async function run(database,ctx,id,options={}){
   // and no test operator; the authenticated website owns the human stage.
   const pending=await session.handoffApprovals();if(pending)return pending;
   const key=options.apiKey||process.env.OPENAI_API_KEY;if(!key)throw Error('OPENAI_API_KEY_REQUIRED');
+  // Preparing a credential-free renderer/context is a read boundary, not a
+  // provider request. Its own fresh authority checks remain in place. Overlap
+  // it with paid-runtime admission; reasoning cannot start until both finish.
+  const preparedSandbox=options.sandboxPool?options.sandboxPool.take(image):require(base+'codex-runtime').prepareSandbox(image);
+  preparations.push(preparedSandbox);preparedSandbox.catch(()=>{});
+  cleanup.push(async()=>{const prepared=await preparedSandbox.catch(()=>null);if(prepared)await prepared.sandbox.close();});
+  const ui=require(base+'lazy-browser').lazyBrowser(async firstAction=>{
+   audit({kind:'runtime_starting',status:'Opening the isolated business browser'});
+   const connectionString=process.env.FOUNDRY_DATABASE_URL||process.env.DATABASE_URL;
+   const token=await pilot.readAuthorization(database,ctx,connectionString);
+   const server=await require(base+'inspection').createInspectionServer({cluster:{connectionString},database,ctx,stagingAuthorization:token});cleanup.push(()=>server.close());
+   const browser=await require('playwright').chromium.launch({headless:true});cleanup.push(()=>browser.close());
+   const observedPaths=goal.checkpoint.conversation?.environment?.pages?.map(p=>p.path)||[];
+   const openedPath=firstAction?.action==='open'?require('./agent-navigation-path').localPath(firstAction.value):null;
+   let resumedPath=null;
+   if(goal.checkpoint.harness?.native?.codex?.threadId&&goal.checkpoint.harness.native.browserUrl){
+    const previous=new URL(goal.checkpoint.harness.native.browserUrl);
+    if(previous.protocol!=='http:'||previous.hostname!=='127.0.0.1')throw Error('INVALID_RECORDED_BROWSER_ORIGIN');
+    resumedPath=require('./agent-navigation-path').localPath(previous.pathname+previous.search);
+   }
+   const tools=await require(base+'browser').createBrowserTools(browser,{origin:server.origin,audit,
+    startPath:openedPath&&observedPaths.includes(openedPath)?openedPath:resumedPath||goal.checkpoint.page?.path,observedPaths});cleanup.push(()=>tools.close());
+   return tools;
+  });
+  const preparedContext=require(base+'codex-runtime').prepareContext({session,browser:ui,gateway,audit});
+  preparations.push(preparedContext);preparedContext.catch(()=>{});
+  await require('./codex-staging-readiness').verifyPricing(database);
+  const permit=await require('./codex-staging-permit').issue({database,ctx,goalId:id,budget,image});
   const fundingKey=`codex-staging:${id}`;
-  const entitlements=require('../commercial/entitlements'),scope=await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId);
-  const units=Number((await database.query("SELECT units FROM commercial_operation_policies WHERE operation='ask'")).rows[0].units);
+  const entitlements=require('../commercial/entitlements');
+  const [scope,policy]=await Promise.all([entitlements.ownerScopeForWorkspace(database,ctx.workspaceId),
+   database.query("SELECT units FROM commercial_operation_policies WHERE operation='ask'")]);
+  const units=Number(policy.rows[0].units);
   await entitlements.reserveUsage(database,scope,{meter:'ai_work_credits',units,idempotencyKey:`${ctx.workspaceId}:${fundingKey}`,detail:{operation:'ask',runtime:'codex-sdk-staging'}});
   const counter=options.countInput||require(base+'codex-token-counter').createTokenCounter({apiKey:key});
   const relay=await require(base+'relay').createRelay({budget,credentials:{openai:key},commercial:require(base+'commercial').createCommercialAccounting(database),
@@ -57,27 +85,9 @@ async function run(database,ctx,id,options={}){
    wireProfile:'codex',livePermit:permit,requestGate:()=>session.codexRequest()});
   helperTransport.setNativeSession(session.helperDelivery());
   helper=require(base+'codex-helper-provider').create({transport:helperTransport});
-  // Both resources are brand-new and goal-local. Prepare the credential-free
-  // sandbox concurrently with the restricted renderer, never reuse a browser
-  // or another goal's files. Join cleanup even if either initialization fails.
-  const preparedSandbox=options.sandboxPool?options.sandboxPool.take(image):require(base+'codex-runtime').prepareSandbox(image);
-  preparedSandbox.catch(()=>{});
-  cleanup.push(async()=>{const prepared=await preparedSandbox.catch(()=>null);if(prepared)await prepared.sandbox.close();});
-  const ui=require(base+'lazy-browser').lazyBrowser(async firstAction=>{
-   audit({kind:'runtime_starting',status:'Opening the isolated business browser'});
-   const connectionString=process.env.FOUNDRY_DATABASE_URL||process.env.DATABASE_URL;
-   const token=await pilot.readAuthorization(database,ctx,connectionString);
-   const server=await require(base+'inspection').createInspectionServer({cluster:{connectionString},database,ctx,stagingAuthorization:token});cleanup.push(()=>server.close());
-   const browser=await require('playwright').chromium.launch({headless:true});cleanup.push(()=>browser.close());
-   const observedPaths=goal.checkpoint.conversation?.environment?.pages?.map(p=>p.path)||[];
-   const openedPath=firstAction?.action==='open'?require('./agent-navigation-path').localPath(firstAction.value):null;
-   const tools=await require(base+'browser').createBrowserTools(browser,{origin:server.origin,audit,
-    startPath:openedPath&&observedPaths.includes(openedPath)?openedPath:goal.checkpoint.page?.path,observedPaths});cleanup.push(()=>tools.close());
-   return tools;
-  });
   audit({kind:'runtime_starting',status:'Starting the Codex SDK session'});
   const result=await require(base+'worker').run({candidate:'codex',session,gateway:{...gateway,authorize},browser:ui,budget,transport,
-   preparedCodexSandbox:preparedSandbox,
+   preparedCodexSandbox:preparedSandbox,preparedCodexContext:preparedContext,
    credentials:{openai:key},codexLivePermit:permit,codexImage:image,privateHarnessDirectory:directory,audit,
    finalReportInstructions:require('./postgres-codex-verification').instructions});
   const current=await store.get(database,ctx,id);
@@ -96,6 +106,6 @@ async function run(database,ctx,id,options={}){
    WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 AND run_token=$4`,[ctx.workspaceId,ctx.actorId,id,goal.run_token,
     error.code==='STAGING_MODEL_PRICE_UNVERIFIED'?error.message:'The Staging runtime could not start. No business operation was executed.']);
   throw error;
- }finally{await auditQueue.catch(()=>{});for(const close of cleanup.reverse())await close();}
+ }finally{await Promise.allSettled(preparations);await auditQueue.catch(()=>{});for(const close of cleanup.reverse())await close();}
 }
 module.exports={run};

@@ -3,6 +3,7 @@
  const phase=conversation.label;
  const active=['READY','RUNNING'].includes(goal.status);
  const pendingNavigation=goal.status==='WAITING_EVENT'&&['PENDING','DELIVERING'].includes(goal.checkpoint.navigation?.state)?goal.checkpoint.navigation:null;
+ const delivered=locals.agentDelivery?locals.agentDelivery(goal):null;
 %>
 <div data-conversation-history-for="<%= goal.id %>" class="rm-agent__conversation">
   <% for(const [index,turn] of conversation.history.entries()){ if(index===conversation.history.length-1&&turn.role==='assistant'&&turn.text===conversation.message)continue; %>
@@ -18,6 +19,7 @@
     <% } %>
   </div>
   <div class="rm-agent__answer" data-goal-answer <%= conversation.message?'':'hidden' %>><%- renderAgentAnswer(conversation.message) %></div>
+  <div data-goal-delivery data-revision="<%= delivered?.id||'' %>"><%- include('agent-delivery',{goal,delivery:delivered}) %></div>
   <p class="rm-agent__hint" data-goal-hint><%= active?'You can leave this page. I’ll keep working and show any required approval here.':'' %></p>
   <form method="post" action="/ask/goals/<%= goal.id %>/navigate" data-goal-navigation <%= pendingNavigation?'':'hidden' %>>
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">

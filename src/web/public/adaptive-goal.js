@@ -70,6 +70,38 @@
      const message=conversation?.message||'';
      if(window.StockChiefAnswer)answer.innerHTML=window.StockChiefAnswer.render(message);else answer.textContent=message;
      answer.hidden=!message;
+     const deliveryPanel=panel.querySelector('[data-goal-delivery]');
+     if(deliveryPanel&&deliveryPanel.dataset.revision!==(goal.delivery?.id||'')){
+      deliveryPanel.dataset.revision=goal.delivery?.id||'';deliveryPanel.replaceChildren();
+      const saved=goal.delivery;
+      if(saved){
+       const root=document.createElement('div');root.className='rm-agent__delivery';root.dataset.deliveryId=saved.id;
+       for(const work of saved.workProducts){
+        const card=document.createElement('article'),header=document.createElement('div'),title=document.createElement('h3'),stamp=document.createElement('span'),content=document.createElement('div'),save=document.createElement('a');
+        card.className='rm-agent__work';card.setAttribute('aria-label',work.title);header.className='rm-agent__work-header';title.textContent=work.title;
+        stamp.className='rm-agent__saved';stamp.textContent='Saved in this conversation';header.append(title,stamp);
+        content.className='rm-agent__work-content';content.textContent=work.content;
+        save.className='rm-btn rm-btn--ghost rm-btn--sm';save.textContent='Save a copy';save.href=`/ask/goals/${encodeURIComponent(goal.id)}/work/${encodeURIComponent(work.id)}`;save.download='';
+        card.append(header,content,save);root.append(card);
+       }
+       if(saved.nextActions.length){
+        const next=document.createElement('div'),heading=document.createElement('p'),buttons=document.createElement('div'),note=document.createElement('p');
+        next.className='rm-agent__next';heading.textContent='What would you like to do next?';buttons.className='rm-agent__next-actions';
+        for(const action of saved.nextActions){
+         const row=document.createElement('div'),form=document.createElement('form'),button=document.createElement('button'),details=document.createElement('details'),summary=document.createElement('summary'),explanation=document.createElement('p');
+         form.method='post';form.action=`/ask/goals/${encodeURIComponent(goal.id)}/next`;
+         for(const [name,value]of Object.entries({_csrf:panel.querySelector('input[name="_csrf"]').value,deliveryId:saved.id,actionId:action.id})){
+          const input=document.createElement('input');input.type='hidden';input.name=name;input.value=value;form.append(input);
+         }
+         button.type='submit';button.className='rm-btn rm-btn--sm';button.textContent=action.label;form.append(button);
+         summary.textContent='What this does';explanation.textContent=action.instruction;details.append(summary,explanation);row.append(form,details);buttons.append(row);
+        }
+        note.className='rm-agent__next-note';note.textContent='Next steps continue with StockChief. Any consequential action still requires its usual authorization and approval.';
+        next.append(heading,buttons,note);root.append(next);
+       }
+       deliveryPanel.append(root);
+      }
+     }
      const reply=panel.querySelector('[data-goal-reply]');
      if(reply){reply.hidden=!conversation?.canReply||panel.dataset.goalLatest==='true';reply.elements.questionId.value=conversation?.input?.id||'';}
      if(panel.dataset.goalLatest==='true'){
@@ -108,7 +140,7 @@
      }
     }
    }catch{disconnected=true;hint.textContent='Connection lost. Current progress is unknown; your request is saved.';}
-   if(['READY','RUNNING','WAITING_EVENT','WAITING_APPROVAL'].includes(status))window.setTimeout(poll,3000);
+   if(['READY','RUNNING','WAITING_EVENT','WAITING_APPROVAL'].includes(status))window.setTimeout(poll,['READY','RUNNING'].includes(status)?1000:3000);
   }
   poll();
  }

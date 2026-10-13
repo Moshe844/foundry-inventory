@@ -99,16 +99,18 @@ async function createInspectionServer({cluster,database,ctx,beforeRead=()=>{},st
   // handle. The renderer keeps SELECT-only rights and all GET writes still fail.
   const role=`demo_metrics_${randomBytes(8).toString('hex')}`;
   const password=randomBytes(32).toString('hex');const identifier=escapeIdentifier(role);
-  await database.query(`CREATE ROLE ${identifier} LOGIN PASSWORD ${escapeLiteral(password)} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS`);
-  await database.query(`GRANT USAGE ON SCHEMA public TO ${identifier}`);
-  await database.query(`GRANT INSERT ON commercial_resource_measurements TO ${identifier}`);
-  await database.query(`GRANT SELECT(id) ON commercial_resource_measurements TO ${identifier}`);
-  await database.query(`CREATE POLICY ${identifier} ON commercial_resource_measurements FOR INSERT TO ${identifier}
+  // Install the identical restricted telemetry role/policies atomically,
+  // instead of seven serial trips to the remote Staging database.
+  await database.transaction(client=>client.query(`CREATE ROLE ${identifier} LOGIN PASSWORD ${escapeLiteral(password)} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+    GRANT USAGE ON SCHEMA public TO ${identifier};
+    GRANT INSERT ON commercial_resource_measurements TO ${identifier};
+    GRANT SELECT(id) ON commercial_resource_measurements TO ${identifier};
+    CREATE POLICY ${identifier} ON commercial_resource_measurements FOR INSERT TO ${identifier}
     WITH CHECK ((workspace_id=${escapeLiteral(ctx.workspaceId)} AND account_id=${escapeLiteral(readonly.accountId)})
-      OR (workspace_id IS NULL AND (account_id IS NULL OR account_id=${escapeLiteral(readonly.accountId)})))`);
-  await database.query(`CREATE POLICY ${escapeIdentifier(role+'_conflict')} ON commercial_resource_measurements FOR SELECT TO ${identifier}
+      OR (workspace_id IS NULL AND (account_id IS NULL OR account_id=${escapeLiteral(readonly.accountId)})));
+    CREATE POLICY ${escapeIdentifier(role+'_conflict')} ON commercial_resource_measurements FOR SELECT TO ${identifier}
     USING ((workspace_id=${escapeLiteral(ctx.workspaceId)} AND account_id=${escapeLiteral(readonly.accountId)})
-      OR (workspace_id IS NULL AND (account_id IS NULL OR account_id=${escapeLiteral(readonly.accountId)})))`);
+      OR (workspace_id IS NULL AND (account_id IS NULL OR account_id=${escapeLiteral(readonly.accountId)})));`));
   const connection=new URL(cluster.connectionString);connection.username=role;connection.password=password;
   const telemetry=new Pool(require('../../src/db/postgres').connectionOptions(connection.toString(),{max:2,
     privateNetwork:process.env.FOUNDRY_DATABASE_PRIVATE_NETWORK==='true'}));
@@ -137,10 +139,10 @@ async function createInspectionServer({cluster,database,ctx,beforeRead=()=>{},st
   return {origin:`http://127.0.0.1:${server.address().port}`,readonly,telemetryErrors,
     flushTelemetry:()=>Promise.allSettled([...pendingTelemetry]),
     async close(){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));await telemetry.end();await readonly.close();
-      if(stagingAuthorization){await database.query(`DROP POLICY IF EXISTS ${identifier} ON commercial_resource_measurements`);
-        await database.query(`DROP POLICY IF EXISTS ${escapeIdentifier(role+'_conflict')} ON commercial_resource_measurements`);
-        await database.query(`REVOKE SELECT(id) ON commercial_resource_measurements FROM ${identifier}`);
-        await database.query(`REVOKE ALL PRIVILEGES ON commercial_resource_measurements FROM ${identifier}`);
-        await database.query(`REVOKE USAGE ON SCHEMA public FROM ${identifier}`);await database.query(`DROP ROLE ${identifier}`);}}};
+      if(stagingAuthorization)await database.transaction(client=>client.query(`DROP POLICY IF EXISTS ${identifier} ON commercial_resource_measurements;
+        DROP POLICY IF EXISTS ${escapeIdentifier(role+'_conflict')} ON commercial_resource_measurements;
+        REVOKE SELECT(id) ON commercial_resource_measurements FROM ${identifier};
+        REVOKE ALL PRIVILEGES ON commercial_resource_measurements FROM ${identifier};
+        REVOKE USAGE ON SCHEMA public FROM ${identifier};DROP ROLE ${identifier};`));}};
 }
 module.exports={inspectionDatabase,createInspectionServer};

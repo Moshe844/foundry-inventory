@@ -85,6 +85,7 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    // Page metadata is only a location hint. Read its content with current
    // browser/gateway permissions, not by trusting fields posted by a client.
    page:goal.checkpoint.page?{path:goal.checkpoint.page.path}:null,
+   continuation:structuredClone(goal.checkpoint.continuation||null),
    conversation:structuredClone(goal.checkpoint.conversation||null),
    conversationState:structuredClone(goal.checkpoint.conversationState||null)}}));},
   async checkpoint(native){return authorizedUpdate(h=>{h.native={...h.native,...native};});},
@@ -236,6 +237,7 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
     const classified=require('./outcome').classify({report,answer:goal.answer,verified,current,canonicalVerified,
      progress:h.admissionBlock?{...h.progress,finalReason:h.admissionBlock.code}:h.progress});
     goal.status=classified.status;goal.answer=classified.answer;
+    if(verified&&goal.status==='COMPLETED'&&check.delivery)goal.checkpoint.delivery=check.delivery;
     if(verified&&navigation&&goal.status==='COMPLETED'){
      // A private browser observation is preparation, not user-visible delivery.
      // The authenticated website acknowledges the actual rendered destination.
