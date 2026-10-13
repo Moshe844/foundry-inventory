@@ -72,7 +72,15 @@ async function decide(db,ctx,id,deliveryId,sha256,approved,{responseReference}={
  if(updated?.status==='READY')await store.enqueue(db,updated);return result;
 }
 async function run(db,ctx,id,options={}){
- await access(db,ctx,{enabled:true});return require('./postgres-codex-runtime').run(db,ctx,id,options);
+ const {pilot}=await access(db,ctx,{enabled:true});
+ if(spendingLockMessage(pilot)){
+  const goal=await store.get(db,ctx,id);
+  if(goal?.checkpoint.runtime!=='codex-staging')throw new ValidationError('Pilot goal not found.');
+  // A funding pause is not a failed investigation. Leave the durable goal,
+  // native thread and already-approved operations available for resumption.
+  return {status:goal.status,waitingForFunding:true,answer:spendingLockMessage(pilot)};
+ }
+ return require('./postgres-codex-runtime').run(db,ctx,id,options);
 }
 async function readAuthorization(db,ctx,connectionString){await access(db,ctx,{enabled:true});
  if(!connectionString||connectionString!==(process.env.FOUNDRY_DATABASE_URL||process.env.DATABASE_URL))throw new AuthorizationError('The renderer must use the configured Staging database.');

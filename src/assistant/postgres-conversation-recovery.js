@@ -34,7 +34,8 @@ async function recoverExecutionReporting(db,ctx,id,catalogue){return db.transact
  const goal=(await client.query(`SELECT * FROM stockchief_runtime.assistant_goals WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 FOR UPDATE`,[ctx.workspaceId,ctx.actorId,id])).rows[0];
  const h=goal?.checkpoint.harness;
  if(!goal||goal.status!=='BLOCKED'||new Date(goal.expires_at)<=new Date()||h?.candidate!=='codex'||
-  h.failure?.code!=='OUTCOME_UNVERIFIED'||h.inflight||h.codexDelivery?.state!=='SETTLED'||!h.lastCodexResponse?.usageSettled)return null;
+  !(h.failure?.code==='OUTCOME_UNVERIFIED'||h.reportingRecovery&&h.completionSource==='partial_verified_receipt')||
+  h.inflight||h.codexDelivery?.state!=='SETTLED'||!h.lastCodexResponse?.usageSettled)return null;
  await waits.authority(client,ctx,h);
  const receipt=await require('../../scripts/environment-agent-demo/receipts').collect(client,ctx,goal,h,catalogue);
  if(receipt.dependencyState!=='READY'||!receipt.operations.length||receipt.operations.some(o=>!o.verified||o.externalState!=='DONE'))return null;
