@@ -14,7 +14,8 @@ async function run(database,ctx,id,options={}){
  let auditQueue=Promise.resolve();
  const audit=event=>{
   // The customer timeline stores activity, not raw prompts, tokens or fields.
-  const detail={kind:event.kind,tool:event.name||event.tool||null,action:event.action||null,status:event.status||null,
+  const detail={kind:event.source==='host_initial_observation'?event.kind.replace('agent_tool_','initial_page_'):event.kind,
+   tool:event.name||event.tool||null,action:event.action||null,status:event.status||null,
    code:event.code||event.reason||null};
   auditQueue=auditQueue.then(()=>database.transaction(async client=>{
    await client.query('SELECT id FROM stockchief_runtime.assistant_goals WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 FOR UPDATE',[ctx.workspaceId,ctx.actorId,id]);
