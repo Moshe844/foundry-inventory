@@ -15,7 +15,9 @@ async function main(){
  let db;
  try{
  await sandboxPool.ready();
- db=require('../src/db/postgres').openPostgres(process.env.FOUNDRY_DATABASE_URL||process.env.DATABASE_URL,{max:5,idleTimeoutMillis:4*60000,applicationName:'stockchief-codex-staging-worker'});
+ db=require('../src/db/postgres').openPostgres(process.env.FOUNDRY_DATABASE_URL||process.env.DATABASE_URL,{max:5,min:5,idleTimeoutMillis:4*60000,applicationName:'stockchief-codex-staging-worker'});
+ await Promise.all([require('./environment-agent-demo/source-hash-worker').sourceHash(),
+  ...Array.from({length:5},()=>db.query('SELECT 1'))]);
  if(process.env.STOCKCHIEF_CODEX_TIMING==='1'){
   const hash=statement=>require('node:crypto').createHash('sha256').update(String(statement)).digest('hex').slice(0,16);
   const originalQuery=db.query,originalTransaction=db.transaction;

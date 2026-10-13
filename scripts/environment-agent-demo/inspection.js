@@ -72,7 +72,7 @@ async function inspectionDatabase(cluster,admin,ctx,stagingAuthorization=null){
   await admin.transaction(client=>client.query(statements.join(';\n')),{retrySafe:true});
   connection.username=role;connection.password=password;
   const pool=new Pool({...require('../../src/db/postgres').connectionOptions(connection.toString(),{max:4,
-    privateNetwork:process.env.FOUNDRY_DATABASE_PRIVATE_NETWORK==='true'}),min:1,idleTimeoutMillis:4*60000});
+    privateNetwork:process.env.FOUNDRY_DATABASE_PRIVATE_NETWORK==='true'}),min:4,idleTimeoutMillis:4*60000});
   const query=(sql,values=[])=>pool.query(sql,values);
   async function transaction(operation){const client=await pool.connect();
     try{await client.query('BEGIN READ ONLY');const result=await operation({query:(sql,values=[])=>client.query(sql,values)});
@@ -114,9 +114,9 @@ async function createInspectionServer({cluster,database,ctx,beforeRead=()=>{},st
   catch(error){await readonly.close().catch(()=>{});throw error;}
   const connection=new URL(cluster.connectionString);connection.username=role;connection.password=password;
   const telemetry=new Pool({...require('../../src/db/postgres').connectionOptions(connection.toString(),{max:2,
-    privateNetwork:process.env.FOUNDRY_DATABASE_PRIVATE_NETWORK==='true'}),min:1,idleTimeoutMillis:4*60000});
+    privateNetwork:process.env.FOUNDRY_DATABASE_PRIVATE_NETWORK==='true'}),min:2,idleTimeoutMillis:4*60000});
   // Preparing the renderer alone left both TLS pools cold on the first page.
-  // Open one restricted connection in each before publishing the ready server.
+  // Open their existing bounded capacity before publishing the ready server.
   // No record, permission result or page content is cached by this warm-up.
   const closeTelemetry=async()=>{
     await telemetry.end();
@@ -126,7 +126,8 @@ async function createInspectionServer({cluster,database,ctx,beforeRead=()=>{},st
       REVOKE ALL PRIVILEGES ON commercial_resource_measurements FROM ${identifier};
       REVOKE USAGE ON SCHEMA public FROM ${identifier};DROP ROLE ${identifier};`),{retrySafe:true});
   };
-  try{await Promise.all([readonly.query('SELECT 1'),telemetry.query('SELECT 1')]);}
+  try{await Promise.all([...Array.from({length:4},()=>readonly.query('SELECT 1')),
+    ...Array.from({length:2},()=>telemetry.query('SELECT 1'))]);}
   catch(error){await Promise.allSettled([readonly.close(),closeTelemetry()]);throw error;}
   const telemetryErrors=[];const pendingTelemetry=new Set();
   const resourceDatabase={query(sql,values){const call=telemetry.query(sql,values).catch(error=>{

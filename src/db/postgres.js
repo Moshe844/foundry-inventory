@@ -3,6 +3,9 @@
 const { Pool } = require('pg');
 
 function connectionOptions(connectionString, options = {}) {
+  if (options.min !== undefined && (!Number.isSafeInteger(options.min) || options.min < 0 || options.min > (options.max || 10))) {
+    throw new Error('PostgreSQL minimum connections must fit the configured pool.');
+  }
   let address;
   try { address = new URL(connectionString); } catch { throw new Error('Provide a valid PostgreSQL connection URL.'); }
   if (!['postgres:', 'postgresql:'].includes(address.protocol) || !address.hostname || !address.pathname.slice(1)) {
@@ -21,6 +24,7 @@ function connectionOptions(connectionString, options = {}) {
   return { host: address.hostname.replace(/^\[|\]$/g, ''), port: Number(address.port || 5432),
     database: decodeURIComponent(address.pathname.slice(1)), user: decodeURIComponent(address.username),
     password: decodeURIComponent(address.password), max: options.max || 10,
+    ...(options.min !== undefined ? {min: options.min} : {}),
     connectionTimeoutMillis: options.connectionTimeoutMillis || 10000,
     idleTimeoutMillis: options.idleTimeoutMillis || 30000,
     application_name: options.applicationName || 'stockchief',
