@@ -8,7 +8,7 @@ async function issue({database,ctx,goalId,budget,image}){
  if(goal?.checkpoint.runtime!=='codex-staging'||goal.status!=='RUNNING'||!state.approval||state.stopped||state.unresolved||state.expires<=Date.now()||
   !/^sha256:[a-f0-9]{64}$/.test(image))throw Error('STAGING_CODEX_ADMISSION_BLOCKED');
  const permit=Object.freeze({});permits.set(permit,{budget,task:goalId,image,goalId,workspaceId:ctx.workspaceId,actorId:ctx.actorId,
-  sourceHash:require('../../scripts/environment-agent-demo/certification').sourceHash()});return permit;
+  sourceHash:await require('../../scripts/environment-agent-demo/source-hash-worker').sourceHash()});return permit;
 }
 function has(permit){return Boolean(permit&&permits.has(permit));}
 function assertBinding(permit,{budget,task,image}={}){
@@ -22,6 +22,12 @@ function assert(permit,options={}){
  if(p.sourceHash!==require('../../scripts/environment-agent-demo/certification').sourceHash())throw Error('STAGING_CODEX_ADMISSION_BLOCKED');
  return p; // Full fresh integrity check before EVERY paid HTTP request.
 }
+async function assertFresh(permit,options={}){
+ const p=assertBinding(permit,options);
+ const hash=await require('../../scripts/environment-agent-demo/source-hash-worker').sourceHash();
+ if(p.sourceHash!==hash)throw Error('STAGING_CODEX_ADMISSION_BLOCKED');
+ return assertBinding(permit,options);
+}
 function bind(permit,identity){const p=permits.get(permit);assertBinding(permit,{budget:p?.budget});
  if(identity.candidate!=='codex'||identity.goalId!==p.goalId||identity.workspaceId!==p.workspaceId||identity.actorId!==p.actorId)throw Error('CODEX_SESSION_AUTHORITY_BINDING_MISMATCH');}
-module.exports={issue,has,assert,assertBinding,bind};
+module.exports={issue,has,assert,assertFresh,assertBinding,bind};

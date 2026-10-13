@@ -37,7 +37,7 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
     const admissionAccess=await grant.authorize(); // fresh for this HTTP boundary, never reused across calls
     timings.authorizationMs=Date.now()-authorizationStarted;
     if(grant.livePermit){
-     require('./codex-live-permit').assert(grant.livePermit,{budget,task:grant.task});
+     await require('./codex-live-permit').assertFresh(grant.livePermit,{budget,task:grant.task});
      if(grant.lastBlock)throw new Error('CODEX_ATTEMPT_ALREADY_STOPPED');
     }
     if(grant.wireProfile!=='codex'&&grant.lastResponse?.empty)throw Object.assign(new Error(require('./finalization').EMPTY_MESSAGE),{code:'EMPTY_MODEL_FINAL'});

@@ -59,4 +59,8 @@ function assertSetup(permit,options={}){
  if(require('../../src/assistant/codex-staging-permit').has(permit))return require('../../src/assistant/codex-staging-permit').assertBinding(permit,options);
  return assert(permit,options);
 }
-module.exports={issue,assert,assertSetup,recover,bind};
+async function assertFresh(permit,options={}){
+ if(require('../../src/assistant/codex-staging-permit').has(permit))return require('../../src/assistant/codex-staging-permit').assertFresh(permit,options);
+ return assert(permit,options);
+}
+module.exports={issue,assert,assertFresh,assertSetup,recover,bind};
