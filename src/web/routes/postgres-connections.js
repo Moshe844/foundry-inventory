@@ -108,8 +108,9 @@ function createPostgresConnectionsRouter(database,options={}){
       metadata=registry.get(providerType)?.metadata();
       const connection=await providerService.completeOAuth(database,providerType,req.query,requestOrigin,{providers:registry,
         publicOrigin:options.publicOrigin==='request'?requestOrigin:options.publicOrigin});
-      return oauthReturnPage(res,{connected:true,providerName:metadata?.name,connection,
-        returnOrigin:context.returnOrigin,requestOrigin,message:`${metadata?.name||'The account'} is connected to this inventory.`});
+      // Finish on an authenticated, repeatable page backed by the saved
+      // connection. Reloading completion must never reuse an OAuth code.
+      return res.redirect(303,`${safeOrigin(context.returnOrigin,requestOrigin)}/settings/connections/${encodeURIComponent(connection.id)}/complete`);
     }catch(error){
       return oauthReturnPage(res,{connected:false,providerName:metadata?.name||'Connection',
         connection:context?.connection,returnOrigin:context?.returnOrigin,requestOrigin,
@@ -167,6 +168,14 @@ function createPostgresConnectionsRouter(database,options={}){
       popup:'1'},requestOrigin,{providers:registry,
       publicOrigin:options.publicOrigin==='request'?requestOrigin:options.publicOrigin});
     return res.redirect(303,started.redirectUrl);
+  }));
+  router.get('/settings/connections/:id/complete',requireOwner,asyncRoute(async(req,res)=>{
+    const connection=await connections.get(database,req.ctx.workspaceId,req.params.id);
+    const connected=connection.status==='connected'&&!connection.paused_at&&connection.setup_status==='CONNECTED';
+    const requestOrigin=`${req.protocol}://${req.get('host')}`;
+    return oauthReturnPage(res,{connected,providerName:registry.get(connection.provider_type)?.metadata()?.name||connection.display_name,
+      connection,returnOrigin:requestOrigin,requestOrigin,
+      message:connected?`${connection.display_name} is connected to this inventory.`:'This connection still needs attention. Return to its settings to review the current state.'});
   }));
   router.get('/settings/connections/:id',asyncRoute(async(req,res)=>{
     const newConnectionToken=req.session.newConnectionToken||null;
