@@ -8,7 +8,7 @@ async function learnedEnvironment(db,ctx,startedAt){
   WHERE workspace_id=$1 AND actor_user_id=$2 AND checkpoint->>'runtime'='codex-staging'
   AND checkpoint#>>'{harness,authorityStamp}'=$3 AND ($4::timestamptz IS NULL OR created_at>$4)
   ORDER BY updated_at DESC LIMIT 6`,[ctx.workspaceId,ctx.actorId,stamp,startedAt])).rows;
- const pages=new Map();for(const row of rows)for(const entry of Object.values(row.evidence||{}).reverse()){
+ const pages=new Map();for(const row of rows)for(const entry of require('../../scripts/environment-agent-demo/observations').ordered(Object.values(row.evidence||{})).reverse()){
   if(entry.name!=='environment_browser')continue;let screen;try{const value=JSON.parse(entry.text);screen=value.screen||value;}catch{continue;}
   if(screen.applicationPage!==true||screen.httpStatus!==200)continue;
   let url;try{url=new URL(screen.url);}catch{continue;}

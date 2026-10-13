@@ -82,7 +82,7 @@ async function run(database,ctx,id,options={}){
     resumedPath=require('./agent-navigation-path').localPath(previous.pathname+previous.search);
    }
    const tools=await require(base+'browser').createBrowserTools(browser,{origin:server.origin,audit,
-    startPath:openedPath&&observedPaths.includes(openedPath)?openedPath:resumedPath||goal.checkpoint.page?.path,observedPaths});cleanup.push(()=>tools.close());
+    startPath:openedPath&&observedPaths.includes(openedPath)?openedPath:resumedPath||goal.checkpoint.page?.path||observedPaths[0],observedPaths});cleanup.push(()=>tools.close());
    audit({kind:'browser_preparation_timing',phase:'current_page_load',ms:Date.now()-phaseStarted});
    return tools;
   });
