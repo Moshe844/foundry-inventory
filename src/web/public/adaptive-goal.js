@@ -45,10 +45,25 @@
      status=goal.status;updated=goal.updatedAt;panel.dataset.goalStatus=status;
      if(goal.runStartedAt)panel.querySelector('[data-goal-elapsed]').dataset.runStarted=goal.runStartedAt;
      elapsed();
+     const navigation=panel.querySelector('[data-goal-navigation]');
+     if(navigation){
+      navigation.hidden=!goal.navigation;
+      if(goal.navigation){
+       navigation.querySelector('[data-navigation-label]').textContent=`Open ${goal.navigation.label}`;
+       phase.textContent='Opening the requested page';
+       // Never navigate away with unsent input, from an older conversation, or
+       // from a second tab after the durable delivery has already started.
+       const draft=document.querySelector('textarea[name="message"],input[name="message"]');
+       const key=`stockchief-navigation:${goal.id}:${goal.navigation.id}`;
+       if(goal.navigation.automatic&&goal.navigation.state==='PENDING'&&!(draft?.value||'').trim()&&!sessionStorage.getItem(key)){
+        sessionStorage.setItem(key,'1');navigation.elements.automatic.value='1';navigation.submit();return;
+       }
+      }
+     }
      // A second tab can decide a proposal while this page keeps polling.
      // Remove obsolete decision forms immediately without losing draft text.
      if(status!=='WAITING_APPROVAL')for(const card of panel.querySelectorAll('[data-approval-id]'))card.remove();
-     rows=activities(goal.events||[]);phase.textContent=status==='RUNNING'?(rows.at(-1)?.label||phases.RUNNING):(phases[status]||'Checking progress');
+     rows=activities(goal.events||[]);phase.textContent=goal.navigation?'Ready to open in your browser':status==='RUNNING'?(rows.at(-1)?.label||phases.RUNNING):(phases[status]||'Checking progress');
      const answer=panel.querySelector('[data-goal-answer]');
      if(window.StockChiefAnswer)answer.innerHTML=window.StockChiefAnswer.render(goal.answer||'');else answer.textContent=goal.answer||'';
      answer.hidden=!goal.answer;

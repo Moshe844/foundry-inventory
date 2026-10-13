@@ -11,6 +11,12 @@ function postgresPageRenderer(req,res,next){
     if(req.session)req.session.flash=[];
     const currentHref=(()=>{try{const parsed=new URL(req.originalUrl||req.path||'/',`http://${req.get('host')}`);
       return `${parsed.pathname}${parsed.search}`;}catch{return req.path||'/';}})();
+    // Only successful authenticated application pages can acknowledge delivery.
+    // Errors, auth redirects, raw endpoints and the private agent session cannot.
+    const pending=req.session?.agentNavigation;
+    const agentArrival=res.statusCode===200&&pending&&pending.href===currentHref&&
+      pending.workspaceId===req.ctx?.workspaceId&&pending.actorId===req.ctx?.actorId?pending:null;
+    if(res.statusCode===200&&req.ctx?.workspaceId)res.set('X-StockChief-Page','1');
     if(req.session&&data.title){const labels=req.session.renderedPageLabels||{};
       labels[currentHref]=String(data.title).replace(/\s+·\s+StockChief$/,'').slice(0,100);
       for(const key of Object.keys(labels).slice(0,Math.max(0,Object.keys(labels).length-40)))delete labels[key];
@@ -26,7 +32,7 @@ function postgresPageRenderer(req,res,next){
       flash:flashMessages,csrfToken:res.locals.csrfToken,
       backTo:data.suppressBack?null:(data.backTo || arrivedFrom || data.backToFallback || null),
       onboardingEntry,
-      navigationArrival:null,workspaceGuidance:null,assistantQueue:req.session?.assistantQueue||null,
+      navigationArrival:null,agentArrival,workspaceGuidance:null,assistantQueue:req.session?.assistantQueue||null,
       currentHref,screenGuide:data.screenGuide || null,
       origin:data.origin || `${req.protocol}://${req.get('host')}`});
     });

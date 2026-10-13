@@ -89,7 +89,8 @@ async function run(options){
  }
  lines.on('line',line=>{chain=chain.then(()=>{if(line.length>12*1024*1024)throw Error('BRIDGE_FRAME_LIMIT');return handle(JSON.parse(line));}).catch(error=>{failed=error;stop();});});
  try{
-  const prompt=[state?.threadId?`Continue the original goal. ${options.resumeContext||''}`:saved.goalContext.originalRequest,...newMessages].join('\n');
+  const prompt=[state?.threadId?`Continue the original goal. ${options.resumeContext||''}`:
+   require('../../src/assistant/postgres-agent-context').prompt(saved.goalContext),...newMessages].join('\n');
   child.stdin.write(JSON.stringify({prompt,profile:policy.PROFILE.id,
    instructions:INSTRUCTIONS+(options.finalReportInstructions||'')+'\nAvailable StockChief tool contracts follow. These names and parameter schemas can be used directly; rediscover only missing contract details.\n'+tools.map(t=>`mcp__stockchief__${t.name}: ${t.description}\n${JSON.stringify(t.inputSchema)}`).join('\n'),tools,threadId:state?.threadId,files:state?.files,encoding:state?.encoding,workspaceFiles:state?.workspaceFiles,
    nativeCompactionTokenLimit:policy.nativeCompactionTokenLimit,offlineCompact:options.offlineCompact===true})+'\n');

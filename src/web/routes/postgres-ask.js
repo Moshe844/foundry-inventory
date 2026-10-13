@@ -151,6 +151,24 @@ function createPostgresAskRouter(database,options={}){
   router.use(['/ask','/actions'],requireAuth);
   const goalStore=require('../../assistant/postgres-goal-store');
   const pilot=require('../../assistant/postgres-codex-pilot');
+  const agentNavigation=require('../../assistant/postgres-agent-navigation');
+  router.post('/ask/goals/:id/navigate',asyncRoute(async(req,res)=>{
+    const automatic=req.body.automatic==='1';
+    if(automatic&&req.session.postgresAskNavigationGoal!==req.params.id)
+      throw new ValidationError('A newer request replaced this page handoff.');
+    const pending=await agentNavigation.begin(database,req.ctx,req.params.id,{automatic});
+    if(!pending)return res.redirect(303,'/ask#latest');
+    req.session.agentNavigation=pending;
+    await new Promise((resolve,reject)=>req.session.save(error=>error?reject(error):resolve()));
+    return res.redirect(303,pending.href);
+  }));
+  router.post('/ask/navigation/arrived',asyncRoute(async(req,res)=>{
+    const pending=req.session.agentNavigation;
+    await agentNavigation.acknowledge(database,req.ctx,pending,String(req.body.token||''));
+    if(req.session.postgresAskNavigationGoal===pending.goalId)
+      req.session.postgresAskPageContext={workspaceId:req.ctx.workspaceId,path:pending.href};
+    return res.json({delivered:true});
+  }));
   async function pilotProposalGuard(req,res){
     const native=(await database.query(`SELECT id FROM stockchief_runtime.assistant_goals g WHERE workspace_id=$1
       AND checkpoint->>'runtime'='codex-staging' AND EXISTS(SELECT 1 FROM jsonb_each(COALESCE(checkpoint#>'{harness,approvalDeliveries}','{}'::jsonb)) d
@@ -180,7 +198,9 @@ function createPostgresAskRouter(database,options={}){
     if(isPilot)await pilot.access(database,req.ctx);
     const events=isPilot?(await database.query(`SELECT sequence,kind,detail,created_at FROM stockchief_runtime.assistant_goal_events
       WHERE goal_id=$1 AND kind IN ('agent_activity','approval_ready') ORDER BY sequence DESC LIMIT 20`,[goal.id])).rows:[];
-    return res.json({id:goal.id,status:goal.status,answer:goal.answer,createdAt:goal.created_at,updatedAt:goal.updated_at,runStartedAt:goal.checkpoint.runStartedAt,turns:goal.turns,tools:goal.tool_calls,events});
+    const navigation=agentNavigation.visible(goal);
+    return res.json({id:goal.id,status:goal.status,answer:goal.answer,createdAt:goal.created_at,updatedAt:goal.updated_at,runStartedAt:goal.checkpoint.runStartedAt,turns:goal.turns,tools:goal.tool_calls,events,
+      navigation:navigation?{...navigation,automatic:req.session.postgresAskNavigationGoal===goal.id}:null});
   }));
   router.post('/ask/goals/:id/reply',asyncRoute(async(req,res)=>{
     const existing=await goalStore.get(database,req.ctx,req.params.id);
@@ -253,6 +273,7 @@ function createPostgresAskRouter(database,options={}){
     const nativeRuleIds=new Set(recentGoals.flatMap(goal=>(goal.approvalCards||[]).filter(card=>card.kind==='rule').map(card=>card.proposalId)));
     rules.pendingRules=rules.pendingRules.filter(rule=>!nativeRuleIds.has(rule.id));
     transcript=require('../../assistant/goal-transcript').mergeGoalTranscript(transcript,recentGoals);
+    const continuationGoal=transcript.at(-1)?.agentGoal;
     return res.page('attention/ask',{title:'Ask StockChief',nav:'ask',room:true,suppressBack:true,postgresAsk:true,...rules,
       codexPilot:pilotView,adaptiveGoal:activeGoal,renderAgentAnswer:require('../public/agent-answer').render,
       about:String(req.query.about||'').slice(0,2000),stockActivity:req.query.task==='stock-activity'&&sourcePage?.path==='/inventory',
@@ -261,6 +282,7 @@ function createPostgresAskRouter(database,options={}){
       conversation:null,transcript,currentGoalId:latest?.id||null,conversationId:`postgres:${req.ctx.workspaceId}`,
       aiConfigured:Boolean(options.provider||config.ai.configured),usageKey:newId('askusage'),
       sourcePath:sourcePage?.path||null,emailBodyContinuation,protectedNames,
+      continuationGoalId:continuationGoal?.status==='WAITING_USER'?continuationGoal.id:null,
       examples:await askExamples(database,req.ctx,sourcePage)});
   }));
   router.post('/ask/new',asyncRoute(async(req,res)=>{
@@ -269,6 +291,7 @@ function createPostgresAskRouter(database,options={}){
     const boundary=(await database.query('SELECT clock_timestamp()::text AS started_at')).rows[0].started_at;
     req.session.postgresAskStartedAt=boundary;
     req.session.postgresAskPageContext=null;
+    req.session.postgresAskNavigationGoal=null;
     req.flash('success','New conversation started. Earlier conversations remain in the audit history.');
     await new Promise((resolve,reject)=>req.session.save((error)=>error?reject(error):resolve()));
     return res.redirect(303,'/ask');
@@ -287,14 +310,29 @@ function createPostgresAskRouter(database,options={}){
         provider:options.provider,usageKey:require('../../imports/usage-key').analysisUsageKey(hash,req.body.usageKey)});
       return {navigation:{href:`/imports/${plan.id}`}};
     }
+    if(req.body.continueGoalId){
+      const id=String(req.body.continueGoalId),existing=await goalStore.get(database,req.ctx,id);
+      if(existing?.checkpoint.runtime!=='codex-staging')throw new ValidationError('That agent question is no longer available.');
+      await pilot.access(database,req.ctx,{enabled:true});
+      if(req.session.postgresAskStartedAt&&new Date(existing.created_at)<=new Date(req.session.postgresAskStartedAt))
+        throw new ValidationError('That question belongs to an earlier conversation.');
+      const continued=await goalStore.reply(database,req.ctx,id,req.body.message);
+      if(!continued)throw new ValidationError('That request is no longer waiting for an answer.');
+      await goalStore.enqueue(database,continued);req.session.postgresAskNavigationGoal=id;
+      return {goalId:id};
+    }
     const remembered=req.session.postgresAskPageContext;
     const page=await require('../../assistant/postgres-page-context').load(database,req.ctx.workspaceId,
       req.body.sourcePath||(remembered?.workspaceId===req.ctx.workspaceId?remembered.path:null));
-    return assistant.ask(database,req.ctx,req.body.message,{provider:options.provider,
-      background:goalStore.enabled(req.ctx)||await pilot.selected(database,req.ctx),
+    const result=await assistant.ask(database,req.ctx,req.body.message,{provider:options.provider,
+      // The native pilot always enqueues its own durable job. Runtime selection
+      // and its fresh permission check belong to assistant.ask, once here.
+      background:goalStore.enabled(req.ctx),
       usageKey:String(req.body.usageKey||newId('askusage')),
       page,startedAt:req.session.postgresAskStartedAt||null,
       continueInteractionId:String(req.body.continueInteractionId||'')});
+    req.session.postgresAskNavigationGoal=result.goalId||null;
+    return result;
   }
   router.post('/ask',asyncRoute(async(req,res)=>{
     const result=await runAsk(req);

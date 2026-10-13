@@ -54,18 +54,21 @@ async function run(database,ctx,id,options={}){
    wireProfile:'codex',livePermit:permit,requestGate:()=>session.codexRequest()});
   helperTransport.setNativeSession(session.helperDelivery());
   helper=require(base+'codex-helper-provider').create({transport:helperTransport});
-  const connectionString=process.env.FOUNDRY_DATABASE_URL||process.env.DATABASE_URL;
-  const token=await pilot.readAuthorization(database,ctx,connectionString);
   // Both resources are brand-new and goal-local. Prepare the credential-free
   // sandbox concurrently with the restricted renderer, never reuse a browser
   // or another goal's files. Join cleanup even if either initialization fails.
   const preparedSandbox=require(base+'codex-runtime').prepareSandbox(image);
   preparedSandbox.catch(()=>{});
   cleanup.push(async()=>{const prepared=await preparedSandbox.catch(()=>null);if(prepared)await prepared.sandbox.close();});
-  audit({kind:'runtime_starting',status:'Opening the isolated business browser'});
-  const server=await require(base+'inspection').createInspectionServer({cluster:{connectionString},database,ctx,stagingAuthorization:token});cleanup.push(()=>server.close());
-  const browser=await require('playwright').chromium.launch({headless:true});cleanup.push(()=>browser.close());
-  const ui=await require(base+'browser').createBrowserTools(browser,{origin:server.origin,audit});cleanup.push(()=>ui.close());
+  const ui=require(base+'lazy-browser').lazyBrowser(async()=>{
+   audit({kind:'runtime_starting',status:'Opening the isolated business browser'});
+   const connectionString=process.env.FOUNDRY_DATABASE_URL||process.env.DATABASE_URL;
+   const token=await pilot.readAuthorization(database,ctx,connectionString);
+   const server=await require(base+'inspection').createInspectionServer({cluster:{connectionString},database,ctx,stagingAuthorization:token});cleanup.push(()=>server.close());
+   const browser=await require('playwright').chromium.launch({headless:true});cleanup.push(()=>browser.close());
+   const tools=await require(base+'browser').createBrowserTools(browser,{origin:server.origin,audit,startPath:goal.checkpoint.page?.path});cleanup.push(()=>tools.close());
+   return tools;
+  });
   audit({kind:'runtime_starting',status:'Starting the Codex SDK session'});
   const result=await require(base+'worker').run({candidate:'codex',session,gateway:{...gateway,authorize},browser:ui,budget,transport,
    preparedCodexSandbox:await preparedSandbox,
@@ -74,7 +77,7 @@ async function run(database,ctx,id,options={}){
   const current=await store.get(database,ctx,id);
   if(current.status==='RUNNING'){
    const check=await require('./postgres-codex-verification').verify(database,ctx,current,result.answer,(await gateway.authorize()).catalogue);
-   await session.finish({answer:check.answer,verified:check.verified});
+   await session.finish({answer:check.answer,verified:check.verified,navigation:check.navigation});
   }
   return store.get(database,ctx,id);
  }catch(error){

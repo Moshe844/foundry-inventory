@@ -30,10 +30,11 @@ const PAGES=[
 ];
 
 async function load(database,workspaceId,sourcePath){
-  const path=String(sourcePath||'');
-  if(path.length>300||!path.startsWith('/')||path.startsWith('//')||path.includes('?'))return null;
+  const path=require('./agent-navigation-path').localPath(sourcePath);
+  if(!path||path.length>300)return null;
+  const pathname=new URL(path,'https://stockchief.invalid').pathname;
   for(const page of PAGES){
-    const matched=page.route.exec(path);if(!matched)continue;
+    const matched=page.route.exec(pathname);if(!matched)continue;
     let id;try{id=decodeURIComponent(matched[1]);}catch{return null;}
     if(id.length>150)return null;
     const rows=(await database.query(page.sql,[workspaceId,id])).rows;

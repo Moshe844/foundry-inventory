@@ -47,6 +47,7 @@ async function refresh(database,ctx,goalId){
  return database.transaction(async client=>{
  const goal=(await client.query(`SELECT * FROM stockchief_runtime.assistant_goals WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 FOR UPDATE`,[ctx.workspaceId,ctx.actorId,goalId])).rows[0];
  if(!goal?.checkpoint.harness||!['WAITING_APPROVAL','WAITING_EVENT','BLOCKED'].includes(goal.status))return goal;
+ if(goal.status==='WAITING_EVENT'&&goal.checkpoint.navigation)return goal;
  if(new Date(goal.expires_at)<=new Date())return goal;
  await authority(client,ctx,goal.checkpoint.harness);
  const h=goal.checkpoint.harness;

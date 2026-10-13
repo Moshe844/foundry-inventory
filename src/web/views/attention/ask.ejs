@@ -441,6 +441,7 @@
   <%- include('../partials/composer', {
     queryConversation: true,
     emailBodyContinuation: locals.emailBodyContinuation,
+    continuationGoalId: locals.continuationGoalId,
     composerPrefill: error ? question : locals.prefill ? locals.prefill : about ? 'About ' + about + ': ' : '',
     composerPlaceholder: locals.emailBodyContinuation ? 'Write the email message to ' + locals.emailBodyContinuation.recipient + '…' : result && result.actionClarification ? 'Answer the question above…' : 'Ask what’s happening or tell StockChief what to do…',
     actionClarification: result && result.actionClarification ? result.actionClarification : null,

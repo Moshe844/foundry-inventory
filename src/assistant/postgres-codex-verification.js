@@ -5,6 +5,8 @@ const {createHash}=require('node:crypto');
 async function verify(database,ctx,goal,raw,catalogue){
  let report;try{report=JSON.parse(raw);}catch{return {verified:false,answer:raw};}
  if(report.status==='needs_user')return {verified:false,answer:raw};
+ if(report.status==='completed'&&goal.checkpoint.clientIntegration===1&&!['answer','navigation'].includes(report.outcome))
+  return {verified:false,answer:'I could not verify delivery of the requested result. A page inspected by the agent is not proof that it opened in your browser.'};
  if(report.status!=='completed'||typeof report.answer!=='string'||!Array.isArray(report.claims)||!report.claims.length||report.claims.length>50)
   return {verified:false,answer:report.answer||raw};
  const h=goal.checkpoint.harness;
@@ -34,9 +36,35 @@ async function verify(database,ctx,goal,raw,catalogue){
   if(JSON.stringify(value)!==JSON.stringify(claim.value))return {verified:false,answer:report.answer};
   verified.push({evidenceId:claim.evidenceId,path:claim.path,sha256:createHash('sha256').update(JSON.stringify(value)).digest('hex')});
  }
- return {verified:true,answer:report.answer,receipt,claims:verified};
+ let navigation=null;
+ if(report.outcome==='navigation'){
+  const fail=()=>({verified:false,answer:'I found a possible destination, but could not verify a safe page to open in your browser.'});
+  const n=report.navigation,entry=n&&find(n.evidenceId);
+  if(!entry||entry.truncated||!entry.text||createHash('sha256').update(entry.text).digest('hex')!==entry.sha256)return fail();
+  const observation=JSON.parse(entry.text);let path,label;
+  if(entry.name==='environment_browser'){
+   if(!['/url','/screen/url'].includes(n.path))return fail();
+   const screen=n.path==='/screen/url'?observation.screen:observation;
+   if(screen?.applicationPage!==true||screen.httpStatus!==200||typeof screen.url!=='string')return fail();
+   let url;try{url=new URL(screen.url);}catch{return fail();}
+   if(!['http:','https:'].includes(url.protocol)||url.username||url.password)return fail();
+   path=url.pathname+url.search;label=screen.title;
+  }else if(entry.name==='business_operations'){
+   const match=/^\/outcomes\/(\d+)\/result\/navigation\/href$/.exec(n.path||'');
+   const outcome=match&&observation.outcomes?.[Number(match[1])];
+   if(!outcome||catalogue.get(outcome.capability)?.kind!=='navigation'||outcome.result?.status!=='ANSWERED')return fail();
+   path=outcome.result.navigation?.href;label=outcome.result.navigation?.label;
+  }else return fail();
+  const href=require('./agent-navigation-path').localPath(path);
+  if(!href)return fail();
+  navigation={href,label:String(label||'the requested page').replace(/\s+·\s+StockChief$/,'').slice(0,120),
+   evidenceId:entry.id,evidenceHash:entry.sha256};
+ }
+ return {verified:true,answer:report.answer,receipt,claims:verified,navigation};
 }
-const instructions=`\nFor your final report return JSON with status "completed", answer, and claims: [{evidenceId,path,value}].
+const instructions=`\nFor your final report return JSON with status "completed", outcome ("answer" or "navigation"), answer, and claims: [{evidenceId,path,value}].
+The browser tool controls a private inspection browser, NOT the user's website. When the user asks to open a page, use outcome "navigation" and navigation: {evidenceId,path:"/url"} referencing an actual successful applicationPage observation (use /screen/url if wrapped). The host will deliver that page to the user's browser and verify its arrival without another model call. Do not claim it has already opened for the user. Do not return outcome "answer" to fulfill a navigation request. For questions or completed business changes that do not request moving the user's browser, use outcome "answer".
+A governed navigation operation also supplies a safe destination: reference its actual /outcomes/N/result/navigation/href in navigation.path. When that authorized destination is already available, you do not need to visit it in the private browser merely to open it for the user. Unlisted pages remain discoverable through browser exploration.
 Each factual claim must reference actual durable evidence by ID and a JSON Pointer to its exact recorded value.
 Current-state claims after execution require fresh observations. Mark a historical claim historical:true and describe its time/scope explicitly.
 Use the complete evidence already in a tool response. Its _stockchiefEvidence reference supplies evidenceId and valuePointerPrefix; prepend that prefix to the JSON Pointer of the displayed value. Retrieve the journal only for missing, truncated, compacted or earlier evidence. Do not retrieve a value again just to report what the current response already shows. Include current-state verification after authorized changes.

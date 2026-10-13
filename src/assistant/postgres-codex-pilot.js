@@ -38,10 +38,11 @@ async function toggle(db,ctx,enabled){await access(db,ctx,{owner:true});
 async function start(db,ctx,message,options={}){
  const {pilot}=await access(db,ctx,{enabled:true});
  const locked=spendingLockMessage(pilot);if(locked)throw new ValidationError(locked);
+ const conversation=await require('./postgres-agent-context').capture(db,ctx,options.startedAt||null);
  const goal=await store.create(db,ctx,message,{...options,budgetMinor:Math.min(options.budgetMinor||100,100)});
  if(goal.checkpoint.runtime&&goal.checkpoint.runtime!=='codex-staging')throw new ValidationError('That request already belongs to another Ask runtime.');
- await db.query(`UPDATE stockchief_runtime.assistant_goals SET checkpoint=checkpoint||$4::jsonb WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,
-  [ctx.workspaceId,ctx.actorId,goal.id,JSON.stringify({runtime:'codex-staging',pilotRevision:pilot.revision})]);
+ await db.query(`UPDATE stockchief_runtime.assistant_goals SET checkpoint=$4::jsonb||checkpoint||$5::jsonb WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,
+  [ctx.workspaceId,ctx.actorId,goal.id,JSON.stringify({conversation,clientIntegration:1}),JSON.stringify({runtime:'codex-staging',pilotRevision:pilot.revision})]);
  goal.checkpoint.runtime='codex-staging';
  await store.enqueue(db,goal);return {status:'CLARIFY',answer:'StockChief is investigating your goal.',goalId:goal.id,goalStatus:goal.status};
 }

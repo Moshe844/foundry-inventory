@@ -79,7 +79,11 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    return {answer:goal.answer,completionSource:h.completionSource,checkedAt:h.receipt.checkedAt};
   },
   async load(){return authorizedUpdate((h,goal)=>({...structuredClone(h),goalContext:{
-   originalRequest:goal.original_request,messages:structuredClone(goal.checkpoint.messages||[])}}));},
+   originalRequest:goal.original_request,messages:structuredClone(goal.checkpoint.messages||[]),
+   // Page metadata is only a location hint. Read its content with current
+   // browser/gateway permissions, not by trusting fields posted by a client.
+   page:goal.checkpoint.page?{path:goal.checkpoint.page.path}:null,
+   conversation:structuredClone(goal.checkpoint.conversation||null)}}));},
   async checkpoint(native){return authorizedUpdate(h=>{h.native={...h.native,...native};});},
   async workingMemory(){return authorizedUpdate(h=>require('./memory').working(h));},
   async codexRequest(){return authorizedUpdate(h=>{
@@ -206,7 +210,7 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
     });throw error;
    }
   },
-  async finish({answer,verified=false}){
+  async finish({answer,verified=false,navigation=null}){
    const access=await authorize();return update(async(h,goal,client)=>{
     if(h.inflight)throw new Error('SESSION_OPERATION_UNRESOLVED');
     // Only a host verifier may set verified; SDK final text is not verification.
@@ -219,6 +223,13 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
     const classified=require('./outcome').classify({answer:goal.answer,verified,current,canonicalVerified,
      progress:h.admissionBlock?{...h.progress,finalReason:h.admissionBlock.code}:h.progress});
     goal.status=classified.status;goal.answer=classified.answer;
+    if(verified&&navigation&&goal.status==='COMPLETED'){
+     // A private browser observation is preparation, not user-visible delivery.
+     // The authenticated website acknowledges the actual rendered destination.
+     goal.checkpoint.navigation={...navigation,id:require('node:crypto').randomUUID(),state:'PENDING',
+      resultAnswer:h.receipt.operations.length?goal.answer:null};
+     goal.status='WAITING_EVENT';goal.answer=`Ready to open ${navigation.label} in your browser.`;
+    }
     h.failure=classified.failure||null;h.userQuestion=classified.question||null;
     h.completionSource=goal.status==='COMPLETED'?'host_verified_answer':'unverified_answer';
     h.finishedAt=new Date().toISOString();

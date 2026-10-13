@@ -1,6 +1,7 @@
 <%
  const phase=({READY:'Getting started',RUNNING:'Working on your request',WAITING_APPROVAL:'Ready for your approval',WAITING_EVENT:'Waiting for confirmation',WAITING_USER:'Your input is needed',COMPLETED:'Completed and verified',BLOCKED:'Could not finish',CANCELLED:'Stopped'})[goal.status]||'Checking progress';
  const active=['READY','RUNNING'].includes(goal.status);
+ const pendingNavigation=goal.status==='WAITING_EVENT'&&['PENDING','DELIVERING'].includes(goal.checkpoint.navigation?.state)?goal.checkpoint.navigation:null;
 %>
 <section class="rm-agent" aria-label="Goal progress" data-adaptive-goal="<%= goal.id %>" data-goal-status="<%= goal.status %>" data-goal-created="<%= new Date(goal.created_at).toISOString() %>" data-goal-updated="<%= new Date(goal.updated_at).toISOString() %>" data-goal-latest="<%= locals.isLatest?'true':'false' %>">
   <div class="rm-agent__header">
@@ -12,6 +13,11 @@
   </div>
   <div class="rm-agent__answer" data-goal-answer <%= goal.answer?'':'hidden' %>><%- renderAgentAnswer(goal.answer||'') %></div>
   <p class="rm-agent__hint" data-goal-hint><%= active?'You can leave this page. I’ll keep working and show any required approval here.':'' %></p>
+  <form method="post" action="/ask/goals/<%= goal.id %>/navigate" data-goal-navigation <%= pendingNavigation?'':'hidden' %>>
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <input type="hidden" name="automatic" value="0">
+    <button class="rm-btn rm-btn--sm" data-navigation-label type="submit"><%= pendingNavigation?'Open '+pendingNavigation.label:'Open page' %></button>
+  </form>
   <% if(goal.checkpoint.runtime==='codex-staging'){ %>
     <details class="rm-agent__details"><summary>Activity details</summary><ol data-goal-timeline aria-label="Agent activity"></ol></details>
     <% for(const card of locals.codexApprovals||[]){ %>

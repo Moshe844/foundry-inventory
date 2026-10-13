@@ -1858,8 +1858,19 @@ async function cancelProposal(database,ctx,id) {
 }
 
 async function ask(database,ctx,message,options={}){
-    if(options.legacy!==true&&await require('./postgres-codex-pilot').selected(database,ctx))
-      return require('./postgres-codex-pilot').start(database,ctx,message,options);
+  if(options.legacy!==true&&await require('./postgres-codex-pilot').selected(database,ctx)){
+    // Preserve the existing zero-model page command. This is only a shortcut:
+    // unknown destinations and compound requests still reach the native agent.
+    const plane=require('./postgres-control-plane');
+    if(!options.continueInteractionId&&plane.explicitPageNavigation(message,require('./postgres-capability-registry').registry)){
+      const actor=(await database.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];
+      const contract=plane.explicitPageNavigation(message,await plane.planningCatalogue(database,ctx,actor));
+      if(contract){const step={contract,args:{},dependsOn:[],continuesPending:false};
+        const outcome=await plane.executeStep(capabilityService(),database,ctx,step,{actor,sourceMessage:message});
+        return recordCapabilityOutcome(database,ctx,message,{step,...outcome});}
+    }
+    return require('./postgres-codex-pilot').start(database,ctx,message,options);
+  }
   if(require('./postgres-goal-store').enabled(ctx)&&options.legacy!==true)
     return require('./postgres-goal-controller').start(database,ctx,message,options);
   return askCapabilities(database,ctx,message,options);

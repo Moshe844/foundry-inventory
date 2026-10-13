@@ -7,7 +7,9 @@ function enabled(ctx){return process.env.STOCKCHIEF_ADAPTIVE_ASK==='1'&&
 async function get(db,ctx,id){return (await db.query(`SELECT * FROM ${TABLE}
  WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,id])).rows[0]||null;}
 async function progress(db,ctx,id){return (await db.query(`SELECT id,status,answer,created_at,updated_at,turns,tool_calls,
- jsonb_build_object('runtime',checkpoint->'runtime','runStartedAt',checkpoint->'runStartedAt') AS checkpoint FROM ${TABLE}
+ jsonb_build_object('runtime',checkpoint->'runtime','runStartedAt',checkpoint->'runStartedAt',
+ 'navigation',jsonb_build_object('id',checkpoint#>'{navigation,id}','label',checkpoint#>'{navigation,label}',
+ 'state',checkpoint#>'{navigation,state}')) AS checkpoint FROM ${TABLE}
  WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,id])).rows[0]||null;}
 async function create(db,ctx,message,{usageKey=newId('goalrequest'),budgetMinor=75,page=null}={}){
  const clean=String(message||'').trim();

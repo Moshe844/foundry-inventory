@@ -5,7 +5,7 @@ const {randomUUID}=require('node:crypto');
 // No task text, selectors from test cases, route maps or business workflows enter
 // this module. This is NOT the authorization boundary: use a read-only app and
 // a separate canonical execution gateway as well.
-async function createBrowserTools(browser,{origin,audit=()=>{}}){
+async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null}){
   const context=await browser.newContext({viewport:{width:1280,height:900},serviceWorkers:'block',acceptDownloads:false});
   await context.addInitScript(()=>{
     const hide=()=>{for(const e of document.querySelectorAll('input,textarea')){
@@ -28,9 +28,10 @@ async function createBrowserTools(browser,{origin,audit=()=>{}}){
   context.on('page',popup=>{if(popup!==page)void popup.close();});
   page.on('download',download=>void download.cancel());
   page.on('dialog',dialog=>void dialog.dismiss());
-  let references=new Map(),continuations=new Map(),revision=0,httpStatus=null;
+  let references=new Map(),continuations=new Map(),revision=0,httpStatus=null,applicationPage=false;
   const generation=randomUUID();
-  page.on('response',response=>{if(response.request().isNavigationRequest()&&response.frame()===page.mainFrame())httpStatus=response.status();});
+  page.on('response',response=>{if(response.request().isNavigationRequest()&&response.frame()===page.mainFrame()){
+    httpStatus=response.status();applicationPage=response.headers()['x-stockchief-page']==='1';}});
   const cursor=value=>{const ref=`${generation}:page:${randomUUID()}`;continuations.set(ref,value);return ref;};
   async function describe(node,optionOffset=0,optionLimit=100){return node.evaluate((element,{offset,limit})=>{
     const labelledBy=(element.getAttribute('aria-labelledby')||'').split(/\s+/).map(id=>document.getElementById(id)?.innerText||'').join(' ').trim();
@@ -70,7 +71,7 @@ async function createBrowserTools(browser,{origin,audit=()=>{}}){
     }
     const text=await page.locator('body').innerText();
     return {url:page.url(),title:await page.title(),text:text.slice(textOffset,textOffset+18000),
-      controls,httpStatus,truncated:controlOffset+controls.length<total||textOffset+18000<text.length,
+      controls,httpStatus,applicationPage,truncated:controlOffset+controls.length<total||textOffset+18000<text.length,
       pagination:{controlOffset,controlTotal:total,textOffset,textLength:text.length,
         controlsNextRef:controlOffset+controls.length<total?cursor({kind:'page',controlOffset:controlOffset+controls.length,textOffset}):null,
         textNextRef:textOffset+18000<text.length?cursor({kind:'page',controlOffset,textOffset:textOffset+18000}):null},
@@ -84,7 +85,7 @@ async function createBrowserTools(browser,{origin,audit=()=>{}}){
     if(!node)return {error:{code:'STALE_BROWSER_REFERENCE',message:'Inspect this fresh screen; the previous observation cursor expired.'},screen:await inspect()};
     const data=await describe(node,next?.offset||0),control={ref:next?.ref||ref,...data};
     if(data.optionsTruncated)control.optionsNextRef=cursor({kind:'options',ref:control.ref,offset:data.optionsOffset+100});
-    return {url:page.url(),title:await page.title(),httpStatus,controls:[control],partial:true,
+    return {url:page.url(),title:await page.title(),httpStatus,applicationPage,controls:[control],partial:true,
       notice:'Details of a live observed control, not permission to submit its form.'};
   }
   async function act({action,ref,value}){
@@ -119,8 +120,9 @@ async function createBrowserTools(browser,{origin,audit=()=>{}}){
       return {error:{code:'BROWSER_ACTION_FAILED',message:String(error.message).slice(0,400),actionMayHaveOccurred:true},screen:await inspect()};
     }
   }
-  // Starting at the application entry point is setup, not a task-specific route.
-  await page.goto(allowed+'/',{waitUntil:'domcontentloaded'});
+  // Start at the user's page when supplied, otherwise the application entry.
+  // Neither choice encodes a task-specific route or a navigation decision.
+  await page.goto(allowed+(require('../../src/assistant/agent-navigation-path').localPath(startPath)||'/'),{waitUntil:'domcontentloaded'});
   async function restore(url){
     const target=new URL(url);
     if(target.origin!==allowed||target.username||target.password)
