@@ -36,6 +36,10 @@
     <% for(const card of locals.codexApprovals||[]){ %>
       <article class="rm-agent__approval" data-approval-id="<%= card.id %>">
         <p><strong>Approval required</strong></p><p><%= card.summary %></p>
+        <dl class="summary-list"><% for(const [key,value] of locals.agentApprovalFields?locals.agentApprovalFields(card):[]){ %>
+          <div><dt><%= helpers.columnLabel(key) %></dt><dd style="white-space:pre-wrap;overflow-wrap:anywhere"><%= value %></dd></div>
+        <% } %></dl>
+        <p><a href="<%= card.kind==='business'?'/actions/'+encodeURIComponent(card.proposalId):'/operating-instructions/'+encodeURIComponent(card.proposalId)+'?from=ask' %>">Review the full prepared change</a></p>
         <p>Prepared only. Nothing has changed yet.</p>
         <form method="post" action="/ask/goals/<%= goal.id %>/approval">
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">

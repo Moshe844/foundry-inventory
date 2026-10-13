@@ -59,6 +59,19 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
   }
   return {
     authorize:access,
+    async initialContracts(){
+      const {catalogue}=await access(),operations=[];let bytes=0;
+      for(const contract of catalogue.list()){
+        if(contract.kind==='read'||contract.kind==='navigation')continue;
+        const complete=describe(contract);
+        const entry=Buffer.byteLength(JSON.stringify(complete))<=4096?complete:
+          {name:contract.name,kind:contract.kind,description:contract.description,required:contract.required||[],detailsByName:true};
+        const size=Buffer.byteLength(JSON.stringify(entry));
+        if(bytes+size>18000)break;
+        operations.push(entry);bytes+=size;
+      }
+      return {operations,coverage:'Current authorized execution contracts only. This is not an environment map. Discover pages and forms through the browser; use environment_interfaces for omitted contract details. All execution repeats fresh authority and canonical verification.'};
+    },
     async interfaces({search='',offset=0,names=[]}={}){const {actor,catalogue}=await access();
       const operationSearch=require('./interface-search').ranked(catalogue.list(),search);
       const all=operationSearch.items;
@@ -99,7 +112,7 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
         let result;
         try{result=await control.executeStep(service.capabilityService(),database,{...ctx,goalId,
           planStepKey:`environment:${goalId}:${call}:${index}`},step,{actor,provider,rawProvider,
-          sourceMessage:current.sourceMessage,usageKey:`environment:${goalId}:${call}:${index}`});}
+          sourceMessage:current.sourceMessage,usageKey:`environment:${goalId}:${call}:${index}`,preparedContent:true});}
         catch(error){effectsStarted||=step.contract.kind!=='read'&&error.effectMayHaveOccurred!==false;throw error;}
         effectsStarted||=step.contract.kind!=='read';
         outcomes.push({...result,step});

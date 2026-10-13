@@ -1203,7 +1203,7 @@ async function prepareAction(database,ctx,message,request,options={}) {
     if(mailbox.ambiguous)return {status:'CLARIFY',answer:'More than one business mailbox can send this. Name the exact mailbox to use.',awaitingField:'mailbox',
       choices:mailbox.ambiguous.map((row)=>({label:`${row.display_name}${row.provider_account_name?` · ${row.provider_account_name}`:''}`,value:row.display_name}))};
     const business=(await database.query('SELECT name FROM workspaces WHERE id=$1',[ctx.workspaceId])).rows[0];
-    const ownerBody=emailOwnerWords(request.body,resolved.row.name);
+    const ownerBody=options.preparedContent?request.body:emailOwnerWords(request.body,resolved.row.name);
     const drafted=await draftBusinessEmail({...request,body:ownerBody},business.name,options.emailDraftProvider);
     const recipientEmail=request.recipientEmail||resolved.row.email;
     if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(recipientEmail||'')))

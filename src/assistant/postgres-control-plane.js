@@ -114,7 +114,7 @@ function explicitPageNavigation(message,catalogue){
 }
 
 async function executeStep(service,database,ctx,step,{actor,provider,rawProvider,sourceMessage,pending,page,usageKey,
-  dependencyArgs=null,priorInstruction=null,priorReport=null}){
+  dependencyArgs=null,priorInstruction=null,priorReport=null,preparedContent=false}){
   const {contract}=step;
   const permission=contract.kind==='read'?READ_PERMISSIONS[contract.view]||contract.permission:contract.permission;
   permissions.assertCan(actor,permission,contract.name);
@@ -187,7 +187,7 @@ async function executeStep(service,database,ctx,step,{actor,provider,rawProvider
   // original instruction. A short answer to a clarification is not a new,
   // self-contained request; preserve both turns through the canonical engine.
   const result=await contract.prepare(service,database,ctx,resolutionMessage,args,
-    {emailDraftProvider:contract.name==='communication.send_email'?provider:null,
+    {preparedContent,emailDraftProvider:contract.name==='communication.send_email'&&!preparedContent?provider:null,
       reportProvider:contract.name==='report.template.create'?provider:null,
       reportContext:contract.name==='report.template.create'?priorReport:null});
   if(result?.status==='PREPARED'&&!await contract.verify(service,database,ctx,result))

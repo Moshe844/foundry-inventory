@@ -21,26 +21,14 @@
   </style>
 </head>
 <body>
-  <main class="oauth-return">
+  <main class="oauth-return" data-connection-return data-connected="<%= outcome.connected?'true':'false' %>" data-workspace-id="<%= outcome.workspaceId||'' %>" data-return-path="<%= outcome.returnPath %>" data-return-origin="<%= outcome.returnOrigin %>">
     <div class="panel">
       <div class="oauth-return__mark" aria-hidden="true"><%= outcome.connected ? '✓' : '!' %></div>
       <h1><%= outcome.connected ? outcome.providerName + ' is connected' : outcome.providerName + ' was not connected' %></h1>
       <p><%= outcome.message %></p>
-      <a class="btn btn--primary" href="<%= outcome.returnUrl %>">Return to StockChief</a>
+      <a class="btn btn--primary" data-connection-return-link href="<%= outcome.returnUrl %>">Return to StockChief</a>
     </div>
   </main>
-  <script>
-    (function () {
-      var message = {
-        type: 'foundry:connection-return',
-        connected: <%- JSON.stringify(Boolean(outcome.connected)) %>,
-        workspaceId: <%- JSON.stringify(outcome.workspaceId || null) %>,
-        returnPath: <%- JSON.stringify(outcome.returnPath) %>
-      };
-      if (!window.opener || window.opener.closed) return;
-      window.opener.postMessage(message, <%- JSON.stringify(outcome.returnOrigin || '*') %>);
-      window.setTimeout(function () { window.close(); }, 650);
-    }());
-  </script>
+  <script src="/connection-return.js" defer></script>
 </body>
 </html>

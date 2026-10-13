@@ -155,6 +155,11 @@ function createPostgresAskRouter(database,options={}){
   const conversation=require('../../assistant/agent-conversation');
   const delivery=require('../../assistant/agent-delivery');
   router.use('/ask',(req,res,next)=>{res.locals.agentDelivery=delivery.visible;next();});
+  router.use('/ask',(req,res,next)=>{
+    const fields=require('../../assistant/postgres-capability-registry').FIELDS;
+    res.locals.agentApprovalFields=card=>Object.entries(card.payload||{}).filter(([key,value])=>fields[key]&&value!==null&&['string','number','boolean'].includes(typeof value));
+    next();
+  });
   async function deliveredGoal(req,id=req.params.id){
     await pilot.access(database,req.ctx);
     const goal=await goalStore.get(database,req.ctx,id);
@@ -169,9 +174,12 @@ function createPostgresAskRouter(database,options={}){
     if(req.session.postgresAskStartedAt&&new Date(goal.created_at)<=new Date(req.session.postgresAskStartedAt))
       throw new ValidationError('That result belongs to an earlier conversation.');
     const key=crypto.createHash('sha256').update(message).digest('hex');
+    const remembered=req.session.postgresAskPageContext;
+    const currentPage=remembered?.workspaceId===req.ctx.workspaceId
+      ?await require('../../assistant/postgres-page-context').load(database,req.ctx.workspaceId,remembered.path):null;
     const next=await pilot.start(database,req.ctx,message,{usageKey:`next:${goal.id}:${key}`,
-      page:goal.checkpoint.page,startedAt:req.session.postgresAskStartedAt||null,
-      continuation:{sourceGoalId:goal.id,deliveryId:saved.id,workProducts:saved.workProducts}});
+      page:currentPage||goal.checkpoint.page,startedAt:req.session.postgresAskStartedAt||null,
+      continuation:{sourceGoalId:goal.id,deliveryId:saved.id,sourcePage:goal.checkpoint.page,workProducts:saved.workProducts}});
     req.session.postgresAskNavigationGoal=next.goalId;return next;
   }
   router.get('/ask/goals/:id/work/:workId',asyncRoute(async(req,res)=>{

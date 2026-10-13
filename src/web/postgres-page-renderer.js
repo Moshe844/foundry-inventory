@@ -13,6 +13,12 @@ function postgresPageRenderer(req,res,next){
       return `${parsed.pathname}${parsed.search}`;}catch{return req.path||'/';}})();
     // Only successful authenticated application pages can acknowledge delivery.
     // Errors, auth redirects, raw endpoints and the private agent session cannot.
+    // Track actual rendered application pages, not API polls or a manually
+    // enumerated route catalogue. Ask itself must not erase its source screen.
+    if(req.method==='GET'&&req.ctx?.workspaceId&&req.session&&!data.postgresAsk&&res.statusCode<400){
+      const path=require('../assistant/agent-navigation-path').localPath(currentHref);
+      if(path)req.session.postgresAskPageContext={workspaceId:req.ctx.workspaceId,path};
+    }
     const pending=req.session?.agentNavigation;
     const agentArrival=res.statusCode===200&&pending&&pending.href===currentHref&&
       pending.workspaceId===req.ctx?.workspaceId&&pending.actorId===req.ctx?.actorId?pending:null;
