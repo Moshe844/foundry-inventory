@@ -5,7 +5,7 @@ const {randomUUID}=require('node:crypto');
 // No task text, selectors from test cases, route maps or business workflows enter
 // this module. This is NOT the authorization boundary: use a read-only app and
 // a separate canonical execution gateway as well.
-async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null}){
+async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null,observedPaths=[]}){
   const context=await browser.newContext({viewport:{width:1280,height:900},serviceWorkers:'block',acceptDownloads:false});
   await context.addInitScript(()=>{
     const hide=()=>{for(const e of document.querySelectorAll('input,textarea')){
@@ -30,6 +30,7 @@ async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null}){
   page.on('dialog',dialog=>void dialog.dismiss());
   let references=new Map(),continuations=new Map(),revision=0,httpStatus=null,applicationPage=false;
   const generation=randomUUID();
+  const knownPaths=new Set(observedPaths.map(p=>require('../../src/assistant/agent-navigation-path').localPath(p)).filter(Boolean));
   page.on('response',response=>{if(response.request().isNavigationRequest()&&response.frame()===page.mainFrame()){
     httpStatus=response.status();applicationPage=response.headers()['x-stockchief-page']==='1';}});
   const cursor=value=>{const ref=`${generation}:page:${randomUUID()}`;continuations.set(ref,value);return ref;};
@@ -64,6 +65,7 @@ async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null}){
       // Bound source observations before journaling, not by silently cutting
       // their tail. Remaining controls/options get live continuation handles.
       const data=await describe(node,0,10),size=JSON.stringify(data).length+200;
+      if(data.href){try{const target=new URL(data.href,allowed);if(target.origin===allowed){const path=require('../../src/assistant/agent-navigation-path').localPath(target.pathname+target.search);if(path)knownPaths.add(path);}}catch{}}
       if(controls.length&&controlChars+size>90000){full=true;await node.dispose();continue;}
       controlChars+=size;
       const ref=`${generation}:${revision}:${controls.length}`;references.set(ref,node);controls.push({ref,...data});
@@ -91,6 +93,11 @@ async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null}){
   async function act({action,ref,value}){
     audit({kind:'browser_action',action,ref,valueLength:value?.length||0});
     if(action==='inspect')return inspectReference(ref);
+    if(action==='open'){
+      const path=require('../../src/assistant/agent-navigation-path').localPath(value);
+      if(!path||!knownPaths.has(path))return {error:{code:'UNOBSERVED_APPLICATION_PATH',message:'Discover this destination from current links or prior authorized page observations before opening it.'},screen:await inspect()};
+      if(page.url()!==allowed+path)await page.goto(allowed+path,{waitUntil:'domcontentloaded'});return inspect();
+    }
     if(action==='screenshot')return {screen:await inspect(),image:{mimeType:'image/png',
       base64:(await page.screenshot({fullPage:false})).toString('base64')}};
     if(action==='back'){await page.goBack({waitUntil:'domcontentloaded'});return inspect();}

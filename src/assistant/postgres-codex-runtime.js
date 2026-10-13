@@ -60,13 +60,16 @@ async function run(database,ctx,id,options={}){
   const preparedSandbox=options.sandboxPool?options.sandboxPool.take(image):require(base+'codex-runtime').prepareSandbox(image);
   preparedSandbox.catch(()=>{});
   cleanup.push(async()=>{const prepared=await preparedSandbox.catch(()=>null);if(prepared)await prepared.sandbox.close();});
-  const ui=require(base+'lazy-browser').lazyBrowser(async()=>{
+  const ui=require(base+'lazy-browser').lazyBrowser(async firstAction=>{
    audit({kind:'runtime_starting',status:'Opening the isolated business browser'});
    const connectionString=process.env.FOUNDRY_DATABASE_URL||process.env.DATABASE_URL;
    const token=await pilot.readAuthorization(database,ctx,connectionString);
    const server=await require(base+'inspection').createInspectionServer({cluster:{connectionString},database,ctx,stagingAuthorization:token});cleanup.push(()=>server.close());
    const browser=await require('playwright').chromium.launch({headless:true});cleanup.push(()=>browser.close());
-   const tools=await require(base+'browser').createBrowserTools(browser,{origin:server.origin,audit,startPath:goal.checkpoint.page?.path});cleanup.push(()=>tools.close());
+   const observedPaths=goal.checkpoint.conversation?.environment?.pages?.map(p=>p.path)||[];
+   const openedPath=firstAction?.action==='open'?require('./agent-navigation-path').localPath(firstAction.value):null;
+   const tools=await require(base+'browser').createBrowserTools(browser,{origin:server.origin,audit,
+    startPath:openedPath&&observedPaths.includes(openedPath)?openedPath:goal.checkpoint.page?.path,observedPaths});cleanup.push(()=>tools.close());
    return tools;
   });
   audit({kind:'runtime_starting',status:'Starting the Codex SDK session'});
