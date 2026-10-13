@@ -5,6 +5,7 @@ const resolver=require('./postgres-context-resolver');
 const registry=require('./postgres-capability-registry').registry;
 const permissions=require('../actions/permissions');
 const entitlements=require('../entitlements/postgres-service');
+const entitlementsCapability=require('../commercial/catalog').canonicalCapability;
 const {destinationById}=require('../web/postgres-navigation');
 const {destinations}=require('../product-brain/catalog');
 const {destinationMatch,navigationTokens}=require('../product-brain/navigation');
@@ -51,22 +52,21 @@ async function membership(database,ctx){
 async function planningCatalogue(database,ctx,actor){
   if(!actor)return {list:()=>[],get:()=>null};
   const scope=await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId);
-  const state=new Map();
-  const enabled=async(capability)=>{
-    if(!state.has(capability))state.set(capability,(await entitlements.capabilityState(database,scope,capability)).enabled);
-    return state.get(capability);
-  };
-  const entries=[];
-  for(const contract of registry.list()){
-    if(contract.adaptiveOnly&&(!ctx.goalId||!require('./postgres-goal-store').enabled(ctx)))continue;
+  const eligible=registry.list().filter(contract=>{
+    if(contract.adaptiveOnly&&(!ctx.goalId||!require('./postgres-goal-store').enabled(ctx)))return false;
     const permission=contract.kind==='read'?READ_PERMISSIONS[contract.view]||contract.permission:contract.permission;
-    if(!permissions.can(actor,permission))continue;
-    if(contract.ownerOnly&&actor.role!=='owner')continue;
-    if(['mutation','policy'].includes(contract.kind)&&!await enabled('ask.prepare_actions'))continue;
+    return permissions.can(actor,permission)&&(!contract.ownerOnly||actor.role==='owner');
+  });
+  const states=await entitlements.capabilityStates(database,scope,eligible.flatMap(contract=>[
+    ...(['mutation','policy'].includes(contract.kind)?['ask.prepare_actions']:[]),
+    ...(contract.additionalCommercialCapabilities||[]),contract.commercialCapability].filter(Boolean)));
+  const entries=[];
+  for(const contract of eligible){
+    if(['mutation','policy'].includes(contract.kind)&&!states.get('ask.prepare_actions').enabled)continue;
     const gated=[...(contract.additionalCommercialCapabilities||[]),contract.commercialCapability].filter(Boolean);
     const unavailable=[];
-    for(const capability of gated)if(!await enabled(capability)){
-      const stateForCapability=await entitlements.capabilityState(database,scope,capability);
+    for(const capability of gated)if(!states.get(entitlementsCapability(capability)).enabled){
+      const stateForCapability=states.get(entitlementsCapability(capability));
       if(stateForCapability.definition.readiness==='DISABLED'){unavailable.length=0;unavailable.push('DISABLED');break;}
       unavailable.push(capability);
     }

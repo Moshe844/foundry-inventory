@@ -15,18 +15,42 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
   }
   return result;
  }
- async function authority({catalogue=true}={}){const access=await authorize({catalogue});
-  if(access?.actor)await update(h=>{const stamp=createHash('sha256').update(JSON.stringify(stable(access.actor))).digest('hex');
-   if(h.authorityStamp&&h.authorityStamp!==stamp)throw new Error('SESSION_AUTHORITY_CHANGED');h.authorityStamp=stamp;});
-  return access;
+ function checkAuthority(h,access){if(access?.actor){
+  const stamp=createHash('sha256').update(JSON.stringify(stable(access.actor))).digest('hex');
+  if(h.authorityStamp&&h.authorityStamp!==stamp)throw new Error('SESSION_AUTHORITY_CHANGED');h.authorityStamp=stamp;
+ }}
+ // Validate the fresh authority and persist its stamp in the SAME transaction
+ // as the checkpoint it protects. No authority is cached between operations.
+ async function authorizedUpdate(change,settings={catalogue:false}){
+  const access=await authorize(settings);return update(change,{access});
  }
- async function update(change,{cleanup=false}={}){return database.transaction(async client=>{
-  const goal=(await client.query(`SELECT * FROM ${TABLE} WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 FOR UPDATE`,
-   [ctx.workspaceId,ctx.actorId,goalId])).rows[0];
+ async function authority(settings={catalogue:true}){
+  const access=await authorize(settings);await read(()=>null,access);return access;
+ }
+ function held(goal,cleanup=false){
   if(!goal||goal.status!=='RUNNING'||goal.run_token!==runToken||!cleanup&&(new Date(goal.lease_until)<=new Date()||new Date(goal.expires_at)<=new Date()))
    throw new Error('SESSION_LEASE_LOST');
-  const cp=goal.checkpoint;cp.harness||={candidate,sequence:0,calls:{},native:{}};
-  if(cp.harness.candidate!==candidate)throw new Error('SESSION_CANDIDATE_MISMATCH');
+ }
+ function harness(goal){const cp=goal.checkpoint;cp.harness||={candidate,sequence:0,calls:{},native:{}};
+  if(cp.harness.candidate!==candidate)throw new Error('SESSION_CANDIDATE_MISMATCH');return cp.harness;
+ }
+ async function read(select,access){access||=await authorize({catalogue:false});
+  const goal=(await database.query(`SELECT * FROM ${TABLE} WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,goalId])).rows[0];
+  held(goal);const h=harness(goal);checkAuthority(h,access);return select(h,goal);
+ }
+ function present(h,output,{full=false}={}){
+  const text=JSON.stringify(output)??'null',legacyText=JSON.stringify(output?.image?output.screen:output)??'null';
+  const entry=require('./observations').ordered(Object.values(h.evidence||{})).findLast(e=>e.text===text||e.text===legacyText||e.truncated&&e.text===text.slice(0,128000));
+  if(full&&entry){const reference={evidenceId:entry.id,sha256:entry.sha256,observedAt:entry.at,untrusted:true,
+   valuePointerPrefix:output?.image&&entry.text===text?'/screen':'',complete:!entry.truncated};
+   return output?.image?{...output,screen:{...output.screen,_stockchiefEvidence:reference}}:{...output,_stockchiefEvidence:reference};}
+  return entry?require('./context').preview(output,entry.id):output;
+ }
+ async function update(change,{cleanup=false,access}={}){return database.transaction(async client=>{
+  const goal=(await client.query(`SELECT * FROM ${TABLE} WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 FOR UPDATE`,
+   [ctx.workspaceId,ctx.actorId,goalId])).rows[0];
+  held(goal,cleanup);
+  const cp=goal.checkpoint;checkAuthority(harness(goal),access);
   const result=await change(cp.harness,goal,client);
   if(Buffer.byteLength(JSON.stringify(cp))>8*1024*1024)throw new Error('SESSION_SIZE_LIMIT');
   await client.query(`UPDATE ${TABLE} SET checkpoint=$4::jsonb,status=$5,answer=$6,tool_calls=$7,
@@ -54,27 +78,27 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    if(h.receipt?.requestHash!==require('./receipts').requestHash(goal))throw new Error('COMPLETION_REQUEST_MISMATCH');
    return {answer:goal.answer,completionSource:h.completionSource,checkedAt:h.receipt.checkedAt};
   },
-  async load(){await authority({catalogue:false});return update((h,goal)=>({...structuredClone(h),goalContext:{
+  async load(){return authorizedUpdate((h,goal)=>({...structuredClone(h),goalContext:{
    originalRequest:goal.original_request,messages:structuredClone(goal.checkpoint.messages||[])}}));},
-  async checkpoint(native){await authority({catalogue:false});return update(h=>{h.native={...h.native,...native};});},
-  async workingMemory(){await authority();return update(h=>require('./memory').working(h));},
-  async codexRequest(){await authority({catalogue:false});return update(h=>{
+  async checkpoint(native){return authorizedUpdate(h=>{h.native={...h.native,...native};});},
+  async workingMemory(){return authorizedUpdate(h=>require('./memory').working(h));},
+  async codexRequest(){return authorizedUpdate(h=>{
    if(candidate!=='codex')throw new Error('NOT_A_CODEX_SESSION');
    h.codexRequests||=0;
    if(h.codexRequests>=24)throw new Error('DURABLE_MODEL_REQUEST_LIMIT');
    h.codexRequests++;
    return {request:h.codexRequests};
   });},
-  async codexReplay(hash){await authority({catalogue:false});return update(h=>{
+  async codexReplay(hash){return read(h=>{
    if(candidate!=='codex')throw new Error('NOT_A_CODEX_SESSION');
    if(h.codexDelivery?.state==='PENDING')throw new Error('CODEX_RESPONSE_RECONCILIATION_REQUIRED');
    return h.codexDelivery?.hash===hash?structuredClone(h.codexDelivery.packet):null;
   });},
-  async codexPending(hash){await authority({catalogue:false});return update(h=>{
+  async codexPending(hash){return authorizedUpdate(h=>{
    if(candidate!=='codex'||h.codexDelivery?.state==='PENDING')throw new Error('CODEX_RESPONSE_RECONCILIATION_REQUIRED');
    h.codexDelivery={hash,state:'PENDING'};
   });},
-  async codexDelivered(hash,packet,outcome){await authority({catalogue:false});return update(h=>{
+  async codexDelivered(hash,packet,outcome){return authorizedUpdate(h=>{
    if(candidate!=='codex'||h.codexDelivery?.hash!==hash||h.codexDelivery.state!=='PENDING')throw new Error('CODEX_RESPONSE_SEQUENCE_MISMATCH');
    h.codexDelivery={hash,state:'SETTLED',packet};h.lastCodexResponse={...outcome,request:h.codexRequests};
   });},
@@ -82,20 +106,20 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
   // Its own durable slot still prevents spending again on an unknown outcome.
   helperDelivery(){return {
    identity:Object.freeze({workspaceId:ctx.workspaceId,actorId:ctx.actorId,goalId,candidate}),
-   codexReplay:async hash=>{await authority({catalogue:false});return update(h=>{
+   codexReplay:async hash=>{return read(h=>{
     if(h.helperDelivery?.state==='PENDING')throw Error('CODEX_RESPONSE_RECONCILIATION_REQUIRED');
     return h.helperDelivery?.hash===hash?structuredClone(h.helperDelivery.packet):null;
    });},
-   codexPending:async hash=>{await authority({catalogue:false});return update(h=>{
+   codexPending:async hash=>{return authorizedUpdate(h=>{
     if(h.helperDelivery?.state==='PENDING')throw Error('CODEX_RESPONSE_RECONCILIATION_REQUIRED');
     h.helperDelivery={hash,state:'PENDING'};
    });},
-   codexDelivered:async(hash,packet)=>{await authority({catalogue:false});return update(h=>{
+   codexDelivered:async(hash,packet)=>{return authorizedUpdate(h=>{
     if(h.helperDelivery?.hash!==hash||h.helperDelivery.state!=='PENDING')throw Error('CODEX_RESPONSE_SEQUENCE_MISMATCH');
     h.helperDelivery={hash,state:'SETTLED',packet};
    });}
   };},
-  async modelControl({budgetFinal=false}={}){await authority();return update(h=>{
+  async modelControl({budgetFinal=false}={}){return authorizedUpdate(h=>{
    h.modelRequests||=0;
    if(h.lastModelResponse?.empty)throw Object.assign(new Error(require('./finalization').EMPTY_MESSAGE),{code:'EMPTY_MODEL_FINAL'});
    if(h.modelRequests>=24||h.finalRequestSent)throw Object.assign(new Error('FINAL_REQUEST_EXHAUSTED'),{code:'FINAL_REQUEST_EXHAUSTED'});
@@ -104,28 +128,22 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    if(reason)h.finalRequestSent=true;
    return {request:h.modelRequests,final:Boolean(reason),reason};
   });},
-  async modelResponse(outcome){await authority();return update(h=>{
+  async modelResponse(outcome){return authorizedUpdate(h=>{
    if(outcome.request!==h.modelRequests)throw new Error('MODEL_RESPONSE_SEQUENCE_MISMATCH');
    h.lastModelResponse={request:outcome.request,final:Boolean(outcome.final),terminal:Boolean(outcome.terminal),
     visible:Boolean(outcome.visible),tool:Boolean(outcome.tool),empty:Boolean(outcome.empty),stopReason:outcome.stopReason,
     usageSettled:Boolean(outcome.usageSettled)};
   });},
-  async evidenceIndex(){await authority({catalogue:false});return update(h=>require('./observations').index(h));},
-  async present(output,{full=false}={}){await authority({catalogue:false});return update(h=>{
-   const text=JSON.stringify(output)??'null',legacyText=JSON.stringify(output?.image?output.screen:output)??'null';
-   const entry=require('./observations').ordered(Object.values(h.evidence||{})).findLast(e=>e.text===text||e.text===legacyText||e.truncated&&e.text===text.slice(0,128000));
-   if(full&&entry){const reference={evidenceId:entry.id,sha256:entry.sha256,observedAt:entry.at,untrusted:true,
-    valuePointerPrefix:output?.image&&entry.text===text?'/screen':'',complete:!entry.truncated};
-    return output?.image?{...output,screen:{...output.screen,_stockchiefEvidence:reference}}:{...output,_stockchiefEvidence:reference};}
-   return entry?require('./context').preview(output,entry.id):output;
-  });},
-  async evidence(input){await authority({catalogue:false});return update(h=>require('./observations').retrieve(h,input));},
-  async execute(name,input,operation){
+  async evidenceIndex(){return read(h=>require('./observations').index(h));},
+  async present(output,options){return read(h=>present(h,output,options));},
+  async evidence(input){return read(h=>require('./observations').retrieve(h,input));},
+  async executePresented(name,input,operation,presentation){return this.execute(name,input,operation,{presentation});},
+  async execute(name,input,operation,{presentation}={}){
    const business=name==='business_operations';
    // Browser/evidence/scratch tools need current lease and actor authority,
    // not a rebuilt catalogue of every possible commercial operation. The
    // interface/record gateway performs its own fresh contract checks.
-   const access=await authority({catalogue:business});
+   const access=await authorize({catalogue:business});
    let intent=business&&typeof input.stepsJson==='string'?{steps:require('./contracts').parseJson(input.stepsJson)}:input;
    if(business&&Array.isArray(intent.steps)&&intent.steps.length&&access?.catalogue)
     intent={steps:require('./contracts').operationSteps(intent.steps,access.catalogue)};
@@ -143,10 +161,10 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
       notice:'Original outcomes describe the previous preparation. canonicalReceipt is the fresh status. No business operation was repeated.',
       canonicalReceipt:await require('./receipts').collect(client,ctx,goal,h,access?.catalogue)};
      require('./observations').store(h,{id,name,result:replay});
-     return {replay};
+     return {replay:presentation?present(h,replay,presentation):replay};
     }
     h.inflight={id,name,fingerprint,consequential};return {id};
-   });}catch(error){
+   },{access});}catch(error){
     if(['DURABLE_TOOL_LIMIT','SESSION_OPERATION_UNRESOLVED'].includes(error.message))
      await update(h=>{h.admissionBlock={code:error.message,requiresUserInput:false};}).catch(()=>{});
     throw error;
@@ -154,7 +172,10 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    if(Object.hasOwn(start,'replay'))return start.replay;
    try{
     const result=await operation(start.id);
-    const approvals=await update(async(h,goal,client)=>{
+    // Evidence must not be released if authority changed while the tool ran.
+    // Persist/present it together, but retain the fresh post-operation check.
+    const deliveryAccess=presentation?await authorize({catalogue:false}):undefined;
+    const completed=await update(async(h,goal,client)=>{
      if(h.inflight?.id!==start.id)throw new Error('SESSION_OPERATION_MISMATCH');
      const onlyQuestions=Array.isArray(result?.outcomes)&&result.outcomes.length&&result.outcomes.every(o=>o.result?.status==='CLARIFY'&&!o.result.proposal);
      // No business effect was prepared for a pure question. After the owner
@@ -173,9 +194,10 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
       if(screen?.url)h.native.browserUrl=screen.url;
      }
      h.inflight=null;
-     if(candidate==='codex'&&business){const cards=await require('./approval-handoff').stage(client,ctx,goal,h);return {approvals:cards};}
-    });
-    await notifyApprovals(approvals);return result;
+     const approvals=candidate==='codex'&&business?await require('./approval-handoff').stage(client,ctx,goal,h):[];
+     return {approvals,output:presentation?present(h,result,presentation):result};
+    },{access:deliveryAccess});
+    await notifyApprovals(completed);return completed.output;
    }catch(error){
     await update((h,goal)=>{
      h.lastToolError={name,code:require('./tool-error').code(error),effectMayHaveOccurred:error.effectMayHaveOccurred!==false};
@@ -185,7 +207,7 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    }
   },
   async finish({answer,verified=false}){
-   const access=await authority();return update(async(h,goal,client)=>{
+   const access=await authorize();return update(async(h,goal,client)=>{
     if(h.inflight)throw new Error('SESSION_OPERATION_UNRESOLVED');
     // Only a host verifier may set verified; SDK final text is not verification.
     goal.answer=String(answer||'').slice(0,20000);
@@ -200,13 +222,13 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
     h.failure=classified.failure||null;h.userQuestion=classified.question||null;
     h.completionSource=goal.status==='COMPLETED'?'host_verified_answer':'unverified_answer';
     h.finishedAt=new Date().toISOString();
-   });
+   },{access});
   },
   async completeIfVerified(){
    // The verifier is supplied by trusted host code, never by a tool argument.
    // It must cover the ORIGINAL request, not merely the agent's chosen plan.
    if(!verifyOutcome)return null;
-   const access=await authority();return update(async(h,goal,client)=>{
+   const access=await authorize();return update(async(h,goal,client)=>{
     if(h.inflight)return null;
     const receipts=require('./receipts'),receipt=await receipts.collect(client,ctx,goal,h,access?.catalogue);
     if(receipt.dependencyState!=='READY'||receipt.operations.some(op=>!op.verified))return null;
@@ -216,7 +238,7 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
     goal.answer=String(verdict.answer).slice(0,20000);goal.status='COMPLETED';
     h.receipt={...receipt,wholeGoalVerification:verdict.evidence};h.completionSource='host_verified_receipt';
     h.finishedAt=new Date().toISOString();return {answer:goal.answer,completionSource:h.completionSource};
-   });
+   },{access});
   },
   async stop({code='HARNESS_INTERRUPTED'}={}){
    const existing=(await database.query(`SELECT status,run_token FROM ${TABLE} WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,goalId])).rows[0];

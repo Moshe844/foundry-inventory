@@ -70,6 +70,37 @@ async function capabilityState(database, scope, capability, options = {}) {
     source:'plan',subscription,access};
 }
 
+// One fresh snapshot for one catalogue construction, never a cache or an
+// execution permit. Canonical operations still recheck their own entitlement.
+async function capabilityStates(database,scope,capabilities,options={}){
+  const keys=[...new Set(capabilities.map(key=>catalog.canonicalCapability(key)))];
+  const definitions=new Map(keys.map(key=>[key,catalog.assertCapabilityKey(key)]));
+  await wallet.assertScope(database,scope);
+  const subscription=options.subscription||await subscriptionFor(database,scope.accountId);
+  const access=operationalAccess(subscription,options.now);
+  if(!subscription&&!config.commercial.requirePaidWorkspace)return new Map(keys.map(capability=>[capability,{
+    capability,definition:definitions.get(capability),enabled:definitions.get(capability).readiness!=='DISABLED',source:'development',
+    subscription:null,access:{mode:'DEVELOPMENT',canOperate:true,canRead:true}}]));
+  if(!access.canOperate&&!(options.allowReadOnly&&access.canRead&&subscription))return new Map(keys.map(capability=>[capability,{
+    capability,definition:definitions.get(capability),enabled:false,source:'subscription',subscription,access}]));
+  const overrides=(await database.query(`SELECT DISTINCT ON (capability) * FROM commercial_entitlement_overrides
+    WHERE (account_id=$1 OR workspace_id=$2) AND capability=ANY($3::text[]) AND starts_at<=COALESCE($4::timestamptz,now())
+      AND (ends_at IS NULL OR ends_at>COALESCE($4::timestamptz,now()))
+    ORDER BY capability,CASE WHEN workspace_id IS NOT NULL THEN 0 ELSE 1 END,created_at DESC`,
+    [scope.accountId,scope.workspaceId||null,keys,options.now||null])).rows;
+  const rows=subscription.plan_version_id
+    ?(await database.query(`SELECT entry->>'capability' AS capability,(entry->>'enabled')::bigint AS enabled,
+      COALESCE(entry->'configuration','{}'::jsonb) AS configuration FROM commercial_plan_versions version
+      CROSS JOIN LATERAL jsonb_array_elements(version.entitlements) entry
+      WHERE version.id=$1 AND entry->>'capability'=ANY($2::text[])`,[subscription.plan_version_id,keys])).rows
+    :(await database.query('SELECT capability,enabled,configuration FROM commercial_plan_entitlements WHERE plan_id=$1 AND capability=ANY($2::text[])',
+      [subscription.plan_id,keys])).rows;
+  return new Map(keys.map(capability=>{const definition=definitions.get(capability),override=overrides.find(row=>row.capability===capability),row=rows.find(row=>row.capability===capability);
+    return [capability,override?{capability,definition,enabled:definition.readiness!=='DISABLED'&&Boolean(Number(override.enabled)),
+      source:'override',override,subscription,access}:{capability,definition,enabled:definition.readiness!=='DISABLED'&&Boolean(row&&Number(row.enabled)),
+      configuration:row?.configuration||{},source:'plan',subscription,access}];}));
+}
+
 async function assertCapability(database, scope, capability, options = {}) {
   capability=catalog.canonicalCapability(capability);
   const state = await capabilityState(database, scope, capability, options);
@@ -329,6 +360,6 @@ async function summary(database, scope) {
     meters:await Promise.all(meters.filter((row)=>!wallet.CATEGORY_FOR[row.meter]).map((row)=>meterState(database,scope,row.meter,{subscription})))};
 }
 
-module.exports = { EntitlementError,subscriptionFor,operationalAccess,capabilityState,assertCapability,meterState,
+module.exports = { EntitlementError,subscriptionFor,operationalAccess,capabilityState,capabilityStates,assertCapability,meterState,
   ownerScopeForWorkspace,operationalAccessForWorkspace,assertWorkspaceOperational,assertMeterCapacity,
   reserveUsage,commitUsage,reverseUsage,recordUsage,summary,periodBounds };

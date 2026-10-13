@@ -9,6 +9,12 @@ Full observations are recorded in the durable environment_evidence journal. Tool
 Use the scratch workspace for calculations and documents. Do not invent business facts or permissions. Clearly distinguish verified results, pending approvals, external waits, missing user decisions and internal failures.
 If a genuinely missing user decision prevents progress, return a final JSON object with status "needs_user", question and missingInformation. An internal failure or exhausted investigation is not a missing user decision.`;
 function digest(value){return createHash('sha256').update(JSON.stringify(Object.fromEntries(Object.keys(value||{}).sort().map(key=>[key,value[key]])))).digest('hex');}
+const preparedSandboxes=new WeakSet();
+async function prepareSandbox(image){
+ const sandbox=await require('./sandbox').createSandbox({image});
+ try{const prepared={sandbox,isolation:await sandbox.certify(),image};preparedSandboxes.add(prepared);return prepared;}
+ catch(error){await sandbox.close().catch(()=>{});throw error;}
+}
 async function run(options){
  const {session,transport,budget,audit=()=>{},signal}=options;
  if(process.env.STOCKCHIEF_CODEX_SDK_DEMO!=='1'&&!require('../../src/assistant/codex-staging-permit').has(options.codexLivePermit))throw Error('CODEX_SDK_FEATURE_DISABLED');
@@ -21,9 +27,11 @@ async function run(options){
  const saved=await session.load();const state=saved.native.codex;
  transport.setNativeSession?.(session);
  if(state&&(state.version!==policy.VERSION||state.model!==policy.MODEL||state.effort!==policy.EFFORT||state.digest!==digest(state.files)))throw Error('CODEX_NATIVE_STATE_MISMATCH');
- const sandbox=await require('./sandbox').createSandbox({image:options.codexImage});
- const isolation=await sandbox.certify();audit({kind:'codex_isolation',...isolation});
- const common=require('./candidates').sharedTools({...options,sandbox,session:{...session,present:output=>session.present(output,{full:true})}});
+ const prepared=options.preparedCodexSandbox||await prepareSandbox(options.codexImage);
+ if(!preparedSandboxes.has(prepared)||prepared.image!==options.codexImage)throw Error('INVALID_PREPARED_SANDBOX');
+ preparedSandboxes.delete(prepared);
+ const {sandbox,isolation}=prepared;audit({kind:'codex_isolation',...isolation});
+ const common=require('./candidates').sharedTools({...options,sandbox,session,fullEvidence:true});
  const tools=common.map(t=>({name:t.name,description:t.description,inputSchema:require('zod').z.toJSONSchema(t.schema)}));
  const messages=saved.goalContext.messages||[];
  const newMessages=messages.slice(state?.deliveredMessages||0);
@@ -91,6 +99,6 @@ async function run(options){
   if(terminal&&(terminal.empty||terminal.tool||!terminal.terminal))throw Error('EMPTY_MODEL_FINAL');
   if(!answer.trim())throw Error('EMPTY_MODEL_FINAL');
   return {answer,reportedUsage:usage,threadId,runtime:{sdk:'@openai/codex-sdk',version:policy.VERSION,requestedModel:policy.MODEL,reasoningEffort:policy.EFFORT}};
- }finally{clearTimeout(timer);signal?.removeEventListener('abort',interrupt);stop();lines.close();await sandbox.close();}
+ }finally{clearTimeout(timer);signal?.removeEventListener('abort',interrupt);stop();lines.close();if(!options.preparedCodexSandbox)await sandbox.close();}
 }
-module.exports={run,INSTRUCTIONS,digest};
+module.exports={run,INSTRUCTIONS,digest,prepareSandbox};

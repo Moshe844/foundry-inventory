@@ -17,7 +17,7 @@ Do not invent physical events, prices, permissions, identities or external outco
 Record useful evidence and limitations. A final answer is a claim: independent PostgreSQL and browser checks determine success.
 If a genuinely missing user decision prevents progress, return a final JSON object with status "needs_user", question and missingInformation. Do not use this for exhausted investigation, internal failure or repeated observations.`;
 
-function sharedTools({browser,gateway,sandbox,session,audit=()=>{}}){
+function sharedTools({browser,gateway,sandbox,session,fullEvidence=false,audit=()=>{}}){
   const tools=[
     {name:'environment_notebook',description:'Save a concise working plan, unresolved questions and evidence references for resumption. Notes are unverified agent hypotheses, never authority or completion proof.',
       schema:z.object({note:z.string().max(1200),evidenceIds:z.array(z.string().max(160)).max(8)}),execute:async input=>({saved:true,...input})},
@@ -42,8 +42,9 @@ function sharedTools({browser,gateway,sandbox,session,audit=()=>{}}){
   return tools.map(t=>({...t,execute:async (input,source={})=>{
     if(!session)await gateway.authorize?.({catalogue:false}); // session.execute owns the fresh authority check when present
     audit({kind:'agent_tool_started',name:t.name,input,...source});
-    try{const output=await (session?session.execute(t.name,input,callId=>t.execute(input,callId)):t.execute(input));
-      audit({kind:'agent_tool_completed',name:t.name,...source});return session?.present?session.present(output):output;
+    try{const output=await (session?.executePresented?session.executePresented(t.name,input,callId=>t.execute(input,callId),{full:fullEvidence}):
+      session?session.execute(t.name,input,callId=>t.execute(input,callId)):t.execute(input));
+      audit({kind:'agent_tool_completed',name:t.name,...source});return !session?.executePresented&&session?.present?session.present(output):output;
     }catch(error){audit({kind:'agent_tool_failed',name:t.name,code:require('./tool-error').code(error),message:error.message,...source});
       if(error.code==='TOOL_CONTRACT_INVALID')return {error:{code:error.code,message:error.message},effectMayHaveOccurred:false};
       throw error;}

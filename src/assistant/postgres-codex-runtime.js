@@ -56,12 +56,19 @@ async function run(database,ctx,id,options={}){
   helper=require(base+'codex-helper-provider').create({transport:helperTransport});
   const connectionString=process.env.FOUNDRY_DATABASE_URL||process.env.DATABASE_URL;
   const token=await pilot.readAuthorization(database,ctx,connectionString);
+  // Both resources are brand-new and goal-local. Prepare the credential-free
+  // sandbox concurrently with the restricted renderer, never reuse a browser
+  // or another goal's files. Join cleanup even if either initialization fails.
+  const preparedSandbox=require(base+'codex-runtime').prepareSandbox(image);
+  preparedSandbox.catch(()=>{});
+  cleanup.push(async()=>{const prepared=await preparedSandbox.catch(()=>null);if(prepared)await prepared.sandbox.close();});
   audit({kind:'runtime_starting',status:'Opening the isolated business browser'});
   const server=await require(base+'inspection').createInspectionServer({cluster:{connectionString},database,ctx,stagingAuthorization:token});cleanup.push(()=>server.close());
   const browser=await require('playwright').chromium.launch({headless:true});cleanup.push(()=>browser.close());
   const ui=await require(base+'browser').createBrowserTools(browser,{origin:server.origin,audit});cleanup.push(()=>ui.close());
   audit({kind:'runtime_starting',status:'Starting the Codex SDK session'});
   const result=await require(base+'worker').run({candidate:'codex',session,gateway:{...gateway,authorize},browser:ui,budget,transport,
+   preparedCodexSandbox:await preparedSandbox,
    credentials:{openai:key},codexLivePermit:permit,codexImage:image,privateHarnessDirectory:directory,audit,
    finalReportInstructions:require('./postgres-codex-verification').instructions});
   const current=await store.get(database,ctx,id);

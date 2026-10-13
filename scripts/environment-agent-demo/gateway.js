@@ -11,6 +11,16 @@ function describe(c){return {name:c.name,kind:c.kind,description:c.description,r
   fields:Object.fromEntries(c.fields.map(name=>[name,{type:FIELDS[name]?.type||'string',description:c.agentHints?.[name]||FIELDS[name]?.description||name,
    ...(c.argumentSchemas?.[name]?{jsonSchema:c.argumentSchemas[name]()}:{})}])),
   authority:c.authority,unavailable:c.commercialUnavailable||[]};}
+function contractPage(entries,offset,details,summary){
+ const page=[];let bytes=0;
+ for(const entry of entries.slice(offset,offset+12)){
+  let value=details(entry),size=Buffer.byteLength(JSON.stringify(value));
+  if(size>18000){value={...summary(entry),detailsByName:true};size=Buffer.byteLength(JSON.stringify(value));}
+  if(page.length&&bytes+size>18000)break;
+  page.push(value);bytes+=size;
+ }
+ return {page,nextOffset:offset+page.length<entries.length?offset+page.length:null};
+}
 
 // ctx, original goal and database are host-bound. Models cannot supply tenant,
 // actor, approval, SQL, provider credentials or an alternative source message.
@@ -44,17 +54,25 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
   return {
     authorize:access,
     async interfaces({search='',offset=0,names=[]}={}){const {actor,catalogue}=await access();
-      const matches=c=>require('./interface-search').matches(c,search);
-      const all=catalogue.list().filter(matches);
+      const operationSearch=require('./interface-search').ranked(catalogue.list(),search);
+      const all=operationSearch.items;
       const datasets=require('../../src/reports/postgres-registry').list(actor).map(d=>({...d,name:d.key}));
       if(require('../../src/reports/postgres-composed').dimensions(actor).length)datasets.push({name:'composed',label:'Combine governed measures across datasets'});
-      const matchedDatasets=datasets.filter(matches);return {
+      const datasetSearch=require('./interface-search').ranked(datasets,search);
+      const matchedDatasets=datasetSearch.items;
+      // Relevant contracts arrive with their usable fields in the discovery
+      // response. Bounded pagination avoids an obligatory detail-only model
+      // round without injecting the whole catalogue into every prompt.
+      const operationPage=contractPage(all,offset,describe,c=>({name:c.name,kind:c.kind,description:c.description}));
+      const datasetDetails=d=>({...d,queryContract:require('../../src/reports/postgres-service').queryContract(d.name,actor)});
+      const datasetPage=contractPage(matchedDatasets,offset,datasetDetails,d=>({name:d.name,label:d.label}));
+      return {
       operations:names.length?catalogue.list().filter(c=>names.includes(c.name)).map(describe):
-       all.slice(offset,offset+12).map(c=>({name:c.name,kind:c.kind,description:c.description})),
-      total:all.length,nextOffset:offset+12<all.length?offset+12:null,
-      datasets:names.length?matchedDatasets.filter(d=>names.includes(d.name)).map(d=>({...d,queryContract:require('../../src/reports/postgres-service').queryContract(d.name,actor)})):
-       matchedDatasets.slice(offset,offset+12).map(d=>({name:d.name,label:d.label})),
-      datasetTotal:matchedDatasets.length,datasetNextOffset:offset+12<matchedDatasets.length?offset+12:null,
+       operationPage.page,
+      total:all.length,nextOffset:operationPage.nextOffset,
+      datasets:names.length?matchedDatasets.filter(d=>names.includes(d.name)).map(datasetDetails):datasetPage.page,
+      datasetTotal:matchedDatasets.length,datasetNextOffset:datasetPage.nextOffset,
+      searchMatch:{operations:operationSearch.matchMode,datasets:datasetSearch.matchMode},
       coverage:'These are governed execution contracts and curated report projections, not exhaustive environment discovery. Unlisted application screens, forms and rendered records remain discoverable through the browser. A missing execution contract is a reported execution limitation, never authority to bypass the gateway.',
       policy:'Browser inspection cannot commit changes. Operations use canonical engines. Prepared means awaiting authority, never completed. No approval tool is available.'};},
     async operate({steps,callId=randomUUID()}){
