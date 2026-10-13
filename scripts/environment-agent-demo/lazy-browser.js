@@ -9,6 +9,6 @@ function lazyBrowser(create){
   attempt.catch(()=>{if(opening===attempt)opening=null;});
   return attempt;
  };
- return {act:async input=>(await get(input)).act(input),restore:async url=>(await get()).restore(url)};
+ return {prepare:()=>get(),act:async input=>(await get(input)).act(input),restore:async url=>(await get()).restore(url)};
 }
 module.exports={lazyBrowser};

@@ -86,6 +86,12 @@ async function run(database,ctx,id,options={}){
    audit({kind:'browser_preparation_timing',phase:'current_page_load',ms:Date.now()-phaseStarted});
    return tools;
   });
+  // A fresh session always receives the current browser view. Open that
+  // credential-free, permission-checked renderer alongside durable loading
+  // instead of serializing its startup behind the session transaction.
+  if(!goal.checkpoint.harness?.native?.codex?.threadId){
+   const initialBrowser=ui.prepare();preparations.push(initialBrowser);initialBrowser.catch(()=>{});
+  }
   let preparedContext=require(base+'codex-runtime').prepareContext({session,browser:ui,gateway,audit});
   preparations.push(preparedContext);preparedContext.catch(()=>{});
   const fundingKey=`codex-staging:${id}`;
