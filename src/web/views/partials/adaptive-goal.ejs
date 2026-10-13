@@ -5,12 +5,12 @@
 <section class="rm-agent" aria-label="Goal progress" data-adaptive-goal="<%= goal.id %>" data-goal-status="<%= goal.status %>" data-goal-created="<%= new Date(goal.created_at).toISOString() %>" data-goal-updated="<%= new Date(goal.updated_at).toISOString() %>" data-goal-latest="<%= locals.isLatest?'true':'false' %>">
   <div class="rm-agent__header">
     <p class="rm-agent__phase" role="status" data-goal-phase><span class="rm-agent__dot" aria-hidden="true"></span><span data-goal-phase-text><%= phase %></span></p>
-    <span class="rm-agent__elapsed" data-goal-elapsed></span>
+    <span class="rm-agent__elapsed" data-goal-elapsed data-run-started="<%= goal.checkpoint.runStartedAt||new Date(goal.created_at).toISOString() %>" <%= goal.status==='RUNNING'?'':'hidden' %>></span>
     <% if(!['COMPLETED','CANCELLED','BLOCKED'].includes(goal.status)){ %>
       <form method="post" action="/ask/goals/<%= goal.id %>/cancel"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">Stop</button></form>
     <% } %>
   </div>
-  <p class="rm-agent__answer" data-goal-answer <%= goal.answer?'':'hidden' %>><%= goal.answer||'' %></p>
+  <div class="rm-agent__answer" data-goal-answer <%= goal.answer?'':'hidden' %>><%- renderAgentAnswer(goal.answer||'') %></div>
   <p class="rm-agent__hint" data-goal-hint><%= active?'You can leave this page. I’ll keep working and show any required approval here.':'' %></p>
   <% if(goal.checkpoint.runtime==='codex-staging'){ %>
     <details class="rm-agent__details"><summary>Activity details</summary><ol data-goal-timeline aria-label="Agent activity"></ol></details>

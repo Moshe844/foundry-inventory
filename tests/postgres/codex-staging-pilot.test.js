@@ -50,8 +50,13 @@ test('Staging website pilot is scoped, delivers durable approvals, executes cano
  await session.execute('business_operations',{steps},callId=>gateway.operate({steps,callId}));
  const ready=await session.handoffApprovals();assert.equal(ready.approvals.length,1);
  const followup=await store.create(db,ctx,'Read my current products.');
- await db.query(`UPDATE stockchief_runtime.assistant_goals SET checkpoint=checkpoint||'{"runtime":"codex-staging"}'::jsonb WHERE id=$1`,[followup.id]);
+ const formattedAnswer='Your current inventory:\n\n| Item | SKU | On hand |\n|---|---|---:|\n| Sample A | A | 20 |\n| Sample B | B | 8 |\n| Sample C | C | 0 |\n\nSample C is out of stock, with 2 units on order.';
+ await db.query(`UPDATE stockchief_runtime.assistant_goals SET status='COMPLETED',answer=$2,checkpoint=checkpoint||'{"runtime":"codex-staging"}'::jsonb WHERE id=$1`,[followup.id,formattedAnswer]);
  await page.reload();assert.equal(await page.getByRole('button',{name:'Approve exact operation'}).count(),1,(await page.locator('body').innerText()).slice(-3500));
+ const answerPanel=page.locator(`[data-adaptive-goal="${followup.id}"]`);
+ assert.equal(await answerPanel.getByRole('table').count(),1);assert.equal(await answerPanel.getByRole('row').count(),4);
+ await answerPanel.getByRole('cell',{name:'20',exact:true}).waitFor();
+ assert.equal(await answerPanel.getByRole('columnheader',{name:'On hand',exact:true}).count(),1);
  assert.equal(await page.getByRole('button',{name:'Approve exact operation'}).evaluate(el=>Boolean(el.closest('.rm-history'))),false,'A newer question cannot hide a pending approval inside folded history');
  assert.equal((await db.query('SELECT count(*) AS n FROM movements WHERE workspace_id=$1 AND reference=$2',[ctx.workspaceId,'STAGE-SMOKE'])).rows[0].n,'0');
  const card=ready.approvals[0];
@@ -66,6 +71,31 @@ test('Staging website pilot is scoped, delivers durable approvals, executes cano
  assert.equal((await db.query('SELECT count(*) AS n FROM movements WHERE workspace_id=$1 AND reference=$2',[ctx.workspaceId,'STAGE-SMOKE'])).rows[0].n,'1');
  const cards=(await db.query("SELECT count(*) AS n FROM stockchief_runtime.assistant_goal_events WHERE goal_id=$1 AND kind='approval_ready'",[goal.id])).rows[0].n;
  assert.equal(cards,'1');
+ // Reproduce the live failure: reject in another tab while this page remains
+ // open. Waiting for the owner is not runtime, and old approval forms vanish.
+ const rejected=await store.create(db,ctx,'Prepare a receipt for owner review.');
+ await db.query(`UPDATE stockchief_runtime.assistant_goals SET created_at=now()-interval '87 minutes',checkpoint=checkpoint||'{"runtime":"codex-staging"}'::jsonb WHERE id=$1`,[rejected.id]);
+ const held=await store.claim(db,ctx,rejected.id);assert(Date.now()-new Date(held.checkpoint.runStartedAt).getTime()<5000);
+ const rejectionGateway=require('../../scripts/environment-agent-demo/gateway').createGateway({database:db,ctx,goal:held.original_request,goalId:held.id,runToken:held.run_token,provider:{complete:async()=>{throw Error('NO_PAID_MODELS');}}});
+ const rejectionSession=require('../../scripts/environment-agent-demo/session').createSession({database:db,ctx,goalId:held.id,runToken:held.run_token,candidate:'codex',authorize:rejectionGateway.authorize});
+ const rejectedSteps=structuredClone(steps);rejectedSteps[0].arguments.find(a=>a.name==='reference').value='REJECTED-SMOKE';
+ await rejectionSession.execute('business_operations',{steps:rejectedSteps},callId=>rejectionGateway.operate({steps:rejectedSteps,callId}));
+ const rejectedCard=(await rejectionSession.handoffApprovals()).approvals[0];await page.reload();
+ const rejectedPanel=page.locator(`[data-adaptive-goal="${held.id}"]`);
+ assert.equal(await rejectedPanel.locator('[data-goal-elapsed]').isVisible(),false);
+ await page.getByRole('textbox',{name:'Ask StockChief',exact:true}).fill('Keep this unsent draft');
+ await pilot.decide(db,ctx,held.id,rejectedCard.id,rejectedCard.sha256,false,{responseReference:'offline owner rejection from second tab'});
+ await rejectedPanel.getByText('Stopped',{exact:true}).waitFor();
+ assert.equal(await rejectedPanel.getByRole('button',{name:'Approve exact operation'}).count(),0);
+ assert.match(await rejectedPanel.innerText(),/rejected.*stopped/);
+ assert.equal(await rejectedPanel.locator('[data-goal-elapsed]').isVisible(),false);
+ assert.equal(await page.getByRole('textbox',{name:'Ask StockChief',exact:true}).inputValue(),'Keep this unsent draft');
+ assert.equal((await store.get(db,ctx,held.id)).status,'CANCELLED');
+ assert.equal((await db.query('SELECT count(*) AS n FROM movements WHERE workspace_id=$1 AND reference=$2',[ctx.workspaceId,'REJECTED-SMOKE'])).rows[0].n,'0');
+ // The old path stored BLOCKED plus the original approval text. Reconcile
+ // only a canonically cancelled proposal with persisted human rejection.
+ await db.query("UPDATE stockchief_runtime.assistant_goals SET status='BLOCKED',answer='Approval required' WHERE id=$1",[held.id]);
+ assert.equal((await require('../../scripts/environment-agent-demo/waits').refresh(db,ctx,held.id)).status,'CANCELLED');
  await page.getByRole('button',{name:'Disable pilot · use existing Ask'}).click();assert.equal(await pilot.selected(db,ctx),false);
  assert.match(await page.locator('body').innerText(),/Existing Ask/);
  assert.equal((await db.query('SELECT count(*) AS n FROM stockchief_runtime.codex_pilot_calls')).rows[0].n,'0');

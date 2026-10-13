@@ -17,18 +17,20 @@
  }
  if(typeof module!=='undefined'&&module.exports){module.exports={activity,activities};return;}
  for(const panel of document.querySelectorAll('[data-adaptive-goal]')){
-  let status=panel.dataset.goalStatus,updated=panel.dataset.goalUpdated,rows=[],disconnected=false;
+  let status=panel.dataset.goalStatus,updated=panel.dataset.goalUpdated,rows=[],disconnected=false,elapsedTimer;
   const phase=panel.querySelector('[data-goal-phase-text]'),hint=panel.querySelector('[data-goal-hint]');
   function elapsed(){
-   const active=['READY','RUNNING','WAITING_EVENT'].includes(status);
-   const start=new Date(panel.dataset.goalCreated).getTime(),end=active?Date.now():new Date(updated).getTime();
+   window.clearTimeout(elapsedTimer);
+   const active=['READY','RUNNING'].includes(status);
+   const timer=panel.querySelector('[data-goal-elapsed]');timer.hidden=status!=='RUNNING';
+   const start=new Date(timer.dataset.runStarted||panel.dataset.goalCreated).getTime(),end=Date.now();
    const seconds=Math.max(0,Math.floor((end-start)/1000));
    panel.querySelector('[data-goal-elapsed]').textContent=seconds>=60?`${Math.floor(seconds/60)}m ${seconds%60}s`:`${seconds}s`;
    if(disconnected)hint.textContent='Connection lost. Current progress is unknown; your request is saved.';
    else if(['READY','RUNNING'].includes(status))hint.textContent=seconds>=60?'This is taking longer than usual. You can leave this page; I’ll keep working.':'You can leave this page. I’ll keep working and show any required approval here.';
    else hint.textContent='';
    panel.dataset.active=String(active);
-   if(active)window.setTimeout(elapsed,1000);
+   if(active)elapsedTimer=window.setTimeout(elapsed,1000);
   }
   elapsed();
   if(panel.dataset.goalLatest!=='true'&&!['READY','RUNNING','WAITING_EVENT','WAITING_APPROVAL'].includes(status))continue;
@@ -41,15 +43,21 @@
      const changed=goal.status!==status;
      disconnected=false;
      status=goal.status;updated=goal.updatedAt;panel.dataset.goalStatus=status;
+     if(goal.runStartedAt)panel.querySelector('[data-goal-elapsed]').dataset.runStarted=goal.runStartedAt;
+     elapsed();
+     // A second tab can decide a proposal while this page keeps polling.
+     // Remove obsolete decision forms immediately without losing draft text.
+     if(status!=='WAITING_APPROVAL')for(const card of panel.querySelectorAll('[data-approval-id]'))card.remove();
      rows=activities(goal.events||[]);phase.textContent=status==='RUNNING'?(rows.at(-1)?.label||phases.RUNNING):(phases[status]||'Checking progress');
-     const answer=panel.querySelector('[data-goal-answer]');answer.textContent=goal.answer||'';answer.hidden=!goal.answer;
+     const answer=panel.querySelector('[data-goal-answer]');
+     if(window.StockChiefAnswer)answer.innerHTML=window.StockChiefAnswer.render(goal.answer||'');else answer.textContent=goal.answer||'';
+     answer.hidden=!goal.answer;
      const timeline=panel.querySelector('[data-goal-timeline]');
      if(timeline){timeline.replaceChildren();for(const row of rows){const li=document.createElement('li');li.textContent=row.label;timeline.append(li);}}
      if(['COMPLETED','BLOCKED','CANCELLED'].includes(status)){
       panel.dataset.active='false';hint.textContent='';
       const stop=panel.querySelector('form[action$="/cancel"]');if(stop)stop.hidden=true;
-      const seconds=Math.max(0,Math.floor((new Date(updated)-new Date(panel.dataset.goalCreated))/1000));
-      panel.querySelector('[data-goal-elapsed]').textContent=seconds>=60?`${Math.floor(seconds/60)}m ${seconds%60}s`:`${seconds}s`;
+      panel.querySelector('[data-goal-elapsed]').hidden=true;
      }
      // Update terminal truth immediately; never depend on a page reload to
      // stop the spinner. Reload only to obtain authenticated decision forms.

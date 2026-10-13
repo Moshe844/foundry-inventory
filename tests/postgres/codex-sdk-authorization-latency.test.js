@@ -19,7 +19,8 @@ test('native bookkeeping avoids repeated catalogue construction while retaining 
  for(let index=0;index<17;index++){await session.load();await session.checkpoint({browserStep:index});}
  for(let index=0;index<12;index++){await session.codexRequest();await session.codexPending('round-'+index);await session.codexDelivered('round-'+index,{status:200},{terminal:false,tool:true});}
  assert(calls.every(c=>c.catalogue===false));
- const tools=require('../../scripts/environment-agent-demo/candidates').sharedTools({gateway,session,browser:{act:async()=>({url:'http://isolated/',text:'Observed records'})},sandbox:{}});
+ let browserReads=0;
+ const tools=require('../../scripts/environment-agent-demo/candidates').sharedTools({gateway,session,browser:{act:async()=>{browserReads++;return {url:'http://isolated/',text:'Observed records'};}},sandbox:{}});
  queries=0;await tools.find(t=>t.name==='environment_browser').execute({action:'inspect',ref:null,value:null});const browserQueries=queries;
  assert(calls.every(c=>c.catalogue===false),'Real shared browser tool path avoids every full catalogue rebuild');
  assert(browserQueries<fullQueries,JSON.stringify({fullQueries,lightQueries,browserQueries}));
@@ -41,6 +42,9 @@ test('native bookkeeping avoids repeated catalogue construction while retaining 
  t.diagnostic(JSON.stringify({fullQueries,lightQueries,browserQueries,interfaceQueries}));
  await db.query("UPDATE users SET permissions='{}'::jsonb,role='member' WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,ctx.actorId]);
  await assert.rejects(session.load(),/SESSION_AUTHORITY_CHANGED/);
+ const beforeReads=browserReads;
+ await assert.rejects(tools.find(t=>t.name==='environment_browser').execute({action:'inspect',ref:null,value:null}),/SESSION_AUTHORITY_CHANGED/);
+ assert.equal(browserReads,beforeReads,'Revoked authority fails before browser inspection even without the redundant wrapper check');
  await store.cancel(db,ctx,goal.id);
  await assert.rejects(gateway.authorize({catalogue:false}),/not held/);
 });

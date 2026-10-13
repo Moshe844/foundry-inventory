@@ -7,7 +7,7 @@ function enabled(ctx){return process.env.STOCKCHIEF_ADAPTIVE_ASK==='1'&&
 async function get(db,ctx,id){return (await db.query(`SELECT * FROM ${TABLE}
  WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,id])).rows[0]||null;}
 async function progress(db,ctx,id){return (await db.query(`SELECT id,status,answer,created_at,updated_at,turns,tool_calls,
- jsonb_build_object('runtime',checkpoint->'runtime') AS checkpoint FROM ${TABLE}
+ jsonb_build_object('runtime',checkpoint->'runtime','runStartedAt',checkpoint->'runStartedAt') AS checkpoint FROM ${TABLE}
  WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,id])).rows[0]||null;}
 async function create(db,ctx,message,{usageKey=newId('goalrequest'),budgetMinor=75,page=null}={}){
  const clean=String(message||'').trim();
@@ -27,7 +27,8 @@ async function claim(db,ctx,id){
  await db.query(`UPDATE ${TABLE} SET status='BLOCKED',answer='The previous run was interrupted. Review its recorded work before retrying.',
  run_token=NULL,lease_until=NULL,updated_at=now() WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3
  AND status='RUNNING' AND lease_until<now()`,[ctx.workspaceId,ctx.actorId,id]);
- return (await db.query(`UPDATE ${TABLE} SET status='RUNNING',run_token=$4,lease_until=now()+interval '10 minutes',updated_at=now()
+ return (await db.query(`UPDATE ${TABLE} SET status='RUNNING',run_token=$4,lease_until=now()+interval '10 minutes',updated_at=now(),
+ checkpoint=jsonb_set(checkpoint,'{runStartedAt}',to_jsonb(now()))
  WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 AND status='READY' AND expires_at>now() RETURNING *`,
  [ctx.workspaceId,ctx.actorId,id,token])).rows[0]||null;
 }

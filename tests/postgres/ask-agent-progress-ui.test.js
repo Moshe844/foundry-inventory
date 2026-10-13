@@ -32,7 +32,7 @@ test('agent conversation keeps requests in order with compact responsive progres
  assert.equal(await panel.locator('[data-goal-timeline] li').count(),1);
  assert((await panel.boundingBox()).height<180,'Desktop progress stays compact');
  await page.setViewportSize({width:390,height:800});assert((await panel.boundingBox()).height<240,'Mobile progress wraps without narrow event columns');
- await db.query("UPDATE stockchief_runtime.assistant_goals SET created_at=created_at-interval '2 minutes' WHERE id=ANY($1::text[])",[[first.id,second.id]]);
+ await db.query("UPDATE stockchief_runtime.assistant_goals SET checkpoint=jsonb_set(checkpoint,'{runStartedAt}',to_jsonb(now()-interval '2 minutes')) WHERE id=$1",[second.id]);
  await page.reload();await panel.getByText('This is taking longer than usual.',{exact:false}).waitFor();
  assert.match(await panel.locator('[data-goal-elapsed]').innerText(),/\d+m \d+s/);
  let navigations=0;page.on('framenavigated',()=>navigations++);
@@ -43,5 +43,14 @@ test('agent conversation keeps requests in order with compact responsive progres
  assert.equal(await panel.getByRole('button',{name:'Stop',exact:true}).isVisible(),false);
  assert.equal(await panel.locator('[data-goal-hint]').innerText(),'');
  assert.match(await panel.locator('[data-goal-answer]').innerText(),/failed before any business change/);
+ await db.query("UPDATE stockchief_runtime.assistant_goals SET status='RUNNING',answer='' WHERE id=$1",[second.id]);await page.reload();
+ const tableAnswer='Your current inventory:\n\n| Item | SKU | On hand |\n|---|---|---:|\n| Sample A | A | 20 |\n| Sample B | B | 8 |\n| Sample C | C | 0 |\n\nSample C is out of stock, with 2 units on order.';
+ await db.query("UPDATE stockchief_runtime.assistant_goals SET status='COMPLETED',answer=$2,updated_at=now() WHERE id=$1",[second.id,tableAnswer]);
+ await panel.getByRole('columnheader',{name:'On hand',exact:true}).waitFor();
+ assert.equal(await panel.getByRole('row').count(),4,'Live polling formats the completed response just like server rendering');
+ assert.equal(await panel.locator('[data-goal-elapsed]').isVisible(),false);
+ assert(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),'The table fits the mobile page');
+ require('node:fs').mkdirSync('data/codex-staging-pilot',{recursive:true});
+ await panel.screenshot({path:'data/codex-staging-pilot/offline-answer-rendering.png'});
  assert.equal(Number((await db.query('SELECT count(*) AS n FROM stockchief_runtime.codex_pilot_calls')).rows[0].n),0);
 });

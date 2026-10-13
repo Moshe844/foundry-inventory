@@ -39,7 +39,9 @@ async function run(options){
   if(message.kind==='failed'){failed||=Error(message.message);return;}
   let result;
   try{
-   await options.gateway.authorize({catalogue:false});
+   // Authority belongs to the side-effect boundary: session.checkpoint,
+   // shared tool execution, and the paid relay each perform fresh checks.
+   // SDK event acknowledgements expose no business data or execution grant.
    if(message.kind==='checkpoint'){
     if(message.resources)audit({kind:'codex_resources',...message.resources});
     const native={version:policy.VERSION,model:policy.MODEL,effort:policy.EFFORT,threadId:message.threadId,files:message.files,encoding:message.encoding,
@@ -81,7 +83,7 @@ async function run(options){
  try{
   const prompt=[state?.threadId?`Continue the original goal. ${options.resumeContext||''}`:saved.goalContext.originalRequest,...newMessages].join('\n');
   child.stdin.write(JSON.stringify({prompt,profile:policy.PROFILE.id,
-   instructions:INSTRUCTIONS+(options.finalReportInstructions||'')+'\nAvailable StockChief tools (their exact parameter schemas remain discoverable):\n'+common.map(t=>`mcp__stockchief__${t.name}: ${t.description}`).join('\n'),tools,threadId:state?.threadId,files:state?.files,encoding:state?.encoding,workspaceFiles:state?.workspaceFiles,
+   instructions:INSTRUCTIONS+(options.finalReportInstructions||'')+'\nAvailable StockChief tool contracts follow. These names and parameter schemas can be used directly; rediscover only missing contract details.\n'+tools.map(t=>`mcp__stockchief__${t.name}: ${t.description}\n${JSON.stringify(t.inputSchema)}`).join('\n'),tools,threadId:state?.threadId,files:state?.files,encoding:state?.encoding,workspaceFiles:state?.workspaceFiles,
    nativeCompactionTokenLimit:policy.nativeCompactionTokenLimit,offlineCompact:options.offlineCompact===true})+'\n');
   const code=await new Promise((resolve,reject)=>{child.once('error',reject);child.once('close',resolve);});await chain;
   if(code!==0||failed||!completed)throw failed||Error('CODEX_RUNTIME_FAILED: '+stderr.slice(-600));

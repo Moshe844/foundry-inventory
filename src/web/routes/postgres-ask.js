@@ -180,7 +180,7 @@ function createPostgresAskRouter(database,options={}){
     if(isPilot)await pilot.access(database,req.ctx);
     const events=isPilot?(await database.query(`SELECT sequence,kind,detail,created_at FROM stockchief_runtime.assistant_goal_events
       WHERE goal_id=$1 AND kind IN ('agent_activity','approval_ready') ORDER BY sequence DESC LIMIT 20`,[goal.id])).rows:[];
-    return res.json({id:goal.id,status:goal.status,answer:goal.answer,createdAt:goal.created_at,updatedAt:goal.updated_at,turns:goal.turns,tools:goal.tool_calls,events});
+    return res.json({id:goal.id,status:goal.status,answer:goal.answer,createdAt:goal.created_at,updatedAt:goal.updated_at,runStartedAt:goal.checkpoint.runStartedAt,turns:goal.turns,tools:goal.tool_calls,events});
   }));
   router.post('/ask/goals/:id/reply',asyncRoute(async(req,res)=>{
     const existing=await goalStore.get(database,req.ctx,req.params.id);
@@ -254,7 +254,7 @@ function createPostgresAskRouter(database,options={}){
     rules.pendingRules=rules.pendingRules.filter(rule=>!nativeRuleIds.has(rule.id));
     transcript=require('../../assistant/goal-transcript').mergeGoalTranscript(transcript,recentGoals);
     return res.page('attention/ask',{title:'Ask StockChief',nav:'ask',room:true,suppressBack:true,postgresAsk:true,...rules,
-      codexPilot:pilotView,adaptiveGoal:activeGoal,
+      codexPilot:pilotView,adaptiveGoal:activeGoal,renderAgentAnswer:require('../public/agent-answer').render,
       about:String(req.query.about||'').slice(0,2000),stockActivity:req.query.task==='stock-activity'&&sourcePage?.path==='/inventory',
       question:latest?.message||'',result:resultFor(latest,latestProposal),error:null,
       prefill:String(req.query.q||'').slice(0,2000),
