@@ -30,4 +30,23 @@ async function recoverClarification(db,ctx,id){return db.transaction(async clien
  return (await client.query(`UPDATE stockchief_runtime.assistant_goals SET status=$4,answer=$5,checkpoint=$6::jsonb,run_token=NULL,lease_until=NULL,updated_at=now()
   WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 RETURNING *`,[ctx.workspaceId,ctx.actorId,id,goal.status,goal.answer,JSON.stringify(goal.checkpoint)])).rows[0];
 },{isolation:'SERIALIZABLE',retrySafe:true});}
-module.exports={finalReport,recoverClarification};
+async function recoverExecutionReporting(db,ctx,id,catalogue){return db.transaction(async client=>{
+ const goal=(await client.query(`SELECT * FROM stockchief_runtime.assistant_goals WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 FOR UPDATE`,[ctx.workspaceId,ctx.actorId,id])).rows[0];
+ const h=goal?.checkpoint.harness;
+ if(!goal||goal.status!=='BLOCKED'||new Date(goal.expires_at)<=new Date()||h?.candidate!=='codex'||
+  h.failure?.code!=='OUTCOME_UNVERIFIED'||h.inflight||h.codexDelivery?.state!=='SETTLED'||!h.lastCodexResponse?.usageSettled)return null;
+ await waits.authority(client,ctx,h);
+ const receipt=await require('../../scripts/environment-agent-demo/receipts').collect(client,ctx,goal,h,catalogue);
+ if(receipt.dependencyState!=='READY'||!receipt.operations.length||receipt.operations.some(o=>!o.verified||o.externalState!=='DONE'))return null;
+ const uncertain=(await client.query(`SELECT 1 FROM stockchief_runtime.codex_pilot_calls WHERE workspace_id=$1 AND goal_id=$2 AND state IN ('RESERVED','UNKNOWN') LIMIT 1`,[ctx.workspaceId,id])).rows.length;
+ if(uncertain)return null;
+ goal.status='READY';goal.answer='The approved change was executed and verified. I’m finishing the response.';
+ h.failure=null;h.pendingReport=null;h.finishedAt=null;h.receipt=receipt;
+ h.reportingRecovery={at:new Date().toISOString(),source:'fresh_canonical_receipt'};goal.checkpoint.lifecycleStage='verification';conversation.sync(goal);
+ // Continue the same SDK thread and goal. Do not erase operations, approvals,
+ // native responses, model counts, tool counts, idempotency keys or budgets.
+ return (await client.query(`UPDATE stockchief_runtime.assistant_goals SET status='READY',answer=$4,checkpoint=$5::jsonb,
+  run_token=NULL,lease_until=NULL,updated_at=now() WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 RETURNING *`,
+ [ctx.workspaceId,ctx.actorId,id,goal.answer,JSON.stringify(goal.checkpoint)])).rows[0];
+},{isolation:'SERIALIZABLE',retrySafe:true});}
+module.exports={finalReport,recoverClarification,recoverExecutionReporting};

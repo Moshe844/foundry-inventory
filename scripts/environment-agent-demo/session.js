@@ -52,7 +52,7 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    [ctx.workspaceId,ctx.actorId,goalId])).rows[0];
   held(goal,cleanup);
   const cp=goal.checkpoint;checkAuthority(harness(goal),access);
-  const result=await change(cp.harness,goal,client);
+  const result=await change(cp.harness,goal,client,access);
   require('../../src/assistant/agent-conversation').sync(goal);
   if(Buffer.byteLength(JSON.stringify(cp))>8*1024*1024)throw new Error('SESSION_SIZE_LIMIT');
   await client.query(`UPDATE ${TABLE} SET checkpoint=$4::jsonb,status=$5,answer=$6,tool_calls=$7,
@@ -90,6 +90,13 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    conversationState:structuredClone(goal.checkpoint.conversationState||null),
    modelRouting:structuredClone(goal.checkpoint.modelRouting||null)}}));},
   async checkpoint(native){return authorizedUpdate(h=>{h.native={...h.native,...native};});},
+  async executionState(){return authorizedUpdate(async(h,goal,client,access)=>{
+   const receipt=await require('./receipts').collect(client,ctx,goal,h,access.catalogue);
+   if(!receipt.operations.length)return null;
+   const id=`${goalId}:host-receipt:${createHash('sha256').update(JSON.stringify(receipt)).digest('hex').slice(0,24)}`;
+   require('./observations').store(h,{id,name:'canonical_execution_state',result:receipt});
+   h.receipt=receipt;return present(h,receipt,{full:true});
+  },{catalogue:true});},
   async promoteReasoning(request){return authorizedUpdate((h,goal)=>{
    if(candidate!=='codex'||h.pendingReport?.status!=='needs_reasoning')throw Error('INVALID_MODEL_TIER_HANDOFF');
    const routing=require('../../src/assistant/codex-model-routing').promote(goal,ctx,request);
