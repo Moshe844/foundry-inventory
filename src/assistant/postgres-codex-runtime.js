@@ -13,6 +13,10 @@ async function run(database,ctx,id,options={}){
  let session;
  let auditQueue=Promise.resolve();
  const audit=event=>{
+  if(event.kind==='context_preparation_timing'){
+   if(process.env.STOCKCHIEF_CODEX_TIMING==='1')console.log(JSON.stringify({kind:event.kind,goalId:id,phase:event.phase,ms:event.ms}));
+   return;
+  }
   // Native SDK events are retained in its durable journal. These two event
   // kinds previously wrote empty UI records and locked the goal on every SDK
   // acknowledgement/checkpoint, competing with actual session work.
@@ -81,11 +85,14 @@ async function run(database,ctx,id,options={}){
   });
   let preparedContext=require(base+'codex-runtime').prepareContext({session,browser:ui,gateway,audit});
   preparations.push(preparedContext);preparedContext.catch(()=>{});
-  await require('./codex-staging-readiness').verifyPricing(database,modelProfile);
-  const permit=await require('./codex-staging-permit').issue({database,ctx,goalId:id,budget,image});
   const fundingKey=`codex-staging:${id}`;
   const entitlements=require('../commercial/entitlements');
-  const [scope,policy]=await Promise.all([entitlements.ownerScopeForWorkspace(database,ctx.workspaceId),
+  // These fresh admission reads are independent. Join all of them before
+  // reserving usage or exposing transport to the SDK; no check is skipped.
+  const [,permit,scope,policy]=await Promise.all([
+   require('./codex-staging-readiness').verifyPricing(database,modelProfile),
+   require('./codex-staging-permit').issue({database,ctx,goalId:id,budget,image}),
+   entitlements.ownerScopeForWorkspace(database,ctx.workspaceId),
    database.query("SELECT units FROM commercial_operation_policies WHERE operation='ask'")]);
   const units=Number(policy.rows[0].units);
   await entitlements.reserveUsage(database,scope,{meter:'ai_work_credits',units,idempotencyKey:`${ctx.workspaceId}:${fundingKey}`,detail:{operation:'ask',runtime:'codex-sdk-staging'}});

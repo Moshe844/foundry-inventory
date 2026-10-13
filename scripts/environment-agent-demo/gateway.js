@@ -31,13 +31,19 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
     // every boundary. Repeating the identical commercial check here adds
     // remote database round trips, not authority. No result is cached or
     // carried into another call; gateways without a guard retain their check.
-    if(accessGuard)await accessGuard();
-    const state=(await database.query(`SELECT original_request,status,run_token,lease_until,expires_at,checkpoint->'messages' AS user_messages FROM stockchief_runtime.assistant_goals
-      WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,goalId])).rows[0];
+    const [guard,stateResult]=await Promise.all([
+     accessGuard?accessGuard():null,
+     database.query(`SELECT original_request,status,run_token,lease_until,expires_at,checkpoint->'messages' AS user_messages FROM stockchief_runtime.assistant_goals
+      WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,goalId])]);
+    const state=stateResult.rows[0];
     if(!state||state.original_request!==goal||state.status!=='RUNNING'||state.run_token!==runToken||
       new Date(state.lease_until).getTime()<=Date.now()||new Date(state.expires_at).getTime()<=Date.now())throw new Error('Goal is not held by this agent run.');
-    const actor=(await database.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',
-      [ctx.workspaceId,ctx.actorId])).rows[0];
+    // A host guard may supply the membership/permissions it JUST checked in
+    // this call. Reuse that snapshot only for this boundary and exact actor.
+    const actor=guard?.actor?.id===ctx.actorId&&Object.hasOwn(guard.actor,'permissions')
+      ?{role:guard.actor.role,permissions:guard.actor.permissions}
+      :(await database.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',
+        [ctx.workspaceId,ctx.actorId])).rows[0];
     if(!actor)throw new Error('Actor no longer belongs to this business.');
     if(!accessGuard)await require('../../src/commercial/enforcement').workspace(database,ctx.workspaceId,'ask.lookup');
     // Native checkpoint/transport bookkeeping needs current lease, membership,

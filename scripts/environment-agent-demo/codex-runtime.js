@@ -44,11 +44,14 @@ async function initialObservation(options,saved,state){
 const preparedSandboxes=new WeakSet();
 const preparedContexts=new WeakSet();
 async function prepareContext(options){
- const saved=await options.session.load();
+ const measure=async(phase,operation)=>{const at=Date.now();try{return await operation();}finally{
+  options.audit?.({kind:'context_preparation_timing',phase,ms:Date.now()-at});
+ }};
+ const saved=await measure('durable_session',()=>options.session.load());
  const [initialView,initialContracts,executionState]=await Promise.all([
-  initialObservation(options,saved,saved.native.codex),
-  saved.native.codex?.threadId?null:options.gateway.initialContracts?.()||null,
-  saved.native.codex?.threadId?options.session.executionState?.()||null:null]);
+  measure('current_page',()=>initialObservation(options,saved,saved.native.codex)),
+  measure('execution_contracts',()=>saved.native.codex?.threadId?null:options.gateway.initialContracts?.()||null),
+  measure('execution_receipt',()=>saved.native.codex?.threadId?options.session.executionState?.()||null:null)]);
  const prepared={session:options.session,saved,initialView,initialContracts,executionState};
  preparedContexts.add(prepared);return prepared;
 }

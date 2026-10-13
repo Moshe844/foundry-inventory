@@ -71,8 +71,8 @@ async function inspectionDatabase(cluster,admin,ctx,stagingAuthorization=null){
   // atomic installation. Avoid hundreds of remote PostgreSQL round trips.
   await admin.transaction(client=>client.query(statements.join(';\n')),{retrySafe:true});
   connection.username=role;connection.password=password;
-  const pool=new Pool(require('../../src/db/postgres').connectionOptions(connection.toString(),{max:4,
-    privateNetwork:process.env.FOUNDRY_DATABASE_PRIVATE_NETWORK==='true'}));
+  const pool=new Pool({...require('../../src/db/postgres').connectionOptions(connection.toString(),{max:4,
+    privateNetwork:process.env.FOUNDRY_DATABASE_PRIVATE_NETWORK==='true'}),min:1,idleTimeoutMillis:4*60000});
   const query=(sql,values=[])=>pool.query(sql,values);
   async function transaction(operation){const client=await pool.connect();
     try{await client.query('BEGIN READ ONLY');const result=await operation({query:(sql,values=[])=>client.query(sql,values)});
@@ -113,8 +113,21 @@ async function createInspectionServer({cluster,database,ctx,beforeRead=()=>{},st
       OR (workspace_id IS NULL AND (account_id IS NULL OR account_id=${escapeLiteral(readonly.accountId)})));`),{retrySafe:true});}
   catch(error){await readonly.close().catch(()=>{});throw error;}
   const connection=new URL(cluster.connectionString);connection.username=role;connection.password=password;
-  const telemetry=new Pool(require('../../src/db/postgres').connectionOptions(connection.toString(),{max:2,
-    privateNetwork:process.env.FOUNDRY_DATABASE_PRIVATE_NETWORK==='true'}));
+  const telemetry=new Pool({...require('../../src/db/postgres').connectionOptions(connection.toString(),{max:2,
+    privateNetwork:process.env.FOUNDRY_DATABASE_PRIVATE_NETWORK==='true'}),min:1,idleTimeoutMillis:4*60000});
+  // Preparing the renderer alone left both TLS pools cold on the first page.
+  // Open one restricted connection in each before publishing the ready server.
+  // No record, permission result or page content is cached by this warm-up.
+  const closeTelemetry=async()=>{
+    await telemetry.end();
+    if(stagingAuthorization)await database.transaction(client=>client.query(`DROP POLICY IF EXISTS ${identifier} ON commercial_resource_measurements;
+      DROP POLICY IF EXISTS ${escapeIdentifier(role+'_conflict')} ON commercial_resource_measurements;
+      REVOKE SELECT(id) ON commercial_resource_measurements FROM ${identifier};
+      REVOKE ALL PRIVILEGES ON commercial_resource_measurements FROM ${identifier};
+      REVOKE USAGE ON SCHEMA public FROM ${identifier};DROP ROLE ${identifier};`),{retrySafe:true});
+  };
+  try{await Promise.all([readonly.query('SELECT 1'),telemetry.query('SELECT 1')]);}
+  catch(error){await Promise.allSettled([readonly.close(),closeTelemetry()]);throw error;}
   const telemetryErrors=[];const pendingTelemetry=new Set();
   const resourceDatabase={query(sql,values){const call=telemetry.query(sql,values).catch(error=>{
     telemetryErrors.push({code:error.code,message:error.message});throw error;});
@@ -124,7 +137,9 @@ async function createInspectionServer({cluster,database,ctx,beforeRead=()=>{},st
   await new Promise((resolve,reject)=>store.set(sid,{accountId:readonly.accountId,workspaceId:ctx.workspaceId,
     cookie:{maxAge:3600000,httpOnly:true,sameSite:'lax'}},error=>error?reject(error):resolve()));
   const app=require('../../src/postgres-app').createPostgresApp({database:readonly,resourceDatabase,sessionStore:store,
-    sessionSecret:secret,env:'test',aiProvider:blockedProvider,agentInspection:true});
+    sessionSecret:secret,env:'test',aiProvider:blockedProvider,agentInspection:true,
+    agentInspectionGuard:stagingAuthorization?(req,res,next)=>
+      require('../../src/assistant/postgres-codex-pilot').access(database,ctx,{enabled:true}).then(()=>next(),next):null});
   const gate=express();
   gate.use((req,res,next)=>{
     if(!['GET','HEAD'].includes(req.method))return res.status(403).send('Use the governed business gateway.');
@@ -132,18 +147,14 @@ async function createInspectionServer({cluster,database,ctx,beforeRead=()=>{},st
     req.headers.cookie=`foundry.sid=${encodeURIComponent('s:'+signature.sign(sid,secret))}`;
     delete req.headers.authorization;
     res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-src 'none'; object-src 'none'; form-action 'self'");
-    if(stagingAuthorization)require('../../src/assistant/postgres-codex-pilot').access(database,ctx,{enabled:true}).then(()=>next(),next);
-    else next();
+    next();
   });
   gate.use((req,res,next)=>require('./network-guard').restricted({databaseUrl:cluster.connectionString,stagingAuthorization,ctx},()=>app(req,res,next)));
   const server=await new Promise(resolve=>{const server=gate.listen(0,'127.0.0.1',()=>resolve(server));});
   return {origin:`http://127.0.0.1:${server.address().port}`,readonly,telemetryErrors,
     flushTelemetry:()=>Promise.allSettled([...pendingTelemetry]),
-    async close(){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));await telemetry.end();await readonly.close();
-      if(stagingAuthorization)await database.transaction(client=>client.query(`DROP POLICY IF EXISTS ${identifier} ON commercial_resource_measurements;
-        DROP POLICY IF EXISTS ${escapeIdentifier(role+'_conflict')} ON commercial_resource_measurements;
-        REVOKE SELECT(id) ON commercial_resource_measurements FROM ${identifier};
-        REVOKE ALL PRIVILEGES ON commercial_resource_measurements FROM ${identifier};
-        REVOKE USAGE ON SCHEMA public FROM ${identifier};DROP ROLE ${identifier};`),{retrySafe:true});}};
+    async close(){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));
+      const results=await Promise.allSettled([readonly.close(),closeTelemetry()]);
+      const failed=results.find(result=>result.status==='rejected');if(failed)throw failed.reason;}};
 }
 module.exports={inspectionDatabase,createInspectionServer};

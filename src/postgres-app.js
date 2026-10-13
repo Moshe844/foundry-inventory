@@ -49,7 +49,7 @@ const postgresExploration = require('./onboarding/postgres-exploration');
 const { requireOperationalSubscription } = require('./web/commercial-middleware');
 
 function createPostgresApp({database,resourceDatabase=database,sessionStore,sessionSecret=config.sessionSecret,env=config.env,aiProvider=null,
-  connectionProviders=null,connectionPublicOrigin=null,shippingOptions=null,paymentOptions=null,agentInspection=false,
+  connectionProviders=null,connectionPublicOrigin=null,shippingOptions=null,paymentOptions=null,agentInspection=false,agentInspectionGuard=null,
   commercialOptions=null,probeCacheMs={health:5000,readiness:1000},probeNow=Date.now,
   assetVersion=process.env.FOUNDRY_ASSET_VERSION||config.operations.releaseRef}={}) {
   if(!database?.query)throw new TypeError('A PostgreSQL database is required.');
@@ -65,6 +65,13 @@ function createPostgresApp({database,resourceDatabase=database,sessionStore,sess
   app.disable('x-powered-by');
   app.use(require('./commercial/resource-metrics').middleware(resourceDatabase));
   app.use(express.static(path.join(__dirname,'web','public'),{maxAge:env==='production'?'7d':0}));
+  // The restricted agent renderer uses the same public asset boundary as the
+  // actual website. Every application/API read after static files still crosses
+  // its fresh host guard; public CSS/JS never requires a tenant database read.
+  if(agentInspectionGuard!==null){
+    if(!agentInspection||typeof agentInspectionGuard!=='function')throw new TypeError('An inspection guard requires the restricted agent renderer.');
+    app.use(agentInspectionGuard);
+  }
   // Webhooks and token APIs run before cookie authentication, but still need a
   // database context so an unscoped external request cannot escape accounting.
   app.use(require('./commercial/enforcement').contextMiddleware(database));

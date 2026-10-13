@@ -7,14 +7,22 @@ function configured(ctx){return process.env.STOCKCHIEF_RUNTIME_ENV==='staging'&&
  list(process.env.STOCKCHIEF_CODEX_PILOT_WORKSPACES).includes(ctx.workspaceId);}
 async function access(db,ctx,{enabled=false,owner=false}={}){
  if(!configured(ctx))throw new AuthorizationError('The Codex pilot is not available in this business.');
- const actor=(await db.query(`SELECT u.id,u.role,a.email FROM users u JOIN accounts a ON a.id=u.account_id
+ // One fresh identity/pilot snapshot for this boundary. No authority is cached
+ // between reads, model requests or operations.
+ const row=(await db.query(`SELECT u.id,u.role,u.permissions,a.email,w.owner_account_id,to_jsonb(p) AS pilot
+  FROM users u JOIN accounts a ON a.id=u.account_id JOIN workspaces w ON w.id=u.workspace_id
+  LEFT JOIN stockchief_runtime.codex_pilots p ON p.workspace_id=u.workspace_id
   WHERE u.workspace_id=$1 AND u.id=$2`,[ctx.workspaceId,ctx.actorId])).rows[0];
+ const actor=row&&{id:row.id,role:row.role,permissions:row.permissions,email:row.email};
  if(!actor||!list(process.env.STOCKCHIEF_CODEX_PILOT_EMAILS).map(s=>s.toLowerCase()).includes(actor.email.toLowerCase())||owner&&actor.role!=='owner')
   throw new AuthorizationError('This account is not authorized for the Staging pilot.');
- const pilot=(await db.query('SELECT * FROM stockchief_runtime.codex_pilots WHERE workspace_id=$1',[ctx.workspaceId])).rows[0];
+ const pilot=row.pilot;
  if(!pilot||!pilot.authorized_actor_ids.includes(ctx.actorId)||enabled&&!pilot.enabled)
   throw new AuthorizationError('The Staging pilot is disabled for this account.');
- await require('../commercial/enforcement').workspace(db,ctx.workspaceId,'ask.lookup');
+ // assertCapability still freshly verifies the commercial ownership scope,
+ // subscription, overrides and entitlement; the joined owner avoids a second
+ // identical owner lookup before that check.
+ await require('../commercial/entitlements').assertCapability(db,{accountId:row.owner_account_id,workspaceId:ctx.workspaceId},'ask.lookup');
  return {actor,pilot};
 }
 async function selected(db,ctx){if(!configured(ctx))return false;try{await access(db,ctx,{enabled:true});return true;}catch(e){if(e instanceof AuthorizationError)return false;throw e;}}

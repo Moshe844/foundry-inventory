@@ -12,7 +12,7 @@ async function main(){
  let db;
  try{
  await sandboxPool.ready();
- db=require('../src/db/postgres').openPostgres(process.env.FOUNDRY_DATABASE_URL||process.env.DATABASE_URL,{max:5,applicationName:'stockchief-codex-staging-worker'});
+ db=require('../src/db/postgres').openPostgres(process.env.FOUNDRY_DATABASE_URL||process.env.DATABASE_URL,{max:5,idleTimeoutMillis:4*60000,applicationName:'stockchief-codex-staging-worker'});
  if(process.env.STOCKCHIEF_CODEX_TIMING==='1'){
   const hash=statement=>require('node:crypto').createHash('sha256').update(String(statement)).digest('hex').slice(0,16);
   const originalQuery=db.query,originalTransaction=db.transaction;
