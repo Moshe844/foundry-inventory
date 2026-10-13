@@ -250,6 +250,8 @@ function createPostgresAskRouter(database,options={}){
     const activeGoal=recentGoals.at(-1)||null;
     for(const goal of recentGoals)goal.approvalCards=goal.checkpoint.runtime==='codex-staging'&&!['COMPLETED','CANCELLED','BLOCKED'].includes(goal.status)
       ?(await pilot.inbox(database,req.ctx,goal.id)).approvals:[];
+    const nativeRuleIds=new Set(recentGoals.flatMap(goal=>(goal.approvalCards||[]).filter(card=>card.kind==='rule').map(card=>card.proposalId)));
+    rules.pendingRules=rules.pendingRules.filter(rule=>!nativeRuleIds.has(rule.id));
     transcript=require('../../assistant/goal-transcript').mergeGoalTranscript(transcript,recentGoals);
     return res.page('attention/ask',{title:'Ask StockChief',nav:'ask',room:true,suppressBack:true,postgresAsk:true,...rules,
       codexPilot:pilotView,adaptiveGoal:activeGoal,

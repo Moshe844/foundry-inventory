@@ -6,7 +6,7 @@ const csrf=html=>/name="_csrf" value="([^"]+)"/.exec(html)?.[1];
 test('Staging website pilot is scoped, delivers durable approvals, executes canonically and rolls back without spending',{timeout:180000},async t=>{
  const cluster=await require('../helpers/postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString);
  const old={};for(const key of ['STOCKCHIEF_RUNTIME_ENV','STOCKCHIEF_CODEX_PILOT','STOCKCHIEF_CODEX_PILOT_WORKSPACES','STOCKCHIEF_CODEX_PILOT_EMAILS','FOUNDRY_DATABASE_URL'])old[key]=process.env[key];
- t.after(async()=>{for(const [key,value]of Object.entries(old))if(value===undefined)delete process.env[key];else process.env[key]=value;await db.close();cluster.stop();});
+ const cleanup=[];t.after(async()=>{for(const close of cleanup.reverse())await close();for(const [key,value]of Object.entries(old))if(value===undefined)delete process.env[key];else process.env[key]=value;await db.close();cluster.stop();});
  await require('../../src/db/migrate-postgres').migratePostgres(db);
  const email=randomUUID()+'@example.test',password='Staging!'+randomUUID();
  const user=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'Pilot owner',businessName:'Testing',email,password});
@@ -18,9 +18,9 @@ test('Staging website pilot is scoped, delivers durable approvals, executes cano
  assert.equal(await pilot.selected(db,ctx),false);assert.equal(await pilot.view(db,{workspaceId:other.workspaceId,actorId:other.userId}),null);
  process.env.STOCKCHIEF_RUNTIME_ENV='production';assert.equal(await pilot.view(db,ctx),null);process.env.STOCKCHIEF_RUNTIME_ENV='staging';
  const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:'pilot-smoke-'+randomUUID(),aiProvider:{complete:async()=>{throw Error('NO_PAID_MODELS');}}});
- t.after(()=>app.locals.sessionStore.close());
- const server=await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));});t.after(()=>new Promise(resolve=>server.close(resolve)));
- const browser=await require('playwright').chromium.launch({headless:true});t.after(()=>browser.close());
+ cleanup.push(()=>app.locals.sessionStore.close());
+ const server=await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));});cleanup.push(()=>new Promise(resolve=>server.close(resolve)));
+ const browser=await require('playwright').chromium.launch({headless:true});cleanup.push(()=>browser.close());
  const page=await browser.newPage();
  const agent=request.agent(app),login=await agent.get('/login');
  const signed=await agent.post('/login').type('form').send({_csrf:csrf(login.text),email,password});assert([302,303].includes(signed.status));
@@ -49,7 +49,10 @@ test('Staging website pilot is scoped, delivers durable approvals, executes cano
  const steps=[{capability:'inventory.receive',arguments:[{name:'sku',value:skus[0].code},{name:'location',value:location},{name:'quantity',value:3},{name:'reference',value:'STAGE-SMOKE'}],dependsOn:[]}];
  await session.execute('business_operations',{steps},callId=>gateway.operate({steps,callId}));
  const ready=await session.handoffApprovals();assert.equal(ready.approvals.length,1);
+ const followup=await store.create(db,ctx,'Read my current products.');
+ await db.query(`UPDATE stockchief_runtime.assistant_goals SET checkpoint=checkpoint||'{"runtime":"codex-staging"}'::jsonb WHERE id=$1`,[followup.id]);
  await page.reload();assert.equal(await page.getByRole('button',{name:'Approve exact operation'}).count(),1,(await page.locator('body').innerText()).slice(-3500));
+ assert.equal(await page.getByRole('button',{name:'Approve exact operation'}).evaluate(el=>Boolean(el.closest('.rm-history'))),false,'A newer question cannot hide a pending approval inside folded history');
  assert.equal((await db.query('SELECT count(*) AS n FROM movements WHERE workspace_id=$1 AND reference=$2',[ctx.workspaceId,'STAGE-SMOKE'])).rows[0].n,'0');
  const card=ready.approvals[0];
  const handoff=await agent.get('/ask');

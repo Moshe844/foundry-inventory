@@ -7,7 +7,7 @@ test('embedded SDK prepares discovered typed rules with one intent check and can
  const old=Object.fromEntries(keys.map(k=>[k,process.env[k]]));
  t.after(async()=>{for(const [k,v]of Object.entries(old))if(v===undefined)delete process.env[k];else process.env[k]=v;await db.close();cluster.stop();});
  await require('../../src/db/migrate-postgres').migratePostgres(db);
- const email=randomUUID()+'@example.test',owner=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'SDK Staging owner',businessName:'Testing',email,password:'Fake!'+randomUUID()});
+ const email=randomUUID()+'@example.test',password='Fake!'+randomUUID(),owner=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'SDK Staging owner',businessName:'Testing',email,password});
  const ctx={workspaceId:owner.workspaceId,actorId:owner.userId};process.env.STOCKCHIEF_RUNTIME_ENV='staging';
  Object.assign(process.env,(await require('../../scripts/provision-codex-staging').provision(db,{businessName:'Testing',emails:[email]})).environment);
  process.env.FOUNDRY_DATABASE_URL=cluster.connectionString;
@@ -43,6 +43,19 @@ test('embedded SDK prepares discovered typed rules with one intent check and can
  const first=await pilot.run(db,ctx,started.goalId,options);assert.equal(first.status,'WAITING_APPROVAL',JSON.stringify(first));assert.equal(checks,1);assert.equal(sdkCalls,1);
  const prepared=await store.get(db,ctx,started.goalId),discovery=Object.values(prepared.checkpoint.harness.evidence).find(e=>e.name==='environment_interfaces');
  const contract=JSON.parse(discovery.text).operations[0];assert(contract.fields.ruleChanges.jsonSchema.items.properties.domain.enum.includes('stock_alert'));
+ await t.test('native rule approval stays with its request after a newer question, with no duplicate legacy rule card',async u=>{
+  const next=await store.create(db,ctx,'Read my current products.');await db.query(`UPDATE stockchief_runtime.assistant_goals SET status='COMPLETED',checkpoint=checkpoint||'{"runtime":"codex-staging"}'::jsonb WHERE id=$1`,[next.id]);
+  const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:randomUUID(),aiProvider:{complete:async()=>{throw Error('NO_MODELS');}}});u.after(()=>app.locals.sessionStore.close());
+  const server=await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));});u.after(()=>new Promise(resolve=>server.close(resolve)));
+  const browser=await require('playwright').chromium.launch({headless:true});u.after(()=>browser.close());const page=await browser.newPage();
+  const agent=require('supertest').agent(app),login=await agent.get('/login'),token=/name="_csrf" value="([^"]+)"/.exec(login.text)[1];
+  const signed=await agent.post('/login').type('form').send({_csrf:token,email,password});const cookie=signed.headers['set-cookie'].find(c=>c.startsWith('foundry.sid='));
+  await page.context().addCookies([{name:'foundry.sid',value:cookie.split(';')[0].slice('foundry.sid='.length),url:`http://127.0.0.1:${server.address().port}`}]);
+  await page.goto(`http://127.0.0.1:${server.address().port}/ask`);
+  const button=page.getByRole('button',{name:'Approve exact operation'});assert.equal(await button.count(),1);assert.equal(await button.evaluate(el=>Boolean(el.closest('.rm-history'))),false);
+  assert.equal(await page.getByText('I read that as a standing rule. Is this right?',{exact:true}).count(),0,'Native proposal is not appended as the answer to an unrelated new question');
+  const said=(await page.locator('.rm-turn--you .rm-turn__said').allTextContents()).map(s=>s.trim());assert.deepEqual(said,[original,'Read my current products.']);
+ });
  assert.equal((await db.query('SELECT count(*) AS n FROM stockchief_runtime.stock_threshold_rules WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,'0');
  const card=(await pilot.inbox(db,ctx,started.goalId)).approvals[0];await pilot.decide(db,ctx,started.goalId,card.id,card.sha256,true,{responseReference:'OFFLINE owner approval'});
  const rules=(await db.query('SELECT * FROM stockchief_runtime.stock_threshold_rules WHERE workspace_id=$1',[ctx.workspaceId])).rows;assert.equal(rules.length,2);assert(rules.every(r=>Number(r.threshold)===10&&r.comparator==='below'&&r.metric==='on_hand'));

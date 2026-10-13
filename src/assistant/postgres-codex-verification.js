@@ -39,7 +39,7 @@ async function verify(database,ctx,goal,raw,catalogue){
 const instructions=`\nFor your final report return JSON with status "completed", answer, and claims: [{evidenceId,path,value}].
 Each factual claim must reference actual durable evidence by ID and a JSON Pointer to its exact recorded value.
 Current-state claims after execution require fresh observations. Mark a historical claim historical:true and describe its time/scope explicitly.
-Retrieve evidence to learn its structure. Include current-state verification after authorized changes.
+Use the complete evidence already in a tool response. Its _stockchiefEvidence reference supplies evidenceId and valuePointerPrefix; prepend that prefix to the JSON Pointer of the displayed value. Retrieve the journal only for missing, truncated, compacted or earlier evidence. Do not retrieve a value again just to report what the current response already shows. Include current-state verification after authorized changes.
 Use status "needs_user", question and missingInformation only for an actual missing human decision.
 If complete outcomes cannot be established, report status "blocked" and answer explaining the limitation.
 Never claim every part of a request was completed merely because one receipt was verified.`;

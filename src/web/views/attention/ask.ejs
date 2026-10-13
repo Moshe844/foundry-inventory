@@ -142,6 +142,7 @@
      */
     var latestIndex = transcript.length - 1;
     var earlier = latestIndex;
+    transcript.forEach(function(turn,index){if(turn.agentGoal&&['WAITING_APPROVAL','WAITING_USER'].includes(turn.agentGoal.status))earlier=Math.min(earlier,index);});
   %>
   <% transcript.forEach(function (turn, turnIndex) { %>
     <% if (earlier > 0 && turnIndex === 0) { %>

@@ -44,7 +44,7 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
   return {
     authorize:access,
     async interfaces({search='',offset=0,names=[]}={}){const {actor,catalogue}=await access();
-      const matches=c=>`${c.name} ${c.description||c.label||''}`.toLowerCase().includes(search.toLowerCase());
+      const matches=c=>require('./interface-search').matches(c,search);
       const all=catalogue.list().filter(matches);
       const datasets=require('../../src/reports/postgres-registry').list(actor).map(d=>({...d,name:d.key}));
       if(require('../../src/reports/postgres-composed').dimensions(actor).length)datasets.push({name:'composed',label:'Combine governed measures across datasets'});

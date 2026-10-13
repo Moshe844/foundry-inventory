@@ -114,7 +114,8 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
   async present(output,{full=false}={}){await authority({catalogue:false});return update(h=>{
    const text=JSON.stringify(output)??'null',legacyText=JSON.stringify(output?.image?output.screen:output)??'null';
    const entry=require('./observations').ordered(Object.values(h.evidence||{})).findLast(e=>e.text===text||e.text===legacyText||e.truncated&&e.text===text.slice(0,128000));
-   if(full&&entry){const reference={evidenceId:entry.id,sha256:entry.sha256,observedAt:entry.at,untrusted:true};
+   if(full&&entry){const reference={evidenceId:entry.id,sha256:entry.sha256,observedAt:entry.at,untrusted:true,
+    valuePointerPrefix:output?.image&&entry.text===text?'/screen':'',complete:!entry.truncated};
     return output?.image?{...output,screen:{...output.screen,_stockchiefEvidence:reference}}:{...output,_stockchiefEvidence:reference};}
    return entry?require('./context').preview(output,entry.id):output;
   });},

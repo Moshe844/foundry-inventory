@@ -23,6 +23,17 @@ test('native bookkeeping avoids repeated catalogue construction while retaining 
  queries=0;await tools.find(t=>t.name==='environment_browser').execute({action:'inspect',ref:null,value:null});const browserQueries=queries;
  assert(calls.every(c=>c.catalogue===false),'Real shared browser tool path avoids every full catalogue rebuild');
  assert(browserQueries<fullQueries,JSON.stringify({fullQueries,lightQueries,browserQueries}));
+ const visual={image:{data:'offline-only',mimeType:'image/png'},screen:{url:'http://isolated/',text:'Complete observed inventory'}};
+ await session.execute('environment_browser',{action:'visual'},async()=>visual);
+ const shown=await session.present(visual,{full:true});assert.equal(shown.screen._stockchiefEvidence.valuePointerPrefix,'/screen');
+ const saved=await session.load();assert.equal(JSON.parse(saved.evidence[shown.screen._stockchiefEvidence.evidenceId].text).screen.text,visual.screen.text);
+ assert.equal(shown.screen._stockchiefEvidence.complete,true);
+ // Historical sessions stored the screen alone. The reference must describe
+ // that persisted value, rather than the newer image wrapper presented now.
+ const legacy={...visual,screen:{url:'http://isolated/earlier',text:'Earlier observed inventory'}};
+ await session.execute('environment_browser',{action:'legacy'},async()=>legacy.screen);
+ assert.equal((await session.present(legacy,{full:true})).screen._stockchiefEvidence.valuePointerPrefix,'');
+ assert.equal((await session.present(legacy.screen,{full:true}))._stockchiefEvidence.valuePointerPrefix,'');
  queries=0;await tools.find(t=>t.name==='environment_interfaces').execute({search:'policy',names:[],offset:0});const interfaceQueries=queries;
  assert(interfaceQueries<fullQueries*2,'Interface discovery builds one fresh catalogue, not three');
  await session.execute('business_operations',{stepsJson:JSON.stringify([{capability:'read.operating_rules',arguments:[],dependsOn:[]}])},async()=>({outcomes:[]}));

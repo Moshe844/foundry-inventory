@@ -81,7 +81,7 @@ async function run(options){
  try{
   const prompt=[state?.threadId?`Continue the original goal. ${options.resumeContext||''}`:saved.goalContext.originalRequest,...newMessages].join('\n');
   child.stdin.write(JSON.stringify({prompt,profile:policy.PROFILE.id,
-   instructions:INSTRUCTIONS+(options.finalReportInstructions||''),tools,threadId:state?.threadId,files:state?.files,encoding:state?.encoding,workspaceFiles:state?.workspaceFiles,
+   instructions:INSTRUCTIONS+(options.finalReportInstructions||'')+'\nAvailable StockChief tools (their exact parameter schemas remain discoverable):\n'+common.map(t=>`mcp__stockchief__${t.name}: ${t.description}`).join('\n'),tools,threadId:state?.threadId,files:state?.files,encoding:state?.encoding,workspaceFiles:state?.workspaceFiles,
    nativeCompactionTokenLimit:policy.nativeCompactionTokenLimit,offlineCompact:options.offlineCompact===true})+'\n');
   const code=await new Promise((resolve,reject)=>{child.once('error',reject);child.once('close',resolve);});await chain;
   if(code!==0||failed||!completed)throw failed||Error('CODEX_RUNTIME_FAILED: '+stderr.slice(-600));
