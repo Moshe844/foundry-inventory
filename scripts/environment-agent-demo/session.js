@@ -198,6 +198,17 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
      if(name!=='environment_evidence'){
       require('./observations').store(h,{id:start.id,name,result});
      }
+     if(business){
+      // Recovery destinations come from canonical operation results, never
+      // model prose or a catalogue of chat-specific workflows. Keep the
+      // durable evidence reference so delivery does not need another turn.
+      goal.checkpoint.prerequisiteHandoffs=(result?.outcomes||[]).flatMap(outcome=>{
+       const handoff=outcome.result?.handoff;
+       const href=require('../../src/assistant/agent-navigation-path').localPath(handoff?.href);
+       return href&&typeof handoff.label==='string'&&handoff.label.trim()
+        ?[{href,label:handoff.label.trim().slice(0,120),evidenceId:start.id}]:[];
+      }).slice(0,10);
+     }
      if(candidate!=='codex'){
       require('./memory').observe(h,name,input,result,start.id);
       require('./evidence').remember(h,name,input,result,start.id);

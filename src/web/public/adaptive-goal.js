@@ -60,6 +60,14 @@
      status=goal.status;updated=goal.updatedAt;panel.dataset.goalStatus=status;
      if(goal.runStartedAt)panel.querySelector('[data-goal-elapsed]').dataset.runStarted=goal.runStartedAt;
      elapsed();
+     const prerequisites=panel.querySelector('[data-goal-prerequisites]');
+     if(prerequisites){
+      prerequisites.replaceChildren();
+      for(const handoff of goal.prerequisiteHandoffs||[]){
+       const link=document.createElement('a');link.className='rm-btn rm-btn--sm';
+       link.href=handoff.href;link.textContent=handoff.label;prerequisites.append(link);
+      }
+     }
      const navigation=panel.querySelector('[data-goal-navigation]');
      if(navigation){
       navigation.hidden=!goal.navigation;

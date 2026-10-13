@@ -1191,6 +1191,13 @@ async function prepareAction(database,ctx,message,request,options={}) {
       awaitingField:'recipientEmail',emailFlow:{kind:'missing_email',name:resolved.row.name,recipientKind:resolved.row.kind}};
     if(!request.body)return {status:'CLARIFY',answer:`What would you like the email to ${resolved.row.name} to say? I’ll polish it before you approve it.`,awaitingField:'body'};
     const mailbox=await outboundMail.resolveMailbox(database,ctx.workspaceId,request.mailbox);
+    if(mailbox.unavailable){const row=mailbox.unavailable;return {status:'CLARIFY',
+      answer:`${row.display_name}${row.provider_account_name?` (${row.provider_account_name})`:''} is already configured. ${row.reason} Nothing was prepared or sent.`,
+      reason:'mailbox_unavailable',handoff:{href:`/settings/connections/${encodeURIComponent(row.id)}`,label:`Review ${row.display_name} connection`},
+      prerequisite:{kind:'connection',id:row.id,state:row.setup_status||row.status}};}
+    if(mailbox.unavailableChoices)return {status:'CLARIFY',answer:'Your configured mailboxes need attention before this email can be prepared. Choose which connection to review. Nothing was sent.',
+      choices:mailbox.unavailableChoices.map(row=>({label:row.display_name,value:row.display_name})),
+      handoff:{href:'/settings/connections',label:'Review connections'}};
     if(mailbox.missing)return {status:'CLARIFY',answer:'Connect and verify a Gmail or Microsoft 365 business mailbox before preparing this email.'};
     if(mailbox.notFound)return {status:'CLARIFY',answer:`No connected business mailbox matches “${request.mailbox}”. Nothing was prepared.`};
     if(mailbox.ambiguous)return {status:'CLARIFY',answer:'More than one business mailbox can send this. Name the exact mailbox to use.',awaitingField:'mailbox',

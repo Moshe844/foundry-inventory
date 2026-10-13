@@ -241,7 +241,7 @@ function createPostgresAskRouter(database,options={}){
     const safeEvents=events.map(e=>({sequence:e.sequence,kind:e.kind,created_at:e.created_at,
       detail:{kind:e.detail.kind,tool:typeof e.detail.tool==='string'?e.detail.tool:null,status:e.detail.kind==='runtime_starting'?e.detail.status:null}}));
     return res.json({id:goal.id,status:goal.status,answer:state.message,conversation:state,createdAt:goal.created_at,updatedAt:goal.updated_at,runStartedAt:goal.checkpoint.runStartedAt,turns:goal.turns,tools:goal.tool_calls,events:safeEvents,
-      delivery:delivery.visible(goal),navigation:navigation?{...navigation,automatic:req.session.postgresAskNavigationGoal===goal.id}:null});
+      delivery:delivery.visible(goal),prerequisiteHandoffs:goal.checkpoint.prerequisiteHandoffs||[],navigation:navigation?{...navigation,automatic:req.session.postgresAskNavigationGoal===goal.id}:null});
   }));
   router.post('/ask/goals/:id/reply',asyncRoute(async(req,res)=>{
     const existing=await goalStore.get(database,req.ctx,req.params.id);

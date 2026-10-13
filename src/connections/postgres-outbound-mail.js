@@ -46,10 +46,21 @@ async function mailboxes(database,workspaceId){
 
 async function resolveMailbox(database,workspaceId,requested){
   const available=await mailboxes(database,workspaceId);
-  if(!requested)return available.length===1?{row:available[0]}:{missing:available.length===0,ambiguous:available};
-  const matches=available.filter((row)=>[row.id,row.display_name,row.provider_account_name,row.provider_type]
+  const matching=rows=>rows.filter((row)=>[row.id,row.display_name,row.provider_account_name,row.provider_type]
     .filter(Boolean).some((value)=>String(value).toLowerCase()===String(requested).trim().toLowerCase()));
-  return matches.length===1?{row:matches[0]}:{notFound:matches.length===0,ambiguous:matches};
+  if(!requested&&available.length)return available.length===1?{row:available[0]}:{ambiguous:available};
+  const matches=requested?matching(available):[];
+  if(matches.length)return matches.length===1?{row:matches[0]}:{ambiguous:matches};
+  // Configured and currently usable are different facts. Return safe state
+  // metadata for an unavailable existing connection, never its credentials.
+  const configured=(await database.query(`SELECT id,display_name,provider_type,provider_account_name,status,setup_status,paused_at
+    FROM workspace_connectors WHERE workspace_id=$1 AND provider_type IN ('gmail','microsoft365') ORDER BY display_name,id`,[workspaceId])).rows;
+  const found=requested?matching(configured):configured;
+  if(found.length===1){const row=found[0];return {unavailable:{...row,
+    reason:row.setup_status==='REAUTHORIZATION_REQUIRED'?'Sign in again to restore the existing authorization.':
+      row.paused_at?'This connection is paused.':row.status==='disconnected'?'This connection was disconnected.':'This connection needs attention.'}};}
+  if(found.length>1)return {unavailableChoices:found};
+  return requested?{notFound:true}:{missing:true};
 }
 
 async function resolveRecipient(database,workspaceId,search,kind=null){

@@ -13,6 +13,10 @@ async function run(database,ctx,id,options={}){
  let session;
  let auditQueue=Promise.resolve();
  const audit=event=>{
+  // Native SDK events are retained in its durable journal. These two event
+  // kinds previously wrote empty UI records and locked the goal on every SDK
+  // acknowledgement/checkpoint, competing with actual session work.
+  if(['codex_event','codex_resources'].includes(event.kind))return;
   // The customer timeline stores activity, not raw prompts, tokens or fields.
   const detail={kind:event.source==='host_initial_observation'?event.kind.replace('agent_tool_','initial_page_'):event.kind,
    tool:event.name||event.tool||null,action:event.action||null,status:event.status||null,

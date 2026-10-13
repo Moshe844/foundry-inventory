@@ -20,6 +20,11 @@
   </div>
   <div class="rm-agent__answer" data-goal-answer <%= conversation.message?'':'hidden' %>><%- renderAgentAnswer(conversation.message) %></div>
   <div data-goal-delivery data-revision="<%= delivered?.id||'' %>"><%- include('agent-delivery',{goal,delivery:delivered}) %></div>
+  <div data-goal-prerequisites>
+    <% for(const handoff of goal.checkpoint.prerequisiteHandoffs||[]){ %>
+      <a class="rm-btn rm-btn--sm" href="<%= handoff.href %>"><%= handoff.label %></a>
+    <% } %>
+  </div>
   <p class="rm-agent__hint" data-goal-hint><%= active?'You can leave this page. I’ll keep working and show any required approval here.':'' %></p>
   <form method="post" action="/ask/goals/<%= goal.id %>/navigate" data-goal-navigation <%= pendingNavigation?'':'hidden' %>>
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">

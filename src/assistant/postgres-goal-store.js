@@ -8,7 +8,7 @@ async function get(db,ctx,id){return (await db.query(`SELECT * FROM ${TABLE}
  WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,id])).rows[0]||null;}
 async function progress(db,ctx,id){return (await db.query(`SELECT id,status,answer,created_at,updated_at,turns,tool_calls,
  jsonb_build_object('runtime',checkpoint->'runtime','runStartedAt',checkpoint->'runStartedAt',
- 'conversationState',checkpoint->'conversationState','delivery',checkpoint->'delivery','lifecycleStage',checkpoint->'lifecycleStage',
+ 'conversationState',checkpoint->'conversationState','delivery',checkpoint->'delivery','prerequisiteHandoffs',checkpoint->'prerequisiteHandoffs','lifecycleStage',checkpoint->'lifecycleStage',
  'harness',jsonb_build_object('userQuestion',checkpoint#>'{harness,userQuestion}','interruption',checkpoint#>'{harness,interruption}'),
  'navigation',jsonb_build_object('id',checkpoint#>'{navigation,id}','label',checkpoint#>'{navigation,label}',
  'state',checkpoint#>'{navigation,state}')) AS checkpoint FROM ${TABLE}

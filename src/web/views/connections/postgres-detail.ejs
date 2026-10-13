@@ -2,6 +2,7 @@
   const accounting=connection.accounting||null;
   const providerName=provider?.name||connection.display_name||connection.provider_type;
   const connected=connection.status==='connected'&&!connection.paused_at;
+  const needsAuthorization=connection.setup_status==='REAUTHORIZATION_REQUIRED'||connection.status==='disconnected';
   const hasCatalogue=connection.productsMapped+connection.locationsMapped>0;
   const hasEvent=isMailbox?Boolean(mailboxLastPollAt):Boolean(connection.last_activity_at);
   const proven=connected&&connection.publicStatus==='Connected'&&(!canDiscover||hasCatalogue)&&hasEvent;
@@ -18,6 +19,14 @@
 </header>
 
 <% if(connection.last_error){ %><div class="notice notice--warn section"><div><strong>This connection needs attention.</strong><p><%= connection.last_error %></p></div></div><% } %>
+<% if(needsAuthorization&&currentUser.role==='owner'&&provider?.available){ %>
+  <section class="rm-note" aria-label="Restore provider authorization"><p><strong>Sign in again to <%= providerName %></strong></p><p>This restores the existing connection. Its records, mappings and history are kept.</p>
+    <form method="post" action="/settings/connections/connect"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="providerType" value="<%= connection.provider_type %>"><input type="hidden" name="connectorId" value="<%= connection.id %>">
+      <% if(connection.config.shop){ %><input type="hidden" name="shop" value="<%= connection.config.shop %>"><% } %><% if(connection.config.storeUrl){ %><input type="hidden" name="storeUrl" value="<%= connection.config.storeUrl %>"><% } %>
+      <button class="btn btn--primary" type="submit">Sign in again to <%= providerName %></button>
+    </form>
+  </section>
+<% } %>
 <% if(newConnectionToken){ %><div class="notice notice--warn section"><div><strong>Copy this secure connection key now. StockChief will not show it again.</strong><input class="input mono" aria-label="Connection token" value="<%= newConnectionToken %>" readonly onclick="this.select()"></div></div><% } %>
 
 <% if(!accounting){ %>
