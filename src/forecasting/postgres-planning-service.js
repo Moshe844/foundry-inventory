@@ -185,7 +185,6 @@ function transfers(rows) {
 async function overview(database, workspaceId) {
   await require('../commercial/enforcement').workspace(database,workspaceId,'planning.transfer_before_buy');
   const goal = await goals(database, workspaceId); const rows = await position(database, workspaceId);
-  await ensureRecommendations(database, workspaceId, rows);
   const maxDays = goal.maxDaysOfSupply || 90;
   const shortages = rows.filter(row => row.shortage).sort((a, b) => (a.daysOfSupply ?? 999999) - (b.daysOfSupply ?? 999999));
   const excess = rows.filter(row => row.onHand > 0 && ((row.targetStock !== null && row.onHand > row.targetStock)
@@ -197,6 +196,13 @@ async function overview(database, workspaceId) {
   return { scanned:new Set(rows.map(row => row.sku_id)).size,rows,shortages,excess,transfers:transfers(rows),
     recommendations:await openRecommendations(database,workspaceId),goals:goal,accuracy:await accuracy(database,workspaceId),
     heldMinor,inventoryCapMinor:goal.inventoryCapMinor };
+}
+
+// Derived recommendation persistence belongs to an authorized background
+// evaluation. Inspecting a forecast is a read, including for the agent browser.
+async function refreshRecommendations(database,workspaceId){
+  await require('../commercial/enforcement').workspace(database,workspaceId,'planning.transfer_before_buy');
+  await ensureRecommendations(database,workspaceId,await position(database,workspaceId));
 }
 
 async function decide(database, ctx, id, decision) {
@@ -237,5 +243,5 @@ async function decide(database, ctx, id, decision) {
   }, { isolation:'SERIALIZABLE',retrySafe:true });
 }
 
-module.exports = { goals,saveGoals,position,overview,openRecommendations,decide };
-require('../commercial/enforcement').guardExports(module.exports,0,1,{saveGoals:'planning.basic',decide:'planning.basic',overview:'planning.basic'});
+module.exports = { goals,saveGoals,position,overview,openRecommendations,decide,refreshRecommendations };
+require('../commercial/enforcement').guardExports(module.exports,0,1,{saveGoals:'planning.basic',decide:'planning.basic',overview:'planning.basic',refreshRecommendations:'planning.basic'});

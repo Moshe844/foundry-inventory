@@ -353,9 +353,15 @@ async function repairSupplierPreview(database,workspaceId,id,plan,mappings){
 async function get(database, workspaceId, id) {
   const result=await database.query('SELECT * FROM import_plans WHERE workspace_id=$1 AND id=$2',[workspaceId,id]);
   if(!result.rows.length)throw new NotFoundError('That import could not be found.');
-  const plan=hydratePlan(result.rows[0]);
+  return hydratePlan(result.rows[0]);
+}
+
+// Legacy preview conversion invalidates approval and requires row locks.
+// It belongs to an authorized mutation, never viewing an import or agent read.
+async function getForMutation(database,workspaceId,id){
+  const plan=await get(database,workspaceId,id);
   const supplierMapping=plan.status==='READY'&&!plan.transformations.dataset
-    ?supplierDataset.classify(plan.sourceColumns):null;
+    &&!plan.isExpired?supplierDataset.classify(plan.sourceColumns):null;
   if(supplierMapping){await repairSupplierPreview(database,workspaceId,id,plan,supplierMapping);
     return hydratePlan((await database.query('SELECT * FROM import_plans WHERE workspace_id=$1 AND id=$2',
       [workspaceId,id])).rows[0]);}
@@ -393,6 +399,7 @@ async function duplicates(database, workspaceId, plan) {
 
 async function revise(database,ctx,id,input={}){
   await assertOperator(database,ctx);
+  await getForMutation(database,ctx.workspaceId,id);
   return database.transaction(async(client)=>{
     const saved=(await client.query('SELECT * FROM import_plans WHERE workspace_id=$1 AND id=$2 FOR UPDATE',
       [ctx.workspaceId,id])).rows[0];
@@ -472,6 +479,7 @@ async function revise(database,ctx,id,input={}){
 
 async function approve(database, ctx, id, expectedHash) {
   await assertOperator(database,ctx);
+  await getForMutation(database,ctx.workspaceId,id);
   return database.transaction(async(client)=>{
     const result=await client.query('SELECT * FROM import_plans WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,id]);
     if(!result.rows.length)throw new NotFoundError('That import could not be found.');
@@ -514,7 +522,7 @@ function variantKey(parsed) {
 
 async function execute(database, ctx, id, options={}) {
   await assertOperator(database,ctx);
-  const plan=await get(database,ctx.workspaceId,id);
+  const plan=await getForMutation(database,ctx.workspaceId,id);
   if(plan.approvalStatus!=='APPROVED')throw new ValidationError('Approve the preview before importing it.');
   const previous=(await database.query(`SELECT e.* FROM import_executions e JOIN import_plans p ON p.id=e.import_id
     WHERE e.workspace_id=$1 AND p.source_hash=$2 AND e.status='SUCCEEDED' ORDER BY e.finished_at DESC LIMIT 1`,

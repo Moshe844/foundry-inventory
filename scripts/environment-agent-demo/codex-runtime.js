@@ -65,7 +65,7 @@ async function run(options){
  const {session,transport,budget,audit=()=>{},signal}=options;
  if(process.env.STOCKCHIEF_CODEX_SDK_DEMO!=='1'&&!require('../../src/assistant/codex-staging-permit').has(options.codexLivePermit))throw Error('CODEX_SDK_FEATURE_DISABLED');
  if(!options.offlineOnly||options.credentials?.openai!=='FAKE'){
-  require('./codex-live-permit').assert(options.codexLivePermit,{budget,image:options.codexImage});
+  require('./codex-live-permit').assertSetup(options.codexLivePermit,{budget,image:options.codexImage});
   if(options.offlineCompact)throw Error('LIVE_COMPACTION_TRIGGER_FORBIDDEN');
  }
  const allowance=await budget.status();if(!allowance.approval||allowance.stopped)throw Error('PAID_TESTING_LOCKED');

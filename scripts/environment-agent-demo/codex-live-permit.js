@@ -55,4 +55,8 @@ function assert(permit,{budget,task,image}={}){
   state.stopped||state.unresolved||state.expires<=Date.now()||p.sourceHash!==require('./certification').sourceHash())throw Error('CODEX_LIVE_NOT_CERTIFIED');
  return p;
 }
-module.exports={issue,assert,recover,bind};
+function assertSetup(permit,options={}){
+ if(require('../../src/assistant/codex-staging-permit').has(permit))return require('../../src/assistant/codex-staging-permit').assertBinding(permit,options);
+ return assert(permit,options);
+}
+module.exports={issue,assert,assertSetup,recover,bind};

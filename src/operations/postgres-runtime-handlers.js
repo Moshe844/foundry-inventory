@@ -346,6 +346,10 @@ async function autopilotEvaluate(job,client){
   const subscription=await entitlements.subscriptionFor(client,scope.accountId);
   if((subscription||config.commercial.requirePaidWorkspace)&&!entitlements.operationalAccess(subscription).canOperate)
     return {skipped:'subscription_read_only'};
+  const basic=await entitlements.capabilityState(client,scope,'planning.basic');
+  const transfers=await entitlements.capabilityState(client,scope,'planning.transfer_before_buy');
+  if(basic.enabled&&transfers.enabled)await require('../forecasting/postgres-planning-service')
+    .refreshRecommendations(scopedDatabase(client),job.workspaceId);
   return autonomy.run(scopedDatabase(client),{workspaceId:job.workspaceId,actorId:job.payload.actorId});
 }
 

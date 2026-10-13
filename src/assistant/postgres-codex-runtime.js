@@ -13,7 +13,7 @@ async function run(database,ctx,id,options={}){
  let session;
  let auditQueue=Promise.resolve();
  const audit=event=>{
-  if(event.kind==='context_preparation_timing'){
+  if(['context_preparation_timing','browser_preparation_timing'].includes(event.kind)){
    if(process.env.STOCKCHIEF_CODEX_TIMING==='1')console.log(JSON.stringify({kind:event.kind,goalId:id,phase:event.phase,ms:event.ms}));
    return;
   }
@@ -62,7 +62,7 @@ async function run(database,ctx,id,options={}){
   const ui=require(base+'lazy-browser').lazyBrowser(async firstAction=>{
    audit({kind:'runtime_starting',status:'Opening the isolated business browser'});
    const connectionString=process.env.FOUNDRY_DATABASE_URL||process.env.DATABASE_URL;
-   let server;
+   let server,phaseStarted=Date.now();
    if(options.inspectionPool){
     const lease=await options.inspectionPool.acquire({database,ctx,connectionString});
     server=lease.server;cleanup.push(()=>lease.release());
@@ -70,7 +70,9 @@ async function run(database,ctx,id,options={}){
     const token=await pilot.readAuthorization(database,ctx,connectionString);
     server=await require(base+'inspection').createInspectionServer({cluster:{connectionString},database,ctx,stagingAuthorization:token});cleanup.push(()=>server.close());
    }
+   audit({kind:'browser_preparation_timing',phase:'renderer_acquire',ms:Date.now()-phaseStarted});phaseStarted=Date.now();
    const browser=await require('playwright').chromium.launch({headless:true});cleanup.push(()=>browser.close());
+   audit({kind:'browser_preparation_timing',phase:'chromium_launch',ms:Date.now()-phaseStarted});phaseStarted=Date.now();
    const observedPaths=goal.checkpoint.conversation?.environment?.pages?.map(p=>p.path)||[];
    const openedPath=firstAction?.action==='open'?require('./agent-navigation-path').localPath(firstAction.value):null;
    let resumedPath=null;
@@ -81,6 +83,7 @@ async function run(database,ctx,id,options={}){
    }
    const tools=await require(base+'browser').createBrowserTools(browser,{origin:server.origin,audit,
     startPath:openedPath&&observedPaths.includes(openedPath)?openedPath:resumedPath||goal.checkpoint.page?.path,observedPaths});cleanup.push(()=>tools.close());
+   audit({kind:'browser_preparation_timing',phase:'current_page_load',ms:Date.now()-phaseStarted});
    return tools;
   });
   let preparedContext=require(base+'codex-runtime').prepareContext({session,browser:ui,gateway,audit});

@@ -11,7 +11,9 @@ function createPostgresOnboardingRouter(database) {
   const router = express.Router();
   router.use('/onboarding', requireAuth);
   router.get('/onboarding', asyncRoute(async (req,res) => {
-    const state = await paths.ensure(database,req.ctx.workspaceId);
+    // Browsing previews the default state; authorized POST choices persist it.
+    const state = await paths.get(database,req.ctx.workspaceId)||paths.hydrate({
+      workspace_id:req.ctx.workspaceId,path:'undecided',status:'choosing'});
     const products = await database.query('SELECT 1 FROM items WHERE workspace_id=$1 AND is_active=1 LIMIT 1',
       [req.ctx.workspaceId]);
     if(state.isComplete && products.rows.length && req.query.add!=='1')return res.redirect(303,'/inventory');

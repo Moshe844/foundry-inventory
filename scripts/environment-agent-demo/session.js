@@ -266,7 +266,7 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
      // A private browser observation is preparation, not user-visible delivery.
      // The authenticated website acknowledges the actual rendered destination.
      goal.checkpoint.navigation={...navigation,id:require('node:crypto').randomUUID(),state:'PENDING',
-      resultAnswer:h.receipt.operations.length?goal.answer:null};
+      resultAnswer:goal.answer};
      goal.status='WAITING_EVENT';goal.answer=`Ready to open ${navigation.label} in your browser.`;
     }
     h.failure=classified.failure||null;h.userQuestion=classified.question||null;

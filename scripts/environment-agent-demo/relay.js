@@ -183,7 +183,7 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
    if(!['native','existing'].includes(accountingMode))throw new Error('Unsupported commercial accounting mode.');
    if(wireProfile!==null&&(wireProfile!=='codex'||provider!=='openai'||accountingMode!=='native'||typeof requestGate!=='function'))throw new Error('INVALID_CODEX_GATE');
    if(wireProfile==='codex'&&credentials.openai!=='FAKE'){
-    require('./codex-live-permit').assert(livePermit,{budget,task});
+    require('./codex-live-permit').assertSetup(livePermit,{budget,task});
     if(typeof countCodexInput!=='function')throw new Error('NATIVE_TOKEN_PREFLIGHT_REQUIRED');
    }
    if(wireProfile==='codex'){

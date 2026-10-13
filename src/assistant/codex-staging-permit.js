@@ -11,12 +11,17 @@ async function issue({database,ctx,goalId,budget,image}){
   sourceHash:require('../../scripts/environment-agent-demo/certification').sourceHash()});return permit;
 }
 function has(permit){return Boolean(permit&&permits.has(permit));}
-function assert(permit,{budget,task,image}={}){
+function assertBinding(permit,{budget,task,image}={}){
  const p=permits.get(permit);
- if(!p||p.budget!==budget||task&&p.task!==task||image&&p.image!==image||!require('./postgres-codex-pilot').configured({workspaceId:p.workspaceId})||
-  p.sourceHash!==require('../../scripts/environment-agent-demo/certification').sourceHash())throw Error('STAGING_CODEX_ADMISSION_BLOCKED');
- return p; // Current actor, flag, money and period are checked durably before each provider/tool request.
+ if(!p||p.budget!==budget||task&&p.task!==task||image&&p.image!==image||!require('./postgres-codex-pilot').configured({workspaceId:p.workspaceId}))
+  throw Error('STAGING_CODEX_ADMISSION_BLOCKED');
+ return p;
 }
-function bind(permit,identity){const p=permits.get(permit);assert(permit,{budget:p?.budget});
+function assert(permit,options={}){
+ const p=assertBinding(permit,options);
+ if(p.sourceHash!==require('../../scripts/environment-agent-demo/certification').sourceHash())throw Error('STAGING_CODEX_ADMISSION_BLOCKED');
+ return p; // Full fresh integrity check before EVERY paid HTTP request.
+}
+function bind(permit,identity){const p=permits.get(permit);assertBinding(permit,{budget:p?.budget});
  if(identity.candidate!=='codex'||identity.goalId!==p.goalId||identity.workspaceId!==p.workspaceId||identity.actorId!==p.actorId)throw Error('CODEX_SESSION_AUTHORITY_BINDING_MISMATCH');}
-module.exports={issue,has,assert,bind};
+module.exports={issue,has,assert,assertBinding,bind};

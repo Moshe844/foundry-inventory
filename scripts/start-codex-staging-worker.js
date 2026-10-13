@@ -6,6 +6,9 @@ async function main(){
  if(process.env.FOUNDRY_DATABASE_PRIVATE_NETWORK==='true'||address.searchParams.get('sslmode')!=='verify-full')
   throw Error('LOCAL_STAGING_BRIDGE_REQUIRES_VERIFIED_TLS');
  const image=process.env.STOCKCHIEF_CODEX_PILOT_IMAGE;
+ // Compile the already-installed browser module before accepting a goal.
+ // Its first synchronous import otherwise stalls in-flight admission queries.
+ require('playwright');
  // No image pull/install, no paid request, and no automatic approval here.
  const sandboxPool=require('./environment-agent-demo/codex-sandbox-pool').createPool({image});
  const inspectionPool=require('./environment-agent-demo/inspection-pool').createPool();
