@@ -32,6 +32,17 @@ const SCHEMA={type:'object',additionalProperties:false,required:['understood','s
     clarifyingQuestion:{type:'string'},unsupportedReason:{type:'string'}}};
 const EFFECT_FIT_SCHEMA={type:'object',additionalProperties:false,required:['equivalent','difference'],
   properties:{equivalent:{type:'boolean'},difference:{type:'string',maxLength:240}}};
+const PROPOSED_CHANGES_SCHEMA={type:'array',minItems:1,maxItems:12,items:{...CHANGE_SCHEMA,required:['domain','operation']}};
+function proposedChanges(value){
+ let changes;try{changes=typeof value==='string'?JSON.parse(value):value;}catch{throw Object.assign(new ValidationError('Provide typed rule changes using the discovered contract.'),{effectMayHaveOccurred:false});}
+ const validate=new(require('ajv'))({allErrors:true,strict:false}).compile(PROPOSED_CHANGES_SCHEMA);
+ if(!validate(changes))throw Object.assign(new ValidationError('The proposed rule fields do not match the canonical contract.'),{effectMayHaveOccurred:false});
+ const defaults=Object.fromEntries(Object.entries(CHANGE_SCHEMA.properties).map(([name,schema])=>[name,schema.type==='integer'||schema.type==='number'?-1:schema.type==='boolean'?false:'']));
+ for(const change of changes)if(change.domain==='stock_alert'&&change.operation==='set'&&
+  (!['on_hand','available_to_fulfill'].includes(change.notificationMetric)||!['below','at_or_below'].includes(change.notificationComparator)||!Number.isInteger(change.notificationThreshold)||change.notificationThreshold<0))
+  throw Object.assign(new ValidationError('A stock alert proposal needs an explicit stock measure, comparator and nonnegative threshold.'),{effectMayHaveOccurred:false});
+ return changes.map(change=>({...defaults,...change}));
+}
 const EFFECT_FIT_SYSTEM=`Compare the owner's instruction with the exact effects the application will enforce after approval.
 The listed effects are hypothetical post-approval effects, NOT currently active settings. This call only creates a pending proposal; it never applies a rule. An instruction to prepare now and wait for approval is satisfied by that lifecycle, so compare the business effect, not whether the effect already happened.
 Reject any changed measure, comparator, threshold, named SKU/location/supplier, authority, automatic action,
@@ -192,9 +203,12 @@ function describe(change){if(change.domain==='replenishment')return `${change.di
 
 async function interpret(database,ctx,instruction,options={}){const clean=String(instruction||'').trim().slice(0,2000);
   if(!clean)throw new ValidationError('Tell StockChief how you want this inventory run.');
+  if(options.proposedChanges!==undefined&&String(instruction||'').trim().length>2000)
+    throw Object.assign(new ValidationError('The complete instruction exceeds the canonical rule limit. It must not be truncated before intent verification.'),{effectMayHaveOccurred:false});
+  const typed=options.proposedChanges===undefined?null:proposedChanges(options.proposedChanges);
   const provider=options.provider||(config.ai.configured?createProviderUnobserved(config.ai.provider,config.ai.tier('standard')):null);
   if(!provider)throw new ValidationError('StockChief needs its model connection to read a free-form standing instruction.');
-  const [catalogue,locations,suppliers]=await Promise.all([
+  const [catalogue,locations,suppliers]=typed?[{rows:[]},{rows:[]},{rows:[]}]:await Promise.all([
     database.query(`SELECT i.name,s.code,s.variant_label FROM skus s JOIN items i ON i.id=s.item_id
       WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 ORDER BY i.name,s.position LIMIT 500`,[ctx.workspaceId]),
     database.query(`SELECT name FROM locations WHERE workspace_id=$1 AND is_active=1 ORDER BY name LIMIT 200`,[ctx.workspaceId]),
@@ -229,7 +243,7 @@ async function interpret(database,ctx,instruction,options={}){const clean=String
         supplierId,...change})=>change)}:null;
   const evidence={instruction:clean,currentRecord,priorApprovedRule,realSkus:catalogue.rows,
     realLocations:locations.rows,realSuppliers:suppliers.rows};
-  let response=await completeExtraction({system:`${SYSTEM}\n${PAGE_CONTEXT_RULE}\n${PRIOR_CONTEXT_RULE}`,prompt:JSON.stringify(evidence),
+  let response=typed?{data:{understood:true,changes:typed}}:await completeExtraction({system:`${SYSTEM}\n${PAGE_CONTEXT_RULE}\n${PRIOR_CONTEXT_RULE}`,prompt:JSON.stringify(evidence),
     schema:SCHEMA,schemaName:'postgres_operating_instruction'});
   if(options.onUsage&&response.usage)await options.onUsage(response.usage,{schemaName:'postgres_operating_instruction'});
   let read=response?.data||{};
@@ -275,6 +289,7 @@ async function interpret(database,ctx,instruction,options={}){const clean=String
       {schemaName:'postgres_operating_instruction_effect_fit'});
     if(fit.data?.equivalent===true)break;
     const difference=String(fit.data?.difference||'The requested effect does not match the available rule.').slice(0,240);
+    if(typed)throw Object.assign(new ValidationError("The proposed effects do not match your instruction. "+difference),{effectMayHaveOccurred:false});
     if(pass===1)throw new ValidationError(`I won't propose a rule that changes your request. ${difference} Nothing changed.`);
     response=await completeModel({system:`${SYSTEM}\n${PAGE_CONTEXT_RULE}\n${PRIOR_CONTEXT_RULE}`,
       prompt:JSON.stringify({...evidence,rejectedInterpretation:read,effectMismatch:difference,
@@ -285,6 +300,7 @@ async function interpret(database,ctx,instruction,options={}){const clean=String
     if(!read.understood||!Array.isArray(read.changes)||!read.changes.length)
       throw new ValidationError(read.unsupportedReason||read.clarifyingQuestion||difference);
   }
+  if(typed&&questions.length)throw Object.assign(new ValidationError(questions[0],{reason:'instruction_input_required',question:questions[0]}),{effectMayHaveOccurred:false});
   const snapshot={statedAs:clean,resolvedChanges};
   const id=newId('oin');const at=nowIso();await database.query(`INSERT INTO operating_instruction_proposals
     (id,workspace_id,created_by_user_id,stated_as,summary,changes,resolved_changes,questions,status,integrity_hash,created_at,updated_at)
@@ -448,5 +464,5 @@ async function answer(database,ctx,id,value,options={}){const proposal=await get
   await database.query(`UPDATE operating_instruction_proposals SET status='SUPERSEDED',updated_at=$3
     WHERE workspace_id=$1 AND id=$2 AND status='PENDING'`,[ctx.workspaceId,id,nowIso()]);return replacement;}
 
-module.exports={SCHEMA,SYSTEM,interpret,get,approve,cancel,answer,describe};
+module.exports={SCHEMA,SYSTEM,PROPOSED_CHANGES_SCHEMA,interpret,get,approve,cancel,answer,describe};
 require('../commercial/enforcement').guardExports(module.exports,0,1,{interpret:'ask.prepare_actions',answer:'ask.prepare_actions',approve:'ask.prepare_actions'});

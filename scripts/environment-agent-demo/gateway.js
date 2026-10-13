@@ -8,7 +8,8 @@ const {FIELDS}=require('../../src/assistant/postgres-capability-registry');
 const {randomUUID}=require('node:crypto');
 
 function describe(c){return {name:c.name,kind:c.kind,description:c.description,required:c.required||[],
-  fields:Object.fromEntries(c.fields.map(name=>[name,{type:FIELDS[name]?.type||'string',description:c.agentHints?.[name]||FIELDS[name]?.description||name}])),
+  fields:Object.fromEntries(c.fields.map(name=>[name,{type:FIELDS[name]?.type||'string',description:c.agentHints?.[name]||FIELDS[name]?.description||name,
+   ...(c.argumentSchemas?.[name]?{jsonSchema:c.argumentSchemas[name]()}:{})}])),
   authority:c.authority,unavailable:c.commercialUnavailable||[]};}
 
 // ctx, original goal and database are host-bound. Models cannot supply tenant,
@@ -28,8 +29,17 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
     // Actual interface discovery, operations and verification retain the full
     // fresh catalogue; this does not cache authority or commercial decisions.
     const clarifications=Array.isArray(state.user_messages)?state.user_messages.filter(m=>typeof m==='string'):[];
+    let interfaces;
+    if(catalogue){
+      interfaces=await control.planningCatalogue(database,{...ctx,goalId},actor);
+      if(require('../../src/commercial/relay-provider').ownsAccounting(provider)){
+        const entries=interfaces.list().map(c=>c.agentFields?Object.freeze({...c,fields:[...c.fields,...c.agentFields]}):c);
+        const byName=new Map(entries.map(c=>[c.name,c]));
+        interfaces={list:(kind=null)=>entries.filter(c=>!kind||c.kind===kind),get:name=>byName.get(name)||null};
+      }
+    }
     return {actor,sourceMessage:[goal,...clarifications.map(m=>'User clarification: '+m)].join('\n'),
-      ...(catalogue?{catalogue:await control.planningCatalogue(database,{...ctx,goalId},actor)}:{})};
+      ...(catalogue?{catalogue:interfaces}:{})};
   }
   return {
     authorize:access,

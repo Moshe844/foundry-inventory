@@ -13,6 +13,7 @@ const {destinationById}=require('../web/postgres-navigation');
 const governedReports=require('../reports/postgres-registry');
 
 const FIELDS=Object.freeze({
+  ruleChanges:{type:'string',description:'A JSON array of proposed typed operating-rule changes using the discovered canonical schema. Supply only established facts and requested effects. Canonical identity resolution, intent verification and owner approval still apply.'},
   search:{type:'string',description:'Name, code, or status explicitly being sought.'},
   baseCode:{type:'string',description:'Exact new product SKU or base code explicitly supplied by the owner.'},
   sku:{type:'string',entity:'sku',description:'Product, variant, or SKU identity.'},
@@ -295,11 +296,11 @@ add('read.custom_report',`Compose governed PostgreSQL reports with fields, filte
 
 add('policy.propose','Propose a lasting operating rule within StockChief’s registered policy domains and limits.',
   [],'policy',permissions.ADMIN,'owner_review',
-  (service,db,ctx,text,_args,options)=>service.prepareInstruction(db,ctx,text,options),
+  (service,db,ctx,text,args,options)=>service.prepareInstruction(db,ctx,text,{...options,...(args.ruleChanges!==undefined?{proposedChanges:args.ruleChanges}:{})}),
   async(_service,_db,_ctx,result)=>Boolean(result?.proposal?.id||result?.status==='CLARIFY'),
   // One typed instruction can contain several rule changes. Planning it twice
   // would create duplicate proposals and reuse the same funded model request.
-  {singleEffectPerTarget:true});
+  {singleEffectPerTarget:true,agentFields:['ruleChanges'],argumentSchemas:{ruleChanges:()=>require('../manager/postgres-operating-instructions').PROPOSED_CHANGES_SCHEMA}});
 
 // The page catalogue is presentation metadata. Each destination is checked
 // against the real PostgreSQL router before it is offered by the navigator.

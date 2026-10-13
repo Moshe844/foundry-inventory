@@ -155,10 +155,10 @@ async function executeStep(service,database,ctx,step,{actor,provider,rawProvider
     args:resolved.args,provenance:resolved.provenance};
   }
   if(contract.kind==='policy'){
-    const result=await contract.prepare(service,database,ctx,sourceMessage,{},
+    const result=await contract.prepare(service,database,ctx,sourceMessage,step.args,
       {provider:rawProvider,instructionUsageKey:`${usageKey}:instruction`,currentPage:page,
         priorInstruction});
-    return {result,args:{},provenance:{}};
+    return {result,args:step.args,provenance:{}};
   }
   if(contract.kind==='read'){
     const args={search:step.args.search||null,timeframe:step.args.timeframe||'all_time'};
