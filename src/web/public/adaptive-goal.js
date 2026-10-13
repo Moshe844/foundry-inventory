@@ -16,6 +16,20 @@
   return rows.slice(-6);
  }
  if(typeof module!=='undefined'&&module.exports){module.exports={activity,activities};return;}
+ function selectWork(goalId,deliveryId){
+  const composer=document.getElementById('tell-foundry');if(!composer)return;
+  for(const [name,value]of Object.entries({sourceGoalId:goalId,deliveryId,continueGoalId:'',questionId:''})){
+   let field=composer.querySelector(`input[name="${name}"]`);
+   if(!field){field=document.createElement('input');field.type='hidden';field.name=name;composer.append(field);}field.value=value;
+  }
+  let context=composer.querySelector('[data-agent-work-context]');
+  if(!context){context=document.createElement('p');context.dataset.agentWorkContext='';context.className='rm-composer__context';composer.prepend(context);}
+  context.replaceChildren(document.createTextNode('Your next request will include this saved work. '));
+  const clear=document.createElement('button');clear.type='button';clear.className='rm-btn rm-btn--ghost rm-btn--sm';clear.textContent='Clear selection';
+  clear.onclick=()=>{for(const name of ['sourceGoalId','deliveryId'])composer.querySelector(`input[name="${name}"]`).value='';context.remove();};
+  context.append(clear);composer.querySelector('textarea[name="message"],input[name="message"]')?.focus();
+ }
+ for(const button of document.querySelectorAll('[data-work-continuation]'))button.onclick=()=>selectWork(button.dataset.sourceGoal,button.dataset.deliveryId);
  for(const panel of document.querySelectorAll('[data-adaptive-goal]')){
   let status=panel.dataset.goalStatus,updated=panel.dataset.goalUpdated,rows=[],disconnected=false,elapsedTimer;
   const phase=panel.querySelector('[data-goal-phase-text]'),hint=panel.querySelector('[data-goal-hint]');
@@ -84,6 +98,7 @@
         save.className='rm-btn rm-btn--ghost rm-btn--sm';save.textContent='Save a copy';save.href=`/ask/goals/${encodeURIComponent(goal.id)}/work/${encodeURIComponent(work.id)}`;save.download='';
         card.append(header,content,save);root.append(card);
        }
+       if(saved.workProducts.length){const continueButton=document.createElement('button');continueButton.type='button';continueButton.className='rm-btn rm-btn--ghost rm-btn--sm';continueButton.textContent='Continue with this work';continueButton.onclick=()=>selectWork(goal.id,saved.id);root.append(continueButton);}
        if(saved.nextActions.length){
         const next=document.createElement('div'),heading=document.createElement('p'),buttons=document.createElement('div'),note=document.createElement('p');
         next.className='rm-agent__next';heading.textContent='What would you like to do next?';buttons.className='rm-agent__next-actions';

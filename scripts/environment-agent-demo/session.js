@@ -95,18 +95,18 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    return authorizedUpdate(h=>{h.pendingReport=report;});
   },
   async workingMemory(){return authorizedUpdate(h=>require('./memory').working(h));},
-  async codexRequest(){return authorizedUpdate(h=>{
+  async codexRequest(admissionAccess=null){const change=h=>{
    if(candidate!=='codex')throw new Error('NOT_A_CODEX_SESSION');
    h.codexRequests||=0;
    if(h.codexRequests>=24)throw new Error('DURABLE_MODEL_REQUEST_LIMIT');
    h.codexRequests++;
    return {request:h.codexRequests};
-  });},
-  async codexReplay(hash){return read(h=>{
+  };return admissionAccess?.actor?update(change,{access:admissionAccess}):authorizedUpdate(change);},
+  async codexReplay(hash,admissionAccess=null){return read(h=>{
    if(candidate!=='codex')throw new Error('NOT_A_CODEX_SESSION');
    if(h.codexDelivery?.state==='PENDING')throw new Error('CODEX_RESPONSE_RECONCILIATION_REQUIRED');
    return h.codexDelivery?.hash===hash?structuredClone(h.codexDelivery.packet):null;
-  });},
+  },admissionAccess);},
   async codexPending(hash){return authorizedUpdate(h=>{
    if(candidate!=='codex'||h.codexDelivery?.state==='PENDING')throw new Error('CODEX_RESPONSE_RECONCILIATION_REQUIRED');
    h.codexDelivery={hash,state:'PENDING'};

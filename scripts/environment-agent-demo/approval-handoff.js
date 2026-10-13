@@ -59,6 +59,19 @@ async function transaction(database,ctx,goalId,fn,{allowMissing=false,allowCompl
  return result;
 },{isolation:'SERIALIZABLE',retrySafe:true});}
 async function inbox(database,ctx,goalId,{pause=false,runToken=null}={}){
+ // A native read-only investigation cannot have a pending business approval
+ // without a durable operation reference, outbox card or unresolved operation.
+ // Checking absence releases no business data or authority. Avoid rewriting
+ // the whole native checkpoint in a transaction for every such model request.
+ const empty=(await database.query(`SELECT status,expires_at,jsonb_build_object(
+  'inflight',checkpoint#>'{harness,inflight}','calls',checkpoint#>'{harness,calls}',
+  'approvalDeliveries',checkpoint#>'{harness,approvalDeliveries}') AS h
+  FROM ${TABLE} WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,goalId])).rows[0];
+ if(empty&&['READY','RUNNING','WAITING_USER'].includes(empty.status)&&new Date(empty.expires_at)>new Date()&&!empty.h.inflight&&
+  !Object.keys(empty.h.approvalDeliveries||{}).length){
+  const refs=waits.dependencies(empty.h);
+  if(!refs.missionIds.length&&!refs.proposalIds.length&&!refs.workIds.length)return null;
+ }
  return transaction(database,ctx,goalId,({goal,h,cards})=>{
   if(!cards.length)return null;
   if(pause){

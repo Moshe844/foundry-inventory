@@ -80,9 +80,9 @@ async function run(database,ctx,id,options={}){
   const relay=await require(base+'relay').createRelay({budget,credentials:{openai:key},commercial:require(base+'commercial').createCommercialAccounting(database),
    allowedProviders:['openai'],countCodexInput:counter,audit,...(options.fetchImpl?{fetchImpl:options.fetchImpl}:{})});cleanup.push(()=>relay.close());
   const transport=relay.grant({candidate:'codex',provider:'openai',task:id,ctx,goalId:id,budget,fundingKey,authorize:()=>authorize({catalogue:false}),
-   wireProfile:'codex',livePermit:permit,requestGate:()=>session.codexRequest()});
+   wireProfile:'codex',livePermit:permit,requestGate:access=>session.codexRequest(access)});
   const helperTransport=relay.grant({candidate:'codex',provider:'openai',task:id,ctx,goalId:id,budget,fundingKey,authorize:()=>authorize({catalogue:false}),
-   wireProfile:'codex',livePermit:permit,requestGate:()=>session.codexRequest()});
+   wireProfile:'codex',livePermit:permit,requestGate:access=>session.codexRequest(access)});
   helperTransport.setNativeSession(session.helperDelivery());
   helper=require(base+'codex-helper-provider').create({transport:helperTransport});
   audit({kind:'runtime_starting',status:'Starting the Codex SDK session'});

@@ -155,12 +155,24 @@ function createPostgresAskRouter(database,options={}){
   const conversation=require('../../assistant/agent-conversation');
   const delivery=require('../../assistant/agent-delivery');
   router.use('/ask',(req,res,next)=>{res.locals.agentDelivery=delivery.visible;next();});
-  async function deliveredGoal(req){
+  async function deliveredGoal(req,id=req.params.id){
     await pilot.access(database,req.ctx);
-    const goal=await goalStore.get(database,req.ctx,req.params.id);
+    const goal=await goalStore.get(database,req.ctx,id);
     if(goal?.checkpoint.runtime!=='codex-staging'||!delivery.visible(goal))throw new ValidationError('This saved result is not available.');
     await require('../../../scripts/environment-agent-demo/waits').authority(database,req.ctx,goal.checkpoint.harness);
     return goal;
+  }
+  async function continueWork(req,goal,saved,instruction){
+    const message=String(instruction||'').trim();
+    if(!message||message.length>12000)throw new ValidationError('Describe what to do next in at most 12,000 characters.');
+    if(saved.id!==req.body.deliveryId)throw new ValidationError('The saved result changed. Reload before continuing.');
+    if(req.session.postgresAskStartedAt&&new Date(goal.created_at)<=new Date(req.session.postgresAskStartedAt))
+      throw new ValidationError('That result belongs to an earlier conversation.');
+    const key=crypto.createHash('sha256').update(message).digest('hex');
+    const next=await pilot.start(database,req.ctx,message,{usageKey:`next:${goal.id}:${key}`,
+      page:goal.checkpoint.page,startedAt:req.session.postgresAskStartedAt||null,
+      continuation:{sourceGoalId:goal.id,deliveryId:saved.id,workProducts:saved.workProducts}});
+    req.session.postgresAskNavigationGoal=next.goalId;return next;
   }
   router.get('/ask/goals/:id/work/:workId',asyncRoute(async(req,res)=>{
     const goal=await deliveredGoal(req),work=delivery.visible(goal).workProducts.find(p=>p.id===req.params.workId);
@@ -171,17 +183,11 @@ function createPostgresAskRouter(database,options={}){
   }));
   router.post('/ask/goals/:id/next',asyncRoute(async(req,res)=>{
     const goal=await deliveredGoal(req),saved=delivery.visible(goal);
-    if(saved.id!==req.body.deliveryId)throw new ValidationError('The saved result changed. Reload before continuing.');
     const action=saved.nextActions.find(a=>a.id===req.body.actionId);
     if(!action)throw new ValidationError('That next step is not available.');
-    if(req.session.postgresAskStartedAt&&new Date(goal.created_at)<=new Date(req.session.postgresAskStartedAt))
-      throw new ValidationError('That result belongs to an earlier conversation.');
     // This is a human-selected follow-up, not a tool, planner or approval. The
     // embedded SDK chooses how to perform it under the existing gateway.
-    const next=await pilot.start(database,req.ctx,action.instruction,{usageKey:`next:${goal.id}:${action.id}`,
-      page:goal.checkpoint.page,startedAt:req.session.postgresAskStartedAt||null,
-      continuation:{sourceGoalId:goal.id,deliveryId:saved.id,workProducts:saved.workProducts}});
-    req.session.postgresAskNavigationGoal=next.goalId;
+    await continueWork(req,goal,saved,action.instruction);
     return res.redirect(303,'/ask#latest');
   }));
   router.post('/ask/goals/:id/navigate',asyncRoute(async(req,res)=>{
@@ -357,6 +363,10 @@ function createPostgresAskRouter(database,options={}){
       if(!continued)throw new ValidationError('That request is no longer waiting for an answer.');
       if(!continued.replyReplayed)await goalStore.enqueue(database,continued);req.session.postgresAskNavigationGoal=id;
       return {goalId:id};
+    }
+    if(req.body.sourceGoalId){
+      const source=await deliveredGoal(req,String(req.body.sourceGoalId));
+      return continueWork(req,source,delivery.visible(source),req.body.message);
     }
     const remembered=req.session.postgresAskPageContext;
     const page=await require('../../assistant/postgres-page-context').load(database,req.ctx.workspaceId,

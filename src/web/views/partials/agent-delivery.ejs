@@ -7,6 +7,9 @@
         <a class="rm-btn rm-btn--ghost rm-btn--sm" href="/ask/goals/<%= encodeURIComponent(goal.id) %>/work/<%= work.id %>" download>Save a copy</a>
       </article>
     <% } %>
+    <% if(delivery.workProducts.length){ %>
+      <button type="button" class="rm-btn rm-btn--ghost rm-btn--sm" data-work-continuation data-source-goal="<%= goal.id %>" data-delivery-id="<%= delivery.id %>">Continue with this work</button>
+    <% } %>
     <% if(delivery.nextActions.length){ %>
       <div class="rm-agent__next"><p><strong>What would you like to do next?</strong></p><div class="rm-agent__next-actions">
         <% for(const next of delivery.nextActions){ %>

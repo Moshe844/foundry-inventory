@@ -33,7 +33,7 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
    try{
     let size=0;const parts=[];
     for await(const part of req){size+=part.length;if(size>wire.MAX_BODY)throw new Error('REQUEST_TOO_LARGE');parts.push(part);}
-    await grant.authorize(); // current lease, tenant, actor and original authority
+    const admissionAccess=await grant.authorize(); // fresh for this HTTP boundary, never reused across calls
     if(grant.livePermit){
      require('./codex-live-permit').assert(grant.livePermit,{budget,task:grant.task});
      if(grant.lastBlock)throw new Error('CODEX_ATTEMPT_ALREADY_STOPPED');
@@ -46,6 +46,13 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
      maxInputTokens:Math.min(60000,await commercial.inputAllowance?.({provider:grant.provider,outputTokens})??60000)};
     const fit=value=>nativeCodex?require('./codex-wire').normalize(value):grant.accountingMode==='native'?require('./wire-context').fit(grant.provider,value,fitOptions):wire.normalize(grant.provider,value);
     let normalized=fit(input);
+    if(nativeCodex&&grant.ctx?.workspaceId&&grant.ctx?.actorId){
+     // Native threads still own reasoning/context. Cache accounting belongs to
+     // the tenant and actor, not a freshly generated mission UUID. This changes
+     // no input, tool, reasoning, retention, response or financial bound.
+     normalized.body.prompt_cache_key=require('node:crypto').createHash('sha256')
+      .update(JSON.stringify([grant.ctx.workspaceId,grant.ctx.actorId,normalized.body.model])).digest('hex');
+    }
     require('./protocol').validate(grant.provider,normalized.body);
     const requestHash=nativeCodex?require('node:crypto').createHash('sha256').update(JSON.stringify({
      input:require('./codex-wire').countRequest(normalized.body),outputTokens:normalized.outputTokens,stream:normalized.body.stream,
@@ -53,10 +60,10 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
     if(nativeCodex){
      if(typeof countCodexInput!=='function')throw new Error('NATIVE_TOKEN_PREFLIGHT_REQUIRED');
      if(credentials.openai!=='FAKE'&&!grant.nativeSession)throw new Error('DURABLE_CODEX_SESSION_REQUIRED');
-     const replay=await grant.nativeSession?.codexReplay(requestHash);
+     const replay=await grant.nativeSession?.codexReplay(requestHash,admissionAccess);
      if(replay){grant.lastResponse=replay.outcome;audit({kind:'codex_response_replayed',requestHash,paidCalls:0});
       res.writeHead(replay.status,{'content-type':replay.contentType,'cache-control':'no-store'});res.end(replay.body);return;}
-     await grant.requestGate();
+     await grant.requestGate(admissionAccess);
      if(countCodexInput){
       const state=await budget.status();
       if(!state.approval||state.stopped||state.expires<=Date.now())throw new Error('PAID_TESTING_LOCKED');
