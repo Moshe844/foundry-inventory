@@ -54,6 +54,13 @@ async function refresh(db,ctx,id){
  [ctx.workspaceId,ctx.actorId,id,status,JSON.stringify(cp),goal.status])).rows[0]||null;
 }
 async function sweep(db){
+ // Let the native session recover its durable handoff before a generic lease
+ // expiry turns it into a failure. No model runs in this reconciliation step.
+ const interrupted=(await db.query(`SELECT id,workspace_id,actor_user_id FROM stockchief_runtime.assistant_goals
+  WHERE checkpoint->>'runtime'='codex-staging' AND status='RUNNING' AND lease_until<now() AND expires_at>now() LIMIT 100`)).rows;
+ for(const row of interrupted){const ctx={workspaceId:row.workspace_id,actorId:row.actor_user_id};
+  if(require('./postgres-codex-pilot').configured(ctx))await require('../../scripts/environment-agent-demo/waits').recover(db,ctx,row.id);
+ }
  await db.query(`UPDATE stockchief_runtime.assistant_goals SET status='BLOCKED',run_token=NULL,lease_until=NULL,
  answer='This goal expired or its previous run was interrupted. Review its recorded work.',updated_at=now()
  WHERE status NOT IN ('COMPLETED','CANCELLED','BLOCKED') AND (expires_at<=now() OR (status='RUNNING' AND lease_until<now()))`);

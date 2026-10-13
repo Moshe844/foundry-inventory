@@ -52,6 +52,7 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
   held(goal,cleanup);
   const cp=goal.checkpoint;checkAuthority(harness(goal),access);
   const result=await change(cp.harness,goal,client);
+  require('../../src/assistant/agent-conversation').sync(goal);
   if(Buffer.byteLength(JSON.stringify(cp))>8*1024*1024)throw new Error('SESSION_SIZE_LIMIT');
   await client.query(`UPDATE ${TABLE} SET checkpoint=$4::jsonb,status=$5,answer=$6,tool_calls=$7,
    run_token=CASE WHEN $5='RUNNING' THEN run_token ELSE NULL END,
@@ -83,8 +84,14 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    // Page metadata is only a location hint. Read its content with current
    // browser/gateway permissions, not by trusting fields posted by a client.
    page:goal.checkpoint.page?{path:goal.checkpoint.page.path}:null,
-   conversation:structuredClone(goal.checkpoint.conversation||null)}}));},
+   conversation:structuredClone(goal.checkpoint.conversation||null),
+   conversationState:structuredClone(goal.checkpoint.conversationState||null)}}));},
   async checkpoint(native){return authorizedUpdate(h=>{h.native={...h.native,...native};});},
+  async recordReport(raw){
+   const report=require('../../src/assistant/agent-conversation').parse(raw);
+   if(!report)return;
+   return authorizedUpdate(h=>{h.pendingReport=report;});
+  },
   async workingMemory(){return authorizedUpdate(h=>require('./memory').working(h));},
   async codexRequest(){return authorizedUpdate(h=>{
    if(candidate!=='codex')throw new Error('NOT_A_CODEX_SESSION');
@@ -210,7 +217,7 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
     });throw error;
    }
   },
-  async finish({answer,verified=false,navigation=null}){
+  async finish({answer,verified=false,navigation=null,report=null}){
    const access=await authorize();return update(async(h,goal,client)=>{
     if(h.inflight)throw new Error('SESSION_OPERATION_UNRESOLVED');
     // Only a host verifier may set verified; SDK final text is not verification.
@@ -220,7 +227,7 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
     h.dependencies=refs;
     h.receipt=await require('./receipts').collect(client,ctx,goal,h,access?.catalogue);
     const canonicalVerified=!h.receipt.operations.some(op=>!op.verified);
-    const classified=require('./outcome').classify({answer:goal.answer,verified,current,canonicalVerified,
+    const classified=require('./outcome').classify({report,answer:goal.answer,verified,current,canonicalVerified,
      progress:h.admissionBlock?{...h.progress,finalReason:h.admissionBlock.code}:h.progress});
     goal.status=classified.status;goal.answer=classified.answer;
     if(verified&&navigation&&goal.status==='COMPLETED'){
@@ -231,6 +238,7 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
      goal.status='WAITING_EVENT';goal.answer=`Ready to open ${navigation.label} in your browser.`;
     }
     h.failure=classified.failure||null;h.userQuestion=classified.question||null;
+    h.pendingReport=null;goal.checkpoint.lifecycleStage=null;
     h.completionSource=goal.status==='COMPLETED'?'host_verified_answer':'unverified_answer';
     h.finishedAt=new Date().toISOString();
    },{access});
@@ -247,6 +255,7 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
     catch(error){throw Object.assign(new Error('WHOLE_GOAL_VERIFICATION_FAILED'),{code:'WHOLE_GOAL_VERIFICATION_FAILED',cause:error});}
     if(verdict?.complete!==true||!verdict.answer||!Array.isArray(verdict.evidence)||!verdict.evidence.length)return null;
     goal.answer=String(verdict.answer).slice(0,20000);goal.status='COMPLETED';
+    h.userQuestion=null;h.pendingReport=null;
     h.receipt={...receipt,wholeGoalVerification:verdict.evidence};h.completionSource='host_verified_receipt';
     h.finishedAt=new Date().toISOString();return {answer:goal.answer,completionSource:h.completionSource};
    },{access});
@@ -267,6 +276,15 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
     await client.query('SAVEPOINT dependency_check');
     try{current=!access||h.inflight?'BLOCKED':await waits.current(client,ctx,goalId,refs);await client.query('RELEASE SAVEPOINT dependency_check');}
     catch{await client.query('ROLLBACK TO SAVEPOINT dependency_check');h.verificationUnavailable=true;}
+    // A saved question is a host handoff, independent of SDK completion. It
+    // never overrides an uncertain effect or a canonical approval/event wait.
+    if(access&&!h.inflight&&current==='READY'&&h.pendingReport?.status==='needs_user'){
+     const classified=require('../../src/assistant/agent-conversation').classify({report:h.pendingReport});
+     goal.status=classified.status;goal.answer=classified.answer;h.userQuestion=classified.question;
+     h.pendingReport=null;h.failure=null;h.completionSource='durable_input_handoff';
+     h.interruption={code:String(code).replace(/[^a-zA-Z0-9_-]/g,'').slice(0,80),at:new Date().toISOString()};
+     return {answer:goal.answer,status:goal.status,completionSource:h.completionSource};
+    }
     goal.status=['WAITING_APPROVAL','WAITING_EVENT'].includes(current)?current:'BLOCKED';
     goal.answer=goal.status==='WAITING_APPROVAL'
      ?'The investigation stopped before final verification. Prepared changes still require approval; they are not completed.'

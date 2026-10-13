@@ -77,7 +77,7 @@ async function run(database,ctx,id,options={}){
   const current=await store.get(database,ctx,id);
   if(current.status==='RUNNING'){
    const check=await require('./postgres-codex-verification').verify(database,ctx,current,result.answer,(await gateway.authorize()).catalogue);
-   await session.finish({answer:check.answer,verified:check.verified,navigation:check.navigation});
+   await session.finish(check);
   }
   return store.get(database,ctx,id);
  }catch(error){

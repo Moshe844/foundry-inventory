@@ -64,8 +64,9 @@ async function refresh(database,ctx,goalId){
  const refs=dependencies(h),status=rejected?'CANCELLED':await current(client,ctx,goalId,refs);
  if(status===goal.status)return goal;
  const checkpoint=structuredClone(goal.checkpoint);
+ checkpoint.lifecycleStage=status==='READY'?'verification':null;
  checkpoint.feedback=rejected?'The user rejected a prepared operation. Do not execute or resume this request.':'Canonical dependency states changed. Inspect current records and verify the full original goal again.';
- const answer=rejected?'You rejected the prepared operation, so this request is stopped. The rejected proposal was not executed. Any earlier approved operations retain their recorded status.':goal.answer;
+ const answer=rejected?'You rejected the prepared operation, so this request is stopped. The rejected proposal was not executed. Any earlier approved operations retain their recorded status.':status==='READY'?'The pending work has finished. I’m checking the result.':goal.answer;
  return (await client.query(`UPDATE stockchief_runtime.assistant_goals SET status=$4,checkpoint=$5::jsonb,answer=$7,updated_at=now()
   WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 AND status=$6 AND expires_at>now() RETURNING *`,
   [ctx.workspaceId,ctx.actorId,goalId,status,JSON.stringify(checkpoint),goal.status,answer])).rows[0]||null;
@@ -82,10 +83,16 @@ async function recover(database,ctx,goalId){
   h.recovery={at:new Date().toISOString(),interruptedTool:h.inflight?.name||null,requiresReconciliation:Boolean(uncertain)};
   if(!uncertain){h.inflight=null;h.native.openaiState=null;}
   // Tool counters, model holds, original request and evidence are unchanged.
+  let recoveredStatus=status,recoveredAnswer=uncertain?
+   'An interrupted business operation requires canonical reconciliation before it can be retried.':goal.answer;
+  if(!uncertain&&status==='READY'&&h.pendingReport?.status==='needs_user'){
+   const classified=require('../../src/assistant/agent-conversation').classify({report:h.pendingReport});
+   recoveredStatus=classified.status;recoveredAnswer=classified.answer;h.userQuestion=classified.question;h.pendingReport=null;h.failure=null;
+  }
+  goal.status=recoveredStatus;goal.answer=recoveredAnswer;require('../../src/assistant/agent-conversation').sync(goal);
   return (await client.query(`UPDATE stockchief_runtime.assistant_goals SET status=$4,checkpoint=$5::jsonb,run_token=NULL,lease_until=NULL,
    answer=$6,updated_at=now() WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 RETURNING *`,
-   [ctx.workspaceId,ctx.actorId,goalId,status,JSON.stringify(goal.checkpoint),uncertain?
-    'An interrupted business operation requires canonical reconciliation before it can be retried.':goal.answer])).rows[0];
+   [ctx.workspaceId,ctx.actorId,goalId,recoveredStatus,JSON.stringify(goal.checkpoint),recoveredAnswer])).rows[0];
  },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 module.exports={authority,dependencies,current,refresh,recover};

@@ -40,6 +40,7 @@
     if(!result.ok)throw Error('Progress unavailable');
     if(result.ok){
      const goal=await result.json();
+     const conversation=goal.conversation;
      const changed=goal.status!==status;
      disconnected=false;
      status=goal.status;updated=goal.updatedAt;panel.dataset.goalStatus=status;
@@ -53,9 +54,10 @@
        phase.textContent='Opening the requested page';
        // Never navigate away with unsent input, from an older conversation, or
        // from a second tab after the durable delivery has already started.
-       const draft=document.querySelector('textarea[name="message"],input[name="message"]');
+       const hasDraft=[...document.querySelectorAll('textarea[name="message"],input[name="message"]')]
+        .some(field=>!field.closest('[hidden]')&&(field.value||'').trim());
        const key=`stockchief-navigation:${goal.id}:${goal.navigation.id}`;
-       if(goal.navigation.automatic&&goal.navigation.state==='PENDING'&&!(draft?.value||'').trim()&&!sessionStorage.getItem(key)){
+       if(goal.navigation.automatic&&goal.navigation.state==='PENDING'&&!hasDraft&&!sessionStorage.getItem(key)){
         sessionStorage.setItem(key,'1');navigation.elements.automatic.value='1';navigation.submit();return;
        }
       }
@@ -63,10 +65,33 @@
      // A second tab can decide a proposal while this page keeps polling.
      // Remove obsolete decision forms immediately without losing draft text.
      if(status!=='WAITING_APPROVAL')for(const card of panel.querySelectorAll('[data-approval-id]'))card.remove();
-     rows=activities(goal.events||[]);phase.textContent=goal.navigation?'Ready to open in your browser':status==='RUNNING'?(rows.at(-1)?.label||phases.RUNNING):(phases[status]||'Checking progress');
+     rows=activities(goal.events||[]);phase.textContent=conversation?.label||(phases[status]||'Checking progress');
      const answer=panel.querySelector('[data-goal-answer]');
-     if(window.StockChiefAnswer)answer.innerHTML=window.StockChiefAnswer.render(goal.answer||'');else answer.textContent=goal.answer||'';
-     answer.hidden=!goal.answer;
+     const message=conversation?.message||'';
+     if(window.StockChiefAnswer)answer.innerHTML=window.StockChiefAnswer.render(message);else answer.textContent=message;
+     answer.hidden=!message;
+     const reply=panel.querySelector('[data-goal-reply]');
+     if(reply){reply.hidden=!conversation?.canReply||panel.dataset.goalLatest==='true';reply.elements.questionId.value=conversation?.input?.id||'';}
+     if(panel.dataset.goalLatest==='true'){
+      const composer=document.getElementById('tell-foundry');
+      if(composer)for(const [name,value]of Object.entries({continueGoalId:conversation?.canReply?goal.id:'',questionId:conversation?.input?.id||''})){
+       let input=composer.querySelector(`input[name="${name}"]`);
+       if(!input){input=document.createElement('input');input.type='hidden';input.name=name;composer.append(input);}input.value=value;
+      }
+      if(composer){let context=composer.querySelector('[data-agent-reply-context]');
+       if(!context){context=document.createElement('p');context.dataset.agentReplyContext='';context.className='rm-composer__context';composer.prepend(context);}
+       context.hidden=!conversation?.canReply;context.textContent='Reply to StockChief’s question to continue this request.';
+      }
+     }
+     const history=document.querySelector(`[data-conversation-history-for="${CSS.escape(goal.id)}"]`);
+     if(history&&conversation){
+      const turns=conversation.history.filter((turn,index)=>!(index===conversation.history.length-1&&turn.role==='assistant'&&turn.text===message));
+      history.replaceChildren();for(const turn of turns){const row=document.createElement('div'),label=document.createElement('p'),body=document.createElement('div');
+       row.className='rm-agent__exchange';label.className='rm-stamp';label.textContent=turn.role==='user'?'You':'StockChief';
+       if(window.StockChiefAnswer)body.innerHTML=window.StockChiefAnswer.render(turn.text);else body.textContent=turn.text;
+       row.append(label,body);history.append(row);
+      }
+     }
      const timeline=panel.querySelector('[data-goal-timeline]');
      if(timeline){timeline.replaceChildren();for(const row of rows){const li=document.createElement('li');li.textContent=row.label;timeline.append(li);}}
      if(['COMPLETED','BLOCKED','CANCELLED'].includes(status)){
@@ -76,7 +101,11 @@
      }
      // Update terminal truth immediately; never depend on a page reload to
      // stop the spinner. Reload only to obtain authenticated decision forms.
-     if(changed&&['WAITING_APPROVAL','WAITING_USER'].includes(status)){window.location.reload();return;}
+     if(changed&&status==='WAITING_APPROVAL'){
+      const draft=document.querySelector('#tell-foundry textarea[name="message"]');
+      if(!(draft?.value||'').trim()){window.location.reload();return;}
+      hint.textContent='A change is ready for review. Your draft is preserved; reload when you are ready to review the approval.';
+     }
     }
    }catch{disconnected=true;hint.textContent='Connection lost. Current progress is unknown; your request is saved.';}
    if(['READY','RUNNING','WAITING_EVENT','WAITING_APPROVAL'].includes(status))window.setTimeout(poll,3000);

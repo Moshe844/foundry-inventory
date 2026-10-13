@@ -44,7 +44,7 @@ test('recorded zero-argument rule call completes through budgeted helpers, appro
   assert.equal(sdkCalls,3);
   const current=await store.get(db,ctx,response.goalId),entry=Object.values(current.checkpoint.harness.evidence).findLast(e=>e.name==='business_operations');
   const evidence=JSON.parse(entry.text);
-  return require('../helpers/codex-offline-response').final(body,sdkCalls,JSON.stringify({status:'completed',answer:'The approved stock warnings are active for both existing products.',claims:[{evidenceId:entry.id,path:'/outcomes/0/result/status',value:evidence.outcomes[0].result.status}]}));
+  return require('../helpers/codex-offline-response').final(body,sdkCalls,JSON.stringify({status:'completed',outcome:'answer',answer:'The approved stock warnings are active for both existing products.',claims:[{evidenceId:entry.id,path:'/outcomes/0/result/status',value:evidence.outcomes[0].result.status}]}));
  };
  const options={image:process.env.STOCKCHIEF_OFFLINE_CODEX_IMAGE||JSON.parse(require('node:fs').readFileSync('data/environment-agent-demo/codex-sdk-approval-handoff/runtime.json')).image,
   apiKey:'FAKE',fetchImpl:fake,countInput:async()=>{counted++;return {object:'response.input_tokens',input_tokens:200};}};

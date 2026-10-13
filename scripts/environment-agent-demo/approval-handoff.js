@@ -50,6 +50,7 @@ async function transaction(database,ctx,goalId,fn,{allowMissing=false,allowCompl
  const h=goal.checkpoint.harness;if(!h){if(allowMissing)return null;throw Error('APPROVAL_GOAL_UNAVAILABLE');}
  await waits.authority(client,ctx,h);
  const cards=await stage(client,ctx,goal,h),result=await fn({client,goal,h,cards});
+ require('../../src/assistant/agent-conversation').sync(goal);
  if(Buffer.byteLength(JSON.stringify(goal.checkpoint))>8*1024*1024)throw Error('SESSION_SIZE_LIMIT');
  await client.query(`UPDATE ${TABLE} SET checkpoint=$4::jsonb,status=$5,answer=$6,
   run_token=CASE WHEN $5='RUNNING' THEN run_token ELSE NULL END,

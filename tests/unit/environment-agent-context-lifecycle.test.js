@@ -70,12 +70,13 @@ test('full observed payload, immutable identity and pagination survive former 12
  assert.equal(JSON.stringify(records).includes('Handling requirement:'),true);
  assert.deepEqual(rebuild(records),value);
 });
-test('only an explicit question can wait for a user; forced loop exits remain failures',()=>{
+test('only an explicit question can wait for a user; a loop without a question remains a failure',()=>{
  const classify=require(base+'outcome').classify;
  assert.equal(classify({answer:'Incomplete, please retry.',verified:false}).status,'BLOCKED');
  const answer=JSON.stringify({status:'needs_user',question:'Which location received these goods?',missingInformation:'Physical receiving location is not specified or recorded.'});
  assert.equal(classify({answer,verified:false}).status,'WAITING_USER');
- assert.equal(classify({answer,verified:false,progress:{finalReason:'REPEATED_UNCHANGED_EVIDENCE'}}).status,'BLOCKED');
+ assert.equal(classify({answer,verified:false,progress:{finalReason:'REPEATED_UNCHANGED_EVIDENCE'}}).status,'WAITING_USER');
+ assert.equal(classify({answer:'Repeated inspections did not resolve the task.',verified:false,progress:{finalReason:'REPEATED_UNCHANGED_EVIDENCE'}}).status,'BLOCKED');
  assert.equal(classify({answer:'Approval pending',verified:false,current:'WAITING_APPROVAL'}).status,'WAITING_APPROVAL');
  assert.equal(classify({answer:'Verified',verified:true}).status,'COMPLETED');
 });

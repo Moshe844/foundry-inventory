@@ -1,0 +1,73 @@
+'use strict';
+const {z}=require('zod'),{createHash}=require('node:crypto');
+const text=z.string().trim().min(1).max(20000);
+const missing=z.preprocess(value=>typeof value==='string'?[value]:value,z.array(z.string().trim().min(1).max(1000)).min(1).max(30));
+// One wire contract for all domains. Model reports express intent, never an
+// approval, an execution grant, or proof that a business outcome occurred.
+const Report=z.discriminatedUnion('status',[
+ z.object({version:z.literal(1).optional(),status:z.literal('needs_user'),question:text.refine(q=>publicText(q,'')===q),missingInformation:missing}),
+ z.object({version:z.literal(1).optional(),status:z.literal('completed'),outcome:z.enum(['answer','navigation']).optional(),answer:text,
+  claims:z.array(z.object({evidenceId:z.string(),path:z.string(),value:z.unknown(),historical:z.boolean().optional()})).max(50),
+  navigation:z.object({evidenceId:z.string(),path:z.string()}).optional()}),
+ z.object({version:z.literal(1).optional(),status:z.literal('blocked'),answer:text})
+]);
+function parse(raw){
+ let value=raw;
+ if(typeof raw==='string'){try{value=JSON.parse(raw);}catch{return null;}}
+ const result=Report.safeParse(value);return result.success?{version:1,...result.data}:null;
+}
+const FAILED='I could not finish this request safely. Your goal and recorded work are saved. Any completed operations retain their recorded status.';
+function publicText(value,fallback=FAILED){
+ if(typeof value!=='string'||!value.trim())return fallback;
+ // Protocol envelopes and exception diagnostics are never a customer answer.
+ if(/^\s*(?:[\[{]|```(?:json)?\s*[\[{])/i.test(value)||/Outcome not fully verified\. Agent report:|\b(?:Error|Exception|TypeError):|\b[A-Z][A-Z0-9]+(?:_[A-Z0-9]+){2,}\b|\bat \S+\s*\([^\n]+:\d+:\d+\)/.test(value))return fallback;
+ return value.trim().slice(0,20000);
+}
+function classify({report,answer,verified,current='READY',canonicalVerified=true,progress={}}){
+ report=parse(report)||parse(answer);
+ // Canonical dependencies outrank a model's view of what stage it reached.
+ if(current!=='READY')return {status:current,answer:current==='WAITING_APPROVAL'?'The prepared changes need your approval.':current==='WAITING_EVENT'?'An authorized operation is still awaiting confirmation.':FAILED};
+ if(verified&&canonicalVerified)return {status:'COMPLETED',answer:publicText(report?.answer||answer)};
+ if(report?.status==='needs_user')return {status:'WAITING_USER',answer:publicText(report.question),
+  question:{question:publicText(report.question),missingInformation:report.missingInformation}};
+ return {status:'BLOCKED',answer:report?.status==='blocked'?publicText(report.answer):FAILED,
+  failure:{code:progress.finalReason||'OUTCOME_UNVERIFIED',requiresUserInput:false}};
+}
+const labels={queued:'Getting started',working:'Working on your request',clarification:'Let’s clarify',approval:'Ready for your approval',
+ external_wait:'Waiting for confirmation',navigation:'Ready to open in your browser',verification:'Checking the result',completed:'Completed and verified',
+ interrupted:'Work paused',failed:'Could not finish',cancelled:'Stopped'};
+const ConversationState=z.object({version:z.literal(1),goalId:z.string(),phase:z.enum(Object.keys(labels)),label:z.string(),
+ active:z.boolean(),terminal:z.boolean(),message:z.string(),canReply:z.boolean(),revision:z.number().int().nonnegative(),
+ input:z.object({id:z.string(),question:z.string(),missingInformation:z.array(z.string())}).nullable(),
+ history:z.array(z.object({id:z.string(),role:z.enum(['user','assistant']),text:z.string(),at:z.string()})),recovery:z.string().nullable()});
+/** @returns {import('zod').output<typeof ConversationState>} */
+function state(goal){
+ const cp=goal.checkpoint||{},h=cp.harness||{},saved=cp.conversationState;
+ const phase=({READY:cp.lifecycleStage==='verification'?'verification':'queued',RUNNING:cp.lifecycleStage==='verification'?'verification':'working',
+  WAITING_USER:'clarification',WAITING_APPROVAL:'approval',WAITING_EVENT:['PENDING','DELIVERING'].includes(cp.navigation?.state)?'navigation':'external_wait',COMPLETED:'completed',
+  BLOCKED:h.interruption?'interrupted':'failed',CANCELLED:'cancelled'})[goal.status]||'failed';
+ const question=goal.status==='WAITING_USER'?(h.userQuestion||saved?.input||{question:goal.answer,missingInformation:['Your decision']}):null;
+ const input=question?{id:question.id||createHash('sha256').update(JSON.stringify([goal.id,cp.messages?.length||0,question.question])).digest('hex'),
+  question:publicText(question.question,'What would you like me to use?'),missingInformation:missing.safeParse(question.missingInformation).success?missing.parse(question.missingInformation):[]}:null;
+ return ConversationState.parse({version:1,goalId:goal.id,phase,label:labels[phase],active:!['completed','failed','cancelled','interrupted'].includes(phase),
+  terminal:['completed','failed','cancelled'].includes(phase),message:input?.question||publicText(goal.answer,['queued','working','verification'].includes(phase)?'':FAILED),input,
+  canReply:phase==='clarification'&&Boolean(input),revision:saved?.revision||0,
+  history:(saved?.history||[]).map(m=>({id:m.id,role:m.role,text:publicText(m.text,''),at:m.at})),
+  recovery:phase==='interrupted'?'Your goal is saved. Recorded operations must be checked before work resumes.':null});
+}
+function sync(goal){
+ const old=goal.checkpoint.conversationState,next=state(goal);
+ const same=old&&old.phase===next.phase&&old.message===next.message&&old.input?.id===next.input?.id;
+ next.history=old?.history||[];
+ if(!same){next.revision=(old?.revision||0)+1;
+  if(next.message&&next.message!==old?.message)next.history=[...next.history,{id:`${goal.id}:assistant:${next.revision}`,role:'assistant',text:next.message,at:new Date().toISOString()}];
+ }
+ if(next.input&&goal.checkpoint.harness)goal.checkpoint.harness.userQuestion={...next.input};
+ goal.checkpoint.conversationState=next;return next;
+}
+const instructions=`\nStockChief conversation contract v1: End a turn with ONE JSON report matching a variant below. This report is consumed by the host, never displayed as JSON.
+Clarification: {version:1,status:"needs_user",question:string,missingInformation:string[]}. Ask only the smallest set of genuinely missing user choices needed for the next step. First use authorized records, existing conversation, form defaults and business settings to derive facts safely. Do not ask the user to repeat known information, supply internal IDs, or fill every possible field. Resolve a selected record's prices, currency, contact details and other stored defaults from evidence before asking about absent values. Do not infer a user's choice from multiple possible records. Internal errors, unavailable tools, loops and budget limits are not user questions.
+Completion: {version:1,status:"completed",outcome:"answer"|"navigation",answer:string,claims:[{evidenceId:string,path:string,value:any,historical?:boolean}],navigation?:{evidenceId:string,path:string}}. Only the host verifier can mark completion.
+Blocked: {version:1,status:"blocked",answer:string}. Describe the limitation in ordinary language without internal error codes, stack traces or protocol data.
+Clarification does not complete or abandon the goal. The next human reply continues this same goal with its durable evidence, canonical proposals, limits and original instructions. Human input alone is never approval of a business operation.`;
+module.exports={Report,ConversationState,parse,classify,state,sync,publicText,instructions,FAILED};

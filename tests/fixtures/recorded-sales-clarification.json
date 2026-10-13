@@ -1,0 +1,13 @@
+{
+  "source": "Recorded Staging native Codex final, 2026-10-13T13:41:32.782Z. No business proposals were created. Identifiers and personal records omitted.",
+  "request": "Create a sales order",
+  "elapsedMs": 67305,
+  "modelCalls": 4,
+  "toolCalls": 4,
+  "ledgerMicroUsd": 235340,
+  "rawFinal": "{\n  \"status\": \"needs_user\",\n  \"question\": \"Who is the customer, which products and quantities are they ordering, and what is the price per unit and currency? Will they pick up, or should it ship—and to what address?\",\n  \"missingInformation\": [\"customer\", \"products and quantities\", \"unit prices and currency\", \"delivery method and shipping address if applicable\"]\n}",
+  "persistedStatus": "BLOCKED",
+  "failureCode": "OUTCOME_UNVERIFIED",
+  "storedQuestion": null,
+  "messages": []
+}

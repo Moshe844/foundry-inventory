@@ -1,8 +1,14 @@
 <%
- const phase=({READY:'Getting started',RUNNING:'Working on your request',WAITING_APPROVAL:'Ready for your approval',WAITING_EVENT:'Waiting for confirmation',WAITING_USER:'Your input is needed',COMPLETED:'Completed and verified',BLOCKED:'Could not finish',CANCELLED:'Stopped'})[goal.status]||'Checking progress';
+ const conversation=goal.conversation||{label:'Checking progress',message:'Your request is saved.',history:[],canReply:false};
+ const phase=conversation.label;
  const active=['READY','RUNNING'].includes(goal.status);
  const pendingNavigation=goal.status==='WAITING_EVENT'&&['PENDING','DELIVERING'].includes(goal.checkpoint.navigation?.state)?goal.checkpoint.navigation:null;
 %>
+<div data-conversation-history-for="<%= goal.id %>" class="rm-agent__conversation">
+  <% for(const [index,turn] of conversation.history.entries()){ if(index===conversation.history.length-1&&turn.role==='assistant'&&turn.text===conversation.message)continue; %>
+    <div class="rm-agent__exchange"><p class="rm-stamp"><%= turn.role==='user'?'You':'StockChief' %></p><div><%- renderAgentAnswer(turn.text) %></div></div>
+  <% } %>
+</div>
 <section class="rm-agent" aria-label="Goal progress" data-adaptive-goal="<%= goal.id %>" data-goal-status="<%= goal.status %>" data-goal-created="<%= new Date(goal.created_at).toISOString() %>" data-goal-updated="<%= new Date(goal.updated_at).toISOString() %>" data-goal-latest="<%= locals.isLatest?'true':'false' %>">
   <div class="rm-agent__header">
     <p class="rm-agent__phase" role="status" data-goal-phase><span class="rm-agent__dot" aria-hidden="true"></span><span data-goal-phase-text><%= phase %></span></p>
@@ -11,7 +17,7 @@
       <form method="post" action="/ask/goals/<%= goal.id %>/cancel"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">Stop</button></form>
     <% } %>
   </div>
-  <div class="rm-agent__answer" data-goal-answer <%= goal.answer?'':'hidden' %>><%- renderAgentAnswer(goal.answer||'') %></div>
+  <div class="rm-agent__answer" data-goal-answer <%= conversation.message?'':'hidden' %>><%- renderAgentAnswer(conversation.message) %></div>
   <p class="rm-agent__hint" data-goal-hint><%= active?'You can leave this page. I’ll keep working and show any required approval here.':'' %></p>
   <form method="post" action="/ask/goals/<%= goal.id %>/navigate" data-goal-navigation <%= pendingNavigation?'':'hidden' %>>
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -37,9 +43,8 @@
   <% for(const id of goal.checkpoint.waiting?.proposalIds||[]){ %>
     <p><a href="<%= goal.checkpoint.observations.find(o=>o.result.proposal?.id===id)?.result.proposal?.href || '/actions/'+encodeURIComponent(id) %>">Review prepared operation</a></p>
   <% } %>
-  <% if(goal.status==='WAITING_USER'){ %>
-    <form method="post" action="/ask/goals/<%= goal.id %>/reply"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <form data-goal-reply method="post" action="/ask/goals/<%= goal.id %>/reply" <%= conversation.canReply&&!locals.isLatest?'':'hidden' %>><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="hidden" name="questionId" value="<%= conversation.input?.id||'' %>">
       <label>Your answer<input name="message" maxlength="4000" required></label><button class="rm-btn rm-btn--sm" type="submit">Continue this goal</button>
     </form>
-  <% } %>
 </section>

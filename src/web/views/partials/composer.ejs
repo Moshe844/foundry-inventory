@@ -24,7 +24,8 @@
   <% if (locals.queryConversation) { %><input type="hidden" name="queryConversation" value="1"><% } %>
   <% if (locals.continuationGoalId) { %>
     <input type="hidden" name="continueGoalId" value="<%= locals.continuationGoalId %>">
-    <p class="rm-composer__context">Replying to StockChief’s question above. To ask something else, start a new conversation.</p>
+    <input type="hidden" name="questionId" value="<%= locals.continuationQuestionId||'' %>">
+    <p class="rm-composer__context" data-agent-reply-context>Reply to StockChief’s question to continue this request.</p>
   <% } %>
   <% if (locals.emailBodyContinuation) { %>
     <input type="hidden" name="continueInteractionId" value="<%= locals.emailBodyContinuation.interactionId %>">

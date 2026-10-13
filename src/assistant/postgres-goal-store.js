@@ -8,6 +8,8 @@ async function get(db,ctx,id){return (await db.query(`SELECT * FROM ${TABLE}
  WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,id])).rows[0]||null;}
 async function progress(db,ctx,id){return (await db.query(`SELECT id,status,answer,created_at,updated_at,turns,tool_calls,
  jsonb_build_object('runtime',checkpoint->'runtime','runStartedAt',checkpoint->'runStartedAt',
+ 'conversationState',checkpoint->'conversationState','lifecycleStage',checkpoint->'lifecycleStage',
+ 'harness',jsonb_build_object('userQuestion',checkpoint#>'{harness,userQuestion}','interruption',checkpoint#>'{harness,interruption}'),
  'navigation',jsonb_build_object('id',checkpoint#>'{navigation,id}','label',checkpoint#>'{navigation,label}',
  'state',checkpoint#>'{navigation,state}')) AS checkpoint FROM ${TABLE}
  WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,id])).rows[0]||null;}
@@ -50,12 +52,32 @@ async function cancel(db,ctx,id){return (await db.query(`UPDATE ${TABLE} SET sta
  answer='Goal stopped. Previously approved or completed business operations retain their own recorded status.',updated_at=now()
  WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 AND status NOT IN ('COMPLETED','CANCELLED') RETURNING *`,
  [ctx.workspaceId,ctx.actorId,id])).rows[0]||null;}
-async function reply(db,ctx,id,message){
+async function reply(db,ctx,id,message,{questionId=null}={}){
  const text=String(message||'').trim();if(!text||text.length>4000)throw new ValidationError('Provide a brief answer to continue.');
- return (await db.query(`UPDATE ${TABLE} SET status='READY',checkpoint=jsonb_set(checkpoint,'{messages}',
- COALESCE(checkpoint->'messages','[]'::jsonb)||$4::jsonb),updated_at=now()
- WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 AND status='WAITING_USER' AND expires_at>now() RETURNING *`,
- [ctx.workspaceId,ctx.actorId,id,JSON.stringify([text])])).rows[0]||null;
+ return db.transaction(async client=>{
+  const goal=(await client.query(`SELECT * FROM ${TABLE} WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 FOR UPDATE`,[ctx.workspaceId,ctx.actorId,id])).rows[0];
+  if(!goal||new Date(goal.expires_at)<=new Date())return null;
+  const cp=goal.checkpoint,contract=require('./agent-conversation');
+  if(cp.harness)await require('../../scripts/environment-agent-demo/waits').authority(client,ctx,cp.harness);
+  const prior=questionId&&(cp.conversationState?.history||[]).find(m=>m.role==='user'&&m.questionId===questionId);
+  if(prior)return prior.text===text?{...goal,replyReplayed:true}:null;
+  if(goal.status!=='WAITING_USER')return null;
+  // Compatibility for old valid questions; it is never inferred from failure text.
+  cp.harness?.userQuestion||(cp.harness?cp.harness.userQuestion={question:goal.answer,missingInformation:['Your decision']}:null);
+  const current=contract.sync(goal);
+  if(questionId&&questionId!==current.input?.id)return null;
+  const inputId=current.input?.id||`${id}:legacy:${cp.messages?.length||0}`;
+  current.history.push({id:`${id}:reply:${inputId}`,role:'user',text,questionId:inputId,at:new Date().toISOString()});
+  cp.messages=[...(cp.messages||[]),text];
+  if(cp.harness){cp.harness.userQuestion=null;cp.harness.pendingReport=null;cp.harness.failure=null;}
+  cp.lifecycleStage=null;goal.status='READY';goal.answer='';contract.sync(goal);
+  const row=(await client.query(`UPDATE ${TABLE} SET status='READY',checkpoint=$4::jsonb,answer='',updated_at=now()
+   WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 RETURNING *`,[ctx.workspaceId,ctx.actorId,id,JSON.stringify(cp)])).rows[0];
+  await client.query(`INSERT INTO stockchief_runtime.assistant_goal_events(id,goal_id,sequence,kind,detail)
+   SELECT $1,$2,COALESCE(MAX(sequence),0)+1,'user_replied',$3::jsonb FROM stockchief_runtime.assistant_goal_events WHERE goal_id=$2`,
+   [newId('goalevent'),id,JSON.stringify({questionId:inputId})]);
+  return row;
+ },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 async function enqueue(db,goal){return require('../operations/postgres-job-queue').enqueue(db,{workspaceId:goal.workspace_id,
  kind:goal.checkpoint.runtime==='codex-staging'?'assistant.run-codex-goal':'assistant.run-goal',payload:{goalId:goal.id,actorId:goal.actor_user_id},

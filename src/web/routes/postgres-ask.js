@@ -152,6 +152,7 @@ function createPostgresAskRouter(database,options={}){
   const goalStore=require('../../assistant/postgres-goal-store');
   const pilot=require('../../assistant/postgres-codex-pilot');
   const agentNavigation=require('../../assistant/postgres-agent-navigation');
+  const conversation=require('../../assistant/agent-conversation');
   router.post('/ask/goals/:id/navigate',asyncRoute(async(req,res)=>{
     const automatic=req.body.automatic==='1';
     if(automatic&&req.session.postgresAskNavigationGoal!==req.params.id)
@@ -199,16 +200,19 @@ function createPostgresAskRouter(database,options={}){
     const events=isPilot?(await database.query(`SELECT sequence,kind,detail,created_at FROM stockchief_runtime.assistant_goal_events
       WHERE goal_id=$1 AND kind IN ('agent_activity','approval_ready') ORDER BY sequence DESC LIMIT 20`,[goal.id])).rows:[];
     const navigation=agentNavigation.visible(goal);
-    return res.json({id:goal.id,status:goal.status,answer:goal.answer,createdAt:goal.created_at,updatedAt:goal.updated_at,runStartedAt:goal.checkpoint.runStartedAt,turns:goal.turns,tools:goal.tool_calls,events,
+    const state=conversation.state(goal);
+    const safeEvents=events.map(e=>({sequence:e.sequence,kind:e.kind,created_at:e.created_at,
+      detail:{kind:e.detail.kind,tool:typeof e.detail.tool==='string'?e.detail.tool:null,status:e.detail.kind==='runtime_starting'?e.detail.status:null}}));
+    return res.json({id:goal.id,status:goal.status,answer:state.message,conversation:state,createdAt:goal.created_at,updatedAt:goal.updated_at,runStartedAt:goal.checkpoint.runStartedAt,turns:goal.turns,tools:goal.tool_calls,events:safeEvents,
       navigation:navigation?{...navigation,automatic:req.session.postgresAskNavigationGoal===goal.id}:null});
   }));
   router.post('/ask/goals/:id/reply',asyncRoute(async(req,res)=>{
     const existing=await goalStore.get(database,req.ctx,req.params.id);
     if(existing?.checkpoint.runtime==='codex-staging')await pilot.access(database,req.ctx,{enabled:true});
     else if(!goalStore.enabled(req.ctx))throw new ValidationError('Adaptive Ask is disabled.');
-    const goal=await goalStore.reply(database,req.ctx,req.params.id,req.body.message);
+    const goal=await goalStore.reply(database,req.ctx,req.params.id,req.body.message,{questionId:req.body.questionId||null});
     if(!goal)throw new ValidationError('This goal is not waiting for an answer.');
-    await goalStore.enqueue(database,goal);return res.redirect(303,'/ask');
+    if(!goal.replyReplayed)await goalStore.enqueue(database,goal);return res.redirect(303,'/ask');
   }));
   router.post('/ask/goals/:id/cancel',asyncRoute(async(req,res)=>{
     await goalStore.cancel(database,req.ctx,req.params.id);return res.redirect(303,'/ask');
@@ -268,6 +272,7 @@ function createPostgresAskRouter(database,options={}){
     const pilotView=options.agentInspection?null:await pilot.view(database,req.ctx);
     const recentGoals=goalStore.enabled(req.ctx)||pilotView?await goalStore.recent(database,req.ctx,startedAt):[];
     const activeGoal=recentGoals.at(-1)||null;
+    for(const goal of recentGoals)goal.conversation=conversation.state(goal);
     for(const goal of recentGoals)goal.approvalCards=goal.checkpoint.runtime==='codex-staging'&&!['COMPLETED','CANCELLED','BLOCKED'].includes(goal.status)
       ?(await pilot.inbox(database,req.ctx,goal.id)).approvals:[];
     const nativeRuleIds=new Set(recentGoals.flatMap(goal=>(goal.approvalCards||[]).filter(card=>card.kind==='rule').map(card=>card.proposalId)));
@@ -283,6 +288,7 @@ function createPostgresAskRouter(database,options={}){
       aiConfigured:Boolean(options.provider||config.ai.configured),usageKey:newId('askusage'),
       sourcePath:sourcePage?.path||null,emailBodyContinuation,protectedNames,
       continuationGoalId:continuationGoal?.status==='WAITING_USER'?continuationGoal.id:null,
+      continuationQuestionId:continuationGoal?.conversation?.input?.id||null,
       examples:await askExamples(database,req.ctx,sourcePage)});
   }));
   router.post('/ask/new',asyncRoute(async(req,res)=>{
@@ -316,9 +322,9 @@ function createPostgresAskRouter(database,options={}){
       await pilot.access(database,req.ctx,{enabled:true});
       if(req.session.postgresAskStartedAt&&new Date(existing.created_at)<=new Date(req.session.postgresAskStartedAt))
         throw new ValidationError('That question belongs to an earlier conversation.');
-      const continued=await goalStore.reply(database,req.ctx,id,req.body.message);
+      const continued=await goalStore.reply(database,req.ctx,id,req.body.message,{questionId:req.body.questionId||null});
       if(!continued)throw new ValidationError('That request is no longer waiting for an answer.');
-      await goalStore.enqueue(database,continued);req.session.postgresAskNavigationGoal=id;
+      if(!continued.replyReplayed)await goalStore.enqueue(database,continued);req.session.postgresAskNavigationGoal=id;
       return {goalId:id};
     }
     const remembered=req.session.postgresAskPageContext;
@@ -442,6 +448,17 @@ function createPostgresAskRouter(database,options={}){
     if(opened?.href?.startsWith('/')&&!opened.href.startsWith('//'))return res.redirect(303,opened.href);
     return res.redirect(303,result.continued?.length?'/ask#latest':`/actions/${proposal.id}`);
   }));
+  // Agent protocol/adapter exceptions are diagnostics, not conversation text.
+  // Apply this to both the composer and goal endpoints (including polling).
+  router.use((error,req,res,next)=>{
+    if(!req.path.startsWith('/ask/goals/')&&!['/ask','/foundry/tell'].includes(req.path))return next(error);
+    const expected=error instanceof require('../../domain/errors').DomainError;
+    const message=expected?conversation.publicText(error.message,'This request cannot continue. Reload Ask to check its current state.'):
+      'StockChief could not continue this step. Your conversation is saved; reload Ask to check its current state.';
+    if(!expected)console.error('[stockchief agent lifecycle]',error.code||error.name||'Error');
+    if(req.method==='POST'&&req.session){req.flash('error',message);return res.redirect(303,'/ask#latest');}
+    return res.status(expected?error.status||400:500).json({error:{code:'conversation_unavailable',message}});
+  });
   return router;
 }
 

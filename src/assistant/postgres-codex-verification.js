@@ -3,12 +3,15 @@ const {createHash}=require('node:crypto');
 // Models identify claims; the host checks their values against durable evidence
 // and canonical PostgreSQL effects. A model's success flag alone is insufficient.
 async function verify(database,ctx,goal,raw,catalogue){
- let report;try{report=JSON.parse(raw);}catch{return {verified:false,answer:raw};}
- if(report.status==='needs_user')return {verified:false,answer:raw};
+ const conversation=require('./agent-conversation'),report=conversation.parse(raw);
+ if(!report)return {verified:false,answer:conversation.FAILED};
+ if(report.status==='needs_user')return {verified:false,answer:report.question,report};
+ if(report.status==='blocked')return {verified:false,answer:conversation.publicText(report.answer),report};
+ if(conversation.publicText(report.answer,'')!==report.answer)return {verified:false,answer:conversation.FAILED};
  if(report.status==='completed'&&goal.checkpoint.clientIntegration===1&&!['answer','navigation'].includes(report.outcome))
   return {verified:false,answer:'I could not verify delivery of the requested result. A page inspected by the agent is not proof that it opened in your browser.'};
  if(report.status!=='completed'||typeof report.answer!=='string'||!Array.isArray(report.claims)||!report.claims.length||report.claims.length>50)
-  return {verified:false,answer:report.answer||raw};
+  return {verified:false,answer:conversation.publicText(report.answer)};
  const h=goal.checkpoint.harness;
  const receipt=await require('../../scripts/environment-agent-demo/receipts').collect(database,ctx,goal,h,catalogue);
  if(receipt.dependencyState!=='READY'||receipt.operations.some(o=>!o.verified))return {verified:false,answer:report.answer,receipt};
@@ -68,7 +71,5 @@ A governed navigation operation also supplies a safe destination: reference its 
 Each factual claim must reference actual durable evidence by ID and a JSON Pointer to its exact recorded value.
 Current-state claims after execution require fresh observations. Mark a historical claim historical:true and describe its time/scope explicitly.
 Use the complete evidence already in a tool response. Its _stockchiefEvidence reference supplies evidenceId and valuePointerPrefix; prepend that prefix to the JSON Pointer of the displayed value. Retrieve the journal only for missing, truncated, compacted or earlier evidence. Do not retrieve a value again just to report what the current response already shows. Include current-state verification after authorized changes.
-Use status "needs_user", question and missingInformation only for an actual missing human decision.
-If complete outcomes cannot be established, report status "blocked" and answer explaining the limitation.
 Never claim every part of a request was completed merely because one receipt was verified.`;
 module.exports={verify,instructions};
