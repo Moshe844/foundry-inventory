@@ -87,8 +87,14 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    page:goal.checkpoint.page?{path:goal.checkpoint.page.path}:null,
    continuation:structuredClone(goal.checkpoint.continuation||null),
    conversation:structuredClone(goal.checkpoint.conversation||null),
-   conversationState:structuredClone(goal.checkpoint.conversationState||null)}}));},
+   conversationState:structuredClone(goal.checkpoint.conversationState||null),
+   modelRouting:structuredClone(goal.checkpoint.modelRouting||null)}}));},
   async checkpoint(native){return authorizedUpdate(h=>{h.native={...h.native,...native};});},
+  async promoteReasoning(request){return authorizedUpdate((h,goal)=>{
+   if(candidate!=='codex'||h.pendingReport?.status!=='needs_reasoning')throw Error('INVALID_MODEL_TIER_HANDOFF');
+   const routing=require('../../src/assistant/codex-model-routing').promote(goal,ctx,request);
+   h.pendingReport=null;return routing;
+  });},
   async recordReport(raw){
    const report=require('../../src/assistant/agent-conversation').parse(raw);
    if(!report)return;

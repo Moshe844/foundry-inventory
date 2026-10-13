@@ -7,6 +7,7 @@ const NextActions=z.array(z.object({label:z.string().trim().min(1).max(80),instr
 // One wire contract for all domains. Model reports express intent, never an
 // approval, an execution grant, or proof that a business outcome occurred.
 const Report=z.discriminatedUnion('status',[
+ z.object({version:z.literal(1).optional(),status:z.literal('needs_reasoning'),tier:z.enum(['standard','complex','exceptional']),reason:z.string().trim().min(1).max(1600)}),
  z.object({version:z.literal(1).optional(),status:z.literal('needs_user'),question:text.refine(q=>publicText(q,'')===q),missingInformation:missing}),
  z.object({version:z.literal(1).optional(),status:z.literal('completed'),outcome:z.enum(['answer','navigation']).optional(),answer:text,
   claims:z.array(z.object({evidenceId:z.string(),path:z.string(),value:z.unknown(),historical:z.boolean().optional()})).max(50),

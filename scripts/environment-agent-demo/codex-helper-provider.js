@@ -3,13 +3,13 @@ const wire=require('./codex-wire');
 // Canonical engines may need structured interpretation or effect-fit checks.
 // They use the SAME native preflight, funded goal, period ledger and request
 // counter as the SDK. No credentials, direct provider transport or retry here.
-function create({transport}){
- return require('../../src/commercial/relay-provider').register({name:'openai',model:wire.MODEL,
+function create({transport,policy=wire}){
+ return require('../../src/commercial/relay-provider').register({name:'openai',model:policy.MODEL,
   async complete(request){
    const schema=require('../../src/foundry/schema-tools').toWireSchema(request.schema);
    const response=await fetch(transport.openaiBaseURL+'/responses',{method:'POST',
     headers:{authorization:'Bearer '+transport.token,'content-type':'application/json'},
-    body:JSON.stringify({model:wire.MODEL,reasoning:{effort:wire.EFFORT},store:false,stream:false,
+    body:JSON.stringify({model:policy.MODEL,reasoning:{effort:policy.EFFORT},store:false,stream:false,
      max_output_tokens:Math.min(request.maxOutputTokens||3000,3000),
      instructions:request.system,input:[{role:'user',content:request.prompt}],
      text:{format:{type:'json_schema',name:request.schemaName||'canonical_result',strict:true,schema}}})});

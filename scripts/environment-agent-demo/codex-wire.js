@@ -2,7 +2,9 @@
 // Transport policy, not a reasoning/context controller. Never trim native Codex
 // history, synthesize a final turn, or choose an agent action here.
 const wire=require('./wire-policy');
-const PROFILE=require('./codex-models').getProfile(process.env.STOCKCHIEF_CODEX_EVALUATION_PROFILE||'sol-high');
+const policies=new WeakSet();
+function forProfile(id){
+const PROFILE=require('./codex-models').getProfile(id);
 const MODEL=PROFILE.model,EFFORT=PROFILE.effort,VERSION='0.162.1';
 // Verified standard short-context pricing, 2026-10-12. The input bound is below
 // 180k, hence below the 272k long-context threshold. Include cache-write pricing.
@@ -47,4 +49,7 @@ function receipt(value){
  if(value.returnedServiceTier&&!['default','standard'].includes(value.returnedServiceTier))throw new Error('CODEX_RETURNED_SERVICE_TIER_MISMATCH');
  return {...value,conservativeMicroUsd:Math.ceil(value.inputTokens*PRICES.input+value.outputTokens*PRICES.output)};
 }
-module.exports={MODEL,EFFORT,PROFILE,VERSION,PRICES,source,normalize,receipt,countRequest,counted,MAX_INPUT_TOKENS,REQUEST_CEILING_MICRO_USD,nativeCompactionTokenLimit};
+const result=Object.freeze({MODEL,EFFORT,PROFILE,VERSION,PRICES,source,normalize,receipt,countRequest,counted,MAX_INPUT_TOKENS,REQUEST_CEILING_MICRO_USD,nativeCompactionTokenLimit});
+policies.add(result);return result;
+}
+module.exports={...forProfile(process.env.STOCKCHIEF_CODEX_EVALUATION_PROFILE||'sol-high'),forProfile,isPolicy:value=>policies.has(value)};

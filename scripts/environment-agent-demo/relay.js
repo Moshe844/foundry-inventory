@@ -41,10 +41,10 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
     if(grant.wireProfile!=='codex'&&grant.lastResponse?.empty)throw Object.assign(new Error(require('./finalization').EMPTY_MESSAGE),{code:'EMPTY_MODEL_FINAL'});
     const input=JSON.parse(Buffer.concat(parts).toString('utf8'));
     const outputTokens=grant.provider==='openai'?input.max_output_tokens||wire.MAX_OUTPUT:input.max_tokens||wire.MAX_OUTPUT;
-    const nativeCodex=grant.wireProfile==='codex';
+    const nativeCodex=grant.wireProfile==='codex',codex=grant.codexPolicy;
     const fitOptions=nativeCodex?null:{memory:await grant.contextSource?.(),
      maxInputTokens:Math.min(60000,await commercial.inputAllowance?.({provider:grant.provider,outputTokens})??60000)};
-    const fit=value=>nativeCodex?require('./codex-wire').normalize(value):grant.accountingMode==='native'?require('./wire-context').fit(grant.provider,value,fitOptions):wire.normalize(grant.provider,value);
+    const fit=value=>nativeCodex?codex.normalize(value):grant.accountingMode==='native'?require('./wire-context').fit(grant.provider,value,fitOptions):wire.normalize(grant.provider,value);
     let normalized=fit(input);
     if(nativeCodex&&grant.ctx?.workspaceId&&grant.ctx?.actorId){
      // Native threads still own reasoning/context. Cache accounting belongs to
@@ -68,7 +68,7 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
       const state=await budget.status();
       if(!state.approval||state.stopped||state.expires<=Date.now())throw new Error('PAID_TESTING_LOCKED');
       if(state.unresolved)throw new Error('UNRESOLVED_MODEL_CALL');
-      const codex=require('./codex-wire'),countBody=codex.countRequest(normalized.body);
+      const countBody=codex.countRequest(normalized.body);
       const countStarted=Date.now(),count=await countCodexInput(structuredClone(countBody));
       timings.tokenPreflightMs=Date.now()-countStarted;
       normalized=codex.counted(normalized,count);
@@ -115,7 +115,7 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
      throw new Error(`UPSTREAM_STATUS_${response.status}`);
     }
     const parsedReceipt=parser.finish();
-    const receipt=nativeCodex?require('./codex-wire').receipt(parsedReceipt):parsedReceipt;
+    const receipt=nativeCodex?codex.receipt(parsedReceipt):parsedReceipt;
     if(receipt.inputTokens>normalized.inputTokens||receipt.outputTokens>normalized.outputTokens){
      await budget.stop();throw new Error('TOKEN_BOUND_VIOLATION');
     }
@@ -168,7 +168,7 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
  server.listen(0,'127.0.0.1');await once(server,'listening');
  const origin=`http://127.0.0.1:${server.address().port}`;
  return {
-  grant({candidate,task,provider,authorize,fundingKey,goalId,ctx,accountingMode='native',wireProfile=null,requestGate=null,livePermit=null}){
+  grant({candidate,task,provider,authorize,fundingKey,goalId,ctx,accountingMode='native',wireProfile=null,requestGate=null,livePermit=null,codexPolicy=null}){
    if(!wire.MODELS[provider]||typeof authorize!=='function'||!goalId||!ctx||!fundingKey)throw new Error('A funded, authorized durable goal is required.');
    if(!['native','existing'].includes(accountingMode))throw new Error('Unsupported commercial accounting mode.');
    if(wireProfile!==null&&(wireProfile!=='codex'||provider!=='openai'||accountingMode!=='native'||typeof requestGate!=='function'))throw new Error('INVALID_CODEX_GATE');
@@ -176,7 +176,11 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
     require('./codex-live-permit').assert(livePermit,{budget,task});
     if(typeof countCodexInput!=='function')throw new Error('NATIVE_TOKEN_PREFLIGHT_REQUIRED');
    }
-   const token=randomBytes(32).toString('hex');grants.set(token,{candidate,task,provider,authorize,fundingKey,goalId,ctx,accountingMode,wireProfile,requestGate,livePermit});
+   if(wireProfile==='codex'){
+    codexPolicy||=require('./codex-wire').forProfile(require('./codex-wire').PROFILE.id);
+    if(!require('./codex-wire').isPolicy(codexPolicy))throw Error('INVALID_HOST_MODEL_POLICY');
+   }
+   const token=randomBytes(32).toString('hex');grants.set(token,{candidate,task,provider,authorize,fundingKey,goalId,ctx,accountingMode,wireProfile,requestGate,livePermit,codexPolicy});
    return {token,openaiBaseURL:origin+'/openai/v1',anthropicBaseURL:origin+'/anthropic',
     setContextSource:source=>{if(wireProfile==='codex')throw new Error('NATIVE_CODEX_CONTEXT_OWNED_BY_SDK');if(typeof source!=='function')throw new Error('Host context source required.');grants.get(token).contextSource=source;},
     setControlSource:source=>{if(wireProfile==='codex')throw new Error('NATIVE_CODEX_CONTROL_OWNED_BY_SDK');if(typeof source!=='function')throw new Error('Host control source required.');grants.get(token).controlSource=source;},

@@ -81,7 +81,7 @@
 <div class="rm-chat<%= guidedEmailStep ? ' rm-chat--guided' : '' %>" data-conversation="<%= locals.conversationId || '' %>">
   <% if(locals.codexPilot){ %>
     <section class="rm-note" aria-label="Staging agent controls">
-      <p><strong>Staging agent pilot</strong> · <%= locals.codexPilot.enabled?'Codex SDK · Sol High':'Existing Ask' %></p>
+      <p><strong>Staging agent pilot</strong> · <%= locals.codexPilot.enabled?'Codex SDK · Adaptive reasoning':'Existing Ask' %></p>
       <% if(locals.codexPilot.enabled&&!locals.codexPilot.funded){ %><p><%= locals.codexPilot.lockMessage %></p><% } %>
       <% if(locals.codexPilot.canToggle){ %><form method="post" action="/ask/agent-pilot">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">

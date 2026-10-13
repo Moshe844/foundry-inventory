@@ -26,7 +26,7 @@ function spendingLockMessage(pilot){
 }
 async function view(db,ctx){if(!configured(ctx))return null;try{const {actor,pilot}=await access(db,ctx);return {
  enabled:pilot.enabled,canToggle:actor.role==='owner',funded:!spendingLockMessage(pilot),lockMessage:spendingLockMessage(pilot),
- model:'GPT-6.1 Sol',reasoning:'High'};}catch(e){if(e instanceof AuthorizationError)return null;throw e;}}
+ model:'Codex SDK',reasoning:'Adaptive reasoning'};}catch(e){if(e instanceof AuthorizationError)return null;throw e;}}
 async function toggle(db,ctx,enabled){await access(db,ctx,{owner:true});
  return db.transaction(async client=>{
   await client.query(`UPDATE stockchief_runtime.codex_pilots SET enabled=$2,revision=revision+1,updated_at=now() WHERE workspace_id=$1`,[ctx.workspaceId,Boolean(enabled)]);
@@ -36,13 +36,15 @@ async function toggle(db,ctx,enabled){await access(db,ctx,{owner:true});
  });
 }
 async function start(db,ctx,message,options={}){
+ ctx=await require('./codex-model-routing').context(db,ctx);
  const {pilot}=await access(db,ctx,{enabled:true});
  const locked=spendingLockMessage(pilot);if(locked)throw new ValidationError(locked);
  const conversation=await require('./postgres-agent-context').capture(db,ctx,options.startedAt||null);
  const goal=await store.create(db,ctx,message,{...options,budgetMinor:Math.min(options.budgetMinor||100,100)});
  if(goal.checkpoint.runtime&&goal.checkpoint.runtime!=='codex-staging')throw new ValidationError('That request already belongs to another Ask runtime.');
  await db.query(`UPDATE stockchief_runtime.assistant_goals SET checkpoint=$4::jsonb||checkpoint||$5::jsonb WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,
-  [ctx.workspaceId,ctx.actorId,goal.id,JSON.stringify({conversation,clientIntegration:1}),JSON.stringify({runtime:'codex-staging',pilotRevision:pilot.revision})]);
+  [ctx.workspaceId,ctx.actorId,goal.id,JSON.stringify({conversation,clientIntegration:1}),JSON.stringify({runtime:'codex-staging',pilotRevision:pilot.revision,
+   ...(!goal.checkpoint.modelRouting&&!goal.checkpoint.harness?.native?.codex?{modelRouting:require('./codex-model-routing').initial(ctx)}:{})})]);
  goal.checkpoint.runtime='codex-staging';
  await store.enqueue(db,goal);return {status:'CLARIFY',answer:'StockChief is investigating your goal.',goalId:goal.id,goalStatus:goal.status};
 }

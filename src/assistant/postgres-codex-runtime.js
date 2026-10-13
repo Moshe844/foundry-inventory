@@ -33,10 +33,12 @@ async function run(database,ctx,id,options={}){
  };
  try{
   const budget=require('./postgres-codex-budget').createBudget(database,ctx,id);
+  const routing=require('./codex-model-routing');ctx=await routing.context(database,ctx);
+  let modelProfile=routing.selected(goal,ctx);
   audit({kind:'runtime_starting',status:'Checking model pricing and permissions'});
   const image=options.image||process.env.STOCKCHIEF_CODEX_PILOT_IMAGE;
   let helper;
-  const provider=require('../commercial/relay-provider').register({name:'openai',model:require(base+'codex-wire').MODEL,
+  const provider=require('../commercial/relay-provider').register({name:'openai',get model(){return modelProfile.model;},
    complete:request=>{if(!helper)throw Error('GOVERNED_HELPER_NOT_READY');return helper.complete(request);}});
   const gateway=require(base+'gateway').createGateway({database,ctx:{...ctx,goalRunToken:goal.run_token},goal:goal.original_request,goalId:id,
    runToken:goal.run_token,provider,rawProvider:provider,audit,accessGuard:()=>pilot.access(database,ctx,{enabled:true})});
@@ -49,9 +51,10 @@ async function run(database,ctx,id,options={}){
   // Preparing a credential-free renderer/context is a read boundary, not a
   // provider request. Its own fresh authority checks remain in place. Overlap
   // it with paid-runtime admission; reasoning cannot start until both finish.
-  const preparedSandbox=options.sandboxPool?options.sandboxPool.take(image):require(base+'codex-runtime').prepareSandbox(image);
+  let preparedSandbox=options.sandboxPool?options.sandboxPool.take(image):require(base+'codex-runtime').prepareSandbox(image);
+  const initialSandbox=preparedSandbox;
   preparations.push(preparedSandbox);preparedSandbox.catch(()=>{});
-  cleanup.push(async()=>{const prepared=await preparedSandbox.catch(()=>null);if(prepared)await prepared.sandbox.close();});
+  cleanup.push(async()=>{const prepared=await initialSandbox.catch(()=>null);if(prepared)await prepared.sandbox.close();});
   const ui=require(base+'lazy-browser').lazyBrowser(async firstAction=>{
    audit({kind:'runtime_starting',status:'Opening the isolated business browser'});
    const connectionString=process.env.FOUNDRY_DATABASE_URL||process.env.DATABASE_URL;
@@ -76,9 +79,9 @@ async function run(database,ctx,id,options={}){
     startPath:openedPath&&observedPaths.includes(openedPath)?openedPath:resumedPath||goal.checkpoint.page?.path,observedPaths});cleanup.push(()=>tools.close());
    return tools;
   });
-  const preparedContext=require(base+'codex-runtime').prepareContext({session,browser:ui,gateway,audit});
+  let preparedContext=require(base+'codex-runtime').prepareContext({session,browser:ui,gateway,audit});
   preparations.push(preparedContext);preparedContext.catch(()=>{});
-  await require('./codex-staging-readiness').verifyPricing(database);
+  await require('./codex-staging-readiness').verifyPricing(database,modelProfile);
   const permit=await require('./codex-staging-permit').issue({database,ctx,goalId:id,budget,image});
   const fundingKey=`codex-staging:${id}`;
   const entitlements=require('../commercial/entitlements');
@@ -89,17 +92,37 @@ async function run(database,ctx,id,options={}){
   const counter=options.countInput||require(base+'codex-token-counter').createTokenCounter({apiKey:key});
   const relay=await require(base+'relay').createRelay({budget,credentials:{openai:key},commercial:require(base+'commercial').createCommercialAccounting(database),
    allowedProviders:['openai'],countCodexInput:counter,audit,...(options.fetchImpl?{fetchImpl:options.fetchImpl}:{})});cleanup.push(()=>relay.close());
+  let result;
+  while(true){
+  const modelPolicy=require(base+'codex-wire').forProfile(modelProfile.id);
+  audit({kind:'model_profile_selected',status:`${modelProfile.model} · ${modelProfile.effort}`});
   const transport=relay.grant({candidate:'codex',provider:'openai',task:id,ctx,goalId:id,budget,fundingKey,authorize:()=>authorize({catalogue:false}),
+   codexPolicy:modelPolicy,
    wireProfile:'codex',livePermit:permit,requestGate:access=>session.codexRequest(access)});
   const helperTransport=relay.grant({candidate:'codex',provider:'openai',task:id,ctx,goalId:id,budget,fundingKey,authorize:()=>authorize({catalogue:false}),
+   codexPolicy:modelPolicy,
    wireProfile:'codex',livePermit:permit,requestGate:access=>session.codexRequest(access)});
   helperTransport.setNativeSession(session.helperDelivery());
-  helper=require(base+'codex-helper-provider').create({transport:helperTransport});
+  helper=require(base+'codex-helper-provider').create({transport:helperTransport,policy:modelPolicy});
   audit({kind:'runtime_starting',status:'Starting the Codex SDK session'});
-  const result=await require(base+'worker').run({candidate:'codex',session,gateway:{...gateway,authorize},browser:ui,budget,transport,
+  result=await require(base+'worker').run({candidate:'codex',session,gateway:{...gateway,authorize},browser:ui,budget,transport,
+   codexPolicy:modelPolicy,modelRoutingInstructions:routing.instructions(ctx,modelProfile),
    preparedCodexSandbox:preparedSandbox,preparedCodexContext:preparedContext,
    credentials:{openai:key},codexLivePermit:permit,codexImage:image,privateHarnessDirectory:directory,audit,
    finalReportInstructions:require('./postgres-codex-verification').instructions});
+  const report=require('./agent-conversation').parse(result.answer);
+  if(report?.status!=='needs_reasoning')break;
+  const ready=await session.handoffApprovals();if(ready)return ready;
+  const stronger=await session.promoteReasoning(report);modelProfile=require(base+'codex-models').getProfile(stronger.profile);
+  await require('./codex-staging-readiness').verifyPricing(database,modelProfile);
+  transport.revoke();helperTransport.revoke();
+  await (await preparedSandbox).sandbox.close();
+  preparedSandbox=options.sandboxPool?options.sandboxPool.take(image):require(base+'codex-runtime').prepareSandbox(image);
+  const nextSandbox=preparedSandbox;preparations.push(nextSandbox);nextSandbox.catch(()=>{});
+  cleanup.push(async()=>{const prepared=await nextSandbox.catch(()=>null);if(prepared)await prepared.sandbox.close();});
+  preparedContext=require(base+'codex-runtime').prepareContext({session,browser:ui,gateway,audit});
+  preparations.push(preparedContext);preparedContext.catch(()=>{});
+  }
   const current=await store.get(database,ctx,id);
   if(current.status==='RUNNING'){
    const finalStarted=Date.now();

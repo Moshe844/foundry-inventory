@@ -18,6 +18,7 @@ async function main(){
  // Prepare only configured, authorized pilot identities. No model calls or
  // business writes; fresh permissions still gate every goal and browser read.
  const workspaces=String(process.env.STOCKCHIEF_CODEX_PILOT_WORKSPACES||'').split(',').map(s=>s.trim()).filter(Boolean);
+ const warmInspection=async()=>{
  const pilots=(await db.query(`SELECT p.workspace_id,u.id AS actor_id FROM stockchief_runtime.codex_pilots p
   JOIN users u ON u.workspace_id=p.workspace_id WHERE p.enabled AND p.workspace_id=ANY($1::text[])
   AND p.authorized_actor_ids ? u.id ORDER BY p.workspace_id,u.id LIMIT 4`,[workspaces])).rows;
@@ -25,10 +26,13 @@ async function main(){
   const lease=await inspectionPool.acquire({database:db,ctx:{workspaceId:row.workspace_id,actorId:row.actor_id},connectionString:address.toString()});
   await lease.release();
  }
+ };await warmInspection();
+ let warming=Promise.resolve();
+ const warmTimer=setInterval(()=>{warming=warming.then(warmInspection).catch(error=>console.warn('Read-only browser warm-up unavailable:',error.code||'INSPECTION_UNAVAILABLE'));},2*60000);warmTimer.unref();
  const handler=async job=>require('../src/assistant/postgres-codex-pilot').run(db,{workspaceId:job.workspaceId,actorId:job.payload.actorId},job.payload.goalId,{sandboxPool,inspectionPool});
  handler.externalEffect=true;
  const worker=require('../src/operations/postgres-worker').start(db,{handlers:{'assistant.run-codex-goal':handler},leaseMs:10*60000});
- const stop=async()=>{clearInterval(keepAlive);await worker.stop();await inspectionPool.close();await sandboxPool.close();await db.close();};
+ const stop=async()=>{clearInterval(keepAlive);clearInterval(warmTimer);await worker.stop();await warming;await inspectionPool.close();await sandboxPool.close();await db.close();};
  const keepAlive=setInterval(()=>{},60000);
  process.once('SIGTERM',()=>stop().then(()=>process.exit(0)));process.once('SIGINT',()=>stop().then(()=>process.exit(0)));
  console.log('Codex Staging worker ready. Paid calls remain governed by the PostgreSQL pilot and commercial ledgers.');
