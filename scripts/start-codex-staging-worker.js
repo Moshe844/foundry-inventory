@@ -13,6 +13,21 @@ async function main(){
  try{
  await sandboxPool.ready();
  db=require('../src/db/postgres').openPostgres(process.env.FOUNDRY_DATABASE_URL||process.env.DATABASE_URL,{max:5,applicationName:'stockchief-codex-staging-worker'});
+ if(process.env.STOCKCHIEF_CODEX_TIMING==='1'){
+  const hash=statement=>require('node:crypto').createHash('sha256').update(String(statement)).digest('hex').slice(0,16);
+  const originalQuery=db.query,originalTransaction=db.transaction;
+  db.query=async(statement,values)=>{const at=Date.now();try{return await originalQuery(statement,values);}finally{
+   if(Date.now()-at>100)console.log(JSON.stringify({kind:'database_query_timing',queryHash:hash(statement),ms:Date.now()-at,pool:db.poolMetrics()}));
+  }};
+  db.transaction=async(operation,settings)=>{const at=Date.now();let attempts=0,queriesMs=0,maxQueryMs=0;
+   try{return await originalTransaction(client=>{attempts++;return operation({query:async(statement,values)=>{
+    const queryAt=Date.now();try{return await client.query(statement,values);}finally{const ms=Date.now()-queryAt;queriesMs+=ms;maxQueryMs=Math.max(maxQueryMs,ms);
+     if(ms>100)console.log(JSON.stringify({kind:'database_query_timing',queryHash:hash(statement),ms,pool:db.poolMetrics()}));}
+   }});},settings);}finally{
+    if(Date.now()-at>200)console.log(JSON.stringify({kind:'database_transaction_timing',ms:Date.now()-at,attempts,queriesMs,maxQueryMs,pool:db.poolMetrics()}));
+   }
+  };
+ }
  await require('../src/db/migrate-postgres').migratePostgres(db);
  await require('../src/assistant/codex-staging-readiness').verifyPricing(db);
  // Prepare only configured, authorized pilot identities. No model calls or
