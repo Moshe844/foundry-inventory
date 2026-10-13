@@ -42,7 +42,7 @@ const labels={queued:'Getting started',working:'Working on your request',clarifi
 const ConversationState=z.object({version:z.literal(1),goalId:z.string(),phase:z.enum(Object.keys(labels)),label:z.string(),
  active:z.boolean(),terminal:z.boolean(),message:z.string(),canReply:z.boolean(),revision:z.number().int().nonnegative(),
  input:z.object({id:z.string(),question:z.string(),missingInformation:z.array(z.string())}).nullable(),
- history:z.array(z.object({id:z.string(),role:z.enum(['user','assistant']),text:z.string(),at:z.string()})),recovery:z.string().nullable()});
+ history:z.array(z.object({id:z.string(),role:z.enum(['user','assistant']),text:z.string(),at:z.string(),phase:z.string().optional()})),recovery:z.string().nullable()});
 /** @returns {import('zod').output<typeof ConversationState>} */
 function state(goal){
  const cp=goal.checkpoint||{},h=cp.harness||{},saved=cp.conversationState;
@@ -52,10 +52,16 @@ function state(goal){
  const question=goal.status==='WAITING_USER'?(h.userQuestion||saved?.input||{question:goal.answer,missingInformation:['Your decision']}):null;
  const input=question?{id:question.id||createHash('sha256').update(JSON.stringify([goal.id,cp.messages?.length||0,question.question])).digest('hex'),
   question:publicText(question.question,'What would you like me to use?'),missingInformation:missing.safeParse(question.missingInformation).success?missing.parse(question.missingInformation):[]}:null;
+ const history=saved?.history||[],questions=new Set();let precedingAssistant=null;
+ // Legacy replies carry the durable question ID. Their preceding assistant
+ // message is the clarification, without matching any words or domain.
+ for(const entry of history){if(entry.role==='assistant')precedingAssistant=entry.id;
+  else if(entry.questionId&&precedingAssistant)questions.add(precedingAssistant);}
  return ConversationState.parse({version:1,goalId:goal.id,phase,label:labels[phase],active:!['completed','failed','cancelled','interrupted'].includes(phase),
   terminal:['completed','failed','cancelled'].includes(phase),message:input?.question||publicText(goal.answer,['queued','working','verification'].includes(phase)?'':FAILED),input,
   canReply:phase==='clarification'&&Boolean(input),revision:saved?.revision||0,
-  history:(saved?.history||[]).map(m=>({id:m.id,role:m.role,text:publicText(m.text,''),at:m.at})),
+  history:history.filter(m=>m.role==='user'||m.phase==='clarification'||!m.phase&&questions.has(m.id))
+   .map(m=>({id:m.id,role:m.role,text:publicText(m.text,''),at:m.at,phase:m.phase})),
   recovery:phase==='interrupted'?'Your goal is saved. Recorded operations must be checked before work resumes.':null});
 }
 function sync(goal){
@@ -63,7 +69,7 @@ function sync(goal){
  const same=old&&old.phase===next.phase&&old.message===next.message&&old.input?.id===next.input?.id;
  next.history=old?.history||[];
  if(!same){next.revision=(old?.revision||0)+1;
-  if(next.message&&next.message!==old?.message)next.history=[...next.history,{id:`${goal.id}:assistant:${next.revision}`,role:'assistant',text:next.message,at:new Date().toISOString()}];
+  if(next.message&&next.message!==old?.message)next.history=[...next.history,{id:`${goal.id}:assistant:${next.revision}`,role:'assistant',text:next.message,phase:next.phase,at:new Date().toISOString()}];
  }
  if(next.input&&goal.checkpoint.harness)goal.checkpoint.harness.userQuestion={...next.input};
  goal.checkpoint.conversationState=next;return next;

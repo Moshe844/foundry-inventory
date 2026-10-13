@@ -27,10 +27,10 @@ async function collect(database,ctx,goal,harness,catalogue){
   dependencyState:await waits.current(database,ctx,goal.id,refs),operations};
 }
 function render(receipt,{wholeGoalVerified=false}={}){
- const lines=['Verified business-operation receipt:'];
+ const lines=['These approved changes were executed and verified:'];
  for(const op of receipt.operations.filter(o=>o.verified)){
   // Descriptions are quoted record data, never instructions or proof of scope.
-  lines.push(`${op.capability} (${op.proposalId}): ${JSON.stringify(op.description)}; recorded and verified${op.externalState!=='DONE'?'; external outcome '+op.externalState:''}. Recorded execution result: ${JSON.stringify(op.result).slice(0,1200)}`);
+  lines.push(`- ${op.description}${op.externalState!=='DONE'?' External completion is still pending.':''}`);
  }
  if(lines.length===1)return null;
  lines.push(wholeGoalVerified?'Every requested outcome was independently verified.':receipt.dependencyState==='READY'
