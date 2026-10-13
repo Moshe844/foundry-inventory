@@ -71,4 +71,37 @@ test('recorded zero-argument rule call completes through budgeted helpers, appro
  assert.equal(completed.checkpoint.harness.codexRequests,5,'Helpers share the unchanged native turn ceiling');
  assert.equal((await db.query('SELECT count(*) AS n FROM commercial_model_cost_holds WHERE goal_id=$1',[response.goalId])).rows[0].n,'5','One hold per request, no double reservation');
  t.diagnostic(JSON.stringify({sdkCalls,helperCalls,counted,proposals:1,approvedRules:2,warningCount:1,actualProviderSpend:0,syntheticLedgerMicroUsd:ledger.reduce((n,c)=>n+Number(c.charged),0)}));
+ await t.test('exact live clarification is delivered as a question without a helper retry or uncertain write',async()=>{
+  const recorded=require('../fixtures/staging-rule-clarification.json');
+  const pending=await pilot.start(db,ctx,original);let native=0,helpers=0;
+  const fakeClarification=async(_url,init)=>{const body=JSON.parse(init.body);
+   if(body.text?.format?.type==='json_schema'){
+    helpers++;assert.equal(helpers,1,'A valid missing-information response must not buy a retry');
+    return Response.json({id:'recorded-helper',object:'response',status:'completed',model:body.model,
+     output:[{type:'message',role:'assistant',content:[{type:'output_text',text:JSON.stringify(recorded.data)}]}],usage:{input_tokens:200,output_tokens:40,total_tokens:240}});
+   }
+   if(++native===1)return require('../helpers/codex-offline-response')(body,1,'text(await tools.mcp__stockchief__business_operations({stepsJson:JSON.stringify([{capability:"policy.propose",arguments:[],dependsOn:[]}])}));');
+   assert.equal(native,2);return require('../helpers/codex-offline-response').final(body,2,JSON.stringify({status:'needs_user',question:recorded.data.clarifyingQuestion,missingInformation:'Product scope and stock measure'}));
+  };
+  const result=await pilot.run(db,ctx,pending.goalId,{...options,fetchImpl:fakeClarification});
+  assert.equal(result.status,'WAITING_USER',JSON.stringify(result));assert.equal(result.answer,recorded.data.clarifyingQuestion);
+  assert.equal(helpers,1);assert.equal(result.checkpoint.harness.inflight,null);
+  assert.equal((await pilot.inbox(db,ctx,pending.goalId)).approvals.length,0);
+  assert.equal((await db.query('SELECT count(*) AS n FROM operating_instruction_proposals WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,'1','Only the earlier complete approved proposal exists');
+  const reply='Cover '+codes.join(' and ')+' using physical on-hand units.';
+  await store.reply(db,ctx,pending.goalId,reply);
+  let resumeHelpers=0;
+  const resume=async(_url,init)=>{const body=JSON.parse(init.body);
+   if(body.text?.format?.type==='json_schema'){
+    resumeHelpers++;const input=JSON.parse(body.input[0].content);
+    assert((input.instruction||input.ownerInstruction).includes(reply),'Canonical interpretation receives the authenticated owner clarification');
+    const data=body.text.format.name==='postgres_operating_instruction'?{understood:true,summary:'Stock warnings',changes:codes.map(change),clarifyingQuestion:'',unsupportedReason:''}:{equivalent:true,difference:''};
+    return Response.json({id:'clarified-'+resumeHelpers,object:'response',status:'completed',model:body.model,output:[{type:'message',role:'assistant',content:[{type:'output_text',text:JSON.stringify(data)}]}],usage:{input_tokens:200,output_tokens:40,total_tokens:240}});
+   }
+   return require('../helpers/codex-offline-response')(body,3,'text(await tools.mcp__stockchief__business_operations({stepsJson:JSON.stringify([{capability:"policy.propose",arguments:[],dependsOn:[]}])}));');
+  };
+  const resumed=await pilot.run(db,ctx,pending.goalId,{...options,fetchImpl:resume});
+  assert.equal(resumed.status,'WAITING_APPROVAL',JSON.stringify(resumed));assert.equal(resumeHelpers,2);
+  assert.equal((await pilot.inbox(db,ctx,pending.goalId)).approvals.length,1,'A real clarification resumes to approval without replaying the old question');
+ });
 });

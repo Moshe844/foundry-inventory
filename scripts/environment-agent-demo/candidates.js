@@ -40,7 +40,7 @@ function sharedTools({browser,gateway,sandbox,session,audit=()=>{}}){
       execute:async({path})=>({text:Buffer.from(await sandbox.readFile({path,runAs:'node',maxBytes:24000})).toString('utf8')})}
   ];
   return tools.map(t=>({...t,execute:async (input,source={})=>{
-    await gateway.authorize?.();
+    await gateway.authorize?.({catalogue:false});
     audit({kind:'agent_tool_started',name:t.name,input,...source});
     try{const output=await (session?session.execute(t.name,input,callId=>t.execute(input,callId)):t.execute(input));
       audit({kind:'agent_tool_completed',name:t.name,...source});return session?.present?session.present(output):output;

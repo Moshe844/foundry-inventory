@@ -1,0 +1,39 @@
+{
+  "sourceGoal": "goal_silnxe1uppy1yh49oagcqtyf",
+  "data": {
+    "understood": false,
+    "summary": "Prepare a stock warning when a product falls strictly below 10 units. The SKU and stock metric are not yet specified.",
+    "changes": [
+      {
+        "domain": "stock_alert",
+        "operation": "set",
+        "sku": "",
+        "supplier": "",
+        "location": "",
+        "sourceLocation": "",
+        "reorderPoint": -1,
+        "targetStock": -1,
+        "safetyStock": -1,
+        "leadTimeDays": -1,
+        "unitsPerPurchaseUnit": -1,
+        "minimumOrderQuantity": -1,
+        "orderMultiple": -1,
+        "maximumQuantity": -1,
+        "maximumValue": -1,
+        "weeklyValue": -1,
+        "daysOfStock": -1,
+        "preferTransferBeforePurchasing": false,
+        "guardMode": "",
+        "guardComparator": "",
+        "guardThreshold": -1,
+        "guardReleaseCondition": "",
+        "notificationThreshold": 10,
+        "notificationMetric": "",
+        "notificationComparator": "below",
+        "capabilityName": ""
+      }
+    ],
+    "clarifyingQuestion": "Which SKUs should the warning cover, and should it count physical on-hand units or units available after customer commitments?",
+    "unsupportedReason": ""
+  }
+}

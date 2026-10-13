@@ -15,7 +15,7 @@ function describe(c){return {name:c.name,kind:c.kind,description:c.description,r
 // actor, approval, SQL, provider credentials or an alternative source message.
 function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=provider,audit=()=>{}}){
   async function access({catalogue=true}={}){
-    const state=(await database.query(`SELECT original_request,status,run_token,lease_until,expires_at FROM stockchief_runtime.assistant_goals
+    const state=(await database.query(`SELECT original_request,status,run_token,lease_until,expires_at,checkpoint->'messages' AS user_messages FROM stockchief_runtime.assistant_goals
       WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,goalId])).rows[0];
     if(!state||state.original_request!==goal||state.status!=='RUNNING'||state.run_token!==runToken||
       new Date(state.lease_until).getTime()<=Date.now()||new Date(state.expires_at).getTime()<=Date.now())throw new Error('Goal is not held by this agent run.');
@@ -27,7 +27,9 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
     // permissions and Ask entitlement, not every business execution contract.
     // Actual interface discovery, operations and verification retain the full
     // fresh catalogue; this does not cache authority or commercial decisions.
-    return {actor,...(catalogue?{catalogue:await control.planningCatalogue(database,{...ctx,goalId},actor)}:{})};
+    const clarifications=Array.isArray(state.user_messages)?state.user_messages.filter(m=>typeof m==='string'):[];
+    return {actor,sourceMessage:[goal,...clarifications.map(m=>'User clarification: '+m)].join('\n'),
+      ...(catalogue?{catalogue:await control.planningCatalogue(database,{...ctx,goalId},actor)}:{})};
   }
   return {
     authorize:access,
@@ -63,7 +65,7 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
         let result;
         try{result=await control.executeStep(service.capabilityService(),database,{...ctx,goalId,
           planStepKey:`environment:${goalId}:${call}:${index}`},step,{actor,provider,rawProvider,
-          sourceMessage:goal,usageKey:`environment:${goalId}:${call}:${index}`});}
+          sourceMessage:current.sourceMessage,usageKey:`environment:${goalId}:${call}:${index}`});}
         catch(error){effectsStarted||=step.contract.kind!=='read'&&error.effectMayHaveOccurred!==false;throw error;}
         effectsStarted||=step.contract.kind!=='read';
         outcomes.push({...result,step});
@@ -78,7 +80,7 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
       }catch(error){error.effectMayHaveOccurred=effectsStarted;throw error;}
     },
     async dataset({spec,offset=0}){
-      const {actor}=await access();
+      const {actor}=await access({catalogue:false});
       if(spec?.filters!==undefined&&!Array.isArray(spec.filters))throw Object.assign(new Error('Dataset filters must be an array of field/operator/value conditions; discover the dataset contract before retrying.'),{code:'TOOL_CONTRACT_INVALID'});
       require('./contracts').datasetSpec(spec,actor);
       return require('../../src/reports/postgres-service').run(database,ctx,actor,spec,{limit:101,offset});

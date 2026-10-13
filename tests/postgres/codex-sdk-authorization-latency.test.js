@@ -19,8 +19,15 @@ test('native bookkeeping avoids repeated catalogue construction while retaining 
  for(let index=0;index<17;index++){await session.load();await session.checkpoint({browserStep:index});}
  for(let index=0;index<12;index++){await session.codexRequest();await session.codexPending('round-'+index);await session.codexDelivered('round-'+index,{status:200},{terminal:false,tool:true});}
  assert(calls.every(c=>c.catalogue===false));
- await session.execute('environment_browser',{},async()=>({screen:{url:'http://isolated/',text:'Observed records'}}));
- assert(calls.some(c=>c.catalogue===true),'Tool execution still obtains the full fresh catalogue');
+ const tools=require('../../scripts/environment-agent-demo/candidates').sharedTools({gateway,session,browser:{act:async()=>({url:'http://isolated/',text:'Observed records'})},sandbox:{}});
+ queries=0;await tools.find(t=>t.name==='environment_browser').execute({action:'inspect',ref:null,value:null});const browserQueries=queries;
+ assert(calls.every(c=>c.catalogue===false),'Real shared browser tool path avoids every full catalogue rebuild');
+ assert(browserQueries<fullQueries,JSON.stringify({fullQueries,lightQueries,browserQueries}));
+ queries=0;await tools.find(t=>t.name==='environment_interfaces').execute({search:'policy',names:[],offset:0});const interfaceQueries=queries;
+ assert(interfaceQueries<fullQueries*2,'Interface discovery builds one fresh catalogue, not three');
+ await session.execute('business_operations',{stepsJson:JSON.stringify([{capability:'read.operating_rules',arguments:[],dependsOn:[]}])},async()=>({outcomes:[]}));
+ assert(calls.some(c=>c.catalogue===true),'Business operations retain fresh catalogue validation');
+ t.diagnostic(JSON.stringify({fullQueries,lightQueries,browserQueries,interfaceQueries}));
  await db.query("UPDATE users SET permissions='{}'::jsonb,role='member' WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,ctx.actorId]);
  await assert.rejects(session.load(),/SESSION_AUTHORITY_CHANGED/);
  await store.cancel(db,ctx,goal.id);

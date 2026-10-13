@@ -233,6 +233,10 @@ async function interpret(database,ctx,instruction,options={}){const clean=String
     schema:SCHEMA,schemaName:'postgres_operating_instruction'});
   if(options.onUsage&&response.usage)await options.onUsage(response.usage,{schemaName:'postgres_operating_instruction'});
   let read=response?.data||{};
+  if(require('../commercial/relay-provider').ownsAccounting(provider)&&read.understood===false&&String(read.clarifyingQuestion||'').trim()&&!read.unsupportedReason){
+    const question=String(read.clarifyingQuestion).trim().slice(0,1000);
+    throw Object.assign(new ValidationError(question,{reason:'instruction_input_required',question}),{effectMayHaveOccurred:false});
+  }
   if(!read.understood||!Array.isArray(read.changes)||!read.changes.length){
     response=await completeExtraction({system:`${SYSTEM}\n${PAGE_CONTEXT_RULE}\n${PRIOR_CONTEXT_RULE}`,prompt:JSON.stringify({...evidence,
       rejectedInterpretation:read,

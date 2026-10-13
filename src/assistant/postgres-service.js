@@ -1627,7 +1627,13 @@ async function askCapabilities(database,ctx,message,options={}){
 }
 
 async function prepareInstruction(database,ctx,message,options={}){
-  const proposal=await operatingInstructions.interpret(database,ctx,message,options);
+    let proposal;
+    try{proposal=await operatingInstructions.interpret(database,ctx,message,options);}
+    catch(error){
+      if(error.code==='validation_error'&&error.details?.reason==='instruction_input_required'&&error.effectMayHaveOccurred===false)
+        return {status:'CLARIFY',reason:'clarification_required',answer:error.details.question,question:error.details.question,missingInformation:error.details.question};
+      throw error;
+    }
   if(proposal.questions.length)return {status:'CLARIFY',answer:proposal.questions[0],proposal:{id:proposal.id,
     summary:proposal.summary,actionType:'operating.instruction',href:`/operating-instructions/${proposal.id}?from=ask`}};
   return {status:'PREPARED',answer:`${proposal.summary} Nothing is in force yet. Review the exact limits and approve once.`,

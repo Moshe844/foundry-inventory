@@ -17,7 +17,8 @@ function wrap(database,ctx,provider,operation,key,options={}){const policy=POLIC
     const response=await provider.complete({...input,maxOutputTokens:Math.min(policy.maxOutputTokens,3000)});
     const validated=require('../foundry/validator').validate(require('../foundry/schema-tools').toWireSchema(request.schema),response.data);
     if(!validated.ok)throw new (require('../ai/provider').ProviderOutputError)('The model response did not match the operation contract.',validated.errors);
-    if(operation==='instruction'&&request.schemaName==='postgres_operating_instruction'&&(!response.data?.understood||!response.data?.changes?.length))
+    const clarification=response.data?.understood===false&&String(response.data?.clarifyingQuestion||'').trim()&&!response.data?.unsupportedReason;
+    if(operation==='instruction'&&request.schemaName==='postgres_operating_instruction'&&!clarification&&(!response.data?.understood||!response.data?.changes?.length))
       throw new (require('../ai/provider').ProviderOutputError)('The model did not produce a usable operating instruction.',{reason:String(response.data?.unsupportedReason||response.data?.clarifyingQuestion||'').slice(0,240)});
     if(typeof onValidated==='function')await onValidated(response.data);
     return response;

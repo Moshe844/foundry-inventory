@@ -120,8 +120,11 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
   });},
   async evidence(input){await authority({catalogue:false});return update(h=>require('./observations').retrieve(h,input));},
   async execute(name,input,operation){
-   const access=await authority();
    const business=name==='business_operations';
+   // Browser/evidence/scratch tools need current lease and actor authority,
+   // not a rebuilt catalogue of every possible commercial operation. The
+   // interface/record gateway performs its own fresh contract checks.
+   const access=await authority({catalogue:business});
    let intent=business&&typeof input.stepsJson==='string'?{steps:require('./contracts').parseJson(input.stepsJson)}:input;
    if(business&&Array.isArray(intent.steps)&&intent.steps.length&&access?.catalogue)
     intent={steps:require('./contracts').operationSteps(intent.steps,access.catalogue)};
@@ -152,7 +155,11 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
     const result=await operation(start.id);
     const approvals=await update(async(h,goal,client)=>{
      if(h.inflight?.id!==start.id)throw new Error('SESSION_OPERATION_MISMATCH');
-     if(consequential)h.calls[fingerprint]={id:start.id,state:'DONE',result};
+     const onlyQuestions=Array.isArray(result?.outcomes)&&result.outcomes.length&&result.outcomes.every(o=>o.result?.status==='CLARIFY'&&!o.result.proposal);
+     // No business effect was prepared for a pure question. After the owner
+     // supplies the missing facts, the same zero-argument contract must run
+     // with that clarification rather than replaying an obsolete question.
+     if(consequential&&!onlyQuestions)h.calls[fingerprint]={id:start.id,state:'DONE',result};
      if(name!=='environment_evidence'){
       require('./observations').store(h,{id:start.id,name,result});
      }
