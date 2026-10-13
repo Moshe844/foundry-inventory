@@ -17,6 +17,8 @@ async function run(database,ctx,id,options={}){
   const detail={kind:event.source==='host_initial_observation'?event.kind.replace('agent_tool_','initial_page_'):event.kind,
    tool:event.name||event.tool||null,action:event.action||null,status:event.status||null,
    code:event.code||event.reason||null};
+  if(event.timings)detail.timings=Object.fromEntries(Object.entries(event.timings).filter(([key,value])=>
+   ['admissionMs','tokenPreflightMs','providerMs','commercialSettlementMs','nativeCheckpointMs','finalVerificationMs'].includes(key)&&Number.isFinite(value)&&value>=0));
   auditQueue=auditQueue.then(()=>database.transaction(async client=>{
    await client.query('SELECT id FROM stockchief_runtime.assistant_goals WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 FOR UPDATE',[ctx.workspaceId,ctx.actorId,id]);
    await client.query(`INSERT INTO stockchief_runtime.assistant_goal_events(id,goal_id,sequence,kind,detail)
@@ -75,13 +77,14 @@ async function run(database,ctx,id,options={}){
   });
   audit({kind:'runtime_starting',status:'Starting the Codex SDK session'});
   const result=await require(base+'worker').run({candidate:'codex',session,gateway:{...gateway,authorize},browser:ui,budget,transport,
-   preparedCodexSandbox:await preparedSandbox,
+   preparedCodexSandbox:preparedSandbox,
    credentials:{openai:key},codexLivePermit:permit,codexImage:image,privateHarnessDirectory:directory,audit,
    finalReportInstructions:require('./postgres-codex-verification').instructions});
   const current=await store.get(database,ctx,id);
   if(current.status==='RUNNING'){
-   const check=await require('./postgres-codex-verification').verify(database,ctx,current,result.answer,(await gateway.authorize()).catalogue);
-   await session.finish(check);
+   const finalStarted=Date.now();
+   await session.finish((client,{goal,access})=>require('./postgres-codex-verification').verify(client,ctx,goal,result.answer,access.catalogue));
+   audit({kind:'host_final_verification',timings:{finalVerificationMs:Date.now()-finalStarted}});
   }
   return store.get(database,ctx,id);
  }catch(error){

@@ -218,15 +218,20 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
     });throw error;
    }
   },
-  async finish({answer,verified=false,navigation=null,report=null}){
+  async finish(result){
    const access=await authorize();return update(async(h,goal,client)=>{
     if(h.inflight)throw new Error('SESSION_OPERATION_UNRESOLVED');
+    // A trusted host verifier runs inside the same final transaction and fresh
+    // authority boundary. Models cannot supply a callback or a verified receipt.
+    const check=typeof result==='function'?await result(client,{goal,access}):result;
+    const {answer,verified=false,navigation=null,report=null}=check;
     // Only a host verifier may set verified; SDK final text is not verification.
     goal.answer=String(answer||'').slice(0,20000);
     const waits=require('./waits');const refs=waits.dependencies(h);
     const current=await waits.current(client,ctx,goalId,refs);
     h.dependencies=refs;
-    h.receipt=await require('./receipts').collect(client,ctx,goal,h,access?.catalogue);
+    h.receipt=typeof result==='function'&&check.receipt?check.receipt:
+     await require('./receipts').collect(client,ctx,goal,h,access?.catalogue);
     const canonicalVerified=!h.receipt.operations.some(op=>!op.verified);
     const classified=require('./outcome').classify({report,answer:goal.answer,verified,current,canonicalVerified,
      progress:h.admissionBlock?{...h.progress,finalReason:h.admissionBlock.code}:h.progress});

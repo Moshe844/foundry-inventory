@@ -16,7 +16,7 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
   throw new Error('Commercial request accounting is required.');
  const grants=new Map();let active=0;
  const server=http.createServer(async(req,res)=>{
-  let id=null,held=null,attempted=false,settled=false,grant=null,control=null;const start=Date.now();
+  let id=null,held=null,attempted=false,settled=false,grant=null,control=null;const start=Date.now(),timings={};
   try{
    const token=req.headers.authorization?.replace(/^Bearer /,'')||req.headers['x-api-key'];
     grant=grants.get(token);if(!grant)throw new Error('UNAUTHORIZED_RELAY');
@@ -62,7 +62,8 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
       if(!state.approval||state.stopped||state.expires<=Date.now())throw new Error('PAID_TESTING_LOCKED');
       if(state.unresolved)throw new Error('UNRESOLVED_MODEL_CALL');
       const codex=require('./codex-wire'),countBody=codex.countRequest(normalized.body);
-      const count=await countCodexInput(structuredClone(countBody));
+      const countStarted=Date.now(),count=await countCodexInput(structuredClone(countBody));
+      timings.tokenPreflightMs=Date.now()-countStarted;
       normalized=codex.counted(normalized,count);
       audit({kind:'codex_input_count',inputTokens:normalized.inputTokens,
        maxOutputTokens:normalized.outputTokens,upperBoundMicroUsd:normalized.upperBoundMicroUsd,
@@ -91,10 +92,12 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
     // Do not forward caller headers, beta features, destinations or redirect auth.
     if(nativeCodex)await grant.nativeSession?.codexPending(requestHash);
     attempted=true;
+    const providerStarted=Date.now();timings.admissionMs=providerStarted-start-(timings.tokenPreflightMs||0);
     const response=await fetchImpl(ENDPOINTS[grant.provider],{method:'POST',headers,redirect:'error',
      body:JSON.stringify(normalized.body),signal:AbortSignal.timeout(timeoutMs)});
     const parser=new wire.UsageParser(grant.provider);const output=[];
     for await(const chunk of response.body){parser.append(chunk);output.push(Buffer.from(chunk));}
+    timings.providerMs=Date.now()-providerStarted;
     // Error responses and interrupted calls have no reliable charge receipt.
     // Fail closed, retain their complete reservation, and prevent SDK retry spend.
     if(!response.ok){
@@ -109,12 +112,13 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
     if(receipt.inputTokens>normalized.inputTokens||receipt.outputTokens>normalized.outputTokens){
      await budget.stop();throw new Error('TOKEN_BOUND_VIOLATION');
     }
-    await commercial.complete(held,receipt);
+    const settlementStarted=Date.now();await commercial.complete(held,receipt);
+    timings.commercialSettlementMs=Date.now()-settlementStarted;
     await budget.settle(id,receipt.conservativeMicroUsd,{provider:grant.provider,model:normalized.body.model,
-     usage:receipt.raw,latencyMs:Date.now()-start,accounting:'conservative standard-price charge'});
+     usage:receipt.raw,latencyMs:Date.now()-start,timings,accounting:'conservative standard-price charge'});
     settled=true;
     audit({kind:'model_call',id,candidate:grant.candidate,task:grant.task,usage:receipt,
-     latencyMs:Date.now()-start,source:'native_sdk_http'});
+     latencyMs:Date.now()-start,timings,source:'native_sdk_http'});
     const outcome={...parser.response.result(),request:control?.request||null,final:Boolean(control?.final),usageSettled:true};
     grant.lastResponse=outcome;
     if(nativeCodex)await grant.nativeSession?.codexDelivered(requestHash,{status:response.status,

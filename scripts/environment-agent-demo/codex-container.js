@@ -67,7 +67,7 @@ async function main(start){
  const resources=()=>{const processes=[];for(const name of fs.readdirSync('/proc').filter(n=>/^\d+$/.test(n))){try{
   const status=fs.readFileSync('/proc/'+name+'/status','utf8');processes.push({name:status.match(/^Name:\s*(.*)/m)?.[1],threads:Number(status.match(/^Threads:\s*(\d+)/m)?.[1]||0)});
  }catch{}}return {processes,totalThreads:processes.reduce((n,p)=>n+p.threads,0)};};
- const checkpoint=()=>rpc('checkpoint',{threadId:thread?.id||start.threadId||null,encoding:'gzip',files:nativeFiles(),workspaceFiles:workspaceFiles(),resources:resources()});
+ const checkpoint=(terminal=false)=>rpc('checkpoint',{threadId:thread?.id||start.threadId||null,encoding:'gzip',files:nativeFiles(),workspaceFiles:workspaceFiles(),resources:resources(),terminal});
  const server=http.createServer(async(req,res)=>{
   try{
    if(req.headers.authorization!==`Bearer ${token}`)throw Error('UNAUTHORIZED_BRIDGE');
@@ -111,10 +111,16 @@ async function main(start){
  const options={model:profile.model,modelReasoningEffort:profile.effort,workingDirectory:'/workspace',skipGitRepoCheck:true,
   sandboxMode:'read-only',approvalPolicy:'never',webSearchMode:'disabled',networkAccessEnabled:false};
  thread=start.threadId?codex.resumeThread(start.threadId,options):codex.startThread(options);
+ let turnCompleted=false;
  try{
   const result=await thread.runStreamed(start.prompt);
-  for await(const event of result.events){await rpc('event',{event});}
-  await checkpoint();send({kind:'done',threadId:thread.id});
+  for await(const event of result.events){
+   await rpc('event',{event});
+   // The SDK's semantic completion precedes CLI/MCP shutdown. Save native
+   // state now; the host can verify and deliver without waiting for teardown.
+   if(event.type==='turn.completed'){turnCompleted=true;await checkpoint(true);}
+  }
+  await checkpoint(turnCompleted);send({kind:'done',threadId:thread.id});
  }finally{server.closeAllConnections();server.close();}
 }
 let started=false;

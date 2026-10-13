@@ -13,6 +13,33 @@ Use the scratch workspace for calculations and documents. Do not invent business
 Write the customer-facing answer as concise Markdown: lead with the result, use a table for comparable records or figures, and use a list for choices or next steps. Keep protocol fields and evidence bookkeeping outside the answer. State limitations honestly and do not add unrelated investigations or metrics.
 `+require('../../src/assistant/agent-conversation').instructions;
 function digest(value){return createHash('sha256').update(JSON.stringify(Object.fromEntries(Object.keys(value||{}).sort().map(key=>[key,value[key]])))).digest('hex');}
+function durableFinal(files,encoding,threadId,answer){
+ if(encoding!=='gzip'||!threadId)return false;
+ for(const [name,value]of Object.entries(files||{})){
+  if(!name.endsWith(threadId+'.jsonl'))continue;
+  try{
+   const raw=require('node:zlib').gunzipSync(Buffer.from(value,'base64'),{maxOutputLength:6*1024*1024}).toString('utf8');
+   let started=null,completed=null;
+   for(const line of raw.split('\n'))if(line.trim()){
+    const row=JSON.parse(line);if(row.type!=='event_msg')continue;
+    if(row.payload?.type==='task_started'){started=row.payload.turn_id;completed=null;}
+    if(row.payload?.type==='task_complete')completed=row.payload;
+   }
+   return typeof started==='string'&&completed?.turn_id===started&&completed.last_agent_message===answer;
+  }catch{return false;}
+ }
+ return false;
+}
+async function initialObservation(options,saved,state){
+ if(state?.threadId||!saved.goalContext.page?.path)return null;
+ const initialTools=require('./candidates').sharedTools({...options,sandbox:null,fullEvidence:true});
+ try{return await initialTools.find(t=>t.name==='environment_browser').execute(
+  {action:'inspect',ref:null,value:null},{source:'host_initial_observation'});}
+ catch(error){
+  await options.gateway.authorize({catalogue:false});
+  return {unavailable:true,notice:'The current application view could not be loaded. Investigate with the available authorized tools; no business action was performed.'};
+ }
+}
 const preparedSandboxes=new WeakSet();
 async function prepareSandbox(image){
  const sandbox=await require('./sandbox').createSandbox({image});
@@ -31,26 +58,23 @@ async function run(options){
  const saved=await session.load();const state=saved.native.codex;
  transport.setNativeSession?.(session);
  if(state&&(state.version!==policy.VERSION||state.model!==policy.MODEL||state.effort!==policy.EFFORT||state.digest!==digest(state.files)))throw Error('CODEX_NATIVE_STATE_MISMATCH');
- const prepared=options.preparedCodexSandbox||await prepareSandbox(options.codexImage);
- if(!preparedSandboxes.has(prepared)||prepared.image!==options.codexImage)throw Error('INVALID_PREPARED_SANDBOX');
- preparedSandboxes.delete(prepared);
- const {sandbox,isolation}=prepared;audit({kind:'codex_isolation',...isolation});
+ // Both preparations are independent and credential-free. Join every result
+ // before failing so the host can close resources even if either fails.
+ const preparations=await Promise.allSettled([
+  Promise.resolve(options.preparedCodexSandbox||prepareSandbox(options.codexImage)).then(prepared=>{
+   if(!preparedSandboxes.has(prepared)||prepared.image!==options.codexImage)throw Error('INVALID_PREPARED_SANDBOX');
+   audit({kind:'codex_isolation',...prepared.isolation});return prepared;
+  }),initialObservation(options,saved,state)
+ ]);
+ const rejection=preparations.find(r=>r.status==='rejected');
+ if(rejection){if(!options.preparedCodexSandbox&&preparations[0].status==='fulfilled')await preparations[0].value.sandbox.close();throw rejection.reason;}
+ const prepared=preparations[0].value,initialView=preparations[1].value;preparedSandboxes.delete(prepared);
+ const {sandbox}=prepared;
  const common=require('./candidates').sharedTools({...options,sandbox,session,fullEvidence:true});
  // Supply the actual current application view as environment context, like an
  // operator receiving a tab's initial state. Do not choose a destination from
  // the goal, infer routes, or replay a prior observation. Native resumption
  // already owns its context and must not repeat this initialization.
- let initialView=null;
- if(!state?.threadId&&saved.goalContext.page?.path){
-  try{initialView=await common.find(t=>t.name==='environment_browser').execute(
-   {action:'inspect',ref:null,value:null},{source:'host_initial_observation'});}
-  catch(error){
-   // A recoverable read failure is evidence for the native agent, not grounds
-   // to abandon an otherwise authorized goal. Never mask loss of authority.
-   await options.gateway.authorize({catalogue:false});
-   initialView={unavailable:true,notice:'The current application view could not be loaded. Investigate with the available authorized tools; no business action was performed.'};
-  }
- }
  const tools=common.map(t=>({name:t.name,description:t.description,inputSchema:require('zod').z.toJSONSchema(t.schema)}));
  const messages=saved.goalContext.messages||[];
  const newMessages=messages.slice(state?.deliveredMessages||0);
@@ -61,6 +85,13 @@ async function run(options){
  signal?.addEventListener('abort',interrupt,{once:true});
  const timer=setTimeout(()=>{failed||=Object.assign(Error('CODEX_RUNTIME_TIMEOUT'),{code:'CODEX_RUNTIME_TIMEOUT'});stop();},8*60000);
  const lines=createInterface({input:child.stdout});let stderr='';child.stderr.on('data',c=>{stderr=(stderr+c).slice(-6000);});
+ let terminalCheckpointed=false,resolveTerminalCheckpoint;
+ const terminalCheckpoint=new Promise(resolve=>{resolveTerminalCheckpoint=resolve;});
+ const childClosed=new Promise((resolve,reject)=>{child.once('error',reject);child.once('close',code=>resolve({code}));});
+ function settledFinal(){
+  const terminal=transport.lastResponse?.();
+  if(!terminal?.usageSettled||terminal.empty||terminal.tool||!terminal.terminal||!answer.trim())throw Error('EMPTY_MODEL_FINAL');
+ }
  async function handle(message){
   if(message.kind==='done'){threadId=message.threadId;return;}
   if(message.kind==='failed'){failed||=Error(message.message);return;}
@@ -70,11 +101,17 @@ async function run(options){
    // shared tool execution, and the paid relay each perform fresh checks.
    // SDK event acknowledgements expose no business data or execution grant.
    if(message.kind==='checkpoint'){
+    const checkpointStarted=Date.now();
+    if(message.terminal===true){if(!completed||failed)throw Error('CODEX_COMPLETION_SEQUENCE_MISMATCH');settledFinal();}
     if(message.resources)audit({kind:'codex_resources',...message.resources});
     const native={version:policy.VERSION,model:policy.MODEL,effort:policy.EFFORT,threadId:message.threadId,files:message.files,encoding:message.encoding,
      workspaceFiles:message.workspaceFiles,digest:digest(message.files),deliveredMessages:messages.length};
     await session.checkpoint({codex:native});result={saved:true};
+    if(message.terminal===true&&durableFinal(message.files,message.encoding,message.threadId,answer)){
+     terminalCheckpointed=true;audit({kind:'native_completion_checkpoint',timings:{nativeCheckpointMs:Date.now()-checkpointStarted}});
+    }
    }else if(message.kind==='provider'){
+    if(terminalCheckpointed)throw Error('CODEX_TURN_ALREADY_COMPLETED');
     const handoff=await session.handoffApprovals?.();
     if(handoff)throw new (require('./approval-handoff').ApprovalHandoff)(handoff);
     const verified=await session.completeIfVerified();
@@ -84,6 +121,7 @@ async function run(options){
      body:message.body,redirect:'error',signal});
     result={status:response.status,contentType:response.headers.get('content-type')||'application/json',body:await response.text()};
    }else if(message.kind==='tool'){
+    if(terminalCheckpointed)throw Error('CODEX_TURN_ALREADY_COMPLETED');
     const tool=common.find(t=>t.name===message.name);if(!tool)throw Error('UNKNOWN_GOVERNED_TOOL');
     const input=tool.schema.parse(message.input);
     const output=await tool.execute(input,{sdk:'codex',sdkToolCallId:`codex-mcp-${message.id}`});
@@ -102,6 +140,7 @@ async function run(options){
     result={received:true};
    }else throw Error('INVALID_CODEX_BRIDGE_MESSAGE');
    child.stdin.write(JSON.stringify({id:message.id,result})+'\n');
+   if(message.kind==='checkpoint'&&message.terminal===true&&terminalCheckpointed)resolveTerminalCheckpoint({checkpointed:true});
   }catch(error){
    if(message.kind==='tool'){
     // Native Codex, not this adapter, decides how to recover from tool errors.
@@ -122,8 +161,8 @@ async function run(options){
   child.stdin.write(JSON.stringify({prompt,profile:policy.PROFILE.id,
    instructions:INSTRUCTIONS+(options.finalReportInstructions||'')+'\nAvailable StockChief tool contracts follow. These names and parameter schemas can be used directly; rediscover only missing contract details.\n'+tools.map(t=>`mcp__stockchief__${t.name}: ${t.description}\n${JSON.stringify(t.inputSchema)}`).join('\n'),tools,threadId:state?.threadId,files:state?.files,encoding:state?.encoding,workspaceFiles:state?.workspaceFiles,
    nativeCompactionTokenLimit:policy.nativeCompactionTokenLimit,offlineCompact:options.offlineCompact===true})+'\n');
-  const code=await new Promise((resolve,reject)=>{child.once('error',reject);child.once('close',resolve);});await chain;
-  if(code!==0||failed||!completed)throw failed||Error('CODEX_RUNTIME_FAILED: '+stderr.slice(-600));
+  const completion=await Promise.race([childClosed,terminalCheckpoint]);await chain;
+  if((!completion.checkpointed&&completion.code!==0)||failed||!completed)throw failed||Error('CODEX_RUNTIME_FAILED: '+stderr.slice(-600));
   const terminal=transport.lastResponse?.();
   if(terminal&&(terminal.empty||terminal.tool||!terminal.terminal))throw Error('EMPTY_MODEL_FINAL');
   if(!answer.trim())throw Error('EMPTY_MODEL_FINAL');
