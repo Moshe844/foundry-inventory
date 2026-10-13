@@ -57,7 +57,7 @@ async function run(database,ctx,id,options={}){
   // Both resources are brand-new and goal-local. Prepare the credential-free
   // sandbox concurrently with the restricted renderer, never reuse a browser
   // or another goal's files. Join cleanup even if either initialization fails.
-  const preparedSandbox=require(base+'codex-runtime').prepareSandbox(image);
+  const preparedSandbox=options.sandboxPool?options.sandboxPool.take(image):require(base+'codex-runtime').prepareSandbox(image);
   preparedSandbox.catch(()=>{});
   cleanup.push(async()=>{const prepared=await preparedSandbox.catch(()=>null);if(prepared)await prepared.sandbox.close();});
   const ui=require(base+'lazy-browser').lazyBrowser(async()=>{
