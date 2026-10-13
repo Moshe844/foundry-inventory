@@ -118,7 +118,7 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
   async codexReplay(hash,admissionAccess=null){return read(h=>{
    if(candidate!=='codex')throw new Error('NOT_A_CODEX_SESSION');
    if(h.codexDelivery?.state==='PENDING')throw new Error('CODEX_RESPONSE_RECONCILIATION_REQUIRED');
-   return h.codexDelivery?.hash===hash?structuredClone(h.codexDelivery.packet):null;
+   return h.codexDelivery?.hash===hash?require('./replay-packet').unpack(h.codexDelivery.packet):null;
   },admissionAccess);},
   async codexPending(hash){return authorizedUpdate(h=>{
    if(candidate!=='codex'||h.codexDelivery?.state==='PENDING')throw new Error('CODEX_RESPONSE_RECONCILIATION_REQUIRED');
@@ -126,7 +126,7 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
   });},
   async codexDelivered(hash,packet,outcome){return authorizedUpdate(h=>{
    if(candidate!=='codex'||h.codexDelivery?.hash!==hash||h.codexDelivery.state!=='PENDING')throw new Error('CODEX_RESPONSE_SEQUENCE_MISMATCH');
-   h.codexDelivery={hash,state:'SETTLED',packet};h.lastCodexResponse={...outcome,request:h.codexRequests};
+   h.codexDelivery={hash,state:'SETTLED',packet:require('./replay-packet').pack(packet)};h.lastCodexResponse={...outcome,request:h.codexRequests};
   });},
   // A helper's delivery must never overwrite the SDK response/checkpoint.
   // Its own durable slot still prevents spending again on an unknown outcome.
@@ -134,7 +134,7 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    identity:Object.freeze({workspaceId:ctx.workspaceId,actorId:ctx.actorId,goalId,candidate}),
    codexReplay:async hash=>{return read(h=>{
     if(h.helperDelivery?.state==='PENDING')throw Error('CODEX_RESPONSE_RECONCILIATION_REQUIRED');
-    return h.helperDelivery?.hash===hash?structuredClone(h.helperDelivery.packet):null;
+    return h.helperDelivery?.hash===hash?require('./replay-packet').unpack(h.helperDelivery.packet):null;
    });},
    codexPending:async hash=>{return authorizedUpdate(h=>{
     if(h.helperDelivery?.state==='PENDING')throw Error('CODEX_RESPONSE_RECONCILIATION_REQUIRED');
@@ -142,7 +142,7 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    });},
    codexDelivered:async(hash,packet)=>{return authorizedUpdate(h=>{
     if(h.helperDelivery?.hash!==hash||h.helperDelivery.state!=='PENDING')throw Error('CODEX_RESPONSE_SEQUENCE_MISMATCH');
-    h.helperDelivery={hash,state:'SETTLED',packet};
+    h.helperDelivery={hash,state:'SETTLED',packet:require('./replay-packet').pack(packet)};
    });}
   };},
   async modelControl({budgetFinal=false}={}){return authorizedUpdate(h=>{

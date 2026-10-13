@@ -5,8 +5,7 @@ const conversation=require('./agent-conversation'),waits=require('../../scripts/
 function finalReport(h){
  if(h.candidate!=='codex'||h.codexDelivery?.state!=='SETTLED'||h.lastCodexResponse?.terminal!==true||
   h.lastCodexResponse.empty||h.lastCodexResponse.tool||!h.lastCodexResponse.usageSettled)return null;
- let response;const body=h.codexDelivery.packet?.body;
- if(typeof body!=='string')return null;
+ let response,body;try{body=require('../../scripts/environment-agent-demo/replay-packet').body(h.codexDelivery.packet);}catch{return null;}
  try{response=JSON.parse(body);}catch{
   for(const line of body.split(/\r?\n/))if(line.startsWith('data: ')){
    try{const event=JSON.parse(line.slice(6));if(event.type==='response.completed')response=event.response;}catch{}

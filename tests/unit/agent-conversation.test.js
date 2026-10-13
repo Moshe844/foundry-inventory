@@ -38,3 +38,16 @@ test('legacy recovery requires a settled successful native final, never just JSO
   const changed=structuredClone(h);mutate(changed);assert.equal(finalReport(changed),null);
  }
 });
+test('compressed replay preserves the recorded clarification and every recovery gate',()=>{
+ const {gzipSync}=require('node:zlib'),{createHash}=require('node:crypto');
+ const codec=require('../../scripts/environment-agent-demo/replay-packet');
+ const {finalReport}=require('../../src/assistant/postgres-conversation-recovery');
+ const body='data: '+JSON.stringify({type:'response.completed',response:{status:'completed',output:[{type:'message',role:'assistant',content:[{type:'output_text',text:trace.rawFinal}]}]}})+'\n\n';
+ const packet={status:200,contentType:'text/event-stream',bodyEncoding:'gzip-base64',bodyBytes:Buffer.byteLength(body),bodySha256:createHash('sha256').update(body).digest('hex'),bodyGzip:gzipSync(body).toString('base64')};
+ assert.deepEqual(codec.unpack(JSON.parse(JSON.stringify(packet))),{status:200,contentType:'text/event-stream',body});
+ const h={candidate:'codex',codexDelivery:{state:'SETTLED',packet},lastCodexResponse:{terminal:true,empty:false,tool:false,usageSettled:true}};
+ assert.equal(finalReport(h).question,JSON.parse(trace.rawFinal).question);
+ for(const mutate of [x=>x.codexDelivery.state='PENDING',x=>x.lastCodexResponse.usageSettled=false,x=>x.codexDelivery.packet.bodySha256='0'.repeat(64),x=>x.codexDelivery.packet.bodyBytes=8*1024*1024+1]){
+  const changed=structuredClone(h);mutate(changed);assert.equal(finalReport(changed),null);
+ }
+});
