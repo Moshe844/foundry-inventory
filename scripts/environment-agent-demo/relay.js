@@ -33,7 +33,9 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
    try{
     let size=0;const parts=[];
     for await(const part of req){size+=part.length;if(size>wire.MAX_BODY)throw new Error('REQUEST_TOO_LARGE');parts.push(part);}
+    const authorizationStarted=Date.now();
     const admissionAccess=await grant.authorize(); // fresh for this HTTP boundary, never reused across calls
+    timings.authorizationMs=Date.now()-authorizationStarted;
     if(grant.livePermit){
      require('./codex-live-permit').assert(grant.livePermit,{budget,task:grant.task});
      if(grant.lastBlock)throw new Error('CODEX_ATTEMPT_ALREADY_STOPPED');
@@ -60,10 +62,12 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
     if(nativeCodex){
      if(typeof countCodexInput!=='function')throw new Error('NATIVE_TOKEN_PREFLIGHT_REQUIRED');
      if(credentials.openai!=='FAKE'&&!grant.nativeSession)throw new Error('DURABLE_CODEX_SESSION_REQUIRED');
+     const sessionStarted=Date.now();
      const replay=await grant.nativeSession?.codexReplay(requestHash,admissionAccess);
      if(replay){grant.lastResponse=replay.outcome;audit({kind:'codex_response_replayed',requestHash,paidCalls:0});
       res.writeHead(replay.status,{'content-type':replay.contentType,'cache-control':'no-store'});res.end(replay.body);return;}
      await grant.requestGate(admissionAccess);
+     timings.sessionAdmissionMs=Date.now()-sessionStarted;
      if(countCodexInput){
       const state=await budget.status();
       if(!state.approval||state.stopped||state.expires<=Date.now())throw new Error('PAID_TESTING_LOCKED');
@@ -90,14 +94,19 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
      audit({kind:'model_control',...control,remainingMicroUsd:room,requestBoundMicroUsd:normalized.upperBoundMicroUsd});
     }
     if(normalized.context)audit({kind:'wire_context',provider:grant.provider,...normalized.context,inputTokenBound:normalized.inputTokens});
+    const reservationStarted=Date.now();
     id=await budget.reserve({candidate:grant.candidate,task:grant.task,upperBoundMicroUsd:normalized.upperBoundMicroUsd});
+    timings.budgetReservationMs=Date.now()-reservationStarted;
+    const commercialStarted=Date.now();
     held=await commercial.begin({...grant,id,...normalized});
+    timings.commercialReservationMs=Date.now()-commercialStarted;
     const secret=credentials[grant.provider];if(!secret)throw new Error('PROVIDER_CREDENTIAL_UNAVAILABLE');
     const headers={'content-type':'application/json',...(grant.provider==='openai'
      ?{authorization:`Bearer ${secret}`}:{'x-api-key':secret,'anthropic-version':'2023-06-01',
       ...(normalized.body.context_management?{'anthropic-beta':'context-management-2025-06-27'}:{})})};
     // Do not forward caller headers, beta features, destinations or redirect auth.
-    if(nativeCodex)await grant.nativeSession?.codexPending(requestHash);
+    const pendingStarted=Date.now();if(nativeCodex)await grant.nativeSession?.codexPending(requestHash);
+    timings.pendingCheckpointMs=Date.now()-pendingStarted;
     attempted=true;
     const providerStarted=Date.now();timings.admissionMs=providerStarted-start-(timings.tokenPreflightMs||0);
     const response=await fetchImpl(ENDPOINTS[grant.provider],{method:'POST',headers,redirect:'error',
