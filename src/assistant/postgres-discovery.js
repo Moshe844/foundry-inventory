@@ -43,21 +43,21 @@ async function available(database,ctx){
   const actor=(await database.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',
     [ctx.workspaceId,ctx.actorId])).rows[0];
   if(!actor)return [];
-  const facts=(await database.query(`SELECT
+  const [factsResult,scope]=await Promise.all([database.query(`SELECT
     (SELECT COUNT(*)::int FROM items WHERE workspace_id=$1 AND is_active=1) AS products,
     (SELECT COUNT(*)::int FROM suppliers WHERE workspace_id=$1 AND status='active') AS suppliers,
     (SELECT COUNT(*)::int FROM workspace_connectors WHERE workspace_id=$1 AND status='connected'
       AND paused_at IS NULL AND provider_type IN ('gmail','microsoft365')) AS mailboxes`,
-  [ctx.workspaceId])).rows[0];
-  const scope=await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId);
+  [ctx.workspaceId]),entitlements.ownerScopeForWorkspace(database,ctx.workspaceId)]);
+  const facts=factsResult.rows[0];
   const write=await entitlements.capabilityState(database,scope,'ask.prepare_actions');
   const readPermissions=require('./postgres-control-plane').READ_PERMISSIONS;
   const checks=new Map();
   const enabled=async(key)=>{
-    if(!checks.has(key))checks.set(key,(await entitlements.capabilityState(database,scope,key)).enabled);
+    if(!checks.has(key))checks.set(key,entitlements.capabilityState(database,scope,key).then(state=>state.enabled));
     return checks.get(key);
   };
-  const entries=[];
+  const entries=[],permitted=[];
   for(const contract of registry.list()){
     if(contract.adaptiveOnly&&(!ctx.goalId||!require('./postgres-goal-store').enabled(ctx)))continue;
     const discovery=discoveryFor(contract);
@@ -66,6 +66,14 @@ async function available(database,ctx){
     if(!permissions.can(actor,permission))continue;
     if(contract.ownerOnly&&actor.role!=='owner')continue;
     if(['mutation','policy'].includes(contract.kind)&&!write.enabled)continue;
+    permitted.push({contract,discovery});
+  }
+  // These are fresh read-only checks for the same request and scope. Retain
+  // every entitlement; bounded database pools handle their concurrency.
+  const keys=new Set(permitted.flatMap(({contract,discovery})=>[
+    contract.commercialCapability||discovery.commercialCapability,...(contract.additionalCommercialCapabilities||[])]).filter(Boolean));
+  await Promise.all([...keys].map(enabled));
+  for(const {contract,discovery} of permitted){
     if((contract.commercialCapability||discovery.commercialCapability)&&
       !await enabled(contract.commercialCapability||discovery.commercialCapability))continue;
     if((contract.additionalCommercialCapabilities||[]).length&&

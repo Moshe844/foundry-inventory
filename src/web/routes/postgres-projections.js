@@ -135,8 +135,8 @@ function aging(rows){const today=Date.now();const buckets={current:0,days1to30:0
 function createPostgresProjectionsRouter(database){
   const router=express.Router();
   router.get(['/', '/overview'],requireAuth,asyncRoute(async(req,res)=>{
-    const result=await presenters.home(database,req.ctx.workspaceId);
-    const available=await require('../../assistant/postgres-discovery').available(database,req.ctx);
+    const [result,available]=await Promise.all([presenters.home(database,req.ctx.workspaceId),
+      require('../../assistant/postgres-discovery').available(database,req.ctx)]);
     const askSuggestions=[];
     const offer=(entry)=>{if(entry&&!askSuggestions.some((current)=>current.name===entry.name))askSuggestions.push(entry);};
     offer(available.find((entry)=>entry.name==='read.custom_report'));
