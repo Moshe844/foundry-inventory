@@ -24,8 +24,14 @@ function contractPage(entries,offset,details,summary){
 
 // ctx, original goal and database are host-bound. Models cannot supply tenant,
 // actor, approval, SQL, provider credentials or an alternative source message.
-function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=provider,audit=()=>{}}){
+function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=provider,audit=()=>{},accessGuard=null}){
+  if(accessGuard!==null&&typeof accessGuard!=='function')throw new Error('INVALID_HOST_ACCESS_GUARD');
   async function access({catalogue=true}={}){
+    // A native Staging guard checks pilot identity AND the Ask entitlement on
+    // every boundary. Repeating the identical commercial check here adds
+    // remote database round trips, not authority. No result is cached or
+    // carried into another call; gateways without a guard retain their check.
+    if(accessGuard)await accessGuard();
     const state=(await database.query(`SELECT original_request,status,run_token,lease_until,expires_at,checkpoint->'messages' AS user_messages FROM stockchief_runtime.assistant_goals
       WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,goalId])).rows[0];
     if(!state||state.original_request!==goal||state.status!=='RUNNING'||state.run_token!==runToken||
@@ -33,7 +39,7 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
     const actor=(await database.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',
       [ctx.workspaceId,ctx.actorId])).rows[0];
     if(!actor)throw new Error('Actor no longer belongs to this business.');
-    await require('../../src/commercial/enforcement').workspace(database,ctx.workspaceId,'ask.lookup');
+    if(!accessGuard)await require('../../src/commercial/enforcement').workspace(database,ctx.workspaceId,'ask.lookup');
     // Native checkpoint/transport bookkeeping needs current lease, membership,
     // permissions and Ask entitlement, not every business execution contract.
     // Actual interface discovery, operations and verification retain the full

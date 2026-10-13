@@ -34,8 +34,8 @@ async function run(database,ctx,id,options={}){
   const provider=require('../commercial/relay-provider').register({name:'openai',model:require(base+'codex-wire').MODEL,
    complete:request=>{if(!helper)throw Error('GOVERNED_HELPER_NOT_READY');return helper.complete(request);}});
   const gateway=require(base+'gateway').createGateway({database,ctx:{...ctx,goalRunToken:goal.run_token},goal:goal.original_request,goalId:id,
-   runToken:goal.run_token,provider,rawProvider:provider,audit});
-  const authorize=async settings=>{await pilot.access(database,ctx,{enabled:true});return gateway.authorize(settings);};
+   runToken:goal.run_token,provider,rawProvider:provider,audit,accessGuard:()=>pilot.access(database,ctx,{enabled:true})});
+  const authorize=settings=>gateway.authorize(settings);
   session=require(base+'session').createSession({database,ctx,goalId:id,runToken:goal.run_token,candidate:'codex',authorize});
   // Publish is durable in the shared goal outbox. There is no file-review loop
   // and no test operator; the authenticated website owns the human stage.
