@@ -46,7 +46,10 @@ async function main(){
  const warmTimer=setInterval(()=>{warming=warming.then(warmInspection).catch(error=>console.warn('Read-only browser warm-up unavailable:',error.code||'INSPECTION_UNAVAILABLE'));},2*60000);warmTimer.unref();
  const handler=async job=>require('../src/assistant/postgres-codex-pilot').run(db,{workspaceId:job.workspaceId,actorId:job.payload.actorId},job.payload.goalId,{sandboxPool,inspectionPool});
  handler.externalEffect=true;
- const worker=require('../src/operations/postgres-worker').start(db,{handlers:{'assistant.run-codex-goal':handler},leaseMs:10*60000});
+ const shouldClaim=async()=>Boolean((await db.query(`SELECT 1 FROM stockchief_runtime.codex_pilots WHERE workspace_id=ANY($1::text[])
+  AND enabled AND NOT stopped AND approval_reference IS NOT NULL AND ceiling_micro_usd>0
+  AND period_ends_at>now() LIMIT 1`,[workspaces])).rows.length);
+ const worker=require('../src/operations/postgres-worker').start(db,{handlers:{'assistant.run-codex-goal':handler},leaseMs:10*60000,shouldClaim});
  const stop=async()=>{clearInterval(keepAlive);clearInterval(warmTimer);await worker.stop();await warming;await inspectionPool.close();await sandboxPool.close();await db.close();};
  const keepAlive=setInterval(()=>{},60000);
  process.once('SIGTERM',()=>stop().then(()=>process.exit(0)));process.once('SIGINT',()=>stop().then(()=>process.exit(0)));

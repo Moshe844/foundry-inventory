@@ -13,7 +13,10 @@ function start(database, options = {}) {
   let active = null;
   const tick = async () => {
     if (stopped || active) return;
-    active = jobs.processOne(database, options.handlers || {}, { owner, leaseMs: options.leaseMs ?? 60000 });
+    active = (async()=>{
+      if(options.shouldClaim&&!await options.shouldClaim())return;
+      return jobs.processOne(database, options.handlers || {}, { owner, leaseMs: options.leaseMs ?? 60000 });
+    })();
     try { await active; }
     catch (error) {
       if (options.onError) options.onError(error);

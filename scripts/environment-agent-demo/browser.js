@@ -71,8 +71,11 @@ async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null,ob
       const ref=`${generation}:${revision}:${controls.length}`;references.set(ref,node);controls.push({ref,...data});
       if(data.optionsTruncated)controls.at(-1).optionsNextRef=cursor({kind:'options',ref,offset:10});
     }
-    const text=await page.locator('body').innerText();
-    return {url:page.url(),title:await page.title(),text:text.slice(textOffset,textOffset+18000),
+    const text=await page.locator('body').innerText(),visibleText=text.slice(textOffset,textOffset+18000);
+    // Address actual visible lines directly. A claim about one fact should
+    // not require generating another copy of the entire page for verification.
+    const textBlocks=Object.fromEntries(visibleText.split(/\r?\n/).map(line=>line.trim()).filter(Boolean).map((line,index)=>[`line${index}`,line]));
+    return {url:page.url(),title:await page.title(),text:visibleText,textBlocks,
       controls,httpStatus,applicationPage,truncated:controlOffset+controls.length<total||textOffset+18000<text.length,
       pagination:{controlOffset,controlTotal:total,textOffset,textLength:text.length,
         controlsNextRef:controlOffset+controls.length<total?cursor({kind:'page',controlOffset:controlOffset+controls.length,textOffset}):null,
