@@ -80,7 +80,14 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    if(h.receipt?.requestHash!==require('./receipts').requestHash(goal))throw new Error('COMPLETION_REQUEST_MISMATCH');
    return {answer:goal.answer,completionSource:h.completionSource,checkedAt:h.receipt.checkedAt};
   },
-  async load(){return authorizedUpdate((h,goal)=>({...structuredClone(h),goalContext:{
+  async load(){return authorizedUpdate((h,goal,client,access)=>{
+   let environment=null;
+   if(access?.environment){
+    const id=`${goalId}:environment:${createHash('sha256').update(JSON.stringify(access.environment)).digest('hex').slice(0,24)}`;
+    require('./observations').store(h,{id,name:'authorized_environment',result:access.environment});
+    environment=present(h,access.environment,{full:true});
+   }
+   return {...structuredClone(h),goalContext:{environment,
    originalRequest:goal.original_request,messages:structuredClone(goal.checkpoint.messages||[]),
    // Page metadata is only a location hint. Read its content with current
    // browser/gateway permissions, not by trusting fields posted by a client.
@@ -88,7 +95,8 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    continuation:structuredClone(goal.checkpoint.continuation||null),
    conversation:structuredClone(goal.checkpoint.conversation||null),
    conversationState:structuredClone(goal.checkpoint.conversationState||null),
-   modelRouting:structuredClone(goal.checkpoint.modelRouting||null)}}));},
+   modelRouting:structuredClone(goal.checkpoint.modelRouting||null)}};
+  });},
   async checkpoint(native){return authorizedUpdate(h=>{h.native={...h.native,...native};});},
   async executionState(){return authorizedUpdate(async(h,goal,client,access)=>{
    const receipt=await require('./receipts').collect(client,ctx,goal,h,access.catalogue);

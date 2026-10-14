@@ -9,7 +9,7 @@ async function access(db,ctx,{enabled=false,owner=false}={}){
  if(!configured(ctx))throw new AuthorizationError('The Codex pilot is not available in this business.');
  // One fresh identity/pilot snapshot for this boundary. No authority is cached
  // between reads, model requests or operations.
- const row=(await db.query(`SELECT u.id,u.role,u.permissions,a.email,w.owner_account_id,to_jsonb(p) AS pilot
+ const row=(await db.query(`SELECT u.id,u.role,u.permissions,a.email,w.owner_account_id,w.name AS business_name,to_jsonb(p) AS pilot
   FROM users u JOIN accounts a ON a.id=u.account_id JOIN workspaces w ON w.id=u.workspace_id
   LEFT JOIN stockchief_runtime.codex_pilots p ON p.workspace_id=u.workspace_id
   WHERE u.workspace_id=$1 AND u.id=$2`,[ctx.workspaceId,ctx.actorId])).rows[0];
@@ -24,7 +24,7 @@ async function access(db,ctx,{enabled=false,owner=false}={}){
  // identical owner lookup before that check.
  const scope={accountId:row.owner_account_id,workspaceId:ctx.workspaceId};
  const entitlement=await require('../commercial/entitlements').assertCapability(db,scope,'ask.lookup');
- return {actor,pilot,commercialAccess:{scope,entitlement}};
+ return {actor,pilot,commercialAccess:{scope,entitlement},environment:{business:{name:row.business_name},actor:{role:actor.role},clock:{utc:new Date().toISOString()}}};
 }
 async function selected(db,ctx){if(!configured(ctx))return false;try{await access(db,ctx,{enabled:true});return true;}catch(e){if(e instanceof AuthorizationError)return false;throw e;}}
 function spendingLockMessage(pilot){

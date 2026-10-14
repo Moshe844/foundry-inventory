@@ -62,6 +62,7 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
     }
     return {actor,sourceMessage:[goal,...clarifications.map(m=>'User clarification: '+m)].join('\n'),
       ...(guard?.commercialAccess?{commercialAccess:guard.commercialAccess}:{}),
+      ...(guard?.environment?{environment:guard.environment}:{}),
       ...(catalogue?{catalogue:interfaces}:{})};
   }
   return {
