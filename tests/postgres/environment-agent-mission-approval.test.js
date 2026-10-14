@@ -46,9 +46,13 @@ test('native chat supports exact individual or full-mission approval, with durab
  await assert.rejects(pilot.decide(db,ctx,goal.id,card.id,card.sha256,true,{responseReference:decision.responseReference,missionScope:scope}),/CHANGED/);
  await db.query('UPDATE stockchief_runtime.assistant_capability_plans SET approved_steps=$2::jsonb,plan_hash=$3 WHERE id=$1',[scope.id,JSON.stringify(missionBefore.approved_steps),scope.sha256]);
  await assert.rejects(pilot.decide(db,ctx,goal.id,card.id,card.sha256,true,{responseReference:'OFFLINE DIFFERENT SCOPE'}),/CONFLICT/);
+ // Interrupted after canonical authorization, before the first operation.
+ await require('../../src/assistant/postgres-capability-plans').authorize(db,ctx,card.proposalId,{expectedHash:scope.sha256,expectedId:scope.id});
+ const resumedCard=(await pilot.inbox(db,ctx,goal.id)).approvals[0];assert.equal(resumedCard.mission.sha256,scope.sha256);assert.deepEqual(resumedCard.decision.scope,scope);
  await pilot.decide(db,ctx,goal.id,card.id,card.sha256,true,{responseReference:decision.responseReference,missionScope:scope});
  const mission=(await db.query('SELECT * FROM stockchief_runtime.assistant_capability_plans WHERE id=$1',[scope.id])).rows[0];
  assert.equal(mission.authorization_mode,'MISSION');assert.equal(mission.status,'DONE');assert.equal(mission.verification_status,'VERIFIED');
+ assert.equal(mission.metrics.approvalInteractions,1,'resumption is not another human approval');
  const quotes=(await db.query('SELECT amount_minor FROM sku_purchase_costs WHERE workspace_id=$1 ORDER BY amount_minor',[ctx.workspaceId])).rows;
  assert.deepEqual(quotes.map(r=>Number(r.amount_minor)),[2500,2600]);
  await pilot.decide(db,ctx,goal.id,card.id,card.sha256,true,{responseReference:decision.responseReference,missionScope:scope});

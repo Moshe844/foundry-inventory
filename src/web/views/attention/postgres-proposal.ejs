@@ -28,12 +28,14 @@
     <% if(typeof mission!=='undefined'&&mission&&(!native||native.mission)){ %><form method="post" action="<%= native?'/ask/goals/'+native.goalId+'/approval':'/actions/'+proposal.id+'/approve-mission' %>">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="missionHash" value="<%= mission.plan_hash %>">
       <% if(native){ %><input type="hidden" name="decision" value="approve"><input type="hidden" name="deliveryId" value="<%= native.id %>"><input type="hidden" name="sha256" value="<%= native.sha256 %>"><input type="hidden" name="scope" value="mission"><input type="hidden" name="missionId" value="<%= mission.id %>"><% } %>
-      <button class="btn btn--primary" type="submit">Approve all remaining changes</button></form><% } %>
+      <button class="btn btn--primary" type="submit"><%= native?.decision?.approved?'Continue approved changes':'Approve all remaining changes' %></button></form><% } %>
+    <% if(!native?.decision?.scope){ %>
     <form method="post" action="<%= native?'/ask/goals/'+native.goalId+'/approval':'/actions/'+proposal.id+'/approve' %>"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <% if(native){ %><input type="hidden" name="decision" value="approve"><input type="hidden" name="deliveryId" value="<%= native.id %>"><input type="hidden" name="sha256" value="<%= native.sha256 %>"><% } %>
-      <button class="btn" type="submit">Approve only this change</button></form>
+      <button class="btn" type="submit"><%= native?.decision?.approved?'Continue approved change':'Approve only this change' %></button></form><% } %>
+    <% if(!native?.decision?.approved){ %>
     <form method="post" action="<%= native?'/ask/goals/'+native.goalId+'/approval':'/actions/'+proposal.id+'/cancel' %>"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
-      <% if(native){ %><input type="hidden" name="decision" value="reject"><input type="hidden" name="deliveryId" value="<%= native.id %>"><input type="hidden" name="sha256" value="<%= native.sha256 %>"><% } %><button class="btn" type="submit">Reject this change</button></form>
+      <% if(native){ %><input type="hidden" name="decision" value="reject"><input type="hidden" name="deliveryId" value="<%= native.id %>"><input type="hidden" name="sha256" value="<%= native.sha256 %>"><% } %><button class="btn" type="submit">Reject this change</button></form><% } %>
   </div><% } %>
   <% if (typeof resumeAvailable !== 'undefined' && resumeAvailable) { %><div class="card-foot"><p>That change completed. StockChief paused before preparing the next step.</p><form method="post" action="/actions/<%= proposal.id %>/continue"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Continue the remaining request</button></form></div><% } %>
 </div>

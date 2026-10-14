@@ -60,6 +60,7 @@ async function authorize(database,ctx,proposalId,{expectedHash=null,expectedId=n
     if(['mutation','policy'].includes(contract.kind))permissions.assertCan(actor,contract.permission,contract.name);
     if(contract.ownerOnly&&actor.role!=='owner')throw new Error('Only the inventory owner can approve this mission.');
   }
+  if(plan.approval_status==='APPROVED'&&plan.authorization_mode==='MISSION')return plan;
   const metrics=metric(plan.metrics,'approvalInteractions');
   const changed=(await client.query(`UPDATE stockchief_runtime.assistant_capability_plans
     SET authorization_mode='MISSION',approval_status='APPROVED',approved_by_user_id=$3,approved_at=now(),

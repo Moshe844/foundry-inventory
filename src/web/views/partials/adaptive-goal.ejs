@@ -41,13 +41,14 @@
         <% } %></dl>
         <% if(card.mission){ %><div class="rm-agent__approval-choice"><p>This request contains <strong><%= card.mission.count %> changes</strong>. You can approve them individually or review the full request for one approval.</p><a class="rm-btn rm-btn--ghost rm-btn--sm" href="/actions/<%= encodeURIComponent(card.proposalId) %>">Review all <%= card.mission.count %> changes together</a></div><% }else{ %>
         <p><a href="<%= card.kind==='business'?'/actions/'+encodeURIComponent(card.proposalId):'/operating-instructions/'+encodeURIComponent(card.proposalId)+'?from=ask' %>">Review details</a></p><% } %>
-        <p class="rm-agent__approval-note">This change has not been applied.</p>
+        <p class="rm-agent__approval-note"><%= card.decision?.approved?'Your approval is recorded. Continue to finish the authorized change.':'This change has not been applied.' %></p>
         <form method="post" action="/ask/goals/<%= goal.id %>/approval">
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
           <input type="hidden" name="deliveryId" value="<%= card.id %>">
           <input type="hidden" name="sha256" value="<%= card.sha256 %>">
-          <button class="rm-btn rm-btn--sm" name="decision" value="approve">Approve this change</button>
-          <button class="rm-btn rm-btn--ghost rm-btn--sm" name="decision" value="reject">Reject</button>
+          <% if(card.decision?.scope?.kind==='mission'){ %><input type="hidden" name="scope" value="mission"><input type="hidden" name="missionId" value="<%= card.decision.scope.id %>"><input type="hidden" name="missionHash" value="<%= card.decision.scope.sha256 %>"><% } %>
+          <button class="rm-btn rm-btn--sm" name="decision" value="approve"><%= card.decision?.approved?'Continue approved changes':'Approve this change' %></button>
+          <% if(!card.decision?.approved){ %><button class="rm-btn rm-btn--ghost rm-btn--sm" name="decision" value="reject">Reject</button><% } %>
         </form>
       </article>
     <% } %>

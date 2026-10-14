@@ -63,7 +63,8 @@ async function inbox(db,ctx,id){await access(db,ctx);const goal=await store.get(
  const approvals=result?.approvals||[];
  for(const card of approvals)if(card.kind==='business'){
   const mission=await require('./postgres-capability-plans').missionForProposal(db,ctx.workspaceId,ctx.actorId,card.proposalId);
-  if(mission?.goal_id===id&&mission.waiting_proposal_id===card.proposalId&&mission.approval_status==='PENDING'&&mission.approved_steps.length>1)
+  const approvedScope=card.decision?.source==='human_user'&&card.decision.approved&&card.decision.scope?.kind==='mission'&&card.decision.scope.id===mission?.id&&card.decision.scope.sha256===mission?.plan_hash;
+  if(mission?.goal_id===id&&mission.waiting_proposal_id===card.proposalId&&(mission.approval_status==='PENDING'||mission.approval_status==='APPROVED'&&approvedScope)&&mission.approved_steps.length>1)
    card.mission={id:mission.id,sha256:mission.plan_hash,count:mission.approved_steps.length};
  }
  return {goal:result?await store.get(db,ctx,id):goal,approvals};
