@@ -97,12 +97,15 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
       const operationPage=contractPage(all,offset,describe,c=>({name:c.name,kind:c.kind,description:c.description}));
       const datasetDetails=d=>({...d,queryContract:require('../../src/reports/postgres-service').queryContract(d.name,actor)});
       const datasetPage=contractPage(matchedDatasets,offset,datasetDetails,d=>({name:d.name,label:d.label}));
+      const namedOperations=names.length?catalogue.list().filter(c=>names.includes(c.name)).map(describe):null;
+      const namedDatasets=names.length?matchedDatasets.filter(d=>names.includes(d.name)).map(datasetDetails):null;
       return {
-      operations:names.length?catalogue.list().filter(c=>names.includes(c.name)).map(describe):
+      operations:names.length?namedOperations:
        operationPage.page,
-      total:all.length,nextOffset:operationPage.nextOffset,
-      datasets:names.length?matchedDatasets.filter(d=>names.includes(d.name)).map(datasetDetails):datasetPage.page,
-      datasetTotal:matchedDatasets.length,datasetNextOffset:datasetPage.nextOffset,
+      total:names.length?namedOperations.length:all.length,nextOffset:names.length?null:operationPage.nextOffset,
+      datasets:names.length?namedDatasets:datasetPage.page,
+      datasetTotal:names.length?namedDatasets.length:matchedDatasets.length,datasetNextOffset:names.length?null:datasetPage.nextOffset,
+      selection:{kind:names.length?'names':'search',...(names.length?{names}:{query:search})},
       searchMatch:{operations:operationSearch.matchMode,datasets:datasetSearch.matchMode},
       coverage:'These are governed execution contracts and curated report projections, not exhaustive environment discovery. Unlisted application screens, forms and rendered records remain discoverable through the browser. A missing execution contract is a reported execution limitation, never authority to bypass the gateway.',
       policy:'Browser inspection cannot commit changes. Operations use canonical engines. Prepared means awaiting authority, never completed. No approval tool is available.'};},
