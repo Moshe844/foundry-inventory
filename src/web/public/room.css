@@ -44,7 +44,7 @@
 .rm-agent__answer ul { margin: 0 0 12px; padding-left: 22px; }
 .rm-agent__table { max-width: 100%; overflow-x: auto; margin: 12px 0; }
 .rm-agent__table table { width: 100%; border-collapse: collapse; font-size: 14px; }
-.rm-agent__table th, .rm-agent__table td { padding: 9px 12px; border-bottom: 1px solid var(--line); white-space: normal; }
+.rm-agent__table th, .rm-agent__table td { padding: 9px 12px; border-bottom: 1px solid var(--line); white-space: normal; overflow-wrap:normal; word-break:normal; }
 .rm-agent__table th { font-weight:650; color:var(--ink-2); text-transform:none; letter-spacing:0; line-height:1.4; background:var(--brand-wash); }
 .rm-agent__table td { line-height:1.5; }
 .rm-agent__table tbody tr:nth-child(even) { background:var(--canvas,#f8f9fc); }
