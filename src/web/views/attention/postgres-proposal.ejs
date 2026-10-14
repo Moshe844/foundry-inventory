@@ -1,4 +1,4 @@
-<div class="rm-head"><a class="rm-head__back" href="/ask"><span aria-hidden="true">←</span> Ask StockChief</a><div class="rm-title"><div><p class="rm-stamp">Prepared change</p><h1>Review before anything changes</h1></div></div></div>
+<div class="rm-head"><a class="rm-head__back" href="/ask"><span aria-hidden="true">←</span> Ask StockChief</a><div class="rm-title"><div><p class="rm-stamp"><%= proposal.status==='EXECUTED'?'Recorded change':'Prepared change' %></p><h1><%= proposal.status==='EXECUTED'?'Completed change':'Review before anything changes' %></h1></div></div></div>
 <div class="card measure"><div class="card-head"><h2><%= proposal.summary %></h2><span class="badge badge--<%= proposal.status === 'EXECUTED' ? 'ok' : proposal.status === 'PENDING' ? 'warn' : 'muted' %>"><%= proposal.status %></span></div>
   <div class="card-body rm-mission-review"><details class="rm-mission-request"><summary>Your original request</summary><p><%= proposal.source_message %></p></details>
     <% if (typeof mission !== 'undefined' && mission) { %>
@@ -14,7 +14,7 @@
       <% if (mission.status === 'WAITING_EVENT' && mission.waiting_condition && mission.waiting_condition.kind === 'supplier_acceptance') { %>
         <div class="notice"><strong>Waiting for the supplier’s acceptance.</strong> The email was sent, but the purchase order has not been placed. StockChief will check replies in the sent thread and resume this approved mission automatically when acceptance is verified.</div>
       <% } else if (mission.status === 'DONE' && mission.verification_status === 'VERIFIED') { %>
-        <div class="notice notice--ok"><strong>Mission completed and verified.</strong> All approved steps finished; no further approval was required.</div>
+        <div class="notice notice--ok"><strong>Mission completed and verified.</strong> All approved changes finished. Their outcomes are recorded.</div>
       <% } else if (mission.status === 'BLOCKED') { %>
         <div class="notice"><strong>Mission stopped safely.</strong> StockChief could not verify the next step. Review the supplier reply or changed terms before starting another action.</div>
       <% } %>

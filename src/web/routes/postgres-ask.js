@@ -464,7 +464,7 @@ function createPostgresAskRouter(database,options={}){
       AND checkpoint->>'runtime'='codex-staging' AND EXISTS(SELECT 1 FROM jsonb_each(COALESCE(checkpoint#>'{harness,approvalDeliveries}','{}'::jsonb)) d WHERE d.value->>'proposalId'=$3) LIMIT 1`,[req.ctx.workspaceId,req.ctx.actorId,proposal.id])).rows[0];
     const nativeCard=native&&!['COMPLETED','CANCELLED','BLOCKED'].includes(native.status)?(await pilot.inbox(database,req.ctx,native.id)).approvals.find(card=>card.proposalId===proposal.id):null;
     return res.page('attention/postgres-proposal',{title:mission?'Review operating mission':'Review prepared change',nav:'ask',proposal,mission,nativeApproval:nativeCard?{goalId:native.id,...nativeCard}:null,
-      missionSteps:(mission?.approved_steps||[]).map((step,index)=>{const contract=capabilities.get(step.capability);return {label:contract?.discovery?.label||(contract?.legacyAction||step.capability).replace(/[._]/g,' ').replace(/^./,s=>s.toUpperCase()),args:step.args,index:index+1,state:mission.steps[index]?.state||'BLOCKED'};}),
+      missionSteps:(mission?.approved_steps||[]).map((step,index)=>{const contract=capabilities.get(step.capability);return {label:(contract?.legacyAction||step.capability).replace(/[._]/g,' ').replace(/^./,s=>s.toUpperCase()),args:step.args,index:index+1,state:mission.steps[index]?.state||'BLOCKED'};}),
       resumeAvailable:proposal.status==='EXECUTED'&&resuming});
   }));
   router.post('/actions/:id/approve-mission',asyncRoute(async(req,res)=>{
