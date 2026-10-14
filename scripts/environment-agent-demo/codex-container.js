@@ -113,7 +113,7 @@ async function main(start){
  thread=start.threadId?codex.resumeThread(start.threadId,options):codex.startThread(options);
  let turnCompleted=false;
  try{
-  const result=await thread.runStreamed(start.prompt);
+  const result=await thread.runStreamed(start.prompt,{outputSchema:start.outputSchema});
   for await(const event of result.events){
    await rpc('event',{event});
    // The SDK's semantic completion precedes CLI/MCP shutdown. Save native
