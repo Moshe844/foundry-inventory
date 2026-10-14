@@ -97,7 +97,20 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    conversationState:structuredClone(goal.checkpoint.conversationState||null),
    modelRouting:structuredClone(goal.checkpoint.modelRouting||null)}};
   });},
-  async checkpoint(native){return authorizedUpdate(h=>{h.native={...h.native,...native};});},
+  async checkpoint(native){
+   if(candidate!=='codex')return authorizedUpdate(h=>{h.native={...h.native,...native};});
+   // Native persistence is host bookkeeping, not a new grant to read records,
+   // call a model or execute an operation. Keep the lease, tenant and fresh
+   // actor stamp in this transaction; those effect boundaries still perform
+   // their own complete commercial/authority admission. This also lets the
+   // SDK save its settled state if the spending lock changes mid-response.
+   return update(async(h,goal,client)=>{
+    const actor=(await client.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2 FOR SHARE',
+     [ctx.workspaceId,ctx.actorId])).rows[0];
+    if(!actor||!h.authorityStamp)throw Error('SESSION_AUTHORITY_CHANGED');
+    checkAuthority(h,{actor});h.native={...h.native,...native};
+   });
+  },
   async executionState(){return authorizedUpdate(async(h,goal,client,access)=>{
    const receipt=await require('./receipts').collect(client,ctx,goal,h,access.catalogue);
    if(!receipt.operations.length)return null;
@@ -128,10 +141,10 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    if(h.codexDelivery?.state==='PENDING')throw new Error('CODEX_RESPONSE_RECONCILIATION_REQUIRED');
    return h.codexDelivery?.hash===hash?require('./replay-packet').unpack(h.codexDelivery.packet):null;
   },admissionAccess);},
-  async codexPending(hash){return authorizedUpdate(h=>{
+  async codexPending(hash,admissionAccess=null){const change=h=>{
    if(candidate!=='codex'||h.codexDelivery?.state==='PENDING')throw new Error('CODEX_RESPONSE_RECONCILIATION_REQUIRED');
    h.codexDelivery={hash,state:'PENDING'};
-  });},
+  };return admissionAccess?.actor?update(change,{access:admissionAccess}):authorizedUpdate(change);},
   async codexDelivered(hash,packet,outcome){return authorizedUpdate(h=>{
    if(candidate!=='codex'||h.codexDelivery?.hash!==hash||h.codexDelivery.state!=='PENDING')throw new Error('CODEX_RESPONSE_SEQUENCE_MISMATCH');
    h.codexDelivery={hash,state:'SETTLED',packet:require('./replay-packet').pack(packet)};h.lastCodexResponse={...outcome,request:h.codexRequests};

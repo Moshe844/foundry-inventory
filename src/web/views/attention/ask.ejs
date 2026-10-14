@@ -142,7 +142,7 @@
      */
     var latestIndex = transcript.length - 1;
     var earlier = latestIndex;
-    transcript.forEach(function(turn,index){if(turn.agentGoal&&['WAITING_APPROVAL','WAITING_USER'].includes(turn.agentGoal.status))earlier=Math.min(earlier,index);});
+    transcript.forEach(function(turn,index){if(turn.agentGoal&&(['WAITING_APPROVAL','WAITING_USER'].includes(turn.agentGoal.status)||turn.agentGoal.id===locals.focusedGoalId))earlier=Math.min(earlier,index);});
   %>
   <% transcript.forEach(function (turn, turnIndex) { %>
     <% if (earlier > 0 && turnIndex === 0) { %>
@@ -154,6 +154,7 @@
       </div>
     </details>
     <% } %>
+    <% if(turn.agentGoal?.id===locals.focusedGoalId){ %><span id="focused-goal" tabindex="-1"></span><% } %>
     <div <%- turnIndex === latestIndex ? 'id="latest"' : '' %> class="rm-turn rm-turn--you<%= turnIndex === latestIndex ? ' rm-turn--latest' : ' rm-turn--past' %>">
       <p class="rm-turn__who">You<%
         /* Several parts: how many are settled, so a half-done message never reads as done. */

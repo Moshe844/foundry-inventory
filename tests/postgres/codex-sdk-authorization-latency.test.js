@@ -18,9 +18,15 @@ test('native bookkeeping avoids repeated catalogue construction while retaining 
  // The live trace crossed twelve model rounds and seventeen tool rounds.
  // Repeat native checkpoint boundaries at that scale without inference.
  for(let index=0;index<17;index++){await session.load();await session.checkpoint({browserStep:index});}
- for(let index=0;index<12;index++){await session.codexRequest();await session.codexPending('round-'+index);await session.codexDelivered('round-'+index,{status:200},{terminal:false,tool:true});}
+ const packet={status:200,contentType:'application/json',body:'{}',outcome:{terminal:false,tool:true}};
+ for(let index=0;index<12;index++){await session.codexRequest();await session.codexPending('round-'+index);await session.codexDelivered('round-'+index,packet,packet.outcome);}
  assert.equal(transactions,17*2+12*3,'Authority stamps commit with their protected checkpoint, not in separate transactions');
  assert(calls.every(c=>c.catalogue===false));
+ assert.equal(calls.length,17+12*3,'Native checkpoints keep fresh actor/lease validation without another commercial admission');
+ const requestAccess=await gateway.authorize({catalogue:false}),admissions=calls.length;
+ await session.codexPending('same-http-boundary',requestAccess);
+ assert.equal(calls.length,admissions,'Pending delivery uses only this HTTP request\'s fresh admission');
+ await session.codexDelivered('same-http-boundary',packet,packet.outcome);
  let browserReads=0;
  const tools=require('../../scripts/environment-agent-demo/candidates').sharedTools({gateway,session,browser:{act:async()=>{browserReads++;return {url:'http://isolated/',text:'Observed records'};}},sandbox:{}});
  queries=0;transactions=0;await tools.find(t=>t.name==='environment_browser').execute({action:'inspect',ref:null,value:null});const browserQueries=queries;
@@ -62,6 +68,7 @@ test('native bookkeeping avoids repeated catalogue construction while retaining 
  },{full:true}),/SESSION_AUTHORITY_CHANGED/);
  await db.query("UPDATE users SET permissions='{}'::jsonb,role='member' WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,ctx.actorId]);
  await assert.rejects(session.load(),/SESSION_AUTHORITY_CHANGED/);
+ await assert.rejects(session.checkpoint({codex:{threadId:'must-not-save'}}),/SESSION_AUTHORITY_CHANGED/);
  const beforeReads=browserReads;
  await assert.rejects(tools.find(t=>t.name==='environment_browser').execute({action:'inspect',ref:null,value:null}),/SESSION_AUTHORITY_CHANGED/);
  assert.equal(browserReads,beforeReads,'Revoked authority fails before browser inspection even without the redundant wrapper check');

@@ -105,7 +105,7 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
      ?{authorization:`Bearer ${secret}`}:{'x-api-key':secret,'anthropic-version':'2023-06-01',
       ...(normalized.body.context_management?{'anthropic-beta':'context-management-2025-06-27'}:{})})};
     // Do not forward caller headers, beta features, destinations or redirect auth.
-    const pendingStarted=Date.now();if(nativeCodex)await grant.nativeSession?.codexPending(requestHash);
+    const pendingStarted=Date.now();if(nativeCodex)await grant.nativeSession?.codexPending(requestHash,admissionAccess);
     timings.pendingCheckpointMs=Date.now()-pendingStarted;
     attempted=true;
     const providerStarted=Date.now();timings.admissionMs=providerStarted-start-(timings.tokenPreflightMs||0);

@@ -234,7 +234,8 @@ function createPostgresAskRouter(database,options={}){
     await pilot.decide(database,req.ctx,req.params.id,String(req.body.deliveryId||''),String(req.body.sha256||''),req.body.decision==='approve',
       {responseReference:`Authenticated website ${req.body.decision} by ${req.ctx.actorId} at ${new Date().toISOString()}`});
     req.flash('success',req.body.decision==='approve'?'Approved. StockChief is checking the recorded outcome.':'The proposal was rejected.');
-    return res.redirect(303,'/ask');
+    req.session.postgresAskNavigationGoal=req.params.id;
+    return res.redirect(303,'/ask?goal='+encodeURIComponent(req.params.id)+'#focused-goal');
   }));
   router.get('/ask/goals/:id',asyncRoute(async(req,res)=>{
     res.set('Cache-Control','no-store');
@@ -317,6 +318,7 @@ function createPostgresAskRouter(database,options={}){
     const pilotView=options.agentInspection?null:await pilot.view(database,req.ctx);
     const recentGoals=goalStore.enabled(req.ctx)||pilotView?await goalStore.recent(database,req.ctx,startedAt):[];
     const activeGoal=recentGoals.at(-1)||null;
+    const focusedGoal=recentGoals.find(goal=>goal.id===req.query.goal);
     for(const goal of recentGoals)goal.conversation=conversation.state(goal);
     for(const goal of recentGoals)goal.approvalCards=goal.checkpoint.runtime==='codex-staging'&&!['COMPLETED','CANCELLED','BLOCKED'].includes(goal.status)
       ?(await pilot.inbox(database,req.ctx,goal.id)).approvals:[];
@@ -325,7 +327,7 @@ function createPostgresAskRouter(database,options={}){
     transcript=require('../../assistant/goal-transcript').mergeGoalTranscript(transcript,recentGoals);
     const continuationGoal=transcript.at(-1)?.agentGoal;
     return res.page('attention/ask',{title:'Ask StockChief',nav:'ask',room:true,suppressBack:true,postgresAsk:true,...rules,
-      codexPilot:pilotView,adaptiveGoal:activeGoal,renderAgentAnswer:require('../public/agent-answer').render,
+      codexPilot:pilotView,adaptiveGoal:activeGoal,focusedGoalId:focusedGoal?.id||null,renderAgentAnswer:require('../public/agent-answer').render,
       about:String(req.query.about||'').slice(0,2000),stockActivity:req.query.task==='stock-activity'&&sourcePage?.path==='/inventory',
       question:latest?.message||'',result:resultFor(latest,latestProposal),error:null,
       prefill:String(req.query.q||'').slice(0,2000),
