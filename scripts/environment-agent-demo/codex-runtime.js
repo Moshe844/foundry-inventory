@@ -49,7 +49,10 @@ async function prepareContext(options){
  }};
  const saved=await measure('durable_session',()=>options.session.load());
  const [initialView,initialContracts,executionState]=await Promise.all([
-  measure('current_page',()=>initialObservation(options,saved,saved.native.codex)),
+  // A supplied user page is actual conversation context. A previously learned
+  // private page is only navigation knowledge; loading it must not delay every
+  // general question. The native agent chooses when it needs that browser.
+  measure('current_page',()=>saved.goalContext.page?.path?initialObservation(options,saved,saved.native.codex):null),
   measure('execution_contracts',()=>saved.native.codex?.threadId?null:options.gateway.initialContracts?.()||null),
   measure('execution_receipt',()=>saved.native.codex?.threadId?options.session.executionState?.()||null:null)]);
  const prepared={session:options.session,saved,initialView,initialContracts,executionState};
