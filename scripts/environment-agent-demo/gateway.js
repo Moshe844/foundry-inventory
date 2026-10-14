@@ -11,11 +11,10 @@ function describe(c){return {name:c.name,kind:c.kind,description:c.description,r
   fields:Object.fromEntries(c.fields.map(name=>[name,{type:FIELDS[name]?.type||'string',description:c.agentHints?.[name]||FIELDS[name]?.description||name,
    ...(c.argumentSchemas?.[name]?{jsonSchema:c.argumentSchemas[name]()}:{})}])),
   authority:c.authority,unavailable:c.commercialUnavailable||[]};}
-function contractPage(entries,offset,details,summary){
+function discoveryPage(entries,offset,summary){
  const page=[];let bytes=0;
- for(const entry of entries.slice(offset,offset+12)){
-  let value=details(entry),size=Buffer.byteLength(JSON.stringify(value));
-  if(size>18000){value={...summary(entry),detailsByName:true};size=Buffer.byteLength(JSON.stringify(value));}
+ for(const entry of entries.slice(offset)){
+  const value=summary(entry),size=Buffer.byteLength(JSON.stringify(value));
   if(page.length&&bytes+size>18000)break;
   page.push(value);bytes+=size;
  }
@@ -68,12 +67,17 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
   return {
     authorize:access,
     async initialContracts(){
-      const {catalogue}=await access(),operations=[];let bytes=0;
+      const {catalogue}=await access(),operations=[];
       // Ordinary questions must be able to choose a governed read immediately,
       // not pay for a separate discovery turn or a browser tour first. This is
       // current authorized metadata, not a map limiting environment discovery.
       const contracts=catalogue.list().sort((a,b)=>Number(b.kind==='read')-Number(a.kind==='read'));
-      for(const contract of contracts){
+      // A complete name/kind index distinguishes an absent execution contract
+      // from details merely omitted from the initial packet. This is generated
+      // from fresh authorized contracts, never a page/route discovery boundary.
+      const operationIndex=contracts.map(c=>({name:c.name,kind:c.kind}));
+      let bytes=Buffer.byteLength(JSON.stringify(operationIndex));
+      for(const contract of contracts.filter(c=>c.kind==='read')){
         const complete=describe(contract);
         const entry=Buffer.byteLength(JSON.stringify(complete))<=4096?complete:
           {name:contract.name,kind:contract.kind,description:contract.description,required:contract.required||[],detailsByName:true};
@@ -81,7 +85,7 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
         if(bytes+size>18000)break;
         operations.push(entry);bytes+=size;
       }
-      return {operations,total:contracts.length,complete:operations.length===contracts.length,
+      return {operations,operationIndex,indexComplete:true,total:contracts.length,complete:operations.length===contracts.length,
         coverage:'Current authorized interface contracts within the existing metadata bound. This is not an environment map. Discover pages and forms through the browser; use environment_interfaces for omitted contract details. All operations repeat fresh authority and canonical verification.'};
     },
     async interfaces({search='',offset=0,names=[]}={}){const {actor,catalogue}=await access();
@@ -91,14 +95,16 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
       if(require('../../src/reports/postgres-composed').dimensions(actor).length)datasets.push({name:'composed',label:'Combine governed measures across datasets'});
       const datasetSearch=require('./interface-search').ranked(datasets,search);
       const matchedDatasets=datasetSearch.items;
-      // Relevant contracts arrive with their usable fields in the discovery
-      // response. Bounded pagination avoids an obligatory detail-only model
-      // round without injecting the whole catalogue into every prompt.
-      const operationPage=contractPage(all,offset,describe,c=>({name:c.name,kind:c.kind,description:c.description}));
+      // Search is discovery, not schema loading. Return the matching contract
+      // descriptions together; exact-name lookup supplies complete schemas.
+      // Large unrelated dataset/query schemas must not grow native history
+      // simply because the agent is finding which interface exists.
+      const operationPage=discoveryPage(all,offset,c=>({name:c.name,kind:c.kind,description:c.description,
+       required:c.required||[],detailsByName:true,unavailable:c.commercialUnavailable||[]}));
       const datasetDetails=d=>({...d,queryContract:require('../../src/reports/postgres-service').queryContract(d.name,actor)});
-      const datasetPage=contractPage(matchedDatasets,offset,datasetDetails,d=>({name:d.name,label:d.label}));
+      const datasetPage=discoveryPage(matchedDatasets,offset,d=>({name:d.name,label:d.label,detailsByName:true}));
       const namedOperations=names.length?catalogue.list().filter(c=>names.includes(c.name)).map(describe):null;
-      const namedDatasets=names.length?matchedDatasets.filter(d=>names.includes(d.name)).map(datasetDetails):null;
+      const namedDatasets=names.length?datasets.filter(d=>names.includes(d.name)).map(datasetDetails):null;
       return {
       operations:names.length?namedOperations:
        operationPage.page,
