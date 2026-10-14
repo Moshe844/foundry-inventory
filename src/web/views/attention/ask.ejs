@@ -80,7 +80,7 @@
 
 <div class="rm-chat<%= guidedEmailStep ? ' rm-chat--guided' : '' %>" data-conversation="<%= locals.conversationId || '' %>">
   <% if(locals.codexPilot){ %>
-    <section class="rm-note" aria-label="Staging agent controls">
+    <section class="rm-note" style="display:block" aria-label="Staging agent controls">
       <p><strong>Staging agent pilot</strong> · <%= locals.codexPilot.enabled?'Codex SDK · Adaptive reasoning':'Existing Ask' %></p>
       <% if(locals.codexPilot.budget){ const budget=locals.codexPilot.budget; %><p class="rm-agent__hint">Pilot budget ledger: $<%= (budget.committed/1000000).toFixed(2) %> / $<%= (budget.ceiling/1000000).toFixed(2) %> · $<%= (budget.remaining/1000000).toFixed(2) %> remaining. Includes spending reservations; this is not the provider invoice.</p><% } %>
       <% if(locals.codexPilot.enabled&&!locals.codexPilot.funded){ %><p><%= locals.codexPilot.lockMessage %></p><% } %>
