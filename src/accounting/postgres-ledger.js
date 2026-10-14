@@ -135,4 +135,13 @@ async function post(database,ctx,input){
   return database.transaction((client)=>postInTransaction(client,ctx,input),{isolation:'SERIALIZABLE',retrySafe:true});
 }
 
-module.exports={ configure,configureInTransaction,post,postInTransaction };
+// Zero-value inventory events still require configured books and an open
+// period. They do not create fictitious zero-amount journal lines.
+async function validatePostingDateInTransaction(client,ctx,value){
+ await require('../commercial/enforcement').workspace(client,ctx.workspaceId,'accounting.core');
+ const date=dateOnly(value),settings=(await client.query('SELECT accounting_start_date FROM accounting_settings WHERE workspace_id=$1 AND enabled=1',[ctx.workspaceId])).rows[0];
+ if(!settings)throw new ValidationError('Configure accounting before posting inventory value.');
+ if(date<settings.accounting_start_date)throw new ValidationError('Posting date is before the accounting start date.');
+ return ensurePeriod(client,ctx.workspaceId,date);
+}
+module.exports={ configure,configureInTransaction,post,postInTransaction,validatePostingDateInTransaction };

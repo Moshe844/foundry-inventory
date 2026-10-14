@@ -27,6 +27,9 @@ async function verifiedMovement(client,ctx,result,payload,operation,sign){
 }
 
 const EXECUTORS=Object.freeze({
+  'inventory.establish_cost':{
+    execute:(client,ctx,payload)=>require('../accounting/postgres-inventory-costs').establishInTransaction(client,ctx,payload),
+    verify:(client,ctx,result,payload)=>require('../accounting/postgres-inventory-costs').verify(client,ctx,result,payload)},
   'inventory.receive':{execute:(client,ctx,payload)=>inventory.receiveInTransaction(client,ctx,payload),
     verify:(client,ctx,result,payload)=>verifiedMovement(client,ctx,result,payload,'receive',1)},
   'inventory.issue':{execute:(client,ctx,payload)=>inventory.issueInTransaction(client,ctx,payload),

@@ -44,6 +44,11 @@ function createPostgresInventoryRouter(database) {
       sort:req.query.sort || 'name',includeArchived:req.query.archived==='1' || req.query.archived==='only',
       archivedOnly:req.query.archived==='only',group:activeGroup?.key||''};
     const result=await catalog.listItems(database,req.ctx.workspaceId,{...filters,page:req.query.page});
+    if(result.items.length){const missing=(await database.query(`SELECT s.item_id,SUM(GREATEST(0,b.on_hand-COALESCE(c.quantity_units,0))) AS missing_units
+      FROM skus s JOIN balances b ON b.workspace_id=s.workspace_id AND b.sku_id=s.id
+      LEFT JOIN accounting_inventory_cost_balances c ON c.workspace_id=b.workspace_id AND c.sku_id=b.sku_id AND c.location_id=b.location_id
+      WHERE s.workspace_id=$1 AND s.item_id=ANY($2::text[]) AND b.on_hand>0 GROUP BY s.item_id`,[req.ctx.workspaceId,result.items.map(i=>i.id)])).rows;
+      result.items=result.items.map(item=>({...item,missingStockCostUnits:Number(missing.find(r=>r.item_id===item.id)?.missing_units||0)}));}
     // Rendering must work with a read-only business connection. Authorized
     // onboarding choices initialize state; browsing never creates it.
     const state=await onboarding.get(database,req.ctx.workspaceId);
@@ -82,6 +87,13 @@ function createPostgresInventoryRouter(database) {
     const detail=await catalog.getItem(database,req.ctx.workspaceId,req.params.id,{page:req.query.page});
     const priceState=await pricing.listForSkus(database,req.ctx.workspaceId,detail.skus.map((sku)=>sku.id));
     detail.skus=detail.skus.map((sku)=>({...sku,...priceState.get(sku.id)}));
+    const costRows=detail.skus.length?(await database.query(`SELECT b.sku_id,b.on_hand,COALESCE(c.quantity_units,0) AS costed_units,COALESCE(c.total_cost_minor,0) AS total_cost_minor,
+      COALESCE((SELECT base_currency FROM accounting_settings a WHERE a.workspace_id=b.workspace_id),'USD') AS currency
+      FROM balances b LEFT JOIN accounting_inventory_cost_balances c ON c.workspace_id=b.workspace_id AND c.sku_id=b.sku_id AND c.location_id=b.location_id
+      WHERE b.workspace_id=$1 AND b.sku_id=ANY($2::text[]) AND b.on_hand>0`,[req.ctx.workspaceId,detail.skus.map(s=>s.id)])).rows:[];
+    detail.skus=detail.skus.map(sku=>{const rows=costRows.filter(r=>r.sku_id===sku.id);return {...sku,stockCost:{
+      costedUnits:rows.reduce((n,r)=>n+Number(r.costed_units),0),missingUnits:rows.reduce((n,r)=>n+Math.max(0,Number(r.on_hand)-Number(r.costed_units)),0),
+      totalCostMinor:rows.reduce((n,r)=>n+Number(r.total_cost_minor),0),currency:rows[0]?.currency||'USD'}};});
     const purchasingRows=detail.skus.length?(await database.query(`SELECT sku.id AS sku_id,policy.location_id,
       location.name AS location_name,policy.reorder_point,policy.target_stock,policy.safety_stock,
       policy.preferred_supplier_id,supplier.name AS supplier_name
@@ -104,6 +116,7 @@ function createPostgresInventoryRouter(database) {
           .map((row)=>({supplierName:row.supplier_name}))};});
     return res.page('inventory/item',{title:detail.item.name,nav:'inventory',room:true,...detail,attention:[],findingTotal:0,
       purchasingLines,commitments:[],outlook:[],canOperate:permissions.can(req.user,permissions.OPERATE),
+      canEstablishCost:['owner','accountant'].includes(req.user.role)&&permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
       kitDefinitions:Object.fromEntries(detail.skus.map((sku)=>[sku.id,{isKit:false,components:[]}]))});
   }));
   router.post('/inventory/:id/details',requirePermission(permissions.OPERATE,'edit products'),asyncRoute(async(req,res)=>{
@@ -168,6 +181,27 @@ function createPostgresInventoryRouter(database) {
     await catalog.setItemActive(database,req.ctx,req.params.id,restore);
     req.flash('success',restore?'Product restored.':'Product archived.');
     return res.redirect(303,restore?`/inventory/${req.params.id}`:'/inventory');
+  }));
+  router.get('/inventory/:id/costs',requirePermission(permissions.MANAGE_ACCOUNTING,'establish inventory cost'),asyncRoute(async(req,res)=>{
+    const detail=await catalog.getItem(database,req.ctx.workspaceId,req.params.id);
+    const positions=(await database.query(`SELECT s.id AS sku_id,s.code,s.variant_label,l.id AS location_id,l.name AS location_name,b.on_hand,
+      COALESCE(c.quantity_units,0) AS costed_units FROM skus s JOIN balances b ON b.workspace_id=s.workspace_id AND b.sku_id=s.id
+      JOIN locations l ON l.workspace_id=b.workspace_id AND l.id=b.location_id AND l.is_active=1
+      LEFT JOIN accounting_inventory_cost_balances c ON c.workspace_id=b.workspace_id AND c.sku_id=b.sku_id AND c.location_id=b.location_id
+      WHERE s.workspace_id=$1 AND s.item_id=$2 AND s.is_active=1 AND b.on_hand>0 ORDER BY s.position,s.code,l.name`,[req.ctx.workspaceId,req.params.id])).rows;
+    const settings=(await database.query('SELECT enabled,base_currency FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId])).rows[0];
+    return res.page('inventory/postgres-stock-cost',{title:'Record cost of existing stock',nav:'inventory',item:detail.item,positions,
+      settings:settings||null,today:require('../../lib/util').nowIso().slice(0,10)});
+  }));
+  router.post('/inventory/:id/costs/proposals',requirePermission(permissions.MANAGE_ACCOUNTING,'establish inventory cost'),asyncRoute(async(req,res)=>{
+    const detail=await catalog.getItem(database,req.ctx.workspaceId,req.params.id);
+    const [skuId,locationId]=String(req.body.position||'').split(':');
+    if(!(await database.query('SELECT 1 FROM skus WHERE workspace_id=$1 AND item_id=$2 AND id=$3 AND is_active=1',
+      [req.ctx.workspaceId,req.params.id,skuId])).rows.length)throw new ValidationError('Choose a variant from this product.');
+    const prepared=await require('../../accounting/postgres-inventory-costs').prepare(database,req.ctx,{skuId,locationId,quantity:req.body.quantity,
+      unitCost:req.body.unitCost,currency:req.body.currency,basis:req.body.basis,evidenceReference:req.body.evidenceReference,postingDate:req.body.postingDate},
+      `Record the evidenced cost of existing ${detail.item.name} stock; do not change physical quantities.`);
+    return res.redirect(303,`/actions/${prepared.proposal.id}`);
   }));
   return router;
 }

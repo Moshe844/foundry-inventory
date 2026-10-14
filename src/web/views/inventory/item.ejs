@@ -127,7 +127,7 @@
   </div>
   <div class="rm-stat<%= available ? '' : ' rm-stat--flag' %>">
     <span class="rm-stat__n"><%= helpers.qty(available) %></span>
-    <span class="rm-stat__d"><%= helpers.plural(available, item.unit_label) %> available</span>
+    <span class="rm-stat__d"><%= helpers.plural(available, item.unit_label) %> <%= locals.canEstablishCost!==undefined?'uncommitted':'available' %></span>
   </div>
   <div class="rm-stat">
     <span class="rm-stat__n"><%= helpers.qty(onOrder || 0) %></span>
@@ -170,10 +170,10 @@
             <th><%= item.has_variants ? 'Variant' : 'Product' %></th>
             <th class="num">On hand</th>
             <th class="num">Committed</th>
-            <th class="num">Available</th>
+            <th class="num"><%= locals.canEstablishCost!==undefined?'Uncommitted':'Available' %></th>
             <th class="num">On order</th>
             <th>Selling price</th>
-            <th>Purchase cost</th>
+            <th><%= locals.canEstablishCost!==undefined?'Purchasing price & stock cost':'Purchase cost' %></th>
             <th>Reordering</th>
             <% if (canAct) { %><th><span class="visually-hidden">Actions</span></th><% } %>
           </tr>
@@ -214,13 +214,18 @@
                 <% if (sku.purchaseCost) { %>
                   <span class="visually-hidden">Purchase cost </span><strong><%= sku.purchaseCost.formatted %></strong>
                   <a href="/pricing/purchase-costs/new?skuId=<%= sku.id %>">Change</a>
-                  <% if (sku.purchaseCost.sourceLabel) { %><small><%= sku.purchaseCost.sourceLabel %></small><% } %>
+                  <% if (sku.purchaseCost.sourceLabel) { %><small><%= sku.purchaseCost.sourceLabel %><%= sku.stockCost?' · purchasing price':'' %></small><% } %>
                   <% if (sku.sellingPrice.isSet && sku.sellingPrice.amount_minor < sku.purchaseCost.amount_minor) { %>
                     <small class="is-warn"><strong>Warning:</strong> sells <%= helpers.money(sku.purchaseCost.amount_minor - sku.sellingPrice.amount_minor, sku.purchaseCost.currency) %> below purchase cost</small>
                   <% } %>
                 <% } else { %>
                   <span class="vt-nil">Not set</span>
                   <a class="vt-do" href="/pricing/purchase-costs/new?skuId=<%= sku.id %>">Set cost</a>
+                <% } %>
+                <% if(sku.stockCost){ %>
+                  <% if(sku.stockCost.missingUnits>0){ %><small class="is-warn"><strong>Stock cost missing:</strong> <%= helpers.qty(sku.stockCost.missingUnits) %> units. Sale posting is blocked for those units.</small>
+                    <% if(locals.canEstablishCost){ %><small><a href="/inventory/<%= item.id %>/costs">Record actual stock cost</a></small><% } %>
+                  <% }else if(sku.total>0){ %><small><strong>Actual stock value: <%= helpers.money(sku.stockCost.totalCostMinor,sku.stockCost.currency) %></strong> · <%= helpers.money(Math.round(sku.stockCost.totalCostMinor/sku.stockCost.costedUnits),sku.stockCost.currency) %> average/unit.</small><small>Actual cost recorded for all <%= helpers.qty(sku.stockCost.costedUnits) %> units.</small><% } %>
                 <% } %>
               </td>
               <td class="vt-rule">
@@ -255,9 +260,9 @@
       </div>
     <% } %>
     <p class="rm-panel__foot">
-      Selling price is charged to customers; supplier cost is kept separately for purchasing and
+      <% if(locals.canEstablishCost!==undefined){ %>Purchasing price is a reference for buying. Actual stock cost values the units already on hand; saving a purchasing price does not apply it to existing stock. Uncommitted units may still need cost before they can be sold.<% }else{ %>Selling price is charged to customers; supplier cost is kept separately for purchasing and
       margin reporting. StockChief will not pick a reorder level for you until it has seen one
-      sell — or you set it yourself.
+      sell — or you set it yourself.<% } %>
     </p>
   </section>
 <% var isKitProduct = Object.values(kitDefinitions).some(function (definition) { return definition.isKit; }); %>

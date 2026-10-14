@@ -1,0 +1,21 @@
+<div class="rm-head"><a class="rm-head__back" href="/inventory/<%= item.id %>">← <%= item.name %></a><div class="rm-title"><div><p class="rm-stamp">Existing stock · no new receipt</p><h1>Record actual stock cost</h1></div></div></div>
+<p class="rm-sub">This is the cost you actually paid for units already on hand, used to value inventory and calculate profit when they sell. It is separate from today's purchasing price.</p>
+<div class="card"><div class="card-body"><div class="table-scroll"><table class="table"><thead><tr><th>Product</th><th>Location</th><th>On hand</th><th>Cost recorded</th><th>Needs cost</th></tr></thead><tbody>
+<% positions.forEach(function(p){ %><tr><td><%= p.variant_label||item.name %> <small><%= p.code %></small></td><td><%= p.location_name %></td><td><%= p.on_hand %></td><td><%= p.costed_units %> units</td><td><%= Math.max(0,Number(p.on_hand)-Number(p.costed_units)) %> units</td></tr><% }) %>
+</tbody></table></div></div></div>
+<% const eligible=positions.filter(p=>Number(p.on_hand)>Number(p.costed_units)); if(!settings||!Number(settings.enabled)){ %>
+<p class="notice">Accounting must be configured before StockChief can record inventory value. <a href="/accounting">Open accounting</a>.</p>
+<% }else if(!eligible.length){ %><p class="notice notice--ok">There are no existing units missing cost for this product.</p><% }else{ %>
+<form class="card form-card" method="post" action="/inventory/<%= item.id %>/costs/proposals">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<div class="notice">Nothing changes until you review and approve. Stock quantities, purchasing prices, cash and supplier balances remain unchanged.</div>
+<div class="form-grid">
+<label class="field"><span>Stock position</span><select name="position" required><% eligible.forEach(function(p){ %><option value="<%= p.sku_id %>:<%= p.location_id %>"><%= p.variant_label||item.name %> · <%= p.code %> · <%= p.location_name %> · <%= Number(p.on_hand)-Number(p.costed_units) %> units missing cost</option><% }) %></select></label>
+<label class="field"><span>Units to cost</span><input name="quantity" type="number" min="1" step="1" value="<%= eligible.length===1?Number(eligible[0].on_hand)-Number(eligible[0].costed_units):'' %>" required></label>
+<label class="field"><span>Actual cost per unit</span><input name="unitCost" inputmode="decimal" required><small>Use the evidenced cost for these units, not an assumed current quote.</small></label>
+<label class="field"><span>Currency</span><input name="currency" value="<%= settings.base_currency %>" readonly></label>
+<label class="field"><span>Why is this cost being recorded?</span><select name="basis" required><option value="">Choose the established fact</option><option value="opening_inventory">Stock owned before accounting setup</option><option value="previously_expensed">The purchase was already recorded as an expense</option></select><small>Opening stock records inventory against opening equity. A previously expensed purchase moves cost from expenses to inventory and increases profit in the posting period. An unpaid or unrecorded bill needs its supplier-invoice workflow.</small></label>
+<label class="field"><span>Supporting evidence or document reference</span><textarea name="evidenceReference" minlength="3" maxlength="1200" required></textarea><small>Identify the invoice, opening valuation or owner-confirmed actual cost and its source.</small></label>
+<label class="field"><span>Posting date</span><input name="postingDate" type="date" value="<%= today %>" max="<%= today %>" required></label>
+</div><div class="form-actions"><button class="btn btn--primary" type="submit">Review stock cost</button><a class="btn btn--ghost" href="/inventory/<%= item.id %>">Cancel</a></div></form>
+<% } %>

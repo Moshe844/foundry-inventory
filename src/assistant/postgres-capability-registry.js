@@ -13,6 +13,8 @@ const {destinationById}=require('../web/postgres-navigation');
 const governedReports=require('../reports/postgres-registry');
 
 const FIELDS=Object.freeze({
+  costBasis:{type:'string',description:'Confirmed accounting basis: opening_inventory for stock owned before accounting setup; previously_expensed for a purchase already recorded as an expense. Never infer either from a current purchase quote. Unrecorded/unpaid purchases require the supplier-invoice workflow.'},
+  postingDate:{type:'string',description:'Accounting posting date, YYYY-MM-DD. Defaults to today and is shown for approval; closed periods cannot be used.'},
   ruleChanges:{type:'string',description:'A JSON array of proposed typed operating-rule changes using the discovered canonical schema. Supply only established facts and requested effects. Canonical identity resolution, intent verification and owner approval still apply.'},
   search:{type:'string',description:'Name, code, or status explicitly being sought.'},
   baseCode:{type:'string',description:'Exact new product SKU or base code explicitly supplied by the owner.'},
@@ -210,6 +212,13 @@ action('catalog.set_price','Change the current customer selling price of a SKU.'
   ['sku','amount','currency'],permissions.OPERATE,'set_price');
 action('catalog.set_purchase_cost','Change the SKU-wide current per-unit purchase quote, not a named supplier-product term or historical cost of goods sold. Use supplier.link_product to record a particular supplier’s unit cost.',
   ['sku','amount','currency'],permissions.ADMIN,'set_purchase_cost');
+add('inventory.establish_cost','Establish evidenced actual unit cost for existing uncosted stock without a physical receipt, quantity change, payment or supplier liability. Records immutable cost evidence and a balanced inventory valuation journal. Current purchase quotes alone are not historical cost evidence. Human approval is mandatory.',
+  ['sku','location','quantity','amount','currency','costBasis','reference','postingDate'],'mutation',permissions.MANAGE_ACCOUNTING,'owner_review',
+  (_service,db,ctx,text,args)=>require('../accounting/postgres-inventory-costs').prepareFromArgs(db,ctx,args,text),
+  (service,db,ctx,result)=>service.verifyProposal(db,ctx,result),
+  {required:['sku','location','amount','costBasis','reference'],execute:EXECUTORS['inventory.establish_cost'].execute,
+    verifyExecution:EXECUTORS['inventory.establish_cost'].verify,commercialCapability:'accounting.core',additionalCommercialCapabilities:['inventory.core'],
+    resultingRecords:['accounting_inventory_cost_establishments','accounting_inventory_cost_balances','accounting_journal_entries']});
 action('contact.create','Add a new supplier or customer business contact to this inventory. This creates only the contact record; it does not send email, order goods, or move money.',
   ['recipient','recipientKind','recipientEmail','phone','notes'],permissions.OPERATE,'create_contact');
 action('communication.send_email','After approval, send a business email through a connected mailbox. Dependent steps wait for verified provider delivery; when supplierAcceptance=required, they instead wait for a trusted reply in that sent thread explicitly accepting the related purchase order without changed terms. An unclear or failed outcome never counts as acceptance.',

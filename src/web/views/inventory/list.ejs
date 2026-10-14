@@ -106,7 +106,7 @@
             <th>Status</th>
             <th class="num"><a class="sort <%= filters.sort === 'stock_asc' ? 'is-asc' : filters.sort === 'stock_desc' ? 'is-desc' : '' %>" href="/inventory<%= helpers.queryString(query, { sort: filters.sort === 'stock_desc' ? 'stock_asc' : 'stock_desc', page: null }) %>" title="Sort by stock"><%= filters.locationId ? 'At location' : 'On hand' %></a></th>
             <th class="num">Committed</th>
-            <th class="num">Available</th>
+            <th class="num"><%= typeof postgresNative!=='undefined'&&postgresNative?'Uncommitted':'Available' %></th>
             <th class="num">On order</th>
           </tr>
         </thead>
@@ -140,6 +140,7 @@
                     %><% if (item.has_variants && item.sku_count > 1) { %> · <%= item.sku_count %> variants<% } %><%
                     %><% if (tracksUnits) { %> · <%= tracking.label %><% } %>
                 </span>
+                <% if(item.missingStockCostUnits>0){ %><small class="is-warn"><%= helpers.qty(item.missingStockCostUnits) %> units need actual stock cost before sale posting.</small><% } %>
               </td>
               <td data-label="Status">
                 <span class="badge badge--<%= status.tone %>"><%= status.label %></span>

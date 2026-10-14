@@ -47,17 +47,17 @@ const datasets=Object.freeze({
       book_cost_minor:'money_minor',currency:'text',as_of:'date'}},
   inventory_cost_movements:{label:'Recorded inventory cost changes',permission:permissions.VIEW,
     source:`SELECT i.id AS record_id,i.name AS product,s.code AS sku,l.name AS location,
-      cm.quantity_delta::bigint AS quantity_delta,cm.cost_delta_minor::bigint AS book_cost_change_minor,
+      cm.quantity_delta::bigint AS quantity_delta,cm.physical_quantity_delta::bigint AS physical_quantity_delta,cm.cost_delta_minor::bigint AS book_cost_change_minor,
       cm.cost_source_type AS source_kind,a.base_currency AS currency,
-      LEFT(cm.created_at,10) AS recorded_on,COALESCE(m.reference,'') AS reference
-      FROM accounting_inventory_cost_movements cm
+      LEFT(cm.created_at,10) AS recorded_on,COALESCE(cm.source_reference,m.reference,'') AS reference
+      FROM accounting_inventory_cost_events cm
       JOIN skus s ON s.id=cm.sku_id AND s.workspace_id=cm.workspace_id
       JOIN items i ON i.id=s.item_id AND i.workspace_id=cm.workspace_id
       JOIN locations l ON l.id=cm.location_id AND l.workspace_id=cm.workspace_id
-      JOIN movements m ON m.id=cm.inventory_movement_id AND m.workspace_id=cm.workspace_id
+      LEFT JOIN movements m ON m.id=cm.inventory_movement_id AND m.workspace_id=cm.workspace_id
       JOIN accounting_settings a ON a.workspace_id=cm.workspace_id AND a.enabled=1
       WHERE cm.workspace_id=$1`,recordHref:(row)=>`/inventory/${row.record_id}`,
-    enumFields:['source_kind'],fields:{product:'text',sku:'text',location:'text',quantity_delta:'number',
+    enumFields:['source_kind'],fields:{product:'text',sku:'text',location:'text',quantity_delta:'number',physical_quantity_delta:'number',
       book_cost_change_minor:'money_minor',source_kind:'text',currency:'text',
       recorded_on:'date',reference:'text'}},
   customers:{label:'Customer directory',permission:permissions.VIEW_SALES,

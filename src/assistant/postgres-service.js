@@ -335,29 +335,29 @@ async function lookup(database,ctx,request,options={}) {
     const currency=(await database.query(`SELECT base_currency FROM accounting_settings
       WHERE workspace_id=$1 AND enabled=1`,[ctx.workspaceId])).rows[0]?.base_currency||'USD';
     const rows=(await database.query(`SELECT i.id AS item_id,i.name AS product,s.code AS sku,
-      l.name AS location,cm.quantity_delta,cm.cost_delta_minor,cm.unit_cost_minor,
+      l.name AS location,cm.quantity_delta,cm.physical_quantity_delta,cm.source_reference,cm.cost_delta_minor,cm.unit_cost_minor,
       cm.cost_source_type,cm.created_at,ip.source_name,ir.row_number,m.reference
-      FROM accounting_inventory_cost_movements cm
+      FROM accounting_inventory_cost_events cm
       JOIN skus s ON s.id=cm.sku_id AND s.workspace_id=cm.workspace_id
       JOIN items i ON i.id=s.item_id AND i.workspace_id=cm.workspace_id
       JOIN locations l ON l.id=cm.location_id AND l.workspace_id=cm.workspace_id
-      JOIN movements m ON m.id=cm.inventory_movement_id AND m.workspace_id=cm.workspace_id
+      LEFT JOIN movements m ON m.id=cm.inventory_movement_id AND m.workspace_id=cm.workspace_id
       LEFT JOIN import_rows ir ON ir.id=cm.cost_source_record_id AND ir.workspace_id=cm.workspace_id
         AND cm.cost_source_type='opening_inventory'
       LEFT JOIN import_plans ip ON ip.id=ir.import_id AND ip.workspace_id=cm.workspace_id
       WHERE cm.workspace_id=$1 AND ($2::text IS NULL OR i.name ILIKE '%'||$2||'%'
         OR s.code ILIKE '%'||$2||'%' OR l.name ILIKE '%'||$2||'%'
         OR COALESCE(ip.source_name,'') ILIKE '%'||$2||'%'
-        OR COALESCE(m.reference,'') ILIKE '%'||$2||'%')
+        OR COALESCE(cm.source_reference,'') ILIKE '%'||$2||'%')
       ORDER BY cm.created_at DESC,cm.id DESC LIMIT 100`,[ctx.workspaceId,search])).rows.map((row)=>
       evidenceRow({product:row.product,sku:row.sku,location:row.location,
-        change:Number(row.quantity_delta),bookCostChange:pricing.formatMinor(Number(row.cost_delta_minor),currency),
+        change:Number(row.quantity_delta),physicalStockChange:Number(row.physical_quantity_delta),bookCostChange:pricing.formatMinor(Number(row.cost_delta_minor),currency),
         recordedUnitCost:row.unit_cost_minor===null?'Not recorded':pricing.formatMinor(Number(row.unit_cost_minor),currency),
         source:row.source_name?`Import ${row.source_name}, row ${row.row_number}`:row.cost_source_type,
-        reference:row.reference||'',at:row.created_at},`/inventory/${row.item_id}`));
+        reference:row.source_reference||row.reference||'',at:row.created_at},`/inventory/${row.item_id}`));
     return {answer:rows.length?`Showing ${rows.length}${rows.length===100?'+':''} recorded inventory-cost changes, including import row provenance where available.`:
       'No recorded inventory-cost change matched that request.',rows,
-      columns:['product','sku','location','change','bookCostChange','recordedUnitCost','source','reference','at']};
+      columns:['product','sku','location','change','physicalStockChange','bookCostChange','recordedUnitCost','source','reference','at']};
   }
   if(request.view==='prices'){
     const rows=(await database.query(`SELECT i.id AS item_id,i.name AS product,s.code AS sku,
@@ -1883,6 +1883,6 @@ async function ask(database,ctx,message,options={}){
   return askCapabilities(database,ctx,message,options);
 }
 
-module.exports={lookup,prepareAction,ask,askLegacy:askCapabilities,listInteractions,capabilityService,recordCapabilityOutcome,
+module.exports={lookup,prepareAction,createProposal,ask,askLegacy:askCapabilities,listInteractions,capabilityService,recordCapabilityOutcome,
   continueEmail,reviseEmailProposal,getProposal,executeProposal,executeMission,resumeMission,cancelProposal,
   fundedAskProvider,summarizeCustomerOrders};

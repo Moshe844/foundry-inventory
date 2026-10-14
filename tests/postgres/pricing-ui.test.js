@@ -35,7 +35,7 @@ test('real Chromium previews and approves PostgreSQL selling prices and purchase
     const skuId=item.skuIds[0];
 
     await page.goto(`${base}/inventory/${item.itemId}`);const emptyPricing=await page.locator('main').innerText();
-    assert.match(emptyPricing,/Selling price/i);assert.match(emptyPricing,/Purchase cost/i);
+    assert.match(emptyPricing,/Selling price/i);assert.match(emptyPricing,/Purchasing price & stock cost/i);
     assert.equal((emptyPricing.match(/Not set/g)||[]).length,2);
     await page.locator(`a[href="/pricing/new?skuId=${skuId}"]`).click();await page.getByLabel(/Selling price per/).fill('24.50');
     await Promise.all([page.waitForURL(/\/pricing\/proposals\//),page.getByRole('button',{name:'Review price change'}).click()]);
@@ -69,7 +69,7 @@ test('real Chromium previews and approves PostgreSQL selling prices and purchase
     await page.goto(`${base}${actionHref}`);
     await page.locator('details.advanced-settings summary').click();
     assert.match(await page.locator('main').innerText(),/catalog\.set_price/);
-    await page.getByRole('button',{name:'Approve and execute'}).click();await page.waitForURL(`${base}${actionHref}`);
+    await page.getByRole('button',{name:'Approve only this change'}).click();await page.waitForURL(`${base}${actionHref}`);
     assert.match(await page.locator('main').innerText(),/EXECUTED/);
     assert.equal((await pricing.currentPrice(database,ctx.workspaceId,skuId)).amount_minor,2800);
 
@@ -81,7 +81,7 @@ test('real Chromium previews and approves PostgreSQL selling prices and purchase
     await page.goto(`${base}${costActionHref}`);
     await page.locator('details.advanced-settings summary').click();
     assert.match(await page.locator('main').innerText(),/catalog\.set_purchase_cost/);
-    await page.getByRole('button',{name:'Approve and execute'}).click();await page.waitForURL(`${base}${costActionHref}`);
+    await page.getByRole('button',{name:'Approve only this change'}).click();await page.waitForURL(`${base}${costActionHref}`);
     assert.match(await page.locator('main').innerText(),/EXECUTED/);
     assert.equal((await pricing.purchaseCost(database,ctx.workspaceId,skuId)).amount_minor,1425);
   });

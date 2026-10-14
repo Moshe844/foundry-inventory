@@ -355,7 +355,8 @@ async function receivePurchaseOrderInTransaction(client, rawContext, purchaseOrd
       });
       const unitCostMinor = Math.round(Number(line.unit_cost) * 100);
       const totalCostMinor = unitCostMinor * quantity;
-      const posted = await ledger.postInTransaction(client, ctx, {
+      if(totalCostMinor===0)await ledger.validatePostingDateInTransaction(client,ctx,at.slice(0,10));
+      const posted = totalCostMinor===0?null:await ledger.postInTransaction(client, ctx, {
         postingDate: at.slice(0, 10), sourceKey: `purchase-receipt:${receiptId}:${line.id}`,
         description: `Receive ${quantity} units on ${order.po_number}`, sourceType: 'purchase_receipt',
         sourceRecordType: 'purchase_order_receipt', sourceRecordId: receiptId,
@@ -369,7 +370,7 @@ async function receivePurchaseOrderInTransaction(client, rawContext, purchaseOrd
         ],
       });
       await costing.receiveInTransaction(client, ctx, { movementId: physical.movementId, unitCostMinor,
-        totalCostMinor, journalEntryId: posted.entry.id, sourceType: 'purchase_order_receipt', sourceRecordId: receiptId });
+        totalCostMinor, journalEntryId: posted?.entry.id||null, sourceType: 'purchase_order_receipt', sourceRecordId: receiptId });
       await client.query(`UPDATE purchase_order_lines SET quantity_received_units=quantity_received_units+$4
         WHERE id=$1 AND purchase_order_id=$2 AND workspace_id=$3`, [line.id, purchaseOrderId, ctx.workspaceId, quantity]);
       await client.query(`INSERT INTO purchase_order_receipt_lines
@@ -381,7 +382,7 @@ async function receivePurchaseOrderInTransaction(client, rawContext, purchaseOrd
         JSON.stringify(requested.serials || []), overBy, JSON.stringify([physical.movementId]), nowIso()]);
       movementGroupIds.push(physical.groupId);
       received.push({ lineId: line.id, quantity, movementId: physical.movementId,
-        journalEntryId: posted.entry.id, totalCostMinor, overBy });
+        journalEntryId: posted?.entry.id||null, totalCostMinor, overBy });
     }
     const totals = await client.query(`SELECT COUNT(*) FILTER (WHERE quantity_received_units < quantity_units) AS open
       FROM purchase_order_lines WHERE purchase_order_id=$1 AND workspace_id=$2`, [purchaseOrderId, ctx.workspaceId]);
@@ -664,7 +665,7 @@ async function fulfillSalesOrderInTransaction(client, rawContext, salesOrderId, 
             itemId: line.item_id, skuId: line.sku_id, locationId: requested.locationId },
           { accountKey: 'INVENTORY_ASSET', creditMinor: preparedCost.totalCostMinor, customerId: order.customer_id,
             itemId: line.item_id, skuId: line.sku_id, locationId: requested.locationId },
-        ],
+        ].filter(line=>Number(line.debitMinor||0)!==0||Number(line.creditMinor||0)!==0),
       });
       await costing.commitIssueInTransaction(client, ctx, preparedCost, { journalEntryId: posted.entry.id,
         sourceType: 'sales_order_fulfillment', sourceRecordId: salesOrderId });

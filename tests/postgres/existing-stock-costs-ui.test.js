@@ -1,0 +1,43 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
+const {chromium}=require('playwright'),{startCluster}=require('../helpers/postgres-cluster'),{openPostgres}=require('../../src/db/postgres'),{migratePostgres}=require('../../src/db/migrate-postgres');
+test('real website reviews and approves actual existing-stock cost and shows its changed PostgreSQL truth',{timeout:180000},async t=>{
+ const cluster=await startCluster(),db=openPostgres(cluster.connectionString);await migratePostgres(db);
+ const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:'disposable-stock-cost-ui'});
+ const server=await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));});
+ const browser=await chromium.launch();t.after(async()=>{await browser.close();await new Promise(r=>server.close(r));await app.locals.sessionStore.close();await db.close();cluster.stop();});
+ const page=await browser.newPage({viewport:{width:1440,height:1000}}),base=`http://127.0.0.1:${server.address().port}`;
+ await page.goto(base+'/register');await page.getByLabel('Business name').fill('Disposable stock-cost verification');await page.getByLabel('Your name').fill('Cost Owner');
+ await page.getByLabel('Work email').fill('stock-cost-ui@example.test');await page.locator('input[name="password"]').fill('test-cost-password');
+ if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('test-cost-password');
+ await Promise.all([page.waitForURL(base+'/onboarding'),page.getByRole('button',{name:'Create account'}).click()]);
+ const identity=(await db.query("SELECT w.id AS workspace_id,u.id AS actor_id FROM workspaces w JOIN users u ON u.workspace_id=w.id JOIN accounts a ON a.id=u.account_id WHERE a.email='stock-cost-ui@example.test'")).rows[0];
+ const ctx={workspaceId:identity.workspace_id,actorId:identity.actor_id};
+ await require('../../src/accounting/postgres-ledger').configure(db,ctx,{startDate:'2026-01-01',currency:'USD'});
+ const created=await require('../../src/domain/postgres-catalog-service').createItem(db,ctx,{name:'Copper connectors',baseCode:'CU-STOCK-COST',trackingMode:'quantity'}),skuId=created.skuIds[0];
+ const at=new Date().toISOString();await db.query("INSERT INTO locations(id,workspace_id,name,kind,is_active,created_at) VALUES('cost-ui-depot',$1,'River depot','warehouse',1,$2)",[ctx.workspaceId,at]);
+ await require('../../src/domain/postgres-inventory-engine').receive(db,ctx,{skuId,locationId:'cost-ui-depot',quantity:7,idempotencyKey:'ui-original-receipt'});
+ await require('../../src/pricing/postgres-service').setPurchaseCost(db,ctx,{skuId,amount:'19.25',currency:'USD'});
+ await page.goto(base+'/inventory/'+created.itemId);assert.match(await page.locator('main').innerText(),/Stock cost missing:\s*7 units/i);
+ assert.match(await page.locator('main').innerText(),/Purchasing price/);assert.match(await page.locator('main').innerText(),/uncommitted/);
+ const proofDirectory=path.resolve(__dirname,'../../data/stock-cost-proof');fs.mkdirSync(proofDirectory,{recursive:true});
+ await page.screenshot({path:path.join(proofDirectory,'before-cost.png'),fullPage:true});
+ await page.getByRole('link',{name:'Record actual stock cost'}).click();await page.getByLabel(/^Actual cost per unit/).fill('16.50');
+ await page.getByLabel('Why is this cost being recorded?').selectOption('opening_inventory');
+ await page.getByLabel('Supporting evidence or document reference').fill('Owner-certified opening-stock sheet, seven connectors at $16.50 each');
+ await Promise.all([page.waitForURL(/\/actions\//),page.getByRole('button',{name:'Review stock cost'}).click()]);
+ const approval=await page.locator('main').innerText();assert.match(approval,/\$115\.50 total/);assert.match(approval,/Quantity stays 7/);assert.match(approval,/opening equity/);assert.match(approval,/No payment or supplier debt/);
+ assert.equal((await db.query('SELECT count(*) AS n FROM accounting_inventory_cost_establishments WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,'0');
+ await page.screenshot({path:path.join(proofDirectory,'approval.png'),fullPage:true});
+ await page.getByRole('button',{name:'Approve only this change'}).click();await page.getByText('EXECUTED',{exact:true}).waitFor();
+ const proof=(await db.query('SELECT c.quantity_units,c.total_cost_minor,e.journal_entry_id FROM accounting_inventory_cost_balances c JOIN accounting_inventory_cost_establishments e USING(workspace_id,sku_id,location_id) WHERE c.workspace_id=$1',[ctx.workspaceId])).rows[0];
+ assert.equal(Number(proof.quantity_units),7);assert.equal(Number(proof.total_cost_minor),11550);assert.ok(proof.journal_entry_id);
+ assert.equal(Number((await db.query('SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2',[ctx.workspaceId,skuId])).rows[0].on_hand),7);
+ await page.goto(base+'/inventory/'+created.itemId);assert.match(await page.locator('main').innerText(),/Actual cost recorded for all 7 units/);assert.doesNotMatch(await page.locator('main').innerText(),/Stock cost missing:/);
+ await page.screenshot({path:path.join(proofDirectory,'after-cost.png'),fullPage:true});
+ // The embedded gateway discovers the new canonical action through ordinary
+ // metadata, and preparation uses the same service without any helper model.
+ const contract=require('../../src/assistant/postgres-capability-registry').registry.get('inventory.establish_cost');
+ assert.equal(contract.authority.mode,'explicit_approval');assert.equal(contract.permission,'MANAGE_ACCOUNTING');
+ assert.ok(contract.fields.includes('costBasis'));assert.ok(contract.fields.includes('reference'));
+});
