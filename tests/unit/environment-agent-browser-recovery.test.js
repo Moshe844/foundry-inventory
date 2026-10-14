@@ -24,7 +24,16 @@ test('browser reports navigation failures, rejects old-session references and re
  assert.notEqual(stale.screen.controls[0].ref,fresh.controls[0].ref);
  const denied=await newUi.restore('https://example.test/elsewhere');assert.equal(denied.error.code,'RESTORE_ORIGIN_CHANGED');
  assert.equal(newUi.page.url(),fresh.url);
- const commit=denied.screen.controls.find(c=>c.label==='Commit');
+ const dynamic='/'+randomUUID();
+ assert.equal((await newUi.act({action:'open',value:dynamic})).error.code,'UNOBSERVED_APPLICATION_PATH');
+ newUi.observeReadLinks([{capability:'read.purchase_orders',result:{status:'ANSWERED',rows:[{href:dynamic},{href:'https://outside.example/records'}]}}]);
+ assert.equal((await newUi.act({action:'open',value:dynamic})).url,origin+dynamic);
+ assert.equal((await newUi.act({action:'open',value:'https://outside.example/records'})).error.code,'UNOBSERVED_APPLICATION_PATH');
+ const untrusted='/'+randomUUID();
+ newUi.observeReadLinks([{capability:'supplier.create',result:{status:'ANSWERED',rows:[{href:untrusted}]}},{capability:'read.purchase_orders',result:{status:'FAILED',rows:[{href:untrusted}]}}]);
+ assert.equal((await newUi.act({action:'open',value:untrusted})).error.code,'UNOBSERVED_APPLICATION_PATH');
+ const current=await newUi.inspect();
+ const commit=current.controls.find(c=>c.label==='Commit');
  const blocked=await newUi.act({action:'click',ref:commit.ref});assert.equal(blocked.httpStatus,403);assert.equal(posts,0);
  await ui.close();await newUi.close();
 });

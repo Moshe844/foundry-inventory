@@ -143,6 +143,18 @@ async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null,ob
     audit({kind:'browser_location_restored',path:target.pathname});
     return inspect();
   }
-  return {act,inspect,restore,page,context,close:()=>context.close()};
+  // Host-only ingestion of links returned by freshly authorized canonical
+  // reads. A model cannot add guessed destinations. These links grant no
+  // access: every GET is still checked by the restricted application identity.
+  function observeReadLinks(outcomes){
+    for(const outcome of outcomes||[]){
+      if(require('../../src/assistant/postgres-capability-registry').registry.get(outcome.capability)?.kind!=='read'||outcome.result?.status!=='ANSWERED')continue;
+      for(const row of outcome.result.rows||[]){
+        const path=require('../../src/assistant/agent-navigation-path').localPath(row.href);
+        if(path)knownPaths.add(path);
+      }
+    }
+  }
+  return {act,inspect,restore,observeReadLinks,page,context,close:()=>context.close()};
 }
 module.exports={createBrowserTools};

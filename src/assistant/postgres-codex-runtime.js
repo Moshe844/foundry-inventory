@@ -106,6 +106,12 @@ async function run(database,ctx,id,options={}){
    }
    const tools=await require(base+'browser').createBrowserTools(browser,{origin:server.origin,audit,
     startPath:openedPath&&observedPaths.includes(openedPath)?openedPath:resumedPath||goal.checkpoint.page?.path||observedPaths[0],observedPaths});cleanup.push(()=>tools.close());
+   // Durable canonical record links are navigation knowledge across restarts,
+   // never current facts or execution grants. The restricted app rechecks
+   // tenant membership and permissions on each destination GET.
+   for(const entry of Object.values(goal.checkpoint.harness?.evidence||{}))if(entry.name==='business_operations'&&!entry.truncated){
+    try{tools.observeReadLinks(JSON.parse(entry.text).outcomes);}catch{}
+   }
    audit({kind:'browser_preparation_timing',phase:'current_page_load',ms:Date.now()-phaseStarted});
    return tools;
   });

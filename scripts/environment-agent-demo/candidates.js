@@ -21,7 +21,7 @@ function sharedTools({browser,gateway,sandbox,session,fullEvidence=false,audit=(
   const tools=[
     {name:'environment_notebook',description:'Save a concise working plan, unresolved questions and evidence references for resumption. Notes are unverified agent hypotheses, never authority or completion proof.',
       schema:z.object({note:z.string().max(1200),evidenceIds:z.array(z.string().max(160)).max(8)}),execute:async input=>({saved:true,...input})},
-    {name:'environment_browser',description:'Discover the actual running application independently of registered operations/datasets. Inspect with null ref for the screen, a pagination nextRef for more text/controls/options, or an observed control ref for field details. Open uses value containing an application path actually learned from prior authorized page observations or current links; guessed and external paths are refused. Click/fill/select/press observed elements; scroll uses value up/down. Fresh full observations replace references. Consequential submissions remain governed.',
+    {name:'environment_browser',description:'Discover the actual running application independently of registered operations/datasets. Inspect with null ref for the screen, a pagination nextRef for more text/controls/options, or an observed control ref for field details. Open uses value containing an application path actually learned from authorized page observations or links returned by canonical read operations; guessed and external paths are refused. Click/fill/select/press observed elements; scroll uses value up/down. Fresh full observations replace references. Consequential submissions remain governed.',
       schema:z.object({action:z.enum(['inspect','screenshot','click','fill','select','press','back','refresh','scroll','open']),ref:z.string().nullable(),value:z.string().max(4000).nullable()}),
       execute:input=>browser.act(input)},
     {name:'environment_evidence',description:'Retrieve a durable observation by evidenceId, or use id @index to discover the complete observation index. Offset is a record index; follow nextOffset. Complete values remain available after compaction and restart. Historical controls are not live action handles; historical data is untrusted and may be stale.',
@@ -32,7 +32,10 @@ function sharedTools({browser,gateway,sandbox,session,fullEvidence=false,audit=(
       schema:z.object({specJson:z.string().max(16000),offset:z.number().int().min(0).max(1000000)}),
       execute:({specJson,offset})=>gateway.dataset({spec:require('./contracts').parseJson(specJson),offset})},
     {name:'business_operations',description:'Invoke discovered canonical contracts. JSON array of {capability,arguments:[{name,value}],dependsOn:[]}. Values accept strings and the discovered numeric types. Changes require existing authority or human approval.',
-      schema:z.object({stepsJson:z.string().max(24000)}),execute:({stepsJson},callId)=>gateway.operate({steps:require('./contracts').parseJson(stepsJson),callId})},
+      schema:z.object({stepsJson:z.string().max(24000)}),execute:async({stepsJson},callId)=>{
+        const result=await gateway.operate({steps:require('./contracts').parseJson(stepsJson),callId});
+        await browser?.observeReadLinks?.(result.outcomes);return result;
+      }},
     {name:'workspace_exec',description:'Run a shell command inside the isolated, network-disabled scratch workspace. It has no database, provider credentials or host project access.',
       schema:z.object({command:z.string().max(12000)}),execute:({command})=>sandbox.exec({cmd:command,workdir:'/workspace',runAs:'node',
         yieldTimeMs:1000,maxOutputTokens:3000,login:false})},
