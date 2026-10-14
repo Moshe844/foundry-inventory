@@ -67,6 +67,14 @@ async function run(database,ctx,id,options={}){
   // and no test operator; the authenticated website owns the human stage.
   const pending=await session.handoffApprovals();if(pending)return pending;
   const key=options.apiKey||process.env.OPENAI_API_KEY;if(!key)throw Error('OPENAI_API_KEY_REQUIRED');
+  const counter=options.countInput||require(base+'codex-token-counter').createTokenCounter({apiKey:key});
+  // Warm the existing TLS/token-count path with non-business text while other
+  // startup work proceeds. This generates no model output and NEVER replaces
+  // the exact full-request native preflight at the paid HTTP boundary.
+  if(!options.countInput){const warm=counter({model:modelProfile.model,reasoning:{effort:modelProfile.effort},
+   input:[{role:'user',content:'Connection readiness check only; no model generation.'}]}).catch(()=>null);
+   preparations.push(warm);
+  }
   // Preparing a credential-free renderer/context is a read boundary, not a
   // provider request. Its own fresh authority checks remain in place. Overlap
   // it with paid-runtime admission; reasoning cannot start until both finish.
@@ -120,7 +128,6 @@ async function run(database,ctx,id,options={}){
    database.query("SELECT units FROM commercial_operation_policies WHERE operation='ask'")]);
   const units=Number(policy.rows[0].units);
   await entitlements.reserveUsage(database,scope,{meter:'ai_work_credits',units,idempotencyKey:`${ctx.workspaceId}:${fundingKey}`,detail:{operation:'ask',runtime:'codex-sdk-staging'}});
-  const counter=options.countInput||require(base+'codex-token-counter').createTokenCounter({apiKey:key});
   const relay=await require(base+'relay').createRelay({budget,credentials:{openai:key},commercial:require(base+'commercial').createCommercialAccounting(database),
    allowedProviders:['openai'],countCodexInput:counter,audit,...(options.fetchImpl?{fetchImpl:options.fetchImpl}:{})});cleanup.push(()=>relay.close());
   let result;

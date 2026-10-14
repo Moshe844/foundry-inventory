@@ -46,6 +46,16 @@ function openPostgres(connectionString, options = {}) {
   const measuredQuery=async(target,statement,values)=>{const start=process.hrtime.bigint();
     try{return await target.query(statement,values);}finally{require('../commercial/resource-metrics').queryFinished(start);}};
   const query = (statement, values = []) => measuredQuery(pool,statement,values);
+  async function listen(channel,onNotification){
+    if(!/^[a-z][a-z0-9_]{0,62}$/.test(channel)||typeof onNotification!=='function')throw new TypeError('Invalid PostgreSQL notification subscription.');
+    const client=await pool.connect();let closed=false;
+    const received=message=>{if(!closed&&message.channel===channel)onNotification(message);};
+    const failed=error=>{if(closed)return;closed=true;client.off('notification',received);client.release(error);};
+    client.on('notification',received);client.on('error',failed);
+    try{await client.query(`LISTEN "${channel}"`);}catch(error){failed(error);throw error;}
+    return async()=>{if(closed)return;closed=true;client.off('notification',received);client.off('error',failed);
+      let discard=false;try{await client.query(`UNLISTEN "${channel}"`);}catch{discard=true;}finally{client.release(discard);}};
+  }
   async function transaction(operation, settings = {}) {
     const isolation = settings.isolation || 'SERIALIZABLE';
     if (!['SERIALIZABLE', 'REPEATABLE READ', 'READ COMMITTED'].includes(isolation)) {
@@ -81,7 +91,7 @@ function openPostgres(connectionString, options = {}) {
       await new Promise((resolve) => setTimeout(resolve, backoff + jitter));
     }
   }
-  return { query, transaction, close: () => pool.end(), connectionErrors: errors,
+  return { query, transaction, listen, close: () => pool.end(), connectionErrors: errors,
     poolMetrics:()=>({max:pool.options.max,total:pool.totalCount,idle:pool.idleCount,waiting:pool.waitingCount}),
     topology: Object.freeze({ engine: 'postgresql', shared: true, multiWriter: true }) };
 }

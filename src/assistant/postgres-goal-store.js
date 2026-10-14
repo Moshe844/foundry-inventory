@@ -79,9 +79,13 @@ async function reply(db,ctx,id,message,{questionId=null}={}){
   return row;
  },{isolation:'SERIALIZABLE',retrySafe:true});
 }
-async function enqueue(db,goal){return require('../operations/postgres-job-queue').enqueue(db,{workspaceId:goal.workspace_id,
+async function enqueue(db,goal){const queued=await require('../operations/postgres-job-queue').enqueue(db,{workspaceId:goal.workspace_id,
  kind:goal.checkpoint.runtime==='codex-staging'?'assistant.run-codex-goal':'assistant.run-goal',payload:{goalId:goal.id,actorId:goal.actor_user_id},
- idempotencyKey:`goal:${goal.id}:${goal.updated_at.toISOString()}`,maxAttempts:1,priority:20});}
+ idempotencyKey:`goal:${goal.id}:${goal.updated_at.toISOString()}`,maxAttempts:1,priority:20});
+ // Wake only the isolated native pilot after its durable enqueue committed.
+ // Notification loss cannot lose work: the existing poll remains the fallback.
+ if(goal.checkpoint.runtime==='codex-staging')await db.query("SELECT pg_notify('stockchief_codex_jobs',$1)",[goal.workspace_id]).catch(()=>{});
+ return queued;}
 async function latest(db,ctx,startedAt=null){return (await db.query(`SELECT * FROM ${TABLE}
  WHERE workspace_id=$1 AND actor_user_id=$2 AND ($3::timestamptz IS NULL OR created_at>$3)
  ORDER BY created_at DESC LIMIT 1`,[ctx.workspaceId,ctx.actorId,startedAt])).rows[0]||null;}

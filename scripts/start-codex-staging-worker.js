@@ -55,7 +55,10 @@ async function main(){
   AND enabled AND NOT stopped AND approval_reference IS NOT NULL AND ceiling_micro_usd>0
   AND period_ends_at>now() LIMIT 1`,[workspaces])).rows.length);
  const worker=require('../src/operations/postgres-worker').start(db,{handlers:{'assistant.run-codex-goal':handler},leaseMs:10*60000,shouldClaim});
- const stop=async()=>{clearInterval(keepAlive);clearInterval(warmTimer);await worker.stop();await warming;await inspectionPool.close();await sandboxPool.close();await db.close();};
+ const stopNotifications=await db.listen('stockchief_codex_jobs',message=>{
+  if(workspaces.includes(message.payload))worker.wake();
+ }).catch(error=>{console.warn('Job notifications unavailable; durable polling remains active:',error.code||'NOTIFICATION_UNAVAILABLE');return async()=>{};});
+ const stop=async()=>{clearInterval(keepAlive);clearInterval(warmTimer);await stopNotifications();await worker.stop();await warming;await inspectionPool.close();await sandboxPool.close();await db.close();};
  const keepAlive=setInterval(()=>{},60000);
  process.once('SIGTERM',()=>stop().then(()=>process.exit(0)));process.once('SIGINT',()=>stop().then(()=>process.exit(0)));
  console.log('Codex Staging worker ready. Paid calls remain governed by the PostgreSQL pilot and commercial ledgers.');

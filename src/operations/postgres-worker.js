@@ -11,6 +11,7 @@ function start(database, options = {}) {
   let stopped = false;
   let timer;
   let active = null;
+  let wakeRequested=false;
   const tick = async () => {
     if (stopped || active) return;
     active = (async()=>{
@@ -24,13 +25,16 @@ function start(database, options = {}) {
     } finally {
       active = null;
       if (!stopped) {
-        timer = setTimeout(tick, interval);
+        timer = setTimeout(tick, wakeRequested?0:interval);wakeRequested=false;
         timer.unref();
       }
     }
   };
   tick();
-  return { owner, stop: async () => {
+  return { owner, wake:()=>{
+    if(stopped)return;clearTimeout(timer);
+    if(active)wakeRequested=true;else tick();
+  }, stop: async () => {
     stopped = true;
     clearTimeout(timer);
     if (active) await active.catch(() => {});
