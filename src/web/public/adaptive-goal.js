@@ -106,7 +106,8 @@
         const card=document.createElement('article'),header=document.createElement('div'),title=document.createElement('h3'),stamp=document.createElement('span'),content=document.createElement('div'),save=document.createElement('a');
         card.className='rm-agent__work';card.setAttribute('aria-label',work.title);header.className='rm-agent__work-header';title.textContent=work.title;
         stamp.className='rm-agent__saved';stamp.textContent='Saved in this conversation';header.append(title,stamp);
-        content.className='rm-agent__work-content';content.textContent=work.content;
+        content.className='rm-agent__work-content rm-agent__answer';
+        if(window.StockChiefAnswer)content.innerHTML=window.StockChiefAnswer.render(work.content);else content.textContent=work.content;
         save.className='rm-btn rm-btn--ghost rm-btn--sm';save.textContent='Save a copy';save.href=`/ask/goals/${encodeURIComponent(goal.id)}/work/${encodeURIComponent(work.id)}`;save.download='';
         card.append(header,content,save);root.append(card);
        }

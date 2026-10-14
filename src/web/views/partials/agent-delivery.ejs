@@ -3,7 +3,7 @@
     <% for(const work of delivery.workProducts){ %>
       <article class="rm-agent__work" aria-label="<%= work.title %>">
         <div class="rm-agent__work-header"><h3><%= work.title %></h3><span class="rm-agent__saved">Saved in this conversation</span></div>
-        <div class="rm-agent__work-content"><%= work.content %></div>
+        <div class="rm-agent__work-content rm-agent__answer"><%- renderAgentAnswer(work.content) %></div>
         <a class="rm-btn rm-btn--ghost rm-btn--sm" href="/ask/goals/<%= encodeURIComponent(goal.id) %>/work/<%= work.id %>" download>Save a copy</a>
       </article>
     <% } %>
