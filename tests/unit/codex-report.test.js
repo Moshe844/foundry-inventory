@@ -6,6 +6,9 @@ function report(fields={}){return {version:1,status:'completed',outcome:'answer'
 test('native final decoding preserves arbitrary discovered evidence and all conversation handoffs',()=>{
  const completed=conversation.parse(wire.decode(JSON.stringify(report())));
  assert.deepEqual(completed.claims[0].value,[{unknownField:'discovered',quantity:0,available:false}]);assert.equal(completed.navigation,undefined);
+ const exact='On the way\t0\t—\t0\t2';
+ const scalar=conversation.parse(wire.decode(JSON.stringify(report({claims:[{evidenceId:'live-record',path:'/textBlocks/line42',value:exact,valueJson:null,historical:false}]}))));
+ assert.equal(scalar.claims[0].value,exact,'Visible tabs are not double-encoded in a string transport field');
  for(const [status,fields]of [
   ['needs_user',{question:'Which location should receive these?',missingInformation:['location']}],
   ['needs_reasoning',{tier:'complex',reason:'Several dependent decisions require stronger reasoning.'}],
