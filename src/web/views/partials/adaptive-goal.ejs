@@ -7,7 +7,7 @@
 %>
 <div data-conversation-history-for="<%= goal.id %>" class="rm-agent__conversation">
   <% for(const [index,turn] of conversation.history.entries()){ if(index===conversation.history.length-1&&turn.role==='assistant'&&turn.text===conversation.message)continue; %>
-    <div class="rm-agent__exchange"><p class="rm-stamp"><%= turn.role==='user'?'You':'StockChief' %></p><div><%- renderAgentAnswer(turn.text) %></div></div>
+    <div class="rm-agent__exchange rm-agent__exchange--<%= turn.role==='user'?'user':'assistant' %>"><p class="rm-agent__speaker"><%= turn.role==='user'?'You':'StockChief' %></p><div class="rm-agent__bubble rm-agent__answer"><%- renderAgentAnswer(turn.text) %></div></div>
   <% } %>
 </div>
 <section class="rm-agent" aria-label="Goal progress" data-adaptive-goal="<%= goal.id %>" data-goal-status="<%= goal.status %>" data-goal-created="<%= new Date(goal.created_at).toISOString() %>" data-goal-updated="<%= new Date(goal.updated_at).toISOString() %>" data-goal-latest="<%= locals.isLatest?'true':'false' %>">
@@ -35,17 +35,18 @@
     <details class="rm-agent__details"><summary>Activity details</summary><ol data-goal-timeline aria-label="Agent activity"></ol></details>
     <% for(const card of locals.codexApprovals||[]){ %>
       <article class="rm-agent__approval" data-approval-id="<%= card.id %>">
-        <p><strong>Approval required</strong></p><p><%= card.summary %></p>
+        <p class="rm-agent__approval-label">Review this change</p><h3><%= card.summary %></h3>
         <dl class="summary-list"><% for(const [key,value] of locals.agentApprovalFields?locals.agentApprovalFields(card):[]){ %>
           <div><dt><%= helpers.columnLabel(key) %></dt><dd style="white-space:pre-wrap;overflow-wrap:anywhere"><%= value %></dd></div>
         <% } %></dl>
-        <p><a href="<%= card.kind==='business'?'/actions/'+encodeURIComponent(card.proposalId):'/operating-instructions/'+encodeURIComponent(card.proposalId)+'?from=ask' %>">Review the full prepared change</a></p>
-        <p>Prepared only. Nothing has changed yet.</p>
+        <% if(card.mission){ %><div class="rm-agent__approval-choice"><p>This request contains <strong><%= card.mission.count %> changes</strong>. You can approve them individually or review the full request for one approval.</p><a class="rm-btn rm-btn--ghost rm-btn--sm" href="/actions/<%= encodeURIComponent(card.proposalId) %>">Review all <%= card.mission.count %> changes together</a></div><% }else{ %>
+        <p><a href="<%= card.kind==='business'?'/actions/'+encodeURIComponent(card.proposalId):'/operating-instructions/'+encodeURIComponent(card.proposalId)+'?from=ask' %>">Review details</a></p><% } %>
+        <p class="rm-agent__approval-note">This change has not been applied.</p>
         <form method="post" action="/ask/goals/<%= goal.id %>/approval">
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
           <input type="hidden" name="deliveryId" value="<%= card.id %>">
           <input type="hidden" name="sha256" value="<%= card.sha256 %>">
-          <button class="rm-btn rm-btn--sm" name="decision" value="approve">Approve exact operation</button>
+          <button class="rm-btn rm-btn--sm" name="decision" value="approve">Approve this change</button>
           <button class="rm-btn rm-btn--ghost rm-btn--sm" name="decision" value="reject">Reject</button>
         </form>
       </article>

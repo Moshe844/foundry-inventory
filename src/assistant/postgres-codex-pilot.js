@@ -60,19 +60,26 @@ async function start(db,ctx,message,options={}){
 async function inbox(db,ctx,id){await access(db,ctx);const goal=await store.get(db,ctx,id);
  if(!goal||goal.checkpoint.runtime!=='codex-staging')throw new ValidationError('Pilot goal not found.');
  const result=await require('../../scripts/environment-agent-demo/approval-handoff').inbox(db,ctx,id);
- return {goal:result?await store.get(db,ctx,id):goal,approvals:result?.approvals||[]};
+ const approvals=result?.approvals||[];
+ for(const card of approvals)if(card.kind==='business'){
+  const mission=await require('./postgres-capability-plans').missionForProposal(db,ctx.workspaceId,ctx.actorId,card.proposalId);
+  if(mission?.goal_id===id&&mission.waiting_proposal_id===card.proposalId&&mission.approval_status==='PENDING'&&mission.approved_steps.length>1)
+   card.mission={id:mission.id,sha256:mission.plan_hash,count:mission.approved_steps.length};
+ }
+ return {goal:result?await store.get(db,ctx,id):goal,approvals};
 }
-async function decide(db,ctx,id,deliveryId,sha256,approved,{responseReference}={}){
+async function decide(db,ctx,id,deliveryId,sha256,approved,{responseReference,missionScope=null}={}){
  await access(db,ctx,{enabled:true});
  const goal=await store.get(db,ctx,id);if(goal?.checkpoint.runtime!=='codex-staging')throw new ValidationError('Pilot goal not found.');
  if(goal.checkpoint.harness?.approvalDeliveries?.[deliveryId]?.sha256!==sha256)throw new ValidationError('The prepared approval changed. Reload its exact card before approving.');
  const handoff=require('../../scripts/environment-agent-demo/approval-handoff');
  const result=await handoff.decide({database:db,ctx,goalId:id,id:deliveryId,sha256,
-  decision:{source:'human_user',approved:Boolean(approved),responseReference},
-  execute:async(proposal,executionDb)=>{
+  decision:{source:'human_user',approved:Boolean(approved),responseReference,...(missionScope?{scope:missionScope}:{})},
+  execute:async(proposal,executionDb,scope)=>{
    if(!proposal.action_type)return require('../manager/postgres-operating-instructions').approve(executionDb,ctx,proposal.id,proposal.integrity_hash);
-   return require('./postgres-service').executeProposal(executionDb,{...ctx,goalId:id},proposal.id,{provider:{name:'openai',model:'gpt-6.1-sol',
-    complete:async()=>{throw Error('UNAPPROVED_HELPER_MODEL_CALL');}}});
+   const service=require('./postgres-service'),options={provider:{name:'openai',model:'gpt-6.1-sol',complete:async()=>{throw Error('UNAPPROVED_HELPER_MODEL_CALL');}}};
+   if(scope){options.missionApproval={expectedHash:scope.sha256,expectedId:scope.id};return service.executeMission(executionDb,{...ctx,goalId:id},proposal.id,options);}
+   return service.executeProposal(executionDb,{...ctx,goalId:id},proposal.id,options);
   }});
  if(!approved){const current=await inbox(db,ctx,id),card=current.approvals.find(c=>c.id===deliveryId);
   if(card?.kind==='rule')await require('../manager/postgres-operating-instructions').cancel(db,ctx,card.proposalId);

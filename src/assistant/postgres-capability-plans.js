@@ -44,9 +44,10 @@ async function missionForProposal(database,workspaceId,actorId,proposalId,{lock=
     authorizationMode:row.authorization_mode}:null;
 }
 
-async function authorize(database,ctx,proposalId){return database.transaction(async(client)=>{
+async function authorize(database,ctx,proposalId,{expectedHash=null,expectedId=null}={}){return database.transaction(async(client)=>{
   const plan=await missionForProposal(client,ctx.workspaceId,ctx.actorId,proposalId,{lock:true,client});
   if(!plan)throw new Error('That prepared change is not part of a multi-step mission.');
+  if(expectedHash&&plan.plan_hash!==expectedHash||expectedId&&plan.id!==expectedId)throw new Error('The reviewed mission changed. Review its current scope before approving.');
   if(!['WAITING','ADVANCING'].includes(plan.status)||plan.waiting_proposal_id!==proposalId)
     throw new Error('That mission is no longer waiting on this exact step.');
   if(plan.plan_hash!==planHash(plan.approved_steps||[]))throw new Error('The mission plan changed before approval. Ask again.');

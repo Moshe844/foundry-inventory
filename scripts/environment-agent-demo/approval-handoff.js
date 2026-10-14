@@ -95,15 +95,23 @@ async function acknowledge(database,ctx,goalId,id,sha256){return transaction(dat
 async function decide({database,ctx,goalId,id,sha256,decision,execute}){
  if(decision?.source!=='human_user'||typeof decision.approved!=='boolean'||!decision.responseReference||typeof execute!=='function')
   throw Error('EXPLICIT_HUMAN_APPROVAL_REQUIRED');
- const prepared=await transaction(database,ctx,goalId,({goal,h,cards})=>{
+ const prepared=await transaction(database,ctx,goalId,async({client,goal,h,cards})=>{
   const stored=h.approvalDeliveries[id],card=cards.find(c=>c.id===id&&c.sha256===sha256);
   if(!stored||stored.sha256!==sha256)throw Error('APPROVAL_CHANGED');
   if(stored.decision&&stored.decision.approved!==decision.approved)throw Error('APPROVAL_DECISION_CONFLICT');
+  if(stored.decision&&digest(stored.decision.scope||null)!==digest(decision.scope||null))throw Error('APPROVAL_DECISION_CONFLICT');
+  if(decision.scope){
+   if(!decision.approved||card?.kind!=='business'&&stored.kind!=='business'||decision.scope.kind!=='mission')throw Error('APPROVAL_CHANGED');
+   const plans=require('../../src/assistant/postgres-capability-plans');
+   const plan=await plans.missionForProposal(client,ctx.workspaceId,ctx.actorId,stored.proposalId,{lock:true,client});
+   if(!plan||plan.goal_id!==goalId||plan.id!==decision.scope.id||plan.plan_hash!==decision.scope.sha256||plan.plan_hash!==plans.planHash(plan.approved_steps||[]))throw Error('APPROVAL_CHANGED');
+   if(card&&(plan.waiting_proposal_id!==stored.proposalId||!['WAITING','ADVANCING'].includes(plan.status)))throw Error('APPROVAL_CHANGED');
+  }
   if(!card&&!['EXECUTED','APPROVED'].includes(stored.canonicalStatus))throw Error('APPROVAL_CHANGED');
   if(h.inflight||card&&goal.status!=='WAITING_APPROVAL')throw Error('APPROVAL_NOT_READY');
   if(!card&&!stored.decision?.approved)throw Error('EXPLICIT_HUMAN_APPROVAL_REQUIRED');
   stored.decision||={...decision,at:new Date().toISOString()};
-  return {card:card||structuredClone(stored),approved:stored.decision.approved,alreadyExecuted:!card};
+  return {card:card||structuredClone(stored),approved:stored.decision.approved,scope:stored.decision.scope||null,alreadyExecuted:!card};
  },{allowCompleted:true});
  if(!prepared.approved||prepared.alreadyExecuted)return prepared;
  // Canonical engine is authoritative and idempotent. Persisted human intent
@@ -121,7 +129,7 @@ async function decide({database,ctx,goalId,id,sha256,decision,execute}){
  },settings)};
  // Validate the approved revision under the canonical engine's own transaction
  // and row lock, closing the decision-to-execution edit/cancellation gap.
- const result=await execute(prepared.card.proposal,executionDatabase);
+ const result=await execute(prepared.card.proposal,executionDatabase,prepared.scope);
  await transaction(database,ctx,goalId,({h})=>{
   const d=h.approvalDeliveries[id];if(!['EXECUTED','APPROVED'].includes(d?.canonicalStatus))throw Error('CANONICAL_APPROVAL_UNVERIFIED');
   d.executedAt||=new Date().toISOString();return null;

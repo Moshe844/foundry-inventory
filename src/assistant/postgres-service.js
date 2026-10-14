@@ -1831,7 +1831,7 @@ async function executeProposal(database,ctx,id,options={}) {
 }
 
 async function executeMission(database,ctx,proposalId,options={}){
-  const plan=await require('./postgres-capability-plans').authorize(database,ctx,proposalId);
+  const plan=await require('./postgres-capability-plans').authorize(database,ctx,proposalId,options.missionApproval);
   const committed=await executeProposalCore(database,ctx,proposalId,{missionPlanId:plan.id});
   try{return {...committed,missionId:plan.id,continued:await continueApprovedPlans(database,ctx,proposalId,options)};}
   catch(error){console.warn('[stockchief] mission continuation failed',JSON.stringify({missionId:plan.id,

@@ -232,7 +232,8 @@ function createPostgresAskRouter(database,options={}){
     if(!['approve','reject'].includes(req.body.decision))throw new ValidationError('Choose approve or reject.');
     await entitlements.assertCapability(database,commercialScope(req),'ask.prepare_actions');
     await pilot.decide(database,req.ctx,req.params.id,String(req.body.deliveryId||''),String(req.body.sha256||''),req.body.decision==='approve',
-      {responseReference:`Authenticated website ${req.body.decision} by ${req.ctx.actorId} at ${new Date().toISOString()}`});
+      {responseReference:`Authenticated website ${req.body.decision} by ${req.ctx.actorId} at ${new Date().toISOString()}`,
+        missionScope:req.body.scope==='mission'?{kind:'mission',id:String(req.body.missionId||''),sha256:String(req.body.missionHash||'')}:null});
     req.flash('success',req.body.decision==='approve'?'Approved. StockChief is checking the recorded outcome.':'The proposal was rejected.');
     req.session.postgresAskNavigationGoal=req.params.id;
     return res.redirect(303,'/ask?goal='+encodeURIComponent(req.params.id)+'#focused-goal');
@@ -459,13 +460,18 @@ function createPostgresAskRouter(database,options={}){
       WHERE workspace_id=$1 AND actor_user_id=$2 AND status='ADVANCING'
         AND steps @> $3::jsonb LIMIT 1`,[req.ctx.workspaceId,req.ctx.actorId,
       JSON.stringify([{proposalId:proposal.id}])])).rows.length>0;
-    return res.page('attention/postgres-proposal',{title:mission?'Review operating mission':'Review prepared change',nav:'ask',proposal,mission,
+    const native=(await database.query(`SELECT id,status FROM stockchief_runtime.assistant_goals WHERE workspace_id=$1 AND actor_user_id=$2
+      AND checkpoint->>'runtime'='codex-staging' AND EXISTS(SELECT 1 FROM jsonb_each(COALESCE(checkpoint#>'{harness,approvalDeliveries}','{}'::jsonb)) d WHERE d.value->>'proposalId'=$3) LIMIT 1`,[req.ctx.workspaceId,req.ctx.actorId,proposal.id])).rows[0];
+    const nativeCard=native&&!['COMPLETED','CANCELLED','BLOCKED'].includes(native.status)?(await pilot.inbox(database,req.ctx,native.id)).approvals.find(card=>card.proposalId===proposal.id):null;
+    return res.page('attention/postgres-proposal',{title:mission?'Review operating mission':'Review prepared change',nav:'ask',proposal,mission,nativeApproval:nativeCard?{goalId:native.id,...nativeCard}:null,
+      missionSteps:(mission?.approved_steps||[]).map((step,index)=>{const contract=capabilities.get(step.capability);return {label:contract?.discovery?.label||(contract?.legacyAction||step.capability).replace(/[._]/g,' ').replace(/^./,s=>s.toUpperCase()),args:step.args,index:index+1,state:mission.steps[index]?.state||'BLOCKED'};}),
       resumeAvailable:proposal.status==='EXECUTED'&&resuming});
   }));
   router.post('/actions/:id/approve-mission',asyncRoute(async(req,res)=>{
     if(await pilotProposalGuard(req,res))return;
     await entitlements.assertCapability(database,commercialScope(req),'ask.prepare_actions');
-    const result=await assistant.executeMission(database,req.ctx,req.params.id,{provider:options.provider});
+    if(!req.body.missionHash)throw new ValidationError('Review the full prepared mission before approving.');
+    const result=await assistant.executeMission(database,req.ctx,req.params.id,{provider:options.provider,missionApproval:{expectedHash:String(req.body.missionHash)}});
     if(result.continuationError)req.flash('error',
       'The first verified step completed, but the mission stopped safely before further work. Review the recorded reason.');
     else req.flash('success',result.continued?.some((part)=>part.status==='PREPARED')

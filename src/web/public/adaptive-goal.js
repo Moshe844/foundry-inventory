@@ -147,7 +147,7 @@
      if(history&&conversation){
       const turns=conversation.history.filter((turn,index)=>!(index===conversation.history.length-1&&turn.role==='assistant'&&turn.text===message));
       history.replaceChildren();for(const turn of turns){const row=document.createElement('div'),label=document.createElement('p'),body=document.createElement('div');
-       row.className='rm-agent__exchange';label.className='rm-stamp';label.textContent=turn.role==='user'?'You':'StockChief';
+       row.className='rm-agent__exchange rm-agent__exchange--'+(turn.role==='user'?'user':'assistant');label.className='rm-agent__speaker';label.textContent=turn.role==='user'?'You':'StockChief';body.className='rm-agent__bubble rm-agent__answer';
        if(window.StockChiefAnswer)body.innerHTML=window.StockChiefAnswer.render(turn.text);else body.textContent=turn.text;
        row.append(label,body);history.append(row);
       }
