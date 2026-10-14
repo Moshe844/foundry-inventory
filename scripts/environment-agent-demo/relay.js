@@ -98,7 +98,7 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
     id=await budget.reserve({candidate:grant.candidate,task:grant.task,upperBoundMicroUsd:normalized.upperBoundMicroUsd});
     timings.budgetReservationMs=Date.now()-reservationStarted;
     const commercialStarted=Date.now();
-    held=await commercial.begin({...grant,id,...normalized});
+    held=await commercial.begin({...grant,id,...normalized,admissionAccess});
     timings.commercialReservationMs=Date.now()-commercialStarted;
     const secret=credentials[grant.provider];if(!secret)throw new Error('PROVIDER_CREDENTIAL_UNAVAILABLE');
     const headers={'content-type':'application/json',...(grant.provider==='openai'

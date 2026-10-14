@@ -10,9 +10,17 @@ async function modelUsage(database,scope,usage,key,detail={}){
  ['cache_write_5m',usage.cacheWrite5mTokens],['cache_write_1h',usage.cacheWrite1hTokens]];
  if(usage.inputTokens==null||usage.outputTokens==null)await control.recordCost(database,scope,{provider:usage.provider||'unknown',
   model:usage.model||'',operation:'missing_token_usage',unit:'request',quantity:1,idempotencyKey:key,detail});
- for(const [operation,quantity] of fields){if(!quantity)continue;await control.recordCost(database,scope,{provider:usage.provider||'unknown',
+ // Components of one receipt are independent, idempotent cost events. Wait
+ // for every write before settlement, including when one component fails.
+ const record=([operation,quantity])=>control.recordCost(database,scope,{provider:usage.provider||'unknown',
   model:usage.model||'',providerVersion:usage.providerVersion||'',operation,unit:'token',quantity:Number(quantity),
-  idempotencyKey:`${key}:${operation}`,detail:{...detail,latencyMs:usage.latencyMs}});}
+  idempotencyKey:`${key}:${operation}`,detail:{...detail,latencyMs:usage.latencyMs}});
+ const components=fields.filter(([,quantity])=>quantity);
+ // Transaction clients have one wire and must stay sequential. Only an
+ // actual connection pool can execute the independent component writes.
+ if(typeof database.poolMetrics!=='function'){for(const component of components)await record(component);return;}
+ const recorded=await Promise.allSettled(components.map(record));
+ const failed=recorded.find(result=>result.status==='rejected');if(failed)throw failed.reason;
 }
 async function begin(database,workspaceId,input){const scope=await entitlements.ownerScopeForWorkspace(database,workspaceId);
  if(!input.key||typeof input.key!=='string')throw new ValidationError('An operation needs its stable usage key.');

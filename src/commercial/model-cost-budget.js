@@ -78,7 +78,9 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
  const operationCap=operationLimit(operation)*100;
  if(bound.maximumMinor>operationCap)throw Object.assign(new RateLimitError(
   'This request exceeds the approved per-operation model-cost bound. Shorten its context or use a smaller batch; no model call was made.'),{limitKind:'operation_cost'});
- const subscription=await entitlements.subscriptionFor(database,scope.accountId);
+ // A native relay may pass the subscription checked at this same HTTP
+ // admission. No snapshot is retained for a later request or resumption.
+ const subscription=goalScope.subscription||await entitlements.subscriptionFor(database,scope.accountId);
  const plan=subscription?.plan_id||'starter';const accountCap=periodLimit(plan)*100;
  const workspaceCap=configuredUsd('STOCKCHIEF_AI_WORKSPACE_PERIOD_COST_CAP_USD',accountCap/100)*100;
  const bounds=entitlements.periodBounds(subscription);

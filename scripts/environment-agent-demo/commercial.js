@@ -20,8 +20,14 @@ function createCommercialAccounting(database){return {
  },
  inputAllowance:({provider,outputTokens})=>cost.nativeInputTokenAllowance(database,{name:provider,model:MODELS[provider]},outputTokens),
  async begin(call){
-  const scope=await entitlements.ownerScopeForWorkspace(database,call.ctx.workspaceId);
-  await entitlements.assertCapability(database,scope,'ask.lookup');
+  // This value comes from the relay's fresh host authorization for this exact
+  // HTTP boundary, never from the model body or a prior request. Reuse that
+  // entitlement snapshot; all dollar reservations still run below.
+  const checked=call.admissionAccess?.commercialAccess;
+  if(checked&&(checked.scope.workspaceId!==call.ctx.workspaceId||!checked.scope.accountId||
+    checked.entitlement?.capability!=='ask.lookup'||checked.entitlement.enabled!==true))throw Error('COMMERCIAL_ADMISSION_SCOPE_MISMATCH');
+  const scope=checked?.scope||await entitlements.ownerScopeForWorkspace(database,call.ctx.workspaceId);
+  const entitlement=checked?.entitlement||await entitlements.assertCapability(database,scope,'ask.lookup');
   const key=`${scope.workspaceId}:environment:${call.id}`;
   const provider={name:call.provider,model:call.body?.model||MODELS[call.provider],
    ...(call.codexPolicy?.PROFILE.providerVersion?{providerVersion:call.codexPolicy.PROFILE.providerVersion}:{})};
@@ -46,7 +52,7 @@ function createCommercialAccounting(database){return {
   held.fundingKey=`${scope.workspaceId}:${call.fundingKey}`;
   try{
    held.cost=await cost.reserveNative(database,scope,provider,call,'ask',key,
-    `${scope.workspaceId}:${call.fundingKey}`,{goalId:call.goalId,actorId:call.ctx.actorId});
+    `${scope.workspaceId}:${call.fundingKey}`,{goalId:call.goalId,actorId:call.ctx.actorId,subscription:entitlement.subscription});
    held.day=await daily.begin(database,scope.accountId);return held;
   }catch(error){if(held.cost)await cost.release(database,scope,key);throw error;}
  },

@@ -11,7 +11,25 @@ async function run(database,ctx,id,options={}){
  const cleanup=[],preparations=[],directory=fs.mkdtempSync(path.join(os.tmpdir(),'stockchief-codex-staging-'));
  cleanup.push(()=>fs.rmSync(directory,{recursive:true,force:true}));
  let session;
- let auditQueue=Promise.resolve();
+ let auditQueue=Promise.resolve(),auditTimer=null;
+ const pendingActivity=[];
+ function flushActivity(){
+  clearTimeout(auditTimer);auditTimer=null;
+  if(!pendingActivity.length)return auditQueue;
+  const batch=pendingActivity.splice(0);
+  // Progress is an outbox, not an execution checkpoint. Append a burst under
+  // one goal lock so observations cannot queue dozens of competing locks in
+  // front of native checkpoints, approval handoff or final verification.
+  auditQueue=auditQueue.catch(()=>{}).then(()=>database.transaction(async client=>{
+   await client.query('SELECT id FROM stockchief_runtime.assistant_goals WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 FOR UPDATE',[ctx.workspaceId,ctx.actorId,id]);
+   await client.query(`INSERT INTO stockchief_runtime.assistant_goal_events(id,goal_id,sequence,kind,detail)
+    SELECT entry->>'id',$1,base.sequence+ordinality,'agent_activity',entry->'detail'
+    FROM jsonb_array_elements($2::jsonb) WITH ORDINALITY AS entries(entry,ordinality)
+    CROSS JOIN (SELECT COALESCE(max(sequence),0) AS sequence FROM stockchief_runtime.assistant_goal_events WHERE goal_id=$1) base`,
+    [id,JSON.stringify(batch)]);
+  },{isolation:'SERIALIZABLE',retrySafe:true}));
+  auditQueue.catch(()=>{});return auditQueue;
+ }
  const audit=event=>{
   if(['context_preparation_timing','browser_preparation_timing'].includes(event.kind)){
    if(process.env.STOCKCHIEF_CODEX_TIMING==='1')console.log(JSON.stringify({kind:event.kind,goalId:id,phase:event.phase,ms:event.ms}));
@@ -27,13 +45,9 @@ async function run(database,ctx,id,options={}){
    code:event.code||event.reason||null};
   if(event.timings)detail.timings=Object.fromEntries(Object.entries(event.timings).filter(([key,value])=>
    ['admissionMs','tokenPreflightMs','providerMs','commercialSettlementMs','nativeCheckpointMs','finalVerificationMs'].includes(key)&&Number.isFinite(value)&&value>=0));
-  auditQueue=auditQueue.then(()=>database.transaction(async client=>{
-   await client.query('SELECT id FROM stockchief_runtime.assistant_goals WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 FOR UPDATE',[ctx.workspaceId,ctx.actorId,id]);
-   await client.query(`INSERT INTO stockchief_runtime.assistant_goal_events(id,goal_id,sequence,kind,detail)
-    SELECT $1,$2,COALESCE(max(sequence),0)+1,'agent_activity',$3::jsonb FROM stockchief_runtime.assistant_goal_events WHERE goal_id=$2`,
-    [require('../lib/util').newId('goalevent'),id,JSON.stringify(detail)]);
-  },{isolation:'SERIALIZABLE',retrySafe:true}));
-  auditQueue.catch(()=>{});
+  pendingActivity.push({id:require('../lib/util').newId('goalevent'),detail});
+  if(pendingActivity.length>=32)flushActivity();
+  else if(!auditTimer)auditTimer=setTimeout(flushActivity,25);
  };
  try{
   const budget=require('./postgres-codex-budget').createBudget(database,ctx,id);
@@ -156,13 +170,13 @@ async function run(database,ctx,id,options={}){
     error.code==='STAGING_MODEL_PRICE_UNVERIFIED'?error.message:'The Staging runtime could not start. No business operation was executed.']);
   throw error;
  }finally{
-  await Promise.allSettled(preparations);await auditQueue.catch(()=>{});
+  await Promise.allSettled(preparations);await flushActivity().catch(()=>{});
   // Attempt every independent cleanup. One transient resource failure must
   // not leak the remaining resources or overwrite a durable business outcome.
   for(const close of cleanup.reverse())try{await close();}catch(error){
    audit({kind:'runtime_cleanup_failed',code:require(base+'tool-error').code(error)});
   }
-  await auditQueue.catch(()=>{});
+  await flushActivity().catch(()=>{});
  }
 }
 module.exports={run};

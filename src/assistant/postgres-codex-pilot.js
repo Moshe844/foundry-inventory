@@ -22,8 +22,9 @@ async function access(db,ctx,{enabled=false,owner=false}={}){
  // assertCapability still freshly verifies the commercial ownership scope,
  // subscription, overrides and entitlement; the joined owner avoids a second
  // identical owner lookup before that check.
- await require('../commercial/entitlements').assertCapability(db,{accountId:row.owner_account_id,workspaceId:ctx.workspaceId},'ask.lookup');
- return {actor,pilot};
+ const scope={accountId:row.owner_account_id,workspaceId:ctx.workspaceId};
+ const entitlement=await require('../commercial/entitlements').assertCapability(db,scope,'ask.lookup');
+ return {actor,pilot,commercialAccess:{scope,entitlement}};
 }
 async function selected(db,ctx){if(!configured(ctx))return false;try{await access(db,ctx,{enabled:true});return true;}catch(e){if(e instanceof AuthorizationError)return false;throw e;}}
 function spendingLockMessage(pilot){
