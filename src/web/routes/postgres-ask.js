@@ -239,10 +239,13 @@ function createPostgresAskRouter(database,options={}){
   }));
   router.get('/ask/goals/:id',asyncRoute(async(req,res)=>{
     res.set('Cache-Control','no-store');
-    const goal=await goalStore.progress(database,req.ctx,req.params.id);
+    let goal=await goalStore.progress(database,req.ctx,req.params.id);
     if(!goal)return res.status(404).json({error:'Goal not found.'});
     const isPilot=goal.checkpoint.runtime==='codex-staging';
     if(isPilot)await pilot.access(database,req.ctx);
+    const approvalInbox=isPilot&&!['COMPLETED','CANCELLED','BLOCKED'].includes(goal.status)
+      ?await pilot.inbox(database,req.ctx,goal.id):null;
+    if(approvalInbox)goal=approvalInbox.goal;
     const events=isPilot?(await database.query(`SELECT sequence,kind,detail,created_at FROM stockchief_runtime.assistant_goal_events
       WHERE goal_id=$1 AND kind IN ('agent_activity','approval_ready') ORDER BY sequence DESC LIMIT 20`,[goal.id])).rows:[];
     const navigation=agentNavigation.visible(goal);
@@ -250,6 +253,7 @@ function createPostgresAskRouter(database,options={}){
     const safeEvents=events.map(e=>({sequence:e.sequence,kind:e.kind,created_at:e.created_at,
       detail:{kind:e.detail.kind,tool:typeof e.detail.tool==='string'?e.detail.tool:null,status:e.detail.kind==='runtime_starting'?e.detail.status:null}}));
     return res.json({id:goal.id,status:goal.status,answer:state.message,conversation:state,createdAt:goal.created_at,updatedAt:goal.updated_at,runStartedAt:goal.checkpoint.runStartedAt,turns:goal.turns,tools:goal.tool_calls,events:safeEvents,
+      approvalIds:(approvalInbox?.approvals||[]).map(card=>card.id),
       delivery:delivery.visible(goal),prerequisiteHandoffs:goal.checkpoint.prerequisiteHandoffs||[],navigation:navigation?{...navigation,automatic:req.session.postgresAskNavigationGoal===goal.id}:null});
   }));
   router.post('/ask/goals/:id/reply',asyncRoute(async(req,res)=>{
@@ -319,9 +323,12 @@ function createPostgresAskRouter(database,options={}){
     const recentGoals=goalStore.enabled(req.ctx)||pilotView?await goalStore.recent(database,req.ctx,startedAt):[];
     const activeGoal=recentGoals.at(-1)||null;
     const focusedGoal=recentGoals.find(goal=>goal.id===req.query.goal);
-    for(const goal of recentGoals)goal.conversation=conversation.state(goal);
-    for(const goal of recentGoals)goal.approvalCards=goal.checkpoint.runtime==='codex-staging'&&!['COMPLETED','CANCELLED','BLOCKED'].includes(goal.status)
-      ?(await pilot.inbox(database,req.ctx,goal.id)).approvals:[];
+    for(const goal of recentGoals){
+      if(goal.checkpoint.runtime==='codex-staging'&&!['COMPLETED','CANCELLED','BLOCKED'].includes(goal.status)){
+        const inbox=await pilot.inbox(database,req.ctx,goal.id);Object.assign(goal,inbox.goal);goal.approvalCards=inbox.approvals;
+      }else goal.approvalCards=[];
+      goal.conversation=conversation.state(goal);
+    }
     const nativeRuleIds=new Set(recentGoals.flatMap(goal=>(goal.approvalCards||[]).filter(card=>card.kind==='rule').map(card=>card.proposalId)));
     rules.pendingRules=rules.pendingRules.filter(rule=>!nativeRuleIds.has(rule.id));
     transcript=require('../../assistant/goal-transcript').mergeGoalTranscript(transcript,recentGoals);

@@ -48,11 +48,15 @@ async function transaction(database,ctx,goalId,fn,{allowMissing=false,allowCompl
   [ctx.workspaceId,ctx.actorId,goalId])).rows[0];
  if(!goal||new Date(goal.expires_at)<=new Date()||goal.status==='CANCELLED'||!allowCompleted&&goal.status==='COMPLETED')throw Error('APPROVAL_GOAL_UNAVAILABLE');
  const h=goal.checkpoint.harness;if(!h){if(allowMissing)return null;throw Error('APPROVAL_GOAL_UNAVAILABLE');}
+ const before=digest({checkpoint:goal.checkpoint,status:goal.status,answer:goal.answer});
  await waits.authority(client,ctx,h);
  const cards=await stage(client,ctx,goal,h),result=await fn({client,goal,h,cards});
  require('../../src/assistant/agent-conversation').sync(goal);
  if(Buffer.byteLength(JSON.stringify(goal.checkpoint))>8*1024*1024)throw Error('SESSION_SIZE_LIMIT');
- await client.query(`UPDATE ${TABLE} SET checkpoint=$4::jsonb,status=$5,answer=$6,
+ // Polling must not rewrite an unchanged native checkpoint or move its clock.
+ // Stable comparison ignores JSONB key ordering and retains every real state
+ // change, new card, acknowledgement and canonical approval transition.
+ if(before!==digest({checkpoint:goal.checkpoint,status:goal.status,answer:goal.answer}))await client.query(`UPDATE ${TABLE} SET checkpoint=$4::jsonb,status=$5,answer=$6,
   run_token=CASE WHEN $5='RUNNING' THEN run_token ELSE NULL END,
   lease_until=CASE WHEN $5='RUNNING' THEN lease_until ELSE NULL END,updated_at=now()
   WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,goalId,JSON.stringify(goal.checkpoint),goal.status,goal.answer]);
@@ -78,9 +82,9 @@ async function inbox(database,ctx,goalId,{pause=false,runToken=null}={}){
    if(h.inflight)throw Error('SESSION_OPERATION_UNRESOLVED');
    if(goal.status==='RUNNING'&&goal.run_token!==runToken)throw Error('SESSION_LEASE_LOST');
    goal.status='WAITING_APPROVAL';
-   goal.answer='Approval required. These changes are prepared, not executed:\n'+cards.map(c=>JSON.stringify(c.summary)).join('\n');
    h.dependencies=waits.dependencies(h);h.completionSource='durable_approval_handoff';
   }
+  if(goal.status==='WAITING_APPROVAL')goal.answer='Approval required. These changes are prepared, not executed:\n'+cards.map(c=>'- '+c.summary).join('\n');
   return {status:goal.status,answer:goal.answer,completionSource:'durable_approval_handoff',approvals:cards};
  },{allowMissing:true});
 }

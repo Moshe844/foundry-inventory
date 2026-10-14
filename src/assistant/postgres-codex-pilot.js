@@ -60,7 +60,7 @@ async function start(db,ctx,message,options={}){
 async function inbox(db,ctx,id){await access(db,ctx);const goal=await store.get(db,ctx,id);
  if(!goal||goal.checkpoint.runtime!=='codex-staging')throw new ValidationError('Pilot goal not found.');
  const result=await require('../../scripts/environment-agent-demo/approval-handoff').inbox(db,ctx,id);
- return {goal,approvals:result?.approvals||[]};
+ return {goal:result?await store.get(db,ctx,id):goal,approvals:result?.approvals||[]};
 }
 async function decide(db,ctx,id,deliveryId,sha256,approved,{responseReference}={}){
  await access(db,ctx,{enabled:true});

@@ -15,7 +15,11 @@
   for(const event of [...events].sort((a,b)=>a.sequence-b.sequence)){const label=activity(event);if(label&&rows.at(-1)?.label!==label)rows.push({label,at:event.created_at});}
   return rows.slice(-6);
  }
- if(typeof module!=='undefined'&&module.exports){module.exports={activity,activities};return;}
+ function approvalChange(current,next){
+  if(!Array.isArray(next))return {removed:[],added:[]};
+  return {removed:current.filter(id=>!next.includes(id)),added:next.filter(id=>!current.includes(id))};
+ }
+ if(typeof module!=='undefined'&&module.exports){module.exports={activity,activities,approvalChange};return;}
  function selectWork(goalId,deliveryId){
   const composer=document.getElementById('tell-foundry');if(!composer)return;
   for(const [name,value]of Object.entries({sourceGoalId:goalId,deliveryId,continueGoalId:'',questionId:''})){
@@ -156,7 +160,12 @@
      }
      // Update terminal truth immediately; never depend on a page reload to
      // stop the spinner. Reload only to obtain authenticated decision forms.
-     if(changed&&status==='WAITING_APPROVAL'){
+     const approvalIds=Array.isArray(goal.approvalIds)?goal.approvalIds:null;
+     const visibleApprovals=[...panel.querySelectorAll('[data-approval-id]')];
+     const approvalDelta=approvalChange(visibleApprovals.map(card=>card.dataset.approvalId),approvalIds);
+     for(const card of visibleApprovals)if(approvalDelta.removed.includes(card.dataset.approvalId))card.remove();
+     const newApproval=approvalDelta.added.length>0;
+     if((changed||newApproval)&&status==='WAITING_APPROVAL'){
       const draft=document.querySelector('#tell-foundry textarea[name="message"]');
       if(!(draft?.value||'').trim()){window.location.reload();return;}
       hint.textContent='A change is ready for review. Your draft is preserved; reload when you are ready to review the approval.';
