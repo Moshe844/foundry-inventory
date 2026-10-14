@@ -56,7 +56,8 @@ async function run(database,ctx,id,options={}){
   audit({kind:'runtime_starting',status:'Checking model pricing and permissions'});
   const image=options.image||process.env.STOCKCHIEF_CODEX_PILOT_IMAGE;
   let helper;
-  const provider=require('../commercial/relay-provider').register({name:'openai',get model(){return modelProfile.model;},
+  const provider=require('../commercial/relay-provider').register({name:'openai',get model(){return modelProfile.verificationProfile?
+   require(base+'codex-models').getProfile(modelProfile.verificationProfile).model:modelProfile.model;},
    complete:request=>{if(!helper)throw Error('GOVERNED_HELPER_NOT_READY');return helper.complete(request);}});
   const gateway=require(base+'gateway').createGateway({database,ctx:{...ctx,goalRunToken:goal.run_token},goal:goal.original_request,goalId:id,
    runToken:goal.run_token,provider,rawProvider:provider,audit,accessGuard:()=>pilot.access(database,ctx,{enabled:true})});
@@ -125,15 +126,19 @@ async function run(database,ctx,id,options={}){
   let result;
   while(true){
   const modelPolicy=require(base+'codex-wire').forProfile(modelProfile.id);
+  // Exploration may use a cheaper profile. Canonical semantic helpers retain
+  // the previously configured verification strength and their own exact rates.
+  const helperPolicy=modelProfile.verificationProfile?require(base+'codex-wire').forProfile(modelProfile.verificationProfile):modelPolicy;
+  if(helperPolicy!==modelPolicy)await require('./codex-staging-readiness').verifyPricing(database,helperPolicy.PROFILE);
   audit({kind:'model_profile_selected',status:`${modelProfile.model} · ${modelProfile.effort}`});
   const transport=relay.grant({candidate:'codex',provider:'openai',task:id,ctx,goalId:id,budget,fundingKey,authorize:()=>authorize({catalogue:false}),
    codexPolicy:modelPolicy,
    wireProfile:'codex',livePermit:permit,requestGate:access=>session.codexRequest(access)});
   const helperTransport=relay.grant({candidate:'codex',provider:'openai',task:id,ctx,goalId:id,budget,fundingKey,authorize:()=>authorize({catalogue:false}),
-   codexPolicy:modelPolicy,
+   codexPolicy:helperPolicy,
    wireProfile:'codex',livePermit:permit,requestGate:access=>session.codexRequest(access)});
   helperTransport.setNativeSession(session.helperDelivery());
-  helper=require(base+'codex-helper-provider').create({transport:helperTransport,policy:modelPolicy});
+  helper=require(base+'codex-helper-provider').create({transport:helperTransport,policy:helperPolicy});
   audit({kind:'runtime_starting',status:'Starting the Codex SDK session'});
   result=await require(base+'worker').run({candidate:'codex',session,gateway:{...gateway,authorize},browser:ui,budget,transport,
    codexPolicy:modelPolicy,modelRoutingInstructions:routing.instructions(ctx,modelProfile),
