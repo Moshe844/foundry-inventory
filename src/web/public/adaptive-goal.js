@@ -1,6 +1,6 @@
 'use strict';
 (() => {
- const phases={READY:'Getting started',RUNNING:'Working on your request',WAITING_APPROVAL:'Ready for your approval',WAITING_EVENT:'Waiting for confirmation',WAITING_USER:'Your input is needed',COMPLETED:'Completed and verified',BLOCKED:'Could not finish',CANCELLED:'Stopped'};
+ const phases={READY:'Getting started',RUNNING:'Working on your request',WAITING_APPROVAL:'Ready for your approval',WAITING_EVENT:'Waiting for confirmation',WAITING_USER:'Your input is needed',COMPLETED:'Completed',BLOCKED:'Could not finish',CANCELLED:'Stopped'};
  function activity(event){
   const d=event.detail||{};
   if(event.kind==='approval_ready')return 'Prepared a change for your approval';
@@ -35,7 +35,7 @@
  }
  for(const button of document.querySelectorAll('[data-work-continuation]'))button.onclick=()=>selectWork(button.dataset.sourceGoal,button.dataset.deliveryId);
  for(const panel of document.querySelectorAll('[data-adaptive-goal]')){
-  let status=panel.dataset.goalStatus,updated=panel.dataset.goalUpdated,rows=[],disconnected=false,elapsedTimer;
+  let status=panel.dataset.goalStatus,updated=panel.dataset.goalUpdated,rows=[],disconnected=false,workerAvailable=panel.dataset.workerAvailable!=='false',elapsedTimer;
   const phase=panel.querySelector('[data-goal-phase-text]'),hint=panel.querySelector('[data-goal-hint]');
   function elapsed(){
    window.clearTimeout(elapsedTimer);
@@ -45,6 +45,7 @@
    const seconds=Math.max(0,Math.floor((end-start)/1000));
    panel.querySelector('[data-goal-elapsed]').textContent=seconds>=60?`${Math.floor(seconds/60)}m ${seconds%60}s`:`${seconds}s`;
    if(disconnected)hint.textContent='Connection lost. Current progress is unknown; your request is saved.';
+   else if(['READY','RUNNING'].includes(status)&&!workerAvailable)hint.textContent='The agent is temporarily unavailable. Your request is saved and will wait for service to return.';
    else if(['READY','RUNNING'].includes(status))hint.textContent=seconds>=60?'This is taking longer than usual. You can leave this page; I’ll keep working.':'You can leave this page. I’ll keep working and show any required approval here.';
    else hint.textContent='';
    panel.dataset.active=String(active);
@@ -62,6 +63,8 @@
      const changed=goal.status!==status;
      disconnected=false;
      status=goal.status;updated=goal.updatedAt;panel.dataset.goalStatus=status;
+     if(typeof goal.workerAvailable==='boolean')workerAvailable=goal.workerAvailable;
+     const resume=panel.querySelector('[data-goal-resume]');if(resume)resume.hidden=status!=='BLOCKED';
      if(goal.runStartedAt)panel.querySelector('[data-goal-elapsed]').dataset.runStarted=goal.runStartedAt;
      elapsed();
      const prerequisites=panel.querySelector('[data-goal-prerequisites]');

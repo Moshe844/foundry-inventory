@@ -238,11 +238,17 @@ function createPostgresAskRouter(database,options={}){
     req.session.postgresAskNavigationGoal=req.params.id;
     return res.redirect(303,'/ask?goal='+encodeURIComponent(req.params.id)+'#focused-goal');
   }));
+  router.post('/ask/goals/:id/resume',asyncRoute(async(req,res)=>{
+    await pilot.resume(database,req.ctx,req.params.id);
+    req.session.postgresAskNavigationGoal=req.params.id;
+    return res.redirect(303,'/ask?goal='+encodeURIComponent(req.params.id)+'#focused-goal');
+  }));
   router.get('/ask/goals/:id',asyncRoute(async(req,res)=>{
     res.set('Cache-Control','no-store');
     let goal=await goalStore.progress(database,req.ctx,req.params.id);
     if(!goal)return res.status(404).json({error:'Goal not found.'});
     const isPilot=goal.checkpoint.runtime==='codex-staging';
+    const workerAvailable=isPilot?Boolean(goal.worker_available):null;
     if(isPilot)await pilot.access(database,req.ctx);
     const approvalInbox=isPilot&&!['COMPLETED','CANCELLED','BLOCKED'].includes(goal.status)
       ?await pilot.inbox(database,req.ctx,goal.id):null;
@@ -254,7 +260,7 @@ function createPostgresAskRouter(database,options={}){
     const safeEvents=events.map(e=>({sequence:e.sequence,kind:e.kind,created_at:e.created_at,
       detail:{kind:e.detail.kind,tool:typeof e.detail.tool==='string'?e.detail.tool:null,status:e.detail.kind==='runtime_starting'?e.detail.status:null}}));
     return res.json({id:goal.id,status:goal.status,answer:state.message,conversation:state,createdAt:goal.created_at,updatedAt:goal.updated_at,runStartedAt:goal.checkpoint.runStartedAt,turns:goal.turns,tools:goal.tool_calls,events:safeEvents,
-      approvalIds:(approvalInbox?.approvals||[]).map(card=>card.id),
+      workerAvailable,approvalIds:(approvalInbox?.approvals||[]).map(card=>card.id),
       delivery:delivery.visible(goal),prerequisiteHandoffs:goal.checkpoint.prerequisiteHandoffs||[],navigation:navigation?{...navigation,automatic:req.session.postgresAskNavigationGoal===goal.id}:null});
   }));
   router.post('/ask/goals/:id/reply',asyncRoute(async(req,res)=>{
@@ -368,7 +374,8 @@ function createPostgresAskRouter(database,options={}){
       await entitlements.assertCapability(database,scope,'imports.spreadsheet');
       const hash=crypto.createHash('sha256').update(file.buffer).digest('hex');
       const plan=await imports.analyse(database,req.ctx,{buffer:file.buffer,filename:file.filename,
-        provider:options.provider,usageKey:require('../../imports/usage-key').analysisUsageKey(hash,req.body.usageKey)});
+        provider:options.provider,allowModel:!await pilot.selected(database,req.ctx),
+        usageKey:require('../../imports/usage-key').analysisUsageKey(hash,req.body.usageKey)});
       return {navigation:{href:`/imports/${plan.id}`}};
     }
     if(req.body.continueGoalId){
@@ -501,6 +508,7 @@ function createPostgresAskRouter(database,options={}){
     return res.redirect(303,'/ask#latest');
   }));
   router.post('/actions/:id/continue',asyncRoute(async(req,res)=>{
+    if(await pilotProposalGuard(req,res))return;
     const proposal=await assistant.getProposal(database,req.ctx.workspaceId,req.params.id);
     if(proposal.status!=='EXECUTED')throw new (require('../../domain/errors').ValidationError)(
       'Approve the prepared change before continuing its dependent steps.');
@@ -520,7 +528,7 @@ function createPostgresAskRouter(database,options={}){
     const message=expected?conversation.publicText(error.message,'This request cannot continue. Reload Ask to check its current state.'):
       'StockChief could not continue this step. Your conversation is saved; reload Ask to check its current state.';
     if(!expected)console.error('[stockchief agent lifecycle]',error.code||error.name||'Error');
-    if(req.method==='POST'&&req.session){req.flash('error',message);return res.redirect(303,'/ask#latest');}
+    if(req.method==='POST'&&req.session&&!req.xhr&&req.accepts('html')){req.flash('error',message);return res.redirect(303,'/ask#latest');}
     return res.status(expected?error.status||400:500).json({error:{code:'conversation_unavailable',message}});
   });
   return router;

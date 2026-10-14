@@ -1,8 +1,9 @@
 'use strict';
 const {createHash}=require('node:crypto');
+const unavailable=(answer,code)=>({verified:false,answer,report:{version:1,status:'blocked',answer},verificationFailure:code});
 // Models identify claims; the host checks their values against durable evidence
 // and canonical PostgreSQL effects. A model's success flag alone is insufficient.
-async function verify(database,ctx,goal,raw,catalogue){
+async function verify(database,ctx,goal,raw,catalogue,options={}){
  const conversation=require('./agent-conversation'),report=conversation.parse(raw);
  if(!report)return {verified:false,answer:conversation.FAILED};
  if(report.status==='needs_user')return {verified:false,answer:report.question,report};
@@ -26,7 +27,7 @@ async function verify(database,ctx,goal,raw,catalogue){
  }
  const lastExecution=(await database.query(`SELECT max(executed_at) AS at FROM stockchief_runtime.assistant_action_proposals
   WHERE workspace_id=$1 AND actor_user_id=$2 AND id=ANY($3::text[])`,[ctx.workspaceId,ctx.actorId,receipt.operations.map(o=>o.proposalId)])).rows[0].at;
- const verified=[];
+ const verified=[],fresh=new Map();
  for(const claim of report.claims){
   if(typeof claim.evidenceId!=='string'||typeof claim.path!=='string'||!claim.path.startsWith('/')||claim.path.length>400)return {verified:false,answer:report.answer};
   const entry=find(claim.evidenceId);if(!entry)return {verified:false,answer:report.answer};
@@ -37,6 +38,17 @@ async function verify(database,ctx,goal,raw,catalogue){
    if(['__proto__','constructor','prototype'].includes(key)||value===null||typeof value!=='object'||!Object.hasOwn(value,key))return {verified:false,answer:report.answer};
    value=value[key];}
   if(JSON.stringify(value)!==JSON.stringify(claim.value))return {verified:false,answer:report.answer};
+  if(claim.historical!==true){
+   if(!fresh.has(entry.id)){
+    try{fresh.set(entry.id,await require('./agent-evidence-verification').current(database,ctx,goal,entry,{catalogue,...options}));}
+    catch(error){return unavailable('I could not confirm that the collected information still matches the current records. Your request and recorded work are saved.',error.message);}
+   }
+   let current=fresh.get(entry.id);
+   for(const part of claim.path.slice(1).split('/')){const key=part.replace(/~1/g,'/').replace(/~0/g,'~');
+    if(['__proto__','constructor','prototype'].includes(key)||current===null||typeof current!=='object'||!Object.hasOwn(current,key))return {verified:false,answer:report.answer};
+    current=current[key];}
+   if(JSON.stringify(current)!==JSON.stringify(claim.value))return unavailable('The business records changed during this request. The earlier figures are no longer verified as current. Your request and recorded work are saved.','CURRENT_RECORDS_CHANGED');
+  }
   verified.push({evidenceId:claim.evidenceId,path:claim.path,sha256:createHash('sha256').update(JSON.stringify(value)).digest('hex')});
  }
  let navigation=null;
@@ -63,7 +75,7 @@ async function verify(database,ctx,goal,raw,catalogue){
   navigation={href,label:String(label||'the requested page').replace(/\s+·\s+StockChief$/,'').slice(0,120),
    evidenceId:entry.id,evidenceHash:entry.sha256};
  }
- return {verified:true,answer:report.answer,receipt,claims:verified,navigation,delivery:require('./agent-delivery').create(report)};
+ return {verified:true,answer:report.answer,receipt,claims:verified,verificationScope:'referenced_claims_and_canonical_effects',navigation,delivery:require('./agent-delivery').create(report)};
 }
 const instructions=`\nFor your final report return JSON with status "completed", outcome ("answer" or "navigation"), answer, and claims: [{evidenceId,path,value}].
 The browser tool controls a private inspection browser, NOT the user's website. When the user asks to open a page, use outcome "navigation" and navigation: {evidenceId,path:"/url"} referencing an actual successful applicationPage observation (use /screen/url if wrapped). The host will deliver that page to the user's browser and verify its arrival without another model call. Do not claim it has already opened for the user. Do not return outcome "answer" to fulfill a navigation request. For questions or completed business changes that do not request moving the user's browser, use outcome "answer".

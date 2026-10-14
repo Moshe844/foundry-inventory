@@ -19,6 +19,9 @@
     <% } %>
   </div>
   <div class="rm-agent__answer" data-goal-answer <%= conversation.message?'':'hidden' %>><%- renderAgentAnswer(conversation.message) %></div>
+  <% if(goal.checkpoint.runtime==='codex-staging'){ %>
+    <form data-goal-resume method="post" action="/ask/goals/<%= goal.id %>/resume" <%= goal.status==='BLOCKED'?'':'hidden' %>><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">Continue this request</button></form>
+  <% } %>
   <div data-goal-delivery data-revision="<%= delivered?.id||'' %>"><%- include('agent-delivery',{goal,delivery:delivered}) %></div>
   <div data-goal-prerequisites>
     <% for(const handoff of goal.checkpoint.prerequisiteHandoffs||[]){ %>

@@ -37,7 +37,7 @@ function classify({report,answer,verified,current='READY',canonicalVerified=true
   failure:{code:progress.finalReason||'OUTCOME_UNVERIFIED',requiresUserInput:false}};
 }
 const labels={queued:'Getting started',working:'Working on your request',clarification:'Let’s clarify',approval:'Ready for your approval',
- external_wait:'Waiting for confirmation',navigation:'Ready to open in your browser',verification:'Checking the result',completed:'Completed and verified',
+ external_wait:'Waiting for confirmation',navigation:'Ready to open in your browser',verification:'Checking the result',completed:'Completed',
  interrupted:'Work paused',funding:'Spending limit reached',failed:'Could not finish',cancelled:'Stopped'};
 const ConversationState=z.object({version:z.literal(1),goalId:z.string(),phase:z.enum(Object.keys(labels)),label:z.string(),
  active:z.boolean(),terminal:z.boolean(),message:z.string(),canReply:z.boolean(),revision:z.number().int().nonnegative(),

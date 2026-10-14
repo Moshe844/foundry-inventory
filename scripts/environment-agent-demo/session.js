@@ -230,7 +230,8 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
      // with that clarification rather than replaying an obsolete question.
      if(consequential&&!onlyQuestions)h.calls[fingerprint]={id:start.id,state:'DONE',result};
      if(name!=='environment_evidence'){
-      require('./observations').store(h,{id:start.id,name,result});
+      require('./observations').store(h,{id:start.id,name,result,
+       source:name==='environment_dataset'||name==='environment_browser'||business?{version:1,name,input:intent}:null});
      }
      if(business){
       // Recovery destinations come from canonical operation results, never

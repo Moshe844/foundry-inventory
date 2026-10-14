@@ -38,6 +38,11 @@ async function main(){
  // Prepare only configured, authorized pilot identities. No model calls or
  // business writes; fresh permissions still gate every goal and browser read.
  const workspaces=String(process.env.STOCKCHIEF_CODEX_PILOT_WORKSPACES||'').split(',').map(s=>s.trim()).filter(Boolean);
+ const workerIdentity=require('node:crypto').randomUUID();
+ const markAvailable=()=>db.query('UPDATE stockchief_runtime.codex_pilots SET worker_seen_at=now(),worker_identity=$2 WHERE workspace_id=ANY($1::text[])',[workspaces,workerIdentity]);
+ await markAvailable();
+ let availability=Promise.resolve();
+ const availabilityTimer=setInterval(()=>{availability=availability.then(markAvailable).catch(error=>console.warn('Agent availability update failed:',error.code||'DATABASE_UNAVAILABLE'));},10000);availabilityTimer.unref();
  const warmInspection=async()=>{
  const pilots=(await db.query(`SELECT p.workspace_id,u.id AS actor_id FROM stockchief_runtime.codex_pilots p
   JOIN users u ON u.workspace_id=p.workspace_id WHERE p.enabled AND p.workspace_id=ANY($1::text[])
@@ -49,7 +54,18 @@ async function main(){
  };await warmInspection();
  let warming=Promise.resolve();
  const warmTimer=setInterval(()=>{warming=warming.then(warmInspection).catch(error=>console.warn('Read-only browser warm-up unavailable:',error.code||'INSPECTION_UNAVAILABLE'));},2*60000);warmTimer.unref();
- const handler=async job=>require('../src/assistant/postgres-codex-pilot').run(db,{workspaceId:job.workspaceId,actorId:job.payload.actorId},job.payload.goalId,{sandboxPool,inspectionPool});
+ const handler=async job=>{
+  const ctx={workspaceId:job.workspaceId,actorId:job.payload.actorId};
+  try{return await require('../src/assistant/postgres-codex-pilot').run(db,ctx,job.payload.goalId,{sandboxPool,inspectionPool});}
+  catch(error){
+   // A failure before claim must not leave a permanent "Getting started".
+   await db.query(`UPDATE stockchief_runtime.assistant_goals SET status='BLOCKED',answer='The agent could not start this request. Your goal is saved; you can continue it here.',
+    checkpoint=jsonb_set(checkpoint,'{harness}',COALESCE(checkpoint->'harness','{}'::jsonb)||$4::jsonb),updated_at=now()
+    WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 AND status='READY'`,
+    [ctx.workspaceId,ctx.actorId,job.payload.goalId,JSON.stringify({candidate:'codex',failure:{code:'WORKER_START_FAILED',requiresUserInput:false}})]).catch(()=>{});
+   throw error;
+  }
+ };
  handler.externalEffect=true;
  const shouldClaim=async()=>Boolean((await db.query(`SELECT 1 FROM stockchief_runtime.codex_pilots WHERE workspace_id=ANY($1::text[])
   AND enabled AND NOT stopped AND approval_reference IS NOT NULL AND ceiling_micro_usd>0
@@ -58,7 +74,9 @@ async function main(){
  const stopNotifications=await db.listen('stockchief_codex_jobs',message=>{
   if(workspaces.includes(message.payload))worker.wake();
  }).catch(error=>{console.warn('Job notifications unavailable; durable polling remains active:',error.code||'NOTIFICATION_UNAVAILABLE');return async()=>{};});
- const stop=async()=>{clearInterval(keepAlive);clearInterval(warmTimer);await stopNotifications();await worker.stop();await warming;await inspectionPool.close();await sandboxPool.close();await db.close();};
+ const stop=async()=>{clearInterval(keepAlive);clearInterval(warmTimer);clearInterval(availabilityTimer);await stopNotifications();await worker.stop();await warming;await availability;
+  await db.query('UPDATE stockchief_runtime.codex_pilots SET worker_seen_at=NULL,worker_identity=NULL WHERE workspace_id=ANY($1::text[]) AND worker_identity=$2',[workspaces,workerIdentity]).catch(()=>{});
+  await inspectionPool.close();await sandboxPool.close();await db.close();};
  const keepAlive=setInterval(()=>{},60000);
  process.once('SIGTERM',()=>stop().then(()=>process.exit(0)));process.once('SIGINT',()=>stop().then(()=>process.exit(0)));
  console.log('Codex Staging worker ready. Paid calls remain governed by the PostgreSQL pilot and commercial ledgers.');

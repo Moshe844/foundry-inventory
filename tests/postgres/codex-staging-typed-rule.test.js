@@ -26,7 +26,7 @@ test('embedded SDK prepares discovered typed rules with one intent check and can
  assert.deepEqual(require('../../src/assistant/postgres-capability-registry').registry.get('policy.propose').fields,[],'Existing Ask retains its original planner contract');
  const started=await pilot.start(db,ctx,original);let sdkCalls=0,checks=0,counted=0;
  const fake=async(_url,init)=>{const body=JSON.parse(init.body);
-  if(body.text?.format?.type==='json_schema'){
+  if(body.text?.format?.type==='json_schema'&&!body.stream){
    assert.equal(body.text.format.name,'postgres_operating_instruction_effect_fit','No second model reinterpretation of the goal');checks++;
    const input=JSON.parse(body.input[0].content);assert.equal(input.ownerInstruction,original);assert.equal(input.enforcedEffects.length,2);
    return Response.json({id:'fit-'+checks,object:'response',status:'completed',model:body.model,output:[{type:'message',role:'assistant',content:[{type:'output_text',text:JSON.stringify({equivalent:true,difference:''})}]}],usage:{input_tokens:200,output_tokens:40,total_tokens:240}});
@@ -37,10 +37,10 @@ test('embedded SDK prepares discovered typed rules with one intent check and can
   if(sdkCalls===2)return require('../helpers/codex-offline-response')(body,2,'text(await tools.mcp__stockchief__business_operations({stepsJson:JSON.stringify([{capability:"read.operating_rules",arguments:[],dependsOn:[]}])}));');
   assert.equal(sdkCalls,3);
   const goal=await store.get(db,ctx,started.goalId),entry=Object.values(goal.checkpoint.harness.evidence).findLast(e=>e.name==='business_operations'),evidence=JSON.parse(entry.text);
-  return require('../helpers/codex-offline-response').final(body,3,JSON.stringify({status:'completed',answer:'The approved stock warnings are active for both existing products.',claims:[{evidenceId:entry.id,path:'/outcomes/0/result/status',value:evidence.outcomes[0].result.status}]}));
+  return require('../helpers/codex-offline-response').final(body,3,JSON.stringify({status:'completed',outcome:'answer',answer:'The approved stock warnings are active for both existing products.',claims:[{evidenceId:entry.id,path:'/outcomes/0/result/status',value:evidence.outcomes[0].result.status}]}));
  };
  const options={image:process.env.STOCKCHIEF_OFFLINE_CODEX_IMAGE||JSON.parse(require('node:fs').readFileSync('data/environment-agent-demo/codex-sdk-approval-handoff/runtime.json')).image,apiKey:'FAKE',fetchImpl:fake,countInput:async()=>{counted++;return {object:'response.input_tokens',input_tokens:200};}};
- const first=await pilot.run(db,ctx,started.goalId,options);assert.equal(first.status,'WAITING_APPROVAL',JSON.stringify(first));assert.equal(checks,1);assert.equal(sdkCalls,1);
+ const first=await pilot.run(db,ctx,started.goalId,options);assert.equal(first.status,'WAITING_APPROVAL',JSON.stringify({status:first.status,answer:first.answer,interruption:first.checkpoint.harness?.interruption,failure:first.checkpoint.harness?.failure}));assert.equal(checks,1);assert.equal(sdkCalls,1);
  const prepared=await store.get(db,ctx,started.goalId),discovery=Object.values(prepared.checkpoint.harness.evidence).find(e=>e.name==='environment_interfaces');
  const contract=JSON.parse(discovery.text).operations[0];assert(contract.fields.ruleChanges.jsonSchema.items.properties.domain.enum.includes('stock_alert'));
  await t.test('native rule approval stays with its request after a newer question, with no duplicate legacy rule card',async u=>{
@@ -52,9 +52,19 @@ test('embedded SDK prepares discovered typed rules with one intent check and can
   const signed=await agent.post('/login').type('form').send({_csrf:token,email,password});const cookie=signed.headers['set-cookie'].find(c=>c.startsWith('foundry.sid='));
   await page.context().addCookies([{name:'foundry.sid',value:cookie.split(';')[0].slice('foundry.sid='.length),url:`http://127.0.0.1:${server.address().port}`}]);
   await page.goto(`http://127.0.0.1:${server.address().port}/ask`);
-  const button=page.getByRole('button',{name:'Approve exact operation'});assert.equal(await button.count(),1);assert.equal(await button.evaluate(el=>Boolean(el.closest('.rm-history'))),false);
+  const button=page.getByRole('button',{name:'Approve this change'});assert.equal(await button.count(),1);assert.equal(await button.evaluate(el=>Boolean(el.closest('.rm-history'))),false);
   assert.equal(await page.getByText('I read that as a standing rule. Is this right?',{exact:true}).count(),0,'Native proposal is not appended as the answer to an unrelated new question');
   const said=(await page.locator('.rm-turn--you .rm-turn__said').allTextContents()).map(s=>s.trim());assert.deepEqual(said,[original,'Read my current products.']);
+  const card=(await pilot.inbox(db,ctx,started.goalId)).approvals[0],proposal=await require('../../src/manager/postgres-operating-instructions').get(db,ctx.workspaceId,card.proposalId);
+  await db.query("UPDATE stockchief_runtime.assistant_goals SET status='CANCELLED' WHERE id=$1",[started.goalId]);
+  try{
+  const currentPage=await agent.get('/ask'),currentToken=/name="_csrf" value="([^"]+)"/.exec(currentPage.text)[1];
+  const rejected=await agent.post(`/operating-instructions/${card.proposalId}/approve`).set('Accept','application/json').type('form').send({_csrf:currentToken,integrityHash:proposal.integrityHash});
+  assert.equal(rejected.status,400,'A stale detail page cannot activate a rule after its agent goal is cancelled');
+  assert.equal((await db.query('SELECT count(*) AS n FROM stockchief_runtime.stock_threshold_rules WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,'0');
+  await page.goto(`http://127.0.0.1:${server.address().port}/operating-instructions/${card.proposalId}?from=ask`);
+  assert.equal(await page.getByRole('button',{name:'Approve standing rule'}).count(),0);assert.equal(await page.getByRole('link',{name:'Return to this request'}).count(),1);
+  }finally{await db.query("UPDATE stockchief_runtime.assistant_goals SET status='WAITING_APPROVAL' WHERE id=$1",[started.goalId]);}
  });
  assert.equal((await db.query('SELECT count(*) AS n FROM stockchief_runtime.stock_threshold_rules WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,'0');
  const card=(await pilot.inbox(db,ctx,started.goalId)).approvals[0];await pilot.decide(db,ctx,started.goalId,card.id,card.sha256,true,{responseReference:'OFFLINE owner approval'});
@@ -62,7 +72,7 @@ test('embedded SDK prepares discovered typed rules with one intent check and can
  const alerts=require('../../src/manager/postgres-stock-threshold-alerts');assert.equal((await alerts.evaluate(db,{workspaceId:ctx.workspaceId})).alerted,0);
  await inventory.issue(db,ctx,{skuId:items[0].skuIds[0],locationId:place.id,quantity:1,reasonCode:'other',reference:'BOUNDARY',idempotencyKey:'typed-boundary'});
  assert.equal((await alerts.evaluate(db,{workspaceId:ctx.workspaceId})).alerted,1);assert.equal((await alerts.evaluate(db,{workspaceId:ctx.workspaceId})).alerted,0);
- const completed=await pilot.run(db,ctx,started.goalId,options);assert.equal(completed.status,'COMPLETED',JSON.stringify(completed));assert.equal(checks,1);assert.equal(sdkCalls,3);assert.equal(counted,4);
+ const completed=await pilot.run(db,ctx,started.goalId,options);assert.equal(completed.status,'COMPLETED',JSON.stringify({status:completed.status,answer:completed.answer,interruption:completed.checkpoint.harness?.interruption,failure:completed.checkpoint.harness?.failure}));assert.equal(checks,1);assert.equal(sdkCalls,3);assert.equal(counted,4);
  assert.equal((await db.query('SELECT count(*) AS n FROM commercial_model_cost_holds WHERE goal_id=$1',[started.goalId])).rows[0].n,'4');
  await t.test('typed proposals cannot inject a tenant, omit the stock measure or substitute purchasing authority',async()=>{
   const claim=await store.claim(db,ctx,(await store.create(db,ctx,original)).id);let fitCalls=0;

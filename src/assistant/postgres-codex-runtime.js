@@ -115,10 +115,9 @@ async function run(database,ctx,id,options={}){
    audit({kind:'browser_preparation_timing',phase:'current_page_load',ms:Date.now()-phaseStarted});
    return tools;
   });
-  // A fresh session always receives the current browser view. Open that
-  // credential-free, permission-checked renderer alongside durable loading
-  // instead of serializing its startup behind the session transaction.
-  if(!goal.checkpoint.harness?.native?.codex?.threadId){
+  // Prepare the browser only when the user actually supplied page context.
+  // Otherwise the native agent can choose records without opening Chromium.
+  if(goal.checkpoint.page?.path&&!goal.checkpoint.harness?.native?.codex?.threadId){
    const initialBrowser=ui.prepare();preparations.push(initialBrowser);initialBrowser.catch(()=>{});
   }
   let preparedContext=require(base+'codex-runtime').prepareContext({session,browser:ui,gateway,audit});
@@ -174,7 +173,7 @@ async function run(database,ctx,id,options={}){
   const current=await store.get(database,ctx,id);
   if(current.status==='RUNNING'){
    const finalStarted=Date.now();
-   await session.finish((client,{goal,access})=>require('./postgres-codex-verification').verify(client,ctx,goal,result.answer,access.catalogue));
+   await session.finish((client,{goal,access})=>require('./postgres-codex-verification').verify(client,ctx,goal,result.answer,access.catalogue,{browser:ui}));
    audit({kind:'host_final_verification',timings:{finalVerificationMs:Date.now()-finalStarted}});
   }
   return store.get(database,ctx,id);

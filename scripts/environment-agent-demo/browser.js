@@ -155,6 +155,13 @@ async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null,ob
       }
     }
   }
-  return {act,inspect,restore,observeReadLinks,page,context,close:()=>context.close()};
+  async function verifyObservation(url){
+    const target=new URL(url);
+    if(target.origin!==allowed||target.username||target.password)throw Error('INVALID_VERIFICATION_ORIGIN');
+    // Unlike restoration, verification always performs a new scoped GET.
+    await page.goto(target.href,{waitUntil:'domcontentloaded'});
+    return inspect();
+  }
+  return {act,inspect,restore,verifyObservation,observeReadLinks,page,context,close:()=>context.close()};
 }
 module.exports={createBrowserTools};

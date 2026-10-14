@@ -7,6 +7,7 @@ function enabled(ctx){return process.env.STOCKCHIEF_ADAPTIVE_ASK==='1'&&
 async function get(db,ctx,id){return (await db.query(`SELECT * FROM ${TABLE}
  WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,id])).rows[0]||null;}
 async function progress(db,ctx,id){return (await db.query(`SELECT id,status,answer,created_at,updated_at,turns,tool_calls,
+ COALESCE((SELECT p.worker_seen_at>now()-interval '30 seconds' FROM stockchief_runtime.codex_pilots p WHERE p.workspace_id=assistant_goals.workspace_id),false) AS worker_available,
  jsonb_build_object('runtime',checkpoint->'runtime','runStartedAt',checkpoint->'runStartedAt',
  'conversationState',checkpoint->'conversationState','delivery',checkpoint->'delivery','prerequisiteHandoffs',checkpoint->'prerequisiteHandoffs','lifecycleStage',checkpoint->'lifecycleStage',
  'harness',jsonb_build_object('userQuestion',checkpoint#>'{harness,userQuestion}','interruption',checkpoint#>'{harness,interruption}'),
@@ -82,6 +83,12 @@ async function reply(db,ctx,id,message,{questionId=null}={}){
 async function enqueue(db,goal){const queued=await require('../operations/postgres-job-queue').enqueue(db,{workspaceId:goal.workspace_id,
  kind:goal.checkpoint.runtime==='codex-staging'?'assistant.run-codex-goal':'assistant.run-goal',payload:{goalId:goal.id,actorId:goal.actor_user_id},
  idempotencyKey:`goal:${goal.id}:${goal.updated_at.toISOString()}`,maxAttempts:1,priority:20});
+ if(queued.job?.status==='DEAD'&&goal.status==='READY'&&goal.checkpoint.runtime==='codex-staging'){
+  await db.query(`UPDATE ${TABLE} SET status='BLOCKED',answer='The worker stopped before starting this request. Your goal is saved; you can continue it here.',
+   checkpoint=jsonb_set(checkpoint,'{harness}',COALESCE(checkpoint->'harness','{}'::jsonb)||$4::jsonb),updated_at=now()
+   WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 AND status='READY'`,
+   [goal.workspace_id,goal.actor_user_id,goal.id,JSON.stringify({candidate:'codex',failure:{code:'WORKER_JOB_FAILED',requiresUserInput:false}})]);
+ }
  // Wake only the isolated native pilot after its durable enqueue committed.
  // Notification loss cannot lose work: the existing poll remains the fallback.
  if(goal.checkpoint.runtime==='codex-staging')await db.query("SELECT pg_notify('stockchief_codex_jobs',$1)",[goal.workspace_id]).catch(()=>{});

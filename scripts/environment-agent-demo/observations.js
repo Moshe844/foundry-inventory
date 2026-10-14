@@ -20,13 +20,15 @@ function control(c,{historical=false}={}){
  }
  return out;
 }
-function store(h,{id,name,result,at=new Date().toISOString()}){
+function store(h,{id,name,result,source=null,at=new Date().toISOString()}){
  const value=result,text=JSON.stringify(value)??'null';
  h.evidence||={};
  if(h.evidence[id]&&h.evidence[id].text!==text)throw new Error('EVIDENCE_ID_CONFLICT');
  // The existing 8 MiB session limit remains enforced transactionally. Never
  // claim durable storage while silently discarding a payload's tail.
- h.evidence[id]={id,name,at,text,truncated:false,sha256:hash(value)};
+ const sourceText=source?JSON.stringify(source):null;
+ h.evidence[id]={id,name,at,text,truncated:false,sha256:hash(value),
+  ...(sourceText?{sourceText,sourceSha256:createHash('sha256').update(sourceText).digest('hex')}:{})};
  return h.evidence[id];
 }
 function index(h){const entries=Object.values(h.evidence||{});

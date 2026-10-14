@@ -272,7 +272,7 @@ async function analyse(database, ctx, input) {
     WHERE workspace_id=$1 AND source_hash=$2 AND approval_status='APPROVED' AND status<>'CANCELLED'
     ORDER BY created_at DESC,id DESC LIMIT 1`,
   [ctx.workspaceId,sourceHash])).rows[0];
-  const modelProvider=input.provider||(require('../config').ai.configured?
+  const modelProvider=input.allowModel===false?null:input.provider||(require('../config').ai.configured?
     require('../ai/provider').createProviderUnobserved(require('../config').ai.provider,require('../config').ai.tier('fast')):null);
   const proposal=await mappingService.proposeMappings({...sheet,sourceName:input.filename || 'pasted data'},
     {provider:modelProvider?require('../commercial/model').wrap(database,ctx,modelProvider,'import_mapping',input.usageKey||require('./usage-key').analysisUsageKey(sourceHash)):null,

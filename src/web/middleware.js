@@ -572,7 +572,7 @@ function errorHandler(isProduction) {
           title: status === 404 ? 'Not found' : 'Something went wrong',
           status,
           message,
-          detail: !isProduction && !expected ? String(err.stack || err) : null,
+          detail: null,
         });
       }
       return res.type('text/plain').send(message);

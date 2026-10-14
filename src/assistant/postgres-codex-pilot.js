@@ -36,6 +36,7 @@ function spendingLockMessage(pilot){
 async function view(db,ctx){if(!configured(ctx))return null;try{const {actor,pilot}=await access(db,ctx);
  const usage=await require('./postgres-codex-budget').createBudget(db,ctx,null).status();return {
  enabled:pilot.enabled,canToggle:actor.role==='owner',funded:!spendingLockMessage(pilot),lockMessage:spendingLockMessage(pilot),
+ workerAvailable:Boolean(pilot.worker_seen_at&&Date.now()-new Date(pilot.worker_seen_at).getTime()<30000),
  budget:{ceiling:usage.ceiling,committed:usage.committed,remaining:usage.remaining},
  model:'Codex SDK',reasoning:'Adaptive reasoning'};}catch(e){if(e instanceof AuthorizationError)return null;throw e;}}
 async function toggle(db,ctx,enabled){await access(db,ctx,{owner:true});
@@ -101,6 +102,27 @@ async function run(db,ctx,id,options={}){
  }
  return require('./postgres-codex-runtime').run(db,ctx,id,options);
 }
+async function resume(db,ctx,id){
+ const {pilot}=await access(db,ctx,{enabled:true});const locked=spendingLockMessage(pilot);if(locked)throw new ValidationError(locked);
+ const goal=await db.transaction(async client=>{
+  const row=(await client.query('SELECT * FROM stockchief_runtime.assistant_goals WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 FOR UPDATE',[ctx.workspaceId,ctx.actorId,id])).rows[0];
+  if(!row||row.checkpoint.runtime!=='codex-staging'||row.status!=='BLOCKED'||new Date(row.expires_at)<=new Date())throw new ValidationError('This saved request cannot be continued.');
+  const h=row.checkpoint.harness||{};
+  if(h.inflight||h.codexDelivery?.state==='PENDING'||h.helperDelivery?.state==='PENDING'||(await client.query("SELECT 1 FROM stockchief_runtime.codex_pilot_calls WHERE workspace_id=$1 AND goal_id=$2 AND state IN ('RESERVED','UNKNOWN') LIMIT 1",[ctx.workspaceId,id])).rows.length)
+   throw new ValidationError('An earlier step still needs reconciliation. StockChief will not repeat an uncertain operation or charge.');
+  if(Number(h.codexRequests||0)>=24||Number(row.tool_calls)>=30)throw new ValidationError('This request reached its existing execution limits. Recorded changes and approvals remain available for review.');
+  await require('../../scripts/environment-agent-demo/waits').authority(client,ctx,h);
+  const dependencies=require('../../scripts/environment-agent-demo/waits').dependencies(h);
+  const state=await require('../../scripts/environment-agent-demo/waits').current(client,ctx,id,dependencies);
+  if(state==='BLOCKED')throw new ValidationError('A recorded dependency still needs attention before this request can continue.');
+  h.failure=null;h.interruption=null;h.admissionBlock=null;h.pendingReport=null;row.checkpoint.harness=h;
+  row.status=state==='READY'?'READY':state;row.answer=state==='READY'?'Continuing your saved request. Previously recorded work will not be repeated.':row.answer;
+  require('./agent-conversation').sync(row);
+  return (await client.query(`UPDATE stockchief_runtime.assistant_goals SET status=$4,answer=$5,checkpoint=$6::jsonb,recoveries=recoveries+1,
+   run_token=NULL,lease_until=NULL,updated_at=clock_timestamp() WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 RETURNING *`,[ctx.workspaceId,ctx.actorId,id,row.status,row.answer,JSON.stringify(row.checkpoint)])).rows[0];
+ },{isolation:'SERIALIZABLE',retrySafe:true});
+ if(goal.status==='READY')await store.enqueue(db,goal);return goal;
+}
 async function readAuthorization(db,ctx,connectionString){await access(db,ctx,{enabled:true});
  if(!connectionString||connectionString!==(process.env.FOUNDRY_DATABASE_URL||process.env.DATABASE_URL))throw new AuthorizationError('The renderer must use the configured Staging database.');
  const token=Object.freeze({});readonlyAuthorizations.set(token,{...ctx,connectionString});return token;
@@ -109,4 +131,4 @@ function assertReadAuthorization(token,cluster,ctx){const p=readonlyAuthorizatio
  if(!p||!configured(ctx)||p.connectionString!==cluster.connectionString||p.workspaceId!==ctx.workspaceId||p.actorId!==ctx.actorId)
   throw new AuthorizationError('Invalid Staging renderer identity.');
 }
-module.exports={configured,access,selected,view,toggle,start,inbox,decide,run,readAuthorization,assertReadAuthorization};
+module.exports={configured,access,selected,view,toggle,start,inbox,decide,run,resume,readAuthorization,assertReadAuthorization};

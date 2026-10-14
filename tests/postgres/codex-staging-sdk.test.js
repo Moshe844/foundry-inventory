@@ -40,7 +40,7 @@ test('actual Staging SDK lifecycle uses the real renderer, website approval and 
  const options={image:JSON.parse(require('node:fs').readFileSync('data/environment-agent-demo/codex-sdk-approval-handoff/runtime.json')).image,
   apiKey:'FAKE',fetchImpl:fake,countInput:async()=>({object:'response.input_tokens',input_tokens:200})};
  const first=await pilot.run(db,ctx,response.goalId,options);
- assert.equal(first.status,'WAITING_APPROVAL');assert.equal(calls,1);
+ assert.equal(first.status,'WAITING_APPROVAL',JSON.stringify({failure:first.checkpoint.harness?.failure,interruption:first.checkpoint.harness?.interruption,calls,answer:first.answer}));assert.equal(calls,1);
  const browserEvidence=Object.values(first.checkpoint.harness.evidence).find(e=>e.name==='environment_browser');
  assert.equal(new URL(JSON.parse(browserEvidence.text).url).pathname,'/inventory','Agent starts on the user page');
  const ready=await pilot.inbox(db,ctx,response.goalId);assert.equal(ready.approvals.length,1);
