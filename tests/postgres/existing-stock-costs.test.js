@@ -88,7 +88,7 @@ test('existing-stock cost uses governed approval, immutable evidence and atomic 
  assert.equal(freeReceipt.lines[0].totalCostMinor,0);assert.equal(freeReceipt.lines[0].journalEntryId,null);
  assert.equal(Number((await db.query("SELECT quantity_units FROM accounting_inventory_cost_balances WHERE workspace_id='w' AND sku_id='FREE-PO'")).rows[0].quantity_units),1);
  const bad=await stock('BAD',1);
- for(const alteration of [{currency:'EUR'},{basis:'invented'},{unitCost:'1.234'},{quantity:2},{evidenceReference:''},{postingDate:'2026-02-30'}])await assert.rejects(cost.prepare(db,ctx,{...bad,...alteration}));
+ for(const alteration of [{currency:'EUR'},{unitCost:'€35'},{basis:'invented'},{unitCost:'1.234'},{quantity:2},{evidenceReference:''},{postingDate:'2026-02-30'}])await assert.rejects(cost.prepare(db,ctx,{...bad,...alteration}));
  const close=await cost.prepare(db,ctx,bad);
  await db.query("UPDATE accounting_periods SET status='CLOSED' WHERE workspace_id='w' AND starts_on<=$1 AND ends_on>=$1",[today]);
  await assert.rejects(assistant.executeProposal(db,ctx,close.proposal.id),/closed/i);

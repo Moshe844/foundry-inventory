@@ -40,6 +40,8 @@ async function previewInTransaction(client,ctx,input){
  if(reference.length<3||reference.length>1200)throw new ValidationError('Provide the purchase document, opening valuation or owner-confirmed evidence supporting this actual cost.');
  const currency=pricing.normaliseCurrency(input.currency,settings.base_currency);
  if(currency!==settings.base_currency)throw new ValidationError('Existing-stock cost must use the accounting base currency; no exchange rate will be guessed.');
+ const symbols=String(input.unitCost??'').match(/[$£€¥]/g)||[],symbol=new Intl.NumberFormat('en-US',{style:'currency',currency}).formatToParts(1).find(p=>p.type==='currency')?.value||currency;
+ if(symbols.some(s=>!symbol.includes(s)))throw new ValidationError('The unit-cost currency symbol does not match the accounting currency. Supply the evidenced amount in the displayed base currency.');
  const amount=input.unitCostMinor===undefined?pricing.toMinor(input.unitCost,'Actual unit cost'):Number(input.unitCostMinor);
  const quantity=input.quantity===undefined||input.quantity===null||input.quantity===''?current.missingUnits:Number(input.quantity);
  if(!Number.isSafeInteger(quantity)||quantity<1||quantity>current.missingUnits)throw new ValidationError(`Only ${current.missingUnits} existing units at this location are missing cost. Already-costed units cannot be costed again.`);
