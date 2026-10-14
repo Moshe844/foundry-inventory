@@ -69,8 +69,11 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
     authorize:access,
     async initialContracts(){
       const {catalogue}=await access(),operations=[];let bytes=0;
-      for(const contract of catalogue.list()){
-        if(contract.kind==='read'||contract.kind==='navigation')continue;
+      // Ordinary questions must be able to choose a governed read immediately,
+      // not pay for a separate discovery turn or a browser tour first. This is
+      // current authorized metadata, not a map limiting environment discovery.
+      const contracts=catalogue.list().sort((a,b)=>Number(b.kind==='read')-Number(a.kind==='read'));
+      for(const contract of contracts){
         const complete=describe(contract);
         const entry=Buffer.byteLength(JSON.stringify(complete))<=4096?complete:
           {name:contract.name,kind:contract.kind,description:contract.description,required:contract.required||[],detailsByName:true};
@@ -78,7 +81,8 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
         if(bytes+size>18000)break;
         operations.push(entry);bytes+=size;
       }
-      return {operations,coverage:'Current authorized execution contracts only. This is not an environment map. Discover pages and forms through the browser; use environment_interfaces for omitted contract details. All execution repeats fresh authority and canonical verification.'};
+      return {operations,total:contracts.length,complete:operations.length===contracts.length,
+        coverage:'Current authorized interface contracts within the existing metadata bound. This is not an environment map. Discover pages and forms through the browser; use environment_interfaces for omitted contract details. All operations repeat fresh authority and canonical verification.'};
     },
     async interfaces({search='',offset=0,names=[]}={}){const {actor,catalogue}=await access();
       const operationSearch=require('./interface-search').ranked(catalogue.list(),search);

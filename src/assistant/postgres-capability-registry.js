@@ -246,7 +246,7 @@ for(const [name,required] of Object.entries(REQUIRED)){
 }
 
 const READS={
-  inventory:'Current SKU stock across the business, including on-hand, committed and available-to-fulfill quantities; incoming purchase-order units are new supply, while planned/in-transit internal transfers only relocate existing stock and must not be added to business-wide incoming supply.',
+  inventory:'Current SKU physical stock, commitments, and uncommitted quantities across the business. An uncommitted quantity is not proof that all fulfillment prerequisites are met; canonical execution also checks its applicable costing, order and authority requirements. Incoming purchase-order units are new supply; planned/in-transit internal transfers relocate existing stock and must not be added to business-wide incoming supply.',
   inventory_positions:'Current on-hand stock by product and location only. It does not account for commitments and cannot establish what is available to ship.',
   inventory_movements:'Recorded physical stock movements with verified source kind: import, supplier purchase receipt, customer return, internal transfer, customer sale fulfillment, or other. Count movements by source without treating imports or returns as supplier deliveries.',
   inventory_valuation:'Current recorded inventory book cost by product and location; distinct from supplier purchase quotes.',
