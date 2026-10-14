@@ -38,7 +38,7 @@ function classify({report,answer,verified,current='READY',canonicalVerified=true
 }
 const labels={queued:'Getting started',working:'Working on your request',clarification:'Let’s clarify',approval:'Ready for your approval',
  external_wait:'Waiting for confirmation',navigation:'Ready to open in your browser',verification:'Checking the result',completed:'Completed and verified',
- interrupted:'Work paused',failed:'Could not finish',cancelled:'Stopped'};
+ interrupted:'Work paused',funding:'Spending limit reached',failed:'Could not finish',cancelled:'Stopped'};
 const ConversationState=z.object({version:z.literal(1),goalId:z.string(),phase:z.enum(Object.keys(labels)),label:z.string(),
  active:z.boolean(),terminal:z.boolean(),message:z.string(),canReply:z.boolean(),revision:z.number().int().nonnegative(),
  input:z.object({id:z.string(),question:z.string(),missingInformation:z.array(z.string())}).nullable(),
@@ -48,7 +48,7 @@ function state(goal){
  const cp=goal.checkpoint||{},h=cp.harness||{},saved=cp.conversationState;
  const phase=({READY:cp.lifecycleStage==='verification'?'verification':'queued',RUNNING:cp.lifecycleStage==='verification'?'verification':'working',
   WAITING_USER:'clarification',WAITING_APPROVAL:'approval',WAITING_EVENT:['PENDING','DELIVERING'].includes(cp.navigation?.state)?'navigation':'external_wait',COMPLETED:'completed',
-  BLOCKED:h.interruption?'interrupted':'failed',CANCELLED:'cancelled'})[goal.status]||'failed';
+  BLOCKED:h.interruption?.code==='SHARED_SPENDING_CEILING'?'funding':h.interruption?'interrupted':'failed',CANCELLED:'cancelled'})[goal.status]||'failed';
  const question=goal.status==='WAITING_USER'?(h.userQuestion||saved?.input||{question:goal.answer,missingInformation:['Your decision']}):null;
  const input=question?{id:question.id||createHash('sha256').update(JSON.stringify([goal.id,cp.messages?.length||0,question.question])).digest('hex'),
   question:publicText(question.question,'What would you like me to use?'),missingInformation:missing.safeParse(question.missingInformation).success?missing.parse(question.missingInformation):[]}:null;
@@ -57,12 +57,14 @@ function state(goal){
  // message is the clarification, without matching any words or domain.
  for(const entry of history){if(entry.role==='assistant')precedingAssistant=entry.id;
   else if(entry.questionId&&precedingAssistant)questions.add(precedingAssistant);}
- return ConversationState.parse({version:1,goalId:goal.id,phase,label:labels[phase],active:!['completed','failed','cancelled','interrupted'].includes(phase),
-  terminal:['completed','failed','cancelled'].includes(phase),message:input?.question||publicText(goal.answer,['queued','working','verification'].includes(phase)?'':FAILED),input,
+ const fundingMessage='Your request is saved. The approved spending allowance cannot cover another model request, so paid work has stopped. A separately approved budget increase is required to continue.';
+ const partial=['partial_verified_receipt','partial_observation_report'].includes(h.completionSource)?publicText(goal.answer,''):'';
+ return ConversationState.parse({version:1,goalId:goal.id,phase,label:labels[phase],active:!['completed','failed','cancelled','interrupted','funding'].includes(phase),
+  terminal:['completed','failed','cancelled'].includes(phase),message:phase==='funding'?[partial,fundingMessage].filter(Boolean).join('\n\n'):input?.question||publicText(goal.answer,['queued','working','verification'].includes(phase)?'':FAILED),input,
   canReply:phase==='clarification'&&Boolean(input),revision:saved?.revision||0,
   history:history.filter(m=>m.role==='user'||m.phase==='clarification'||!m.phase&&questions.has(m.id))
    .map(m=>({id:m.id,role:m.role,text:publicText(m.text,''),at:m.at,phase:m.phase})),
-  recovery:phase==='interrupted'?'Your goal is saved. Recorded operations must be checked before work resumes.':null});
+  recovery:phase==='funding'?'Your goal is saved. Paid work requires a separately approved spending allowance.':phase==='interrupted'?'Your goal is saved. Recorded operations must be checked before work resumes.':null});
 }
 function sync(goal){
  const old=goal.checkpoint.conversationState,next=state(goal);

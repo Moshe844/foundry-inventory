@@ -33,8 +33,10 @@ function spendingLockMessage(pilot){
  if(pilot.stopped)return 'Agent spending is paused. Your Staging budget is already approved.';
  return null;
 }
-async function view(db,ctx){if(!configured(ctx))return null;try{const {actor,pilot}=await access(db,ctx);return {
+async function view(db,ctx){if(!configured(ctx))return null;try{const {actor,pilot}=await access(db,ctx);
+ const usage=await require('./postgres-codex-budget').createBudget(db,ctx,null).status();return {
  enabled:pilot.enabled,canToggle:actor.role==='owner',funded:!spendingLockMessage(pilot),lockMessage:spendingLockMessage(pilot),
+ budget:{ceiling:usage.ceiling,committed:usage.committed,remaining:usage.remaining},
  model:'Codex SDK',reasoning:'Adaptive reasoning'};}catch(e){if(e instanceof AuthorizationError)return null;throw e;}}
 async function toggle(db,ctx,enabled){await access(db,ctx,{owner:true});
  return db.transaction(async client=>{
