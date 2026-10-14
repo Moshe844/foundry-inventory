@@ -17,10 +17,14 @@ async function migratePostgres(database) {
       const statement = name.endsWith('.js')
         ? require(migrationPath).render()
         : fs.readFileSync(migrationPath, 'utf8');
-      const checksum = crypto.createHash('sha256').update(statement).digest('hex');
+      // Migration identity is independent of repository/Windows line endings.
+      // Keep the original statement for execution and the historical checksum
+      // untouched. Actual SQL edits still fail the immutable migration check.
+      const checksum = crypto.createHash('sha256').update(statement.replace(/\r\n/g,'\n')).digest('hex');
+      const originalChecksum = crypto.createHash('sha256').update(statement).digest('hex');
       const prior = await client.query('SELECT checksum FROM stockchief_postgres_migrations WHERE name = $1', [name]);
       if (prior.rows.length) {
-        if (prior.rows[0].checksum !== checksum) throw new Error(`Applied PostgreSQL migration ${name} has changed.`);
+        if (![checksum,originalChecksum].includes(prior.rows[0].checksum)) throw new Error(`Applied PostgreSQL migration ${name} has changed.`);
         continue;
       }
       await client.query(statement);
