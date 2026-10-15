@@ -13,6 +13,9 @@ const classification=Object.freeze({
  'assistant/postgres-capability-planner.js':'METERED',
  'assistant/postgres-control-plane.js':'METERED',
  'assistant/postgres-evidence-answer.js':'METERED',
+ // The preserved adaptive rollback path constructs fundedAskProvider with
+ // commercial/model.wrap before any reasoning or verification call.
+ 'assistant/postgres-goal-controller.js':'METERED',
  'assistant/postgres-service.js':'METERED',
  // Mission resumption passes a funded Ask provider to the supplier evidence assessor.
  'assistant/postgres-supplier-acceptance.js':'METERED',

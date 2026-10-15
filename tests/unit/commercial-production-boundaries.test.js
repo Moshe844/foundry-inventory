@@ -13,8 +13,9 @@ const expected={
  'assistant/calls.js':1,'assistant/mail-draft.js':1,'assistant/postgres-capability-planner.js':2,
  'assistant/postgres-control-plane.js':3,'assistant/postgres-service.js':1,
  'assistant/postgres-evidence-answer.js':1,
+ 'assistant/postgres-goal-controller.js':1,
  'assistant/postgres-supplier-acceptance.js':1,
- 'assistant/understand.js':1,'attention/interpretation-service.js':1,'commercial/model.js':1,
+ 'assistant/understand.js':1,'attention/interpretation-service.js':1,'commercial/model.js':2,
  'commercial/stripe-billing.js':1,'connections/postgres-reply-drafting.js':1,
  'connections/providers/common.js':1,'connections/reply-drafting.js':1,
  'foundry/document-intake.js':1,'foundry/understanding-service.js':3,'imports/mapping-service.js':1,
@@ -45,6 +46,13 @@ test('PostgreSQL production dependency graph has no unclassified direct provider
   'each Ask and report model call must pass through commercial metering');
  assert.match(read('connections/postgres-reply-drafting.js'),/model\.wrap\(/,
   'mailbox reply drafting must use the commercial model wrapper');
+ assert.match(read('assistant/postgres-goal-controller.js'),/const provider=service\.fundedAskProvider\(db,ctx,raw,[\s\S]*?require\('\.\.\/commercial\/model'\)\.wrap/,
+  'the preserved adaptive rollback controller must construct the funded provider before reasoning');
+ assert.match(read('commercial/model.js'),/require\('\.\/relay-provider'\)\.ownsAccounting\(provider\)/,
+  'the second provider boundary may delegate financial accounting only to a host-branded relay');
+ const identity=require('../../src/commercial/relay-provider');
+ assert.equal(identity.ownsAccounting({ownsAccounting:true,commercial:true}),false,
+  'a caller-supplied property must never bypass the commercial hold');
  assert.match(read('assistant/postgres-control-plane.js'),/reportProvider:contract\.name==='report\.template\.create'\?provider:null/,
   'report scheduling must receive the funded Ask provider');
  assert.match(read('assistant/postgres-service.js'),/const provider=fundedAskProvider\(/,
