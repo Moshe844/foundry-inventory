@@ -8,10 +8,17 @@ test('shared Staging spending serializes requests and retains uncertainty withou
  await require('../../src/db/migrate-postgres').migratePostgres(db);
  const email=randomUUID()+'@example.test',owner=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'Budget owner',businessName:'Budget test',email,password:'Fake!'+randomUUID()});
  const ctx={workspaceId:owner.workspaceId,actorId:owner.userId};process.env.STOCKCHIEF_RUNTIME_ENV='staging';
+ const unfunded=await require('../../src/assistant/postgres-codex-budget').createBudget(db,ctx,null).status();
+ assert.equal(unfunded.stopped,true);assert.equal(unfunded.ceiling,0);assert.equal(unfunded.remaining,0);
+ assert.equal(unfunded.calls,0);assert.equal(unfunded.unresolved,0);
  Object.assign(process.env,(await require('../../scripts/provision-codex-staging').provision(db,{businessName:'Budget test',emails:[email]})).environment);
  await db.query(`UPDATE stockchief_runtime.codex_pilots SET enabled=true,stopped=false,ceiling_micro_usd=100000,approval_reference='OFFLINE ONLY' WHERE workspace_id=$1`,[ctx.workspaceId]);
  const store=require('../../src/assistant/postgres-goal-store'),g=await store.create(db,ctx,'Offline goal');
  const budget=require('../../src/assistant/postgres-codex-budget').createBudget(db,ctx,g.id);
+ let statusQueries=0;
+ const measuredBudget=require('../../src/assistant/postgres-codex-budget').createBudget({query:(...args)=>{statusQueries++;return db.query(...args);}},ctx,g.id);
+ assert.deepEqual(await measuredBudget.status(),await budget.status());
+ assert.equal(statusQueries,1,'Approval and exposure come from one PostgreSQL snapshot and network round trip');
  const args={candidate:'codex',task:g.id,upperBoundMicroUsd:70000};
  const parallel=await Promise.allSettled([budget.reserve(args),budget.reserve(args)]);
  assert.equal(parallel.filter(p=>p.status==='fulfilled').length,1);assert.equal((await budget.status()).unresolved,1);

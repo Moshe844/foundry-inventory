@@ -67,16 +67,22 @@ function openPostgres(connectionString, options = {}) {
     if (!Number.isSafeInteger(retryBaseDelayMs) || retryBaseDelayMs < 1 || retryBaseDelayMs > 1000) {
       throw new TypeError('PostgreSQL retry delay must be a positive integer no greater than one second.');
     }
-    for (const timeout of [settings.statementTimeoutMs ?? 30000, settings.lockTimeoutMs ?? 10000]) {
+    const statementTimeoutMs = settings.statementTimeoutMs ?? 30000;
+    const lockTimeoutMs = settings.lockTimeoutMs ?? 10000;
+    for (const timeout of [statementTimeoutMs, lockTimeoutMs]) {
       if (!Number.isSafeInteger(timeout) || timeout < 1) throw new TypeError('PostgreSQL transaction timeouts must be positive integer milliseconds.');
     }
     for (let attempt = 0; ; attempt += 1) {
       const client = await pool.connect();
       let discard = false;
       try {
-        await client.query(`BEGIN ISOLATION LEVEL ${isolation}${settings.readOnly ? ' READ ONLY' : ''}`);
-        await client.query("SELECT set_config('statement_timeout', $1, true), set_config('lock_timeout', $2, true)",
-          [String(settings.statementTimeoutMs ?? 30000), String(settings.lockTimeoutMs ?? 10000)]);
+        // Establish the SAME transaction-local protections in one protocol
+        // round trip. These literals are enum/positive-integer validated above;
+        // no application SQL or user text is interpolated here. Do not start
+        // the operation until PostgreSQL acknowledges every setup statement.
+        await client.query(`BEGIN ISOLATION LEVEL ${isolation}${settings.readOnly ? ' READ ONLY' : ''};` +
+          ` SET LOCAL statement_timeout = '${statementTimeoutMs}ms';` +
+          ` SET LOCAL lock_timeout = '${lockTimeoutMs}ms'`);
         const result = await operation({ query: (statement, values = []) => measuredQuery(client,statement,values) });
         await client.query('COMMIT');
         return result;

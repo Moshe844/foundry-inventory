@@ -2,10 +2,15 @@
 const {randomUUID}=require('node:crypto');
 function createBudget(db,ctx,goalId){
  async function status(client=db){
-  const p=(await client.query('SELECT * FROM stockchief_runtime.codex_pilots WHERE workspace_id=$1',[ctx.workspaceId])).rows[0];
-  const u=(await client.query(`SELECT COALESCE(sum(CASE WHEN state='SETTLED' THEN charged ELSE reserved END),0) AS committed,
-   count(*) AS calls,count(*) FILTER(WHERE state IN ('RESERVED','UNKNOWN')) AS unresolved
-   FROM stockchief_runtime.codex_pilot_calls WHERE workspace_id=$1`,[ctx.workspaceId])).rows[0];
+  // One database snapshot and round trip for approval + exposure. In
+  // particular, do not combine an earlier approval with later ledger totals.
+  // The reservation path still locks the pilot and repeats fresh authority.
+  const row=(await client.query(`SELECT to_jsonb(p) AS pilot,u.*
+   FROM (SELECT COALESCE(sum(CASE WHEN state='SETTLED' THEN charged ELSE reserved END),0) AS committed,
+    count(*) AS calls,count(*) FILTER(WHERE state IN ('RESERVED','UNKNOWN')) AS unresolved
+    FROM stockchief_runtime.codex_pilot_calls WHERE workspace_id=$1) u
+   LEFT JOIN stockchief_runtime.codex_pilots p ON p.workspace_id=$1`,[ctx.workspaceId])).rows[0];
+  const p=row.pilot,u=row;
   return {approval:p?.approval_reference,ceiling:Number(p?.ceiling_micro_usd||0),expires:p?new Date(p.period_ends_at).getTime():0,
    stopped:!p?.enabled||p.stopped,committed:Number(u.committed),calls:Number(u.calls),unresolved:Number(u.unresolved),
    remaining:Math.max(0,Number(p?.ceiling_micro_usd||0)-Number(u.committed))};

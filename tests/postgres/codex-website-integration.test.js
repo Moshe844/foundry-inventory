@@ -54,27 +54,30 @@ test('pilot preserves fast navigation and hands native navigation to the custome
  // Reproduce the recorded four-response sequence through the ACTUAL SDK and
  // restricted browser. Only this offline provider fixture supplies decisions.
  const run=await pilot.run(db,ctx,requested.id,{apiKey:'FAKE',
-  image:JSON.parse(require('node:fs').readFileSync('data/environment-agent-demo/codex-sdk-approval-handoff/runtime.json')).image,
+  image:process.env.STOCKCHIEF_OFFLINE_CODEX_IMAGE||JSON.parse(require('node:fs').readFileSync('data/environment-agent-demo/codex-sdk-approval-handoff/runtime.json')).image,
   countInput:async()=>({object:'response.input_tokens',input_tokens:200}),fetchImpl:async(_url,init)=>{
    const body=JSON.parse(init.body);nativeCalls++;
    if(nativeCalls===1)return require('../helpers/codex-offline-response')(body,nativeCalls,
     `const b=ALL_TOOLS.find(t=>t.name.endsWith('__environment_browser'));text(await tools[b.name]({action:'inspect',ref:null,value:null}));`);
-   const current=await store.get(db,ctx,requested.id),entry=Object.values(current.checkpoint.harness.evidence).at(-1),screen=JSON.parse(entry.text);
+   const current=await store.get(db,ctx,requested.id),entry=Object.values(current.checkpoint.harness.evidence).findLast(e=>e.name==='environment_browser');
+   assert(entry,'The current browser observation is durably recorded independently of other evidence');
+   const observed=JSON.parse(entry.text),screen=observed.screen||observed,prefix=observed.screen?'/screen':'';
+   assert(Array.isArray(screen.controls),'The recorded browser observation contains live controls: '+JSON.stringify(Object.keys(screen)));
    if(nativeCalls<4){
     const target=screen.controls.find(c=>c.href===(nativeCalls===2?'/purchasing':'/suppliers'));assert(target,JSON.stringify(screen.controls.map(c=>({label:c.label,href:c.href}))));
     return require('../helpers/codex-offline-response')(body,nativeCalls,
      `const b=ALL_TOOLS.find(t=>t.name.endsWith('__environment_browser'));text(await tools[b.name](${JSON.stringify({action:'click',ref:target.ref,value:null})}));`);
    }
    assert.equal(nativeCalls,4);assert.equal(screen.applicationPage,true);
-   const recordedFinal={status:'completed',answer:'Opened the Suppliers tab.',claims:[{evidenceId:entry.id,path:'/title',value:screen.title}]};
+   const recordedFinal={status:'completed',answer:'Opened the Suppliers tab.',claims:[{evidenceId:entry.id,path:prefix+'/title',value:screen.title}]};
    const actor=(await db.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];
    const catalogue=await require('../../src/assistant/postgres-control-plane').planningCatalogue(db,ctx,actor);
    assert.equal((await verification.verify(db,ctx,current,JSON.stringify(recordedFinal),catalogue)).verified,false,
     'Recorded title-only final cannot falsely claim user-browser completion');
    return require('../helpers/codex-offline-response').final(body,nativeCalls,JSON.stringify({...recordedFinal,outcome:'navigation',
-    navigation:{evidenceId:entry.id,path:'/url'}}));
+    navigation:{evidenceId:entry.id,path:prefix+'/url'}}));
   }});
- assert.equal(run.status,'WAITING_EVENT',JSON.stringify(run.checkpoint.harness.failure));assert.equal(nativeCalls,4);
+ assert.equal(run.status,'WAITING_EVENT',JSON.stringify({failure:run.checkpoint.harness.failure,interruption:run.checkpoint.harness.interruption,nativeCalls}));assert.equal(nativeCalls,4);
  assert.equal(new URL(page.url()).pathname,'/ask','Private browser arrival is not user-browser arrival');
  await page.getByLabel('Ask StockChief',{exact:true}).fill('');
  await page.waitForURL(origin+'/suppliers',{timeout:15000});
@@ -93,8 +96,8 @@ test('pilot preserves fast navigation and hands native navigation to the custome
  const screen=await s.execute('environment_browser',{action:'restore'},()=>inspect.restore(origin+novel));
  const state=await store.get(db,ctx,active.id),e=Object.values(state.checkpoint.harness.evidence).at(-1);
  const checked=await verification.verify(db,ctx,state,JSON.stringify({status:'completed',outcome:'navigation',answer:'Ready to open.',
-  navigation:{evidenceId:e.id,path:'/url'},claims:[{evidenceId:e.id,path:'/title',value:screen.title}]}),(await g.authorize()).catalogue);
- assert.equal(checked.verified,true);await s.finish(checked);
+  navigation:{evidenceId:e.id,path:'/url'},claims:[{evidenceId:e.id,path:'/title',value:screen.title}]}),(await g.authorize()).catalogue,{browser:inspect});
+ assert.equal(checked.verified,true,JSON.stringify(checked));await s.finish(checked);
  assert.equal((await require('../../scripts/environment-agent-demo/waits').refresh(db,ctx,active.id)).status,'WAITING_EVENT',
   'A pending page handoff must not enqueue another model run after restart');
  await page.getByRole('button',{name:'Open '+label,exact:true}).waitFor();

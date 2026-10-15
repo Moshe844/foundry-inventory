@@ -37,10 +37,10 @@ test('actual Staging SDK lifecycle uses the real renderer, website approval and 
   return require('../helpers/codex-offline-response').final(body,calls,JSON.stringify({status:'completed',outcome:'answer',answer:'The approved receipt is recorded. Current stock is 3 units.',
    claims:[{evidenceId:entry.id,path:'/rows/0/on_hand',value:evidence.rows[0].on_hand}]}));
  };
- const options={image:JSON.parse(require('node:fs').readFileSync('data/environment-agent-demo/codex-sdk-approval-handoff/runtime.json')).image,
+ const options={image:process.env.STOCKCHIEF_OFFLINE_CODEX_IMAGE||JSON.parse(require('node:fs').readFileSync('data/environment-agent-demo/codex-sdk-approval-handoff/runtime.json')).image,
   apiKey:'FAKE',fetchImpl:fake,countInput:async()=>({object:'response.input_tokens',input_tokens:200})};
- const first=await pilot.run(db,ctx,response.goalId,options);
- assert.equal(first.status,'WAITING_APPROVAL',JSON.stringify({failure:first.checkpoint.harness?.failure,interruption:first.checkpoint.harness?.interruption,calls,answer:first.answer}));assert.equal(calls,1);
+ const firstResult=await pilot.run(db,ctx,response.goalId,options),first=await store.get(db,ctx,response.goalId);
+ assert.equal(first.status,'WAITING_APPROVAL',JSON.stringify({failure:first.checkpoint.harness?.failure,interruption:first.checkpoint.harness?.interruption,calls,answer:first.answer,returned:firstResult}));assert.equal(calls,1);
  const browserEvidence=Object.values(first.checkpoint.harness.evidence).find(e=>e.name==='environment_browser');
  assert.equal(new URL(JSON.parse(browserEvidence.text).url).pathname,'/inventory','Agent starts on the user page');
  const ready=await pilot.inbox(db,ctx,response.goalId);assert.equal(ready.approvals.length,1);

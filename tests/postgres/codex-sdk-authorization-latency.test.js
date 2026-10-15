@@ -50,7 +50,14 @@ test('native bookkeeping avoids repeated catalogue construction while retaining 
  assert(interfaceQueries<=fullQueries+lightQueries*2,'Discovery builds one catalogue with fresh execution/delivery authority checks');
  const discovered=await gateway.interfaces({search:'products catalog inventory',offset:0,names:[]});
  assert(discovered.operations.length||discovered.datasets.length,'Recorded multiword search returns usable related interfaces');
- assert(discovered.datasets.some(dataset=>dataset.queryContract),'Dataset fields arrive with discovery, without another model round');
+ assert(discovered.datasets.length,'Related governed datasets remain discoverable');
+ assert(discovered.datasets.every(dataset=>dataset.detailsByName),'Discovery advertises exact-name retrieval of complete schemas');
+ const detailed=await gateway.interfaces({names:discovered.datasets.map(dataset=>dataset.name),offset:0});
+ for(const dataset of discovered.datasets){
+  const contract=detailed.datasets.find(entry=>entry.name===dataset.name);
+  assert(contract?.queryContract,'Every discovered dataset has a retrievable query contract: '+dataset.name);
+  assert(Object.keys(contract.queryContract).length,'Exact-name lookup preserves the actual query schema');
+ }
  assert(discovered.operations.every(operation=>operation.fields||operation.detailsByName));
  const names=new Set();let offset=0;
  do{const page=await gateway.interfaces({search:'',offset,names:[]});
