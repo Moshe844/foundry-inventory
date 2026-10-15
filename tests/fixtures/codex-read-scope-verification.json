@@ -1,0 +1,40 @@
+{
+  "source": "Exact API claims and typed scope from the recorded live embedded payment investigation.",
+  "request": "Please review our customer invoices and recorded payments. Tell me which invoices are actually outstanding and what payment evidence is available; do not assume an invoice was paid because an order exists and do not change anything.",
+  "steps": [
+    {
+      "capability": "read.receivables",
+      "arguments": [
+        {
+          "name": "timeframe",
+          "value": "all_time"
+        }
+      ],
+      "dependsOn": []
+    },
+    {
+      "capability": "read.payments",
+      "arguments": [
+        {
+          "name": "timeframe",
+          "value": "all_time"
+        }
+      ],
+      "dependsOn": []
+    }
+  ],
+  "claims": [
+    {
+      "path": "/outcomes/0/result/answer",
+      "value": "Customers currently owe us nothing on open invoices."
+    },
+    {
+      "path": "/outcomes/1/result/answer",
+      "value": "No payment matched that request."
+    },
+    {
+      "path": "/outcomes/1/result/intent/timeframe",
+      "value": "all_time"
+    }
+  ]
+}

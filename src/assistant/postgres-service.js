@@ -1528,25 +1528,10 @@ function capabilityService(){return {lookup,prepareAction,prepareInstruction,
 
 async function recordCapabilityOutcome(database,ctx,message,outcome,{batchId=null,planId=null,index=0,count=1,
   pending=null}={}){
-  const {step,args,provenance}=outcome;const result=outcome.result;const contract=step?.contract;
-  const intent={intent:contract?.kind==='mutation'?'action':contract?.kind==='policy'?'instruction':
-    contract?.kind==='navigation'?'navigation':'lookup',
-    view:contract?.view||null,action:contract?.legacyAction||null,...args,
-    controlPlane:contract?{capability:contract.name,args,provenance,dependsOn:step.dependsOn,
-      continuesPending:step.continuesPending,
-      originalMessage:step.continuesPending&&pending?.capability===contract.name
-        ?pending.originalMessage||message:message,...(planId?{planId}:{}),
-      ...(result.pendingProposalId?{pendingProposalId:result.pendingProposalId}:{})}:null,
-    ...(batchId?{batchId,sourceMessage:message,requestIndex:index+1,requestCount:count}:{}),
-    ...(result.reportConfig?{reportConfig:result.reportConfig}:{}),
-    ...(result.reportConfig?{comparisonSafe:result.comparisonSafe!==false}:{}),
-    ...(result.proposal?{proposalId:result.proposal.id,
-      proposalHref:result.proposal.href||`/actions/${result.proposal.id}`}:{})};
-  const interactionId=newId('pgask');
-  if(result.reportConfig)result.handoff={href:`/reports/from-ask/${interactionId}/run`,
-    label:'Open full report and source records'};
-  result.interactionId=await storeInteraction(database,ctx,message,intent,result,interactionId);
-  result.intent=intent;return result;
+  const interactionId=newId('pgask'),result=outcome.result;
+  Object.assign(result,require('./capability-outcome-presentation').present(message,outcome,{batchId,planId,index,count,pending,interactionId}));
+  result.interactionId=await storeInteraction(database,ctx,message,result.intent,result,interactionId);
+  return result;
 }
 
 /** The production Ask entry point. Language selects registered contracts;
