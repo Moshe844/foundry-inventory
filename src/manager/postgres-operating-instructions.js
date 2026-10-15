@@ -44,6 +44,9 @@ function proposedChanges(value){
  return changes.map(change=>({...defaults,...change}));
 }
 const EFFECT_FIT_SYSTEM=`Compare the owner's instruction with the exact effects the application will enforce after approval.
+This is a scoped review of ALL requested lasting operating-rule effects, not a review of whether the entire multi-step goal has already finished. assessmentScope is supplied by the host, not the proposing agent.
+Preparation, separate human approval, one-time investigation and post-approval verification belong to the surrounding request lifecycle. Do not require those stages to be encoded as additional persistent rule effects. They remain outstanding work; accepting a faithful rule does not mark them complete or waive verification.
+Do not move an actual lasting requirement into that lifecycle scope: recurring behavior, notification delivery, timing, prohibitions and authority must still match the enforced effects. A request to verify an outcome is distinct from a request to change what the rule does.
 The listed effects are hypothetical post-approval effects, NOT currently active settings. This call only creates a pending proposal; it never applies a rule. An instruction to prepare now and wait for approval is satisfied by that lifecycle, so compare the business effect, not whether the effect already happened.
 Reject any changed measure, comparator, threshold, named SKU/location/supplier, authority, automatic action,
 notification channel or timing. A requested prohibition is satisfied only if no proposed effect violates it.
@@ -279,6 +282,10 @@ async function interpret(database,ctx,instruction,options={}){const clean=String
     if(questions.length)break;
     const fit=await completeModel({system:EFFECT_FIT_SYSTEM,
       prompt:JSON.stringify({ownerInstruction:clean,proposalLifecycle:'PENDING_UNTIL_SEPARATE_OWNER_APPROVAL',
+        assessmentScope:{kind:'ALL_REQUESTED_PERSISTENT_POLICY_EFFECTS',stage:'PREPARATION',
+          lifecycleWork:'Preparation, human approval, one-time investigation, execution and final verification are separate request stages, not persistent rule fields.',
+          lifecycleWorkComplete:false,requiresSeparateOwnerApproval:true,
+          constraints:'All lasting effects, identities, measures, comparators, limits, recurring timing, channels, prohibitions and authority remain in scope.'},
         priorApprovedRule,enforcedEffects:resolvedChanges.map(describe),
         resolvedEntities:resolvedChanges.map((change)=>({requestedSku:change.sku||null,
           verifiedSkuCode:change.skuCode||null,verifiedProductName:change.displayName||null,

@@ -1,0 +1,19 @@
+{
+  "source": "Minimal recorded failure from the isolated Staging warning attempt on 2026-10-15. Provider IDs and account data omitted.",
+  "ownerInstruction": "I want a Needs You warning whenever shoes has 10 or fewer physical units across this business. Preserve the existing reorder setting. Do not buy anything or send email. Prepare the exact lasting instruction for my approval, then after approval check that the warning really appears rather than just saying the rule was saved.",
+  "changes": [
+    {
+      "domain": "stock_alert",
+      "operation": "set",
+      "sku": "SHOES",
+      "notificationThreshold": 10,
+      "notificationMetric": "on_hand",
+      "notificationComparator": "at_or_below"
+    }
+  ],
+  "schemaName": "postgres_operating_instruction_effect_fit",
+  "recordedRejection": {
+    "equivalent": false,
+    "difference": "The effects create the Needs You warning but do not include the requested post-approval check that the warning actually appears."
+  }
+}
