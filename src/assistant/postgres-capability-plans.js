@@ -48,8 +48,6 @@ async function authorize(database,ctx,proposalId,{expectedHash=null,expectedId=n
   const plan=await missionForProposal(client,ctx.workspaceId,ctx.actorId,proposalId,{lock:true,client});
   if(!plan)throw new Error('That prepared change is not part of a multi-step mission.');
   if(expectedHash&&plan.plan_hash!==expectedHash||expectedId&&plan.id!==expectedId)throw new Error('The reviewed mission changed. Review its current scope before approving.');
-  if(!['WAITING','ADVANCING'].includes(plan.status)||plan.waiting_proposal_id!==proposalId)
-    throw new Error('That mission is no longer waiting on this exact step.');
   if(plan.plan_hash!==planHash(plan.approved_steps||[]))throw new Error('The mission plan changed before approval. Ask again.');
   const actor=(await client.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',
     [ctx.workspaceId,ctx.actorId])).rows[0];
@@ -61,6 +59,8 @@ async function authorize(database,ctx,proposalId,{expectedHash=null,expectedId=n
     if(contract.ownerOnly&&actor.role!=='owner')throw new Error('Only the inventory owner can approve this mission.');
   }
   if(plan.approval_status==='APPROVED'&&plan.authorization_mode==='MISSION')return plan;
+  if(!['WAITING','ADVANCING'].includes(plan.status)||plan.waiting_proposal_id!==proposalId)
+    throw new Error('That mission is no longer waiting on this exact step.');
   const metrics=metric(plan.metrics,'approvalInteractions');
   const changed=(await client.query(`UPDATE stockchief_runtime.assistant_capability_plans
     SET authorization_mode='MISSION',approval_status='APPROVED',approved_by_user_id=$3,approved_at=now(),
@@ -143,7 +143,7 @@ function scopeReadToCompletedRecord(steps,index,contract,args){
   if(contract.kind!=='read'||!contract.recordKind||!steps[index].dependsOn.length)return args;
   const references=[...new Set(steps.slice(0,index).filter((step)=>step.state==='DONE'
     &&registry.get(step.capability)?.kind==='mutation'
-    &&registry.get(step.capability)?.recordKind===contract.recordKind
+    &&(registry.get(step.capability)?.resultRecordKind||registry.get(step.capability)?.recordKind)===contract.recordKind
     &&step.args?.recordReference).map((step)=>step.args.recordReference))];
   return references.length===1?{...args,search:references[0]}:args;
 }
@@ -152,7 +152,7 @@ async function scopeReadToRelatedParty(database,ctx,steps,index,contract,args){
   if(contract.kind!=='read'||contract.view!=='receivables'||args.search)return args;
   const references=[...new Set(steps.slice(0,index).filter((step)=>step.state==='DONE'
     &&registry.get(step.capability)?.kind==='mutation'
-    &&registry.get(step.capability)?.recordKind==='sales_order'
+    &&(registry.get(step.capability)?.resultRecordKind||registry.get(step.capability)?.recordKind)==='sales_order'
     &&step.args?.recordReference).map((step)=>step.args.recordReference))];
   if(references.length!==1)return args;
   const rows=(await database.query(`SELECT c.name FROM sales_orders so JOIN customers c
@@ -271,7 +271,13 @@ async function resume(database,ctx,proposalId,{service,provider,rawProvider,reco
       const actor=(await database.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',
         [ctx.workspaceId,ctx.actorId])).rows[0]||null;
       while(true){
-        const next=readyIndexes(steps)[0];if(next===undefined)break;
+        // Resume an approved prepared step after a transaction abort/restart.
+        // The normal preparation path revalidates its current records and the
+        // SAME idempotency key. createProposal rejects a changed payload; the
+        // canonical executor still locks, authorizes and verifies every effect.
+        const preparedIndex=claimed.authorization_mode==='MISSION'&&claimed.approval_status==='APPROVED'&&executeAuthorizedProposal
+          ?steps.findIndex(step=>step.state==='WAITING'&&step.proposalId&&step.dependsOn.every(i=>steps[i]?.state==='DONE')):-1;
+        const next=preparedIndex>=0?preparedIndex:readyIndexes(steps)[0];if(next===undefined)break;
         const stored=steps[next];const contract=registry.get(stored.capability);
         if(!contract){stored.state='BLOCKED';stored.reason='capability_removed';break;}
         const satisfiedBy=stored.dependsOn.map((index)=>steps[index]).filter((parent)=>

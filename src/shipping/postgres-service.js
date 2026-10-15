@@ -295,7 +295,7 @@ async function handoff(database,ctx,shipmentId,input={}){
   const shipment=await requireShipment(database,ctx.workspaceId,shipmentId);
   if(shipment.status==='SHIPPED'||shipment.status==='DELIVERED')return {shipment,replayed:true};
   if(shipment.status!=='PACKED')throw new ValidationError('Pack this shipment before recording the handoff.');
-  const handover=String(input.handover||shipment.handover||'CARRIER').toUpperCase();
+  const handover=String(input.handover||shipment.handover||'CARRIER').trim().toUpperCase().replace(/[\s-]+/g,'_');
   if(!['CARRIER','COLLECTED','DELIVERED_BY_US'].includes(handover))throw new ValidationError('Choose how the goods actually left.');
   const trackingNumber=String(input.trackingNumber||shipment.tracking_number||'').trim()||null;
   const carrier=String(input.carrier||shipment.carrier||'').trim()||null;

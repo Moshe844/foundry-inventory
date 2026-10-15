@@ -111,9 +111,20 @@ async function decide({database,ctx,goalId,id,sha256,decision,execute}){
   if(h.inflight||card&&goal.status!=='WAITING_APPROVAL')throw Error('APPROVAL_NOT_READY');
   if(!card&&!stored.decision?.approved)throw Error('EXPLICIT_HUMAN_APPROVAL_REQUIRED');
   stored.decision||={...decision,at:new Date().toISOString()};
-  return {card:card||structuredClone(stored),approved:stored.decision.approved,scope:stored.decision.scope||null,alreadyExecuted:!card};
+  let reviewed=card;
+  if(!reviewed){
+   // An executed first step is no longer in the pending-card inbox. Recover
+   // its canonical proposal for a previously approved whole-mission replay.
+   const proposal=stored.kind==='business'?(await client.query(`SELECT * FROM stockchief_runtime.assistant_action_proposals
+    WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,stored.proposalId])).rows[0]:
+    (await client.query('SELECT * FROM operating_instruction_proposals WHERE workspace_id=$1 AND created_by_user_id=$2 AND id=$3',
+     [ctx.workspaceId,ctx.actorId,stored.proposalId])).rows[0];
+   if(!proposal||digest(snapshot(stored.kind,proposal))!==sha256)throw Error('APPROVAL_CHANGED');
+   reviewed={...structuredClone(stored),proposal};
+  }
+  return {card:reviewed,approved:stored.decision.approved,scope:stored.decision.scope||null,alreadyExecuted:!card};
  },{allowCompleted:true});
- if(!prepared.approved||prepared.alreadyExecuted)return prepared;
+ if(!prepared.approved||prepared.alreadyExecuted&&!prepared.scope)return prepared;
  // Canonical engine is authoritative and idempotent. Persisted human intent
  // survives a crash before/after execution; no model decides or retries it.
  const executionDatabase={...database,transaction:(operation,settings)=>database.transaction(async client=>{

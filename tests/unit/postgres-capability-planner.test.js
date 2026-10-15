@@ -115,6 +115,21 @@ test('post-approval customer balance read is scoped through the changed order',a
     'Lab Northside Plumbing: $1.50 outstanding across 1 open invoice recorded in StockChief.');
 });
 
+test('a created record keeps its output identity separate from its input record kind',async()=>{
+  const contract=registry.get('shipping.prepare');
+  assert.equal(contract.recordKind,'sales_order');
+  assert.equal(contract.resultRecordKind,'shipment');
+  assert.equal(contract.resultReference,'shipmentId');
+  const steps=[{capability:'sales_order.create',state:'DONE',args:{recordReference:'SO-00009'}},
+    {capability:'shipping.prepare',state:'DONE',args:{recordReference:'SHP-00002'}},
+    {capability:'read.sales_orders',state:'BLOCKED',dependsOn:[1],args:{search:null}}];
+  assert.deepEqual(capabilityPlans.scopeReadToCompletedRecord(steps,2,
+    registry.get('read.sales_orders'),steps[2].args),{search:'SO-00009'});
+  const database={query:async(_sql,args)=>{assert.deepEqual(args,['workspace-one','SO-00009']);return {rows:[{name:'Test buyer'}]};}};
+  assert.deepEqual(await capabilityPlans.scopeReadToRelatedParty(database,{workspaceId:'workspace-one'},
+    steps,2,registry.get('read.receivables'),{search:null}),{search:'Test buyer'});
+});
+
 test('a dependent order read can answer exact quantities after an approved write',async()=>{
   const provider={complete:async()=>{throw new Error('Exact post-action order evidence does not need a model guess.');}};
   const rows=[{order:'SO-00008',orderedUnits:2,fulfilledUnits:1,heldUnits:1,
@@ -143,6 +158,9 @@ test('a failed broad plan can retry against the actual named record’s capabili
 test('capability discovery remains compact while preserving action safety contracts',()=>{
   const catalogue=planner.planningCatalogue();
   assert.ok(planner.systemFor().length<24000,'A larger catalog can exceed Ask’s model-cost safety bound.');
+  const encoded=JSON.parse(planner.systemFor().split('Registered capability contracts: ')[1]);
+  assert.deepEqual(encoded.mutations.map(({n,a})=>({n,a})),catalogue.mutations.map(({n,a})=>({n,a})),
+    'Compact descriptions must preserve every available mutation and input');
   const contact=catalogue.mutations.find((entry)=>entry.n==='contact.create');
   assert.ok(contact,'contact creation is discoverable');
   assert.ok(contact.a.includes('recipient'));

@@ -510,7 +510,12 @@ async function createSalesOrderInTransaction(client, rawContext, input) {
     if (operation.replayed) return { ...operation.result, replayed: true };
     const customer = await requireRow(client, 'SELECT * FROM customers WHERE id=$1 AND workspace_id=$2 AND record_state=$3',
       [input.customerId, ctx.workspaceId, 'ACTIVE'], 'Choose an active customer from this inventory.');
-    const deliveryMethod = input.deliveryMethod || 'SHIP';
+    const requestedDeliveryMethod = String(input.deliveryMethod || 'SHIP').trim().toUpperCase();
+    // An own-delivery order still has a shipping destination. Transport and
+    // physical handoff are recorded by the shipment engine, not a third
+    // sales-order delivery mode. Retain compatibility with prepared proposals.
+    const deliveryMethod = requestedDeliveryMethod === 'OWN_DELIVERY' ? 'SHIP' : requestedDeliveryMethod;
+    if (!['SHIP', 'PICKUP'].includes(deliveryMethod)) throw new ValidationError('Choose shipped delivery or customer pickup.');
     const addressWasSubmitted = input.shipToAddress !== undefined;
     const shipToAddress = addressWasSubmitted ? trimOrNull(input.shipToAddress) : trimOrNull(customer.shipping_address);
     if (deliveryMethod !== 'PICKUP' && !shipToAddress) {

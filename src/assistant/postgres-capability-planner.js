@@ -173,7 +173,12 @@ function planningCatalogue(catalogue=registry,{compact=false}={}){
   };
 }
 
-function systemFor(catalogue=registry,{compact=false}={}){return `${PLANNING_RULES}\nRegistered capability contracts: ${JSON.stringify(planningCatalogue(catalogue,{compact}))}`;}
+function systemFor(catalogue=registry,{compact=false}={}){
+  const prompt=`${PLANNING_RULES}\nRegistered capability contracts: ${JSON.stringify(planningCatalogue(catalogue,{compact}))}`;
+  // Use the existing compact descriptions before an expanded catalogue can
+  // exceed the legacy planner's prompt budget. Keep every contract and input.
+  return !compact&&prompt.length>=24000?systemFor(catalogue,{compact:true}):prompt;
+}
 
 async function completeWithOutputRetry(provider,request){
   try{return await provider.complete(request);}

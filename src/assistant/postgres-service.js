@@ -1519,9 +1519,14 @@ async function createProposal(database,ctx,message,actionType,payload,summary) {
     VALUES($1,$2,$3,$4,$5::jsonb,$6,$7,$8)
     ON CONFLICT(workspace_id,idempotency_key) DO NOTHING RETURNING id`,
   [id,ctx.workspaceId,ctx.actorId,actionType,JSON.stringify(payload),summary,message,key]);
-  const proposalId=inserted.rows[0]?.id||(await database.query(`SELECT id,action_type FROM stockchief_runtime.assistant_action_proposals
-    WHERE workspace_id=$1 AND idempotency_key=$2 AND actor_user_id=$3`,
-  [ctx.workspaceId,key,ctx.actorId])).rows[0]?.id;
+  let proposalId=inserted.rows[0]?.id;
+  if(!proposalId){
+    const existing=(await database.query(`SELECT id,action_type,payload FROM stockchief_runtime.assistant_action_proposals
+      WHERE workspace_id=$1 AND idempotency_key=$2 AND actor_user_id=$3`,[ctx.workspaceId,key,ctx.actorId])).rows[0];
+    if(existing&&(existing.action_type!==actionType||!require('node:util').isDeepStrictEqual(existing.payload,JSON.parse(JSON.stringify(payload)))))
+      throw new InvariantError('The prepared operation changed during resumption. Review the current scope before proceeding.','proposal_scope_changed');
+    proposalId=existing?.id;
+  }
   if(!proposalId)throw new InvariantError('A prepared change could not be recovered safely.','proposal_idempotency');
   return {status:'PREPARED',answer:`${summary} Nothing has changed yet. Review and approve the exact change.`,
     proposal:{id:proposalId,summary,actionType}};

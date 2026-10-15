@@ -244,7 +244,7 @@ async function purchaseOrderSupplierInvoice(database,ctx,order,args){
 
 async function shippingHandoff(database,ctx,shipment,args){
   requireState(shipment,['PACKED'],'This shipment');
-  const handover=String(args.handover||shipment.handover||'CARRIER').toUpperCase();
+  const handover=String(args.handover||shipment.handover||'CARRIER').trim().toUpperCase().replace(/[\s-]+/g,'_');
   if(!['CARRIER','COLLECTED','DELIVERED_BY_US'].includes(handover))throw new ValidationError(
     'Choose carrier handoff, customer collection, or delivery by your business.');
   const trackingNumber=args.trackingNumber||shipment.tracking_number||null;
@@ -809,6 +809,7 @@ const SPECS=Object.freeze([
         Number(row.allocation_priority)===p.priority&&String(row.needed_by||'')===String(p.neededBy||'')))},
   {name:'shipping.prepare',description:'Pack existing allocated lines of a confirmed shipping order into one shipment, without buying postage or recording handoff.',
     record:'sales_order',fields:['recordReference','sku','quantity'],permission:permissions.FULFILL_SALES,
+    resultReference:'shipmentId',resultDisplayReference:'shipmentNumber',resultRecordKind:'shipment',
     capability:'shipping.workflow',build:shipmentPrepare,
     execute:(client,ctx,p)=>shipping.prepare(sameClient(client),ctx,p.salesOrderId,p),
     verify:async(client,ctx,r,p)=>Boolean(r.shipmentId&&await state(client,ctx,'sales_shipments',r.shipmentId,['PACKED'])&&
