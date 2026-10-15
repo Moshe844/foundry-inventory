@@ -94,6 +94,7 @@ async function main(start){
  const {Codex}=await import('/opt/stockchief/codex-sdk.mjs');
  const economicThreshold=require('./codex-models.cjs').compactionTokenLimit(profile);
  if(!Number.isSafeInteger(start.nativeCompactionTokenLimit)||start.nativeCompactionTokenLimit!==economicThreshold)throw Error('INVALID_NATIVE_COMPACTION_POLICY');
+ if(!['codex-default','stockchief-operator-v1'].includes(start.instructionsProfile))throw Error('INVALID_NATIVE_INSTRUCTIONS_PROFILE');
  const codex=new Codex({codexPathOverride:'/opt/codex/vendor/x86_64-unknown-linux-musl/bin/codex',
   // Docker CPU quotas do not change the host CPU count seen by thread pools.
   // Bound native pools to the existing one-CPU/64-PID sandbox, rather than
@@ -106,6 +107,7 @@ async function main(start){
    mcp_servers:{stockchief:{url:origin+'/mcp',bearer_token_env_var:'STOCKCHIEF_BRIDGE_TOKEN',required:true,default_tools_approval_mode:'approve'}},
    features:{shell_tool:false,multi_agent:false,js_repl:false},
    developer_instructions:start.instructions,
+   ...(start.instructionsProfile==='stockchief-operator-v1'?{model_instructions_file:'/opt/stockchief/codex-operator-instructions.txt'}:{}),
    // Test-only trigger changes WHEN native Codex compacts; never its algorithm.
    model_auto_compact_token_limit:start.offlineCompact?1:start.nativeCompactionTokenLimit}});
  const options={model:profile.model,modelReasoningEffort:profile.effort,workingDirectory:'/workspace',skipGitRepoCheck:true,

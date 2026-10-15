@@ -26,6 +26,8 @@ test('actual Staging SDK lifecycle uses the real renderer, website approval and 
  const fake=async(_url,init)=>{const body=JSON.parse(init.body);calls++;
   if(calls===1){assert(JSON.stringify(body).includes('Open suppliers tab'),'Native SDK receives the preceding conversation');
    assert(JSON.stringify(body).includes('User application context'),'Native SDK receives the page context');
+   assert(JSON.stringify(body).includes(require('../../scripts/environment-agent-demo/codex-operator-instructions').trim().split('\n')[0]),'Actual SDK loads the business operator base instructions');
+   assert(!JSON.stringify(body).includes('### Writing PR descriptions'),'Repository/PR instructions are not injected into a new business session');
    return require('../helpers/codex-offline-response')(body,calls,
    `const b=ALL_TOOLS.find(t=>t.name.endsWith('__environment_browser'));text(await tools[b.name]({action:'inspect',ref:null,value:null}));const op=ALL_TOOLS.find(t=>t.name.endsWith('__business_operations'));text(await tools[op.name](${JSON.stringify({stepsJson:JSON.stringify(steps)})}));`);
   }
@@ -44,6 +46,7 @@ test('actual Staging SDK lifecycle uses the real renderer, website approval and 
  const browserEvidence=Object.values(first.checkpoint.harness.evidence).find(e=>e.name==='environment_browser');
  assert.equal(new URL(JSON.parse(browserEvidence.text).url).pathname,'/inventory','Agent starts on the user page');
  const ready=await pilot.inbox(db,ctx,response.goalId);assert.equal(ready.approvals.length,1);
+ assert.equal(first.checkpoint.harness.native.codex.instructionsProfile,'stockchief-operator-v1');
  assert.equal((await db.query('SELECT count(*) AS n FROM movements WHERE workspace_id=$1 AND reference=$2',[ctx.workspaceId,'OFFLINE-STAGING'])).rows[0].n,'0');
  const card=ready.approvals[0];await pilot.decide(db,ctx,response.goalId,card.id,card.sha256,true,{responseReference:'OFFLINE simulated website human approval'});
  const completed=await pilot.run(db,ctx,response.goalId,options);
@@ -53,6 +56,27 @@ test('actual Staging SDK lifecycle uses the real renderer, website approval and 
  const ledger=(await db.query('SELECT state FROM stockchief_runtime.codex_pilot_calls WHERE workspace_id=$1',[ctx.workspaceId])).rows;
  assert.equal(ledger.length,3);assert(ledger.every(c=>c.state==='SETTLED'));
  assert.equal(completed.checkpoint.harness.codexRequests,3);
+ assert.equal(completed.checkpoint.harness.native.codex.instructionsProfile,'stockchief-operator-v1','Approval resumption retains the original instruction profile');
+ // Produce a real older SDK journal using the unchanged, previously certified
+ // image and a fake provider. Its missing profile field is the exact legacy
+ // persistence shape. The new image must resume it without changing its base.
+ const legacy=await pilot.start(db,ctx,'Help identify which warehouse a private report should describe.');
+ const legacyImage=process.env.STOCKCHIEF_OFFLINE_LEGACY_CODEX_IMAGE||'sha256:e07529d8e4052730eb42398b482a7b624f554f5164575eb0eb35ecdf4117cc1e';
+ let legacyCalls=0;
+ const oldQuestion=await pilot.run(db,ctx,legacy.goalId,{...options,image:legacyImage,fetchImpl:async(_url,init)=>{
+  legacyCalls++;const body=JSON.parse(init.body);assert(JSON.stringify(body).includes('### Writing PR descriptions'));
+  return require('../helpers/codex-offline-response').final(body,legacyCalls,JSON.stringify({status:'needs_user',question:'Which warehouse should the report describe?',missingInformation:['warehouse'],claims:[]}));
+ }});
+ assert.equal(oldQuestion.status,'WAITING_USER',JSON.stringify({failure:oldQuestion.checkpoint.harness?.failure,calls:legacyCalls,answer:oldQuestion.answer}));
+ await db.query("UPDATE stockchief_runtime.assistant_goals SET checkpoint=checkpoint#-'{harness,native,codex,instructionsProfile}' WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,legacy.goalId]);
+ await store.reply(db,ctx,legacy.goalId,location);
+ const legacyResumed=await pilot.run(db,ctx,legacy.goalId,{...options,fetchImpl:async(_url,init)=>{
+  legacyCalls++;const body=JSON.parse(init.body);assert(JSON.stringify(body).includes('### Writing PR descriptions'),'An existing thread keeps its previously recorded base instructions');
+  const current=await store.get(db,ctx,legacy.goalId),entry=Object.values(current.checkpoint.harness.evidence).findLast(e=>e.name==='authorized_environment');
+  return require('../helpers/codex-offline-response').final(body,legacyCalls,JSON.stringify({status:'completed',outcome:'answer',answer:'The report belongs to Testing.',claims:[{evidenceId:entry.id,path:'/business/name',value:'Testing'}]}));
+ }});
+ assert.equal(legacyResumed.status,'COMPLETED',JSON.stringify(legacyResumed.checkpoint.harness.failure));
+ assert.equal(legacyResumed.checkpoint.harness.native.codex.instructionsProfile,'codex-default');assert.equal(legacyCalls,2);
  // A later record-only goal uses the same native SDK but creates no browser or
  // read-only renderer. Verify the actual lazy boundary, not just its wrapper.
  const inspection=require('../../scripts/environment-agent-demo/inspection'),originalInspection=inspection.createInspectionServer;
