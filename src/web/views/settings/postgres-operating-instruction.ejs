@@ -3,7 +3,7 @@
 
 <section class="rm-card"><h2>Exact effect</h2>
   <% descriptions.forEach(function(description){ %><div class="rm-row"><span><strong><%= description %></strong></span></div><% }) %>
-  <p class="rm-note">Nothing here is authority merely because a model understood it. Only this saved, tenant-scoped snapshot can be approved.</p>
+  <p class="rm-note"><%= proposal.status==='PENDING' ? 'These changes are prepared for approval. Preparing them does not change your business records.' : 'This records the changes included in the instruction. Its approval status is shown below.' %></p>
 </section>
 
 <% if(locals.nativeGoal&&['COMPLETED','CANCELLED','BLOCKED'].includes(nativeGoal.status)&&proposal.status==='PENDING'){ %>
@@ -23,5 +23,8 @@
         <button class="rm-btn rm-btn--quiet" type="submit">Discard</button></form></div>
   </section>
 <% } else if (proposal.status === 'APPROVED') { %>
-  <section class="rm-card"><h2>In force</h2><p>This exact instruction was approved <%= helpers.dateTime(proposal.approvedAt) %>. Later work still rechecks current facts and every hard limit.</p></section>
+  <section class="rm-card"><h2>Approved changes</h2><p>Approved <%= helpers.dateTime(proposal.approvedAt) %>. Later instructions or settings changes may replace these changes.</p>
+    <p>To change or stop this instruction, tell StockChief what you want. It will check the current settings and prepare any change for approval.</p>
+    <a class="rm-btn rm-btn--ghost" href="/ask?about=<%= encodeURIComponent('Standing instruction: '+proposal.statedAs) %>">Request a change</a>
+  </section>
 <% } else { %><section class="rm-card"><p>This instruction is no longer in force.</p></section><% } %>

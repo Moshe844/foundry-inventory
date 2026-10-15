@@ -18,26 +18,35 @@
   var policies = locals.policies || [];
   var connections = locals.connections || [];
   var preferences = locals.preferences || [];
+  var approvalHistory = rules.some(function (r) { return r.approvalHistory; });
   var live = rules.filter(function (r) { return r.status === 'APPROVED'; });
   var waiting = rules.filter(function (r) { return r.status === 'PENDING'; });
-  var gone = rules.filter(function (r) { return r.status === 'REMOVED' || r.status === 'CANCELLED'; });
+  var gone = rules.filter(function (r) { return r.status === 'REMOVED' || r.status === 'CANCELLED' || r.status === 'SUPERSEDED'; });
 %>
 
 <p class="rm-stamp">What you've told me</p>
 <h1 class="rm-figure">
   <% if (live.length) { %>
-    <%= live.length %> standing rule<%= live.length === 1 ? '' : 's' %>, in the words you said them.
+    <%= live.length %> <%= approvalHistory ? 'approved instruction' : 'standing rule' %><%= live.length === 1 ? '' : 's' %>, in the words you said them.
   <% } else { %>
-    You haven't told me any standing rules yet.
+    <%= approvalHistory ? 'Your standing-instruction history.' : "You haven't told me any standing rules yet." %>
   <% } %>
 </h1>
 <p class="rm-sub">
   <% if (live.length) { %>
+    <% if (approvalHistory) { %>
+      These record what you approved. Later changes may replace them. Review an instruction to ask StockChief for a change or removal.
+    <% } else { %>
     Each one can be changed, paused or taken away. I only do what these say, plus what you approve
     one at a time.
+    <% } %>
   <% } else { %>
+    <% if (approvalHistory) { %>
+      Tell StockChief what you want to change. Any new instruction will be prepared for your approval.
+    <% } else { %>
     Say something like “never let Downtown have fewer than 10 Black Small” and I will write it
     down here, in your words, before it takes effect.
+    <% } %>
   <% } %>
 </p>
 
@@ -63,8 +72,8 @@
         </span>
         <span class="rm-told__m is-ok">
           <%= helpers.shortDate(rule.approvedAt || rule.createdAt) %>
-          · active
-          <a href="<%= rule.href || ('/operating-instructions/' + rule.id) %>">Change</a>
+          · <%= rule.approvalHistory ? 'approved' : 'active' %>
+          <a href="<%= rule.href || ('/operating-instructions/' + rule.id) %>"><%= rule.linkLabel || 'Change' %></a>
         </span>
       </div>
     <% }) %>
@@ -148,12 +157,12 @@
 <% } %>
 
 <% if (gone.length) { %>
-  <p class="rm-stamp">No longer in force · <%= gone.length %></p>
+  <p class="rm-stamp"><%= approvalHistory ? 'Earlier decisions' : 'No longer in force' %> · <%= gone.length %></p>
   <div class="rm-told">
     <% gone.slice(0, 6).forEach(function (rule) { %>
       <div class="rm-told__row">
         <span class="rm-told__t rm-quiet"><%= rule.summary || rule.statedAs %></span>
-        <span class="rm-told__m is-paused"><%= rule.status === 'REMOVED' ? 'removed' : 'never turned on' %></span>
+        <span class="rm-told__m is-paused"><%= rule.status === 'REMOVED' ? 'removed' : rule.status === 'SUPERSEDED' ? 'replaced' : 'never turned on' %></span>
       </div>
     <% }) %>
   </div>

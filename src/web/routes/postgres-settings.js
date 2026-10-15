@@ -15,7 +15,7 @@ const { requireAuth,requireOwner,asyncRoute }=require('../middleware');
 const { ValidationError }=require('../../domain/errors');
 const {newId,nowIso}=require('../../lib/util');
 
-function instructionFrom(row){return {id:row.id,statedAs:row.stated_as,summary:row.summary,status:row.status,
+function instructionFrom(row){return {id:row.id,statedAs:row.stated_as,summary:row.summary,status:row.status,approvalHistory:true,linkLabel:'Review',
   approvedAt:row.approved_at,createdAt:row.created_at,href:`/operating-instructions/${row.id}`};}
 
 function authorityFrom(policy){return {id:policy.id,name:policy.name,description:policy.description,

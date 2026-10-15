@@ -10,11 +10,15 @@ function unchangedControl(previous,current,path){
  const old=match[1]?previous.screen:previous,fresh=match[1]?current.screen:current,suffix=match[3]||'';
  if(!Array.isArray(old?.controls)||!Array.isArray(fresh?.controls)||/^\/(?:ref|optionsNextRef|evidencePath)(?:\/|$)/.test(suffix))return {applicable:true,matched:false};
  const original=old.controls[Number(match[2])],identity=facts(original);
+ const sameSequence=old.controls.length===fresh.controls.length&&old.controls.every((control,index)=>facts(control)===facts(fresh.controls[index]));
  // A full unchanged field/control, not a matching isolated value, anchors the
  // fact. Its label, name, form target, constraints, options, flags and value
  // must ALL match. Duplicate fields are ambiguous and cannot be rebased.
- if(!identity||old.controls.filter(c=>facts(c)===identity).length!==1)return {applicable:true,matched:false};
- const matches=fresh.controls.map((control,index)=>({control,index})).filter(({control})=>facts(control)===identity);
+ // Repeated names/labels are valid HTML (for example ordered array fields).
+ // Their ordinal is anchored only when the ENTIRE observed control sequence
+ // is unchanged. If any control changed, preserve strict unique rebasing.
+ if(!identity||!sameSequence&&old.controls.filter(c=>facts(c)===identity).length!==1)return {applicable:true,matched:false};
+ const matches=sameSequence?[{control:fresh.controls[Number(match[2])],index:Number(match[2])}]:fresh.controls.map((control,index)=>({control,index})).filter(({control})=>facts(control)===identity);
  if(matches.length!==1)return {applicable:true,matched:false};
  let value=original;
  if(suffix)for(const part of suffix.slice(1).split('/')){

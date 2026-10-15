@@ -1,0 +1,241 @@
+{
+  "provenance": "Sanitized static controls from the recorded report-builder failure; no business records, identifiers, session data or model decisions",
+  "controls": [
+    {
+      "tag": "select",
+      "type": null,
+      "role": null,
+      "label": "Group by \nNo grouping\nproduct\nsku\nlocation\non hand\nas of",
+      "description": "",
+      "name": "groups",
+      "sensitive": false,
+      "value": "",
+      "disabled": false,
+      "required": false,
+      "readOnly": false,
+      "multiple": false,
+      "min": null,
+      "max": null,
+      "step": null,
+      "pattern": null,
+      "maxLength": null,
+      "form": {
+        "method": "post",
+        "action": "/reports/run",
+        "label": null
+      },
+      "options": [
+        {
+          "label": "No grouping",
+          "value": "",
+          "disabled": false
+        },
+        {
+          "label": "product",
+          "value": "product",
+          "disabled": false
+        },
+        {
+          "label": "sku",
+          "value": "sku",
+          "disabled": false
+        },
+        {
+          "label": "location",
+          "value": "location",
+          "disabled": false
+        },
+        {
+          "label": "on hand",
+          "value": "on_hand",
+          "disabled": false
+        },
+        {
+          "label": "as of",
+          "value": "as_of",
+          "disabled": false
+        }
+      ],
+      "optionsOffset": 0,
+      "optionsTotal": 6,
+      "optionsTruncated": false
+    },
+    {
+      "tag": "select",
+      "type": null,
+      "role": null,
+      "label": "Then group by \nNo additional grouping\nproduct\nsku\nlocation\non hand\nas of",
+      "description": "",
+      "name": "groups",
+      "sensitive": false,
+      "value": "",
+      "disabled": false,
+      "required": false,
+      "readOnly": false,
+      "multiple": false,
+      "min": null,
+      "max": null,
+      "step": null,
+      "pattern": null,
+      "maxLength": null,
+      "form": {
+        "method": "post",
+        "action": "/reports/run",
+        "label": null
+      },
+      "options": [
+        {
+          "label": "No additional grouping",
+          "value": "",
+          "disabled": false
+        },
+        {
+          "label": "product",
+          "value": "product",
+          "disabled": false
+        },
+        {
+          "label": "sku",
+          "value": "sku",
+          "disabled": false
+        },
+        {
+          "label": "location",
+          "value": "location",
+          "disabled": false
+        },
+        {
+          "label": "on hand",
+          "value": "on_hand",
+          "disabled": false
+        },
+        {
+          "label": "as of",
+          "value": "as_of",
+          "disabled": false
+        }
+      ],
+      "optionsOffset": 0,
+      "optionsTotal": 6,
+      "optionsTruncated": false
+    },
+    {
+      "tag": "select",
+      "type": null,
+      "role": null,
+      "label": "Then group by \nNo additional grouping\nproduct\nsku\nlocation\non hand\nas of",
+      "description": "",
+      "name": "groups",
+      "sensitive": false,
+      "value": "",
+      "disabled": false,
+      "required": false,
+      "readOnly": false,
+      "multiple": false,
+      "min": null,
+      "max": null,
+      "step": null,
+      "pattern": null,
+      "maxLength": null,
+      "form": {
+        "method": "post",
+        "action": "/reports/run",
+        "label": null
+      },
+      "options": [
+        {
+          "label": "No additional grouping",
+          "value": "",
+          "disabled": false
+        },
+        {
+          "label": "product",
+          "value": "product",
+          "disabled": false
+        },
+        {
+          "label": "sku",
+          "value": "sku",
+          "disabled": false
+        },
+        {
+          "label": "location",
+          "value": "location",
+          "disabled": false
+        },
+        {
+          "label": "on hand",
+          "value": "on_hand",
+          "disabled": false
+        },
+        {
+          "label": "as of",
+          "value": "as_of",
+          "disabled": false
+        }
+      ],
+      "optionsOffset": 0,
+      "optionsTotal": 6,
+      "optionsTruncated": false
+    },
+    {
+      "tag": "select",
+      "type": null,
+      "role": null,
+      "label": "Date grouping\nExact dates\nday\nweek\nmonth\nquarter\nyear",
+      "description": "",
+      "name": "dateGrain",
+      "sensitive": false,
+      "value": "exact",
+      "disabled": false,
+      "required": false,
+      "readOnly": false,
+      "multiple": false,
+      "min": null,
+      "max": null,
+      "step": null,
+      "pattern": null,
+      "maxLength": null,
+      "form": {
+        "method": "post",
+        "action": "/reports/run",
+        "label": null
+      },
+      "options": [
+        {
+          "label": "Exact dates",
+          "value": "exact",
+          "disabled": false
+        },
+        {
+          "label": "day",
+          "value": "day",
+          "disabled": false
+        },
+        {
+          "label": "week",
+          "value": "week",
+          "disabled": false
+        },
+        {
+          "label": "month",
+          "value": "month",
+          "disabled": false
+        },
+        {
+          "label": "quarter",
+          "value": "quarter",
+          "disabled": false
+        },
+        {
+          "label": "year",
+          "value": "year",
+          "disabled": false
+        }
+      ],
+      "optionsOffset": 0,
+      "optionsTotal": 6,
+      "optionsTruncated": false
+    }
+  ]
+}
