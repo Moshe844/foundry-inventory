@@ -83,7 +83,7 @@ async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null,ob
         for(let depth=0;depth<2&&parent&&!['BODY','HTML','MAIN'].includes(parent.tagName);depth++,parent=parent.parentElement)headingGroups.add(parent);
       }
       const elements=[...new Set([...headingGroups,...document.querySelectorAll(
-        'main,form,table,tr,section,article,fieldset,[role="main"],[role="region"],[role="row"],[role="group"]')])];
+        'main,form,table,tr,section,article,fieldset,details,[role="main"],[role="region"],[role="row"],[role="group"]')])];
       return {text:document.body.innerText,regions:elements
         .filter(element=>element.getClientRects().length&&getComputedStyle(element).visibility!=='hidden').slice(0,80)
         .map(element=>({tag:element.tagName.toLowerCase(),role:element.getAttribute('role'),
@@ -191,6 +191,15 @@ async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null,ob
     if(target.origin!==allowed||target.username||target.password)throw Error('INVALID_VERIFICATION_ORIGIN');
     // Unlike restoration, verification always performs a new scoped GET.
     await page.goto(target.href,{waitUntil:'domcontentloaded'});
+    // Disclosure state is local presentation, not a business mutation. A fresh
+    // GET resets native details even when a recorded read was expanded. Reveal
+    // these already-rendered, authorized sections for HOST verification only;
+    // never click buttons, submit forms, fetch hidden endpoints or replace the
+    // agent's independent navigation. Complete semantic regions still have to
+    // match, so opening a section cannot validate a changed business fact.
+    await page.locator('details:not([open])').evaluateAll(elements=>{
+      for(const element of elements)element.open=true;
+    });
     return inspect();
   }
   return {act,inspect,restore,verifyObservation,observeReadLinks,page,context,close:()=>context.close()};
