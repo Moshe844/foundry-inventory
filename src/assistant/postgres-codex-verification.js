@@ -11,7 +11,8 @@ async function verify(database,ctx,goal,raw,catalogue,options={}){
  if(conversation.publicText(report.answer,'')!==report.answer)return {verified:false,answer:conversation.FAILED};
  if(report.status==='completed'&&goal.checkpoint.clientIntegration===1&&!['answer','navigation'].includes(report.outcome))
   return {verified:false,answer:'I could not verify delivery of the requested result. A page inspected by the agent is not proof that it opened in your browser.'};
- if(report.status!=='completed'||typeof report.answer!=='string'||!Array.isArray(report.claims)||!report.claims.length||report.claims.length>50)
+ if(report.status!=='completed'||typeof report.answer!=='string'||!Array.isArray(report.claims)||
+  (!report.claims.length&&report.outcome!=='navigation')||report.claims.length>50)
   return {verified:false,answer:conversation.publicText(report.answer)};
  const h=goal.checkpoint.harness;
  const receipt=await require('../../scripts/environment-agent-demo/receipts').collect(database,ctx,goal,h,catalogue);
@@ -56,22 +57,36 @@ async function verify(database,ctx,goal,raw,catalogue,options={}){
   const fail=()=>({verified:false,answer:'I found a possible destination, but could not verify a safe page to open in your browser.'});
   const n=report.navigation,entry=n&&find(n.evidenceId);
   if(!entry||entry.truncated||!entry.text||createHash('sha256').update(entry.text).digest('hex')!==entry.sha256)return fail();
-  const observation=JSON.parse(entry.text);let path,label;
+  const observation=JSON.parse(entry.text);let path,label,observedDestination;
   if(entry.name==='environment_browser'){
    if(!['/url','/screen/url'].includes(n.path))return fail();
    const screen=n.path==='/screen/url'?observation.screen:observation;
    if(screen?.applicationPage!==true||screen.httpStatus!==200||typeof screen.url!=='string')return fail();
    let url;try{url=new URL(screen.url);}catch{return fail();}
    if(!['http:','https:'].includes(url.protocol)||url.username||url.password)return fail();
-   path=url.pathname+url.search;label=screen.title;
+   observedDestination=screen.url;path=url.pathname+url.search;label=screen.title;
   }else if(entry.name==='business_operations'){
    const match=/^\/outcomes\/(\d+)\/result\/navigation\/href$/.exec(n.path||'');
    const outcome=match&&observation.outcomes?.[Number(match[1])];
    if(!outcome||catalogue.get(outcome.capability)?.kind!=='navigation'||outcome.result?.status!=='ANSWERED')return fail();
-   path=outcome.result.navigation?.href;label=outcome.result.navigation?.label;
+   path=outcome.result.navigation?.href;label=outcome.result.navigation?.label;observedDestination=path;
   }else return fail();
   const href=require('./agent-navigation-path').localPath(path);
   if(!href)return fail();
+  // Navigation is itself an evidence-backed result, independent of optional
+  // factual claims in the prose. Revalidate its source even when claims=[];
+  // an old destination or an unrelated claim cannot bypass current authority.
+  if(!fresh.has(entry.id)){
+   try{fresh.set(entry.id,await require('./agent-evidence-verification').current(database,ctx,goal,entry,{catalogue,...options}));}
+   catch{return fail();}
+  }
+  let current=fresh.get(entry.id);
+  for(const part of n.path.slice(1).split('/')){
+   const key=part.replace(/~1/g,'/').replace(/~0/g,'~');
+   if(['__proto__','constructor','prototype'].includes(key)||current===null||typeof current!=='object'||!Object.hasOwn(current,key))return fail();
+   current=current[key];
+  }
+  if(current!==observedDestination)return fail();
   navigation={href,label:String(label||'the requested page').replace(/\s+·\s+StockChief$/,'').slice(0,120),
    evidenceId:entry.id,evidenceHash:entry.sha256};
  }

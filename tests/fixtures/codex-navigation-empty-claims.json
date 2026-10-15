@@ -1,0 +1,23 @@
+{
+  "recordedAt": "2026-10-15T02:04:18.906Z",
+  "source": "actual embedded Codex SDK Staging failure",
+  "goalId": "goal_myjlgjw6ir6njpzadx24au7z",
+  "request": "Bring up my supplier directory so I can browse it.",
+  "report": {
+    "version": 1,
+    "status": "completed",
+    "outcome": "navigation",
+    "answer": "Opening your supplier directory.",
+    "question": null,
+    "missingInformation": [],
+    "tier": null,
+    "reason": null,
+    "claims": [],
+    "navigation": {
+      "evidenceId": "goal_myjlgjw6ir6njpzadx24au7z:2",
+      "path": "/outcomes/0/result/navigation/href"
+    },
+    "workProducts": [],
+    "nextActions": []
+  }
+}

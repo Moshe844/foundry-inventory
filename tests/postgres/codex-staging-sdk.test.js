@@ -70,19 +70,29 @@ test('actual Staging SDK lifecycle uses the real renderer, website approval and 
     claims:[{evidenceId:entry.id,path:'/rows/0/on_hand',value:JSON.parse(entry.text).rows[0].on_hand}]}));
   }});
   assert.equal(read.status,'COMPLETED');assert.equal(opened,0);assert.equal(readCalls,2);
-  const opening=await pilot.start(db,ctx,'Please bring me to the stock directory.');let navigationCalls=0;
+  const recorded=require('../fixtures/codex-navigation-empty-claims.json');
+  const opening=await pilot.start(db,ctx,recorded.request);let navigationCalls=0;
   const navigation=await pilot.run(db,ctx,opening.goalId,{...options,fetchImpl:async(_url,init)=>{
    const body=JSON.parse(init.body);navigationCalls++;
    if(navigationCalls===1)return require('../helpers/codex-offline-response')(body,navigationCalls,
-    `const t=ALL_TOOLS.find(t=>t.name.endsWith('__business_operations'));text(await tools[t.name](${JSON.stringify({stepsJson:JSON.stringify([{capability:'navigate.inventory',arguments:[],dependsOn:[]}])})}));`);
-   assert.equal(navigationCalls,2);
+    `const t=ALL_TOOLS.find(t=>t.name.endsWith('__environment_interfaces'));text(await tools[t.name]({search:'',names:['navigate.suppliers'],offset:0}));`);
+   if(navigationCalls===2)return require('../helpers/codex-offline-response')(body,navigationCalls,
+    `const t=ALL_TOOLS.find(t=>t.name.endsWith('__business_operations'));text(await tools[t.name](${JSON.stringify({stepsJson:JSON.stringify([{capability:'navigate.suppliers',arguments:[],dependsOn:[]}])})}));`);
+   assert.equal(navigationCalls,3);
    const saved=await store.get(db,ctx,opening.goalId),entry=Object.values(saved.checkpoint.harness.evidence).findLast(e=>e.name==='business_operations');
-   const target=JSON.parse(entry.text).outcomes[0].result.navigation;
-   return require('../helpers/codex-offline-response').final(body,navigationCalls,JSON.stringify({status:'completed',outcome:'navigation',answer:'Ready to open Inventory.',
-    navigation:{evidenceId:entry.id,path:'/outcomes/0/result/navigation/href'},claims:[{evidenceId:entry.id,path:'/outcomes/0/result/navigation/href',value:target.href}]}));
+   assert.equal(JSON.parse(entry.text).outcomes[0].result.navigation.href,'/suppliers');
+   const report={...recorded.report,navigation:{...recorded.report.navigation,evidenceId:entry.id}};
+   const verification=require('../../src/assistant/postgres-codex-verification');
+   const actor=(await db.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];
+   const catalogue=await require('../../src/assistant/postgres-control-plane').planningCatalogue(db,ctx,actor);
+   assert.equal((await verification.verify(db,ctx,saved,JSON.stringify(report),catalogue)).verified,true,'The actual live final contains its own navigation evidence');
+   assert.equal((await verification.verify(db,ctx,saved,JSON.stringify({...report,outcome:'answer'}),catalogue)).verified,false,'Factual answers still need claims');
+   assert.equal((await verification.verify(db,ctx,saved,JSON.stringify({...report,navigation:{...report.navigation,evidenceId:'invented'}}),catalogue)).verified,false,'Navigation cannot invent evidence');
+   assert.equal((await verification.verify(db,ctx,saved,JSON.stringify(report),{get:()=>null,list:()=>[]})).verified,false,'Current navigation authority is required even without factual claims');
+   return require('../helpers/codex-offline-response').final(body,navigationCalls,JSON.stringify(report));
   }});
   assert.equal(navigation.status,'WAITING_EVENT',JSON.stringify(navigation.checkpoint.harness.failure));
-  assert.equal(navigation.checkpoint.navigation.href,'/inventory');assert.equal(opened,0);assert.equal(navigationCalls,2);
+  assert.equal(navigation.checkpoint.navigation.href,'/suppliers');assert.equal(opened,0);assert.equal(navigationCalls,3);
  }finally{inspection.createInspectionServer=originalInspection;}
  // A standard background mission worker must not inherit the configured
  // provider and spend outside this native goal's shared relay ledger.
