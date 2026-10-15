@@ -15,7 +15,21 @@ async function current(database,ctx,goal,entry,{catalogue,browser}={}){
   database={query:(...args)=>client.query(...args),transaction:operation=>operation(client)};
  }
  if(entry.name==='canonical_execution_state')return require('../../scripts/environment-agent-demo/receipts').collect(database,ctx,goal,goal.checkpoint.harness,catalogue);
- const saved=source(entry);
+ if(entry.name==='authorized_environment'){
+  const row=(await database.query(`SELECT w.name,u.role FROM users u JOIN workspaces w ON w.id=u.workspace_id
+   WHERE u.workspace_id=$1 AND u.id=$2`,[ctx.workspaceId,ctx.actorId])).rows[0];
+  if(!row)throw Error('CURRENT_AUTHORITY_REQUIRED');
+  return {business:{name:row.name},actor:{role:row.role},clock:{utc:new Date().toISOString()}};
+ }
+ let saved;
+ if(entry.name==='environment_interfaces'&&!entry.sourceText){
+  // Older journals already contain the host-generated exact-name selection.
+  // That complete selection is reconstructible; an old paginated search is
+  // not, because its offset was not saved. Never guess missing provenance.
+  const observed=JSON.parse(entry.text),selection=observed.selection;
+  if(selection?.kind!=='names'||!Array.isArray(selection.names)||!selection.names.length||selection.names.length>6||selection.names.some(name=>typeof name!=='string'))throw Error('CURRENT_EVIDENCE_REQUIRED');
+  saved={version:1,name:entry.name,input:{search:'',offset:0,names:selection.names}};
+ }else saved=source(entry);
  if(saved.name==='environment_browser'){
   if(!browser)throw Error('CURRENT_BROWSER_VERIFICATION_REQUIRED');
   const observation=JSON.parse(entry.text),screen=observation.screen||observation;
@@ -32,6 +46,10 @@ async function current(database,ctx,goal,entry,{catalogue,browser}={}){
  }
  const actor=(await database.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];
  if(!actor)throw Error('CURRENT_AUTHORITY_REQUIRED');
+ if(saved.name==='environment_interfaces'){
+  if(!catalogue)throw Error('CURRENT_INTERFACE_CATALOGUE_REQUIRED');
+  return require('../../scripts/environment-agent-demo/gateway').interfaceSnapshot(catalogue,actor,saved.input);
+ }
  if(saved.name==='environment_dataset'){
   const input=saved.input,spec=typeof input.specJson==='string'?JSON.parse(input.specJson):input.spec;
   require('../../scripts/environment-agent-demo/contracts').datasetSpec(spec,actor);

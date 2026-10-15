@@ -1,0 +1,66 @@
+{
+  "source": "Exact metadata claims from the recorded embedded SDK sales/shipping investigation. No model decisions replayed by production runtime.",
+  "observations": [
+    {
+      "selection": {
+        "kind": "names",
+        "names": [
+          "sales_order.create",
+          "sales_order.fulfill",
+          "shipping.prepare",
+          "shipping.quote",
+          "shipping.label",
+          "shipping.handoff"
+        ]
+      },
+      "claims": [
+        {
+          "path": "/operations/0/fields/customer/description",
+          "value": "Customer identity."
+        },
+        {
+          "path": "/operations/0/fields/shipToAddress/description",
+          "value": "Customer delivery address."
+        },
+        {
+          "path": "/operations/2/description",
+          "value": "Pack existing allocated lines of a confirmed shipping order into one shipment, without buying postage or recording handoff."
+        },
+        {
+          "path": "/operations/5/description",
+          "value": "Record actual physical handoff of a packed shipment, fulfill its allocated order lines, and post stock and accounting together. Carrier handoff requires a purchased label or exact tracking number."
+        }
+      ]
+    },
+    {
+      "selection": {
+        "kind": "names",
+        "names": [
+          "inventory.establish_cost",
+          "sales_order.confirm",
+          "sales_order.reserve_all",
+          "shipping.package_measurement",
+          "read.connections"
+        ]
+      },
+      "claims": [
+        {
+          "path": "/operations/0/description",
+          "value": "Establish evidenced actual unit cost for existing uncosted stock without a physical receipt, quantity change, payment or supplier liability. Records immutable cost evidence and a balanced inventory valuation journal. Current purchase quotes alone are not historical cost evidence. Human approval is mandatory."
+        },
+        {
+          "path": "/operations/0/fields/costBasis/description",
+          "value": "Confirmed accounting basis: opening_inventory for stock owned before accounting setup; previously_expensed for a purchase already recorded as an expense. Never infer either from a current purchase quote. Unrecorded/unpaid purchases require the supplier-invoice workflow."
+        },
+        {
+          "path": "/operations/1/description",
+          "value": "Confirm an existing draft customer order and reserve available stock; report a real shortage rather than invent stock."
+        },
+        {
+          "path": "/operations/3/description",
+          "value": "Set the measured weight and optional dimensions of one not-yet-shipped parcel, invalidating stale carrier quotes. Multi-parcel shipments require individual review."
+        }
+      ]
+    }
+  ]
+}

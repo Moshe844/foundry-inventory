@@ -35,30 +35,24 @@ async function verify(database,ctx,goal,raw,catalogue,options={}){
   const entry=find(claim.evidenceId);if(!entry)return {verified:false,answer:report.answer};
   if(entry.truncated||entry.text&&createHash('sha256').update(entry.text).digest('hex')!==entry.sha256)return {verified:false,answer:report.answer};
   if(lastExecution&&claim.historical!==true&&new Date(entry.at)<new Date(lastExecution))return {verified:false,answer:report.answer};
-  let value=entry.text?JSON.parse(entry.text):entry.value??entry.output??entry.result??entry;
-  for(const part of claim.path.slice(1).split('/')){const key=part.replace(/~1/g,'/').replace(/~0/g,'~');
-   if(['__proto__','constructor','prototype'].includes(key)||value===null||typeof value!=='object'||!Object.hasOwn(value,key))return {verified:false,answer:report.answer};
-   value=value[key];}
-  if(!equal(value,claim.value)){
-   // Browser wire encoding removes declared defaults. A whole control copied
-   // exactly from that host-produced representation is still recorded evidence.
-   // Accept that exact representation only, never an arbitrary object subset.
-   if(entry.name!=='environment_browser'||!/^\/(?:screen\/)?controls\/(?:0|[1-9]\d*)$/.test(claim.path))return {verified:false,answer:report.answer};
-   let shown=require('../../scripts/environment-agent-demo/browser-presentation').compact(JSON.parse(entry.text));
-   for(const part of claim.path.slice(1).split('/'))shown=shown?.[part];
-   if(!equal(shown,claim.value))return {verified:false,answer:report.answer};
-   value=shown;
+  const original=entry.text?JSON.parse(entry.text):entry.value??entry.output??entry.result??entry;
+  const presentation=require('../../scripts/environment-agent-demo/evidence-presentation');
+  let selected=presentation.locate(original,claim.path),toolView=false;
+  if(!selected.found||!equal(selected.value,claim.value)){
+   // The same lossless codec that delivered this observation is the only
+   // alternative representation accepted. No arbitrary projection/subset.
+   selected=presentation.locate(presentation.project(entry.name,original),claim.path);
+   if(!selected.found||!equal(selected.value,claim.value))return {verified:false,answer:report.answer};
+   toolView=true;
   }
+  const value=selected.value;
   if(claim.historical!==true){
    if(!fresh.has(entry.id)){
     try{fresh.set(entry.id,await require('./agent-evidence-verification').current(database,ctx,goal,entry,{catalogue,...options}));}
     catch(error){return unavailable('I could not confirm that the collected information still matches the current records. Your request and recorded work are saved.',error.message);}
    }
-   let current=fresh.get(entry.id),missingCurrent=false;
-   for(const part of claim.path.slice(1).split('/')){const key=part.replace(/~1/g,'/').replace(/~0/g,'~');
-    if(['__proto__','constructor','prototype'].includes(key))return {verified:false,answer:report.answer};
-    if(current===null||typeof current!=='object'||!Object.hasOwn(current,key)){missingCurrent=true;break;}
-    current=current[key];}
+   const currentClaim=presentation.locate(toolView?presentation.project(entry.name,fresh.get(entry.id)):fresh.get(entry.id),claim.path);
+   const current=currentClaim.value,missingCurrent=!currentClaim.found;
    // Controls, like text offsets and loopback ports, have observation-local
    // identity. Verify their complete semantic facts before trusting an array
    // position, even when an unrelated field happens to contain the same value.

@@ -20,6 +20,31 @@ function discoveryPage(entries,offset,summary){
  }
  return {page,nextOffset:offset+page.length<entries.length?offset+page.length:null};
 }
+// One pure representation for discovery and final CURRENT contract verification.
+// The caller supplies a freshly authorized catalogue and current actor. This
+// describes interfaces only; it cannot grant authority or execute an operation.
+function interfaceSnapshot(catalogue,actor,{search='',offset=0,names=[]}={}){
+ if(typeof search!=='string'||search.length>200||!Number.isSafeInteger(offset)||offset<0||offset>10000||
+  !Array.isArray(names)||names.length>6||names.some(name=>typeof name!=='string'))throw Error('INVALID_INTERFACE_QUERY');
+ const operationSearch=require('./interface-search').ranked(catalogue.list(),search),all=operationSearch.items;
+ const datasets=require('../../src/reports/postgres-registry').list(actor).map(d=>({...d,name:d.key}));
+ if(require('../../src/reports/postgres-composed').dimensions(actor).length)datasets.push({name:'composed',label:'Combine governed measures across datasets'});
+ const datasetSearch=require('./interface-search').ranked(datasets,search),matchedDatasets=datasetSearch.items;
+ const operationPage=discoveryPage(all,offset,c=>({name:c.name,kind:c.kind,description:c.description,
+  required:c.required||[],detailsByName:true,unavailable:c.commercialUnavailable||[]}));
+ const datasetDetails=d=>({...d,queryContract:require('../../src/reports/postgres-service').queryContract(d.name,actor)});
+ const datasetPage=discoveryPage(matchedDatasets,offset,d=>({name:d.name,label:d.label,detailsByName:true}));
+ const namedOperations=names.length?catalogue.list().filter(c=>names.includes(c.name)).map(describe):null;
+ const namedDatasets=names.length?datasets.filter(d=>names.includes(d.name)).map(datasetDetails):null;
+ return {operations:names.length?namedOperations:operationPage.page,
+  total:names.length?namedOperations.length:all.length,nextOffset:names.length?null:operationPage.nextOffset,
+  datasets:names.length?namedDatasets:datasetPage.page,
+  datasetTotal:names.length?namedDatasets.length:matchedDatasets.length,datasetNextOffset:names.length?null:datasetPage.nextOffset,
+  selection:{kind:names.length?'names':'search',...(names.length?{names}:{query:search})},
+  searchMatch:{operations:operationSearch.matchMode,datasets:datasetSearch.matchMode},
+  coverage:'These are governed execution contracts and curated report projections, not exhaustive environment discovery. Unlisted application screens, forms and rendered records remain discoverable through the browser. A missing execution contract is a reported execution limitation, never authority to bypass the gateway.',
+  policy:'Browser inspection cannot commit changes. Operations use canonical engines. Prepared means awaiting authority, never completed. No approval tool is available.'};
+}
 
 // ctx, original goal and database are host-bound. Models cannot supply tenant,
 // actor, approval, SQL, provider credentials or an alternative source message.
@@ -88,33 +113,7 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
       return {operations,operationIndex,indexComplete:true,total:contracts.length,complete:operations.length===contracts.length,
         coverage:'Current authorized interface contracts within the existing metadata bound. This is not an environment map. Discover pages and forms through the browser; use environment_interfaces for omitted contract details. All operations repeat fresh authority and canonical verification.'};
     },
-    async interfaces({search='',offset=0,names=[]}={}){const {actor,catalogue}=await access();
-      const operationSearch=require('./interface-search').ranked(catalogue.list(),search);
-      const all=operationSearch.items;
-      const datasets=require('../../src/reports/postgres-registry').list(actor).map(d=>({...d,name:d.key}));
-      if(require('../../src/reports/postgres-composed').dimensions(actor).length)datasets.push({name:'composed',label:'Combine governed measures across datasets'});
-      const datasetSearch=require('./interface-search').ranked(datasets,search);
-      const matchedDatasets=datasetSearch.items;
-      // Search is discovery, not schema loading. Return the matching contract
-      // descriptions together; exact-name lookup supplies complete schemas.
-      // Large unrelated dataset/query schemas must not grow native history
-      // simply because the agent is finding which interface exists.
-      const operationPage=discoveryPage(all,offset,c=>({name:c.name,kind:c.kind,description:c.description,
-       required:c.required||[],detailsByName:true,unavailable:c.commercialUnavailable||[]}));
-      const datasetDetails=d=>({...d,queryContract:require('../../src/reports/postgres-service').queryContract(d.name,actor)});
-      const datasetPage=discoveryPage(matchedDatasets,offset,d=>({name:d.name,label:d.label,detailsByName:true}));
-      const namedOperations=names.length?catalogue.list().filter(c=>names.includes(c.name)).map(describe):null;
-      const namedDatasets=names.length?datasets.filter(d=>names.includes(d.name)).map(datasetDetails):null;
-      return {
-      operations:names.length?namedOperations:
-       operationPage.page,
-      total:names.length?namedOperations.length:all.length,nextOffset:names.length?null:operationPage.nextOffset,
-      datasets:names.length?namedDatasets:datasetPage.page,
-      datasetTotal:names.length?namedDatasets.length:matchedDatasets.length,datasetNextOffset:names.length?null:datasetPage.nextOffset,
-      selection:{kind:names.length?'names':'search',...(names.length?{names}:{query:search})},
-      searchMatch:{operations:operationSearch.matchMode,datasets:datasetSearch.matchMode},
-      coverage:'These are governed execution contracts and curated report projections, not exhaustive environment discovery. Unlisted application screens, forms and rendered records remain discoverable through the browser. A missing execution contract is a reported execution limitation, never authority to bypass the gateway.',
-      policy:'Browser inspection cannot commit changes. Operations use canonical engines. Prepared means awaiting authority, never completed. No approval tool is available.'};},
+    async interfaces(input={}){const {actor,catalogue}=await access();return interfaceSnapshot(catalogue,actor,input);},
     async operate({steps,callId=randomUUID()}){
       let effectsStarted=false;
       try{
@@ -155,4 +154,4 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
     }
   };
 }
-module.exports={createGateway};
+module.exports={createGateway,interfaceSnapshot};

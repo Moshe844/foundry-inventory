@@ -52,7 +52,10 @@ test('native bookkeeping avoids repeated catalogue construction while retaining 
  assert(discovered.operations.length||discovered.datasets.length,'Recorded multiword search returns usable related interfaces');
  assert(discovered.datasets.length,'Related governed datasets remain discoverable');
  assert(discovered.datasets.every(dataset=>dataset.detailsByName),'Discovery advertises exact-name retrieval of complete schemas');
- const detailed=await gateway.interfaces({names:discovered.datasets.map(dataset=>dataset.name),offset:0});
+ const detailed={datasets:[]},datasetNames=discovered.datasets.map(dataset=>dataset.name);
+ for(let offset=0;offset<datasetNames.length;offset+=6){
+  const page=await gateway.interfaces({names:datasetNames.slice(offset,offset+6),offset:0});detailed.datasets.push(...page.datasets);
+ }
  for(const dataset of discovered.datasets){
   const contract=detailed.datasets.find(entry=>entry.name===dataset.name);
   assert(contract?.queryContract,'Every discovered dataset has a retrievable query contract: '+dataset.name);
