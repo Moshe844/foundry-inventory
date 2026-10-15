@@ -71,10 +71,24 @@ async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null,ob
       const ref=`${generation}:${revision}:${controls.length}`;references.set(ref,node);controls.push({ref,...data});
       if(data.optionsTruncated)controls.at(-1).optionsNextRef=cursor({kind:'options',ref,offset:10});
     }
-    const snapshot=await page.evaluate(()=>({text:document.body.innerText,regions:Array.from(document.querySelectorAll(
-      'main,form,table,tr,section,article,fieldset,[role="main"],[role="region"],[role="row"],[role="group"]'))
-      .filter(element=>element.getClientRects().length&&getComputedStyle(element).visibility!=='hidden').slice(0,80)
-      .map(element=>({tag:element.tagName.toLowerCase(),role:element.getAttribute('role'),text:element.innerText})).filter(region=>region.text.length<=18000)}));
+    const snapshot=await page.evaluate(()=>{
+      // Record headers are often ordinary divs. Capture their complete local
+      // heading groups so unrelated additions elsewhere do not invalidate a
+      // stable status/title. This is DOM-derived, never an application route,
+      // class, field or workflow catalogue. Verification still requires the
+      // entire unique group to be byte-equivalent.
+      const headingGroups=new Set();
+      for(const heading of document.querySelectorAll('h1,h2,h3,h4,[role="heading"]')){
+        let parent=heading.parentElement;
+        for(let depth=0;depth<2&&parent&&!['BODY','HTML','MAIN'].includes(parent.tagName);depth++,parent=parent.parentElement)headingGroups.add(parent);
+      }
+      const elements=[...new Set([...headingGroups,...document.querySelectorAll(
+        'main,form,table,tr,section,article,fieldset,[role="main"],[role="region"],[role="row"],[role="group"]')])];
+      return {text:document.body.innerText,regions:elements
+        .filter(element=>element.getClientRects().length&&getComputedStyle(element).visibility!=='hidden').slice(0,80)
+        .map(element=>({tag:element.tagName.toLowerCase(),role:element.getAttribute('role'),
+          ...(headingGroups.has(element)?{kind:'heading_container'}:{}),text:element.innerText})).filter(region=>region.text.length<=18000)};
+    });
     const text=snapshot.text,visibleText=text.slice(textOffset,textOffset+18000);
     // Address actual visible lines directly. A claim about one fact should
     // not require generating another copy of the entire page for verification.
@@ -89,7 +103,7 @@ async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null,ob
       for(let start=0;start+content.length<=lines.length;start++)if(content.every((line,index)=>line===lines[start+index])){
         matches.push(start);if(matches.length>1)break;
       }
-      if(matches.length===1)textRegions.push({firstLine:matches[0],count:content.length,tag:region.tag,...(region.role?{role:region.role}:{}),
+      if(matches.length===1)textRegions.push({firstLine:matches[0],count:content.length,tag:region.tag,...(region.role?{role:region.role}:{}),...(region.kind?{kind:region.kind}:{}),
         sha256:createHash('sha256').update(JSON.stringify(content)).digest('hex')});
     }
     return {url:page.url(),title:await page.title(),text:visibleText,textBlocks,textRegions,

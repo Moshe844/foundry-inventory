@@ -30,3 +30,12 @@ test('missing, tampered, ambiguous and non-text identities fail closed',()=>{
  assert.equal(unchangedLine(old,current,'/textBlocks/__proto__').matched,false);
  assert.equal(unchangedLine({screen:old},{screen:current},'/screen/textBlocks/line2').value,'Value');
 });
+test('a complete unchanged record header remains verifiable when an unrelated reference is added outside it',()=>{
+ const before=observation(['Orders','Order Q7 · Example customer','Created today','Collected','Items','One unit']);
+ const after=observation(['Orders','Order Q7 · Example customer','Created today','Collected','Reference REF-Q7','Items','One unit']);
+ after.textRegions=[{firstLine:1,count:3,tag:'div',kind:'heading_container',sha256:createHash('sha256').update(JSON.stringify(Object.values(after.textBlocks).slice(1,4))).digest('hex')}];
+ const checked=unchangedLine(before,after,'/textBlocks/line3');assert.equal(checked.matched,true);assert.equal(checked.value,'Collected');
+ const changed=observation(['Orders','Order Q7 · Example customer','Created today','Cancelled','Reference REF-Q7','Collected elsewhere']);
+ changed.textRegions=[{firstLine:1,count:3,tag:'div',kind:'heading_container',sha256:createHash('sha256').update(JSON.stringify(Object.values(changed.textBlocks).slice(1,4))).digest('hex')}];
+ assert.equal(unchangedLine(before,changed,'/textBlocks/line3').matched,false,'The same word elsewhere cannot replace a changed record status');
+});
