@@ -19,7 +19,8 @@ test('recorded daily-cap stop retains its typed reason and evidence, blocks upst
   const goal=await store.get(db,ctx,response.goalId),entry=Object.values(goal.checkpoint.harness.evidence).find(e=>e.name==='business_operations'),value=JSON.parse(entry.text).outcomes[0].result.rows[0].products;
   return require('../helpers/codex-offline-response').final(body,calls,JSON.stringify({status:'completed',outcome:'answer',answer:'There are '+value+' active products.',claims:[{evidenceId:entry.id,path:'/outcomes/0/result/rows/0/products',value}]}));
  };
- const options={image:process.env.STOCKCHIEF_OFFLINE_CODEX_IMAGE,apiKey:'FAKE',fetchImpl:fake,countInput:async()=>({object:'response.input_tokens',input_tokens:200})};assert(options.image);
+ const countBodies=[],countInput=require('../../scripts/environment-agent-demo/codex-token-counter').createTokenCounter({apiKey:'FAKE',fetchImpl:async(url,init)=>{assert.equal(url,'https://api.openai.com/v1/responses/input_tokens');countBodies.push(init.body);if(countBodies.length===2)throw new DOMException('The operation was aborted due to timeout','TimeoutError');return Response.json({object:'response.input_tokens',input_tokens:200});}});
+ const options={image:process.env.STOCKCHIEF_OFFLINE_CODEX_IMAGE,apiKey:'FAKE',fetchImpl:fake,countInput};assert(options.image);
  await pilot.run(db,ctx,response.goalId,options);const stopped=await store.get(db,ctx,response.goalId);
  assert.equal(calls,1);assert.equal(stopped.status,'BLOCKED');assert.equal(stopped.checkpoint.harness.interruption.limitKind,'daily_model_attempts');assert.equal(conversation.state(stopped).phase,'capacity');
  assert.equal(conversation.state(stopped).canReply,false);assert.equal(conversation.state(stopped).terminal,false);assert.match(conversation.state(stopped).message,/daily allowance resets/);
@@ -35,5 +36,6 @@ test('recorded daily-cap stop retains its typed reason and evidence, blocks upst
  assert(evidenceIds.every(id=>completed.checkpoint.harness.evidence[id]));assert.equal(Number(completed.budget_minor),100);
  assert.equal(Number((await db.query('SELECT count(*) AS n FROM movements WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n),0);
  assert.equal(Number((await db.query('SELECT count(*) AS n FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n),0);
+ assert.equal(countBodies.length,4,'One failed non-generating count adds no model request');assert.equal(countBodies[1],countBodies[2],'The alternate preflight counts the identical native context');
  t.diagnostic(JSON.stringify({providerCalls:2,blockedUpstreamCalls:0,sameNativeThread:true,counterNotReset:true,noBusinessEffects:true}));
 });
