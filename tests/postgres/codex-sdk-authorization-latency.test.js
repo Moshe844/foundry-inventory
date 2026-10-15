@@ -10,6 +10,10 @@ test('native bookkeeping avoids repeated catalogue construction while retaining 
  let queries=0;const measured={...db,query:async(...args)=>{queries++;return db.query(...args);}};
  const gateway=require('../../scripts/environment-agent-demo/gateway').createGateway({database:measured,ctx,goal:goal.original_request,goalId:goal.id,runToken:goal.run_token});
  queries=0;const full=await gateway.authorize(),fullQueries=queries;assert(full.catalogue.list().length);
+ const initial=await gateway.initialContracts(),codec=require('../../scripts/environment-agent-demo/interface-presentation');
+ assert(Buffer.byteLength(JSON.stringify(codec.compact(initial)))<=18000,'The complete actually delivered metadata stays inside the unchanged bound');
+ assert.deepEqual(codec.expand(codec.compact(initial)),initial,'Packing changes no contract, field or authority fact');
+ assert(initial.operations.some(c=>c.name==='read.payments'&&c.fields),'Recorded live cash investigation must not lose its read contract by measuring the uncompressed intermediate representation');
  queries=0;const fresh=await gateway.authorize({catalogue:false}),lightQueries=queries;
  assert.deepEqual(fresh.actor,full.actor);assert.equal(fresh.catalogue,undefined);
  assert(fullQueries<=lightQueries+5,'One catalogue snapshot, not a subscription lookup per capability: '+JSON.stringify({fullQueries,lightQueries}));

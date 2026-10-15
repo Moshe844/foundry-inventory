@@ -101,17 +101,20 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
       // from details merely omitted from the initial packet. This is generated
       // from fresh authorized contracts, never a page/route discovery boundary.
       const operationIndex=contracts.map(c=>({name:c.name,kind:c.kind}));
-      let bytes=Buffer.byteLength(JSON.stringify(operationIndex));
+      const packet=()=>({operations,operationIndex,indexComplete:true,total:contracts.length,complete:operations.length===contracts.length,
+        coverage:'Current authorized interface contracts within the existing metadata bound. This is not an environment map. Discover pages and forms through the browser; use environment_interfaces for omitted contract details. All operations repeat fresh authority and canonical verification.'});
       for(const contract of contracts.filter(c=>c.kind==='read')){
         const complete=describe(contract);
         const entry=Buffer.byteLength(JSON.stringify(complete))<=4096?complete:
           {name:contract.name,kind:contract.kind,description:contract.description,required:contract.required||[],detailsByName:true};
-        const size=Buffer.byteLength(JSON.stringify(entry));
-        if(bytes+size>18000)break;
-        operations.push(entry);bytes+=size;
+        operations.push(entry);
+        // The model receives the lossless compact representation below, not
+        // this repeated raw metadata. Measuring before that codec discarded
+        // useful authorized read contracts and forced paid rediscovery turns.
+        // Keep the SAME byte boundary on the complete delivered packet.
+        if(Buffer.byteLength(JSON.stringify(require('./interface-presentation').compact(packet())))>18000)operations.pop();
       }
-      return {operations,operationIndex,indexComplete:true,total:contracts.length,complete:operations.length===contracts.length,
-        coverage:'Current authorized interface contracts within the existing metadata bound. This is not an environment map. Discover pages and forms through the browser; use environment_interfaces for omitted contract details. All operations repeat fresh authority and canonical verification.'};
+      return packet();
     },
     async interfaces(input={}){const {actor,catalogue}=await access();return interfaceSnapshot(catalogue,actor,input);},
     async operate({steps,callId=randomUUID()}){
