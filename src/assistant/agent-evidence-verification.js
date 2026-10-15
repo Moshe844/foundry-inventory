@@ -34,7 +34,7 @@ async function current(database,ctx,goal,entry,{catalogue,browser}={}){
   if(!browser)throw Error('CURRENT_BROWSER_VERIFICATION_REQUIRED');
   const observation=JSON.parse(entry.text),screen=observation.screen||observation;
   if(!screen.applicationPage||screen.httpStatus!==200)throw Error('APPLICATION_EVIDENCE_REQUIRED');
-  const fresh=await browser.verifyObservation(screen.url);
+  const fresh=await browser.verifyObservation(screen.url,screen);
   if(!fresh.applicationPage||fresh.httpStatus!==200)throw Error('CURRENT_APPLICATION_EVIDENCE_REQUIRED');
   // Private renderer ports can change after a restart. The authenticated
   // application path is stable; never treat an ephemeral loopback port as a

@@ -86,7 +86,7 @@ test('committed intermediate effects survive later workflow states while current
  await tools.page.getByText('Reference: '+reference,{exact:true}).evaluate(el=>el.remove());
  await tools.page.getByText('Money',{exact:true}).last().evaluate(el=>{el.closest('details').open=true;});
  const oldPage=await tools.inspect();
- const freshPage=await tools.verifyObservation(origin+'/orders/'+order);
+ const freshPage=await tools.verifyObservation(origin+'/orders/'+order,oldPage);
  const status=Object.entries(oldPage.textBlocks).find(([,text])=>text==='Collected');assert(status,'Actual recorded order status is present');
  const unchanged=require('../../src/assistant/browser-text-verification').unchangedLine;
  assert(freshPage.textRegions.some(region=>region.kind==='heading_container'),'Host captures actual record-header semantics without registered routes or classes');
@@ -94,10 +94,19 @@ test('committed intermediate effects survive later workflow states while current
  const paidLine=Object.entries(oldPage.textBlocks).find(([,text])=>text.includes('by cash. Print receipt'));
  assert(paidLine,'The actual expanded payment line from the live failure is present');
  assert.equal(unchanged(oldPage,freshPage,'/textBlocks/'+paidLine[0]).matched,true,'A fresh GET collapsing disclosure state must not erase an unchanged canonical payment');
+ const legacyPage=structuredClone(oldPage);delete legacyPage.viewState;
+ assert.equal(unchanged(legacyPage,await tools.verifyObservation(origin+'/orders/'+order,legacyPage),'/textBlocks/'+paidLine[0]).matched,true,'The exact older live trace remains verifiable through a complete unchanged disclosure region');
  await tools.page.locator('details').filter({hasText:'Print receipt'}).last().locator('p').filter({hasText:'by cash.'}).evaluate(el=>{el.innerText=el.innerText.replace('$75.00','$76.00');});
  assert.equal(unchanged(oldPage,await tools.inspect(),'/textBlocks/'+paidLine[0]).matched,false,'Changed payment amount fails even though the host can reveal its section');
  await tools.page.locator('.page-head .badge').evaluate(el=>{el.innerText='Cancelled';});
  assert.equal(unchanged(oldPage,await tools.inspect(),'/textBlocks/'+status[0]).matched,false,'A changed header still fails current-state verification');
+ await tools.restore(origin+'/orders/new');
+ const newForm=await tools.inspect(),nativeDetails=await tools.page.locator('details').evaluateAll(elements=>elements.map(e=>e.open));
+ const checkedForm=await tools.verifyObservation(origin+'/orders/new',newForm);
+ assert.deepEqual(await tools.page.locator('details').evaluateAll(elements=>elements.map(e=>e.open)),nativeDetails,'Exact new-order failure: verification must not expand optional form fields or global navigation');
+ assert.equal(checkedForm.text,newForm.text);
+ const legacyForm=structuredClone(newForm);delete legacyForm.viewState;
+ assert.equal((await tools.verifyObservation(origin+'/orders/new',legacyForm)).text,newForm.text,'Earlier journals with closed forms retain their visible form, not an all-open replacement');
  await tools.close();
  t.diagnostic(JSON.stringify({recordedFailureReproduced:true,committedOperations:4,currentOrder:'FULFILLED',invoiceBalance:0,physicalStock:0,referenceAvailable:true,paymentReceiptStatus:200,crossOrderReceiptStatus:404,paidCalls:0}));
 });

@@ -71,9 +71,8 @@ async function main(){
   AND enabled AND NOT stopped AND approval_reference IS NOT NULL AND ceiling_micro_usd>0
   AND period_ends_at>now() LIMIT 1`,[workspaces])).rows.length);
  const worker=require('../src/operations/postgres-worker').start(db,{handlers:{'assistant.run-codex-goal':handler},leaseMs:10*60000,shouldClaim});
- const stopNotifications=await db.listen('stockchief_codex_jobs',message=>{
-  if(workspaces.includes(message.payload))worker.wake();
- }).catch(error=>{console.warn('Job notifications unavailable; durable polling remains active:',error.code||'NOTIFICATION_UNAVAILABLE');return async()=>{};});
+ const stopNotifications=await require('../src/assistant/postgres-goal-resume').watchDependencies(db,workspaces,()=>worker.wake())
+  .catch(error=>{console.warn('Job/dependency notifications unavailable; durable polling and sweeps remain active:',error.code||'NOTIFICATION_UNAVAILABLE');return async()=>{};});
  const stop=async()=>{clearInterval(keepAlive);clearInterval(warmTimer);clearInterval(availabilityTimer);await stopNotifications();await worker.stop();await warming;await availability;
   await db.query('UPDATE stockchief_runtime.codex_pilots SET worker_seen_at=NULL,worker_identity=NULL WHERE workspace_id=ANY($1::text[]) AND worker_identity=$2',[workspaces,workerIdentity]).catch(()=>{});
   await inspectionPool.close();await sandboxPool.close();await db.close();};

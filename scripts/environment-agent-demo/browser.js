@@ -84,7 +84,8 @@ async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null,ob
       }
       const elements=[...new Set([...headingGroups,...document.querySelectorAll(
         'main,form,table,tr,section,article,fieldset,details,[role="main"],[role="region"],[role="row"],[role="group"]')])];
-      return {text:document.body.innerText,regions:elements
+      return {text:document.body.innerText,openDisclosures:Array.from(document.querySelectorAll('details[open]'))
+        .map(element=>element.querySelector(':scope > summary')?.textContent?.replace(/\s+/g,' ').trim()).filter(Boolean),regions:elements
         .filter(element=>element.getClientRects().length&&getComputedStyle(element).visibility!=='hidden').slice(0,80)
         .map(element=>({tag:element.tagName.toLowerCase(),role:element.getAttribute('role'),
           ...(headingGroups.has(element)?{kind:'heading_container'}:{}),text:element.innerText})).filter(region=>region.text.length<=18000)};
@@ -107,6 +108,7 @@ async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null,ob
         sha256:createHash('sha256').update(JSON.stringify(content)).digest('hex')});
     }
     return {url:page.url(),title:await page.title(),text:visibleText,textBlocks,textRegions,
+      viewState:{version:1,openDisclosures:snapshot.openDisclosures.map(summary=>createHash('sha256').update(summary).digest('hex'))},
       controls,httpStatus,applicationPage,truncated:controlOffset+controls.length<total||textOffset+18000<text.length,
       pagination:{controlOffset,controlTotal:total,textOffset,textLength:text.length,
         controlsNextRef:controlOffset+controls.length<total?cursor({kind:'page',controlOffset:controlOffset+controls.length,textOffset}):null,
@@ -186,21 +188,39 @@ async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null,ob
       }
     }
   }
-  async function verifyObservation(url){
+  async function verifyObservation(url,previous=null){
     const target=new URL(url);
     if(target.origin!==allowed||target.username||target.password)throw Error('INVALID_VERIFICATION_ORIGIN');
     // Unlike restoration, verification always performs a new scoped GET.
     await page.goto(target.href,{waitUntil:'domcontentloaded'});
-    // Disclosure state is local presentation, not a business mutation. A fresh
-    // GET resets native details even when a recorded read was expanded. Reveal
-    // these already-rendered, authorized sections for HOST verification only;
-    // never click buttons, submit forms, fetch hidden endpoints or replace the
-    // agent's independent navigation. Complete semantic regions still have to
-    // match, so opening a section cannot validate a changed business fact.
-    await page.locator('details:not([open])').evaluateAll(elements=>{
-      for(const element of elements)element.open=true;
-    });
-    return inspect();
+    // Reproduce only LOCAL disclosure presentation, never input values,
+    // selections, submissions or business state. Opening every section on a
+    // verification GET changes the observed form and its line/control offsets.
+    const details=await page.locator('details').evaluateAll(elements=>elements.map(element=>
+      element.querySelector(':scope > summary')?.textContent?.replace(/\s+/g,' ').trim()||''));
+    const keys=details.map(summary=>createHash('sha256').update(summary).digest('hex'));
+    const saved=previous?.viewState?.version===1&&Array.isArray(previous.viewState.openDisclosures)
+      ?previous.viewState.openDisclosures:null;
+    const priorLines=Object.values(previous?.textBlocks||{});
+    const states=saved?keys.map(key=>keys.filter(other=>other===key).length===1?saved.includes(key):null):null;
+    if(previous)await page.locator('details').evaluateAll((elements,{states,priorLines})=>{
+      const unique=(haystack,needle)=>{let count=0;
+        for(let index=0;index+needle.length<=haystack.length;index++)if(needle.every((line,n)=>line===haystack[index+n]))count++;
+        return count===1;
+      };
+      for(const [index,element]of elements.entries()){
+        if(states?.[index]!==null&&states?.[index]!==undefined){element.open=states[index];continue;}
+        // Legacy journals lack disclosure state. An opened section is usable
+        // only if its COMPLETE current visible content occurs uniquely in the
+        // old observation. Never infer an open section from an isolated value.
+        element.open=true;
+        const lines=element.innerText.split(/\r?\n/).map(line=>line.trim()).filter(Boolean);
+        element.open=lines.length>=2&&unique(priorLines,lines);
+      }
+    },{states,priorLines});
+    const window=previous?.pagination||{};
+    return inspect({controlOffset:Number.isSafeInteger(window.controlOffset)&&window.controlOffset>=0?window.controlOffset:0,
+      textOffset:Number.isSafeInteger(window.textOffset)&&window.textOffset>=0?window.textOffset:0});
   }
   return {act,inspect,restore,verifyObservation,observeReadLinks,page,context,close:()=>context.close()};
 }

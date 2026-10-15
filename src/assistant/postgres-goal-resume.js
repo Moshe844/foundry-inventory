@@ -72,4 +72,41 @@ async function sweep(db){
   if(goal?.status==='READY'){const job=await store.enqueue(db,goal);if(job.created)scheduled++;}}
  return scheduled;
 }
-module.exports={refresh,sweep};
+// Reconcile canonical facts promptly after settlement. This path neither
+// executes a business operation nor invokes a provider/model. The existing
+// native worker still owns reasoning, current authority and spending admission.
+async function refreshWorkspace(db,workspaceId){
+ const rows=(await db.query(`SELECT id,actor_user_id FROM stockchief_runtime.assistant_goals
+  WHERE workspace_id=$1 AND checkpoint->>'runtime'='codex-staging'
+  AND status IN ('WAITING_APPROVAL','WAITING_EVENT') AND expires_at>now()
+  ORDER BY updated_at,id LIMIT 100`,[workspaceId])).rows;
+ let scheduled=0;
+ for(const row of rows){
+  try{
+   const goal=await refresh(db,{workspaceId,actorId:row.actor_user_id},row.id);
+   if(goal?.status==='READY'&&(await store.enqueue(db,goal)).created)scheduled++;
+  }catch(error){console.warn('Agent dependency reconciliation unavailable:',error.code||'DEPENDENCY_CHECK_FAILED');}
+ }
+ return scheduled;
+}
+async function watchDependencies(db,workspaceIds,wake=()=>{}){
+ const allowed=new Set(workspaceIds),pending=new Set();let queue=Promise.resolve();
+ // Multiplex the existing dedicated job listener, rather than holding another
+ // PostgreSQL connection out of the unchanged foreground pool.
+ const stop=await db.listen('stockchief_codex_jobs',message=>{
+  let workspaceId=message.payload,dependency=false;
+  try{const event=JSON.parse(message.payload);if(event?.kind!=='dependency_changed'||typeof event.workspaceId!=='string')return;workspaceId=event.workspaceId;dependency=true;}catch{}
+  if(!allowed.has(workspaceId))return;
+  if(!dependency){wake();return;}
+  if(pending.has(workspaceId))return;
+  pending.add(workspaceId);
+  queue=queue.catch(()=>{}).then(async()=>{
+   pending.delete(workspaceId);
+   // store.enqueue publishes the usual job hint after its durable write. The
+   // ordinary worker poll still recovers a lost notification.
+   await refreshWorkspace(db,workspaceId);
+  }).catch(error=>console.warn('Agent dependency notification unavailable:',error.code||'DEPENDENCY_CHECK_FAILED'));
+ });
+ return async()=>{await stop();await queue;};
+}
+module.exports={refresh,sweep,refreshWorkspace,watchDependencies};

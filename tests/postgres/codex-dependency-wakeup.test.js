@@ -1,0 +1,56 @@
+'use strict';
+process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
+test('committed provider settlement wakes the existing native goal without a sweep, inference, duplicate job or authority bypass',{timeout:90000},async t=>{
+ const cluster=await require('../helpers/postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString);
+ let stop;const oldFlag=process.env.STOCKCHIEF_ADAPTIVE_ASK,oldScopes=process.env.STOCKCHIEF_ADAPTIVE_ASK_WORKSPACES;
+ t.after(async()=>{if(stop)await stop();if(oldFlag===undefined)delete process.env.STOCKCHIEF_ADAPTIVE_ASK;else process.env.STOCKCHIEF_ADAPTIVE_ASK=oldFlag;if(oldScopes===undefined)delete process.env.STOCKCHIEF_ADAPTIVE_ASK_WORKSPACES;else process.env.STOCKCHIEF_ADAPTIVE_ASK_WORKSPACES=oldScopes;await db.close();cluster.stop();});
+ await require('../../src/db/migrate-postgres').migratePostgres(db);
+ const owner=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'Dependency test',businessName:'Disposable',email:randomUUID()+'@example.test',password:'Offline!'+randomUUID()});
+ const ctx={workspaceId:owner.workspaceId,actorId:owner.userId},store=require('../../src/assistant/postgres-goal-store'),resume=require('../../src/assistant/postgres-goal-resume');
+ process.env.STOCKCHIEF_ADAPTIVE_ASK='1';process.env.STOCKCHIEF_ADAPTIVE_ASK_WORKSPACES=ctx.workspaceId;
+ const goal=await store.create(db,ctx,'Send the already-approved message, wait for actual provider acceptance, and verify.');
+ const held=await store.claim(db,ctx,goal.id),gateway=require('../../scripts/environment-agent-demo/gateway').createGateway({database:db,ctx,goal:goal.original_request,goalId:goal.id,runToken:held.run_token});
+ await require('../../scripts/environment-agent-demo/session').createSession({database:db,ctx,goalId:goal.id,runToken:held.run_token,candidate:'codex',authorize:gateway.authorize}).load();
+ const seeded=(await store.get(db,ctx,goal.id)).checkpoint.harness;
+ const originalActor=(await db.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];
+ const effect=await require('../../src/operations/postgres-provider-effects').enqueue(db,{workspaceId:ctx.workspaceId,kind:'mail.outbound.send',provider:'offline',aggregateType:'customer_communication',aggregateId:'fixture-'+randomUUID(),idempotencyKey:'fixture-'+randomUUID(),requestedByUserId:ctx.actorId,payload:{}});
+ const proposal='fixture-proposal-'+randomUUID();
+ await db.query(`INSERT INTO stockchief_runtime.assistant_action_proposals(id,workspace_id,actor_user_id,action_type,payload,summary,source_message,status,idempotency_key,result,executed_at)
+  VALUES($1,$2,$3,'communication.send_email','{}','Offline approved send','Offline fixture','EXECUTED',$1,$4::jsonb,now())`,[proposal,ctx.workspaceId,ctx.actorId,JSON.stringify({effectId:effect.effect.id})]);
+ const checkpoint={runtime:'codex-staging',harness:{...seeded,calls:{fixture:{state:'DONE',result:{outcomes:[{result:{proposal:{id:proposal}}}]}}}}};
+ await db.query("UPDATE stockchief_runtime.assistant_goals SET status='WAITING_EVENT',run_token=NULL,lease_until=NULL,checkpoint=$2::jsonb WHERE id=$1",[goal.id,JSON.stringify(checkpoint)]);
+ let wakeups=0;stop=await resume.watchDependencies(db,[ctx.workspaceId],()=>wakeups++);
+ const notify=workspaceId=>db.query("SELECT pg_notify('stockchief_codex_jobs',$1)",[JSON.stringify({kind:'dependency_changed',workspaceId})]);
+ await notify(ctx.workspaceId);
+ await new Promise(resolve=>setTimeout(resolve,50));assert.equal((await store.get(db,ctx,goal.id)).status,'WAITING_EVENT','A notification alone does not prove provider success');
+ let release,changed;const changedPromise=new Promise(resolve=>{changed=resolve;}),releasePromise=new Promise(resolve=>{release=resolve;});
+ const settling=db.transaction(async client=>{await client.query("UPDATE stockchief_runtime.provider_effects SET status='SUCCEEDED',completed_at=now() WHERE id=$1",[effect.effect.id]);changed();await releasePromise;});
+ await changedPromise;await new Promise(resolve=>setTimeout(resolve,50));assert.equal(wakeups,0,'Uncommitted provider facts must not wake paid reasoning');release();await settling;
+ const jobs=()=>db.query("SELECT id FROM stockchief_runtime.jobs WHERE workspace_id=$1 AND kind='assistant.run-codex-goal' AND payload->>'goalId'=$2",[ctx.workspaceId,goal.id]);
+ const started=Date.now();while(Date.now()-started<3000){
+  if((await store.get(db,ctx,goal.id)).status==='READY'&&(await jobs()).rows.length===1&&wakeups===1)break;
+  await new Promise(resolve=>setTimeout(resolve,20));
+ }
+ assert.equal((await store.get(db,ctx,goal.id)).status,'READY');
+ assert.equal((await jobs()).rows.length,1);assert.equal(wakeups,1);
+ await notify(ctx.workspaceId);await notify('another-workspace');
+ await new Promise(resolve=>setTimeout(resolve,80));assert.equal((await jobs()).rows.length,1);assert.equal(wakeups,1,'Repeated or foreign hints cannot duplicate an admitted job');
+ const revoked=await store.create(db,ctx,'Verify the settled dependency only if my authority remains valid.');
+ await db.query("UPDATE stockchief_runtime.assistant_goals SET status='WAITING_EVENT',checkpoint=$2::jsonb WHERE id=$1",[revoked.id,JSON.stringify(checkpoint)]);
+ await db.query("UPDATE users SET role='member',permissions='{}'::jsonb WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,ctx.actorId]);
+ await notify(ctx.workspaceId);await new Promise(resolve=>setTimeout(resolve,100));
+ assert.equal((await store.get(db,ctx,revoked.id)).status,'WAITING_EVENT');
+ assert.equal((await db.query("SELECT count(*) AS n FROM stockchief_runtime.jobs WHERE workspace_id=$1 AND kind='assistant.run-codex-goal' AND payload->>'goalId'=$2",[ctx.workspaceId,revoked.id])).rows[0].n,'0','A settled effect never bypasses changed authority');
+ await db.query('UPDATE users SET role=$3,permissions=$4 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId,originalActor.role,originalActor.permissions]);
+ await stop();stop=null;
+ const lost=await store.create(db,ctx,'Recover a committed dependency after a disconnected listener.');
+ await db.query("UPDATE stockchief_runtime.assistant_goals SET status='WAITING_EVENT',checkpoint=$2::jsonb WHERE id=$1",[lost.id,JSON.stringify(checkpoint)]);
+ await resume.sweep(db);
+ assert.equal((await store.get(db,ctx,lost.id)).status,'READY','Existing durable sweep recovers a lost notification without another provider execution');
+ assert.equal((await db.query("SELECT count(*) AS n FROM stockchief_runtime.jobs WHERE workspace_id=$1 AND kind='assistant.run-codex-goal' AND payload->>'goalId'=$2",[ctx.workspaceId,lost.id])).rows[0].n,'1');
+ assert.equal((await db.query('SELECT count(*) AS n FROM stockchief_runtime.codex_pilot_calls WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,'0');
+ assert.equal((await db.query('SELECT count(*) AS n FROM customer_communications WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,'0','The reconciler sends no message');
+ assert.equal((await db.query('SELECT count(*) AS n FROM movements WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,'0');
+ t.diagnostic(JSON.stringify({notificationToReadyBeforeAnySweep:true,paidCalls:0,businessExecutions:0,duplicateJobs:0,changedAuthorityBlocked:true,lostNotificationRecovered:true}));
+});
