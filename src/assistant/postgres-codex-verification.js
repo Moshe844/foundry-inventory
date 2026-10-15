@@ -1,7 +1,7 @@
 'use strict';
 const {createHash}=require('node:crypto');
 const {isDeepStrictEqual:equal}=require('node:util');
-const unavailable=(answer,code)=>({verified:false,answer,report:{version:1,status:'blocked',answer},verificationFailure:code});
+ const unavailable=(answer,code,detail={})=>({verified:false,answer,report:{version:1,status:'blocked',answer},verificationFailure:code,verificationDetail:detail});
 // Models identify claims; the host checks their values against durable evidence
 // and canonical PostgreSQL effects. A model's success flag alone is insufficient.
 async function verify(database,ctx,goal,raw,catalogue,options={}){
@@ -47,7 +47,9 @@ async function verify(database,ctx,goal,raw,catalogue,options={}){
    // The same lossless codec that delivered this observation is the only
    // alternative representation accepted. No arbitrary projection/subset.
    selected=presentation.locate(presentation.project(entry.name,original),claim.path);
-   if(!selected.found||!equal(selected.value,claim.value))return {verified:false,answer:report.answer};
+   if(!selected.found||!equal(selected.value,claim.value))return unavailable(
+    'I could not verify the supporting evidence for this answer. Your request and collected information are saved.',
+    selected.found?'EVIDENCE_VALUE_MISMATCH':'EVIDENCE_POINTER_NOT_FOUND',{evidenceId:claim.evidenceId,path:claim.path});
    toolView=true;
   }
   const value=selected.value;

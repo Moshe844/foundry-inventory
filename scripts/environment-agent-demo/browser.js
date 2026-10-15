@@ -68,7 +68,8 @@ async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null,ob
       if(data.href){try{const target=new URL(data.href,allowed);if(target.origin===allowed){const path=require('../../src/assistant/agent-navigation-path').localPath(target.pathname+target.search);if(path)knownPaths.add(path);}}catch{}}
       if(controls.length&&controlChars+size>90000){full=true;await node.dispose();continue;}
       controlChars+=size;
-      const ref=`${generation}:${revision}:${controls.length}`;references.set(ref,node);controls.push({ref,...data});
+      const indexInObservation=controls.length,ref=`${generation}:${revision}:${indexInObservation}`;
+      references.set(ref,node);controls.push({ref,...data,evidencePath:`/controls/${indexInObservation}`});
       if(data.optionsTruncated)controls.at(-1).optionsNextRef=cursor({kind:'options',ref,offset:10});
     }
     const snapshot=await page.evaluate(()=>{
@@ -121,9 +122,11 @@ async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null,ob
     if(next?.kind==='page')return inspect(next);
     const node=references.get(next?.ref||ref);
     if(!node)return {error:{code:'STALE_BROWSER_REFERENCE',message:'Inspect this fresh screen; the previous observation cursor expired.'},screen:await inspect()};
-    const data=await describe(node,next?.offset||0),control={ref:next?.ref||ref,...data};
+    const data=await describe(node,next?.offset||0),control={ref:next?.ref||ref,...data,evidencePath:'/controls/0'};
     if(data.optionsTruncated)control.optionsNextRef=cursor({kind:'options',ref:control.ref,offset:data.optionsOffset+100});
+    const open=await page.locator('details[open]').evaluateAll(elements=>elements.map(element=>element.querySelector(':scope > summary')?.textContent?.replace(/\s+/g,' ').trim()).filter(Boolean));
     return {url:page.url(),title:await page.title(),httpStatus,applicationPage,controls:[control],partial:true,
+      viewState:{version:1,openDisclosures:open.map(summary=>createHash('sha256').update(summary).digest('hex'))},
       notice:'Details of a live observed control, not permission to submit its form.'};
   }
   async function act({action,ref,value}){
@@ -218,6 +221,28 @@ async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null,ob
         element.open=lines.length>=2&&unique(priorLines,lines);
       }
     },{states,priorLines});
+    if(previous?.partial===true&&previous.controls?.length===1){
+      // A detailed field read can contain a different options page than the
+      // initial screen. Re-read that SAME observed field and options window,
+      // rather than comparing it with the first ten options of another view.
+      // Identity only selects a candidate; all fresh facts still go through
+      // the independent complete-control comparison in the host verifier.
+      const wanted=previous.controls[0],matches=[];
+      const nodes=await page.locator('a,button,input,select,textarea,summary,[role="button"],[role="link"],[role="textbox"],[role="combobox"],[role="checkbox"],[role="radio"],[contenteditable="true"]').elementHandles();
+      for(const node of nodes){
+        if(!await node.isVisible()){await node.dispose();continue;}
+        const data=await describe(node,Number.isSafeInteger(wanted.optionsOffset)&&wanted.optionsOffset>=0?wanted.optionsOffset:0,
+          Math.min(100,Math.max(10,wanted.options?.length||0)));
+        if(['tag','type','role','name','label'].every(key=>data[key]===wanted[key])&&JSON.stringify(data.form)===JSON.stringify(wanted.form))matches.push({node,data});
+        else await node.dispose();
+      }
+      if(matches.length!==1){await Promise.allSettled(matches.map(match=>match.node.dispose()));throw Error(matches.length?'CURRENT_CONTROL_AMBIGUOUS':'CURRENT_CONTROL_CHANGED');}
+      await Promise.allSettled([...references.values()].map(node=>node.dispose()));references=new Map();continuations=new Map();revision++;
+      const ref=`${generation}:${revision}:0`;references.set(ref,matches[0].node);
+      const open=await page.locator('details[open]').evaluateAll(elements=>elements.map(element=>element.querySelector(':scope > summary')?.textContent?.replace(/\s+/g,' ').trim()).filter(Boolean));
+      return {url:page.url(),title:await page.title(),httpStatus,applicationPage,controls:[{ref,...matches[0].data,evidencePath:'/controls/0'}],partial:true,
+        viewState:{version:1,openDisclosures:open.map(summary=>createHash('sha256').update(summary).digest('hex'))}};
+    }
     const window=previous?.pagination||{};
     return inspect({controlOffset:Number.isSafeInteger(window.controlOffset)&&window.controlOffset>=0?window.controlOffset:0,
       textOffset:Number.isSafeInteger(window.textOffset)&&window.textOffset>=0?window.textOffset:0});

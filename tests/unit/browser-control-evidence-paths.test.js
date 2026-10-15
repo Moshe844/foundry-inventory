@@ -1,0 +1,26 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict'),http=require('node:http'),{randomUUID}=require('node:crypto');
+test('discovered fields carry exact evidence paths and detailed option windows survive fresh verification',{timeout:30000},async t=>{
+ const name='field_'+randomUUID().slice(0,8);let changed=false,duplicate=false;
+ const server=http.createServer((_req,res)=>{res.setHeader('content-type','text/html');res.setHeader('x-stockchief-page','1');
+  const field=`<label>Unexpected choices<select name="${name}">${Array.from({length:145},(_,n)=>`<option value="v${n}" ${n===121?'selected':''}>Choice ${n}${changed&&n===131?' CHANGED':''}</option>`).join('')}</select></label>`;
+  res.end(`<html><body><a href="/">Entry</a><main><h1>Unfamiliar form</h1><details><summary>Extra fields</summary><form method="post" action="/governed-review">${field}${duplicate?field:''}</form></details></main></body></html>`);});
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>{server.closeAllConnections();server.close(resolve);}));
+ const origin='http://127.0.0.1:'+server.address().port,browser=await require('playwright').chromium.launch({headless:true});t.after(()=>browser.close());
+ const tools=await require('../../scripts/environment-agent-demo/browser').createBrowserTools(browser,{origin});t.after(()=>tools.close());
+ const first=await tools.inspect(),summary=first.controls.find(c=>c.tag==='summary');
+ const opened=await tools.act({action:'click',ref:summary.ref,value:null}),index=opened.controls.findIndex(c=>c.name===name),control=opened.controls[index];
+ assert.equal(control.evidencePath,'/controls/'+index,'Filtering cannot erase the host-supplied original field location');
+ const detail=await tools.act({action:'inspect',ref:control.ref,value:null});assert.equal(detail.controls[0].options.length,100);assert(detail.controls[0].optionsNextRef);
+ const later=await tools.act({action:'inspect',ref:detail.controls[0].optionsNextRef,value:null});
+ assert.equal(later.controls[0].evidencePath,'/controls/0');assert.equal(later.controls[0].optionsOffset,100);assert.equal(later.controls[0].options.length,45);assert.equal(later.viewState.openDisclosures.length,1);
+ const h={evidence:{}},entry=require('../../scripts/environment-agent-demo/observations').store(h,{id:'goal:1',name:'environment_browser',result:later,source:{version:1,name:'environment_browser',input:{action:'inspect',ref:control.ref,value:null}}});
+ const lazy=require('../../scripts/environment-agent-demo/lazy-browser').lazyBrowser(async()=>tools);
+ const current=()=>require('../../src/assistant/agent-evidence-verification').current({query:async()=>({rows:[]})},{},{checkpoint:{harness:h}},entry,{browser:lazy});
+ const fresh=await current();assert.equal(fresh.controls.length,1);assert.deepEqual(fresh.controls[0].options,later.controls[0].options);
+ const compare=require('../../src/assistant/browser-control-verification').unchangedControl;
+ assert.equal(compare(later,fresh,later.controls[0].evidencePath+'/value').matched,true,'The field is compared at its recorded granularity, not against an unrelated initial control');
+ assert.equal(compare(later,fresh,'/controls/0/evidencePath').matched,false,'Transport locations are not business facts');
+ changed=true;assert.equal(compare(later,await current(),'/controls/0/value').matched,false,'A changed observed option remains a changed control even when the selected value is unchanged');
+ changed=false;duplicate=true;await assert.rejects(current(),/CURRENT_CONTROL_AMBIGUOUS/,'Duplicate fields cannot substitute for the originally observed unique control');
+});

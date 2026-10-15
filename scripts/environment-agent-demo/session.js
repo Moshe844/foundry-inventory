@@ -95,6 +95,9 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    continuation:structuredClone(goal.checkpoint.continuation||null),
    conversation:structuredClone(goal.checkpoint.conversation||null),
    conversationState:structuredClone(goal.checkpoint.conversationState||null),
+   verificationFeedback:h.verificationFailure?{kind:'host_verification_feedback',code:h.verificationFailure.code,
+    ...(h.verificationFailure.evidenceId?{evidenceId:h.verificationFailure.evidenceId,path:h.verificationFailure.path}:{}),
+    notice:'The host did not verify the preceding final answer. This is diagnostic feedback, not a user request, approval or new execution authority. Preserve completed canonical effects and the original goal; use actual durable evidence and current records to correct the result. Resolve internal evidence references with the tools; ask the user only for genuinely missing business information.'}:null,
    modelRouting:structuredClone(goal.checkpoint.modelRouting||null)}};
   });},
   async checkpoint(native){
@@ -292,6 +295,9 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
      goal.status='WAITING_EVENT';goal.answer=`Ready to open ${navigation.label} in your browser.`;
     }
     h.failure=classified.failure||null;h.userQuestion=classified.question||null;
+    h.verificationFailure=verified?null:{code:/^[A-Z][A-Z0-9_]{0,99}$/.test(check.verificationFailure||'')?check.verificationFailure:'OUTCOME_UNVERIFIED',
+     nativeDigest:h.native?.codex?.digest||null,sourceHash:check.verificationSourceHash||null,
+     ...(check.verificationDetail?.evidenceId?{evidenceId:check.verificationDetail.evidenceId,path:check.verificationDetail.path}:{})};
     h.pendingReport=null;goal.checkpoint.lifecycleStage=null;
     h.completionSource=goal.status==='COMPLETED'?'host_verified_answer':'unverified_answer';
     h.finishedAt=new Date().toISOString();

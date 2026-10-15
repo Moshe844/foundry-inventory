@@ -103,10 +103,20 @@ async function run(database,ctx,id,options={}){
   // delivery is a separate durable stage: recheck the exact saved final with
   // CURRENT authority, canonical receipts and fresh records/browser evidence.
   // No credential, token count, spending hold or new SDK turn is needed here.
-  const savedFinal=require(base+'codex-runtime').savedFinal(goal.checkpoint.harness,{profile:modelProfile,messages:goal.checkpoint.messages||[]});
+  let savedFinal=require(base+'codex-runtime').savedFinal(goal.checkpoint.harness,{profile:modelProfile,messages:goal.checkpoint.messages||[]});
+  let verificationSourceHash=null;
+  if(savedFinal){
+   verificationSourceHash=await require(base+'source-hash-worker').sourceHash();
+   const rejected=goal.checkpoint.harness.verificationFailure;
+   // A settled native message is not a reusable VERIFIED result when this
+   // same host release already rejected that exact message. On an explicit
+   // Continue, resume the actual SDK with typed diagnostic feedback. A changed
+   // verifier release can first recheck the saved message without paid work.
+   if(rejected?.nativeDigest===goal.checkpoint.harness.native?.codex?.digest&&rejected.sourceHash===verificationSourceHash)savedFinal=null;
+  }
   if(savedFinal){
    audit({kind:'saved_native_result_verifying'});
-   await session.finish((client,{goal,access})=>require('./postgres-codex-verification').verify(client,ctx,goal,savedFinal,access.catalogue,{browser:ui}));
+   await session.finish(async(client,{goal,access})=>({...await require('./postgres-codex-verification').verify(client,ctx,goal,savedFinal,access.catalogue,{browser:ui}),verificationSourceHash}));
    return store.get(database,ctx,id);
   }
   const key=options.apiKey||process.env.OPENAI_API_KEY;if(!key)throw Error('OPENAI_API_KEY_REQUIRED');
@@ -176,7 +186,8 @@ async function run(database,ctx,id,options={}){
   const current=await store.get(database,ctx,id);
   if(current.status==='RUNNING'){
    const finalStarted=Date.now();
-   await session.finish((client,{goal,access})=>require('./postgres-codex-verification').verify(client,ctx,goal,result.answer,access.catalogue,{browser:ui}));
+   await session.finish(async(client,{goal,access})=>({...await require('./postgres-codex-verification').verify(client,ctx,goal,result.answer,access.catalogue,{browser:ui}),
+    verificationSourceHash:require('./codex-staging-permit').assertBinding(permit,{budget,task:id,image}).sourceHash}));
    audit({kind:'host_final_verification',timings:{finalVerificationMs:Date.now()-finalStarted}});
   }
   return store.get(database,ctx,id);

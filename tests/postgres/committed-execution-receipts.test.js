@@ -107,6 +107,18 @@ test('committed intermediate effects survive later workflow states while current
  assert.equal(checkedForm.text,newForm.text);
  const legacyForm=structuredClone(newForm);delete legacyForm.viewState;
  assert.equal((await tools.verifyObservation(origin+'/orders/new',legacyForm)).text,newForm.text,'Earlier journals with closed forms retain their visible form, not an all-open replacement');
+ // Reproduce the actual stock-cost trace: the model filtered form controls
+ // and cited index zero, which was really the page's skip link. Never accept
+ // that guessed location or infer a different field from its claimed value.
+ await require('../../src/domain/postgres-inventory-engine').receive(db,ctx,{skuId:item.skuIds[0],locationId:place.id,quantity:1,reference:'UNCOSTED-FORM-FIXTURE',idempotencyKey:'uncosted-form-fixture'});
+ const costForm=await tools.restore(origin+'/inventory/'+item.itemId+'/costs');
+ const costControl=costForm.controls.find(control=>control.name==='position');assert(costControl);
+ const costText=JSON.stringify(costForm),costSource=JSON.stringify({version:1,name:'environment_browser',input:{action:'open',value:new URL(costForm.url).pathname,ref:null}}),costEntry={id:goal.id+':cost-form',name:'environment_browser',text:costText,sha256:createHash('sha256').update(costText).digest('hex'),sourceText:costSource,sourceSha256:createHash('sha256').update(costSource).digest('hex'),at:new Date().toISOString()};
+ goal.checkpoint.harness.evidence[costEntry.id]=costEntry;
+ const badControlReport={status:'completed',outcome:'answer',answer:'The cost form prepares an approved cost correction.',claims:[{evidenceId:costEntry.id,path:'/controls/0/form/action',value:costControl.form.action}]};
+ const rejected=await verifier.verify(db,ctx,goal,badControlReport,catalogue,{browser:tools});assert.equal(rejected.verified,false);assert.equal(rejected.verificationFailure,'EVIDENCE_POINTER_NOT_FOUND');assert.equal(rejected.verificationDetail.path,'/controls/0/form/action');
+ const exactControlReport=structuredClone(badControlReport);exactControlReport.claims[0].path=costControl.evidencePath+'/form/action';
+ assert.equal((await verifier.verify(db,ctx,goal,exactControlReport,catalogue,{browser:tools})).verified,true,'The explicit field citation path works without another inspection or guessed reindexing');
  await tools.close();
  t.diagnostic(JSON.stringify({recordedFailureReproduced:true,committedOperations:4,currentOrder:'FULFILLED',invoiceBalance:0,physicalStock:0,referenceAvailable:true,paymentReceiptStatus:200,crossOrderReceiptStatus:404,paidCalls:0}));
 });
