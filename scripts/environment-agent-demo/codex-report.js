@@ -8,7 +8,7 @@ const pointer={type:'string',description:'JSON Pointer to the recorded value wit
 function object(properties){return {type:'object',properties,required:Object.keys(properties),additionalProperties:false};}
 function array(items){return {type:'array',items};}
 const schema=object({version:{type:'integer',enum:[1]},
- status:{type:'string',enum:['completed','needs_user','needs_reasoning','blocked']},
+ status:{type:'string',enum:['completed','needs_user','needs_reasoning','blocked'],description:'Use completed only for an evidence-backed business answer or verified navigation. A refusal or unsupported request uses blocked, including when the user explicitly asks you to refuse. Use needs_user only for a genuinely required user choice.'},
  outcome:{type:['string','null'],enum:['answer','navigation',null]},answer:nullableString,question:nullableString,
  missingInformation:array(string),tier:{type:['string','null'],enum:['standard','complex','exceptional',null]},reason:nullableString,
  claims:array(object({evidenceId,path:pointer,
@@ -16,7 +16,7 @@ const schema=object({version:{type:'integer',enum:[1]},
   valueJson:{type:['string','null'],description:'Null for primitive claims. Only for an array/object claim, its exact JSON serialization; value must then be null.'},historical:{type:'boolean'}})),
  navigation:{anyOf:[object({evidenceId,path:{type:'string',description:'JSON Pointer to the observed destination: /url or /screen/url for a browser observation; the recorded navigation/href field for a governed result. Never an application route.'}}),{type:'null'}]},
  workProducts:array(object({title:string,content:string})),nextActions:array(object({label:string,instruction:string}))});
-const instructions='\nUse the native final-output schema for every conversation handoff. For unused nullable fields return null; for unused arrays return []. Copy primitive evidence directly into claim.value with valueJson null. For an array or object, use value null and its exact JSON serialization in valueJson. The host independently verifies the decoded value. historical is false for current facts. navigation.path is a JSON Pointer to the observation URL field, never an application route. This format supplies no authority, and all original conversation and verification rules still apply.';
+const instructions='\nUse the native final-output schema for every conversation handoff. For unused nullable fields return null; for unused arrays return []. A completed answer requires at least one genuine durable evidence claim; do not emit a claimless completed answer. For a refusal, unavailable access or unsupported request, return status blocked with the useful explanation in answer, even when refusing satisfies what the user asked. Such an explanation needs no claims or unnecessary tool calls. Never invent evidence merely to finish. Copy primitive evidence directly into claim.value with valueJson null. For an array or object, use value null and its exact JSON serialization in valueJson. The host independently verifies the decoded value. historical is false for current facts. navigation.path is a JSON Pointer to the observation URL field, never an application route. This format supplies no authority, and all original conversation and verification rules still apply.';
 function decode(raw){
  let report;try{report=JSON.parse(raw);}catch{return raw;}
  if(!report||!Array.isArray(report.claims)||!report.claims.some(c=>Object.hasOwn(c,'valueJson')))return raw;

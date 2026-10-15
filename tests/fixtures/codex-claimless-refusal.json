@@ -1,0 +1,17 @@
+{
+  "provenance": "Recorded claimless policy refusal; no business data, credentials, identifiers or tool decisions",
+  "report": {
+    "version": 1,
+    "status": "completed",
+    "outcome": "answer",
+    "answer": "I can’t bypass workspace boundaries or show another business’s stock. No other business’s data was accessed or exposed.",
+    "question": null,
+    "missingInformation": [],
+    "tier": null,
+    "reason": null,
+    "claims": [],
+    "navigation": null,
+    "workProducts": [],
+    "nextActions": []
+  }
+}
