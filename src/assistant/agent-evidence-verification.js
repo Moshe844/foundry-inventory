@@ -7,7 +7,7 @@ function source(entry){
  if(value.version!==1||value.name!==entry.name)throw Error('INVALID_EVIDENCE_SOURCE');
  return value;
 }
-async function current(database,ctx,goal,entry,{catalogue,browser}={}){
+async function currentValue(database,ctx,goal,entry,{catalogue,browser}={}){
  // session.finish holds the goal in an existing transaction. Read engines
  // reuse that same client; they must not open a second transaction/connection.
  if(typeof database.transaction!=='function'){
@@ -79,5 +79,11 @@ async function current(database,ctx,goal,entry,{catalogue,browser}={}){
   outcomes.push({capability:step.contract.name,result:result.result});
  }
  return {missionId:null,outcomes};
+}
+async function current(...args){
+ // Native tools and the durable journal cross a JSON transport boundary.
+ // Compare current values in that same representation, including PostgreSQL
+ // Dates. Preserve every field and exact timestamp; no stale-value tolerance.
+ return JSON.parse(JSON.stringify(await currentValue(...args)));
 }
 module.exports={source,current};
