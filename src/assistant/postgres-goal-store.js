@@ -10,7 +10,8 @@ async function progress(db,ctx,id){return (await db.query(`SELECT id,status,answ
  COALESCE((SELECT p.worker_seen_at>now()-interval '30 seconds' FROM stockchief_runtime.codex_pilots p WHERE p.workspace_id=assistant_goals.workspace_id),false) AS worker_available,
  jsonb_build_object('runtime',checkpoint->'runtime','runStartedAt',checkpoint->'runStartedAt',
  'conversationState',checkpoint->'conversationState','delivery',checkpoint->'delivery','prerequisiteHandoffs',checkpoint->'prerequisiteHandoffs','lifecycleStage',checkpoint->'lifecycleStage',
- 'harness',jsonb_build_object('userQuestion',checkpoint#>'{harness,userQuestion}','interruption',checkpoint#>'{harness,interruption}'),
+ 'harness',jsonb_build_object('userQuestion',checkpoint#>'{harness,userQuestion}','interruption',checkpoint#>'{harness,interruption}',
+ 'completionSource',checkpoint#>'{harness,completionSource}'),
  'navigation',jsonb_build_object('id',checkpoint#>'{navigation,id}','label',checkpoint#>'{navigation,label}',
  'state',checkpoint#>'{navigation,state}')) AS checkpoint FROM ${TABLE}
  WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,id])).rows[0]||null;}
