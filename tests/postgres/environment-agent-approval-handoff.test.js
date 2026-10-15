@@ -54,7 +54,7 @@ test('actual recorded live boundary: SDK pauses at persisted approval despite 24
   wireProfile:'codex',requestGate:()=>session.codexRequest()});
  process.env.STOCKCHIEF_CODEX_SDK_DEMO='1';
  const sdkEvents=[],options={candidate:'codex',session,gateway,transport,budget,credentials:{openai:'FAKE'},offlineOnly:true,
-  codexImage:JSON.parse(fs.readFileSync('data/environment-agent-demo/codex-sdk-lifecycle-audit/runtime.json')).image,
+  codexImage:process.env.STOCKCHIEF_OFFLINE_CODEX_IMAGE||JSON.parse(fs.readFileSync('data/environment-agent-demo/codex-sdk-lifecycle-audit/runtime.json')).image,
   browser:{act:async()=>{throw Error('NO_BROWSER_REPLAY');}},audit:e=>sdkEvents.push(e)};
  const result=await require(base+'worker').run(options);
  assert.equal(result.completionSource,'durable_approval_handoff',JSON.stringify(result));assert.equal(result.status,'WAITING_APPROVAL');

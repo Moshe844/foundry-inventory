@@ -284,7 +284,7 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
      await require('./receipts').collect(client,ctx,goal,h,access?.catalogue);
     const canonicalVerified=!h.receipt.operations.some(op=>!op.verified);
     const classified=require('./outcome').classify({report,answer:goal.answer,verified,current,canonicalVerified,
-     progress:h.admissionBlock?{...h.progress,finalReason:h.admissionBlock.code}:h.progress});
+     progress:h.admissionBlock?{...h.progress,finalReason:h.admissionBlock.code,requiresUserInput:false}:h.progress});
     goal.status=classified.status;goal.answer=classified.answer;
     if(verified&&goal.status==='COMPLETED'&&check.delivery)goal.checkpoint.delivery=check.delivery;
     if(verified&&navigation&&goal.status==='COMPLETED'){

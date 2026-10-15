@@ -31,6 +31,12 @@ function classify({report,answer,verified,current='READY',canonicalVerified=true
  // Canonical dependencies outrank a model's view of what stage it reached.
  if(current!=='READY')return {status:current,answer:current==='WAITING_APPROVAL'?'The prepared changes need your approval.':current==='WAITING_EVENT'?'An authorized operation is still awaiting confirmation.':FAILED};
  if(verified&&canonicalVerified)return {status:'COMPLETED',answer:publicText(report?.answer||answer)};
+ // A failed host admission is not a missing business choice. Only trusted
+ // progress supplies this flag; a model question cannot grant more tools,
+ // money or execution authority. An already valid clarification or canonical
+ // approval still survives a limit reached after it was prepared.
+ if(progress.finalReason&&progress.requiresUserInput===false)return {status:'BLOCKED',answer:FAILED,
+  failure:{code:progress.finalReason,requiresUserInput:false}};
  if(report?.status==='needs_user')return {status:'WAITING_USER',answer:publicText(report.question),
   question:{question:publicText(report.question),missingInformation:report.missingInformation}};
  return {status:'BLOCKED',answer:report?.status==='blocked'?publicText(report.answer):FAILED,

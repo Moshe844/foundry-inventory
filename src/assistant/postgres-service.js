@@ -835,14 +835,34 @@ async function lookup(database,ctx,request,options={}) {
       return {answer:`${outcome} Revenue is ${money(report.revenueMinor)}, cost of goods sold is ${money(report.cogsMinor)}, and operating expenses are ${money(report.operatingExpenseMinor)} for ${report.from} through ${report.to}.`,
         rows,columns:['measure','value']};
     }
-    const result=(await database.query(`SELECT COUNT(DISTINCT e.id) FILTER (WHERE e.status='POSTED') AS posted,
-      COALESCE(SUM(debit_minor),0) AS debits,COALESCE(SUM(credit_minor),0) AS credits
-      FROM accounting_journal_entries e LEFT JOIN accounting_journal_lines l ON l.entry_id=e.id
-      WHERE e.workspace_id=$1`,[ctx.workspaceId])).rows[0];
-    const rows=[{measure:'Posted journal entries',value:Number(result.posted)},{measure:'Debits',value:Number(result.debits)},
-      {measure:'Credits',value:Number(result.credits)}];
-    return {answer:`The posted journal contains ${Number(result.posted).toLocaleString('en-US')} entries. Debits and credits are ${Number(result.debits)===Number(result.credits)?'balanced':'not balanced'}.`,
-      rows,columns:['measure','value']};
+    if(request.timeframe&&!['all_time','today','month_to_date','previous_month','last_30_days'].includes(request.timeframe))
+      return {status:'CLARIFY',answer:'Which supported posting-date period should I check?',rows:[],columns:[]};
+    const period=request.timeframe&&request.timeframe!=='all_time'?salesPeriod(request.timeframe):null;
+    const result=(await database.query(`WITH posted AS (
+      SELECT id FROM accounting_journal_entries WHERE workspace_id=$1 AND status='POSTED'
+        AND ($2::text IS NULL OR posting_date BETWEEN $2 AND $3)
+      ), totals AS (
+      SELECT l.currency,SUM(l.debit_minor) AS debits,SUM(l.credit_minor) AS credits
+      FROM posted e JOIN accounting_journal_lines l ON l.entry_id=e.id AND l.workspace_id=$1
+      GROUP BY l.currency)
+      SELECT (SELECT count(*) FROM posted) AS posted,
+        COALESCE(jsonb_agg(jsonb_build_object('currency',currency,'debits',debits,'credits',credits)
+          ORDER BY currency) FILTER(WHERE currency IS NOT NULL),'[]'::jsonb) AS totals FROM totals`,
+    [ctx.workspaceId,period?.from||null,period?.to||null])).rows[0];
+    const totals=result.totals.map(row=>{
+      const debits=Number(row.debits),credits=Number(row.credits);
+      if(!Number.isSafeInteger(debits)||!Number.isSafeInteger(credits))throw new InvariantError('Journal totals exceed exact supported precision.');
+      return {...row,debits,credits};
+    });
+    // Counts and money must not share an unlabelled numeric value. Preserve
+    // exact minor-unit amounts separately; display currency with canonical
+    // formatting and never add amounts from different currencies together.
+    const rows=[{measure:'Posted journal entries',value:Number(result.posted),unit:'entries',amountMinor:null,currency:null},
+      ...totals.flatMap(row=>[{measure:'Debits',value:pricing.formatMinor(row.debits,row.currency),unit:'money',amountMinor:row.debits,currency:row.currency},
+        {measure:'Credits',value:pricing.formatMinor(row.credits,row.currency),unit:'money',amountMinor:row.credits,currency:row.currency}])];
+    const amounts=totals.map(row=>`${row.currency}: debits ${pricing.formatMinor(row.debits,row.currency)}, credits ${pricing.formatMinor(row.credits,row.currency)}.`).join(' ');
+    return {answer:`The posted journal contains ${Number(result.posted).toLocaleString('en-US')} entries${period?` for ${period.from} through ${period.to}`:''}. Debits and credits are ${totals.every(row=>row.debits===row.credits)?'balanced':'not balanced'} within each recorded currency. ${amounts}`.trim(),
+      rows,columns:['measure','value','currency']};
   }
   if(request.view==='payments'){
     const rows=(await database.query(`SELECT p.id,p.payment_number,p.direction,p.amount_minor,p.currency,p.status,p.payment_date,p.method,p.reference,

@@ -20,6 +20,11 @@ test('host authority controls approval, verification and navigation regardless o
  for(const current of ['WAITING_APPROVAL','WAITING_EVENT','BLOCKED'])assert.equal(contract.classify({answer:trace.rawFinal,current}).status,current);
  assert.equal(contract.classify({answer:'Done',verified:true,canonicalVerified:false}).status,'BLOCKED');
  assert.equal(contract.classify({answer:trace.rawFinal,progress:{finalReason:'DURABLE_MODEL_REQUEST_LIMIT'}}).status,'WAITING_USER','A real question survives a turn limit');
+ const rejected=contract.classify({answer:trace.rawFinal,progress:{finalReason:'HOST_ADMISSION_REJECTED',requiresUserInput:false}});
+ assert.equal(rejected.status,'BLOCKED','An actual non-human admission failure cannot become a user clarification');
+ assert.equal(rejected.failure.requiresUserInput,false);
+ assert.equal(contract.classify({answer:trace.rawFinal,current:'WAITING_APPROVAL',progress:{finalReason:'HOST_ADMISSION_REJECTED',requiresUserInput:false}}).status,'WAITING_APPROVAL','A durable proposal still outranks an exhausted reasoning stage');
+ assert.equal(contract.classify({answer:'Verified outcome',verified:true,progress:{finalReason:'HOST_ADMISSION_REJECTED',requiresUserInput:false}}).status,'COMPLETED','An already verified outcome needs no further reasoning allowance');
  const g={id:'goal',status:'WAITING_USER',answer:'',checkpoint:{messages:[],harness:{userQuestion:contract.classify({answer:trace.rawFinal}).question}}};
  const first=contract.sync(g);assert.equal(first.phase,'clarification');assert(first.canReply);assert(first.active);assert(!first.terminal);
  const id=first.input.id;contract.sync(g);assert.equal(g.checkpoint.conversationState.input.id,id);assert.equal(g.checkpoint.conversationState.history.length,1);
