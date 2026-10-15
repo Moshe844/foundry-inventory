@@ -98,7 +98,19 @@ async function enqueue(db,goal){const queued=await require('../operations/postgr
 async function latest(db,ctx,startedAt=null){return (await db.query(`SELECT * FROM ${TABLE}
  WHERE workspace_id=$1 AND actor_user_id=$2 AND ($3::timestamptz IS NULL OR created_at>$3)
  ORDER BY created_at DESC LIMIT 1`,[ctx.workspaceId,ctx.actorId,startedAt])).rows[0]||null;}
-async function recent(db,ctx,startedAt=null){return (await db.query(`SELECT * FROM ${TABLE}
- WHERE workspace_id=$1 AND actor_user_id=$2 AND ($3::timestamptz IS NULL OR created_at>$3)
- ORDER BY created_at DESC,id DESC LIMIT 12`,[ctx.workspaceId,ctx.actorId,startedAt])).rows.reverse();}
+async function recent(db,ctx,startedAt=null,focusedGoalId=null){
+ const focus=typeof focusedGoalId==='string'&&focusedGoalId.length<=160?focusedGoalId:null;
+ // Keep ordinary history bounded. A direct link can add one owned goal from
+ // this conversation, without loading every historical checkpoint.
+ return (await db.query(`WITH visible_ids AS (
+  (SELECT id FROM ${TABLE}
+   WHERE workspace_id=$1 AND actor_user_id=$2 AND ($3::timestamptz IS NULL OR created_at>$3)
+   ORDER BY created_at DESC,id DESC LIMIT 12)
+  UNION
+  SELECT id FROM ${TABLE}
+   WHERE workspace_id=$1 AND actor_user_id=$2 AND ($3::timestamptz IS NULL OR created_at>$3) AND id=$4
+ ) SELECT goal.* FROM ${TABLE} goal JOIN visible_ids visible ON visible.id=goal.id
+ WHERE goal.workspace_id=$1 AND goal.actor_user_id=$2
+ ORDER BY goal.created_at,goal.id`,[ctx.workspaceId,ctx.actorId,startedAt,focus])).rows;
+}
 module.exports={enabled,get,progress,create,claim,save,cancel,reply,enqueue,latest,recent};

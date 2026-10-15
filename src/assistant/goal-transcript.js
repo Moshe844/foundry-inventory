@@ -1,7 +1,7 @@
 'use strict';
 // Join the request ledger to canonical step results by durable IDs, never by
 // matching the user's words. A delayed result stays with its original request.
-function mergeGoalTranscript(transcript,goals){
+function mergeGoalTranscript(transcript,goals,{focusedGoalId=null}={}){
  const byId=new Map(goals.map(goal=>[goal.id,{id:'agent-'+goal.id,message:goal.original_request,
   createdAt:goal.created_at,goals:[],agentGoal:goal,referents:[]}]));
  const turns=[];
@@ -11,6 +11,12 @@ function mergeGoalTranscript(transcript,goals){
   if(owner)byId.get(owner.id).goals.push(...turn.goals);
   else turns.push(turn);
  }
- return [...turns,...byId.values()].sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt)||String(a.id).localeCompare(String(b.id))).slice(-12);
+ const chronological=(a,b)=>new Date(a.createdAt)-new Date(b.createdAt)||String(a.id).localeCompare(String(b.id));
+ const ordered=[...turns,...byId.values()].sort(chronological),recent=ordered.slice(-12);
+ const focused=byId.get(focusedGoalId);
+ // Legacy turns also consume the transcript window. Retain the explicitly
+ // requested goal once, even when merging those turns pushes it outside it.
+ if(focused&&!recent.includes(focused))recent.push(focused);
+ return recent.sort(chronological);
 }
 module.exports={mergeGoalTranscript};

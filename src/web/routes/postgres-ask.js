@@ -330,9 +330,10 @@ function createPostgresAskRouter(database,options={}){
         AND name ~ '[0-9]{4,}'`,
     [req.ctx.workspaceId])).rows.map((row)=>row.name);
     const pilotView=options.agentInspection?null:await pilot.view(database,req.ctx);
-    const recentGoals=goalStore.enabled(req.ctx)||pilotView?await goalStore.recent(database,req.ctx,startedAt):[];
+    const focusedGoalId=typeof req.query.goal==='string'&&req.query.goal.length<=160?req.query.goal:null;
+    const recentGoals=goalStore.enabled(req.ctx)||pilotView?await goalStore.recent(database,req.ctx,startedAt,focusedGoalId):[];
     const activeGoal=recentGoals.at(-1)||null;
-    const focusedGoal=recentGoals.find(goal=>goal.id===req.query.goal);
+    const focusedGoal=recentGoals.find(goal=>goal.id===focusedGoalId);
     for(const goal of recentGoals){
       if(goal.checkpoint.runtime==='codex-staging'&&!['COMPLETED','CANCELLED','BLOCKED'].includes(goal.status)){
         const inbox=await pilot.inbox(database,req.ctx,goal.id);Object.assign(goal,inbox.goal);goal.approvalCards=inbox.approvals;
@@ -341,7 +342,7 @@ function createPostgresAskRouter(database,options={}){
     }
     const nativeRuleIds=new Set(recentGoals.flatMap(goal=>(goal.approvalCards||[]).filter(card=>card.kind==='rule').map(card=>card.proposalId)));
     rules.pendingRules=rules.pendingRules.filter(rule=>!nativeRuleIds.has(rule.id));
-    transcript=require('../../assistant/goal-transcript').mergeGoalTranscript(transcript,recentGoals);
+    transcript=require('../../assistant/goal-transcript').mergeGoalTranscript(transcript,recentGoals,{focusedGoalId:focusedGoal?.id});
     const continuationGoal=transcript.at(-1)?.agentGoal;
     return res.page('attention/ask',{title:'Ask StockChief',nav:'ask',room:true,suppressBack:true,postgresAsk:true,...rules,
       codexPilot:pilotView,adaptiveGoal:activeGoal,focusedGoalId:focusedGoal?.id||null,renderAgentAnswer:require('../public/agent-answer').render,
