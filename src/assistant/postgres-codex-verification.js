@@ -27,14 +27,17 @@ async function verify(database,ctx,goal,raw,catalogue,options={}){
   const journal=Array.isArray(evidence.entries)?evidence.entries:Object.values(evidence.entries||{});
   return [...entries,...journal].find(e=>e?.id===id||e?.evidenceId===id)||observed.find(e=>e?._stockchiefEvidence?.evidenceId===id);
  }
- const lastExecution=(await database.query(`SELECT max(executed_at) AS at FROM stockchief_runtime.assistant_action_proposals
-  WHERE workspace_id=$1 AND actor_user_id=$2 AND id=ANY($3::text[])`,[ctx.workspaceId,ctx.actorId,receipt.operations.map(o=>o.proposalId)])).rows[0].at;
  const verified=[],fresh=new Map();
  for(const claim of report.claims){
   if(typeof claim.evidenceId!=='string'||typeof claim.path!=='string'||!claim.path.startsWith('/')||claim.path.length>400)return {verified:false,answer:report.answer};
   const entry=find(claim.evidenceId);if(!entry)return {verified:false,answer:report.answer};
   if(entry.truncated||entry.text&&createHash('sha256').update(entry.text).digest('hex')!==entry.sha256)return {verified:false,answer:report.answer};
-  if(lastExecution&&claim.historical!==true&&new Date(entry.at)<new Date(lastExecution))return {verified:false,answer:report.answer};
+  // Observation age is not a substitute for checking current truth. A later
+  // operation may change another record entirely (for example, sending an
+  // email after reading an already-paid order). Every nonhistorical claim is
+  // re-read below under CURRENT authority and compared exactly. Rejecting an
+  // earlier observation before that check discards valid durable knowledge
+  // and forces unnecessary model/tool turns without improving verification.
   const original=entry.text?JSON.parse(entry.text):entry.value??entry.output??entry.result??entry;
   if(entry.name==='canonical_execution_state'&&/^\/operations\/\d+\/result(?:\/|$)/.test(claim.path)&&claim.historical!==true)
    return unavailable('A recorded execution result proves what happened then. Current-state claims still need a fresh business record.','EXECUTION_RESULT_REQUIRES_HISTORICAL_SCOPE');

@@ -31,7 +31,7 @@ test('committed intermediate effects survive later workflow states while current
  assert.equal(await confirm.verifyExecution(db,ctx,confirmed.result,confirmed.payload),false,'Reproduces the recorded live failure: current state is FULFILLED, not the earlier CONFIRMED');
  const store=require('../../src/assistant/postgres-goal-store'),goal=await store.create(db,ctx,'Verify the complete authorized pickup sale.');
  const h={calls:{fixture:{state:'DONE',result:{outcomes:executed.map(p=>({result:{proposal:{id:p.id}}}))}}}};
- const catalogue={list:()=>registry.list()};
+ const catalogue={list:()=>registry.list(),get:name=>registry.get(name)};
  const receipts=require('../../scripts/environment-agent-demo/receipts'),receipt=await receipts.collect(db,ctx,goal,h,catalogue);
  assert.equal(receipt.operations.length,4);assert(receipt.operations.every(o=>o.verified));
  assert(receipt.operations.every(o=>o.verificationScope==='canonical_execution_at_commit'&&o.committedAt));
@@ -49,6 +49,19 @@ test('committed intermediate effects survive later workflow states while current
  report.claims[0].historical=true;assert.equal((await verifier.verify(db,ctx,goal,report,catalogue)).verified,true);
  const payments=await service.lookup(db,ctx,{view:'payments',search:reference});assert.equal(payments.rows.length,1);assert.equal(payments.rows[0].amount,'$75.00');assert.equal(payments.rows[0].amountMinor,7500);assert.equal(payments.rows[0].method,'cash');assert.equal(payments.rows[0].reference,reference);
  const orders=await service.lookup(db,ctx,{view:'sales_orders',search:reference});assert.equal(orders.rows.length,1);assert.equal(orders.rows[0].reference,reference);assert.equal(orders.rows[0].outstanding,'$0.00');
+ // Recorded live email continuation: a later approved operation must not
+ // invalidate unchanged sales/payment facts merely because they were learned
+ // earlier. The host re-reads every current claim; it does not trust age.
+ const readSource=JSON.stringify({version:1,name:'business_operations',input:{steps:[{capability:'read.payments',arguments:[{name:'search',value:reference}],dependsOn:[]}]}});
+ const readText=JSON.stringify({missionId:null,outcomes:[{capability:'read.payments',result:payments}]});
+ const priorRead={id:goal.id+':prior-payment',name:'business_operations',text:readText,sha256:createHash('sha256').update(readText).digest('hex'),sourceText:readSource,sourceSha256:createHash('sha256').update(readSource).digest('hex'),at:new Date(Date.parse(confirmed.executed_at)-60000).toISOString()};
+ goal.checkpoint.harness.evidence[priorRead.id]=priorRead;
+ const priorReport={status:'completed',outcome:'answer',answer:'The recorded payment remains $75.00 cash.',claims:[{evidenceId:priorRead.id,path:'/outcomes/0/result/rows/0/amount',value:'$75.00'},{evidenceId:priorRead.id,path:'/outcomes/0/result/rows/0/method',value:'cash'}]};
+ const checkedPrior=await verifier.verify(db,ctx,goal,priorReport,catalogue);
+ assert.equal(checkedPrior.verified,true,'Exact live failure class: current unchanged facts remain usable across unrelated subsequent execution '+JSON.stringify(checkedPrior));
+ await db.query("UPDATE accounting_payments SET method='bank_transfer' WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,paid.result.paymentId]);
+ assert.equal((await verifier.verify(db,ctx,goal,priorReport,catalogue)).verified,false,'A genuinely changed payment still rejects the earlier current claim');
+ await db.query("UPDATE accounting_payments SET method='cash' WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,paid.result.paymentId]);
  const balance=(await db.query('SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2',[ctx.workspaceId,item.skuIds[0]])).rows[0];assert.equal(Number(balance.on_hand),0);
  app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:randomUUID(),aiProvider:noModels});
  const web=require('supertest').agent(app),login=await web.get('/login'),csrf=/name="_csrf" value="([^"]+)"/.exec(login.text)[1];
