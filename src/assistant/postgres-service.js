@@ -714,7 +714,7 @@ async function lookup(database,ctx,request,options={}) {
       'invoiceDocumentsReceived','postedPayable','invoiceDocuments','invoiceDocumentsTruncated']};
   }
   if(request.view==='sales_orders'){
-    const rows=(await database.query(`SELECT so.id,so.order_number,so.status,so.currency,c.name AS customer,
+    const rows=(await database.query(`SELECT so.id,so.order_number,so.status,so.currency,so.reference,c.name AS customer,
       COALESCE(lines.ordered_units,0) AS ordered_units,
       COALESCE(lines.fulfilled_units,0) AS fulfilled_units,
       COALESCE(lines.line_count,0) AS line_count,
@@ -763,8 +763,8 @@ async function lookup(database,ctx,request,options={}) {
       LEFT JOIN LATERAL (SELECT COUNT(*)::int AS shipment_count FROM sales_shipments
         WHERE workspace_id=so.workspace_id AND sales_order_id=so.id) shipments ON true
       WHERE so.workspace_id=$1 AND ($2::text IS NULL OR so.order_number ILIKE '%'||$2||'%' OR c.name ILIKE '%'||$2||'%'
-        OR so.status ILIKE '%'||$2||'%') ORDER BY so.created_at DESC LIMIT 100`,
-    [ctx.workspaceId,search])).rows.map((row)=>evidenceRow({order:row.order_number,status:row.status,customer:row.customer,
+        OR so.status ILIKE '%'||$2||'%' OR COALESCE(so.reference,'') ILIKE '%'||$2||'%') ORDER BY so.created_at DESC LIMIT 100`,
+    [ctx.workspaceId,search])).rows.map((row)=>evidenceRow({order:row.order_number,status:row.status,customer:row.customer,reference:row.reference,
       orderedUnits:Number(row.ordered_units),heldUnits:Number(row.held_units),
       fulfilledUnits:Number(row.fulfilled_units),openUnits:Number(row.open_units),
       lineCount:Number(row.line_count),orderTotal:pricing.formatMinor(Number(row.order_total_minor),row.currency),
@@ -782,7 +782,7 @@ async function lookup(database,ctx,request,options={}) {
       rows,columns:['order','status','customer','lineCount','lineItems','orderTotal',
         'orderedUnits','heldUnits','fulfilledUnits','openUnits',
         'invoiceCount','invoiced','paid','outstanding','postedRevenue','postedProductCost',
-        'postedGrossProfit','shipments']};
+        'postedGrossProfit','shipments','reference']};
   }
   if(['suppliers','customers'].includes(request.view)){
     const supplier=request.view==='suppliers';
@@ -845,15 +845,17 @@ async function lookup(database,ctx,request,options={}) {
       rows,columns:['measure','value']};
   }
   if(request.view==='payments'){
-    const rows=(await database.query(`SELECT p.id,p.direction,p.amount_minor,p.currency,p.status,p.payment_date,
+    const rows=(await database.query(`SELECT p.id,p.payment_number,p.direction,p.amount_minor,p.currency,p.status,p.payment_date,p.method,p.reference,
       COALESCE(c.name,s.name,'Unassigned') AS party FROM accounting_payments p
       LEFT JOIN customers c ON c.id=p.customer_id LEFT JOIN suppliers s ON s.id=p.supplier_id
       WHERE p.workspace_id=$1 AND ($2::text IS NULL OR COALESCE(c.name,s.name,'') ILIKE '%'||$2||'%'
-        OR p.status ILIKE '%'||$2||'%') ORDER BY p.payment_date DESC,p.created_at DESC LIMIT 100`,
+        OR p.status ILIKE '%'||$2||'%' OR p.payment_number ILIKE '%'||$2||'%'
+        OR COALESCE(p.reference,'') ILIKE '%'||$2||'%') ORDER BY p.payment_date DESC,p.created_at DESC LIMIT 100`,
     [ctx.workspaceId,search])).rows.map((row)=>evidenceRow({party:row.party,direction:row.direction,status:row.status,
-      amount:Number(row.amount_minor),currency:row.currency,date:row.payment_date},`/accounting/payments/${row.id}`));
+      amount:pricing.formatMinor(Number(row.amount_minor),row.currency),amountMinor:Number(row.amount_minor),currency:row.currency,date:row.payment_date,
+      receipt:row.payment_number,method:row.method,reference:row.reference},`/accounting/payments/${row.id}`));
     return {answer:rows.length?`${rows.length} payment record${rows.length===1?'':'s'} matched.`:'No payment matched that request.',
-      rows,columns:['party','direction','status','amount','currency','date']};
+      rows,columns:['party','direction','status','amount','currency','date','receipt','method','reference']};
   }
   if(['payables','receivables'].includes(request.view)){
     const payable=request.view==='payables';const table=payable?'accounting_supplier_bills':'accounting_customer_invoices';

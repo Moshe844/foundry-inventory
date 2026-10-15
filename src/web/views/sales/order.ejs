@@ -48,6 +48,7 @@
 %>
 <div class="breadcrumb"><a href="/orders">Orders</a> <%- helpers.icon('chevron', { size: 13 }) %> <span><%= order.order_number %></span></div>
 <div class="page-head"><div class="titles"><p class="eyebrow">Customer order</p><h1><%= order.order_number %> · <%= order.customer.name %></h1><p>Created <%= order.order_date %><%= order.needed_by ? ' · customer needs it by ' + order.needed_by : '' %></p></div><span class="badge <%= setupRequired || order.status === 'BACKORDERED' ? 'badge--warn' : order.status === 'FULFILLED' ? 'badge--success' : 'badge--muted' %>"><%= setupRequired ? 'Waiting for customer details' : (statusLabels[order.status] || order.status) %></span></div>
+<% if(order.reference){ %><p class="t-muted">Reference: <%= order.reference %></p><% } %>
 
 <% if (!locals.room) { %><%- include('allocation-settings') %><% } %>
 

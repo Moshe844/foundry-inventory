@@ -791,6 +791,36 @@ function createPostgresCommerceRouter(database,options={}){
     return res.redirect(303,`/orders/${result.salesOrderId}`);
   }));
 
+  router.get('/orders/:id/receipt/:paymentId',requirePermission(permissions.VIEW_SALES,'see customer orders'),
+    requirePermission(permissions.VIEW_ACCOUNTING,'see payment receipts'),asyncRoute(async(req,res)=>{
+    const payment=(await database.query(`SELECT p.* FROM accounting_payments p
+      WHERE p.workspace_id=$1 AND p.id=$2 AND p.direction='CUSTOMER_RECEIPT'
+      AND (p.sales_order_id=$3 OR EXISTS(SELECT 1 FROM accounting_payment_allocations a
+        JOIN accounting_customer_invoices i ON i.id=a.customer_invoice_id AND i.workspace_id=a.workspace_id
+        WHERE a.workspace_id=p.workspace_id AND a.payment_id=p.id AND i.sales_order_id=$3))`,
+    [req.ctx.workspaceId,req.params.paymentId,req.params.id])).rows[0];
+    if(!payment)throw new NotFoundError('That receipt does not belong to this customer order.');
+    const [page,linked,workspace]=await Promise.all([
+      salesOrderPage(database,req.ctx.workspaceId,req.params.id),
+      database.query(`SELECT p.id,p.status,COALESCE((SELECT sum(a.amount_minor)
+        FROM accounting_payment_allocations a JOIN accounting_customer_invoices i
+          ON i.id=a.customer_invoice_id AND i.workspace_id=a.workspace_id
+        WHERE a.workspace_id=p.workspace_id AND a.payment_id=p.id AND i.sales_order_id=$2),p.amount_minor)::bigint AS order_amount_minor
+        FROM accounting_payments p WHERE p.workspace_id=$1 AND p.direction='CUSTOMER_RECEIPT'
+        AND (p.sales_order_id=$2 OR EXISTS(SELECT 1 FROM accounting_payment_allocations a
+          JOIN accounting_customer_invoices i ON i.id=a.customer_invoice_id AND i.workspace_id=a.workspace_id
+          WHERE a.workspace_id=p.workspace_id AND a.payment_id=p.id AND i.sales_order_id=$2))
+        ORDER BY p.created_at,p.id`,[req.ctx.workspaceId,req.params.id]),
+      database.query('SELECT name FROM workspaces WHERE id=$1',[req.ctx.workspaceId])]);
+    let paidAfterReceiptMinor=0,receiptAmountMinor=Number(payment.amount_minor);
+    for(const row of linked.rows){if(row.status==='POSTED')paidAfterReceiptMinor+=Number(row.order_amount_minor);
+      if(row.id===payment.id){receiptAmountMinor=Number(row.order_amount_minor);break;}}
+    return res.page('sales/receipt',{title:`Receipt ${payment.payment_number}`,nav:'sales',screenGuide:null,
+      order:page.order,payment,receiptAmountMinor,paidAfterReceiptMinor,
+      outstandingAfterReceiptMinor:Math.max(0,Number(page.order.pricing.totalMinor)-paidAfterReceiptMinor),
+      businessName:workspace.rows[0]?.name||'StockChief'});
+  }));
+
   router.get(['/orders/:id','/sales/orders/:id'],requirePermission(permissions.VIEW_SALES,'see customer orders'),asyncRoute(async(req,res)=>{
     const [page,returnRows,locationRows]=await Promise.all([
       salesOrderPage(database,req.ctx.workspaceId,req.params.id),

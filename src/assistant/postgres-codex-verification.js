@@ -36,6 +36,8 @@ async function verify(database,ctx,goal,raw,catalogue,options={}){
   if(entry.truncated||entry.text&&createHash('sha256').update(entry.text).digest('hex')!==entry.sha256)return {verified:false,answer:report.answer};
   if(lastExecution&&claim.historical!==true&&new Date(entry.at)<new Date(lastExecution))return {verified:false,answer:report.answer};
   const original=entry.text?JSON.parse(entry.text):entry.value??entry.output??entry.result??entry;
+  if(entry.name==='canonical_execution_state'&&/^\/operations\/\d+\/result(?:\/|$)/.test(claim.path)&&claim.historical!==true)
+   return unavailable('A recorded execution result proves what happened then. Current-state claims still need a fresh business record.','EXECUTION_RESULT_REQUIRES_HISTORICAL_SCOPE');
   const presentation=require('../../scripts/environment-agent-demo/evidence-presentation');
   let selected=presentation.locate(original,claim.path),toolView=false;
   if(!selected.found||!equal(selected.value,claim.value)){
@@ -114,6 +116,7 @@ A governed navigation operation also supplies a safe destination: reference its 
 Each factual claim must reference actual durable evidence by ID and a JSON Pointer to its exact recorded value.
 Use the smallest recorded values that substantiate the answer. Do not copy unrelated rows or an entire observation into claims when individual fields or visible text blocks suffice. Preserve enough claims to support all reported facts; concise evidence never removes canonical outcome verification.
 Current-state claims after execution require fresh observations. Mark a historical claim historical:true and describe its time/scope explicitly.
+Canonical execution receipts prove committed effects at their recorded time. Their result fields may describe an intermediate state that later approved work changed. Claims under canonical_execution_state /operations/N/result must use historical:true; use fresh business records for the final current state. Never treat an earlier confirmed or draft status as a failure merely because the same order has since been fulfilled.
 Use the complete evidence already in a tool response. Its _stockchiefEvidence reference supplies evidenceId and valuePointerPrefix; prepend that prefix to the JSON Pointer of the displayed value. Retrieve the journal only for missing, truncated, compacted or earlier evidence. Do not retrieve a value again just to report what the current response already shows. Include current-state verification after authorized changes.
 Never claim every part of a request was completed merely because one receipt was verified.`;
 module.exports={verify,instructions};

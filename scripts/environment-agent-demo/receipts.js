@@ -12,16 +12,25 @@ async function collect(database,ctx,goal,harness,catalogue){
   for(const step of mission?.steps||[])if(step.proposalId)proposalIds.add(step.proposalId);
  }
  for(const id of proposalIds){
-  const row=(await database.query(`SELECT id,action_type,status,result,payload,summary FROM stockchief_runtime.assistant_action_proposals
+  const row=(await database.query(`SELECT id,action_type,status,result,payload,summary,executed_at,idempotency_key FROM stockchief_runtime.assistant_action_proposals
    WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,id])).rows[0];
   if(!row)continue; // Unknown/rule proposals cannot earn an execution receipt here.
   const contract=registry.get(row.action_type);
   if(!catalogue?.list().some(c=>c.name===row.action_type))continue;
-  const verified=row.status==='EXECUTED'&&typeof contract?.verifyExecution==='function'&&
-   await contract.verifyExecution(database,ctx,row.result||{},row.payload||{});
+  // executeProposalCore is the ONLY writer of EXECUTED. It runs the canonical
+  // engine and verifyExecution in the SAME serializable transaction before
+  // recording result + executed_at. This is durable evidence that the effect
+  // committed, not an assertion that its transient postcondition still holds.
+  // Replaying that predicate here rejects legitimate later operations (e.g.
+  // confirmed -> fulfilled, open invoice -> paid). Current business assertions
+  // are checked separately against fresh records by the final-report verifier.
+  const verified=row.status==='EXECUTED'&&Boolean(row.idempotency_key)&&
+   Number.isFinite(new Date(row.executed_at).getTime())&&row.executed_at!==null&&
+   typeof contract?.verifyExecution==='function';
   const external=verified?await require('../../src/assistant/postgres-capability-plans').externalState(database,ctx.workspaceId,row.result||{}):null;
   operations.push({proposalId:id,capability:row.action_type,description:String(row.summary||'').slice(0,500),status:row.status,
-   verified:Boolean(verified),externalState:external?.state||null,result:verified?row.result:null});
+   verified:Boolean(verified),verificationScope:'canonical_execution_at_commit',committedAt:row.executed_at||null,
+   externalState:external?.state||null,result:verified?row.result:null});
  }
  return {version:1,requestHash:requestHash(goal),checkedAt:new Date().toISOString(),
   dependencyState:await waits.current(database,ctx,goal.id,refs),operations};
