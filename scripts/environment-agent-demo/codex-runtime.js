@@ -18,8 +18,8 @@ Write the customer-facing answer as concise Markdown: lead with the result, use 
 Browser textBlocks are individually addressable lines from the actual visible page. Prefer the smallest recorded values that substantiate your claims instead of reproducing an entire page in a final claim. The full text and durable journal remain available.
 `+require('../../src/assistant/business-evidence-principles')+'\n'+require('../../src/assistant/agent-conversation').instructions;
 function digest(value){return createHash('sha256').update(JSON.stringify(Object.fromEntries(Object.keys(value||{}).sort().map(key=>[key,value[key]])))).digest('hex');}
-function durableFinal(files,encoding,threadId,answer){
- if(encoding!=='gzip'||!threadId)return false;
+function completedMessage(files,encoding,threadId){
+ if(encoding!=='gzip'||!threadId)return null;
  for(const [name,value]of Object.entries(files||{})){
   if(!name.endsWith(threadId+'.jsonl'))continue;
   try{
@@ -30,10 +30,22 @@ function durableFinal(files,encoding,threadId,answer){
     if(row.payload?.type==='task_started'){started=row.payload.turn_id;completed=null;}
     if(row.payload?.type==='task_complete')completed=row.payload;
    }
-   return typeof started==='string'&&completed?.turn_id===started&&completed.last_agent_message===answer;
-  }catch{return false;}
+   return typeof started==='string'&&completed?.turn_id===started&&typeof completed.last_agent_message==='string'?completed.last_agent_message:null;
+  }catch{return null;}
  }
- return false;
+ return null;
+}
+function durableFinal(files,encoding,threadId,answer){return typeof answer==='string'&&completedMessage(files,encoding,threadId)===answer;}
+function savedFinal(h,{profile,messages=[]}={}){
+ const state=h?.native?.codex,last=h?.lastCodexResponse,delivery=h?.codexDelivery;
+ if(!state||h.inflight||delivery?.state!=='SETTLED'||!last?.usageSettled||!last.terminal||last.tool||last.empty||
+  !delivery.packet?.outcome?.usageSettled||!delivery.packet.outcome.terminal||delivery.packet.outcome.tool||delivery.packet.outcome.empty||
+  state.version!==defaultPolicy.VERSION||state.profile!==profile?.id||state.model!==profile?.model||state.effort!==profile?.effort||
+  state.deliveredMessages!==messages.length||state.digest!==digest(state.files))return null;
+ const answer=completedMessage(state.files,state.encoding,state.threadId);if(!answer)return null;
+ try{const decoded=require('./codex-report').decode(answer);
+  return require('../../src/assistant/agent-conversation').parse(decoded)?.status==='completed'?decoded:null;
+ }catch{return null;}
 }
 async function initialObservation(options,saved,state){
  if(state?.threadId)return null;
@@ -202,4 +214,4 @@ async function run(options){
   return {answer:require('./codex-report').decode(answer),reportedUsage:usage,threadId,runtime:{sdk:'@openai/codex-sdk',version:policy.VERSION,requestedModel:policy.MODEL,reasoningEffort:policy.EFFORT}};
  }finally{clearTimeout(timer);signal?.removeEventListener('abort',interrupt);stop();lines.close();if(!options.preparedCodexSandbox)await sandbox.close();}
 }
-module.exports={run,INSTRUCTIONS,digest,prepareSandbox,prepareContext};
+module.exports={run,INSTRUCTIONS,digest,prepareSandbox,prepareContext,savedFinal};

@@ -44,11 +44,16 @@ async function verify(database,ctx,goal,raw,catalogue,options={}){
     try{fresh.set(entry.id,await require('./agent-evidence-verification').current(database,ctx,goal,entry,{catalogue,...options}));}
     catch(error){return unavailable('I could not confirm that the collected information still matches the current records. Your request and recorded work are saved.',error.message);}
    }
-   let current=fresh.get(entry.id);
+   let current=fresh.get(entry.id),missingCurrent=false;
    for(const part of claim.path.slice(1).split('/')){const key=part.replace(/~1/g,'/').replace(/~0/g,'~');
-    if(['__proto__','constructor','prototype'].includes(key)||current===null||typeof current!=='object'||!Object.hasOwn(current,key))return {verified:false,answer:report.answer};
+    if(['__proto__','constructor','prototype'].includes(key))return {verified:false,answer:report.answer};
+    if(current===null||typeof current!=='object'||!Object.hasOwn(current,key)){missingCurrent=true;break;}
     current=current[key];}
-   if(JSON.stringify(current)!==JSON.stringify(claim.value))return unavailable('The business records changed during this request. The earlier figures are no longer verified as current. Your request and recorded work are saved.','CURRENT_RECORDS_CHANGED');
+   if(missingCurrent||JSON.stringify(current)!==JSON.stringify(claim.value)){
+    const moved=entry.name==='environment_browser'?require('./browser-text-verification').unchangedLine(
+     JSON.parse(entry.text),fresh.get(entry.id),claim.path):{matched:false};
+    if(!moved.matched||JSON.stringify(moved.value)!==JSON.stringify(claim.value))return unavailable('The business records changed during this request. The earlier figures are no longer verified as current. Your request and recorded work are saved.','CURRENT_RECORDS_CHANGED');
+   }
   }
   verified.push({evidenceId:claim.evidenceId,path:claim.path,sha256:createHash('sha256').update(JSON.stringify(value)).digest('hex')});
  }

@@ -70,6 +70,27 @@ test('actual Staging SDK lifecycle uses the real renderer, website approval and 
     claims:[{evidenceId:entry.id,path:'/rows/0/on_hand',value:JSON.parse(entry.text).rows[0].on_hand}]}));
   }});
   assert.equal(read.status,'COMPLETED');assert.equal(opened,0);assert.equal(readCalls,2);
+  // Actual SDK terminal files survive a host verification failure. A later
+  // explicit website resume must reverify/deliver them even when reasoning
+  // limits are exhausted, with no provider, counter or SDK sandbox startup.
+  const native=require('../../scripts/environment-agent-demo/codex-runtime'),profile=require('../../src/assistant/codex-model-routing').selected(read,ctx);
+  assert(native.savedFinal(read.checkpoint.harness,{profile,messages:[]}));
+  assert.equal(native.savedFinal(read.checkpoint.harness,{profile,messages:['A new human decision']}),null);
+  assert.equal(native.savedFinal({...read.checkpoint.harness,inflight:{name:'uncertain'}},{profile,messages:[]}),null);
+  assert.equal(native.savedFinal({...read.checkpoint.harness,lastCodexResponse:{...read.checkpoint.harness.lastCodexResponse,terminal:false}},{profile,messages:[]}),null);
+  assert.equal(native.savedFinal({...read.checkpoint.harness,codexDelivery:{...read.checkpoint.harness.codexDelivery,state:'PENDING'}},{profile,messages:[]}),null);
+  assert.equal(native.savedFinal({...read.checkpoint.harness,native:{codex:{...read.checkpoint.harness.native.codex,digest:'tampered'}}},{profile,messages:[]}),null);
+  const ledgerBefore=(await db.query('SELECT count(*) AS n,coalesce(sum(charged),0) AS charged FROM stockchief_runtime.codex_pilot_calls WHERE goal_id=$1',[reading.goalId])).rows[0];
+  await db.query(`UPDATE stockchief_runtime.assistant_goals SET status='BLOCKED',tool_calls=30,
+   checkpoint=jsonb_set(checkpoint,'{harness,codexRequests}','24') WHERE id=$1`,[reading.goalId]);
+  await pilot.resume(db,ctx,reading.goalId);
+  const delivered=await pilot.run(db,ctx,reading.goalId,{...options,
+   fetchImpl:async()=>{throw Error('COMPLETED_REASONING_MUST_NOT_CALL_PROVIDER');},
+   countInput:async()=>{throw Error('COMPLETED_REASONING_MUST_NOT_COUNT_AGAIN');},
+   sandboxPool:{take:()=>{throw Error('COMPLETED_REASONING_MUST_NOT_START_SDK');}}});
+  assert.equal(delivered.status,'COMPLETED',JSON.stringify(delivered.checkpoint.harness.failure));
+  assert.equal(delivered.checkpoint.harness.codexRequests,24);assert.equal(delivered.tool_calls,30);assert.equal(opened,0);
+  assert.deepEqual((await db.query('SELECT count(*) AS n,coalesce(sum(charged),0) AS charged FROM stockchief_runtime.codex_pilot_calls WHERE goal_id=$1',[reading.goalId])).rows[0],ledgerBefore);
   const recorded=require('../fixtures/codex-navigation-empty-claims.json');
   const opening=await pilot.start(db,ctx,recorded.request);let navigationCalls=0;
   const navigation=await pilot.run(db,ctx,opening.goalId,{...options,fetchImpl:async(_url,init)=>{

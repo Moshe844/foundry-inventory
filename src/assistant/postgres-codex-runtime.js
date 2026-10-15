@@ -66,22 +66,6 @@ async function run(database,ctx,id,options={}){
   // Publish is durable in the shared goal outbox. There is no file-review loop
   // and no test operator; the authenticated website owns the human stage.
   const pending=await session.handoffApprovals();if(pending)return pending;
-  const key=options.apiKey||process.env.OPENAI_API_KEY;if(!key)throw Error('OPENAI_API_KEY_REQUIRED');
-  const counter=options.countInput||require(base+'codex-token-counter').createTokenCounter({apiKey:key});
-  // Warm the existing TLS/token-count path with non-business text while other
-  // startup work proceeds. This generates no model output and NEVER replaces
-  // the exact full-request native preflight at the paid HTTP boundary.
-  if(!options.countInput){const warm=counter({model:modelProfile.model,reasoning:{effort:modelProfile.effort},
-   input:[{role:'user',content:'Connection readiness check only; no model generation.'}]}).catch(()=>null);
-   preparations.push(warm);
-  }
-  // Preparing a credential-free renderer/context is a read boundary, not a
-  // provider request. Its own fresh authority checks remain in place. Overlap
-  // it with paid-runtime admission; reasoning cannot start until both finish.
-  let preparedSandbox=options.sandboxPool?options.sandboxPool.take(image):require(base+'codex-runtime').prepareSandbox(image);
-  const initialSandbox=preparedSandbox;
-  preparations.push(preparedSandbox);preparedSandbox.catch(()=>{});
-  cleanup.push(async()=>{const prepared=await initialSandbox.catch(()=>null);if(prepared)await prepared.sandbox.close();});
   const ui=require(base+'lazy-browser').lazyBrowser(async firstAction=>{
    audit({kind:'runtime_starting',status:'Opening the isolated business browser'});
    const connectionString=process.env.FOUNDRY_DATABASE_URL||process.env.DATABASE_URL;
@@ -115,6 +99,25 @@ async function run(database,ctx,id,options={}){
    audit({kind:'browser_preparation_timing',phase:'current_page_load',ms:Date.now()-phaseStarted});
    return tools;
   });
+  // A settled, natively completed turn has already done its reasoning. Host
+  // delivery is a separate durable stage: recheck the exact saved final with
+  // CURRENT authority, canonical receipts and fresh records/browser evidence.
+  // No credential, token count, spending hold or new SDK turn is needed here.
+  const savedFinal=require(base+'codex-runtime').savedFinal(goal.checkpoint.harness,{profile:modelProfile,messages:goal.checkpoint.messages||[]});
+  if(savedFinal){
+   audit({kind:'saved_native_result_verifying'});
+   await session.finish((client,{goal,access})=>require('./postgres-codex-verification').verify(client,ctx,goal,savedFinal,access.catalogue,{browser:ui}));
+   return store.get(database,ctx,id);
+  }
+  const key=options.apiKey||process.env.OPENAI_API_KEY;if(!key)throw Error('OPENAI_API_KEY_REQUIRED');
+  const counter=options.countInput||require(base+'codex-token-counter').createTokenCounter({apiKey:key});
+  // Warm only a session that actually needs reasoning. Every paid request
+  // still receives exact native preflight and every unchanged spending hold.
+  if(!options.countInput){const warm=counter({model:modelProfile.model,reasoning:{effort:modelProfile.effort},
+   input:[{role:'user',content:'Connection readiness check only; no model generation.'}]}).catch(()=>null);preparations.push(warm);}
+  let preparedSandbox=options.sandboxPool?options.sandboxPool.take(image):require(base+'codex-runtime').prepareSandbox(image);
+  const initialSandbox=preparedSandbox;preparations.push(preparedSandbox);preparedSandbox.catch(()=>{});
+  cleanup.push(async()=>{const prepared=await initialSandbox.catch(()=>null);if(prepared)await prepared.sandbox.close();});
   // Prepare the browser only when the user actually supplied page context.
   // Otherwise the native agent can choose records without opening Chromium.
   if(goal.checkpoint.page?.path&&!goal.checkpoint.harness?.native?.codex?.threadId){

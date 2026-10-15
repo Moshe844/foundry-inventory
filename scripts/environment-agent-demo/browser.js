@@ -1,5 +1,5 @@
 'use strict';
-const {randomUUID}=require('node:crypto');
+const {randomUUID,createHash}=require('node:crypto');
 
 // Mechanical browser executor. The model chooses every action and target.
 // No task text, selectors from test cases, route maps or business workflows enter
@@ -71,11 +71,28 @@ async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null,ob
       const ref=`${generation}:${revision}:${controls.length}`;references.set(ref,node);controls.push({ref,...data});
       if(data.optionsTruncated)controls.at(-1).optionsNextRef=cursor({kind:'options',ref,offset:10});
     }
-    const text=await page.locator('body').innerText(),visibleText=text.slice(textOffset,textOffset+18000);
+    const snapshot=await page.evaluate(()=>({text:document.body.innerText,regions:Array.from(document.querySelectorAll(
+      'main,form,table,tr,section,article,fieldset,[role="main"],[role="region"],[role="row"],[role="group"]'))
+      .filter(element=>element.getClientRects().length&&getComputedStyle(element).visibility!=='hidden').slice(0,80)
+      .map(element=>({tag:element.tagName.toLowerCase(),role:element.getAttribute('role'),text:element.innerText})).filter(region=>region.text.length<=18000)}));
+    const text=snapshot.text,visibleText=text.slice(textOffset,textOffset+18000);
     // Address actual visible lines directly. A claim about one fact should
     // not require generating another copy of the entire page for verification.
     const textBlocks=Object.fromEntries(visibleText.split(/\r?\n/).map(line=>line.trim()).filter(Boolean).map((line,index)=>[`line${index}`,line]));
-    return {url:page.url(),title:await page.title(),text:visibleText,textBlocks,
+    // Line numbers identify values within THIS observation, not across page
+    // reloads. Preserve exact visible semantic regions for host verification;
+    // they confer no permission and contain no interaction capabilities.
+    const lines=Object.values(textBlocks),textRegions=[];
+    for(const region of snapshot.regions){
+      const content=region.text.split(/\r?\n/).map(line=>line.trim()).filter(Boolean);if(content.length<2)continue;
+      const matches=[];
+      for(let start=0;start+content.length<=lines.length;start++)if(content.every((line,index)=>line===lines[start+index])){
+        matches.push(start);if(matches.length>1)break;
+      }
+      if(matches.length===1)textRegions.push({firstLine:matches[0],count:content.length,tag:region.tag,...(region.role?{role:region.role}:{}),
+        sha256:createHash('sha256').update(JSON.stringify(content)).digest('hex')});
+    }
+    return {url:page.url(),title:await page.title(),text:visibleText,textBlocks,textRegions,
       controls,httpStatus,applicationPage,truncated:controlOffset+controls.length<total||textOffset+18000<text.length,
       pagination:{controlOffset,controlTotal:total,textOffset,textLength:text.length,
         controlsNextRef:controlOffset+controls.length<total?cursor({kind:'page',controlOffset:controlOffset+controls.length,textOffset}):null,

@@ -110,7 +110,11 @@ async function resume(db,ctx,id){
   const h=row.checkpoint.harness||{};
   if(h.inflight||h.codexDelivery?.state==='PENDING'||h.helperDelivery?.state==='PENDING'||(await client.query("SELECT 1 FROM stockchief_runtime.codex_pilot_calls WHERE workspace_id=$1 AND goal_id=$2 AND state IN ('RESERVED','UNKNOWN') LIMIT 1",[ctx.workspaceId,id])).rows.length)
    throw new ValidationError('An earlier step still needs reconciliation. StockChief will not repeat an uncertain operation or charge.');
-  if(Number(h.codexRequests||0)>=24||Number(row.tool_calls)>=30)throw new ValidationError('This request reached its existing execution limits. Recorded changes and approvals remain available for review.');
+  if(Number(h.codexRequests||0)>=24||Number(row.tool_calls)>=30){
+   const profile=require('./codex-model-routing').selected(row,ctx);
+   if(!require('../../scripts/environment-agent-demo/codex-runtime').savedFinal(h,{profile,messages:row.checkpoint.messages||[]}))
+    throw new ValidationError('This request reached its existing execution limits. Recorded changes and approvals remain available for review.');
+  }
   await require('../../scripts/environment-agent-demo/waits').authority(client,ctx,h);
   const dependencies=require('../../scripts/environment-agent-demo/waits').dependencies(h);
   const state=await require('../../scripts/environment-agent-demo/waits').current(client,ctx,id,dependencies);
