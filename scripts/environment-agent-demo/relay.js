@@ -16,7 +16,8 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
   throw new Error('Commercial request accounting is required.');
  const grants=new Map();let active=0;
  const server=http.createServer(async(req,res)=>{
-  let id=null,held=null,attempted=false,settled=false,grant=null,control=null;const start=Date.now(),timings={};
+  let id=null,held=null,attempted=false,settled=false,grant=null,control=null,callDetail={},providerStarted=null,providerSignal=null,parser=null,receipt=null;
+  const start=Date.now(),timings={},transport={phase:'admission',receivedBytes:0};
   try{
    const token=req.headers.authorization?.replace(/^Bearer /,'')||req.headers['x-api-key'];
     grant=grants.get(token);if(!grant)throw new Error('UNAUTHORIZED_RELAY');
@@ -95,7 +96,9 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
     }
     if(normalized.context)audit({kind:'wire_context',provider:grant.provider,...normalized.context,inputTokenBound:normalized.inputTokens});
     const reservationStarted=Date.now();
-    id=await budget.reserve({candidate:grant.candidate,task:grant.task,upperBoundMicroUsd:normalized.upperBoundMicroUsd});
+    callDetail={provider:grant.provider,model:normalized.body.model,requestedServiceTier:normalized.body.service_tier||null,
+     inputTokenBound:normalized.inputTokens,outputTokenBound:normalized.outputTokens,requestHash};
+    id=await budget.reserve({candidate:grant.candidate,task:grant.task,upperBoundMicroUsd:normalized.upperBoundMicroUsd,detail:callDetail});
     timings.budgetReservationMs=Date.now()-reservationStarted;
     const commercialStarted=Date.now();
     held=await commercial.begin({...grant,id,...normalized,admissionAccess});
@@ -108,11 +111,22 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
     const pendingStarted=Date.now();if(nativeCodex)await grant.nativeSession?.codexPending(requestHash,admissionAccess);
     timings.pendingCheckpointMs=Date.now()-pendingStarted;
     attempted=true;
-    const providerStarted=Date.now();timings.admissionMs=providerStarted-start-(timings.tokenPreflightMs||0);
+    providerStarted=Date.now();timings.admissionMs=providerStarted-start-(timings.tokenPreflightMs||0);
+    transport.phase='request';transport.clientRequestId=grant.provider==='openai'?id:null;transport.timeoutMs=timeoutMs;
+    // Correlation only, never idempotency or permission to retry an uncertain
+    // generation. The durable reservation ID exists even if no headers arrive.
+    if(grant.provider==='openai')headers['x-client-request-id']=id;
+    providerSignal=AbortSignal.timeout(timeoutMs);
     const response=await fetchImpl(ENDPOINTS[grant.provider],{method:'POST',headers,redirect:'error',
-     body:JSON.stringify(normalized.body),signal:AbortSignal.timeout(timeoutMs)});
-    const parser=new wire.UsageParser(grant.provider);const output=[];
-    for await(const chunk of response.body){parser.append(chunk);output.push(Buffer.from(chunk));}
+     body:JSON.stringify(normalized.body),signal:providerSignal});
+    timings.responseHeadersMs=Date.now()-providerStarted;transport.phase='body';transport.status=response.status;
+    const providerRequestId=response.headers.get('x-request-id')||response.headers.get('request-id');
+    transport.providerRequestId=typeof providerRequestId==='string'&&/^[A-Za-z0-9_-]{1,200}$/.test(providerRequestId)?providerRequestId:null;
+    parser=new wire.UsageParser(grant.provider);const output=[];
+    for await(const chunk of response.body){
+     if(!transport.receivedBytes)timings.firstByteMs=Date.now()-providerStarted;
+     transport.receivedBytes+=chunk.byteLength;parser.append(chunk);output.push(Buffer.from(chunk));
+    }
     timings.providerMs=Date.now()-providerStarted;
     // Error responses and interrupted calls have no reliable charge receipt.
     // Fail closed, retain their complete reservation, and prevent SDK retry spend.
@@ -124,16 +138,17 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
      throw new Error(`UPSTREAM_STATUS_${response.status}`);
     }
     const parsedReceipt=parser.finish();
-    const receipt=nativeCodex?codex.receipt(parsedReceipt):parsedReceipt;
+    receipt=nativeCodex?codex.receipt(parsedReceipt):parsedReceipt;
     if(receipt.inputTokens>normalized.inputTokens||receipt.outputTokens>normalized.outputTokens){
      await budget.stop();throw new Error('TOKEN_BOUND_VIOLATION');
     }
-    const settlementStarted=Date.now();await commercial.complete(held,receipt);
+    transport.phase='settlement';const settlementStarted=Date.now();await commercial.complete(held,receipt);
     timings.commercialSettlementMs=Date.now()-settlementStarted;
     await budget.settle(id,receipt.conservativeMicroUsd,{provider:grant.provider,model:normalized.body.model,
      requestedServiceTier:normalized.body.service_tier,returnedServiceTier:receipt.returnedServiceTier||null,
-     usage:receipt.raw,latencyMs:Date.now()-start,timings,accounting:'conservative standard-price charge'});
+     usage:receipt.raw,latencyMs:Date.now()-start,timings,transport:{...transport,providerResponseId:parser.responseId||null},accounting:'conservative standard-price charge'});
     settled=true;
+    transport.phase='delivery';
     audit({kind:'model_call',id,candidate:grant.candidate,task:grant.task,usage:receipt,
      latencyMs:Date.now()-start,timings,source:'native_sdk_http'});
     const outcome={...parser.response.result(),request:control?.request||null,final:Boolean(control?.final),usageSettled:true};
@@ -153,17 +168,25 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
    }finally{active--;}
   }catch(error){
    // Never expose provider responses, secrets, SQL or internal stack traces.
-   const reason=String(error.code||error.message||'RELAY_FAILURE').slice(0,180);
+   const providerUncertain=attempted&&!settled&&['request','body'].includes(transport.phase);
+   const timedOut=providerUncertain&&providerSignal?.aborted;
+   const networkFailure=providerUncertain&&['UND_ERR_CONNECT_TIMEOUT','UND_ERR_HEADERS_TIMEOUT','UND_ERR_BODY_TIMEOUT','UND_ERR_SOCKET','ECONNRESET','EPIPE','ETIMEDOUT','EAI_AGAIN'].includes(error.cause?.code||error.code);
+   const reason=timedOut?'PROVIDER_REQUEST_TIMEOUT':networkFailure?'PROVIDER_TRANSPORT_UNCERTAIN':String(error.code||error.message||'RELAY_FAILURE').slice(0,180);
+   if(providerStarted!==null&&!timings.providerMs)timings.providerMs=Date.now()-providerStarted;
+   const limitKind=timedOut||networkFailure?'provider_transport':error.limitKind||null;
+   const uncertainDetail={...callDetail,latencyMs:Date.now()-start,timings,
+    transport:{...transport,providerResponseId:parser?.responseId||null},
+    ...(receipt?{usage:receipt.raw}:{}),accounting:receipt?'provider usage retained; local settlement requires reconciliation':'full reservation retained; provider usage unverified',upstreamAttempted:attempted,usageSettled:settled};
    const finalGate=['EMPTY_MODEL_FINAL','FINAL_REQUEST_EXHAUSTED'].includes(reason);
    const message=reason==='EMPTY_MODEL_FINAL'?require('./finalization').EMPTY_MESSAGE:
     reason==='FINAL_REQUEST_EXHAUSTED'?'StockChief already used the final request allowance. No additional provider call was made.':
     'StockChief model budget or authority gate stopped this request.';
-   if(grant)grant.lastBlock={code:reason,limitKind:error.limitKind||null,upstreamAttempted:attempted,usageSettled:settled,message};
+   if(grant)grant.lastBlock={code:reason,limitKind,upstreamAttempted:attempted,usageSettled:settled,message};
    if(id&&!settled){
-    if(attempted){await budget.unknown(id,reason);if(held)await commercial.unknown(held,reason).catch(()=>budget.stop());}
+    if(attempted){await budget.unknown(id,reason,uncertainDetail);if(held)await commercial.unknown(held,reason).catch(()=>budget.stop());}
     else {if(held)await commercial.release(held).catch(()=>budget.stop());await budget.settle(id,0,{reason,upstreamAttempted:false});}
    }
-   audit({kind:'model_call_blocked',id,reason,limitKind:error.limitKind||null,
+   audit({kind:'model_call_blocked',id,reason,limitKind,...(attempted?{timings,transport:uncertainDetail.transport}:{}),
     reasonDetail:error.code==='rate_limited'?String(error.message).slice(0,240):null,
     transportCode:error.cause?.code||null,upstreamAttempted:attempted,usageSettled:settled});
    const contextGate=reason==='CONTEXT_BUDGET_EXHAUSTED'||error.limitKind==='operation_cost';

@@ -198,9 +198,9 @@
   box-shadow: 0 8px 22px -16px rgba(72, 50, 190, .8);
   overflow-wrap: anywhere;
 }
-:is(.rm-chat, .rm-history__body) > .rm-turn--you details.rm-turn__said > summary { cursor: pointer; list-style: none; }
+:is(.rm-chat, .rm-history__body) > .rm-turn--you details.rm-turn__said > summary { cursor: pointer; list-style: none; display: block; color: inherit; }
 :is(.rm-chat, .rm-history__body) > .rm-turn--you details.rm-turn__said > summary::-webkit-details-marker { display: none; }
-:is(.rm-chat, .rm-history__body) > .rm-turn--you details.rm-turn__said > summary::after { content: ' Show all'; opacity: .8; font-size: 12.5px; }
+:is(.rm-chat, .rm-history__body) > .rm-turn--you details.rm-turn__said > summary::after { content: ' Show all'; opacity: .8; font-size: 12.5px; white-space: nowrap; }
 :is(.rm-chat, .rm-history__body) > .rm-turn--you details[open].rm-turn__said > summary::after { content: ' Show less'; }
 :is(.rm-chat, .rm-history__body) > .rm-turn--foundry { align-self: flex-start; min-width: min(100%, 420px); }
 :is(.rm-chat, .rm-history__body) > .rm-turn--foundry .rm-turn__who { padding-left: 4px; color: var(--brand-2); }

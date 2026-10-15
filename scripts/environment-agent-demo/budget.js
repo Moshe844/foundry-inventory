@@ -78,7 +78,7 @@ class ExperimentBudget {
     return {...shared,...usage,ceiling:allocation.ceiling,remaining:Math.min(shared.remaining,Math.max(0,allocation.ceiling-usage.committed)),
       candidate,sharedCeiling:shared.ceiling,sharedRemaining:shared.remaining,sharedUnresolved:shared.unresolved};
   }
-  reserve({candidate,task,upperBoundMicroUsd}){
+  reserve({candidate,task,upperBoundMicroUsd,detail={}}){
     integer(upperBoundMicroUsd,'upper bound');
     if(!candidate||!task||upperBoundMicroUsd===0)throw new Error('A priced candidate and task are required.');
     return this.transaction(()=>{
@@ -90,8 +90,8 @@ class ExperimentBudget {
       if(upperBoundMicroUsd>state.remaining)throw new Error('SHARED_SPENDING_CEILING');
       if(upperBoundMicroUsd>this.candidateStatus(candidate).remaining)throw new Error('CANDIDATE_SPENDING_CEILING');
       const id=randomUUID();
-      this.db.prepare(`INSERT INTO experiment_calls(id,experiment,candidate,task,reserved,state,created)
-        VALUES(?,?,?,?,?,'RESERVED',?)`).run(id,this.experiment,candidate,task,upperBoundMicroUsd,Date.now());
+      this.db.prepare(`INSERT INTO experiment_calls(id,experiment,candidate,task,reserved,state,created,detail)
+        VALUES(?,?,?,?,?,'RESERVED',?,?)`).run(id,this.experiment,candidate,task,upperBoundMicroUsd,Date.now(),JSON.stringify(detail));
       return id;
     });
   }
@@ -114,9 +114,9 @@ class ExperimentBudget {
     });
     if(result)throw new Error(result);
   }
-  unknown(id,reason){
-    this.db.prepare("UPDATE experiment_calls SET state='UNKNOWN',detail=? WHERE id=? AND experiment=? AND state='RESERVED'")
-      .run(JSON.stringify({reason}),id,this.experiment);
+  unknown(id,reason,detail={}){
+    this.db.prepare("UPDATE experiment_calls SET state='UNKNOWN',detail=json_patch(detail,?) WHERE id=? AND experiment=? AND state='RESERVED'")
+      .run(JSON.stringify({...detail,reason}),id,this.experiment);
   }
   stop(){this.db.prepare('UPDATE experiment_budget SET stopped=1 WHERE id=?').run(this.experiment);}
   // Trusted operator reconciliation only; never invoked by the relay or SDK.

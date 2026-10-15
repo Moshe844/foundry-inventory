@@ -112,12 +112,17 @@ class UsageParser{
   for(;;){const boundary=this.pending.search(/\r?\n\r?\n/);if(boundary<0)break;
    const frame=this.pending.slice(0,boundary);this.pending=this.pending.slice(boundary).replace(/^\r?\n\r?\n/,'');
    const data=frame.split(/\r?\n/).filter(line=>line.startsWith('data:')).map(line=>line.slice(5).trimStart()).join('\n');
-   if(data&&data!=='[DONE]'){try{const event=JSON.parse(data);this.response.observe(event);if(event.usage||event.response?.usage||event.message?.usage||event.type==='message_stop')this.events.push(event);}catch{throw new Error('MALFORMED_USAGE_STREAM');}}
+   if(data&&data!=='[DONE]'){try{const event=JSON.parse(data);this.observe(event);if(event.usage||event.response?.usage||event.message?.usage||event.type==='message_stop')this.events.push(event);}catch{throw new Error('MALFORMED_USAGE_STREAM');}}
   }
  }
  finish(){this.pending+=this.decoder.decode();if(this.pending.trim()){
-   try{const event=JSON.parse(this.pending);this.response.observe(event);this.events.push(event);}catch{throw new Error('INCOMPLETE_USAGE_STREAM');}}
+   try{const event=JSON.parse(this.pending);this.observe(event);this.events.push(event);}catch{throw new Error('INCOMPLETE_USAGE_STREAM');}}
   return usage(this.provider,this.events);
+ }
+ observe(event){
+  const id=this.provider==='openai'?(event.response||event).id:(event.message||event).id;
+  if(typeof id==='string'&&/^(resp|msg)_[A-Za-z0-9_-]{1,180}$/.test(id))this.responseId=id;
+  this.response.observe(event);
  }
 }
 module.exports={MODELS,PRICES,MAX_OUTPUT,MAX_BODY,normalize,usage,UsageParser};

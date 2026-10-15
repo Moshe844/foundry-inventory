@@ -11,6 +11,10 @@ test('lightweight progress preserves the complete public conversation across all
   {status:'BLOCKED',harness:{interruption:{code:'SHARED_SPENDING_CEILING'},completionSource:'partial_observation_report'}},
   {status:'BLOCKED',harness:{interruption:{code:'SHARED_SPENDING_CEILING'}}},
   {status:'BLOCKED',harness:{interruption:{code:'DISCONNECTED'}}},
+  {status:'BLOCKED',harness:{interruption:{code:'23'},codexDelivery:{state:'PENDING',hash:'PRIVATE_HASH_SENTINEL',packet:'PRIVATE_PACKET_SENTINEL'}}},
+  {status:'BLOCKED',harness:{interruption:{code:'DISCONNECTED'},helperDelivery:{state:'PENDING',hash:'PRIVATE_HASH_SENTINEL'}}},
+  {status:'BLOCKED',harness:{interruption:{code:'PROVIDER_REQUEST_TIMEOUT',limitKind:'provider_transport'}}},
+  {status:'WAITING_APPROVAL',harness:{codexDelivery:{state:'PENDING',hash:'PRIVATE_HASH_SENTINEL'}}},
   {status:'BLOCKED',harness:{}},
   {status:'WAITING_USER',harness:{userQuestion:{id:'question-one',question:'Which delivery address should I use?',missingInformation:['Customer delivery address']}}},
   {status:'WAITING_APPROVAL',harness:{}},
@@ -25,6 +29,7 @@ test('lightweight progress preserves the complete public conversation across all
   const full=await store.get(db,ctx,goal.id),progress=await store.progress(db,ctx,goal.id);
   assert.deepEqual(conversation.state(progress),conversation.state(full),JSON.stringify(fixture));
   assert(!JSON.stringify(progress).includes('PRIVATE_EVIDENCE_SENTINEL'));assert(!JSON.stringify(progress).includes('PRIVATE_AUTHORITY_SENTINEL'));
+  assert(!JSON.stringify(progress).includes('PRIVATE_HASH_SENTINEL'));assert(!JSON.stringify(progress).includes('PRIVATE_PACKET_SENTINEL'));
   if(fixture.harness.completionSource)assert(conversation.state(progress).message.includes('The approved operation was executed and verified.'));
   assert.equal(await store.progress(db,{...ctx,actorId:'foreign-user'},goal.id),null);
   assert.equal(await store.progress(db,{...ctx,workspaceId:'foreign-workspace'},goal.id),null);

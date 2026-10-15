@@ -26,7 +26,15 @@ test('shared Staging spending serializes requests and retains uncertainty withou
  await budget.settle(id,60000,{offline:true});
  await assert.rejects(budget.reserve(args),/SHARED_SPENDING_CEILING/);
  await assert.rejects(budget.reserve({...args,upperBoundMicroUsd:300001}),/INVALID_PILOT_RESERVATION/);
- const unknown=await budget.reserve({...args,upperBoundMicroUsd:30000});await budget.unknown(unknown,'offline interruption');
+ const unknown=await budget.reserve({...args,upperBoundMicroUsd:30000,detail:{provider:'openai',model:'offline-model',requestHash:'offline-hash'}});
+ assert.equal((await db.query('SELECT detail FROM stockchief_runtime.codex_pilot_calls WHERE id=$1',[unknown])).rows[0].detail.model,'offline-model','Provider identity is durable before the network starts');
+ const otherBudget=require('../../src/assistant/postgres-codex-budget').createBudget(db,{...ctx,actorId:randomUUID()},g.id);
+ await otherBudget.unknown(unknown,'wrong-actor');assert.equal((await db.query('SELECT state FROM stockchief_runtime.codex_pilot_calls WHERE id=$1',[unknown])).rows[0].state,'RESERVED');
+ await budget.unknown(unknown,'PROVIDER_REQUEST_TIMEOUT',{transport:{phase:'request',receivedBytes:0,clientRequestId:unknown},timings:{providerMs:120000}});
+ const detail=(await db.query('SELECT detail FROM stockchief_runtime.codex_pilot_calls WHERE id=$1',[unknown])).rows[0].detail;
+ assert.equal(detail.model,'offline-model');assert.equal(detail.requestHash,'offline-hash');assert.equal(detail.reason,'PROVIDER_REQUEST_TIMEOUT');assert.equal(detail.transport.clientRequestId,unknown);
+ await budget.unknown(unknown,'second-write');assert.deepEqual((await db.query('SELECT detail FROM stockchief_runtime.codex_pilot_calls WHERE id=$1',[unknown])).rows[0].detail,detail,'A second stop cannot overwrite the unknown receipt');
+ await assert.rejects(budget.settle(unknown,0),/REQUIRES_RECONCILIATION/);
  assert.equal((await budget.status()).committed,90000);assert.equal((await budget.status()).unresolved,1);
  await assert.rejects(budget.reserve({...args,upperBoundMicroUsd:1000}),/UNRESOLVED_MODEL_CALL/);
  await budget.stop();assert((await budget.status()).stopped);

@@ -1,0 +1,13 @@
+{
+  "source": "Recorded Testing live run, 2026-10-15T20:44:19Z through 20:47:13Z. Diagnostic metadata only; no recorded model decisions or business data.",
+  "model": "gpt-6.1-sol",
+  "requestedServiceTier": "fast",
+  "modelRequests": 3,
+  "settledBeforeFailure": 2,
+  "providerDeadlineMs": 120000,
+  "interruption": { "code": "23" },
+  "codexDelivery": { "state": "PENDING" },
+  "unresolvedReservationMicroUsd": 185270,
+  "proposalsPrepared": 0,
+  "businessChanges": 0
+}
