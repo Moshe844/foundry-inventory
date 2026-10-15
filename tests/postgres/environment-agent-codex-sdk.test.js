@@ -37,7 +37,16 @@ test('actual Codex SDK in network-none Docker: governed MCP, native restart, and
     assert(body.input.some(i=>i.type==='additional_tools'));
     return require('../helpers/codex-offline-response')(body,n,`const e=ALL_TOOLS.find(t=>t.name.endsWith('__environment_evidence'));text(await tools[e.name]({id:'absent-offline-evidence',offset:0}));const t=ALL_TOOLS.find(t=>t.name.endsWith('__environment_browser'));if(!t)throw Error('Browser unavailable');text(await tools[t.name]({action:'click',ref:'expired-offline-handle',value:null}));text(await tools[t.name]({action:'inspect',ref:null,value:null}));`);
    }
-   if(!resumed){assert(body.input.some(i=>i.type==='custom_tool_call_output'));return response(body,n,null,null,'Offline SDK transport observed the application.');}
+   if(!resumed){
+    assert(body.input.some(i=>i.type==='custom_tool_call_output'));
+    const h=(await goals.get(db,ctx,held.id)).checkpoint.harness,entry=Object.values(h.evidence).findLast(e=>e.name==='environment_browser'),observation=JSON.parse(entry.text);assert(observation.url);
+    // Synthetic provider tests only the real SDK's new lossless wire contract;
+    // it is never reported as evidence of live-model business intelligence.
+    const report={version:2,status:'completed',outcome:'answer',answer:'Offline SDK transport observed the application.',question:null,missingInformation:[],tier:null,reason:null,
+     claims:[{evidenceId:entry.id,historical:false,values:[{path:'/url',value:observation.url}]}],navigation:null,workProducts:[],nextActions:[]};
+    assert(new(require('ajv'))({strict:false}).compile(require(base+'codex-report').schema)(report));
+    return response(body,n,null,null,JSON.stringify(report));
+   }
    if(n===3)assert(JSON.stringify(body.input).includes('Offline SDK transport observed the application.'),'native JSONL history survives a new container');
    if(n===4){assert(JSON.stringify(body.input).includes('CONTEXT CHECKPOINT COMPACTION'));return response(body,n,null,null,'Offline native compaction summary: the application was observed; durable evidence is available from environment_evidence.');}
    if(n===5)assert(JSON.stringify(body.input).includes('Offline native compaction summary:'),'native compacted history must reach the next inference');
@@ -54,6 +63,7 @@ test('actual Codex SDK in network-none Docker: governed MCP, native restart, and
  process.env.STOCKCHIEF_CODEX_SDK_DEMO='1';t.after(()=>{delete process.env.STOCKCHIEF_CODEX_SDK_DEMO;});
  const first=await require(base+'codex-runtime').run(options);
  assert(first.answer.includes('observed'));assert.equal(requests.length,2);
+ assert.equal(JSON.parse(first.answer).version,1);assert.equal(JSON.parse(first.answer).claims.length,1);assert.equal(typeof JSON.parse(first.answer).claims[0].value,'string');
  const cp=(await goals.get(db,ctx,held.id)).checkpoint.harness;
  assert(cp.native.codex.threadId);assert(Object.keys(cp.native.codex.files).length);assert.equal(cp.codexRequests,2);
  assert.equal(Object.values(cp.evidence).length,2);assert(Object.values(cp.evidence)[0].text.includes('STALE_BROWSER_REFERENCE'));

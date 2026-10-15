@@ -81,7 +81,7 @@ const EXECUTORS=Object.freeze({
         &&effect.kind==='mail.outbound.send'&&effect.aggregate_id===result.communicationId);
     }},
   'sales_order.create':{execute:(client,ctx,payload)=>workflows.createSalesOrderInTransaction(client,ctx,payload),
-    verify:(client,ctx,result)=>exists(client,'sales_orders',ctx.workspaceId,result.salesOrderId)},
+    verify:require('./canonical-order-verification').sales},
   'report.template.create':{execute:async(client,ctx,payload)=>{
     const actor=(await client.query(`SELECT u.role,u.permissions,a.email FROM users u
       JOIN accounts a ON a.id=u.account_id WHERE u.workspace_id=$1 AND u.id=$2`,
@@ -109,7 +109,7 @@ const EXECUTORS=Object.freeze({
       &&Number(row.total_minor)>0&&row.journal_entry_id);
   }},
   'purchase_order.create':{execute:(client,ctx,payload)=>workflows.createPurchaseOrderInTransaction(client,ctx,payload),
-    verify:(client,ctx,result)=>exists(client,'purchase_orders',ctx.workspaceId,result.purchaseOrderId)},
+    verify:require('./canonical-order-verification').purchase},
   'purchase_order.receive':{execute:(client,ctx,payload)=>workflows.receivePurchaseOrderInTransaction(client,ctx,payload.purchaseOrderId,payload),
     verify:(client,ctx,result)=>exists(client,'purchase_order_receipts',ctx.workspaceId,result.receiptId)},
   'supplier_payment.record':{execute:(client,ctx,payload)=>workflows.recordSupplierPaymentInTransaction(client,ctx,payload),

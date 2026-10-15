@@ -59,6 +59,7 @@
     <div>
       <h1>Purchase order</h1>
       <div class="muted"><%= order.poNumber %></div>
+      <% if (order.reference) { %><div class="muted">Reference: <%= order.reference %></div><% } %>
     </div>
     <div style="text-align:right;">
       <div style="font-weight:600;"><%= businessName %></div>

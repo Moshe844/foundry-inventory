@@ -300,6 +300,13 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
      ...(check.verificationDetail?.evidenceId?{evidenceId:check.verificationDetail.evidenceId,path:check.verificationDetail.path}:{})};
     h.pendingReport=null;goal.checkpoint.lifecycleStage=null;
     h.completionSource=goal.status==='COMPLETED'?'host_verified_answer':'unverified_answer';
+    // A rejected narrative must not hide canonically committed work. Keep the
+    // goal blocked and its precise verification failure; report only freshly
+    // verified execution receipts, never promote a partial effect to success.
+    if(!verified&&goal.status==='BLOCKED'&&canonicalVerified){
+     const partial=require('./receipts').render(h.receipt);
+     if(partial){goal.answer=partial;h.completionSource='partial_verified_receipt';}
+    }
     h.finishedAt=new Date().toISOString();
    },{access});
   },

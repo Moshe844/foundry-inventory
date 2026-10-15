@@ -166,12 +166,12 @@ async function createPurchaseOrderInTransaction(client, rawContext, input) {
     const orderDate = dateOnly(input.orderDate || at.slice(0, 10), 'Order date');
     await client.query(`INSERT INTO purchase_orders
       (id,workspace_id,po_number,supplier_id,status,order_date,expected_date,expected_date_source,
-       destination_location_id,currency,notes,source,source_detail,created_by_user_id,integrity_hash,created_at,updated_at)
-      VALUES($1,$2,$3,$4,'DRAFT',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$15)`,
+       destination_location_id,currency,notes,source,source_detail,created_by_user_id,integrity_hash,reference,created_at,updated_at)
+      VALUES($1,$2,$3,$4,'DRAFT',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$16)`,
     [id, ctx.workspaceId, poNumber, supplier.id, orderDate, input.expectedDate || null,
       input.expectedDate ? 'manual' : 'unknown', input.destinationLocationId || null,
       input.currency || supplier.currency || 'USD', trimOrNull(input.notes), input.source || 'manual',
-      JSON.stringify(input.sourceDetail || {}), ctx.actorId, crypto.createHash('sha256').update(JSON.stringify(resolved)).digest('hex'), at]);
+      JSON.stringify(input.sourceDetail || {}), ctx.actorId, crypto.createHash('sha256').update(JSON.stringify(resolved)).digest('hex'), trimOrNull(input.reference), at]);
     const lineIds = [];
     for (const [index, line] of resolved.entries()) {
       const lineId = newId('pol'); lineIds.push(lineId);
@@ -242,6 +242,25 @@ async function reviseDraftPurchaseOrderLineInTransaction(client, rawContext, pur
 
 function reviseDraftPurchaseOrderLine(database, ctx, purchaseOrderId, input) {
   return transaction(database, (client) => reviseDraftPurchaseOrderLineInTransaction(client,ctx,purchaseOrderId,input));
+}
+
+async function reviseDraftPurchaseOrderReference(database, rawContext, purchaseOrderId, input) {
+  const ctx=requireContext(rawContext);
+  return transaction(database,async client=>{
+    await requirePermission(client,ctx,access.CREATE_PO,'correct a draft purchase-order reference');
+    const operation=await beginOperation(client,ctx,'purchase_order.revise_draft_reference',input.idempotencyKey);
+    if(operation.replayed)return {...operation.result,replayed:true};
+    const reference=trimOrNull(input.reference);
+    if(!reference||!Object.hasOwn(input,'expectedReference')||!input.expectedUpdatedAt)
+      throw new ValidationError('Review the exact reference and current draft before correcting it.');
+    const order=await requireRow(client,'SELECT * FROM purchase_orders WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,purchaseOrderId],'That purchase order was not found.');
+    if(order.status!=='DRAFT'||trimOrNull(order.reference)!==trimOrNull(input.expectedReference)||new Date(order.updated_at).toISOString()!==input.expectedUpdatedAt)
+      throw new ValidationError('This draft changed after review. Nothing was corrected.');
+    const at=nowIso(),integrity=crypto.createHash('sha256').update(JSON.stringify({previous:order.integrity_hash,reference})).digest('hex');
+    await client.query('UPDATE purchase_orders SET reference=$3,updated_at=$4,integrity_hash=$5 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,purchaseOrderId,reference,at,integrity]);
+    await event(client,'purchase_order_events',null,{workspaceId:ctx.workspaceId,recordId:purchaseOrderId,type:'draft_reference_revised',actorId:ctx.actorId,at,detail:{from:order.reference,to:reference,approvalReference:trimOrNull(input.approvalReference)}});
+    const result={purchaseOrderId,reference,status:'DRAFT'};await completeOperation(client,operation,result);return {...result,replayed:false};
+  });
 }
 
 async function approvePurchaseOrder(database, rawContext, purchaseOrderId, input) {
@@ -1042,6 +1061,7 @@ module.exports = {
   createPurchaseOrderInTransaction,
   reviseDraftPurchaseOrderLine,
   reviseDraftPurchaseOrderLineInTransaction,
+  reviseDraftPurchaseOrderReference,
   approvePurchaseOrder,
   placePurchaseOrder,
   cancelPurchaseOrder,

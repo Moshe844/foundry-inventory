@@ -3,6 +3,19 @@
 const {sections:moreSections}=require('./routes/postgres-settings');
 
 function postgresPageRenderer(req,res,next){
+  const render=res.render.bind(res);
+  // Both shell pages and standalone business documents use server templates.
+  // Mark only successful authenticated renders; raw endpoints, failed renders
+  // and unauthenticated pages cannot manufacture application evidence.
+  res.render=(view,data,callback)=>{
+    if(typeof data==='function'){callback=data;data=undefined;}
+    return render(view,data,(error,body)=>{
+      if(!error&&res.statusCode===200&&req.ctx?.workspaceId)res.set('X-StockChief-Page','1');
+      if(callback)return callback(error,body);
+      if(error)return next(error);
+      return res.send(body);
+    });
+  };
   res.page=(view,data={})=>{const onboardingEntry=data.onboardingEntry || data.layoutOnboardingEntry || res.locals.globalOnboardingEntry || null;
     return res.render(view,{...data,onboardingEntry},(error,body)=>{
     if(error)return next(error);
@@ -22,7 +35,6 @@ function postgresPageRenderer(req,res,next){
     const pending=req.session?.agentNavigation;
     const agentArrival=res.statusCode===200&&pending&&pending.href===currentHref&&
       pending.workspaceId===req.ctx?.workspaceId&&pending.actorId===req.ctx?.actorId?pending:null;
-    if(res.statusCode===200&&req.ctx?.workspaceId)res.set('X-StockChief-Page','1');
     if(req.session&&data.title){const labels=req.session.renderedPageLabels||{};
       labels[currentHref]=String(data.title).replace(/\s+·\s+StockChief$/,'').slice(0,100);
       for(const key of Object.keys(labels).slice(0,Math.max(0,Object.keys(labels).length-40)))delete labels[key];

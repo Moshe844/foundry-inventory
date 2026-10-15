@@ -1434,6 +1434,9 @@ async function prepareAction(database,ctx,message,request,options={}) {
     const unitCost=request.amount===null?(supplierItem?.last_unit_cost===null||supplierItem?.last_unit_cost===undefined
       ?null:Number(supplierItem.last_unit_cost)):request.amount;
     const currency=request.currency||party.row.currency||'USD';
+    const packSize=Number(supplierItem?.units_per_purchase_unit||1);
+    if(request.quantity%packSize!==0)return {status:'CLARIFY',awaitingField:'quantity',carryForward:orderContext,
+      answer:`${party.row.name} supplies this product in packs of ${packSize} stock units. How many stock units should this order contain? Choose a multiple of ${packSize}; nothing has been prepared or ordered.`};
     return createProposal(database,ctx,message,'purchase_order.create',{supplierId:party.row.id,
       ...(request.poNumber?{poNumber:request.poNumber}:{}),
       destinationLocationId:place.row.id,currency,expectedDate:request.neededBy,reference:request.reference,

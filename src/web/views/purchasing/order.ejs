@@ -4,6 +4,7 @@
     <h1><%= order.poNumber %> · <%= order.supplierName %></h1>
     <div class="page-sub">
       <%= helpers.columnLabel(order.status.toLowerCase().replace('_', ' ')) %>
+      <% if (order.reference) { %> · Reference: <%= order.reference %><% } %>
       <% if (order.expectedDate) { %> · expected <%= order.expectedDate %><% } %>
       <% if (order.source === 'foundry_recommendation') { %> · prepared by StockChief<% } %>
       <% if (order.source === 'instruction') { %> · from something you asked for<% } %>

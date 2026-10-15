@@ -1,0 +1,238 @@
+{
+  "source": "Actual browser-001 final shape, 2026-10-15; private identifiers, narrative and product options removed. Paths, other primitive defaults, order and 37-claim structure retained. The full original values are checked separately in an ignored local artifact.",
+  "originalSha256": "98c1d9844f4314f23c2e82932367d5e1cb8994e8f7da23329e17568e5e6a70b6",
+  "originalRawCharacters": 7523,
+  "report": {
+    "version": 1,
+    "status": "completed",
+    "outcome": "answer",
+    "answer": "Recorded unfamiliar order-form answer; full exact claim set retained.",
+    "missingInformation": [],
+    "claims": [
+      {
+        "evidenceId": "recorded-form-observation-0",
+        "path": "/controls/15/value",
+        "value": "",
+        "historical": false
+      },
+      {
+        "evidenceId": "recorded-form-observation-0",
+        "path": "/controlDefaults/required",
+        "value": false,
+        "historical": false
+      },
+      {
+        "evidenceId": "recorded-form-observation-0",
+        "path": "/controls/16/value",
+        "value": "",
+        "historical": false
+      },
+      {
+        "evidenceId": "recorded-form-observation-0",
+        "path": "/controls/16/label",
+        "value": "Their email\nwhere order and shipping updates go\nStockChief cannot tell them anything without this. Filled in for an existing customer who has none.",
+        "historical": false
+      },
+      {
+        "evidenceId": "recorded-form-observation-0",
+        "path": "/controls/17/checked",
+        "value": true,
+        "historical": false
+      },
+      {
+        "evidenceId": "recorded-form-observation-0",
+        "path": "/controls/17/label",
+        "value": "Send by carrier\nA complete delivery address is required before the order is created. Nothing ships until handover is confirmed later.",
+        "historical": false
+      },
+      {
+        "evidenceId": "recorded-form-observation-0",
+        "path": "/controls/18/label",
+        "value": "Customer pickup\nNo address is needed and no carrier is involved.",
+        "historical": false
+      },
+      {
+        "evidenceId": "recorded-form-observation-0",
+        "path": "/controls/19/value",
+        "value": "",
+        "historical": false
+      },
+      {
+        "evidenceId": "recorded-form-observation-0",
+        "path": "/controls/19/label",
+        "value": "Delivery address for this order\nSaved on this Sales Order. Changing the customer's address later will not change this order.",
+        "historical": false
+      },
+      {
+        "evidenceId": "recorded-form-observation-0",
+        "path": "/controls/20/checked",
+        "value": false,
+        "historical": false
+      },
+      {
+        "evidenceId": "recorded-form-observation-0",
+        "path": "/controls/21/required",
+        "value": true,
+        "historical": false
+      },
+      {
+        "evidenceId": "recorded-form-observation-0",
+        "path": "/controls/21/value",
+        "value": "",
+        "historical": false
+      },
+      {
+        "evidenceId": "recorded-form-observation-0",
+        "path": "/controls/21/label",
+        "value": "Product or variant\nChoose a product\nRecorded private product options omitted from the public regression fixture.",
+        "historical": false
+      },
+      {
+        "evidenceId": "recorded-form-observation-0",
+        "path": "/controls/22/required",
+        "value": true,
+        "historical": false
+      },
+      {
+        "evidenceId": "recorded-form-observation-0",
+        "path": "/controls/22/value",
+        "value": "",
+        "historical": false
+      },
+      {
+        "evidenceId": "recorded-form-observation-0",
+        "path": "/controls/22/min",
+        "value": "1",
+        "historical": false
+      },
+      {
+        "evidenceId": "recorded-form-observation-0",
+        "path": "/controls/22/step",
+        "value": "1",
+        "historical": false
+      },
+      {
+        "evidenceId": "recorded-form-observation-0",
+        "path": "/controls/23/value",
+        "value": "",
+        "historical": false
+      },
+      {
+        "evidenceId": "recorded-form-observation-0",
+        "path": "/textBlocks/line75",
+        "value": "Every customer order needs a price. StockChief will never invent one. It uses the product’s selling price or the order price above. Accounting updates only after items physically leave.",
+        "historical": false
+      },
+      {
+        "evidenceId": "recorded-form-observation-0",
+        "path": "/controls/26/value",
+        "value": "",
+        "historical": false
+      },
+      {
+        "evidenceId": "recorded-form-observation-0",
+        "path": "/controls/27/value",
+        "value": "2026-10-15",
+        "historical": false
+      },
+      {
+        "evidenceId": "recorded-form-observation-0",
+        "path": "/controls/28/value",
+        "value": "",
+        "historical": false
+      },
+      {
+        "evidenceId": "recorded-form-observation-0",
+        "path": "/controls/29/value",
+        "value": "100",
+        "historical": false
+      },
+      {
+        "evidenceId": "recorded-form-observation-0",
+        "path": "/controls/29/min",
+        "value": "0",
+        "historical": false
+      },
+      {
+        "evidenceId": "recorded-form-observation-0",
+        "path": "/controls/29/max",
+        "value": "1000",
+        "historical": false
+      },
+      {
+        "evidenceId": "recorded-form-observation-0",
+        "path": "/controls/29/step",
+        "value": "1",
+        "historical": false
+      },
+      {
+        "evidenceId": "recorded-form-observation-0",
+        "path": "/controls/29/label",
+        "value": "Allocation priority\nlower numbers first",
+        "historical": false
+      },
+      {
+        "evidenceId": "recorded-form-observation-0",
+        "path": "/controls/30/value",
+        "value": "",
+        "historical": false
+      },
+      {
+        "evidenceId": "recorded-form-observation-0",
+        "path": "/controls/30/label",
+        "value": "Ship from\noptional\nLet StockChief use available stock at any location\nMain Warehouse",
+        "historical": false
+      },
+      {
+        "evidenceId": "recorded-form-observation-0",
+        "path": "/controls/31/value",
+        "value": "",
+        "historical": false
+      },
+      {
+        "evidenceId": "recorded-form-observation-0",
+        "path": "/controls/32/value",
+        "value": "",
+        "historical": false
+      },
+      {
+        "evidenceId": "recorded-form-observation-0",
+        "path": "/controls/33/value",
+        "value": "",
+        "historical": false
+      },
+      {
+        "evidenceId": "recorded-form-observation-0",
+        "path": "/controls/34/value",
+        "value": "",
+        "historical": false
+      },
+      {
+        "evidenceId": "recorded-form-observation-0",
+        "path": "/controls/24/label",
+        "value": "+ Add another product",
+        "historical": false
+      },
+      {
+        "evidenceId": "recorded-form-observation-0",
+        "path": "/controls/35/label",
+        "value": "Create order and continue",
+        "historical": false
+      },
+      {
+        "evidenceId": "recorded-form-observation-0",
+        "path": "/controls/36/label",
+        "value": "Save draft",
+        "historical": false
+      },
+      {
+        "evidenceId": "recorded-form-observation-0",
+        "path": "/controls/37/label",
+        "value": "Cancel",
+        "historical": false
+      }
+    ],
+    "workProducts": [],
+    "nextActions": []
+  }
+}
