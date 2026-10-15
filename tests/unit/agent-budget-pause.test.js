@@ -14,4 +14,9 @@ test('recorded shared-budget stop is a saved funding pause, not an unexplained i
  goal.status='WAITING_EVENT';assert.equal(contract.state(goal).phase,'external_wait');
  goal.status='COMPLETED';assert.equal(contract.state(goal).phase,'completed');
  goal.status='BLOCKED';goal.checkpoint.harness.interruption.code='REPEATED_UNCHANGED_EVIDENCE';assert.equal(contract.state(goal).phase,'interrupted');
+ goal.checkpoint.harness.interruption={code:'rate_limited',limitKind:'daily_model_attempts'};
+ const daily=contract.state(goal);assert.equal(daily.phase,'capacity');assert.equal(daily.canReply,false);assert.equal(daily.active,false);assert.equal(daily.terminal,false);
+ assert(daily.message.includes(goal.answer));assert.match(daily.message,/daily allowance resets/);assert(!daily.message.includes('rate_limited'));
+ goal.status='WAITING_APPROVAL';assert.equal(contract.state(goal).phase,'approval');
+ goal.status='WAITING_USER';goal.checkpoint.harness.userQuestion={question:'Which address?',missingInformation:['Address']};assert.equal(contract.state(goal).phase,'clarification');
 });

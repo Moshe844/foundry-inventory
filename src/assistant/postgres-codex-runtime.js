@@ -42,7 +42,8 @@ async function run(database,ctx,id,options={}){
   // The customer timeline stores activity, not raw prompts, tokens or fields.
   const detail={kind:event.source==='host_initial_observation'?event.kind.replace('agent_tool_','initial_page_'):event.kind,
    tool:event.name||event.tool||null,action:event.action||null,status:event.status||null,
-   code:event.code||event.reason||null};
+   code:event.code||event.reason||null,
+   limitKind:typeof event.limitKind==='string'&&/^[a-z_]{1,80}$/.test(event.limitKind)?event.limitKind:null};
   if(event.timings)detail.timings=Object.fromEntries(Object.entries(event.timings).filter(([key,value])=>
    ['admissionMs','tokenPreflightMs','providerMs','commercialSettlementMs','nativeCheckpointMs','finalVerificationMs'].includes(key)&&Number.isFinite(value)&&value>=0));
   pendingActivity.push({id:require('../lib/util').newId('goalevent'),detail});
@@ -194,7 +195,7 @@ async function run(database,ctx,id,options={}){
  }catch(error){
   audit({kind:'runtime_failed',code:error.code||'STAGING_RUNTIME_STOPPED'});
   if(session){const ready=await session.handoffApprovals().catch(()=>null);if(ready)return ready;
-   return session.stop({code:error.code||error.message||'STAGING_RUNTIME_STOPPED'});}
+   return session.stop({code:error.code||error.message||'STAGING_RUNTIME_STOPPED',limitKind:error.limitKind||null});}
   await database.query(`UPDATE stockchief_runtime.assistant_goals SET status='BLOCKED',run_token=NULL,lease_until=NULL,
    answer=$5,updated_at=now()
    WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 AND run_token=$4`,[ctx.workspaceId,ctx.actorId,id,goal.run_token,

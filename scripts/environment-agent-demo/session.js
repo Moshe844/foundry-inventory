@@ -320,7 +320,9 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
     h.finishedAt=new Date().toISOString();return {answer:goal.answer,completionSource:h.completionSource};
    },{access});
   },
-  async stop({code='HARNESS_INTERRUPTED'}={}){
+  async stop({code='HARNESS_INTERRUPTED',limitKind=null}={}){
+   const interruption=()=>({code:String(code).replace(/[^a-zA-Z0-9_-]/g,'').slice(0,80),
+    ...(typeof limitKind==='string'&&/^[a-z_]{1,80}$/.test(limitKind)?{limitKind}:{}),at:new Date().toISOString()});
    const existing=(await database.query(`SELECT status,run_token FROM ${TABLE} WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,goalId])).rows[0];
    if(!existing||existing.status!=='RUNNING'||existing.run_token!==runToken)return {
     status:existing&&existing.status!=='RUNNING'?existing.status:'BLOCKED',completionSource:'already_stopped',
@@ -342,7 +344,7 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
      const classified=require('../../src/assistant/agent-conversation').classify({report:h.pendingReport});
      goal.status=classified.status;goal.answer=classified.answer;h.userQuestion=classified.question;
      h.pendingReport=null;h.failure=null;h.completionSource='durable_input_handoff';
-     h.interruption={code:String(code).replace(/[^a-zA-Z0-9_-]/g,'').slice(0,80),at:new Date().toISOString()};
+     h.interruption=interruption();
      return {answer:goal.answer,status:goal.status,completionSource:h.completionSource};
     }
     goal.status=['WAITING_APPROVAL','WAITING_EVENT'].includes(current)?current:'BLOCKED';
@@ -366,7 +368,7 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
     }
     h.dependencies=refs;
     if(code==='WHOLE_GOAL_VERIFICATION_FAILED')h.verificationUnavailable=true;
-    h.interruption={code:String(code).replace(/[^a-zA-Z0-9_-]/g,'').slice(0,80),at:new Date().toISOString()};
+    h.interruption=interruption();
     return {answer:goal.answer,status:goal.status,completionSource:h.completionSource||'interrupted'};
    },{cleanup:true});
   }
