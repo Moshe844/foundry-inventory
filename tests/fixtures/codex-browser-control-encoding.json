@@ -1,0 +1,204 @@
+{
+  "source": "Exact embedded SDK live failure: compact control copied as received; observation indices renumbered and test-record form path anonymized.",
+  "previous": {
+    "controls": [
+      {
+        "ref": "301400a2-cfb4-4291-8dd6-71f77db14d51:5:16",
+        "tag": "input",
+        "type": "number",
+        "role": null,
+        "label": "Units to cost",
+        "description": "",
+        "name": "quantity",
+        "sensitive": false,
+        "value": "10",
+        "disabled": false,
+        "required": true,
+        "readOnly": false,
+        "multiple": false,
+        "min": "1",
+        "max": null,
+        "step": "1",
+        "pattern": null,
+        "maxLength": null,
+        "form": {
+          "method": "post",
+          "action": "/inventory/fixture-product/costs/proposals",
+          "label": null
+        },
+        "optionsTruncated": false
+      },
+      {
+        "ref": "301400a2-cfb4-4291-8dd6-71f77db14d51:5:18",
+        "tag": "input",
+        "type": null,
+        "role": null,
+        "label": "Currency",
+        "description": "",
+        "name": "currency",
+        "sensitive": false,
+        "value": "USD",
+        "disabled": false,
+        "required": false,
+        "readOnly": true,
+        "multiple": false,
+        "min": null,
+        "max": null,
+        "step": null,
+        "pattern": null,
+        "maxLength": null,
+        "form": {
+          "method": "post",
+          "action": "/inventory/fixture-product/costs/proposals",
+          "label": null
+        },
+        "optionsTruncated": false
+      },
+      {
+        "ref": "301400a2-cfb4-4291-8dd6-71f77db14d51:5:21",
+        "tag": "input",
+        "type": "date",
+        "role": null,
+        "label": "Posting date",
+        "description": "",
+        "name": "postingDate",
+        "sensitive": false,
+        "value": "2026-10-15",
+        "disabled": false,
+        "required": true,
+        "readOnly": false,
+        "multiple": false,
+        "min": null,
+        "max": "2026-10-15",
+        "step": null,
+        "pattern": null,
+        "maxLength": null,
+        "form": {
+          "method": "post",
+          "action": "/inventory/fixture-product/costs/proposals",
+          "label": null
+        },
+        "optionsTruncated": false
+      }
+    ]
+  },
+  "current": {
+    "controls": [
+      {
+        "ref": "b37aea6f-8b51-425c-a158-432b9855be7e:1:16",
+        "tag": "input",
+        "type": "number",
+        "role": null,
+        "label": "Units to cost",
+        "description": "",
+        "name": "quantity",
+        "sensitive": false,
+        "value": "10",
+        "disabled": false,
+        "required": true,
+        "readOnly": false,
+        "multiple": false,
+        "min": "1",
+        "max": null,
+        "step": "1",
+        "pattern": null,
+        "maxLength": null,
+        "form": {
+          "method": "post",
+          "action": "/inventory/fixture-product/costs/proposals",
+          "label": null
+        },
+        "optionsTruncated": false
+      },
+      {
+        "ref": "b37aea6f-8b51-425c-a158-432b9855be7e:1:18",
+        "tag": "input",
+        "type": null,
+        "role": null,
+        "label": "Currency",
+        "description": "",
+        "name": "currency",
+        "sensitive": false,
+        "value": "USD",
+        "disabled": false,
+        "required": false,
+        "readOnly": true,
+        "multiple": false,
+        "min": null,
+        "max": null,
+        "step": null,
+        "pattern": null,
+        "maxLength": null,
+        "form": {
+          "method": "post",
+          "action": "/inventory/fixture-product/costs/proposals",
+          "label": null
+        },
+        "optionsTruncated": false
+      },
+      {
+        "ref": "b37aea6f-8b51-425c-a158-432b9855be7e:1:21",
+        "tag": "input",
+        "type": "date",
+        "role": null,
+        "label": "Posting date",
+        "description": "",
+        "name": "postingDate",
+        "sensitive": false,
+        "value": "2026-10-15",
+        "disabled": false,
+        "required": true,
+        "readOnly": false,
+        "multiple": false,
+        "min": null,
+        "max": "2026-10-15",
+        "step": null,
+        "pattern": null,
+        "maxLength": null,
+        "form": {
+          "method": "post",
+          "action": "/inventory/fixture-product/costs/proposals",
+          "label": null
+        },
+        "optionsTruncated": false
+      }
+    ]
+  },
+  "claims": [
+    {
+      "path": "/controls/0",
+      "value": {
+        "ref": "301400a2-cfb4-4291-8dd6-71f77db14d51:5:16",
+        "tag": "input",
+        "type": "number",
+        "label": "Units to cost",
+        "name": "quantity",
+        "value": "10",
+        "required": true,
+        "min": "1",
+        "step": "1",
+        "form": {
+          "method": "post",
+          "action": "/inventory/fixture-product/costs/proposals",
+          "label": null
+        }
+      }
+    },
+    {
+      "path": "/controls/1/value",
+      "value": "USD"
+    },
+    {
+      "path": "/controls/1/readOnly",
+      "value": true
+    },
+    {
+      "path": "/controls/2/value",
+      "value": "2026-10-15"
+    },
+    {
+      "path": "/controls/2/max",
+      "value": "2026-10-15"
+    }
+  ]
+}

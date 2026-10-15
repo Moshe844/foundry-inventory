@@ -42,6 +42,20 @@ test('real website form remains verifiable after navigation chrome changes; actu
  const checked=await verification.verify(db,ctx,current,JSON.stringify(report),catalogue,{browser:tools});
  assert.equal(checked.verified,true,JSON.stringify(checked));assert.equal(checked.navigation.href,'/reports/builder?dataset=stock');
  assert.equal(current.status,'RUNNING','Verification alone does not deliver or execute an outcome');
+ // The live cost-form failure copied a whole compact control exactly as the
+ // agent received it. Defaults and observation refs are transport encoding,
+ // not changed business facts. Exercise the same path on another real form.
+ const index=observed.controls.findIndex(c=>c.form&&c.name&&['input','select'].includes(c.tag));assert(index>=0);
+ const encoded=require('../../scripts/environment-agent-demo/browser-presentation').compact(observed).controls[index];
+ const controlClaim={evidenceId:evidence.id,path:'/controls/'+index,value:Object.fromEntries(Object.entries(encoded).reverse())};
+ const controlReport={...report,claims:[...claims,controlClaim]};
+ assert.equal((await verification.verify(db,ctx,current,JSON.stringify(controlReport),catalogue,{browser:tools})).verified,true);
+ const forged=structuredClone(controlReport);delete forged.claims.at(-1).value.ref;
+ assert.equal((await verification.verify(db,ctx,current,JSON.stringify(forged),catalogue,{browser:tools})).verified,false,'Arbitrary subsets are not exact host wire evidence');
+ const realRead=tools.verifyObservation;
+ tools.verifyObservation=async url=>{const fresh=await realRead(url);fresh.controls.find(c=>c.name===observed.controls[index].name).disabled=!observed.controls[index].disabled;return fresh;};
+ assert.equal((await verification.verify(db,ctx,current,JSON.stringify(controlReport),catalogue,{browser:tools})).verified,false,'Changed constraints remain unverified');
+ tools.verifyObservation=realRead;
  const original=tools.verifyObservation;let reads=0;
  tools.verifyObservation=async url=>{const fresh=await original(url);reads++;
   const key=Object.keys(fresh.textBlocks).find(key=>fresh.textBlocks[key]===claims[0].value);fresh.textBlocks[key]='Changed business-form meaning';return fresh;};

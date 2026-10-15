@@ -1,5 +1,6 @@
 'use strict';
 const {createHash}=require('node:crypto');
+const {isDeepStrictEqual:equal}=require('node:util');
 const unavailable=(answer,code)=>({verified:false,answer,report:{version:1,status:'blocked',answer},verificationFailure:code});
 // Models identify claims; the host checks their values against durable evidence
 // and canonical PostgreSQL effects. A model's success flag alone is insufficient.
@@ -38,7 +39,16 @@ async function verify(database,ctx,goal,raw,catalogue,options={}){
   for(const part of claim.path.slice(1).split('/')){const key=part.replace(/~1/g,'/').replace(/~0/g,'~');
    if(['__proto__','constructor','prototype'].includes(key)||value===null||typeof value!=='object'||!Object.hasOwn(value,key))return {verified:false,answer:report.answer};
    value=value[key];}
-  if(JSON.stringify(value)!==JSON.stringify(claim.value))return {verified:false,answer:report.answer};
+  if(!equal(value,claim.value)){
+   // Browser wire encoding removes declared defaults. A whole control copied
+   // exactly from that host-produced representation is still recorded evidence.
+   // Accept that exact representation only, never an arbitrary object subset.
+   if(entry.name!=='environment_browser'||!/^\/(?:screen\/)?controls\/(?:0|[1-9]\d*)$/.test(claim.path))return {verified:false,answer:report.answer};
+   let shown=require('../../scripts/environment-agent-demo/browser-presentation').compact(JSON.parse(entry.text));
+   for(const part of claim.path.slice(1).split('/'))shown=shown?.[part];
+   if(!equal(shown,claim.value))return {verified:false,answer:report.answer};
+   value=shown;
+  }
   if(claim.historical!==true){
    if(!fresh.has(entry.id)){
     try{fresh.set(entry.id,await require('./agent-evidence-verification').current(database,ctx,goal,entry,{catalogue,...options}));}
@@ -49,10 +59,17 @@ async function verify(database,ctx,goal,raw,catalogue,options={}){
     if(['__proto__','constructor','prototype'].includes(key))return {verified:false,answer:report.answer};
     if(current===null||typeof current!=='object'||!Object.hasOwn(current,key)){missingCurrent=true;break;}
     current=current[key];}
-   if(missingCurrent||JSON.stringify(current)!==JSON.stringify(claim.value)){
+   // Controls, like text offsets and loopback ports, have observation-local
+   // identity. Verify their complete semantic facts before trusting an array
+   // position, even when an unrelated field happens to contain the same value.
+   const control=entry.name==='environment_browser'?require('./browser-control-verification').unchangedControl(
+    JSON.parse(entry.text),fresh.get(entry.id),claim.path):{applicable:false};
+   if(control.applicable){
+    if(!control.matched)return unavailable('The form changed during this request. Its earlier fields are no longer verified as current. Your request and recorded work are saved.','CURRENT_FORM_CHANGED');
+   }else if(missingCurrent||!equal(current,claim.value)){
     const moved=entry.name==='environment_browser'?require('./browser-text-verification').unchangedLine(
      JSON.parse(entry.text),fresh.get(entry.id),claim.path):{matched:false};
-    if(!moved.matched||JSON.stringify(moved.value)!==JSON.stringify(claim.value))return unavailable('The business records changed during this request. The earlier figures are no longer verified as current. Your request and recorded work are saved.','CURRENT_RECORDS_CHANGED');
+    if(!moved.matched||!equal(moved.value,claim.value))return unavailable('The business records changed during this request. The earlier figures are no longer verified as current. Your request and recorded work are saved.','CURRENT_RECORDS_CHANGED');
    }
   }
   verified.push({evidenceId:claim.evidenceId,path:claim.path,sha256:createHash('sha256').update(JSON.stringify(value)).digest('hex')});

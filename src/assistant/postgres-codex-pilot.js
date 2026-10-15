@@ -60,7 +60,8 @@ async function start(db,ctx,message,options={}){
  goal.checkpoint.runtime='codex-staging';
  await store.enqueue(db,goal);return {status:'CLARIFY',answer:'StockChief is investigating your goal.',goalId:goal.id,goalStatus:goal.status};
 }
-async function inbox(db,ctx,id){await access(db,ctx);const goal=await store.get(db,ctx,id);
+async function inbox(db,ctx,id,{progress=false}={}){await access(db,ctx);
+ const read=progress?store.progress:store.get,goal=await read(db,ctx,id);
  if(!goal||goal.checkpoint.runtime!=='codex-staging')throw new ValidationError('Pilot goal not found.');
  const result=await require('../../scripts/environment-agent-demo/approval-handoff').inbox(db,ctx,id);
  const approvals=result?.approvals||[];
@@ -70,7 +71,7 @@ async function inbox(db,ctx,id){await access(db,ctx);const goal=await store.get(
   if(mission?.goal_id===id&&mission.waiting_proposal_id===card.proposalId&&(mission.approval_status==='PENDING'||mission.approval_status==='APPROVED'&&approvedScope)&&mission.approved_steps.length>1)
    card.mission={id:mission.id,sha256:mission.plan_hash,count:mission.approved_steps.length};
  }
- return {goal:result?await store.get(db,ctx,id):goal,approvals};
+ return {goal:result?await read(db,ctx,id):goal,approvals};
 }
 async function decide(db,ctx,id,deliveryId,sha256,approved,{responseReference,missionScope=null}={}){
  await access(db,ctx,{enabled:true});

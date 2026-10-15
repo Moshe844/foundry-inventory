@@ -50,7 +50,7 @@ test('recorded clarification and unfamiliar multi-turn domains traverse the real
   await page.getByLabel('Ask StockChief',{exact:true}).fill(sample.goal);
   await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Continue',exact:true}).click()]);
   const goal=await store.latest(db,ctx);let calls=0;
-  const options={image:JSON.parse(fs.readFileSync('data/environment-agent-demo/codex-sdk-approval-handoff/runtime.json')).image,
+  const options={image:process.env.STOCKCHIEF_OFFLINE_CODEX_IMAGE||JSON.parse(fs.readFileSync('data/environment-agent-demo/codex-sdk-approval-handoff/runtime.json')).image,
    apiKey:'FAKE',countInput:async()=>({object:'response.input_tokens',input_tokens:200}),fetchImpl:async(_url,init)=>{
     const body=JSON.parse(init.body);calls++;
     if(calls===1)return require('../helpers/codex-offline-response').final(body,calls,sample.name==='sales'?trace.rawFinal:JSON.stringify(sample.question));
@@ -87,9 +87,9 @@ test('recorded clarification and unfamiliar multi-turn domains traverse the real
   const proposal=inbox.approvals[0];assert.equal(proposal.canonicalStatus,'PENDING');
   if(sample.name==='sales'){assert.equal(proposal.payload.lines[0].unitPriceMinor,1275);assert.equal(proposal.payload.currency,'GBP');assert.equal(proposal.payload.shipToAddress,'18 Test Road');}
   assert.equal((await db.query('SELECT count(*) AS n FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1 AND id=$2 AND status=$3',[ctx.workspaceId,proposal.proposalId,'EXECUTED'])).rows[0].n,'0');
-  await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve exact operation',exact:true}).click()]);
+  await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve this change',exact:true}).click()]);
   const verified=await pilot.run(db,ctx,goal.id,options);assert.equal(verified.status,'COMPLETED',verified.answer);
-  await page.reload();assert(await page.getByText('Completed and verified',{exact:true}).isVisible());
+  await page.reload();assert(await page.locator('[data-adaptive-goal="'+goal.id+'"] [data-goal-phase-text]').getByText('Completed',{exact:true}).isVisible());
   assert((await page.locator('body').innerText()).includes(sample.reply));assert((await page.locator('body').innerText()).includes(sample.second));
   assert.equal((await db.query('SELECT status FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,proposal.proposalId])).rows[0].status,'EXECUTED');
   assert.equal((await store.get(db,ctx,goal.id)).original_request,sample.goal);

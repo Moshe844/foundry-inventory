@@ -249,9 +249,12 @@ function createPostgresAskRouter(database,options={}){
     if(!goal)return res.status(404).json({error:'Goal not found.'});
     const isPilot=goal.checkpoint.runtime==='codex-staging';
     const workerAvailable=isPilot?Boolean(goal.worker_available):null;
-    if(isPilot)await pilot.access(database,req.ctx);
+    // inbox performs the same fresh pilot/commercial admission. The polling
+    // path needs only public progress, never the full native SDK journal.
+    // Approval staging still uses its canonical transaction when necessary.
     const approvalInbox=isPilot&&!['COMPLETED','CANCELLED','BLOCKED'].includes(goal.status)
-      ?await pilot.inbox(database,req.ctx,goal.id):null;
+      ?await pilot.inbox(database,req.ctx,goal.id,{progress:true}):null;
+    if(isPilot&&!approvalInbox)await pilot.access(database,req.ctx);
     if(approvalInbox)goal=approvalInbox.goal;
     const events=isPilot?(await database.query(`SELECT sequence,kind,detail,created_at FROM stockchief_runtime.assistant_goal_events
       WHERE goal_id=$1 AND kind IN ('agent_activity','approval_ready') ORDER BY sequence DESC LIMIT 20`,[goal.id])).rows:[];
