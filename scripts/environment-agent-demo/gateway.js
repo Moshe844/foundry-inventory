@@ -92,7 +92,7 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
   return {
     authorize:access,
     async initialContracts(){
-      const {catalogue}=await access(),operations=[];
+      const {catalogue,actor}=await access(),operations=[];
       // Ordinary questions must be able to choose a governed read immediately,
       // not pay for a separate discovery turn or a browser tour first. This is
       // current authorized metadata, not a map limiting environment discovery.
@@ -100,8 +100,12 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
       // A complete name/kind index distinguishes an absent execution contract
       // from details merely omitted from the initial packet. This is generated
       // from fresh authorized contracts, never a page/route discovery boundary.
-      const operationIndex=contracts.map(c=>({name:c.name,kind:c.kind}));
-      const packet=()=>({operations,operationIndex,indexComplete:true,total:contracts.length,complete:operations.length===contracts.length,
+      const operationIndex=Object.fromEntries([...new Set(contracts.map(c=>c.kind))]
+        .map(kind=>[kind,contracts.filter(c=>c.kind===kind).map(c=>c.name)]));
+      const datasets=require('../../src/reports/postgres-registry').list(actor);
+      const datasetIndex=datasets.map(({key:name,label})=>({name,label,detailsByName:true}));
+      const packet=()=>({operations,operationIndex,datasetIndex,datasetFieldsComplete:datasetIndex.every(d=>d.fields),indexComplete:true,total:contracts.length,complete:operations.length===contracts.length,
+        datasetAccess:'These are current authorized read projections, not application pages or database tables. environment_dataset accepts a discovered name and columns for detail reads. Use environment_interfaces for full query schemas, aggregation and completeness rules. All dataset reads recheck permissions and tenant scope.',
         coverage:'Current authorized interface contracts within the existing metadata bound. This is not an environment map. Discover pages and forms through the browser; use environment_interfaces for omitted contract details. All operations repeat fresh authority and canonical verification.'});
       for(const contract of contracts.filter(c=>c.kind==='read')){
         const complete=describe(contract);
@@ -114,6 +118,16 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
         // Keep the SAME byte boundary on the complete delivered packet.
         if(Buffer.byteLength(JSON.stringify(require('./interface-presentation').compact(packet())))>18000)operations.pop();
       }
+      // Names stay complete; optional field details use only space left after
+      // the executable read contracts. Nothing silently disappears from the
+      // index when richer metadata needs exact-name retrieval.
+      for(const [index,dataset]of datasets.entries()){
+        datasetIndex[index].fields=dataset.fields;
+        if(Buffer.byteLength(JSON.stringify(require('./interface-presentation').compact(packet())))>18000)
+          delete datasetIndex[index].fields;
+      }
+      if(Buffer.byteLength(JSON.stringify(require('./interface-presentation').compact(packet())))>18000)
+        throw Error('INITIAL_INTERFACE_INDEX_LIMIT');
       return packet();
     },
     async interfaces(input={}){const {actor,catalogue}=await access();return interfaceSnapshot(catalogue,actor,input);},

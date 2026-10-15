@@ -13,3 +13,11 @@ test('model HTML, executable links and malicious table cells remain inert text',
  assert(!/<(?:img|script|a)\b/i.test(html));assert.match(html,/&lt;img/);assert.match(html,/<strong>&lt;script&gt;/);
  assert.match(render('• First\n• Second\n\nA **clear** result.'),/<ul><li>First<\/li><li>Second<\/li><\/ul><p>A <strong>clear<\/strong> result\.<\/p>/);
 });
+
+test('ordinary Markdown section labels render cleanly without exposing heading markers or active HTML',()=>{
+ const html=render('### Posted customer invoices\n\n| Invoice | Total |\n|---|---:|\n| INV-7 | $75.00 |\n\nA conclusion.\n## Next steps\n\nReview the record.');
+ assert.match(html,/^<h3 class="rm-agent__heading">Posted customer invoices<\/h3><div/);
+ assert.match(html,/<p>A conclusion\.<\/p><h3 class="rm-agent__heading">Next steps<\/h3>/);
+ assert(!html.includes('###'));
+ assert.equal(render('## <img src=x onerror=alert(1)>'),'<h3 class="rm-agent__heading">&lt;img src=x onerror=alert(1)&gt;</h3>');
+});

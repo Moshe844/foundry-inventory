@@ -41,6 +41,8 @@
 .rm-agent__answer { margin: 12px 0 0; font-size: 15px; line-height: 1.6; overflow-wrap: anywhere; }
 .rm-agent__answer p { margin: 0 0 12px; }
 .rm-agent__answer p:last-child { margin-bottom: 0; }
+.rm-agent__answer .rm-agent__heading { margin: 16px 0 8px; font-size: 1em; line-height: 1.4; font-weight: 650; }
+.rm-agent__answer .rm-agent__heading:first-child { margin-top: 0; }
 .rm-agent__answer ul { margin: 0 0 12px; padding-left: 22px; }
 .rm-agent__table { max-width: 100%; overflow-x: auto; margin: 12px 0; }
 .rm-agent__table table { width: 100%; border-collapse: collapse; font-size: 14px; }

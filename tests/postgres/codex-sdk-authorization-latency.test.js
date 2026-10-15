@@ -13,6 +13,18 @@ test('native bookkeeping avoids repeated catalogue construction while retaining 
  const initial=await gateway.initialContracts(),codec=require('../../scripts/environment-agent-demo/interface-presentation');
  assert(Buffer.byteLength(JSON.stringify(codec.compact(initial)))<=18000,'The complete actually delivered metadata stays inside the unchanged bound');
  assert.deepEqual(codec.expand(codec.compact(initial)),initial,'Packing changes no contract, field or authority fact');
+ assert.deepEqual(Object.entries(initial.operationIndex).flatMap(([kind,names])=>names.map(name=>({name,kind}))).sort((a,b)=>a.name.localeCompare(b.name)),
+  full.catalogue.list().map(({name,kind})=>({name,kind})).sort((a,b)=>a.name.localeCompare(b.name)),
+  'Grouping the complete operation index must lose no authorized contract');
+ const reportRegistry=require('../../src/reports/postgres-registry');
+ assert.deepEqual(initial.datasetIndex.map(({name,label,detailsByName})=>({name,label,detailsByName})),
+  reportRegistry.list(full.actor).map(({key:name,label})=>({name,label,detailsByName:true})),
+  'Recorded live invoice discovery must see every authorized dataset before the first model call');
+ for(const dataset of initial.datasetIndex)if(dataset.fields)
+  assert.deepEqual(dataset.fields,reportRegistry.list(full.actor).find(d=>d.key===dataset.name).fields);
+ assert(initial.datasetIndex.some(d=>d.name==='customer_invoices'));
+ assert.equal(initial.datasetFieldsComplete,initial.datasetIndex.every(d=>Boolean(d.fields)));
+ assert(!JSON.stringify(initial.datasetIndex).includes('SELECT '),'SQL implementation is never interface metadata');
  assert(initial.operations.some(c=>c.name==='read.payments'&&c.fields),'Recorded live cash investigation must not lose its read contract by measuring the uncompressed intermediate representation');
  queries=0;const fresh=await gateway.authorize({catalogue:false}),lightQueries=queries;
  assert.deepEqual(fresh.actor,full.actor);assert.equal(fresh.catalogue,undefined);
