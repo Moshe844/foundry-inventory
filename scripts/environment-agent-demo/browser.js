@@ -34,6 +34,21 @@ async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null,ob
   page.on('response',response=>{if(response.request().isNavigationRequest()&&response.frame()===page.mainFrame()){
     httpStatus=response.status();applicationPage=response.headers()['x-stockchief-page']==='1';}});
   const cursor=value=>{const ref=`${generation}:page:${randomUUID()}`;continuations.set(ref,value);return ref;};
+  // Host-observed local presentation, not a model-selected action. Native
+  // dialogs have no URL transition; a fresh GET otherwise hides their form.
+  // Identity selects a unique presentation surface only. Every cited field
+  // and text region is still checked against newly rendered facts.
+  async function dialogStates(){return page.locator('dialog').evaluateAll(elements=>elements.map(element=>({
+    identity:JSON.stringify({id:element.id||null,label:element.getAttribute('aria-label'),
+      labelledBy:element.getAttribute('aria-labelledby'),forms:Array.from(element.querySelectorAll('form')).map(form=>({method:form.method,action:form.getAttribute('action')}))}),
+    open:element.open,modal:element.matches(':modal')})));}
+  async function presentation(){const [open,dialogs]=await Promise.all([
+    page.locator('details[open]').evaluateAll(elements=>elements.map(element=>element.querySelector(':scope > summary')?.textContent?.replace(/\s+/g,' ').trim()).filter(Boolean)),dialogStates()]);
+    const identities=dialogs.map(dialog=>dialog.identity);
+    return {version:1,openDisclosures:open.map(summary=>createHash('sha256').update(summary).digest('hex')),
+      openDialogs:dialogs.filter(dialog=>dialog.open&&identities.filter(key=>key===dialog.identity).length===1)
+        .map(dialog=>({key:createHash('sha256').update(dialog.identity).digest('hex'),modal:dialog.modal}))};
+  }
   async function describe(node,optionOffset=0,optionLimit=100){return node.evaluate((element,{offset,limit})=>{
     const labelledBy=(element.getAttribute('aria-labelledby')||'').split(/\s+/).map(id=>document.getElementById(id)?.innerText||'').join(' ').trim();
     const describedBy=(element.getAttribute('aria-describedby')||'').split(/\s+/).map(id=>document.getElementById(id)?.innerText||'').join(' ').trim();
@@ -84,7 +99,7 @@ async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null,ob
         for(let depth=0;depth<2&&parent&&!['BODY','HTML','MAIN'].includes(parent.tagName);depth++,parent=parent.parentElement)headingGroups.add(parent);
       }
       const elements=[...new Set([...headingGroups,...document.querySelectorAll(
-        'main,form,table,tr,section,article,fieldset,details,[role="main"],[role="region"],[role="row"],[role="group"]')])];
+        'main,form,table,tr,section,article,fieldset,details,dialog,[role="dialog"],[role="main"],[role="region"],[role="row"],[role="group"]')])];
       return {text:document.body.innerText,openDisclosures:Array.from(document.querySelectorAll('details[open]'))
         .map(element=>element.querySelector(':scope > summary')?.textContent?.replace(/\s+/g,' ').trim()).filter(Boolean),regions:elements
         .filter(element=>element.getClientRects().length&&getComputedStyle(element).visibility!=='hidden').slice(0,80)
@@ -109,7 +124,7 @@ async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null,ob
         sha256:createHash('sha256').update(JSON.stringify(content)).digest('hex')});
     }
     return {url:page.url(),title:await page.title(),text:visibleText,textBlocks,textRegions,
-      viewState:{version:1,openDisclosures:snapshot.openDisclosures.map(summary=>createHash('sha256').update(summary).digest('hex'))},
+      viewState:await presentation(),
       controls,httpStatus,applicationPage,truncated:controlOffset+controls.length<total||textOffset+18000<text.length,
       pagination:{controlOffset,controlTotal:total,textOffset,textLength:text.length,
         controlsNextRef:controlOffset+controls.length<total?cursor({kind:'page',controlOffset:controlOffset+controls.length,textOffset}):null,
@@ -124,9 +139,8 @@ async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null,ob
     if(!node)return {error:{code:'STALE_BROWSER_REFERENCE',message:'Inspect this fresh screen; the previous observation cursor expired.'},screen:await inspect()};
     const data=await describe(node,next?.offset||0),control={ref:next?.ref||ref,...data,evidencePath:'/controls/0'};
     if(data.optionsTruncated)control.optionsNextRef=cursor({kind:'options',ref:control.ref,offset:data.optionsOffset+100});
-    const open=await page.locator('details[open]').evaluateAll(elements=>elements.map(element=>element.querySelector(':scope > summary')?.textContent?.replace(/\s+/g,' ').trim()).filter(Boolean));
     return {url:page.url(),title:await page.title(),httpStatus,applicationPage,controls:[control],partial:true,
-      viewState:{version:1,openDisclosures:open.map(summary=>createHash('sha256').update(summary).digest('hex'))},
+      viewState:await presentation(),
       notice:'Details of a live observed control, not permission to submit its form.'};
   }
   async function act({action,ref,value}){
@@ -196,6 +210,27 @@ async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null,ob
     if(target.origin!==allowed||target.username||target.password)throw Error('INVALID_VERIFICATION_ORIGIN');
     // Unlike restoration, verification always performs a new scoped GET.
     await page.goto(target.href,{waitUntil:'domcontentloaded'});
+    const priorLines=Object.values(previous?.textBlocks||{}),dialogs=await dialogStates(),dialogKeys=dialogs.map(dialog=>createHash('sha256').update(dialog.identity).digest('hex'));
+    const savedDialogs=previous?.viewState?.version===1&&Array.isArray(previous.viewState.openDialogs)?previous.viewState.openDialogs:null;
+    if(previous)await page.locator('dialog').evaluateAll((elements,{keys,saved,priorLines})=>{
+      const unique=(haystack,needle)=>{let count=0;for(let index=0;index+needle.length<=haystack.length;index++)
+        if(needle.every((line,n)=>line===haystack[index+n]))count++;return count===1;};
+      for(const [index,element]of elements.entries()){
+        if(keys.filter(key=>key===keys[index]).length!==1){if(element.open)element.close();continue;}
+        if(saved){
+          const match=saved.filter(entry=>entry&&entry.key===keys[index]&&typeof entry.modal==='boolean');
+          if(element.open)element.close();
+          if(match.length===1){if(match[0].modal)element.showModal();else element.open=true;}
+          continue;
+        }
+        // Older journals cannot recover a dialog from an isolated heading or
+        // field name. Require its entire current visible content to occur
+        // uniquely in the original observation. No click or input is replayed.
+        element.open=true;
+        const lines=element.innerText.split(/\r?\n/).map(line=>line.trim()).filter(Boolean);
+        element.open=lines.length>=2&&unique(priorLines,lines);
+      }
+    },{keys:dialogKeys,saved:savedDialogs,priorLines});
     // Reproduce only LOCAL disclosure presentation, never input values,
     // selections, submissions or business state. Opening every section on a
     // verification GET changes the observed form and its line/control offsets.
@@ -204,7 +239,6 @@ async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null,ob
     const keys=details.map(summary=>createHash('sha256').update(summary).digest('hex'));
     const saved=previous?.viewState?.version===1&&Array.isArray(previous.viewState.openDisclosures)
       ?previous.viewState.openDisclosures:null;
-    const priorLines=Object.values(previous?.textBlocks||{});
     const states=saved?keys.map(key=>keys.filter(other=>other===key).length===1?saved.includes(key):null):null;
     if(previous)await page.locator('details').evaluateAll((elements,{states,priorLines})=>{
       const unique=(haystack,needle)=>{let count=0;
@@ -239,9 +273,8 @@ async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null,ob
       if(matches.length!==1){await Promise.allSettled(matches.map(match=>match.node.dispose()));throw Error(matches.length?'CURRENT_CONTROL_AMBIGUOUS':'CURRENT_CONTROL_CHANGED');}
       await Promise.allSettled([...references.values()].map(node=>node.dispose()));references=new Map();continuations=new Map();revision++;
       const ref=`${generation}:${revision}:0`;references.set(ref,matches[0].node);
-      const open=await page.locator('details[open]').evaluateAll(elements=>elements.map(element=>element.querySelector(':scope > summary')?.textContent?.replace(/\s+/g,' ').trim()).filter(Boolean));
       return {url:page.url(),title:await page.title(),httpStatus,applicationPage,controls:[{ref,...matches[0].data,evidencePath:'/controls/0'}],partial:true,
-        viewState:{version:1,openDisclosures:open.map(summary=>createHash('sha256').update(summary).digest('hex'))}};
+        viewState:await presentation()};
     }
     const window=previous?.pagination||{};
     return inspect({controlOffset:Number.isSafeInteger(window.controlOffset)&&window.controlOffset>=0?window.controlOffset:0,

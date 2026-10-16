@@ -5,18 +5,27 @@ const registry=require('../../src/assistant/postgres-capability-registry').regis
 const requestHash=goal=>createHash('sha256').update(goal.original_request).digest('hex');
 // Host-only, scoped read verification. No execution, approval or provider call.
 async function collect(database,ctx,goal,harness,catalogue){
- const refs=waits.dependencies(harness),proposalIds=new Set(refs.proposalIds),operations=[];
+ const refs=waits.dependencies(harness),proposalIds=new Set(refs.proposalIds),operations=[],humanDecisions=[];
  for(const id of refs.missionIds){
   const mission=(await database.query(`SELECT steps FROM stockchief_runtime.assistant_capability_plans
    WHERE workspace_id=$1 AND actor_user_id=$2 AND goal_id=$3 AND id=$4`,[ctx.workspaceId,ctx.actorId,goal.id,id])).rows[0];
   for(const step of mission?.steps||[])if(step.proposalId)proposalIds.add(step.proposalId);
  }
  for(const id of proposalIds){
-  const row=(await database.query(`SELECT id,action_type,status,result,payload,summary,executed_at,idempotency_key FROM stockchief_runtime.assistant_action_proposals
+  const row=(await database.query(`SELECT id,action_type,status,result,payload,summary,source_message,executed_at,idempotency_key FROM stockchief_runtime.assistant_action_proposals
    WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,id])).rows[0];
-  if(!row)continue; // Unknown/rule proposals cannot earn an execution receipt here.
+  if(!row){
+   // A rule's human decision is resumption context, not an execution receipt
+   // or proof that its trigger ran. Verify the rule/trigger separately.
+   const rule=(await database.query(`SELECT id,summary,status,stated_as,resolved_changes,integrity_hash FROM operating_instruction_proposals
+    WHERE workspace_id=$1 AND created_by_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,id])).rows[0];
+   const decision=rule&&require('./approval-handoff').recordedDecision(harness,rule,'rule');if(decision)humanDecisions.push(decision);
+   continue;
+  }
   const contract=registry.get(row.action_type);
   if(!catalogue?.list().some(c=>c.name===row.action_type))continue;
+  const decision=require('./approval-handoff').recordedDecision(harness,row);
+  if(decision)humanDecisions.push(decision);
   // executeProposalCore is the ONLY writer of EXECUTED. It runs the canonical
   // engine and verifyExecution in the SAME serializable transaction before
   // recording result + executed_at. This is durable evidence that the effect
@@ -33,7 +42,7 @@ async function collect(database,ctx,goal,harness,catalogue){
    externalState:external?.state||null,result:verified?row.result:null});
  }
  return {version:1,requestHash:requestHash(goal),checkedAt:new Date().toISOString(),
-  dependencyState:await waits.current(database,ctx,goal.id,refs),operations};
+  dependencyState:await waits.current(database,ctx,goal.id,refs),operations,humanDecisions};
 }
 function render(receipt,{wholeGoalVerified=false}={}){
  const lines=['These approved changes were executed and verified:'];

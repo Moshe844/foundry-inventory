@@ -331,11 +331,14 @@ function createPostgresAskRouter(database,options={}){
     [req.ctx.workspaceId])).rows.map((row)=>row.name);
     const pilotView=options.agentInspection?null:await pilot.view(database,req.ctx);
     const focusedGoalId=typeof req.query.goal==='string'&&req.query.goal.length<=160?req.query.goal:null;
-    const recentGoals=goalStore.enabled(req.ctx)||pilotView?await goalStore.recent(database,req.ctx,startedAt,focusedGoalId):[];
+    // The restricted renderer must show the actor's real native conversation,
+    // even though it cannot select/enqueue the pilot or stage its approvals.
+    // Hiding that history made recovery investigations search unrelated pages.
+    const recentGoals=goalStore.enabled(req.ctx)||pilotView||options.agentInspection?await goalStore.recent(database,req.ctx,startedAt,focusedGoalId):[];
     const activeGoal=recentGoals.at(-1)||null;
     const focusedGoal=recentGoals.find(goal=>goal.id===focusedGoalId);
     for(const goal of recentGoals){
-      if(goal.checkpoint.runtime==='codex-staging'&&!['COMPLETED','CANCELLED','BLOCKED'].includes(goal.status)){
+      if(!options.agentInspection&&goal.checkpoint.runtime==='codex-staging'&&!['COMPLETED','CANCELLED','BLOCKED'].includes(goal.status)){
         const inbox=await pilot.inbox(database,req.ctx,goal.id);Object.assign(goal,inbox.goal);goal.approvalCards=inbox.approvals;
       }else goal.approvalCards=[];
       goal.conversation=conversation.state(goal);
@@ -345,7 +348,7 @@ function createPostgresAskRouter(database,options={}){
     transcript=require('../../assistant/goal-transcript').mergeGoalTranscript(transcript,recentGoals,{focusedGoalId:focusedGoal?.id});
     const continuationGoal=transcript.at(-1)?.agentGoal;
     return res.page('attention/ask',{title:'Ask StockChief',nav:'ask',room:true,suppressBack:true,postgresAsk:true,...rules,
-      codexPilot:pilotView,adaptiveGoal:activeGoal,focusedGoalId:focusedGoal?.id||null,renderAgentAnswer:require('../public/agent-answer').render,
+      codexPilot:pilotView,adaptiveGoal:activeGoal,agentInspection:Boolean(options.agentInspection),focusedGoalId:focusedGoal?.id||null,renderAgentAnswer:require('../public/agent-answer').render,
       about:String(req.query.about||'').slice(0,2000),stockActivity:req.query.task==='stock-activity'&&sourcePage?.path==='/inventory',
       question:latest?.message||'',result:resultFor(latest,latestProposal),error:null,
       prefill:String(req.query.q||'').slice(0,2000),

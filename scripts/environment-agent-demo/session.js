@@ -116,7 +116,7 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
   },
   async executionState(){return authorizedUpdate(async(h,goal,client,access)=>{
    const receipt=await require('./receipts').collect(client,ctx,goal,h,access.catalogue);
-   if(!receipt.operations.length)return null;
+   if(!receipt.operations.length&&!receipt.humanDecisions.length)return null;
    const id=`${goalId}:host-receipt:${createHash('sha256').update(JSON.stringify(receipt)).digest('hex').slice(0,24)}`;
    require('./observations').store(h,{id,name:'canonical_execution_state',result:receipt});
    h.receipt=receipt;return present(h,receipt,{full:true});

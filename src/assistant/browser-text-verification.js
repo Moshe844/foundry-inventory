@@ -20,7 +20,7 @@ function unchangedLine(previous,current,pointer){
  }
  const matches=new Set();
  for(const region of fresh.textRegions){
-  if(!['main','form','table','tr','section','article','fieldset','details'].includes(region.tag)&&!['main','region','row','group'].includes(region.role)&&region.kind!=='heading_container'||
+  if(!['main','form','table','tr','section','article','fieldset','details','dialog'].includes(region.tag)&&!['main','region','row','group','dialog'].includes(region.role)&&region.kind!=='heading_container'||
    !Number.isSafeInteger(region.firstLine)||!Number.isSafeInteger(region.count)||region.firstLine<0||region.count<2||region.firstLine+region.count>after.length)continue;
   const content=after.slice(region.firstLine,region.firstLine+region.count);
   if(createHash('sha256').update(JSON.stringify(content)).digest('hex')!==region.sha256||uniqueStart(after,content)!==region.firstLine)continue;

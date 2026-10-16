@@ -53,6 +53,10 @@ test('native chat supports exact individual or full-mission approval, with durab
  const mission=(await db.query('SELECT * FROM stockchief_runtime.assistant_capability_plans WHERE id=$1',[scope.id])).rows[0];
  assert.equal(mission.authorization_mode,'MISSION');assert.equal(mission.status,'DONE');assert.equal(mission.verification_status,'VERIFIED');
  assert.equal(mission.metrics.approvalInteractions,1,'resumption is not another human approval');
+ const recordedGoal=await store.get(db,ctx,goal.id),actor=(await db.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];
+ const catalogue=await require('../../src/assistant/postgres-control-plane').planningCatalogue(db,ctx,actor);
+ const receipt=await require('../../scripts/environment-agent-demo/receipts').collect(db,ctx,recordedGoal,recordedGoal.checkpoint.harness,catalogue);
+ assert(receipt.humanDecisions.some(d=>d.source==='human_user'&&d.decision==='approved'&&d.scope.kind==='mission'&&d.scope.id===scope.id&&d.scope.sha256===scope.sha256),'Real mission approval must survive canonical execution as native resumption evidence');
  const quotes=(await db.query('SELECT amount_minor FROM sku_purchase_costs WHERE workspace_id=$1 ORDER BY amount_minor',[ctx.workspaceId])).rows;
  assert.deepEqual(quotes.map(r=>Number(r.amount_minor)),[2500,2600]);
  await pilot.decide(db,ctx,goal.id,card.id,card.sha256,true,{responseReference:decision.responseReference,missionScope:scope});

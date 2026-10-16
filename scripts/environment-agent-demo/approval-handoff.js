@@ -24,6 +24,18 @@ async function proposals(client,ctx,goal,h){
 function snapshot(kind,p){return {kind,proposalId:p.id,action:p.action_type||'policy.propose',summary:p.summary,
  authorityReference:kind==='business'?{sourceMessage:p.source_message,idempotencyKey:p.idempotency_key}:{statedAs:p.stated_as},
  payload:kind==='business'?p.payload:{resolvedChanges:p.resolved_changes,integrityHash:p.integrity_hash}};}
+// Historical, authenticated intent for native resumption/reporting only. The
+// canonical engine still rechecks every permission, revision and execution.
+function recordedDecision(h,proposal,kind='business'){
+ if(!['business','rule'].includes(kind))return null;
+ const sha256=digest(snapshot(kind,proposal));
+ const card=Object.values(h.approvalDeliveries||{}).find(d=>d.kind===kind&&d.proposalId===proposal.id&&d.sha256===sha256);
+ const decision=card?.decision;
+ if(decision?.source!=='human_user'||typeof decision.approved!=='boolean'||!decision.responseReference||!Number.isFinite(Date.parse(decision.at)))return null;
+ if(decision.scope&&(decision.scope.kind!=='mission'||typeof decision.scope.id!=='string'||!decision.scope.id||!/^[a-f0-9]{64}$/.test(decision.scope.sha256)))return null;
+ return {proposalId:proposal.id,source:'human_user',decision:decision.approved?'approved':'rejected',decidedAt:decision.at,reviewedRevision:sha256,
+  scope:decision.scope?structuredClone(decision.scope):{kind:'proposal',id:proposal.id,sha256}};
+}
 async function stage(client,ctx,goal,h){
  h.approvalDeliveries||={};const current=await proposals(client,ctx,goal,h),active=[];
  for(const {kind,proposal} of current){
@@ -154,4 +166,4 @@ async function resumeApproved({database,ctx,goalId,id,execute}){
  },{allowCompleted:true});
  return decide({database,ctx,goalId,id,sha256:saved.sha256,decision:saved.decision,execute});
 }
-module.exports={ApprovalHandoff,stage,inbox,acknowledge,decide,resumeApproved};
+module.exports={ApprovalHandoff,stage,inbox,acknowledge,decide,resumeApproved,recordedDecision};

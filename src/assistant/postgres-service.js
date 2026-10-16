@@ -568,13 +568,16 @@ async function lookup(database,ctx,request,options={}) {
       handoff:{href:'/inventory',label:'Open inventory'}};
   }
   if(request.view==='locations'){
-    const rows=(await database.query(`SELECT l.id,l.name,l.kind,COALESCE(SUM(b.on_hand),0) AS units
+    const rows=(await database.query(`SELECT l.id,l.name,l.kind,l.is_active,COALESCE(SUM(b.on_hand),0) AS units
       FROM locations l LEFT JOIN balances b ON b.location_id=l.id AND b.workspace_id=l.workspace_id
-      WHERE l.workspace_id=$1 AND l.is_active=1 AND ($2::text IS NULL OR l.name ILIKE '%'||$2||'%')
-      GROUP BY l.id ORDER BY l.name LIMIT 100`,[ctx.workspaceId,search])).rows.map((row)=>
-      evidenceRow({name:row.name,kind:row.kind,units:Number(row.units)},`/inventory?location=${row.id}`));
-    return {answer:rows.length?`${rows.length} active location${rows.length===1?'':'s'} hold ${rows.reduce((sum,row)=>sum+row.units,0).toLocaleString('en-US')} units.`:
-      'No active location matched that request.',rows,columns:['name','kind','units']};
+      WHERE l.workspace_id=$1 AND ($2::text IS NULL OR l.name ILIKE '%'||$2||'%')
+      GROUP BY l.id ORDER BY l.name LIMIT 101`,[ctx.workspaceId,search])).rows;
+    const truncated=rows.length>100,visible=rows.slice(0,100).map(row=>evidenceRow({name:row.name,kind:row.kind,
+      active:Boolean(Number(row.is_active)),receivingLocationEligible:Boolean(Number(row.is_active)),units:Number(row.units)},`/inventory?location=${row.id}`));
+    return {answer:visible.length?`${truncated?'Showing the first 100 matching locations':`${visible.length} location${visible.length===1?'':'s'}`}, including inactive locations. `+
+      'An active location meets the receiving-location activity check; product, tracking, quantity, permission and approval checks still apply.':
+      'No location matched that request.',rows:visible,columns:['name','kind','active','receivingLocationEligible','units'],
+      scope:{includesInactive:true,eligibilityBasis:'location_activity_only',truncated,limit:100}};
   }
   if(request.view==='transfers'){
     const rows=(await database.query(`SELECT t.id,t.transfer_number,t.status,
@@ -883,17 +886,30 @@ async function lookup(database,ctx,request,options={}) {
       rows,columns:['measure','value','currency']};
   }
   if(request.view==='payments'){
+    if(request.timeframe&&!['all_time','today','month_to_date','previous_month','last_30_days'].includes(request.timeframe))
+      return {status:'CLARIFY',answer:'Which supported payment-date period should I check?',rows:[],columns:[]};
+    const period=request.timeframe&&request.timeframe!=='all_time'?salesPeriod(request.timeframe):null;
     const rows=(await database.query(`SELECT p.id,p.payment_number,p.direction,p.amount_minor,p.currency,p.status,p.payment_date,p.method,p.reference,
-      COALESCE(c.name,s.name,'Unassigned') AS party FROM accounting_payments p
-      LEFT JOIN customers c ON c.id=p.customer_id LEFT JOIN suppliers s ON s.id=p.supplier_id
+      COALESCE(c.name,s.name,'Unassigned') AS party,COALESCE(a.documents,'[]'::jsonb) AS allocations FROM accounting_payments p
+      LEFT JOIN customers c ON c.id=p.customer_id AND c.workspace_id=p.workspace_id LEFT JOIN suppliers s ON s.id=p.supplier_id AND s.workspace_id=p.workspace_id
+      LEFT JOIN LATERAL(SELECT jsonb_agg(jsonb_build_object('document',COALESCE(i.invoice_number,b.bill_number),
+        'kind',CASE WHEN a.customer_invoice_id IS NOT NULL THEN 'customer_invoice' ELSE 'supplier_bill' END,
+        'amountMinor',a.amount_minor,'currency',p.currency) ORDER BY a.id) AS documents
+        FROM accounting_payment_allocations a
+        LEFT JOIN accounting_customer_invoices i ON i.workspace_id=a.workspace_id AND i.id=a.customer_invoice_id
+        LEFT JOIN accounting_supplier_bills b ON b.workspace_id=a.workspace_id AND b.id=a.supplier_bill_id
+        WHERE a.workspace_id=p.workspace_id AND a.payment_id=p.id) a ON true
       WHERE p.workspace_id=$1 AND ($2::text IS NULL OR COALESCE(c.name,s.name,'') ILIKE '%'||$2||'%'
         OR p.status ILIKE '%'||$2||'%' OR p.payment_number ILIKE '%'||$2||'%'
-        OR COALESCE(p.reference,'') ILIKE '%'||$2||'%') ORDER BY p.payment_date DESC,p.created_at DESC LIMIT 100`,
-    [ctx.workspaceId,search])).rows.map((row)=>evidenceRow({party:row.party,direction:row.direction,status:row.status,
+        OR COALESCE(p.reference,'') ILIKE '%'||$2||'%') AND ($3::text IS NULL OR p.payment_date BETWEEN $3 AND $4)
+        ORDER BY p.payment_date DESC,p.created_at DESC LIMIT 100`,
+    [ctx.workspaceId,search,period?.from||null,period?.to||null])).rows.map((row)=>evidenceRow({party:row.party,direction:row.direction,status:row.status,
       amount:pricing.formatMinor(Number(row.amount_minor),row.currency),amountMinor:Number(row.amount_minor),currency:row.currency,date:row.payment_date,
-      receipt:row.payment_number,method:row.method,reference:row.reference},`/accounting/payments/${row.id}`));
+      receipt:row.payment_number,method:row.method,reference:row.reference,allocations:row.allocations,
+      settles:row.allocations.map(a=>`${a.document||'Document unavailable'} · ${pricing.formatMinor(Number(a.amountMinor),a.currency)}`).join('; ')||'Unallocated'},`/accounting/payments/${row.id}`));
     return {answer:rows.length?`${rows.length} payment record${rows.length===1?'':'s'} matched.`:'No payment matched that request.',
-      rows,columns:['party','direction','status','amount','currency','date','receipt','method','reference']};
+      rows,columns:['party','direction','status','amount','currency','date','receipt','method','reference','settles'],
+      scope:{basis:'payment_date',from:period?.from||null,to:period?.to||null}};
   }
   if(['payables','receivables'].includes(request.view)){
     const payable=request.view==='payables';const table=payable?'accounting_supplier_bills':'accounting_customer_invoices';

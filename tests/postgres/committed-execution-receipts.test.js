@@ -107,6 +107,20 @@ test('committed intermediate effects survive later workflow states while current
  assert.equal(checkedForm.text,newForm.text);
  const legacyForm=structuredClone(newForm);delete legacyForm.viewState;
  assert.equal((await tools.verifyObservation(origin+'/orders/new',legacyForm)).text,newForm.text,'Earlier journals with closed forms retain their visible form, not an all-open replacement');
+ // Exact browser-013 failure: native dialogs are local view state, not a
+ // route. Reloading the Locations page cannot invalidate its unchanged form
+ // merely by closing the dialog the agent independently opened.
+ const locations=await tools.restore(origin+'/locations');
+ const modal=await tools.act({action:'click',ref:locations.controls.find(c=>c.label==='Add location').ref});
+ const modalText=JSON.stringify(modal),modalSource=JSON.stringify({version:1,name:'environment_browser',input:{action:'click',ref:null,value:null}}),modalEntry={id:goal.id+':dialog',name:'environment_browser',text:modalText,sha256:createHash('sha256').update(modalText).digest('hex'),sourceText:modalSource,sourceSha256:createHash('sha256').update(modalSource).digest('hex'),at:new Date().toISOString()};
+ goal.checkpoint.harness.evidence[modalEntry.id]=modalEntry;
+ const heading=Object.entries(modal.textBlocks).find(([,value])=>value==='Add a location');assert(heading);
+ const nameIndex=modal.controls.findIndex(c=>c.name==='name'&&c.form),kindIndex=modal.controls.findIndex(c=>c.name==='kind'&&c.form);assert(nameIndex>=0&&kindIndex>=0);
+ const dialogReport={status:'completed',outcome:'answer',answer:'The current form requires a name and a type, initially Warehouse. Nothing was saved.',claims:[
+  {evidenceId:modalEntry.id,path:'/textBlocks/'+heading[0],value:heading[1]},
+  {evidenceId:modalEntry.id,path:'/controls/'+nameIndex+'/required',value:true},
+  {evidenceId:modalEntry.id,path:'/controls/'+kindIndex+'/value',value:'warehouse'}]};
+ assert.equal((await verifier.verify(db,ctx,goal,JSON.stringify(dialogReport),catalogue,{browser:tools})).verified,true,'An unchanged genuinely opened form verifies without another model call');
  // Reproduce the actual stock-cost trace: the model filtered form controls
  // and cited index zero, which was really the page's skip link. Never accept
  // that guessed location or infer a different field from its claimed value.

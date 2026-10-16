@@ -59,7 +59,12 @@ test('recorded clarification and unfamiliar multi-turn domains traverse the real
     assert(JSON.stringify(body).includes(sample.second),'Native resumed context retains the second user answer');
     if(calls===3){const steps=[{capability:sample.capability,arguments:Object.entries(sample.args).map(([name,value])=>({name,value})),dependsOn:[]}];
      return require('../helpers/codex-offline-response')(body,calls,`const op=ALL_TOOLS.find(t=>t.name.endsWith('__business_operations'));text(await tools[op.name](${JSON.stringify({stepsJson:JSON.stringify(steps)})}));`);}
-    if(calls===4)return require('../helpers/codex-offline-response')(body,calls,`const d=ALL_TOOLS.find(t=>t.name.endsWith('__environment_dataset'));text(await tools[d.name](${JSON.stringify({specJson:JSON.stringify(sample.dataset),offset:0})}));`);
+    if(calls===4){
+     const actual=JSON.stringify(body);
+     assert(actual.includes('Authenticated human decisions recorded after the original request'),'Actual SDK resumed request must receive the explicit authenticated human decision');
+     assert(actual.includes('decidedAt')&&actual.includes('reviewedRevision'),'The real provider-compatible context must retain the reviewed revision and decision timestamp');
+     return require('../helpers/codex-offline-response')(body,calls,`const d=ALL_TOOLS.find(t=>t.name.endsWith('__environment_dataset'));text(await tools[d.name](${JSON.stringify({specJson:JSON.stringify(sample.dataset),offset:0})}));`);
+    }
     assert.equal(calls,5,'No hidden retry');const current=await store.get(db,ctx,goal.id),entry=Object.values(current.checkpoint.harness.evidence).findLast(e=>e.name==='environment_dataset');
     let actual=JSON.parse(entry.text);for(const part of sample.path.slice(1).split('/'))actual=actual[part];assert.equal(String(actual),String(sample.value));
     return require('../helpers/codex-offline-response').final(body,calls,JSON.stringify({version:1,status:'completed',outcome:'answer',answer:'The approved operation is recorded and its current business state is verified.',claims:[{evidenceId:entry.id,path:sample.path,value:actual}]}));
@@ -76,7 +81,7 @@ test('recorded clarification and unfamiliar multi-turn domains traverse the real
   const duplicate=await store.reply(db,ctx,goal.id,sample.reply,{questionId:qid});assert(duplicate.replyReplayed);assert.equal(duplicate.checkpoint.messages.length,1);
   assert.equal(await store.reply(db,{...ctx,actorId:'not-this-actor'},goal.id,'intrusion',{questionId:qid}),null);
   await pilot.run(db,ctx,goal.id,options);await page.reload();
-  const second=await store.get(db,ctx,goal.id);assert.notEqual(second.checkpoint.conversationState.input.id,qid);
+  const second=await store.get(db,ctx,goal.id);assert.equal(second.status,'WAITING_USER',JSON.stringify({calls,failure:second.checkpoint.harness?.failure,interruption:second.checkpoint.harness?.interruption}));assert.notEqual(second.checkpoint.conversationState.input.id,qid);
   assert.equal(await store.reply(db,ctx,goal.id,'stale different answer',{questionId:qid}),null);
   const secondQuestion=second.checkpoint.conversationState.input.id;
   await page.getByLabel('Ask StockChief',{exact:true}).fill(sample.second);

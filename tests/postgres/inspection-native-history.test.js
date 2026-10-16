@@ -1,0 +1,24 @@
+'use strict';
+process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
+test('restricted application shows the same owned native conversation state without invoking its execution lifecycle',{timeout:120000},async t=>{
+ const cluster=await require('../helpers/postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString);let renderer;
+ t.after(async()=>{if(renderer)await renderer.close();await db.close();await cluster.stop();});await require('../../src/db/migrate-postgres').migratePostgres(db);
+ const owner=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'History owner',businessName:'History environment',email:randomUUID()+'@example.test',password:'History!'+randomUUID()}),ctx={workspaceId:owner.workspaceId,actorId:owner.userId},store=require('../../src/assistant/postgres-goal-store');
+ const goal=await store.create(db,ctx,'Investigate the unfamiliar deferred business outcome.');
+ const cp={...goal.checkpoint,runtime:'codex-staging',harness:{candidate:'codex',interruption:{code:'operation_cost'},native:{privateMarker:'DO-NOT-EXPOSE-NATIVE-CHECKPOINT'}}};
+ await db.query("UPDATE stockchief_runtime.assistant_goals SET status='BLOCKED',answer=$2,checkpoint=$3::jsonb WHERE id=$1",[goal.id,'The prepared change was not executed. No stock moved.',JSON.stringify(cp)]);
+ const completed=await store.create(db,ctx,'Prepare a place for future stock.');await db.query("UPDATE stockchief_runtime.assistant_goals SET status='COMPLETED',answer=$2,checkpoint=$3::jsonb WHERE id=$1",[completed.id,'The authorized warehouse was created once.',JSON.stringify({...completed.checkpoint,runtime:'codex-staging'})]);
+ const other=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'Other owner',businessName:'Other environment',email:randomUUID()+'@example.test',password:'History!'+randomUUID()}),foreign=await store.create(db,{workspaceId:other.workspaceId,actorId:other.userId},'FOREIGN-WORKSPACE-PRIVATE-GOAL');
+ const untouched=(await db.query('SELECT id,status,checkpoint,updated_at FROM stockchief_runtime.assistant_goals ORDER BY id')).rows;
+ renderer=await require('../../scripts/environment-agent-demo/inspection').createInspectionServer({cluster,database:db,ctx});
+ const response=await fetch(renderer.origin+'/ask'),html=await response.text();assert.equal(response.status,200);
+ assert(html.includes(goal.original_request),'Recorded safety-011 failure: the restricted Ask renderer omitted actual native goals, causing unrelated investigation');
+ assert(html.includes('The prepared change was not executed. No stock moved.'));assert(html.includes('The authorized warehouse was created once.'));
+ assert(!html.includes(foreign.original_request));assert(!html.includes('DO-NOT-EXPOSE-NATIVE-CHECKPOINT'));
+ assert(!html.includes('src="/adaptive-goal.js'),'Read-only rendering must not start mutating approval/polling lifecycle calls');
+ assert.equal((await fetch(renderer.origin+'/ask/goals/'+goal.id+'/resume',{method:'POST'})).status,403);
+ assert.deepEqual((await db.query('SELECT id,status,checkpoint,updated_at FROM stockchief_runtime.assistant_goals ORDER BY id')).rows,untouched);
+ assert.equal(Number((await db.query('SELECT count(*) AS n FROM stockchief_runtime.codex_pilot_calls')).rows[0].n),0);
+ t.diagnostic(JSON.stringify({actualApplication:true,ownedNativeHistoryVisible:true,noModels:true,noGoalMutation:true,foreignWorkspaceHidden:true}));
+});
