@@ -135,7 +135,7 @@ function aging(rows){const today=Date.now();const buckets={current:0,days1to30:0
 function createPostgresProjectionsRouter(database){
   const router=express.Router();
   router.get(['/', '/overview'],requireAuth,asyncRoute(async(req,res)=>{
-    const [result,available]=await Promise.all([presenters.home(database,req.ctx.workspaceId),
+    const [result,available]=await Promise.all([presenters.home(database,req.ctx.workspaceId,req.ctx.actorId),
       require('../../assistant/postgres-discovery').available(database,req.ctx)]);
     const askSuggestions=[];
     const offer=(entry)=>{if(entry&&!askSuggestions.some((current)=>current.name===entry.name))askSuggestions.push(entry);};
@@ -155,7 +155,7 @@ function createPostgresProjectionsRouter(database){
       routineProposal:null,financialPulse:null,observedBrief:'',canOperate:permissions.can(req.user,permissions.OPERATE)});
   }));
   router.get(['/needs-you','/needs-you/all'],requireAuth,asyncRoute(async(req,res)=>{
-    const [items,failures]=await Promise.all([projections.needs(database,req.ctx.workspaceId),
+    const [items,failures]=await Promise.all([projections.needs(database,req.ctx.workspaceId,req.ctx.actorId),
       req.user.role==='owner'?projections.runtimeFailures(database,req.ctx.workspaceId):Promise.resolve(null)]);
     res.locals.attentionCount=items.length;
     items.coverageErrors=[];
@@ -168,7 +168,7 @@ function createPostgresProjectionsRouter(database){
       recentOnly:true,...(await activityPage(database,req.ctx.workspaceId,req.query))});
   }));
   router.get(['/money','/accounting'],requireAuth,asyncRoute(async(req,res)=>{
-    const result=await presenters.money(database,req.ctx.workspaceId,period(req.query));
+    const result=await presenters.money(database,req.ctx.workspaceId,period(req.query),req.ctx.actorId);
     return res.page('accounting/money',{title:'Money',nav:'accounting',room:true,...result,
       configured:{enabled:true,currency:result.story.currency},period:{key:'custom',from:result.from,to:result.to,label:'Current period'}});
   }));

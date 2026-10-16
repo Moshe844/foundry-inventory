@@ -1,10 +1,8 @@
 'use strict';
 // Host-only lifecycle. Never a model tool, execution grant or new spending gate.
 // PostgreSQL owns the outbox; transport can redeliver one stable card until ack.
-const {createHash}=require('node:crypto'),waits=require('./waits');
+const waits=require('./waits'),{digest,snapshot}=require('../../src/assistant/approval-revision');
 const TABLE='stockchief_runtime.assistant_goals';
-const stable=v=>Array.isArray(v)?v.map(stable):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,stable(v[k])])):v;
-const digest=v=>createHash('sha256').update(JSON.stringify(stable(v))).digest('hex');
 class ApprovalHandoff extends Error {constructor(result){super('DURABLE_APPROVAL_READY');this.result=result;}}
 async function proposals(client,ctx,goal,h){
  const refs=waits.dependencies(h),ids=new Set(refs.proposalIds);
@@ -21,9 +19,6 @@ async function proposals(client,ctx,goal,h){
  }
  return rows;
 }
-function snapshot(kind,p){return {kind,proposalId:p.id,action:p.action_type||'policy.propose',summary:p.summary,
- authorityReference:kind==='business'?{sourceMessage:p.source_message,idempotencyKey:p.idempotency_key}:{statedAs:p.stated_as},
- payload:kind==='business'?p.payload:{resolvedChanges:p.resolved_changes,integrityHash:p.integrity_hash}};}
 // Historical, authenticated intent for native resumption/reporting only. The
 // canonical engine still rechecks every permission, revision and execution.
 function recordedDecision(h,proposal,kind='business'){
@@ -79,10 +74,26 @@ async function inbox(database,ctx,goalId,{pause=false,runToken=null}={}){
  // without a durable operation reference, outbox card or unresolved operation.
  // Checking absence releases no business data or authority. Avoid rewriting
  // the whole native checkpoint in a transaction for every such model request.
- const empty=(await database.query(`SELECT status,expires_at,jsonb_build_object(
+ const empty=(await database.query(`SELECT status,answer,expires_at,jsonb_build_object(
   'inflight',checkpoint#>'{harness,inflight}','calls',checkpoint#>'{harness,calls}',
   'approvalDeliveries',checkpoint#>'{harness,approvalDeliveries}') AS h
   FROM ${TABLE} WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,goalId])).rows[0];
+ if(empty&&new Date(empty.expires_at)<=new Date()){
+  if(['COMPLETED','CANCELLED','BLOCKED'].includes(empty.status))return {status:empty.status,answer:empty.answer,approvals:[]};
+  // An expired historical approval must not throw out the whole Ask page.
+  // Stop only its host lifecycle; keep all proposals, decisions, evidence,
+  // usage holds and canonical effects intact. Restricted inspection never
+  // invokes this host-only handoff path.
+  const expired=(await database.query(`UPDATE ${TABLE} SET status='BLOCKED',run_token=NULL,lease_until=NULL,
+   answer='This saved request has expired. Its recorded work is preserved. Start a new request to review what remains.',
+   checkpoint=jsonb_set(checkpoint,'{harness}',COALESCE(checkpoint->'harness','{}'::jsonb)||
+     '{"failure":{"code":"GOAL_EXPIRED","requiresUserInput":false}}'::jsonb),updated_at=now()
+   WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 AND expires_at<=now()
+     AND status NOT IN ('COMPLETED','CANCELLED','BLOCKED') RETURNING status,answer`,[ctx.workspaceId,ctx.actorId,goalId])).rows[0];
+  // The caller rereads after a non-null result, including if completion won
+  // this conditional update. Do not retry the expired approval transaction.
+  return {...(expired||{status:empty.status,answer:empty.answer}),approvals:[]};
+ }
  if(empty&&['READY','RUNNING','WAITING_USER'].includes(empty.status)&&new Date(empty.expires_at)>new Date()&&!empty.h.inflight&&
   !Object.keys(empty.h.approvalDeliveries||{}).length){
   const refs=waits.dependencies(empty.h);

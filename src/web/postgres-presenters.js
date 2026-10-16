@@ -27,9 +27,9 @@ const STOCK_GROUPS=Object.freeze([
   Object.freeze({key:'healthy',name:'Available now',detail:'Physical stock covers the units promised to customers.',tone:'ok',icon:'check'}),
 ]);
 
-async function home(database,workspaceId){
+async function home(database,workspaceId,actorId=null){
   const [brief,state,completed,executing,upcoming]=await Promise.all([
-    projections.brief(database,workspaceId),autonomy.getState(database,workspaceId),
+    projections.brief(database,workspaceId,actorId),autonomy.getState(database,workspaceId),
     database.query(`SELECT id,recommended_action,outcome,completed_at,COUNT(*) OVER() AS total
       FROM work_items WHERE workspace_id=$1 AND source='postgres_autopilot'
         AND approval_requirement='NONE' AND execution_status='COMPLETED'
@@ -176,7 +176,7 @@ async function sales(database,workspaceId){
     sellingConnectionCount:number(connections.rows[0].count)};
 }
 
-async function money(database,workspaceId,input={}){
+async function money(database,workspaceId,input={},actorId=null){
   const to=String(input.to||today());const from=String(input.from||monthStart(to));
   const [pnl,balance,receivables,payables,inventory,confirmed,changed,needItems]=await Promise.all([
     reports.profitAndLoss(database,workspaceId,{from,to}),reports.balanceSheet(database,workspaceId,{asOf:to}),
@@ -192,7 +192,7 @@ async function money(database,workspaceId,input={}){
       AND status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED') ORDER BY needed_by NULLS LAST,created_at LIMIT 20`,[workspaceId]),
     database.query(`SELECT posting_date AS at,description AS what FROM accounting_journal_entries
       WHERE workspace_id=$1 AND status='POSTED' AND posting_date BETWEEN $2 AND $3
-      ORDER BY posting_date DESC,entry_number DESC LIMIT 6`,[workspaceId,from,to]),projections.needs(database,workspaceId),
+      ORDER BY posting_date DESC,entry_number DESC LIMIT 6`,[workspaceId,from,to]),projections.needs(database,workspaceId,actorId),
   ]);
   const receivableMinor=receivables.rows.reduce((sum,row)=>sum+number(row.balance_minor),0);
   const payableMinor=payables.rows.reduce((sum,row)=>sum+number(row.balance_minor),0);

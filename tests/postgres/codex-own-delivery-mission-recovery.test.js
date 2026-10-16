@@ -40,6 +40,16 @@ test('recorded OWN_DELIVERY constraint failure resumes one approved six-step mis
  let mission=(await db.query('SELECT * FROM stockchief_runtime.assistant_capability_plans WHERE id=$1',[scope.id])).rows[0];assert.equal(mission.approval_status,'APPROVED');assert.equal(mission.steps[0].state,'DONE');assert.equal(mission.steps[1].state,'WAITING');assert.equal(mission.run_token,null);
  assert.equal(Number((await db.query('SELECT count(*) AS n FROM sales_orders WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n),0);assert.equal(Number((await db.query('SELECT sum(on_hand) AS n FROM balances WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n),1);
  const preparedId=mission.steps[1].proposalId,payload=(await db.query('SELECT payload FROM stockchief_runtime.assistant_action_proposals WHERE id=$1',[preparedId])).rows[0].payload;
+ // The newly staged second card has no step decision, but the first human
+ // decision already granted the exact frozen mission. The shared inbox must
+ // distinguish recovery from another approval and retain incomplete scope.
+ await pilot.inbox(db,ctx,goal.id);
+ const decisions=require('../../src/projections/postgres-service'),recoveries=(await decisions.needs(db,ctx.workspaceId,ctx.actorId)).filter(i=>i.approval?.proposalId===preparedId);
+ assert.equal(recoveries.length,1);assert.equal(recoveries[0].kind,'recovery');assert.equal(recoveries[0].approval.scope,'review_existing_mission');assert.equal(recoveries[0].approval.recordedMission.sha256,scope.sha256);assert.equal(recoveries[0].approval.missionOption,null);
+ const scopeMissing=structuredClone(mission.steps);scopeMissing[1].reason='mission_scope_incomplete';
+ await db.query("UPDATE stockchief_runtime.assistant_capability_plans SET status='WAITING_USER',steps=$2::jsonb WHERE id=$1",[scope.id,JSON.stringify(scopeMissing)]);
+ const additional=(await decisions.needs(db,ctx.workspaceId,ctx.actorId)).find(i=>i.approval?.proposalId===preparedId);assert.equal(additional.kind,'approval');assert.equal(additional.approval.scope,'single_operation');assert.match(additional.why,/additional scope/);
+ await db.query('UPDATE stockchief_runtime.assistant_capability_plans SET status=$2,steps=$3::jsonb WHERE id=$1',[scope.id,mission.status,JSON.stringify(mission.steps)]);
  await db.query('UPDATE stockchief_runtime.assistant_action_proposals SET payload=$2::jsonb WHERE id=$1',[preparedId,JSON.stringify({...payload,lines:payload.lines.map(line=>({...line,unitPriceMinor:9900}))})]);
  await pilot.decide(db,ctx,goal.id,card.id,card.sha256,true,decision);assert.equal(Number((await db.query('SELECT count(*) AS n FROM sales_orders WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n),0,'A revised payload is never covered by the original frozen approval');
  await db.query('UPDATE stockchief_runtime.assistant_action_proposals SET payload=$2::jsonb WHERE id=$1',[preparedId,JSON.stringify(payload)]);

@@ -540,18 +540,21 @@ async function lookup(database,ctx,request,options={}) {
       rows,columns:['measure','value'],handoff,reason:explained.supported?null:'unverified'};
   }
   if(request.view==='needs_you'){
-    const [needs,state]=await Promise.all([projections.needs(database,ctx.workspaceId),autonomy.getState(database,ctx.workspaceId)]);
+    const [needs,state]=await Promise.all([projections.needs(database,ctx.workspaceId,ctx.actorId),autonomy.getState(database,ctx.workspaceId)]);
     const lastCheck=state.lastEvaluatedAt?Date.parse(state.lastEvaluatedAt):NaN;
     const checkMissing=!Number.isFinite(lastCheck);
     const checkStale=!checkMissing&&Date.now()-lastCheck>86400000;
     const rows=needs.slice(0,10).map((item)=>evidenceRow({decision:item.title,importance:item.importance,
-      reason:item.why||item.happened||''},item.href));
+      reason:item.why||item.happened||'',kind:item.kind,...(item.approval?{approval:item.approval}:{})},item.href));
     const answer=needs.length?`${needs.length} ${needs.length===1?'thing needs':'things need'} your attention. First: ${needs[0].title}.`:
       checkMissing?'No decisions are waiting yet, but StockChief has not run its first check. This is not an all-clear.':
       checkStale?'No decisions are waiting from the last check, but that check is over a day old. Run a fresh check for a current answer.':
         'Nothing needs your attention right now.';
-    return {answer,rows,columns:['decision','importance','reason'],
-      handoff:{href:needs.length?'/needs-you':'/',label:needs.length?'Review what needs you':'Open Home'}};
+    const complete=rows.length===needs.length;
+    return {answer:answer+(complete?'':` Showing the first ${rows.length} of ${needs.length}; this is not the complete list. Open the full list to inspect the rest.`),
+      rows,columns:['decision','importance','reason'],
+      coverage:{total:needs.length,returned:rows.length,complete,scope:'Workspace decisions and this actor\'s native Ask approvals',allHref:'/needs-you/all'},
+      handoff:{href:needs.length?(complete?'/needs-you':'/needs-you/all'):'/',label:needs.length?'Review what needs you':'Open Home'}};
   }
   if(request.view==='inventory_summary'){
     const count=(await database.query(`SELECT
@@ -874,14 +877,17 @@ async function lookup(database,ctx,request,options={}) {
     if(request.timeframe&&!['all_time','today','month_to_date','previous_month','last_30_days'].includes(request.timeframe))
       return {status:'CLARIFY',answer:'Which supported posting-date period should I check?',rows:[],columns:[]};
     const period=request.timeframe&&request.timeframe!=='all_time'?salesPeriod(request.timeframe):null;
-    const result=(await database.query(`WITH posted AS (
-      SELECT id FROM accounting_journal_entries WHERE workspace_id=$1 AND status='POSTED'
+    const result=(await database.query(`WITH scoped AS (
+      SELECT id,status FROM accounting_journal_entries WHERE workspace_id=$1
         AND ($2::text IS NULL OR posting_date BETWEEN $2 AND $3)
+      ), states AS (SELECT status,COUNT(*) AS count FROM scoped GROUP BY status
+      ), posted AS (SELECT id FROM scoped WHERE status='POSTED'
       ), totals AS (
       SELECT l.currency,SUM(l.debit_minor) AS debits,SUM(l.credit_minor) AS credits
       FROM posted e JOIN accounting_journal_lines l ON l.entry_id=e.id AND l.workspace_id=$1
       GROUP BY l.currency)
-      SELECT (SELECT count(*) FROM posted) AS posted,
+      SELECT (SELECT count(*) FROM posted) AS posted,(SELECT count(*) FROM scoped) AS total,
+        COALESCE((SELECT jsonb_agg(jsonb_build_object('status',status,'count',count) ORDER BY status) FROM states),'[]'::jsonb) AS states,
         COALESCE(jsonb_agg(jsonb_build_object('currency',currency,'debits',debits,'credits',credits)
           ORDER BY currency) FILTER(WHERE currency IS NOT NULL),'[]'::jsonb) AS totals FROM totals`,
     [ctx.workspaceId,period?.from||null,period?.to||null])).rows[0];
@@ -893,12 +899,16 @@ async function lookup(database,ctx,request,options={}) {
     // Counts and money must not share an unlabelled numeric value. Preserve
     // exact minor-unit amounts separately; display currency with canonical
     // formatting and never add amounts from different currencies together.
+    const stateCounts=Object.fromEntries(result.states.map(row=>[row.status,Number(row.count)]));
     const rows=[{measure:'Posted journal entries',value:Number(result.posted),unit:'entries',amountMinor:null,currency:null},
+      ...result.states.filter(row=>row.status!=='POSTED').map(row=>({measure:`${row.status} journal entries`,state:row.status,value:Number(row.count),unit:'entries',amountMinor:null,currency:null})),
       ...totals.flatMap(row=>[{measure:'Debits',value:pricing.formatMinor(row.debits,row.currency),unit:'money',amountMinor:row.debits,currency:row.currency},
         {measure:'Credits',value:pricing.formatMinor(row.credits,row.currency),unit:'money',amountMinor:row.credits,currency:row.currency}])];
     const amounts=totals.map(row=>`${row.currency}: debits ${pricing.formatMinor(row.debits,row.currency)}, credits ${pricing.formatMinor(row.credits,row.currency)}.`).join(' ');
-    return {answer:`The posted journal contains ${Number(result.posted).toLocaleString('en-US')} entries${period?` for ${period.from} through ${period.to}`:''}. Debits and credits are ${totals.every(row=>row.debits===row.credits)?'balanced':'not balanced'} within each recorded currency. ${amounts}`.trim(),
-      rows,columns:['measure','value','currency']};
+    const states=result.states.map(row=>`${row.status}: ${Number(row.count).toLocaleString('en-US')}`).join(', ')||'none';
+    return {answer:`The posted journal contains ${Number(result.posted).toLocaleString('en-US')} entries${period?` for ${period.from} through ${period.to}`:''}. Complete entry-state counts: ${states}. States absent from these scoped records have zero entries; this does not establish which additional states the application supports. Posted debits and credits are ${totals.every(row=>row.debits===row.credits)?'balanced':'not balanced'} within each recorded currency. ${amounts}`.trim(),
+      rows,columns:['measure','value','currency'],entryStates:{complete:true,total:Number(result.total),counts:stateCounts,
+        scope:period?{postingDateFrom:period.from,postingDateTo:period.to}:{timeframe:'all_time'},monetaryScope:'POSTED only, separated by currency'}};
   }
   if(request.view==='payments'){
     if(request.timeframe&&!['all_time','today','month_to_date','previous_month','last_30_days'].includes(request.timeframe))

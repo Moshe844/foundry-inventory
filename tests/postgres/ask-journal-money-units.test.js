@@ -15,9 +15,16 @@ test('recorded journal read preserves money units, posted scope, currency separa
  SELECT $1||line_number,workspace_id,$1,line_number,account_id,CASE WHEN debit_minor>0 THEN 99900 ELSE 0 END,CASE WHEN credit_minor>0 THEN 99900 ELSE 0 END,currency,created_at FROM accounting_journal_lines WHERE entry_id=$2`,[draft,usd.entry.id]);
  const lookup=request=>require('../../src/assistant/postgres-service').lookup(db,ctx,{view:'accounting',...request});
  const all=await lookup({timeframe:'all_time'});assert.equal(all.rows[0].value,2);assert.equal(all.rows[0].unit,'entries');
+ assert.deepEqual(all.entryStates.counts,{DRAFT:1,POSTED:2});assert.equal(all.entryStates.total,3);assert.equal(all.entryStates.complete,true);
+ assert.equal(all.rows.find(r=>r.state==='DRAFT').value,1);assert.equal(all.rows.find(r=>r.state==='DRAFT').amountMinor,null);
  const dollars=all.rows.find(r=>r.measure==='Debits'&&r.currency==='USD');assert.deepEqual(dollars,{measure:'Debits',value:'$152.50',unit:'money',amountMinor:15250,currency:'USD'});
  assert.equal(all.rows.find(r=>r.measure==='Credits'&&r.currency==='EUR').value,'€43.00');assert.match(all.answer,/USD: debits \$152\.50, credits \$152\.50/);assert(!all.answer.includes('$15,250'));
- const current=await lookup({timeframe:'today'});assert.equal(current.rows[0].value,1);assert.equal(current.rows.length,3);assert.equal(current.rows[1].value,'$152.50');
+ const current=await lookup({timeframe:'today'});assert.equal(current.rows[0].value,1);assert.equal(current.rows.length,4);assert.equal(current.rows.find(r=>r.measure==='Debits').value,'$152.50');
+ assert.deepEqual(current.entryStates.counts,{DRAFT:1,POSTED:1});assert.equal(current.entryStates.total,2);
  assert.equal((await lookup({timeframe:'unsupported'})).status,'CLARIFY');
  const another=await create(),empty=await require('../../src/assistant/postgres-service').lookup(db,another,{view:'accounting',timeframe:'all_time'});assert.equal(empty.rows[0].value,0);assert.equal(empty.rows.length,1);
+ assert.deepEqual(empty.entryStates.counts,{});assert.equal(empty.entryStates.total,0);assert.equal(empty.entryStates.complete,true);
+ // Absence from exhaustive scoped counts establishes zero recorded entries,
+ // not a new supported journal state or permission to change its lifecycle.
+ assert(!Object.hasOwn(all.entryStates.counts,'VOID'));assert.match(all.answer,/does not establish.*states.*supports/);
 });

@@ -3,8 +3,8 @@
 function number(value){return Number(value || 0);}
 function object(value){if(value && typeof value==='object')return value;try{return JSON.parse(value || '{}');}catch{return {};}}
 
-async function needsCount(database,workspaceId){
-  const result=await database.query(`SELECT
+async function needsCount(database,workspaceId,actorId=null){
+  const [result,nativeApprovals]=await Promise.all([database.query(`SELECT
     (SELECT COUNT(*) FROM attention_items WHERE workspace_id=$1 AND status='OPEN')+
     (SELECT COUNT(*) FROM connection_issues WHERE workspace_id=$1 AND status='OPEN')+
     (SELECT COUNT(*) FROM work_items WHERE workspace_id=$1 AND approval_requirement<>'NONE'
@@ -32,8 +32,9 @@ async function needsCount(database,workspaceId){
       AND NOT (effect.aggregate_type IN ('email_message','supplier_communication','customer_communication')
         AND EXISTS (SELECT 1 FROM connection_issues issue
         WHERE issue.workspace_id=effect.workspace_id AND issue.issue_type='EMAIL_SEND_AMBIGUOUS'
-        AND issue.external_event_id=effect.aggregate_id AND issue.status='OPEN'))) AS count`,[workspaceId]);
-  return number(result.rows[0].count);
+        AND issue.external_event_id=effect.aggregate_id AND issue.status='OPEN'))) AS count`,[workspaceId]),
+    require('../assistant/postgres-approval-projection').pending(database,workspaceId,actorId)]);
+  return number(result.rows[0].count)+nativeApprovals.length;
 }
 
 async function runtimeFailures(database,workspaceId){
@@ -45,9 +46,9 @@ async function runtimeFailures(database,workspaceId){
   return {attempts:rows.reduce((sum,row)=>sum+number(row.attempts),0),causes:rows};
 }
 
-async function needs(database,workspaceId){
+async function needs(database,workspaceId,actorId=null){
   const [attention,connections,work,imports,bills,supplierReturns,shippingExceptions,mail,orders,purchases,
-    repairs,ambiguousEffects]=await Promise.all([
+    repairs,ambiguousEffects,nativeApprovals]=await Promise.all([
     database.query(`SELECT id,title,concise_summary,explanation,recommendation,severity,priority_score,item_id,first_detected_at
       FROM attention_items WHERE workspace_id=$1 AND status='OPEN' ORDER BY priority_score DESC,first_detected_at`,[workspaceId]),
     database.query(`SELECT i.id,i.title,i.detail,i.resolution_hint,i.updated_at,i.connector_id,
@@ -114,8 +115,9 @@ async function needs(database,workspaceId){
         WHERE issue.workspace_id=effect.workspace_id AND issue.issue_type='EMAIL_SEND_AMBIGUOUS'
         AND issue.external_event_id=effect.aggregate_id AND issue.status='OPEN'))
       ORDER BY effect.completed_at DESC,effect.id`,[workspaceId]),
+    require('../assistant/postgres-approval-projection').pending(database,workspaceId,actorId),
   ]);
-  const items=[];
+  const items=[...nativeApprovals];
   for(const row of attention.rows)items.push({kind:'inventory',importance:row.severity==='critical'?'Urgent':row.severity==='important'?'Important':'Watch',
     priority:number(row.priority_score),title:row.title,happened:row.concise_summary,why:row.explanation,
     recommendation:row.recommendation,href:row.item_id?`/inventory/${row.item_id}`:'/inventory',actionLabel:'Review inventory',at:row.first_detected_at});
@@ -157,8 +159,8 @@ async function needs(database,workspaceId){
     href:`/fulfilment/${row.id}`,actionLabel:'Review shipment',at:row.tracked_at});
   for(const row of mail.rows)items.push({kind:'mail',importance:'Important',priority:82,title:row.subject || `Reply to ${row.sender}`,
     happened:`${row.sender} is waiting for a response.`,why:row.reply_reason || 'A known customer or supplier sent a business message.',
-    recommendation:'Read the message, edit the exact reply, then send or mark it handled.',href:`/mail/${row.id}`,
-    actionLabel:'Reply',at:row.received_at});
+    recommendation:'Read the message first. Review or write a reply only if one is needed.',href:`/mail/${row.id}`,
+    actionLabel:'Read email',at:row.received_at});
   for(const row of orders.rows)items.push({kind:'order',importance:row.needed_by && row.needed_by<new Date().toISOString().slice(0,10)?'Urgent':'Important',
     priority:92,title:`${row.order_number} does not have enough allocated stock`,happened:`${row.customer_name} needs ${number(row.remaining)} units; ${number(row.allocated)} are allocated.`,
     why:'The order cannot be fulfilled completely from its current allocations.',recommendation:'Review transfer or replenishment options before the promised date.',
@@ -185,7 +187,7 @@ async function needs(database,workspaceId){
   return items.sort((a,b)=>b.priority-a.priority || String(a.at||'').localeCompare(String(b.at||'')));
 }
 
-async function brief(database,workspaceId){
+async function brief(database,workspaceId,actorId=null){
   const [stats,locations,activity,openOrders,openPurchases,needItems]=await Promise.all([
     database.query(`SELECT
       (SELECT COUNT(*) FROM items WHERE workspace_id=$1 AND is_active=1) AS item_count,
@@ -210,7 +212,7 @@ async function brief(database,workspaceId){
       AND status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')`,[workspaceId]),
     database.query(`SELECT COUNT(*) AS count FROM purchase_orders WHERE workspace_id=$1
       AND status IN ('DRAFT','AWAITING_APPROVAL','APPROVED','ORDERED','PARTIALLY_RECEIVED')`,[workspaceId]),
-    needs(database,workspaceId),
+    needs(database,workspaceId,actorId),
   ]);
   const row=stats.rows[0];
   return {stats:{itemCount:number(row.item_count),skuCount:number(row.sku_count),locationCount:number(row.location_count),

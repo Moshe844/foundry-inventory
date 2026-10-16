@@ -69,7 +69,7 @@ async function inspectionDatabase(cluster,admin,ctx,stagingAuthorization=null){
   }
   // Same escaped host-generated grants and restrictive tenant policies, one
   // atomic installation. Avoid hundreds of remote PostgreSQL round trips.
-  await admin.transaction(client=>client.query(statements.join(';\n')),{retrySafe:true});
+  await require('./inspection-schema').mutate(admin,guardedTables,client=>client.query(statements.join(';\n')));
   connection.username=role;connection.password=password;
   const pool=new Pool({...require('../../src/db/postgres').connectionOptions(connection.toString(),{max:4,
     privateNetwork:process.env.FOUNDRY_DATABASE_PRIVATE_NETWORK==='true'}),min:4,idleTimeoutMillis:4*60000});
@@ -86,7 +86,7 @@ async function inspectionDatabase(cluster,admin,ctx,stagingAuthorization=null){
       cleanupStatements.push(`DROP POLICY IF EXISTS ${escapeIdentifier(role+'_restrict')} ON ${name}`);
       cleanupStatements.push(`REVOKE ALL PRIVILEGES ON ${name} FROM ${identifier}`);}
     cleanupStatements.push(`REVOKE USAGE ON SCHEMA public,stockchief_runtime FROM ${identifier}`,`DROP ROLE ${identifier}`);
-    await admin.transaction(client=>client.query(cleanupStatements.join(';\n')),{retrySafe:true});
+    await require('./inspection-schema').mutate(admin,guardedTables,client=>client.query(cleanupStatements.join(';\n')));
   }},accountId,topology:{engine:'postgresql',shared:true,multiWriter:false}};
 }
 
@@ -101,7 +101,8 @@ async function createInspectionServer({cluster,database,ctx,beforeRead=()=>{},st
   const password=randomBytes(32).toString('hex');const identifier=escapeIdentifier(role);
   // Install the identical restricted telemetry role/policies atomically,
   // instead of seven serial trips to the remote Staging database.
-  try{await database.transaction(client=>client.query(`CREATE ROLE ${identifier} LOGIN PASSWORD ${escapeLiteral(password)} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+  const telemetryTables=[{table_schema:'public',table_name:'commercial_resource_measurements'}];
+  try{await require('./inspection-schema').mutate(database,telemetryTables,client=>client.query(`CREATE ROLE ${identifier} LOGIN PASSWORD ${escapeLiteral(password)} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
     GRANT USAGE ON SCHEMA public TO ${identifier};
     GRANT INSERT ON commercial_resource_measurements TO ${identifier};
     GRANT SELECT(id) ON commercial_resource_measurements TO ${identifier};
@@ -110,7 +111,7 @@ async function createInspectionServer({cluster,database,ctx,beforeRead=()=>{},st
       OR (workspace_id IS NULL AND (account_id IS NULL OR account_id=${escapeLiteral(readonly.accountId)})));
     CREATE POLICY ${escapeIdentifier(role+'_conflict')} ON commercial_resource_measurements FOR SELECT TO ${identifier}
     USING ((workspace_id=${escapeLiteral(ctx.workspaceId)} AND account_id=${escapeLiteral(readonly.accountId)})
-      OR (workspace_id IS NULL AND (account_id IS NULL OR account_id=${escapeLiteral(readonly.accountId)})));`),{retrySafe:true});}
+      OR (workspace_id IS NULL AND (account_id IS NULL OR account_id=${escapeLiteral(readonly.accountId)})));`));}
   catch(error){await readonly.close().catch(()=>{});throw error;}
   const connection=new URL(cluster.connectionString);connection.username=role;connection.password=password;
   const telemetry=new Pool({...require('../../src/db/postgres').connectionOptions(connection.toString(),{max:2,
@@ -120,11 +121,11 @@ async function createInspectionServer({cluster,database,ctx,beforeRead=()=>{},st
   // No record, permission result or page content is cached by this warm-up.
   const closeTelemetry=async()=>{
     await telemetry.end();
-    if(stagingAuthorization)await database.transaction(client=>client.query(`DROP POLICY IF EXISTS ${identifier} ON commercial_resource_measurements;
+    if(stagingAuthorization)await require('./inspection-schema').mutate(database,telemetryTables,client=>client.query(`DROP POLICY IF EXISTS ${identifier} ON commercial_resource_measurements;
       DROP POLICY IF EXISTS ${escapeIdentifier(role+'_conflict')} ON commercial_resource_measurements;
       REVOKE SELECT(id) ON commercial_resource_measurements FROM ${identifier};
       REVOKE ALL PRIVILEGES ON commercial_resource_measurements FROM ${identifier};
-      REVOKE USAGE ON SCHEMA public FROM ${identifier};DROP ROLE ${identifier};`),{retrySafe:true});
+      REVOKE USAGE ON SCHEMA public FROM ${identifier};DROP ROLE ${identifier};`));
   };
   try{await Promise.all([...Array.from({length:4},()=>readonly.query('SELECT 1')),
     ...Array.from({length:2},()=>telemetry.query('SELECT 1'))]);}

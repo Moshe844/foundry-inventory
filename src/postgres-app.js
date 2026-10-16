@@ -155,7 +155,7 @@ function createPostgresApp({database,resourceDatabase=database,sessionStore,sess
     if(!req.ctx)return next();
     try {
       const [attentionCount,entry]=await Promise.all([
-        postgresProjections.needsCount(database,req.ctx.workspaceId),
+        postgresProjections.needsCount(database,req.ctx.workspaceId,req.ctx.actorId),
         postgresExploration.state(database,req.ctx.workspaceId,req.account.id),
       ]);
       res.locals.attentionCount=attentionCount;res.locals.globalOnboardingEntry=entry;return next();
