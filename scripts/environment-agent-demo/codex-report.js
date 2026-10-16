@@ -13,8 +13,12 @@ const schema=object({version:{type:'integer',enum:[2]},
  answer:{...nullableString,description:'For completed results, the actual customer-visible Markdown answer. Include the requested facts, rows, calculations or explanation here, or put the full requested artifact in workProducts and summarize it here. Claims are hidden verification data and never display a result for you. Do not announce content that is absent from both answer and workProducts.'},
  question:{...nullableString,description:'For needs_user, the customer-visible question about genuinely missing information or a real choice. A search filter you inferred is a hypothesis, not a user constraint. Reconsider unsuccessful inferred filters within authorized scope before asking; retain explicit constraints and clarify genuine ambiguity.'},
  missingInformation:array(string),tier:{type:['string','null'],enum:['standard','complex','exceptional',null]},reason:nullableString,
- claims:{...array(object({evidenceId,historical:{type:'boolean'},values:array(object({path:pointer,
-  value:{anyOf:[{type:['string','number','boolean','null']},object({json:{type:'string',description:'Only for an array or object: its exact JSON serialization. Primitives are copied directly, without this wrapper.'}})]}}))})),description:'Hidden supporting evidence for host verification. These values are not rendered as a customer answer, table or work product. Include the requested usable result separately in answer or workProducts.'},
+ claims:{...array({anyOf:[
+  object({sourceRef:{type:'string',description:'Copy the host-generated source reference from the exact record or contract object. Do not reconstruct an observation ID or array position.'},historical:{type:'boolean'},values:array(object({path:{...pointer,description:'JSON Pointer relative to the object carrying sourceRef, for example /description or /quantity. Copy the actual field key; never prepend its former array position.'},
+   value:{anyOf:[{type:['string','number','boolean','null']},object({json:{type:'string',description:'Exact JSON serialization of an asserted array or object. Primitives are copied directly.'}})]}}))}),
+  object({evidenceId,historical:{type:'boolean'},values:array(object({path:pointer,
+   value:{anyOf:[{type:['string','number','boolean','null']},object({json:{type:'string',description:'Only for an array or object: its exact JSON serialization. Primitives are copied directly, without this wrapper.'}})]}}))})
+ ]}),description:'Hidden supporting evidence for host verification. Prefer sourceRef from the actual object with relative paths and exact asserted values. Legacy evidenceId/absolute-path claims remain readable. Claims are never the customer-visible answer or artifact.'},
  navigation:{anyOf:[object({evidenceId,path:{type:'string',description:'JSON Pointer to the observed destination: /url or /screen/url for a browser observation; the recorded navigation/href field for a governed result. Never an application route.'}}),{type:'null'}]},
  workProducts:{...array(object({title:string,content:{type:'string',description:'Full customer-visible artifact content in Markdown, including all requested rows or draft text. This is a saved conversation artifact, not a canonical business record or evidence of execution.'}})),description:'Optional complete artifacts delivered alongside the completed answer. If empty, all requested usable result content must be in answer. Evidence claims are not artifacts.'},nextActions:array(object({label:string,instruction:string}))});
 const instructions='\nUse the native final-output schema version 2 for every conversation handoff. For unused nullable fields return null; for unused arrays return []. A completed answer requires at least one genuine durable evidence claim; do not emit a claimless completed answer. For a refusal, unavailable access or unsupported request, return status blocked with the useful explanation in answer, even when refusing satisfies what the user asked. Such an explanation needs no claims or unnecessary tool calls. Never invent evidence merely to finish. Group claims sharing the same evidenceId and historical flag into one claims entry, with a values array containing every original path and its exact value. Copy primitive values directly. Only for an array or object use value:{json:its exact JSON serialization}. This is lossless transport compression: do not remove supporting claims, omit facts or substitute a whole-page citation merely to shorten output. The host expands every entry and independently verifies every value with the unchanged evidence verifier. historical is false for current facts. navigation.path is a JSON Pointer to the observation URL field, never an application route. This format supplies no authority, and all original conversation and verification rules still apply.';
@@ -25,7 +29,8 @@ function decode(raw){
   const converted=Object.fromEntries(Object.entries(report).filter(([,value])=>value!==null));
   converted.version=1;converted.claims=[];
   for(const group of report.claims){
-   if(!group||typeof group.evidenceId!=='string'||typeof group.historical!=='boolean'||!Array.isArray(group.values))throw Error('INVALID_NATIVE_CLAIM_ENCODING');
+   if(!group||typeof group.historical!=='boolean'||!Array.isArray(group.values)||
+    (typeof group.sourceRef==='string')===(typeof group.evidenceId==='string'))throw Error('INVALID_NATIVE_CLAIM_ENCODING');
    for(const entry of group.values){
     if(!entry||typeof entry.path!=='string'||!Object.hasOwn(entry,'value'))throw Error('INVALID_NATIVE_CLAIM_ENCODING');
     let value=entry.value;
@@ -34,7 +39,7 @@ function decode(raw){
      try{value=JSON.parse(value.json);}catch{throw Error('INVALID_NATIVE_CLAIM_ENCODING');}
      if(value===null||typeof value!=='object')throw Error('INVALID_NATIVE_CLAIM_ENCODING');
     }else if(!['string','number','boolean'].includes(typeof value)&&value!==null)throw Error('INVALID_NATIVE_CLAIM_ENCODING');
-    converted.claims.push({evidenceId:group.evidenceId,path:entry.path,value,historical:group.historical});
+    converted.claims.push({...(typeof group.sourceRef==='string'?{sourceRef:group.sourceRef}:{evidenceId:group.evidenceId}),path:entry.path,value,historical:group.historical});
     if(converted.claims.length>50)throw Error('INVALID_NATIVE_CLAIM_ENCODING');
    }
   }
@@ -53,4 +58,5 @@ function decode(raw){
  });
  return JSON.stringify(converted);
 }
-module.exports={schema,instructions,decode};
+const sourceInstructions='\nPrefer host-owned source references when the observation supplies _stockchiefSources.field. Each original record or contract object carries that named source-reference field. Preserve it with the object when filtering, sorting or storing notes. Group its claims by sourceRef with paths relative to that object and exact asserted values. Do not join a different observation ID to that object, calculate its prior array index, or put source-reference metadata into the customer answer. The host resolves each reference to the original observation and object before unchanged integrity, value, authority and current-record verification. Legacy evidenceId/absolute-path claims are supported for earlier observations without source references. A reference supplies no business authority and never substitutes for a factual asserted value.';
+module.exports={schema,instructions:instructions+sourceInstructions,decode};

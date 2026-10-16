@@ -27,8 +27,11 @@ async function verify(database,ctx,goal,raw,catalogue,options={}){
   const journal=Array.isArray(evidence.entries)?evidence.entries:Object.values(evidence.entries||{});
   return [...entries,...journal].find(e=>e?.id===id||e?.evidenceId===id)||observed.find(e=>e?._stockchiefEvidence?.evidenceId===id);
  }
- const verified=[],fresh=new Map();
- for(const claim of report.claims){
+ const verified=[],fresh=new Map(),sourceCache=new Map(),sourceMetadataCache=new Map();
+ for(const inputClaim of report.claims){
+  let claim=inputClaim;
+  if(Object.hasOwn(claim,'sourceRef'))try{claim=require('../../scripts/environment-agent-demo/source-references').resolve(entries,claim,sourceCache);}
+  catch(error){return unavailable('I could not verify the supporting evidence for this answer. Your request and collected information are saved.',error.message);}
   if(typeof claim.evidenceId!=='string'||typeof claim.path!=='string'||!claim.path.startsWith('/')||claim.path.length>400)return {verified:false,answer:report.answer};
   const entry=find(claim.evidenceId);if(!entry)return {verified:false,answer:report.answer};
   if(entry.truncated||entry.text&&createHash('sha256').update(entry.text).digest('hex')!==entry.sha256)return {verified:false,answer:report.answer};
@@ -39,6 +42,8 @@ async function verify(database,ctx,goal,raw,catalogue,options={}){
   // earlier observation before that check discards valid durable knowledge
   // and forces unnecessary model/tool turns without improving verification.
   const original=entry.text?JSON.parse(entry.text):entry.value??entry.output??entry.result??entry;
+  if(require('../../scripts/environment-agent-demo/source-references').metadataClaim(entry,claim.path,sourceMetadataCache))
+   return unavailable('The answer needs supporting business facts, not internal source references.','TRANSPORT_METADATA_NOT_EVIDENCE');
   if(entry.name==='environment_browser'&&/^\/(?:screen\/)?viewState(?:\/|$)/.test(claim.path))
    return unavailable('The answer needs observed application facts, not internal presentation metadata.','TRANSPORT_METADATA_NOT_EVIDENCE');
   if(['business_operations','environment_dataset'].includes(entry.name)&&require('../../scripts/environment-agent-demo/record-presentation').metadataClaim(original,claim.path))

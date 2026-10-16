@@ -43,7 +43,7 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
   const entry=require('./observations').ordered(Object.values(h.evidence||{})).findLast(e=>e.text===text||e.text===legacyText||e.truncated&&e.text===text.slice(0,128000));
   if(full&&entry){const reference={evidenceId:entry.id,sha256:entry.sha256,observedAt:entry.at,untrusted:true,
    valuePointerPrefix:output?.image&&entry.text===text?'/screen':'',complete:!entry.truncated};
-   const presented=require('./evidence-presentation').project(entry.name,output);
+   const presented=require('./source-references').present(entry,require('./evidence-presentation').project(entry.name,output));
    return presented?.image?{...presented,screen:{...presented.screen,_stockchiefEvidence:reference}}:{...presented,_stockchiefEvidence:reference};}
   return entry?require('./context').preview(output,entry.id):output;
  }
