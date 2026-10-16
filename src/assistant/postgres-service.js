@@ -444,7 +444,9 @@ async function lookup(database,ctx,request,options={}) {
   if(request.view==='supplier_items'){
     const rows=(await database.query(`SELECT i.id AS item_id,i.name AS product,sku.code AS sku,
       supplier.name AS supplier,supplier.currency,si.supplier_sku,si.last_unit_cost,si.last_cost_at,
-      si.lead_time_days,si.is_preferred,si.purchase_unit,si.units_per_purchase_unit
+      si.lead_time_days,supplier.default_lead_time_days,
+      COALESCE(si.lead_time_days,supplier.default_lead_time_days) AS effective_lead_time_days,
+      si.minimum_order_quantity,si.order_multiple,si.is_preferred,si.purchase_unit,si.units_per_purchase_unit
       FROM supplier_items si JOIN suppliers supplier ON supplier.id=si.supplier_id AND supplier.workspace_id=si.workspace_id
       JOIN skus sku ON sku.id=si.sku_id AND sku.workspace_id=si.workspace_id
       JOIN items i ON i.id=sku.item_id AND i.workspace_id=si.workspace_id
@@ -456,11 +458,16 @@ async function lookup(database,ctx,request,options={}) {
         supplierCode:row.supplier_sku||'',lastUnitCost:row.last_unit_cost===null?'Not recorded':Number(row.last_unit_cost),
         currency:row.currency||null,
         costRecordedAt:row.last_cost_at||'',leadTimeDays:row.lead_time_days===null?'Not recorded':Number(row.lead_time_days),
+        supplierLeadTimeDays:row.default_lead_time_days===null?'Not recorded':Number(row.default_lead_time_days),
+        effectiveLeadTimeDays:row.effective_lead_time_days===null?'Not recorded':Number(row.effective_lead_time_days),
+        minimumOrderQuantity:row.minimum_order_quantity===null?'Not recorded':Number(row.minimum_order_quantity),
+        orderMultiple:row.order_multiple===null?'Not recorded':Number(row.order_multiple),
         preferred:Boolean(row.is_preferred),purchaseUnit:row.purchase_unit,
         unitsPerPurchaseUnit:Number(row.units_per_purchase_unit)},`/inventory/${row.item_id}`));
     return {answer:rows.length?`${rows.length}${rows.length===100?'+':''} active supplier-product relationships matched.`:
       'No active supplier-product relationship matched that request.',rows,
-      columns:['product','sku','supplier','supplierCode','lastUnitCost','currency','costRecordedAt','leadTimeDays','preferred','purchaseUnit','unitsPerPurchaseUnit']};
+      columns:['product','sku','supplier','supplierCode','lastUnitCost','currency','costRecordedAt','leadTimeDays',
+        'supplierLeadTimeDays','effectiveLeadTimeDays','minimumOrderQuantity','orderMultiple','preferred','purchaseUnit','unitsPerPurchaseUnit']};
   }
   if(request.view==='messages'){
     const rows=(await database.query(`SELECT kind,recipient,subject,body,status,at FROM (
