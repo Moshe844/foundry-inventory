@@ -45,6 +45,10 @@ function classify({report,answer,verified,current='READY',canonicalVerified=true
 const labels={queued:'Getting started',working:'Working on your request',clarification:'Let’s clarify',approval:'Ready for your approval',
  external_wait:'Waiting for confirmation',navigation:'Ready to open in your browser',verification:'Checking the result',completed:'Completed',
  interrupted:'Work paused',funding:'Spending limit reached',capacity:'Daily work limit reached',service_wait:'AI service temporarily unavailable',usage_review:'Checking interrupted AI work',failed:'Could not finish',cancelled:'Stopped'};
+const lifecycleMessages=Object.freeze({
+ external_wait:'StockChief is waiting for confirmation of the authorized work. No further approval is needed at this stage.',
+ verification:'The authorized work is recorded. I’m checking the complete result.'
+});
 const ConversationState=z.object({version:z.literal(1),goalId:z.string(),phase:z.enum(Object.keys(labels)),label:z.string(),
  active:z.boolean(),terminal:z.boolean(),message:z.string(),canReply:z.boolean(),revision:z.number().int().nonnegative(),
  input:z.object({id:z.string(),question:z.string(),missingInformation:z.array(z.string())}).nullable(),
@@ -69,7 +73,10 @@ function state(goal){
  const usageMessage='An AI request lost its confirmation. Your goal and recorded work are saved. Paid work is paused while its usage is checked; no automatic retry will run.';
  const partial=['partial_verified_receipt','partial_observation_report'].includes(h.completionSource)?publicText(goal.answer,''):'';
  return ConversationState.parse({version:1,goalId:goal.id,phase,label:labels[phase],active:!['completed','failed','cancelled','interrupted','funding','capacity','service_wait','usage_review'].includes(phase),
-  terminal:['completed','failed','cancelled'].includes(phase),message:['funding','capacity','service_wait','usage_review'].includes(phase)?[partial,phase==='funding'?fundingMessage:phase==='capacity'?capacityMessage:phase==='usage_review'?usageMessage:serviceMessage].filter(Boolean).join('\n\n'):input?.question||publicText(goal.answer,['queued','working','verification'].includes(phase)?'':FAILED),input,
+  // A durable external wait is canonical lifecycle state, not an approval
+  // request or a model answer. Older rows may still carry the prior approval
+  // text; render the current phase safely without editing native evidence.
+  terminal:['completed','failed','cancelled'].includes(phase),message:phase==='external_wait'?lifecycleMessages.external_wait:['funding','capacity','service_wait','usage_review'].includes(phase)?[partial,phase==='funding'?fundingMessage:phase==='capacity'?capacityMessage:phase==='usage_review'?usageMessage:serviceMessage].filter(Boolean).join('\n\n'):input?.question||publicText(goal.answer,['queued','working','verification'].includes(phase)?'':FAILED),input,
   canReply:phase==='clarification'&&Boolean(input),revision:saved?.revision||0,
   history:history.filter(m=>m.role==='user'||m.phase==='clarification'||!m.phase&&questions.has(m.id))
    .map(m=>({id:m.id,role:m.role,text:publicText(m.text,''),at:m.at,phase:m.phase})),
@@ -91,4 +98,4 @@ Completion: {version:1,status:"completed",outcome:"answer"|"navigation",answer:s
 When the requested result is something the user can use or edit, deliver its full content as a workProduct, not merely prose describing it. The host durably saves each workProduct and offers a downloadable copy and free-form continuation. Keep answer a short outcome summary; do not repeat the workProduct there. A usable workProduct should include meaningful nextActions rather than leave the user at a dead end: these are natural-language follow-up requests chosen by you, not execution grants or approval. Choose their labels honestly and their instructions precisely; clicking one starts the same governed agent workflow under fresh authority, limits and approvals. Discover applicable operations when needed. Do not invent capabilities, imply a downloadable work product is a canonical business record, or claim a draft was sent. If the requested scope includes an actual business operation, prepare/execute its canonical contract rather than returning a workProduct as a substitute.
 Blocked: {version:1,status:"blocked",answer:string}. Use this for refusals, unavailable access and unsupported requests, including when the user explicitly requested a refusal. Keep the useful explanation here instead of reporting a claimless completed business answer. Do not call tools merely to manufacture a citation for a refusal. Describe the limitation in ordinary language without internal error codes, stack traces or protocol data.
 Clarification does not complete or abandon the goal. The next human reply continues this same goal with its durable evidence, canonical proposals, limits and original instructions. Human input alone is never approval of a business operation.`;
-module.exports={Report,ConversationState,WorkProducts,NextActions,parse,classify,state,sync,publicText,instructions,FAILED};
+module.exports={Report,ConversationState,WorkProducts,NextActions,parse,classify,state,sync,publicText,instructions,FAILED,lifecycleMessages};
