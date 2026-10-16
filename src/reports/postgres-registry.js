@@ -11,11 +11,13 @@ const datasets=Object.freeze({
       COALESCE(s.variant_label,'') AS variant,COALESCE(s.barcode,'') AS barcode,
       i.unit_label AS unit,i.tracking_mode AS tracking,
       CASE WHEN i.is_active=1 AND s.is_active=1 THEN 'active' ELSE 'inactive' END AS status,
+      CASE WHEN i.is_active=1 THEN 'active' ELSE 'inactive' END AS product_status,
+      CASE WHEN s.is_active=1 THEN 'active' ELSE 'inactive' END AS variant_status,
       LEFT(i.created_at,10) AS created_on
       FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
       WHERE s.workspace_id=$1`,recordHref:(row)=>`/inventory/${row.record_id}`,
-    enumFields:['status'],fields:{product:'text',sku:'text',variant:'text',barcode:'text',unit:'text',tracking:'text',
-      status:'text',created_on:'date'}},
+    enumFields:['status','product_status','variant_status'],fields:{product:'text',sku:'text',variant:'text',barcode:'text',unit:'text',tracking:'text',
+      status:'text',product_status:'text',variant_status:'text',created_on:'date'}},
   stock:{label:'Stock by product and location',permission:permissions.VIEW,
     source:`SELECT i.id AS record_id,i.name AS product,s.code AS sku,l.name AS location,
       b.on_hand::bigint AS on_hand,LEFT(b.updated_at,10) AS as_of

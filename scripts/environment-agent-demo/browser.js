@@ -253,10 +253,16 @@ async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null,ob
   function observeReadLinks(outcomes){
     for(const outcome of outcomes||[]){
       if(require('../../src/assistant/postgres-capability-registry').registry.get(outcome.capability)?.kind!=='read'||outcome.result?.status!=='ANSWERED')continue;
-      for(const row of outcome.result.rows||[]){
-        const path=require('../../src/assistant/agent-navigation-path').localPath(row.href);
-        if(path)knownPaths.add(path);
-      }
+      observeDatasetLinks(outcome.result);
+    }
+  }
+  // Called only by the host after a governed read, never by a browser tool
+  // argument. Report record links use the same local-path guard as canonical
+  // reads. A remembered link is navigation knowledge, not a permission grant.
+  function observeDatasetLinks(result){
+    for(const row of Array.isArray(result?.rows)?result.rows:[]){
+      const path=require('../../src/assistant/agent-navigation-path').localPath(row?.href);
+      if(path)knownPaths.add(path);
     }
   }
   async function verifyObservation(url,previous=null){
@@ -371,6 +377,6 @@ async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null,ob
     if(ambientBefore&&(await formSurface()).ambient!==ambientBefore)throw Error('CURRENT_FORM_PRESENTATION_CHANGED_OUTSIDE_FORM');
     return result;
   }
-  return {act,inspect,restore,verifyObservation,observeReadLinks,page,context,close:()=>context.close()};
+  return {act,inspect,restore,verifyObservation,observeReadLinks,observeDatasetLinks,page,context,close:()=>context.close()};
 }
 module.exports={createBrowserTools};

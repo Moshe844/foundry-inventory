@@ -291,6 +291,26 @@ function createPostgresAskRouter(database,options={}){
     return res.page('attention/ask-capabilities',{title:'What Ask StockChief can do',nav:'ask',room:true,
       query,groups,total:entries.length,visibleCount:visible.length});
   }));
+  router.get('/ask/history',asyncRoute(async(req,res)=>{
+    // Reading an owned saved request is independent of the current chat and
+    // spending admission. Never stage approvals, resume or enqueue on a GET.
+    res.set('Cache-Control','no-store');
+    const history=require('../../assistant/postgres-goal-history');
+    let selected=null;
+    if(req.query.goal!==undefined){
+      if(typeof req.query.goal!=='string'||req.query.goal.length>160)return res.sendStatus(404);
+      const goal=await goalStore.get(database,req.ctx,req.query.goal);
+      if(!goal)return res.sendStatus(404);
+      const recorded=await history.effects(database,req.ctx,[goal.id]);
+      const state=conversation.state(goal);
+      selected={id:goal.id,request:goal.original_request,label:history.labels[goal.status],createdAt:goal.created_at,
+        conversation:{...state,history:(state.history||[]).map(turn=>({...turn,text:conversation.publicText(turn.text)}))},
+        delivery:delivery.visible(goal),effects:recorded.get(goal.id)||[]};
+    }
+    const saved=selected?null:await history.list(database,req.ctx,{before:req.query.before,status:req.query.status||''});
+    return res.page('attention/ask-history',{title:'Saved requests',nav:'ask',room:true,selected,saved,
+      labels:history.labels,renderAgentAnswer:require('../public/agent-answer').render});
+  }));
   router.get('/ask',asyncRoute(async(req,res)=>{
     const remembered=req.session.postgresAskPageContext;
     const requestedPath=req.query.from===undefined&&remembered?.workspaceId===req.ctx.workspaceId

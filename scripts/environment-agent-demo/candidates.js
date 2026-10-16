@@ -30,7 +30,10 @@ function sharedTools({browser,gateway,sandbox,session,fullEvidence=false,audit=(
       schema:z.object({search:z.string().max(200),offset:z.number().int().min(0).max(10000),names:z.array(z.string()).max(6)}),execute:input=>gateway.interfaces(input)},
     {name:'environment_dataset',description:'Read a scoped dataset using its discovered fields. Provide a report JSON spec with dataset and columns or groups/aggregate; optional filters. No SQL.',
       schema:z.object({specJson:z.string().max(16000),offset:z.number().int().min(0).max(1000000)}),
-      execute:({specJson,offset})=>gateway.dataset({spec:require('./contracts').parseJson(specJson),offset})},
+      execute:async({specJson,offset})=>{
+        const result=await gateway.dataset({spec:require('./contracts').parseJson(specJson),offset});
+        await browser?.observeDatasetLinks?.(result);return result;
+      }},
     {name:'business_operations',description:'Invoke discovered canonical contracts. JSON array of {capability,arguments:[{name,value}],dependsOn:[]}. Values accept strings and the discovered numeric types. Changes require existing authority or human approval.',
       schema:z.object({stepsJson:z.string().max(24000)}),execute:async({stepsJson},callId)=>{
         const result=await gateway.operate({steps:require('./contracts').parseJson(stepsJson),callId});

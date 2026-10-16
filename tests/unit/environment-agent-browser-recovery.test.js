@@ -32,6 +32,16 @@ test('browser reports navigation failures, rejects old-session references and re
  const untrusted='/'+randomUUID();
  newUi.observeReadLinks([{capability:'supplier.create',result:{status:'ANSWERED',rows:[{href:untrusted}]}},{capability:'read.purchase_orders',result:{status:'FAILED',rows:[{href:untrusted}]}}]);
  assert.equal((await newUi.act({action:'open',value:untrusted})).error.code,'UNOBSERVED_APPLICATION_PATH');
+ const reported='/'+randomUUID(),report={rows:[{href:reported},{href:'//outside.example/record'},{href:'https://outside.example/record'},{href:'javascript:alert(1)'}]};
+ newUi.observeDatasetLinks(report);
+ assert.equal((await newUi.act({action:'open',value:reported})).url,origin+reported,'Exact governed report link must be usable');
+ assert.equal((await newUi.act({action:'open',value:reported+'/guessed'})).error.code,'UNOBSERVED_APPLICATION_PATH');
+ assert.equal((await newUi.act({action:'open',value:'//outside.example/record'})).error.code,'UNOBSERVED_APPLICATION_PATH');
+ const restarted=await createBrowserTools(browser,{origin});
+ assert.equal((await restarted.act({action:'open',value:reported})).error.code,'UNOBSERVED_APPLICATION_PATH');
+ require('../../scripts/environment-agent-demo/read-navigation').restoreReadLinks(restarted,{original:{name:'environment_dataset',text:JSON.stringify(report)}});
+ assert.equal((await restarted.act({action:'open',value:reported})).url,origin+reported,'Durable report evidence restores the same guarded link after restart');
+ await restarted.close();
  const current=await newUi.inspect();
  const commit=current.controls.find(c=>c.label==='Commit');
  const blocked=await newUi.act({action:'click',ref:commit.ref});assert.equal(blocked.httpStatus,403);assert.equal(posts,0);

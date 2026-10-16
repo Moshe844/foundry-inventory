@@ -1,0 +1,38 @@
+<div class="rm-head"><a class="rm-head__back" href="/ask">← Ask StockChief</a><div class="rm-title"><div>
+  <p class="rm-stamp">Your work in this business</p><h1>Saved requests</h1>
+  <p class="rm-prose">Review earlier conversations and recorded outcomes. Opening this history never resumes work or approves a change.</p>
+</div></div></div>
+<% if(selected){ %>
+  <section class="card measure" aria-label="Saved request">
+    <p><a href="/ask/history">← All saved requests</a></p>
+    <p class="rm-stamp"><%= helpers.dateTime(selected.createdAt) %> · <%= selected.label %></p>
+    <h2 style="white-space:pre-wrap;overflow-wrap:anywhere"><%= selected.request %></h2>
+    <p class="rm-agent__hint">This is a saved result. Business records may have changed since it was recorded.</p>
+    <% for(const turn of selected.conversation.history||[]){ %>
+      <div class="rm-agent__exchange rm-agent__exchange--<%= turn.role==='user'?'user':'assistant' %>"><p class="rm-agent__speaker"><%= turn.role==='user'?'You':'StockChief' %></p><div class="rm-agent__answer"><%- renderAgentAnswer(turn.text) %></div></div>
+    <% } %>
+    <% if(selected.conversation.message!==selected.conversation.history?.at(-1)?.text){ %><div class="rm-agent__answer"><%- renderAgentAnswer(selected.conversation.message) %></div><% } %>
+    <% for(const work of selected.delivery?.workProducts||[]){ %><article class="rm-agent__work"><h3><%= work.title %></h3><div class="rm-agent__answer"><%- renderAgentAnswer(work.content) %></div></article><% } %>
+    <h3>Recorded outcomes</h3>
+    <% if(!selected.effects.length){ %><p>No executed operation or approved rule is linked to this request.</p><% } %>
+    <ul><% for(const effect of selected.effects){ %><li><strong><%= effect.kind==='rule'?'Rule approved':'Operation recorded' %>:</strong> <a href="<%= effect.href %>"><%= effect.summary %></a></li><% } %></ul>
+    <% if(selected.effects.some(e=>e.kind==='rule')){ %><p>Rule approval does not prove that its trigger ran.</p><% } %>
+    <% if(selected.effects.some(e=>e.kind==='business')){ %><p>Open a record to check its current status.</p><% } %>
+  </section>
+<% }else{ %>
+  <section class="card measure" aria-label="Saved request history">
+    <form method="get" action="/ask/history"><label for="history-status">Status</label>
+      <select id="history-status" name="status"><option value="">All requests</option><% for(const [value,label] of Object.entries(labels)){ %><option value="<%= value %>" <%= saved.status===value?'selected':'' %>><%= label %></option><% } %></select>
+      <button class="rm-btn rm-btn--sm" type="submit">Filter</button>
+    </form>
+    <p><%= saved.total %> saved <%= saved.total===1?'request':'requests' %><%= saved.status?' with this status':'' %>. Showing <%= saved.rows.length %> on this page<%= saved.hasMore?'; more follow.':'.' %></p>
+    <div class="table-scroll"><table><thead><tr><th>Requested</th><th>Goal</th><th>Status</th><th>Recorded outcomes</th></tr></thead><tbody>
+    <% for(const goal of saved.rows){ %><tr><td><%= helpers.dateTime(goal.created_at) %></td><td style="min-width:15rem;max-width:30rem;overflow-wrap:anywhere"><a href="/ask/history?goal=<%= encodeURIComponent(goal.id) %>"><%= goal.original_request %></a></td><td><%= goal.label %></td><td>
+      <% const operations=goal.effects.filter(e=>e.kind==='business').length,rules=goal.effects.filter(e=>e.kind==='rule').length; %>
+      <%= operations %> recorded <%= operations===1?'operation':'operations' %><% if(rules){ %>; <%= rules %> approved <%= rules===1?'rule':'rules' %><% } %>
+    </td></tr><% } %>
+    </tbody></table></div>
+    <% if(saved.next){ %><a class="rm-btn rm-btn--ghost rm-btn--sm" href="/ask/history?before=<%= encodeURIComponent(saved.next) %>&amp;status=<%= encodeURIComponent(saved.status) %>">Older requests →</a><% } %>
+    <% if(!saved.rows.length){ %><p>No requests are recorded for you with this status.</p><% } %>
+  </section>
+<% } %>

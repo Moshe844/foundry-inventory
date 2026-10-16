@@ -32,3 +32,25 @@ test('canonical read links do not initialize a browser and are forwarded when it
  assert.deepEqual(await ui.act({action:'inspect'}),{ready:true});assert.deepEqual(received,[links]);
  await ui.observeReadLinks(links);assert.equal(received.length,2);assert.equal(created,1);
 });
+
+test('governed dataset links survive lazy creation and journal restoration without teaching routes to the agent',async()=>{
+ let created=0;const seen=[];
+ const ui=require('../../scripts/environment-agent-demo/lazy-browser').lazyBrowser(async()=>{created++;return {
+  observeDatasetLinks:result=>seen.push(result),act:async()=>({ready:true})};});
+ const report={rows:[{href:'/record-'+require('node:crypto').randomUUID()}]};
+ const tools=require('../../scripts/environment-agent-demo/candidates').sharedTools({browser:ui,gateway:{dataset:async()=>report}});
+ assert.equal(await tools.find(t=>t.name==='environment_dataset').execute({specJson:'{}',offset:0}),report);
+ assert.equal(created,0);assert.equal(seen.length,0);
+ await ui.act({action:'inspect'});assert.deepEqual(seen,[report]);
+ const restored=[];require('../../scripts/environment-agent-demo/read-navigation').restoreReadLinks({observeDatasetLinks:r=>restored.push(r)},
+  {full:{name:'environment_dataset',text:JSON.stringify(report)},truncated:{name:'environment_dataset',text:JSON.stringify(report),truncated:true},
+   model:{name:'environment_notebook',text:JSON.stringify(report)},broken:{name:'environment_dataset',text:'broken'}});
+ assert.deepEqual(restored,[report]);
+ await assert.rejects(()=>require('../../scripts/environment-agent-demo/candidates').sharedTools({browser:ui,gateway:{dataset:async()=>{throw Error('DENIED');}}})
+  .find(t=>t.name==='environment_dataset').execute({specJson:'{}',offset:0}),/DENIED/);
+ assert.equal(seen.length,1,'Failed/unauthorized reads cannot seed navigation');
+ const legacy=[];require('../../scripts/environment-agent-demo/read-navigation').restoreReadLinks({observeReadLinks:r=>legacy.push(r)},
+  {wrong:{name:'business_operations',text:'{"outcomes":"invalid"}'},empty:{name:'business_operations',text:'null'},
+   valid:{name:'business_operations',text:JSON.stringify({outcomes:[null,{capability:'read.locations',result:{status:'ANSWERED',rows:[]}}]})}});
+ assert.deepEqual(legacy,[[{capability:'read.locations',result:{status:'ANSWERED',rows:[]}}]],'Malformed legacy records cannot break restoration of valid observations');
+});

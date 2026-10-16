@@ -94,9 +94,7 @@ async function run(database,ctx,id,options={}){
    // Durable canonical record links are navigation knowledge across restarts,
    // never current facts or execution grants. The restricted app rechecks
    // tenant membership and permissions on each destination GET.
-   for(const entry of Object.values(goal.checkpoint.harness?.evidence||{}))if(entry.name==='business_operations'&&!entry.truncated){
-    try{tools.observeReadLinks(JSON.parse(entry.text).outcomes);}catch{}
-   }
+   require(base+'read-navigation').restoreReadLinks(tools,goal.checkpoint.harness?.evidence);
    audit({kind:'browser_preparation_timing',phase:'current_page_load',ms:Date.now()-phaseStarted});
    return tools;
   });

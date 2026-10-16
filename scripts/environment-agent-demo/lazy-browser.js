@@ -6,7 +6,7 @@ function lazyBrowser(create){
  const get=input=>{
   if(opening)return opening;
   const attempt=(async()=>{
-   const browser=await create(input);for(const links of pendingLinks)browser.observeReadLinks?.(links);pendingLinks=[];return browser;
+   const browser=await create(input);for(const [method,links] of pendingLinks)await browser[method]?.(links);pendingLinks=[];return browser;
   })();opening=attempt;
   attempt.catch(()=>{if(opening===attempt)opening=null;});
   return attempt;
@@ -17,6 +17,7 @@ function lazyBrowser(create){
    const path=require('../../src/assistant/agent-navigation-path').localPath(prior.pathname+prior.search);
    if(!path)throw Error('INVALID_EVIDENCE_PATH');
    return browser.verifyObservation(new URL(path,new URL(browser.page.url()).origin).href,observation);},
-  observeReadLinks:async outcomes=>{if(opening)(await opening).observeReadLinks?.(outcomes);else pendingLinks.push(outcomes);}};
+  observeReadLinks:async outcomes=>{if(opening)await (await opening).observeReadLinks?.(outcomes);else pendingLinks.push(['observeReadLinks',outcomes]);},
+  observeDatasetLinks:async result=>{if(opening)await (await opening).observeDatasetLinks?.(result);else pendingLinks.push(['observeDatasetLinks',result]);}};
 }
 module.exports={lazyBrowser};
