@@ -4,6 +4,7 @@
 function project(name,value){
  if(name==='environment_browser')return require('./browser-presentation').compact(value);
  if(name==='environment_interfaces')return require('./interface-presentation').compact(value);
+ if(['business_operations','environment_dataset'].includes(name))return require('./record-presentation').project(value);
  return value;
 }
 function locate(value,pointer){

@@ -1,0 +1,12 @@
+{
+  "source": "Actual investigate-019 embedded SDK failure, October 16 2026: order rows, original order and failing pointer preserved; private IDs, references and names removed.",
+  "originalRowCount": 5,
+  "failedClaim": {"path":"/outcomes/0/result/rows/3/order","value":"SO-00003"},
+  "observation": {"outcomes":[{"capability":"read.sales_orders","result":{"rows":[
+    {"order":"SO-00005","status":"DRAFT"},
+    {"order":"SO-00004","status":"DRAFT"},
+    {"order":"SO-00003","status":"FULFILLED"},
+    {"order":"SO-00002","status":"FULFILLED"},
+    {"order":"SO-00001","status":"DRAFT"}
+  ]}}]}
+}

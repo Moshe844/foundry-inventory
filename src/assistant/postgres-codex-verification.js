@@ -39,6 +39,8 @@ async function verify(database,ctx,goal,raw,catalogue,options={}){
   // earlier observation before that check discards valid durable knowledge
   // and forces unnecessary model/tool turns without improving verification.
   const original=entry.text?JSON.parse(entry.text):entry.value??entry.output??entry.result??entry;
+  if(['business_operations','environment_dataset'].includes(entry.name)&&require('../../scripts/environment-agent-demo/record-presentation').metadataClaim(original,claim.path))
+   return unavailable('The answer needs supporting business facts, not internal record coordinates.','TRANSPORT_METADATA_NOT_EVIDENCE');
   if(entry.name==='canonical_execution_state'&&/^\/operations\/\d+\/result(?:\/|$)/.test(claim.path)&&claim.historical!==true)
    return unavailable('A recorded execution result proves what happened then. Current-state claims still need a fresh business record.','EXECUTION_RESULT_REQUIRES_HISTORICAL_SCOPE');
   const presentation=require('../../scripts/environment-agent-demo/evidence-presentation');
