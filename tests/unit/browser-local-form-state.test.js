@@ -1,0 +1,22 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict'),http=require('node:http'),{randomUUID}=require('node:crypto');
+test('unfamiliar local form choices survive restart while changed defaults, ambiguity and write attempts fail closed',{timeout:45000},async t=>{
+ const names=Array.from({length:4},()=>randomUUID());let duplicate=false,changedDefault=false,changedConstraint=false,writes=0;
+ const server=http.createServer((req,res)=>{if(req.method==='POST')writes++;res.setHeader('x-stockchief-page','1');res.setHeader('content-type','text/html');
+  const toggle=`<label>Reveal unfamiliar details<input type="checkbox" name="${names[0]}" ${changedDefault?'checked':''} onchange="document.querySelector('fieldset').hidden=!this.checked;fetch('/forbidden',{method:'POST'}).catch(()=>{});"></label>`;
+  res.end(`<html><body><main><h1>Unfamiliar form</h1><form method="post">${toggle}${duplicate?toggle:''}<fieldset ${changedDefault?'':'hidden'}><label>Unexpected choice<select name="${names[1]}"><option value="a">First</option><option value="b">Second</option></select></label><label>Unfamiliar text<input name="${names[2]}" maxlength="${changedConstraint?4:30}" value="original"></label><label>Mode one<input type="radio" name="${names[3]}" value="first" checked></label><label>Mode two<input type="radio" name="${names[3]}" value="second"></label><input name="api_token" value="SECRET_NEVER_RECORD"><button>Commit</button></fieldset></form></main></body></html>`);});
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>{server.closeAllConnections();server.close(resolve);}));const origin='http://127.0.0.1:'+server.address().port,browser=await require('playwright').chromium.launch({headless:true});t.after(()=>browser.close());
+ let tools=await require('../../scripts/environment-agent-demo/browser').createBrowserTools(browser,{origin});t.after(()=>tools.close());
+ let observation=await tools.inspect(),field=observation.controls.find(c=>c.name===names[0]);observation=await tools.act({action:'click',ref:field.ref,value:null});field=observation.controls.find(c=>c.name===names[1]);observation=await tools.act({action:'select',ref:field.ref,value:'b'});field=observation.controls.find(c=>c.name===names[2]);observation=await tools.act({action:'fill',ref:field.ref,value:'a local draft'});
+ field=observation.controls.find(c=>c.name===names[3]&&c.value==='first');observation=await tools.act({action:'press',ref:field.ref,value:'ArrowDown'});
+ assert.equal(observation.viewState.localEdits.length,4);assert.equal(observation.controls.find(c=>c.name===names[3]&&c.value==='second').checked,true);assert(!JSON.stringify(observation).includes('SECRET_NEVER_RECORD'));assert.equal(writes,0);
+ await tools.page.evaluate(()=>{location.hash='local-section';});assert.equal((await tools.inspect()).viewState.localEdits.length,4,'Same-document navigation retains local edits');
+ const saved=JSON.parse(JSON.stringify(observation));await tools.close();tools=await require('../../scripts/environment-agent-demo/browser').createBrowserTools(browser,{origin});
+ const fresh=await tools.verifyObservation(origin+'/',saved),compare=require('../../src/assistant/browser-control-verification').unchangedControl;
+ for(const name of names){const i=saved.controls.findIndex(c=>c.name===name);assert.equal(compare(saved,fresh,'/controls/'+i).matched,true,'All facts, constraints and values still match after a new browser session');}assert.equal(writes,0,'Neither original nor verifier UI events can bypass the GET-only browser boundary');
+ changedDefault=true;await assert.rejects(tools.verifyObservation(origin+'/',saved),/CURRENT_FORM_BASELINE_CHANGED/);changedDefault=false;
+ changedConstraint=true;await assert.rejects(tools.verifyObservation(origin+'/',saved),/CURRENT_FORM_BASELINE_CHANGED/);changedConstraint=false;
+ duplicate=true;await assert.rejects(tools.verifyObservation(origin+'/',saved),/CURRENT_FORM_BASELINE_CHANGED/);duplicate=false;
+ const forged=structuredClone(saved);forged.viewState.localEdits[0].kind='submit';await assert.rejects(tools.verifyObservation(origin+'/',forged),/CURRENT_FORM_PRESENTATION_INVALID/);assert.equal(writes,0);
+ await tools.page.goto(origin+'/');assert.deepEqual((await tools.inspect()).viewState.localEdits,[],'A new GET cannot inherit edits from an earlier page');
+});

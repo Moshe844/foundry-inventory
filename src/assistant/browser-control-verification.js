@@ -28,4 +28,4 @@ function unchangedControl(previous,current,path){
  }
  return {applicable:true,matched:true,value,currentPointer:(match[1]||'')+'/controls/'+matches[0].index+suffix};
 }
-module.exports={unchangedControl};
+module.exports={facts,unchangedControl};

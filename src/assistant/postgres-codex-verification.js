@@ -39,6 +39,8 @@ async function verify(database,ctx,goal,raw,catalogue,options={}){
   // earlier observation before that check discards valid durable knowledge
   // and forces unnecessary model/tool turns without improving verification.
   const original=entry.text?JSON.parse(entry.text):entry.value??entry.output??entry.result??entry;
+  if(entry.name==='environment_browser'&&/^\/(?:screen\/)?viewState(?:\/|$)/.test(claim.path))
+   return unavailable('The answer needs observed application facts, not internal presentation metadata.','TRANSPORT_METADATA_NOT_EVIDENCE');
   if(['business_operations','environment_dataset'].includes(entry.name)&&require('../../scripts/environment-agent-demo/record-presentation').metadataClaim(original,claim.path))
    return unavailable('The answer needs supporting business facts, not internal record coordinates.','TRANSPORT_METADATA_NOT_EVIDENCE');
   if(entry.name==='canonical_execution_state'&&/^\/operations\/\d+\/result(?:\/|$)/.test(claim.path)&&claim.historical!==true)
@@ -68,11 +70,11 @@ async function verify(database,ctx,goal,raw,catalogue,options={}){
    const control=entry.name==='environment_browser'?require('./browser-control-verification').unchangedControl(
     JSON.parse(entry.text),fresh.get(entry.id),claim.path):{applicable:false};
    if(control.applicable){
-    if(!control.matched)return unavailable('The form changed during this request. Its earlier fields are no longer verified as current. Your request and recorded work are saved.','CURRENT_FORM_CHANGED');
+    if(!control.matched)return unavailable('The form changed during this request. Its earlier fields are no longer verified as current. Your request and recorded work are saved.','CURRENT_FORM_CHANGED',{evidenceId:claim.evidenceId,path:claim.path});
    }else if(missingCurrent||!equal(current,claim.value)){
     const moved=entry.name==='environment_browser'?require('./browser-text-verification').unchangedLine(
      JSON.parse(entry.text),fresh.get(entry.id),claim.path):{matched:false};
-    if(!moved.matched||!equal(moved.value,claim.value))return unavailable('The business records changed during this request. The earlier figures are no longer verified as current. Your request and recorded work are saved.','CURRENT_RECORDS_CHANGED');
+    if(!moved.matched||!equal(moved.value,claim.value))return unavailable('The business records changed during this request. The earlier figures are no longer verified as current. Your request and recorded work are saved.','CURRENT_RECORDS_CHANGED',{evidenceId:claim.evidenceId,path:claim.path});
    }
   }
   verified.push({evidenceId:claim.evidenceId,path:claim.path,sha256:createHash('sha256').update(JSON.stringify(value)).digest('hex')});

@@ -181,10 +181,13 @@ async function lookup(database,ctx,request,options={}) {
   if(request.view==='operating_rules'){
     const [alerts,replenishment,guards,automation,preferences]=await Promise.all([
       database.query(`SELECT s.code AS sku,i.name AS product,l.name AS location,r.threshold,r.metric,
-        r.comparator,r.armed,r.updated_at FROM stockchief_runtime.stock_threshold_rules r
+        r.comparator,r.armed,r.updated_at,a.id AS warning_id,a.status AS warning_status,
+        a.title AS warning_title,a.metrics AS warning_metrics,a.last_evaluated_at AS warning_evaluated_at
+        FROM stockchief_runtime.stock_threshold_rules r
         JOIN skus s ON s.id=r.sku_id AND s.workspace_id=r.workspace_id
         JOIN items i ON i.id=s.item_id AND i.workspace_id=r.workspace_id
         LEFT JOIN locations l ON l.id=r.location_id AND l.workspace_id=r.workspace_id
+        LEFT JOIN attention_items a ON a.workspace_id=r.workspace_id AND a.fingerprint='stock-threshold:'||r.id
         WHERE r.workspace_id=$1 AND r.is_active=TRUE AND ($2::text IS NULL OR s.code ILIKE '%'||$2||'%'
           OR i.name ILIKE '%'||$2||'%' OR l.name ILIKE '%'||$2||'%')
         ORDER BY r.updated_at DESC LIMIT 100`,[ctx.workspaceId,search]),
@@ -215,7 +218,11 @@ async function lookup(database,ctx,request,options={}) {
     const rows=[
       ...alerts.rows.map((row)=>({kind:'stock_warning',sku:row.sku,product:row.product,
         location:row.location||'All locations',threshold:Number(row.threshold),metric:row.metric,
-        comparator:row.comparator,armed:row.armed,externalEmail:false,automaticPurchase:false,
+        comparator:row.comparator,monitoringEnabled:true,armed:row.armed,
+        currentWarning:row.warning_id?{id:row.warning_id,status:row.warning_status,title:row.warning_title,
+          metrics:typeof row.warning_metrics==='string'?JSON.parse(row.warning_metrics):row.warning_metrics,
+          lastEvaluatedAt:row.warning_evaluated_at}:null,
+        externalEmail:false,automaticPurchase:false,
         updatedAt:row.updated_at})),
       ...replenishment.rows.map((row)=>({kind:'replenishment_setting',sku:row.sku,
         product:row.product,location:row.location||'All locations',reorderPoint:row.reorder_point,
@@ -232,11 +239,14 @@ async function lookup(database,ctx,request,options={}) {
         updatedAt:row.updated_at})),
     ];
     const detail=rows.map((row)=>row.kind==='stock_warning'
-      ?`${row.sku} ${row.location}: Needs You warning ${row.comparator==='below'?'strictly below':'at or below'} ${row.threshold} ${row.metric==='available_to_fulfill'?'available to fulfill':'physically on hand'}; it does not email or purchase. ${row.armed?'Armed':'Waiting to re-arm'}.`
+      ?`${row.sku} ${row.location}: monitoring enabled for a Needs You warning ${row.comparator==='below'?'strictly below':'at or below'} ${row.threshold} ${row.metric==='available_to_fulfill'?'available to fulfill':'physically on hand'}; it does not email or purchase. Next threshold notification: ${row.armed?'ready':'waiting for stock recovery before another notification'}. Recorded warning: ${row.currentWarning?row.currentWarning.status+' — '+row.currentWarning.title:'none'}.`
       :`${row.kind.replaceAll('_',' ')}: ${JSON.stringify(row)}`).join(' ');
     return {answer:rows.length?`Current in-force settings: ${detail}`:
       'No current approved operating rule matched that request.',rows,
-      columns:['kind','sku','product','location','threshold','metric','comparator','updatedAt']};
+      columns:['kind','sku','product','location','threshold','metric','comparator','updatedAt'],
+      semantics:{stockWarnings:{monitoringEnabled:'Whether this approved rule is enabled.',
+        armed:'Ready to notify on the next threshold crossing. False suppresses duplicate notifications until stock recovers; it does not disable monitoring or resolve an existing warning.',
+        currentWarning:'The independently persisted Needs You warning. Its status is separate from the rule\'s next-notification flag.'}}};
   }
   if(request.view==='inventory_positions'){
     const rows=(await database.query(`SELECT i.id AS item_id,i.name AS product,s.code AS sku,

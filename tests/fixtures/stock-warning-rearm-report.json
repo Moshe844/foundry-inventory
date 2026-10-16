@@ -1,0 +1,7 @@
+{
+  "recordedCase": "prepare-023, live Staging, 2026-10-16",
+  "rule": {"is_active": true, "armed": false, "threshold": 8, "metric": "on_hand", "comparator": "below"},
+  "independentPostgresWarning": {"status": "OPEN", "observed": 5},
+  "incorrectDraftSentence": "The warning is currently disarmed, so it is not an active alert.",
+  "originalReaderOmitted": "The persisted Needs You warning status; only the rule's next-notification flag was returned."
+}

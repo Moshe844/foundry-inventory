@@ -1,0 +1,15 @@
+{
+  "recordedCase": "browser-027, live Staging, 2026-10-16",
+  "originalFailure": "CURRENT_RECORDS_CHANGED",
+  "beforeText": [
+    "This item comes in options such as size or colour",
+    "Each option combination is counted separately. It still works with any of the choices above.",
+    "Quantity", "Individual units", "Lots / batches"
+  ],
+  "afterText": [
+    "List the choices for each option, separated by commas. StockChief creates one tracked variant per combination.",
+    "Option name", "Choices", "Option name", "Choices", "Another option"
+  ],
+  "checkedControl": "hasVariants",
+  "fieldLabels": ["First option name", "First option choices", "Second option name", "Second option choices", "Third option name", "Third option choices"]
+}
