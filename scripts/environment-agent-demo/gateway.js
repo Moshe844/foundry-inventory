@@ -6,9 +6,10 @@ const plans=require('../../src/assistant/postgres-capability-plans');
 const service=require('../../src/assistant/postgres-service');
 const {FIELDS}=require('../../src/assistant/postgres-capability-registry');
 const {randomUUID}=require('node:crypto');
+const {nativeFieldName}=require('./contracts');
 
-function describe(c){return {name:c.name,kind:c.kind,description:c.description,required:c.required||[],
-  fields:Object.fromEntries(c.fields.map(name=>[name,{type:FIELDS[name]?.type||'string',description:c.agentHints?.[name]||FIELDS[name]?.description||name,
+function describe(c){return {name:c.name,kind:c.kind,description:c.description,required:(c.required||[]).map(name=>nativeFieldName(c,name)),
+  fields:Object.fromEntries(c.fields.map(name=>[nativeFieldName(c,name),{type:FIELDS[name]?.type||'string',description:c.agentHints?.[name]||FIELDS[nativeFieldName(c,name)]?.description||name,
    ...(c.argumentSchemas?.[name]?{jsonSchema:c.argumentSchemas[name]()}:{})}])),
   authority:c.authority,unavailable:c.commercialUnavailable||[]};}
 function discoveryPage(entries,offset,summary){
@@ -31,7 +32,7 @@ function interfaceSnapshot(catalogue,actor,{search='',offset=0,names=[]}={}){
  if(require('../../src/reports/postgres-composed').dimensions(actor).length)datasets.push({name:'composed',label:'Combine governed measures across datasets'});
  const datasetSearch=require('./interface-search').ranked(datasets,search),matchedDatasets=datasetSearch.items;
  const operationPage=discoveryPage(all,offset,c=>({name:c.name,kind:c.kind,description:c.description,
-  required:c.required||[],detailsByName:true,unavailable:c.commercialUnavailable||[]}));
+  required:(c.required||[]).map(name=>nativeFieldName(c,name)),detailsByName:true,unavailable:c.commercialUnavailable||[]}));
  const datasetDetails=d=>({...d,queryContract:require('../../src/reports/postgres-service').queryContract(d.name,actor)});
  const datasetPage=discoveryPage(matchedDatasets,offset,d=>({name:d.name,label:d.label,detailsByName:true}));
  const namedOperations=names.length?catalogue.list().filter(c=>names.includes(c.name)).map(describe):null;
@@ -110,7 +111,7 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
       for(const contract of contracts.filter(c=>c.kind==='read')){
         const complete=describe(contract);
         const entry=Buffer.byteLength(JSON.stringify(complete))<=4096?complete:
-          {name:contract.name,kind:contract.kind,description:contract.description,required:contract.required||[],detailsByName:true};
+          {name:contract.name,kind:contract.kind,description:contract.description,required:(contract.required||[]).map(name=>nativeFieldName(contract,name)),detailsByName:true};
         operations.push(entry);
         // The model receives the lossless compact representation below, not
         // this repeated raw metadata. Measuring before that codec discarded

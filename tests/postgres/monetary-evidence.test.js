@@ -1,0 +1,42 @@
+'use strict';
+process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
+
+test('business read evidence preserves recorded currency and minor amounts across prices, quotes, valuation and movements',{timeout:120000},async t=>{
+ const cluster=await require('../helpers/postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString);
+ t.after(async()=>{await db.close();await cluster.stop();});await require('../../src/db/migrate-postgres').migratePostgres(db);
+ const auth=require('../../src/domain/postgres-auth-service'),password='Evidence!'+randomUUID();
+ const owner=await auth.createBusiness(db,{name:'Evidence owner',businessName:'Money evidence',email:randomUUID()+'@example.test',password}),other=await auth.createBusiness(db,{name:'Other owner',businessName:'Other money evidence',email:randomUUID()+'@example.test',password});
+ const ctx={workspaceId:owner.workspaceId,actorId:owner.userId},foreign={workspaceId:other.workspaceId,actorId:other.userId},catalog=require('../../src/domain/postgres-catalog-service'),pricing=require('../../src/pricing/postgres-service'),assistant=require('../../src/assistant/postgres-service');
+ const create=(scope,code)=>catalog.createItem(db,scope,{name:'Money fixture '+code,baseCode:code,trackingMode:'quantity'});
+ const regular=await create(ctx,'MONEY-CAD'),zero=await create(ctx,'MONEY-ZERO'),missing=await create(ctx,'MONEY-MISSING'),foreignItem=await create(foreign,'MONEY-CAD');
+ await pricing.setPrice(db,ctx,{skuId:regular.skuIds[0],amount:'7.50',currency:'USD'});
+ await pricing.setPrice(db,ctx,{skuId:regular.skuIds[0],amount:'17.75',currency:'CAD'});
+ await pricing.setPrice(db,ctx,{skuId:zero.skuIds[0],amount:'0',currency:'GBP'});
+ await pricing.setPrice(db,foreign,{skuId:foreignItem.skuIds[0],amount:'999.99',currency:'AUD'});
+ await pricing.setPurchaseCost(db,ctx,{skuId:regular.skuIds[0],amount:'0',currency:'CAD'});
+ await pricing.setPurchaseCost(db,ctx,{skuId:zero.skuIds[0],amount:'12.25',currency:'EUR'});
+ const location=await require('../../src/domain/postgres-location-service').createLocation(db,ctx,{name:'Evidence warehouse',kind:'warehouse'});
+ const receipt=await require('../../src/domain/postgres-inventory-engine').receive(db,ctx,{skuId:regular.skuIds[0],locationId:location.id,quantity:2,idempotencyKey:randomUUID(),reference:'MONETARY-EVIDENCE'});
+ await db.transaction(client=>require('../../src/accounting/postgres-costing').receiveInTransaction(client,ctx,{movementId:receipt.movementId,totalCostMinor:3500,unitCostMinor:1750,sourceType:'opening_inventory',sourceRecordId:receipt.movementId}));
+ const prices=await assistant.lookup(db,ctx,{view:'prices'}),bySku=new Map(prices.rows.map(row=>[row.sku,row]));
+ assert.equal(bySku.size,3);assert.equal(bySku.get('MONEY-CAD').sellingPriceMinor,1775,'The real failure discarded the stored amount and currency after formatting');assert.equal(bySku.get('MONEY-CAD').currency,'CAD');
+ assert.equal(bySku.get('MONEY-ZERO').sellingPriceMinor,0);assert.equal(bySku.get('MONEY-ZERO').currency,'GBP');assert.equal(bySku.get('MONEY-MISSING').sellingPriceMinor,null);assert.equal(bySku.get('MONEY-MISSING').currency,null);
+ assert(!JSON.stringify(prices).includes('AUD'));assert(prices.columns.includes('currency'));
+ const quotes=await assistant.lookup(db,ctx,{view:'purchase_costs'}),quote=new Map(quotes.rows.map(row=>[row.sku,row]));
+ assert.equal(quote.get('MONEY-CAD').purchaseCostMinor,0);assert.equal(quote.get('MONEY-CAD').currency,'CAD');assert.equal(quote.get('MONEY-CAD').inventoryBookCostMinor,3500);assert.equal(quote.get('MONEY-CAD').inventoryCurrency,'USD');
+ assert.equal(quote.get('MONEY-ZERO').purchaseCostMinor,1225);assert.equal(quote.get('MONEY-ZERO').currency,'EUR');assert.equal(quote.get('MONEY-ZERO').inventoryBookCostMinor,null);assert.equal(quote.get('MONEY-ZERO').inventoryCurrency,null);
+ assert.equal(quote.get('MONEY-MISSING').purchaseCostMinor,null);assert.equal(quote.get('MONEY-MISSING').currency,null);
+ const valuation=await assistant.lookup(db,ctx,{view:'inventory_valuation'});assert.equal(valuation.rows[0].inventoryBookCostMinor,3500);assert.equal(valuation.rows[0].averageRecordedUnitCostMinor,1750);assert.equal(valuation.rows[0].currency,'USD');
+ const movement=await assistant.lookup(db,ctx,{view:'inventory_cost_movements'});assert.equal(movement.rows[0].bookCostChangeMinor,3500);assert.equal(movement.rows[0].recordedUnitCostMinor,1750);assert.equal(movement.rows[0].currency,'USD');
+ const commerce=require('../../src/operations/postgres-commerce'),supplier=await commerce.createSupplier(db,ctx,{name:'Canadian supplier',currency:'CAD'});
+ await commerce.linkSupplierItem(db,ctx,{supplierId:supplier.id,skuId:regular.skuIds[0],supplierSku:'SUP-MONEY',purchaseUnit:'each',unitsPerPurchaseUnit:1,lastUnitCost:1.25});
+ const supplierItems=await assistant.lookup(db,ctx,{view:'supplier_items'});assert.equal(supplierItems.rows[0].lastUnitCost,1.25);assert.equal(supplierItems.rows[0].currency,'CAD');
+ const customer=await commerce.createCustomer(db,ctx,{name:'Currency customer'}),order=await require('../../src/operations/postgres-business-workflows').createSalesOrder(db,ctx,{customerId:customer.id,fulfillmentLocationId:location.id,deliveryMethod:'PICKUP',currency:'CAD',reference:'CURRENCY-READ',idempotencyKey:randomUUID(),lines:[{skuId:regular.skuIds[0],quantity:1,unitPriceMinor:1775}]});
+ const sales=await assistant.lookup(db,ctx,{view:'sales_orders'});assert.equal(sales.rows[0].currency,'CAD');assert.equal(sales.rows[0].orderTotalMinor,1775);assert.equal(sales.rows[0].paidMinor,0);assert.equal(sales.rows[0].invoicedMinor,0);assert.equal(sales.rows[0].status,'DRAFT');
+ assert.equal((await db.query('SELECT id FROM sales_orders WHERE workspace_id=$1 AND reference=$2',[ctx.workspaceId,'CURRENCY-READ'])).rows[0].id,order.salesOrderId);
+ const profit=await assistant.lookup(db,ctx,{view:'accounting',search:'profit_and_loss'});for(const row of profit.rows){assert.equal(row.currency,'USD');assert.equal(row.amountMinor,0);}
+ const activity=await assistant.lookup(db,ctx,{view:'sales_activity'}),revenue=activity.rows.find(row=>row.measure==='Posted revenue');assert.equal(revenue.currency,'USD');assert.equal(revenue.amountMinor,0);
+ assert.equal(Number((await db.query('SELECT sum(on_hand) AS n FROM balances WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n),2);
+ t.diagnostic(JSON.stringify({mixedCurrenciesPreserved:true,latestPriceSelected:true,zeroDistinctFromMissing:true,quoteAndInventoryCurrenciesSeparate:true,supplierSalesAndReportingCurrenciesPreserved:true,tenantIsolation:true,modelCalls:0}));
+});

@@ -21,6 +21,7 @@ const FIELDS=Object.freeze({
   sku:{type:'string',entity:'sku',description:'Product, variant, or SKU identity.'},
   skuScope:{type:'string',description:'Subset of SKUs explicitly referred to: active or currently_stocked.'},
   location:{type:'string',entity:'location',description:'One inventory location.'},
+  locationName:{type:'string',description:'Display name of the new inventory location. Supply only its name, without the operation instructions.'},
   fromLocation:{type:'string',entity:'location',description:'Source inventory location.'},
   toLocation:{type:'string',entity:'location',description:'Destination inventory location.'},
   quantity:{type:'integer',description:'Number of units being moved or ordered.'},
@@ -85,7 +86,7 @@ const FIELDS=Object.freeze({
   trackingNumber:{type:'string',description:'Exact carrier tracking number, when provided.'},
   mode:{type:'string',description:'A registered operating mode for the named subsystem; do not invent a mode.'},
   workspaceName:{type:'string',description:'New name of this inventory workspace.'},
-  itemName:{type:'string',description:'New display name for an existing product.'},
+  itemName:{type:'string',description:'The requested product display name itself. Keep the name separate from operation instructions and SKU codes.'},
   itemDescription:{type:'string',description:'New description for an existing product.'},
   baseCode:{type:'string',description:'New base product code, when explicitly requested.'},
   unitLabel:{type:'string',description:'New unit label for an existing product.'},
@@ -134,7 +135,13 @@ class Registry {
     if(entry.kind==='mutation'&&(typeof entry.execute!=='function'||typeof entry.verifyExecution!=='function'))
       throw new TypeError(`Mutation capability lacks executor or verifier: ${entry.name}`);
     for(const field of entry.fields)if(!FIELDS[field])throw new TypeError(`Unknown capability field ${field}`);
-    this.entries.set(entry.name,Object.freeze({...entry,fields:Object.freeze([...entry.fields])}));
+    const aliases={...entry.agentArgumentAliases},targets=new Set();
+    for(const [alias,target]of Object.entries(aliases)){
+      if(!FIELDS[alias]||!entry.fields.includes(target)||entry.fields.includes(alias)||targets.has(target)||FIELDS[alias].type!==FIELDS[target].type)
+        throw new TypeError(`Invalid native argument alias ${alias}`);
+      targets.add(target);
+    }
+    this.entries.set(entry.name,Object.freeze({...entry,fields:Object.freeze([...entry.fields]),agentArgumentAliases:Object.freeze(aliases)}));
     return this;
   }
   get(name){return this.entries.get(name)||null;}
@@ -205,9 +212,9 @@ action('inventory.transfer','Request and approve a transfer between inventory lo
 action('inventory.adjust','Correct a stock position to a verified physical count.',
   ['sku','skuScope','location','countedQuantity','reason','reference'],permissions.ADJUST,'adjust');
 action('catalog.create_item','Create a quantity-tracked product record with its exact SKU code when supplied.',
-  ['search','baseCode'],permissions.OPERATE,'create_item');
+  ['search','baseCode'],permissions.OPERATE,'create_item',{agentArgumentAliases:{itemName:'search'}});
 action('location.create','Create an inventory location.',
-  ['location'],permissions.ADMIN,'create_location');
+  ['location'],permissions.ADMIN,'create_location',{agentArgumentAliases:{locationName:'location'}});
 action('catalog.set_price','Change the current customer selling price of a SKU.',
   ['sku','amount','currency'],permissions.OPERATE,'set_price');
 action('catalog.set_purchase_cost','Change the SKU-wide current per-unit purchase quote, not a named supplier-product term or historical cost of goods sold. Use supplier.link_product to record a particular supplier’s unit cost.',

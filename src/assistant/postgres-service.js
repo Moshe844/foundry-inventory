@@ -130,8 +130,10 @@ async function explainProfitChange(database,ctx){
     (drivers.length?`Largest recorded drivers: ${drivers.join('; ')}.`:'There is no posted revenue, cost-of-goods or operating-expense difference between those periods.');
   const rows=metrics.concat([{measure:'Net income',current:current.netIncomeMinor,previous:previous.netIncomeMinor,impact:netChange}])
     .map((entry)=>({measure:entry.measure,current:pricing.formatMinor(entry.current,current.currency),
-      previous:pricing.formatMinor(entry.previous,current.currency),profitImpact:`${entry.impact>=0?'+':'-'}${money(entry.impact)}`}));
-  return {answer,rows,columns:['measure','current','previous','profitImpact'],
+      previous:pricing.formatMinor(entry.previous,previous.currency),profitImpact:`${entry.impact>=0?'+':'-'}${money(entry.impact)}`,
+      currentMinor:entry.current,previousMinor:entry.previous,profitImpactMinor:entry.impact,
+      currency:current.currency,previousCurrency:previous.currency}));
+  return {answer,rows,columns:['measure','current','previous','profitImpact','currency'],
     handoff:{href:`/accounting/reports/profit-and-loss?from=${current.from}&to=${current.to}`,label:'Open the current profit and loss report'}};
 }
 
@@ -160,7 +162,7 @@ async function salesActivity(database,ctx,timeframe){
   const orders=Number(counts.orders),fulfilledUnits=Number(counts.fulfilled_units);
   const revenue=report?pricing.formatMinor(report.revenueMinor,report.currency):null;
   const rows=[{measure:'Customer orders',value:orders},{measure:'Units fulfilled',value:fulfilledUnits},
-    {measure:'Posted revenue',value:revenue||'Not available'}];
+    {measure:'Posted revenue',value:revenue||'Not available',amountMinor:report?Number(report.revenueMinor):null,currency:report?.currency||null}];
   const answer=orders===0&&report?.revenueMinor===0
     ?`I don't see any customer orders or posted sales revenue recorded in StockChief ${period.label}. Sales through systems that are not connected or imported here would not appear in this answer.`
     :orders===0&&!report
@@ -324,12 +326,14 @@ async function lookup(database,ctx,request,options={}) {
       evidenceRow({product:row.product,sku:row.sku,location:row.location,
         costedUnits:Number(row.quantity_units),onHand:row.on_hand===null?null:Number(row.on_hand),
         inventoryBookCost:pricing.formatMinor(Number(row.total_cost_minor),currency),
+        inventoryBookCostMinor:Number(row.total_cost_minor),currency,
+        averageRecordedUnitCostMinor:row.quantity_units>0?Math.round(Number(row.total_cost_minor)/Number(row.quantity_units)):null,
         averageRecordedUnitCost:row.quantity_units>0
           ?pricing.formatMinor(Math.round(Number(row.total_cost_minor)/Number(row.quantity_units)),currency):'Not available',
         valuedAt:row.updated_at},`/inventory/${row.item_id}`));
     return {answer:rows.length?`Showing recorded inventory book cost for ${rows.length}${rows.length===100?'+':''} product-location positions. This is not a current supplier quote.`:
       'No recorded inventory-cost position matched that request.',rows,
-      columns:['product','sku','location','costedUnits','onHand','inventoryBookCost','averageRecordedUnitCost','valuedAt']};
+      columns:['product','sku','location','costedUnits','onHand','inventoryBookCost','averageRecordedUnitCost','currency','valuedAt']};
   }
   if(request.view==='inventory_cost_movements'){
     const currency=(await database.query(`SELECT base_currency FROM accounting_settings
@@ -353,11 +357,12 @@ async function lookup(database,ctx,request,options={}) {
       evidenceRow({product:row.product,sku:row.sku,location:row.location,
         change:Number(row.quantity_delta),physicalStockChange:Number(row.physical_quantity_delta),bookCostChange:pricing.formatMinor(Number(row.cost_delta_minor),currency),
         recordedUnitCost:row.unit_cost_minor===null?'Not recorded':pricing.formatMinor(Number(row.unit_cost_minor),currency),
+        bookCostChangeMinor:Number(row.cost_delta_minor),recordedUnitCostMinor:row.unit_cost_minor===null?null:Number(row.unit_cost_minor),currency,
         source:row.source_name?`Import ${row.source_name}, row ${row.row_number}`:row.cost_source_type,
         reference:row.source_reference||row.reference||'',at:row.created_at},`/inventory/${row.item_id}`));
     return {answer:rows.length?`Showing ${rows.length}${rows.length===100?'+':''} recorded inventory-cost changes, including import row provenance where available.`:
       'No recorded inventory-cost change matched that request.',rows,
-      columns:['product','sku','location','change','physicalStockChange','bookCostChange','recordedUnitCost','source','reference','at']};
+      columns:['product','sku','location','change','physicalStockChange','bookCostChange','recordedUnitCost','currency','source','reference','at']};
   }
   if(request.view==='prices'){
     const rows=(await database.query(`SELECT i.id AS item_id,i.name AS product,s.code AS sku,
@@ -371,10 +376,11 @@ async function lookup(database,ctx,request,options={}) {
       ORDER BY i.name,s.code LIMIT 100`,[ctx.workspaceId,search])).rows.map((row)=>
       evidenceRow({product:row.product,sku:row.sku,variant:row.variant,
         sellingPrice:row.amount_minor===null?'Not recorded':pricing.formatMinor(Number(row.amount_minor),row.currency),
+        sellingPriceMinor:row.amount_minor===null?null:Number(row.amount_minor),currency:row.currency||null,
         priceRecordedAt:row.created_at||''},`/inventory/${row.item_id}`));
     return {answer:rows.length?`Showing current recorded selling prices for ${rows.length}${rows.length===100?'+':''} SKUs.`:
       'No product or SKU matched that price request.',rows,
-      columns:['product','sku','variant','sellingPrice','priceRecordedAt']};
+      columns:['product','sku','variant','sellingPrice','currency','priceRecordedAt']};
   }
   if(request.view==='purchase_costs'){
     const rows=(await database.query(`SELECT i.id AS item_id,i.name AS product,s.code AS sku,
@@ -402,22 +408,27 @@ async function lookup(database,ctx,request,options={}) {
       ORDER BY i.name,s.code LIMIT 100`,[ctx.workspaceId,search])).rows.map((row)=>
       evidenceRow({product:row.product,sku:row.sku,variant:row.variant,
         purchaseCost:row.amount_minor===null?'Not recorded':pricing.formatMinor(Number(row.amount_minor),row.currency),
+        purchaseCostMinor:row.amount_minor===null?null:Number(row.amount_minor),currency:row.currency||null,
         costRecordedAt:row.created_at||'',onHand:Number(row.on_hand),costedUnits:Number(row.costed_units),
         unitsMissingCost:Math.max(0,Number(row.on_hand)-Number(row.costed_units)),
         inventoryBookCost:Number(row.costed_units)>0
-          ?pricing.formatMinor(Number(row.inventory_book_minor),row.accounting_currency||row.currency||'USD'):'Not recorded',
+          ?pricing.formatMinor(Number(row.inventory_book_minor),row.accounting_currency||'USD'):'Not recorded',
+        inventoryBookCostMinor:Number(row.costed_units)>0?Number(row.inventory_book_minor):null,
+        inventoryCurrency:Number(row.costed_units)>0?(row.accounting_currency||'USD'):null,
         openingImportUnits:Number(row.opening_import_units),
         openingImportCost:Number(row.opening_import_units)>0
-          ?pricing.formatMinor(Number(row.opening_import_minor),row.accounting_currency||row.currency||'USD'):'Not recorded'},
+          ?pricing.formatMinor(Number(row.opening_import_minor),row.accounting_currency||'USD'):'Not recorded',
+        openingImportCostMinor:Number(row.opening_import_units)>0?Number(row.opening_import_minor):null,
+        openingImportCurrency:Number(row.opening_import_units)>0?(row.accounting_currency||'USD'):null},
       `/inventory/${row.item_id}`));
     return {answer:rows.length?`Showing current purchase quotes, recorded inventory book cost, and historical opening-import cost separately for ${rows.length}${rows.length===100?'+':''} SKUs. A missing current purchase cost does not mean stock lacks book cost.`:
       'No product or SKU matched that cost request.',rows,
-      columns:['product','sku','variant','purchaseCost','costRecordedAt','onHand','costedUnits','unitsMissingCost',
-        'inventoryBookCost','openingImportUnits','openingImportCost']};
+      columns:['product','sku','variant','purchaseCost','currency','costRecordedAt','onHand','costedUnits','unitsMissingCost',
+        'inventoryBookCost','inventoryCurrency','openingImportUnits','openingImportCost','openingImportCurrency']};
   }
   if(request.view==='supplier_items'){
     const rows=(await database.query(`SELECT i.id AS item_id,i.name AS product,sku.code AS sku,
-      supplier.name AS supplier,si.supplier_sku,si.last_unit_cost,si.last_cost_at,
+      supplier.name AS supplier,supplier.currency,si.supplier_sku,si.last_unit_cost,si.last_cost_at,
       si.lead_time_days,si.is_preferred,si.purchase_unit,si.units_per_purchase_unit
       FROM supplier_items si JOIN suppliers supplier ON supplier.id=si.supplier_id AND supplier.workspace_id=si.workspace_id
       JOIN skus sku ON sku.id=si.sku_id AND sku.workspace_id=si.workspace_id
@@ -428,12 +439,13 @@ async function lookup(database,ctx,request,options={}) {
       ORDER BY i.name,si.is_preferred DESC,supplier.name LIMIT 100`,[ctx.workspaceId,search])).rows.map((row)=>
       evidenceRow({product:row.product,sku:row.sku,supplier:row.supplier,
         supplierCode:row.supplier_sku||'',lastUnitCost:row.last_unit_cost===null?'Not recorded':Number(row.last_unit_cost),
+        currency:row.currency||null,
         costRecordedAt:row.last_cost_at||'',leadTimeDays:row.lead_time_days===null?'Not recorded':Number(row.lead_time_days),
         preferred:Boolean(row.is_preferred),purchaseUnit:row.purchase_unit,
         unitsPerPurchaseUnit:Number(row.units_per_purchase_unit)},`/inventory/${row.item_id}`));
     return {answer:rows.length?`${rows.length}${rows.length===100?'+':''} active supplier-product relationships matched.`:
       'No active supplier-product relationship matched that request.',rows,
-      columns:['product','sku','supplier','supplierCode','lastUnitCost','costRecordedAt','leadTimeDays','preferred','purchaseUnit','unitsPerPurchaseUnit']};
+      columns:['product','sku','supplier','supplierCode','lastUnitCost','currency','costRecordedAt','leadTimeDays','preferred','purchaseUnit','unitsPerPurchaseUnit']};
   }
   if(request.view==='messages'){
     const rows=(await database.query(`SELECT kind,recipient,subject,body,status,at FROM (
@@ -500,6 +512,7 @@ async function lookup(database,ctx,request,options={}) {
       if(key==='lastBusinessCheck')return {measure:'Last business check',value:fact.at?`${fact.at}${fact.paused?' · paused':''}`:'Not run yet'};
       if(key==='availability')return {measure:'Financial analysis',value:fact.postedFinancialAnalysis};
       if(key.startsWith('postedFinancials'))return {measure:key==='postedFinancialsCurrent'?'Posted financials · this month':'Posted financials · previous comparable period',
+        revenueMinor:fact.revenueMinor,netIncomeMinor:fact.netIncomeMinor,currency:fact.currency,
         value:`Revenue ${pricing.formatMinor(fact.revenueMinor,fact.currency)}; net income ${pricing.formatMinor(fact.netIncomeMinor,fact.currency)}`};
       return null;
     }).filter(Boolean);
@@ -637,6 +650,7 @@ async function lookup(database,ctx,request,options={}) {
       scrappedUnits:Number(row.scrapped_units),repairUnits:Number(row.repair_units),
       refundDestination:row.refund_destination||null,
       postedRefundOrCredit:row.refund_destination?pricing.formatMinor(Number(row.refund_minor),row.currency):null,
+      postedRefundOrCreditMinor:row.refund_destination?Number(row.refund_minor):null,currency:row.currency,
       cashReturned:row.refund_destination==='CASH',
       unpaidInvoiceCredited:row.refund_destination==='AR'},`/returns/${row.id}`));
     const answer=rows.length===1?`${rows[0].return} is ${rows[0].status.toLowerCase().replace(/_/g,' ')}: `+
@@ -648,7 +662,7 @@ async function lookup(database,ctx,request,options={}) {
       rows.length?`${rows.length} customer returns matched.`:'No customer return matched that request.';
     return {answer,rows,columns:['return','status','resolution','customer','order',
       'quarantineLocation','authorizedUnits','physicallyReceivedUnits','restockedUnits',
-      'scrappedUnits','repairUnits','refundDestination','postedRefundOrCredit',
+      'scrappedUnits','repairUnits','refundDestination','postedRefundOrCredit','currency',
       'cashReturned','unpaidInvoiceCredited']};
   }
   if(request.view==='purchase_orders'){
@@ -768,6 +782,7 @@ async function lookup(database,ctx,request,options={}) {
       orderedUnits:Number(row.ordered_units),heldUnits:Number(row.held_units),
       fulfilledUnits:Number(row.fulfilled_units),openUnits:Number(row.open_units),
       lineCount:Number(row.line_count),orderTotal:pricing.formatMinor(Number(row.order_total_minor),row.currency),
+      orderTotalMinor:Number(row.order_total_minor),currency:row.currency,
       lineItems:(Array.isArray(row.line_items_json)?row.line_items_json:[]).map((line)=>
         `${line.quantity} × ${line.sku} ${line.product} at ${pricing.formatMinor(Number(line.unitPriceMinor),row.currency)} each = `+
         pricing.formatMinor(Number(line.lineTotalMinor),row.currency)).join('; '),
@@ -777,9 +792,12 @@ async function lookup(database,ctx,request,options={}) {
       postedRevenue:pricing.formatMinor(Number(row.posted_revenue_minor),row.currency),
       postedProductCost:pricing.formatMinor(Number(row.posted_cogs_minor),row.currency),
       postedGrossProfit:pricing.formatMinor(Number(row.posted_revenue_minor)-Number(row.posted_cogs_minor),row.currency),
+      invoicedMinor:Number(row.invoiced_minor),paidMinor:Number(row.paid_minor),outstandingMinor:Number(row.outstanding_minor),
+      postedRevenueMinor:Number(row.posted_revenue_minor),postedProductCostMinor:Number(row.posted_cogs_minor),
+      postedGrossProfitMinor:Number(row.posted_revenue_minor)-Number(row.posted_cogs_minor),
       shipments:Number(row.shipment_count)},`/orders/${row.id}`));
     return {answer:summarizeCustomerOrders(rows,search),
-      rows,columns:['order','status','customer','lineCount','lineItems','orderTotal',
+      rows,columns:['order','status','customer','lineCount','lineItems','orderTotal','currency',
         'orderedUnits','heldUnits','fulfilledUnits','openUnits',
         'invoiceCount','invoiced','paid','outstanding','postedRevenue','postedProductCost',
         'postedGrossProfit','shipments','reference']};
@@ -827,13 +845,13 @@ async function lookup(database,ctx,request,options={}) {
           recorded?'Recorded income and expenses net to zero so far this month.':
             'No income or expenses are recorded in StockChief for this month.';
       const rows=[
-        {measure:'Revenue',value:money(report.revenueMinor)},
-        {measure:'Cost of goods sold',value:money(report.cogsMinor)},
-        {measure:'Operating expenses',value:money(report.operatingExpenseMinor)},
-        {measure:'Net income',value:money(report.netIncomeMinor)},
+        {measure:'Revenue',value:money(report.revenueMinor),amountMinor:Number(report.revenueMinor),currency:report.currency},
+        {measure:'Cost of goods sold',value:money(report.cogsMinor),amountMinor:Number(report.cogsMinor),currency:report.currency},
+        {measure:'Operating expenses',value:money(report.operatingExpenseMinor),amountMinor:Number(report.operatingExpenseMinor),currency:report.currency},
+        {measure:'Net income',value:money(report.netIncomeMinor),amountMinor:Number(report.netIncomeMinor),currency:report.currency},
       ];
       return {answer:`${outcome} Revenue is ${money(report.revenueMinor)}, cost of goods sold is ${money(report.cogsMinor)}, and operating expenses are ${money(report.operatingExpenseMinor)} for ${report.from} through ${report.to}.`,
-        rows,columns:['measure','value']};
+        rows,columns:['measure','value','currency']};
     }
     if(request.timeframe&&!['all_time','today','month_to_date','previous_month','last_30_days'].includes(request.timeframe))
       return {status:'CLARIFY',answer:'Which supported posting-date period should I check?',rows:[],columns:[]};

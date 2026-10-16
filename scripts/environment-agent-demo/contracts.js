@@ -3,6 +3,7 @@
 // remain responsible for business meaning and authority.
 const {FIELDS}=require('../../src/assistant/postgres-capability-registry');
 function invalid(message){throw Object.assign(new Error(message),{code:'TOOL_CONTRACT_INVALID',effectMayHaveOccurred:false});}
+function nativeFieldName(contract,field){return Object.entries(contract.agentArgumentAliases||{}).find(([,target])=>target===field)?.[0]||field;}
 function operationSteps(steps,catalogue){
  if(!Array.isArray(steps)||!steps.length||steps.length>8)invalid('Provide one to eight operations.');
  return steps.map((step,index)=>{
@@ -11,8 +12,11 @@ function operationSteps(steps,catalogue){
   if(!Array.isArray(step.arguments)||!Array.isArray(step.dependsOn))invalid(`Step ${index}: arguments and dependsOn must be arrays.`);
   const seen=new Set();
   const args=step.arguments.map(entry=>{
-   const field=entry?.name,type=FIELDS[field]?.type;
-   if(!contract.fields.includes(field)||seen.has(field))invalid(`Step ${index}: invalid or duplicate field ${field}. Allowed fields: ${contract.fields.join(', ')}.`);
+   // Native names describe the business value. Keep existing canonical names
+   // accepted for durable missions and older threads; conflicting forms cannot
+   // overwrite each other. This maps names only, never extracts prose values.
+   const supplied=entry?.name,field=Object.hasOwn(contract.agentArgumentAliases||{},supplied)?contract.agentArgumentAliases[supplied]:supplied,type=FIELDS[field]?.type;
+   if(!contract.fields.includes(field)||seen.has(field))invalid(`Step ${index}: invalid or duplicate field ${supplied}. Allowed fields: ${contract.fields.map(name=>nativeFieldName(contract,name)).join(', ')}.`);
    seen.add(field);let value=entry.value;
    if(typeof value==='number'&&['number','integer'].includes(type)){
     if(!Number.isFinite(value)||type==='integer'&&!Number.isSafeInteger(value))invalid(`${field} requires a finite ${type}.`);
@@ -35,4 +39,4 @@ function datasetSpec(spec,actor){
  try{return reports.normalize(spec,actor);}catch(error){if(error.code==='validation_error')invalid(error.message);throw error;}
 }
 function parseJson(text){try{return JSON.parse(text);}catch{invalid('Provide valid JSON using the discovered tool contract. No operation ran.');}}
-module.exports={operationSteps,datasetSpec,parseJson};
+module.exports={operationSteps,datasetSpec,parseJson,nativeFieldName};
