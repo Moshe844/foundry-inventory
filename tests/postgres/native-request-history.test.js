@@ -60,6 +60,19 @@ test('recorded discovery gaps: paginated owned history exposes canonical effects
  const web=require('supertest').agent(app),login=await web.get('/login'),csrf=/name="_csrf" value="([^"]+)"/.exec(login.text)[1],signed=await web.post('/login').type('form').send({_csrf:csrf,email,password});
  const ask=await web.get('/ask');assert.match(ask.text,/href="\/ask\/history"/);
  assert.equal((await web.post('/ask/new').type('form').send({_csrf:/name="_csrf" value="([^"]+)"/.exec(ask.text)[1]})).status,303);
+ // Exact live UI defect: unrelated workspace-wide PENDING rules were appended
+ // as the assistant's replies even after starting an isolated new chat.
+ const ruleIds={old:'oin_'+randomUUID(),current:'oin_'+randomUUID(),other:'oin_'+randomUUID()};
+ for(const[k,id]of Object.entries(ruleIds))await db.query(`INSERT INTO operating_instruction_proposals
+  (id,workspace_id,created_by_user_id,stated_as,summary,integrity_hash,status,created_at,updated_at)
+  VALUES($1,$2,$3,$4,$4,$5,'PENDING',$6,$6)`,[id,ctx.workspaceId,k==='other'?colleague:ctx.actorId,'Pending conversation scope '+k,randomUUID(),new Date().toISOString()]);
+ const fresh=await web.get('/ask');for(const id of Object.values(ruleIds))assert(!fresh.text.includes('/operating-instructions/'+id),'Unassociated pending work must not become a conversational reply');
+ await db.query(`INSERT INTO stockchief_runtime.assistant_interactions(id,workspace_id,actor_user_id,message,intent,status,answer,evidence,created_at)
+  VALUES($1,$2,$3,'Current visible rule request',$4::jsonb,'PREPARED','Prepared for review','[]'::jsonb,clock_timestamp())`,['interaction_'+randomUUID(),ctx.workspaceId,ctx.actorId,JSON.stringify({intent:'standing_instruction',proposalId:ruleIds.current})]);
+ const currentChat=await web.get('/ask');assert(currentChat.text.includes('/operating-instructions/'+ruleIds.current));assert(!currentChat.text.includes('/operating-instructions/'+ruleIds.old));assert(!currentChat.text.includes('/operating-instructions/'+ruleIds.other));
+ const currentCsrf=/name="_csrf" value="([^"]+)"/.exec(currentChat.text)[1];assert.equal((await web.post('/ask/new').type('form').send({_csrf:currentCsrf})).status,303);
+ const resetChat=await web.get('/ask');for(const id of Object.values(ruleIds))assert(!resetChat.text.includes('/operating-instructions/'+id));
+ assert((await db.query('SELECT status FROM operating_instruction_proposals WHERE workspace_id=$1 AND id=ANY($2::text[])',[ctx.workspaceId,Object.values(ruleIds)])).rows.every(r=>r.status==='PENDING'),'Conversation scoping never cancels, approves or activates the global pending records');
  const detail=await web.get('/ask/history?goal='+ids[0]);assert.equal(detail.status,200);assert.match(detail.text,/Saved result before final reporting/);assert.match(detail.text,/Rule approval does not prove/);assert.match(detail.text,/Operation recorded/);assert(!detail.text.includes('Email delivered'));
  assert(!detail.text.includes('PRIVATE_NATIVE_SECRET'));assert(!detail.text.includes('/resume"'));assert(!detail.text.includes('/approval"'));
  for(const id of [otherGoal.id,colleagueGoal.id])assert.equal((await web.get('/ask/history?goal='+id)).status,404);

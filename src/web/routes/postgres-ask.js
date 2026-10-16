@@ -121,10 +121,13 @@ async function askExamples(database,ctx,page=null){
   return require('../../assistant/postgres-discovery').suggestions(database,ctx,4,page);
 }
 
-async function instructionLists(database,workspaceId){
+async function instructionLists(database,ctx,proposalIds){
   const rows=(await database.query(`SELECT id,stated_as,summary,questions,status,approved_at,created_at
-    FROM operating_instruction_proposals WHERE workspace_id=$1 AND status IN ('PENDING','APPROVED')
-    ORDER BY created_at DESC LIMIT 20`,[workspaceId])).rows.map((row)=>({id:row.id,statedAs:row.stated_as,
+    FROM (SELECT * FROM (SELECT * FROM operating_instruction_proposals
+        WHERE workspace_id=$1 AND status='APPROVED' ORDER BY created_at DESC,id DESC LIMIT 20) approved
+      UNION ALL SELECT * FROM operating_instruction_proposals
+        WHERE workspace_id=$1 AND created_by_user_id=$2 AND status='PENDING' AND id=ANY($3::text[])) visible
+    ORDER BY created_at DESC,id DESC`,[ctx.workspaceId,ctx.actorId,proposalIds])).rows.map((row)=>({id:row.id,statedAs:row.stated_as,
       summary:row.summary,questions:Array.isArray(row.questions)?row.questions:[],status:row.status,
       approvedAt:row.approved_at,createdAt:row.created_at}));
   return {recentRules:rows.filter((row)=>row.status==='APPROVED'),pendingRules:rows.filter((row)=>row.status==='PENDING')};
@@ -339,7 +342,7 @@ function createPostgresAskRouter(database,options={}){
         }
         proposal.deliveryStatus=deliveryStatus;
     }
-    let transcript=transcriptFor(visible,proposals);const rules=await instructionLists(database,req.ctx.workspaceId);
+    let transcript=transcriptFor(visible,proposals);
     const protectedNames=(await database.query(`SELECT name FROM suppliers WHERE workspace_id=$1
         AND name ~ '[0-9]{4,}'
       UNION SELECT name FROM customers WHERE workspace_id=$1
@@ -364,6 +367,12 @@ function createPostgresAskRouter(database,options={}){
       goal.conversation=conversation.state(goal);
     }
     const nativeRuleIds=new Set(recentGoals.flatMap(goal=>(goal.approvalCards||[]).filter(card=>card.kind==='rule').map(card=>card.proposalId)));
+    // Conversation replies must come from these visible, actor-owned turns
+    // and goals. A workspace-wide pending queue is not a chat transcript.
+    // Global pending records retain their original canonical status/access.
+    const visibleProposalIds=[...new Set([...visible.map(turn=>turn.intent?.proposalId),
+      ...recentGoals.flatMap(goal=>Object.values(goal.checkpoint.harness?.approvalDeliveries||{}).map(card=>card.proposalId))].filter(id=>typeof id==='string'))];
+    const rules=await instructionLists(database,req.ctx,visibleProposalIds);
     rules.pendingRules=rules.pendingRules.filter(rule=>!nativeRuleIds.has(rule.id));
     transcript=require('../../assistant/goal-transcript').mergeGoalTranscript(transcript,recentGoals,{focusedGoalId:focusedGoal?.id});
     const continuationGoal=transcript.at(-1)?.agentGoal;

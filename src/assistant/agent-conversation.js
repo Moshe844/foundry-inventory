@@ -11,7 +11,7 @@ const Report=z.discriminatedUnion('status',[
  z.object({version:z.literal(1).optional(),status:z.literal('needs_user'),question:text.refine(q=>publicText(q,'')===q),missingInformation:missing}),
  z.object({version:z.literal(1).optional(),status:z.literal('completed'),outcome:z.enum(['answer','navigation']).optional(),answer:text,
   claims:z.array(z.union([
-   z.object({sourceRef:z.string(),path:z.string(),value:z.unknown(),historical:z.boolean().optional()}),
+   z.object({sourceRef:z.string(),path:z.string().optional(),value:z.unknown(),historical:z.boolean().optional()}),
    z.object({evidenceId:z.string(),path:z.string(),value:z.unknown(),historical:z.boolean().optional()})
   ])).max(50),
   navigation:z.object({evidenceId:z.string(),path:z.string()}).optional(),workProducts:WorkProducts.optional(),nextActions:NextActions.optional()}),

@@ -635,6 +635,8 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     assert.rejects(()=>reports.run(database,ctx,actor,{dataset:'stock',columns:['product'],
       filters:[{field:'secret_sql',operator:'contains',value:'x'}]}),/valid report filters/i);
     const reportsPage=await owner.get('/reports');assert.equal(reportsPage.status,200);
+    assert.match(reportsPage.text,/Opening a saved report runs its current read-only query\./);
+    assert.match(reportsPage.text,/aria-label="Run saved report:/,'Actual rendered link semantics disclose that opening a template executes its read-only query');
     assert.match(reportsPage.text,/Stock by product and location/);
     const marginBuilder=await owner.get('/reports/builder?dataset=posted_sales_activity');
     assert.equal(marginBuilder.status,200);

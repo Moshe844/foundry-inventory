@@ -15,18 +15,20 @@ test('source bindings remove both recorded citation joins while retaining origin
  async function check(claims,saved){return verify(db,ctx,saved||await store.get(db,ctx,goal.id),JSON.stringify({version:1,status:'completed',outcome:'answer',answer:'Observed evidence verified.',claims}),catalogue);}
  const first=await session.executePresented('environment_interfaces',{search:'',offset:0,names:['catalog.set_price','read.prices','read.sales_orders']},()=>gateway.interfaces({search:'',offset:0,names:['catalog.set_price','read.prices','read.sales_orders']}),{full:true});
  const second=await session.executePresented('environment_interfaces',{search:'',offset:0,names:['catalog.set_price','customer_invoice.create','sales_order.revise_draft_line']},()=>gateway.interfaces({search:'',offset:0,names:['catalog.set_price','customer_invoice.create','sales_order.revise_draft_line']}),{full:true});
- const contract=second.operations.find(r=>r.name==='customer_invoice.create'),field=second._stockchiefSources.field,wrongIndex=first.operations.findIndex(r=>r.name==='read.prices');
+ const contract=second.operations.find(r=>r.name==='customer_invoice.create'),wrongIndex=first.operations.findIndex(r=>r.name==='read.prices');
  const legacyWrong={evidenceId:first._stockchiefEvidence.evidenceId,path:'/operations/'+wrongIndex+'/description',value:contract.description};
  assert.equal((await check([legacyWrong])).verificationFailure,'EVIDENCE_VALUE_MISMATCH','Exact cross-observation join failure remains rejected');
- const sourceClaim={sourceRef:contract[field],path:'/description',value:contract.description};assert.equal((await check([sourceClaim])).verified,true);
+ const sourceClaim={sourceRef:contract[second._stockchiefSources.valueField].description,value:contract.description};assert.equal((await check([sourceClaim])).verified,true);
  assert.equal((await check([{...sourceClaim,value:first.operations[wrongIndex].description}])).verificationFailure,'EVIDENCE_VALUE_MISMATCH','A wrong asserted value is never silently filled from the reference');
  const input={steps:[{capability:'read.inventory',arguments:[],dependsOn:[]}]},records=await session.executePresented('business_operations',input,()=>gateway.operate(input),{full:true}),rows=records.outcomes[0].result.rows;
  const stockRow=rows.find(r=>r.onHand===22),emptyRow=rows.find(r=>r.onHand===0);assert(stockRow&&emptyRow);
- const wrongRow=rows.indexOf(stockRow),emptyRef=emptyRow[records._stockchiefSources.field],quantityClaim={sourceRef:emptyRef,path:'/onHand',value:0};
+ const wrongRow=rows.indexOf(stockRow),emptyRef=emptyRow[records._stockchiefSources.valueField].onHand,quantityClaim={sourceRef:emptyRef,value:0};
  assert.equal((await check([{evidenceId:records._stockchiefEvidence.evidenceId,path:'/outcomes/0/result/rows/'+wrongRow+'/onHand',value:0}])).verificationFailure,'EVIDENCE_VALUE_MISMATCH');
  const restarted=JSON.parse(JSON.stringify(await store.get(db,ctx,goal.id)));assert.equal((await check([quantityClaim],restarted)).verified,true,'References reconstruct from the original journal after restart');
  const retrieved=await session.evidence({id:records._stockchiefEvidence.evidenceId,offset:0});assert(JSON.stringify(retrieved).includes(emptyRef),'Durable retrieval preserves the same source binding');
- assert.equal((await check([{...quantityClaim,path:'/'+records._stockchiefSources.field,value:emptyRef}])).verificationFailure,'TRANSPORT_METADATA_NOT_EVIDENCE');
+ assert.equal((await check([{...quantityClaim,path:'/onHand'}])).verificationFailure,'FIELD_REFERENCE_MUST_NOT_SUPPLY_PATH');
+ const recordEntry=Object.values(restarted.checkpoint.harness.evidence).find(e=>e.id===records._stockchiefEvidence.evidenceId),legacy=refs.present(recordEntry,JSON.parse(recordEntry.text),{legacy:true}),legacyEmpty=legacy.outcomes[0].result.rows.find(r=>r.onHand===0);
+ assert.equal((await check([{sourceRef:legacyEmpty[legacy._stockchiefSources.field],path:'/'+records._stockchiefSources.valueField+'/onHand',value:emptyRef}])).verificationFailure,'TRANSPORT_METADATA_NOT_EVIDENCE');
  const otherGoal=await store.claim(db,ctx,(await store.create(db,ctx,'Another independent investigation.')).id);
  await require('../../scripts/environment-agent-demo/session').createSession({database:db,ctx,goalId:otherGoal.id,runToken:otherGoal.run_token,candidate:'codex',authorize:gateway.authorize}).load();
  assert.equal((await check([quantityClaim],await store.get(db,ctx,otherGoal.id))).verificationFailure,'SOURCE_REFERENCE_NOT_FOUND','A reference from another goal conveys no access');

@@ -41,12 +41,12 @@ test('actual Codex SDK in network-none Docker: governed MCP, native restart, and
     assert(body.input.some(i=>i.type==='custom_tool_call_output'));
     const h=(await goals.get(db,ctx,held.id)).checkpoint.harness,entry=Object.values(h.evidence).findLast(e=>e.name==='environment_browser'),observation=JSON.parse(entry.text);assert(observation.url);
     const delivered=require(base+'source-references').present(entry,require(base+'evidence-presentation').project(entry.name,observation));
-    const sourceRef=delivered[delivered._stockchiefSources.field];
+    const sourceRef=delivered[delivered._stockchiefSources.valueField].url;
     assert(JSON.stringify(body.input).includes(sourceRef),'The real SDK/MCP result actually delivered this host-owned source reference');
     // Synthetic provider tests only the real SDK's new lossless wire contract;
     // it is never reported as evidence of live-model business intelligence.
-    const report={version:2,status:'completed',outcome:'answer',answer:'Offline SDK transport observed the application.',question:null,missingInformation:[],tier:null,reason:null,
-     claims:[{sourceRef,historical:false,values:[{path:'/url',value:observation.url}]}],navigation:null,workProducts:[],nextActions:[]};
+    const report={version:3,status:'completed',outcome:'answer',answer:'Offline SDK transport observed the application.',question:null,missingInformation:[],tier:null,reason:null,
+     claims:[{sourceRef,historical:false,value:observation.url}],navigation:null,workProducts:[],nextActions:[]};
     assert(new(require('ajv'))({strict:false}).compile(require(base+'codex-report').schema)(report));
     return response(body,n,null,null,JSON.stringify(report));
    }
@@ -68,6 +68,7 @@ test('actual Codex SDK in network-none Docker: governed MCP, native restart, and
  assert(first.answer.includes('observed'));assert.equal(requests.length,2);
  assert.equal(JSON.parse(first.answer).version,1);assert.equal(JSON.parse(first.answer).claims.length,1);assert.equal(typeof JSON.parse(first.answer).claims[0].value,'string');
  assert(JSON.parse(first.answer).claims[0].sourceRef);assert.equal(JSON.parse(first.answer).claims[0].evidenceId,undefined);
+ assert.equal(JSON.parse(first.answer).claims[0].path,undefined,'The native runtime no longer authors factual field paths');
  assert.equal((await require('../../src/assistant/postgres-codex-verification').verify(db,ctx,await goals.get(db,ctx,held.id),first.answer,(await gateway.authorize()).catalogue,{browser})).verified,true,'The real SDK source-reference report passes unchanged host and fresh-browser verification');
  const cp=(await goals.get(db,ctx,held.id)).checkpoint.harness;
  assert(cp.native.codex.threadId);assert(Object.keys(cp.native.codex.files).length);assert.equal(cp.codexRequests,2);

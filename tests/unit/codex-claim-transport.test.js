@@ -6,7 +6,8 @@ function grouped(report){
  return result;
 }
 test('actual 37-claim live form report becomes smaller without losing any independently verifiable fact',()=>{
- const f=require('../fixtures/codex-recorded-final-claims.json'),input=f.report,packet=grouped(input),valid=new Ajv({strict:false}).compile(wire.schema);assert(valid(packet),JSON.stringify(valid.errors));
+ const f=require('../fixtures/codex-recorded-final-claims.json'),input=f.report,packet=grouped(input),valid=new Ajv({strict:false}).compile(wire.legacySchema);assert(valid(packet),JSON.stringify(valid.errors));
+ assert.equal(new Ajv({strict:false}).compile(wire.schema)(packet),false,'New native generation cannot reconstruct legacy observation IDs and field paths; stored reports remain losslessly decoded');
  const decoded=conversation.parse(wire.decode(JSON.stringify(packet)));assert.deepEqual(decoded.claims,input.claims);assert.equal(decoded.answer,input.answer);assert.equal(decoded.claims.length,37);
  const legacy={...packet,version:1,claims:input.claims.map(c=>({...c,valueJson:null}))},legacyBytes=Buffer.byteLength(JSON.stringify(legacy)),groupedBytes=Buffer.byteLength(JSON.stringify(packet));assert(groupedBytes<legacyBytes*.7,'Real metadata overhead must be reduced, not just moved to another field');
  assert.equal(conversation.classify({report:decoded,verified:false}).status,'BLOCKED','Compression cannot grant verification');
