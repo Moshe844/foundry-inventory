@@ -160,7 +160,7 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
       if(mission)await database.query('UPDATE stockchief_runtime.assistant_capability_plans SET goal_id=$1 WHERE id=$2 AND workspace_id=$3',
         [goalId,mission.id,ctx.workspaceId]);
       for(const [index,outcome]of outcomes.entries())if(outcome.result.reason!=='dependency_waiting')
-        await service.recordCapabilityOutcome(database,ctx,goal,outcome,{batchId:`${goalId}:${call}`,planId:mission?.id,index,count:outcomes.length});
+        await service.recordCapabilityOutcome(database,{...ctx,goalId},goal,outcome,{batchId:`${goalId}:${call}`,planId:mission?.id,index,count:outcomes.length});
       return {missionId:mission?.id||null,outcomes:outcomes.map(o=>({capability:o.step.contract.name,result:o.result}))};
       }catch(error){error.effectMayHaveOccurred=effectsStarted;throw error;}
     },

@@ -277,7 +277,7 @@ const READS={
   transfers:'Read tracked inventory transfers, their exact workflow state, source and destination, units held at source, departed/in transit, physically received, and unresolved loss or damage. An approved transfer has not physically left.',
   customer_returns:'Read customer returns and their lifecycle, original sale, authorized, physically received and inspected quantities, disposition, and posted cash refund versus unpaid-invoice credit. A return request alone is not a receipt or refund.',
   sales_orders:'Read recorded customer orders, their product lines, per-unit prices and draft order total, ordered, held, fulfilled and open units, invoice and payment balances, and posted sale revenue, product cost and gross profit from fulfillment journals; answers do not change business records.',
-  sales_activity:'Recorded customer order and sales activity for supported time windows.',
+  sales_activity:'Recorded customer order counts, fulfilled units, posted revenue, cost of sales and gross profit for supported time windows. Order counts use order date; financial totals use canonical posting date, with exact minor amounts and currency.',
   suppliers:'Supplier records.',customers:'Customer records.',shipping:'Shipping records.',
   payments:'Recorded payment transactions.',payables:'Posted open supplier bill balances, with disputed supplier invoice documents shown separately as excluded from debt.',
   receivables:'Open customer invoice balances.',accounting:'Posted financial records and reports.',
@@ -293,8 +293,11 @@ for(const [view,description] of Object.entries(READS))add(`read.${view}`,descrip
     timeframe:args.timeframe||'all_time'},{provider:options.answerProvider,question:text}),
   async(_service,_db,_ctx,result)=>Boolean(result&&Array.isArray(result.rows)),
   {view,recordKind:READ_RECORD_KINDS[view]||null,
-    agentHints:['inventory_positions','inventory_valuation','inventory_cost_movements','purchase_costs','prices'].includes(view)
-      ?{search:'Optional literal name or code filter. Omit it to inspect all records and resolve spelling, pluralization, or location comparisons. Empty filtered results are not proof that an entity is absent.'}:null,
+    argumentSchemas:{timeframe:()=>({type:'string',enum:require('./read-timeframes').supported(view)})},
+    agentHints:{timeframe:require('./read-timeframes').supported(view).length===1?'Only all_time; this reader has no period filter.':
+      'Use a supported period from the supplied schema; order, payment and posting dates are distinct.',
+      ...(['inventory_positions','inventory_valuation','inventory_cost_movements','purchase_costs','prices'].includes(view)
+      ?{search:'Optional literal name or code filter. Omit it to inspect all records and resolve spelling, pluralization, or location comparisons. Empty filtered results are not proof that an entity is absent.'}:{})},
     answerMode:['general_knowledge','business_analysis','inventory_summary'].includes(view)?'executor':'evidence'});
 for(const [name,description,search] of [
   ['read.profit_and_loss','Read the current month’s posted profit and loss; never infer unrecorded activity.','profit_and_loss'],

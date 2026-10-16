@@ -162,17 +162,22 @@ async function salesActivity(database,ctx,timeframe){
   const orders=Number(counts.orders),fulfilledUnits=Number(counts.fulfilled_units);
   const revenue=report?pricing.formatMinor(report.revenueMinor,report.currency):null;
   const rows=[{measure:'Customer orders',value:orders},{measure:'Units fulfilled',value:fulfilledUnits},
-    {measure:'Posted revenue',value:revenue||'Not available',amountMinor:report?Number(report.revenueMinor):null,currency:report?.currency||null}];
+    ...[['Posted revenue','revenueMinor'],['Posted cost of sales','cogsMinor'],['Posted gross profit','grossProfitMinor']].map(([measure,key])=>({
+      measure,value:report?pricing.formatMinor(report[key],report.currency):'Not available',
+      amountMinor:report?Number(report[key]):null,currency:report?.currency||null}))];
   const answer=orders===0&&report?.revenueMinor===0
     ?`I don't see any customer orders or posted sales revenue recorded in StockChief ${period.label}. Sales through systems that are not connected or imported here would not appear in this answer.`
     :orders===0&&!report
       ?`I don't see any customer orders recorded in StockChief ${period.label}. Posted revenue is not available here, so I cannot confirm whether other sales occurred.`
     :`StockChief records show ${orders} customer ${orders===1?'order':'orders'} ${period.label}, ${fulfilledUnits} units fulfilled, and ${revenue||'no available posted-revenue figure'}. Orders and posted revenue are different measures; sales outside connected or imported records are not included.`;
-  return {answer,rows,columns:['measure','value'],handoff:{href:'/orders',label:'Review customer orders'}};
+  return {answer,rows,columns:['measure','value'],scope:{from:period.from,to:period.to,financialBasis:'posting_date',orderBasis:'order_date'},handoff:{href:'/orders',label:'Review customer orders'}};
 }
 
 async function lookup(database,ctx,request,options={}) {
   const search=trimOrNull(request.search);
+  if(!require('./read-timeframes').accepted({...request,search}))return {status:require('./read-timeframes').supported('sales_activity').includes(request.timeframe)?'UNSUPPORTED_PERIOD':'CLARIFY',
+    answer:'I cannot verify that time period from this summary. Use an authorized date-filtered report or a reader whose contract supports that period; no unfiltered records were substituted.',
+    rows:[],columns:[],scope:{requestedTimeframe:request.timeframe,supportedTimeframes:require('./read-timeframes').supported(request.view)}};
   if(request.view==='operating_rules'){
     const [alerts,replenishment,guards,automation,preferences]=await Promise.all([
       database.query(`SELECT s.code AS sku,i.name AS product,l.name AS location,r.threshold,r.metric,
@@ -1570,7 +1575,7 @@ async function createProposal(database,ctx,message,actionType,payload,summary) {
 }
 
 async function storeInteraction(database,ctx,message,intent,result,id=newId('pgask')) {
-  const storedIntent={...intent,...(result.carryForward||{}),presentation:{columns:result.columns || [],
+  const storedIntent={...intent,...(result.carryForward||{}),...(ctx.goalId?{parentGoalId:ctx.goalId}:{}),presentation:{columns:result.columns || [],
     columnLabels:result.columnLabels||{},choices:result.choices || [],handoff:result.handoff || null,
     reason:result.reason||null,awaitingField:result.awaitingField||null,emailFlow:result.emailFlow||null,
     researchViews:result.researchViews||[],chartAmounts:result.chartAmounts||null}};
@@ -1697,10 +1702,16 @@ async function prepareInstruction(database,ctx,message,options={}){
 }
 
 async function listInteractions(database,workspaceId,limit=20,{actorId=null,startedAt=null}={}) {
-  const result=await database.query(`SELECT * FROM stockchief_runtime.assistant_interactions
-    WHERE workspace_id=$1 AND ($3::text IS NULL OR actor_user_id=$3)
-      AND ($4::timestamptz IS NULL OR created_at > $4::timestamptz)
-    ORDER BY created_at DESC,id DESC LIMIT $2`,[workspaceId,Math.min(100,Math.max(1,limit)),actorId,startedAt]);
+  const result=await database.query(`SELECT i.*,parent.id AS parent_goal_id
+    FROM stockchief_runtime.assistant_interactions i
+    LEFT JOIN LATERAL (SELECT g.id FROM stockchief_runtime.assistant_goals g
+      WHERE g.workspace_id=i.workspace_id AND g.actor_user_id=i.actor_user_id
+        AND (g.id=i.intent->>'parentGoalId' OR g.id=i.intent->>'batchId'
+          OR left(i.intent->>'batchId',length(g.id)+1)=g.id||':')
+      ORDER BY g.created_at DESC,g.id DESC LIMIT 1) parent ON true
+    WHERE i.workspace_id=$1 AND ($3::text IS NULL OR i.actor_user_id=$3)
+      AND ($4::timestamptz IS NULL OR i.created_at > $4::timestamptz)
+    ORDER BY i.created_at DESC,i.id DESC LIMIT $2`,[workspaceId,Math.min(100,Math.max(1,limit)),actorId,startedAt]);
   return result.rows.map((row)=>({...row,intent:row.intent || {},evidence:row.evidence || []})).sort((left,right)=>{
     const byTime=new Date(left.created_at)-new Date(right.created_at);if(byTime)return byTime;
     if(left.intent.batchId&&left.intent.batchId===right.intent.batchId)return Number(left.intent.requestIndex)-Number(right.intent.requestIndex);

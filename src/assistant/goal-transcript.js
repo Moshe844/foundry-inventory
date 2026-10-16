@@ -7,9 +7,13 @@ function mergeGoalTranscript(transcript,goals,{focusedGoalId=null}={}){
  const turns=[];
  for(const turn of transcript){
   const batch=turn.understanding?.batchId;
-  const owner=goals.find(goal=>batch===goal.id||typeof batch==='string'&&batch.startsWith(goal.id+':'));
+  const parent=turn.understanding?.parentGoalId;
+  const owner=goals.find(goal=>parent?parent===goal.id:batch===goal.id||typeof batch==='string'&&batch.startsWith(goal.id+':'));
   if(owner)byId.get(owner.id).goals.push(...turn.goals);
-  else turns.push(turn);
+  // The database resolved this step to its owning tenant/actor's goal even
+  // when that request is outside this conversation or the recent window.
+  // A late internal result must never become a new customer request.
+  else if(!parent)turns.push(turn);
  }
  const chronological=(a,b)=>new Date(a.createdAt)-new Date(b.createdAt)||String(a.id).localeCompare(String(b.id));
  const ordered=[...turns,...byId.values()].sort(chronological),recent=ordered.slice(-12);

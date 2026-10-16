@@ -69,12 +69,12 @@ function transcriptFor(interactions,proposals=new Map()){
   interactions.forEach((turn,index)=>{
     const batchId=turn.intent?.batchId;
     if(!batchId){transcript.push({id:`turn-${turn.id}`,conversationId:'postgres',channel:'ask',message:turn.message,
-      understanding:turn.intent||{},createdAt:turn.created_at,
+      understanding:{...(turn.intent||{}),...(turn.parent_goal_id?{parentGoalId:turn.parent_goal_id}:{})},createdAt:turn.created_at,
       goals:[goalFor(turn,index,0,proposals.get(turn.intent?.proposalId))],referents:[]});return;}
     let batch=batches.get(batchId);
     if(!batch){batch={id:`turn-${batchId}`,conversationId:'postgres',channel:'ask',message:turn.intent.sourceMessage||turn.message,
       coveragePendingStatuses:['pending','needs_approval','clarify'],
-      understanding:{intent:'multi_request',batchId},createdAt:turn.created_at,goals:[],referents:[]};batches.set(batchId,batch);transcript.push(batch);}
+      understanding:{intent:'multi_request',batchId,...(turn.parent_goal_id?{parentGoalId:turn.parent_goal_id}:{})},createdAt:turn.created_at,goals:[],referents:[]};batches.set(batchId,batch);transcript.push(batch);}
     batch.goals.push(goalFor(turn,index,Math.max(0,Number(turn.intent.requestIndex||1)-1),
       proposals.get(turn.intent?.proposalId)));
     batch.goals.sort((left,right)=>left.position-right.position);

@@ -2,6 +2,16 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const {mergeGoalTranscript}=require('../../src/assistant/goal-transcript');
 const {activities}=require('../../src/web/public/adaptive-goal');
+
+test('late internal work outside the selected conversation never becomes a new customer request',()=>{
+ const fresh={id:'goal_current',original_request:'Current requested outcome',created_at:'2026-10-16T13:22:00Z'};
+ const late={id:'old_read',createdAt:'2026-10-16T13:33:00Z',message:'Old prepared receipt request',understanding:{batchId:'goal_prior:goal_prior:read',parentGoalId:'goal_prior'},goals:[{id:'read-result'}]};
+ const real={id:'legacy_user',createdAt:'2026-10-16T13:34:00Z',message:'A real legacy question',understanding:{},goals:[]};
+ assert.deepEqual(mergeGoalTranscript([late,real],[fresh]).map(t=>t.message),[fresh.original_request,real.message]);
+ const prior={id:'goal_prior',original_request:'Old prepared receipt request',created_at:'2026-10-16T13:07:00Z'};
+ const focused=mergeGoalTranscript([late,real],[fresh,prior],{focusedGoalId:prior.id});
+ assert.equal(focused.filter(t=>t.agentGoal?.id===prior.id).length,1);assert.deepEqual(focused[0].goals,late.goals);
+});
 test('agent requests keep submission order, including unanswered requests and late canonical results',()=>{
  const old={id:'goal_old',original_request:'First request',created_at:'2026-10-12T10:00:00Z'};
  const next={id:'goal_new',original_request:'Next request',created_at:'2026-10-12T10:01:00Z'};

@@ -43,6 +43,7 @@ test('embedded SDK prepares discovered typed rules with one intent check and can
  const first=await pilot.run(db,ctx,started.goalId,options);assert.equal(first.status,'WAITING_APPROVAL',JSON.stringify({status:first.status,answer:first.answer,interruption:first.checkpoint.harness?.interruption,failure:first.checkpoint.harness?.failure}));assert.equal(checks,1);assert.equal(sdkCalls,1);
  const prepared=await store.get(db,ctx,started.goalId),discovery=Object.values(prepared.checkpoint.harness.evidence).find(e=>e.name==='environment_interfaces');
  const contract=JSON.parse(discovery.text).operations[0];assert(contract.fields.ruleChanges.jsonSchema.items.properties.domain.enum.includes('stock_alert'));
+ assert.match(contract.fields.ruleChanges.jsonSchema.items.properties.location.description,/entire business/,'The embedded SDK must receive the same omitted-location semantics as the canonical rule interpreter');
  await t.test('native rule approval stays with its request after a newer question, with no duplicate legacy rule card',async u=>{
   const next=await store.create(db,ctx,'Read my current products.');await db.query(`UPDATE stockchief_runtime.assistant_goals SET status='COMPLETED',checkpoint=checkpoint||'{"runtime":"codex-staging"}'::jsonb WHERE id=$1`,[next.id]);
   const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:randomUUID(),aiProvider:{complete:async()=>{throw Error('NO_MODELS');}}});u.after(()=>app.locals.sessionStore.close());
@@ -68,7 +69,7 @@ test('embedded SDK prepares discovered typed rules with one intent check and can
  });
  assert.equal((await db.query('SELECT count(*) AS n FROM stockchief_runtime.stock_threshold_rules WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,'0');
  const card=(await pilot.inbox(db,ctx,started.goalId)).approvals[0];await pilot.decide(db,ctx,started.goalId,card.id,card.sha256,true,{responseReference:'OFFLINE owner approval'});
- const rules=(await db.query('SELECT * FROM stockchief_runtime.stock_threshold_rules WHERE workspace_id=$1',[ctx.workspaceId])).rows;assert.equal(rules.length,2);assert(rules.every(r=>Number(r.threshold)===10&&r.comparator==='below'&&r.metric==='on_hand'));
+ const rules=(await db.query('SELECT * FROM stockchief_runtime.stock_threshold_rules WHERE workspace_id=$1',[ctx.workspaceId])).rows;assert.equal(rules.length,2);assert(rules.every(r=>Number(r.threshold)===10&&r.comparator==='below'&&r.metric==='on_hand'&&r.location_id===null),'An omitted optional location must preserve the canonical business-wide scope');
  const alerts=require('../../src/manager/postgres-stock-threshold-alerts');assert.equal((await alerts.evaluate(db,{workspaceId:ctx.workspaceId})).alerted,0);
  await inventory.issue(db,ctx,{skuId:items[0].skuIds[0],locationId:place.id,quantity:1,reasonCode:'other',reference:'BOUNDARY',idempotencyKey:'typed-boundary'});
  assert.equal((await alerts.evaluate(db,{workspaceId:ctx.workspaceId})).alerted,1);assert.equal((await alerts.evaluate(db,{workspaceId:ctx.workspaceId})).alerted,0);

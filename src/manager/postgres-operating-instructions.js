@@ -16,7 +16,7 @@ const CHANGE_SCHEMA={type:'object',additionalProperties:false,required:['domain'
   'preferTransferBeforePurchasing','guardMode','guardComparator','guardThreshold','guardReleaseCondition',
   'notificationThreshold','notificationMetric','notificationComparator','capabilityName'],properties:{
   domain:{type:'string',enum:DOMAINS},operation:{type:'string',enum:['set','remove']},sku:{type:'string'},
-  supplier:{type:'string'},location:{type:'string'},sourceLocation:{type:'string'},reorderPoint:{type:'integer'},
+  supplier:{type:'string'},location:{type:'string',description:'Optional canonical location name. Omit it or use an empty string for a rule across the entire business. An omitted location is not missing information; ask only when the owner explicitly names an ambiguous location.'},sourceLocation:{type:'string'},reorderPoint:{type:'integer'},
   targetStock:{type:'integer'},safetyStock:{type:'integer'},leadTimeDays:{type:'integer'},
   unitsPerPurchaseUnit:{type:'integer'},minimumOrderQuantity:{type:'integer'},orderMultiple:{type:'integer'},
   maximumQuantity:{type:'integer'},maximumValue:{type:'number'},weeklyValue:{type:'number'},daysOfStock:{type:'integer'},
@@ -24,8 +24,8 @@ const CHANGE_SCHEMA={type:'object',additionalProperties:false,required:['domain'
   guardComparator:{type:'string',enum:['','below','at_or_below']},guardThreshold:{type:'integer'},
   guardReleaseCondition:{type:'string',enum:['','on_order','stock_recovered','manual']},
   notificationThreshold:{type:'integer'},
-  notificationMetric:{type:'string',enum:['','on_hand','available_to_fulfill']},
-  notificationComparator:{type:'string',enum:['','below','at_or_below']},
+  notificationMetric:{type:'string',enum:['','on_hand','available_to_fulfill'],description:'For stock_alert, physical stock means on_hand; stock after customer commitments means available_to_fulfill. The exact requested measure is required.'},
+  notificationComparator:{type:'string',enum:['','below','at_or_below'],description:'For stock_alert, below is strictly less than the threshold; at_or_below includes equality. Preserve the requested comparison.'},
   capabilityName:{type:'string',enum:['',...capabilityDefinitions.NAMES]}}};
 const SCHEMA={type:'object',additionalProperties:false,required:['understood','summary','changes','clarifyingQuestion','unsupportedReason'],
   properties:{understood:{type:'boolean'},summary:{type:'string'},changes:{type:'array',minItems:0,maxItems:12,items:CHANGE_SCHEMA},
@@ -65,6 +65,7 @@ Extract only facts and limits explicitly stated. Never invent a product, supplie
 Preparing a rule for approval is the normal workflow: extract its intended changes now. The application will not apply them until the owner separately approves the proposal. Never ask the owner about JSON, arrays, schema shape, or approval-workflow formatting.
 An omitted location means the rule applies across this inventory; do not ask which location unless the owner explicitly refers to one ambiguously. Set clarifyingQuestion only when a required fact is missing or the requested effect is semantically ambiguous, not to seek an optional narrower scope.
 Use replenishment for reorder point, target stock and safety stock. These settings detect need but grant no authority. If the owner names a location, retain that location as the rule's scope. If one instruction requests both a reorder target and a Needs You warning, return separate replenishment and stock_alert changes; neither effect implies the other.
+If the owner only states a minimum stock level without saying whether it should trigger replenishment, notify the owner, or block outgoing stock, ask which outcome they want. Do not silently choose one effect from the number alone.
 Use stock_alert for an owner's request to be notified in Needs You at a SKU threshold. It needs a SKU, notificationThreshold, notificationMetric and notificationComparator. Physical units in the warehouse are on_hand; units available to fulfill after customer commitments are available_to_fulfill. "Below" means strictly below; "at or below", "or less", and "reaches" mean at_or_below. Never substitute one metric or comparator for another. It neither sends external email nor orders goods. A replenishment rule alone does not notify.
 Use supplier_terms for lead time, units per purchase unit, MOQ or order multiple for one real supplier and SKU.
 Use transfer_authority only when the owner explicitly permits automatic transfers without approval; maximumQuantity is required.
@@ -297,7 +298,7 @@ async function interpret(database,ctx,instruction,options={}){const clean=String
     if(fit.data?.equivalent===true)break;
     const difference=String(fit.data?.difference||'The requested effect does not match the available rule.').slice(0,240);
     if(typed)throw Object.assign(new ValidationError("The proposed effects do not match your instruction. "+difference),{effectMayHaveOccurred:false});
-    if(pass===1)throw new ValidationError(`I won't propose a rule that changes your request. ${difference} Nothing changed.`);
+    if(pass===1)throw new ValidationError("I won't propose a rule that changes your request. I could not verify which operating effect you meant; please clarify the outcome you want. Nothing changed.");
     response=await completeModel({system:`${SYSTEM}\n${PAGE_CONTEXT_RULE}\n${PRIOR_CONTEXT_RULE}`,
       prompt:JSON.stringify({...evidence,rejectedInterpretation:read,effectMismatch:difference,
         correction:'Revise the typed changes to cover every requested effect. Keep named entities and scopes exact. A reorder point and a Needs You warning are independent effects. Never invent authority.'}),
