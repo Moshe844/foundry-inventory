@@ -63,3 +63,22 @@ test('actual screenshot text-envelope shape retains the screen binding at its or
  const h={evidence:{[e.id]:e}},retrieved=require('../../scripts/environment-agent-demo/observations').retrieve(h,{id:e.id,offset:0});
  assert.equal(retrieved.screen[field].url,text[field].url);assert.equal(retrieved.screen._stockchiefSources.valueField,field);
 });
+
+test('sequential screen subsets cannot become a new whole-container assertion or cross-observation join',()=>{
+ const wire=require('../../scripts/environment-agent-demo/codex-report'),validate=new(require('ajv'))({strict:false}).compile(wire.schema);
+ const earlier=evidence('owned:2',{screen:{textBlocks:Object.fromEntries(Array.from({length:81},(_,i)=>['line'+i,'Earlier field '+i]))}},'environment_browser');
+ const later=evidence('owned:3',{screen:{textBlocks:Object.fromEntries(Array.from({length:100},(_,i)=>['line'+i,'Later field '+i]))}},'environment_browser');
+ const out=refs.present(later,JSON.parse(later.text)),field=out.screen._stockchiefSources?.valueField||out._stockchiefSources.valueField;
+ assert.equal(out.screen[field],undefined,'Container references are not offered as new native factual assertions');
+ const [sourceRef,value]=Object.entries(out.screen.textBlocks)[17],report={version:3,status:'completed',outcome:'answer',answer:'A visible field.',question:null,missingInformation:[],tier:null,reason:null,claims:[{sourceRef,value,historical:false}],navigation:null,workProducts:[],nextActions:[]};
+ assert(validate(report));assert.equal(refs.resolve([earlier,later],report.claims[0]).evidenceId,later.id);assert.equal(refs.resolve([earlier,later],report.claims[0]).path,'/screen/textBlocks/line17');
+ assert.equal(validate({...report,claims:[{...report.claims[0],value:{json:JSON.stringify(Object.fromEntries(Object.entries(out.screen.textBlocks).slice(0,5)))}}]}),false,'An observed subset cannot be asserted as an original container');
+ const previousContainerRef='fv1:'+createHash('sha256').update(JSON.stringify([earlier.id,earlier.sha256,'/screen/textBlocks'])).digest('base64url').slice(0,16);
+ assert.equal(refs.resolve([earlier,later],{sourceRef:previousContainerRef,value:{legacy:'retained'}}).path,'/screen/textBlocks','Saved version-3 bindings retain their original meaning; no current-data substitution');
+ const primitiveArrays=evidence('owned:array',{codes:['a',null,false,0,['nested']],empty:[]}),arrayView=refs.present(primitiveArrays,JSON.parse(primitiveArrays.text)),map=arrayView[arrayView._stockchiefSources.valueField];
+ for(const [label,path,value]of [['codes[0]','/codes/0','a'],['codes[1]','/codes/1',null],['codes[2]','/codes/2',false],['codes[3]','/codes/3',0],['codes[4][0]','/codes/4/0','nested']])assert.deepEqual(refs.resolve([primitiveArrays],{sourceRef:map[label],value}),{evidenceId:primitiveArrays.id,path,value,historical:undefined});
+ assert.equal(map.empty,undefined,'Empty containers are not synthesized into an absence fact');assert.deepEqual(arrayView.codes,JSON.parse(primitiveArrays.text).codes);
+ const colliding=evidence('owned:array-collision',{codes:['array value',['nested value']],'codes[0]':'literal value','codes[1][0]':'literal nested label'}),collisionView=refs.present(colliding,JSON.parse(colliding.text)),collisionMap=collisionView[collisionView._stockchiefSources.valueField];
+ for(const [label,path,value]of [['codes[0]','/codes[0]','literal value'],['codes[0]_','/codes/0','array value'],['codes[1][0]','/codes[1][0]','literal nested label'],['codes[1][0]_','/codes/1/0','nested value']])assert.equal(refs.resolve([colliding],{sourceRef:collisionMap[label],value}).path,path,'Literal field names never overwrite generated array bindings');
+ const oldReport={...report,claims:[{sourceRef:previousContainerRef,historical:false,value:{json:'{}'}}]};assert.equal(validate(oldReport),false);assert.deepEqual(JSON.parse(wire.decode(JSON.stringify(oldReport))).claims[0].value,{},'Already-saved v3 containers retain decoding, but cannot be newly generated');
+});

@@ -31,7 +31,19 @@ function encode(entry,value,{legacy=false}={}){
   for(const[k,value]of Object.entries(v)){
    const pointer=path+'/'+part(k);
    if(generated.has(k)||entry.name==='environment_browser'&&pointer==='/image'||/^\/(?:screen\/)?viewState(?:\/|$)/.test(pointer))continue;
-   values[k]=fieldReference(pointer);
+   // A presented container can contain host labels or projected children.
+   // Its displayed JSON is not the original factual value. New reports cite
+   // the primitive leaves; historical container bindings remain indexed.
+   if(legacy||value===null||typeof value!=='object')values[k]=fieldReference(pointer);
+   if(!legacy&&Array.isArray(value)){
+    const leaves=(array,at,label)=>array.forEach((child,index)=>{
+     if(Array.isArray(child))leaves(child,at+'/'+index,label+'['+index+']');
+     else if(child===null||typeof child!=='object'){
+      let key=label+'['+index+']';while(Object.hasOwn(v,key)||Object.hasOwn(values,key))key+='_';
+      values[key]=fieldReference(at+'/'+index);
+     }
+    });leaves(value,pointer,k);
+   }
   }
   if(!legacy&&Object.keys(values).length)output[valueField]=values;
   if(legacy&&selected){
