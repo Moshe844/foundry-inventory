@@ -3,28 +3,26 @@
 const crypto=require('node:crypto');
 const {newId,nowIso,trimOrNull}=require('../lib/util');
 const {ValidationError,NotFoundError}=require('../domain/errors');
+const money=require('../domain/currency');
 
 const CURRENCY=/^[A-Z]{3}$/;
 
 function normaliseCurrency(value,fallback='USD'){
   const currency=String(value||fallback).trim().toUpperCase();
-  if(!CURRENCY.test(currency))throw new ValidationError('Currency must be a three-letter code such as USD, EUR or GBP.');
-  return currency;
+  return money.code(currency);
 }
 
-function toMinor(value,label='Price'){
+function toMinor(value,label='Price',currency='USD'){
   if(value===null||value===undefined||String(value).trim()==='')return null;
   const clean=String(value).trim().replace(/[$£€¥,\s]/g,'');
-  if(!/^\d+(?:\.\d{1,2})?$/.test(clean))throw new ValidationError(`${label} must be a positive amount with no more than two decimal places.`);
-  const [whole,fraction='']=clean.split('.');const minor=Number(whole)*100+Number(fraction.padEnd(2,'0'));
+  const minor=money.toMinor(clean,currency,{label});
   if(!Number.isSafeInteger(minor)||minor<0||minor>99999999999)throw new ValidationError(`${label} is outside the supported range.`);
   return minor;
 }
 
 function formatMinor(amountMinor,currency='USD'){
   if(amountMinor===null||amountMinor===undefined)return 'Not set';
-  try{return new Intl.NumberFormat('en-US',{style:'currency',currency:normaliseCurrency(currency)}).format(Number(amountMinor)/100);}
-  catch{return `${currency} ${(Number(amountMinor)/100).toFixed(2)}`;}
+  return money.format(amountMinor,currency);
 }
 
 function hash(value){return crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');}
@@ -55,7 +53,7 @@ async function purchaseCost(queryable,workspaceId,skuId){
     WHERE si.workspace_id=$1 AND si.sku_id=$2 AND si.is_active=1 AND si.last_unit_cost IS NOT NULL
     ORDER BY si.is_preferred DESC,si.last_cost_at DESC,si.updated_at DESC LIMIT 1`,[workspaceId,skuId])).rows[0];
   if(!supplier)return null;
-  const amountMinor=Math.round(Number(supplier.last_unit_cost)*100);
+  const amountMinor=money.toMinor(supplier.last_unit_cost,supplier.currency);
   return {...supplier,amount_minor:amountMinor,isSet:true,formatted:formatMinor(amountMinor,supplier.currency),sourceLabel:supplier.supplier_name};
 }
 
@@ -67,7 +65,7 @@ async function listForSkus(queryable,workspaceId,skuIds){
 }
 
 async function setPriceInTransaction(client,ctx,input){
-  const sku=await requireSku(client,ctx.workspaceId,input.skuId);const amountMinor=input.amountMinor===undefined?toMinor(input.amount):input.amountMinor;
+  const sku=await requireSku(client,ctx.workspaceId,input.skuId);const amountMinor=input.amountMinor===undefined?toMinor(input.amount,'Price',input.currency||'USD'):input.amountMinor;
   if(amountMinor!==null&&(!Number.isSafeInteger(Number(amountMinor))||Number(amountMinor)<0))throw new ValidationError('Selling price must be a valid non-negative amount.');
   const currency=normaliseCurrency(input.currency);const current=await currentPrice(client,ctx.workspaceId,sku.id);
   if(Object.prototype.hasOwnProperty.call(input,'expectedCurrentId')&&(current.id||null)!==(input.expectedCurrentId||null))
@@ -89,7 +87,7 @@ async function setPrice(database,ctx,input){return database.transaction((client)
 
 async function setPurchaseCostInTransaction(client,ctx,input){
   const sku=await requireSku(client,ctx.workspaceId,input.skuId);const amountMinor=input.amountMinor===undefined?
-    toMinor(input.amount,'Purchase cost'):Number(input.amountMinor);
+    toMinor(input.amount,'Purchase cost',input.currency||'USD'):Number(input.amountMinor);
   if(!Number.isSafeInteger(amountMinor)||amountMinor<0)throw new ValidationError('Purchase cost must be a valid non-negative amount.');
   const currency=normaliseCurrency(input.currency);const current=await purchaseCost(client,ctx.workspaceId,sku.id);
   if(Object.prototype.hasOwnProperty.call(input,'expectedCurrentId')&&(current?.id||null)!==(input.expectedCurrentId||null))
@@ -101,7 +99,7 @@ async function setPurchaseCostInTransaction(client,ctx,input){
     VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10)`,[id,ctx.workspaceId,sku.id,amountMinor,currency,
     input.supplierItemId||null,trimOrNull(input.source)||'owner',JSON.stringify(input.sourceDetail||{}),ctx.actorId||null,at]);
   if(input.supplierItemId)await client.query(`UPDATE supplier_items SET last_unit_cost=$1,last_cost_at=$2,updated_at=$2
-    WHERE id=$3 AND workspace_id=$4 AND sku_id=$5`,[amountMinor/100,at,input.supplierItemId,ctx.workspaceId,sku.id]);
+    WHERE id=$3 AND workspace_id=$4 AND sku_id=$5`,[money.fromMinor(amountMinor,currency),at,input.supplierItemId,ctx.workspaceId,sku.id]);
   return purchaseCost(client,ctx.workspaceId,sku.id);
 }
 
@@ -117,7 +115,7 @@ async function preferredSupplierItem(queryable,workspaceId,skuId){
 function pricePayload(workspaceId,skuId,amountMinor,currency,currentPriceId){return {workspaceId,skuId,amountMinor,currency,currentPriceId};}
 
 async function createPriceProposal(database,ctx,input){
-  const sku=await requireSku(database,ctx.workspaceId,input.skuId);const amountMinor=input.amountMinor===undefined?toMinor(input.amount):input.amountMinor;
+  const sku=await requireSku(database,ctx.workspaceId,input.skuId);const amountMinor=input.amountMinor===undefined?toMinor(input.amount,'Price',input.currency||'USD'):input.amountMinor;
   const currency=normaliseCurrency(input.currency);const current=await currentPrice(database,ctx.workspaceId,sku.id);
   if(current.id&&current.amount_minor===amountMinor&&current.currency===currency)throw new ValidationError('That selling price is already current.');
   const id=newId('pricechg');const payload=pricePayload(ctx.workspaceId,sku.id,amountMinor,currency,current.id||null);
@@ -168,7 +166,7 @@ function purchasePayload(workspaceId,skuId,amountMinor,currency,supplierItemId,c
 
 async function createPurchaseCostProposal(database,ctx,input){
   const sku=await requireSku(database,ctx.workspaceId,input.skuId);const amountMinor=input.amountMinor===undefined?
-    toMinor(input.amount,'Purchase cost'):Number(input.amountMinor);const currency=normaliseCurrency(input.currency);
+    toMinor(input.amount,'Purchase cost',input.currency||'USD'):Number(input.amountMinor);const currency=normaliseCurrency(input.currency);
   const current=await purchaseCost(database,ctx.workspaceId,sku.id);
   if(current&&current.amount_minor===amountMinor&&current.currency===currency)throw new ValidationError('That purchase cost is already current.');
   const supplierItemId=input.supplierItemId||await preferredSupplierItem(database,ctx.workspaceId,sku.id);

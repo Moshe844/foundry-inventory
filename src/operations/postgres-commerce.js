@@ -232,7 +232,7 @@ async function salesOrders(database, workspaceId) {
       COUNT(sol.id)::integer AS line_count,
       COALESCE(SUM(sol.quantity_ordered),0)::bigint AS units_ordered,
       COALESCE(SUM(sol.quantity_fulfilled),0)::bigint AS units_fulfilled,
-      (COALESCE(SUM(sol.quantity_ordered*sol.unit_price_minor),0)-COALESCE(so.discount_minor,0)+COALESCE(so.tax_minor,0))::bigint AS total_minor,
+      COALESCE(so.pricing_total_minor,(COALESCE(SUM(sol.quantity_ordered*sol.unit_price_minor),0)-COALESCE(so.discount_minor,0)+COALESCE(so.tax_minor,0)))::bigint AS total_minor,
       COALESCE((SELECT SUM(balance_minor) FROM accounting_customer_invoices i
         WHERE i.workspace_id=so.workspace_id AND i.sales_order_id=so.id AND i.status<>'VOID'),0)::bigint AS balance_minor
     FROM sales_orders so JOIN customers c ON c.id=so.customer_id AND c.workspace_id=so.workspace_id
@@ -279,8 +279,8 @@ async function salesOrder(database, workspaceId, id) {
   const mappedLines=lines.rows.map((row)=>({...row,allocated:Number(row.allocated),
     quantity_returned:Number(row.quantity_returned),allocations:byLine.get(row.id)||[]}));
   const terms=paymentTerms.rows[0]||null;
-  const orderTotalMinor=Math.max(0,mappedLines.reduce((sum,row)=>sum+Number(row.quantity_ordered)*Number(row.unit_price_minor),0)
-    -Number(header.rows[0].discount_minor||0)+Number(header.rows[0].tax_minor||0));
+  const orderTotalMinor=header.rows[0].pricing_total_minor===null?Math.max(0,mappedLines.reduce((sum,row)=>sum+Number(row.quantity_ordered)*Number(row.unit_price_minor),0)
+    -Number(header.rows[0].discount_minor||0)+Number(header.rows[0].tax_minor||0)):Number(header.rows[0].pricing_total_minor);
   const requiredDepositMinor=terms?.kind==='DEPOSIT'?(terms.deposit_minor==null
     ?Math.round(orderTotalMinor*Number(terms.deposit_percent||0)/100):Math.min(orderTotalMinor,Number(terms.deposit_minor))):0;
   return {order:header.rows[0],lines:mappedLines,

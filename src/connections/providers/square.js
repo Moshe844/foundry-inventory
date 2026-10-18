@@ -3,11 +3,12 @@
 const crypto = require('node:crypto');
 const config = require('../../config');
 const { ValidationError } = require('../../domain/errors');
-const { safeEqual, requireVerified, jsonRequest } = require('./common');
+const { safeEqual, requireVerified, jsonRequest, postalAddress } = require('./common');
+const facts=require('../commerce-facts');
 
 const API_VERSION = '2026-08-19';
 const SCOPES = ['ITEMS_READ', 'ORDERS_READ', 'PAYMENTS_READ', 'MERCHANT_PROFILE_READ', 'INVENTORY_READ'];
-const WEBHOOK_EVENTS = ['payment.created', 'payment.updated', 'refund.created', 'refund.updated',
+const WEBHOOK_EVENTS = ['payment.created', 'payment.updated', 'refund.created', 'refund.updated','order.created','order.updated','order.fulfillment.updated',
   'catalog.version.updated', 'location.created', 'location.updated'];
 
 function base() { return config.connections.square.environment === 'sandbox' ? 'https://connect.squareupsandbox.com' : 'https://connect.squareup.com'; }
@@ -40,6 +41,7 @@ async function tryDirectAuthorization() {
     environment: 'sandbox', authMode: 'sandbox_personal' };
   const merchant = (await api(credentials, '/v2/merchants/me')).body.merchant;
   if (!merchant?.id) throw new ValidationError('Square did not return a Sandbox merchant for this access token.');
+  credentials.merchantId=merchant.id;
   return { credentials, accountId: merchant.id,
     accountName: merchant.business_name || `Square merchant ${String(merchant.id).slice(-6)}`,
     capabilities: [...SCOPES, 'WEBHOOKS'] };
@@ -122,11 +124,13 @@ async function registerWebhooks({ credentials, webhookUrl }) {
   return { credentials: { ...credentials, webhookSignatureKey: saved.signature_key }, subscriptionId: saved.id };
 }
 
-function verifyWebhook({ headers, rawBody, webhookUrl, credentials }) {
+function verifyWebhook({ headers, rawBody, webhookUrl, credentials, connection, body }) {
   const key = credentials.webhookSignatureKey || config.connections.square.webhookSignatureKey;
   if (!key) throw new ValidationError('Square webhook verification is not configured for this StockChief installation.');
   const expected = crypto.createHmac('sha256', key).update(`${webhookUrl}${rawBody.toString('utf8')}`).digest('base64');
   requireVerified(safeEqual(headers['x-square-hmacsha256-signature'], expected), 'This webhook did not pass Square signature verification.');
+  const merchantId=credentials.merchantId||connection?.provider_account_id;
+  if(merchantId)requireVerified(body?.merchant_id===merchantId,'This Square event does not belong to the connected merchant.');
 }
 
 async function createSandboxCheckout({ credentials, externalSku, externalLocationId, quantity }) {
@@ -155,17 +159,16 @@ async function normalizeWebhook({ body, credentials }) {
     if (!payment || payment.status !== 'COMPLETED' || !payment.id || !payment.order_id) return [];
     const embedded = body.data?.object?.order;
     const order = embedded || (await api(credentials, `/v2/orders/${encodeURIComponent(payment.order_id)}`)).body.order;
-    return (order.line_items || []).filter((line) => line.catalog_object_id && Number(line.quantity) > 0).map((line, i) => ({
-      // Square can send both payment.created and payment.updated for one
-      // completed payment. The business event identity is the payment line,
-      // not the delivery ID; using it makes that provider lifecycle exactly-once.
-      eventId: `square-payment:${payment.id}:${i}`, type: 'sale.completed',
-      occurredAt: payment.created_at || payment.updated_at || occurredAt, aggregateId: order.id, data: { externalSku: line.catalog_object_id,
-        externalLocationId: payment.location_id || order.location_id, quantity: Number(line.quantity),
-        unitPriceMinor: Number.isSafeInteger(Number(line.base_price_money?.amount)) ? Number(line.base_price_money.amount) : undefined,
-        currency: line.base_price_money?.currency || payment.amount_money?.currency,
-        reference: `Square order ${order.id}` },
-    }));
+    requireVerified(order?.id===payment.order_id&&order.location_id===payment.location_id,'Square payment and order identities disagree.');
+    return [...orderEvents(order,eventId,occurredAt),{eventId:eventId+':payment',effectKey:facts.effectKey('square','payment',payment.id),type:'payment.reported',
+      aggregateId:order.id,occurredAt:payment.created_at||occurredAt,data:{externalOrderId:order.id,externalPaymentId:payment.id,amountMinor:payment.amount_money?.amount,currency:payment.amount_money?.currency}}];
+  }
+  if(type.startsWith('order.')){
+    const externalId=body.data?.object?.order_created?.order_id||body.data?.object?.order_updated?.order_id||body.data?.object?.order_fulfillment_updated?.order_id;
+    if(!externalId)throw new ValidationError('The Square order notification is missing its order identity.');
+    const order=(await api(credentials,'/v2/orders/'+encodeURIComponent(externalId))).body.order;
+    requireVerified(order?.id===externalId,'Square did not confirm that order.');
+    return orderEvents(order,eventId,occurredAt);
   }
   if (type.startsWith('catalog.')) return [{ eventId, type: 'product.changed', occurredAt,
     data: { catalogVersion: body.data?.object?.catalog_version?.updated_at || occurredAt } }];
@@ -189,6 +192,23 @@ async function normalizeWebhook({ body, credentials }) {
   }
   throw new ValidationError(`Square event ${type || '(missing)'} is not supported.`);
 }
+function orderEvents(order,delivery,at){
+ const occurredAt=order.updated_at||order.created_at||at,version=String(order.version||occurredAt||'');
+ if(!order.id||!version)throw new ValidationError('The Square order is missing a durable identity or version.');
+ if(order.state==='CANCELED')return [{eventId:delivery+':cancel',effectKey:facts.effectKey('square','order-cancel',order.id),type:'sales_order.cancelled',aggregateId:order.id,version,occurredAt,data:{externalOrderId:order.id,reason:'Cancelled in Square'}}];
+ if(!order.line_items?.length)return [{eventId:delivery+':notice',effectKey:facts.effectKey('square','order-notice',order.id,version),type:'fulfillment.reported',aggregateId:order.id,version,occurredAt,data:{externalOrderId:order.id,reference:'Square order contains no supported inventory lines'}}];
+ const fulfillments=order.fulfillments||[],methods=[...new Set(fulfillments.map(f=>({PICKUP:'PICKUP',IN_STORE:'PICKUP',SHIPMENT:'SHIP',DELIVERY:'DELIVERY'})[f.type]))];
+ if(methods.includes(undefined)||methods.length>1)throw new ValidationError('This Square order has unsupported or mixed fulfillment destinations. Reconcile its fulfillment scope before posting.');
+ const deliveryMethod=methods[0]||'PICKUP',recipient=fulfillments[0]?.shipment_details?.recipient||fulfillments[0]?.delivery_details?.recipient||fulfillments[0]?.pickup_details?.recipient,address=recipient?.address||{};
+ const shippingAddress=postalAddress({line1:address.address_line_1,line2:address.address_line_2,city:address.locality,region:address.administrative_district_level_1,postalCode:address.postal_code,country:address.country});
+ const data={externalOrderId:order.id,orderNumber:order.reference_id||undefined,sourceSnapshotComplete:true,externalLocationId:order.location_id,deliveryMethod,shippingAddress,customerEmail:recipient?.email_address,
+  customer:{externalId:order.customer_id||undefined,name:recipient?.display_name||(order.customer_id?'Square customer '+order.customer_id:'Square counter customer')},...facts.square(order)};
+ const events=[{eventId:delivery+':order',effectKey:facts.effectKey('square','order-snapshot',order.id,version),type:'sales_order.snapshot',aggregateId:order.id,version,occurredAt,data}];
+ // Payment is not handoff. Only a completed provider order with completed
+ // fulfillments can own the physical issue; every tender shares this identity.
+ if(order.state==='COMPLETED'&&(order.fulfillments||[]).every(f=>f.state==='COMPLETED'))events.push({eventId:delivery+':fulfilled',effectKey:facts.effectKey('square','order-fulfilled',order.id),type:'sales_order.fulfilled',aggregateId:order.id,version,occurredAt,data:{externalOrderId:order.id,fulfillmentMode:'cumulative',lines:data.lines.map(l=>({externalLineId:l.externalLineId,externalSku:l.externalSku,quantity:l.quantity,externalLocationId:order.location_id}))}});
+ return events;
+}
 
 async function historySummary({ credentials, since, locations = [] }) {
   let cursor = null; const orderIds = new Set();
@@ -204,4 +224,4 @@ async function historySummary({ credentials, since, locations = [] }) {
 }
 
 module.exports = { metadata, authorizationUrl, tryDirectAuthorization, exchangeAuthorization, discover,
-  registerWebhooks, verifyWebhook, normalizeWebhook, createSandboxCheckout, historySummary, api, API_VERSION };
+  registerWebhooks, verifyWebhook, normalizeWebhook, createSandboxCheckout, historySummary, api, orderEvents, API_VERSION };

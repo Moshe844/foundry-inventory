@@ -149,7 +149,7 @@ async function salesOrderPage(database,workspaceId,id){
   const lines=detail.lines.map((line)=>{
     const ordered=Number(line.quantity_ordered);const fulfilled=Number(line.quantity_fulfilled);const allocated=Number(line.allocated);
     return {...line,displayName:line.item_name+(line.variant_label?` / ${line.variant_label}`:''),
-      lineTotalMinor:line.unit_price_minor===null?null:ordered*Number(line.unit_price_minor),allocated,
+      lineTotalMinor:line.pricing_snapshot?.grossMinor??(line.unit_price_minor===null?null:ordered*Number(line.unit_price_minor)),allocated,
       backordered:Math.max(0,ordered-fulfilled-allocated),quantity_fulfilled:fulfilled,isKit:false,
       allocations:line.allocations.map((allocation)=>({...allocation,quantity:Number(allocation.quantity),
         location_name:allocation.location_name,kit_component_id:null}))};
@@ -164,7 +164,7 @@ async function salesOrderPage(database,workspaceId,id){
     customer_decision_required:Number(detail.order.customer_decision_required)===1,
     delivery_decision_required:Number(detail.order.delivery_decision_required)===1,
     pricing:{missingPriceLines:lines.filter((line)=>line.unit_price_minor===null).length,subtotalMinor,
-      discountMinor:Number(detail.order.discount_minor||0),taxMinor:Number(detail.order.tax_minor||0),totalMinor:detail.orderTotalMinor},
+      discountMinor:Number(detail.order.discount_minor||0),chargesMinor:Number(detail.order.charges_minor||0),taxMinor:Number(detail.order.tax_minor||0),totalMinor:detail.orderTotalMinor},
     events:detail.events.map((event)=>({...event,event_type:String(event.event_type||event.event||'updated').toUpperCase(),actor_name:null}))};
   const linesByShipment=new Map();
   for(const line of shipmentLines.rows){

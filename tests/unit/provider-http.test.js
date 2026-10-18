@@ -28,7 +28,7 @@ test('a POST without an idempotency key is never retried: the first attempt may 
   let calls = 0;
   const fetch = async () => { calls += 1; return response(502); };
   await assert.rejects(providerFetch('https://api.example.test/x', { method: 'POST', body: 'a=1' }, { provider: 'Example', fetch, sleep: noSleep }),
-    (err) => err instanceof ProviderUnavailableError && err.code === 'provider_unavailable' && err.status === 503 && err.httpStatus === 502 && /not working right now/.test(err.message));
+    (err) => err instanceof ProviderUnavailableError && err.code === 'provider_unavailable' && err.status === 503 && err.httpStatus === 502 && err.providerOutcomeUncertain===true && /outcome must be checked/.test(err.message));
   assert.equal(calls, 1);
 });
 
@@ -58,7 +58,13 @@ test('a dropped connection or a timeout ends as "could not be reached", after th
   assert.equal(calls, 3);
   const timeout = async () => { const e = new Error('The operation was aborted due to timeout'); e.name = 'TimeoutError'; throw e; };
   await assert.rejects(providerFetch('https://api.example.test/x', { method: 'POST' }, { provider: 'Example', fetch: timeout, sleep: noSleep }),
-    (err) => err instanceof ProviderUnavailableError && /could not be reached in time/.test(err.message));
+    (err) => err instanceof ProviderUnavailableError && /outcome must be verified/.test(err.message)&&err.providerOutcomeUncertain===true&&err.attempts===1);
+});
+test('a failed write never claims nothing changed and a typed admission refusal is not retried',async()=>{
+ const effects=require('../../src/operations/postgres-provider-effects');assert.equal(effects.definiteFailure({status:400}),true);assert.equal(effects.definiteFailure({status:400,providerOutcomeUncertain:true}),false,'A response-decoding failure after dispatch is not a provider refusal');
+ let attempts=0;await assert.rejects(providerFetch('https://api.example.test/x',{method:'POST'},{provider:'Example',fetch:async()=>{attempts++;return response(500);},sleep:noSleep}),e=>e instanceof ProviderUnavailableError&&e.providerOutcomeUncertain===true&&!/Nothing was changed/.test(e.message)&&e.httpStatus===500);assert.equal(attempts,1);
+ const denied=new(require('../../src/domain/errors').AuthorizationError)('Tenant denied');attempts=0;
+ await assert.rejects(providerFetch('https://api.example.test/x',{}, {provider:'Example',fetch:async()=>{attempts++;throw denied;},sleep:noSleep}),e=>e===denied);assert.equal(attempts,1);
 });
 
 test('429 honours Retry-After and reads as rate-limited, not refused', async () => {

@@ -35,6 +35,11 @@ function createPostgresOperationsRouter(database){
     return res.page('settings/postgres-provider-effect',{title:'Provider outcome review',nav:'settings',room:true,
       backTo:{href:'/needs-you',label:'Needs you'},effect});
   }));
+  router.post('/settings/operations/provider-effects/:id/verify',asyncRoute(async(req,res)=>{
+    try{await require('../../accounting/postgres-integration-sync').verifyExistingExport(database,req.ctx,req.params.id);req.flash('success','The existing provider record matches the canonical journal. Nothing was resent.');}
+    catch(error){req.flash('warn','Verification is still pending. No operation was resent. '+(Number(error.status)<500?error.message:'Try verifying again when the provider is available.'));}
+    return res.redirect(303,'/settings/operations/provider-effects/'+encodeURIComponent(req.params.id));
+  }));
   router.post('/settings/operations/jobs/:id/retry',asyncRoute(async(req,res)=>{
     const job=await jobs.retryDead(database,req.params.id,req.ctx.workspaceId,{by:req.user.id});
     if(!job)throw new NotFoundError('No dead-lettered job with that id belongs to this inventory.');

@@ -18,15 +18,15 @@ const {AuthenticationError}=require('../../src/domain/errors');
 const {newId,nowIso}=require('../../src/lib/util');
 
 const webhookSecret='shopify-postgres-webhook-secret';
-const signedAdapter={...shopify,verifyWebhook({headers,rawBody}){
-  const expected=crypto.createHmac('sha256',webhookSecret).update(rawBody).digest('base64');
-  if(headers['x-shopify-hmac-sha256']!==expected)throw new AuthenticationError('This webhook did not pass Shopify signature verification.');
-}};
+const signedAdapter=shopify;
 const providers={get(type){return type==='shopify'?signedAdapter:null;},catalog(){return [];}};
 const sign=(body)=>crypto.createHmac('sha256',webhookSecret).update(body).digest('base64');
 
 test('real Chromium qualifies signed Shopify order creation, fulfillment and cancellation on PostgreSQL',
   {timeout:180000},async(context)=>{
+    const oldSecret=process.env.SHOPIFY_CLIENT_SECRET,oldFetch=global.fetch;process.env.SHOPIFY_CLIENT_SECRET=webhookSecret;let providerRequests=0;
+    global.fetch=async(value,options)=>{const url=new URL(value);if(url.hostname==='127.0.0.1')return oldFetch(value,options);assert.equal(url.hostname,'shopify-store-1.myshopify.com','The wire fixture must never contact an actual store');providerRequests++;const id=JSON.parse(options.body).variables.id,node=/\/Order\/(1001|1002)$/.test(id)?{id}:id==='gid://shopify/Fulfillment/7001'?{id,order:{id:'gid://shopify/Order/1001'}}:null;return Response.json({data:{node}});};
+    context.after(()=>{global.fetch=oldFetch;if(oldSecret===undefined)delete process.env.SHOPIFY_CLIENT_SECRET;else process.env.SHOPIFY_CLIENT_SECRET=oldSecret;});
     const eventDay=new Date().toISOString().slice(0,10);
     const cluster=await startCluster();
     const database=openPostgres(cluster.connectionString,{applicationName:'stockchief-postgres-shopify-webhooks'});
@@ -68,21 +68,21 @@ test('real Chromium qualifies signed Shopify order creation, fulfillment and can
     [newId('cmap'),ctx.workspaceId,connectorId,entityType,externalId,foundryRecordId,ctx.actorId,at]);
     const endpoint=`${base}/api/v1/connections/shopify/webhooks/${connectorId}`;
     const send=async(body,topic,delivery,token=sign(body))=>fetch(endpoint,{method:'POST',headers:{'content-type':'application/json',
-      'x-shopify-topic':topic,'x-shopify-webhook-id':delivery,'x-shopify-hmac-sha256':token},body});
+      'x-shopify-topic':topic,'x-shopify-webhook-id':delivery,'x-shopify-shop-domain':'shopify-store-1.myshopify.com','x-shopify-hmac-sha256':token},body});
     const order=(id,quantity=2)=>({id,name:`#${id}`,created_at:`${eventDay}T12:00:00.000Z`,updated_at:`${eventDay}T12:00:00.000Z`,
       currency:'USD',location_id:44,email:`buyer-${id}@example.test`,customer:{id:77,first_name:'Sharon',last_name:'Buyer',
         email:`buyer-${id}@example.test`},shipping_address:{address1:'20 Main Street',city:'Monroe',province:'NY',zip:'10950',country_code:'US'},
-      line_items:[{variant_id:501,product_id:50,sku:'SHOP-BOTTLE',quantity,price:'15.00'}]});
+      line_items:[{id:id*10+1,variant_id:501,product_id:50,sku:'SHOP-BOTTLE',quantity,price:'15.00'}]});
     const createBody=JSON.stringify(order(1001));
     const created=await send(createBody,'orders/create','shopify-create-1001');
-    assert.equal(created.status,200,await created.clone().text());assert.equal((await created.json()).accepted,1);
+    assert.equal(created.status,202,await created.clone().text());assert.equal(providerRequests,0,'The signed HTTP acknowledgement must not wait for provider API reads');assert.equal((await require('../helpers/provider-webhook-worker').result(database,created,providers)).accepted,1);
     const mapped=(await database.query(`SELECT foundry_record_id FROM connection_mappings WHERE workspace_id=$1
       AND connector_id=$2 AND entity_type='sales_order' AND external_id='1001'`,[ctx.workspaceId,connectorId])).rows[0];
     assert.ok(mapped);
     const fulfillmentBody=JSON.stringify({id:7001,order_id:1001,location_id:44,created_at:`${eventDay}T13:00:00.000Z`,
-      updated_at:`${eventDay}T13:00:00.000Z`,line_items:[{variant_id:501,product_id:50,sku:'SHOP-BOTTLE',quantity:2}]});
+      updated_at:`${eventDay}T13:00:00.000Z`,line_items:[{id:10011,variant_id:501,product_id:50,sku:'SHOP-BOTTLE',quantity:2}]});
     const fulfilled=await send(fulfillmentBody,'fulfillments/create','shopify-fulfill-1001');
-    assert.equal(fulfilled.status,200);assert.equal((await fulfilled.json()).accepted,1);
+    assert.equal(fulfilled.status,202);assert.equal((await require('../helpers/provider-webhook-worker').result(database,fulfilled,providers)).accepted,1);
     assert.equal((await database.query('SELECT status FROM sales_orders WHERE workspace_id=$1 AND id=$2',
       [ctx.workspaceId,mapped.foundry_record_id])).rows[0].status,'FULFILLED');
     assert.equal(Number((await database.query(`SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3`,
@@ -92,13 +92,14 @@ test('real Chromium qualifies signed Shopify order creation, fulfillment and can
       [ctx.workspaceId,item.skuIds[0],location.id])).rows[0].on_hand),4);
     assert.equal((await send(createBody,'orders/create','shopify-forged','forged')).status,401);
 
-    const secondBody=JSON.stringify(order(1002,1));assert.equal((await send(secondBody,'orders/create','shopify-create-1002')).status,200);
+    const secondBody=JSON.stringify(order(1002,1)),secondResponse=await send(secondBody,'orders/create','shopify-create-1002');assert.equal(secondResponse.status,202);await require('../helpers/provider-webhook-worker').result(database,secondResponse,providers);
     const cancelBody=JSON.stringify({...order(1002,1),cancel_reason:'customer',updated_at:`${eventDay}T14:00:00.000Z`});
     const cancelled=await send(cancelBody,'orders/cancelled','shopify-cancel-1002');
-    assert.equal(cancelled.status,200);assert.equal((await cancelled.json()).accepted,1);
+    assert.equal(cancelled.status,202);assert.equal((await require('../helpers/provider-webhook-worker').result(database,cancelled,providers)).accepted,1);
     assert.equal((await database.query(`SELECT so.status FROM sales_orders so JOIN connection_mappings m ON m.foundry_record_id=so.id
       WHERE m.workspace_id=$1 AND m.connector_id=$2 AND m.entity_type='sales_order' AND m.external_id='1002'`,
     [ctx.workspaceId,connectorId])).rows[0].status,'CANCELLED');
+    const foreign=await send(JSON.stringify(order(2001,1)),'orders/create','wrong-store-record');assert.equal(foreign.status,202);const foreignResult=await require('../helpers/provider-webhook-worker').result(database,foreign,providers);assert.equal(foreignResult.processingStatus,'NEEDS_REVIEW');assert.equal(Number((await database.query("SELECT count(*) AS n FROM connection_mappings WHERE workspace_id=$1 AND connector_id=$2 AND entity_type='sales_order' AND external_id='2001'",[ctx.workspaceId,connectorId])).rows[0].n),0);
     await page.goto(`${base}/sales/orders/${mapped.foundry_record_id}`);
     assert.match(await page.locator('main').innerText(),/Fulfilled/i);assert.deepEqual(errors,[]);
   });

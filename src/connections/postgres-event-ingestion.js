@@ -1,6 +1,5 @@
 'use strict';
 
-const crypto=require('node:crypto');
 const {newId,nowIso,requireText,trimOrNull}=require('../lib/util');
 const {ValidationError,InvariantError}=require('../domain/errors');
 const inventory=require('../domain/postgres-inventory-engine');
@@ -9,6 +8,7 @@ const commerce=require('../operations/postgres-commerce');
 const jobs=require('../operations/postgres-job-queue');
 const commercialUsage=require('../entitlements/postgres-service');
 const commercialControl=require('../commercial/control-service');
+const facts=require('./commerce-facts');
 
 const MAX_BATCH=100;
 const LEGACY_MAX_BATCH=500;
@@ -19,11 +19,12 @@ const TYPES=Object.freeze({sale:'sale.completed',issue:'sale.completed','sale.co
   count:'inventory.adjust',adjust:'inventory.adjust',adjustment:'inventory.adjust','inventory.adjust':'inventory.adjust',
   transfer:'inventory.transfer','inventory.transfer':'inventory.transfer',
   return_reported:'return.reported','return.reported':'return.reported',
+  'fulfillment.reported':'fulfillment.reported','payment.reported':'payment.reported',
   'sales_order.created':'sales_order.created','sales_order.snapshot':'sales_order.snapshot',
   'sales_order.fulfilled':'sales_order.fulfilled','sales_order.cancelled':'sales_order.cancelled',
   'product.changed':'product.changed','location.changed':'location.changed'});
 
-function hash(value){return crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');}
+function hash(value){return facts.hash(value);}
 
 function normalize(input){
   if(!input||typeof input!=='object'||Array.isArray(input))throw new ValidationError('Each event must be an object.');
@@ -34,6 +35,8 @@ function normalize(input){
   const data=input.data&&typeof input.data==='object'&&!Array.isArray(input.data)?{...input.data}:{...input};
   for(const key of ['id','eventId','type','version','occurredAt','providerTimestamp','data'])delete data[key];
   return {eventId,type,sourceType:rawType,version:trimOrNull(input.version),
+    ...(input.effectKey?{effectKey:requireText(input.effectKey,'Business effect identity',{max:160})}:{}),
+    ...(input.aggregateId?{aggregateId:requireText(input.aggregateId,'External aggregate',{max:240})}:{}),
     occurredAt:trimOrNull(input.occurredAt||input.providerTimestamp),data};
 }
 
@@ -179,6 +182,7 @@ async function mapRecord(client,auth,entityType,externalId,foundryRecordId){
     VALUES($1,$2,$3,$4,$5,$6,'exact',$7,$8,$8)
     ON CONFLICT(workspace_id,connector_id,entity_type,external_id) DO NOTHING`,
   [newId('cmap'),auth.workspaceId,auth.connectorId,entityType,String(externalId),foundryRecordId,auth.actorId,at]);
+  await require('./postgres-provider-sync').resolveMappingIssues(client,{workspace_id:auth.workspaceId,id:auth.connectorId},entityType,String(externalId),at);
 }
 
 async function mappedRecord(client,auth,entityType,externalId){
@@ -219,19 +223,16 @@ async function customerFor(client,auth,event){
 async function pricedLines(client,auth,event){
   const source=Array.isArray(event.data.lines)?event.data.lines:[];
   if(!source.length)throw new ValidationError('A customer order needs at least one line.');
-  const totals=new Map();
+  const lines=[],identities=new Set();
   for(const line of source){
     const skuId=await requiredMapping(client,auth,event,'sku',line);
-    const count=quantity(line.quantity);const prior=totals.get(skuId);
-    totals.set(skuId,{skuId,quantity:count+(prior?.quantity||0),unitPriceMinor:line.unitPriceMinor??prior?.unitPriceMinor});
+    const count=quantity(line.quantity),identity=line.externalLineId||skuId;
+    if(identities.has(identity))throw new ValidationError('Distinct provider lines must have distinct external identities.');identities.add(identity);
+    if(line.unitPriceMinor===undefined||line.unitPriceMinor===null)throw new ValidationError('The actual provider price is missing. StockChief will not substitute the current catalogue price.');
+    if(!Number.isSafeInteger(line.unitPriceMinor)||line.unitPriceMinor<0)throw new ValidationError('The provider price must use exact non-negative minor units.');
+    lines.push({...line,skuId,quantity:count});
   }
-  for(const line of totals.values())if(line.unitPriceMinor===undefined||line.unitPriceMinor===null){
-    const price=await client.query(`SELECT amount_minor FROM sku_prices WHERE workspace_id=$1 AND sku_id=$2
-      AND amount_minor IS NOT NULL ORDER BY created_at DESC,id DESC LIMIT 1`,[auth.workspaceId,line.skuId]);
-    if(!price.rows.length)throw new ValidationError('A provider order line has no selling price. Add the price before retrying this event.');
-    line.unitPriceMinor=Number(price.rows[0].amount_minor);
-  }
-  return [...totals.values()];
+  return lines;
 }
 
 async function salesOrderFor(client,auth,event){
@@ -246,9 +247,13 @@ async function salesOrderFor(client,auth,event){
 async function applySalesOrder(client,auth,event){
   const ctx={workspaceId:auth.workspaceId,actorId:auth.actorId,acceptedSalesEvent:{connectorId:auth.connectorId,eventId:event.eventId}};const data=event.data;
   const externalOrderId=requireText(data.externalOrderId||data.orderId,'External order id',{max:160});
-  if(event.type==='sales_order.created'){
+  if(event.type==='sales_order.created'||event.type==='sales_order.snapshot'&&data.sourceSnapshotComplete===true&&!await mappedRecord(client,auth,'sales_order',externalOrderId)){
     const existing=await mappedRecord(client,auth,'sales_order',externalOrderId);
     if(existing)return {actionType:'sales_order.created',actionRecordId:existing,movementIds:[]};
+    // An upgraded connector must not issue stock a second time for an order
+    // previously imported through the old per-payment POS path.
+    const legacy=(await client.query("SELECT e.id FROM connector_feed_events e JOIN workspace_connectors c ON c.workspace_id=e.workspace_id AND c.id=e.connector_id WHERE e.workspace_id=$1 AND e.connector_id=$2 AND c.provider_type='square' AND e.status='COMPLETED' AND e.normalized_payload::jsonb->>'type'='sale.completed' AND e.normalized_payload::jsonb->'data'->>'reference'=$3 LIMIT 1",[auth.workspaceId,auth.connectorId,'Square order '+externalOrderId])).rows[0];
+    if(legacy)throw new ValidationError('This order was imported through the previous POS path. Reconcile its existing stock effects before linking a canonical order; no stock was deducted again.');
     const lines=await pricedLines(client,auth,event);const customerId=await customerFor(client,auth,event);
     let fulfillmentLocationId=null;
     if(data.externalLocationId||data.fulfillmentLocationExternalId||data.locationId||data.locationName){
@@ -261,8 +266,9 @@ async function applySalesOrder(client,auth,event){
       orderNumber:trimOrNull(data.orderNumber),orderDate:(event.occurredAt||nowIso()).slice(0,10),
       neededBy:data.neededBy,fulfillmentLocationId,deliveryMethod:data.deliveryMethod||'SHIP',
       shipToAddress:data.shippingAddress||data.customer?.shippingAddress,reference:`Source: ${auth.displayName}; ${externalOrderId}`,
-      notes:`External event ${event.eventId}.`,currency:data.currency||'USD',discountMinor:data.discountMinor||0,
-      taxMinor:data.taxMinor||0,idempotencyKey:`connector:${auth.connectorId}:${event.eventId}:create`});
+      notes:`External event ${event.eventId}.`,currency:data.currency||'USD',discountMinor:data.discountMinor??0,
+      taxMinor:data.taxMinor??0,recordedAmounts:data.recordedAmounts,sourceFinancials:data.sourceFinancials,orderCharges:data.orderCharges,
+      idempotencyKey:`connector:${auth.connectorId}:${event.effectKey||event.eventId}:create`});
     await mapRecord(client,auth,'sales_order',externalOrderId,created.salesOrderId);
     await workflows.confirmSalesOrderInTransaction(client,ctx,created.salesOrderId,
       {idempotencyKey:`connector:${auth.connectorId}:${event.eventId}:confirm`});
@@ -275,8 +281,18 @@ async function applySalesOrder(client,auth,event){
     return {actionType:'sales_order.cancelled',actionRecordId:cancelled.salesOrderId,movementIds:[]};
   }
   if(event.type==='sales_order.snapshot'){
-    const synced=await workflows.synchronizeSalesOrderInTransaction(client,ctx,order.id,{lines:await pricedLines(client,auth,event),discountMinor:data.discountMinor||0,taxMinor:data.taxMinor||0,
-      source:auth.displayName,idempotencyKey:`connector:${auth.connectorId}:${event.eventId}:snapshot`});
+    if(['FULFILLED','CANCELLED'].includes(order.status)){
+      const prior=(await client.query('SELECT external_line_id,sku_id,quantity_ordered,unit_price_minor,pricing_snapshot FROM sales_order_lines WHERE workspace_id=$1 AND sales_order_id=$2',[auth.workspaceId,order.id])).rows,next=await pricedLines(client,auth,event);
+      const unchanged=next.length===prior.length&&(!data.currency||data.currency===order.currency)&&Number(order.discount_minor||0)===Number(data.discountMinor??0)&&Number(order.tax_minor||0)===Number(data.taxMinor??0)&&Number(order.charges_minor||0)===facts.sum((data.orderCharges||[]).map(c=>c.amountMinor))&&next.every(line=>{
+        const matches=prior.filter(p=>p.sku_id===line.skuId&&(!line.externalLineId||p.external_line_id===line.externalLineId));if(matches.length!==1)return false;
+        const p=matches[0],snapshot=p.pricing_snapshot;return Number(p.quantity_ordered)===line.quantity&&Number(p.unit_price_minor)===line.unitPriceMinor&&(!data.recordedAmounts||snapshot?.grossMinor===line.grossMinor&&snapshot?.discountMinor===line.discountMinor&&(snapshot?.goodsTaxMinor??snapshot?.taxMinor)===line.taxMinor);
+      });
+      if(!unchanged)throw new ValidationError('The provider changed historical order amounts after completion. Reconcile the retained evidence; no completed transaction was rewritten.');
+      return {actionType:'sales_order.snapshot_unchanged',actionRecordId:order.id,movementIds:[]};
+    }
+    const synced=await workflows.synchronizeSalesOrderInTransaction(client,ctx,order.id,{currency:data.currency,lines:await pricedLines(client,auth,event),discountMinor:data.discountMinor??0,taxMinor:data.taxMinor??0,
+      recordedAmounts:data.recordedAmounts,sourceFinancials:data.sourceFinancials,orderCharges:data.orderCharges,
+      source:auth.displayName,idempotencyKey:`connector:${auth.connectorId}:${event.effectKey||event.eventId}:snapshot`});
     return {actionType:'sales_order.changed',actionRecordId:synced.salesOrderId,movementIds:[]};
   }
   if(order.status==='FULFILLED')return {actionType:'sales_order.fulfilled',actionRecordId:order.id,movementIds:[]};
@@ -286,9 +302,12 @@ async function applySalesOrder(client,auth,event){
   if(supplied.length){
     for(const external of supplied){
       const skuId=await requiredMapping(client,auth,event,'sku',external);
-      const line=orderLines.find((row)=>row.sku_id===skuId);
+      const matches=orderLines.filter(row=>row.sku_id===skuId&&(!external.externalLineId||row.external_line_id===external.externalLineId));
+      if(matches.length>1)throw new ValidationError('The provider fulfillment must identify its exact external order line.');
+      const line=matches[0];
       if(!line)throw new ValidationError('The provider fulfillment contains a product that is not on this Sales Order.');
       let remaining=quantity(external.quantity);
+      if(data.fulfillmentMode==='cumulative'){remaining-=Number(line.quantity_fulfilled);if(remaining<0)throw new ValidationError('A cumulative fulfillment cannot remove already fulfilled units.');if(!remaining)continue;}
       const allocations=(await client.query(`SELECT * FROM sales_order_allocations WHERE workspace_id=$1
         AND sales_order_line_id=$2 ORDER BY created_at,id FOR UPDATE`,[auth.workspaceId,line.id])).rows;
       for(const allocation of allocations){if(!remaining)break;const count=Math.min(remaining,Number(allocation.quantity));
@@ -302,9 +321,9 @@ async function applySalesOrder(client,auth,event){
     for(const allocation of allocations)requested.push({lineId:allocation.sales_order_line_id,
       locationId:allocation.location_id,quantity:Number(allocation.quantity)});
   }
-  if(!requested.length)throw new ValidationError('The provider says this order was fulfilled, but StockChief has no committed stock to issue.');
+  if(!requested.length){if(data.fulfillmentMode==='cumulative')return {actionType:'sales_order.fulfilled',actionRecordId:order.id,movementIds:[]};throw new ValidationError('The provider says this order was fulfilled, but StockChief has no committed stock to issue.');}
   const fulfilled=await workflows.fulfillSalesOrderInTransaction(client,ctx,order.id,{lines:requested,
-    fulfilledAt:event.occurredAt||nowIso(),idempotencyKey:`connector:${auth.connectorId}:${event.eventId}:fulfill`});
+    fulfilledAt:event.occurredAt||nowIso(),idempotencyKey:`connector:${auth.connectorId}:${event.effectKey||event.eventId}:fulfill`});
   return {actionType:'sales_order.fulfilled',actionRecordId:order.id,
     movementIds:fulfilled.lines.map((line)=>line.movementId).filter(Boolean)};
 }
@@ -314,26 +333,69 @@ function missingMappingError(missing){
   return new ValidationError('The location in that feed event was not found or was not unique.');
 }
 
+function compareVersion(a,b){
+  if(a==null||b==null)return 0;
+  if(/^\d+$/.test(String(a))&&/^\d+$/.test(String(b))){const left=BigInt(a),right=BigInt(b);return left<right?-1:left>right?1:0;}
+  if(/^\d{4}-\d\d-\d\dT/.test(String(a))&&/^\d{4}-\d\d-\d\dT/.test(String(b))){const left=Date.parse(a),right=Date.parse(b);if(Number.isFinite(left)&&Number.isFinite(right))return Math.sign(left-right);}
+  return 0;
+}
+
+async function persistIntegrityConflict(client,auth,event,contentHash,reason){
+  await client.query(`INSERT INTO connection_event_conflicts(id,workspace_id,connector_id,delivery_id,effect_key,content_hash,evidence,reason) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8) ON CONFLICT(workspace_id,connector_id,delivery_id,content_hash) DO NOTHING`,[newId('ceconflict'),auth.workspaceId,auth.connectorId,event.eventId,event.effectKey||null,contentHash,JSON.stringify(event),reason]);
+  const at=nowIso(),fingerprint='event-conflict:'+auth.connectorId+':'+event.eventId;
+  await client.query(`INSERT INTO connection_issues(id,workspace_id,connector_id,external_event_id,issue_type,fingerprint,title,detail,resolution_hint,candidate_matches,status,created_at,updated_at) VALUES($1,$2,$3,$4,'EVENT_IDENTITY_CONFLICT',$5,$6,$7,$8,'[]','OPEN',$9,$9) ON CONFLICT(workspace_id,fingerprint) DO UPDATE SET status='OPEN',resolved_at=NULL,updated_at=EXCLUDED.updated_at`,[newId('conissue'),auth.workspaceId,auth.connectorId,event.eventId,fingerprint,'Conflicting provider event needs reconciliation',reason,'Compare the retained provider evidence with the existing effect before authorizing any correction.',at]);
+}
+
+async function recordDelivery(client,auth,event,contentHash){
+  await client.query(`INSERT INTO connection_event_deliveries(workspace_id,connector_id,delivery_id,effect_key,content_hash) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,[auth.workspaceId,auth.connectorId,event.eventId,event.effectKey,contentHash]);
+  const row=(await client.query('SELECT effect_key,content_hash FROM connection_event_deliveries WHERE workspace_id=$1 AND connector_id=$2 AND delivery_id=$3',[auth.workspaceId,auth.connectorId,event.eventId])).rows[0];
+  if(row.effect_key!==event.effectKey||row.content_hash!==contentHash)throw Object.assign(new Error('A concurrent provider delivery must be reconciled.'),{code:'40001'});
+}
+
 async function ingest(database,auth,raw,options={}){
-  const event=normalize(raw);const payloadHash=hash(raw);const receivedAt=nowIso();
-  return database.transaction(async(client)=>{
+  const event=normalize(raw);const payloadHash=event.effectKey?hash({type:event.type,data:event.data}):hash(raw);const receivedAt=nowIso();
+  const outcome=await database.transaction(async(client)=>{
+    const connection=(await client.query('SELECT id FROM workspace_connectors WHERE workspace_id=$1 AND id=$2',[auth.workspaceId,auth.connectorId])).rows[0];
+    if(!connection)throw new ValidationError('That connection does not belong to this business.');
+    if(event.effectKey){
+      const delivered=(await client.query('SELECT effect_key,content_hash FROM connection_event_deliveries WHERE workspace_id=$1 AND connector_id=$2 AND delivery_id=$3',[auth.workspaceId,auth.connectorId,event.eventId])).rows[0];
+      if(delivered&&(delivered.effect_key!==event.effectKey||delivered.content_hash!==payloadHash)){
+        const error='That provider delivery identity was reused for different evidence. No effect was repeated.';
+        await persistIntegrityConflict(client,auth,event,payloadHash,error);return {integrityConflict:true,error};
+      }
+    }
+    const aggregate=event.aggregateId||event.data.externalOrderId||event.data.orderId||event.effectKey||event.eventId;
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1),hashtext($2))',[auth.workspaceId,auth.connectorId+':'+aggregate]);
     const inserted=await client.query(`INSERT INTO connector_feed_events
       (id,workspace_id,connector_id,external_event_id,event_type,payload,status,movement_ids,external_version,
-       payload_hash,normalized_payload,attempt_count,last_attempt_at,occurred_at,received_at,processed_at)
-      VALUES($1,$2,$3,$4,$5,$6,'PROCESSING','[]',$7,$8,$9,1,$10,$11,$10,$10)
-      ON CONFLICT(workspace_id,connector_id,external_event_id) DO NOTHING RETURNING id`,
+       payload_hash,normalized_payload,attempt_count,last_attempt_at,occurred_at,received_at,processed_at,effect_key)
+      VALUES($1,$2,$3,$4,$5,$6,'PROCESSING','[]',$7,$8,$9,1,$10,$11,$10,$10,$12)
+      ON CONFLICT DO NOTHING RETURNING id`,
     [newId('cevt'),auth.workspaceId,auth.connectorId,event.eventId,event.type,JSON.stringify(raw),event.version,
-      payloadHash,JSON.stringify(event),receivedAt,event.occurredAt]);
+      payloadHash,JSON.stringify(event),receivedAt,event.occurredAt,event.effectKey||null]);
     if(!inserted.rows.length){
-      const prior=(await client.query(`SELECT * FROM connector_feed_events WHERE workspace_id=$1 AND connector_id=$2
-        AND external_event_id=$3 FOR UPDATE`,[auth.workspaceId,auth.connectorId,event.eventId])).rows[0];
-      if(prior.payload_hash!==payloadHash)throw new InvariantError('That external event id was already used for different evidence.','external_event_conflict');
+      const priors=(await client.query(`SELECT * FROM connector_feed_events WHERE workspace_id=$1 AND connector_id=$2
+        AND (external_event_id=$3 OR ($4::text IS NOT NULL AND effect_key=$4)) FOR UPDATE`,[auth.workspaceId,auth.connectorId,event.eventId,event.effectKey||null])).rows;
+      const prior=priors[0];
+      if(priors.length!==1||prior.payload_hash!==payloadHash||(prior.effect_key||null)!==(event.effectKey||null)){
+        const error='That external event identity was already used for different evidence. No effect was repeated.';
+        await persistIntegrityConflict(client,auth,event,payloadHash,error);
+        return {integrityConflict:true,error};
+      }
+      if(event.effectKey)await recordDelivery(client,auth,event,payloadHash);
       if(['COMPLETED','IGNORED'].includes(prior.status))return {accepted:true,replayed:true,status:prior.status,eventId:event.eventId,
         movementIds:prior.movement_ids||[]};
-      if(['NEEDS_MAPPING','REJECTED','FAILED','STALE'].includes(prior.status))return {accepted:false,replayed:true,
+      if(prior.status==='NEEDS_MAPPING'&&options.retryMapped===true){
+        // A different delivery may resolve the same held business effect.
+        // Execute against the original durable receipt, including its ID,
+        // rather than inventing an approval/pricing source for the new delivery.
+        Object.assign(event,normalize(typeof prior.normalized_payload==='string'?JSON.parse(prior.normalized_payload):prior.normalized_payload));
+        await client.query("UPDATE connector_feed_events SET status='PROCESSING',attempt_count=attempt_count+1,last_attempt_at=$4 WHERE workspace_id=$1 AND connector_id=$2 AND external_event_id=$3",[auth.workspaceId,auth.connectorId,event.eventId,receivedAt]);
+      }else if(['NEEDS_MAPPING','REJECTED','FAILED','STALE'].includes(prior.status))return {accepted:false,replayed:true,
         status:prior.status,eventId:event.eventId,movementIds:[],error:prior.error_message};
-      throw new InvariantError('That external event is already being processed.','event_in_progress');
+      else throw new InvariantError('That external event is already being processed.','event_in_progress');
     }
+    if(event.effectKey)await recordDelivery(client,auth,event,payloadHash);
     const owner=(await client.query(`SELECT workspace.owner_account_id,connector.provider_type
       FROM workspaces workspace LEFT JOIN workspace_connectors connector
         ON connector.workspace_id=workspace.id AND connector.id=$2 WHERE workspace.id=$1`,
@@ -347,16 +409,16 @@ async function ingest(database,auth,raw,options={}){
       workspaceId:auth.workspaceId},{provider:owner.provider_type||'commerce_connector',operation:'event_ingestion',unit:'event',
       quantity:1,idempotencyKey:`event:${auth.connectorId}:${event.eventId}`,occurredAt:receivedAt,
       detail:{eventType:event.type,connectorId:auth.connectorId}});
-    if(event.type==='return.reported'){
-      await persistReturnReview(client,auth,event);
+    if(['return.reported','fulfillment.reported','payment.reported'].includes(event.type)){
+      if(event.type==='return.reported')await persistReturnReview(client,auth,event);
       const processedAt=nowIso();
-      await client.query(`UPDATE connector_feed_events SET status='IGNORED',action_type='return.review_required',
+      await client.query(`UPDATE connector_feed_events SET status='IGNORED',action_type=$6,
         action_record_id=NULL,error_message=$2,processed_at=$3 WHERE workspace_id=$1 AND connector_id=$4
           AND external_event_id=$5`,[auth.workspaceId,
-        'Financial refund recorded; physical return requires confirmation.',processedAt,auth.connectorId,event.eventId]);
+        event.type==='return.reported'?'Financial refund recorded; physical return requires confirmation.':null,processedAt,auth.connectorId,event.eventId,event.type==='return.reported'?'return.review_required':'provider.observation_recorded']);
       await client.query(`UPDATE workspace_connectors SET last_activity_at=$3,last_synced_at=$3,last_error=NULL,updated_at=$3
         WHERE workspace_id=$1 AND id=$2`,[auth.workspaceId,auth.connectorId,processedAt]);
-      return {accepted:true,replayed:false,status:'IGNORED',eventId:event.eventId,movementIds:[],requiresReview:true};
+      return {accepted:true,replayed:false,status:'IGNORED',eventId:event.eventId,movementIds:[],requiresReview:event.type==='return.reported'};
     }
     if(event.type==='product.changed'||event.type==='location.changed'){
       const scheduled=await jobs.enqueue(scopedDatabase(client),{workspaceId:auth.workspaceId,kind:'provider.catalog-sync',
@@ -372,9 +434,18 @@ async function ingest(database,auth,raw,options={}){
         refreshScheduled:true,refreshJobId:scheduled.job.id};
     }
     if(event.type.startsWith('sales_order.')){
+      if(event.type==='sales_order.snapshot'&&event.version){
+        const latest=(await client.query(`SELECT external_version FROM connector_feed_events WHERE workspace_id=$1 AND connector_id=$2 AND status='COMPLETED' AND event_type IN ('sales_order.created','sales_order.snapshot') AND normalized_payload::jsonb->'data'->>'externalOrderId'=$3 ORDER BY processed_at DESC,id DESC LIMIT 1`,[auth.workspaceId,auth.connectorId,String(event.data.externalOrderId||event.data.orderId)])).rows[0];
+        if(latest&&compareVersion(event.version,latest.external_version)<0){
+          await client.query(`UPDATE connector_feed_events SET status='IGNORED',action_type='provider.stale_snapshot',error_message=$4 WHERE workspace_id=$1 AND connector_id=$2 AND external_event_id=$3`,[auth.workspaceId,auth.connectorId,event.eventId,'Older provider snapshot retained without rewriting current business state.']);
+          return {accepted:true,replayed:false,status:'IGNORED',eventId:event.eventId,movementIds:[],stale:true};
+        }
+      }
       let result;
-      try{result=await applySalesOrder(client,auth,event);}catch(error){
+      await client.query('SAVEPOINT provider_sales_apply');
+      try{result=await applySalesOrder(client,auth,event);await client.query('RELEASE SAVEPOINT provider_sales_apply');}catch(error){
         if(!(error instanceof MappingNeeded))throw error;
+        await client.query('ROLLBACK TO SAVEPOINT provider_sales_apply');
         await persistIssue(client,auth,event,error.missing);
         await client.query(`UPDATE connector_feed_events SET status='NEEDS_MAPPING',error_message=$2,processed_at=$3
           WHERE workspace_id=$1 AND connector_id=$4 AND external_event_id=$5`,[auth.workspaceId,
@@ -450,6 +521,8 @@ async function ingest(database,auth,raw,options={}){
       WHERE workspace_id=$1 AND id=$2`,[auth.workspaceId,auth.connectorId,nowIso()]);
     return {accepted:true,replayed:false,status:'COMPLETED',eventId:event.eventId,movementIds};
   },{isolation:'SERIALIZABLE',retrySafe:true});
+  if(outcome.integrityConflict)throw new InvariantError(outcome.error,'external_event_conflict');
+  return outcome;
 }
 
 async function recordLegacyRejection(database,auth,raw,error){

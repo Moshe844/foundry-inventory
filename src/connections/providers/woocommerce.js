@@ -3,6 +3,8 @@
 const crypto = require('node:crypto');
 const { ValidationError } = require('../../domain/errors');
 const { safeEqual, hmacBase64, requireVerified, normalizeStoreUrl, jsonRequest, postalAddress } = require('./common');
+const money = require('../../domain/currency');
+const facts = require('../commerce-facts');
 
 function metadata() {
   return { type: 'woocommerce', name: 'WooCommerce', mark: 'Woo', category: 'selling', authMode: 'application_auth', available: true,
@@ -34,11 +36,13 @@ function credentialsFromCallback(body, metadata) {
 
 async function api(credentials, path, options = {}) {
   const auth = Buffer.from(`${credentials.consumerKey}:${credentials.consumerSecret}`).toString('base64');
-  return jsonRequest(`${credentials.storeUrl}/wp-json/wc/v3${path}`, { ...options,
+  return jsonRequest(`${credentials.storeUrl}/wp-json/wc/v3${path}`, { ...options,selfHostedStore:true,
     headers: { authorization: `Basic ${auth}`, 'content-type': 'application/json', ...(options.headers || {}) } });
 }
 
 async function discover({ credentials }) {
+  const currency=money.code((await api(credentials,'/settings/general/woocommerce_currency')).body.value);
+  const priceMoney=value=>String(value??'').trim()===''?null:{amount:money.toMinor(value,currency),currency};
   const products = [];
   for (let page = 1; ; page += 1) {
     const response = await api(credentials, `/products?per_page=100&page=${page}`);
@@ -53,9 +57,7 @@ async function discover({ credentials }) {
             displayName: `${product.name}${variant.attributes?.length ? ` / ${variant.attributes.map((a) => a.option).join(' / ')}` : ''}`,
             providerData: { status: variant.status, itemName: product.name,
               variationName: variant.attributes?.map((a) => a.option).join(' / ') || null,
-              priceMoney: String(variant.price ?? '').trim() && Number.isFinite(Number(variant.price))
-                ? { amount: Math.round(Number(variant.price) * 100), currency: product.currency || 'USD' }
-                : null,
+              priceMoney:priceMoney(variant.price),
               inventoryCounts: variant.manage_stock && Number.isInteger(Number(variant.stock_quantity))
                 ? [{ externalLocationId: credentials.storeUrl, state: 'IN_STOCK', quantity: Number(variant.stock_quantity) }]
                 : [] } });
@@ -65,9 +67,7 @@ async function discover({ credentials }) {
       } else products.push({ entityType: 'sku', externalId: String(product.id), code: product.sku || null,
         displayName: product.name, providerData: { status: product.status, itemName: product.name,
           variationName: null,
-          priceMoney: String(product.price ?? '').trim() && Number.isFinite(Number(product.price))
-            ? { amount: Math.round(Number(product.price) * 100), currency: product.currency || 'USD' }
-            : null,
+          priceMoney:priceMoney(product.price),
           inventoryCounts: product.manage_stock && Number.isInteger(Number(product.stock_quantity))
             ? [{ externalLocationId: credentials.storeUrl, state: 'IN_STOCK', quantity: Number(product.stock_quantity) }]
             : [] } });
@@ -122,44 +122,39 @@ function verifyWebhook({ headers, rawBody, credentials }) {
   requireVerified(safeEqual(headers['x-wc-webhook-signature'], expected), 'This webhook did not pass WooCommerce signature verification.');
 }
 
-function lines(order) {
-  return (order.line_items || []).filter((line) => Number(line.quantity) > 0).map((line) => ({
-    externalSku: String(line.variation_id || line.product_id), skuCode: line.sku || undefined,
-    quantity: Number(line.quantity), unitPriceMinor: line.price ? Math.round(Number(line.price) * 100) : undefined,
-  }));
-}
-
-function normalizeWebhook({ headers, body, connection }) {
+function normalizeNotification({ headers, body, connection }) {
   const topic = String(headers['x-wc-webhook-topic'] || `${headers['x-wc-webhook-resource']}.${headers['x-wc-webhook-event']}`).toLowerCase();
   const delivery = String(headers['x-wc-webhook-delivery-id'] || headers['x-wc-delivery-id'] || `${topic}:${body.id}:${body.date_modified_gmt || body.date_created_gmt}`);
   const occurredAt = body.date_modified_gmt || body.date_created_gmt;
   const version = occurredAt;
-  const orderData = { externalOrderId: String(body.id), orderNumber: body.number,
+  const orderData = { externalOrderId: String(body.id), orderNumber: body.number,sourceSnapshotComplete:true,
       customer: { externalId: body.customer_id ? String(body.customer_id) : undefined,
         name: [body.billing?.first_name, body.billing?.last_name].filter(Boolean).join(' ') || body.billing?.email || 'WooCommerce customer' },
       shippingAddress: postalAddress({ line1: body.shipping?.address_1, line2: body.shipping?.address_2,
         city: body.shipping?.city, region: body.shipping?.state, postalCode: body.shipping?.postcode, country: body.shipping?.country }),
       customerEmail: body.billing?.email,
-      externalLocationId: connection?.config?.storeUrl || undefined, currency: body.currency, lines: lines(body) };
-  const event = (suffix, type, data = orderData) => ({ eventId: `${delivery}:${suffix}`, type, version, occurredAt,
+      externalLocationId: connection?.config?.storeUrl || undefined,
+      ...(['order.created','order.updated'].includes(topic)?facts.woocommerce(body):{}) };
+  const event = (suffix, type, data = orderData) => ({ eventId: `${delivery}:${suffix}`,
+    effectKey:facts.effectKey('woocommerce',suffix,body.id,...(suffix==='snapshot'?[version]:[])), type, version, occurredAt,
     aggregateId: String(body.id), data });
   if (topic === 'order.created') {
     const created = event('created', 'sales_order.created');
-    if (body.status === 'completed') return [created, event('fulfilled', 'sales_order.fulfilled', orderData)];
+    if (body.status === 'completed') return [created, event('fulfilled', 'sales_order.fulfilled', {...orderData,fulfillmentMode:'cumulative'})];
     if (['cancelled', 'failed'].includes(body.status)) return [created, event('cancelled', 'sales_order.cancelled', {
       externalOrderId: String(body.id), reason: `WooCommerce status: ${body.status}` })];
     return [created];
   }
   if (topic === 'order.updated') {
     if (body.status === 'completed') return [event('snapshot', 'sales_order.snapshot'),
-      event('fulfilled', 'sales_order.fulfilled', orderData)];
+      event('fulfilled', 'sales_order.fulfilled', {...orderData,fulfillmentMode:'cumulative'})];
     if (['cancelled', 'failed'].includes(body.status)) return [event('cancelled', 'sales_order.cancelled', {
       externalOrderId: String(body.id), reason: `WooCommerce status: ${body.status}` })];
     if (body.status === 'refunded') {
       const refunds = Array.isArray(body.refunds) && body.refunds.length ? body.refunds : [{ id: `order-${body.id}` }];
       const reported = refunds.map((refund) => event(`refund-${refund.id}`, 'return.reported', {
-        externalOrderId: String(body.id), refundId: String(refund.id), amountMinor: refund.total
-          ? Math.round(Math.abs(Number(refund.total)) * 100) : undefined,
+        externalOrderId: String(body.id), refundId: String(refund.id), currency:body.currency,
+        amountMinor:refund.total==null?undefined:Math.abs(money.toMinor(refund.total,body.currency,{signed:true})),
         reason: refund.reason || 'WooCommerce reported a financial refund; physical stock requires confirmation.',
       }));
       return body.date_completed_gmt ? reported : [event('cancelled', 'sales_order.cancelled', {
@@ -173,6 +168,20 @@ function normalizeWebhook({ headers, body, connection }) {
   if (topic.startsWith('product.')) return [{ eventId: `${delivery}:product`, type: 'product.changed', version, occurredAt,
     data: { externalProductId: String(body.id), name: body.name, sku: body.sku } }];
   throw new ValidationError(`WooCommerce topic ${topic || '(missing)'} is not supported.`);
+}
+function normalizeWebhook(input){
+ const events=normalizeNotification(input),{body,headers}=input,topic=String(headers['x-wc-webhook-topic']||'');
+ if(!['order.created','order.updated'].includes(topic))return events;
+ // Woo sends partially refunded orders as completed/processing as well.
+ // Financial refunds are independent observations, never physical receipts.
+ for(const refund of body.refunds||[]){
+  const key=facts.effectKey('woocommerce','refund-'+refund.id,body.id);
+  if(events.some(e=>e.effectKey===key))continue;
+  events.push({eventId:String(headers['x-wc-webhook-delivery-id']||body.id)+':refund-'+refund.id,effectKey:key,type:'return.reported',
+   aggregateId:String(body.id),occurredAt:body.date_modified_gmt,data:{externalOrderId:String(body.id),refundId:String(refund.id),currency:body.currency,
+    amountMinor:refund.total==null?undefined:Math.abs(money.toMinor(refund.total,body.currency,{signed:true})),reason:refund.reason||'WooCommerce reported a financial refund; physical stock requires confirmation.'}});
+ }
+ return events;
 }
 
 module.exports = { metadata, validateInput, authorizationUrl, credentialsFromCallback, discover, registerWebhooks,

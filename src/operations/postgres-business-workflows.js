@@ -602,10 +602,10 @@ async function createSalesOrderInTransaction(client, rawContext, input) {
       if(quote.lines[index]?.skuId!==line.skuId||quote.lines[index]?.quantity!==Number(line.quantity))throw new ValidationError('The pricing quote must match every exact order line.');
       const lineId = newId('sol'); lineIds.push(lineId);
       await client.query(`INSERT INTO sales_order_lines
-        (id,workspace_id,sales_order_id,sku_id,quantity_ordered,quantity_fulfilled,unit_price_minor,notes,created_at,updated_at)
-        VALUES($1,$2,$3,$4,$5,0,$6,$7,$8,$8)`,
+        (id,workspace_id,sales_order_id,sku_id,quantity_ordered,quantity_fulfilled,unit_price_minor,notes,created_at,updated_at,external_line_id)
+        VALUES($1,$2,$3,$4,$5,0,$6,$7,$8,$8,$9)`,
       [lineId, ctx.workspaceId, id, line.skuId, positiveInteger(line.quantity, `Sales-order line ${index + 1} quantity`),
-        quote.lines[index].unitPriceMinor, trimOrNull(line.notes), at]);
+        quote.lines[index].unitPriceMinor, trimOrNull(line.notes), at, trimOrNull(line.externalLineId)]);
     }
     await promotions.saveQuote(client,ctx,id,quote,lineIds);
     await event(client, 'sales_order_events', null, { workspaceId: ctx.workspaceId, recordId: id,
@@ -726,13 +726,18 @@ async function fulfillSalesOrderInTransaction(client, rawContext, salesOrderId, 
         snapshot=legacy.lines[original.findIndex(r=>r.id===line.id)];
       }
       if(snapshot.quantity!==Number(line.quantity_ordered)||snapshot.unitPriceMinor!==Number(line.unit_price_minor))throw new ValidationError('The order pricing snapshot no longer matches its line. Review pricing before fulfillment.');
-      const before=Number(line.quantity_fulfilled),grossMinor=priceCalculator.portion(snapshot.grossMinor,snapshot.quantity,before,quantity),discountMinor=priceCalculator.portion(snapshot.discountMinor,snapshot.quantity,before,quantity),taxMinor=priceCalculator.portion(snapshot.taxMinor,snapshot.quantity,before,quantity),revenueMinor=grossMinor-discountMinor,totalMinor=revenueMinor+taxMinor;
+      const before=Number(line.quantity_fulfilled);
+      if(before&&snapshot.allocationVersion!==2){
+        const historical=(await client.query(`SELECT coalesce(sum((metadata::jsonb->>'grossMinor')::bigint),0) AS gross,coalesce(sum((metadata::jsonb->>'discountMinor')::bigint),0) AS discount,coalesce(sum((metadata::jsonb->>'taxMinor')::bigint),0) AS tax,coalesce(sum((metadata::jsonb->>'revenueMinor')::bigint),0) AS revenue FROM accounting_journal_entries WHERE workspace_id=$1 AND source_type='sale_fulfillment' AND metadata::jsonb->>'salesOrderLineId'=$2`,[ctx.workspaceId,line.id])).rows[0],expected=priceCalculator.monetaryPortion(snapshot,snapshot.quantity,0,before);
+        if([['grossMinor','gross'],['discountMinor','discount'],['taxMinor','tax'],['revenueMinor','revenue']].some(([k,c])=>expected[k]!==Number(historical[c])))throw new ValidationError('The historical partial amounts need reconciliation before more units can be fulfilled. No earlier transaction was rewritten.');
+      }
+      const {grossMinor,discountMinor,taxMinor,chargesMinor,chargeTaxMinor,revenueMinor,totalMinor}=priceCalculator.monetaryPortion(snapshot,snapshot.quantity,before,quantity);
       const posted = await ledger.postInTransaction(client, ctx, {
         postingDate: at.slice(0, 10), sourceKey: `sales-fulfillment:${input.idempotencyKey}:${line.id}:${requested.locationId}`,
         description: `Fulfill ${quantity} units on ${order.order_number}`, sourceType: 'sale_fulfillment',
         sourceRecordType: 'sales_order', sourceRecordId: salesOrderId, currency: order.currency,
         metadata: { movementId: physical.movementId, salesOrderId, salesOrderLineId: line.id,
-          revenueMinor, grossMinor,discountMinor,taxMinor,totalMinor,quantity,cogsMinor: preparedCost.totalCostMinor },
+          allocationVersion:2,revenueMinor, grossMinor,discountMinor,taxMinor,chargesMinor,chargeTaxMinor,totalMinor,quantity,cogsMinor: preparedCost.totalCostMinor },
         lines: [
           { accountKey: 'ACCOUNTS_RECEIVABLE', debitMinor: totalMinor, customerId: order.customer_id,
             itemId: line.item_id, skuId: line.sku_id, locationId: requested.locationId },
@@ -756,7 +761,7 @@ async function fulfillSalesOrderInTransaction(client, rawContext, salesOrderId, 
       await client.query(`UPDATE sales_order_lines SET quantity_fulfilled=quantity_fulfilled+$2,updated_at=$3 WHERE id=$1`,
         [line.id, quantity, nowIso()]);
       fulfilled.push({ lineId: line.id, quantity, locationId: requested.locationId,
-        movementId: physical.movementId, revenueMinor,grossMinor,discountMinor,taxMinor,totalMinor,unitPriceMinor:Number(line.unit_price_minor),costMinor: preparedCost.totalCostMinor,
+        movementId: physical.movementId, revenueMinor,grossMinor,discountMinor,taxMinor,chargesMinor,chargeTaxMinor,totalMinor,unitPriceMinor:Number(line.unit_price_minor),costMinor: preparedCost.totalCostMinor,
         journalEntryId: posted.entry.id });
     }
     const outstanding = await client.query(`SELECT COUNT(*) FILTER (WHERE quantity_fulfilled < quantity_ordered) AS open
@@ -782,20 +787,20 @@ async function fulfillSalesOrderInTransaction(client, rawContext, salesOrderId, 
     const revenueAccount = await accountId(client, ctx.workspaceId, 'SALES_REVENUE');
     const count = await client.query(`SELECT COUNT(*) AS count FROM accounting_customer_invoice_lines WHERE invoice_id=$1`, [invoice.id]);
     let lineNumber = Number(count.rows[0].count);
-    let fulfillmentTotal = 0,fulfillmentGross=0,fulfillmentDiscount=0,fulfillmentTax=0;
+    let fulfillmentTotal = 0,fulfillmentGross=0,fulfillmentDiscount=0,fulfillmentTax=0,fulfillmentCharges=0;
     for (const line of fulfilled) {
-      lineNumber += 1; fulfillmentTotal += line.totalMinor;fulfillmentGross+=line.grossMinor;fulfillmentDiscount+=line.discountMinor;fulfillmentTax+=line.taxMinor;
+      lineNumber += 1; fulfillmentTotal += line.totalMinor;fulfillmentGross+=line.grossMinor;fulfillmentDiscount+=line.discountMinor;fulfillmentTax+=line.taxMinor;fulfillmentCharges+=line.chargesMinor;
       await client.query(`INSERT INTO accounting_customer_invoice_lines
         (id,workspace_id,invoice_id,line_number,description,quantity,unit_price_minor,line_total_minor,
-         revenue_account_id,sku_id,sales_order_line_id,created_at,pricing_snapshot)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb)`,
+         revenue_account_id,sku_id,sales_order_line_id,created_at,pricing_snapshot,charges_minor)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14)`,
       [newId('arline'), ctx.workspaceId, invoice.id, lineNumber, `Fulfillment on ${order.order_number}`,
         line.quantity, line.unitPriceMinor, line.revenueMinor, revenueAccount,
         (await requireRow(client, 'SELECT sku_id FROM sales_order_lines WHERE id=$1', [line.lineId], 'Sales line missing.')).sku_id,
-        line.lineId, nowIso(),JSON.stringify({grossMinor:line.grossMinor,discountMinor:line.discountMinor,taxMinor:line.taxMinor,totalMinor:line.totalMinor})]);
+        line.lineId, nowIso(),JSON.stringify({grossMinor:line.grossMinor,discountMinor:line.discountMinor,taxMinor:line.taxMinor,chargesMinor:line.chargesMinor,chargeTaxMinor:line.chargeTaxMinor,totalMinor:line.totalMinor}),line.chargesMinor]);
     }
     await client.query(`UPDATE accounting_customer_invoices SET subtotal_minor=subtotal_minor+$4,discount_minor=discount_minor+$5,tax_minor=tax_minor+$6,total_minor=total_minor+$2,
-      balance_minor=balance_minor+$2,updated_at=$3 WHERE id=$1`, [invoice.id, fulfillmentTotal, nowIso(),fulfillmentGross,fulfillmentDiscount,fulfillmentTax]);
+      balance_minor=balance_minor+$2,charges_minor=charges_minor+$7,updated_at=$3 WHERE id=$1`, [invoice.id, fulfillmentTotal, nowIso(),fulfillmentGross,fulfillmentDiscount,fulfillmentTax,fulfillmentCharges]);
     let appliedDepositMinor = 0;
     const depositRows = await client.query(`SELECT p.*,
         COALESCE((SELECT SUM(a.amount_minor) FROM accounting_payment_allocations a
@@ -891,47 +896,48 @@ async function synchronizeSalesOrderInTransaction(client,rawContext,salesOrderId
   const current=(await client.query(`SELECT * FROM sales_order_lines WHERE workspace_id=$1 AND sales_order_id=$2
     ORDER BY created_at,id FOR UPDATE`,[ctx.workspaceId,salesOrderId])).rows;
   const promotions=require('../pricing/postgres-promotions');
-  const syncedInput={customerId:order.customer_id,currency:order.currency,lines:input.lines,discountMinor:input.discountMinor??Number(order.discount_minor),taxMinor:input.taxMinor??Number(order.tax_minor)};
+  if(input.currency&&input.currency!==order.currency)throw new ValidationError('A provider update cannot silently change an order currency.');
+  const syncedInput={...input,customerId:order.customer_id,currency:order.currency,lines:input.lines,discountMinor:input.discountMinor??Number(order.discount_minor),taxMinor:input.taxMinor??Number(order.tax_minor)};
   const synchronizedQuote=await promotions.prepareQuote(client,ctx,syncedInput,{lock:true});
   if(synchronizedQuote.violations.length)throw new ValidationError('The accepted order snapshot needs a pricing safeguard review.');
-  for(const prior of current.filter(r=>Number(r.quantity_fulfilled)>0)){
-    const next=synchronizedQuote.lines.filter(l=>l.skuId===prior.sku_id);if(next.length!==1||next[0].quantity<Number(prior.quantity_fulfilled))throw new ValidationError('A channel update cannot remove or reduce fulfilled units.');
-    const historical=(await client.query(`SELECT coalesce(sum((metadata::jsonb->>'grossMinor')::bigint),0) AS gross,coalesce(sum((metadata::jsonb->>'discountMinor')::bigint),0) AS discount,coalesce(sum((metadata::jsonb->>'taxMinor')::bigint),0) AS tax FROM accounting_journal_entries WHERE workspace_id=$1 AND source_type='sale_fulfillment' AND metadata::jsonb->>'salesOrderLineId'=$2`,[ctx.workspaceId,prior.id])).rows[0];
-    for(const [key,column]of [['grossMinor','gross'],['discountMinor','discount'],['taxMinor','tax']])if(priceCalculator.portion(next[0][key],next[0].quantity,0,Number(prior.quantity_fulfilled))!==Number(historical[column]))throw new ValidationError('This channel update would change fulfilled historical amounts. Its original event is retained for an accounting review.');
-  }
-  const desired=new Map();
+  const identities=new Set(),used=new Set(),desired=[];
   for(const [index,line] of input.lines.entries()){
     await requireRow(client,'SELECT id FROM skus WHERE id=$1 AND workspace_id=$2 AND is_active=1',
       [line.skuId,ctx.workspaceId],`Sales-order line ${index+1} has an unavailable SKU.`);
     const quantity=positiveInteger(line.quantity,`Sales-order line ${index+1} quantity`);
-    const prior=desired.get(line.skuId);
-    desired.set(line.skuId,{skuId:line.skuId,quantity:quantity+(prior?.quantity||0),
-      unitPriceMinor:line.unitPriceMinor??prior?.unitPriceMinor});
+    const externalLineId=trimOrNull(line.externalLineId),identity=externalLineId?'external:'+externalLineId:'sku:'+line.skuId;
+    if(identities.has(identity))throw new ValidationError('Distinct provider lines need distinct external line identities.');identities.add(identity);
+    const exact=externalLineId?current.find(row=>row.external_line_id===externalLineId):null;
+    const candidates=exact?[exact]:current.filter(row=>!used.has(row.id)&&!row.external_line_id&&row.sku_id===line.skuId);
+    if(candidates.length>1)throw new ValidationError('This older order has ambiguous duplicate lines; reconcile their external identities before applying the update.');
+    const prior=candidates[0]||null;
+    if(prior){
+      if(prior.sku_id!==line.skuId||used.has(prior.id))throw new ValidationError('A provider line identity cannot be reassigned to a different product.');
+      used.add(prior.id);
+      if(quantity<Number(prior.quantity_fulfilled))throw new ValidationError('A channel update cannot reduce fulfilled units.');
+      if(Number(prior.quantity_fulfilled)>0){
+        const historical=(await client.query(`SELECT coalesce(sum((metadata::jsonb->>'grossMinor')::bigint),0) AS gross,coalesce(sum((metadata::jsonb->>'discountMinor')::bigint),0) AS discount,coalesce(sum((metadata::jsonb->>'taxMinor')::bigint),0) AS tax,coalesce(sum((metadata::jsonb->>'chargesMinor')::bigint),0) AS charges FROM accounting_journal_entries WHERE workspace_id=$1 AND source_type='sale_fulfillment' AND metadata::jsonb->>'salesOrderLineId'=$2`,[ctx.workspaceId,prior.id])).rows[0];
+        const next=synchronizedQuote.lines[index];
+        const historicalPortion=priceCalculator.monetaryPortion(next,quantity,0,Number(prior.quantity_fulfilled));
+        for(const [key,column]of [['grossMinor','gross'],['discountMinor','discount'],['taxMinor','tax'],['chargesMinor','charges']]){
+          const part=historicalPortion[key]||0;
+          if(part!==Number(historical[column]))throw new ValidationError('This channel update would change fulfilled historical amounts. Its evidence needs an accounting review.');
+        }
+      }
+    }
+    desired.push({...line,externalLineId,quantity,id:prior?.id||newId('sol'),existing:Boolean(prior)});
   }
+  if(current.some(row=>!used.has(row.id)&&Number(row.quantity_fulfilled)>0))throw new ValidationError('A channel update cannot remove a fulfilled line.');
   await client.query(`DELETE FROM sales_order_allocations WHERE workspace_id=$1 AND sales_order_line_id IN
     (SELECT id FROM sales_order_lines WHERE workspace_id=$1 AND sales_order_id=$2)`,[ctx.workspaceId,salesOrderId]);
   const at=nowIso();
-  for(const line of current){
-    const next=desired.get(line.sku_id);
-    if(!next){
-      if(Number(line.quantity_fulfilled)>0)await client.query(`UPDATE sales_order_lines
-        SET quantity_ordered=quantity_fulfilled,updated_at=$2 WHERE id=$1`,[line.id,at]);
-      else await client.query('DELETE FROM sales_order_lines WHERE id=$1',[line.id]);
-      continue;
-    }
-    if(next.quantity<Number(line.quantity_fulfilled))throw new ValidationError('A provider snapshot cannot reduce an order below what was already fulfilled.');
-    await client.query(`UPDATE sales_order_lines SET quantity_ordered=$2,unit_price_minor=COALESCE($3,unit_price_minor),
-      updated_at=$4 WHERE id=$1`,[line.id,next.quantity,next.unitPriceMinor===undefined?null:
-        nonNegativeMinor(next.unitPriceMinor,'Sales-order line price'),at]);
-    desired.delete(line.sku_id);
+  for(const line of current.filter(row=>!used.has(row.id)))await client.query('DELETE FROM sales_order_lines WHERE workspace_id=$1 AND sales_order_id=$2 AND id=$3',[ctx.workspaceId,salesOrderId,line.id]);
+  for(const line of desired){
+    const price=nonNegativeMinor(line.unitPriceMinor,'Sales-order line price');
+    if(line.existing)await client.query(`UPDATE sales_order_lines SET quantity_ordered=$4,unit_price_minor=$5,external_line_id=$6,updated_at=$7 WHERE workspace_id=$1 AND sales_order_id=$2 AND id=$3`,[ctx.workspaceId,salesOrderId,line.id,line.quantity,price,line.externalLineId,at]);
+    else await client.query(`INSERT INTO sales_order_lines(id,workspace_id,sales_order_id,sku_id,quantity_ordered,quantity_fulfilled,unit_price_minor,created_at,updated_at,external_line_id) VALUES($1,$2,$3,$4,$5,0,$6,$7,$7,$8)`,[line.id,ctx.workspaceId,salesOrderId,line.skuId,line.quantity,price,at,line.externalLineId]);
   }
-  for(const line of desired.values())await client.query(`INSERT INTO sales_order_lines
-    (id,workspace_id,sales_order_id,sku_id,quantity_ordered,quantity_fulfilled,unit_price_minor,created_at,updated_at)
-    VALUES($1,$2,$3,$4,$5,0,$6,$7,$7)`,[newId('sol'),ctx.workspaceId,salesOrderId,line.skuId,line.quantity,
-    nonNegativeMinor(line.unitPriceMinor,'Sales-order line price'),at]);
-  const synchronizedLines=(await client.query('SELECT id,sku_id FROM sales_order_lines WHERE workspace_id=$1 AND sales_order_id=$2',[ctx.workspaceId,salesOrderId])).rows;
-  if(new Set(synchronizedQuote.lines.map(l=>l.skuId)).size!==synchronizedQuote.lines.length)throw new ValidationError('A channel snapshot must combine identical product lines before pricing.');
-  await promotions.saveQuote(client,ctx,salesOrderId,synchronizedQuote,synchronizedQuote.lines.map(l=>synchronizedLines.find(r=>r.sku_id===l.skuId).id));
+  await promotions.saveQuote(client,ctx,salesOrderId,synchronizedQuote,desired.map(line=>line.id));
   await event(client,'sales_order_events',null,{workspaceId:ctx.workspaceId,recordId:salesOrderId,
     type:'synchronized',detail:{source:trimOrNull(input.source)||'provider'},actorId:ctx.actorId,
     key:`${input.idempotencyKey}:event`,at});

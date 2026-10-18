@@ -15,7 +15,7 @@ function providerNameFor(url) {
   if (/microsoft|graph\.microsoft/.test(host)) return 'Microsoft 365';
   return host || 'provider';
 }
-const { ValidationError, AuthenticationError } = require('../../domain/errors');
+const { DomainError, ValidationError, AuthenticationError } = require('../../domain/errors');
 
 function safeEqual(a, b) {
   const left = Buffer.from(String(a || ''));
@@ -32,30 +32,38 @@ function requireVerified(valid, message = 'The provider signature is invalid.') 
 }
 
 function normalizeStoreUrl(value) {
-  let url;
-  try { url = new URL(String(value || '').trim()); } catch { throw new ValidationError('Enter a valid store URL.'); }
-  if (!['https:', 'http:'].includes(url.protocol)) throw new ValidationError('The store URL must use HTTP or HTTPS.');
+  const url=require('./store-network').address(String(value||'').trim());
   url.pathname = url.pathname.replace(/\/$/, '');
   url.search = ''; url.hash = '';
   return url.toString().replace(/\/$/, '');
 }
 
 async function jsonRequest(url, options = {}) {
+  const {selfHostedStore=false,...requestOptions}=options;
   let response;
   try {
-    response = await providerFetch(url, options, { provider: options.provider || providerNameFor(url), timeoutMs: 20_000 });
+    response = await providerFetch(url, requestOptions, { provider: options.provider || providerNameFor(url), timeoutMs: 20_000,
+      ...(selfHostedStore?{fetch:require('./store-network').fetchStore}:{}) });
   } catch (cause) {
+    if(cause instanceof DomainError)throw cause;
+    if(cause.cause instanceof DomainError)throw cause.cause;
     // Kept as the code the sync runners already understand as transient.
-    const error = new Error('StockChief could not reach the external service from this computer. Check its internet or security-software access; StockChief will retry safely.');
+    const write=!['GET','HEAD','OPTIONS'].includes(String(options.method||'GET').toUpperCase());
+    const error = new Error(write?'The external service did not confirm this operation. Its outcome must be checked before it is repeated.':'The external service could not be reached. StockChief will retry this read safely.');
     error.code = 'PROVIDER_UNREACHABLE';
     error.transient = true;
+    error.providerOutcomeUncertain=write;
     error.cause = cause;
     error.status = 503;
     throw error;
   }
   const text = await response.text();
+  if(response.status>=300&&response.status<400)throw new ValidationError('The store redirected an authenticated API request. Use its final HTTPS store address; no credentials were forwarded.');
   let body = null;
-  try { body = text ? JSON.parse(text) : {}; } catch { body = { raw: text.slice(0, 500) }; }
+  try { body = text ? JSON.parse(text) : {}; } catch {
+    if(response.ok){const error=new ValidationError('The external service returned an unreadable API response. Verify its API access before continuing.');error.providerOutcomeUncertain=!['GET','HEAD','OPTIONS'].includes(String(options.method||'GET').toUpperCase());throw error;}
+    body={};
+  }
   if (!response.ok) {
     const providerDetail = body?.Fault?.Error?.[0]?.Detail || body?.Fault?.Error?.[0]?.Message
       || body?.message || body?.error_description || body?.errors?.[0]?.detail;

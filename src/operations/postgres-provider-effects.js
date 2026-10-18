@@ -70,10 +70,24 @@ async function succeed(database,workspaceId,id,token,input={}){return database.t
     claim_token=NULL,claimed_at=NULL,provider_reference=$4::jsonb,result=$5::jsonb,error_code=NULL,error_message=NULL,
     completed_at=$6,updated_at=$6 WHERE workspace_id=$1 AND id=$2 AND claim_token=$3 RETURNING *`,
   [workspaceId,id,token,JSON.stringify(input.providerReference||null),JSON.stringify(input.result||{}),at])).rows[0];
+  if(input.after)await input.after(client,hydrate(row));
   return hydrate(row);
 },{isolation:'SERIALIZABLE',retrySafe:true});}
+async function checkpoint(database,workspaceId,id,token,providerReference){
+ const row=(await database.query("UPDATE stockchief_runtime.provider_effects SET provider_reference=$4::jsonb,updated_at=now() WHERE workspace_id=$1 AND id=$2 AND status='RUNNING' AND claim_token=$3 AND (provider_reference IS NULL OR provider_reference=$4::jsonb) RETURNING *",[workspaceId,id,token,JSON.stringify(providerReference)])).rows[0];
+ if(!row)throw new InvariantError('The provider result no longer belongs to the active operation.','provider_effect_claim_lost');
+ return hydrate(row);
+}
+async function claimVerification(database,workspaceId,id,kind){return database.transaction(async c=>{
+ const row=(await c.query('SELECT * FROM stockchief_runtime.provider_effects WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[workspaceId,id])).rows[0];
+ if(!row||row.kind!==kind)throw new NotFoundError('That provider operation was not found.');
+ if(row.status==='SUCCEEDED')return {replayed:true,effect:hydrate(row)};
+ if(row.status!=='AMBIGUOUS'||!row.provider_reference?.externalId)throw new ValidationError('This operation has no retained provider identity available for verification. It was not repeated.');
+ const token=newId('peverify'),updated=(await c.query("UPDATE stockchief_runtime.provider_effects SET status='RUNNING',claim_token=$3,claimed_at=now(),updated_at=now() WHERE workspace_id=$1 AND id=$2 RETURNING *",[workspaceId,id,token])).rows[0];
+ return {replayed:false,effect:hydrate(updated)};
+ },{isolation:'SERIALIZABLE',retrySafe:true});}
 
-function definiteFailure(error){const status=Number(error?.status);return status>=400&&status<500&&status!==408&&status!==409&&status!==429;}
+function definiteFailure(error){if(error?.providerOutcomeUncertain)return false;const status=Number(error?.status);return status>=400&&status<500&&status!==408&&status!==409&&status!==429;}
 
 async function finishError(database,workspaceId,id,token,error,input={}){const ambiguous=input.ambiguous??!definiteFailure(error);
   return database.transaction(async(client)=>{const locked=(await client.query(`SELECT * FROM stockchief_runtime.provider_effects
@@ -110,4 +124,4 @@ async function markStaleAmbiguous(client,{olderThanMinutes=5}={}){const at=nowIs
     completed_at=$2,updated_at=$2 WHERE status='RUNNING' AND claimed_at<now()-($1::integer*interval '1 minute') RETURNING *`,
   [olderThanMinutes,at]);}
 
-module.exports={get,enqueue,enqueueInTransaction,claim,succeed,finishError,markStaleAmbiguous,definiteFailure,hydrate};
+module.exports={get,enqueue,enqueueInTransaction,claim,claimVerification,checkpoint,succeed,finishError,markStaleAmbiguous,definiteFailure,hydrate};

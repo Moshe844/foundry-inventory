@@ -75,6 +75,7 @@ function validateRule(rule){
   return JSON.parse(JSON.stringify(rule));
 }
 function quote(input){
+  const recorded=input.recordedAmounts===true;
   if(!Array.isArray(input.lines)||!input.lines.length||input.lines.length>500)invalid('Choose between one and 500 order lines.');
   if(input.codes!==undefined&&(!Array.isArray(input.codes)||input.codes.length>50||input.codes.some(c=>typeof c!=='string'||!c.trim()||c.length>80)))invalid('Choose at most 50 valid promotion codes.');
   const at=Date.parse(input.at);if(!Number.isFinite(at))invalid('An explicit pricing time is required.');
@@ -91,8 +92,10 @@ function quote(input){
       if(tier)candidates.push({list,tier,specificity:(list.scope?.customerIds?.length?4:0)+(list.scope?.skuIds?.length?2:0)+(list.scope?.categoryIds?.length?1:0)});}
     candidates.sort((a,b)=>(b.list.priority||0)-(a.list.priority||0)||b.specificity-a.specificity||b.tier.minQuantity-a.tier.minQuantity||a.tier.unitPriceMinor-b.tier.unitPriceMinor||String(a.list.id).localeCompare(String(b.list.id),'en'));
     if(candidates.length){selected=candidates[0].list;unitPriceMinor=candidates[0].tier.unitPriceMinor;}
-    const grossMinor=extended(unitPriceMinor,scaled[index]);
-    return {index,skuId:line.skuId,categoryId:line.categoryId||null,quantity,priceOverride:line.priceOverride===true,baseUnitPriceMinor:base,unitPriceMinor,costUnitMinor:line.costUnitMinor??null,grossMinor,discountMinor:0,netMinor:grossMinor,priceSource:selected?{id:selected.id,version:selected.version}:null,adjustments:[]};
+    const grossMinor=recorded?integer(line.grossMinor,'Recorded line gross'):extended(unitPriceMinor,scaled[index]);
+    const discountMinor=recorded?integer(line.discountMinor??0,'Recorded line discount'):0;
+    if(discountMinor>grossMinor)invalid('Recorded discount exceeds its line value.');
+    return {index,allocationVersion:2,skuId:line.skuId,externalLineId:line.externalLineId||null,categoryId:line.categoryId||null,quantity,priceOverride:line.priceOverride===true,baseUnitPriceMinor:base,unitPriceMinor,costUnitMinor:line.costUnitMinor??null,grossMinor,discountMinor,netMinor:grossMinor-discountMinor,priceSource:selected?{id:selected.id,version:selected.version}:null,adjustments:[]};
   });
   if(input.priceListId&&!lists.some(r=>r.id===input.priceListId&&lines.some(l=>l.priceSource?.id===r.id)))invalid('The selected price list is not applicable to this customer, currency or quantity.');
   const originalSubtotal=sum(lines.map(l=>l.grossMinor)),applied=[],groups=new Set();let exclusive=false;
@@ -118,20 +121,48 @@ function quote(input){
     }
     if(amount){applied.push({id:rule.id,version:rule.version,name:rule.name,amountMinor:amount,excludes:rule.excludes});if(rule.stackGroup)groups.add(rule.stackGroup);exclusive=(rule.stacking||'exclusive')==='exclusive';}
   }
-  const manual=integer(input.discountMinor??0,'Order discount');if(manual>sum(lines.map(l=>l.netMinor)))invalid('Order discount exceeds the remaining order value.');
-  if(manual)apply({id:'manual',version:null},lines.map(l=>l.index),manual);
+  const manual=integer(input.discountMinor??0,'Order discount');
+  if(recorded){
+    if(discounts.length||lists.length)invalid('Recorded channel amounts cannot be repriced with current promotions.');
+    if(manual!==sum(lines.map(l=>l.discountMinor)))invalid('Recorded discounts do not match their line allocations.');
+  }else{
+    if(manual>sum(lines.map(l=>l.netMinor)))invalid('Order discount exceeds the remaining order value.');
+    if(manual)apply({id:'manual',version:null},lines.map(l=>l.index),manual);
+  }
+  const charges=recorded?(input.orderCharges||[]):[];
+  if(!Array.isArray(charges)||charges.length>100)invalid('Choose at most 100 recorded order charges.');
+  for(const charge of charges){integer(charge.amountMinor,'Recorded charge',{min:-Number.MAX_SAFE_INTEGER});integer(charge.taxMinor??0,'Recorded charge tax');}
+  const chargesMinor=integer(Number(charges.reduce((n,c)=>n+BigInt(c.amountMinor),0n)),'Recorded charges',{min:-Number.MAX_SAFE_INTEGER}),chargeTaxMinor=sum(charges.map(c=>c.taxMinor??0));
+  const weights=lines.some(l=>l.netMinor>0)?lines.map(l=>l.netMinor):scaled;
+  // Signed fee adjustments are preserved, never converted to guessed prices.
+  const chargeSign=charges.reduce((n,c)=>n+BigInt(c.amountMinor),0n)<0n?-1:1;
+  const absoluteCharges=Number(charges.reduce((n,c)=>n+BigInt(c.amountMinor),0n)*BigInt(chargeSign));
+  const allocatedCharges=allocate(absoluteCharges,weights),allocatedChargeTax=allocate(chargeTaxMinor,weights);
+  lines.forEach((line,i)=>{line.chargesMinor=allocatedCharges[i]*chargeSign;line.chargeTaxMinor=allocatedChargeTax[i];if(line.netMinor+line.chargesMinor<0)invalid('Recorded charges make a line negative.');});
   const violations=[];
   for(const guard of guards)for(const line of lines){if(!eligible(guard.scope,line,input.customerId))continue;
-    const source=input.lines[line.index];const reference=extended(integer(source.referenceUnitPriceMinor??line.baseUnitPriceMinor,'Reference price'),scaled[line.index]);
-    if(guard.maximumDiscountBps!==undefined&&BigInt(Math.max(0,reference-line.netMinor))*10000n>BigInt(reference)*BigInt(guard.maximumDiscountBps))violations.push({ruleId:guard.id,skuId:line.skuId,kind:'discount_limit'});
+    const source=input.lines[line.index],guardNet=Math.min(line.netMinor,line.netMinor+line.chargesMinor);const reference=extended(integer(source.referenceUnitPriceMinor??line.baseUnitPriceMinor,'Reference price'),scaled[line.index]);
+    if(guard.maximumDiscountBps!==undefined&&BigInt(Math.max(0,reference-guardNet))*10000n>BigInt(reference)*BigInt(guard.maximumDiscountBps))violations.push({ruleId:guard.id,skuId:line.skuId,kind:'discount_limit'});
     if(guard.minimumMarginBps!==undefined){if(line.costUnitMinor===null)violations.push({ruleId:guard.id,skuId:line.skuId,kind:'missing_cost_evidence'});
-      else {const cost=BigInt(integer(line.costUnitMinor,'Recorded unit cost'))*BigInt(scaled[line.index]),revenue=BigInt(line.netMinor)*BigInt(QUANTITY_SCALE);if((revenue-cost)*10000n<revenue*BigInt(guard.minimumMarginBps))violations.push({ruleId:guard.id,skuId:line.skuId,kind:'minimum_margin'});}}
+      else {const cost=BigInt(integer(line.costUnitMinor,'Recorded unit cost'))*BigInt(scaled[line.index]),revenue=BigInt(guardNet)*BigInt(QUANTITY_SCALE);if((revenue-cost)*10000n<revenue*BigInt(guard.minimumMarginBps))violations.push({ruleId:guard.id,skuId:line.skuId,kind:'minimum_margin'});}}
   }
-  const taxMinor=integer(input.taxMinor??0,'Tax'),taxes=allocate(taxMinor,lines.map(l=>l.netMinor));
-  lines.forEach((line,i)=>{line.taxMinor=taxes[i];line.totalMinor=sum([line.netMinor,line.taxMinor]);});
-  return {version:1,at:input.at,currency:input.currency,customerId:input.customerId||null,lines,subtotalMinor:originalSubtotal,discountMinor:sum(lines.map(l=>l.discountMinor)),manualDiscountMinor:manual,taxMinor,totalMinor:sum(lines.map(l=>l.totalMinor)),applied:applied.map(({excludes,...p})=>p),policyVersions:rules.map(r=>({id:r.id,version:r.version})),codes:[...codes],unusedCodes:[...codes].filter(code=>!discounts.some(r=>r.code?.trim().toUpperCase()===code&&applied.some(p=>p.id===r.id))),priceListId:input.priceListId||null,violations};
+  const taxMinor=integer(input.taxMinor??0,'Tax'),taxes=recorded?input.lines.map(l=>integer(l.taxMinor??0,'Recorded line tax')):allocate(taxMinor,lines.map(l=>l.netMinor));
+  if(recorded&&sum(taxes)+chargeTaxMinor!==taxMinor)invalid('Recorded tax does not match its line and charge allocations.');
+  lines.forEach((line,i)=>{line.goodsTaxMinor=taxes[i];line.taxMinor=sum([taxes[i],line.chargeTaxMinor]);line.totalMinor=number(BigInt(line.netMinor)+BigInt(line.chargesMinor)+BigInt(line.taxMinor));});
+  return {version:2,recordedAmounts:recorded,at:input.at,currency:input.currency,customerId:input.customerId||null,lines,subtotalMinor:originalSubtotal,discountMinor:sum(lines.map(l=>l.discountMinor)),manualDiscountMinor:manual,chargesMinor,chargeTaxMinor,charges,taxMinor,totalMinor:sum(lines.map(l=>l.totalMinor)),applied:applied.map(({excludes,...p})=>p),policyVersions:rules.map(r=>({id:r.id,version:r.version})),codes:[...codes],unusedCodes:[...codes].filter(code=>!discounts.some(r=>r.code?.trim().toUpperCase()===code&&applied.some(p=>p.id===r.id))),priceListId:input.priceListId||null,violations};
 }
 // Cumulative allocation makes splitting a fulfillment or return conserve every
 // penny; the final unit receives exactly the snapshot's remaining fraction.
 function portion(total,quantity,before,take){integer(total,'Historical amount');integer(quantity,'Ordered quantity',{min:1});integer(before,'Already processed');integer(take,'Requested quantity');if(before+take>quantity)invalid('Quantity exceeds the historical line.');return number(BigInt(total)*BigInt(before+take)/BigInt(quantity)-BigInt(total)*BigInt(before)/BigInt(quantity));}
-module.exports={quote,validateRule,allocate,ratio,portion};
+// Allocate non-negative economic components, then derive their parents.
+// Independently flooring gross and discount (or total tax and shipping tax)
+// can otherwise produce negative revenue/tax on an intermediate unit.
+function monetaryPortion(snapshot,quantity,before,take){
+ const gross=integer(snapshot.grossMinor??snapshot.revenueMinor,'Historical gross'),discount=integer(snapshot.discountMinor??0,'Historical discount'),charges=integer(snapshot.chargesMinor??0,'Historical charges',{min:-Number.MAX_SAFE_INTEGER}),tax=integer(snapshot.taxMinor??0,'Historical tax'),chargeTax=integer(snapshot.chargeTaxMinor??0,'Historical charge tax');
+ if(discount>gross||chargeTax>tax)invalid('Historical components do not reconcile.');
+ const net=gross-discount;if(net+charges<0)invalid('Historical charges exceed the line revenue.');
+ const credit=charges<0?portion(-charges,quantity,before,take):0,goodsNet=portion(charges<0?net+charges:net,quantity,before,take)+credit,discountMinor=portion(discount,quantity,before,take),chargesMinor=charges<0?-credit:portion(charges,quantity,before,take),goodsTaxMinor=portion(tax-chargeTax,quantity,before,take),chargeTaxMinor=portion(chargeTax,quantity,before,take);
+ const grossMinor=sum([goodsNet,discountMinor]),taxMinor=sum([goodsTaxMinor,chargeTaxMinor]),revenueMinor=number(BigInt(goodsNet)+BigInt(chargesMinor));
+ return {allocationVersion:2,grossMinor,discountMinor,goodsNetMinor:goodsNet,chargesMinor,chargeTaxMinor,goodsTaxMinor,taxMinor,revenueMinor,totalMinor:sum([revenueMinor,taxMinor])};
+}
+module.exports={quote,validateRule,allocate,ratio,portion,monetaryPortion};

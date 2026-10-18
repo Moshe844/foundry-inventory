@@ -4,6 +4,8 @@ const crypto = require('node:crypto');
 const config = require('../../config');
 const { ValidationError, AuthenticationError } = require('../../domain/errors');
 const { safeEqual, hmacBase64, requireVerified, jsonRequest, postalAddress } = require('./common');
+const money = require('../../domain/currency');
+const facts = require('../commerce-facts');
 
 const API_VERSION = '2026-07';
 const SCOPES = ['read_orders', 'read_products', 'read_locations', 'read_inventory', 'read_fulfillments'];
@@ -191,7 +193,7 @@ async function discover({ credentials }) {
       variationName: variant.title && variant.title !== 'Default Title' ? variant.title : null,
       tracked: variant.tracked, price: variant.price, currency: snapshot.currency,
       priceMoney: Number.isFinite(Number(variant.price))
-        ? { amount: Math.round(Number(variant.price) * 100), currency: snapshot.currency }
+        ? { amount: money.toMinor(variant.price, snapshot.currency), currency: snapshot.currency }
         : null,
       selectedOptions: variant.selectedOptions, inventoryLevels: variant.inventoryLevels,
       inventoryCounts: variant.inventoryLevels.map((level) => ({
@@ -255,10 +257,26 @@ async function historySummary({ credentials, since }) {
     detail: { precision: data.ordersCount?.precision || 'unknown' } };
 }
 
-function verifyWebhook({ headers, rawBody }) {
+function verifyWebhook({ headers, rawBody, credentials, connection }) {
   const provided = headers['x-shopify-hmac-sha256'];
   const expected = hmacBase64(config.connections.shopify.clientSecret, rawBody);
   requireVerified(safeEqual(provided, expected), 'This webhook did not pass Shopify signature verification.');
+  const shop=credentials?.shop||connection?.provider_account_id;
+  if(shop)requireVerified(normalizeShop(headers['x-shopify-shop-domain'])===normalizeShop(shop),'This webhook does not belong to the connected Shopify store.');
+}
+
+async function hydrateWebhook({headers,body,credentials,connection}){
+ const shop=normalizeShop(credentials.shop);
+ requireVerified(normalizeShop(headers['x-shopify-shop-domain'])===shop,'This webhook does not belong to the connected Shopify store.');
+ if(connection.provider_account_id)requireVerified(normalizeShop(connection.provider_account_id)===shop,'The Shopify account identity changed. Reconnect before applying events.');
+ const topic=String(headers['x-shopify-topic']||'').toLowerCase();
+ let type;if(topic.startsWith('orders/'))type='Order';else if(topic.startsWith('fulfillments/'))type='Fulfillment';else if(topic==='refunds/create')type='Refund';else return;
+ // The shared app HMAC alone does not prove that a record belongs to this
+ // tenant. Resolve consequential record IDs using this store's own token.
+ if(!body.id)throw new ValidationError('The Shopify event is missing its record identity.');
+ const id=shopifyGid(type,body.id),data=await graphql(credentials,`query WebhookOwnership($id:ID!){node(id:$id){id ... on Fulfillment{order{id}} ... on Refund{order{id}}}}`,{id});
+ requireVerified(data.node?.id===id,'Shopify did not confirm this record in the connected store.');
+ if(type!=='Order')requireVerified(data.node.order?.id===shopifyGid('Order',body.order_id),'Shopify did not confirm the event’s order identity.');
 }
 
 function shopifyGid(type, value) {
@@ -267,46 +285,43 @@ function shopifyGid(type, value) {
   return `gid://shopify/${type}/${id}`;
 }
 
-function orderLines(payload) {
-  return (payload.line_items || []).filter((line) => Number(line.quantity) > 0).map((line) => ({
-    externalSku: line.variant_id ? shopifyGid('ProductVariant', line.variant_id) : shopifyGid('Product', line.product_id),
-    skuCode: line.sku || undefined,
-    quantity: Number(line.quantity), unitPriceMinor: line.price ? Math.round(Number(line.price) * 100) : undefined,
-  }));
-}
-
 function normalizeWebhook({ headers, body }) {
   const topic = String(headers['x-shopify-topic'] || '').toLowerCase();
   const delivery = String(headers['x-shopify-webhook-id'] || headers['x-shopify-event-id'] || body.id);
   const occurredAt = headers['x-shopify-triggered-at'] || body.updated_at || body.created_at;
   const version = body.updated_at || occurredAt;
-  if (topic === 'orders/create') return [{ eventId: delivery, type: 'sales_order.created', version, occurredAt,
+  if (topic === 'orders/create') return [{ eventId: delivery, effectKey: facts.effectKey('shopify','order-created',body.id), type: 'sales_order.created', version, occurredAt,
     aggregateId: String(body.id), data: { externalOrderId: String(body.id), orderNumber: body.name,
       customer: body.customer ? { externalId: String(body.customer.id), name: [body.customer.first_name, body.customer.last_name].filter(Boolean).join(' ') || body.customer.email } : undefined,
       shippingAddress: postalAddress({ line1: body.shipping_address?.address1, line2: body.shipping_address?.address2,
         city: body.shipping_address?.city, region: body.shipping_address?.province,
         postalCode: body.shipping_address?.zip, country: body.shipping_address?.country_code || body.shipping_address?.country }),
       customerEmail: body.email || body.customer?.email,
-      externalLocationId: body.location_id ? shopifyGid('Location', body.location_id) : undefined, currency: body.currency,
-      lines: orderLines(body) } }];
-  if (topic === 'orders/updated') return [{ eventId: delivery, type: 'sales_order.snapshot', version, occurredAt,
-    aggregateId: String(body.id), data: { externalOrderId: String(body.id), lines: orderLines(body) } }];
-  if (topic === 'orders/cancelled') return [{ eventId: delivery, type: 'sales_order.cancelled', version, occurredAt,
+      externalLocationId: body.location_id ? shopifyGid('Location', body.location_id) : undefined,
+      ...facts.shopify(body) } }];
+  if (topic === 'orders/updated') return [{ eventId: delivery, effectKey: facts.effectKey('shopify','order-snapshot',body.id,version), type: 'sales_order.snapshot', version, occurredAt,
+    aggregateId: String(body.id), data: { externalOrderId: String(body.id), ...facts.shopify(body) } }];
+  if (topic === 'orders/cancelled') return [{ eventId: delivery, effectKey: facts.effectKey('shopify','order-cancelled',body.id), type: 'sales_order.cancelled', version, occurredAt,
     aggregateId: String(body.id), data: { externalOrderId: String(body.id), reason: body.cancel_reason || 'Cancelled in Shopify' } }];
-  if (topic === 'orders/fulfilled') return [{ eventId: delivery, type: 'sales_order.fulfilled', version, occurredAt,
-    aggregateId: String(body.id), data: { externalOrderId: String(body.id) } }];
-  if (topic === 'fulfillments/create') return [{ eventId: delivery, type: 'sales_order.fulfilled', version, occurredAt,
+  // Aggregate order notifications are not an additional physical shipment.
+  // Per-fulfillment IDs below own the exact issue effect.
+  if (topic === 'orders/fulfilled') return [{ eventId: delivery, effectKey: facts.effectKey('shopify','order-fulfilled-notice',body.id), type: 'fulfillment.reported', version, occurredAt,
+    aggregateId: String(body.id), data: { externalOrderId: String(body.id), reference: 'Shopify order fulfillment notification' } }];
+  if (topic === 'fulfillments/create') return [{ eventId: delivery, effectKey: facts.effectKey('shopify','fulfillment',body.id), type: 'sales_order.fulfilled', version, occurredAt,
     aggregateId: String(body.order_id), data: { externalOrderId: String(body.order_id), lines: (body.line_items || []).map((line) => ({
       externalSku: line.variant_id ? shopifyGid('ProductVariant', line.variant_id) : shopifyGid('Product', line.product_id),
-      skuCode: line.sku || undefined,
+      skuCode: line.sku || undefined, externalLineId: String(line.id),
       externalLocationId: body.location_id ? shopifyGid('Location', body.location_id) : undefined, quantity: Number(line.quantity),
     })) } }];
-  if (topic === 'refunds/create') return (body.refund_line_items || []).filter((row) => row.restock_type && row.restock_type !== 'no_restock').map((row, i) => ({
-    eventId: `${delivery}:${i}`, type: 'return.completed', version, occurredAt,
+  // A refund/restock instruction is not physical receipt confirmation. In
+  // particular restock_type=cancel only releases an unfulfilled commitment.
+  if (topic === 'refunds/create') return (body.refund_line_items?.length?body.refund_line_items:[{}]).map((row, i) => ({
+    eventId: `${delivery}:${i}`, effectKey: facts.effectKey('shopify','refund',body.id,row.id??row.line_item_id??i), type: 'return.reported', version, occurredAt,
     data: { externalSku: row.line_item?.variant_id ? shopifyGid('ProductVariant', row.line_item.variant_id)
       : shopifyGid('Product', row.line_item?.product_id), skuCode: row.line_item?.sku,
       externalLocationId: row.location_id ? shopifyGid('Location', row.location_id) : undefined, quantity: Number(row.quantity),
-      reason: `Shopify refund ${body.id} (${row.restock_type})` },
+      externalOrderId: body.order_id==null?undefined:String(body.order_id), externalRefundId:String(body.id),
+      restockType:row.restock_type||null, reason: `Shopify refund ${body.id} (${row.restock_type||'financial only'})` },
   }));
   if (topic.startsWith('products/')) return [{ eventId: delivery, type: 'product.changed', version, occurredAt,
     data: { externalProductId: shopifyGid('Product', body.id), name: body.title, variants: body.variants || [] } }];
@@ -318,4 +333,4 @@ function normalizeWebhook({ headers, body }) {
 
 module.exports = { metadata, normalizeShop, validateInput, authorizationUrl, tryDirectAuthorization, refreshCredentials,
   verifyOAuthQuery, exchangeAuthorization, discover, bootstrapSnapshot, registerWebhooks, historySummary, verifyWebhook,
-  normalizeWebhook, graphql, API_VERSION };
+  normalizeWebhook, hydrateWebhook, graphql, API_VERSION };

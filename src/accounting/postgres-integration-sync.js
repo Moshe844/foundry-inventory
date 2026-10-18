@@ -41,7 +41,7 @@ async function initialize(database,connection,actorId,fact){
 
 async function chooseAuthority(database,ctx,connectorId,authority){
   const requested=String(authority||'OBSERVE').toUpperCase();
-  if(!['OBSERVE','POST'].includes(requested))throw new ValidationError('Choose observe or governed posting authority.');
+  if(!['OBSERVE','SHADOW','POST'].includes(requested))throw new ValidationError('Choose observe, shadow comparison or governed posting authority.');
   return database.transaction(async(client)=>{
     await policy(client,ctx.workspaceId,connectorId,true);
     const connection=(await client.query(`SELECT * FROM workspace_connectors
@@ -50,11 +50,11 @@ async function chooseAuthority(database,ctx,connectorId,authority){
       'Choose a connected QuickBooks or Xero account.');
     const at=nowIso();const post=requested==='POST';
     await client.query(`UPDATE accounting_sync_policies SET accounting_source='FOUNDRY',posting_direction=$3,
-      requested_authority=$4,stage=$5,write_enabled_by_user_id=NULL,write_enabled_at=NULL,updated_at=$6
+      requested_authority=$4,stage=$5,last_shadow_run_id=NULL,write_enabled_by_user_id=NULL,write_enabled_at=NULL,updated_at=$6
       WHERE workspace_id=$1 AND connector_id=$2`,[ctx.workspaceId,connectorId,
-      post?'FOUNDRY_TO_EXTERNAL':'READ_ONLY',requested,post?'SHADOW':'READ_ONLY_VERIFIED',at]);
+      post?'FOUNDRY_TO_EXTERNAL':'READ_ONLY',requested,requested==='OBSERVE'?'READ_ONLY_VERIFIED':'SHADOW',at]);
     await client.query(`UPDATE workspace_connectors SET setup_status=$3,updated_at=$4
-      WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,connectorId,post?'SHADOW_PENDING':'READ_ONLY_ACTIVE',at]);
+      WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,connectorId,requested==='OBSERVE'?'READ_ONLY_ACTIVE':'SHADOW_PENDING',at]);
     return policy(client,ctx.workspaceId,connectorId);
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
@@ -77,14 +77,19 @@ function compare(local,external,mappings=[]){
     if(Number(other.balanceMinor)!==account.balanceMinor)differences.push({kind:'BALANCE_MISMATCH',code:account.code,
       externalId,foundryMinor:account.balanceMinor,externalMinor:Number(other.balanceMinor)});
   }
-  if(external.currency&&local.currency&&external.currency!==local.currency)differences.push({kind:'CURRENCY_MISMATCH',
+  const mappedExternal=new Set(mappedByLocal.values());
+  for(const account of external.accounts||[]){
+    if(!mappedExternal.has(String(account.externalId))&&Number(account.balanceMinor)!==0)differences.push({
+      kind:'UNMAPPED_EXTERNAL_ACCOUNT',externalId:String(account.externalId),externalMinor:Number(account.balanceMinor)});
+  }
+  if(!external.currency||!local.currency||external.currency!==local.currency)differences.push({kind:'CURRENCY_MISMATCH',
     foundry:local.currency,external:external.currency});
   return differences;
 }
 
 async function shadow(database,ctx,connectorId,adapter,credentials,input={}){
   const current=await policy(database,ctx.workspaceId,connectorId);
-  if(current.requested_authority!=='POST')throw new ValidationError('Choose governed posting before running shadow parity.');
+  if(!['SHADOW','POST'].includes(current.requested_authority))throw new ValidationError('Choose shadow comparison or governed posting before comparing the books.');
   if(!adapter?.readAccountingSnapshot)throw new ValidationError('This provider cannot supply a certified accounting snapshot.');
   const asOf=input.asOf||new Date().toISOString().slice(0,10);const runId=newId('acshadow');const started=nowIso();
   await database.query(`INSERT INTO accounting_shadow_runs
@@ -99,13 +104,19 @@ async function shadow(database,ctx,connectorId,adapter,credentials,input={}){
         WHERE workspace_id=$1 AND connector_id=$2`,[ctx.workspaceId,connectorId])]);
     const differences=compare(local,external,mappings.rows);const status=differences.length?'MISMATCH':'MATCHED';const at=nowIso();
     await database.transaction(async(client)=>{
+      const latest=await policy(client,ctx.workspaceId,connectorId,true);
+      if(latest.updated_at!==current.updated_at||latest.requested_authority!==current.requested_authority){
+        throw new ValidationError('Accounting authority or mappings changed during comparison. Run the comparison again; nothing was posted.');
+      }
+      const ready=status==='MATCHED'&&latest.requested_authority==='POST';
       await client.query(`UPDATE accounting_shadow_runs SET status=$2,local_snapshot=$3,external_snapshot=$4,
         differences=$5,completed_at=$6 WHERE id=$1`,[runId,status,JSON.stringify(local),JSON.stringify(external),
         JSON.stringify(differences),at]);
-      await client.query(`UPDATE accounting_sync_policies SET last_shadow_run_id=$3,stage=$4,updated_at=$5
-        WHERE workspace_id=$1 AND connector_id=$2`,[ctx.workspaceId,connectorId,runId,status==='MATCHED'?'WRITE_READY':'SHADOW',at]);
+      await client.query(`UPDATE accounting_sync_policies SET last_shadow_run_id=$3,stage=$4,
+        write_enabled_by_user_id=NULL,write_enabled_at=NULL,updated_at=$5
+        WHERE workspace_id=$1 AND connector_id=$2`,[ctx.workspaceId,connectorId,runId,ready?'WRITE_READY':status==='MATCHED'?'READ_ONLY_VERIFIED':'SHADOW',at]);
       await client.query(`UPDATE workspace_connectors SET setup_status=$3,last_synced_at=$4,last_activity_at=$4,
-        updated_at=$4 WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,connectorId,status==='MATCHED'?'WRITE_READY':'SHADOW_MISMATCH',at]);
+        updated_at=$4 WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,connectorId,ready?'WRITE_READY':status==='MATCHED'?'READ_ONLY_ACTIVE':'SHADOW_MISMATCH',at]);
     },{isolation:'SERIALIZABLE',retrySafe:true});
     return {runId,status,local,external,differences};
   }catch(error){await database.query(`UPDATE accounting_shadow_runs SET status='FAILED',error_message=$2,
@@ -134,6 +145,12 @@ async function mapAccount(database,ctx,connectorId,input={}){
       ON CONFLICT(workspace_id,connector_id,foundry_account_id) DO UPDATE SET external_id=EXCLUDED.external_id,
         approved_by_user_id=EXCLUDED.approved_by_user_id,updated_at=EXCLUDED.updated_at`,
     [newId('acmap'),ctx.workspaceId,connectorId,accountId,externalId,ctx.actorId,at]);
+    await client.query(`UPDATE accounting_sync_policies SET last_shadow_run_id=NULL,
+      stage=CASE WHEN requested_authority='OBSERVE' THEN 'READ_ONLY_VERIFIED' ELSE 'SHADOW' END,
+      write_enabled_by_user_id=NULL,write_enabled_at=NULL,updated_at=$3 WHERE workspace_id=$1 AND connector_id=$2`,
+    [ctx.workspaceId,connectorId,at]);
+    await client.query(`UPDATE workspace_connectors SET setup_status=$3,updated_at=$4 WHERE workspace_id=$1 AND id=$2`,
+      [ctx.workspaceId,connectorId,'SHADOW_PENDING',at]);
     return {account,external};
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
@@ -143,6 +160,7 @@ async function enableWrites(database,ctx,connectorId){return database.transactio
   const connection=(await client.query(`SELECT * FROM workspace_connectors
     WHERE workspace_id=$1 AND id=$2 FOR UPDATE`,[ctx.workspaceId,connectorId])).rows[0];
   const capabilities=json(connection?.capabilities,[]);
+  if(!providers.get(connection?.provider_type)?.verifyJournalEntry)throw new ValidationError('Posting is unavailable for this connection. Read-only accounting remains available.');
   if(current.posting_direction!=='FOUNDRY_TO_EXTERNAL'||current.requested_authority!=='POST')throw new ValidationError(
     'Choose StockChief as the accounting source and request posting authority first.');
   const run=current.last_shadow_run_id&&(await client.query(`SELECT status FROM accounting_shadow_runs
@@ -178,7 +196,9 @@ async function entry(database,workspaceId,connectorId,entryId){
     WHERE workspace_id=$1 AND connector_id=$2 ORDER BY started_at DESC LIMIT 1`,[workspaceId,connectorId])).rows[0];
   const externalCodes=new Map((json(snapshot?.external_snapshot,{}).accounts||[])
     .map((account)=>[String(account.externalId),account.code||account.externalId]));
-  return {...header,lines:lines.map((line)=>({...line,debit_minor:Number(line.debit_minor),
+  const currencies=[...new Set(lines.map(line=>require('../domain/currency').code(line.currency)))];
+  if(currencies.length!==1)throw new ValidationError('A journal with missing or mixed currencies requires reconciliation before export.');
+  return {...header,currency:currencies[0],lines:lines.map((line)=>({...line,debit_minor:Number(line.debit_minor),
     credit_minor:Number(line.credit_minor),account_code:line.external_account_id
       ?externalCodes.get(String(line.external_account_id))||line.account_code:line.account_code}))};
 }
@@ -236,17 +256,21 @@ async function mapParty(database,ctx,connectorId,input={}){
 async function queuePending(database,ctx,connectorId,input={}){
   const current=await policy(database,ctx.workspaceId,connectorId);
   if(current.stage!=='WRITE_ENABLED')throw new ValidationError('Verified posting is not enabled for this accounting connection.');
+  if(!providers.get(current.provider_type)?.verifyJournalEntry)throw new ValidationError('Posting is unavailable for this connection. Read-only accounting remains available.');
   const pending=await pendingEntries(database,ctx.workspaceId,connectorId);
   const selected=new Set((input.entryIds||pending.map((row)=>row.id)).map(String));
   const targets=pending.filter((row)=>selected.has(String(row.id))&&!row.effect_status);
   const blocked=targets.filter((row)=>row.missingAccounts.length||row.missingParties.length);
   if(blocked.length)throw new ValidationError(
     'Every journal account and customer or supplier identity must be exactly mapped before export. Nothing was queued.');
-  const queued=[];await database.transaction(async(client)=>{for(const journal of targets){
+  const queued=[];await database.transaction(async(client)=>{
+    const account=(await client.query("SELECT provider_account_id,status,paused_at FROM workspace_connectors WHERE workspace_id=$1 AND id=$2 FOR UPDATE",[ctx.workspaceId,connectorId])).rows[0];
+    if(!account?.provider_account_id||account.status!=='connected'||account.paused_at)throw new ValidationError('Reconnect the accounting company before queueing exports.');
+    for(const journal of targets){
     const effect=await providerEffects.enqueueInTransaction(client,{workspaceId:ctx.workspaceId,
       kind:'accounting.journal.export',provider:current.provider_type,aggregateType:'accounting_journal_entry',
       aggregateId:journal.id,idempotencyKey:`accounting-export:${connectorId}:${journal.id}`,
-      requestedByUserId:ctx.actorId,payload:{connectorId,journalEntryId:journal.id,actorId:ctx.actorId},
+      requestedByUserId:ctx.actorId,payload:{connectorId,journalEntryId:journal.id,actorId:ctx.actorId,providerAccountId:account.provider_account_id},
       priority:15,maxAttempts:12});queued.push(effect.effect);}}, {isolation:'SERIALIZABLE',retrySafe:true});
   return {queued:queued.length,effects:queued};
 }
@@ -255,14 +279,15 @@ async function executeExportEffect(database,workspaceId,effectId,options={}){
   await require('../commercial/enforcement').workspace(database,workspaceId,'accounting.post_connected');
   const claimed=await providerEffects.claim(database,workspaceId,effectId);
   if(claimed.replayed)return {externalId:claimed.effect.providerReference?.externalId||null,replayed:true};
-  const effect=claimed.effect;let providerCalled=false;
+  const effect=claimed.effect;let providerCalled=false,postReturned=false;
   try{
     const connection=await connections.get(database,workspaceId,effect.payload.connectorId);
+    if(!effect.payload.providerAccountId||effect.payload.providerAccountId!==connection.provider_account_id)throw new ValidationError('The accounting company changed after this export was queued. Nothing was posted.');
     const current=await policy(database,workspaceId,connection.id);
     if(current.stage!=='WRITE_ENABLED'||connection.status!=='connected'||connection.paused_at)throw Object.assign(
       new ValidationError('Accounting export is no longer enabled on this connection.'),{status:409});
     const adapter=options.provider||providers.get(connection.provider_type);
-    if(!adapter?.postJournalEntry)throw Object.assign(new ValidationError('This provider cannot post governed journals.'),{status:422});
+    if(!adapter?.postJournalEntry||!adapter.verifyJournalEntry)throw Object.assign(new ValidationError('This provider has not been qualified to post and independently verify governed journals.'),{status:422});
     const credentials=options.credentials||await providerService.loadProviderCredentials(database,connection,adapter);
     const journal=await entry(database,workspaceId,connection.id,effect.payload.journalEntryId);
     if(journal.lines.some((line)=>!line.external_account_id||(connection.provider_type==='quickbooks'&&
@@ -275,7 +300,15 @@ async function executeExportEffect(database,workspaceId,effectId,options={}){
     providerCalled=true;let result;
     try{result=await require('../commercial/context').run({...require('../commercial/context').current(),
       database,scope:usageScope,funded:true,requestId:effect.idempotencyKey},
-      ()=>adapter.postJournalEntry({credentials,entry:journal,idempotencyKey:effect.idempotencyKey}));}
+      async()=>{
+       const posted=await adapter.postJournalEntry({credentials,entry:journal,idempotencyKey:effect.idempotencyKey});
+       postReturned=true;
+       if(!posted?.externalId)throw new ValidationError('The accounting provider did not confirm a journal identity.');
+       await providerEffects.checkpoint(database,workspaceId,effectId,effect.claimToken,{externalId:String(posted.externalId),version:posted.version??null,providerAccountId:connection.provider_account_id,verificationPending:true,journalSnapshot:journal,journalCoreHash:hash(journalCore(journal))});
+       const verification=await adapter.verifyJournalEntry({credentials,entry:journal,externalId:posted.externalId});
+       if(verification?.verified!==true||String(verification.externalId)!==String(posted.externalId))throw new ValidationError('The posted accounting journal has not been independently verified.');
+       return {...posted,verification};
+      });}
     finally{const owner=(await database.query('SELECT owner_account_id FROM workspaces WHERE id=$1',[workspaceId])).rows[0];
       if(owner?.owner_account_id)await commercialControl.recordCost(database,{accountId:owner.owner_account_id,workspaceId},{
         provider:connection.provider_type||'accounting_provider',operation:'journal_export',unit:'journal',quantity:1,
@@ -283,9 +316,26 @@ async function executeExportEffect(database,workspaceId,effectId,options={}){
         detail:{connectorId:connection.id,journalEntryId:journal.id}});}
     if(!result?.externalId)throw Object.assign(new ValidationError(
       'The accounting provider did not confirm an external journal identity.'),{status:422});
+    await completeVerifiedExport(database,workspaceId,effect,connection,journal,result);
+    return {externalId:String(result.externalId),replayed:false};
+  }catch(error){const ambiguous=postReturned||providerCalled&&!providerEffects.definiteFailure(error);
+    if(!ambiguous)await commercialUsage.reverseUsage(database,await commercialUsage.ownerScopeForWorkspace(database,workspaceId),
+      {meter:'accounting_syncs',idempotencyKey:effect.idempotencyKey,reason:error.message});
+    await providerEffects.finishError(database,workspaceId,effectId,effect.claimToken,error,{ambiguous});
+    throw Object.assign(error,{code:ambiguous?'accounting_export_ambiguous':(error.code||'accounting_export_failed'),retryable:false});
+  }
+}
+
+async function completeVerifiedExport(database,workspaceId,effect,connection,journal,result){
+ const effectId=effect.id;
     await providerEffects.succeed(database,workspaceId,effectId,effect.claimToken,{providerReference:{
-      externalId:String(result.externalId),version:result.version==null?null:String(result.version)},result,
-    apply:async(client)=>{const at=nowIso();await client.query(`INSERT INTO accounting_external_identities
+      externalId:String(result.externalId),version:result.version==null?null:String(result.version),providerAccountId:connection.provider_account_id,journalSnapshot:journal,journalCoreHash:hash(journalCore(journal)),verificationPending:false},result,
+    apply:async(client)=>{
+      const current=(await client.query('SELECT provider_account_id FROM workspace_connectors WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[workspaceId,connection.id])).rows[0];
+      if(current?.provider_account_id!==connection.provider_account_id)throw new ValidationError('The accounting company changed before verification settled. The original provider identity is retained.');
+      const prior=(await client.query("SELECT external_id FROM accounting_external_identities WHERE workspace_id=$1 AND connector_id=$2 AND entity_type='journal_entry' AND foundry_record_id=$3 FOR UPDATE",[workspaceId,connection.id,journal.id])).rows[0];
+      if(prior&&prior.external_id!==String(result.externalId))throw new ValidationError('This journal already has a different provider identity. Reconcile the retained results before continuing.');
+      const at=nowIso();await client.query(`INSERT INTO accounting_external_identities
         (id,workspace_id,connector_id,entity_type,foundry_record_id,external_id,external_version,payload_hash,
          last_direction,last_seen_at,created_at,updated_at)
         VALUES($1,$2,$3,'journal_entry',$4,$5,$6,$7,'WRITE',$8,$8,$8)
@@ -301,14 +351,26 @@ async function executeExportEffect(database,workspaceId,effectId,options={}){
       const owner=(await client.query('SELECT owner_account_id FROM workspaces WHERE id=$1',[workspaceId])).rows[0];
       if(owner?.owner_account_id){const scope={accountId:owner.owner_account_id,workspaceId};
         await commercialUsage.commitUsage(client,scope,{meter:'accounting_syncs',
-          idempotencyKey:effect.idempotencyKey,occurredAt:at,detail:{operation:'journal_export',connectorId:connection.id,journalEntryId:journal.id}});}}});
-    return {externalId:String(result.externalId),replayed:false};
-  }catch(error){const ambiguous=providerCalled&&!providerEffects.definiteFailure(error);
-    if(!ambiguous)await commercialUsage.reverseUsage(database,await commercialUsage.ownerScopeForWorkspace(database,workspaceId),
-      {meter:'accounting_syncs',idempotencyKey:effect.idempotencyKey,reason:error.message});
-    await providerEffects.finishError(database,workspaceId,effectId,effect.claimToken,error,{ambiguous});
-    throw Object.assign(error,{code:ambiguous?'accounting_export_ambiguous':(error.code||'accounting_export_failed'),retryable:false});
-  }
+          idempotencyKey:effect.idempotencyKey,occurredAt:at,detail:{operation:'journal_export',connectorId:connection.id,journalEntryId:journal.id}});}},
+    after:client=>require('../operations/postgres-job-queue').reconcileVerifiedEffectWithin(client,workspaceId,effect.id)});
+}
+function journalCore(journal){return {id:journal.id,workspaceId:journal.workspace_id,date:journal.posting_date,source:journal.source_key,currency:journal.currency,lines:journal.lines.map(l=>({id:l.id,account:l.account_id,debit:Number(l.debit_minor),credit:Number(l.credit_minor),currency:l.currency,customer:l.customer_id,supplier:l.supplier_id,item:l.item_id,sku:l.sku_id,location:l.location_id}))};}
+async function verifyExistingExport(database,ctx,effectId){
+ const actor=(await database.query('SELECT role FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];
+ if(actor?.role!=='owner')throw new(require('../domain/errors').AuthorizationError)('Only an owner can verify an external accounting outcome.');
+ const held=await providerEffects.claimVerification(database,ctx.workspaceId,effectId,'accounting.journal.export');if(held.replayed)return {verified:true,replayed:true};
+ const effect=held.effect;
+ try{
+  const connection=await connections.get(database,ctx.workspaceId,effect.payload.connectorId),snapshot=effect.providerReference?.journalSnapshot,canonical=await entry(database,ctx.workspaceId,connection.id,effect.payload.journalEntryId);
+  if(!effect.providerReference?.providerAccountId||effect.providerReference.providerAccountId!==connection.provider_account_id)throw new ValidationError('Reconnect the original accounting company before verifying this recorded operation.');
+  if(!snapshot||snapshot.id!==effect.aggregateId||snapshot.workspace_id!==ctx.workspaceId||hash(journalCore(snapshot))!==effect.providerReference.journalCoreHash||hash(journalCore(canonical))!==effect.providerReference.journalCoreHash)throw new ValidationError('The retained accounting evidence requires reconciliation before verification. No journal was resent.');
+  const adapter=providers.get(connection.provider_type);if(!adapter?.verifyJournalEntry)throw new ValidationError('This provider does not support independent journal verification.');
+  const verification=await require('../commercial/operations').run(database,ctx.workspaceId,{capability:'connections.accounting',provider:connection.provider_type,operation:'accounting_verify',key:'accounting-verify:'+effect.id+':'+effect.claimToken},async()=>{const credentials=await providerService.loadProviderCredentials(database,connection,adapter);return adapter.verifyJournalEntry({credentials,entry:snapshot,externalId:effect.providerReference.externalId});});
+  if(verification?.verified!==true||String(verification.externalId)!==effect.providerReference.externalId)throw new ValidationError('The accounting journal could not be verified.');
+  const result={externalId:effect.providerReference.externalId,version:verification.version??effect.providerReference.version,verification};
+  await completeVerifiedExport(database,ctx.workspaceId,effect,connection,snapshot,result);
+  return {verified:true,replayed:false,externalId:result.externalId};
+ }catch(error){await providerEffects.finishError(database,ctx.workspaceId,effectId,effect.claimToken,error,{ambiguous:true});throw error;}
 }
 
 async function state(database,workspaceId,connectorId){
@@ -327,12 +389,12 @@ async function state(database,workspaceId,connectorId){
       ORDER BY journal.entry_number DESC LIMIT 20`,[workspaceId,connectorId]),
   ]);
   const latestRow=latest.rows[0]||null;
-  return {policy:current,latestShadow:latestRow?{...latestRow,differences:json(latestRow.differences,[]),
+  return {policy:current,canVerifyWrites:typeof providers.get(current.provider_type)?.verifyJournalEntry==='function',latestShadow:latestRow?{...latestRow,isCurrent:current.last_shadow_run_id===latestRow.id,differences:json(latestRow.differences,[]),
     externalSnapshot:json(latestRow.external_snapshot,{})}:null,mappings:mappings.rows,accounts:accounts.rows,
     pendingEntries:pending,postedEntries:posted.rows};
 }
 
 module.exports={hash,policy,initialize,chooseAuthority,localSnapshot,compare,shadow,mapAccount,mapParty,enableWrites,
-  entry,pendingEntries,queuePending,executeExportEffect,state};
+  entry,pendingEntries,queuePending,executeExportEffect,verifyExistingExport,state};
 require('../commercial/enforcement').guardExports(module.exports,0,1,{chooseAuthority:'connections.accounting',
- enableWrites:'accounting.post_connected',queuePending:'accounting.post_connected',executeExportEffect:'accounting.post_connected',shadow:'accounting.sync'});
+ enableWrites:'accounting.post_connected',queuePending:'accounting.post_connected',executeExportEffect:'accounting.post_connected',verifyExistingExport:'connections.accounting',shadow:'accounting.sync'});

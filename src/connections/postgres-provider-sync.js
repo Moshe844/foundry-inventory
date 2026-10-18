@@ -149,11 +149,12 @@ async function sync(job,client,providers=defaultProviders){
   await client.query(`UPDATE connection_issues issue SET status='RESOLVED',resolved_at=$3,updated_at=$3
     WHERE issue.workspace_id=$1 AND issue.connector_id=$2 AND issue.status='OPEN'
       AND issue.issue_type IN ('UNKNOWN_SKU','UNKNOWN_LOCATION')
-      AND NOT EXISTS(SELECT 1 FROM connection_external_records external
-        WHERE external.workspace_id=issue.workspace_id AND external.connector_id=issue.connector_id
-          AND external.selected=1 AND external.mapping_status='UNMAPPED'
-          AND issue.fingerprint='unknown-'||external.entity_type||':'||external.connector_id||':'||external.external_id)`,
+      AND EXISTS(SELECT 1 FROM connection_mappings mapping
+        WHERE mapping.workspace_id=issue.workspace_id AND mapping.connector_id=issue.connector_id
+          AND (issue.fingerprint='unknown-'||mapping.entity_type||':'||mapping.connector_id||':'||mapping.external_id
+            OR issue.fingerprint='UNKNOWN_'||upper(mapping.entity_type)||':'||mapping.connector_id||':'||mapping.external_id))`,
   [job.workspaceId,connectorId,completedAt]);
+  await require('./postgres-webhook-inbox').scheduleMappedInTransaction(client,job.workspaceId,connectorId);
   await client.query(`UPDATE connection_sync_runs SET status='COMPLETED',discovered_products=$2,
     discovered_locations=$3,auto_mapped=$4,needs_mapping=$5,completed_at=$6 WHERE id=$1`,
   [runId,products.length,locations.length,autoMapped,needsMapping,completedAt]);
@@ -206,6 +207,7 @@ async function setMappingInTransaction(client,ctx,input){
     WHERE workspace_id=$1 AND connector_id=$2 AND entity_type=$3 AND external_id=$4`,
   [ctx.workspaceId,connection.id,entityType,externalId,at]);
   await resolveMappingIssues(client,connection,entityType,externalId,at);
+  await require('./postgres-webhook-inbox').scheduleMappedInTransaction(client,ctx.workspaceId,connection.id);
   const remaining=(await client.query(`SELECT COUNT(*) AS count FROM connection_external_records
     WHERE workspace_id=$1 AND connector_id=$2 AND selected=1 AND mapping_status='UNMAPPED'`,
   [ctx.workspaceId,connection.id])).rows[0];
@@ -219,4 +221,4 @@ async function setMapping(database,ctx,input){
   return database.transaction(client=>setMappingInTransaction(client,ctx,input),{isolation:'SERIALIZABLE',retrySafe:true});
 }
 
-module.exports={sync,cacheRecord,exactTarget,setMapping,setMappingInTransaction};
+module.exports={sync,cacheRecord,exactTarget,setMapping,setMappingInTransaction,resolveMappingIssues};

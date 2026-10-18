@@ -40,8 +40,9 @@ test('real Chromium qualifies signed Square sale, replay, forgery rejection and 
     const ctx={workspaceId:identity.workspace_id,actorId:identity.actor_id};
     const location=await locations.createLocation(database,ctx,{name:'Square Store',kind:'store'});
     const item=await catalog.createItem(database,ctx,{name:'Square Hat',baseCode:'SQ-HAT',trackingMode:'quantity',unitLabel:'unit'});
-    await inventory.receive(database,ctx,{skuId:item.skuIds[0],locationId:location.id,quantity:5,
+    const opening=await inventory.receive(database,ctx,{skuId:item.skuIds[0],locationId:location.id,quantity:5,
       reference:'OPENING',idempotencyKey:'square-webhook-opening'});
+    await database.transaction(c=>require('../../src/accounting/postgres-costing').receiveInTransaction(c,ctx,{movementId:opening.movementId,unitCostMinor:400,sourceType:'opening_inventory',sourceRecordId:opening.movementId}));
     const connectorId=newId('con');const at=nowIso();const webhookSecret='square-webhook-signature-secret';
     await database.query(`INSERT INTO workspace_connectors
       (id,workspace_id,connector_key,display_name,provider_type,status,capabilities,provides,config,
@@ -60,35 +61,38 @@ test('real Chromium qualifies signed Square sale, replay, forgery rejection and 
     [newId('cmap'),ctx.workspaceId,connectorId,entityType,externalId,foundryRecordId,ctx.actorId,at]);
 
     const endpoint=`${base}/api/v1/connections/square/webhooks/${connectorId}`;
-    const saleBody=JSON.stringify({event_id:'square-delivery-sale-1',type:'payment.updated',created_at:at,data:{object:{
+    const saleBody=JSON.stringify({merchant_id:'square-merchant-1',event_id:'square-delivery-sale-1',type:'payment.updated',created_at:at,data:{object:{
       payment:{id:'square-payment-1',status:'COMPLETED',order_id:'square-order-1',location_id:'square-location-1',
         created_at:at,amount_money:{amount:2000,currency:'USD'}},
-      order:{id:'square-order-1',location_id:'square-location-1',line_items:[{catalog_object_id:'square-variation-1',
-        quantity:'2',base_price_money:{amount:1000,currency:'USD'}}]},
+      order:{id:'square-order-1',version:2,state:'COMPLETED',location_id:'square-location-1',total_money:{amount:2000,currency:'USD'},line_items:[{uid:'order-line-1',catalog_object_id:'square-variation-1',
+        quantity:'2',base_price_money:{amount:1000,currency:'USD'},total_money:{amount:2000,currency:'USD'}}]},
     }}});
     const send=async(body,token=signature(webhookSecret,endpoint,body))=>fetch(endpoint,{method:'POST',headers:{
       'content-type':'application/json','x-square-hmacsha256-signature':token},body});
-    const accepted=await send(saleBody);assert.equal(accepted.status,200);assert.equal((await accepted.json()).accepted,1);
+    const accepted=await send(saleBody);assert.equal(accepted.status,202);const acceptedBody=await require('../helpers/provider-webhook-worker').result(database,accepted);assert.equal(acceptedBody.accepted,3,JSON.stringify(acceptedBody));
     const balance=async()=>Number((await database.query(`SELECT on_hand FROM balances
       WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3`,[ctx.workspaceId,item.skuIds[0],location.id])).rows[0].on_hand);
     assert.equal(await balance(),3);
-    const replay=await send(saleBody);assert.equal(replay.status,200);assert.equal((await replay.json()).replayed,1);
+    const replay=await send(saleBody);assert.equal(replay.status,200);assert.equal((await replay.json()).replayed,3);
     assert.equal(await balance(),3);
     const forged=await send(saleBody,'forged-signature');assert.equal(forged.status,401);assert.equal(await balance(),3);
+    const wrongMerchant=JSON.parse(saleBody);wrongMerchant.merchant_id='another-merchant';assert.equal((await send(JSON.stringify(wrongMerchant))).status,401);
+    const secondTender=JSON.parse(saleBody);secondTender.event_id='second-tender-delivery';secondTender.data.object.payment.id='second-tender-id';secondTender.data.object.payment.amount_money.amount=1000;
+    const tenderResponse=await send(JSON.stringify(secondTender));assert.equal(tenderResponse.status,202);await require('../helpers/provider-webhook-worker').result(database,tenderResponse);assert.equal(await balance(),3,'A second tender must not issue the complete order again');
 
-    const refundBody=JSON.stringify({event_id:'square-delivery-refund-1',type:'refund.updated',created_at:at,data:{object:{
+    const refundBody=JSON.stringify({merchant_id:'square-merchant-1',event_id:'square-delivery-refund-1',type:'refund.updated',created_at:at,data:{object:{
       refund:{id:'square-refund-1',status:'COMPLETED',payment_id:'square-payment-1',order_id:'square-order-1',
         created_at:at,updated_at:at,amount_money:{amount:1000,currency:'USD'},reason:'Customer returned one hat'},
     }}});
-    const refund=await send(refundBody);assert.equal(refund.status,200);const refundResult=await refund.json();
+    const refund=await send(refundBody);assert.equal(refund.status,202);const refundResult=await require('../helpers/provider-webhook-worker').result(database,refund);
     assert.equal(refundResult.accepted,1);assert.equal(refundResult.results[0].status,'IGNORED');
     assert.equal(refundResult.results[0].requiresReview,true);assert.equal(await balance(),3);
     const refundReplay=await send(refundBody);assert.equal(refundReplay.status,200);
     assert.equal((await refundReplay.json()).replayed,1);assert.equal(await balance(),3);
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM connector_feed_events
-      WHERE workspace_id=$1 AND connector_id=$2`,[ctx.workspaceId,connectorId])).rows[0].count,'2');
-    assert.equal((await database.query(`SELECT COUNT(*) AS count FROM movements
-      WHERE workspace_id=$1 AND reference='Square order square-order-1'`,[ctx.workspaceId])).rows[0].count,'1');
+      WHERE workspace_id=$1 AND connector_id=$2`,[ctx.workspaceId,connectorId])).rows[0].count,'5');
+    assert.equal((await database.query("SELECT count(*) AS count FROM accounting_journal_entries WHERE workspace_id=$1 AND source_type='sale_fulfillment'",[ctx.workspaceId])).rows[0].count,'1');
+    assert.equal((await database.query('SELECT count(*) AS count FROM accounting_customer_invoices WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].count,'1');
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM connection_issues
       WHERE workspace_id=$1 AND issue_type='RETURN_REVIEW_REQUIRED' AND status='OPEN'`,[ctx.workspaceId])).rows[0].count,'1');
 

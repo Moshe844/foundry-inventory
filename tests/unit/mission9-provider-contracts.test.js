@@ -36,7 +36,7 @@ test('QuickBooks sandbox contract verifies identity, reads a dated trial balance
   assert.deepEqual(snapshot.accounts[0], { externalId: '10', code: '1000', name: 'Cash', version: '4',
     accountType: null, accountSubType: null, classification: null, balanceMinor: 1234 });
   const posted = await quickbooks.postJournalEntry({ credentials: connected.credentials, idempotencyKey: 'foundry-entry-9',
-    entry: { entry_number: 9, posting_date: '2026-09-10', description: 'Test', lines: [
+    entry: { entry_number: 9, posting_date: '2026-09-10',currency:'USD', description: 'Test', lines: [
       { debit_minor: 1234, credit_minor: 0, external_account_id: '10', external_customer_id: 'customer-7' },
       { debit_minor: 0, credit_minor: 1234, external_account_id: '20' }] } });
   assert.equal(posted.externalId, 'je-9');

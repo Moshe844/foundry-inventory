@@ -22,6 +22,10 @@ test('native PostgreSQL accounting posts balanced immutable idempotent journals'
   assert.equal((await database.query(`SELECT COUNT(*) AS count FROM accounting_journal_entries WHERE workspace_id='w'`)).rows[0].count,'1');
   const totals=await database.query(`SELECT SUM(debit_minor) AS debit,SUM(credit_minor) AS credit FROM accounting_journal_lines WHERE workspace_id='w'`);
   assert.equal(totals.rows[0].debit,totals.rows[0].credit);
+  await assert.rejects(ledger.post(database,ctx,{...input,sourceKey:'foreign-unconverted',currency:'JPY'}),/verified currency conversion/);
+  await assert.rejects(ledger.configure(database,ctx,{startDate:'2026-01-01',currency:'EUR'}),/cannot change/);
+  assert.equal((await database.query("SELECT count(*) AS n FROM accounting_journal_entries WHERE workspace_id='w'")).rows[0].n,'1');
+  assert.equal((await database.query("SELECT base_currency FROM accounting_settings WHERE workspace_id='w'")).rows[0].base_currency,'USD');
   await assert.rejects(ledger.post(database,ctx,{...input,sourceKey:'bad',lines:[{accountKey:'CASH',debitMinor:100},{accountKey:'SALES_REVENUE',creditMinor:99}]}),/not balanced/i);
   await assert.rejects(database.query(`UPDATE accounting_journal_entries SET description='rewritten' WHERE workspace_id='w'`),/immutable/i);
   await assert.rejects(database.query(`UPDATE accounting_journal_lines SET debit_minor=1 WHERE workspace_id='w'`),/immutable/i);

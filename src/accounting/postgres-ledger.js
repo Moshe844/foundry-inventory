@@ -41,9 +41,13 @@ async function ensurePeriod(client, workspaceId, date) {
 
 async function configureInTransaction(client, ctx, input) {
   const startDate = dateOnly(input.startDate);
-  const currency = String(input.currency || 'USD').toUpperCase();
-  if (!/^[A-Z]{3}$/.test(currency)) throw new ValidationError('Currency must be a three-letter code.');
+  const currency = require('../domain/currency').code(input.currency||'USD');
   await requireAccountingActor(client,ctx);
+  const existing=(await client.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1 FOR UPDATE',[ctx.workspaceId])).rows[0];
+  if(existing&&existing.base_currency!==currency){
+    const history=(await client.query("SELECT EXISTS(SELECT 1 FROM accounting_journal_entries WHERE workspace_id=$1) OR EXISTS(SELECT 1 FROM accounting_inventory_cost_balances WHERE workspace_id=$1 AND (quantity_units<>0 OR total_cost_minor<>0)) AS exists",[ctx.workspaceId])).rows[0];
+    if(history.exists)throw new ValidationError('The accounting currency cannot change after journals or inventory values have been recorded. A governed currency conversion is required.');
+  }
   const at = nowIso();
   await client.query(`INSERT INTO accounting_settings
       (workspace_id,enabled,accounting_start_date,base_currency,costing_method,configured_by_user_id,configured_at,updated_at)
@@ -95,8 +99,10 @@ async function postInTransaction(client, ctx, input) {
     const prior=await client.query(`SELECT * FROM accounting_journal_entries
       WHERE workspace_id=$1 AND source_key=$2`,[ctx.workspaceId,sourceKey]);
     if(prior.rows.length)return { entry:prior.rows[0],replayed:true,totalMinor:total };
-    const settings=await client.query(`SELECT * FROM accounting_settings WHERE workspace_id=$1 AND enabled=1`,[ctx.workspaceId]);
+    const settings=await client.query(`SELECT * FROM accounting_settings WHERE workspace_id=$1 AND enabled=1 FOR SHARE`,[ctx.workspaceId]);
     if(!settings.rows.length)throw new ValidationError('Configure accounting before posting entries.');
+    const currency=require('../domain/currency').code(input.currency||settings.rows[0].base_currency);
+    if(currency!==settings.rows[0].base_currency)throw new ValidationError('This transaction uses '+currency+' but the accounting books use '+settings.rows[0].base_currency+'. A verified currency conversion is required before posting; no foreign amount was relabelled.');
     if(postingDate<settings.rows[0].accounting_start_date)throw new ValidationError('Posting date is before the accounting start date.');
     const period=await ensurePeriod(client,ctx.workspaceId,postingDate);
     const keys=[...new Set(normalized.map((line)=>line.accountKey).filter(Boolean))];
@@ -125,7 +131,7 @@ async function postInTransaction(client, ctx, input) {
          item_id,sku_id,location_id,memo,metadata,created_at)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
       [newId('jel'),ctx.workspaceId,id,index+1,line.accountId||byKey.get(line.accountKey),line.debit,line.credit,
-        input.currency||settings.rows[0].base_currency,line.customerId||null,line.supplierId||null,line.itemId||null,
+        currency,line.customerId||null,line.supplierId||null,line.itemId||null,
         line.skuId||null,line.locationId||null,line.memo||null,JSON.stringify(line.metadata||{}),at]);
     }
   return { entry:{ id,entry_number:entryNumber,posting_date:postingDate,source_key:sourceKey,status:'POSTED' },replayed:false,totalMinor:total };

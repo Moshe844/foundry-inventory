@@ -942,7 +942,7 @@
     <h2>Order lines</h2>
     <span class="spacer"></span>
     <span class="fold-note">
-      <%= order.lines.length %> <%= order.lines.length === 1 ? 'product' : 'products' %>
+      <%= order.lines.length %> <%= order.lines.length === 1 ? 'order line' : 'order lines' %>
       · <%= helpers.money(order.pricing.totalMinor, order.currency) %>
       <% if (order.lines.length === 1 && order.lines[0].unit_price_minor !== null) { %>
         · <%= helpers.money(order.lines[0].unit_price_minor, order.currency) %> each
@@ -969,6 +969,7 @@
   <div class="sales-total-block">
     <div><span>Subtotal</span><strong><%= helpers.money(order.pricing.subtotalMinor, order.currency) %></strong></div>
     <% if (order.pricing.discountMinor) { %><div><span>Discount</span><strong>−<%= helpers.money(order.pricing.discountMinor, order.currency) %></strong></div><% } %>
+    <% if (order.pricing.chargesMinor) { %><div><span>Shipping and other charges</span><strong><%= helpers.money(order.pricing.chargesMinor, order.currency) %></strong></div><% } %>
     <% if (order.pricing.taxMinor) { %><div><span>Tax</span><strong><%= helpers.money(order.pricing.taxMinor, order.currency) %></strong></div><% } %>
     <div class="sales-total"><span>Order total</span><strong><%= helpers.money(order.pricing.totalMinor, order.currency) %></strong></div>
   </div>

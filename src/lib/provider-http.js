@@ -102,10 +102,16 @@ async function providerFetch(url, init = {}, options = {}) {
     } catch (cause) {
       lastError = cause;
       if(commercialAttempt)await require('../commercial/network').after(commercialContext,commercialAttempt,false,{outcome:'unreachable'});
+      // Admission/security failures are not transient network outages and
+      // must retain their typed status instead of consuming retries.
+      if(cause instanceof DomainError&&cause.status<500)throw cause;
       const timedOut = cause && (cause.name === 'TimeoutError' || cause.name === 'AbortError');
       record(provider, { latencyMs: Date.now() - started, outcome: timedOut ? 'timeout' : 'unreachable', error: String(cause && cause.message || cause) });
       if (attempt <= retries) { await wait(backoff(attempt)); continue; }
-      const error = new ProviderUnavailableError(provider, `${provider} could not be reached${timedOut ? ' in time' : ''}. Nothing was changed there; StockChief will try again.`, { attempts: attempt, cause });
+      const writing=!['GET','HEAD','OPTIONS'].includes(String(init.method||'GET').toUpperCase());
+      const message=writing?provider+' did not confirm the operation. Its outcome must be verified before repeating it.':provider+' could not be reached'+(timedOut?' in time':'')+'. StockChief will retry this read safely.';
+      const error = new ProviderUnavailableError(provider,message,{attempts:attempt,cause});
+      error.providerOutcomeUncertain=writing;
       noteUnavailable(provider, error);
       throw error;
     }
@@ -114,9 +120,11 @@ async function providerFetch(url, init = {}, options = {}) {
       lastStatus = response.status;
       record(provider, { latencyMs: Date.now() - started, outcome: response.status === 429 ? 'rate_limited' : 'provider_error', error: `HTTP ${response.status}` });
       if (attempt <= retries) { await wait(retryAfterMs(response) ?? backoff(attempt)); continue; }
-      const error = new ProviderUnavailableError(provider, response.status === 429
-        ? `${provider} is rate-limiting requests right now. Nothing was changed there; StockChief will try again shortly.`
-        : `${provider} is not working right now (HTTP ${response.status}). Nothing was changed there; StockChief will try again.`, { attempts: attempt, httpStatus: response.status });
+      const writing=!['GET','HEAD','OPTIONS'].includes(String(init.method||'GET').toUpperCase());
+      const message=writing?provider+' did not confirm the operation (HTTP '+response.status+'). Its outcome must be checked before it is repeated.':response.status===429
+        ?provider+' is rate-limiting reads. StockChief will retry safely shortly.':provider+' is not working right now (HTTP '+response.status+'). StockChief will retry this read safely.';
+      const error = new ProviderUnavailableError(provider,message,{attempts:attempt,httpStatus:response.status});
+      error.providerOutcomeUncertain=writing;
       noteUnavailable(provider, error);
       throw error;
     }

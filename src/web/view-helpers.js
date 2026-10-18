@@ -22,8 +22,7 @@ function qty(value) {
 
 function money(amountMinor, currency = 'USD') {
   if (amountMinor === null || amountMinor === undefined) return 'Price not set';
-  try { return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(Number(amountMinor) / 100); }
-  catch { return `${currency} ${(Number(amountMinor) / 100).toFixed(2)}`; }
+  return require('../domain/currency').format(amountMinor,currency);
 }
 
 const { unitCount, unitLabel } = require('../lib/units');

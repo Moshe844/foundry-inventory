@@ -4,6 +4,7 @@ const crypto = require('node:crypto');
 const config = require('../../config');
 const { ValidationError } = require('../../domain/errors');
 const { jsonRequest } = require('./common');
+const money=require('../../domain/currency');
 
 const SCOPES = ['com.intuit.quickbooks.accounting'];
 const base = () => config.connections.quickbooks.environment === 'production'
@@ -80,10 +81,14 @@ async function readAccountingSnapshot({ credentials, asOf }) {
     api(credentials, `/v3/company/${encodeURIComponent(credentials.realmId)}/reports/TrialBalance?end_date=${encodeURIComponent(asOf)}&minorversion=75`),
     api(credentials, `/v3/company/${encodeURIComponent(credentials.realmId)}/query?query=${accountQuery}&minorversion=75`),
   ]);
-  const chart = new Map((chartResponse.body.QueryResponse?.Account || []).map((row) => [String(row.Id), row]));
+  const chartRows=[...(chartResponse.body.QueryResponse?.Account||[])];
+  if(chartRows.length===1000)chartRows.push(...await entities(credentials,'Account',1001));
+  const chart = new Map(chartRows.map((row) => [String(row.Id), row]));
+  const currency=money.code(response.body.Header?.Currency);
   const columns = response.body.Columns?.Column || [];
   const debitIndex = columns.findIndex((column) => /debit/i.test(column.ColTitle || ''));
   const creditIndex = columns.findIndex((column) => /credit/i.test(column.ColTitle || ''));
+  if(debitIndex<0||creditIndex<0)throw new ValidationError('QuickBooks did not return the required trial-balance debit and credit columns.');
   const rows = [];
   const reportedAccountIds = new Set();
   const walk = (groups = []) => groups.forEach((row) => {
@@ -98,8 +103,7 @@ async function readAccountingSnapshot({ credentials, asOf }) {
         name: account?.Name || identity.value || 'Unnamed account', version: account?.SyncToken || String(response.body.Header?.Time || asOf),
         accountType: account?.AccountType || null, accountSubType: account?.AccountSubType || null,
         classification: account?.Classification || null,
-        balanceMinor: Math.round((Number(row.ColData[debitIndex]?.value || 0)
-          - Number(row.ColData[creditIndex]?.value || 0)) * 100) });
+        balanceMinor:money.sum([money.toMinor(row.ColData[debitIndex]?.value||'0',currency,{signed:true}),-money.toMinor(row.ColData[creditIndex]?.value||'0',currency,{signed:true})]) });
     }
     if (Array.isArray(row.Rows?.Row)) walk(row.Rows.Row);
   });
@@ -116,17 +120,22 @@ async function readAccountingSnapshot({ credentials, asOf }) {
       classification: account.Classification || null,
       balanceMinor: 0 });
   }
-  return { asOf, currency: response.body.Header?.Currency || 'USD',
+  return { asOf, currency,
     version: String(response.body.Header?.Time || asOf), accounts: rows };
+}
+async function entities(credentials,entity,start=1){
+ if(!['Account','Customer','Vendor'].includes(entity))throw new ValidationError('Unsupported accounting identity type.');
+ const result=[];for(let position=start;;position+=1000){
+  const query=encodeURIComponent('select * from '+entity+' startposition '+position+' maxresults 1000');
+  const response=await api(credentials,'/v3/company/'+encodeURIComponent(credentials.realmId)+'/query?query='+query+'&minorversion=75');
+  const rows=response.body.QueryResponse?.[entity]||[];result.push(...rows);if(rows.length<1000)return result;
+ }
 }
 
 async function listPostingParties({ credentials, partyType }) {
   const entity = partyType === 'customer' ? 'Customer' : partyType === 'supplier' ? 'Vendor' : null;
   if (!entity) throw new ValidationError('QuickBooks can list customers or suppliers for posting.');
-  const query = encodeURIComponent(`select * from ${entity} maxresults 1000`);
-  const response = await api(credentials,
-    `/v3/company/${encodeURIComponent(credentials.realmId)}/query?query=${query}&minorversion=75`);
-  return (response.body.QueryResponse?.[entity] || []).filter((row) => row.Active !== false).map((row) => ({
+  return (await entities(credentials,entity)).filter((row) => row.Active !== false).map((row) => ({
     externalId: String(row.Id), version: row.SyncToken == null ? null : String(row.SyncToken),
     name: row.DisplayName || row.CompanyName || row.GivenName || `${entity} ${row.Id}`,
     company: row.CompanyName || null, email: row.PrimaryEmailAddr?.Address || null,
@@ -150,8 +159,8 @@ async function createPostingParty({ credentials, partyType, party, idempotencyKe
 }
 
 async function postJournalEntry({ credentials, entry, idempotencyKey }) {
-  const body = { TxnDate: entry.posting_date, PrivateNote: `StockChief journal ${entry.entry_number}: ${entry.description}`,
-    Line: entry.lines.map((line) => ({ Amount: Number(line.debit_minor || line.credit_minor) / 100,
+  const body = { TxnDate: entry.posting_date,CurrencyRef:{value:money.code(entry.currency)}, PrivateNote: `StockChief journal ${entry.entry_number}: ${entry.description}`,
+    Line: entry.lines.map((line) => ({ Amount: exactDecimal(line.debit_minor || line.credit_minor,entry.currency),
       Description: line.memo || entry.description, DetailType: 'JournalEntryLineDetail',
       JournalEntryLineDetail: { PostingType: line.debit_minor ? 'Debit' : 'Credit',
         AccountRef: { value: line.external_account_id },
@@ -167,7 +176,25 @@ async function postJournalEntry({ credentials, entry, idempotencyKey }) {
   const created = response.body.JournalEntry;
   return { externalId: created?.Id, version: created?.SyncToken };
 }
+function exactDecimal(minor,currency){const value=Number(money.fromMinor(minor,currency));if(money.toMinor(String(value),currency)!==Number(minor))throw new ValidationError('The accounting amount cannot be represented exactly by this provider.');return value;}
+function verifyJournalPayload(entry,remote,homeCurrency){
+ const currency=money.code(remote.CurrencyRef?.value||homeCurrency);
+ if(currency!==money.code(entry.currency)||remote.TxnDate!==entry.posting_date)throw new ValidationError('QuickBooks returned a different journal date or currency.');
+ if((remote.Line||[]).some(l=>l.DetailType!=='JournalEntryLineDetail'))throw new ValidationError('QuickBooks returned an unsupported additional journal line.');
+ const expected=entry.lines.map(l=>({account:String(l.external_account_id),posting:l.debit_minor?'Debit':'Credit',amount:money.integer(l.debit_minor||l.credit_minor),entity:l.external_customer_id?'Customer:'+l.external_customer_id:l.external_supplier_id?'Vendor:'+l.external_supplier_id:null}));
+ const actual=(remote.Line||[]).filter(l=>l.DetailType==='JournalEntryLineDetail').map(l=>{const d=l.JournalEntryLineDetail||{};return {account:String(d.AccountRef?.value||''),posting:d.PostingType,amount:money.toMinor(l.Amount,currency),entity:d.Entity?d.Entity.Type+':'+d.Entity.EntityRef?.value:null};});
+ const sorted=rows=>rows.map(r=>JSON.stringify(r)).sort();
+ if(JSON.stringify(sorted(actual))!==JSON.stringify(sorted(expected)))throw new ValidationError('QuickBooks journal amounts, posting accounts or party identities do not match the canonical journal.');
+ return {verified:true,currency,lineCount:actual.length};
+}
+async function verifyJournalEntry({credentials,entry,externalId}){
+ if(!externalId)throw new ValidationError('A verified accounting journal requires its provider identity.');
+ const base='/v3/company/'+encodeURIComponent(credentials.realmId),remote=(await api(credentials,base+'/journalentry/'+encodeURIComponent(externalId)+'?minorversion=75')).body.JournalEntry;
+ if(!remote||String(remote.Id)!==String(externalId))throw new ValidationError('QuickBooks did not confirm the journal identity.');
+ let homeCurrency;if(!remote.CurrencyRef?.value)homeCurrency=(await api(credentials,base+'/reports/TrialBalance?end_date='+encodeURIComponent(entry.posting_date)+'&minorversion=75')).body.Header?.Currency;
+ return {...verifyJournalPayload(entry,remote,homeCurrency),externalId:String(remote.Id),version:remote.SyncToken};
+}
 
 module.exports = { integrationClass: 'accounting', metadata, authorizationUrl, exchangeAuthorization,
   refresh, refreshCredentials, verifyReadOnly, readAccountingSnapshot, listPostingParties, createPostingParty,
-  postJournalEntry };
+  postJournalEntry,verifyJournalEntry,verifyJournalPayload,exactDecimal };

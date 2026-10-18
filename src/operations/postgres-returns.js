@@ -219,9 +219,12 @@ function allocateCost(evidence, used, quantity, preferredMovementIds = []) {
     if (availableQuantity <= 0) continue;
     const take = Math.min(remaining, availableQuantity);
     const costMinor = take === availableQuantity ? availableCost : Math.round(availableCost * take / availableQuantity);
-    const portion=require('../pricing/calculator').portion,pricing=source.pricing||{};
-    const amounts={};for(const field of ['revenueMinor','taxMinor','grossMinor','discountMinor'])if(Number.isSafeInteger(pricing[field]))amounts[field]=portion(pricing[field],source.quantity,prior.quantity,take);
-    if(amounts.grossMinor!==undefined&&amounts.discountMinor!==undefined)amounts.revenueMinor=amounts.grossMinor-amounts.discountMinor;
+    const calculator=require('../pricing/calculator'),pricing=source.pricing||{};
+    const amounts=Number.isSafeInteger(pricing.grossMinor??pricing.revenueMinor)?calculator.monetaryPortion(pricing,source.quantity,prior.quantity,take):{};
+    // Product returns do not implicitly refund delivery/service charges or
+    // their tax. Any such financial credit needs its own authorized scope.
+    if(amounts.chargeTaxMinor)amounts.taxMinor-=amounts.chargeTaxMinor;
+    if(amounts.grossMinor!==undefined&&amounts.discountMinor!==undefined){amounts.chargesMinor=Math.min(0,amounts.chargesMinor||0);amounts.revenueMinor=amounts.grossMinor-amounts.discountMinor+amounts.chargesMinor;}
     allocations.push({ inventoryMovementId: source.inventoryMovementId,
       originalJournalEntryId: source.originalJournalEntryId, quantity: take, costMinor,...amounts });
     remaining -= take;
@@ -464,10 +467,10 @@ async function refundCustomerReturnInTransaction(client, rawContext, id, input) 
       for (const allocation of line.trackingEvidence.costAllocations || []) {
         const key = `${allocation.originalJournalEntryId}:${allocation.inventoryJournalEntryId || 'none'}`;
         const current = groups.get(key) || { originalJournalEntryId: allocation.originalJournalEntryId,
-          inventoryJournalEntryId: allocation.inventoryJournalEntryId || null, revenueMinor: 0,taxMinor:0,grossMinor:0,discountMinor:0,costMinor: 0,
+          inventoryJournalEntryId: allocation.inventoryJournalEntryId || null, revenueMinor: 0,taxMinor:0,grossMinor:0,discountMinor:0,chargesMinor:0,costMinor: 0,
           itemId: line.item_id, skuId: line.sku_id, allocations: [] };
         const revenue=allocation.revenueMinor??Number(allocation.quantity)*Number(line.unit_price_minor);
-        current.revenueMinor += revenue;current.taxMinor+=allocation.taxMinor||0;current.grossMinor+=allocation.grossMinor??revenue;current.discountMinor+=allocation.discountMinor||0;
+        current.revenueMinor += revenue;current.taxMinor+=allocation.taxMinor||0;current.grossMinor+=allocation.grossMinor??revenue;current.discountMinor+=allocation.discountMinor||0;current.chargesMinor+=allocation.chargesMinor||0;
         current.costMinor += Number(allocation.costMinor);
         current.allocations.push(allocation);
         groups.set(key, current);
@@ -551,9 +554,9 @@ async function refundCustomerReturnInTransaction(client, rawContext, id, input) 
       const totalMinor = Number(invoice.total_minor) - amountMinor;
       const subtotalMinor = Math.max(0, Number(invoice.subtotal_minor) - refundGroups.reduce((n,g)=>n+g.grossMinor,0));
       const status = balanceMinor === 0 ? 'PAID' : balanceMinor < totalMinor ? 'PARTIALLY_PAID' : 'OPEN';
-      await client.query(`UPDATE accounting_customer_invoices SET subtotal_minor=$2,discount_minor=discount_minor-$7,tax_minor=tax_minor-$8,total_minor=$3,
+      await client.query(`UPDATE accounting_customer_invoices SET subtotal_minor=$2,discount_minor=discount_minor-$7,tax_minor=tax_minor-$8,charges_minor=charges_minor-$9,total_minor=$3,
         balance_minor=$4,status=$5,updated_at=$6 WHERE id=$1`,
-      [invoice.id, subtotalMinor, totalMinor, balanceMinor, status, nowIso(),refundGroups.reduce((n,g)=>n+g.discountMinor,0),refundGroups.reduce((n,g)=>n+g.taxMinor,0)]);
+      [invoice.id, subtotalMinor, totalMinor, balanceMinor, status, nowIso(),refundGroups.reduce((n,g)=>n+g.discountMinor,0),refundGroups.reduce((n,g)=>n+g.taxMinor,0),refundGroups.reduce((n,g)=>n+g.chargesMinor,0)]);
     }
     await client.query(`UPDATE customer_returns SET status='COMPLETED',refund_id=$3,completed_at=$4
       WHERE id=$1 AND workspace_id=$2`, [id, ctx.workspaceId, refundIds[0] || null, nowIso()]);

@@ -223,4 +223,9 @@ async function processOne(database, handlers, options = {}) {
   }
 }
 
-module.exports = { enqueue, get, claim, heartbeat, complete, fail, recoverExpired, retryDead, listDead, processOne };
+async function reconcileVerifiedEffectWithin(client,workspaceId,effectId){
+ const now=Date.now(),result=await client.query("UPDATE stockchief_runtime.jobs job SET status='COMPLETED',result=$3::jsonb,last_error=NULL,completed_at=$4,updated_at=$4 FROM stockchief_runtime.provider_effects effect WHERE effect.workspace_id=$1 AND effect.id=$2 AND effect.status='SUCCEEDED' AND job.workspace_id=effect.workspace_id AND job.kind='provider.effect' AND job.payload->>'effectId'=effect.id AND job.status='DEAD' RETURNING job.id",[workspaceId,effectId,JSON.stringify({verified:true,effectId,readOnlyRecovery:true}),new Date(now).toISOString()]);
+ for(const row of result.rows)await event(client,row.id,'VERIFICATION_RECOVERED',{effectId,readOnlyRecovery:true},now);
+ return result.rows.length;
+}
+module.exports = { enqueue, get, claim, heartbeat, complete, fail, recoverExpired, retryDead, listDead, processOne,reconcileVerifiedEffectWithin };

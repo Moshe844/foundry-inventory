@@ -1,12 +1,15 @@
 <section class="rm-head"><div><p class="rm-eyebrow">External operation</p><h1>Provider outcome review</h1>
-  <p class="rm-lede">StockChief stopped before repeating an external action whose outcome could not be verified.</p></div></section>
+  <p class="rm-lede"><%= effect.status==='SUCCEEDED'?'The external result is verified and recorded.':"StockChief stopped before repeating an external action whose outcome could not be verified." %></p></div></section>
 
 <section class="rm-card"><div class="rm-card__head"><div><h2><%= effect.kind.replaceAll('.', ' ') %></h2>
   <p><%= effect.provider %> · <%= effect.status %></p></div></div>
   <div class="rm-stack">
     <div class="rm-row"><span><strong>Business record</strong><small><%= effect.aggregateType.replaceAll('_', ' ') %> · <%= effect.aggregateId %></small></span></div>
-    <div class="rm-row"><span><strong>What happened</strong><small><%= effect.errorMessage || 'The outside provider has not confirmed the result.' %></small></span></div>
-    <div class="rm-row"><span><strong>What to check</strong><small>Inspect the provider account for this exact operation before any new attempt. This review does not resend or claim success.</small></span></div>
+    <div class="rm-row"><span><strong>What happened</strong><small><%= effect.status==='SUCCEEDED'?'The provider record matches StockChief’s canonical accounting evidence.':effect.errorMessage || 'The outside provider has not confirmed the result.' %></small></span></div>
+    <% if(effect.status!=='SUCCEEDED'){ %><div class="rm-row"><span><strong>What to check</strong><small>Verify the existing provider record before any new attempt. Verification reads the recorded result and does not resend the operation.</small></span></div><% } %>
+    <% if(effect.kind==='accounting.journal.export'&&effect.status==='AMBIGUOUS'&&effect.providerReference?.externalId&&effect.providerReference?.journalSnapshot){ %>
+      <form method="post" action="/settings/operations/provider-effects/<%= effect.id %>/verify"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button type="submit" class="btn btn--primary">Verify existing accounting record</button></form>
+    <% } %>
   </div>
   <p class="rm-disclose"><a href="/settings/operations#dead-letters">Open operations</a><a href="/needs-you">Back to Needs you</a></p>
 </section>

@@ -169,7 +169,8 @@ function createPostgresConnectionsRouter(database,options={}){
   }));
   router.get('/settings/connections/:id/complete',requireOwner,asyncRoute(async(req,res)=>{
     const connection=await connections.get(database,req.ctx.workspaceId,req.params.id);
-    // Authorization success is distinct from the explicit accounting authority decision.
+    // OAuth success and operational readiness are distinct. Accounting still
+    // requires an explicit source-of-truth decision after authorization.
     const connected=connection.status==='connected'&&!connection.paused_at;
     const setupRequired=connected&&connection.setup_status!=='CONNECTED';
     const requestOrigin=`${req.protocol}://${req.get('host')}`;
@@ -207,11 +208,17 @@ function createPostgresConnectionsRouter(database,options={}){
           }catch(error){connection.accounting.externalPartiesError=error.message;}}
       }
     }
+    const pendingWebhooks=(await database.query("SELECT id,status,lease_until,received_at,updated_at,result FROM connection_webhook_receipts WHERE workspace_id=$1 AND connector_id=$2 AND status<>'COMPLETED' ORDER BY received_at DESC,id DESC LIMIT 20",[req.ctx.workspaceId,connection.id])).rows;
     return res.page('connections/postgres-detail',{
       title:'Connection',nav:'connections',room:true,backTo:{href:'/settings/connections',label:'Connections'},
       connection,newConnectionToken,provider:adapter?.metadata?.()||{name:connection.display_name},
-      canDiscover:Boolean(adapter?.discover)&&!isMailbox,isMailbox,mailboxLastPollAt,
+      canDiscover:Boolean(adapter?.discover)&&!isMailbox,isMailbox,mailboxLastPollAt,pendingWebhooks,
     });
+  }));
+  router.post('/settings/connections/:id/receipts/:receiptId/resume',requireOwner,asyncRoute(async(req,res)=>{
+    await require('../../connections/postgres-webhook-inbox').resume(database,req.ctx,req.params.id,req.params.receiptId);
+    req.flash('success','The retained provider event is queued. Completed operations will not be repeated; remaining operations keep their existing permission and safety checks.');
+    return res.redirect(303,`/settings/connections/${encodeURIComponent(req.params.id)}`);
   }));
   router.post('/settings/connections/:id/check-mail',requireOwner,asyncRoute(async(req,res)=>{
     const connection=await connections.get(database,req.ctx.workspaceId,req.params.id);

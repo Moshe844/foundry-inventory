@@ -5,6 +5,7 @@ const config=require('../../config');
 const {DomainError}=require('../../domain/errors');
 const credentials=require('../../connections/postgres-credential-store');
 const ingestion=require('../../connections/postgres-event-ingestion');
+const webhookInbox=require('../../connections/postgres-webhook-inbox');
 const providersDefault=require('../../connections/providers/registry');
 const commercial=require('../../commercial/entitlements');
 const commercialContext=require('../../commercial/context');
@@ -51,18 +52,18 @@ function createPostgresProviderWebhooks(database,options={}){
         message:`${providerType} webhook handling is not configured.`}});
       const providerCredentials=await credentials.get(database,connection.workspace_id,connection.id,'provider');
       if(!providerCredentials)return res.status(409).json({error:{code:'credentials_missing',
-        message:'Reconnect Square before accepting provider events.'}});
+        message:'Reconnect this provider before accepting its events.'}});
       const rawBody=Buffer.isBuffer(req.body)?req.body:Buffer.from(String(req.body||''),'utf8');
       const body=parseBody(rawBody);
       const webhookUrl=`${requestOrigin(req,options.publicOrigin)}${req.originalUrl}`;
       adapter.verifyWebhook({headers:req.headers,rawBody,webhookUrl,credentials:providerCredentials,connection,body});
-      const events=await normalize(database,adapter,connection,{headers:req.headers,rawBody,body,
-        credentials:providerCredentials,connection});
-      if(!events.length)return res.status(200).json({received:true,accepted:0,replayed:0,needsMapping:0,results:[]});
-      const auth={workspaceId:connection.workspace_id,connectorId:connection.id,
-        actorId:connection.authorized_by_user_id,displayName:connection.display_name,providerType};
-      const result=await ingestion.ingestBatch(database,auth,{events});
-      return res.status(result.needsMapping?207:200).json({received:true,...result});
+      const receipt=await webhookInbox.receive(database,connection,{headers:req.headers,rawBody,body});
+      // Acknowledge only after the encrypted receipt and durable job commit.
+      // Provider API reads and business execution belong to the worker, so
+      // slow upstream services cannot hold webhook delivery open or lose work.
+      if(receipt.status==='COMPLETED')return res.status(200).json({received:true,receiptId:receipt.receiptId,
+        processingStatus:'COMPLETED',accepted:0,replayed:(receipt.result?.results||[]).length,needsMapping:0});
+      return res.status(202).json({received:true,receiptId:receipt.receiptId,processingStatus:receipt.status,accepted:0,replayed:0,needsMapping:0});
     }catch(error){return apiError(res,error);}
   };
   for(const providerType of ['shopify','square','woocommerce'])router.post(
