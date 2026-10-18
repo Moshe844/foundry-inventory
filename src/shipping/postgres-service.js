@@ -317,6 +317,68 @@ async function handoff(database,ctx,shipmentId,input={}){
   return {shipment:await requireShipment(database,ctx.workspaceId,shipmentId),fulfillment:result,replayed:result.replayed};
 }
 
+// Reconcile a connected system's already-completed fulfillment. This records
+// shipping evidence only: the canonical sales engine exclusively owns the
+// inventory, costing and invoice effects. Never infer shipment lines from the
+// whole order or rerun its physical handoff to create a missing shipment row.
+async function recordProviderFulfillment(database,ctx,input){
+  const seen=input.observation||{},identity=String(seen.externalFulfillmentId||'').trim();
+  if(!identity||identity.length>240||!input.effectKey)throw new ValidationError('A verified provider fulfillment identity is required.');
+  const text=(value,max)=>{const s=String(value||'').trim();if(s.length>max)throw new ValidationError('Provider tracking evidence is too long.');return s||null;};
+  const carrier=text(seen.carrier,200),number=text(seen.trackingNumber,240),url=text(seen.trackingUrl,2048);
+  if(url){let parsed;try{parsed=new URL(url);}catch{throw new ValidationError('Provider tracking must be a valid web address.');}
+    if(!['http:','https:'].includes(parsed.protocol)||parsed.username||parsed.password)throw new ValidationError('Provider tracking must be a public web link without credentials.');}
+  return database.transaction(async client=>{
+    const connection=(await client.query(`SELECT * FROM workspace_connectors WHERE workspace_id=$1 AND id=$2
+      AND status='connected' AND paused_at IS NULL AND authorized_by_user_id=$3`,[ctx.workspaceId,input.connectorId,ctx.actorId])).rows[0];
+    if(!connection)throw new ValidationError('The provider shipment does not belong to this authorized business connection.');
+    const event=(await client.query(`SELECT * FROM connector_feed_events WHERE workspace_id=$1 AND connector_id=$2
+      AND effect_key=$3 AND event_type='sales_order.fulfilled' AND status='COMPLETED' FOR SHARE`,[ctx.workspaceId,input.connectorId,input.effectKey])).rows[0];
+    const normalized=typeof event?.normalized_payload==='string'?JSON.parse(event.normalized_payload):event?.normalized_payload;
+    if(!event||String(normalized?.data?.externalOrderId)!==String(seen.externalOrderId))
+      throw new ValidationError('The source shipment has no matching completed canonical fulfillment.');
+    const order=(await client.query('SELECT * FROM sales_orders WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,event.action_record_id])).rows[0];
+    if(!order)throw new ValidationError('The fulfilled sales order does not belong to this inventory.');
+    const movementIds=typeof event.movement_ids==='string'?JSON.parse(event.movement_ids):event.movement_ids||[];
+    if(!movementIds.length)throw new ValidationError('Reconcile the original physical fulfillment before recording its shipment.');
+    const lines=(await client.query(`SELECT m.id,m.sku_id,m.location_id,-m.quantity_delta AS quantity,
+      line.id AS line_id FROM movements m JOIN accounting_journal_entries journal ON journal.workspace_id=m.workspace_id
+      AND journal.status='POSTED' AND journal.source_type='sale_fulfillment' AND journal.metadata::jsonb->>'movementId'=m.id
+      JOIN sales_order_lines line ON line.workspace_id=m.workspace_id AND line.id=journal.metadata::jsonb->>'salesOrderLineId'
+      WHERE m.workspace_id=$1 AND m.id=ANY($2::text[]) AND m.quantity_delta<0 AND journal.source_record_id=$3
+      AND line.sales_order_id=$3 AND line.sku_id=m.sku_id ORDER BY m.id`,[ctx.workspaceId,movementIds,order.id])).rows;
+    if(lines.length!==movementIds.length)throw new ValidationError('The source shipment is not fully backed by the recorded inventory and accounting effects.');
+    if(seen.externalLocationId){const mapping=(await client.query("SELECT foundry_record_id FROM connection_mappings WHERE workspace_id=$1 AND connector_id=$2 AND entity_type='location' AND external_id=$3",[ctx.workspaceId,connection.id,seen.externalLocationId])).rows[0];
+      if(!mapping||lines.some(line=>line.location_id!==mapping.foundry_record_id))throw new ValidationError('The provider shipment location does not match the recorded physical fulfillment.');}
+    const shipments=[];
+    for(const locationId of [...new Set(lines.map(line=>line.location_id))]){
+      const key=`provider-fulfillment:${connection.id}:${input.effectKey}:${locationId}`;
+      const operation=await client.query(`INSERT INTO stockchief_runtime.business_operations(id,workspace_id,kind,idempotency_key)
+        VALUES($1,$2,'shipping.provider-observation',$3) ON CONFLICT(workspace_id,kind,idempotency_key) DO NOTHING RETURNING id`,[newId('pgop'),ctx.workspaceId,key]);
+      if(!operation.rows.length){const prior=(await client.query("SELECT status,result FROM stockchief_runtime.business_operations WHERE workspace_id=$1 AND kind='shipping.provider-observation' AND idempotency_key=$2 FOR UPDATE",[ctx.workspaceId,key])).rows[0];
+        if(prior?.status!=='COMPLETED')throw new InvariantError('The source shipment observation is already being recorded.','operation_in_progress');
+        const shipment=await requireShipment(client,ctx.workspaceId,prior.result.shipmentId,true);
+        if(shipment.sales_order_id!==order.id||shipment.ship_from_location_id!==locationId||shipment.provider_shipment_id!==identity)
+          throw new InvariantError('The source fulfillment identity conflicts with its recorded shipment.','provider_shipment_conflict');
+        shipments.push({...prior.result,replayed:true});continue;}
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',[`shipment-number:${ctx.workspaceId}`]);
+      const count=Number((await client.query('SELECT count(*) AS n FROM sales_shipments WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n);
+      const id=newId('shp'),name=`SHP-${String(count+1).padStart(5,'0')}`,at=nowIso(),shippedAt=input.occurredAt||at;
+      await client.query(`INSERT INTO sales_shipments(id,workspace_id,sales_order_id,shipment_number,status,ship_from_location_id,
+        ship_to_address,handover,carrier,tracking_number,tracking_url,currency,notes,shipped_at,created_by_user_id,created_at,updated_at,
+        provider,provider_shipment_id) VALUES($1,$2,$3,$4,'SHIPPED',$5,$6,'CARRIER',$7,$8,$9,$10,$11,$12,$13,$14,$14,$15,$16)`,
+      [id,ctx.workspaceId,order.id,name,locationId,order.ship_to_address,carrier,number,url,order.currency,
+        `Fulfillment recorded by ${connection.display_name}. Inventory and accounting were verified separately.`,shippedAt,ctx.actorId,at,connection.provider_type,identity]);
+      for(const line of lines.filter(line=>line.location_id===locationId))await client.query(`INSERT INTO sales_shipment_lines
+        (id,workspace_id,shipment_id,sales_order_line_id,sku_id,location_id,quantity,created_at,updated_at)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$8)`,[newId('shpl'),ctx.workspaceId,id,line.line_id,line.sku_id,locationId,Number(line.quantity),at]);
+      const result={shipmentId:id,shipmentNumber:name,status:'SHIPPED'};shipments.push({...result,replayed:false});
+      await client.query("UPDATE stockchief_runtime.business_operations SET status='COMPLETED',result=$2::jsonb,completed_at=now() WHERE id=$1",[operation.rows[0].id,JSON.stringify(result)]);
+    }
+    return {shipments};
+  },{isolation:'SERIALIZABLE',retrySafe:true});
+}
+
 async function applyTracking(database,ctx,shipmentId,input={}){
   return database.transaction(async(client)=>{
     const shipment=await requireShipment(client,ctx.workspaceId,shipmentId,true);
@@ -429,6 +491,6 @@ async function refreshTracking(database,ctx,shipmentId,options={}){
 }
 
 module.exports={prepare,requireShipment,packagesFor,setPackages,state,quoteFingerprint,ratesFor,quote,queueLabelPurchase,
-  executeLabelPurchaseEffect,buyLabel,handoff,applyTracking,receiveProviderEvent,refreshTracking};
+  executeLabelPurchaseEffect,buyLabel,handoff,recordProviderFulfillment,applyTracking,receiveProviderEvent,refreshTracking};
 require('../commercial/enforcement').guardExports(module.exports,0,1,{queueLabelPurchase:'shipping.labels',
-  prepare:'shipping.workflow',setPackages:'shipping.workflow',handoff:'shipping.workflow',applyTracking:'shipping.workflow'});
+  prepare:'shipping.workflow',setPackages:'shipping.workflow',handoff:'shipping.workflow',applyTracking:'shipping.workflow',recordProviderFulfillment:'connections.commerce'});

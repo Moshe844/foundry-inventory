@@ -361,7 +361,13 @@ function normalizeWebhook({ headers, body }) {
   if (topic === 'orders/fulfilled') return [{ eventId: delivery, effectKey: facts.effectKey('shopify','order-fulfilled-notice',body.id), type: 'fulfillment.reported', version, occurredAt,
     aggregateId: String(body.id), data: { externalOrderId: String(body.id), reference: 'Shopify order fulfillment notification' } }];
   if (topic === 'fulfillments/create') return [{ eventId: delivery, effectKey: facts.effectKey('shopify','fulfillment',body.id), type: 'sales_order.fulfilled', version, occurredAt,
-    aggregateId: String(body.order_id), data: { externalOrderId: String(body.order_id), lines: (body.line_items || []).map((line) => ({
+    aggregateId: String(body.order_id), shipmentObservation: {
+      externalFulfillmentId: String(body.id), externalOrderId: String(body.order_id),
+      externalLocationId: body.location_id ? shopifyGid('Location', body.location_id) : undefined,
+      carrier: body.tracking_company || null,
+      trackingNumber: body.tracking_number || body.tracking_numbers?.[0] || null,
+      trackingUrl: body.tracking_url || body.tracking_urls?.[0] || null,
+    }, data: { externalOrderId: String(body.order_id), lines: (body.line_items || []).map((line) => ({
       externalSku: line.variant_id ? shopifyGid('ProductVariant', line.variant_id) : shopifyGid('Product', line.product_id),
       skuCode: line.sku || undefined, externalLineId: String(line.id),
       externalLocationId: body.location_id ? shopifyGid('Location', body.location_id) : undefined, quantity: Number(line.quantity),

@@ -52,7 +52,18 @@ async function processReceipt(database,workspaceId,receiptId,providers=providers
    return adapter.normalizeWebhook(input);
   });
   const auth={workspaceId,connectorId:connection.id,actorId:connection.authorized_by_user_id,displayName:connection.display_name,providerType:connection.provider_type};
-  for(const event of events)applied.push(await ingestion.ingest(database,auth,event,{retryMapped:true}));
+  for(const event of events){
+   const result=await ingestion.ingest(database,auth,event,{retryMapped:true});applied.push(result);
+   // A fulfilled order and a shipment are separate durable facts. Record the
+   // source shipment only against the verified canonical physical effect. On
+   // interruption, replaying that effect can finish this handoff without
+   // issuing inventory or posting an invoice again. Observation metadata does
+   // not change the original immutable business-effect identity.
+   if(result.accepted&&event.type==='sales_order.fulfilled'&&event.shipmentObservation)
+    await require('../shipping/postgres-service').recordProviderFulfillment(database,
+     {workspaceId,actorId:auth.actorId},{connectorId:connection.id,effectKey:event.effectKey,
+      observation:event.shipmentObservation,occurredAt:event.occurredAt});
+  }
   const needsMapping=applied.filter(r=>r.status==='NEEDS_MAPPING').length,status=needsMapping?'NEEDS_MAPPING':'COMPLETED',result={processingStatus:status,accepted:applied.filter(r=>r.accepted).length,replayed:applied.filter(r=>r.replayed).length,needsMapping,results:applied,receiptId};
   const finished=await database.query('UPDATE connection_webhook_receipts SET status=$3,result=$4::jsonb,lease_until=NULL,claim_token=NULL,error_code=NULL,error_message=NULL,updated_at=now() WHERE workspace_id=$1 AND id=$2 AND claim_token=$5 RETURNING id',[workspaceId,receiptId,status,JSON.stringify(result),claimToken]);
   if(!finished.rows.length)return {processingStatus:'CLAIM_LOST',receiptId,accepted:0,replayed:0,needsMapping:0,results:[]};

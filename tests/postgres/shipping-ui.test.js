@@ -237,7 +237,7 @@ test('real Chromium qualifies PostgreSQL rates, label, handoff and idempotent de
     assert.equal(quoteProposal.action_type,'shipping.quote');
     assert.equal(quoteProposal.status,'PENDING');
     await page.goto(`${base}/actions/${quoteProposal.id}`);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve and execute'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve only this change',exact:true}).click()]);
     assert.equal((await database.query(`SELECT status FROM stockchief_runtime.assistant_action_proposals
       WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,quoteProposal.id])).rows[0].status,'EXECUTED');
     const quoteHandlers=runtimeHandlers.create(undefined,{shippingProviderResolver:()=>fakeCarrier});
@@ -252,7 +252,7 @@ test('real Chromium qualifies PostgreSQL rates, label, handoff and idempotent de
     const staleProposal=(await database.query(`SELECT id FROM stockchief_runtime.assistant_action_proposals
       WHERE workspace_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1`,[ctx.workspaceId])).rows[0];
     await page.goto(`${base}/actions/${staleProposal.id}`);
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve and execute'}).click()]);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve only this change',exact:true}).click()]);
     await shipping.setPackages(database,ctx,askParcel.shipmentId,
       [{weightGrams:700,lengthMm:210,widthMm:160,heightMm:110}]);
     const beforeStale=quoteCalls;

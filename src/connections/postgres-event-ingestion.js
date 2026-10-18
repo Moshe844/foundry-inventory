@@ -340,8 +340,10 @@ async function applySalesOrder(client,auth,event){
       if(!line)throw new ValidationError('The provider fulfillment contains a product that is not on this Sales Order.');
       let remaining=quantity(external.quantity);
       if(data.fulfillmentMode==='cumulative'){remaining-=Number(line.quantity_fulfilled);if(remaining<0)throw new ValidationError('A cumulative fulfillment cannot remove already fulfilled units.');if(!remaining)continue;}
+      const sourceLocation=external.externalLocationId||external.locationId||external.locationName
+        ?await requiredMapping(client,auth,event,'location',external):null;
       const allocations=(await client.query(`SELECT * FROM sales_order_allocations WHERE workspace_id=$1
-        AND sales_order_line_id=$2 ORDER BY created_at,id FOR UPDATE`,[auth.workspaceId,line.id])).rows;
+        AND sales_order_line_id=$2 AND ($3::text IS NULL OR location_id=$3) ORDER BY created_at,id FOR UPDATE`,[auth.workspaceId,line.id,sourceLocation])).rows;
       for(const allocation of allocations){if(!remaining)break;const count=Math.min(remaining,Number(allocation.quantity));
         if(count)requested.push({lineId:line.id,locationId:allocation.location_id,quantity:count});remaining-=count;}
       if(remaining)throw new ValidationError('The provider fulfillment exceeds stock committed to this Sales Order.');
