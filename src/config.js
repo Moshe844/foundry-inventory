@@ -114,6 +114,7 @@ const config = {
     shopify: {
       get clientId() { return process.env.SHOPIFY_CLIENT_ID || null; },
       get clientSecret() { return process.env.SHOPIFY_CLIENT_SECRET || null; },
+      get scopePolicy() { return process.env.SHOPIFY_ACCESS_SCOPES_BY_SHOP || '{}'; },
       get configured() { return Boolean(this.clientId && this.clientSecret); },
     },
     square: {

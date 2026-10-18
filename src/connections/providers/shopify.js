@@ -9,6 +9,36 @@ const facts = require('../commerce-facts');
 
 const API_VERSION = '2026-07';
 const SCOPES = ['read_orders', 'read_products', 'read_locations', 'read_inventory', 'read_fulfillments'];
+const SUPPORTED_SCOPES = new Set([...SCOPES,'write_products','write_inventory','write_orders',
+  'write_fulfillments','write_merchant_managed_fulfillment_orders']);
+
+// Store-bound deployment policy controls the permission request, never
+// authority to execute business operations. Other stores remain read-only.
+function requestedScopes(shop) {
+  let policy;
+  try { policy=JSON.parse(config.connections.shopify.scopePolicy); }
+  catch { throw new ValidationError('The Shopify permission policy is invalid. Contact your deployment administrator.'); }
+  if(!policy||typeof policy!=='object'||Array.isArray(policy))throw new ValidationError('The Shopify permission policy must identify stores.');
+  const values=Object.hasOwn(policy,shop)?policy[shop]:SCOPES;
+  if(!Array.isArray(values)||!values.length||values.some(value=>!SUPPORTED_SCOPES.has(value)))throw new ValidationError(
+    'The configured Shopify permission request contains unsupported access.');
+  return [...new Set([...SCOPES,...values])];
+}
+
+function missingScopes(granted,required) {
+  const actual=new Set(granted);
+  return required.filter(scope=>!actual.has(scope)&&!(scope.startsWith('read_')&&actual.has('write_'+scope.slice(5))));
+}
+
+async function grantedScopes(body,credentials) {
+  if(typeof body.scope==='string'&&body.scope.trim())return [...new Set(body.scope.split(',').map(s=>s.trim()).filter(Boolean))];
+  // A provider response without scopes is not evidence that our request
+  // was granted. Read the installation instead of inventing capabilities.
+  const data=await graphql(credentials,'query GrantedPermissions { currentAppInstallation { accessScopes { handle } } }');
+  const scopes=data.currentAppInstallation?.accessScopes;
+  if(!Array.isArray(scopes))throw new ValidationError('Shopify did not confirm the installed permissions.');
+  return [...new Set(scopes.map(scope=>scope.handle))];
+}
 
 function metadata() {
   return { type: 'shopify', name: 'Shopify', mark: 'S', category: 'selling', authMode: 'oauth', available: config.connections.shopify.configured,
@@ -32,12 +62,13 @@ function validateInput(input) {
 function authorizationUrl({ state, input }) {
   if (!config.connections.shopify.configured) throw new ValidationError('Shopify is not configured on this StockChief installation.');
   const shop = normalizeShop(input.shop);
+  const scopes = requestedScopes(shop);
   const url = new URL(`https://${shop}/admin/oauth/authorize`);
   url.searchParams.set('client_id', config.connections.shopify.clientId);
-  url.searchParams.set('scope', SCOPES.join(','));
+  url.searchParams.set('scope', scopes.join(','));
   url.searchParams.set('redirect_uri', input.redirectUri);
   url.searchParams.set('state', state);
-  return { url: url.toString(), metadata: { shop, redirectUri: input.redirectUri } };
+  return { url: url.toString(), metadata: { shop, redirectUri: input.redirectUri, requestedScopes:scopes } };
 }
 
 function expiresAt(seconds) {
@@ -57,18 +88,25 @@ async function exchangeClientCredentials(shop) {
     body: form.toString(),
   });
   const accessTokenExpiresAt = expiresAt(body.expires_in);
+  if(!body.access_token)throw new ValidationError('Shopify did not return an access token.');
+  const credential={ accessToken:body.access_token,shop,authMode:'client_credentials',accessTokenExpiresAt };
   return {
-    credentials: { accessToken: body.access_token, shop, authMode: 'client_credentials', accessTokenExpiresAt },
+    credentials: credential,
     expiresAt: accessTokenExpiresAt,
     accountId: shop,
     accountName: shop.replace('.myshopify.com', ''),
-    capabilities: body.scope ? body.scope.split(',') : SCOPES,
+    capabilities: await grantedScopes(body,credential),
   };
 }
 
 async function tryDirectAuthorization({ input }) {
   const shop = normalizeShop(input.shop);
-  try { return await exchangeClientCredentials(shop); }
+  try {
+    const result=await exchangeClientCredentials(shop);
+    // Refreshing an old installation cannot approve new permissions.
+    // Fall back to the merchant consent flow when its grant is incomplete.
+    return missingScopes(result.capabilities,requestedScopes(shop)).length?null:result;
+  }
   catch (error) {
     const raw = String(error.providerBody?.raw || '');
     const rawCode = raw.match(/oauth error\s+([a-z_]+)/i)?.[1];
@@ -117,8 +155,12 @@ async function exchangeAuthorization({ query, metadata: stateMeta }) {
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: form.toString(),
   });
-  return { credentials: { accessToken: body.access_token, shop }, accountId: shop,
-    accountName: shop.replace('.myshopify.com', ''), capabilities: body.scope ? body.scope.split(',') : SCOPES };
+  if(!body.access_token)throw new ValidationError('Shopify did not return an access token.');
+  const credential={accessToken:body.access_token,shop},scopes=await grantedScopes(body,credential);
+  if(missingScopes(scopes,stateMeta.requestedScopes||SCOPES).length)throw new ValidationError(
+    'Shopify has not approved all requested permissions. Review the permission prompt for this store and try again.');
+  return { credentials:credential,accountId:shop,
+    accountName:shop.replace('.myshopify.com',''),capabilities:scopes };
 }
 
 async function graphql(credentials, query, variables = {}) {
