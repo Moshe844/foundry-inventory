@@ -115,8 +115,9 @@ async function run(database,ctx,id,options={}){
   }
   if(savedFinal){
    audit({kind:'saved_native_result_verifying'});
-   await session.finish(async(client,{goal,access})=>({...await require('./postgres-codex-verification').verify(client,ctx,goal,savedFinal,access.catalogue,{browser:ui}),verificationSourceHash}));
-   return store.get(database,ctx,id);
+   const checked=await session.finish(async(client,{goal,access})=>({...await require('./postgres-codex-verification').verify(client,ctx,goal,savedFinal,access.catalogue,{browser:ui}),verificationSourceHash}),{allowReportCorrection:true});
+   if(!checked?.needsCorrection)return store.get(database,ctx,id);
+   audit({kind:'native_report_correction',code:checked.code});
   }
   const key=options.apiKey||process.env.OPENAI_API_KEY;if(!key)throw Error('OPENAI_API_KEY_REQUIRED');
   const counter=options.countInput||require(base+'codex-token-counter').createTokenCounter({apiKey:key});
@@ -170,10 +171,19 @@ async function run(database,ctx,id,options={}){
    credentials:{openai:key},codexLivePermit:permit,codexImage:image,privateHarnessDirectory:directory,audit,
    finalReportInstructions:require('./postgres-codex-verification').instructions});
   const report=require('./agent-conversation').parse(result.answer);
-  if(report?.status!=='needs_reasoning')break;
-  const ready=await session.handoffApprovals();if(ready)return ready;
-  const stronger=await session.promoteReasoning(report);modelProfile=require(base+'codex-models').getProfile(stronger.profile);
-  await require('./codex-staging-readiness').verifyPricing(database,modelProfile);
+  if(report?.status==='needs_reasoning'){
+   const ready=await session.handoffApprovals();if(ready)return ready;
+   const stronger=await session.promoteReasoning(report);modelProfile=require(base+'codex-models').getProfile(stronger.profile);
+   await require('./codex-staging-readiness').verifyPricing(database,modelProfile);
+  }else{
+   const current=await store.get(database,ctx,id);if(current.status!=='RUNNING')break;
+   const finalStarted=Date.now();
+   const checked=await session.finish(async(client,{goal,access})=>({...await require('./postgres-codex-verification').verify(client,ctx,goal,result.answer,access.catalogue,{browser:ui}),
+    verificationSourceHash:require('./codex-staging-permit').assertBinding(permit,{budget,task:id,image}).sourceHash}),{allowReportCorrection:true});
+   audit({kind:'host_final_verification',timings:{finalVerificationMs:Date.now()-finalStarted}});
+   if(!checked?.needsCorrection)break;
+   audit({kind:'native_report_correction',code:checked.code});
+  }
   transport.revoke();helperTransport.revoke();
   await (await preparedSandbox).sandbox.close();
   preparedSandbox=options.sandboxPool?options.sandboxPool.take(image):require(base+'codex-runtime').prepareSandbox(image);
@@ -181,13 +191,6 @@ async function run(database,ctx,id,options={}){
   cleanup.push(async()=>{const prepared=await nextSandbox.catch(()=>null);if(prepared)await prepared.sandbox.close();});
   preparedContext=require(base+'codex-runtime').prepareContext({session,browser:ui,gateway,audit});
   preparations.push(preparedContext);preparedContext.catch(()=>{});
-  }
-  const current=await store.get(database,ctx,id);
-  if(current.status==='RUNNING'){
-   const finalStarted=Date.now();
-   await session.finish(async(client,{goal,access})=>({...await require('./postgres-codex-verification').verify(client,ctx,goal,result.answer,access.catalogue,{browser:ui}),
-    verificationSourceHash:require('./codex-staging-permit').assertBinding(permit,{budget,task:id,image}).sourceHash}));
-   audit({kind:'host_final_verification',timings:{finalVerificationMs:Date.now()-finalStarted}});
   }
   return store.get(database,ctx,id);
  }catch(error){

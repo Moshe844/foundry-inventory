@@ -1,0 +1,11 @@
+{
+  "origin": "Recorded Staging connection investigation, 2026-10-17",
+  "claimsCheckedBeforeFailure": 24,
+  "failure": "SOURCE_REFERENCE_NOT_FOUND",
+  "claim": {
+    "sourceRef": "fv1:cgRu5Yt0tAB_RlM9",
+    "historical": false,
+    "value": "Where your business already happens"
+  },
+  "referenceIssuedByAnyTool": false
+}

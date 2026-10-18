@@ -96,6 +96,8 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    conversation:structuredClone(goal.checkpoint.conversation||null),
    conversationState:structuredClone(goal.checkpoint.conversationState||null),
    verificationFeedback:h.verificationFailure?{kind:'host_verification_feedback',code:h.verificationFailure.code,
+    ...(Number.isInteger(h.verificationFailure.claimIndex)?{claimIndex:h.verificationFailure.claimIndex}:{}),
+    ...(h.verificationFailure.sourceRef?{sourceRef:h.verificationFailure.sourceRef}:{}),
     ...(h.verificationFailure.evidenceId?{evidenceId:h.verificationFailure.evidenceId,path:h.verificationFailure.path}:{}),
     notice:'The host did not verify the preceding final answer. This is diagnostic feedback, not a user request, approval or new execution authority. Preserve completed canonical effects and the original goal; use actual durable evidence and current records to correct the result. Resolve internal evidence references with the tools; ask the user only for genuinely missing business information.'}:null,
    modelRouting:structuredClone(goal.checkpoint.modelRouting||null)}};
@@ -268,7 +270,7 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
     });throw error;
    }
   },
-  async finish(result){
+  async finish(result,{allowReportCorrection=false}={}){
    const access=await authorize();return update(async(h,goal,client)=>{
     if(h.inflight)throw new Error('SESSION_OPERATION_UNRESOLVED');
     // A trusted host verifier runs inside the same final transaction and fresh
@@ -283,6 +285,24 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
     h.receipt=typeof result==='function'&&check.receipt?check.receipt:
      await require('./receipts').collect(client,ctx,goal,h,access?.catalogue);
     const canonicalVerified=!h.receipt.operations.some(op=>!op.verified);
+    const failure=verified?null:{code:/^[A-Z][A-Z0-9_]{0,99}$/.test(check.verificationFailure||'')?check.verificationFailure:'OUTCOME_UNVERIFIED',
+     nativeDigest:h.native?.codex?.digest||null,sourceHash:check.verificationSourceHash||null,
+     ...(Number.isInteger(check.verificationDetail?.claimIndex)?{claimIndex:check.verificationDetail.claimIndex}:{}),
+     ...(check.verificationDetail?.sourceRef?{sourceRef:check.verificationDetail.sourceRef}:{}),
+     ...(check.verificationDetail?.evidenceId?{evidenceId:check.verificationDetail.evidenceId,path:check.verificationDetail.path}:{})};
+    // A settled SDK report can have a bad citation without an uncertain paid
+    // request or business effect. Return that typed rejection to the SAME
+    // native thread once. This uses the existing request/goal/period gates,
+    // keeps every rejected assertion unverified and never repeats an effect.
+    // Persist the allowance so interruptions cannot reset it into a loop.
+    const correctable=['SOURCE_REFERENCE_NOT_FOUND','INVALID_SOURCE_REFERENCE','FIELD_REFERENCE_MUST_NOT_SUPPLY_PATH','EVIDENCE_VALUE_MISMATCH','EVIDENCE_POINTER_NOT_FOUND'].includes(failure?.code);
+    if(candidate==='codex'&&allowReportCorrection&&correctable&&current==='READY'&&h.receipt.dependencyState==='READY'&&canonicalVerified&&!h.admissionBlock&&
+     Number(h.codexRequests||0)<24&&Number(h.verificationCorrections||0)<1){
+     h.verificationCorrections=1;h.verificationFailure=failure;h.pendingReport=null;h.failure=null;h.userQuestion=null;
+     goal.answer='Checking the supporting evidence before delivering the answer.';
+     h.reportCorrection={...failure,at:new Date().toISOString()};
+     return {needsCorrection:true,code:failure.code};
+    }
     const classified=require('./outcome').classify({report,answer:goal.answer,verified,current,canonicalVerified,
      progress:h.admissionBlock?{...h.progress,finalReason:h.admissionBlock.code,requiresUserInput:false}:h.progress});
     goal.status=classified.status;goal.answer=classified.answer;
@@ -295,9 +315,7 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
      goal.status='WAITING_EVENT';goal.answer=`Ready to open ${navigation.label} in your browser.`;
     }
     h.failure=classified.failure||null;h.userQuestion=classified.question||null;
-    h.verificationFailure=verified?null:{code:/^[A-Z][A-Z0-9_]{0,99}$/.test(check.verificationFailure||'')?check.verificationFailure:'OUTCOME_UNVERIFIED',
-     nativeDigest:h.native?.codex?.digest||null,sourceHash:check.verificationSourceHash||null,
-     ...(check.verificationDetail?.evidenceId?{evidenceId:check.verificationDetail.evidenceId,path:check.verificationDetail.path}:{})};
+    h.verificationFailure=failure;
     h.pendingReport=null;goal.checkpoint.lifecycleStage=null;
     h.completionSource=goal.status==='COMPLETED'?'host_verified_answer':'unverified_answer';
     // A rejected narrative must not hide canonically committed work. Keep the

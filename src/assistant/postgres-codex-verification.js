@@ -28,10 +28,11 @@ async function verify(database,ctx,goal,raw,catalogue,options={}){
   return [...entries,...journal].find(e=>e?.id===id||e?.evidenceId===id)||observed.find(e=>e?._stockchiefEvidence?.evidenceId===id);
  }
  const verified=[],fresh=new Map(),sourceCache=new Map(),sourceMetadataCache=new Map();
- for(const inputClaim of report.claims){
+ for(const [claimIndex,inputClaim] of report.claims.entries()){
   let claim=inputClaim;
   if(Object.hasOwn(claim,'sourceRef'))try{claim=require('../../scripts/environment-agent-demo/source-references').resolve(entries,claim,sourceCache);}
-  catch(error){return unavailable('I could not verify the supporting evidence for this answer. Your request and collected information are saved.',error.message);}
+  catch(error){return unavailable('I could not verify the supporting evidence for this answer. Your request and collected information are saved.',error.message,
+   {claimIndex,...(/^(?:sr1:[A-Za-z0-9_-]{24}|fv1:[A-Za-z0-9_-]{16})$/.test(inputClaim.sourceRef)?{sourceRef:inputClaim.sourceRef}:{})});}
   if(typeof claim.evidenceId!=='string'||typeof claim.path!=='string'||!claim.path.startsWith('/')||claim.path.length>400)return {verified:false,answer:report.answer};
   const entry=find(claim.evidenceId);if(!entry)return {verified:false,answer:report.answer};
   if(entry.truncated||entry.text&&createHash('sha256').update(entry.text).digest('hex')!==entry.sha256)return {verified:false,answer:report.answer};
@@ -58,7 +59,7 @@ async function verify(database,ctx,goal,raw,catalogue,options={}){
    selected=presentation.locate(presentation.project(entry.name,original),claim.path);
    if(!selected.found||!equal(selected.value,claim.value))return unavailable(
     'I could not verify the supporting evidence for this answer. Your request and collected information are saved.',
-    selected.found?'EVIDENCE_VALUE_MISMATCH':'EVIDENCE_POINTER_NOT_FOUND',{evidenceId:claim.evidenceId,path:claim.path});
+    selected.found?'EVIDENCE_VALUE_MISMATCH':'EVIDENCE_POINTER_NOT_FOUND',{claimIndex,evidenceId:claim.evidenceId,path:claim.path});
    toolView=true;
   }
   const value=selected.value;
