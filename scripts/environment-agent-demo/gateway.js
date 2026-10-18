@@ -106,7 +106,7 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
       const datasets=require('../../src/reports/postgres-registry').list(actor);
       const datasetIndex=datasets.map(({key:name,label})=>({name,label,detailsByName:true}));
       const packet=()=>({operations,operationIndex,datasetIndex,datasetFieldsComplete:datasetIndex.every(d=>d.fields),indexComplete:true,total:contracts.length,complete:operations.length===contracts.length,
-        datasetAccess:'These are current authorized read projections, not application pages or database tables. environment_dataset accepts a discovered name and columns for detail reads. Use environment_interfaces for full query schemas, aggregation and completeness rules. All dataset reads recheck permissions and tenant scope.',
+        datasetAccess:'These are current authorized read projections, not application pages or database tables. environment_dataset accepts a discovered dataset name alone for a bounded inspection with default columns and available field metadata. Supply explicit columns or discover query schemas for tailored reads and aggregation. Extent states returned rows and an exact total only when the first page is complete; groups are not underlying record counts. All dataset reads recheck permissions and tenant scope.',
         coverage:'Current authorized interface contracts within the existing metadata bound. This is not an environment map. Discover pages and forms through the browser; use environment_interfaces for omitted contract details. All operations repeat fresh authority and canonical verification.'});
       for(const contract of contracts.filter(c=>c.kind==='read')){
         const complete=describe(contract);
@@ -167,8 +167,11 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
     async dataset({spec,offset=0}){
       const {actor}=await access({catalogue:false});
       if(spec?.filters!==undefined&&!Array.isArray(spec.filters))throw Object.assign(new Error('Dataset filters must be an array of field/operator/value conditions; discover the dataset contract before retrying.'),{code:'TOOL_CONTRACT_INVALID'});
+      const original=spec;spec=require('../../src/reports/postgres-service').inspectionSpec(spec,actor);
       require('./contracts').datasetSpec(spec,actor);
-      return require('../../src/reports/postgres-service').run(database,ctx,actor,spec,{limit:101,offset});
+      const result=await require('../../src/reports/postgres-service').run(database,ctx,actor,spec,{limit:101,offset});
+      if(original!==spec)result.availableFields=require('../../src/reports/postgres-registry').get(spec.dataset).fields;
+      return result;
     }
   };
 }

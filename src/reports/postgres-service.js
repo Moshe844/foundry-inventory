@@ -37,6 +37,16 @@ function fieldList(value,fields,maximum){
   if(names.length>maximum||names.some((field)=>!Object.hasOwn(fields,field)))invalid('Choose registered report fields only.');
   return names;
 }
+// A bounded inspection of an authorized dataset does not require the caller
+// to discover and spell every display column first. Explicit report specs
+// retain their existing strict validation and are never silently rewritten.
+function inspectionSpec(spec,actor){
+  if(!spec||spec.dataset==='composed'||Object.hasOwn(spec,'columns')||Object.hasOwn(spec,'groups')||spec.summary===true)return spec;
+  const dataset=registry.get(spec.dataset);if(!dataset)invalid('Choose an available report dataset.');ensureActor(actor,dataset);
+  const columns=Object.keys(dataset.fields).slice(0,12);
+  if(Object.hasOwn(dataset.fields,'currency')&&!columns.includes('currency')){if(columns.length===12)columns.pop();columns.push('currency');}
+  return {...spec,columns};
+}
 function normalize(spec,actor){
   spec=spec||{};
   if(spec.dataset==='composed')return composed.normalize(spec,actor);
@@ -147,7 +157,7 @@ function queryFor(config,workspaceId,{limit=201,offset=0}={}){
       config.aggregate==='ratio'
         ?`ROUND(100.0*SUM(${quote(metric.numerator)})::numeric/NULLIF(SUM(${quote(metric.denominator)}),0),2)`:
       config.aggregate==='sum'?`SUM(${quote(config.measure)})`:
-        config.aggregate==='average'?`AVG(${quote(config.measure)})`:
+        config.aggregate==='average'?(dataset.fields[config.measure]==='money_minor'?`ROUND(AVG(${quote(config.measure)})::numeric,0)`:`AVG(${quote(config.measure)})`):
           config.aggregate==='minimum'?`MIN(${quote(config.measure)})`:`MAX(${quote(config.measure)})`;
     select=`${selectGroups.length?`${selectGroups.join(',')},`:''}${expression} AS ${quote(AGGREGATE_COLUMN[config.aggregate])}`;
     group=groupFields.length?`GROUP BY ${groupFields.join(',')}`:'';
@@ -202,7 +212,8 @@ async function run(database,ctx,actor,spec,options={}){
   })));
   const output={config,columns,columnLabels,rows:rows.map((row)=>({...row,
     href:grouped?null:dataset.recordHref(row)})),displayRows,
-  hasMore,offset,pageSize:limit-1,asOf:new Date().toISOString(),
+  hasMore,offset,pageSize:limit-1,extent:{rowKind:grouped?'groups':'records',returnedRows:rows.length,
+    totalRows:offset===0&&!hasMore?rows.length:null,complete:offset===0&&!hasMore},asOf:new Date().toISOString(),
   provenance:{dataset:config.dataset,workspaceId:ctx.workspaceId,source:'PostgreSQL',grouped,
     currency:currencyFilter}};
   // Totals from different currencies are individually valid, but their raw minor
@@ -304,5 +315,5 @@ async function load(database,ctx,actor,id){
   return {...row,definition:normalize(row.definition,actor)};
 }
 
-module.exports={normalize,queryContract,queryFor,run,countAtMost,save,list,load,drilldownSpec,comparableGroupAmounts,
+module.exports={normalize,inspectionSpec,queryContract,queryFor,run,countAtMost,save,list,load,drilldownSpec,comparableGroupAmounts,
   aggregateColumn:AGGREGATE_COLUMN};

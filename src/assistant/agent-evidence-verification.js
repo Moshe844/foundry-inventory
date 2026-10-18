@@ -51,9 +51,12 @@ async function currentValue(database,ctx,goal,entry,{catalogue,browser}={}){
   return require('../../scripts/environment-agent-demo/gateway').interfaceSnapshot(catalogue,actor,saved.input);
  }
  if(saved.name==='environment_dataset'){
-  const input=saved.input,spec=typeof input.specJson==='string'?JSON.parse(input.specJson):input.spec;
+  const input=saved.input,original=typeof input.specJson==='string'?JSON.parse(input.specJson):input.spec;
+  const spec=require('../reports/postgres-service').inspectionSpec(original,actor);
   require('../../scripts/environment-agent-demo/contracts').datasetSpec(spec,actor);
-  return require('../reports/postgres-service').run(database,ctx,actor,spec,{limit:101,offset:input.offset||0});
+  const result=await require('../reports/postgres-service').run(database,ctx,actor,spec,{limit:101,offset:input.offset||0});
+  if(original!==spec)result.availableFields=require('../reports/postgres-registry').get(spec.dataset).fields;
+  return result;
  }
  if(saved.name!=='business_operations'||!catalogue)throw Error('PURE_READ_EVIDENCE_REQUIRED');
  const steps=saved.input.steps;

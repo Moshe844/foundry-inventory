@@ -28,7 +28,7 @@ function sharedTools({browser,gateway,sandbox,session,fullEvidence=false,audit=(
       schema:z.object({id:z.string().max(160),offset:z.number().int().min(0).max(128000)}),execute:input=>session.evidence(input)},
     {name:'environment_interfaces',description:'Search authorized canonical execution contracts and curated report datasets. This catalogue is not a map of everything in the application. Discover unlisted screens, forms and records through the live browser. Supply discovered names to inspect contract fields.',
       schema:z.object({search:z.string().max(200),offset:z.number().int().min(0).max(10000),names:z.array(z.string()).max(6)}),execute:input=>gateway.interfaces(input)},
-    {name:'environment_dataset',description:'Read a scoped dataset using its discovered fields. Provide a report JSON spec with dataset and columns or groups/aggregate; optional filters. No SQL.',
+    {name:'environment_dataset',description:'Read a tenant-scoped dataset. A discovered dataset name alone gives a bounded inspection with default columns and available fields. Explicit columns, filters and groups/aggregate support tailored reads. Extent distinguishes returned rows, complete first-page totals and groups. No SQL.',
       schema:z.object({specJson:z.string().max(16000),offset:z.number().int().min(0).max(1000000)}),
       execute:async({specJson,offset})=>{
         const result=await gateway.dataset({spec:require('./contracts').parseJson(specJson),offset});

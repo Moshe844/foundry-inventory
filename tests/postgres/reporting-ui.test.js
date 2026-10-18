@@ -195,6 +195,10 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     assert.equal(Number(combined.rows[0].profit),630);
     assert.equal(Number(combined.rows[0].calculated),210);
     assert.equal(combined.displayRows[0].calculated,'$2.10');
+    const fractional=await reports.run(database,ctx,actor,{...combinedDefinition,formula:'profit / (ordered + 1)'});
+    assert.equal(Number(fractional.rows[0].calculated),158,'A 157.5-minor-unit monetary calculation rounds exactly to one minor unit, without changing posted profit');
+    assert.equal(fractional.displayRows[0].calculated,'$1.58');
+    assert.equal(Number(fractional.rows[0].profit),630);
     assert.equal(combined.chartColumn,'calculated');
     assert.equal(combined.config.layout,'dashboard');
     assert.equal(await reports.countAtMost(database,ctx,actor,combinedDefinition,10),1);

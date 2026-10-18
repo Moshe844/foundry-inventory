@@ -200,7 +200,7 @@ function queryFor(config,workspaceId,{limit=201,offset=0,count=false}={}){
       metric.aggregate==='ratio'
         ?`ROUND(100.0*SUM(${quote(registered.numerator)})::numeric/NULLIF(SUM(${quote(registered.denominator)}),0),2)`:
         metric.aggregate==='sum'?`SUM(${measure})::numeric`:
-          metric.aggregate==='average'?`AVG(${measure})::numeric`:
+          metric.aggregate==='average'?(dataset.fields[metric.measure]==='money_minor'?`ROUND(AVG(${measure})::numeric,0)`:`AVG(${measure})::numeric`):
             metric.aggregate==='minimum'?`MIN(${measure})::numeric`:`MAX(${measure})::numeric`;
     ctes.push(`${name} AS (SELECT ${quote(config.dimension)} AS join_key,${calculation} AS ${quote(metric.alias)}
       FROM ${source} ${where} GROUP BY ${quote(config.dimension)})`);
@@ -216,7 +216,7 @@ function queryFor(config,workspaceId,{limit=201,offset=0,count=false}={}){
     const dataset=registry.get(metric.dataset),type=metric.aggregate==='ratio'||metric.aggregate==='count'
       ?'number':dataset.fields[metric.measure]==='money_minor'?'money':'number';
     return [metric.alias,type];}))):null;
-  ctes.push(`computed AS (SELECT *,${parsed?`ROUND((${parsed.sql})::numeric,2)`:'NULL::numeric'}
+  ctes.push(`computed AS (SELECT *,${parsed?`ROUND((${parsed.sql})::numeric,${config.formulaUnit==='money'?0:2})`:'NULL::numeric'}
     AS calculated FROM combined)`);
   const prefix=`WITH ${ctes.join(',')}`;
   const resultConditions=config.resultFilters.map((filter)=>{
@@ -276,7 +276,8 @@ async function run(database,ctx,actor,spec,{limit=201,offset=0}={}){
     column,column===config.dimension?row[column]:format(row[column],column==='calculated'
       ?config.formulaUnit:metricTypes[column])])));
   const result={config,columns,columnLabels,rows:rows.map((row)=>({...row,href:null})),displayRows,
-    hasMore,offset:Number(offset),pageSize:pageLimit-1,asOf:new Date().toISOString(),
+    hasMore,offset:Number(offset),pageSize:pageLimit-1,extent:{rowKind:'groups',returnedRows:rows.length,
+      totalRows:Number(offset)===0&&!hasMore?rows.length:null,complete:Number(offset)===0&&!hasMore},asOf:new Date().toISOString(),
     provenance:{dataset:'composed',datasets:config.metrics.map((metric)=>metric.dataset),
       workspaceId:ctx.workspaceId,source:'PostgreSQL',grouped:true,currency},
     comparisonSafe:true,chartColumn:config.chartMeasure,
