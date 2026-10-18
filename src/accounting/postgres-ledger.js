@@ -73,6 +73,26 @@ async function configure(database, ctx, input) {
   }, { isolation:'SERIALIZABLE', retrySafe:true });
 }
 
+async function createAccountInTransaction(client,ctx,input){
+  await requireAccountingActor(client,ctx);
+  const code=require('../lib/util').requireText(input.code,'Account code',{max:30});
+  const name=require('../lib/util').requireText(input.name,'Account name',{max:120});
+  const type=String(input.type||'').toUpperCase();
+  if(!['ASSET','LIABILITY','EQUITY','INCOME','EXPENSE','COGS'].includes(type))throw new ValidationError('Choose a valid account type.');
+  const normal=String(input.normalBalance||(['ASSET','EXPENSE','COGS'].includes(type)?'DEBIT':'CREDIT')).toUpperCase();
+  if(!['DEBIT','CREDIT'].includes(normal))throw new ValidationError('Normal balance must be debit or credit.');
+  const at=nowIso(),id=newId('acct');
+  const row=(await client.query(`INSERT INTO accounting_accounts
+    (id,workspace_id,code,name,account_type,subtype,normal_balance,system_key,is_control,active,created_at,updated_at)
+    VALUES($1,$2,$3,$4,$5,$6,$7,NULL,0,1,$8,$8) ON CONFLICT(workspace_id,code) DO NOTHING RETURNING *`,
+    [id,ctx.workspaceId,code,name,type,input.subtype||null,normal,at])).rows[0];
+  if(!row)throw new ValidationError('That account code is already in use.');
+  return row;
+}
+
+async function createAccount(database,ctx,input){return database.transaction(
+  client=>createAccountInTransaction(client,ctx,input),{isolation:'SERIALIZABLE',retrySafe:true});}
+
 function normalizeLines(lines) {
   if (!Array.isArray(lines) || lines.length < 2) throw new ValidationError('A journal entry needs at least two lines.');
   let debits=0; let credits=0;
@@ -150,4 +170,4 @@ async function validatePostingDateInTransaction(client,ctx,value){
  if(date<settings.accounting_start_date)throw new ValidationError('Posting date is before the accounting start date.');
  return ensurePeriod(client,ctx.workspaceId,date);
 }
-module.exports={ configure,configureInTransaction,post,postInTransaction,validatePostingDateInTransaction };
+module.exports={ configure,configureInTransaction,createAccount,createAccountInTransaction,post,postInTransaction,validatePostingDateInTransaction };

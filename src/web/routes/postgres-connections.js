@@ -313,6 +313,13 @@ function createPostgresConnectionsRouter(database,options={}){
     req.flash('success','Governed journal posting enabled for this inventory and this provider account.');
     return res.redirect(303,`/settings/connections/${req.params.id}`);
   }));
+  router.post('/settings/connections/:id/accounting/import-opening',requireOwner,asyncRoute(async(req,res)=>{
+    await entitlements.assertCapability(database,commercialScope(req),'connection.accounting');
+    const result=await accountingSync.importOpeningBooks(database,req.ctx,req.params.id,{runId:req.body.runId,scopeHash:req.body.scopeHash});
+    req.flash('success',result.replayed?'These starting balances were already recorded. No duplicate entry was created.':
+      'The approved starting balances are recorded in StockChief. QuickBooks was not changed. Posting remains disabled; run a fresh comparison.');
+    return res.redirect(303,`/settings/connections/${req.params.id}`);
+  }));
   router.post('/settings/connections/:id/accounting/export',requireOwner,asyncRoute(async(req,res)=>{
     await entitlements.assertCapability(database,commercialScope(req),'connection.accounting');
     const result=await accountingSync.queuePending(database,req.ctx,req.params.id,{});

@@ -65,6 +65,96 @@ async function localSnapshot(database,workspaceId,asOf){
     id:row.id,code:row.code,name:row.name,balanceMinor:Number(row.ending_debit_minor)-Number(row.ending_credit_minor)}))};
 }
 
+async function openingBooksPreview(database,workspaceId,connectorId){
+  const [connection,latest,posted]=await Promise.all([
+    connections.get(database,workspaceId,connectorId),
+    database.query(`SELECT run.*,policy.last_shadow_run_id,policy.requested_authority
+      FROM accounting_shadow_runs run JOIN accounting_sync_policies policy
+        ON policy.workspace_id=run.workspace_id AND policy.connector_id=run.connector_id
+      WHERE run.workspace_id=$1 AND run.connector_id=$2 ORDER BY run.started_at DESC LIMIT 1`,[workspaceId,connectorId]),
+    database.query(`SELECT id,status,source_record_type,source_record_id FROM accounting_journal_entries
+      WHERE workspace_id=$1`,[workspaceId]),
+  ]);
+  const row=latest.rows[0];if(!row||!['MATCHED','MISMATCH'].includes(row.status))return null;
+  const alreadyImported=posted.rows.some(entry=>entry.status==='POSTED'&&entry.source_record_type==='accounting_connection_opening'&&entry.source_record_id===connectorId);
+  if(alreadyImported)return {alreadyImported:true,canImport:false};
+  if(posted.rows.length)return null;
+  let prepared;try{prepared=require('./provider-opening-scope').scope(connection.provider_type,json(row.external_snapshot,{}));}
+  catch(error){if(error instanceof ValidationError)return {canImport:false,error:error.message};throw error;}
+  return {...prepared,runId:row.id,alreadyImported,isCurrent:row.last_shadow_run_id===row.id,
+    canImport:connection.status==='connected'&&!connection.paused_at&&!posted.rows.length&&row.last_shadow_run_id===row.id&&row.requested_authority!=='OBSERVE'&&prepared.balanced&&prepared.nonzeroCount>=2};
+}
+
+async function importOpeningBooks(database,ctx,connectorId,input={}){
+  const ledger=require('./postgres-ledger'),opening=require('./provider-opening-scope');
+  const actor=(await database.query('SELECT role FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];
+  if(actor?.role!=='owner')throw new (require('../domain/errors').AuthorizationError)('Only an owner can approve starting books.');
+  if(!/^[a-f0-9]{64}$/.test(input.scopeHash||'')||!input.runId)throw new ValidationError('Review the exact starting balances before approving them.');
+  const connection=await connections.get(database,ctx.workspaceId,connectorId);
+  if(connection.status!=='connected'||connection.paused_at||!['quickbooks','xero'].includes(connection.provider_type))throw new ValidationError('Choose a connected accounting provider.');
+  const prior=(await database.query(`SELECT * FROM accounting_journal_entries WHERE workspace_id=$1
+    AND source_record_type='accounting_connection_opening' AND source_record_id=$2 AND status='POSTED'`,[ctx.workspaceId,connectorId])).rows[0];
+  if(prior){const meta=json(prior.metadata,{});if(meta.openingScopeHash!==input.scopeHash||meta.openingRunId!==input.runId)
+      throw new ValidationError('These books were initialized from a different approval.');return {entry:prior,replayed:true};}
+  const preview=await openingBooksPreview(database,ctx.workspaceId,connectorId);
+  if(!preview?.canImport||preview.runId!==input.runId||preview.scopeHash!==input.scopeHash)
+    throw new ValidationError('Starting books require empty books and a current, balanced, explicitly reviewed comparison.');
+  const adapter=providers.get(connection.provider_type);if(!adapter?.readAccountingSnapshot)throw new ValidationError('The provider cannot verify current starting balances.');
+  const fresh=await require('../commercial/operations').run(database,ctx.workspaceId,{capability:'accounting.sync',provider:connection.provider_type,
+    operation:'accounting_snapshot',key:'opening-read:'+connectorId+':'+require('node:crypto').randomUUID()},async()=>
+      adapter.readAccountingSnapshot({credentials:await providerService.loadProviderCredentials(database,connection,adapter),asOf:preview.asOf}));
+  if(opening.scope(connection.provider_type,fresh).scopeHash!==input.scopeHash)
+    throw new ValidationError('The provider balances changed after review. Run a fresh comparison; nothing was imported.');
+  return database.transaction(async client=>{
+    const authorizer=(await client.query('SELECT role FROM users WHERE workspace_id=$1 AND id=$2 FOR SHARE',[ctx.workspaceId,ctx.actorId])).rows[0];
+    if(authorizer?.role!=='owner')throw new (require('../domain/errors').AuthorizationError)('Only an owner can approve starting books.');
+    const current=await policy(client,ctx.workspaceId,connectorId,true);
+    const connected=(await client.query('SELECT * FROM workspace_connectors WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,connectorId])).rows[0];
+    if(connected.status!=='connected'||connected.paused_at||connected.provider_account_id!==connection.provider_account_id||current.requested_authority==='OBSERVE')
+      throw new ValidationError('The connection or authority changed after review.');
+    const imported=(await client.query(`SELECT * FROM accounting_journal_entries WHERE workspace_id=$1
+      AND source_record_type='accounting_connection_opening' AND source_record_id=$2 AND status='POSTED'`,[ctx.workspaceId,connectorId])).rows[0];
+    if(imported){const meta=json(imported.metadata,{});if(meta.openingScopeHash!==input.scopeHash||meta.openingRunId!==input.runId)
+        throw new ValidationError('These books were initialized from a different approval.');return {entry:imported,replayed:true};}
+    const run=(await client.query(`SELECT * FROM accounting_shadow_runs WHERE workspace_id=$1 AND connector_id=$2 AND id=$3`,[ctx.workspaceId,connectorId,input.runId])).rows[0];
+    if(!run||current.last_shadow_run_id!==run.id||!['MATCHED','MISMATCH'].includes(run.status))throw new ValidationError('The reviewed comparison is no longer current.');
+    const approved=opening.scope(connection.provider_type,json(run.external_snapshot,{}));
+    if(approved.scopeHash!==input.scopeHash||!approved.balanced||approved.nonzeroCount<2)throw new ValidationError('The starting balances do not match this approval.');
+    // The ledger settings lock also serializes against ordinary postings. All
+    // checks and account creation roll back if the books are no longer empty.
+    await ledger.configureInTransaction(client,ctx,{startDate:approved.asOf,currency:approved.currency});
+    if((await client.query(`SELECT 1 FROM accounting_journal_entries WHERE workspace_id=$1 LIMIT 1`,[ctx.workspaceId])).rows.length||
+      (await client.query(`SELECT 1 FROM accounting_inventory_cost_balances WHERE workspace_id=$1 AND (quantity_units<>0 OR total_cost_minor<>0) LIMIT 1`,[ctx.workspaceId])).rows.length)
+      throw new ValidationError('Starting balances can only initialize empty books without existing inventory values.');
+    const byExternal=new Map(),at=nowIso();
+    for(const row of approved.accounts){
+      const mapped=(await client.query(`SELECT account.* FROM accounting_posting_account_mappings mapping
+        JOIN accounting_accounts account ON account.workspace_id=mapping.workspace_id AND account.id=mapping.foundry_account_id
+        WHERE mapping.workspace_id=$1 AND mapping.connector_id=$2 AND mapping.external_id=$3`,[ctx.workspaceId,connectorId,row.externalId])).rows[0];
+      const account=mapped||await ledger.createAccountInTransaction(client,ctx,row.shape);
+      if(Number(account.active)!==1||account.account_type!==row.shape.type)throw new ValidationError('An existing account mapping conflicts with the reviewed provider account.');
+      const identity=(await client.query(`SELECT foundry_record_id FROM accounting_external_identities WHERE workspace_id=$1 AND connector_id=$2 AND entity_type='account' AND external_id=$3`,[ctx.workspaceId,connectorId,row.externalId])).rows[0];
+      if(identity&&identity.foundry_record_id!==account.id)throw new ValidationError('A provider account is already linked to a different StockChief account.');
+      if(!mapped)await client.query(`INSERT INTO accounting_posting_account_mappings(id,workspace_id,connector_id,foundry_account_id,external_id,approved_by_user_id,created_at,updated_at)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$7)`,[newId('acmap'),ctx.workspaceId,connectorId,account.id,row.externalId,ctx.actorId,at]);
+      if(!identity)await client.query(`INSERT INTO accounting_external_identities(id,workspace_id,connector_id,entity_type,foundry_record_id,external_id,payload_hash,last_direction,last_seen_at,created_at,updated_at)
+        VALUES($1,$2,$3,'account',$4,$5,$6,'READ',$7,$7,$7)`,[newId('acident'),ctx.workspaceId,connectorId,account.id,row.externalId,hash(row),at]);
+      byExternal.set(row.externalId,account.id);
+    }
+    const result=await ledger.postInTransaction(client,ctx,{postingDate:approved.asOf,currency:approved.currency,
+      description:'Starting books copied from '+connection.display_name,sourceType:'accounting_connection',
+      sourceRecordType:'accounting_connection_opening',sourceRecordId:connectorId,sourceKey:'accounting-opening:'+connectorId,
+      createdByType:'USER',metadata:{providerType:connection.provider_type,providerAccountId:connection.provider_account_id,
+        openingScopeHash:approved.scopeHash,openingRunId:run.id,approvedByUserId:ctx.actorId},
+      lines:approved.accounts.filter(row=>row.balanceMinor!==0).map(row=>({accountId:byExternal.get(row.externalId),
+        debitMinor:Math.max(0,row.balanceMinor),creditMinor:Math.max(0,-row.balanceMinor),memo:row.name}))});
+    await client.query(`UPDATE accounting_sync_policies SET stage='SHADOW',last_shadow_run_id=NULL,
+      write_enabled_at=NULL,write_enabled_by_user_id=NULL,updated_at=$3 WHERE workspace_id=$1 AND connector_id=$2`,[ctx.workspaceId,connectorId,at]);
+    await client.query(`UPDATE workspace_connectors SET setup_status='SHADOW_PENDING',updated_at=$3 WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,connectorId,at]);
+    return {...result,preview:approved};
+  },{isolation:'SERIALIZABLE',retrySafe:true});
+}
+
 function compare(local,external,mappings=[]){
   const externalById=new Map((external.accounts||[]).map((row)=>[String(row.externalId),row]));
   const mappedByLocal=new Map(mappings.map((row)=>[String(row.foundry_account_id),String(row.external_id)]));
@@ -375,7 +465,7 @@ async function verifyExistingExport(database,ctx,effectId){
 
 async function state(database,workspaceId,connectorId){
   let current=null;try{current=await policy(database,workspaceId,connectorId);}catch{return null;}
-  const [latest,mappings,accounts,pending,posted]=await Promise.all([
+  const [latest,mappings,accounts,pending,posted,openingBooks]=await Promise.all([
     database.query(`SELECT * FROM accounting_shadow_runs WHERE workspace_id=$1 AND connector_id=$2
       ORDER BY started_at DESC LIMIT 1`,[workspaceId,connectorId]),
     database.query(`SELECT mapping.*,account.code AS account_code,account.name AS account_name
@@ -387,14 +477,15 @@ async function state(database,workspaceId,connectorId){
       FROM accounting_external_identities identity JOIN accounting_journal_entries journal ON journal.id=identity.foundry_record_id
       WHERE identity.workspace_id=$1 AND identity.connector_id=$2 AND identity.entity_type='journal_entry'
       ORDER BY journal.entry_number DESC LIMIT 20`,[workspaceId,connectorId]),
+    openingBooksPreview(database,workspaceId,connectorId),
   ]);
   const latestRow=latest.rows[0]||null;
   return {policy:current,canVerifyWrites:typeof providers.get(current.provider_type)?.verifyJournalEntry==='function',latestShadow:latestRow?{...latestRow,isCurrent:current.last_shadow_run_id===latestRow.id,differences:json(latestRow.differences,[]),
     externalSnapshot:json(latestRow.external_snapshot,{})}:null,mappings:mappings.rows,accounts:accounts.rows,
-    pendingEntries:pending,postedEntries:posted.rows};
+    pendingEntries:pending,postedEntries:posted.rows,openingBooks};
 }
 
-module.exports={hash,policy,initialize,chooseAuthority,localSnapshot,compare,shadow,mapAccount,mapParty,enableWrites,
+module.exports={hash,policy,initialize,chooseAuthority,localSnapshot,compare,shadow,mapAccount,mapParty,enableWrites,openingBooksPreview,importOpeningBooks,
   entry,pendingEntries,queuePending,executeExportEffect,verifyExistingExport,state};
 require('../commercial/enforcement').guardExports(module.exports,0,1,{chooseAuthority:'connections.accounting',
- enableWrites:'accounting.post_connected',queuePending:'accounting.post_connected',executeExportEffect:'accounting.post_connected',verifyExistingExport:'connections.accounting',shadow:'accounting.sync'});
+ enableWrites:'accounting.post_connected',queuePending:'accounting.post_connected',executeExportEffect:'accounting.post_connected',verifyExistingExport:'connections.accounting',shadow:'accounting.sync',importOpeningBooks:'accounting.core'});
