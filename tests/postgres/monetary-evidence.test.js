@@ -37,6 +37,8 @@ test('business read evidence preserves recorded currency and minor amounts acros
  assert.equal((await db.query('SELECT id FROM sales_orders WHERE workspace_id=$1 AND reference=$2',[ctx.workspaceId,'CURRENCY-READ'])).rows[0].id,order.salesOrderId);
  const profit=await assistant.lookup(db,ctx,{view:'accounting',search:'profit_and_loss'});for(const row of profit.rows){assert.equal(row.currency,'USD');assert.equal(row.amountMinor,0);}
  const activity=await assistant.lookup(db,ctx,{view:'sales_activity'}),revenue=activity.rows.find(row=>row.measure==='Posted revenue');assert.equal(revenue.currency,'USD');assert.equal(revenue.amountMinor,0);
+ const books=await assistant.lookup(db,ctx,{view:'accounting'});assert.equal(books.configuration.baseCurrency,'USD');assert.equal(books.configuration.configured,true);assert.equal(books.configuration.costingMethod,'WEIGHTED_AVERAGE');
+ await db.query('DELETE FROM accounting_settings WHERE workspace_id=$1',[foreign.workspaceId]);const noBooks=await assistant.lookup(db,foreign,{view:'accounting'});assert.equal(noBooks.configuration.configured,false);assert.equal(noBooks.configuration.baseCurrency,null,'Missing configuration is never inferred from a price currency or a default');
  assert.equal(Number((await db.query('SELECT sum(on_hand) AS n FROM balances WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n),2);
  t.diagnostic(JSON.stringify({mixedCurrenciesPreserved:true,latestPriceSelected:true,zeroDistinctFromMissing:true,quoteAndInventoryCurrenciesSeparate:true,supplierSalesAndReportingCurrenciesPreserved:true,tenantIsolation:true,modelCalls:0}));
 });

@@ -777,8 +777,10 @@ async function lookup(database,ctx,request,options={}) {
       COALESCE(lines.ordered_units,0) AS ordered_units,
       COALESCE(lines.fulfilled_units,0) AS fulfilled_units,
       COALESCE(lines.line_count,0) AS line_count,
-      COALESCE(lines.order_total_minor,0)-COALESCE(so.discount_minor,0)+COALESCE(so.tax_minor,0) AS order_total_minor,
-      so.discount_minor,so.tax_minor,
+      COALESCE(so.pricing_total_minor,COALESCE(lines.order_total_minor,0)-COALESCE(so.discount_minor,0)+COALESCE(so.tax_minor,0)+COALESCE(so.charges_minor,0)) AS order_total_minor,
+      COALESCE(so.priced_subtotal_minor,lines.order_total_minor,0) AS subtotal_minor,
+      so.discount_minor,so.tax_minor,so.charges_minor,so.delivery_method,so.ship_to_address,
+      COALESCE(pricing.quote->'charges','[]'::jsonb) AS order_charges,
       COALESCE(lines.line_items_json,'[]'::json) AS line_items_json,
       COALESCE(lines.ordered_units,0)-COALESCE(lines.fulfilled_units,0) AS open_units,
       COALESCE(held.units,0) AS held_units,COALESCE(invoices.invoice_count,0) AS invoice_count,
@@ -789,6 +791,8 @@ async function lookup(database,ctx,request,options={}) {
       COALESCE(posted.cogs_minor,0) AS posted_cogs_minor,
       COALESCE(shipments.shipment_count,0) AS shipment_count
       FROM sales_orders so JOIN customers c ON c.id=so.customer_id AND c.workspace_id=so.workspace_id
+      LEFT JOIN stockchief_runtime.pricing_order_snapshots pricing ON pricing.workspace_id=so.workspace_id
+        AND pricing.sales_order_id=so.id AND pricing.id=so.pricing_quote_id
       LEFT JOIN LATERAL (SELECT SUM(sol.quantity_ordered) AS ordered_units,
         SUM(sol.quantity_fulfilled) AS fulfilled_units,COUNT(*)::int AS line_count,
         SUM(sol.quantity_ordered*sol.unit_price_minor) AS order_total_minor,
@@ -829,6 +833,13 @@ async function lookup(database,ctx,request,options={}) {
       fulfilledUnits:Number(row.fulfilled_units),openUnits:Number(row.open_units),
       lineCount:Number(row.line_count),orderTotal:pricing.formatMinor(Number(row.order_total_minor),row.currency),
       orderTotalMinor:Number(row.order_total_minor),currency:row.currency,
+      subtotalMinor:Number(row.subtotal_minor),discountMinor:Number(row.discount_minor||0),
+      taxMinor:Number(row.tax_minor||0),chargesMinor:Number(row.charges_minor||0),
+      subtotal:pricing.formatMinor(Number(row.subtotal_minor),row.currency),
+      discount:pricing.formatMinor(Number(row.discount_minor||0),row.currency),
+      tax:pricing.formatMinor(Number(row.tax_minor||0),row.currency),
+      charges:pricing.formatMinor(Number(row.charges_minor||0),row.currency),
+      chargeDetails:row.order_charges,deliveryMethod:row.delivery_method,shippingAddress:row.ship_to_address||null,
       lineItems:(Array.isArray(row.line_items_json)?row.line_items_json:[]).map((line)=>
         `${line.quantity} × ${line.sku} ${line.product} at ${pricing.formatMinor(Number(line.unitPriceMinor),row.currency)} each = `+
         pricing.formatMinor(Number(line.lineTotalMinor),row.currency)).join('; '),
@@ -843,7 +854,7 @@ async function lookup(database,ctx,request,options={}) {
       postedGrossProfitMinor:Number(row.posted_revenue_minor)-Number(row.posted_cogs_minor),
       shipments:Number(row.shipment_count)},`/orders/${row.id}`));
     return {answer:summarizeCustomerOrders(rows,search),
-      rows,columns:['order','status','customer','lineCount','lineItems','orderTotal','currency',
+      rows,columns:['order','status','customer','lineCount','lineItems','subtotal','discount','tax','charges','chargeDetails','orderTotal','currency','deliveryMethod','shippingAddress',
         'orderedUnits','heldUnits','fulfilledUnits','openUnits',
         'invoiceCount','invoiced','paid','outstanding','postedRevenue','postedProductCost',
         'postedGrossProfit','shipments','reference']};
@@ -912,6 +923,8 @@ async function lookup(database,ctx,request,options={}) {
       FROM posted e JOIN accounting_journal_lines l ON l.entry_id=e.id AND l.workspace_id=$1
       GROUP BY l.currency)
       SELECT (SELECT count(*) FROM posted) AS posted,(SELECT count(*) FROM scoped) AS total,
+        (SELECT jsonb_build_object('configured',true,'enabled',enabled=1,'baseCurrency',base_currency,
+          'costingMethod',costing_method,'startDate',accounting_start_date) FROM accounting_settings WHERE workspace_id=$1) AS configuration,
         COALESCE((SELECT jsonb_agg(jsonb_build_object('status',status,'count',count) ORDER BY status) FROM states),'[]'::jsonb) AS states,
         COALESCE(jsonb_agg(jsonb_build_object('currency',currency,'debits',debits,'credits',credits)
           ORDER BY currency) FILTER(WHERE currency IS NOT NULL),'[]'::jsonb) AS totals FROM totals`,
@@ -932,7 +945,7 @@ async function lookup(database,ctx,request,options={}) {
     const amounts=totals.map(row=>`${row.currency}: debits ${pricing.formatMinor(row.debits,row.currency)}, credits ${pricing.formatMinor(row.credits,row.currency)}.`).join(' ');
     const states=result.states.map(row=>`${row.status}: ${Number(row.count).toLocaleString('en-US')}`).join(', ')||'none';
     return {answer:`The posted journal contains ${Number(result.posted).toLocaleString('en-US')} entries${period?` for ${period.from} through ${period.to}`:''}. Complete entry-state counts: ${states}. States absent from these scoped records have zero entries; this does not establish which additional states the application supports. Posted debits and credits are ${totals.every(row=>row.debits===row.credits)?'balanced':'not balanced'} within each recorded currency. ${amounts}`.trim(),
-      rows,columns:['measure','value','currency'],entryStates:{complete:true,total:Number(result.total),counts:stateCounts,
+      rows,columns:['measure','value','currency'],configuration:result.configuration||{configured:false,enabled:false,baseCurrency:null,costingMethod:null,startDate:null},entryStates:{complete:true,total:Number(result.total),counts:stateCounts,
         scope:period?{postingDateFrom:period.from,postingDateTo:period.to}:{timeframe:'all_time'},monetaryScope:'POSTED only, separated by currency'}};
   }
   if(request.view==='payments'){

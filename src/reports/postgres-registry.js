@@ -72,10 +72,10 @@ const datasets=Object.freeze({
   sales_orders:{label:'Customer orders',permission:permissions.VIEW_SALES,
     source:`SELECT o.id AS record_id,o.order_number,c.name AS customer,o.status,o.currency,
       o.order_date,o.needed_by,COALESCE(lines.units,0)::bigint AS ordered_units,
-      CASE WHEN COALESCE(lines.unpriced,0)=0 THEN COALESCE(lines.quoted_minor,0)::bigint
+      CASE WHEN COALESCE(lines.unpriced,0)=0 THEN COALESCE(o.priced_subtotal_minor,lines.quoted_minor,0)::bigint
         ELSE NULL END AS quoted_line_total_minor,
-      o.discount_minor AS quoted_discount_minor,o.tax_minor AS quoted_tax_minor,
-      CASE WHEN COALESCE(lines.unpriced,0)=0 THEN (COALESCE(lines.quoted_minor,0)-o.discount_minor+o.tax_minor)::bigint ELSE NULL END AS quoted_total_minor,
+      o.discount_minor AS quoted_discount_minor,o.tax_minor AS quoted_tax_minor,o.charges_minor AS quoted_charges_minor,
+      CASE WHEN COALESCE(lines.unpriced,0)=0 THEN COALESCE(o.pricing_total_minor,COALESCE(lines.quoted_minor,0)-o.discount_minor+o.tax_minor+COALESCE(o.charges_minor,0))::bigint ELSE NULL END AS quoted_total_minor,
       CASE WHEN COALESCE(lines.unpriced,0)=0 THEN 'yes' ELSE 'no' END AS pricing_complete
       FROM sales_orders o JOIN customers c ON c.id=o.customer_id AND c.workspace_id=o.workspace_id
       LEFT JOIN LATERAL (SELECT SUM(quantity_ordered) AS units,
@@ -85,7 +85,7 @@ const datasets=Object.freeze({
       WHERE o.workspace_id=$1`,recordHref:(row)=>`/orders/${row.record_id}`,
     moneyCompleteness:{quoted_line_total_minor:{field:'pricing_complete',value:'yes'},quoted_total_minor:{field:'pricing_complete',value:'yes'}},
     fields:{order_number:'text',customer:'text',status:'text',currency:'text',order_date:'date',needed_by:'date',
-      ordered_units:'number',quoted_line_total_minor:'money_minor',quoted_discount_minor:'money_minor',quoted_tax_minor:'money_minor',quoted_total_minor:'money_minor',pricing_complete:'text'}},
+      ordered_units:'number',quoted_line_total_minor:'money_minor',quoted_discount_minor:'money_minor',quoted_tax_minor:'money_minor',quoted_total_minor:'money_minor',pricing_complete:'text',quoted_charges_minor:'money_minor'}},
   sales_order_lines:{label:'Customer order lines by product',permission:permissions.VIEW_SALES,
     source:`SELECT o.id AS record_id,o.order_number,c.name AS customer,o.status,
       o.order_date,o.needed_by,i.name AS product,s.code AS sku,
@@ -334,6 +334,26 @@ const datasets=Object.freeze({
       FROM attention_items a WHERE a.workspace_id=$1`,recordHref:()=>'/needs-you',
     fields:{title:'text',category:'text',severity:'text',status:'text',confidence:'text',
       detected_on:'date',evaluated_on:'date'}},
+  warehouse_waves:{label:'Warehouse picking and packing work',permission:permissions.VIEW,
+    source:`SELECT w.id AS record_id,w.wave_number::text AS wave_number,w.title,w.strategy,w.status,
+      COALESCE(lines.planned,0)::bigint AS planned_units,COALESCE(lines.picked,0)::bigint AS picked_units,
+      COALESCE(shipments.total,0)::bigint AS shipment_count,COALESCE(shipments.packed,0)::bigint AS packed_shipments,
+      LEFT(w.created_at::text,10) AS created_on
+      FROM fulfillment_waves w
+      LEFT JOIN LATERAL (SELECT SUM(planned_quantity) AS planned,SUM(picked_quantity) AS picked FROM fulfillment_wave_lines
+        WHERE workspace_id=w.workspace_id AND wave_id=w.id) lines ON true
+      LEFT JOIN LATERAL (SELECT COUNT(*) AS total,COUNT(*) FILTER(WHERE status='PACKED') AS packed FROM fulfillment_wave_shipments
+        WHERE workspace_id=w.workspace_id AND wave_id=w.id) shipments ON true
+      WHERE w.workspace_id=$1`,recordHref:(row)=>`/warehouse/waves/${row.record_id}`,
+    enumFields:['strategy','status'],fields:{wave_number:'text',title:'text',strategy:'text',status:'text',planned_units:'number',picked_units:'number',shipment_count:'number',packed_shipments:'number',created_on:'date'}},
+  provider_effects:{label:'External provider operations: queued, running, verified, failed and uncertain outcomes',permission:permissions.ADMIN,
+    source:`SELECT e.id AS record_id,e.provider,e.kind AS operation,e.status,
+      e.aggregate_type,LEFT(e.created_at::text,10) AS created_on,
+      LEFT(e.updated_at::text,10) AS updated_on,LEFT(e.completed_at::text,10) AS completed_on
+      FROM stockchief_runtime.provider_effects e WHERE e.workspace_id=$1`,
+    recordHref:(row)=>`/settings/operations/provider-effects/${row.record_id}`,
+    enumFields:['provider','operation','status','aggregate_type'],
+    fields:{provider:'text',operation:'text',status:'text',aggregate_type:'text',created_on:'date',updated_on:'date',completed_on:'date'}},
   connections:{label:'Connected systems',permission:permissions.ADMIN,
     source:`SELECT c.id AS record_id,c.display_name,c.provider_type,c.status,
       LEFT(c.last_synced_at,10) AS last_synced_on,
