@@ -16,6 +16,13 @@ test('owner browser imports grouped provider variants and exact opening stock on
   ...['Red','Blue'].map((color,index)=>({entityType:'sku',externalId:'variant-'+color,parentExternalId:'provider-product',displayName:'Travel bag / '+color,providerData:{itemName:'Travel bag',variationName:color,tracked:true,productStatus:'ACTIVE',selectedOptions:[{name:'Color',value:color}],priceMoney:{amount:index?0:1250,currency:'JPY'},inventoryCounts:[{externalLocationId:'store-a',quantity:index?0:4,state:'IN_STOCK'},{externalLocationId:'store-b',quantity:index?0:6,state:'IN_STOCK'}]}})),
   {entityType:'sku',externalId:'gift',displayName:'Provider gift card',providerData:{isGiftCard:true,tracked:true}}];
  await db.transaction(async c=>{for(const row of records)await sync.cacheRecord(c,connection,row);});
+ const unchanged=(await service.describe(db,ctx,id)).revision;
+ await db.transaction(async c=>{for(const row of records)await sync.cacheRecord(c,connection,row);});
+ assert.equal((await service.describe(db,ctx,id)).revision,unchanged,'An unchanged background refresh must preserve the reviewed facts');
+ const changed={...records[2],providerData:{...records[2].providerData,priceMoney:{amount:1500,currency:'JPY'}}};
+ await db.transaction(c=>sync.cacheRecord(c,connection,changed));
+ await assert.rejects(service.importProducts(db,ctx,id,{externalIds:['variant-Red'],revision:unchanged}),/changed/);
+ await db.transaction(c=>sync.cacheRecord(c,connection,records[2]));
  await assert.rejects(service.importProducts(db,ctx,id,{externalIds:['variant-Red'],includeOpening:true}),/Match every location/);assert.equal((await db.query('SELECT count(*) AS n FROM items WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,'0');
  await page.goto(base+'/settings/connections/'+id);
  assert.match(await page.locator('main').innerText(),/Travel bag \/ Red/);

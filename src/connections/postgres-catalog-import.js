@@ -1,5 +1,4 @@
 'use strict';
-const crypto=require('node:crypto');
 const {ValidationError,AuthorizationError}=require('../domain/errors');
 const {newId,nowIso}=require('../lib/util');
 const catalog=require('../domain/postgres-catalog-service');
@@ -9,8 +8,9 @@ const prices=require('../pricing/postgres-service');
 const mapping=require('./postgres-provider-sync');
 const parse=require('./postgres-service').parseJson;
 const {exclusion}=require('./catalog-record-policy');
-function revision(connection,rows){return crypto.createHash('sha256').update(JSON.stringify({id:connection.id,
- rows:rows.map(r=>[r.id,r.updated_at,r.mapping_status,r.foundry_record_id||null,r.selected,r.code,r.provider_data])})).digest('hex');}
+function revision(connection,rows){return require('./commerce-facts').hash({id:connection.id,
+ rows:rows.map(r=>[r.id,r.external_id,r.parent_external_id,r.display_name,r.mapping_status,
+  r.foundry_record_id||null,r.selected,r.code,parse(r.provider_data,{})])});}
 async function read(queryable,ctx,connectorId,{lock=false}={}){
  const connection=(await queryable.query(`SELECT * FROM workspace_connectors WHERE workspace_id=$1 AND id=$2${lock?' FOR UPDATE':''}`,[ctx.workspaceId,connectorId])).rows[0];
  if(!connection)throw new ValidationError('That connection is not in this business.');
