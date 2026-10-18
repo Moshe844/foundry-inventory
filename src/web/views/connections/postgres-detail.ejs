@@ -82,6 +82,7 @@
       <% if(accounting.pendingEntries.length){ %><div class="grid"><% accounting.pendingEntries.forEach(function(entry){ %><div class="list-row"><div><strong>Journal <%= entry.entry_number %> · <%= entry.description %></strong><p><%= entry.posting_date %></p></div><span class="badge"><%= entry.effect_status||'not queued' %></span></div><% }) %></div><% } %>
     </div></section>
   <% } else { %>
+    <% if(catalogueReview){ %><%- include('catalogue-matching', {catalogueReview,connection}) %><% } %>
     <% if(isMailbox){ %>
       <section class="card" aria-label="Mailbox settings">
         <div class="card-head"><div><h2>Business email</h2><p class="muted">Only mail from a known customer or supplier, or a reply to a conversation StockChief sent, enters the business inbox. Other senders are set aside without saving their message body or attachments.</p></div></div>

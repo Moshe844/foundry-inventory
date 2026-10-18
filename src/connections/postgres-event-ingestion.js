@@ -52,6 +52,10 @@ async function candidates(client,workspaceId,entityType,query){
 async function mapping(client,auth,entityType,externalId,directId,exact){
   const table=entityType==='sku'?'skus':'locations';
   if(externalId){
+    const source=(await client.query('SELECT mapping_status,provider_data FROM connection_external_records WHERE workspace_id=$1 AND connector_id=$2 AND entity_type=$3 AND external_id=$4',
+      [auth.workspaceId,auth.connectorId,entityType,externalId])).rows[0];
+    const reason=source&&require('./catalog-record-policy').exclusion(require('./postgres-service').parseJson(source.provider_data,{}));
+    if(source?.mapping_status==='IGNORED'||reason)throw new ValidationError(reason||'This provider record is excluded from physical inventory. Review this event before changing stock.');
     const mapped=await client.query(`SELECT foundry_record_id FROM connection_mappings
       WHERE workspace_id=$1 AND connector_id=$2 AND entity_type=$3 AND external_id=$4`,
     [auth.workspaceId,auth.connectorId,entityType,externalId]);

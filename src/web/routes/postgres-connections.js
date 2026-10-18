@@ -5,6 +5,7 @@ const express=require('express');
 const { requireAuth,requireOwner,asyncRoute }=require('../middleware');
 const connections=require('../../connections/postgres-service');
 const providerService=require('../../connections/postgres-provider-service');
+const catalogue=require('../../connections/postgres-catalog-import');
 const defaultProviders=require('../../connections/providers/registry');
 const jobs=require('../../operations/postgres-job-queue');
 const accountingSync=require('../../accounting/postgres-integration-sync');
@@ -209,11 +210,34 @@ function createPostgresConnectionsRouter(database,options={}){
       }
     }
     const pendingWebhooks=(await database.query("SELECT id,status,lease_until,received_at,updated_at,result FROM connection_webhook_receipts WHERE workspace_id=$1 AND connector_id=$2 AND status<>'COMPLETED' ORDER BY received_at DESC,id DESC LIMIT 20",[req.ctx.workspaceId,connection.id])).rows;
+    const catalogueReview=adapter?.discover&&!isMailbox&&adapter.integrationClass!=='accounting'
+      ?await catalogue.describe(database,req.ctx,connection.id):null;
     return res.page('connections/postgres-detail',{
       title:'Connection',nav:'connections',room:true,backTo:{href:'/settings/connections',label:'Connections'},
       connection,newConnectionToken,provider:adapter?.metadata?.()||{name:connection.display_name},
-      canDiscover:Boolean(adapter?.discover)&&!isMailbox,isMailbox,mailboxLastPollAt,pendingWebhooks,
+      canDiscover:Boolean(adapter?.discover)&&!isMailbox,isMailbox,mailboxLastPollAt,pendingWebhooks,catalogueReview,
     });
+  }));
+  router.post('/settings/connections/:id/map',requireOwner,asyncRoute(async(req,res)=>{
+    await catalogue.mapExternal(database,req.ctx,req.params.id,req.body);
+    req.flash('success','Match saved. Existing stock and prices were preserved. Retained provider events can now resume safely.');
+    return res.redirect(303,`/settings/connections/${encodeURIComponent(req.params.id)}`);
+  }));
+  router.post('/settings/connections/:id/create-location-map',requireOwner,asyncRoute(async(req,res)=>{
+    await catalogue.createLocation(database,req.ctx,req.params.id,req.body);
+    req.flash('success','Provider location created and matched. No stock was moved.');
+    return res.redirect(303,`/settings/connections/${encodeURIComponent(req.params.id)}`);
+  }));
+  router.post('/settings/connections/:id/create-products-map',requireOwner,asyncRoute(async(req,res)=>{
+    const result=await catalogue.importProducts(database,req.ctx,req.params.id,req.body);
+    req.flash('success',result.replayed?'These products were already imported. Nothing was duplicated.':
+      `Imported ${result.mapped} variants with ${result.prices} prices and ${result.openingUnits} physical units. Inventory cost and supplier liabilities were not inferred.`);
+    return res.redirect(303,`/settings/connections/${encodeURIComponent(req.params.id)}`);
+  }));
+  router.post('/settings/connections/:id/exclude-record',requireOwner,asyncRoute(async(req,res)=>{
+    const result=await catalogue.ignore(database,req.ctx,req.params.id,req.body);
+    req.flash('success',result.reason+' It remains visible as excluded.');
+    return res.redirect(303,`/settings/connections/${encodeURIComponent(req.params.id)}`);
   }));
   router.post('/settings/connections/:id/receipts/:receiptId/resume',requireOwner,asyncRoute(async(req,res)=>{
     await require('../../connections/postgres-webhook-inbox').resume(database,req.ctx,req.params.id,req.params.receiptId);

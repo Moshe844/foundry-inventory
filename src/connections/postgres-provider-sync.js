@@ -4,6 +4,7 @@ const {newId,nowIso,requireText}=require('../lib/util');
 const {ValidationError}=require('../domain/errors');
 const providerService=require('./postgres-provider-service');
 const defaultProviders=require('./providers/registry');
+const {exclusion}=require('./catalog-record-policy');
 
 function scopedDatabase(client){return {query:(statement,values=[])=>client.query(statement,values),
   transaction:(operation,options)=>typeof client.transaction==='function'?client.transaction(operation,options):operation(client)};}
@@ -60,7 +61,8 @@ async function cacheRecord(client,connection,record){
   const existing=(await client.query(`SELECT foundry_record_id FROM connection_mappings
     WHERE workspace_id=$1 AND connector_id=$2 AND entity_type=$3 AND external_id=$4`,
   [connection.workspace_id,connection.id,entityType,externalId])).rows[0];
-  const target=existing?.foundry_record_id||await exactTarget(client,connection.workspace_id,{...record,entityType});
+  const target=existing?.foundry_record_id||(!exclusion(providerData(record))
+    ?await exactTarget(client,connection.workspace_id,{...record,entityType}):null);
   const at=nowIso();
   await client.query(`INSERT INTO connection_external_records
     (id,workspace_id,connector_id,entity_type,external_id,parent_external_id,code,display_name,

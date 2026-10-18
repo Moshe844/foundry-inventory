@@ -180,14 +180,22 @@ async function bootstrapSnapshot({ credentials }) {
       productVariants(first:100,after:$after){nodes{
         id title sku price selectedOptions{name value}
         product{id title status isGiftCard}
-        inventoryItem{tracked inventoryLevels(first:250){nodes{
+        inventoryItem{id tracked inventoryLevels(first:250){nodes{
           location{id name isActive}
           quantities(names:["on_hand"]){name quantity}
-        }}}
+        } pageInfo{hasNextPage endCursor}}}
       } pageInfo{hasNextPage endCursor}}
     }`, { after: cursor });
     currency = data.shop?.currencyCode || currency;
     for (const variant of data.productVariants.nodes) {
+      const levels=variant.inventoryItem?.inventoryLevels;
+      while(levels?.pageInfo?.hasNextPage){
+        const next=await graphql(credentials,`query InventoryLevelPage($id:ID!,$after:String!){inventoryItem(id:$id){inventoryLevels(first:250,after:$after){nodes{location{id name isActive} quantities(names:["on_hand"]){name quantity}} pageInfo{hasNextPage endCursor}}}}`,
+          {id:variant.inventoryItem.id,after:levels.pageInfo.endCursor});
+        const page=next.inventoryItem.inventoryLevels;
+        if(page.pageInfo.hasNextPage&&page.pageInfo.endCursor===levels.pageInfo.endCursor)throw new ValidationError('Shopify inventory pagination did not advance. No opening stock was imported.');
+        levels.nodes.push(...page.nodes);levels.pageInfo=page.pageInfo;
+      }
       const product = productsById.get(variant.product.id) || {
         externalId: variant.product.id,
         title: variant.product.title,
@@ -202,6 +210,7 @@ async function bootstrapSnapshot({ credentials }) {
         price: variant.price,
         selectedOptions: variant.selectedOptions || [],
         tracked: !!variant.inventoryItem?.tracked,
+        inventoryItemId:variant.inventoryItem?.id||null,
         inventoryLevels: (variant.inventoryItem?.inventoryLevels?.nodes || []).map((level) => ({
           externalLocationId: level.location.id,
           name: level.location.name,
@@ -215,7 +224,7 @@ async function bootstrapSnapshot({ credentials }) {
   } while (cursor);
   const locations = []; cursor = null;
   do {
-    const data = await graphql(credentials, `query Locations($after:String){locations(first:100,after:$after,includeInactive:true){nodes{id name isActive} pageInfo{hasNextPage endCursor}}}`, { after: cursor });
+    const data = await graphql(credentials, `query Locations($after:String){locations(first:100,after:$after,includeInactive:true,includeLegacy:true){nodes{id name isActive} pageInfo{hasNextPage endCursor}}}`, { after: cursor });
     for (const location of data.locations.nodes) locations.push({ externalId: location.id,
       name: location.name, active: !!location.isActive });
     cursor = data.locations.pageInfo.hasNextPage ? data.locations.pageInfo.endCursor : null;
@@ -234,6 +243,7 @@ async function discover({ credentials }) {
       itemName: product.title,
       variationName: variant.title && variant.title !== 'Default Title' ? variant.title : null,
       tracked: variant.tracked, price: variant.price, currency: snapshot.currency,
+      inventoryItemId:variant.inventoryItemId,
       priceMoney: Number.isFinite(Number(variant.price))
         ? { amount: money.toMinor(variant.price, snapshot.currency), currency: snapshot.currency }
         : null,
