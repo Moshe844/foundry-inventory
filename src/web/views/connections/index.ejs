@@ -584,6 +584,8 @@
   </div>
 <% } %>
 
+<span hidden data-connection-host data-workspace-id="<%= currentWorkspaceId||'' %>" data-public-origin="<%= publicOrigin||'' %>"></span>
+<script src="/connection-return.js"></script>
 <script>
 (function () {
   <% if (postgresMode) { %>
@@ -594,11 +596,6 @@
         'popup=yes,width=720,height=780,resizable=yes,scrollbars=yes');
       if (!popup) { window.location.assign(link.href); return; }
       popup.focus();
-      var closePoll = window.setInterval(function () {
-        if (!popup.closed) return;
-        window.clearInterval(closePoll);
-        window.location.reload();
-      }, 500);
     });
   });
   <% } %>
@@ -669,7 +666,10 @@
           checks += 1;
           if (popup.closed) {
             window.clearInterval(closePoll);
-            window.location.replace('/settings/connections');
+            if (button) {
+              button.disabled = false;
+              button.textContent = button.dataset.originalText || 'Connect';
+            }
           } else if (checks >= 1800) {
             window.clearInterval(closePoll);
           }
@@ -734,23 +734,5 @@
     window.location.replace('/settings/connections#payments');
   });
 
-  var trustedConnectionReturnOrigins = [window.location.origin];
-  var configuredConnectionOrigin = <%- JSON.stringify(publicOrigin || '') %>;
-  if (configuredConnectionOrigin
-      && trustedConnectionReturnOrigins.indexOf(configuredConnectionOrigin) === -1) {
-    trustedConnectionReturnOrigins.push(configuredConnectionOrigin);
-  }
-  window.addEventListener('message', function (event) {
-    if (trustedConnectionReturnOrigins.indexOf(event.origin) === -1) return;
-    if (!event.data || event.data.type !== 'foundry:connection-return') return;
-    if (event.data.workspaceId && currentStripeWorkspaceId
-        && event.data.workspaceId !== currentStripeWorkspaceId) {
-      window.location.replace('/inventories');
-      return;
-    }
-    var path = String(event.data.returnPath || '/settings/connections');
-    if (!path.startsWith('/settings/connections')) path = '/settings/connections';
-    window.location.replace(path);
-  });
 }());
 </script>

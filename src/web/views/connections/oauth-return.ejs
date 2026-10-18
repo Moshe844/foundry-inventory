@@ -18,14 +18,16 @@
       font-size:24px; font-weight:800; box-shadow:0 12px 30px rgba(79, 64, 220, .24); }
     .oauth-return h1 { margin:0 0 10px; font-size:var(--t-2xl); }
     .oauth-return p { margin:0 0 20px; color:var(--muted); line-height:1.55; }
+    .oauth-return [hidden] { display:none !important; }
   </style>
 </head>
 <body>
-  <main class="oauth-return" data-connection-return data-connected="<%= outcome.connected?'true':'false' %>" data-workspace-id="<%= outcome.workspaceId||'' %>" data-return-path="<%= outcome.returnPath %>" data-return-origin="<%= outcome.returnOrigin %>">
+  <main class="oauth-return" data-connection-return data-popup="<%= outcome.popup?'true':'false' %>" data-connected="<%= outcome.connected?'true':'false' %>" data-workspace-id="<%= outcome.workspaceId||'' %>" data-return-path="<%= outcome.returnPath %>" data-return-origin="<%= outcome.returnOrigin %>">
     <div class="panel">
       <div class="oauth-return__mark" aria-hidden="true"><%= outcome.connected ? '✓' : '!' %></div>
       <h1><%= outcome.connected ? outcome.providerName + ' is connected' : outcome.providerName + ' was not connected' %></h1>
-      <p><%= outcome.message %></p>
+      <p data-connection-return-status role="status"><%= outcome.message %></p>
+      <button class="btn btn--primary" type="button" data-connection-return-close hidden>Close window</button>
       <a class="btn btn--primary" data-connection-return-link href="<%= outcome.returnUrl %>">Return to StockChief</a>
     </div>
   </main>

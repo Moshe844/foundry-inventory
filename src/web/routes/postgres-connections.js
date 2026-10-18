@@ -27,7 +27,7 @@ function oauthReturnPage(res,input){
     title:`${input.providerName||'Connection'} · StockChief`,layout:false,outcome:{
       connected:Boolean(input.connected),providerName:input.providerName||'Connection',message:input.message,
       workspaceId:input.workspaceId||input.connection?.workspace_id||null,returnUrl:`${returnOrigin}${returnPath}`,
-      returnOrigin,returnPath,
+      returnOrigin,returnPath,popup:Boolean(input.popup),
     },
   });
 }
@@ -108,7 +108,7 @@ function createPostgresConnectionsRouter(database,options={}){
         publicOrigin:options.publicOrigin==='request'?requestOrigin:options.publicOrigin});
       // Finish on an authenticated, repeatable page backed by the saved
       // connection. Reloading completion must never reuse an OAuth code.
-      return res.redirect(303,`${safeOrigin(context.returnOrigin,requestOrigin)}/settings/connections/${encodeURIComponent(connection.id)}/complete`);
+      return res.redirect(303,`${safeOrigin(context.returnOrigin,requestOrigin)}/settings/connections/${encodeURIComponent(connection.id)}/complete${context.popup?'?popup=1':''}`);
     }catch(error){
       return oauthReturnPage(res,{connected:false,providerName:metadata?.name||'Connection',
         connection:context?.connection,returnOrigin:context?.returnOrigin,requestOrigin,
@@ -175,7 +175,7 @@ function createPostgresConnectionsRouter(database,options={}){
     const setupRequired=connected&&connection.setup_status!=='CONNECTED';
     const requestOrigin=`${req.protocol}://${req.get('host')}`;
     return oauthReturnPage(res,{connected,providerName:registry.get(connection.provider_type)?.metadata()?.name||connection.display_name,
-      connection,returnOrigin:requestOrigin,requestOrigin,
+      connection,returnOrigin:requestOrigin,requestOrigin,popup:req.query.popup==='1',
       message:setupRequired?`${connection.display_name} is connected. Returning you to StockChief to finish its setup.`:connected?`${connection.display_name} is connected to this inventory.`:'This connection still needs attention. Return to its settings to review the current state.'});
   }));
   router.get('/settings/connections/:id',asyncRoute(async(req,res)=>{

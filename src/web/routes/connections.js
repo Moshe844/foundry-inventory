@@ -67,7 +67,7 @@ function oauthReturnPage(res, input) {
       workspaceId: input.connection?.workspace_id || null,
       returnUrl: `${returnOrigin}${returnPath}`,
       returnOrigin: returnOrigin || null,
-      returnPath,
+      returnPath,popup:Boolean(input.popup),
     },
   });
 }
@@ -470,7 +470,7 @@ router.post('/settings/connections/connect', requireOwner, asyncRoute(async (req
         connected: true,
         providerName: started.connection.display_name,
         message: `${started.connection.display_name} is connected. StockChief is ready to continue setup.`,
-        connection: started.connection,
+        connection: started.connection,popup:true,
         returnOrigin: requestOrigin,
       });
     }
@@ -497,7 +497,7 @@ router.get('/settings/connections/:provider/callback', asyncRoute(async (req, re
         : `${connection.display_name} is connected. StockChief discovered its products and locations.`;
     if (req.session) req.flash('success', message);
     if (context.popup || context.returnOrigin && context.returnOrigin !== `${req.protocol}://${req.get('host')}`) return oauthReturnPage(res, {
-      connected: true, providerName, message, connection, returnOrigin: context.returnOrigin,
+      connected: true, providerName, message, connection, returnOrigin: context.returnOrigin,popup:context.popup,
     });
     return res.redirect(303, `/settings/connections/${connection.id}`);
   } catch (error) {
