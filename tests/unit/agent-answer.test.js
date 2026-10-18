@@ -21,3 +21,18 @@ test('ordinary Markdown section labels render cleanly without exposing heading m
  assert(!html.includes('###'));
  assert.equal(render('## <img src=x onerror=alert(1)>'),'<h3 class="rm-agent__heading">&lt;img src=x onerror=alert(1)&gt;</h3>');
 });
+
+test('observed local review links work in table cells, lists and paragraphs without allowing external or session authorization links',()=>{
+ const html=render('| Decision | Review |\n|---|---|\n| Check terms | [Review decision](/autopilot/work/owned-record) |\n\n- [Open saved goal](/ask?goal=owned#focused-goal)\n\n[Read **invoice**](/accounting/payables/owned/review?from=inbox&sort=newest)');
+ assert.match(html,/<a href="\/autopilot\/work\/owned-record">Review decision<\/a>/);
+ assert.match(html,/<a href="\/ask\?goal=owned#focused-goal">Open saved goal<\/a>/);
+ assert.match(html,/<a href="\/accounting\/payables\/owned\/review\?from=inbox&amp;sort=newest">Read <strong>invoice<\/strong><\/a>/);
+ for(const href of ['javascript:alert(1)','https://elsewhere.example/','//elsewhere.example/','/%2felsewhere.example','/a\\b','/a%0ab','/%252felsewhere.example','/%252e%252e/secret','/../secret','/a?ticket=private','/a?access_token=private','/a?accessToken=private','/a?csrfToken=private','/a?state=private','/a?password=private','/verify-email?token[]=private','/invite?token[0]=private','/reset-password?token%5b%5d=private'])assert(!/<a\b/.test(render('[Open]('+href+')')),href);
+ assert.equal(render('`[code](/inventory)`'),'<p><code>[code](/inventory)</code></p>');
+ assert.equal(render('``code ` [example](/inventory)``'),'<p><code>code ` [example](/inventory)</code></p>');
+ assert.equal(render('```$75.00```'),'<p><code>$75.00</code></p>');
+ assert.equal(render('```INV-123``` is the invoice number.'),'<p><code>INV-123</code> is the invoice number.</p>');
+ assert(!/<a\b/.test(render('```code `` [example](/inventory)```')));
+ const escaped=render('[<img onerror=x>](/record/%22onmouseover=%22x)');assert(!/<img|onmouseover="/i.test(escaped));assert.match(escaped,/&lt;img/);
+ for(const text of ['```\n[example](/inventory)\n```','~~~markdown\n[example](/inventory)\n~~~','~~~markdown~\n[example](/inventory)\n~~~','~~~markdown`\n[example](/inventory)\n~~~','    [example](/inventory)','\t[example](/inventory)']){const code=render(text);assert(!/<a\b/.test(code));assert.match(code,/<pre><code>\[example\]/);}
+});

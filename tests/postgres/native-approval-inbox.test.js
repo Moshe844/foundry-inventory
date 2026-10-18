@@ -27,6 +27,8 @@ test('recorded missing native approvals appear consistently in the actor inbox w
  // The live trace omitted eleven real native cards; exceed the existing
  // ten-row read limit so truncated coverage cannot masquerade as exhaustive.
  const ready=[];for(let i=0;i<11;i++)ready.push(await prepare('Review shelf '+i));
+ const preparedAt=(await db.query('SELECT created_at FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ready[0].proposalId])).rows[0].created_at;
+ await db.query("UPDATE stockchief_runtime.assistant_goals SET created_at='2000-01-01',checkpoint=checkpoint#-ARRAY['harness','approvalDeliveries',$2,'createdAt'] WHERE id=$1",[ready[0].goalId,ready[0].card.id]);
  const rule=await prepare('stock warning',ctx,'rule');ready.push(rule);
  await prepare('private colleague change',{...ctx,actorId:colleague});
  const other=await prepare('foreign workspace change',{workspaceId:foreign.workspaceId,actorId:foreign.userId});
@@ -51,6 +53,7 @@ test('recorded missing native approvals appear consistently in the actor inbox w
  const first=native.find(i=>i.approval.proposalId===ready[0].proposalId);assert.equal(first.approval.scope,'single_operation');assert.deepEqual(first.approval.missionOption,{id:mission,sha256:hash,count:2});
  assert.match(first.href,new RegExp(ready[0].goalId));assert(!JSON.stringify(first).includes('payload'));
  const read=await service.lookup(readonly,ctx,{view:'needs_you'});assert.equal(read.coverage.returned,10);assert.equal(read.coverage.total,items.length);assert.equal(read.coverage.complete,false);assert.equal(read.handoff.href,'/needs-you/all');assert.match(read.answer,/not the complete list/);
+ assert(read.rows.every(row=>Number.isFinite(Date.parse(row.recordedAt))&&row.timeLabel==='Proposal created'));assert(read.columns.includes('recordedAt'));assert.equal(read.rows[0].dueDate,null,'A prepared-at instant is separate from a calendar due date');assert.equal(read.rows[0].recordedAt,new Date(preparedAt).toISOString(),'Legacy delivery without its own clock uses the canonical proposal timestamp, never the original workflow start');
  assert.deepEqual((await db.query(`SELECT id,status,checkpoint,updated_at FROM stockchief_runtime.assistant_goals ORDER BY id`)).rows,before.rows);
  // Spending exhaustion and a dead SDK do not erase already-durable approval
  // delivery. This read neither calls the model nor resets financial limits.

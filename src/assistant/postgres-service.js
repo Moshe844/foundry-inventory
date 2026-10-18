@@ -555,15 +555,16 @@ async function lookup(database,ctx,request,options={}) {
     const lastCheck=state.lastEvaluatedAt?Date.parse(state.lastEvaluatedAt):NaN;
     const checkMissing=!Number.isFinite(lastCheck);
     const checkStale=!checkMissing&&Date.now()-lastCheck>86400000;
+    const instant=value=>{if(!value||typeof value==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(value))return null;const at=value instanceof Date?value.getTime():typeof value==='string'?Date.parse(value):NaN;return Number.isFinite(at)?new Date(at).toISOString():null;};
     const rows=needs.slice(0,10).map((item)=>evidenceRow({decision:item.title,importance:item.importance,
-      reason:item.why||item.happened||'',kind:item.kind,...(item.approval?{approval:item.approval}:{})},item.href));
+      reason:item.why||item.happened||'',kind:item.kind,recordedAt:instant(item.createdAt),timeLabel:item.timeLabel||'Record created',updatedAt:instant(item.updatedAt),dueDate:item.dueDate||null,...(item.approval?{approval:item.approval}:{})},item.href));
     const answer=needs.length?`${needs.length} ${needs.length===1?'thing needs':'things need'} your attention. First: ${needs[0].title}.`:
       checkMissing?'No decisions are waiting yet, but StockChief has not run its first check. This is not an all-clear.':
       checkStale?'No decisions are waiting from the last check, but that check is over a day old. Run a fresh check for a current answer.':
         'Nothing needs your attention right now.';
     const complete=rows.length===needs.length;
     return {answer:answer+(complete?'':` Showing the first ${rows.length} of ${needs.length}; this is not the complete list. Open the full list to inspect the rest.`),
-      rows,columns:['decision','importance','reason'],
+      rows,columns:['decision','importance','reason','recordedAt','timeLabel','updatedAt','dueDate'],
       coverage:{total:needs.length,returned:rows.length,complete,scope:'Workspace decisions and this actor\'s native Ask approvals',allHref:'/needs-you/all'},
       handoff:{href:needs.length?(complete?'/needs-you':'/needs-you/all'):'/',label:needs.length?'Review what needs you':'Open Home'}};
   }

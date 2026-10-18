@@ -1,14 +1,36 @@
 'use strict';
 // Small, shared presentation renderer. Model HTML is always escaped; only
-// paragraphs, lists, emphasis, code and pipe tables produce markup.
+// paragraphs, lists, emphasis, code, local links and pipe tables produce markup.
 (function(root){
  const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
- const inline=s=>escape(s).replace(/`([^`\n]+)`/g,'<code>$1</code>').replace(/\*\*([^*\n]+)\*\*/g,'<strong>$1</strong>');
+ const emphasis=s=>escape(s).replace(/\*\*([^*\n]+)\*\*/g,'<strong>$1</strong>');
+ function localHref(value){
+  if(!value.startsWith('/')||value.startsWith('//')||value.length>2000||/[\\\u0000-\u0020\u007f]/.test(value))return null;
+  let decoded=value;try{for(let depth=0;depth<8;depth++){const next=decodeURIComponent(decoded);if(next===decoded)break;decoded=next;}}catch{return null;}
+  if(decoded.startsWith('//')||/[\\\u0000-\u001f\u007f]/.test(decoded)||/%(?:25)*(?:2e|2f|5c|0[ad])/i.test(decoded)||decoded.split(/[?#]/)[0].split('/').some(part=>part==='.'||part==='..'))return null;
+  const url=new URL(value,'https://stockchief.invalid');
+  if(url.origin!=='https://stockchief.invalid'||url.pathname!==value.split(/[?#]/)[0])return null;
+  // Browser-session authorization links cannot be transferred into a chat.
+  if([...url.searchParams.keys()].some(key=>/csrf|token|secret|ticket|password|authorization|session|nonce|^state$/.test(key.replace(/[^a-z0-9]/gi,'').toLowerCase())))return null;
+  return value;
+ }
+ function inline(value){
+  const text=String(value),tokens=/(`+)|\[([^\]\n]+)\]\(([^)\s]+)\)/g;let out='',at=0,match;
+  while((match=tokens.exec(text))){out+=emphasis(text.slice(at,match.index));
+   if(match[1]!==undefined){const delimiter=match[1],start=tokens.lastIndex;let end=text.indexOf(delimiter,start);while(end>=0&&(text[end-1]==='`'||text[end+delimiter.length]==='`'))end=text.indexOf(delimiter,end+delimiter.length);if(end>=0){out+='<code>'+escape(text.slice(start,end))+'</code>';tokens.lastIndex=end+delimiter.length;}else out+=escape(delimiter);}
+   else{const href=localHref(match[3]);out+=href?'<a href="'+escape(href)+'">'+emphasis(match[2])+'</a>':emphasis(match[2]);}
+   at=tokens.lastIndex;
+  }
+  return out+emphasis(text.slice(at));
+ }
  const cells=line=>line.trim().replace(/^\|/,'').replace(/\|$/,'').split('|').map(s=>s.trim());
  function render(value){
   const lines=String(value||'').replace(/\r\n?/g,'\n').split('\n'),out=[];let i=0;
   while(i<lines.length){
    if(!lines[i].trim()){i++;continue;}
+   const fence=lines[i].match(/^\s{0,3}(`{3,})[^`]*$/)||lines[i].match(/^\s{0,3}(~{3,})/);
+   if(fence){const end=new RegExp('^\\s{0,3}'+fence[1][0]+'{'+fence[1].length+',}\\s*$'),code=[];i++;while(i<lines.length&&!end.test(lines[i]))code.push(lines[i++]);if(i<lines.length)i++;out.push('<pre><code>'+escape(code.join('\n'))+'</code></pre>');continue;}
+   if(/^(?: {4}|\t)/.test(lines[i])){const code=[];while(i<lines.length&&(!lines[i].trim()||/^(?: {4}|\t)/.test(lines[i])))code.push(lines[i++].replace(/^(?: {4}|\t)/,''));out.push('<pre><code>'+escape(code.join('\n'))+'</code></pre>');continue;}
    const heading=lines[i].match(/^\s{0,3}#{1,6}\s+(.+?)(?:\s+#+)?\s*$/);
    if(heading){out.push('<h3 class="rm-agent__heading">'+inline(heading[1])+'</h3>');i++;continue;}
    const header=cells(lines[i]),separator=i+1<lines.length?cells(lines[i+1]):[];
@@ -21,7 +43,7 @@
    }
    if(/^\s*[-*•]\s+/.test(lines[i])){let rows='';while(i<lines.length&&/^\s*[-*•]\s+/.test(lines[i]))rows+='<li>'+inline(lines[i++].replace(/^\s*[-*•]\s+/,''))+'</li>';out.push('<ul>'+rows+'</ul>');continue;}
    const paragraph=[];while(i<lines.length&&lines[i].trim()){
-    if(paragraph.length&&(/^\s*[-*•]\s+/.test(lines[i])||/^\s{0,3}#{1,6}\s+/.test(lines[i])||lines[i].includes('|')&&i+1<lines.length&&cells(lines[i+1]).every(s=>/^:?-{3,}:?$/.test(s))))break;
+    if(paragraph.length&&(/^\s*[-*•]\s+/.test(lines[i])||/^\s{0,3}(?:#{1,6}\s+|`{3,}|~{3,})/.test(lines[i])||/^(?: {4}|\t)/.test(lines[i])||lines[i].includes('|')&&i+1<lines.length&&cells(lines[i+1]).every(s=>/^:?-{3,}:?$/.test(s))))break;
     paragraph.push(inline(lines[i++]));
    }
    out.push('<p>'+paragraph.join('<br>')+'</p>');

@@ -132,7 +132,7 @@ async function needs(database,workspaceId,actorId=null){
     href:row.issue_type==='EMAIL_SEND_AMBIGUOUS' && row.reply_message_id
       ?`/mail/${row.reply_message_id}`:row.issue_type==='EMAIL_SEND_AMBIGUOUS' && row.provider_effect_id
         ?`/settings/operations/provider-effects/${row.provider_effect_id}`:`/settings/connections/${row.connector_id}`,
-    actionLabel:row.issue_type==='EMAIL_SEND_AMBIGUOUS'?'Verify email':'Fix connection',sourceId:row.id,createdAt:row.created_at,updatedAt:row.updated_at,at:row.updated_at});
+    actionLabel:row.issue_type==='EMAIL_SEND_AMBIGUOUS'?'Verify email':'Fix connection',sourceId:row.id,createdAt:row.created_at,timeLabel:'Issue opened',updatedAt:row.updated_at,at:row.updated_at});
   for(const row of work.rows){const action=object(row.recommended_action);const authority=object(row.policy_evaluation);items.push({kind:'approval',requiredPermissions:[action.type==='transfer'?require('../actions/permissions').VIEW_TRANSFERS:require('../actions/permissions').VIEW_PURCHASING],
     importance:row.urgency==='immediate'?'Urgent':'Important',priority:70+number(row.priority),
     title:action.title || `${action.type==='transfer'?'Transfer':'Replenish'} ${action.displayName || String(row.category).replaceAll('_',' ')}`,
@@ -141,7 +141,7 @@ async function needs(database,workspaceId,actorId=null){
       : `Prepare ${number(action.quantity)} units from ${action.supplierName || 'the selected supplier'}.`),
     why:row.error_message || authority.reason || 'Your authority policy requires approval.',
     recommendation:action.reason || 'Review the prepared work and its evidence.',href:`/autopilot/work/${row.id}`,
-    actionLabel:'Review decision',sourceId:row.id,createdAt:row.created_at,at:row.created_at});}
+    actionLabel:'Review decision',sourceId:row.id,createdAt:row.created_at,timeLabel:'Proposed',at:row.created_at});}
   for(const row of imports.rows)items.push({kind:'import',importance:'Important',priority:80,title:`Import failed: ${row.source_name}`,
     happened:'The database transaction was rolled back; no partial inventory truth was left behind.',why:row.error_message || 'The import could not be verified.',
     recommendation:'Correct the source or setup, then run the same approved preview again.',href:`/imports/${row.import_id}`,
@@ -149,7 +149,7 @@ async function needs(database,workspaceId,actorId=null){
   for(const row of bills.rows)items.push({kind:'accounting',importance:'Important',priority:88,title:`Review invoice ${row.supplier_invoice_number||row.bill_number} from ${row.supplier_name}`,
     happened:`${row.supplier_name} has ${row.currency} ${(number(row.balance_minor)/100).toFixed(2)} unresolved.`,
     why:'The supplier document and expected purchase do not agree.',recommendation:'Review the discrepancy before paying or posting a correction.',
-    href:`/accounting/payables/${row.id}/review`,actionLabel:'Review invoice',sourceId:row.id,createdAt:row.created_at,updatedAt:row.updated_at,dueDate:row.due_date,at:row.updated_at});
+    href:`/accounting/payables/${row.id}/review`,actionLabel:'Review invoice',sourceId:row.id,createdAt:row.created_at,timeLabel:'Invoice recorded',updatedAt:row.updated_at,dueDate:row.due_date,at:row.updated_at});
   for(const row of supplierReturns.rows)items.push({kind:'accounting',importance:'Important',priority:89,
     title:`Resolve supplier credit mismatch on ${row.return_number}`,
     happened:`${row.supplier_name} credited ${row.currency} ${(number(row.actual_credit_minor)/100).toFixed(2)}; expected ${row.currency} ${(number(row.expected_credit_minor)/100).toFixed(2)}.`,
@@ -168,10 +168,10 @@ async function needs(database,workspaceId,actorId=null){
   for(const row of orders.rows)items.push({kind:'order',importance:row.needed_by && row.needed_by<new Date().toISOString().slice(0,10)?'Urgent':'Important',
     priority:92,title:`${row.order_number} does not have enough allocated stock`,happened:`${row.customer_name} needs ${number(row.remaining)} units; ${number(row.allocated)} are allocated.`,
     why:'The order cannot be fulfilled completely from its current allocations.',recommendation:'Review transfer or replenishment options before the promised date.',
-    href:`/orders/${row.id}`,actionLabel:'Review order',sourceId:row.id,createdAt:row.created_at,dueDate:row.needed_by,at:row.needed_by});
+    href:`/orders/${row.id}`,actionLabel:'Review order',sourceId:row.id,createdAt:row.created_at,timeLabel:'Order created',dueDate:row.needed_by,at:row.needed_by});
   for(const row of purchases.rows)items.push({kind:'purchase',importance:'Important',priority:75,title:`${row.po_number} is late`,
     happened:`${row.supplier_name} was expected on ${row.expected_date}.`,why:'StockChief has no complete receipt for this purchase order.',
-    recommendation:'Check the supplier update and affected customer commitments.',href:`/purchasing/orders/${row.id}`,actionLabel:'Review purchase',sourceId:row.id,createdAt:row.created_at,dueDate:row.expected_date,at:row.expected_date});
+    recommendation:'Check the supplier update and affected customer commitments.',href:`/purchasing/orders/${row.id}`,actionLabel:'Review purchase',sourceId:row.id,createdAt:row.created_at,timeLabel:'Purchase order created',dueDate:row.expected_date,at:row.expected_date});
   for(const row of repairs.rows)items.push({kind:'repair',importance:row.materiality==='high'?'Urgent':'Important',
     priority:row.materiality==='high'?97:86,title:row.symptom,happened:row.failed_invariant,
     why:row.error_message||`The governed repair is ${String(row.status).toLowerCase().replaceAll('_',' ')} with ${row.confidence} confidence.`,
