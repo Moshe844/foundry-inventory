@@ -3,6 +3,16 @@ const test=require('node:test'),assert=require('node:assert/strict'),{createHash
 const refs=require('../../scripts/environment-agent-demo/source-references');
 function evidence(id,value,name='business_operations'){const text=JSON.stringify(value);return{id,name,text,sha256:createHash('sha256').update(text).digest('hex')};}
 
+test('native browser formatting stays lossless without whitespace fact bindings or loss of unknown controls',()=>{
+ const browser=require('../../scripts/environment-agent-demo/browser-presentation'),lines=Array.from({length:90},(_,i)=>'Unfamiliar visible line '+i),original={url:'http://127.0.0.1:12345/unknown',text:'\n '+lines.join('\n\n ')+'\n',textBlocks:Object.fromEntries(lines.map((line,i)=>['line'+i,line])),controls:[{name:'unknown_field',label:'Unexpected field',required:false,value:'retained',unfamiliarAttribute:'kept'}]},e=evidence('native:formatting',original,'environment_browser'),projected=browser.compact(original);
+ assert.deepEqual(browser.expand(projected),original);const current=refs.present(e,projected),key=current._stockchiefSources.valueField;
+ assert.deepEqual(current.textSeparators,projected.textSeparators);assert.equal(current.textEncoding,projected.textEncoding);assert(!Object.keys(current[key]).some(k=>k.startsWith('textSeparators')||k==='textEncoding'));
+ const legacy=refs.present(e,projected,{indexRepresentation:true});assert(Buffer.byteLength(JSON.stringify(current))<Buffer.byteLength(JSON.stringify(legacy))-3000);
+ assert.equal(refs.resolve([e],{sourceRef:legacy[key]['textSeparators[0]'],value:projected.textSeparators[0]}).path,'/textSeparators/0','Historical reference identity is preserved');
+ assert.equal(current.controls[0].unfamiliarAttribute,'kept');assert.equal(refs.resolve([e],{sourceRef:current.controls[0][key].unfamiliarAttribute,value:'kept'}).path,'/controls/0/unfamiliarAttribute');
+ assert.equal(Object.keys(current.textBlocks).length,90);assert(Object.keys(current.textBlocks).every(k=>k.startsWith('fv1:')));
+});
+
 test('durable retrieval retains the same returned count and exact field bindings as initial delivery',()=>{
  const journal=require('../../scripts/environment-agent-demo/observations'),original={outcomes:[{result:{columns:['name','currency'],rows:Array.from({length:40},(_,i)=>({name:'Unknown record '+i,currency:i%2?'CAD':'USD'}))}}]},h={candidate:'codex',evidence:{}};
  const entry=journal.store(h,{id:'durable:page',name:'business_operations',result:original}),shown=refs.present(entry,require('../../scripts/environment-agent-demo/evidence-presentation').project(entry.name,original));
