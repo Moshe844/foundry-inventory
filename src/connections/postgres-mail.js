@@ -32,6 +32,18 @@ function attachmentsForCapture(message){
   });
 }
 
+async function saveAttachments(client,workspaceId,messageId,attachments,at,{backfill=false}={}){
+  let added=0;
+  for(const attachment of attachments){const saved=await client.query(`INSERT INTO connection_email_attachments
+    (id,workspace_id,message_id,external_attachment_id,filename,mime_type,content_hash,content,extracted_text,created_at)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(message_id,content_hash,filename) DO NOTHING RETURNING id`,
+    [newId('emailatt'),workspaceId,messageId,attachment.externalId,attachment.filename,attachment.mimeType,
+      attachment.hash,attachment.content,attachment.extractedText,at]);added+=saved.rows.length;}
+  if(added){const scoped={query:(sql,values)=>client.query(sql,values),transaction:work=>work(client)},suffix=backfill?':backfill:'+crypto.createHash('sha256').update(JSON.stringify(attachments.map(a=>[a.filename,a.hash]))).digest('hex'):'';
+    await jobs.enqueue(scoped,{workspaceId,kind:'mail.attachment-extract',idempotencyKey:'mail-attachments:'+messageId+suffix,payload:{messageId},priority:45,maxAttempts:2});}
+  return added;
+}
+
 async function capture(database,connection,message){
   const attachments=attachmentsForCapture(message);
   const sender=trimOrNull(message.sender)?.toLowerCase();
@@ -84,17 +96,20 @@ async function capture(database,connection,message){
       match.kind==='supplier'?match.id:null,match.kind,threadId,message.internetMessageId||null,
       contentHash(message),triage.state,triage.reason,at]);
     if(!inserted.rows.length){
-      const existing=(await client.query(`SELECT id FROM connection_email_messages WHERE workspace_id=$1
-        AND connector_id=$2 AND external_message_id=$3`,[connection.workspace_id,connection.id,externalId])).rows[0];
-      return {accepted:true,replayed:true,messageId:existing.id};
+      const existing=(await client.query(`SELECT id,sender FROM connection_email_messages WHERE workspace_id=$1
+        AND connector_id=$2 AND external_message_id=$3 FOR UPDATE`,[connection.workspace_id,connection.id,externalId])).rows[0];
+      if(existing.sender.toLowerCase()!==sender)throw new ValidationError('The saved email identity does not match this provider message. Its original evidence was preserved.');
+      let attachmentsBackfilled=0;
+      if(attachments.length){const saved=(await client.query('SELECT filename,content_hash FROM connection_email_attachments WHERE workspace_id=$1 AND message_id=$2',[connection.workspace_id,existing.id])).rows;
+        // Older captures can contain only the original envelope. Recover its
+        // actual provider documents once, without replacing an existing source,
+        // re-counting the email, re-sending a reply or executing business work.
+        if(!saved.length)attachmentsBackfilled=await saveAttachments(client,connection.workspace_id,existing.id,attachments,at,{backfill:true});
+        else if(attachments.some(a=>!saved.some(s=>s.filename===a.filename&&s.content_hash===a.hash)))throw new ValidationError('The provider returned different attachments for a saved email. Review the originals; StockChief did not replace them.');
+      }
+      return {accepted:true,replayed:true,messageId:existing.id,attachmentsBackfilled};
     }
-    for(const attachment of attachments)await client.query(`INSERT INTO connection_email_attachments
-      (id,workspace_id,message_id,external_attachment_id,filename,mime_type,content_hash,content,extracted_text,created_at)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(message_id,content_hash,filename) DO NOTHING`,
-      [newId('emailatt'),connection.workspace_id,id,attachment.externalId,attachment.filename,attachment.mimeType,
-        attachment.hash,attachment.content,attachment.extractedText,at]);
-    if(attachments.length){const scoped={query:(sql,values)=>client.query(sql,values),transaction:work=>work(client)};
-      await jobs.enqueue(scoped,{workspaceId:connection.workspace_id,kind:'mail.attachment-extract',idempotencyKey:'mail-attachments:'+id,payload:{messageId:id},priority:45,maxAttempts:2});}
+    await saveAttachments(client,connection.workspace_id,id,attachments,at);
     if(threadId&&!replyTriage.NO_REPLY_SENDER.test(sender)&&!replyTriage.AUTOMATIC_SUBJECT.test(String(message.subject||''))){
       await client.query(`UPDATE connection_email_messages SET reply_state='HANDLED',
         reply_reason='The counterparty replied on this conversation; review their new message.',reply_state_at=$5
