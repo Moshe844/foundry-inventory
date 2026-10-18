@@ -139,9 +139,16 @@ async function run(options){
   const terminal=transport.lastResponse?.();
   if(!terminal?.usageSettled||terminal.empty||terminal.tool||!terminal.terminal||!answer.trim())throw Error('EMPTY_MODEL_FINAL');
  }
+ function nativeFailure(message){
+  const error=Error(message),last=transport.lastResponse?.();
+  // Preserve a known, settled provider stop instead of losing it behind the
+  // SDK's untyped error message. This grants no retry or larger allowance.
+  if(last?.usageSettled&&last.stopReason==='max_output_tokens')error.code='CODEX_OUTPUT_TOKEN_LIMIT';
+  return error;
+ }
  async function handle(message){
   if(message.kind==='done'){threadId=message.threadId;return;}
-  if(message.kind==='failed'){failed||=Error(message.message);return;}
+  if(message.kind==='failed'){failed||=nativeFailure(message.message);return;}
   let result;
   try{
    // Authority belongs to the side-effect boundary: session.checkpoint,
@@ -183,7 +190,7 @@ async function run(options){
      await session.recordReport?.(require('./codex-report').decode(answer));
     }
     if(e.type==='turn.completed'){usage=e.usage;completed=true;}
-    if(e.type==='turn.failed'||e.type==='error')failed||=Error(e.error?.message||e.message);
+    if(e.type==='turn.failed'||e.type==='error')failed||=nativeFailure(e.error?.message||e.message);
     result={received:true};
    }else throw Error('INVALID_CODEX_BRIDGE_MESSAGE');
    child.stdin.write(JSON.stringify({id:message.id,result})+'\n');

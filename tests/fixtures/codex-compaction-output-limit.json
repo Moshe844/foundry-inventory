@@ -1,0 +1,11 @@
+{
+  "source": "Recorded embedded supplier-document investigation; no customer document text is included in this fixture",
+  "nativeRequestSha256": "0fe6ae4852f974513fac4eee12446140d66fdce259fd1142a4c2ea8e1ef2d6d8",
+  "status": "incomplete",
+  "reason": "max_output_tokens",
+  "inputTokens": 78545,
+  "outputTokens": 3000,
+  "priorModelRequests": 15,
+  "priorToolCalls": 21,
+  "partialSummaryCharacters": 10506
+}

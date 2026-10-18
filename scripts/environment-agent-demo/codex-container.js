@@ -107,6 +107,11 @@ async function main(start){
    mcp_servers:{stockchief:{url:origin+'/mcp',bearer_token_env_var:'STOCKCHIEF_BRIDGE_TOKEN',required:true,default_tools_approval_mode:'approve'}},
    features:{shell_tool:false,multi_agent:false,js_repl:false},
    developer_instructions:start.instructions,
+   // Native Codex still selects when to compact and creates its own summary.
+   // Its default handoff prompt did not know about our bounded output or the
+   // durable evidence journal, and copied entire documents/contracts into a
+   // summary that exceeded the unchanged 3,000-token response ceiling.
+   compact_prompt:'You are performing CONTEXT CHECKPOINT COMPACTION for this existing StockChief session. Write a concise continuation handoff of at most 1,000 tokens. Preserve the original goal, safety constraints, current conclusions, unresolved decisions, next useful step, and identifiers of pending approvals or uncertain effects. Full observations, documents, field-reference maps and tool results already persist in the tenant-scoped environment_evidence journal. Preserve only the few evidence IDs needed next; use environment_evidence with those IDs or @index after compaction to retrieve exact facts and references. Do not copy document bodies, record tables, tool transcripts, execution-contract schemas, field-reference catalogues or instructions into this summary. Do not invent missing facts or approvals. Clearly distinguish observed, prepared, approved, executed and verified work. Historical browser handles are not current handles. This is a context handoff, not a customer answer or permission to execute. Keep it under 1,000 tokens so native compaction fits the existing response ceiling.',
    ...(start.instructionsProfile==='stockchief-operator-v1'?{model_instructions_file:'/opt/stockchief/codex-operator-instructions.txt'}:{}),
    // Test-only trigger changes WHEN native Codex compacts; never its algorithm.
    model_auto_compact_token_limit:start.offlineCompact?1:start.nativeCompactionTokenLimit}});
