@@ -20,3 +20,14 @@ test('coordinates preserve the exact JSON wire values of driver timestamps and b
  const source={rows:[{at:new Date('2026-10-16T13:00:00.123Z'),bytes:Buffer.from('fixture'),amount:0}]},expected=JSON.parse(JSON.stringify(source)),view=codec.project(source),key=view._stockchiefRecordPaths.field;
  const {[key]:coordinate,...business}=view.rows[0];assert.equal(coordinate,'/rows/0');assert.deepEqual(business,expected.rows[0]);assert(source.rows[0].at instanceof Date);assert(Buffer.isBuffer(source.rows[0].bytes));
 });
+
+test('tabular results expose returned counts without inventing source completeness',()=>{
+ const original={outcomes:[{result:{columns:['currency'],rows:[{currency:'USD'},{currency:'CAD'}]}},{result:{columns:['unknown_field'],rows:[]}}]},saved=JSON.stringify(original);
+ const projected=codec.project(original),first=projected.outcomes[0].result,last=projected.outcomes[1].result;
+ assert.deepEqual(first.extent,{returnedRows:2,totalRows:null,complete:false,scope:'Returned records only; full-source completeness was not supplied.'});
+ assert.equal(last.extent.returnedRows,0);assert.equal(last.extent.complete,false);assert.equal(last.extent.totalRows,null);
+ assert.equal(codec.metadataClaim(original,'/outcomes/0/result/extent/returnedRows'),false);assert.equal(JSON.stringify(original),saved);
+ const explicit={columns:['a'],rows:[{a:1}],extent:{returnedRows:1,totalRows:9,complete:false}};
+ assert.deepEqual(codec.project(explicit).extent,explicit.extent);
+ assert.equal(codec.project({rows:[]}).extent,undefined,'Unidentified arrays must not become table counts');
+});

@@ -47,6 +47,7 @@ async function createSandbox({image,containerId=null}){
  }catch(error){if(created)await docker(['rm','--force',containerId]).catch(()=>{});throw error;}
  async function command(args){await inspect();return docker(['exec','--user','1000:1000','--workdir','/workspace',containerId,
   'timeout','--signal=KILL','15s',...args]);}
+ let closing=null;
  const {Manifest}=require('@openai/agents/sandbox');
  const state={manifest:new Manifest({root:'/workspace'}),workspaceReady:true,containerId,image};
  const session={state,
@@ -69,7 +70,14 @@ async function createSandbox({image,containerId=null}){
    if(result.stdout!=='isolated')throw new Error('SANDBOX_PROBE_FAILED');
    return {passed:true,containerId,image,cpuSet:info.HostConfig.CpusetCpus,checkedAt:new Date().toISOString(),checks:['non-root','network-none','no-host-mounts','read-only-root','cpu-memory-pids-disk-bounds','single-cpu-affinity','no-provider-credentials']};
   },
-  async close(){await inspect();await docker(['rm','--force',containerId]);}
+  async close(){
+   // Native report correction can retire a sandbox before the outer lifetime
+   // cleanup runs. Join concurrent/previous successful teardown; still retain
+   // the original identity/isolation check before the first removal.
+   if(!closing)closing=(async()=>{await inspect();await docker(['rm','--force',containerId]);})()
+    .catch(error=>{closing=null;throw error;});
+   return closing;
+  }
  };
  return session;
 }

@@ -4,7 +4,7 @@
 const {createHash}=require('node:crypto');
 const META='_stockchiefSources',FIELD='_stockchiefSourceRef',VALUES='_stockchiefValueRefs';
 const part=value=>String(value).replaceAll('~','~0').replaceAll('/','~1');
-function encode(entry,value,{legacy=false}={}){
+function encode(entry,value,{legacy=false,indexHeadings=false}={}){
  const source=JSON.parse(JSON.stringify(value)),keys=new Set();
  function collect(v){if(!v||typeof v!=='object')return;for(const[k,c]of Object.entries(v)){keys.add(k);collect(c);}}
  collect(source);let field=FIELD,metadata=META,valueField=VALUES;while(keys.has(field))field+='_';while(keys.has(metadata))metadata+='_';while(keys.has(valueField))valueField+='_';
@@ -25,12 +25,19 @@ function encode(entry,value,{legacy=false}={}){
   // per-line map. Original line keys remain untouched in the journal.
   if(!legacy&&entry.name==='environment_browser'&&/^\/(?:screen\/)?textBlocks$/.test(path)&&Object.values(v).every(text=>typeof text==='string'))
    return Object.fromEntries(Object.entries(v).map(([key,text])=>[fieldReference(path+'/'+part(key)),text]));
-  const output=Object.fromEntries(Object.entries(v).filter(([k])=>legacy||!generated.has(k)).map(([k,c])=>[k,visit(c,path+'/'+part(k),
+  // Table headings describe the representation. Issuing a fact reference for
+  // a heading such as "currency" alongside actual currency values made the
+  // recorded native answer bind a record count to a column label and require a paid
+  // correction. Keep headings intact, without presenting them as record facts.
+  // Legacy indexing still resolves old bindings to their exact original value.
+  const heading=k=>!legacy&&!indexHeadings&&['business_operations','environment_dataset'].includes(entry.name)&&
+   Array.isArray(v.rows)&&Array.isArray(v.columns)&&['columns','columnLabels'].includes(k);
+  const output=Object.fromEntries(Object.entries(v).filter(([k])=>legacy||!generated.has(k)).map(([k,c])=>[k,heading(k)?c:visit(c,path+'/'+part(k),
    Boolean(path===''&&entry.name==='environment_browser'&&source.image&&k==='screen'))]));
   const values={};
   for(const[k,value]of Object.entries(v)){
    const pointer=path+'/'+part(k);
-   if(generated.has(k)||entry.name==='environment_browser'&&pointer==='/image'||/^\/(?:screen\/)?viewState(?:\/|$)/.test(pointer))continue;
+   if(heading(k)||generated.has(k)||entry.name==='environment_browser'&&pointer==='/image'||/^\/(?:screen\/)?viewState(?:\/|$)/.test(pointer))continue;
    // A presented container can contain host labels or projected children.
    // Its displayed JSON is not the original factual value. New reports cite
    // the primitive leaves; historical container bindings remain indexed.
@@ -73,7 +80,7 @@ function present(entry,value,options){if(!valid(entry))throw Error('INVALID_SOUR
 function index(entry){
  if(!valid(entry))throw Error('INVALID_SOURCE_REFERENCE_EVIDENCE');
  const original=JSON.parse(entry.text),wire=require('./evidence-presentation').project(entry.name,original),bindings=new Map();
- for(const value of [original,wire])for(const legacy of [false,true])for(const[ref,binding]of encode(entry,value,{legacy}).bindings){
+ for(const value of [original,wire])for(const mode of [{legacy:false},{legacy:true},{indexHeadings:true}])for(const[ref,binding]of encode(entry,value,mode).bindings){
   const prior=bindings.get(ref);if(prior&&(prior.evidenceId!==binding.evidenceId||prior.path!==binding.path))throw Error('SOURCE_REFERENCE_COLLISION');
   bindings.set(ref,binding);
  }

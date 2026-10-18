@@ -2,6 +2,14 @@
 const test=require('node:test'),assert=require('node:assert/strict'),{createHash}=require('node:crypto');
 const refs=require('../../scripts/environment-agent-demo/source-references');
 function evidence(id,value,name='business_operations'){const text=JSON.stringify(value);return{id,name,text,sha256:createHash('sha256').update(text).digest('hex')};}
+
+test('recorded heading-versus-value confusion cannot select an issued table-heading reference',{timeout:10000},()=>{
+ const original={outcomes:[{capability:'read.accounting',result:{columns:['measure','value','currency'],columnLabels:{currency:'Currency'},configuration:{baseCurrency:'USD'},rows:[{measure:'Debits',value:'$0.00',currency:'USD'}]}}]},e=evidence('recorded:heading',original),shown=refs.present(e,original),key=shown._stockchiefSources.valueField,result=shown.outcomes[0].result;
+ assert.deepEqual(result.columns,original.outcomes[0].result.columns);assert.deepEqual(result.columnLabels,original.outcomes[0].result.columnLabels);assert(!Object.hasOwn(result[key]||{},'columns[2]'));
+ const currency=result.configuration[key].baseCurrency;assert.equal(refs.resolve([e],{sourceRef:currency,value:'USD'}).path,'/outcomes/0/result/configuration/baseCurrency');assert.equal(refs.resolve([e],{sourceRef:result.rows[0][key].currency,value:'USD'}).path,'/outcomes/0/result/rows/0/currency');
+ const legacyRef='fv1:'+createHash('sha256').update(JSON.stringify([e.id,e.sha256,'/outcomes/0/result/columns/2'])).digest('base64url').slice(0,16);assert.equal(refs.resolve([e],{sourceRef:legacyRef,value:'26'}).path,'/outcomes/0/result/columns/2');assert.equal(original.outcomes[0].result.columns[2],'currency','Legacy source identity remains bound to the heading, never silently corrected to a record count');
+ const projected=refs.present(e,require('../../scripts/environment-agent-demo/record-presentation').project(original)),extent=projected.outcomes[0].result.extent;assert.equal(extent.returnedRows,1);assert.equal(extent.complete,false);assert.equal(extent.totalRows,null);assert.equal(refs.resolve([e],{sourceRef:extent[projected._stockchiefSources.valueField].returnedRows,value:1}).path,'/outcomes/0/result/extent/returnedRows');
+});
 test('host references bind each original record, preserve unknown fields, and survive arbitrary projections and durable restart',()=>{
  const original={outcomes:[{result:{rows:[{sku:'one',onHand:22},{sku:'two',onHand:0,unexpectedField:'discovered'}]}}]},e=evidence('owned-goal:1',original);
  const output=refs.present(e,original,{legacy:true}),field=output._stockchiefSources.field;
