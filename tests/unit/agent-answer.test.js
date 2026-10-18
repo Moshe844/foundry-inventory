@@ -25,6 +25,8 @@ test('ordinary Markdown section labels render cleanly without exposing heading m
 test('observed local review links work in table cells, lists and paragraphs without allowing external or session authorization links',()=>{
  const html=render('| Decision | Review |\n|---|---|\n| Check terms | [Review decision](/autopilot/work/owned-record) |\n\n- [Open saved goal](/ask?goal=owned#focused-goal)\n\n[Read **invoice**](/accounting/payables/owned/review?from=inbox&sort=newest)');
  assert.match(html,/<a href="\/autopilot\/work\/owned-record">Review decision<\/a>/);
+ assert.equal(render('[Review]( /autopilot/work/owned-record )'),'<p><a href="/autopilot/work/owned-record">Review</a></p>');
+ assert(!/<a\b/.test(render('[Untrusted]( javascript:alert )')));
  assert.match(html,/<a href="\/ask\?goal=owned#focused-goal">Open saved goal<\/a>/);
  assert.match(html,/<a href="\/accounting\/payables\/owned\/review\?from=inbox&amp;sort=newest">Read <strong>invoice<\/strong><\/a>/);
  for(const href of ['javascript:alert(1)','https://elsewhere.example/','//elsewhere.example/','/%2felsewhere.example','/a\\b','/a%0ab','/%252felsewhere.example','/%252e%252e/secret','/../secret','/a?ticket=private','/a?access_token=private','/a?accessToken=private','/a?csrfToken=private','/a?state=private','/a?password=private','/verify-email?token[]=private','/invite?token[0]=private','/reset-password?token%5b%5d=private'])assert(!/<a\b/.test(render('[Open]('+href+')')),href);

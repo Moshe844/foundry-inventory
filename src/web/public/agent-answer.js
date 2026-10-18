@@ -15,7 +15,7 @@
   return value;
  }
  function inline(value){
-  const text=String(value),tokens=/(`+)|\[([^\]\n]+)\]\(([^)\s]+)\)/g;let out='',at=0,match;
+  const text=String(value),tokens=/(`+)|\[([^\]\n]+)\]\([ \t]*([^\s)]+)[ \t]*\)/g;let out='',at=0,match;
   while((match=tokens.exec(text))){out+=emphasis(text.slice(at,match.index));
    if(match[1]!==undefined){const delimiter=match[1],start=tokens.lastIndex;let end=text.indexOf(delimiter,start);while(end>=0&&(text[end-1]==='`'||text[end+delimiter.length]==='`'))end=text.indexOf(delimiter,end+delimiter.length);if(end>=0){out+='<code>'+escape(text.slice(start,end))+'</code>';tokens.lastIndex=end+delimiter.length;}else out+=escape(delimiter);}
    else{const href=localHref(match[3]);out+=href?'<a href="'+escape(href)+'">'+emphasis(match[2])+'</a>':emphasis(match[2]);}
