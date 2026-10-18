@@ -92,4 +92,22 @@ async function scheduleMappedInTransaction(c,workspaceId,connectorId){
  for(const row of rows){await c.query("UPDATE connection_webhook_receipts SET status='RECEIVED',updated_at=now() WHERE workspace_id=$1 AND id=$2",[workspaceId,row.id]);await jobs.enqueue(scoped(c),{workspaceId,kind:'provider.webhook-process',idempotencyKey:'webhook-mapped:'+row.id+':'+row.attempt_count,payload:{receiptId:row.id},priority:30,maxAttempts:8});}
  return {scheduled:rows.length};
 }
-module.exports={receive,processReceipt,job,resume,scheduleMappedInTransaction};
+async function reconcileCancellationObservations(database,connection,adapter){
+ if(!adapter?.hydrateWebhook||!adapter?.normalizeWebhook)return {resolved:0};
+ const rows=(await database.query(`SELECT r.* FROM connection_webhook_receipts r
+ WHERE r.workspace_id=$1 AND r.connector_id=$2 AND r.status='COMPLETED' AND EXISTS(
+  SELECT 1 FROM connection_issues i WHERE i.workspace_id=r.workspace_id AND i.connector_id=r.connector_id
+  AND i.status='OPEN' AND i.issue_type='RETURN_REVIEW_REQUIRED'
+  AND left(i.external_event_id,length(r.delivery_id)+1)=r.delivery_id||':') ORDER BY r.received_at DESC LIMIT 20`,[connection.workspace_id,connection.id])).rows;
+ if(!rows.length)return {resolved:0};
+ const credentials=await providerService.loadProviderCredentials(database,connection,adapter),auth={workspaceId:connection.workspace_id,connectorId:connection.id,actorId:connection.authorized_by_user_id};let resolved=0;
+ for(const row of rows){
+  const sealed=vault.decrypt(row),rawBody=Buffer.from(sealed.rawBody,'base64'),body=JSON.parse(rawBody.toString('utf8'));
+  if(!Array.isArray(body.transactions)||body.transactions.length!==0)continue;
+  const input={headers:sealed.headers,rawBody,body,credentials,connection};
+  try{await adapter.hydrateWebhook(input);}catch{continue;}
+  for(const event of adapter.normalizeWebhook(input))if(await ingestion.reconcileCancellationObservation(database,auth,event))resolved++;
+ }
+ return {resolved};
+}
+module.exports={receive,processReceipt,job,resume,scheduleMappedInTransaction,reconcileCancellationObservations};

@@ -326,9 +326,10 @@ async function hydrateWebhook({headers,body,credentials,connection}){
  // The shared app HMAC alone does not prove that a record belongs to this
  // tenant. Resolve consequential record IDs using this store's own token.
  if(!body.id)throw new ValidationError('The Shopify event is missing its record identity.');
- const id=shopifyGid(type,body.id),data=await graphql(credentials,`query WebhookOwnership($id:ID!){node(id:$id){id ... on Fulfillment{order{id}} ... on Refund{order{id}}}}`,{id});
+ const id=shopifyGid(type,body.id),data=await graphql(credentials,`query WebhookOwnership($id:ID!){node(id:$id){id ... on Fulfillment{order{id}} ... on Refund{order{id displayFinancialStatus}}}}`,{id});
  requireVerified(data.node?.id===id,'Shopify did not confirm this record in the connected store.');
  if(type!=='Order')requireVerified(data.node.order?.id===shopifyGid('Order',body.order_id),'Shopify did not confirm the event’s order identity.');
+ if(type==='Refund')body._stockchiefOrderFinancialStatus=data.node.order.displayFinancialStatus||null;
 }
 
 function shopifyGid(type, value) {
@@ -373,7 +374,10 @@ function normalizeWebhook({ headers, body }) {
       : shopifyGid('Product', row.line_item?.product_id), skuCode: row.line_item?.sku,
       externalLocationId: row.location_id ? shopifyGid('Location', row.location_id) : undefined, quantity: Number(row.quantity),
       externalOrderId: body.order_id==null?undefined:String(body.order_id), externalRefundId:String(body.id),
-      restockType:row.restock_type||null, reason: `Shopify refund ${body.id} (${row.restock_type||'financial only'})` },
+      restockType:row.restock_type||null,
+      reason: `Shopify refund ${body.id} (${row.restock_type||'financial only'})` },
+    observationProof:{noFinancialTransactions:Array.isArray(body.transactions)&&body.transactions.length===0,
+      sourceOrderUnpaid:['PENDING','VOIDED','EXPIRED'].includes(body._stockchiefOrderFinancialStatus)},
   }));
   if (topic.startsWith('products/')) return [{ eventId: delivery, type: 'product.changed', version, occurredAt,
     data: { externalProductId: shopifyGid('Product', body.id), name: body.title, variants: body.variants || [] } }];

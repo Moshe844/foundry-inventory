@@ -18,14 +18,15 @@ const {AuthenticationError}=require('../../src/domain/errors');
 const {newId,nowIso}=require('../../src/lib/util');
 
 const webhookSecret='shopify-postgres-webhook-secret';
-const signedAdapter=shopify;
+let legacyObservation=false;
+const signedAdapter={...shopify,normalizeWebhook(input){const events=shopify.normalizeWebhook(input);if(legacyObservation)for(const event of events)delete event.observationProof;return events;}};
 const providers={get(type){return type==='shopify'?signedAdapter:null;},catalog(){return [];}};
 const sign=(body)=>crypto.createHmac('sha256',webhookSecret).update(body).digest('base64');
 
 test('real Chromium qualifies signed Shopify order creation, fulfillment and cancellation on PostgreSQL',
   {timeout:180000},async(context)=>{
     const oldSecret=process.env.SHOPIFY_CLIENT_SECRET,oldFetch=global.fetch;process.env.SHOPIFY_CLIENT_SECRET=webhookSecret;let providerRequests=0;
-    global.fetch=async(value,options)=>{const url=new URL(value);if(url.hostname==='127.0.0.1')return oldFetch(value,options);assert.equal(url.hostname,'shopify-store-1.myshopify.com','The wire fixture must never contact an actual store');providerRequests++;const id=JSON.parse(options.body).variables.id,node=/\/Order\/(1001|1002)$/.test(id)?{id}:id==='gid://shopify/Fulfillment/7001'?{id,order:{id:'gid://shopify/Order/1001'}}:null;return Response.json({data:{node}});};
+    global.fetch=async(value,options)=>{const url=new URL(value);if(url.hostname==='127.0.0.1')return oldFetch(value,options);assert.equal(url.hostname,'shopify-store-1.myshopify.com','The wire fixture must never contact an actual store');providerRequests++;const id=JSON.parse(options.body).variables.id,node=/\/Order\/(1001|1002)$/.test(id)?{id}:id==='gid://shopify/Fulfillment/7001'?{id,order:{id:'gid://shopify/Order/1001'}}:/\/Refund\/800[1-4]$/.test(id)?{id,order:{id:'gid://shopify/Order/'+(id.endsWith('8002')?'1001':'1002'),displayFinancialStatus:id.endsWith('8002')?'PAID':'VOIDED'}}:null;return Response.json({data:{node}});};
     context.after(()=>{global.fetch=oldFetch;if(oldSecret===undefined)delete process.env.SHOPIFY_CLIENT_SECRET;else process.env.SHOPIFY_CLIENT_SECRET=oldSecret;});
     const eventDay=new Date().toISOString().slice(0,10);
     const cluster=await startCluster();
@@ -99,6 +100,21 @@ test('real Chromium qualifies signed Shopify order creation, fulfillment and can
     assert.equal((await database.query(`SELECT so.status FROM sales_orders so JOIN connection_mappings m ON m.foundry_record_id=so.id
       WHERE m.workspace_id=$1 AND m.connector_id=$2 AND m.entity_type='sales_order' AND m.external_id='1002'`,
     [ctx.workspaceId,connectorId])).rows[0].status,'CANCELLED');
+    const refund=(id,orderId,transactions=[])=>JSON.stringify({id,order_id:orderId,created_at:`${eventDay}T14:00:01.000Z`,transactions,
+      refund_line_items:[{id:id*10,quantity:1,restock_type:'cancel',line_item:{variant_id:501,product_id:50,sku:'SHOP-BOTTLE'}}]});
+    const zero=await send(refund(8001,1002),'refunds/create','zero-cancel-refund');await require('../helpers/provider-webhook-worker').result(database,zero,providers);
+    assert.equal(Number((await database.query("SELECT count(*) AS n FROM connection_issues WHERE workspace_id=$1 AND issue_type='RETURN_REVIEW_REQUIRED' AND status='OPEN'",[ctx.workspaceId])).rows[0].n),0);
+    for(const [id,orderId,transactions]of [[8002,1001,[]],[8003,1002,[{kind:'refund',status:'success',amount:'15.00',currency:'USD'}]]]){const response=await send(refund(id,orderId,transactions),'refunds/create','review-refund-'+id);await require('../helpers/provider-webhook-worker').result(database,response,providers);}
+    assert.equal(Number((await database.query("SELECT count(*) AS n FROM connection_issues WHERE workspace_id=$1 AND issue_type='RETURN_REVIEW_REQUIRED' AND status='OPEN'",[ctx.workspaceId])).rows[0].n),2);
+    legacyObservation=true;const legacy=await send(refund(8004,1002),'refunds/create','old-zero-cancel');await require('../helpers/provider-webhook-worker').result(database,legacy,providers);legacyObservation=false;
+    assert.equal(Number((await database.query("SELECT count(*) AS n FROM connection_issues WHERE workspace_id=$1 AND issue_type='RETURN_REVIEW_REQUIRED' AND status='OPEN'",[ctx.workspaceId])).rows[0].n),3);
+    const connection=(await database.query('SELECT * FROM workspace_connectors WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,connectorId])).rows[0];
+    const reconcile=await require('../../src/commercial/operations').run(database,ctx.workspaceId,{capability:'connections.commerce',provider:'shopify',operation:'catalog_sync',key:'reconcile-old-zero-cancel'},()=>require('../../src/connections/postgres-webhook-inbox').reconcileCancellationObservations(database,connection,signedAdapter));
+    assert.equal(reconcile.resolved,1);assert.equal(Number((await database.query("SELECT count(*) AS n FROM connection_issues WHERE workspace_id=$1 AND issue_type='RETURN_REVIEW_REQUIRED' AND status='OPEN'",[ctx.workspaceId])).rows[0].n),2);
+    const repeatedLegacy=await send(refund(8004,1002),'refunds/create','new-delivery-old-zero-cancel');await require('../helpers/provider-webhook-worker').result(database,repeatedLegacy,providers);
+    assert.equal(Number((await database.query('SELECT count(*) AS n FROM connection_event_conflicts WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n),0,'New verification evidence must not change the original refund business identity');
+    assert.equal(Number((await database.query("SELECT count(*) AS n FROM connection_issues WHERE workspace_id=$1 AND issue_type='RETURN_REVIEW_REQUIRED' AND status='OPEN'",[ctx.workspaceId])).rows[0].n),2);
+    assert.equal(Number((await database.query('SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3',[ctx.workspaceId,item.skuIds[0],location.id])).rows[0].on_hand),4);
     const foreign=await send(JSON.stringify(order(2001,1)),'orders/create','wrong-store-record');assert.equal(foreign.status,202);const foreignResult=await require('../helpers/provider-webhook-worker').result(database,foreign,providers);assert.equal(foreignResult.processingStatus,'NEEDS_REVIEW');assert.equal(Number((await database.query("SELECT count(*) AS n FROM connection_mappings WHERE workspace_id=$1 AND connector_id=$2 AND entity_type='sales_order' AND external_id='2001'",[ctx.workspaceId,connectorId])).rows[0].n),0);
     await page.goto(`${base}/sales/orders/${mapped.foundry_record_id}`);
     assert.match(await page.locator('main').innerText(),/Fulfilled/i);assert.deepEqual(errors,[]);

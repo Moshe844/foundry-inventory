@@ -33,10 +33,12 @@ function normalize(input){
   const type=TYPES[rawType];
   if(!type)throw new ValidationError(`Unsupported PostgreSQL connector event type: ${rawType}.`);
   const data=input.data&&typeof input.data==='object'&&!Array.isArray(input.data)?{...input.data}:{...input};
-  for(const key of ['id','eventId','type','version','occurredAt','providerTimestamp','data'])delete data[key];
+  for(const key of ['id','eventId','type','version','occurredAt','providerTimestamp','data','observationProof'])delete data[key];
   return {eventId,type,sourceType:rawType,version:trimOrNull(input.version),
     ...(input.effectKey?{effectKey:requireText(input.effectKey,'Business effect identity',{max:160})}:{}),
     ...(input.aggregateId?{aggregateId:requireText(input.aggregateId,'External aggregate',{max:240})}:{}),
+    ...(input.observationProof?{observationProof:{noFinancialTransactions:input.observationProof.noFinancialTransactions===true,
+      sourceOrderUnpaid:input.observationProof.sourceOrderUnpaid===true}}:{}),
     occurredAt:trimOrNull(input.occurredAt||input.providerTimestamp),data};
 }
 
@@ -141,6 +143,32 @@ async function persistReturnReview(client,auth,event){
     `${auth.displayName} reported a refund that needs return confirmation`,
     `${reference} is financial evidence only. StockChief has not increased stock.`,
     'Confirm that the product physically returned, then record the return in StockChief.',at]);
+}
+
+async function cancellationOnlyRefund(client,auth,event){
+  if(event.type!=='return.reported'||event.data.restockType!=='cancel'||event.observationProof?.noFinancialTransactions!==true
+    ||event.observationProof?.sourceOrderUnpaid!==true||!event.data.externalOrderId)return false;
+  const orderId=await mappedRecord(client,auth,'sales_order',String(event.data.externalOrderId));
+  if(!orderId)return false;
+  const proof=(await client.query(`SELECT
+    (SELECT coalesce(sum(quantity_fulfilled),0) FROM sales_order_lines WHERE workspace_id=$1 AND sales_order_id=$2) AS fulfilled,
+    (SELECT count(*) FROM accounting_customer_invoices WHERE workspace_id=$1 AND sales_order_id=$2) AS invoices,
+    (SELECT count(*) FROM accounting_payments WHERE workspace_id=$1 AND sales_order_id=$2) AS payments`,[auth.workspaceId,orderId])).rows[0];
+  return Number(proof.fulfilled)===0&&Number(proof.invoices)===0&&Number(proof.payments)===0;
+}
+
+async function reconcileCancellationObservation(database,auth,event){
+  return database.transaction(async client=>{
+    if(!await cancellationOnlyRefund(client,auth,event))return false;
+    const prior=(await client.query("SELECT id FROM connector_feed_events WHERE workspace_id=$1 AND connector_id=$2 AND external_event_id=$3 AND status='IGNORED' AND action_type='return.review_required' FOR UPDATE",[auth.workspaceId,auth.connectorId,event.eventId])).rows[0];
+    if(!prior)return false;
+    const at=nowIso();
+    await client.query("UPDATE connection_issues SET status='RESOLVED',resolved_at=$4,updated_at=$4 WHERE workspace_id=$1 AND connector_id=$2 AND fingerprint=$3 AND issue_type='RETURN_REVIEW_REQUIRED' AND status='OPEN'",[auth.workspaceId,auth.connectorId,`return-review:${auth.connectorId}:${event.eventId}`,at]);
+    // Preserve the original signed evidence and its identity. Correct only
+    // the observation's classification; never replay stock or money effects.
+    await client.query("UPDATE connector_feed_events SET action_type='sales_order.cancellation_refund_noted',error_message=NULL,processed_at=$4 WHERE workspace_id=$1 AND connector_id=$2 AND id=$3",[auth.workspaceId,auth.connectorId,prior.id,at]);
+    return true;
+  },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 
 function scopedDatabase(client){return {query:(statement,values=[])=>client.query(statement,values),
@@ -414,15 +442,17 @@ async function ingest(database,auth,raw,options={}){
       quantity:1,idempotencyKey:`event:${auth.connectorId}:${event.eventId}`,occurredAt:receivedAt,
       detail:{eventType:event.type,connectorId:auth.connectorId}});
     if(['return.reported','fulfillment.reported','payment.reported'].includes(event.type)){
-      if(event.type==='return.reported')await persistReturnReview(client,auth,event);
+      const cancellationOnly=await cancellationOnlyRefund(client,auth,event);
+      const requiresReview=event.type==='return.reported'&&!cancellationOnly;
+      if(requiresReview)await persistReturnReview(client,auth,event);
       const processedAt=nowIso();
       await client.query(`UPDATE connector_feed_events SET status='IGNORED',action_type=$6,
         action_record_id=NULL,error_message=$2,processed_at=$3 WHERE workspace_id=$1 AND connector_id=$4
           AND external_event_id=$5`,[auth.workspaceId,
-        event.type==='return.reported'?'Financial refund recorded; physical return requires confirmation.':null,processedAt,auth.connectorId,event.eventId,event.type==='return.reported'?'return.review_required':'provider.observation_recorded']);
+        requiresReview?'Financial refund recorded; physical return requires confirmation.':null,processedAt,auth.connectorId,event.eventId,requiresReview?'return.review_required':cancellationOnly?'sales_order.cancellation_refund_noted':'provider.observation_recorded']);
       await client.query(`UPDATE workspace_connectors SET last_activity_at=$3,last_synced_at=$3,last_error=NULL,updated_at=$3
         WHERE workspace_id=$1 AND id=$2`,[auth.workspaceId,auth.connectorId,processedAt]);
-      return {accepted:true,replayed:false,status:'IGNORED',eventId:event.eventId,movementIds:[],requiresReview:event.type==='return.reported'};
+      return {accepted:true,replayed:false,status:'IGNORED',eventId:event.eventId,movementIds:[],requiresReview};
     }
     if(event.type==='product.changed'||event.type==='location.changed'){
       const scheduled=await jobs.enqueue(scopedDatabase(client),{workspaceId:auth.workspaceId,kind:'provider.catalog-sync',
@@ -589,4 +619,4 @@ async function ingestBatch(database,auth,envelope){
     replayed:results.filter((row)=>row.replayed).length};
 }
 
-module.exports={MAX_BATCH,LEGACY_MAX_BATCH,TYPES,normalize,ingest,ingestBatch,ingestLegacy,ingestLegacyBatch};
+module.exports={MAX_BATCH,LEGACY_MAX_BATCH,TYPES,normalize,ingest,ingestBatch,ingestLegacy,ingestLegacyBatch,reconcileCancellationObservation};

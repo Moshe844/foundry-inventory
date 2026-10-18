@@ -169,7 +169,9 @@ async function sync(job,client,providers=defaultProviders){
   [job.workspaceId,connectorId,completedAt]);
   return {runId,products:products.length,locations:locations.length,autoMapped,needsMapping,ignored,completedAt};
   };
-  return database.transaction(apply,{isolation:'SERIALIZABLE',retrySafe:true});
+  const result=await database.transaction(apply,{isolation:'SERIALIZABLE',retrySafe:true});
+  if(!result.skipped)await require('./postgres-webhook-inbox').reconcileCancellationObservations(database,connection,adapter);
+  return result;
 }
 
 async function setMappingInTransaction(client,ctx,input){
