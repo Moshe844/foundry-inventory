@@ -7,6 +7,8 @@ test('lightweight progress preserves the complete public conversation across all
  const owner=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'Reviewer',businessName:'Progress parity',email:randomUUID()+'@example.test',password:'Offline!'+randomUUID()}),ctx={workspaceId:owner.workspaceId,actorId:owner.userId};
  const store=require('../../src/assistant/postgres-goal-store'),conversation=require('../../src/assistant/agent-conversation');
  const cases=[
+  {status:'BLOCKED',harness:{interruption:{code:'rate_limited',limitKind:'goal_cost'},completionSource:'partial_verified_receipt'}},
+  {status:'BLOCKED',harness:{admissionBlock:{code:'DURABLE_TOOL_LIMIT',requiresUserInput:false},interruption:{code:'rate_limited'},completionSource:'partial_verified_receipt'}},
   {status:'BLOCKED',harness:{interruption:{code:'SHARED_SPENDING_CEILING'},completionSource:'partial_verified_receipt'}},
   {status:'BLOCKED',harness:{interruption:{code:'SHARED_SPENDING_CEILING'},completionSource:'partial_observation_report'}},
   {status:'BLOCKED',harness:{interruption:{code:'SHARED_SPENDING_CEILING'}}},

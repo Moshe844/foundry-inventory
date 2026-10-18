@@ -97,7 +97,7 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
     THEN maximum_minor WHEN status='SETTLED' THEN actual_minor ELSE 0 END),0) AS amount
     FROM commercial_model_cost_holds WHERE goal_id=$1`,[goalScope.goalId])).rows[0];
    if(Number(exposure.amount)+bound.maximumMinor>Number(goal.budget_minor))
-    throw new RateLimitError('This goal reached its cumulative model-cost ceiling. No model call was made.');
+    throw Object.assign(new RateLimitError('This goal reached its cumulative model-cost ceiling. No model call was made.'),{limitKind:'goal_cost'});
   }
   const grantIds=(await client.query(`SELECT DISTINCT a.grant_id FROM commercial_usage_events e
     JOIN commercial_usage_allocations a ON a.event_id=e.id WHERE e.account_id=$1 AND e.workspace_id=$2

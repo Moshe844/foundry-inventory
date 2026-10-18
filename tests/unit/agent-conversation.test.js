@@ -1,6 +1,12 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict');
 const contract=require('../../src/assistant/agent-conversation'),trace=require('../fixtures/recorded-sales-clarification.json');
+
+test('recorded post-approval exhaustion keeps the executed receipt and stops offering an exhausted continuation',()=>{
+ const goal={id:'recorded-boundary',status:'BLOCKED',answer:'The approved email was executed and verified.',checkpoint:{lifecycleStage:'verification',harness:{completionSource:'partial_verified_receipt',admissionBlock:{code:'DURABLE_TOOL_LIMIT'},interruption:{code:'rate_limited'}}}};
+ const state=contract.state(goal);assert.equal(state.phase,'goal_limit');assert.equal(state.active,false);assert.equal(state.canReply,false);assert.match(state.message,/email was executed and verified/);assert.match(state.message,/No automatic retry/);
+ goal.checkpoint.harness.codexDelivery={state:'PENDING'};assert.equal(contract.state(goal).phase,'usage_review','Unknown provider usage still outranks a known tool ceiling');
+});
 test('exact recorded response demonstrates the former string-only failure and becomes a typed clarification',()=>{
  const raw=JSON.parse(trace.rawFinal);
  assert.equal(typeof raw.missingInformation==='string',false,'Original classifier rejected this successful model turn');

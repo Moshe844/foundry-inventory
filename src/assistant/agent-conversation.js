@@ -46,8 +46,8 @@ function classify({report,answer,verified,current='READY',canonicalVerified=true
   failure:{code:progress.finalReason||'OUTCOME_UNVERIFIED',requiresUserInput:false}};
 }
 const labels={queued:'Getting started',working:'Working on your request',clarification:'Let’s clarify',approval:'Ready for your approval',
- external_wait:'Waiting for confirmation',navigation:'Ready to open in your browser',verification:'Checking the result',completed:'Completed',
- interrupted:'Work paused',funding:'Spending limit reached',capacity:'Daily work limit reached',service_wait:'AI service temporarily unavailable',usage_review:'Checking interrupted AI work',failed:'Could not finish',cancelled:'Stopped'};
+ external_wait:'Waiting for confirmation',navigation:'Ready to open in your browser',verification:'Finishing remaining work',completed:'Completed',
+ interrupted:'Work paused',goal_limit:'Request allowance reached',funding:'Spending limit reached',capacity:'Daily work limit reached',service_wait:'AI service temporarily unavailable',usage_review:'Checking interrupted AI work',failed:'Could not finish',cancelled:'Stopped'};
 const lifecycleMessages=Object.freeze({
  external_wait:'StockChief is waiting for confirmation of the authorized work. No further approval is needed at this stage.',
  verification:'The authorized work is recorded. I’m checking the complete result.'
@@ -61,7 +61,7 @@ function state(goal){
  const cp=goal.checkpoint||{},h=cp.harness||{},saved=cp.conversationState;
  const phase=({READY:cp.lifecycleStage==='verification'?'verification':'queued',RUNNING:cp.lifecycleStage==='verification'?'verification':'working',
   WAITING_USER:'clarification',WAITING_APPROVAL:'approval',WAITING_EVENT:['PENDING','DELIVERING'].includes(cp.navigation?.state)?'navigation':'external_wait',COMPLETED:'completed',
-  BLOCKED:h.modelUsagePending===true||h.codexDelivery?.state==='PENDING'||h.helperDelivery?.state==='PENDING'||['PROVIDER_REQUEST_TIMEOUT','PROVIDER_TRANSPORT_UNCERTAIN','UNRESOLVED_MODEL_CALL','CODEX_RESPONSE_RECONCILIATION_REQUIRED'].includes(h.interruption?.code)?'usage_review':h.interruption?.code==='SHARED_SPENDING_CEILING'?'funding':h.interruption?.limitKind==='daily_model_attempts'?'capacity':h.interruption?.code==='CODEX_TOKEN_COUNT_UNAVAILABLE'?'service_wait':h.interruption?'interrupted':'failed',CANCELLED:'cancelled'})[goal.status]||'failed';
+  BLOCKED:h.modelUsagePending===true||h.codexDelivery?.state==='PENDING'||h.helperDelivery?.state==='PENDING'||['PROVIDER_REQUEST_TIMEOUT','PROVIDER_TRANSPORT_UNCERTAIN','UNRESOLVED_MODEL_CALL','CODEX_RESPONSE_RECONCILIATION_REQUIRED'].includes(h.interruption?.code)?'usage_review':h.interruption?.limitKind==='goal_cost'||['DURABLE_TOOL_LIMIT','DURABLE_MODEL_REQUEST_LIMIT'].includes(h.admissionBlock?.code||h.interruption?.code)?'goal_limit':h.interruption?.code==='SHARED_SPENDING_CEILING'?'funding':h.interruption?.limitKind==='daily_model_attempts'?'capacity':h.interruption?.code==='CODEX_TOKEN_COUNT_UNAVAILABLE'?'service_wait':h.interruption?'interrupted':'failed',CANCELLED:'cancelled'})[goal.status]||'failed';
  const question=goal.status==='WAITING_USER'?(h.userQuestion||saved?.input||{question:goal.answer,missingInformation:['Your decision']}):null;
  const input=question?{id:question.id||createHash('sha256').update(JSON.stringify([goal.id,cp.messages?.length||0,question.question])).digest('hex'),
   question:publicText(question.question,'What would you like me to use?'),missingInformation:missing.safeParse(question.missingInformation).success?missing.parse(question.missingInformation):[]}:null;
@@ -74,16 +74,17 @@ function state(goal){
  const capacityMessage='Your business has used today’s AI work allowance. Your request and any completed work are saved. You can continue after the daily allowance resets.';
  const serviceMessage='StockChief’s AI service was temporarily unavailable. Your request and recorded work are saved. No further paid AI request was sent.';
  const usageMessage='An AI request lost its confirmation. Your goal and recorded work are saved. Paid work is paused while its usage is checked; no automatic retry will run.';
+ const goalLimitMessage='This request reached its work or spending allowance before all remaining work was verified. Recorded operations are saved. No automatic retry will run, and completed operations must not be repeated.';
  const partial=['partial_verified_receipt','partial_observation_report'].includes(h.completionSource)?publicText(goal.answer,''):'';
- return ConversationState.parse({version:1,goalId:goal.id,phase,label:labels[phase],active:!['completed','failed','cancelled','interrupted','funding','capacity','service_wait','usage_review'].includes(phase),
+ return ConversationState.parse({version:1,goalId:goal.id,phase,label:labels[phase],active:!['completed','failed','cancelled','interrupted','goal_limit','funding','capacity','service_wait','usage_review'].includes(phase),
   // A durable external wait is canonical lifecycle state, not an approval
   // request or a model answer. Older rows may still carry the prior approval
   // text; render the current phase safely without editing native evidence.
-  terminal:['completed','failed','cancelled'].includes(phase),message:phase==='external_wait'?lifecycleMessages.external_wait:['funding','capacity','service_wait','usage_review'].includes(phase)?[partial,phase==='funding'?fundingMessage:phase==='capacity'?capacityMessage:phase==='usage_review'?usageMessage:serviceMessage].filter(Boolean).join('\n\n'):input?.question||publicText(goal.answer,['queued','working','verification'].includes(phase)?'':FAILED),input,
+  terminal:['completed','failed','cancelled'].includes(phase),message:phase==='external_wait'?lifecycleMessages.external_wait:['goal_limit','funding','capacity','service_wait','usage_review'].includes(phase)?[partial,phase==='goal_limit'?goalLimitMessage:phase==='funding'?fundingMessage:phase==='capacity'?capacityMessage:phase==='usage_review'?usageMessage:serviceMessage].filter(Boolean).join('\n\n'):input?.question||publicText(goal.answer,['queued','working','verification'].includes(phase)?'':FAILED),input,
   canReply:phase==='clarification'&&Boolean(input),revision:saved?.revision||0,
   history:history.filter(m=>m.role==='user'||m.phase==='clarification'||!m.phase&&questions.has(m.id))
    .map(m=>({id:m.id,role:m.role,text:publicText(m.text,''),at:m.at,phase:m.phase})),
-  recovery:phase==='usage_review'?'The interrupted AI request must be reconciled before work can continue.':phase==='funding'?'Your goal is saved. Paid work requires a separately approved spending allowance.':phase==='capacity'?'Your goal is saved. Continue after the daily allowance resets.':phase==='service_wait'?'Your request is saved. Continue when the AI service is available.':phase==='interrupted'?'Your goal is saved. Recorded operations must be checked before work resumes.':null});
+  recovery:phase==='goal_limit'?'Review the recorded result before starting any remaining work; this request’s allowance has not reset.':phase==='usage_review'?'The interrupted AI request must be reconciled before work can continue.':phase==='funding'?'Your goal is saved. Paid work requires a separately approved spending allowance.':phase==='capacity'?'Your goal is saved. Continue after the daily allowance resets.':phase==='service_wait'?'Your request is saved. Continue when the AI service is available.':phase==='interrupted'?'Your goal is saved. Recorded operations must be checked before work resumes.':null});
 }
 function sync(goal){
  const old=goal.checkpoint.conversationState,next=state(goal);

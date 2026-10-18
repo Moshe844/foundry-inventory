@@ -39,7 +39,11 @@ async function collect(database,ctx,goal,harness,catalogue){
   const external=verified?await require('../../src/assistant/postgres-capability-plans').externalState(database,ctx.workspaceId,row.result||{}):null;
   operations.push({proposalId:id,capability:row.action_type,description:String(row.summary||'').slice(0,500),status:row.status,
    verified:Boolean(verified),verificationScope:'canonical_execution_at_commit',committedAt:row.executed_at||null,
-   externalState:external?.state||null,result:verified?row.result:null});
+   externalState:external?.state||null,
+   ...(verified&&row.result?.effectId?{externalVerification:{effectId:row.result.effectId,
+    state:external.state,scope:'current_canonical_provider_effect',
+    notice:'This current external state supersedes the historical queue status in result. DONE confirms provider execution, not recipient reading or supplier acceptance.'}}:{}),
+   result:verified?row.result:null});
  }
  return {version:1,requestHash:requestHash(goal),checkedAt:new Date().toISOString(),
   dependencyState:await waits.current(database,ctx,goal.id,refs),operations,humanDecisions};

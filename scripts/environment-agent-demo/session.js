@@ -100,7 +100,9 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
     ...(h.verificationFailure.sourceRef?{sourceRef:h.verificationFailure.sourceRef}:{}),
     ...(h.verificationFailure.evidenceId?{evidenceId:h.verificationFailure.evidenceId,path:h.verificationFailure.path}:{}),
     notice:'The host did not verify the preceding final answer. This is diagnostic feedback, not a user request, approval or new execution authority. Preserve completed canonical effects and the original goal; use actual durable evidence and current records to correct the result. Resolve internal evidence references with the tools; ask the user only for genuinely missing business information.'}:null,
-   modelRouting:structuredClone(goal.checkpoint.modelRouting||null)}};
+   modelRouting:structuredClone(goal.checkpoint.modelRouting||null),
+   executionBudget:{toolsUsed:goal.tool_calls,toolsRemaining:Math.max(0,30-goal.tool_calls),
+    modelRequestsUsed:Number(h.codexRequests||0),modelRequestsRemaining:Math.max(0,24-Number(h.codexRequests||0))}}};
   });},
   async checkpoint(native){
    if(candidate!=='codex')return authorizedUpdate(h=>{h.native={...h.native,...native};});
@@ -121,7 +123,12 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    if(!receipt.operations.length&&!receipt.humanDecisions.length)return null;
    const id=`${goalId}:host-receipt:${createHash('sha256').update(JSON.stringify(receipt)).digest('hex').slice(0,24)}`;
    require('./observations').store(h,{id,name:'canonical_execution_state',result:receipt});
-   h.receipt=receipt;return present(h,receipt,{full:true});
+   h.receipt=receipt;
+   // Deliver committed effects before spending on the SDK's remaining work.
+   // This is a partial receipt, never proof of the full original goal.
+   const recorded=require('./receipts').render(receipt);
+   if(recorded&&goal.checkpoint.lifecycleStage==='verification')goal.answer=recorded;
+   return present(h,receipt,{full:true});
   },{catalogue:true});},
   async promoteReasoning(request){return authorizedUpdate((h,goal)=>{
    if(candidate!=='codex'||h.pendingReport?.status!=='needs_reasoning')throw Error('INVALID_MODEL_TIER_HANDOFF');

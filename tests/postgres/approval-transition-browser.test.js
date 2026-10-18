@@ -64,8 +64,29 @@ test('real browser distinguishes two approvals, pending external delivery and fi
  await require('../../src/assistant/postgres-service').resumeMission(db,ctx,mission.id,{provider:noModel});
  const verified=await waits.refresh(db,ctx,goal.id);assert.equal(verified.status,'READY');assert.equal(verified.checkpoint.lifecycleStage,'verification');
  assert.equal(verified.checkpoint.conversationState.phase,'verification');assert(!verified.answer.includes('Approval required'));
- await page.reload();assert.match(await panel.locator('[data-goal-phase-text]').innerText(),/Checking the result/);assert.equal(await panel.locator('[data-approval-id]').count(),0);
+ // Exact recorded follow-up boundary: approval consumed 28 tools and 16
+ // model requests. The canonical result still says QUEUED after delivery.
+ // A fresh host receipt must be visible before any continuation model call.
+ await db.query("UPDATE stockchief_runtime.assistant_goals SET tool_calls=28,checkpoint=jsonb_set(checkpoint,'{harness,codexRequests}','16'::jsonb) WHERE id=$1",[goal.id]);
+ const held=await store.claim(db,ctx,goal.id),resumedGateway=require('../../scripts/environment-agent-demo/gateway').createGateway({database:db,ctx,goal:goal.original_request,goalId:goal.id,runToken:held.run_token,provider:noModel});
+ const resumedSession=require('../../scripts/environment-agent-demo/session').createSession({database:db,ctx,goalId:goal.id,runToken:held.run_token,candidate:'codex',authorize:resumedGateway.authorize});
+ const loaded=await resumedSession.load();assert.deepEqual(loaded.goalContext.executionBudget,{toolsUsed:28,toolsRemaining:2,modelRequestsUsed:16,modelRequestsRemaining:8});
+ await resumedSession.executionState();
+ const delivered=await store.get(db,ctx,goal.id),externalReceipt=delivered.checkpoint.harness.receipt.operations.find(op=>op.capability==='communication.send_email');
+ assert.equal(externalReceipt.result.status,'QUEUED','The historical commit result is preserved exactly');
+ assert.equal(externalReceipt.externalVerification.state,'DONE');assert.equal(externalReceipt.externalVerification.scope,'current_canonical_provider_effect');
+ assert.match(delivered.answer,/executed and verified/);assert.match(delivered.answer,/Completion of every part.*has not been established/);
+ assert.equal(delivered.status,'RUNNING','A partial execution receipt does not mark the entire goal complete');
+ await other.waitForFunction(id=>document.querySelector('[data-adaptive-goal="'+id+'"] [data-goal-answer]')?.textContent.includes('executed and verified'),goal.id);
+ await page.reload();assert.match(await panel.locator('[data-goal-phase-text]').innerText(),/Finishing remaining work/);assert.equal(await panel.locator('[data-approval-id]').count(),0);
  await page.screenshot({path:path.join(artifacts,'checking-complete-result.png'),fullPage:true});
+ await db.query("UPDATE stockchief_runtime.assistant_goals SET tool_calls=30 WHERE id=$1",[goal.id]);
+ await assert.rejects(resumedSession.execute('environment_browser',{},async()=>{throw Error('NO_EXTRA_TOOL');}),/DURABLE_TOOL_LIMIT/);
+ await resumedSession.stop({code:'rate_limited',limitKind:'goal_cost'});
+ await other.waitForFunction(id=>document.querySelector('[data-adaptive-goal="'+id+'"]')?.dataset.goalStatus==='BLOCKED',goal.id);
+ const stopped=conversation.state(await store.get(db,ctx,goal.id));assert.equal(stopped.phase,'goal_limit');assert.equal(stopped.active,false);
+ assert.match(stopped.message,/executed and verified/);assert(!/Checking the result/.test(stopped.label));assert.equal(await otherPanel.locator('[data-goal-resume]').isVisible(),false);
+ await page.reload();assert.equal(await panel.locator('[data-goal-resume]').isVisible(),false);await page.screenshot({path:path.join(artifacts,'recorded-tool-exhaustion.png'),fullPage:true});
  assert.equal(await store.progress(db,{...ctx,actorId:'foreign-user'},goal.id),null);await assert.rejects(pilot.inbox(db,{...ctx,actorId:'foreign-user'},goal.id));
  await require('../../src/connections/postgres-outbound-mail').executeSendEffect(db,ctx.workspaceId,effect.id,{provider:{send:async()=>{throw Error('DUPLICATE_SEND');}}});
  assert.equal(sends,1);assert.deepEqual((await db.query('SELECT amount_minor,currency FROM sku_purchase_costs WHERE workspace_id=$1',[ctx.workspaceId])).rows.map(r=>({amountMinor:Number(r.amount_minor),currency:r.currency})),[{amountMinor:1725,currency:'GBP'}]);

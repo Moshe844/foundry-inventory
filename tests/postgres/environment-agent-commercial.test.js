@@ -30,7 +30,7 @@ test('native SDK cost holds require funded credit and obey durable goal, price a
    assert.equal(hold.detail.providerExecutions,1);accepted++;
    // No receipt: these holds must continue consuming this goal's dollar budget.
    await costs.settle(db,scope,`native-${i}`,{failed:true});
-  }catch(error){assert.match(error.message,/cumulative model-cost ceiling/);break;}
+  }catch(error){assert.match(error.message,/cumulative model-cost ceiling/);assert.equal(error.limitKind,'goal_cost');break;}
  }
  assert.ok(accepted>0&&accepted<20);
  const exposure=(await db.query(`SELECT sum(maximum_minor) AS amount,count(*)::int AS count FROM commercial_model_cost_holds WHERE goal_id=$1 AND status='UNKNOWN'`,[held.id])).rows[0];
