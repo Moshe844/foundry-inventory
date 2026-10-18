@@ -29,8 +29,8 @@ const future = Object.freeze([
 ]);
 
 function get(type) { return adapters[type] || null; }
-function catalog() { return [shopify.metadata(), square.metadata(), clover.metadata(), woocommerce.metadata(), generic,
+function catalog(ctx) { return [shopify.metadata(), square.metadata(), clover.metadata(), woocommerce.metadata(), generic,
   ...future, gmail.metadata(), microsoft365.metadata(), quickbooks.metadata(), xero.metadata()]
-  .map(launchPolicy.metadata); }
+  .map(meta=>launchPolicy.metadata(meta,ctx)); }
 
 module.exports = { get, catalog, generic };

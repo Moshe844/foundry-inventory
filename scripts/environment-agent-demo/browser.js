@@ -197,7 +197,11 @@ async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null,ob
     if(before.type==='radio')for(const radio of await page.locator('input[type="radio"]').elementHandles()){
       const data=await describe(radio,0,10);if(await radio.isVisible()&&!data.sensitive&&!data.checked)radioBaselines.push({node:radio,baseline:await controlHash(data,radio)});else await radio.dispose();
     }
-    if(action==='click')await node.click();
+    // Styled native choices can be transparent and delegate pointer events to
+    // their label. Space is the browser's native, accessible activation for
+    // these controls; it does not submit a form or bypass the network guard.
+    if(action==='click'&&['radio','checkbox'].includes(before.type))await node.press('Space');
+    else if(action==='click')await node.click();
     else if(action==='fill')await node.fill(String(value||''));
     else if(action==='select')await node.selectOption(String(value));
     else if(action==='press'){
@@ -339,7 +343,10 @@ async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null,ob
         if(matches.length!==1){await Promise.allSettled(matches.map(m=>m.node.dispose()));throw Error('CURRENT_FORM_BASELINE_CHANGED');}
         const {node,data}=matches[0],beforeUrl=pageIdentity(page.url()),beforeDocument=documentRevision;
         try{
-          if(edit.kind==='check'&&['checkbox','radio'].includes(data.type)&&typeof edit.checked==='boolean')await node.setChecked(edit.checked);
+          if(edit.kind==='check'&&['checkbox','radio'].includes(data.type)&&typeof edit.checked==='boolean'){
+            if(await node.isChecked()!==edit.checked)await node.press('Space');
+            if(await node.isChecked()!==edit.checked)throw Error('CURRENT_FORM_PRESENTATION_INVALID');
+          }
           else if(edit.kind==='select'&&data.tag==='select'&&Array.isArray(edit.values)&&edit.values.every(value=>typeof value==='string'))await node.selectOption(edit.values);
           else if(edit.kind==='fill'&&['input','textarea'].includes(data.tag)&&!['checkbox','radio','hidden','file','password','submit','button'].includes(data.type)&&typeof edit.value==='string'&&edit.value.length<=2000)await node.fill(edit.value);
           else throw Error('CURRENT_FORM_PRESENTATION_INVALID');

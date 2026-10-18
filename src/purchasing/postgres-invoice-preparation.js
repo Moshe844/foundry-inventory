@@ -1,0 +1,17 @@
+'use strict';
+const {ValidationError}=require('../domain/errors'),workflows=require('../operations/postgres-business-workflows'),pricing=require('../pricing/postgres-service');
+// Document interpretation belongs to the native agent. This boundary only
+// resolves exact business identities and calls the same canonical matcher used
+// by execution. Email text cannot authorize payment, stock, or changed terms.
+async function prepare(db,ctx,order,document){
+ if(!document||typeof document!=='object'||Array.isArray(document)||!Array.isArray(document.lines))throw new ValidationError('Provide the complete structured invoice document.');
+ const poLines=(await db.query(`SELECT p.id,p.sku_id,s.code,i.name FROM purchase_order_lines p JOIN skus s ON s.id=p.sku_id AND s.workspace_id=p.workspace_id JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id WHERE p.workspace_id=$1 AND p.purchase_order_id=$2`,[ctx.workspaceId,order.id])).rows;
+ const lines=document.lines.map(line=>{const wanted=String(line.purchaseOrderLineId||line.skuId||line.sku||'').trim().toLowerCase(),matched=poLines.filter(p=>[p.id,p.sku_id,p.code,p.name].some(v=>String(v).toLowerCase()===wanted));if(matched.length!==1)throw new ValidationError('Each invoice line must identify one exact product on this purchase order.');return {purchaseOrderLineId:matched[0].id,skuId:matched[0].sku_id,description:String(line.description||matched[0].name).slice(0,240),quantity:line.quantity,unitCostMinor:line.unitCostMinor};});
+ const payload={supplierId:order.supplier_id,purchaseOrderId:order.id,supplierInvoiceNumber:document.supplierInvoiceNumber,issueDate:document.issueDate,dueDate:document.dueDate||null,currency:document.currency||order.currency,lines,taxMinor:document.taxMinor||0,charges:document.charges||[],documentTotalMinor:document.documentTotalMinor,sourceMessageId:document.sourceMessageId||null,sourceAttachmentHash:document.sourceAttachmentHash||null};
+ if(!payload.supplierInvoiceNumber||!payload.issueDate||!Number.isSafeInteger(payload.documentTotalMinor))throw new ValidationError('Read the invoice number, issue date and exact document total before preparing it.');
+ const preview=await workflows.previewSupplierInvoice(db,ctx,payload);if(preview.replayed)throw new ValidationError('This invoice is already recorded. Use its existing bill.');
+ payload.expectedMatchFingerprint=preview.matchFingerprint;payload.expectedStatus=preview.status;payload.expectedTotalMinor=preview.totalMinor;
+ const details=preview.lines.map(l=>`${l.quantity} × ${l.description}: ${pricing.formatMinor(l.unitCostMinor,preview.currency)} each`).concat(payload.charges.map(c=>`${c.label}: ${pricing.formatMinor(c.amountMinor,preview.currency)}`));
+ return {payload,summary:`Record invoice ${payload.supplierInvoiceNumber} against ${order.po_number}.\n${details.join('\n')}\nTax ${pricing.formatMinor(preview.taxMinor,preview.currency)}; calculated total ${pricing.formatMinor(preview.totalMinor,preview.currency)}; document total ${pricing.formatMinor(payload.documentTotalMinor,preview.currency)}. Due ${payload.dueDate||'not supplied'}.\n`+(preview.status==='DISPUTED'?`Disputed, excluded from posted debt: ${preview.differences.map(d=>d.kind.replaceAll('_',' ')).join('; ')}.`:'Matched: record the supplier payable.')+' No physical receipt, bank payment, or email send is authorized by this operation.'};
+}
+module.exports={prepare};

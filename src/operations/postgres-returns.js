@@ -180,7 +180,7 @@ async function authorizeCustomerReturn(database, rawContext, id, input) {
 
 async function fulfillmentEvidence(client, ctx, salesOrderLineId) {
   const result = await client.query(`SELECT icm.inventory_movement_id,icm.journal_entry_id,
-      ABS(icm.quantity_delta)::bigint AS quantity,ABS(icm.cost_delta_minor)::bigint AS cost_minor,m.lot_id,je.posted_at
+      ABS(icm.quantity_delta)::bigint AS quantity,ABS(icm.cost_delta_minor)::bigint AS cost_minor,m.lot_id,je.posted_at,je.metadata
     FROM accounting_inventory_cost_movements icm
     JOIN accounting_journal_entries je ON je.id=icm.journal_entry_id AND je.workspace_id=icm.workspace_id
     JOIN movements m ON m.id=icm.inventory_movement_id AND m.workspace_id=icm.workspace_id
@@ -189,7 +189,7 @@ async function fulfillmentEvidence(client, ctx, salesOrderLineId) {
       AND icm.quantity_delta<0 ORDER BY je.posted_at,icm.created_at,icm.id`, [ctx.workspaceId, salesOrderLineId]);
   return result.rows.map((row) => ({ inventoryMovementId: row.inventory_movement_id,
     originalJournalEntryId: row.journal_entry_id, quantity: Number(row.quantity), costMinor: Number(row.cost_minor),
-    lotId: row.lot_id || null }));
+    lotId: row.lot_id || null,pricing:parseJson(row.metadata,{}) }));
 }
 
 async function existingAllocations(client, ctx, salesOrderLineId) {
@@ -219,8 +219,11 @@ function allocateCost(evidence, used, quantity, preferredMovementIds = []) {
     if (availableQuantity <= 0) continue;
     const take = Math.min(remaining, availableQuantity);
     const costMinor = take === availableQuantity ? availableCost : Math.round(availableCost * take / availableQuantity);
+    const portion=require('../pricing/calculator').portion,pricing=source.pricing||{};
+    const amounts={};for(const field of ['revenueMinor','taxMinor','grossMinor','discountMinor'])if(Number.isSafeInteger(pricing[field]))amounts[field]=portion(pricing[field],source.quantity,prior.quantity,take);
+    if(amounts.grossMinor!==undefined&&amounts.discountMinor!==undefined)amounts.revenueMinor=amounts.grossMinor-amounts.discountMinor;
     allocations.push({ inventoryMovementId: source.inventoryMovementId,
-      originalJournalEntryId: source.originalJournalEntryId, quantity: take, costMinor });
+      originalJournalEntryId: source.originalJournalEntryId, quantity: take, costMinor,...amounts });
     remaining -= take;
   }
   if (remaining) throw new ValidationError('The return quantity exceeds the fulfilled inventory-cost evidence.');
@@ -461,16 +464,17 @@ async function refundCustomerReturnInTransaction(client, rawContext, id, input) 
       for (const allocation of line.trackingEvidence.costAllocations || []) {
         const key = `${allocation.originalJournalEntryId}:${allocation.inventoryJournalEntryId || 'none'}`;
         const current = groups.get(key) || { originalJournalEntryId: allocation.originalJournalEntryId,
-          inventoryJournalEntryId: allocation.inventoryJournalEntryId || null, revenueMinor: 0, costMinor: 0,
+          inventoryJournalEntryId: allocation.inventoryJournalEntryId || null, revenueMinor: 0,taxMinor:0,grossMinor:0,discountMinor:0,costMinor: 0,
           itemId: line.item_id, skuId: line.sku_id, allocations: [] };
-        current.revenueMinor += Number(allocation.quantity) * Number(line.unit_price_minor);
+        const revenue=allocation.revenueMinor??Number(allocation.quantity)*Number(line.unit_price_minor);
+        current.revenueMinor += revenue;current.taxMinor+=allocation.taxMinor||0;current.grossMinor+=allocation.grossMinor??revenue;current.discountMinor+=allocation.discountMinor||0;
         current.costMinor += Number(allocation.costMinor);
         current.allocations.push(allocation);
         groups.set(key, current);
       }
     }
     const refundGroups = [...groups.values()];
-    const amountMinor = refundGroups.reduce((sum, group) => sum + group.revenueMinor, 0);
+    const amountMinor = refundGroups.reduce((sum, group) => sum + group.revenueMinor+group.taxMinor, 0);
     const invoiceResult = await client.query(`SELECT * FROM accounting_customer_invoices
       WHERE workspace_id=$1 AND sales_order_id=$2 FOR UPDATE`, [ctx.workspaceId, row.sales_order_id]);
     const invoice = invoiceResult.rows[0];
@@ -493,38 +497,41 @@ async function refundCustomerReturnInTransaction(client, rawContext, id, input) 
     }
     const refundIds = [];
     for (const [index, group] of refundGroups.entries()) {
-      if (!group.revenueMinor) continue;
+      if (!group.revenueMinor&&!group.taxMinor) continue;
       const original = await client.query(`SELECT je.id,
           COALESCE(SUM(CASE WHEN a.system_key='SALES_REVENUE' THEN jl.credit_minor ELSE 0 END),0)::bigint AS revenue_minor,
-          COALESCE(SUM(CASE WHEN a.system_key='COST_OF_GOODS_SOLD' THEN jl.debit_minor ELSE 0 END),0)::bigint AS cogs_minor
+          COALESCE(SUM(CASE WHEN a.system_key='COST_OF_GOODS_SOLD' THEN jl.debit_minor ELSE 0 END),0)::bigint AS cogs_minor,
+          COALESCE(SUM(CASE WHEN a.system_key='SALES_TAX_PAYABLE' THEN jl.credit_minor ELSE 0 END),0)::bigint AS tax_minor
         FROM accounting_journal_entries je JOIN accounting_journal_lines jl ON jl.entry_id=je.id
         JOIN accounting_accounts a ON a.id=jl.account_id WHERE je.workspace_id=$1 AND je.id=$2
           AND je.source_type='sale_fulfillment' AND je.status='POSTED' GROUP BY je.id`,
       [ctx.workspaceId, group.originalJournalEntryId]);
       if (!original.rows.length) throw new ValidationError('The original fulfilled sale accounting entry could not be verified.');
-      const prior = await client.query(`SELECT COALESCE(SUM(revenue_minor),0)::bigint AS revenue,
+      const prior = await client.query(`SELECT COALESCE(SUM(revenue_minor),0)::bigint AS revenue,COALESCE(SUM(tax_minor),0)::bigint AS tax,
           COALESCE(SUM(cogs_minor),0)::bigint AS cogs FROM accounting_sale_refunds
         WHERE workspace_id=$1 AND original_journal_entry_id=$2`, [ctx.workspaceId, group.originalJournalEntryId]);
       if (Number(prior.rows[0].revenue) + group.revenueMinor > Number(original.rows[0].revenue_minor)
+        ||Number(prior.rows[0].tax)+group.taxMinor>Number(original.rows[0].tax_minor)
         || Number(prior.rows[0].cogs) + group.costMinor > Number(original.rows[0].cogs_minor)) {
         throw new ValidationError('This refund exceeds the unrefunded amount on the original fulfilled sale.');
       }
       let journalEntryId = null;
-      if (group.revenueMinor) {
+      if (group.revenueMinor||group.taxMinor) {
         const posted = await ledger.postInTransaction(client, ctx, {
           postingDate: String(input.refundDate || nowIso().slice(0, 10)),
           sourceKey: `customer-return-refund:${id}:${index}`,
           description: `Refund ${row.return_number}`, sourceType: 'sales_refund',
           sourceRecordType: 'customer_return', sourceRecordId: id, currency: row.currency,
           metadata: { customerReturnId: id, originalJournalEntryId: group.originalJournalEntryId,
-            revenueMinor: group.revenueMinor, cogsMinor: group.costMinor, destination },
+            revenueMinor: group.revenueMinor,taxMinor:group.taxMinor,cogsMinor: group.costMinor, destination },
           lines: [
             { accountKey: 'SALES_RETURNS', debitMinor: group.revenueMinor, customerId: row.customer_id,
               itemId: group.itemId, skuId: group.skuId },
+            {accountKey:'SALES_TAX_PAYABLE',debitMinor:group.taxMinor,customerId:row.customer_id},
             { accountKey: destination === 'CASH' ? 'CASH' : 'ACCOUNTS_RECEIVABLE',
-              creditMinor: group.revenueMinor, customerId: row.customer_id,
+              creditMinor: group.revenueMinor+group.taxMinor, customerId: row.customer_id,
               itemId: group.itemId, skuId: group.skuId },
-          ],
+          ].filter(line=>Number(line.debitMinor||0)!==0||Number(line.creditMinor||0)!==0),
         });
         journalEntryId = posted.entry.id;
       }
@@ -533,20 +540,20 @@ async function refundCustomerReturnInTransaction(client, rawContext, id, input) 
         (id,workspace_id,original_journal_entry_id,refund_reference,refund_date,revenue_minor,tax_minor,
          cogs_minor,physical_return,destination,journal_entry_id,inventory_journal_entry_id,source_key,
          created_by_user_id,created_at)
-        VALUES($1,$2,$3,$4,$5,$6,0,$7,1,$8,$9,$10,$11,$12,$13)`,
+        VALUES($1,$2,$3,$4,$5,$6,$14,$7,1,$8,$9,$10,$11,$12,$13)`,
       [refundId, ctx.workspaceId, group.originalJournalEntryId, row.return_number,
         String(input.refundDate || nowIso().slice(0, 10)), group.revenueMinor, group.costMinor, destination,
-        journalEntryId, group.inventoryJournalEntryId, `customer-return:${id}:${index}`, ctx.actorId, nowIso()]);
+        journalEntryId, group.inventoryJournalEntryId, `customer-return:${id}:${index}`, ctx.actorId, nowIso(),group.taxMinor]);
       refundIds.push(refundId);
     }
     if (amountMinor) {
       const balanceMinor = destination === 'AR' ? Number(invoice.balance_minor) - amountMinor : Number(invoice.balance_minor);
       const totalMinor = Number(invoice.total_minor) - amountMinor;
-      const subtotalMinor = Math.max(0, Number(invoice.subtotal_minor) - amountMinor);
+      const subtotalMinor = Math.max(0, Number(invoice.subtotal_minor) - refundGroups.reduce((n,g)=>n+g.grossMinor,0));
       const status = balanceMinor === 0 ? 'PAID' : balanceMinor < totalMinor ? 'PARTIALLY_PAID' : 'OPEN';
-      await client.query(`UPDATE accounting_customer_invoices SET subtotal_minor=$2,total_minor=$3,
+      await client.query(`UPDATE accounting_customer_invoices SET subtotal_minor=$2,discount_minor=discount_minor-$7,tax_minor=tax_minor-$8,total_minor=$3,
         balance_minor=$4,status=$5,updated_at=$6 WHERE id=$1`,
-      [invoice.id, subtotalMinor, totalMinor, balanceMinor, status, nowIso()]);
+      [invoice.id, subtotalMinor, totalMinor, balanceMinor, status, nowIso(),refundGroups.reduce((n,g)=>n+g.discountMinor,0),refundGroups.reduce((n,g)=>n+g.taxMinor,0)]);
     }
     await client.query(`UPDATE customer_returns SET status='COMPLETED',refund_id=$3,completed_at=$4
       WHERE id=$1 AND workspace_id=$2`, [id, ctx.workspaceId, refundIds[0] || null, nowIso()]);

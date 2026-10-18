@@ -136,4 +136,4 @@ function assertReadAuthorization(token,cluster,ctx){const p=readonlyAuthorizatio
  if(!p||!configured(ctx)||p.connectionString!==cluster.connectionString||p.workspaceId!==ctx.workspaceId||p.actorId!==ctx.actorId)
   throw new AuthorizationError('Invalid Staging renderer identity.');
 }
-module.exports={configured,access,selected,view,toggle,start,inbox,decide,run,resume,readAuthorization,assertReadAuthorization};
+module.exports={configured,access,selected,view,toggle,start,inbox,decide,run,resume,readAuthorization,assertReadAuthorization,spendingLockMessage};

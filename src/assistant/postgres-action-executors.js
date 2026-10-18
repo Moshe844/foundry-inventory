@@ -97,6 +97,7 @@ const EXECUTORS=Object.freeze({
     const created=await invoices.createCustomerInvoiceInTransaction(client,ctx,{
       customerId:payload.customerId,description:payload.description,quantity:payload.quantity,
       unitAmount:payload.unitAmount,tax:payload.tax,issueDate:payload.issueDate,
+      skuId:payload.skuId,priceOverride:payload.priceOverride,codes:payload.codes,priceListId:payload.priceListId,pricingQuoteHash:payload.pricingQuoteHash,
       dueDate:payload.dueDate,documentNumber:payload.documentNumber,
       notes:payload.notes,idempotencyKey:payload.idempotencyKey});
     return {invoiceId:created.id,invoiceNumber:created.invoice_number};
@@ -106,7 +107,7 @@ const EXECUTORS=Object.freeze({
       FROM accounting_customer_invoices WHERE workspace_id=$1 AND id=$2`,
     [ctx.workspaceId,result.invoiceId])).rows[0];
     return Boolean(row&&row.customer_id===payload.customerId&&row.status==='OPEN'
-      &&Number(row.total_minor)>0&&row.journal_entry_id);
+      &&Number(row.total_minor)>0&&row.journal_entry_id&&(payload.expectedPricingTotalMinor===undefined||Number(row.total_minor)===payload.expectedPricingTotalMinor));
   }},
   'purchase_order.create':{execute:(client,ctx,payload)=>workflows.createPurchaseOrderInTransaction(client,ctx,payload),
     verify:require('./canonical-order-verification').purchase},

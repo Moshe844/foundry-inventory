@@ -14,9 +14,9 @@ test('recorded missing native approvals appear consistently in the actor inbox w
   SELECT $1,$2,account_id,'Another member','staff',created_at FROM users WHERE id=$3`,[colleague,ctx.workspaceId,foreign.userId]);
  process.env.STOCKCHIEF_RUNTIME_ENV='staging';Object.assign(process.env,(await require('../../scripts/provision-codex-staging').provision(db,{businessName:business,emails:[email]})).environment);
  const store=require('../../src/assistant/postgres-goal-store'),handoff=require('../../scripts/environment-agent-demo/approval-handoff'),service=require('../../src/assistant/postgres-service'),projection=require('../../src/projections/postgres-service');
- async function prepare(label,scope=ctx,kind='business'){
+ async function prepare(label,scope=ctx,kind='business',actionType='location.create'){
   const goal=await store.create(db,scope,'Prepare '+label+' for my approval.');let id;
-  if(kind==='business')id=(await service.createProposal(db,scope,goal.original_request,'location.create',{name:label,kind:'warehouse'},'Create empty warehouse '+label)).proposal.id;
+  if(kind==='business')id=(await service.createProposal(db,scope,goal.original_request,actionType,{name:label,kind:'warehouse'},'Prepared '+label)).proposal.id;
   else {id='rule_'+randomUUID();await db.query(`INSERT INTO operating_instruction_proposals(id,workspace_id,created_by_user_id,stated_as,summary,integrity_hash,created_at,updated_at)
    VALUES($1,$2,$3,$4,$5,$6,$7,$7)`,[id,scope.workspaceId,scope.actorId,goal.original_request,'Review a lasting stock warning',randomUUID(),new Date().toISOString()]);}
   const h={calls:{prepared:{state:'DONE',result:{outcomes:[{result:{proposal:{id}}}]}}}},cards=await handoff.stage(db,scope,goal,h);
@@ -75,5 +75,19 @@ test('recorded missing native approvals appear consistently in the actor inbox w
  const expiryClock=(await db.query('SELECT updated_at FROM stockchief_runtime.assistant_goals WHERE id=$1',[expired.goalId])).rows[0].updated_at;
  assert.deepEqual((await handoff.inbox(db,ctx,expired.goalId)).approvals,[]);
  assert.equal((await db.query('SELECT updated_at FROM stockchief_runtime.assistant_goals WHERE id=$1',[expired.goalId])).rows[0].updated_at.toISOString(),expiryClock.toISOString(),'Expired handoff reads are idempotent');
+ const financial=await prepare('Private supplier payment amount',ctx,'business','supplier_payment.record');
+ const ownerOnly=await prepare('Private pricing authority',ctx,'business','pricing.rule.configure');
+ for(const [type,title]of [['purchase','Private purchase terms'],['transfer','Private transfer scope']])await db.query(`INSERT INTO work_items(id,workspace_id,category,source,recommended_action,idempotency_key,created_at) VALUES($1,$2,'replenishment_plan','offline',$3,$1,$4)`,['work_'+randomUUID(),ctx.workspaceId,JSON.stringify({type,title,summary:title}),new Date().toISOString()]);
+ assert((await projection.needs(readonly,ctx.workspaceId,ctx.actorId)).some(i=>i.approval?.proposalId===financial.proposalId));
+ await db.query("UPDATE users SET role='staff',permissions='[\"VIEW\"]' WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,ctx.actorId]);
+ assert.deepEqual(await projection.needs(readonly,ctx.workspaceId,ctx.actorId),[],'A private proposal does not outlive current domain/action permission');
+ assert.equal(await projection.needsCount(readonly,ctx.workspaceId,ctx.actorId),0);
+ await page.goto(origin+'/needs-you');assert.equal(await page.locator('.ny-card').count(),0);assert(!/Private (supplier|purchase|transfer)/.test(await page.locator('main').innerText()));
+ for(const [grant,allowed,hidden]of [['VIEW_PURCHASING','Private purchase terms','Private transfer scope'],['VIEW_TRANSFERS','Private transfer scope','Private purchase terms']]){
+  await db.query('UPDATE users SET permissions=$3 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId,JSON.stringify(['VIEW',grant])]);
+  const restricted=await projection.needs(readonly,ctx.workspaceId,ctx.actorId);assert.equal(restricted.length,1);assert.equal(restricted[0].title,allowed);assert(!restricted.some(i=>i.title===hidden));assert.equal(await projection.needsCount(readonly,ctx.workspaceId,ctx.actorId),1);
+ }
+ await db.query('UPDATE users SET permissions=$3 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId,JSON.stringify(['ADMIN'])]);
+ const adminOnly=await projection.needs(readonly,ctx.workspaceId,ctx.actorId);assert(!adminOnly.some(i=>[ownerOnly.proposalId,rule.proposalId].includes(i.approval?.proposalId)),'ADMIN does not restore owner-only authority');assert.equal(await projection.needsCount(readonly,ctx.workspaceId,ctx.actorId),adminOnly.length);
  t.diagnostic(JSON.stringify({nativeApprovals:12,excludesStaleExpiredCancelledDecidedExecuted:true,actorAndTenantIsolation:true,completeCoverageMetadata:true,realBrowserReviewLink:true,paidCalls:0}));
 });

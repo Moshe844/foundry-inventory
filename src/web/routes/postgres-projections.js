@@ -159,9 +159,9 @@ function createPostgresProjectionsRouter(database){
       req.user.role==='owner'?projections.runtimeFailures(database,req.ctx.workspaceId):Promise.resolve(null)]);
     res.locals.attentionCount=items.length;
     items.coverageErrors=[];
-    return res.page(req.path==='/needs-you/all'?'manager/needs-you-all':'manager/needs-you',
+    return res.page('manager/needs-you-overview',
       {title:'Needs you',nav:'attention',room:true,suppressBack:true,
-        inbox:items,failures,at:zeroBasedIndex(req.query.at)});
+        inbox:items,failures,desk:require('../needs-you-presentation').present(items,req.query),at:zeroBasedIndex(req.query.at)});
   }));
   router.get('/activity',requireAuth,asyncRoute(async(req,res)=>{
     return res.page('activity/list',{title:'Activity',nav:'history',backToFallback:{href:'/everything',label:'Everything else'},
@@ -214,6 +214,15 @@ function createPostgresProjectionsRouter(database){
       canReview:payable&&permissions.can(req.user,permissions.MANAGE_ACCOUNTING)});}
   router.get('/accounting/receivables',requireAuth,requirePermission(permissions.VIEW_ACCOUNTING,'view receivables'),asyncRoute((req,res)=>subledger(req,res,'receivables')));
   router.get('/accounting/payables',requireAuth,requirePermission(permissions.VIEW_ACCOUNTING,'view payables'),asyncRoute((req,res)=>subledger(req,res,'payables')));
+  router.get('/accounting/payables/:id/review',requireAuth,requirePermission(permissions.VIEW_ACCOUNTING,'review supplier invoices'),asyncRoute(async(req,res)=>{
+    const service=require('../../purchasing/postgres-invoice-review'),bill=await service.get(database,req.ctx,req.params.id),canReview=permissions.can(req.user,permissions.MANAGE_ACCOUNTING);let review=null;
+    if(canReview&&bill.invoice_input&&['DRAFT','DISPUTED'].includes(bill.status))review=await service.preview(database,req.ctx,bill.id);
+    return res.page('accounting/supplier-invoice-review',{title:'Review supplier invoice',nav:'accounting',bill,review,canReview,differenceLabel:service.differenceLabel});
+  }));
+  router.post('/accounting/payables/:id/review',requireAuth,requirePermission(permissions.MANAGE_ACCOUNTING,'recheck supplier invoices'),asyncRoute(async(req,res)=>{
+    const result=await require('../../purchasing/postgres-invoice-review').execute(database,req.ctx,req.params.id,{reason:requireText(req.body.reason,'Review note',{max:1000}),expectedBillRevision:Number(req.body.revision),expectedMatchFingerprint:requireText(req.body.matchFingerprint,'Reviewed evidence',{max:64}),idempotencyKey:'invoice-review:'+req.params.id+':'+req.body.revision+':'+req.body.matchFingerprint});
+    req.flash('success',result.status==='OPEN'?'The existing matched invoice was posted. No stock or payment was changed.':'Review saved. The invoice remains disputed and unposted.');return res.redirect(303,'/accounting/payables/'+result.billId+'/review');
+  }));
   async function manualDocument(req,res,kind){
     if(kind==='bill'&&req.query.purchaseOrderId)return res.redirect(302,
       `/purchasing/orders/${encodeURIComponent(req.query.purchaseOrderId)}`);
@@ -222,20 +231,25 @@ function createPostgresProjectionsRouter(database){
     const counterparties=(await database.query(`SELECT id,name FROM ${table} WHERE workspace_id=$1 AND ${filter}
       ORDER BY lower(name)`,[req.ctx.workspaceId])).rows;
     return res.page('accounting/postgres-manual-document',{title:kind==='invoice'?'Record a customer invoice':'Record a supplier bill',
-      nav:'accounting',kind,counterparties,today:new Date().toISOString().slice(0,10),idempotencyKey:newId('manual-doc')});
+      nav:'accounting',kind,counterparties,products:kind==='invoice'?await require('../../operations/postgres-commerce').catalogue(database,req.ctx.workspaceId):[],today:new Date().toISOString().slice(0,10),idempotencyKey:newId('manual-doc')});
   }
   router.get('/accounting/receivables/new',requireAuth,requirePermission(permissions.MANAGE_ACCOUNTING,'create customer invoices'),
     asyncRoute((req,res)=>manualDocument(req,res,'invoice')));
   router.get('/accounting/payables/new',requireAuth,requirePermission(permissions.MANAGE_ACCOUNTING,'create supplier bills'),
     asyncRoute((req,res)=>manualDocument(req,res,'bill')));
   router.post('/accounting/receivables',requireAuth,requirePermission(permissions.MANAGE_ACCOUNTING,'create customer invoices'),asyncRoute(async(req,res)=>{
-    const result=await manualInvoices.createCustomerInvoice(database,req.ctx,{customerId:req.body.counterpartyId,
+    const input={customerId:req.body.counterpartyId,
       documentNumber:req.body.documentNumber,issueDate:req.body.issueDate,dueDate:req.body.dueDate,
       description:req.body.description,quantity:req.body.quantity,unitAmount:req.body.unitAmount,
-      tax:req.body.tax,notes:req.body.notes,idempotencyKey:req.body.idempotencyKey});
+      tax:req.body.tax,notes:req.body.notes,idempotencyKey:req.body.idempotencyKey,skuId:req.body.skuId||null,priceOverride:req.body.priceOverride==='1',codes:String(req.body.couponCodes||'').split(',').map(s=>s.trim()).filter(Boolean)};
+    const quote=await require('../../pricing/postgres-invoice-pricing').quote(database,req.ctx,input),promotions=require('../../pricing/postgres-promotions');
+    input.idempotencyKey='invoice-form:'+promotions.hash({input,pricingQuoteHash:promotions.quoteHash(quote)});
+    if(input.skuId||input.codes.length||quote.policyVersions.length){const reviewId=newId('invoicereview');req.session.invoicePriceReviews={...(req.session.invoicePriceReviews||{}),[reviewId]:{workspaceId:req.ctx.workspaceId,actorId:req.ctx.actorId,input,quoteHash:promotions.quoteHash(quote),expiresAt:Date.now()+15*60*1000}};for(const id of Object.keys(req.session.invoicePriceReviews).slice(0,-5))delete req.session.invoicePriceReviews[id];const customer=(await database.query('SELECT name FROM customers WHERE workspace_id=$1 AND id=$2',[req.ctx.workspaceId,input.customerId])).rows[0];return res.page('accounting/pricing-review',{title:'Review invoice pricing',nav:'accounting',reviewId,quote,description:input.description,customerName:customer.name,issueDate:input.issueDate,dueDate:input.dueDate});}
+    const result=await manualInvoices.createCustomerInvoice(database,req.ctx,input);
     req.flash('success',`${result.invoice_number} recorded. Payment remains separate.`);
     return res.redirect(303,'/accounting/receivables');
   }));
+  router.post('/accounting/receivables/price-reviews/:id/approve',requireAuth,requirePermission(permissions.MANAGE_ACCOUNTING,'approve invoice pricing'),asyncRoute(async(req,res)=>{const review=req.session.invoicePriceReviews?.[req.params.id];if(!review||review.workspaceId!==req.ctx.workspaceId||review.actorId!==req.ctx.actorId||review.expiresAt<Date.now())throw new ValidationError('This invoice pricing review expired. Prepare it again.');const result=await manualInvoices.createCustomerInvoice(database,req.ctx,{...review.input,pricingQuoteHash:review.quoteHash});req.flash('success',`${result.invoice_number} was posted at the reviewed amount. No payment, stock movement or email occurred.`);return res.redirect(303,'/accounting/receivables');}));
   router.post('/accounting/payables',requireAuth,requirePermission(permissions.MANAGE_ACCOUNTING,'create supplier bills'),asyncRoute(async(req,res)=>{
     const supplierInvoiceNumber=requireText(req.body.documentNumber,'Supplier invoice number',{max:80});
     const prior=(await database.query(`SELECT id FROM accounting_supplier_bills WHERE workspace_id=$1 AND supplier_id=$2

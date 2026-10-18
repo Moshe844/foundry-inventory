@@ -30,7 +30,8 @@ function connectionFrom(row){return {id:row.id,name:row.display_name||row.provid
 const sections=[
   {title:'Customer orders',why:'An order is one story, and it is the page. These are the working surfaces underneath it.',links:[
     {href:'/orders',label:'All customer orders'},{href:'/orders/new',label:'Write an order'},
-    {href:'/fulfilment',label:'Picking and packing queue'},{href:'/sales/customers/new',label:'Add a customer'}]},
+    {href:'/fulfilment',label:'Picking and packing queue'},{href:'/sales/customers/new',label:'Add a customer'},
+    {href:'/sales/pricing',label:'Pricing and promotions'}]},
   {title:'Buying and suppliers',why:'A purchase is one story too. StockChief prepares these; the queue is here for when you want to work through them yourself.',links:[
     {href:'/purchasing',label:'What needs buying'},{href:'/purchasing/orders',label:'All purchase orders'},
     {href:'/purchasing/orders/new',label:'Write a purchase order'},{href:'/purchasing/receive',label:'Book in a delivery'},

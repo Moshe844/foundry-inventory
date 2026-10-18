@@ -1,0 +1,9 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict'),{registry}=require('../../src/assistant/postgres-capability-registry'),{operationSteps}=require('../../scripts/environment-agent-demo/contracts'),{parseSteps}=require('../../src/assistant/postgres-capability-planner');
+test('structured documents cross the existing native tool envelope without silent truncation or widening ordinary argument limits',()=>{
+ const document=JSON.stringify({supplierInvoiceNumber:'DOC',issueDate:'2026-10-16',documentTotalMinor:3000,lines:Array.from({length:30},(_,i)=>({sku:'product-'+i,quantity:1,unitCostMinor:100,description:'A recorded document product'}))});assert(document.length>2000);assert(document.length<16000);
+ const steps=[{capability:'purchase_order.record_supplier_invoice',arguments:[{name:'recordReference',value:'PO-1'},{name:'invoiceDocument',value:document}],dependsOn:[]}],native=operationSteps(steps,registry),parsed=parseSteps({steps:native},registry);assert.equal(parsed.steps[0].args.invoiceDocument,document);assert.equal(JSON.parse(parsed.steps[0].args.invoiceDocument).lines.length,30);
+ assert.throws(()=>operationSteps([{...steps[0],arguments:[{name:'invoiceDocument',value:'x'.repeat(16001)}]}],registry),/16000/);
+ const ordinary=[{capability:'contact.create',arguments:[{name:'recipient',value:'x'.repeat(2001)}],dependsOn:[]}];assert.throws(()=>operationSteps(ordinary,registry),/2000/);assert.equal(parseSteps({steps:ordinary},registry).steps.length,0,'An overlong ordinary value must be rejected, never shortened into a different business operation');
+ assert.equal(require('node:fs').readFileSync(require('node:path').resolve('scripts/environment-agent-demo/candidates.js'),'utf8').includes('stepsJson:z.string().max(24000)'),true,'The overall native operation envelope is unchanged');
+});

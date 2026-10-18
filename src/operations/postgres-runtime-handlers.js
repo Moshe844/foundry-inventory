@@ -72,19 +72,21 @@ async function mailReplyDraft(job,database,options={}){
   if(!row)return {skipped:'message_missing'};
   if(row.reply_state!=='NEEDS_REPLY'||row.reply_sent_at)return {skipped:'reply_no_longer_needed'};
   if(row.draft_source==='owner'||row.draft_source==='model')return {skipped:'draft_already_prepared_or_edited'};
-  if(!options.aiProvider&&!config.ai.configured)return {skipped:'model_not_configured',holdingDraftRetained:true};
+  if(await require('../connections/postgres-document-review').ownsAutomaticReply(database,job.workspaceId,messageId))return {skipped:'native_document_review',draftUnchanged:true};
+  if(!options.aiProvider&&!config.ai.configured)return {skipped:'model_not_configured',draftUnchanged:true};
   const scope=await entitlements.ownerScopeForWorkspace(database,job.workspaceId);
   if(!(await entitlements.capabilityState(database,scope,'communications.ai_drafts')).enabled)
-    return {skipped:'draft_capability_unavailable',holdingDraftRetained:true};
+    return {skipped:'draft_capability_unavailable',draftUnchanged:true};
   try{
-    await require('../connections/postgres-reply-drafting').prepare(database,
+    const result=await require('../connections/postgres-reply-drafting').prepare(database,
       {workspaceId:job.workspaceId,actorId},messageId,{provider:options.aiProvider,automatic:true,
         key:`mail-reply:${messageId}:auto:${job.attemptCount}`});
+    if(result?.skipped)return result;
     return {prepared:true,messageId};
   }catch(error){
     if(error.code==='entitlement_required')throw error;
     if(error.code==='validation_error'||error.name==='ValidationError')
-      return {skipped:'model_draft_rejected',holdingDraftRetained:true,reason:String(error.message).slice(0,300)};
+      return {skipped:'model_draft_rejected',draftUnchanged:true,reason:String(error.message).slice(0,300)};
     throw error;
   }
 }
@@ -498,6 +500,7 @@ function create(providers=defaultProviders,options={}){return {'system.runtime-s
   'system.email-send':external((job,database)=>systemEmail(job,database,options)),
   'mailbox.poll':external((job,database)=>mailboxPoll(job,database,providers)),
   'mail.reply-draft':external((job,database)=>mailReplyDraft(job,database,options)),
+  'mail.attachment-extract':external((job,database)=>require('../connections/postgres-attachments').extractMessage(database,job.workspaceId,job.payload.messageId)),
   'mailbox.renew-push':external((job,database)=>mailboxPushRenewal(job,database,providers,options)),
   'provider.catalog-sync':external((job,database)=>providerSync.sync(job,database,providers)),
   'commercial.auto-top-up':external((job,database)=>require('../commercial/addons').runTopup(database,

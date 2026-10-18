@@ -174,8 +174,15 @@ async function catalogue(database, workspaceId) {
       GROUP BY sol.workspace_id,sol.sku_id) a ON a.workspace_id=s.workspace_id AND a.sku_id=s.id
     WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1
     ORDER BY lower(i.name),s.position,s.id`,[workspaceId]);
+  const positions=(await database.query(`SELECT b.sku_id,b.location_id,b.on_hand,COALESCE(a.committed,0) AS committed
+    FROM balances b LEFT JOIN (SELECT l.workspace_id,l.sku_id,a.location_id,SUM(a.quantity) AS committed
+      FROM sales_order_allocations a JOIN sales_order_lines l ON l.id=a.sales_order_line_id AND l.workspace_id=a.workspace_id
+      WHERE a.workspace_id=$1 GROUP BY l.workspace_id,l.sku_id,a.location_id) a
+      ON a.workspace_id=b.workspace_id AND a.sku_id=b.sku_id AND a.location_id=b.location_id
+    WHERE b.workspace_id=$1`,[workspaceId])).rows,bySku=new Map();
+  for(const row of positions){if(!bySku.has(row.sku_id))bySku.set(row.sku_id,[]);bySku.get(row.sku_id).push({location_id:row.location_id,onHand:Number(row.on_hand),committed:Number(row.committed),available:Number(row.on_hand)-Number(row.committed)});}
   return result.rows.map((row)=>({...row,amount_minor:row.amount_minor===null?null:Number(row.amount_minor),
-    on_hand:Number(row.on_hand),committed:Number(row.committed),available:Number(row.on_hand)-Number(row.committed)}));
+    on_hand:Number(row.on_hand),committed:Number(row.committed),available:Number(row.on_hand)-Number(row.committed),positions:bySku.get(row.id)||[]}));
 }
 
 async function locations(database, workspaceId) {
@@ -225,7 +232,7 @@ async function salesOrders(database, workspaceId) {
       COUNT(sol.id)::integer AS line_count,
       COALESCE(SUM(sol.quantity_ordered),0)::bigint AS units_ordered,
       COALESCE(SUM(sol.quantity_fulfilled),0)::bigint AS units_fulfilled,
-      COALESCE(SUM(sol.quantity_ordered*sol.unit_price_minor),0)::bigint AS total_minor,
+      (COALESCE(SUM(sol.quantity_ordered*sol.unit_price_minor),0)-COALESCE(so.discount_minor,0)+COALESCE(so.tax_minor,0))::bigint AS total_minor,
       COALESCE((SELECT SUM(balance_minor) FROM accounting_customer_invoices i
         WHERE i.workspace_id=so.workspace_id AND i.sales_order_id=so.id AND i.status<>'VOID'),0)::bigint AS balance_minor
     FROM sales_orders so JOIN customers c ON c.id=so.customer_id AND c.workspace_id=so.workspace_id

@@ -8,7 +8,7 @@ async function pending(database,workspaceId,actorId){
  if(!actorId||!require('./postgres-codex-pilot').configured({workspaceId}))return [];
  const emails=String(process.env.STOCKCHIEF_CODEX_PILOT_EMAILS||'').split(',').map(s=>s.trim().toLowerCase()).filter(Boolean);
  if(!emails.length)return [];
- const rows=(await database.query(`SELECT g.id AS goal_id,g.created_at,d.key AS delivery_key,d.value AS delivery,
+ const rows=(await database.query(`SELECT g.id AS goal_id,g.created_at,u.role AS actor_role,u.permissions AS actor_permissions,d.key AS delivery_key,d.value AS delivery,
    CASE d.value->>'kind' WHEN 'business' THEN to_jsonb(p) WHEN 'rule' THEN to_jsonb(r) END AS proposal,
    m.id AS mission_id,m.plan_hash,m.approved_steps,m.approval_status,m.authorization_mode,m.steps AS mission_steps
   FROM stockchief_runtime.assistant_goals g
@@ -35,6 +35,18 @@ async function pending(database,workspaceId,actorId){
  for(const row of rows){
   const card=row.delivery,p=row.proposal;
   if(!p||!['business','rule'].includes(card?.kind))continue;
+  // Ownership does not preserve authority after a membership is changed.
+  // Reuse the executable contract instead of maintaining a second action list.
+  const permissions=require('../actions/permissions'),contract=card.kind==='business'?require('./postgres-capability-registry').registry.get(p.action_type):null;
+  const actionPermission=card.kind==='rule'?permissions.ADMIN:contract?.permission;
+  if(!actionPermission)continue;
+  if((card.kind==='rule'||contract?.ownerOnly)&&row.actor_role!=='owner')continue;
+  const readPermission=permissions.ACCOUNTING.includes(actionPermission)?permissions.VIEW_ACCOUNTING:
+    permissions.SALES.includes(actionPermission)?permissions.VIEW_SALES:
+      permissions.PURCHASING.includes(actionPermission)?permissions.VIEW_PURCHASING:
+        permissions.TRANSFERS.includes(actionPermission)?permissions.VIEW_TRANSFERS:permissions.VIEW;
+  const requiredPermissions=[...new Set([actionPermission,readPermission])];
+  if(!requiredPermissions.every(key=>permissions.can({role:row.actor_role,permissions:row.actor_permissions},key)))continue;
   const revision=digest(snapshot(card.kind,p)),key=JSON.stringify([row.goal_id,card.kind,p.id,revision]);
   // A stale or edited delivery is not an actionable approval. The existing
   // Ask review path remains responsible for staging a changed proposal.
@@ -53,7 +65,7 @@ async function pending(database,workspaceId,actorId){
   // step. Conversely it does not prove a changed/underspecified step fits.
   // Expose recovery for review, never infer a new grant or auto-execute here.
   const recovery=Boolean(recordedMission&&!incompleteScope);
-  items.set(key,{kind:recovery?'recovery':'approval',importance:'Important',priority:85,title:p.summary,
+  items.set(key,{kind:recovery?'recovery':'approval',requiredPermissions,importance:'Important',priority:85,title:p.summary,
    happened:p.summary,why:recovery?'This workflow has a recorded approval, but its execution is unfinished. Review its current scope and recovery status.':
      incompleteScope?'The frozen workflow was approved, but this step needs additional scope before it can continue.':'This proposed change still needs your decision.',
    recommendation:recovery?'Open the saved workflow to review its recorded authority and unfinished work.':

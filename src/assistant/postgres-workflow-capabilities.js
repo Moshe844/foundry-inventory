@@ -40,6 +40,7 @@ const RECORDS=Object.freeze({
   customer:{table:'customers',number:'name',label:'customer'},
   supplier:{table:'suppliers',number:'name',label:'supplier'},
   customer_invoice:{table:'accounting_customer_invoices',number:'invoice_number',label:'customer invoice'},
+  supplier_bill:{table:'accounting_supplier_bills',number:'bill_number',label:'supplier bill'},
   mail_message:{table:'connection_email_messages',number:'subject',label:'business message'},
   import_plan:{table:'import_plans',number:'source_name',label:'import preview'},
   supplier_return:{table:'supplier_returns',number:'return_number',label:'supplier return'},
@@ -196,6 +197,7 @@ async function supplierBill(database,ctx,supplier,args){
 
 async function purchaseOrderSupplierInvoice(database,ctx,order,args){
   requireState(order,['ORDERED','PARTIALLY_RECEIVED','RECEIVED'],'This purchase order');
+  if(args.invoiceDocument){let document;try{document=JSON.parse(args.invoiceDocument);}catch{throw new ValidationError('Read the complete invoice into its structured document contract.');}return require('../purchasing/postgres-invoice-preparation').prepare(database,ctx,order,document);}
   const number=String(args.supplierInvoiceNumber||'').trim();
   const quantity=Number(args.quantity);
   const unitCostMinor=Math.round(Number(args.unitAmount)*100);
@@ -381,7 +383,7 @@ async function returnRefund(database,ctx,customerReturn,args){
   const detail=await returns.getCustomerReturn(database,ctx.workspaceId,customerReturn.id);
   if(detail.resolution!=='REFUND')throw new ValidationError('This return does not have an approved refund resolution.');
   const amountMinor=detail.lines.reduce((sum,line)=>sum+(line.trackingEvidence.costAllocations||[])
-    .reduce((part,allocation)=>part+Number(allocation.quantity)*Number(line.unit_price_minor),0),0);
+    .reduce((part,allocation)=>part+(allocation.revenueMinor??Number(allocation.quantity)*Number(line.unit_price_minor))+(allocation.taxMinor||0),0),0);
   if(!Number.isSafeInteger(amountMinor)||amountMinor<=0)throw new ValidationError(
     'StockChief cannot verify a positive refund against the original sale.');
   return prepareResult({recordId:customerReturn.id,destination,amountMinor},
@@ -723,7 +725,7 @@ const SPECS=Object.freeze([
       requireState(row,['DRAFT'],'This customer order');
       const wanted=String(args.sku||'').trim().toLowerCase();
       if(!wanted)throw new ValidationError('Which product on this draft order should change?');
-      const matches=(await database.query(`SELECT l.id,l.sku_id,l.quantity_ordered,l.unit_price_minor,
+      const matches=(await database.query(`SELECT l.id,l.sku_id,l.quantity_ordered,l.unit_price_minor,l.pricing_snapshot,
         s.code,i.name FROM sales_order_lines l JOIN skus s ON s.id=l.sku_id AND s.workspace_id=l.workspace_id
         JOIN items i ON i.id=s.item_id AND i.workspace_id=l.workspace_id
         WHERE l.workspace_id=$1 AND l.sales_order_id=$2 AND
@@ -742,12 +744,17 @@ const SPECS=Object.freeze([
         line.unit_price_minor==null?NaN:Number(line.unit_price_minor);
       if(!Number.isSafeInteger(unitPriceMinor)||unitPriceMinor<0)
         throw new ValidationError('This order line needs a verified per-unit price before changing it.');
-      return prepareResult({recordId:row.id,skuId:line.sku_id,quantity,unitPriceMinor,
+      const priceOverride=changedPrice||line.pricing_snapshot?.priceOverride===true;
+      const promotions=require('../pricing/postgres-promotions'),revised=await promotions.revisionQuote(database,ctx,row.id,{skuId:line.sku_id,quantity,unitPriceMinor,priceOverride});
+      if(revised.quote.violations.length)throw new ValidationError('The revised order exceeds a pricing safeguard. Review pricing before changing it.');
+      const effectiveUnitPriceMinor=revised.quote.lines.find(l=>l.skuId===line.sku_id).unitPriceMinor;
+      return prepareResult({recordId:row.id,skuId:line.sku_id,quantity,unitPriceMinor:effectiveUnitPriceMinor,priceOverride,pricingQuoteHash:promotions.quoteHash(revised.quote),
         expectedVersion:Number(row.version),expectedQuantity:Number(line.quantity_ordered),
         expectedUnitPriceMinor:Number(line.unit_price_minor)},
       `Change only ${line.name} (${line.code}) on draft ${row.order_number} from ${line.quantity_ordered} to ${quantity} units `+
-        `at ${pricing.formatMinor(unitPriceMinor,row.currency)} each. `+
+        `at ${pricing.formatMinor(effectiveUnitPriceMinor,row.currency)} each. `+
         `Needed by ${row.needed_by||'not set'}; ${String(row.delivery_method||'delivery method not set').toLowerCase()}. `+
+        `The complete revised draft totals ${pricing.formatMinor(revised.quote.totalMinor,row.currency)}, including ${pricing.formatMinor(revised.quote.discountMinor,row.currency)} discount and ${pricing.formatMinor(revised.quote.taxMinor,row.currency)} tax. `+
         'The order remains a draft; no stock is reserved, invoice is posted, or message is sent.');
     },
     execute:(client,ctx,p)=>workflows.reviseDraftSalesOrderLineInTransaction(client,ctx,p.recordId,p),
@@ -979,6 +986,11 @@ const SPECS=Object.freeze([
       (await client.query(`SELECT 1 FROM accounting_payment_allocations WHERE workspace_id=$1
         AND payment_id=$2 AND customer_invoice_id=$3 AND amount_minor=$4`,
       [ctx.workspaceId,r.paymentId,p.customerInvoiceId,p.amountMinor])).rows.length)},
+  {name:'supplier_invoice.recheck',description:'Recheck an existing unposted supplier bill against its original document, current approved purchase order and actual physical receipts. Approval posts the same bill only if all canonical matches now pass; discrepancies remain disputed. This never changes invoice evidence, receives stock or pays a supplier.',
+    record:'supplier_bill',fields:['recordReference','reason'],permission:permissions.MANAGE_ACCOUNTING,capability:'accounting.core',
+    build:async(db,ctx,row,args)=>{const review=await require('../purchasing/postgres-invoice-review').preview(db,ctx,row.id);return prepareResult({recordId:row.id,expectedBillRevision:review.billRevision,expectedMatchFingerprint:review.matchFingerprint,expectedStatus:review.status,expectedTotalMinor:review.totalMinor,reason:args.reason||'Recheck the original invoice against current approved purchase and receiving evidence.'},`Recheck invoice ${review.bill.supplier_invoice_number||review.bill.bill_number} from ${review.bill.supplier_name}, ${pricing.formatMinor(review.totalMinor,review.currency)}, due ${review.dueDate||'not supplied'}. ${review.status==='OPEN'?'Post the existing matched payable.':'Preserve the disputed, unposted bill; remaining differences: '+review.differences.map(d=>require('../purchasing/postgres-invoice-review').differenceLabel(d.kind)).join(' ')} No stock or payment changes.`);},
+    execute:(client,ctx,p)=>require('../purchasing/postgres-invoice-review').execute(sameClient(client),ctx,p.recordId,p),
+    verify:async(client,ctx,r,p)=>Boolean(r.billId===p.recordId&&r.status===p.expectedStatus&&r.totalMinor===p.expectedTotalMinor&&(await client.query('SELECT 1 FROM accounting_supplier_bills WHERE workspace_id=$1 AND id=$2 AND status=$3 AND total_minor=$4',[ctx.workspaceId,p.recordId,p.expectedStatus,p.expectedTotalMinor])).rows.length)},
   {name:'supplier_bill.create',description:'Record a one-line supplier expense bill from an existing supplier with exact invoice number, quantity, unit cost and tax. This creates a payable, not a stock receipt or bank payment.',
     record:'supplier',fields:['recordReference','supplierInvoiceNumber','description','quantity','unitAmount',
       'tax','issueDate','dueDate'],permission:permissions.MANAGE_ACCOUNTING,
@@ -992,11 +1004,12 @@ const SPECS=Object.freeze([
       (await client.query(`SELECT 1 FROM accounting_supplier_bills WHERE workspace_id=$1 AND id=$2
         AND supplier_id=$3 AND supplier_invoice_number=$4 AND total_minor=$5`,
       [ctx.workspaceId,r.billId,p.supplierId,p.supplierInvoiceNumber,r.totalMinor])).rows.length)},
-  {name:'purchase_order.record_supplier_invoice',description:'Record a one-line supplier invoice against an existing placed purchase order using its exact SKU, invoiced quantity, per-stock-unit cost, invoice number and tax. The canonical three-way match posts a payable only when received quantity and approved cost agree; exceptions are retained as disputed without a journal. Never receive stock or pay the supplier from this action.',
+  {name:'purchase_order.record_supplier_invoice',description:'Record a complete supplier invoice against an existing placed purchase order. Use invoiceDocument for multiple product lines, freight/other charges, document total, due date and source-email/attachment evidence. The legacy single-line fields remain supported. The canonical three-way match posts a payable only when received quantity and approved cost agree; exceptions are retained as disputed without a journal. Never receive stock or pay the supplier from this action.',
     record:'purchase_order',fields:['recordReference','supplierInvoiceNumber','sku','quantity','unitAmount',
-      'tax','issueDate','dueDate'],permission:permissions.MANAGE_ACCOUNTING,
+      'tax','issueDate','dueDate','invoiceDocument'],permission:permissions.MANAGE_ACCOUNTING,
     capability:'accounting.core',build:purchaseOrderSupplierInvoice,
     execute:async(client,ctx,p)=>{
+      if(p.expectedMatchFingerprint)return workflows.recordSupplierInvoice(sameClient(client),ctx,p);
       const current=(await client.query(`SELECT pol.quantity_received_units,pol.unit_cost,
         COALESCE((SELECT SUM(bl.quantity) FROM accounting_supplier_bill_lines bl
           JOIN accounting_supplier_bills b ON b.id=bl.bill_id AND b.workspace_id=bl.workspace_id
@@ -1528,6 +1541,12 @@ const SPECS=Object.freeze([
       }
       return true;
     }},
+  {name:'pricing.rule.configure',description:'Prepare a new price list, promotion, coupon, bundle, volume tier or margin/discount safeguard, or revise its exact current version. Discover current business products and customer records first. One owner approval covers the complete frozen policy; deterministic pricing, effective dates and historical snapshots apply to subsequent transactions.',
+    fields:['pricingDefinition','pricingRuleId','expectedRevision'],permission:permissions.ADMIN,ownerOnly:true,capability:'sales_orders.core',
+    build:async(database,ctx,_row,args)=>{let definition;try{definition=JSON.parse(args.pricingDefinition);}catch{throw new ValidationError('Provide a structured pricing rule matching its discovered contract.');}
+      return require('../pricing/postgres-promotions').configuration(database,ctx,definition,{ruleId:args.pricingRuleId||null,expectedRevision:args.expectedRevision||0});},
+    execute:(client,ctx,p)=>require('../pricing/postgres-promotions').activateInTransaction(client,ctx,p),
+    verify:async(client,ctx,r,p)=>{const row=(await client.query('SELECT definition FROM stockchief_runtime.pricing_rule_versions WHERE workspace_id=$1 AND id=$2 AND rule_id=$3 AND revision=$4',[ctx.workspaceId,r.versionId,p.ruleId,p.expectedRevision+1])).rows[0];return Boolean(row&&require('../pricing/postgres-promotions').hash(row.definition)===require('../pricing/postgres-promotions').hash(p.definition));}},
   {name:'repair.approve',description:'Approve the frozen simulation for one existing governed PostgreSQL repair case. Approval alone changes no mapped business record.',
     record:'repair_case',fields:['recordReference'],permission:permissions.ADMIN,states:['NEEDS_AUTHORITY'],
     verb:'Approve the simulated repair for',execute:(client,ctx,p)=>repairs.approve(sameClient(client),ctx,p.recordId),

@@ -74,6 +74,8 @@ const datasets=Object.freeze({
       o.order_date,o.needed_by,COALESCE(lines.units,0)::bigint AS ordered_units,
       CASE WHEN COALESCE(lines.unpriced,0)=0 THEN COALESCE(lines.quoted_minor,0)::bigint
         ELSE NULL END AS quoted_line_total_minor,
+      o.discount_minor AS quoted_discount_minor,o.tax_minor AS quoted_tax_minor,
+      CASE WHEN COALESCE(lines.unpriced,0)=0 THEN (COALESCE(lines.quoted_minor,0)-o.discount_minor+o.tax_minor)::bigint ELSE NULL END AS quoted_total_minor,
       CASE WHEN COALESCE(lines.unpriced,0)=0 THEN 'yes' ELSE 'no' END AS pricing_complete
       FROM sales_orders o JOIN customers c ON c.id=o.customer_id AND c.workspace_id=o.workspace_id
       LEFT JOIN LATERAL (SELECT SUM(quantity_ordered) AS units,
@@ -81,9 +83,9 @@ const datasets=Object.freeze({
         COUNT(*) FILTER (WHERE unit_price_minor IS NULL) AS unpriced
         FROM sales_order_lines WHERE workspace_id=o.workspace_id AND sales_order_id=o.id) lines ON TRUE
       WHERE o.workspace_id=$1`,recordHref:(row)=>`/orders/${row.record_id}`,
-    moneyCompleteness:{quoted_line_total_minor:{field:'pricing_complete',value:'yes'}},
+    moneyCompleteness:{quoted_line_total_minor:{field:'pricing_complete',value:'yes'},quoted_total_minor:{field:'pricing_complete',value:'yes'}},
     fields:{order_number:'text',customer:'text',status:'text',currency:'text',order_date:'date',needed_by:'date',
-      ordered_units:'number',quoted_line_total_minor:'money_minor',pricing_complete:'text'}},
+      ordered_units:'number',quoted_line_total_minor:'money_minor',quoted_discount_minor:'money_minor',quoted_tax_minor:'money_minor',quoted_total_minor:'money_minor',pricing_complete:'text'}},
   sales_order_lines:{label:'Customer order lines by product',permission:permissions.VIEW_SALES,
     source:`SELECT o.id AS record_id,o.order_number,c.name AS customer,o.status,
       o.order_date,o.needed_by,i.name AS product,s.code AS sku,

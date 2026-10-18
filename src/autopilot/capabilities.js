@@ -35,6 +35,11 @@ const permissions = require('../actions/permissions');
  * is a capability nobody granted, and the settings page could never show it.
  */
 const CAPABILITIES = {
+  supplier_document_review: {
+    domain:'purchasing',label:'Review incoming supplier invoices',
+    blurb:'The enabled native agent investigates readable supplier attachments against business records and prepares the required reviews and follow-through. Existing model budgets apply.',
+    consequence:'Paid investigation may run. This grant does not approve bills, payments, emails or physical receipts.',
+  },
   inventory_transfers: {
     domain: 'transfers',
     label: 'Move stock between locations',

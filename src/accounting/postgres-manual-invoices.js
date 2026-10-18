@@ -30,11 +30,11 @@ async function createCustomerInvoiceInTransaction(client,ctx,input){
   const description=requireText(input.description,'Description',{max:250});
   const quantity=Number(input.quantity);
   if(!Number.isFinite(quantity)||quantity<=0||quantity>1000000)throw new ValidationError('Quantity must be positive.');
-  const unitPriceMinor=minor(input.unitAmount,'Unit price');
-  const subtotalMinor=Math.round(quantity*unitPriceMinor);
+  let unitPriceMinor=minor(input.unitAmount,'Unit price');
+  let subtotalMinor=Math.round(quantity*unitPriceMinor);
   if(!Number.isSafeInteger(subtotalMinor)||subtotalMinor<=0)throw new ValidationError('Invoice total is invalid.');
   const taxMinor=minor(input.tax||'0','Tax',true);
-  const totalMinor=subtotalMinor+taxMinor;
+  let totalMinor=subtotalMinor+taxMinor,discountMinor=0,pricingQuote=null;
   if(!Number.isSafeInteger(totalMinor))throw new ValidationError('Invoice total is invalid.');
   const issueDate=date(input.issueDate,'Issue date');
   const dueDate=input.dueDate?date(input.dueDate,'Due date'):null;
@@ -46,6 +46,13 @@ async function createCustomerInvoiceInTransaction(client,ctx,input){
     const existing=(await client.query(`SELECT id,invoice_number FROM accounting_customer_invoices
       WHERE workspace_id=$1 AND source_key=$2`,[ctx.workspaceId,sourceKey])).rows[0];
     if(existing)return {...existing,replayed:true};
+    {
+      pricingQuote=await require('../pricing/postgres-invoice-pricing').quote(client,ctx,input,{lock:true});
+      if(pricingQuote.violations.length)throw new ValidationError('The invoice exceeds an approved pricing safeguard.');
+      if(input.pricingQuoteHash&&input.pricingQuoteHash!==require('../pricing/postgres-promotions').quoteHash(pricingQuote))throw new ValidationError('The invoice pricing changed after approval. Review it again.');
+      unitPriceMinor=pricingQuote.lines[0].unitPriceMinor;subtotalMinor=pricingQuote.subtotalMinor;discountMinor=pricingQuote.discountMinor;totalMinor=pricingQuote.totalMinor;
+      if(totalMinor<=0)throw new ValidationError('A zero-total document creates no amount owed. Use a priced customer order for a free product fulfillment.');
+    }
     const customer=(await client.query(`SELECT id FROM customers WHERE workspace_id=$1 AND id=$2 AND record_state='ACTIVE'`,
       [ctx.workspaceId,customerId])).rows[0];
     if(!customer)throw new NotFoundError('Choose an active customer in this inventory.');
@@ -67,11 +74,11 @@ async function createCustomerInvoiceInTransaction(client,ctx,input){
     }
     const invoiceId=newId('arinvoice');
     const lines=[{accountKey:'ACCOUNTS_RECEIVABLE',debitMinor:totalMinor,customerId},
-      {accountKey:'SALES_REVENUE',creditMinor:subtotalMinor,customerId}];
+      {accountKey:'SALES_REVENUE',creditMinor:subtotalMinor-discountMinor,customerId}];
     if(taxMinor)lines.push({accountKey:'SALES_TAX_PAYABLE',creditMinor:taxMinor,customerId});
     const posted=await ledger.postInTransaction(client,ctx,{postingDate:issueDate,sourceKey:`journal:${sourceKey}`,
       sourceType:'manual_customer_invoice',sourceRecordType:'customer_invoice',sourceRecordId:invoiceId,
-      description:`Customer invoice ${invoiceNumber}`,currency,createdByType:'USER',lines});
+      description:`Customer invoice ${invoiceNumber}`,currency,createdByType:'USER',lines:lines.filter(l=>Number(l.debitMinor||0)!==0||Number(l.creditMinor||0)!==0)});
     const revenueAccount=(await client.query(`SELECT id FROM accounting_accounts WHERE workspace_id=$1
       AND system_key='SALES_REVENUE' AND active=1`,[ctx.workspaceId])).rows[0];
     if(!revenueAccount)throw new ValidationError('Sales revenue account is not configured.');
@@ -82,10 +89,12 @@ async function createCustomerInvoiceInTransaction(client,ctx,input){
       VALUES($1,$2,$3,$4,$5,$6,'OPEN',$7,$8,$9,$10,$10,$11,$12,$13,$14,$15,$15,$15)`,
     [invoiceId,ctx.workspaceId,invoiceNumber,customerId,issueDate,dueDate,currency,subtotalMinor,taxMinor,
       totalMinor,posted.entry.id,sourceKey,trimOrNull(input.notes),ctx.actorId,at]);
+    if(pricingQuote)await client.query('UPDATE accounting_customer_invoices SET discount_minor=$3 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,invoiceId,discountMinor]);
     await client.query(`INSERT INTO accounting_customer_invoice_lines
       (id,workspace_id,invoice_id,line_number,description,quantity,unit_price_minor,line_total_minor,revenue_account_id,created_at)
       VALUES($1,$2,$3,1,$4,$5,$6,$7,$8,$9)`,
-    [newId('arline'),ctx.workspaceId,invoiceId,description,quantity,unitPriceMinor,subtotalMinor,revenueAccount.id,at]);
+    [newId('arline'),ctx.workspaceId,invoiceId,description,quantity,unitPriceMinor,subtotalMinor-discountMinor,revenueAccount.id,at]);
+    if(pricingQuote){await require('../pricing/postgres-invoice-pricing').save(client,ctx,invoiceId,pricingQuote);await client.query('UPDATE accounting_customer_invoice_lines SET sku_id=$3,pricing_snapshot=$4::jsonb WHERE workspace_id=$1 AND invoice_id=$2',[ctx.workspaceId,invoiceId,input.skuId||null,JSON.stringify(pricingQuote.lines[0])]);}
     return {id:invoiceId,invoice_number:invoiceNumber,replayed:false};
   })();
 }

@@ -22,7 +22,8 @@ function operationSteps(steps,catalogue){
     if(!Number.isFinite(value)||type==='integer'&&!Number.isSafeInteger(value))invalid(`${field} requires a finite ${type}.`);
     value=String(value);
    }
-   if(typeof value!=='string'||value.length>2000)invalid(`${field} requires ${type==='string'?'a string':`a ${type} or its string representation`}, at most 2000 characters. Objects, null and booleans are not accepted.`);
+   const maxLength=FIELDS[field]?.maxLength||2000;
+   if(typeof value!=='string'||value.length>maxLength)invalid(`${field} requires ${type==='string'?'a string':`a ${type} or its string representation`}, at most ${maxLength} characters. Objects, null and booleans are not accepted.`);
    if(['number','integer'].includes(type)&&value.trim()&&(!Number.isFinite(Number(value))||type==='integer'&&!Number.isSafeInteger(Number(value))))invalid(`${field} requires a finite ${type}.`);
    return {name:field,value:value.trim()};
   });

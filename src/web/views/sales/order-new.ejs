@@ -172,6 +172,7 @@
         </label>
         <label class="rm-field"><span>Discount amount <small>optional</small></span><input name="discount" inputmode="decimal" value="<%= form.discount || '' %>" placeholder="0.00"></label>
         <label class="rm-field"><span>Tax amount <small>optional</small></span><input name="tax" inputmode="decimal" value="<%= form.tax || '' %>" placeholder="0.00"></label>
+        <% if(locals.allowNewCustomer===false){ %><label class="rm-field"><span>Promotion codes <small>optional, separated by commas</small></span><input name="couponCodes" value="<%= form.couponCodes||'' %>"></label><% } %>
       </div>
       <label class="rm-field"><span>Reference <small>optional</small></span><input name="reference" value="<%= form.reference || '' %>"></label>
       <label class="rm-field"><span>Notes <small>optional</small></span><textarea name="notes"><%= form.notes || '' %></textarea></label>

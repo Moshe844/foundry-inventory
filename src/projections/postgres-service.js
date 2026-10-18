@@ -2,8 +2,11 @@
 
 function number(value){return Number(value || 0);}
 function object(value){if(value && typeof value==='object')return value;try{return JSON.parse(value || '{}');}catch{return {};}}
+async function membership(database,workspaceId,actorId){return actorId?(await database.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',[workspaceId,actorId])).rows[0]:null;}
+function visible(item,actor){const p=require('../actions/permissions'),required={accounting:p.VIEW_ACCOUNTING,order:p.VIEW_SALES,shipping:p.VIEW_SALES,purchase:p.VIEW_PURCHASING,repair:p.ADMIN,provider:p.ADMIN};return (item.requiredPermissions||[required[item.kind]||p.VIEW]).every(key=>p.can(actor,key));}
 
 async function needsCount(database,workspaceId,actorId=null){
+  if(actorId){const actor=await membership(database,workspaceId,actorId),p=require('../actions/permissions');if(!actor)return 0;if(![p.VIEW,p.VIEW_ACCOUNTING,p.VIEW_SALES,p.VIEW_PURCHASING,p.ADMIN].every(key=>p.can(actor,key)))return (await needs(database,workspaceId,actorId)).length;}
   const [result,nativeApprovals]=await Promise.all([database.query(`SELECT
     (SELECT COUNT(*) FROM attention_items WHERE workspace_id=$1 AND status='OPEN')+
     (SELECT COUNT(*) FROM connection_issues WHERE workspace_id=$1 AND status='OPEN')+
@@ -47,11 +50,12 @@ async function runtimeFailures(database,workspaceId){
 }
 
 async function needs(database,workspaceId,actorId=null){
+  const actor=await membership(database,workspaceId,actorId);if(actorId&&!actor)return [];
   const [attention,connections,work,imports,bills,supplierReturns,shippingExceptions,mail,orders,purchases,
     repairs,ambiguousEffects,nativeApprovals]=await Promise.all([
     database.query(`SELECT id,title,concise_summary,explanation,recommendation,severity,priority_score,item_id,first_detected_at
       FROM attention_items WHERE workspace_id=$1 AND status='OPEN' ORDER BY priority_score DESC,first_detected_at`,[workspaceId]),
-    database.query(`SELECT i.id,i.title,i.detail,i.resolution_hint,i.updated_at,i.connector_id,
+    database.query(`SELECT i.id,i.title,i.detail,i.resolution_hint,i.created_at,i.updated_at,i.connector_id,
       i.issue_type,i.external_event_id,c.provider_type,
       message.id AS reply_message_id,related_effect.id AS provider_effect_id
       FROM connection_issues i JOIN workspace_connectors c ON c.id=i.connector_id
@@ -67,7 +71,7 @@ async function needs(database,workspaceId,actorId=null){
     database.query(`SELECT e.id,e.import_id,e.error_message,e.finished_at,p.source_name FROM import_executions e
       JOIN import_plans p ON p.id=e.import_id WHERE e.workspace_id=$1 AND e.status='FAILED'
       ORDER BY e.finished_at DESC`,[workspaceId]),
-    database.query(`SELECT b.id,b.bill_number,b.balance_minor,b.currency,b.exception_detail,b.updated_at,s.name AS supplier_name
+    database.query(`SELECT b.id,b.bill_number,b.supplier_invoice_number,b.balance_minor,b.currency,b.exception_detail,b.created_at,b.updated_at,b.due_date,s.name AS supplier_name
       FROM accounting_supplier_bills b JOIN suppliers s ON s.id=b.supplier_id
       WHERE b.workspace_id=$1 AND b.status='DISPUTED' ORDER BY b.updated_at DESC`,[workspaceId]),
     database.query(`SELECT r.id,r.return_number,r.expected_credit_minor,r.actual_credit_minor,r.created_at,
@@ -76,7 +80,7 @@ async function needs(database,workspaceId,actorId=null){
       LEFT JOIN accounting_supplier_bills b ON b.id=r.supplier_bill_id
       WHERE r.workspace_id=$1 AND r.status='CREDIT_MISMATCH' ORDER BY r.created_at DESC`,[workspaceId]),
     database.query(`SELECT sh.id,sh.shipment_number,sh.tracking_status,sh.tracking_status_detail,
-      sh.exception_reason,sh.tracked_at,so.order_number,c.name AS customer_name
+      sh.exception_reason,sh.created_at,sh.tracked_at,so.order_number,c.name AS customer_name
       FROM sales_shipments sh JOIN sales_orders so ON so.id=sh.sales_order_id
       JOIN customers c ON c.id=so.customer_id WHERE sh.workspace_id=$1
       AND sh.tracking_status IN ('FAILURE','RETURNED') ORDER BY sh.tracked_at DESC`,[workspaceId]),
@@ -85,7 +89,7 @@ async function needs(database,workspaceId,actorId=null){
       AND NOT EXISTS (SELECT 1 FROM stockchief_runtime.email_reply_outbox outbox
         WHERE outbox.workspace_id=message.workspace_id AND outbox.message_id=message.id
         AND outbox.status IN ('PENDING','SENDING','AMBIGUOUS')) ORDER BY message.received_at ASC`,[workspaceId]),
-    database.query(`SELECT so.id,so.order_number,so.needed_by,c.name AS customer_name,
+    database.query(`SELECT so.id,so.order_number,so.needed_by,so.created_at,c.name AS customer_name,
       SUM(sol.quantity_ordered-sol.quantity_fulfilled) AS remaining,
       COALESCE(SUM(a.allocated),0) AS allocated
       FROM sales_orders so JOIN customers c ON c.id=so.customer_id
@@ -93,20 +97,20 @@ async function needs(database,workspaceId,actorId=null){
       LEFT JOIN (SELECT sales_order_line_id,SUM(quantity) AS allocated FROM sales_order_allocations
         WHERE workspace_id=$1 GROUP BY sales_order_line_id) a ON a.sales_order_line_id=sol.id
       WHERE so.workspace_id=$1 AND so.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')
-      GROUP BY so.id,so.order_number,so.needed_by,c.name
+      GROUP BY so.id,so.order_number,so.needed_by,so.created_at,c.name
       HAVING SUM(sol.quantity_ordered-sol.quantity_fulfilled)>COALESCE(SUM(a.allocated),0)
       ORDER BY so.needed_by NULLS LAST,so.created_at`,[workspaceId]),
-    database.query(`SELECT po.id,po.po_number,po.expected_date,s.name AS supplier_name
+    database.query(`SELECT po.id,po.po_number,po.expected_date,po.created_at,s.name AS supplier_name
       FROM purchase_orders po JOIN suppliers s ON s.id=po.supplier_id
       WHERE po.workspace_id=$1 AND po.status IN ('ORDERED','PARTIALLY_RECEIVED')
       AND po.expected_date IS NOT NULL AND po.expected_date<CURRENT_DATE::text
       ORDER BY po.expected_date`,[workspaceId]),
-    database.query(`SELECT id,symptom,failed_invariant,status,materiality,confidence,error_message,updated_at
+    database.query(`SELECT id,symptom,failed_invariant,status,materiality,confidence,error_message,created_at,updated_at
       FROM repair_cases WHERE workspace_id=$1
       AND status IN ('NEEDS_AUTHORITY','AUTHORIZED','FAILED','INCONCLUSIVE')
       ORDER BY CASE materiality WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,updated_at DESC`,[workspaceId]),
     database.query(`SELECT effect.id,effect.kind,effect.provider,effect.aggregate_type,effect.aggregate_id,
-      effect.error_message,effect.completed_at,request.sales_order_id AS payment_order_id
+      effect.error_message,effect.created_at,effect.completed_at,request.sales_order_id AS payment_order_id
       FROM stockchief_runtime.provider_effects effect
       LEFT JOIN payment_requests request ON effect.aggregate_type='payment_request' AND request.id=effect.aggregate_id
       WHERE effect.workspace_id=$1 AND effect.status='AMBIGUOUS'
@@ -120,7 +124,7 @@ async function needs(database,workspaceId,actorId=null){
   const items=[...nativeApprovals];
   for(const row of attention.rows)items.push({kind:'inventory',importance:row.severity==='critical'?'Urgent':row.severity==='important'?'Important':'Watch',
     priority:number(row.priority_score),title:row.title,happened:row.concise_summary,why:row.explanation,
-    recommendation:row.recommendation,href:row.item_id?`/inventory/${row.item_id}`:'/inventory',actionLabel:'Review inventory',at:row.first_detected_at});
+    recommendation:row.recommendation,href:row.item_id?`/inventory/${row.item_id}`:'/inventory',actionLabel:'Review inventory',sourceId:row.id,createdAt:row.first_detected_at,timeLabel:'First detected',at:row.first_detected_at});
   for(const row of connections.rows)items.push({kind:'connection',importance:'Important',priority:85,title:row.title,
     happened:row.detail,why:row.issue_type==='EMAIL_SEND_AMBIGUOUS'
       ?'The provider may have accepted the email before StockChief could verify delivery. Sending it again could create a duplicate.'
@@ -128,8 +132,8 @@ async function needs(database,workspaceId,actorId=null){
     href:row.issue_type==='EMAIL_SEND_AMBIGUOUS' && row.reply_message_id
       ?`/mail/${row.reply_message_id}`:row.issue_type==='EMAIL_SEND_AMBIGUOUS' && row.provider_effect_id
         ?`/settings/operations/provider-effects/${row.provider_effect_id}`:`/settings/connections/${row.connector_id}`,
-    actionLabel:row.issue_type==='EMAIL_SEND_AMBIGUOUS'?'Verify email':'Fix connection',at:row.updated_at});
-  for(const row of work.rows){const action=object(row.recommended_action);const authority=object(row.policy_evaluation);items.push({kind:'approval',
+    actionLabel:row.issue_type==='EMAIL_SEND_AMBIGUOUS'?'Verify email':'Fix connection',sourceId:row.id,createdAt:row.created_at,updatedAt:row.updated_at,at:row.updated_at});
+  for(const row of work.rows){const action=object(row.recommended_action);const authority=object(row.policy_evaluation);items.push({kind:'approval',requiredPermissions:[action.type==='transfer'?require('../actions/permissions').VIEW_TRANSFERS:require('../actions/permissions').VIEW_PURCHASING],
     importance:row.urgency==='immediate'?'Urgent':'Important',priority:70+number(row.priority),
     title:action.title || `${action.type==='transfer'?'Transfer':'Replenish'} ${action.displayName || String(row.category).replaceAll('_',' ')}`,
     happened:action.summary || (action.type==='transfer'
@@ -137,43 +141,43 @@ async function needs(database,workspaceId,actorId=null){
       : `Prepare ${number(action.quantity)} units from ${action.supplierName || 'the selected supplier'}.`),
     why:row.error_message || authority.reason || 'Your authority policy requires approval.',
     recommendation:action.reason || 'Review the prepared work and its evidence.',href:`/autopilot/work/${row.id}`,
-    actionLabel:'Review decision',at:row.created_at});}
+    actionLabel:'Review decision',sourceId:row.id,createdAt:row.created_at,at:row.created_at});}
   for(const row of imports.rows)items.push({kind:'import',importance:'Important',priority:80,title:`Import failed: ${row.source_name}`,
     happened:'The database transaction was rolled back; no partial inventory truth was left behind.',why:row.error_message || 'The import could not be verified.',
     recommendation:'Correct the source or setup, then run the same approved preview again.',href:`/imports/${row.import_id}`,
-    actionLabel:'Open import',at:row.finished_at});
-  for(const row of bills.rows)items.push({kind:'accounting',importance:'Important',priority:88,title:`Resolve disputed bill ${row.bill_number}`,
+    actionLabel:'Open import',sourceId:row.id,createdAt:row.finished_at,timeLabel:'Failed',at:row.finished_at});
+  for(const row of bills.rows)items.push({kind:'accounting',importance:'Important',priority:88,title:`Review invoice ${row.supplier_invoice_number||row.bill_number} from ${row.supplier_name}`,
     happened:`${row.supplier_name} has ${row.currency} ${(number(row.balance_minor)/100).toFixed(2)} unresolved.`,
     why:'The supplier document and expected purchase do not agree.',recommendation:'Review the discrepancy before paying or posting a correction.',
-    href:'/accounting/reports/trial-balance',actionLabel:'Review money',at:row.updated_at});
+    href:`/accounting/payables/${row.id}/review`,actionLabel:'Review invoice',sourceId:row.id,createdAt:row.created_at,updatedAt:row.updated_at,dueDate:row.due_date,at:row.updated_at});
   for(const row of supplierReturns.rows)items.push({kind:'accounting',importance:'Important',priority:89,
     title:`Resolve supplier credit mismatch on ${row.return_number}`,
     happened:`${row.supplier_name} credited ${row.currency} ${(number(row.actual_credit_minor)/100).toFixed(2)}; expected ${row.currency} ${(number(row.expected_credit_minor)/100).toFixed(2)}.`,
     why:'The physical return is complete, but the supplier credited a different amount.',
     recommendation:'Review the supplier credit memo and decide whether to dispute or accept the variance.',
-    href:`/supplier-returns/${row.id}`,actionLabel:'Review supplier return',at:row.created_at});
+    href:`/supplier-returns/${row.id}`,actionLabel:'Review supplier return',sourceId:row.id,createdAt:row.created_at,at:row.created_at});
   for(const row of shippingExceptions.rows)items.push({kind:'shipping',importance:'Urgent',priority:94,
     title:`Carrier exception on ${row.shipment_number}`,happened:`${row.order_number} for ${row.customer_name} is ${String(row.tracking_status).toLowerCase().replaceAll('_',' ')}.`,
     why:row.exception_reason||row.tracking_status_detail||'The carrier reported a delivery exception.',
     recommendation:'Review the parcel and contact the customer if the promise is at risk.',
-    href:`/fulfilment/${row.id}`,actionLabel:'Review shipment',at:row.tracked_at});
+    href:`/fulfilment/${row.id}`,actionLabel:'Review shipment',sourceId:row.id,createdAt:row.created_at,updatedAt:row.tracked_at,timeLabel:'Shipment created',at:row.tracked_at});
   for(const row of mail.rows)items.push({kind:'mail',importance:'Important',priority:82,title:row.subject || `Reply to ${row.sender}`,
     happened:`${row.sender} is waiting for a response.`,why:row.reply_reason || 'A known customer or supplier sent a business message.',
     recommendation:'Read the message first. Review or write a reply only if one is needed.',href:`/mail/${row.id}`,
-    actionLabel:'Read email',at:row.received_at});
+    actionLabel:'Read email',sourceId:row.id,createdAt:row.received_at,timeLabel:'Received',at:row.received_at});
   for(const row of orders.rows)items.push({kind:'order',importance:row.needed_by && row.needed_by<new Date().toISOString().slice(0,10)?'Urgent':'Important',
     priority:92,title:`${row.order_number} does not have enough allocated stock`,happened:`${row.customer_name} needs ${number(row.remaining)} units; ${number(row.allocated)} are allocated.`,
     why:'The order cannot be fulfilled completely from its current allocations.',recommendation:'Review transfer or replenishment options before the promised date.',
-    href:`/orders/${row.id}`,actionLabel:'Review order',at:row.needed_by});
+    href:`/orders/${row.id}`,actionLabel:'Review order',sourceId:row.id,createdAt:row.created_at,dueDate:row.needed_by,at:row.needed_by});
   for(const row of purchases.rows)items.push({kind:'purchase',importance:'Important',priority:75,title:`${row.po_number} is late`,
     happened:`${row.supplier_name} was expected on ${row.expected_date}.`,why:'StockChief has no complete receipt for this purchase order.',
-    recommendation:'Check the supplier update and affected customer commitments.',href:`/purchasing/orders/${row.id}`,actionLabel:'Review purchase',at:row.expected_date});
+    recommendation:'Check the supplier update and affected customer commitments.',href:`/purchasing/orders/${row.id}`,actionLabel:'Review purchase',sourceId:row.id,createdAt:row.created_at,dueDate:row.expected_date,at:row.expected_date});
   for(const row of repairs.rows)items.push({kind:'repair',importance:row.materiality==='high'?'Urgent':'Important',
     priority:row.materiality==='high'?97:86,title:row.symptom,happened:row.failed_invariant,
     why:row.error_message||`The governed repair is ${String(row.status).toLowerCase().replaceAll('_',' ')} with ${row.confidence} confidence.`,
     recommendation:row.status==='AUTHORIZED'||row.status==='FAILED'?'Run and verify the approved correction.':
       row.status==='INCONCLUSIVE'?'Provide exact source evidence before changing records.':'Review the simulation and approve only if it matches the intended correction.',
-    href:`/repairs/${row.id}`,actionLabel:'Review repair',at:row.updated_at});
+    href:`/repairs/${row.id}`,actionLabel:'Review repair',sourceId:row.id,createdAt:row.created_at,updatedAt:row.updated_at,at:row.updated_at});
   for(const row of ambiguousEffects.rows)items.push({kind:'provider',importance:'Urgent',priority:98,
     title:`Verify ${String(row.kind).replaceAll('.',' ')} with ${row.provider}`,
     happened:row.error_message||'The outside provider may have accepted the request before StockChief could save confirmation.',
@@ -183,8 +187,8 @@ async function needs(database,workspaceId,actorId=null){
       row.aggregate_type==='email_message'?`/mail/${row.aggregate_id}`:
         row.payment_order_id?`/orders/${row.payment_order_id}`:
           `/settings/operations/provider-effects/${row.id}`,
-    actionLabel:'Verify provider outcome',at:row.completed_at});
-  return items.sort((a,b)=>b.priority-a.priority || String(a.at||'').localeCompare(String(b.at||'')));
+    actionLabel:'Verify provider outcome',sourceId:row.id,createdAt:row.created_at,updatedAt:row.completed_at,at:row.completed_at});
+  return items.filter(item=>!actorId||visible(item,actor)).sort((a,b)=>b.priority-a.priority || String(a.at||'').localeCompare(String(b.at||'')));
 }
 
 async function brief(database,workspaceId,actorId=null){

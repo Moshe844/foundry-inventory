@@ -10,6 +10,7 @@
     <label class="field"><span class="field-label">Issue date</span><input class="input" type="date" name="issueDate" value="<%= today %>" required></label>
     <label class="field"><span class="field-label">Due date (optional)</span><input class="input" type="date" name="dueDate"></label>
     <label class="field"><span class="field-label">Description</span><input class="input" name="description" maxlength="250" required></label>
+    <% if(kind==='invoice'&&locals.products){ %><label class="field"><span class="field-label">Product pricing (optional)</span><select name="skuId"><option value="">Service or description only</option><% for(const product of products){ %><option value="<%= product.id %>" data-name="<%= product.display_name %>" data-price="<%= product.amount_minor===null?'':Number(product.amount_minor)/100 %>"><%= product.display_name %> · <%= product.code %></option><% } %></select></label><label class="field"><span class="field-label">Promotion codes (optional)</span><input name="couponCodes"></label><label class="field"><input type="checkbox" name="priceOverride" value="1">Keep my entered unit price instead of a customer price list</label><% } %>
     <label class="field"><span class="field-label">Quantity</span><input class="input" type="number" name="quantity" min="0.01" step="0.01" value="1" required></label>
     <label class="field"><span class="field-label">Unit amount</span><input class="input" name="unitAmount" inputmode="decimal" placeholder="0.00" required></label>
     <label class="field"><span class="field-label">Exact tax amount (optional)</span><input class="input" name="tax" inputmode="decimal" placeholder="0.00"></label>
@@ -17,3 +18,4 @@
   </div>
   <div class="card-foot"><button class="btn btn--primary" type="submit"><%= kind==='invoice'?'Record invoice':'Record bill' %></button></div>
 </form>
+<% if(kind==='invoice'&&locals.products){ %><script src="/invoice-product-pricing.js" defer></script><% } %>

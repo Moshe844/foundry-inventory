@@ -172,6 +172,7 @@ function createPostgresApp({database,resourceDatabase=database,sessionStore,sess
   app.use(createPostgresLocationsRouter(database));
   app.use(createPostgresInventoryRouter(database));
   app.use(createPostgresPricingRouter(database));
+    app.use(require('./web/routes/postgres-promotions').createPostgresPromotionsRouter(database));
   app.use(createPostgresSearchRouter(database));
   app.use(createPostgresPlanningRouter(database));
   app.use(createPostgresRepairsRouter(database));

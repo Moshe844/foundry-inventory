@@ -9,7 +9,7 @@ const {randomUUID}=require('node:crypto');
 const {nativeFieldName}=require('./contracts');
 
 function describe(c){return {name:c.name,kind:c.kind,description:c.description,required:(c.required||[]).map(name=>nativeFieldName(c,name)),
-  fields:Object.fromEntries(c.fields.map(name=>[nativeFieldName(c,name),{type:FIELDS[name]?.type||'string',description:c.agentHints?.[name]||FIELDS[nativeFieldName(c,name)]?.description||name,
+  fields:Object.fromEntries(c.fields.map(name=>[nativeFieldName(c,name),{type:FIELDS[name]?.type||'string',...(FIELDS[name]?.type==='string'?{maxLength:FIELDS[name].maxLength||2000}:{}),description:c.agentHints?.[name]||FIELDS[nativeFieldName(c,name)]?.description||name,
    ...(c.argumentSchemas?.[name]?{jsonSchema:c.argumentSchemas[name]()}:{})}])),
   authority:c.authority,unavailable:c.commercialUnavailable||[]};}
 function discoveryPage(entries,offset,summary){

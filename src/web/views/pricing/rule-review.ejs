@@ -1,0 +1,4 @@
+<link rel="stylesheet" href="/pricing-rules.css">
+<section class="pricing-page-head"><p class="eyebrow"><%= proposal.status %></p><h1><%= proposal.definition.name %></h1><p>These are the exact pricing terms. Existing transactions retain their saved prices.</p></section>
+<section class="card pricing-rule-detail"><dl><% for(const [name,value]of rows){ %><dt><strong><%= name %></strong></dt><dd><%= value %></dd><% } %></dl>
+<% if(proposal.status==='PENDING'&&canManage){ %><form method="post" action="/sales/pricing/rules/proposals/<%= proposal.id %>/decide"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= proposal.integrity_hash %>"><button class="btn btn--primary" name="decision" value="approve">Approve this pricing rule</button> <button class="btn" name="decision" value="reject">Reject</button></form><% } %></section><a href="/sales/pricing">Back to pricing</a>

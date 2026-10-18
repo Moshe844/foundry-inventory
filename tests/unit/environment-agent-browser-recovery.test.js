@@ -47,3 +47,11 @@ test('browser reports navigation failures, rejects old-session references and re
  const blocked=await newUi.act({action:'click',ref:commit.ref});assert.equal(blocked.httpStatus,403);assert.equal(posts,0);
  await ui.close();await newUi.close();
 });
+
+test('native styled choices remain operable and verifiable without pointer tricks or form submission',async t=>{
+ const suffix=randomUUID(),choice='choice-'+suffix,flag='flag-'+suffix;let posts=0;
+ const server=http.createServer((req,res)=>{if(req.method!=='GET')posts++;res.setHeader('content-type','text/html');res.end(`<style>label{display:block;position:relative;padding:20px}label input{position:absolute;opacity:0;pointer-events:none}</style><form method="post"><label><input name="mode" type="radio" value="one" checked>First choice</label><label><input name="mode" type="radio" value="two">${choice}</label><label><input name="flag" type="checkbox">${flag}</label><button>Commit</button></form>`);});await new Promise(r=>server.listen(0,'127.0.0.1',r));
+ const browser=await chromium.launch(),origin='http://127.0.0.1:'+server.address().port,ui=await createBrowserTools(browser,{origin});t.after(async()=>{await ui.close();await browser.close();await new Promise(r=>server.close(r));});
+ let screen=await ui.inspect(),target=screen.controls.find(c=>c.label===choice);assert(target);screen=await ui.act({action:'click',ref:target.ref});assert.equal(screen.controls.find(c=>c.label===choice).checked,true);target=screen.controls.find(c=>c.label===flag);screen=await ui.act({action:'click',ref:target.ref});assert.equal(screen.controls.find(c=>c.label===flag).checked,true);
+ const fresh=await ui.verifyObservation(screen.url,screen);assert.equal(fresh.controls.find(c=>c.label===choice).checked,true);assert.equal(fresh.controls.find(c=>c.label===flag).checked,true);assert.equal(posts,0);assert.equal(fresh.viewState.localEdits.filter(e=>e.kind==='check').length,2);
+});

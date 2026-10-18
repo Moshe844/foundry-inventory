@@ -15,6 +15,20 @@ const {newId,nowIso,trimOrNull,requireText}=require('../../lib/util');
 const {ValidationError,NotFoundError}=require('../../domain/errors');
 
 function key(req,kind){return trimOrNull(req.body.idempotencyKey)||`${kind}:${newId('form')}`;}
+async function submitOrder(database,ctx,input,nextStep){
+  if(!['draft','confirm','fulfill'].includes(nextStep))throw new ValidationError('Choose whether to save, reserve or complete this order.');
+  if(nextStep==='fulfill'&&input.deliveryMethod!=='PICKUP')throw new ValidationError('A shipped order needs its shipment handoff before fulfillment.');
+  // A form key alone cannot identify an approval: back/edit and concurrent tabs
+  // can submit different scopes or consequences under that same original key.
+  input={...input,idempotencyKey:'order-form:'+require('../../pricing/postgres-promotions').hash({input,nextStep})};
+  return database.transaction(async client=>{
+    const created=await workflows.createSalesOrderInTransaction(client,ctx,input);if(nextStep==='draft')return {...created,status:'DRAFT'};
+    if(nextStep==='fulfill'){const prior=(await client.query("SELECT result FROM stockchief_runtime.business_operations WHERE workspace_id=$1 AND kind='sales_order.fulfill' AND idempotency_key=$2 AND status='COMPLETED'",[ctx.workspaceId,input.idempotencyKey+':fulfill'])).rows[0];if(prior&&prior.result.salesOrderId===created.salesOrderId)return {...created,...prior.result};}
+    const confirmed=await workflows.confirmSalesOrderInTransaction(client,ctx,created.salesOrderId,{idempotencyKey:input.idempotencyKey+':confirm',requireFullAllocation:nextStep==='fulfill'});if(nextStep==='confirm')return {...created,status:confirmed.status};
+    const allocations=(await client.query('SELECT a.sales_order_line_id,a.location_id,a.quantity FROM sales_order_allocations a JOIN sales_order_lines l ON l.id=a.sales_order_line_id AND l.workspace_id=a.workspace_id WHERE a.workspace_id=$1 AND l.sales_order_id=$2',[ctx.workspaceId,created.salesOrderId])).rows;
+    const fulfilled=await workflows.fulfillSalesOrderInTransaction(client,ctx,created.salesOrderId,{idempotencyKey:input.idempotencyKey+':fulfill',lines:allocations.map(a=>({lineId:a.sales_order_line_id,locationId:a.location_id,quantity:Number(a.quantity)}))});return {...created,status:fulfilled.status,invoiceId:fulfilled.invoiceId};
+  },{isolation:'SERIALIZABLE',retrySafe:true});
+}
 
 function minor(value,label){
   const text=String(value??'').trim();
@@ -722,7 +736,7 @@ function createPostgresCommerceRouter(database,options={}){
       commerce.catalogue(database,req.ctx.workspaceId),commerce.locations(database,req.ctx.workspaceId)]);
     const skus=catalogue.map((sku)=>({...sku,price:{isSet:sku.amount_minor!==null,
       formatted:sku.amount_minor===null?'':`${sku.currency||'USD'} ${(Number(sku.amount_minor)/100).toFixed(2)}`},
-      stock:{onHand:sku.on_hand,committed:sku.committed,available:sku.available}}));
+      stock:{onHand:sku.on_hand,committed:sku.committed,available:sku.available,positions:sku.positions}}));
     return res.page('sales/order-new',{title:'New sales order',nav:'sales',customers,skus,locations,
       form:{customerId:trimOrNull(req.query.customer)||'',deliveryMethod:'SHIP'},formError:null,
       unpricedCount:skus.filter((sku)=>!sku.price.isSet).length,allowNewCustomer:false,screenGuide:null,suppressBack:true});
@@ -780,15 +794,28 @@ function createPostgresCommerceRouter(database,options={}){
     const submittedPrices=Array.isArray(req.body.unitPrice)?req.body.unitPrice:[req.body.unitPrice];
     const catalogue=await commerce.catalogue(database,req.ctx.workspaceId);
     const prices=new Map(catalogue.map((sku)=>[sku.id,sku.amount_minor]));
-    const lines=skuIds.map((skuId,index)=>({skuId,quantity:quantities[index],unitPriceMinor:
+    const lines=skuIds.map((skuId,index)=>({skuId,quantity:quantities[index],priceOverride:Boolean(String(submittedPrices[index]||'').trim()),unitPriceMinor:
       String(submittedPrices[index]||'').trim()?minor(submittedPrices[index],'Selling price'):prices.get(skuId)}));
-    const result=await workflows.createSalesOrder(database,req.ctx,{customerId:req.body.customerId,
+    const input={customerId:req.body.customerId,
       orderDate:req.body.orderDate||dateToday(),neededBy:trimOrNull(req.body.neededBy),
       fulfillmentLocationId:trimOrNull(req.body.fulfillmentLocationId),deliveryMethod:req.body.deliveryMethod||'SHIP',
       shipToAddress:trimOrNull(req.body.shipToAddress||req.body.customerShippingAddress),currency:trimOrNull(req.body.currency)||'USD',
-      notes:trimOrNull(req.body.notes),idempotencyKey:key(req,'sales-order'),lines});
-    req.flash('success',`${result.orderNumber} was drafted. Stock is not committed until confirmation.`);
+      notes:trimOrNull(req.body.notes),reference:trimOrNull(req.body.reference),discountMinor:req.body.discount?minor(req.body.discount,'Discount'):0,taxMinor:req.body.tax?minor(req.body.tax,'Tax'):0,codes:String(req.body.couponCodes||'').split(',').map(s=>s.trim()).filter(Boolean),priceListId:trimOrNull(req.body.priceListId),idempotencyKey:key(req,'sales-order'),lines};
+    const promotions=require('../../pricing/postgres-promotions'),quote=await promotions.prepareQuote(database,req.ctx,input);
+    if(quote.policyVersions.length||quote.codes.length||quote.discountMinor||quote.taxMinor){
+      const nextStep=req.body.nextStep||'draft';if(!['draft','confirm','fulfill'].includes(nextStep))throw new ValidationError('Choose a valid order action.');
+      const reviewId=newId('orderreview');req.session.orderPriceReviews={...(req.session.orderPriceReviews||{}),[reviewId]:{workspaceId:req.ctx.workspaceId,actorId:req.ctx.actorId,input,nextStep,quoteHash:promotions.quoteHash(quote),expiresAt:Date.now()+15*60*1000}};
+      for(const id of Object.keys(req.session.orderPriceReviews).slice(0,-5))delete req.session.orderPriceReviews[id];
+      return res.page('sales/pricing-review',{title:'Review order pricing',nav:'sales',reviewId,nextStep,quote,products:catalogue,customer:(await commerce.customers(database,req.ctx.workspaceId)).find(c=>c.id===input.customerId)});
+    }
+    const result=await submitOrder(database,req.ctx,input,req.body.nextStep||'draft');
+    req.flash('success',`${result.orderNumber}: ${result.status==='DRAFT'?'draft saved; no stock reserved':result.status==='FULFILLED'?'pickup fulfilled and invoice posted; no payment recorded':result.status==='BACKORDERED'?'available stock reserved; remaining units are backordered':'stock reserved; nothing physically released'}.`);
     return res.redirect(303,`/orders/${result.salesOrderId}`);
+  }));
+  router.post('/sales/pricing/order-reviews/:id/approve',requirePermission(permissions.OPERATE,'approve draft order pricing'),asyncRoute(async(req,res)=>{
+    const review=req.session.orderPriceReviews?.[req.params.id];if(!review||review.workspaceId!==req.ctx.workspaceId||review.actorId!==req.ctx.actorId||review.expiresAt<Date.now())throw new ValidationError('This pricing review expired. Review the order again.');
+    const result=await submitOrder(database,req.ctx,{...review.input,pricingQuoteHash:review.quoteHash},review.nextStep);
+    req.flash('success',`${result.orderNumber} was saved at the reviewed prices. ${result.status==='DRAFT'?'No stock was reserved or released.':result.status==='FULFILLED'?'Pickup fulfilled and invoice posted; payment remains separate.':'Available stock was reserved; no goods left.'}`);return res.redirect(303,'/orders/'+result.salesOrderId);
   }));
 
   router.get('/orders/:id/receipt/:paymentId',requirePermission(permissions.VIEW_SALES,'see customer orders'),

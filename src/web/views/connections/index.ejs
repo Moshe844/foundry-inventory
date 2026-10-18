@@ -253,6 +253,7 @@
           <span class="rm-provider__mark <%= String(provider.mark).length > 2 ? 'is-word' : '' %>" aria-hidden="true"><%= provider.mark %></span>
           <span class="rm-provider__n"><%= provider.name %></span>
           <span class="rm-provider__s">
+          <% if(provider.pilot){ %><span class="rm-pillbadge">Staging pilot</span><% } %>
           <% if (alreadyConnected) { %><span class="rm-pillbadge is-ok">Connected</span>
             <% } else if (!provider.available) { %><span class="rm-pillbadge">Not ready to connect</span>
             <% } else if (!includedOnPlan) { %><span class="rm-pillbadge">Growth</span><% } %>

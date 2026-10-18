@@ -7,6 +7,7 @@
    */
   var m = message;
   var productionMail = typeof productionMail !== 'undefined' && productionMail;
+  var allowReplyChanges = !productionMail || Boolean(locals.canWriteReply);
   var sending = m.outbox_status === 'PENDING' || m.outbox_status === 'SENDING';
   var badge = sending ? 'info' : { NEEDS_REPLY: 'warn', WAITING: 'info', HANDLED: 'ok' }[m.reply_state];
 %>
@@ -15,7 +16,7 @@
   <%- helpers.icon('chevron', { size: 13 }) %>
   <span><%= m.subject || 'No subject' %></span>
 </div>
-
+<% if(typeof productionMail!=='undefined'&&productionMail&&message.native_review_goal_id){ %><section class="card"><div class="card-body"><h2>StockChief’s document review</h2><p>This supplier document has a saved agent request under your existing authority. Open it for its current status, required approvals and verified outcomes.</p><a class="btn" href="/ask?goal=<%= message.native_review_goal_id %>#focused-goal">Open this review</a></div></section><% }else if(typeof productionMail!=='undefined'&&productionMail&&message.native_review_state==='NEEDS_REVIEW'){ %><div class="notice notice--warn"><strong>This document needs attention</strong><p><%= message.native_review_reason %></p></div><% } %>
 <div class="page-head">
   <div>
     <h1><%= m.subject || 'No subject' %> <span class="badge badge--<%= badge %>"><%= m.stateWords %></span></h1>
@@ -25,7 +26,7 @@
       · arrived in <%= m.connector_name %>
     </p>
   </div>
-  <% if (m.reply_state === 'NEEDS_REPLY' && !sending && m.outbox_status !== 'AMBIGUOUS' && !(draft && draft.sentAt)) { %>
+  <% if (allowReplyChanges && m.reply_state === 'NEEDS_REPLY' && !sending && m.outbox_status !== 'AMBIGUOUS' && !(draft && draft.sentAt)) { %>
     <a class="btn btn--primary" href="#reply">Reply now</a>
   <% } %>
 </div>
@@ -72,6 +73,7 @@
           <% attachments.forEach(function (file) { %>
             <li>
               <%= file.filename %>
+                <% if(typeof productionMail!=='undefined'&&productionMail){ %> · <a href="/mail/<%= message.id %>/attachments/<%= file.id %>/text">Read attachment</a><% } %>
               <% if (file.mime_type) { %><span class="t-xs t-muted"> · <%= file.mime_type %></span><% } %>
             </li>
           <% }) %>
@@ -141,7 +143,7 @@
           <span class="t-xs t-muted">
             <%= draft.source === 'model' ? 'Written by StockChief from your records'
               : draft.source === 'person' ? 'Your words'
-              : 'Safe holding draft—verify the details' %> · nothing has been sent
+              : 'Unsent draft—verify the details' %> · nothing has been sent
           </span>
         <% } %>
       </div>
@@ -151,8 +153,7 @@
       <div class="card-body">
         <div class="notice notice--warn"><div>
           <strong>StockChief wrote a reply and threw it away.</strong><br>
-          It was rejected because <%= draft.rejected %>. What is below uses your records only,
-          so it is duller and it is true. Edit it however you like before sending.
+          It was rejected because <%= draft.rejected %>. The previous unsent draft remains unchanged.
         </div></div>
       </div>
     <% } %>
@@ -162,7 +163,7 @@
         <p class="t-sm"><strong><%= draft.subject %></strong></p>
         <pre class="message-body"><%= draft.body %></pre>
       </div>
-    <% } else if (draft && !sending && m.outbox_status !== 'AMBIGUOUS') { %>
+    <% } else if (draft && !sending && m.outbox_status !== 'AMBIGUOUS' && allowReplyChanges && (!productionMail || m.reply_state === 'NEEDS_REPLY')) { %>
       <form method="post" action="/mail/<%= m.id %>/draft" data-busy>
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <div class="card-body">
@@ -183,35 +184,55 @@
             Send to <%= m.sender %>
           </button>
           <button class="btn" type="submit" name="action" value="save">Save for later</button>
-          <button class="btn btn--ghost" type="submit" name="action" value="write"><%= productionMail?'Use standard holding reply':'Write it again' %></button>
+          <% if (!productionMail) { %><button class="btn btn--ghost" type="submit" name="action" value="write">Write it again</button><% } %>
           <% if(productionMail && canImproveDraft && draft.source !== 'person' && m.reply_state === 'NEEDS_REPLY'){ %>
             <button class="btn btn--ghost" type="submit" name="action" value="improve">Prepare from verified records</button>
           <% } %>
         </div>
       </form>
-    <% } else if (!sending && m.outbox_status !== 'AMBIGUOUS') { %>
+    <% } else if (productionMail && !sending && m.outbox_status !== 'AMBIGUOUS' && allowReplyChanges && m.reply_state === 'NEEDS_REPLY') { %>
       <div class="card-body">
-        <p class="lede"><%= productionMail?'Write your reply to ':'StockChief can draft this from what it holds about ' %><%= m.sender %>.</p>
-        <p class="hint">
-          <% if(productionMail){ %>StockChief can prepare a safe editable reply. If your plan enables AI drafting, it can also use verified records.
-          Nothing is sent until you approve sending.<% }else{ %>It reads their orders, shipments, tracking and balances first, and may only use
-          figures and dates that are already there. Nothing is sent until you send it.<% } %>
-        </p>
+        <p class="lede"><%= ['PENDING','RETRY','RUNNING'].includes(m.draft_job_status)
+          ? 'StockChief is preparing a reply from this message and your verified records.'
+          : 'No reply has been prepared for ' + m.sender + ' yet.' %></p>
+        <p class="hint">Read their message above. You can leave it for later, write your own reply, or ask StockChief to prepare one from the message and verified records. Nothing is sent without your approval.</p>
+        <% if (['DEAD','PAUSED'].includes(m.draft_job_status) || (m.draft_job_status === 'COMPLETED' && m.draft_job_skip)) { %><p class="hint">Automatic drafting stopped without a verified reply. You can write one yourself<% if (canImproveDraft) { %> or try preparing it again<% } %>.</p><% } %>
       </div>
+      <form method="post" action="/mail/<%= m.id %>/draft" data-busy>
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="card-body">
+          <label class="field"><span class="field-label">Subject</span><input class="input" type="text" name="subject" value="<%= m.subject && /^re:/i.test(m.subject) ? m.subject : 'Re: ' + (m.subject || 'Your message') %>" required></label>
+          <label class="field"><span class="field-label">Your reply</span><textarea class="input textarea message-edit" name="body" rows="10" required></textarea></label>
+        </div>
+        <div class="card-foot">
+          <button class="btn btn--primary" type="submit" name="action" value="send">Send to <%= m.sender %></button>
+          <button class="btn" type="submit" name="action" value="save">Save for later</button>
+          <% if (canImproveDraft && m.reply_state === 'NEEDS_REPLY') { %>
+            <button class="btn btn--ghost" type="submit" name="action" value="improve" formnovalidate>Prepare from verified records</button>
+          <% } %>
+          <a class="btn btn--ghost" href="/mail">Read only—back to mail</a>
+        </div>
+      </form>
+    <% } else if (!productionMail && !sending && m.outbox_status !== 'AMBIGUOUS') { %>
+      <div class="card-body"><p class="lede">StockChief can draft this from what it holds about <%= m.sender %>.</p></div>
       <div class="card-foot">
         <form method="post" action="/mail/<%= m.id %>/draft" data-busy>
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-          <button class="btn btn--primary" type="submit" name="action" value="write"><%= productionMail?'Use standard holding reply':'Draft a reply' %></button>
-          <% if(productionMail && canImproveDraft && m.reply_state === 'NEEDS_REPLY'){ %>
-            <button class="btn" type="submit" name="action" value="improve">Prepare from verified records</button>
-          <% } %>
+          <button class="btn btn--primary" type="submit" name="action" value="write">Draft a reply</button>
         </form>
       </div>
+    <% } else if (productionMail && !allowReplyChanges) { %>
+      <div class="card-body">
+        <p class="hint">You can read this message<%= draft ? ' and its unsent draft' : '' %>. Your inventory access does not allow you to draft, send, or file replies.</p>
+        <% if (draft) { %><p class="t-sm"><strong><%= draft.subject %></strong></p><pre class="message-body"><%= draft.body %></pre><% } %>
+      </div>
+    <% } else if (productionMail && m.reply_state !== 'NEEDS_REPLY' && !m.reply_sent_at) { %>
+      <div class="card-body"><p class="hint">This conversation is not awaiting a reply. If that changes, mark it “Still needs a reply” below before composing.</p></div>
     <% } %>
   </div>
 </section>
 
-<% if (!sending) { %><section class="section">
+<% if (!sending && allowReplyChanges) { %><section class="section">
   <div class="panel">
     <div class="panel-head"><div><h2>Where this belongs</h2></div></div>
     <form method="post" action="/mail/<%= m.id %>/state" data-busy>

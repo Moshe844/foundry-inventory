@@ -61,7 +61,7 @@ async function run(database,ctx,id,options={}){
    require(base+'codex-models').getProfile(modelProfile.verificationProfile).model:modelProfile.model;},
    complete:request=>{if(!helper)throw Error('GOVERNED_HELPER_NOT_READY');return helper.complete(request);}});
   const gateway=require(base+'gateway').createGateway({database,ctx:{...ctx,goalRunToken:goal.run_token},goal:goal.original_request,goalId:id,
-   runToken:goal.run_token,provider,rawProvider:provider,audit,accessGuard:()=>pilot.access(database,ctx,{enabled:true})});
+   runToken:goal.run_token,provider,rawProvider:provider,audit,accessGuard:async()=>{await require('../connections/postgres-document-review').authorize(database,ctx,goal.checkpoint.sourceAutomation);return pilot.access(database,ctx,{enabled:true});}});
   const authorize=settings=>gateway.authorize(settings);
   session=require(base+'session').createSession({database,ctx,goalId:id,runToken:goal.run_token,candidate:'codex',authorize});
   // Publish is durable in the shared goal outbox. There is no file-review loop

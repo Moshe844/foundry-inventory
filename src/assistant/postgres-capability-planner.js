@@ -9,7 +9,7 @@ function schemaFor(catalogue=registry){
         capability:{type:'string',enum:catalogue.list().map((entry)=>entry.name)},
         arguments:{type:'array',maxItems:32,items:{type:'object',additionalProperties:false,
           required:['name','value'],properties:{name:{type:'string',enum:Object.keys(FIELDS)},
-            value:{type:'string',maxLength:2000}}}},
+            value:{type:'string',maxLength:Math.max(2000,...Object.values(FIELDS).map(f=>f.maxLength||2000))}}}},
         dependsOn:{type:'array',maxItems:7,items:{type:'integer',minimum:0,maximum:7}},
         continuesPending:{type:'boolean'},
       }}},
@@ -209,7 +209,8 @@ function parseSteps(raw,catalogue=registry){
     for(const entry of contract.fields.length?step.arguments||[]:[]){
       if(!contract.fields.includes(entry?.name)||typeof entry.value!=='string'||Object.hasOwn(args,entry.name))
         return {steps:[],clarifyingQuestion:'The planned action contained an invalid business input. Nothing changed.'};
-      args[entry.name]=entry.value.trim().slice(0,2000);
+      if(entry.value.length>(FIELDS[entry.name]?.maxLength||2000))return {steps:[],clarifyingQuestion:'The business input exceeds its discovered document limit. Nothing was truncated or changed.'};
+      args[entry.name]=entry.value.trim();
     }
     if(args.recipientMode&&!['add_supplier','add_customer'].includes(args.recipientMode))
       delete args.recipientMode;

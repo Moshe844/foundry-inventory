@@ -14,17 +14,26 @@ const commerce=require('../operations/postgres-commerce');
 const jobs=require('../operations/postgres-job-queue');
 
 function contentHash(message){return crypto.createHash('sha256').update(JSON.stringify({sender:message.sender,
-  subject:message.subject||'',body:message.bodyText||message.body||'',receivedAt:message.receivedAt||''})).digest('hex');}
+  subject:message.subject||'',body:message.bodyText||message.body||'',receivedAt:message.receivedAt||'',
+  attachments:(message.attachments||[]).map(a=>({filename:a.filename,contentHash:crypto.createHash('sha256').update(a.contentBase64?Buffer.from(a.contentBase64,'base64'):Buffer.from(a.extractedText||'')).digest('hex')}))})).digest('hex');}
 
-function initialReply(message,triage){
-  if(triage.state!=='NEEDS_REPLY')return null;
-  const subject=trimOrNull(message.subject)?.replace(/[\r\n\t]+/g,' ').slice(0,150);
-  const topic=subject&&subject.length<=120&&!/^re:/i.test(subject)?` about “${subject}”`:'';
-  return {subject:subject?(/^re:/i.test(subject)?subject:`Re: ${subject}`):'Re: Your message',
-    body:`Hello,\n\nThank you for your message${topic}. I am checking the details against our records before confirming an answer. I will follow up once I can verify them.\n\nBest,\nThe team`};
+function attachmentsForCapture(message){
+  const input=message.attachments||[];
+  if(!Array.isArray(input)||input.length>50)throw new ValidationError('A message may contain at most 50 attachments.');
+  let total=0;
+  return input.map(a=>{
+    if(!a||typeof a!=='object'||Array.isArray(a))throw new ValidationError('Each attachment needs valid document metadata.');
+    const filename=String(a.filename||'').trim();if(!filename||filename.length>240)throw new ValidationError('An attachment needs a valid filename.');
+    if(a.contentBase64!==undefined&&(typeof a.contentBase64!=='string'||a.contentBase64.length>Math.ceil(20*1024*1024/3)*4||!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(a.contentBase64)))throw new ValidationError('The attachment could not be decoded safely.');
+    const content=a.contentBase64?Buffer.from(a.contentBase64,'base64'):null;total+=content?.length||0;
+    if((content?.length||0)>20*1024*1024||total>40*1024*1024)throw new ValidationError('Split attachments larger than the mailbox processing limit.');
+    const extractedText=trimOrNull(a.extractedText);if(extractedText&&extractedText.length>180000)throw new ValidationError('The attachment text is too large to process safely.');
+    return {filename,content,extractedText,mimeType:trimOrNull(a.mimeType),externalId:trimOrNull(a.id),hash:crypto.createHash('sha256').update(content||Buffer.from(extractedText||'')).digest('hex')};
+  });
 }
 
 async function capture(database,connection,message){
+  const attachments=attachmentsForCapture(message);
   const sender=trimOrNull(message.sender)?.toLowerCase();
   if(!sender)throw new ValidationError('A mailbox message needs a sender.');
   const externalId=trimOrNull(message.externalMessageId||message.messageId||message.id);
@@ -64,25 +73,28 @@ async function capture(database,connection,message){
     const triage=replyTriage.judge({sender,subject:message.subject,
       bodyText:message.bodyText||message.body,attachmentCount:(message.attachments||[]).length,
       classification:match.kind,knownCounterparty:true});
-    const draft=initialReply(message,triage);
     const inserted=await client.query(`INSERT INTO connection_email_messages
       (id,workspace_id,connector_id,external_message_id,sender,recipients,subject,body_text,received_at,
        supplier_id,trust_status,classification,external_thread_id,internet_message_id,content_hash,
-       processing_status,reply_state,reply_reason,reply_state_at,created_at,
-       draft_subject,draft_body,draft_source,draft_at)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'TRUSTED',$11,$12,$13,$14,'CAPTURED',$15,$16,$17,$17,
-        $18,$19,$20,$21)
+       processing_status,reply_state,reply_reason,reply_state_at,created_at)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'TRUSTED',$11,$12,$13,$14,'CAPTURED',$15,$16,$17,$17)
       ON CONFLICT(workspace_id,connector_id,external_message_id) DO NOTHING RETURNING id`,
     [id,connection.workspace_id,connection.id,externalId,sender,JSON.stringify(message.recipients||[]),
       trimOrNull(message.subject),trimOrNull(message.bodyText||message.body),message.receivedAt||at,
       match.kind==='supplier'?match.id:null,match.kind,threadId,message.internetMessageId||null,
-      contentHash(message),triage.state,triage.reason,at,draft?.subject||null,draft?.body||null,
-      draft?'records':null,draft?at:null]);
+      contentHash(message),triage.state,triage.reason,at]);
     if(!inserted.rows.length){
       const existing=(await client.query(`SELECT id FROM connection_email_messages WHERE workspace_id=$1
         AND connector_id=$2 AND external_message_id=$3`,[connection.workspace_id,connection.id,externalId])).rows[0];
       return {accepted:true,replayed:true,messageId:existing.id};
     }
+    for(const attachment of attachments)await client.query(`INSERT INTO connection_email_attachments
+      (id,workspace_id,message_id,external_attachment_id,filename,mime_type,content_hash,content,extracted_text,created_at)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(message_id,content_hash,filename) DO NOTHING`,
+      [newId('emailatt'),connection.workspace_id,id,attachment.externalId,attachment.filename,attachment.mimeType,
+        attachment.hash,attachment.content,attachment.extractedText,at]);
+    if(attachments.length){const scoped={query:(sql,values)=>client.query(sql,values),transaction:work=>work(client)};
+      await jobs.enqueue(scoped,{workspaceId:connection.workspace_id,kind:'mail.attachment-extract',idempotencyKey:'mail-attachments:'+id,payload:{messageId:id},priority:45,maxAttempts:2});}
     if(threadId&&!replyTriage.NO_REPLY_SENDER.test(sender)&&!replyTriage.AUTOMATIC_SUBJECT.test(String(message.subject||''))){
       await client.query(`UPDATE connection_email_messages SET reply_state='HANDLED',
         reply_reason='The counterparty replied on this conversation; review their new message.',reply_state_at=$5
@@ -106,7 +118,8 @@ async function capture(database,connection,message){
       workspaceId:connection.workspace_id},{id:newId('usage'),meter:'business_communications',units:1,
       idempotencyKey:`email:${connection.id}:${externalId}`,occurredAt:at,
       detail:{kind:'business_email',connectorId:connection.id}});
-    if(draft&&owner?.owner_account_id){
+    const nativeDocumentReview=match.kind==='supplier'&&attachments.length>0&&await require('./postgres-document-review').granted(client,connection.workspace_id);
+    if(triage.state==='NEEDS_REPLY'&&owner?.owner_account_id&&!nativeDocumentReview){
       const scope={accountId:owner.owner_account_id,workspaceId:connection.workspace_id};
       if((await commercialUsage.capabilityState(client,scope,'communications.ai_drafts')).enabled){
         const actor=(await client.query(`SELECT id FROM users WHERE workspace_id=$1 AND account_id=$2
@@ -224,6 +237,12 @@ async function list(database,workspaceId,state='NEEDS_REPLY'){
 async function get(database,workspaceId,id){
   const result=await database.query(`SELECT message.*,connector.display_name,connector.provider_type,
       supplier.name AS supplier_name,
+      (SELECT status FROM stockchief_runtime.jobs job WHERE job.workspace_id=message.workspace_id
+        AND job.kind='mail.reply-draft' AND job.payload->>'messageId'=message.id
+        ORDER BY job.created_at DESC,job.id DESC LIMIT 1) AS draft_job_status,
+      (SELECT result->>'skipped' FROM stockchief_runtime.jobs job WHERE job.workspace_id=message.workspace_id
+        AND job.kind='mail.reply-draft' AND job.payload->>'messageId'=message.id
+        ORDER BY job.created_at DESC,job.id DESC LIMIT 1) AS draft_job_skip,
       (SELECT status FROM stockchief_runtime.email_reply_outbox outbox WHERE outbox.workspace_id=message.workspace_id
         AND outbox.message_id=message.id ORDER BY started_at DESC LIMIT 1) AS outbox_status
     FROM connection_email_messages message JOIN workspace_connectors connector ON connector.id=message.connector_id
@@ -260,15 +279,36 @@ async function saveDraft(database,ctx,id,input){
   const subject=trimOrNull(input.subject);const body=trimOrNull(input.body);
   if(!subject||!body)throw new ValidationError('A reply needs both a subject and a body.');
   const result=await database.query(`UPDATE connection_email_messages SET draft_subject=$3,draft_body=$4,
-    draft_source='owner',draft_rejected_because=NULL,draft_at=$5 WHERE workspace_id=$1 AND id=$2 RETURNING id`,
+    draft_source='owner',draft_rejected_because=NULL,draft_at=$5
+    WHERE workspace_id=$1 AND id=$2 AND reply_state='NEEDS_REPLY' AND reply_sent_at IS NULL
+      AND NOT EXISTS (SELECT 1 FROM stockchief_runtime.email_reply_outbox outbox
+        WHERE outbox.workspace_id=$1 AND outbox.message_id=$2
+          AND outbox.status IN ('PENDING','SENDING','AMBIGUOUS')) RETURNING id`,
   [ctx.workspaceId,id,subject,body,nowIso()]);
-  if(!result.rows.length)throw new NotFoundError('That business message was not found.');
+  if(!result.rows.length){
+    await get(database,ctx.workspaceId,id);
+    throw new ValidationError('This conversation is no longer awaiting a reply, or its send outcome is unresolved. The draft was not changed.');
+  }
   return get(database,ctx.workspaceId,id);
 }
 
 async function queueSend(database,ctx,id,input={},options={}){
+  await requireOperator(database,ctx,'send replies');
+  const current=await get(database,ctx.workspaceId,id);
+  if(current.reply_sent_at){
+    if(trimOrNull(input.subject)===current.draft_subject&&trimOrNull(input.body)===current.draft_body)
+      return {sent:true,replayed:true,message:current};
+    throw new ValidationError('This reply has already been sent. Its verified text cannot be changed.');
+  }
+  const pending=(await database.query(`SELECT status FROM stockchief_runtime.email_reply_outbox
+    WHERE workspace_id=$1 AND message_id=$2 AND status IN ('PENDING','SENDING','AMBIGUOUS')
+    ORDER BY started_at DESC LIMIT 1`,[ctx.workspaceId,id])).rows[0];
+  if(pending)throw new InvariantError(
+    pending.status==='AMBIGUOUS'
+      ?'The mailbox provider outcome is uncertain. StockChief will not send another reply for this message. Check Sent mail, then mark the conversation waiting or handled.'
+      :'This reply is already being sent. Wait for provider verification before changing or sending it again.',
+    pending.status==='AMBIGUOUS'?'email_send_ambiguous':'email_reply_in_progress');
   const message=await saveDraft(database,ctx,id,input);
-  if(message.reply_sent_at)return {sent:true,replayed:true,message};
   const provider=(options.providers||defaultProviders).get(message.provider_type);
   if(!provider?.send)throw new ValidationError('This mailbox connection cannot send replies.');
   const connection=(await database.query('SELECT * FROM workspace_connectors WHERE workspace_id=$1 AND id=$2',

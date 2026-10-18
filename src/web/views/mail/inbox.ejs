@@ -89,11 +89,11 @@
                 <% if (message.decidedByPerson) { %>You put this here — <% } %><%= message.reply_reason %>
               </div>
             </a>
-            <form class="mail-row-action" method="post" action="/mail/<%= message.id %>/state" data-busy>
+            <% if (typeof canWriteReply === 'undefined' || canWriteReply) { %><form class="mail-row-action" method="post" action="/mail/<%= message.id %>/state" data-busy>
               <input type="hidden" name="_csrf" value="<%= csrfToken %>">
               <input type="hidden" name="returnTo" value="/mail?show=<%= drawer.key %>">
               <% if (drawer.state === 'NEEDS_REPLY') { %>
-                <a class="btn btn--sm btn--primary" href="/mail/<%= message.id %>#reply">Reply</a>
+                <a class="btn btn--sm btn--primary" href="/mail/<%= message.id %>">Read email</a>
                 <button class="btn btn--sm" type="submit" name="state" value="WAITING">
                   I answered
                 </button>
@@ -107,7 +107,9 @@
               <% } else { %>
                 <span class="t-xs t-muted"><%= drawer.state === 'SENDING' ? 'Waiting for delivery verification' : 'Check Sent mail before acting' %></span>
               <% } %>
-            </form>
+            </form><% } else { %>
+              <a class="btn btn--sm btn--primary" href="/mail/<%= message.id %>">Read email</a>
+            <% } %>
           </li>
         <% }) %>
       </ul>

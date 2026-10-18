@@ -19,7 +19,7 @@ const providerOrigin=(requestOrigin)=>config.connections.publicOrigin||requestOr
 async function beginAuthorization(database,ctx,input,requestOrigin,options={}){
   const registry=options.providers||defaultProviders;
   const providerType=requireText(input.providerType,'Provider',{max:40}).toLowerCase();
-  if(!options.providers)launchPolicy.assertNewConnection(providerType);
+  if(registry===defaultProviders)launchPolicy.assertNewConnection(providerType,ctx);
   const adapter=registry.get(providerType);
   if(!adapter)throw new ValidationError('Choose a supported connection provider.');
   const meta=adapter.metadata();
@@ -131,11 +131,11 @@ async function finishAuthorization(database,connection,actorId,result){
 }
 
 async function completeOAuth(database,providerType,query,requestOrigin,options={}){
-  if(!options.providers)launchPolicy.assertNewConnection(providerType);
   const registry=options.providers||defaultProviders;
   const adapter=registry.get(providerType);
   if(!adapter)throw new NotFoundError('Provider not found.');
   const state=await readState(database,query.state,providerType,{consume:true});
+  if(registry===defaultProviders)launchPolicy.assertNewConnection(providerType,{workspaceId:state.workspace_id});
   const connection=await connections.get(database,state.workspace_id,state.connector_id);
   try{
     const result=await require('../commercial/operations').run(database,connection.workspace_id,{capability:

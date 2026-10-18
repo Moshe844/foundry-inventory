@@ -244,7 +244,7 @@ async function salesOrderFor(client,auth,event){
 }
 
 async function applySalesOrder(client,auth,event){
-  const ctx={workspaceId:auth.workspaceId,actorId:auth.actorId};const data=event.data;
+  const ctx={workspaceId:auth.workspaceId,actorId:auth.actorId,acceptedSalesEvent:{connectorId:auth.connectorId,eventId:event.eventId}};const data=event.data;
   const externalOrderId=requireText(data.externalOrderId||data.orderId,'External order id',{max:160});
   if(event.type==='sales_order.created'){
     const existing=await mappedRecord(client,auth,'sales_order',externalOrderId);
@@ -275,7 +275,7 @@ async function applySalesOrder(client,auth,event){
     return {actionType:'sales_order.cancelled',actionRecordId:cancelled.salesOrderId,movementIds:[]};
   }
   if(event.type==='sales_order.snapshot'){
-    const synced=await workflows.synchronizeSalesOrderInTransaction(client,ctx,order.id,{lines:await pricedLines(client,auth,event),
+    const synced=await workflows.synchronizeSalesOrderInTransaction(client,ctx,order.id,{lines:await pricedLines(client,auth,event),discountMinor:data.discountMinor||0,taxMinor:data.taxMinor||0,
       source:auth.displayName,idempotencyKey:`connector:${auth.connectorId}:${event.eventId}:snapshot`});
     return {actionType:'sales_order.changed',actionRecordId:synced.salesOrderId,movementIds:[]};
   }

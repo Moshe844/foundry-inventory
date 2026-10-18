@@ -82,7 +82,7 @@ async function resolveCustomerOrderLines(database,ctx,raw,message,currency){
     }
     if(!Number.isSafeInteger(unitPriceMinor)||unitPriceMinor<=0)return {answer:
       `What selling price per unit should ${found.row.code} use? Nothing was prepared.`};
-    lines.push({skuId:found.row.id,quantity,unitPriceMinor});
+    lines.push({skuId:found.row.id,quantity,unitPriceMinor,priceOverride:statedPrice!==undefined});
     summaries.push(`${quantity} × ${found.row.code} at ${pricing.formatMinor(unitPriceMinor,orderCurrency)} each`);
   }
   return {lines,currency:orderCurrency,summary:summaries.join('; ')};
@@ -178,6 +178,10 @@ async function lookup(database,ctx,request,options={}) {
   if(!require('./read-timeframes').accepted({...request,search}))return {status:require('./read-timeframes').supported('sales_activity').includes(request.timeframe)?'UNSUPPORTED_PERIOD':'CLARIFY',
     answer:'I cannot verify that time period from this summary. Use an authorized date-filtered report or a reader whose contract supports that period; no unfiltered records were substituted.',
     rows:[],columns:[],scope:{requestedTimeframe:request.timeframe,supportedTimeframes:require('./read-timeframes').supported(request.view)}};
+  if(request.view==='pricing'){
+    const all=await require('../pricing/postgres-promotions').list(database,ctx),rows=all.filter(r=>!search||[r.id,r.name,r.code].some(v=>String(v||'').toLowerCase().includes(search.toLowerCase())));
+    return {answer:`${rows.length} approved pricing rules found. Current policy is separate from historical transaction prices.`,rows,columns:['id','name','kind','currency','version','priority','enabled','startsAt','endsAt','scope','entries','discount','code','stacking','excludes','minimumMarginBps','maximumDiscountBps'],handoff:{href:'/sales/pricing',label:'Manage pricing and promotions'}};
+  }
   if(request.view==='operating_rules'){
     const [alerts,replenishment,guards,automation,preferences]=await Promise.all([
       database.query(`SELECT s.code AS sku,i.name AS product,l.name AS location,r.threshold,r.metric,
@@ -760,7 +764,8 @@ async function lookup(database,ctx,request,options={}) {
       COALESCE(lines.ordered_units,0) AS ordered_units,
       COALESCE(lines.fulfilled_units,0) AS fulfilled_units,
       COALESCE(lines.line_count,0) AS line_count,
-      COALESCE(lines.order_total_minor,0) AS order_total_minor,
+      COALESCE(lines.order_total_minor,0)-COALESCE(so.discount_minor,0)+COALESCE(so.tax_minor,0) AS order_total_minor,
+      so.discount_minor,so.tax_minor,
       COALESCE(lines.line_items_json,'[]'::json) AS line_items_json,
       COALESCE(lines.ordered_units,0)-COALESCE(lines.fulfilled_units,0) AS open_units,
       COALESCE(held.units,0) AS held_units,COALESCE(invoices.invoice_count,0) AS invoice_count,
@@ -776,7 +781,7 @@ async function lookup(database,ctx,request,options={}) {
         SUM(sol.quantity_ordered*sol.unit_price_minor) AS order_total_minor,
         JSON_AGG(JSON_BUILD_OBJECT('sku',sku.code,'product',item.name,
           'quantity',sol.quantity_ordered,'unitPriceMinor',sol.unit_price_minor,
-          'lineTotalMinor',sol.quantity_ordered*sol.unit_price_minor) ORDER BY sol.id) AS line_items_json
+          'lineTotalMinor',sol.quantity_ordered*sol.unit_price_minor,'lineDiscountMinor',COALESCE((sol.pricing_snapshot->>'discountMinor')::bigint,0),'lineTaxMinor',COALESCE((sol.pricing_snapshot->>'taxMinor')::bigint,0),'lineNetTotalMinor',COALESCE((sol.pricing_snapshot->>'totalMinor')::bigint,sol.quantity_ordered*sol.unit_price_minor)) ORDER BY sol.id) AS line_items_json
         FROM sales_order_lines sol
         JOIN skus sku ON sku.id=sol.sku_id AND sku.workspace_id=sol.workspace_id
         JOIN items item ON item.id=sku.item_id AND item.workspace_id=sku.workspace_id
@@ -1317,7 +1322,7 @@ async function prepareAction(database,ctx,message,request,options={}) {
       awaitingField:'customer',choices:customer.ambiguous.map((row)=>({label:row.name,value:row.name}))};
     if(!Number.isSafeInteger(request.quantity)||request.quantity<1)return {status:'CLARIFY',
       answer:'How many units should this invoice cover?',awaitingField:'quantity'};
-    let description=request.description||null;let unitAmount=request.amount;
+    let description=request.description||null;let unitAmount=request.amount;let invoiceSkuId=null;
     let priceCurrency=null;
     if(request.sku){
       const sku=await resolveOne(database,'skus',ctx.workspaceId,request.sku,'i.name,s.position');
@@ -1325,6 +1330,7 @@ async function prepareAction(database,ctx,message,request,options={}) {
       if(sku.ambiguous)return {status:'CLARIFY',answer:'More than one product matches. Which exact SKU should appear on the invoice?',
         awaitingField:'sku'};
       if(sku.row){
+        invoiceSkuId=sku.row.id;
         description=description||`${sku.row.name}${sku.row.variant_label?` · ${sku.row.variant_label}`:''}`;
         const price=await pricing.currentPrice(database,ctx.workspaceId,sku.row.id);
         if(unitAmount===null||unitAmount===undefined)unitAmount=price.amount_minor===null?null:price.amount_minor/100;
@@ -1346,7 +1352,7 @@ async function prepareAction(database,ctx,message,request,options={}) {
     const unitMinor=pricing.toMinor(String(unitAmount),'Invoice unit price');
     if(unitMinor<=0)return {status:'CLARIFY',answer:'The invoice unit price must be greater than zero.'};
     return createProposal(database,ctx,message,'customer_invoice.create',{
-      customerId:customer.row.id,description,quantity:request.quantity,unitAmount:String(unitAmount),
+      customerId:customer.row.id,skuId:invoiceSkuId,description,quantity:request.quantity,unitAmount:String(unitAmount),priceOverride:request.amount!==null&&request.amount!==undefined,codes:String(request.couponCodes||'').split(',').map(s=>s.trim()).filter(Boolean),priceListId:request.priceListId||null,
       tax:String(request.tax??0),issueDate,dueDate:request.dueDate||null,notes:request.reference||null,
     },`Record an invoice for ${customer.row.name}: ${request.quantity} × ${description} at ${pricing.formatMinor(unitMinor,base)} each${tax?`, plus ${pricing.formatMinor(tax,base)} tax`:`, with no tax added`}. Approval posts the invoice; it does not send it, fulfill an order, or record payment.`);
   }
@@ -1481,11 +1487,11 @@ async function prepareAction(database,ctx,message,request,options={}) {
         pricing.toMinor(String(request.amount),'Selling price');
       if(!multipleLines&&amountMinor===null)return {status:'CLARIFY',answer:`What selling price per unit should this order use for ${sku.row.name}?`,awaitingField:'amount',carryForward:orderContext};
       const currency=orderLines?.currency||request.currency||current?.currency||'USD';
-      const lines=orderLines?.lines||[{skuId:sku.row.id,quantity:request.quantity,unitPriceMinor:amountMinor}];
+      const lines=orderLines?.lines||[{skuId:sku.row.id,quantity:request.quantity,unitPriceMinor:amountMinor,priceOverride:request.amount!==null&&request.amount!==undefined}];
       return createProposal(database,ctx,message,'sales_order.create',{customerId:party.row.id,
         deliveryMethod,shipToAddress:destination,fulfillmentLocationId,orderDate:request.orderDate,
         neededBy:request.neededBy,
-        currency,reference:request.reference,lines},
+        currency,reference:request.reference,lines,codes:String(request.couponCodes||'').split(',').map(s=>s.trim()).filter(Boolean),priceListId:request.priceListId||null},
       `Prepare one draft customer order for ${party.row.name}: ${orderLines?.summary||
         `${request.quantity} × ${sku.row.name}${sku.row.variant_label?` · ${sku.row.variant_label}`:''} at ${pricing.formatMinor(amountMinor,currency)} each`}, `+
         `${deliveryMethod==='PICKUP'?`pickup from ${fulfillmentLocationName}`:`to ${destination}`}.`);
@@ -1581,6 +1587,25 @@ async function prepareAction(database,ctx,message,request,options={}) {
 }
 
 async function createProposal(database,ctx,message,actionType,payload,summary) {
+  if(actionType==='customer_invoice.create'){
+    const quote=await require('../pricing/postgres-invoice-pricing').quote(database,ctx,payload);
+    if(quote.violations.length)throw new ValidationError('The invoice exceeds a pricing safeguard. Nothing was prepared.');
+    payload={...payload,pricingQuoteHash:require('../pricing/postgres-promotions').quoteHash(quote),expectedPricingTotalMinor:quote.totalMinor};
+    const customer=(await database.query("SELECT name FROM customers WHERE workspace_id=$1 AND id=$2 AND record_state='ACTIVE'",[ctx.workspaceId,payload.customerId])).rows[0];if(!customer)throw new ValidationError('Choose an active customer in this business.');
+    summary=`Record an invoice owed by ${customer.name}: ${payload.quantity} × ${payload.description} at ${pricing.formatMinor(quote.lines[0].unitPriceMinor,quote.currency)} each, discount ${pricing.formatMinor(quote.discountMinor,quote.currency)}, tax ${pricing.formatMinor(quote.taxMinor,quote.currency)}. Exact amount owed ${pricing.formatMinor(quote.totalMinor,quote.currency)}. Issue ${payload.issueDate}; due ${payload.dueDate||'not supplied'}. This posts the invoice only; no stock, payment or email changes.`;
+  }
+  if(actionType==='sales_order.create'){
+    const promotions=require('../pricing/postgres-promotions'),original=JSON.parse(JSON.stringify(payload)),requestedPricingHash=promotions.hash(original);
+    if(ctx.planStepKey){const existing=(await database.query('SELECT id,action_type,payload,summary,status FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1 AND actor_user_id=$2 AND idempotency_key=$3',[ctx.workspaceId,ctx.actorId,ctx.planStepKey])).rows[0];
+      if(existing){if(existing.action_type!==actionType||existing.payload.requestedPricingHash!==requestedPricingHash)throw new InvariantError('The prepared order scope changed during resumption. Review the current request.','proposal_scope_changed');return {status:'PREPARED',answer:existing.status==='PENDING'?'The exact order proposal is still waiting for your approval.':'This order proposal already has a recorded decision; its canonical status is preserved.',proposal:{id:existing.id,summary:existing.summary,actionType}};}}
+    const quote=await promotions.prepareQuote(database,ctx,original);
+    if(quote.violations.length)throw new ValidationError('This order needs a pricing review before approval: '+[...new Set(quote.violations.map(v=>v.kind.replaceAll('_',' ')))].join(', ')+'. Nothing was changed.');
+    payload={...payload,requestedPricingHash,pricingInputLines:original.lines,pricingInputDiscountMinor:original.discountMinor||0,pricingQuoteHash:promotions.quoteHash(quote),
+      discountMinor:quote.discountMinor,taxMinor:quote.taxMinor,lines:quote.lines.map((line,index)=>({...original.lines[index],unitPriceMinor:line.unitPriceMinor}))};
+    const products=(await database.query('SELECT s.id,s.code,i.name FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id WHERE s.workspace_id=$1 AND s.id=ANY($2::text[])',[ctx.workspaceId,quote.lines.map(l=>l.skuId)])).rows;
+    const party=(await database.query('SELECT name FROM customers WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,payload.customerId])).rows[0],location=payload.fulfillmentLocationId?(await database.query('SELECT name FROM locations WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,payload.fulfillmentLocationId])).rows[0]:null;
+    summary=`Prepare one draft order for ${party.name}:\n`+quote.lines.map(line=>{const p=products.find(p=>p.id===line.skuId);return `${line.quantity} × ${p.name} (${p.code}) at ${pricing.formatMinor(line.unitPriceMinor,quote.currency)} each; line discount ${pricing.formatMinor(line.discountMinor,quote.currency)}.`;}).join('\n')+`\n${payload.deliveryMethod==='PICKUP'?'Pickup':'Delivery'}${location?' from '+location.name:''}${payload.shipToAddress?' to '+payload.shipToAddress:''}. Reference ${payload.reference||'not supplied'}. Exact total ${pricing.formatMinor(quote.totalMinor,quote.currency)}; discounts ${pricing.formatMinor(quote.discountMinor,quote.currency)}, tax ${pricing.formatMinor(quote.taxMinor,quote.currency)}. Draft only: no stock reservation, fulfillment, invoice, payment or email.`+(quote.unusedCodes.length?' Unused codes: '+quote.unusedCodes.join(', ')+'.':'');
+  }
   const id=newId('pgprop');
   const key=ctx.planStepKey||`assistant:${id}`;
   const inserted=await database.query(`INSERT INTO stockchief_runtime.assistant_action_proposals

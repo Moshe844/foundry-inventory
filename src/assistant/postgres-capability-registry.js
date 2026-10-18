@@ -13,6 +13,12 @@ const {destinationById}=require('../web/postgres-navigation');
 const governedReports=require('../reports/postgres-registry');
 
 const FIELDS=Object.freeze({
+  invoiceDocument:{type:'string',maxLength:16000,description:'Complete supplier invoice JSON read from actual source evidence: supplierInvoiceNumber, issueDate, dueDate if present, currency, documentTotalMinor, taxMinor, lines [{sku or purchaseOrderLineId, quantity, unitCostMinor, description}], charges [{kind freight/insurance/duty/discount/other,label,amountMinor signed}], optional sourceMessageId and sourceAttachmentHash. Use exact minor amounts and PO product identities; never infer physical receipt or payment from an invoice.'},
+  couponCodes:{type:'string',description:'Comma-separated promotion codes explicitly supplied by the customer or owner. The pricing engine verifies eligibility, dates, stacking and limits; a code is not approval to bypass safeguards.'},
+  priceListId:{type:'string',description:'Exact eligible price-list ID discovered in current approved pricing records; omit to use the deterministic customer/quantity pricing hierarchy.'},
+  pricingDefinition:{type:'string',maxLength:12000,description:'JSON pricing policy using the discovered pricing form and records: kind price_list/promotion/guard, name, currency, optional enabled/priority/scope(customerIds,skuIds,categoryIds)/startsAt/endsAt. Lists contain entries(skuId,minQuantity,unitPriceMinor); promotions contain discount(type percent/fixed_order/fixed_line/fixed_unit/bundle,value in basis points or minor units, optional bundle items skuId/quantity), stacking stack/exclusive, optional code/stackGroup/excludes/minimumOrderMinor/minimumQuantity/maxRedemptions/maxPerCustomer. Guards contain minimumMarginBps/maximumDiscountBps. Exact IDs must come from this business. This proposes a future policy, never rewrites historical orders.'},
+  pricingRuleId:{type:'string',description:'Exact existing governed pricing-rule ID to revise; omit for a new rule.'},
+  expectedRevision:{type:'integer',description:'Current pricing-rule revision shown in the governed record; zero for a new rule.'},
   costBasis:{type:'string',description:'Confirmed accounting basis: opening_inventory for stock owned before accounting setup; previously_expensed for a purchase already recorded as an expense. Never infer either from a current purchase quote. Unrecorded/unpaid purchases require the supplier-invoice workflow.'},
   postingDate:{type:'string',description:'Accounting posting date, YYYY-MM-DD. Defaults to today and is shown for approval; closed periods cannot be used.'},
   ruleChanges:{type:'string',description:'A JSON array of proposed typed operating-rule changes using the discovered canonical schema. Supply only established facts and requested effects. Canonical identity resolution, intent verification and owner approval still apply.'},
@@ -232,13 +238,13 @@ action('communication.send_email','After approval, send a business email through
   ['recipient','recipientKind','recipientEmail','recipientMode','subject','body','mailbox','supplierAcceptance'],permissions.OPERATE,'send_email',
   {additionalCommercialCapabilities:['connection.email'],completionGate:'provider_effect_succeeded'});
 action('sales_order.create','Prepare ONE draft customer order without fulfillment or payment. For several products use orderLines JSON, preserving every SKU, quantity and price PER UNIT; for one product use sku, quantity and amount. Do not create separate orders for separate lines.',
-  ['customer','sku','skuScope','quantity','orderLines','deliveryMethod','shipToAddress','location','orderDate','neededBy','amount','currency','reference'],
+  ['customer','sku','skuScope','quantity','orderLines','deliveryMethod','shipToAddress','location','orderDate','neededBy','amount','currency','reference','couponCodes','priceListId'],
   permissions.MANAGE_SALES,'create_sales_order',{allowUnknownEntities:['customer'],
     resultReference:'salesOrderId',resultDisplayReference:'orderNumber',resultRecordKind:'sales_order'});
 action('report.template.create','Prepare a private saved report from governed PostgreSQL datasets. Can schedule verified-account email delivery daily at a stated UTC hour or weekly on Monday; no email is sent until approved. Use for a request to save or schedule a custom report, not for a one-time report answer.',
   [],permissions.VIEW,'save_report');
 action('customer_invoice.create','Prepare a customer invoice for review. Approval records and posts the invoice in StockChief; it does not create or fulfill a customer order, send the invoice, or collect payment.',
-  ['customer','sku','quantity','amount','tax','currency','description','issueDate','dueDate','reference'],
+  ['customer','sku','quantity','amount','tax','currency','description','issueDate','dueDate','reference','couponCodes','priceListId'],
   permissions.MANAGE_ACCOUNTING,'create_customer_invoice',{allowUnknownEntities:['customer']});
 action('purchase_order.create','Prepare a draft supplier order; amount is cost PER UNIT, not total. Unit cost may remain unknown in draft but must be priced before placement; no on-hand stock changes.',
   ['supplier','sku','skuScope','quantity','location','amount','currency','neededBy','reference','poNumber'],
@@ -263,6 +269,7 @@ for(const [name,required] of Object.entries(REQUIRED)){
 }
 
 const READS={
+  pricing:'Approved versioned customer price lists, quantity tiers, promotions, coupons, bundles, schedules and margin safeguards. These rules affect future quotes; historical order prices remain frozen. Rule IDs and revisions are current business records, not authorization to change them.',
   inventory:'Current SKU physical stock, commitments, and uncommitted quantities across the business. An uncommitted quantity is not proof that all fulfillment prerequisites are met; canonical execution also checks its applicable costing, order and authority requirements. Incoming purchase-order units are new supply; planned/in-transit internal transfers relocate existing stock and must not be added to business-wide incoming supply.',
   inventory_positions:'Current on-hand stock by product and location only. It does not account for commitments and cannot establish what is available to ship.',
   inventory_movements:'Recorded physical stock movements with verified source kind: import, supplier purchase receipt, customer return, internal transfer, customer sale fulfillment, or other. Count movements by source without treating imports or returns as supplier deliveries.',

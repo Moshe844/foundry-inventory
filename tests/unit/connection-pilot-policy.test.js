@@ -1,0 +1,7 @@
+'use strict';const test=require('node:test'),assert=require('node:assert/strict'),policy=require('../../src/connections/launch-policy');
+test('restored optional connections require a scoped staging grant and never enable production',t=>{
+ const names=['STOCKCHIEF_RUNTIME_ENV','STOCKCHIEF_STAGING_CONNECTION_WORKSPACES','STOCKCHIEF_STAGING_CONNECTION_PROVIDERS'],saved=Object.fromEntries(names.map(n=>[n,process.env[n]]));t.after(()=>{for(const[n,v]of Object.entries(saved))if(v===undefined)delete process.env[n];else process.env[n]=v;});
+ process.env.STOCKCHIEF_RUNTIME_ENV='staging';process.env.STOCKCHIEF_STAGING_CONNECTION_WORKSPACES='allowed-workspace';process.env.STOCKCHIEF_STAGING_CONNECTION_PROVIDERS='shopify,clover,xero,quickbooks,microsoft365,erp_future';
+ for(const provider of ['shopify','clover','xero','quickbooks','microsoft365']){assert.equal(policy.reason(provider,{workspaceId:'allowed-workspace'}),null);assert.throws(()=>policy.assertNewConnection(provider,{workspaceId:'other-workspace'}));assert.throws(()=>policy.assertNewConnection(provider));}
+ assert.throws(()=>policy.assertNewConnection('erp_future',{workspaceId:'allowed-workspace'}));process.env.STOCKCHIEF_RUNTIME_ENV='production';assert.throws(()=>policy.assertNewConnection('xero',{workspaceId:'allowed-workspace'}));assert.equal(policy.metadata({type:'xero',available:true},{workspaceId:'allowed-workspace'}).available,false);
+});

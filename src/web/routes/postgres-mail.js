@@ -32,7 +32,8 @@ function createPostgresMailRouter(database,options={}){
       mail.list(database,req.ctx.workspaceId,drawer.state),
       req.user.role==='owner'?mail.setAsideCount(database,req.ctx.workspaceId):Promise.resolve(0)]);
     return res.page('mail/inbox',{title:'Mail',nav:'mail',drawers:DRAWERS,drawer,
-      counts,messages:messages.map(inboxMessage),asideCount,canReviewAside:req.user.role==='owner'});
+      counts,messages:messages.map(inboxMessage),asideCount,canReviewAside:req.user.role==='owner',
+      canWriteReply:permissions.can(req.user,permissions.OPERATE)});
   }));
   router.get('/mail/set-aside',requireOwner,asyncRoute(async(req,res)=>{
     const [messages,count]=await Promise.all([mail.listSetAside(database,req.ctx.workspaceId),
@@ -50,7 +51,7 @@ function createPostgresMailRouter(database,options={}){
   router.get('/mail/:id',requirePermission(permissions.VIEW,'read the mailbox'),asyncRoute(async(req,res)=>{
     const raw=await mail.get(database,req.ctx.workspaceId,req.params.id);const message=messageForView(raw);
     const [attachmentRows,orderRows]=await Promise.all([
-      database.query(`SELECT * FROM connection_email_attachments WHERE workspace_id=$1 AND message_id=$2 ORDER BY filename`,
+      database.query(`SELECT id,filename,mime_type,extraction_status,extraction_error FROM connection_email_attachments WHERE workspace_id=$1 AND message_id=$2 ORDER BY filename`,
         [req.ctx.workspaceId,message.id]),
       database.query(`SELECT so.id,so.order_number,so.status,c.name AS customer_name FROM sales_orders so
         JOIN customers c ON c.id=so.customer_id AND c.workspace_id=so.workspace_id
@@ -63,9 +64,13 @@ function createPostgresMailRouter(database,options={}){
     const canImproveDraft=(await entitlements.capabilityState(database,commercialScope(req),
       'communications.ai_drafts')).enabled&&Boolean(options.aiProvider||require('../../config').ai.configured);
     return res.page('mail/message',{title:message.subject||'Message',nav:'mail',message,draft,productionMail:true,
-      canImproveDraft,
+      canImproveDraft,canWriteReply:permissions.can(req.user,permissions.OPERATE),
       prepared:{order:orderRows.rows[0]||null,because:message.order_draft_reason||null},
       attachments:attachmentRows.rows,drawers:DRAWERS});
+  }));
+  router.get('/mail/:id/attachments/:attachmentId/text',requirePermission(permissions.VIEW,'read the mailbox'),asyncRoute(async(req,res)=>{
+    const document=await require('../../connections/postgres-attachments').textPage(database,req.ctx.workspaceId,req.params.id,req.params.attachmentId,Number(req.query.offset||0));
+    return res.page('mail/attachment-text',{title:document.filename,nav:'mail',document,messageId:req.params.id});
   }));
   router.post('/mail/:id/state',requirePermission(permissions.OPERATE,'sort the mailbox'),asyncRoute(async(req,res)=>{
     const state=req.body.state==='RETHINK'?'NEEDS_REPLY':req.body.state;
@@ -79,13 +84,6 @@ function createPostgresMailRouter(database,options={}){
       await entitlements.assertCapability(database,commercialScope(req),'connection.email');
       await mail.queueSend(database,req.ctx,req.params.id,{subject:req.body.subject,body:req.body.body},{providers:options.providers});
       req.flash('success','Reply queued securely. StockChief will show it as sent only after the mailbox provider confirms it.');
-    }else if(req.body.action==='write'){
-      await entitlements.assertCapability(database,commercialScope(req),'communications.send_approved');
-      const message=await mail.get(database,req.ctx.workspaceId,req.params.id);
-      const name=message.supplier_name||String(message.sender||'').split('@')[0]||'there';
-      await mail.saveDraft(database,req.ctx,req.params.id,{subject:`Re: ${message.subject||'Your message'}`,
-        body:`Hi ${name},\n\nThank you for your message. We are reviewing it against our current records and will follow up with the confirmed details.\n\nBest,\n${req.workspace?.name||'The team'}`});
-      req.flash('success','Standard holding reply template prepared for you to edit. Nothing was sent.');
     }else if(req.body.action==='improve'){
       await require('../../connections/postgres-reply-drafting').prepare(database,req.ctx,req.params.id,
         {provider:options.aiProvider});

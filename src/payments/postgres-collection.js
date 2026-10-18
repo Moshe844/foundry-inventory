@@ -241,7 +241,7 @@ async function queueCustomerReturnRefund(database,ctx,customerReturnId,input={})
       FROM customer_return_lines rl JOIN sales_order_lines sol ON sol.id=rl.sales_order_line_id
       WHERE rl.workspace_id=$1 AND rl.customer_return_id=$2`,[ctx.workspaceId,customerReturnId])).rows;
     const amountMinor=lines.reduce((sum,line)=>sum+(parseJson(line.tracking_evidence).costAllocations||[])
-      .reduce((lineSum,allocation)=>lineSum+Number(allocation.quantity)*Number(line.unit_price_minor),0),0);
+      .reduce((lineSum,allocation)=>lineSum+(allocation.revenueMinor??Number(allocation.quantity)*Number(line.unit_price_minor))+(allocation.taxMinor||0),0),0);
     if(!Number.isSafeInteger(amountMinor)||amountMinor<=0)throw new ValidationError('This return has no verified amount to refund.');
     const paid=(await client.query(`SELECT request.id AS payment_request_id,request.paid_minor,request.currency,
         event.external_payment_id,

@@ -1,0 +1,1 @@
+(()=>{'use strict';const product=document.querySelector('select[name="skuId"]');if(!product)return;product.addEventListener('change',()=>{const option=product.selectedOptions[0],form=product.form;if(!option?.value)return;form.elements.description.value=option.dataset.name||'';form.elements.unitAmount.value=option.dataset.price||'';});})();

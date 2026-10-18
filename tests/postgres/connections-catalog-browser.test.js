@@ -12,7 +12,7 @@ const catalog=require('../../src/domain/postgres-catalog-service');
 const locations=require('../../src/domain/postgres-location-service');
 const inventory=require('../../src/domain/postgres-inventory-engine');
 
-test('Connections browser shows launch-qualified providers and retains excluded connection history honestly',
+test('Connections browser shows the full provider directory without enabling excluded providers or losing history',
   {timeout:120000},async(context)=>{
     const cluster=await startCluster();
     const database=openPostgres(cluster.connectionString,{applicationName:'stockchief-connections-catalog-browser'});
@@ -65,8 +65,9 @@ test('Connections browser shows launch-qualified providers and retains excluded 
     await page.goto(`${base}/settings/connections`);
     const text=await page.locator('main').innerText();
     for(const provider of ['Square','WooCommerce','Gmail','Stripe'])assert.match(text,new RegExp(provider));
-    for(const provider of ['QuickBooks','Xero','Clover','Microsoft 365'])
-      assert.doesNotMatch(text,new RegExp(provider));
+    for(const provider of ['QuickBooks','Xero','Clover','Microsoft 365','Shopify'])
+      assert.match(text,new RegExp(provider),'Existing adapters remain discoverable with honest availability');
+    for(const provider of ['QuickBooks','Xero','Clover','Microsoft 365'])assert.equal(await page.getByRole('link',{name:'Connect '+provider,exact:true}).count(),0,'A directory entry is not a production activation');
     assert.doesNotMatch(text,/Connect Shopify/);
     assert.match(text,/disconnected or incomplete connection/);
     await page.getByText(/disconnected or incomplete connection/).click();
