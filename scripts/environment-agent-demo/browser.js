@@ -74,7 +74,7 @@ async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null,ob
         .map(dialog=>({key:createHash('sha256').update(dialog.identity).digest('hex'),modal:dialog.modal})),
       localEdits:structuredClone(localEdits),...(localEdits.length?{formBaseline,presentationSafe}:{})};
   }
-  async function describe(node,optionOffset=0,optionLimit=100){return node.evaluate((element,{offset,limit})=>{
+  async function describe(node,optionOffset=0,optionLimit=100){return require('./browser-link-evidence').control(await node.evaluate((element,{offset,limit})=>{
     const labelledBy=(element.getAttribute('aria-labelledby')||'').split(/\s+/).map(id=>document.getElementById(id)?.innerText||'').join(' ').trim();
     const describedBy=(element.getAttribute('aria-describedby')||'').split(/\s+/).map(id=>document.getElementById(id)?.innerText||'').join(' ').trim();
     const options=element.tagName==='SELECT'?Array.from(element.options):null;
@@ -93,7 +93,7 @@ async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null,ob
       options:options?.slice(offset,offset+limit).map(o=>({label:o.label.slice(0,500),value:o.value.slice(0,500),disabled:o.disabled})),
       optionsOffset:options?offset:undefined,optionsTotal:options?.length,
       optionsTruncated:options?offset+limit<options.length:false};
-  },{offset:optionOffset,limit:optionLimit});}
+  },{offset:optionOffset,limit:optionLimit}));}
   async function inspect({controlOffset=0,textOffset=0}={}){
     await Promise.allSettled([...references.values()].map(node=>node.dispose()));
     references=new Map();continuations=new Map();revision++;
