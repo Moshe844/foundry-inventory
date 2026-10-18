@@ -3,6 +3,18 @@ const test=require('node:test'),assert=require('node:assert/strict'),{createHash
 const refs=require('../../scripts/environment-agent-demo/source-references');
 function evidence(id,value,name='business_operations'){const text=JSON.stringify(value);return{id,name,text,sha256:createHash('sha256').update(text).digest('hex')};}
 
+test('durable retrieval retains the same returned count and exact field bindings as initial delivery',()=>{
+ const journal=require('../../scripts/environment-agent-demo/observations'),original={outcomes:[{result:{columns:['name','currency'],rows:Array.from({length:40},(_,i)=>({name:'Unknown record '+i,currency:i%2?'CAD':'USD'}))}}]},h={candidate:'codex',evidence:{}};
+ const entry=journal.store(h,{id:'durable:page',name:'business_operations',result:original}),shown=refs.present(entry,require('../../scripts/environment-agent-demo/evidence-presentation').project(entry.name,original));
+ const restarted=JSON.parse(JSON.stringify(h)),records=[];let offset=0;
+ do{const result=journal.retrieve(restarted,{id:entry.id,offset});records.push(...result.records);offset=result.nextOffset;}while(offset!==null);
+ const extent=records.find(r=>r.path==='/outcomes/0/result/extent').value,key=shown._stockchiefSources.valueField;
+ assert.equal(extent.returnedRows,40);assert.equal(extent.totalRows,null);assert.equal(extent.complete,false);
+ assert.equal(extent[key].returnedRows,shown.outcomes[0].result.extent[key].returnedRows);
+ assert.equal(refs.resolve([entry],{sourceRef:extent[key].returnedRows,value:40}).path,'/outcomes/0/result/extent/returnedRows');
+ assert.equal(entry.text,JSON.stringify(original),'The full original journal remains untouched');
+});
+
 test('recorded heading-versus-value confusion cannot select an issued table-heading reference',{timeout:10000},()=>{
  const original={outcomes:[{capability:'read.accounting',result:{columns:['measure','value','currency'],columnLabels:{currency:'Currency'},configuration:{baseCurrency:'USD'},rows:[{measure:'Debits',value:'$0.00',currency:'USD'}]}}]},e=evidence('recorded:heading',original),shown=refs.present(e,original),key=shown._stockchiefSources.valueField,result=shown.outcomes[0].result;
  assert.deepEqual(result.columns,original.outcomes[0].result.columns);assert.deepEqual(result.columnLabels,original.outcomes[0].result.columnLabels);assert(!Object.hasOwn(result[key]||{},'columns[2]'));

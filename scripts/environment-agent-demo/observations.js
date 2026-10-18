@@ -44,7 +44,9 @@ function retrieve(h,{id,offset=0}){
  if(id==='@index')return page({observations:index(h)},id,offset);
  const e=h.evidence?.[id];if(!e)throw new Error('EVIDENCE_NOT_FOUND');
  if(!Number.isSafeInteger(offset)||offset<0)throw new Error('INVALID_EVIDENCE_OFFSET');
- try{const value=require('./source-references').present(e,JSON.parse(e.text));
+ try{const original=JSON.parse(e.text),view=['business_operations','environment_dataset'].includes(e.name)
+   ?require('./evidence-presentation').project(e.name,original):original;
+  const value=require('./source-references').present(e,view);
   if(value?.image&&offset===0)return {image:value.image,screen:{...value.screen,evidenceId:id,observedAt:e.at,historical:true,untrusted:true,
    sourceTruncated:Boolean(e.truncated),sha256:e.sha256||null,notice:'Historical screenshot and screen. Old control references are not live handles.'}};
   return {...page(value?.image?value.screen:value,id,offset,e.at),sourceTruncated:Boolean(e.truncated),sha256:e.sha256||null};}

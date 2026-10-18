@@ -568,7 +568,10 @@ async function lookup(database,ctx,request,options={}) {
     const checkMissing=!Number.isFinite(lastCheck);
     const checkStale=!checkMissing&&Date.now()-lastCheck>86400000;
     const instant=value=>{if(!value||typeof value==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(value))return null;const at=value instanceof Date?value.getTime():typeof value==='string'?Date.parse(value):NaN;return Number.isFinite(at)?new Date(at).toISOString():null;};
-    const rows=needs.slice(0,10).map((item)=>evidenceRow({decision:item.title,importance:item.importance,
+    // The canonical inbox already applied workspace, actor and permission
+    // filters. Preserve that full read; the durable tool transport pages large
+    // observations without forcing browser exploration to recover missing rows.
+    const rows=needs.map((item)=>evidenceRow({decision:item.title,importance:item.importance,
       reason:item.why||item.happened||'',kind:item.kind,recordedAt:instant(item.createdAt),timeLabel:item.timeLabel||'Record created',updatedAt:instant(item.updatedAt),dueDate:item.dueDate||null,...(item.approval?{approval:item.approval}:{})},item.href));
     const answer=needs.length?`${needs.length} ${needs.length===1?'thing needs':'things need'} your attention. First: ${needs[0].title}.`:
       checkMissing?'No decisions are waiting yet, but StockChief has not run its first check. This is not an all-clear.':
