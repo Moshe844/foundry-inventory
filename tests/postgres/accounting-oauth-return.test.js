@@ -1,0 +1,15 @@
+'use strict';
+process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto'),{chromium}=require('playwright');
+test('authorized accounting connection returns automatically while authority remains required, without granting posting',{timeout:180000},async t=>{
+ const cluster=await require('../helpers/postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString);await require('../../src/db/migrate-postgres').migratePostgres(db);
+ const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:randomUUID()}),server=await new Promise(r=>{const s=app.listen(0,'127.0.0.1',()=>r(s));}),browser=await chromium.launch();
+ t.after(async()=>{await browser.close();await new Promise(r=>server.close(r));await app.locals.sessionStore.close();await db.close();await cluster.stop();});
+ const base='http://127.0.0.1:'+server.address().port,page=await browser.newPage(),email=randomUUID()+'@example.test';await page.goto(base+'/register');await page.getByLabel('Business name').fill('Accounting return check');await page.getByLabel('Your name').fill('Test owner');await page.getByLabel('Work email').fill(email);await page.locator('input[name=password]').fill('Test!'+randomUUID());const confirm=page.locator('input[name=confirmPassword]');if(await confirm.count())await confirm.fill(await page.locator('input[name=password]').inputValue());await Promise.all([page.waitForURL(base+'/onboarding'),page.getByRole('button',{name:'Create account'}).click()]);
+ const owner=(await db.query("SELECT w.id,u.id AS actor FROM workspaces w JOIN users u ON u.workspace_id=w.id WHERE w.name='Accounting return check'")).rows[0],id='con_'+randomUUID().replaceAll('-',''),at=new Date().toISOString();
+ await db.query("INSERT INTO workspace_connectors(id,workspace_id,connector_key,display_name,provider_type,status,capabilities,provides,config,expected_interval_minutes,setup_status,authorized_by_user_id,provider_account_id,created_at,updated_at) VALUES($1,$2,$3,'QuickBooks','quickbooks','connected','[]','[]','{}',360,'AUTHORITY_REQUIRED',$4,'sandbox-company',$5,$5)",[id,owner.id,'quickbooks:'+id,owner.actor,at]);
+ const response=await page.goto(base+'/settings/connections/'+id+'/complete');assert.equal(response.status(),200);assert.match(await page.locator('body').innerText(),/QuickBooks is connected/);
+ await page.waitForURL(base+'/settings/connections/'+id);const saved=(await db.query('SELECT status,setup_status FROM workspace_connectors WHERE workspace_id=$1 AND id=$2',[owner.id,id])).rows[0];assert.deepEqual(saved,{status:'connected',setup_status:'AUTHORITY_REQUIRED'});
+ assert.equal(Number((await db.query('SELECT count(*) AS n FROM accounting_journal_entries WHERE workspace_id=$1',[owner.id])).rows[0].n),0);
+ const proof=require('node:path').resolve('../../output/integrations/quickbooks-oauth');require('node:fs').mkdirSync(proof,{recursive:true});await page.screenshot({path:require('node:path').join(proof,'automatic-return-authority-preserved.png'),fullPage:true});
+});

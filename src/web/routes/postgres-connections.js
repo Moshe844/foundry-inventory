@@ -169,11 +169,13 @@ function createPostgresConnectionsRouter(database,options={}){
   }));
   router.get('/settings/connections/:id/complete',requireOwner,asyncRoute(async(req,res)=>{
     const connection=await connections.get(database,req.ctx.workspaceId,req.params.id);
-    const connected=connection.status==='connected'&&!connection.paused_at&&connection.setup_status==='CONNECTED';
+    // Authorization success is distinct from the explicit accounting authority decision.
+    const connected=connection.status==='connected'&&!connection.paused_at;
+    const setupRequired=connected&&connection.setup_status!=='CONNECTED';
     const requestOrigin=`${req.protocol}://${req.get('host')}`;
     return oauthReturnPage(res,{connected,providerName:registry.get(connection.provider_type)?.metadata()?.name||connection.display_name,
       connection,returnOrigin:requestOrigin,requestOrigin,
-      message:connected?`${connection.display_name} is connected to this inventory.`:'This connection still needs attention. Return to its settings to review the current state.'});
+      message:setupRequired?`${connection.display_name} is connected. Returning you to StockChief to finish its setup.`:connected?`${connection.display_name} is connected to this inventory.`:'This connection still needs attention. Return to its settings to review the current state.'});
   }));
   router.get('/settings/connections/:id',asyncRoute(async(req,res)=>{
     const newConnectionToken=req.session.newConnectionToken||null;
