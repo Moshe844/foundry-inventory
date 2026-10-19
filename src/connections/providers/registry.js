@@ -29,7 +29,7 @@ const future = Object.freeze([
 ]);
 
 function get(type) { return adapters[type] || null; }
-function catalog(ctx) { return [shopify.metadata(), square.metadata(), clover.metadata(), woocommerce.metadata(), generic,
+function catalog(ctx,authorizationOptions) { return [shopify.metadata(), square.metadata(authorizationOptions), clover.metadata(), woocommerce.metadata(), generic,
   ...future, gmail.metadata(), microsoft365.metadata(), quickbooks.metadata(), xero.metadata()]
   .map(meta=>launchPolicy.metadata(meta,ctx)); }
 

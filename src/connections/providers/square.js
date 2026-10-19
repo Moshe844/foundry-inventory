@@ -12,8 +12,15 @@ const WEBHOOK_EVENTS = ['payment.created', 'payment.updated', 'refund.created', 
   'catalog.version.updated', 'location.created', 'location.updated'];
 
 function base() { return config.connections.square.environment === 'sandbox' ? 'https://connect.squareupsandbox.com' : 'https://connect.squareup.com'; }
-function metadata() {
-  return { type: 'square', name: 'Square', mark: '□', category: 'selling', authMode: 'oauth', available: config.connections.square.configured,
+function oauthConfigured() { return Boolean(config.connections.square.applicationId && config.connections.square.applicationSecret); }
+const oauthUnavailableReason='Square sign-in has not been configured on this StockChief installation. Your administrator must complete the secure connection setup.';
+function assertOAuthConfigured() { if(!oauthConfigured())throw new ValidationError(oauthUnavailableReason); }
+function metadata({oauthOnly=false}={}) {
+  // The legacy local sandbox can use a personal token directly. A server-side
+  // OAuth connection always requires both application credentials; a personal
+  // API token cannot stand in for the secret in the authorization-code flow.
+  const available=oauthOnly?oauthConfigured():config.connections.square.configured;
+  return { type: 'square', name: 'Square', mark: '□', category: 'selling', authMode: 'oauth', available,
     description: 'Automatically import and keep mapping Square products, variants, prices, inventory and business locations, then receive completed sales and returns.',
     provides: ['completed POS sales', 'returns', 'catalog SKUs and locations'],
     // Square is a source of real business evidence, not a suggestion list.
@@ -24,12 +31,12 @@ function metadata() {
     authorizationPrerequisite:config.connections.square.environment==='sandbox'?{
       message:'Before connecting, launch a seller test account from the Square Developer Console and keep it open in this browser. Square Sandbox requires that signed-in seller session; otherwise its authorization window may appear blank.',
       label:'Open Square Developer Console',href:'https://developer.squareup.com/apps'}:null,
-    unavailableReason: config.connections.square.configured ? null : 'StockChief’s Square app credentials have not been configured on this installation.',
+    unavailableReason: available ? null : oauthUnavailableReason,
   };
 }
 
 function authorizationUrl({ state, input }) {
-  if (!config.connections.square.configured) throw new ValidationError('Square is not configured on this StockChief installation.');
+  assertOAuthConfigured();
   const url = new URL(`${base()}/oauth2/authorize`);
   url.searchParams.set('client_id', config.connections.square.applicationId);
   url.searchParams.set('scope', SCOPES.join(' '));
@@ -52,6 +59,7 @@ async function tryDirectAuthorization() {
 
 async function exchangeAuthorization({ query }) {
   if (query.error) throw new ValidationError(query.error_description || 'Square authorization was not completed.');
+  assertOAuthConfigured();
   const { body } = await jsonRequest(`${base()}/oauth2/token`, { method: 'POST',
     headers: { 'content-type': 'application/json', 'square-version': API_VERSION }, body: JSON.stringify({
       client_id: config.connections.square.applicationId, client_secret: config.connections.square.applicationSecret,

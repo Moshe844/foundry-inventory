@@ -60,7 +60,7 @@ function createPostgresConnectionsRouter(database,options={}){
     return res.page('connections/index',{
       title:'Connections',nav:'connections',room:true,backTo:{href:'/settings',label:'Settings'},launchTicket,
       postgresMode:true,connections:connectionRows,
-      providerCatalog:registry.catalog(req.ctx),
+      providerCatalog:registry.catalog(req.ctx,{oauthOnly:true}),
       apiToken,apiClients:clients,
       // Preserve existing merchant account details, but do not advertise new
       // self-service Connect or StockChief-funded guided shipping at launch.

@@ -22,7 +22,7 @@ async function beginAuthorization(database,ctx,input,requestOrigin,options={}){
   if(registry===defaultProviders)launchPolicy.assertNewConnection(providerType,ctx);
   const adapter=registry.get(providerType);
   if(!adapter)throw new ValidationError('Choose a supported connection provider.');
-  const meta=adapter.metadata();
+  const meta=adapter.metadata({oauthOnly:true});
   const commercialScope=await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId);
   await entitlements.assertCapability(database,commercialScope,['gmail','microsoft365'].includes(providerType)?'communications.email_ingestion':
     adapter.integrationClass==='accounting'?'connections.accounting':'connections.commerce');

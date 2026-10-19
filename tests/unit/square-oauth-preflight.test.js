@@ -1,0 +1,27 @@
+'use strict';
+process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict');
+const adapter=require('../../src/connections/providers/square'),registry=require('../../src/connections/providers/registry');
+test('Square OAuth availability requires the application secret even when a personal sandbox API token exists',async t=>{
+ const keys=['SQUARE_ENVIRONMENT','SQUARE_APPLICATION_ID','SQUARE_APPLICATION_SECRET','SQUARE_SANDBOX_ACCESS_TOKEN'],before=Object.fromEntries(keys.map(k=>[k,process.env[k]])),oldFetch=global.fetch;
+ t.after(()=>{global.fetch=oldFetch;for(const[k,v]of Object.entries(before))if(v===undefined)delete process.env[k];else process.env[k]=v;});
+ process.env.SQUARE_ENVIRONMENT='sandbox';process.env.SQUARE_APPLICATION_ID='sandbox-test-app';process.env.SQUARE_SANDBOX_ACCESS_TOKEN='test-personal-token';delete process.env.SQUARE_APPLICATION_SECRET;
+ let requests=0;global.fetch=async()=>{requests++;throw Error('No upstream request allowed');};
+ assert.equal(adapter.metadata().available,true,'The legacy direct sandbox API path remains available');
+ assert.equal(adapter.metadata({oauthOnly:true}).available,false);
+ assert.equal(registry.catalog({}, {oauthOnly:true}).find(p=>p.type==='square').available,false);
+ assert.throws(()=>adapter.authorizationUrl({state:'test-state',input:{redirectUri:'https://app.example.test/settings/connections/square/callback'}}),/secure connection setup/);
+ await assert.rejects(adapter.exchangeAuthorization({query:{code:'test-code'}}),/secure connection setup/);
+ assert.equal(requests,0,'Missing credentials must be rejected before transmitting a code');
+ global.fetch=async url=>{requests++;assert.equal(new URL(url).pathname,'/v2/merchants/me');return new Response(JSON.stringify({merchant:{id:'sandbox-fixture-merchant',business_name:'Fixture sandbox seller'}}),{status:200,headers:{'content-type':'application/json'}});};
+ const direct=await adapter.tryDirectAuthorization();assert.equal(direct.accountId,'sandbox-fixture-merchant');assert.equal(direct.credentials.authMode,'sandbox_personal');assert.equal(requests,1);
+ process.env.SQUARE_APPLICATION_SECRET='test-application-secret';
+ assert.equal(adapter.metadata({oauthOnly:true}).available,true);
+ const auth=adapter.authorizationUrl({state:'test-state',input:{redirectUri:'https://app.example.test/settings/connections/square/callback'}}),url=new URL(auth.url);
+ assert.equal(url.origin,'https://connect.squareupsandbox.com');assert.equal(url.searchParams.get('client_id'),'sandbox-test-app');assert.equal(url.searchParams.get('state'),'test-state');
+ assert(!url.toString().includes('test-application-secret'));assert(!url.toString().includes('test-personal-token'));
+ assert.equal(auth.metadata.redirectUri,'https://app.example.test/settings/connections/square/callback');
+ process.env.SQUARE_ENVIRONMENT='production';delete process.env.SQUARE_APPLICATION_SECRET;
+ assert.equal(adapter.metadata({oauthOnly:true}).available,false);assert.equal(await adapter.tryDirectAuthorization(),null);
+ assert.equal(requests,1,'Production must not use the personal sandbox helper');
+});
