@@ -3,6 +3,7 @@ const {createHash}=require('node:crypto');
 const TABLE='stockchief_runtime.assistant_goals';
 const stable=value=>Array.isArray(value)?value.map(stable):value&&typeof value==='object'
  ?Object.fromEntries(Object.keys(value).sort().map(key=>[key,stable(value[key])])):value;
+const failureReason=value=>typeof value==='string'?require('../../src/assistant/agent-conversation').publicText(value,'').slice(0,200):'';
 
 // The existing goal owns checkpoints. Interrupted consequential calls require
 // reconciliation against canonical records, never blind replay.
@@ -62,6 +63,15 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    [ctx.workspaceId,ctx.actorId,goalId,JSON.stringify(cp),goal.status,goal.answer,goal.tool_calls]);
   return result;
  },{isolation:'SERIALIZABLE',retrySafe:true});}
+ async function checkpointUpdate(change){return update(async(h,goal,client)=>{
+  // Settled response persistence grants no new model/tool/business operation.
+  // Match native checkpoint semantics: current actor, stamp, lease and tenant
+  // in the same transaction, including after a spending pause.
+  const actor=(await client.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2 FOR SHARE',
+   [ctx.workspaceId,ctx.actorId])).rows[0];
+  if(!actor||!h.authorityStamp)throw Error('SESSION_AUTHORITY_CHANGED');checkAuthority(h,{actor});
+  return change(h,goal,client);
+ });}
  return {
   identity:Object.freeze({workspaceId:ctx.workspaceId,actorId:ctx.actorId,goalId,candidate}),
   async approvalInbox(){return candidate==='codex'?notifyApprovals(await require('./approval-handoff').inbox(database,ctx,goalId)):null;},
@@ -96,6 +106,7 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    conversation:structuredClone(goal.checkpoint.conversation||null),
    conversationState:structuredClone(goal.checkpoint.conversationState||null),
    verificationFeedback:h.verificationFailure?{kind:'host_verification_feedback',code:h.verificationFailure.code,
+    ...(h.verificationFailure.reason?{reason:h.verificationFailure.reason}:{}),
     ...(Number.isInteger(h.verificationFailure.claimIndex)?{claimIndex:h.verificationFailure.claimIndex}:{}),
     ...(h.verificationFailure.sourceRef?{sourceRef:h.verificationFailure.sourceRef}:{}),
     ...(h.verificationFailure.evidenceId?{evidenceId:h.verificationFailure.evidenceId,path:h.verificationFailure.path}:{}),
@@ -111,12 +122,7 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    // actor stamp in this transaction; those effect boundaries still perform
    // their own complete commercial/authority admission. This also lets the
    // SDK save its settled state if the spending lock changes mid-response.
-   return update(async(h,goal,client)=>{
-    const actor=(await client.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2 FOR SHARE',
-     [ctx.workspaceId,ctx.actorId])).rows[0];
-    if(!actor||!h.authorityStamp)throw Error('SESSION_AUTHORITY_CHANGED');
-    checkAuthority(h,{actor});h.native={...h.native,...native};
-   });
+   return checkpointUpdate(h=>{h.native={...h.native,...native};});
   },
   async executionState(){return authorizedUpdate(async(h,goal,client,access)=>{
    const receipt=await require('./receipts').collect(client,ctx,goal,h,access.catalogue);
@@ -157,7 +163,7 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    if(candidate!=='codex'||h.codexDelivery?.state==='PENDING')throw new Error('CODEX_RESPONSE_RECONCILIATION_REQUIRED');
    h.codexDelivery={hash,state:'PENDING'};
   };return admissionAccess?.actor?update(change,{access:admissionAccess}):authorizedUpdate(change);},
-  async codexDelivered(hash,packet,outcome){return authorizedUpdate(h=>{
+  async codexDelivered(hash,packet,outcome){return checkpointUpdate(h=>{
    if(candidate!=='codex'||h.codexDelivery?.hash!==hash||h.codexDelivery.state!=='PENDING')throw new Error('CODEX_RESPONSE_SEQUENCE_MISMATCH');
    h.codexDelivery={hash,state:'SETTLED',packet:require('./replay-packet').pack(packet)};h.lastCodexResponse={...outcome,request:h.codexRequests};
   });},
@@ -165,19 +171,39 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
   // Its own durable slot still prevents spending again on an unknown outcome.
   helperDelivery(){return {
    identity:Object.freeze({workspaceId:ctx.workspaceId,actorId:ctx.actorId,goalId,candidate}),
-   codexReplay:async hash=>{return read(h=>{
+   codexReplay:async(hash,admissionAccess=null)=>{return read(h=>{
     if(h.helperDelivery?.state==='PENDING')throw Error('CODEX_RESPONSE_RECONCILIATION_REQUIRED');
     return h.helperDelivery?.hash===hash?require('./replay-packet').unpack(h.helperDelivery.packet):null;
-   });},
-   codexPending:async hash=>{return authorizedUpdate(h=>{
+   },admissionAccess);},
+   codexPending:async(hash,admissionAccess=null)=>{const change=h=>{
     if(h.helperDelivery?.state==='PENDING')throw Error('CODEX_RESPONSE_RECONCILIATION_REQUIRED');
     h.helperDelivery={hash,state:'PENDING'};
-   });},
-   codexDelivered:async(hash,packet)=>{return authorizedUpdate(h=>{
+   };return admissionAccess?.actor?update(change,{access:admissionAccess}):authorizedUpdate(change);},
+   codexDelivered:async(hash,packet)=>{return checkpointUpdate(h=>{
     if(h.helperDelivery?.hash!==hash||h.helperDelivery.state!=='PENDING')throw Error('CODEX_RESPONSE_SEQUENCE_MISMATCH');
     h.helperDelivery={hash,state:'SETTLED',packet:require('./replay-packet').pack(packet)};
    });}
   };},
+  async answerReview(raw){return authorizedUpdate((h,goal)=>{
+   const review=require('../../src/assistant/native-answer-review');let bound;
+   try{bound=review.binding(goal,raw);}catch{
+    // Reference/integrity errors belong to the existing deterministic verifier
+    // and its bounded native correction path. Never buy a semantic opinion on
+    // evidence the host cannot resolve, or turn that correction into a stop.
+    return {required:false,preflightRejected:true};
+   }
+   if(!bound)return {required:false};
+   if(h.answerScopeReview?.version===review.version&&h.answerScopeReview.hash===bound.hash&&h.answerScopeReview.state==='SETTLED')
+    return {...bound,required:true,verdict:h.answerScopeReview.verdict};
+   h.answerScopeReview={version:review.version,hash:bound.hash,state:'PREPARED',input:bound.input};
+   return {...bound,required:true};
+  });},
+  async answerReviewed(raw,hash,value){return authorizedUpdate((h,goal)=>{
+   const review=require('../../src/assistant/native-answer-review'),bound=review.binding(goal,raw);
+   if(!bound||bound.hash!==hash||h.answerScopeReview?.hash!==hash)throw Error('ANSWER_SCOPE_REVIEW_CHANGED');
+   h.answerScopeReview={version:review.version,hash,state:'SETTLED',input:bound.input,verdict:review.verdict(value)};
+   return h.answerScopeReview.verdict;
+  });},
   async modelControl({budgetFinal=false}={}){return authorizedUpdate(h=>{
    h.modelRequests||=0;
    if(h.lastModelResponse?.empty)throw Object.assign(new Error(require('./finalization').EMPTY_MESSAGE),{code:'EMPTY_MODEL_FINAL'});
@@ -295,6 +321,7 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
     const failure=verified?null:{code:/^[A-Z][A-Z0-9_]{0,99}$/.test(check.verificationFailure||'')?check.verificationFailure:'OUTCOME_UNVERIFIED',
      nativeDigest:h.native?.codex?.digest||null,sourceHash:check.verificationSourceHash||null,
      ...(Number.isInteger(check.verificationDetail?.claimIndex)?{claimIndex:check.verificationDetail.claimIndex}:{}),
+     ...(failureReason(check.verificationDetail?.reason)?{reason:failureReason(check.verificationDetail.reason)}:{}),
      ...(check.verificationDetail?.sourceRef?{sourceRef:check.verificationDetail.sourceRef}:{}),
      ...(check.verificationDetail?.evidenceId?{evidenceId:check.verificationDetail.evidenceId,path:check.verificationDetail.path}:{})};
     // A settled SDK report can have a bad citation without an uncertain paid
@@ -302,7 +329,7 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
     // native thread once. This uses the existing request/goal/period gates,
     // keeps every rejected assertion unverified and never repeats an effect.
     // Persist the allowance so interruptions cannot reset it into a loop.
-    const correctable=['SOURCE_REFERENCE_NOT_FOUND','INVALID_SOURCE_REFERENCE','FIELD_REFERENCE_MUST_NOT_SUPPLY_PATH','EVIDENCE_VALUE_MISMATCH','EVIDENCE_POINTER_NOT_FOUND'].includes(failure?.code);
+    const correctable=['SOURCE_REFERENCE_NOT_FOUND','INVALID_SOURCE_REFERENCE','FIELD_REFERENCE_MUST_NOT_SUPPLY_PATH','EVIDENCE_VALUE_MISMATCH','EVIDENCE_POINTER_NOT_FOUND','ANSWER_SCOPE_UNVERIFIED'].includes(failure?.code);
     if(candidate==='codex'&&allowReportCorrection&&correctable&&current==='READY'&&h.receipt.dependencyState==='READY'&&canonicalVerified&&!h.admissionBlock&&
      Number(h.codexRequests||0)<24&&Number(h.verificationCorrections||0)<1){
      h.verificationCorrections=1;h.verificationFailure=failure;h.pendingReport=null;h.failure=null;h.userQuestion=null;

@@ -12,7 +12,12 @@ test('actual Codex SDK opens a governed report link absent from its starting scr
  await db.query('UPDATE items SET is_active=0 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,product.itemId]);
  const pilot=require('../../src/assistant/postgres-codex-pilot'),store=require('../../src/assistant/postgres-goal-store'),started=await pilot.start(db,ctx,'Inspect the reported record without changing anything.');let calls=0,proof;
  function find(v){if(typeof v==='string'){try{const hit=find(JSON.parse(v));if(hit)return hit;}catch{}const match=v.match(/LINK_PROOF=(\{[^\r\n]*\})/);if(match)return JSON.parse(match[1]);}else if(v&&typeof v==='object')for(const child of Object.values(v)){const hit=find(child);if(hit)return hit;}return null;}
- const fake=async(_url,init)=>{const body=JSON.parse(init.body);calls++;
+ const fake=async(_url,init)=>{const body=JSON.parse(init.body);
+  if(body.text?.format?.name==='native_answer_scope_fit'){
+   const input=JSON.parse(body.input[0].content);assert.equal(input.proposedAnswer,'The reported product is '+proof.product+'.');assert(input.evidence.some(e=>e.observation.rows?.some(r=>r.product===proof.product)));
+   return Response.json({id:'offline-report-review',object:'response',status:'completed',model:body.model,output:[{type:'message',role:'assistant',content:[{type:'output_text',text:JSON.stringify({grounded:true,reason:''})}]}],usage:{input_tokens:200,output_tokens:40,total_tokens:240}});
+  }
+  calls++;
   if(calls===1)return require('../helpers/codex-offline-response')(body,calls,
    `const envelope=await tools.mcp__stockchief__environment_dataset({specJson:JSON.stringify({dataset:'catalogue',columns:['product','status','product_status','variant_status']}),offset:0});if(envelope.isError)throw Error('READ_FAILED');const report=JSON.parse(envelope.content[0].text);const row=report.rows[0];const opened=await tools.mcp__stockchief__environment_browser({action:'open',ref:null,value:row.href});const screen=JSON.parse(opened.content[0].text);text('LINK_PROOF='+JSON.stringify({evidenceId:report._stockchiefEvidence.evidenceId,product:row.product,url:screen.url,httpStatus:screen.httpStatus,error:screen.error}));`);
   assert.equal(calls,2);proof=find(body.input);assert(proof);assert(!proof.error,JSON.stringify(proof.error));assert.equal(new URL(proof.url).pathname,'/inventory/'+product.itemId);assert.equal(proof.httpStatus,200);

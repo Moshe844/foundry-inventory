@@ -103,6 +103,7 @@ async function run(database,ctx,id,options={}){
   // CURRENT authority, canonical receipts and fresh records/browser evidence.
   // No credential, token count, spending hold or new SDK turn is needed here.
   let savedFinal=require(base+'codex-runtime').savedFinal(goal.checkpoint.harness,{profile:modelProfile,messages:goal.checkpoint.messages||[]});
+  let pendingFinal=null;
   let verificationSourceHash=null;
   if(savedFinal){
    verificationSourceHash=await require(base+'source-hash-worker').sourceHash();
@@ -115,26 +116,34 @@ async function run(database,ctx,id,options={}){
   }
   if(savedFinal){
    audit({kind:'saved_native_result_verifying'});
-   const checked=await session.finish(async(client,{goal,access})=>({...await require('./postgres-codex-verification').verify(client,ctx,goal,savedFinal,access.catalogue,{browser:ui}),verificationSourceHash}),{allowReportCorrection:true});
-   if(!checked?.needsCorrection)return store.get(database,ctx,id);
-   audit({kind:'native_report_correction',code:checked.code});
+   const review=await session.answerReview(savedFinal);
+   if(review.required&&!review.verdict)pendingFinal=savedFinal;
+   else{
+    const checked=await session.finish(async(client,{goal,access})=>({...await require('./postgres-codex-verification').verifyFinal(client,ctx,goal,savedFinal,access.catalogue,{browser:ui}),verificationSourceHash}),{allowReportCorrection:true});
+    if(!checked?.needsCorrection)return store.get(database,ctx,id);
+    audit({kind:'native_report_correction',code:checked.code});
+   }
   }
   const key=options.apiKey||process.env.OPENAI_API_KEY;if(!key)throw Error('OPENAI_API_KEY_REQUIRED');
   const counter=options.countInput||require(base+'codex-token-counter').createTokenCounter({apiKey:key});
   // Warm only a session that actually needs reasoning. Every paid request
   // still receives exact native preflight and every unchanged spending hold.
-  if(!options.countInput){const warm=counter({model:modelProfile.model,reasoning:{effort:modelProfile.effort},
+  if(!pendingFinal&&!options.countInput){const warm=counter({model:modelProfile.model,reasoning:{effort:modelProfile.effort},
    input:[{role:'user',content:'Connection readiness check only; no model generation.'}]}).catch(()=>null);preparations.push(warm);}
-  let preparedSandbox=options.sandboxPool?options.sandboxPool.take(image):require(base+'codex-runtime').prepareSandbox(image);
-  const initialSandbox=preparedSandbox;preparations.push(preparedSandbox);preparedSandbox.catch(()=>{});
-  cleanup.push(async()=>{const prepared=await initialSandbox.catch(()=>null);if(prepared)await prepared.sandbox.close();});
+  let preparedSandbox=null,preparedContext=null;
+  const prepareNative=()=>{
+   preparedSandbox=options.sandboxPool?options.sandboxPool.take(image):require(base+'codex-runtime').prepareSandbox(image);
+   const started=preparedSandbox;preparations.push(started);started.catch(()=>{});
+   cleanup.push(async()=>{const prepared=await started.catch(()=>null);if(prepared)await prepared.sandbox.close();});
+   preparedContext=require(base+'codex-runtime').prepareContext({session,browser:ui,gateway,audit});
+   preparations.push(preparedContext);preparedContext.catch(()=>{});
+  };
   // Prepare the browser only when the user actually supplied page context.
   // Otherwise the native agent can choose records without opening Chromium.
-  if(goal.checkpoint.page?.path&&!goal.checkpoint.harness?.native?.codex?.threadId){
+  if(!pendingFinal&&goal.checkpoint.page?.path&&!goal.checkpoint.harness?.native?.codex?.threadId){
    const initialBrowser=ui.prepare();preparations.push(initialBrowser);initialBrowser.catch(()=>{});
   }
-  let preparedContext=require(base+'codex-runtime').prepareContext({session,browser:ui,gateway,audit});
-  preparations.push(preparedContext);preparedContext.catch(()=>{});
+  if(!pendingFinal)prepareNative();
   const fundingKey=`codex-staging:${id}`;
   const entitlements=require('../commercial/entitlements');
   // These fresh admission reads are independent. Join all of them before
@@ -165,7 +174,7 @@ async function run(database,ctx,id,options={}){
   helperTransport.setNativeSession(session.helperDelivery());
   helper=require(base+'codex-helper-provider').create({transport:helperTransport,policy:helperPolicy});
   audit({kind:'runtime_starting',status:'Starting the Codex SDK session'});
-  result=await require(base+'worker').run({candidate:'codex',session,gateway:{...gateway,authorize},browser:ui,budget,transport,
+  result=pendingFinal?{answer:pendingFinal}:await require(base+'worker').run({candidate:'codex',session,gateway:{...gateway,authorize},browser:ui,budget,transport,
    codexPolicy:modelPolicy,modelRoutingInstructions:routing.instructions(ctx,modelProfile),
    preparedCodexSandbox:preparedSandbox,preparedCodexContext:preparedContext,
    credentials:{openai:key},codexLivePermit:permit,codexImage:image,privateHarnessDirectory:directory,audit,
@@ -177,20 +186,29 @@ async function run(database,ctx,id,options={}){
    await require('./codex-staging-readiness').verifyPricing(database,modelProfile);
   }else{
    const current=await store.get(database,ctx,id);if(current.status!=='RUNNING')break;
+   // No model is called under a goal lock. This existing governed helper can
+   // reject a read-only conclusion; it cannot execute, approve or grant money.
+   // Its stable packet/response and verdict survive SDK and worker restarts.
+   const review=await session.answerReview(result.answer);
+   if(review.required&&!review.verdict){
+    audit({kind:'answer_scope_review_started'});
+    const fit=require('./postgres-control-plane');
+    const verdict=await helper.complete({system:fit.ANSWER_FIT_SYSTEM,prompt:JSON.stringify(review.input),
+     schema:fit.ANSWER_FIT_SCHEMA,schemaName:'native_answer_scope_fit',maxOutputTokens:500});
+    await session.answerReviewed(result.answer,review.hash,verdict.data);
+    audit({kind:'answer_scope_review_settled',status:verdict.data.grounded?'supported':'needs_correction'});
+   }
+   pendingFinal=null;
    const finalStarted=Date.now();
-   const checked=await session.finish(async(client,{goal,access})=>({...await require('./postgres-codex-verification').verify(client,ctx,goal,result.answer,access.catalogue,{browser:ui}),
+   const checked=await session.finish(async(client,{goal,access})=>({...await require('./postgres-codex-verification').verifyFinal(client,ctx,goal,result.answer,access.catalogue,{browser:ui}),
     verificationSourceHash:require('./codex-staging-permit').assertBinding(permit,{budget,task:id,image}).sourceHash}),{allowReportCorrection:true});
    audit({kind:'host_final_verification',timings:{finalVerificationMs:Date.now()-finalStarted}});
    if(!checked?.needsCorrection)break;
    audit({kind:'native_report_correction',code:checked.code});
   }
   transport.revoke();helperTransport.revoke();
-  await (await preparedSandbox).sandbox.close();
-  preparedSandbox=options.sandboxPool?options.sandboxPool.take(image):require(base+'codex-runtime').prepareSandbox(image);
-  const nextSandbox=preparedSandbox;preparations.push(nextSandbox);nextSandbox.catch(()=>{});
-  cleanup.push(async()=>{const prepared=await nextSandbox.catch(()=>null);if(prepared)await prepared.sandbox.close();});
-  preparedContext=require(base+'codex-runtime').prepareContext({session,browser:ui,gateway,audit});
-  preparations.push(preparedContext);preparedContext.catch(()=>{});
+  if(preparedSandbox)await (await preparedSandbox).sandbox.close();
+  prepareNative();
   }
   return store.get(database,ctx,id);
  }catch(error){

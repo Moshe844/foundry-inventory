@@ -3,7 +3,7 @@ process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 test('recorded zero-argument rule call completes through budgeted helpers, approval and real warning evaluation offline',{timeout:240000},async t=>{
  const cluster=await require('../helpers/postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString);
- const keys=['STOCKCHIEF_RUNTIME_ENV','STOCKCHIEF_CODEX_PILOT','STOCKCHIEF_CODEX_PILOT_WORKSPACES','STOCKCHIEF_CODEX_PILOT_EMAILS','FOUNDRY_DATABASE_URL'];
+ const keys=['STOCKCHIEF_RUNTIME_ENV','STOCKCHIEF_CODEX_PILOT','STOCKCHIEF_CODEX_PILOT_WORKSPACES','STOCKCHIEF_CODEX_PILOT_EMAILS','FOUNDRY_DATABASE_URL','STOCKCHIEF_CODEX_MODEL_POLICY'];
  const old=Object.fromEntries(keys.map(k=>[k,process.env[k]]));
  t.after(async()=>{for(const [k,v]of Object.entries(old))if(v===undefined)delete process.env[k];else process.env[k]=v;await db.close();cluster.stop();});
  await require('../../src/db/migrate-postgres').migratePostgres(db);
@@ -11,6 +11,7 @@ test('recorded zero-argument rule call completes through budgeted helpers, appro
  const ctx={workspaceId:owner.workspaceId,actorId:owner.userId};process.env.STOCKCHIEF_RUNTIME_ENV='staging';
  Object.assign(process.env,(await require('../../scripts/provision-codex-staging').provision(db,{businessName:'Testing',emails:[email]})).environment);
  process.env.FOUNDRY_DATABASE_URL=cluster.connectionString;
+ process.env.STOCKCHIEF_CODEX_MODEL_POLICY=JSON.stringify({default:{initialTier:'complex'}});
  await db.query(`UPDATE stockchief_runtime.codex_pilots SET enabled=true,stopped=false,ceiling_micro_usd=500000,
   approval_reference='OFFLINE FAKE PROVIDER ONLY' WHERE workspace_id=$1`,[ctx.workspaceId]);
  await require('../../scripts/environment-agent-demo/run-pilot').seedPrices(db);
@@ -26,7 +27,7 @@ test('recorded zero-argument rule call completes through budgeted helpers, appro
  const change=code=>({domain:'stock_alert',operation:'set',sku:code,supplier:'',location:'',sourceLocation:'',reorderPoint:-1,targetStock:-1,safetyStock:-1,leadTimeDays:-1,unitsPerPurchaseUnit:-1,minimumOrderQuantity:-1,orderMultiple:-1,maximumQuantity:-1,maximumValue:-1,weeklyValue:-1,daysOfStock:-1,preferTransferBeforePurchasing:false,guardMode:'',guardComparator:'',guardThreshold:-1,guardReleaseCondition:'',notificationThreshold:10,notificationMetric:'on_hand',notificationComparator:'below',capabilityName:''});
  const fake=async(_url,init)=>{
   const body=JSON.parse(init.body);assert.equal(body.model,'gpt-6.1-sol');assert.equal(body.reasoning.effort,'high');
-  if(body.text?.format?.type==='json_schema'){
+  if(body.text?.format?.name?.startsWith('postgres_operating_instruction')){
    helperCalls++;assert.equal(body.max_output_tokens,3000);
    const input=JSON.parse(body.input[0].content);let data;
    if(body.text.format.name==='postgres_operating_instruction'){
@@ -49,7 +50,7 @@ test('recorded zero-argument rule call completes through budgeted helpers, appro
  const options={image:process.env.STOCKCHIEF_OFFLINE_CODEX_IMAGE||JSON.parse(require('node:fs').readFileSync('data/environment-agent-demo/codex-sdk-approval-handoff/runtime.json')).image,
   apiKey:'FAKE',fetchImpl:fake,countInput:async()=>{counted++;return {object:'response.input_tokens',input_tokens:200};}};
  const first=await pilot.run(db,ctx,response.goalId,options);
- assert.equal(first.status,'WAITING_APPROVAL',JSON.stringify(first));assert.equal(helperCalls,2);assert.equal(sdkCalls,1);
+ assert.equal(first.status,'WAITING_APPROVAL',JSON.stringify({answer:first.answer,interruption:first.checkpoint.harness?.interruption,helperCalls,sdkCalls}));assert.equal(helperCalls,2);assert.equal(sdkCalls,1);
  const saved=await store.get(db,ctx,response.goalId);
  assert.equal(saved.checkpoint.harness.codexDelivery.packet.outcome.tool,true,'Helper did not overwrite native SDK delivery');
  assert.equal(saved.checkpoint.harness.helperDelivery.state,'SETTLED');
@@ -75,7 +76,7 @@ test('recorded zero-argument rule call completes through budgeted helpers, appro
   const recorded=require('../fixtures/staging-rule-clarification.json');
   const pending=await pilot.start(db,ctx,original);let native=0,helpers=0;
   const fakeClarification=async(_url,init)=>{const body=JSON.parse(init.body);
-   if(body.text?.format?.type==='json_schema'){
+   if(body.text?.format?.name?.startsWith('postgres_operating_instruction')){
     helpers++;assert.equal(helpers,1,'A valid missing-information response must not buy a retry');
     return Response.json({id:'recorded-helper',object:'response',status:'completed',model:body.model,
      output:[{type:'message',role:'assistant',content:[{type:'output_text',text:JSON.stringify(recorded.data)}]}],usage:{input_tokens:200,output_tokens:40,total_tokens:240}});
@@ -84,7 +85,7 @@ test('recorded zero-argument rule call completes through budgeted helpers, appro
    assert.equal(native,2);return require('../helpers/codex-offline-response').final(body,2,JSON.stringify({status:'needs_user',question:recorded.data.clarifyingQuestion,missingInformation:'Product scope and stock measure'}));
   };
   const result=await pilot.run(db,ctx,pending.goalId,{...options,fetchImpl:fakeClarification});
-  assert.equal(result.status,'WAITING_USER',JSON.stringify(result));assert.equal(result.answer,recorded.data.clarifyingQuestion);
+  assert.equal(result.status,'WAITING_USER',JSON.stringify({answer:result.answer,interruption:result.checkpoint.harness?.interruption,native,helpers}));assert.equal(result.answer,recorded.data.clarifyingQuestion);
   assert.equal(helpers,1);assert.equal(result.checkpoint.harness.inflight,null);
   assert.equal((await pilot.inbox(db,ctx,pending.goalId)).approvals.length,0);
   assert.equal((await db.query('SELECT count(*) AS n FROM operating_instruction_proposals WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,'1','Only the earlier complete approved proposal exists');
@@ -92,7 +93,7 @@ test('recorded zero-argument rule call completes through budgeted helpers, appro
   await store.reply(db,ctx,pending.goalId,reply);
   let resumeHelpers=0;
   const resume=async(_url,init)=>{const body=JSON.parse(init.body);
-   if(body.text?.format?.type==='json_schema'){
+   if(body.text?.format?.name?.startsWith('postgres_operating_instruction')){
     resumeHelpers++;const input=JSON.parse(body.input[0].content);
     assert((input.instruction||input.ownerInstruction).includes(reply),'Canonical interpretation receives the authenticated owner clarification');
     const data=body.text.format.name==='postgres_operating_instruction'?{understood:true,summary:'Stock warnings',changes:codes.map(change),clarifyingQuestion:'',unsupportedReason:''}:{equivalent:true,difference:''};

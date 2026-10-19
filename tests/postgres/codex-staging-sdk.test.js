@@ -41,6 +41,7 @@ test('actual Staging SDK lifecycle uses the real renderer, website approval and 
  };
  const options={image:process.env.STOCKCHIEF_OFFLINE_CODEX_IMAGE||JSON.parse(require('node:fs').readFileSync('data/environment-agent-demo/codex-sdk-approval-handoff/runtime.json')).image,
   apiKey:'FAKE',fetchImpl:fake,countInput:async()=>({object:'response.input_tokens',input_tokens:200})};
+ const reviewResponse=body=>Response.json({id:'offline-read-review',object:'response',status:'completed',model:body.model,output:[{type:'message',role:'assistant',content:[{type:'output_text',text:JSON.stringify({grounded:true,reason:''})}]}],usage:{input_tokens:200,output_tokens:40,total_tokens:240}});
  const firstResult=await pilot.run(db,ctx,response.goalId,options),first=await store.get(db,ctx,response.goalId);
  assert.equal(first.status,'WAITING_APPROVAL',JSON.stringify({failure:first.checkpoint.harness?.failure,interruption:first.checkpoint.harness?.interruption,calls,answer:first.answer,returned:firstResult}));assert.equal(calls,1);
  const browserEvidence=Object.values(first.checkpoint.harness.evidence).find(e=>e.name==='environment_browser');
@@ -71,9 +72,11 @@ test('actual Staging SDK lifecycle uses the real renderer, website approval and 
  await db.query("UPDATE stockchief_runtime.assistant_goals SET checkpoint=checkpoint#-'{harness,native,codex,instructionsProfile}' WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,legacy.goalId]);
  await store.reply(db,ctx,legacy.goalId,location);
  const legacyResumed=await pilot.run(db,ctx,legacy.goalId,{...options,fetchImpl:async(_url,init)=>{
-  legacyCalls++;const body=JSON.parse(init.body);assert(JSON.stringify(body).includes('### Writing PR descriptions'),'An existing thread keeps its previously recorded base instructions');
+  const body=JSON.parse(init.body);
+  if(body.text?.format?.name==='native_answer_scope_fit'){const input=JSON.parse(body.input[0].content);assert(input.clarifications.includes(location));assert(input.proposedAnswer.includes(location));assert(input.proposedAnswer.includes('Testing'));return reviewResponse(body);}
+  legacyCalls++;assert(JSON.stringify(body).includes('### Writing PR descriptions'),'An existing thread keeps its previously recorded base instructions');
   const current=await store.get(db,ctx,legacy.goalId),entry=Object.values(current.checkpoint.harness.evidence).findLast(e=>e.name==='authorized_environment');
-  return require('../helpers/codex-offline-response').final(body,legacyCalls,JSON.stringify({status:'completed',outcome:'answer',answer:'The report belongs to Testing.',claims:[{evidenceId:entry.id,path:'/business/name',value:'Testing'}]}));
+  return require('../helpers/codex-offline-response').final(body,legacyCalls,JSON.stringify({status:'completed',outcome:'answer',answer:'The report for '+location+' belongs to Testing.',claims:[{evidenceId:entry.id,path:'/business/name',value:'Testing'}]}));
  }});
  assert.equal(legacyResumed.status,'COMPLETED',JSON.stringify(legacyResumed.checkpoint.harness.failure));
  assert.equal(legacyResumed.checkpoint.harness.native.codex.instructionsProfile,'codex-default');assert.equal(legacyCalls,2);
@@ -85,7 +88,9 @@ test('actual Staging SDK lifecycle uses the real renderer, website approval and 
  try{
   const reading=await pilot.start(db,ctx,'Report current physical stock from the business records.');
   const read=await pilot.run(db,ctx,reading.goalId,{...options,fetchImpl:async(_url,init)=>{
-   const body=JSON.parse(init.body);readCalls++;
+   const body=JSON.parse(init.body);
+   if(body.text?.format?.name==='native_answer_scope_fit'){const input=JSON.parse(body.input[0].content);assert.equal(input.proposedAnswer,'Current physical stock is 3 units.');assert(input.evidence.some(e=>e.observation.rows?.some(r=>Number(r.on_hand)===3)));return reviewResponse(body);}
+   readCalls++;
    if(readCalls===1)return require('../helpers/codex-offline-response')(body,readCalls,
     `const d=ALL_TOOLS.find(t=>t.name.endsWith('__environment_dataset'));text(await tools[d.name](${JSON.stringify({specJson:JSON.stringify({dataset:'stock',columns:['sku','location','on_hand']}),offset:0})}));`);
    assert.equal(readCalls,2);
@@ -93,7 +98,7 @@ test('actual Staging SDK lifecycle uses the real renderer, website approval and 
    return require('../helpers/codex-offline-response').final(body,readCalls,JSON.stringify({status:'completed',outcome:'answer',answer:'Current physical stock is 3 units.',
     claims:[{evidenceId:entry.id,path:'/rows/0/on_hand',value:JSON.parse(entry.text).rows[0].on_hand}]}));
   }});
-  assert.equal(read.status,'COMPLETED');assert.equal(opened,0);assert.equal(readCalls,2);
+  assert.equal(read.status,'COMPLETED',JSON.stringify({answer:read.answer,readCalls,interruption:read.checkpoint?.harness?.interruption}));assert.equal(opened,0);assert.equal(readCalls,2);
   // Actual SDK terminal files survive a host verification failure. A later
   // explicit website resume must reverify/deliver them even when reasoning
   // limits are exhausted, with no provider, counter or SDK sandbox startup.

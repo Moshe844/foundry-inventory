@@ -139,4 +139,11 @@ Current-state claims after execution require fresh observations. Mark a historic
 Canonical execution receipts prove committed effects at their recorded time. Their result fields may describe an intermediate state that later approved work changed. Claims under canonical_execution_state /operations/N/result must use historical:true; use fresh business records for the final current state. Never treat an earlier confirmed or draft status as a failure merely because the same order has since been fulfilled.
 Use the complete evidence already in a tool response. Its _stockchiefEvidence reference supplies evidenceId and valuePointerPrefix; prepend that prefix to the JSON Pointer of the displayed value. Retrieve the journal only for missing, truncated, compacted or earlier evidence. Do not retrieve a value again just to report what the current response already shows. Include current-state verification after authorized changes.
 Never claim every part of a request was completed merely because one receipt was verified.`;
-module.exports={verify,instructions};
+async function verifyFinal(database,ctx,goal,raw,catalogue,options={}){
+ const result=await verify(database,ctx,goal,raw,catalogue,options);
+ if(!result.verified)return result;
+ const scope=require('./native-answer-review').checked(goal,raw);
+ if(scope.required&&!scope.verified)return {...unavailable('I could not verify that these findings answer the complete request. Your goal and collected evidence are saved.',scope.code,{reason:scope.reason}),receipt:result.receipt};
+ return {...result,answerScopeReview:scope.required?'governed_semantic_review':'canonical_or_navigation_lifecycle'};
+}
+module.exports={verify,verifyFinal,instructions};

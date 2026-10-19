@@ -38,7 +38,7 @@ test('native bookkeeping avoids repeated catalogue construction while retaining 
  for(let index=0;index<12;index++){await session.codexRequest();await session.codexPending('round-'+index);await session.codexDelivered('round-'+index,packet,packet.outcome);}
  assert.equal(transactions,17*2+12*3,'Authority stamps commit with their protected checkpoint, not in separate transactions');
  assert(calls.every(c=>c.catalogue===false));
- assert.equal(calls.length,17+12*3,'Native checkpoints keep fresh actor/lease validation without another commercial admission');
+ assert.equal(calls.length,17+12*2,'Native checkpoints and settled response persistence keep fresh actor/lease validation without another commercial admission');
  const requestAccess=await gateway.authorize({catalogue:false}),admissions=calls.length;
  await session.codexPending('same-http-boundary',requestAccess);
  assert.equal(calls.length,admissions,'Pending delivery uses only this HTTP request\'s fresh admission');
