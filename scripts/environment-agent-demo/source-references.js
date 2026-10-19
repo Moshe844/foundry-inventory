@@ -32,11 +32,13 @@ function encode(entry,value,{legacy=false,indexHeadings=false,indexRepresentatio
   // Legacy indexing still resolves old bindings to their exact original value.
   const heading=k=>!legacy&&!indexHeadings&&!indexRepresentation&&(
    ['business_operations','environment_dataset'].includes(entry.name)&&Array.isArray(v.rows)&&Array.isArray(v.columns)&&['columns','columnLabels'].includes(k)||
-   // Whitespace separators reconstruct the exact page, but are not facts.
-   // Binding every separator inflated native history enough to trigger early
-   // paid compaction in the recorded live run. Preserve every original byte,
-   // text-block binding and control property; omit only these formatting refs.
-   entry.name==='environment_browser'&&['','/screen'].includes(path)&&v.textEncoding==='labelled_blocks_and_separators'&&['textEncoding','textSeparators'].includes(k));
+   // Page coordinates, formatting and action handles are transport metadata.
+   // Keep all values losslessly without issuing redundant factual bindings.
+   // Unknown fields, labels, values, constraints and options stay citable.
+   entry.name==='environment_browser'&&(
+    ['','/screen'].includes(path)&&['textRegions','controlDefaults','pagination'].includes(k)||
+    ['','/screen'].includes(path)&&v.textEncoding==='labelled_blocks_and_separators'&&['textEncoding','textSeparators'].includes(k)||
+    /^\/(?:screen\/)?controls\/\d+$/.test(path)&&['ref','evidencePath','optionsNextRef'].includes(k)));
   const output=Object.fromEntries(Object.entries(v).filter(([k])=>legacy||!generated.has(k)).map(([k,c])=>[k,heading(k)?c:visit(c,path+'/'+part(k),
    Boolean(path===''&&entry.name==='environment_browser'&&source.image&&k==='screen'))]));
   const values={};

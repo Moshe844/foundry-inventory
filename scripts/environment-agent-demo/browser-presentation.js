@@ -3,8 +3,8 @@
 // observation; page content, fields, options and live handles are never trimmed.
 const DEFAULTS=Object.freeze({type:null,role:null,name:null,form:null,min:null,max:null,step:null,pattern:null,maxLength:null,
  description:'',disabled:false,required:false,readOnly:false,sensitive:false,multiple:false,optionsTruncated:false});
-function compact(value){
- if(value?.screen)return {...value,screen:compact(value.screen)};
+function compact(value,{compactControls=true}={}){
+ if(value?.screen)return {...value,screen:compact(value.screen,{compactControls})};
  if(!value||typeof value!=='object')return value;
  // Preserve explicit line labels: asking the model to count an unlabelled
  // page creates unverifiable citations. Encode only the duplicate full text.
@@ -21,7 +21,7 @@ function compact(value){
    const {text,...rest}=value;value={...rest,textEncoding:'labelled_blocks_and_separators',textSeparators:separators};
   }
  }
- if(!Array.isArray(value.controls)||!value.controls.length||value.controlDefaults)return value;
+ if(!compactControls||!Array.isArray(value.controls)||!value.controls.length||value.controlDefaults)return value;
  const defaults=Object.fromEntries(Object.entries(DEFAULTS).filter(([key])=>value.controls.every(c=>Object.hasOwn(c,key))));
  if(!Object.keys(defaults).length)return value;
  return {...value,controlDefaults:defaults,controls:value.controls.map(c=>Object.fromEntries(Object.entries(c)
