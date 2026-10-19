@@ -12,6 +12,13 @@ const { newId,trimOrNull }=require('../../lib/util');
 const { ValidationError }=require('../../domain/errors');
 
 const PAGE_SIZE=50;
+const BACKGROUND_IMPORT_ROWS=500;
+
+async function importJob(database,workspaceId,id){
+  return (await database.query(`SELECT status,lease_expires_at FROM stockchief_runtime.jobs
+    WHERE workspace_id=$1 AND kind='import.execute-approved' AND payload->>'planId'=$2
+    ORDER BY created_at DESC,id DESC LIMIT 1`,[workspaceId,id])).rows[0]||null;
+}
 
 async function locations(database,workspaceId){
   return (await database.query(`SELECT id,name FROM locations WHERE workspace_id=$1 AND is_active=1 ORDER BY name,id`,
@@ -28,6 +35,12 @@ function createPostgresImportsRouter(database,{provider=null}={}){
   });}
   router.get('/imports/start',asyncRoute(renderStart));
   router.get('/imports',asyncRoute(renderStart));
+  router.get('/imports/:id/progress',asyncRoute(async(req,res)=>{
+    const plan=await imports.get(database,req.ctx.workspaceId,req.params.id);
+    const [run,job]=await Promise.all([imports.report(database,req.ctx.workspaceId,plan.id),importJob(database,req.ctx.workspaceId,plan.id)]);
+    const active=Boolean(job&&(['PENDING','RETRY'].includes(job.status)||job.status==='RUNNING'&&Number(job.lease_expires_at)>Date.now()));
+    res.set('Cache-Control','no-store');return res.json({active,working:job?.status==='RUNNING',finished:!active,verified:run?.verified===true,status:plan.status});
+  }));
   router.post('/imports',asyncRoute(async(req,res)=>{
     const wantsJson=String(req.get('accept') || '').includes('application/json');
     const files=(req.files || []).filter((entry)=>['file','files'].includes(entry.field));
@@ -61,11 +74,12 @@ function createPostgresImportsRouter(database,{provider=null}={}){
       field:Object.keys(plan.fieldMappings).find((key)=>plan.fieldMappings[key]===column.index) || null,
       samples:[...new Set(sampleRows.map((row)=>String(row.raw?.[column.index]??'').trim())
         .filter(Boolean))].slice(0,3).map((value)=>value.slice(0,80))}));
+    const runJob=await importJob(database,req.ctx.workspaceId,plan.id);
     return res.page(plan.transformations.dataset==='suppliers'?'imports/supplier-preview':'imports/postgres-preview',
       {title:`Import ${plan.sourceName}`,nav:'imports',plan,rows,counts,
       duplicatePlans,run,locations:locationRows,mappingRows,fieldOptions:fields.FIELDS,page,pageSize:PAGE_SIZE,filter,
       missingLocationRows:missingLocation.rows.length>0,
-      locationKinds:require('../../domain/constants').LOCATION_KINDS,
+      locationKinds:require('../../domain/constants').LOCATION_KINDS,runJob,
     });
   }));
   router.post('/imports/:id/revise',asyncRoute(async(req,res)=>{
@@ -104,6 +118,12 @@ function createPostgresImportsRouter(database,{provider=null}={}){
   }));
   router.post('/imports/:id/run',asyncRoute(async(req,res)=>{
     try {
+      const plan=await imports.get(database,req.ctx.workspaceId,req.params.id);
+      if(plan.recordsDetected>=BACKGROUND_IMPORT_ROWS&&plan.transformations.dataset!=='suppliers'){
+        const queued=await imports.queueExecution(database,req.ctx,plan.id,trimOrNull(req.body.integrityHash)||plan.integrityHash);
+        req.flash('success',queued.created?'Import queued. You can leave this page; the verified result will be saved here.':'This import is already queued. StockChief will not create a second run.');
+        return res.redirect(303,`/imports/${plan.id}`);
+      }
       const result=await imports.execute(database,req.ctx,req.params.id);
       if(result.duplicate){req.flash('warning','This exact source was already imported. StockChief did not apply it again.');
         return res.redirect(303,`/imports/${result.planId}`);}

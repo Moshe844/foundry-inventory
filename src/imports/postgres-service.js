@@ -521,8 +521,8 @@ function productKey(parsed) {
 }
 
 function variantKey(parsed) {
-  if(parsed.variants.length)return `options:${parsed.variants.map((part)=>`${part.name}:${part.value}`).join('|').toLowerCase()}`;
-  if(parsed.code)return `code:${parsed.code.toLowerCase()}`;
+  if(parsed.code||parsed.variants.length)return stable({code:parsed.code?.toLowerCase()||null,
+    options:parsed.variants.map(part=>[part.name.toLowerCase(),part.value.toLowerCase()]).sort((a,b)=>a[0].localeCompare(b[0]))});
   return 'default';
 }
 
@@ -702,6 +702,20 @@ async function execute(database, ctx, id, options={}) {
   }
 }
 
+async function queueExecution(database,ctx,id,expectedHash){
+  await assertOperator(database,ctx);
+  return database.transaction(async client=>{
+    const plan=hydratePlan((await client.query('SELECT * FROM import_plans WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,id])).rows[0]);
+    if(!plan)throw new NotFoundError('That import could not be found.');
+    if(plan.status!=='READY'||plan.approvalStatus!=='APPROVED'||plan.integrityHash!==expectedHash)
+      throw new ValidationError('Review and approve the current preview before starting this import.');
+    const scoped={query:(sql,values)=>client.query(sql,values),transaction:fn=>fn(client)};
+    return require('../operations/postgres-job-queue').enqueue(scoped,{workspaceId:ctx.workspaceId,
+      kind:'import.execute-approved',idempotencyKey:`ask-import:${id}:${expectedHash}`,
+      payload:{planId:id,actorId:ctx.actorId,integrityHash:expectedHash},priority:30,maxAttempts:1});
+  },{isolation:'SERIALIZABLE',retrySafe:true});
+}
+
 async function report(database, workspaceId, id) {
   const result=await database.query(`SELECT e.*,v.verified,v.checks,v.observed,v.problems FROM import_executions e
     LEFT JOIN import_verifications v ON v.execution_id=e.id
@@ -721,6 +735,6 @@ async function cancel(database, ctx, id) {
   if(!result.rows.length)throw new ValidationError('Only an import waiting to run can be cancelled.');
 }
 
-module.exports={analyse,get,list,rowsFor,counts,duplicates,revise,approve,execute,report,cancel,hydratePlan,hydrateRow};
+module.exports={analyse,get,list,rowsFor,counts,duplicates,revise,approve,execute,queueExecution,report,cancel,hydratePlan,hydrateRow};
 require('../commercial/enforcement').guardExports(module.exports,0,1,{analyse:'imports.spreadsheet',approve:'imports.spreadsheet',
-  revise:'imports.spreadsheet',execute:'imports.spreadsheet',cancel:'imports.spreadsheet'});
+  revise:'imports.spreadsheet',execute:'imports.spreadsheet',queueExecution:'imports.spreadsheet',cancel:'imports.spreadsheet'});

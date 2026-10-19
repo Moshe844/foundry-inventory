@@ -181,7 +181,11 @@ async function runtimeSweep(job,client,options={}){
   }
   const staleImports=await client.query(`UPDATE import_executions SET status='FAILED',stage='recovered_after_interruption',
     error_message='The process stopped before this import completed. Its inventory transaction did not commit.',finished_at=$2
-    WHERE status='EXECUTING' AND started_at<$1 RETURNING workspace_id,import_id,id`,[staleImportAt,at]);
+    WHERE status='EXECUTING' AND started_at<$1 AND NOT EXISTS(
+      SELECT 1 FROM stockchief_runtime.jobs job WHERE job.workspace_id=import_executions.workspace_id
+       AND job.kind='import.execute-approved' AND job.payload->>'planId'=import_executions.import_id
+       AND job.status='RUNNING' AND job.lease_expires_at>$3)
+    RETURNING workspace_id,import_id,id`,[staleImportAt,at,now]);
   for(const execution of staleImports.rows){
     await client.query(`UPDATE import_plans SET status='READY' WHERE workspace_id=$1 AND id=$2 AND status='EXECUTING'`,
       [execution.workspace_id,execution.import_id]);
@@ -493,8 +497,22 @@ function create(providers=defaultProviders,options={}){return {'system.runtime-s
     if(!plan||plan.integrity_hash!==integrityHash||plan.approval_status!=='APPROVED')
       throw Object.assign(new Error('The approved import changed after it was queued.'),
         {code:'import_approval_changed',retryable:false});
-    return require('../imports/postgres-service').execute(database,
-      {workspaceId:job.workspaceId,actorId},planId);
+    let lost=false,pending=Promise.resolve();
+    const leaseMs=job.leaseToken?Math.max(1000,Number(job.leaseExpiresAt)-Date.now()):60000;
+    const timer=job.leaseToken?setInterval(()=>{pending=pending.then(async()=>{
+      if(!await jobs.heartbeat(database,job.id,job.leaseToken,{leaseMs}))lost=true;
+    }).catch(()=>{lost=true;});},Math.max(100,Math.floor(leaseMs/3))):null;
+    if(timer)timer.unref();
+    try{
+      const result=await require('../imports/postgres-service').execute(database,
+        {workspaceId:job.workspaceId,actorId},planId,{beforeRow:()=>{
+          if(lost)throw Object.assign(new Error('The import worker lost its execution lease before committing.'),{code:'import_lease_lost',retryable:false});
+        }});
+      if(!result.verified&&result.execution?.status!=='SUCCEEDED')throw Object.assign(
+        new Error('This import has no verified successful execution. Review the saved outcome before trying again.'),
+        {code:'import_not_verified',retryable:false});
+      return result;
+    }finally{if(timer)clearInterval(timer);await pending;}
   }),
   'system.alert-delivery':external((job,database)=>alertDelivery(job,database,options)),
   'system.email-send':external((job,database)=>systemEmail(job,database,options)),
