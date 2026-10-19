@@ -535,7 +535,8 @@ async function execute(database, ctx, id, options={}) {
   [ctx.workspaceId,plan.sourceHash])).rows[0];
   if(previous)return {duplicate:true,execution:previous,planId:previous.import_id};
   const executionId=newId('impexec');
-  const executionKey=`import:${plan.sourceHash}`;
+  if(options.retryExecutionId)await requireRolledBackExecution(database,ctx,plan,options.retryExecutionId);
+  const executionKey=`import:${plan.sourceHash}${options.retryExecutionId?':retry:'+options.retryExecutionId:''}`;
   const at=nowIso();
   try {
     await database.query(`INSERT INTO import_executions(id,workspace_id,import_id,idempotency_key,executed_by_user_id,
@@ -579,6 +580,7 @@ async function execute(database, ctx, id, options={}) {
         [executionId,created,JSON.stringify({verificationId,verified:true,checks}),finishedAt]);
         await client.query(`UPDATE import_plans SET status='SUCCEEDED',completed_at=$3 WHERE workspace_id=$1 AND id=$2`,
           [ctx.workspaceId,id,finishedAt]);
+        await options.beforeCommit?.();
         return {executionId,verificationId,verified:true,checks,itemsCreated:0,skusCreated:0,
           rowsImported:created,suppliersCreated:created,units:0};
       }
@@ -597,6 +599,18 @@ async function execute(database, ctx, id, options={}) {
       let itemsCreated=0;let skusCreated=0;let units=0;let rowsImported=0;
       const salePriceBySku=new Map();
       let savedRows=[];
+      let pendingValues=[];
+      async function flushValues(){
+        if(!pendingValues.length)return;
+        const valued=pendingValues.filter(value=>value.totalCostMinor>0),posted=await ledger.postManyInTransaction(client,ctx,valued.map(value=>({
+          postingDate:value.postingDate,sourceKey:`import:${id}:row:${value.row.id}:opening-value`,sourceType:'opening_inventory',sourceRecordType:'import_row',sourceRecordId:value.row.id,
+          description:`Opening inventory from ${plan.sourceName}, row ${value.row.rowNumber}`,currency:value.row.parsed.currency,
+          lines:[{accountKey:'INVENTORY_ASSET',debitMinor:value.totalCostMinor,skuId:value.skuId,locationId:value.row.parsed.locationId},{accountKey:'OPENING_BALANCE_EQUITY',creditMinor:value.totalCostMinor}]})));
+        let journalIndex=0;
+        await costing.receiveManyInTransaction(client,ctx,pendingValues.map(value=>({movementId:value.movementId,totalCostMinor:value.totalCostMinor,unitCostMinor:value.row.parsed.unitCostMinor,
+          journalEntryId:value.totalCostMinor>0?posted[journalIndex++].entry.id:null,sourceType:'opening_inventory',sourceRecordId:value.row.id})));
+        pendingValues=[];
+      }
       for(const [key,group] of grouped){
         if(options.beforeGroup)await options.beforeGroup({key,group,itemsCreated});
         const skuByVariant=new Map();
@@ -612,54 +626,43 @@ async function execute(database, ctx, id, options={}) {
           for(const sku of created.skus)skuByVariant.set(sku.key,sku.skuId);
           for(const row of group)row.parsed.createdItemId=created.itemId;
         }
-        for(const row of group){
+        for(let chunkStart=0;chunkStart<group.length;chunkStart+=500){
+        const chunk=group.slice(chunkStart,chunkStart+500),receiving=chunk.filter(row=>row.parsed.quantity>0);
+        const newPrices=[];
+        for(const row of chunk){if(row.parsed.sellingPriceMinor===null)continue;
+          const skuId=row.parsed.existingSkuId||skuByVariant.get(key.startsWith('existing:')?'existing':variantKey(row.parsed)),saleKey=`${row.parsed.currency}:${row.parsed.sellingPriceMinor}`;
+          if(salePriceBySku.has(skuId)&&salePriceBySku.get(skuId)!==saleKey)throw new ValidationError(`Conflicting selling prices for ${row.parsed.name} in this import.`);
+          if(!salePriceBySku.has(skuId)){newPrices.push({skuId,amountMinor:row.parsed.sellingPriceMinor,currency:row.parsed.currency,source:'opening_import',sourceDetail:{importId:id,importRowId:row.id}});salePriceBySku.set(skuId,saleKey);}
+        }
+        await postgresPrices.setPricesInTransaction(client,ctx,newPrices);
+        const receivedRows=await inventory.receiveManyInTransaction(client,ctx,receiving.map(row=>({
+          skuId:row.parsed.existingSkuId||skuByVariant.get(key.startsWith('existing:')?'existing':variantKey(row.parsed)),locationId:row.parsed.locationId,quantity:row.parsed.quantity,
+          serials:row.parsed.serial?[row.parsed.serial]:undefined,lotCode:row.parsed.lotCode,expiresAt:row.parsed.expiresAt,lotReceivedAt:row.parsed.receivedAt,
+          notes:row.parsed.notes,reference:`Import ${plan.sourceName} row ${row.rowNumber}`,idempotencyKey:`import:${id}:row:${row.id}`})));
+        const receiptByRow=new Map(receiving.map((row,index)=>[row.id,receivedRows[index]]));
+        for(const row of chunk){
           if(options.beforeRow)await options.beforeRow({row,rowsImported});
           const skuId=row.parsed.existingSkuId || skuByVariant.get(key.startsWith('existing:')?'existing':variantKey(row.parsed));
           const itemId=row.parsed.existingItemId || row.parsed.createdItemId;
-          if(row.parsed.sellingPriceMinor!==null){
-            const saleKey=`${row.parsed.currency}:${row.parsed.sellingPriceMinor}`;
-            if(salePriceBySku.has(skuId)&&salePriceBySku.get(skuId)!==saleKey)
-              throw new ValidationError(`Conflicting selling prices for ${row.parsed.name} in this import.`);
-            if(!salePriceBySku.has(skuId)){
-              await postgresPrices.setPriceInTransaction(client,ctx,{skuId,
-                amountMinor:row.parsed.sellingPriceMinor,currency:row.parsed.currency,
-                source:'opening_import',sourceDetail:{importId:id,importRowId:row.id}});
-              salePriceBySku.set(skuId,saleKey);
-            }
-          }
           const movementIds=[];
           if(row.parsed.quantity>0){
-            const received=await inventory.receiveInTransaction(client,ctx,{skuId,locationId:row.parsed.locationId,
-              quantity:row.parsed.quantity,serials:row.parsed.serial?[row.parsed.serial]:undefined,
-              lotCode:row.parsed.lotCode,expiresAt:row.parsed.expiresAt,lotReceivedAt:row.parsed.receivedAt,
-              notes:row.parsed.notes,reference:`Import ${plan.sourceName} row ${row.rowNumber}`,
-              idempotencyKey:`import:${id}:row:${row.id}`});
+            const received=receiptByRow.get(row.id);
             movementIds.push(received.movementId);units+=row.parsed.quantity;
             if(row.parsed.unitCostMinor!==null){
               const totalCostMinor=row.parsed.quantity*row.parsed.unitCostMinor;
-              let journalEntryId=null;
-              if(totalCostMinor>0){
-                const posted=await ledger.postInTransaction(client,ctx,{
-                  postingDate:nowIso().slice(0,10),sourceKey:`import:${id}:row:${row.id}:opening-value`,
-                  sourceType:'opening_inventory',sourceRecordType:'import_row',sourceRecordId:row.id,
-                  description:`Opening inventory from ${plan.sourceName}, row ${row.rowNumber}`,
-                  currency:row.parsed.currency,
-                  lines:[{accountKey:'INVENTORY_ASSET',debitMinor:totalCostMinor,skuId,locationId:row.parsed.locationId},
-                    {accountKey:'OPENING_BALANCE_EQUITY',creditMinor:totalCostMinor}],
-                });
-                journalEntryId=posted.entry.id;
-              }
-              await costing.receiveInTransaction(client,ctx,{movementId:received.movementId,totalCostMinor,
-                unitCostMinor:row.parsed.unitCostMinor,journalEntryId,
-                sourceType:'opening_inventory',sourceRecordId:row.id});
+              pendingValues.push({row,skuId,movementId:received.movementId,totalCostMinor,postingDate:nowIso().slice(0,10)});
+              if(pendingValues.length>=500)await flushValues();
             }
           }
           savedRows.push({id:row.id,itemId,skuId,locationId:row.parsed.locationId,movementIds,quantity:row.parsed.quantity,at:nowIso()});
           if(savedRows.length>=500){await rowStore.markImported(client,ctx.workspaceId,id,savedRows);savedRows=[];}
           rowsImported+=1;
-          publishProgress('processing',rowsImported);
+          if(!pendingValues.length)publishProgress('processing',rowsImported);
+        }
+        await flushValues();publishProgress('processing',rowsImported);
         }
       }
+      await flushValues();
       await rowStore.markImported(client,ctx.workspaceId,id,savedRows);
       publishProgress('verifying',rowsImported);
       const finishedAt=nowIso();
@@ -667,19 +670,20 @@ async function execute(database, ctx, id, options={}) {
         {name:'Opening units',expected:sourceRows.reduce((sum,row)=>sum+(row.parsed.quantity || 0),0),observed:units,
           ok:sourceRows.reduce((sum,row)=>sum+(row.parsed.quantity || 0),0)===units}];
       const valuedRows=sourceRows.filter((row)=>row.parsed.quantity>0&&row.parsed.unitCostMinor!==null);
-      const valuedIds=valuedRows.map((row)=>row.id);
       const expectedValue=valuedRows.reduce((sum,row)=>sum+row.parsed.quantity*row.parsed.unitCostMinor,0);
-      const value=(await client.query(`SELECT COALESCE(SUM(cost_delta_minor),0)::bigint AS value,
-        COUNT(*)::int AS movements FROM accounting_inventory_cost_movements
-        WHERE workspace_id=$1 AND cost_source_type='opening_inventory' AND cost_source_record_id=ANY($2::text[])`,
-      [ctx.workspaceId,valuedIds])).rows[0];
+      const value=(await client.query(`SELECT COALESCE(SUM(c.cost_delta_minor),0)::bigint AS value,
+        COUNT(*)::int AS movements FROM accounting_inventory_cost_movements c
+        JOIN import_rows r ON r.id=c.cost_source_record_id AND r.workspace_id=c.workspace_id
+        WHERE c.workspace_id=$1 AND c.cost_source_type='opening_inventory' AND r.import_id=$2`,
+      [ctx.workspaceId,id])).rows[0];
       const posted=(await client.query(`SELECT COALESCE(SUM(l.debit_minor),0)::bigint AS value
         FROM accounting_journal_entries e JOIN accounting_journal_lines l
           ON l.entry_id=e.id AND l.workspace_id=e.workspace_id
         JOIN accounting_accounts a ON a.id=l.account_id AND a.workspace_id=l.workspace_id
+        JOIN import_rows r ON r.id=e.source_record_id AND r.workspace_id=e.workspace_id
         WHERE e.workspace_id=$1 AND e.source_type='opening_inventory'
-          AND e.source_record_id=ANY($2::text[]) AND a.system_key='INVENTORY_ASSET'`,
-      [ctx.workspaceId,valuedIds])).rows[0];
+          AND e.source_record_type='import_row' AND r.import_id=$2 AND a.system_key='INVENTORY_ASSET'`,
+      [ctx.workspaceId,id])).rows[0];
       checks.push({name:'Valued receipt records',expected:valuedRows.length,observed:Number(value.movements),
         ok:valuedRows.length===Number(value.movements)},
       {name:'Opening cost in cents',expected:expectedValue,observed:Number(value.value),
@@ -698,6 +702,7 @@ async function execute(database, ctx, id, options={}) {
         JSON.stringify({verificationId,verified,checks}),finishedAt]);
       await client.query(`UPDATE import_plans SET status=$3,completed_at=$4 WHERE workspace_id=$1 AND id=$2`,
         [ctx.workspaceId,id,verified?'SUCCEEDED':'FAILED',finishedAt]);
+      await options.beforeCommit?.();
       return {executionId,verificationId,verified,checks,itemsCreated,skusCreated,rowsImported,units};
     },{isolation:'SERIALIZABLE',retrySafe:true});
     return result;
@@ -723,6 +728,30 @@ async function queueExecution(database,ctx,id,expectedHash){
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 
+async function requireRolledBackExecution(database,ctx,plan,executionId){
+  const failed=(await database.query(`SELECT id FROM import_executions WHERE workspace_id=$1 AND import_id=$2
+    AND id=$3 AND status='FAILED' AND stage='rolled_back'`,[ctx.workspaceId,plan.id,executionId])).rows[0];
+  if(!failed||plan.status!=='READY'||plan.approvalStatus!=='APPROVED')throw new ValidationError('Only a fully rolled-back import with its unchanged approval can be retried.');
+  const unsafe=(await database.query(`SELECT EXISTS(SELECT 1 FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND status='IMPORTED') OR
+    EXISTS(SELECT 1 FROM import_executions WHERE workspace_id=$1 AND import_id=$2 AND status IN ('EXECUTING','SUCCEEDED')) AS found`,[ctx.workspaceId,plan.id])).rows[0];
+  if(unsafe.found)throw new ValidationError('This import has active or saved effects. Review its existing result before continuing.');
+  return failed;
+}
+
+async function retryExecution(database,ctx,id,expectedHash,executionId){
+  await assertOperator(database,ctx);
+  return database.transaction(async client=>{
+    const row=(await client.query('SELECT * FROM import_plans WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,id])).rows[0];
+    if(!row)throw new NotFoundError('That import could not be found.');
+    const plan=hydratePlan(row);if(plan.integrityHash!==expectedHash||plan.isExpired)throw new ValidationError('Review the current import preview before retrying.');
+    await requireRolledBackExecution(client,ctx,plan,executionId);
+    const scoped={query:(sql,values)=>client.query(sql,values),transaction:fn=>fn(client)};
+    return require('../operations/postgres-job-queue').enqueue(scoped,{workspaceId:ctx.workspaceId,
+      kind:'import.execute-approved',idempotencyKey:`retry-import:${id}:${expectedHash}:${executionId}`,
+      payload:{planId:id,actorId:ctx.actorId,integrityHash:expectedHash,retryExecutionId:executionId},priority:30,maxAttempts:1});
+  },{isolation:'SERIALIZABLE',retrySafe:true});
+}
+
 async function report(database, workspaceId, id) {
   const result=await database.query(`SELECT e.*,v.verified,v.checks,v.observed,v.problems FROM import_executions e
     LEFT JOIN import_verifications v ON v.execution_id=e.id
@@ -742,6 +771,6 @@ async function cancel(database, ctx, id) {
   if(!result.rows.length)throw new ValidationError('Only an import waiting to run can be cancelled.');
 }
 
-module.exports={analyse,get,list,rowsFor,counts,duplicates,revise,approve,execute,queueExecution,report,cancel,hydratePlan,hydrateRow};
+module.exports={analyse,get,list,rowsFor,counts,duplicates,revise,approve,execute,queueExecution,retryExecution,report,cancel,hydratePlan,hydrateRow};
 require('../commercial/enforcement').guardExports(module.exports,0,1,{analyse:'imports.spreadsheet',approve:'imports.spreadsheet',
-  revise:'imports.spreadsheet',execute:'imports.spreadsheet',queueExecution:'imports.spreadsheet',cancel:'imports.spreadsheet'});
+  revise:'imports.spreadsheet',execute:'imports.spreadsheet',queueExecution:'imports.spreadsheet',retryExecution:'imports.spreadsheet',cancel:'imports.spreadsheet'});

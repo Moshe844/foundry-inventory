@@ -108,58 +108,50 @@ function normalizeLines(lines) {
   return { normalized,total:debits };
 }
 
-async function postInTransaction(client, ctx, input) {
-  if(!(ctx.verifiedProviderReceipt&&['customer_payment','customer_deposit'].includes(input.sourceType)))
+async function postManyInTransaction(client,ctx,inputs){
+  if(!Array.isArray(inputs))throw new ValidationError('Journal entries must be a list.');
+  if(!inputs.length)return [];
+  if(!(ctx.verifiedProviderReceipt&&inputs.every(input=>['customer_payment','customer_deposit'].includes(input.sourceType))))
     await require('../commercial/enforcement').workspace(client,ctx.workspaceId,'accounting.core');
-  const postingDate=dateOnly(input.postingDate);
-  const sourceKey=String(input.sourceKey||'').trim();
-  if (!sourceKey) throw new ValidationError('A durable accounting source key is required.');
-  const { normalized,total }=normalizeLines(input.lines);
-    // Journal numbering already serializes this workspace. Take that same
-    // transaction lock before the idempotency lookup, rather than retaining
-    // one additional advisory lock for every source in a bulk operation.
-    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',[`journal:${ctx.workspaceId}`]);
-    const prior=await client.query(`SELECT * FROM accounting_journal_entries
-      WHERE workspace_id=$1 AND source_key=$2`,[ctx.workspaceId,sourceKey]);
-    if(prior.rows.length)return { entry:prior.rows[0],replayed:true,totalMinor:total };
-    const settings=await client.query(`SELECT * FROM accounting_settings WHERE workspace_id=$1 AND enabled=1 FOR SHARE`,[ctx.workspaceId]);
-    if(!settings.rows.length)throw new ValidationError('Configure accounting before posting entries.');
-    const currency=require('../domain/currency').code(input.currency||settings.rows[0].base_currency);
-    if(currency!==settings.rows[0].base_currency)throw new ValidationError('This transaction uses '+currency+' but the accounting books use '+settings.rows[0].base_currency+'. A verified currency conversion is required before posting; no foreign amount was relabelled.');
-    if(postingDate<settings.rows[0].accounting_start_date)throw new ValidationError('Posting date is before the accounting start date.');
-    const period=await ensurePeriod(client,ctx.workspaceId,postingDate);
-    const keys=[...new Set(normalized.map((line)=>line.accountKey).filter(Boolean))];
-    const ids=[...new Set(normalized.map((line)=>line.accountId).filter(Boolean))];
-    const accounts=await client.query(`SELECT id,system_key FROM accounting_accounts
-      WHERE workspace_id=$1 AND active=1 AND (system_key=ANY($2::text[]) OR id=ANY($3::text[]))`,[ctx.workspaceId,keys,ids]);
-    const byKey=new Map(accounts.rows.map((row)=>[row.system_key,row.id]));
-    const byId=new Set(accounts.rows.map((row)=>row.id));
-    if(keys.some((key)=>!byKey.has(key))||ids.some((id)=>!byId.has(id))||normalized.some((line)=>!line.accountKey&&!line.accountId))
-      throw new ValidationError('One or more accounting control accounts are missing or inactive.');
-    const at=nowIso(); const id=newId('je');
-    const sequence=await client.query(`SELECT COALESCE(MAX(entry_number),0)+1 AS next FROM accounting_journal_entries WHERE workspace_id=$1`,[ctx.workspaceId]);
-    const entryNumber=Number(sequence.rows[0].next);
-    await client.query(`INSERT INTO accounting_journal_entries
-      (id,workspace_id,entry_number,posting_date,period_id,description,status,source_type,source_record_type,
-       source_record_id,source_event_id,source_key,created_by_type,created_by_user_id,engine_version,metadata,
-       reversal_of_entry_id,created_at,posted_at)
-      VALUES($1,$2,$3,$4,$5,$6,'POSTED',$7,$8,$9,$10,$11,$12,$13,'accounting-postgres-v1',$14,$15,$16,$16)`,
-    [id,ctx.workspaceId,entryNumber,postingDate,period.id,String(input.description||'Business event'),
-      input.sourceType||'business_event',input.sourceRecordType||null,input.sourceRecordId||null,input.sourceEventId||null,
-      sourceKey,input.createdByType||'SYSTEM',ctx.actorId||null,JSON.stringify(input.metadata||{}),input.reversalOfEntryId||null,at]);
-    const journalLines=normalized.map((line,index)=>({id:newId('jel'),line_number:index+1,account_id:line.accountId||byKey.get(line.accountKey),debit_minor:line.debit,credit_minor:line.credit,
-      customer_id:line.customerId||null,supplier_id:line.supplierId||null,item_id:line.itemId||null,sku_id:line.skuId||null,location_id:line.locationId||null,memo:line.memo||null,metadata:JSON.stringify(line.metadata||{})}));
-    await client.query(`INSERT INTO accounting_journal_lines
-        (id,workspace_id,entry_id,line_number,account_id,debit_minor,credit_minor,currency,customer_id,supplier_id,
-         item_id,sku_id,location_id,memo,metadata,created_at)
-        SELECT x.id,$1,$2,x.line_number,x.account_id,x.debit_minor,x.credit_minor,$3,x.customer_id,x.supplier_id,
-          x.item_id,x.sku_id,x.location_id,x.memo,x.metadata,$4
-        FROM jsonb_to_recordset($5::jsonb) AS x(id text,line_number bigint,account_id text,debit_minor bigint,credit_minor bigint,
-          customer_id text,supplier_id text,item_id text,sku_id text,location_id text,memo text,metadata text)`,
-      [ctx.workspaceId,id,currency,at,JSON.stringify(journalLines)]);
-  return { entry:{ id,entry_number:entryNumber,posting_date:postingDate,source_key:sourceKey,status:'POSTED' },replayed:false,totalMinor:total };
+  const prepared=inputs.map(input=>{const postingDate=dateOnly(input.postingDate),sourceKey=String(input.sourceKey||'').trim();
+    if(!sourceKey)throw new ValidationError('A durable accounting source key is required.');
+    return {input,postingDate,sourceKey,...normalizeLines(input.lines)};});
+  await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',[`journal:${ctx.workspaceId}`]);
+  const sourceKeys=[...new Set(prepared.map(row=>row.sourceKey))],prior=(await client.query('SELECT * FROM accounting_journal_entries WHERE workspace_id=$1 AND source_key=ANY($2::text[])',[ctx.workspaceId,sourceKeys])).rows;
+  const entries=new Map(prior.map(entry=>[entry.source_key,entry])),fresh=new Map();
+  for(const row of prepared)if(!entries.has(row.sourceKey)&&!fresh.has(row.sourceKey))fresh.set(row.sourceKey,row);
+  const rows=[...fresh.values()];
+  if(rows.length){
+    const settings=(await client.query('SELECT * FROM accounting_settings WHERE workspace_id=$1 AND enabled=1 FOR SHARE',[ctx.workspaceId])).rows[0];
+    if(!settings)throw new ValidationError('Configure accounting before posting entries.');
+    const periods=new Map();
+    for(const row of rows){row.currency=require('../domain/currency').code(row.input.currency||settings.base_currency);
+      if(row.currency!==settings.base_currency)throw new ValidationError('This transaction uses '+row.currency+' but the accounting books use '+settings.base_currency+'. A verified currency conversion is required before posting; no foreign amount was relabelled.');
+      if(row.postingDate<settings.accounting_start_date)throw new ValidationError('Posting date is before the accounting start date.');
+      if(!periods.has(row.postingDate))periods.set(row.postingDate,await ensurePeriod(client,ctx.workspaceId,row.postingDate));
+    }
+    const allLines=rows.flatMap(row=>row.normalized),keys=[...new Set(allLines.map(line=>line.accountKey).filter(Boolean))],ids=[...new Set(allLines.map(line=>line.accountId).filter(Boolean))];
+    const accounts=(await client.query('SELECT id,system_key FROM accounting_accounts WHERE workspace_id=$1 AND active=1 AND (system_key=ANY($2::text[]) OR id=ANY($3::text[]))',[ctx.workspaceId,keys,ids])).rows;
+    const byKey=new Map(accounts.map(row=>[row.system_key,row.id])),byId=new Set(accounts.map(row=>row.id));
+    if(keys.some(key=>!byKey.has(key))||ids.some(id=>!byId.has(id))||allLines.some(line=>!line.accountKey&&!line.accountId))throw new ValidationError('One or more accounting control accounts are missing or inactive.');
+    const firstNumber=Number((await client.query('SELECT COALESCE(MAX(entry_number),0)+1 AS next FROM accounting_journal_entries WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].next),at=nowIso(),journalRows=[],journalLines=[];
+    for(const [index,row]of rows.entries()){
+      const input=row.input,id=newId('je'),entry={id,entry_number:firstNumber+index,posting_date:row.postingDate,source_key:row.sourceKey,status:'POSTED'};entries.set(row.sourceKey,entry);
+      journalRows.push({...entry,period_id:periods.get(row.postingDate).id,description:String(input.description||'Business event'),source_type:input.sourceType||'business_event',source_record_type:input.sourceRecordType||null,source_record_id:input.sourceRecordId||null,source_event_id:input.sourceEventId||null,created_by_type:input.createdByType||'SYSTEM',metadata:JSON.stringify(input.metadata||{}),reversal_of_entry_id:input.reversalOfEntryId||null});
+      for(const [position,line]of row.normalized.entries())journalLines.push({id:newId('jel'),entry_id:id,line_number:position+1,account_id:line.accountId||byKey.get(line.accountKey),debit_minor:line.debit,credit_minor:line.credit,currency:row.currency,customer_id:line.customerId||null,supplier_id:line.supplierId||null,item_id:line.itemId||null,sku_id:line.skuId||null,location_id:line.locationId||null,memo:line.memo||null,metadata:JSON.stringify(line.metadata||{})});
+    }
+    await client.query(`INSERT INTO accounting_journal_entries(id,workspace_id,entry_number,posting_date,period_id,description,status,source_type,source_record_type,source_record_id,source_event_id,source_key,created_by_type,created_by_user_id,engine_version,metadata,reversal_of_entry_id,created_at,posted_at)
+      SELECT x.id,$1,x.entry_number,x.posting_date,x.period_id,x.description,'POSTED',x.source_type,x.source_record_type,x.source_record_id,x.source_event_id,x.source_key,x.created_by_type,$2,'accounting-postgres-v1',x.metadata,x.reversal_of_entry_id,$3,$3
+      FROM jsonb_to_recordset($4::jsonb) AS x(id text,entry_number bigint,posting_date text,period_id text,description text,source_type text,source_record_type text,source_record_id text,source_event_id text,source_key text,created_by_type text,metadata text,reversal_of_entry_id text)`,[ctx.workspaceId,ctx.actorId||null,at,JSON.stringify(journalRows)]);
+    await client.query(`INSERT INTO accounting_journal_lines(id,workspace_id,entry_id,line_number,account_id,debit_minor,credit_minor,currency,customer_id,supplier_id,item_id,sku_id,location_id,memo,metadata,created_at)
+      SELECT x.id,$1,x.entry_id,x.line_number,x.account_id,x.debit_minor,x.credit_minor,x.currency,x.customer_id,x.supplier_id,x.item_id,x.sku_id,x.location_id,x.memo,x.metadata,$2
+      FROM jsonb_to_recordset($3::jsonb) AS x(id text,entry_id text,line_number bigint,account_id text,debit_minor bigint,credit_minor bigint,currency text,customer_id text,supplier_id text,item_id text,sku_id text,location_id text,memo text,metadata text)`,[ctx.workspaceId,at,JSON.stringify(journalLines)]);
+  }
+  const seen=new Set(prior.map(entry=>entry.source_key));
+  return prepared.map(row=>{const replayed=seen.has(row.sourceKey);seen.add(row.sourceKey);return {entry:entries.get(row.sourceKey),replayed,totalMinor:row.total};});
 }
 
+async function postInTransaction(client,ctx,input){return (await postManyInTransaction(client,ctx,[input]))[0];}
 async function post(database,ctx,input){
   return database.transaction((client)=>postInTransaction(client,ctx,input),{isolation:'SERIALIZABLE',retrySafe:true});
 }
@@ -173,4 +165,4 @@ async function validatePostingDateInTransaction(client,ctx,value){
  if(date<settings.accounting_start_date)throw new ValidationError('Posting date is before the accounting start date.');
  return ensurePeriod(client,ctx.workspaceId,date);
 }
-module.exports={ configure,configureInTransaction,createAccount,createAccountInTransaction,post,postInTransaction,validatePostingDateInTransaction };
+module.exports={ configure,configureInTransaction,createAccount,createAccountInTransaction,post,postInTransaction,postManyInTransaction,validatePostingDateInTransaction };

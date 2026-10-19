@@ -33,20 +33,26 @@ async function append(client,ctx,row,input,quantityDelta,costDelta,after){
     input.sourceRecordId||null,nowIso()]);
 }
 
-async function receiveInTransaction(client,ctx,input){
-  const evidence=await movement(client,ctx,input.movementId,'in');
-  if(evidence.prior)return {replayed:true,totalCostMinor:Number(evidence.prior.cost_delta_minor)};
-  const quantity=Number(evidence.row.quantity_delta);
-  const total=input.totalCostMinor!=null?Number(input.totalCostMinor):quantity*Number(input.unitCostMinor);
-  if(!Number.isSafeInteger(total)||total<0)throw new ValidationError('Received inventory requires an exact non-negative cost.');
-  const before=await lockState(client,ctx,evidence.row.sku_id,evidence.row.location_id);
-  const after={quantity:Number(before.quantity_units)+quantity,cost:Number(before.total_cost_minor)+total};
-  await client.query(`UPDATE accounting_inventory_cost_balances SET quantity_units=$4,total_cost_minor=$5,updated_at=$6
-    WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3`,
-  [ctx.workspaceId,evidence.row.sku_id,evidence.row.location_id,after.quantity,after.cost,nowIso()]);
-  await append(client,ctx,evidence.row,input,quantity,total,after);
-  return {replayed:false,totalCostMinor:total,balance:after};
+async function receiveManyInTransaction(client,ctx,inputs){
+  if(!Array.isArray(inputs))throw new ValidationError('Receipt costs must be a list.');if(!inputs.length)return [];
+  const ids=[...new Set(inputs.map(input=>input.movementId))],movements=(await client.query('SELECT * FROM movements WHERE workspace_id=$1 AND id=ANY($2::text[]) ORDER BY id FOR UPDATE',[ctx.workspaceId,ids])).rows,byId=new Map(movements.map(row=>[row.id,row]));
+  const prior=(await client.query('SELECT * FROM accounting_inventory_cost_movements WHERE workspace_id=$1 AND inventory_movement_id=ANY($2::text[])',[ctx.workspaceId,ids])).rows,results=new Map(prior.map(row=>[row.inventory_movement_id,{replayed:true,totalCostMinor:Number(row.cost_delta_minor)}])),fresh=new Map();
+  for(const input of inputs){const row=byId.get(input.movementId);if(!row)throw new ValidationError('The inventory movement used for costing could not be found.');if(Number(row.quantity_delta)<=0)throw new ValidationError('Receipt costing requires an incoming movement.');if(results.has(row.id)||fresh.has(row.id))continue;
+    const quantity=Number(row.quantity_delta),total=input.totalCostMinor!=null?Number(input.totalCostMinor):quantity*Number(input.unitCostMinor);if(!Number.isSafeInteger(total)||total<0)throw new ValidationError('Received inventory requires an exact non-negative cost.');fresh.set(row.id,{row,input,quantity,total});}
+  const values=[...fresh.values()];if(values.length){
+    const positions=[...new Map(values.map(value=>[JSON.stringify([value.row.sku_id,value.row.location_id]),{sku_id:value.row.sku_id,location_id:value.row.location_id}])).values()].sort((a,b)=>a.sku_id.localeCompare(b.sku_id)||a.location_id.localeCompare(b.location_id)),payload=JSON.stringify(positions),at=nowIso();
+    await client.query(`INSERT INTO accounting_inventory_cost_balances(workspace_id,sku_id,location_id,quantity_units,total_cost_minor,updated_at) SELECT $1,x.sku_id,x.location_id,0,0,$3 FROM jsonb_to_recordset($2::jsonb) AS x(sku_id text,location_id text) ON CONFLICT(workspace_id,sku_id,location_id) DO NOTHING`,[ctx.workspaceId,payload,at]);
+    const balances=(await client.query(`SELECT b.* FROM accounting_inventory_cost_balances b JOIN jsonb_to_recordset($2::jsonb) AS x(sku_id text,location_id text) ON x.sku_id=b.sku_id AND x.location_id=b.location_id WHERE b.workspace_id=$1 ORDER BY b.sku_id,b.location_id FOR UPDATE OF b`,[ctx.workspaceId,payload])).rows;
+    const states=new Map(balances.map(row=>[JSON.stringify([row.sku_id,row.location_id]),{sku_id:row.sku_id,location_id:row.location_id,quantity:Number(row.quantity_units),cost:Number(row.total_cost_minor)}])),appended=[];
+    for(const value of values){const {row,input,quantity,total}=value,state=states.get(JSON.stringify([row.sku_id,row.location_id]));state.quantity+=quantity;state.cost+=total;if(!Number.isSafeInteger(state.quantity)||!Number.isSafeInteger(state.cost))throw new ValidationError('Receipt cost totals exceed the supported exact range.');
+      appended.push({id:newId('icm'),inventory_movement_id:row.id,inventory_group_id:row.group_id,sku_id:row.sku_id,location_id:row.location_id,quantity_delta:quantity,cost_delta_minor:total,unit_cost_minor:input.unitCostMinor??null,balance_quantity_units:state.quantity,balance_cost_minor:state.cost,journal_entry_id:input.journalEntryId||null,cost_source_type:input.sourceType,cost_source_record_id:input.sourceRecordId||null,created_at:nowIso()});results.set(row.id,{replayed:false,totalCostMinor:total,balance:{quantity:state.quantity,cost:state.cost}});}
+    await client.query(`UPDATE accounting_inventory_cost_balances b SET quantity_units=x.quantity,total_cost_minor=x.cost,updated_at=$3 FROM jsonb_to_recordset($2::jsonb) AS x(sku_id text,location_id text,quantity bigint,cost bigint) WHERE b.workspace_id=$1 AND b.sku_id=x.sku_id AND b.location_id=x.location_id`,[ctx.workspaceId,JSON.stringify([...states.values()]),at]);
+    await client.query(`INSERT INTO accounting_inventory_cost_movements(id,workspace_id,inventory_movement_id,inventory_group_id,sku_id,location_id,quantity_delta,cost_delta_minor,unit_cost_minor,balance_quantity_units,balance_cost_minor,journal_entry_id,cost_source_type,cost_source_record_id,created_at)
+      SELECT x.id,$1,x.inventory_movement_id,x.inventory_group_id,x.sku_id,x.location_id,x.quantity_delta,x.cost_delta_minor,x.unit_cost_minor,x.balance_quantity_units,x.balance_cost_minor,x.journal_entry_id,x.cost_source_type,x.cost_source_record_id,x.created_at FROM jsonb_to_recordset($2::jsonb) AS x(id text,inventory_movement_id text,inventory_group_id text,sku_id text,location_id text,quantity_delta bigint,cost_delta_minor bigint,unit_cost_minor bigint,balance_quantity_units bigint,balance_cost_minor bigint,journal_entry_id text,cost_source_type text,cost_source_record_id text,created_at text)`,[ctx.workspaceId,JSON.stringify(appended)]);
+  }
+  const seen=new Set(prior.map(row=>row.inventory_movement_id));return inputs.map(input=>{const result=results.get(input.movementId);if(seen.has(input.movementId))return {replayed:true,totalCostMinor:result.totalCostMinor};seen.add(input.movementId);return result;});
 }
+async function receiveInTransaction(client,ctx,input){return (await receiveManyInTransaction(client,ctx,[input]))[0];}
 
 async function prepareIssueInTransaction(client,ctx,input){
   const evidence=await movement(client,ctx,input.movementId,'out');
@@ -92,4 +98,4 @@ async function transferInTransaction(client,ctx,input){
     destinationBalance:received.balance};
 }
 
-module.exports={receiveInTransaction,prepareIssueInTransaction,commitIssueInTransaction,transferInTransaction};
+module.exports={receiveInTransaction,receiveManyInTransaction,prepareIssueInTransaction,commitIssueInTransaction,transferInTransaction};

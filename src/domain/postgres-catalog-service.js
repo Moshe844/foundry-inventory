@@ -112,22 +112,21 @@ async function createImportedItemInTransaction(client, ctx, input) {
     SELECT x.id,$1,$2,x.name,x.position FROM jsonb_to_recordset($3::jsonb) AS x(id text,name text,position bigint)`,
     [ctx.workspaceId,itemId,JSON.stringify(optionRows)]);
   const taken = new Set();
-  const created = [];
-  for (const [position, variant] of variants.entries()) {
-    const options = variant.options || [];
-    const label = options.length ? options.map((part) => part.value).join(' / ') : trimOrNull(variant.label);
-    const candidate = trimOrNull(variant.code) ||
-      [codeSlug(name), ...options.map((part) => codeSlug(part.value))].filter(Boolean).join('-');
-    const code = await uniqueCode(client, ctx.workspaceId, candidate, taken);
-    const skuId = newId('sku');
+  const created=[],candidates=variants.map(variant=>trimOrNull(variant.code)||[codeSlug(name),...(variant.options||[]).map(part=>codeSlug(part.value))].filter(Boolean).join('-')||'SKU');
+  const existingCodes=new Set((await client.query('SELECT code FROM skus WHERE workspace_id=$1 AND code=ANY($2::text[])',[ctx.workspaceId,[...new Set(candidates)]])).rows.map(row=>row.code));
+  let skuRows=[],valueRows=[];
+  async function flushVariants(){if(!skuRows.length)return;
     await client.query(`INSERT INTO skus(id,workspace_id,item_id,code,barcode,variant_label,is_default,position,is_active,created_at)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,1,$9)`,
-    [skuId, ctx.workspaceId, itemId, code, trimOrNull(variant.barcode), label, options.length ? 0 : 1, position, at]);
-    if(options.length)await client.query(`INSERT INTO sku_option_values(sku_id,option_id,value)
-      SELECT $1,x.option_id,x.value FROM jsonb_to_recordset($2::jsonb) AS x(option_id text,value text)`,
-      [skuId,JSON.stringify(options.map(part=>({option_id:optionIds.get(part.name),value:part.value})))]);
-    created.push({ key:variant.key, skuId, code });
+      SELECT x.id,$1,$2,x.code,x.barcode,x.variant_label,x.is_default,x.position,1,$3 FROM jsonb_to_recordset($4::jsonb) AS x(id text,code text,barcode text,variant_label text,is_default bigint,position bigint) ORDER BY x.position`,[ctx.workspaceId,itemId,at,JSON.stringify(skuRows)]);
+    if(valueRows.length)await client.query(`INSERT INTO sku_option_values(sku_id,option_id,value) SELECT x.sku_id,x.option_id,x.value FROM jsonb_to_recordset($1::jsonb) AS x(sku_id text,option_id text,value text)`,[JSON.stringify(valueRows)]);skuRows=[];valueRows=[];
   }
+  for(const [position,variant]of variants.entries()){
+    const options=variant.options||[],candidate=candidates[position],code=taken.has(candidate.toLowerCase())||existingCodes.has(candidate)?await uniqueCode(client,ctx.workspaceId,candidate,taken):candidate;
+    taken.add(code.toLowerCase());const skuId=newId('sku'),label=options.length?options.map(part=>part.value).join(' / '):trimOrNull(variant.label);
+    skuRows.push({id:skuId,code,barcode:trimOrNull(variant.barcode),variant_label:label,is_default:options.length?0:1,position});for(const part of options)valueRows.push({sku_id:skuId,option_id:optionIds.get(part.name),value:part.value});
+    created.push({key:variant.key,skuId,code});if(skuRows.length>=500)await flushVariants();
+  }
+  await flushVariants();
   return { itemId, skus:created };
 }
 

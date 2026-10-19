@@ -86,7 +86,13 @@
 <% if(importing){ %>
   <section class="card section" data-import-progress="/imports/<%= plan.id %>/progress" data-import-detail aria-live="polite"><div class="card-head"><h2 data-import-status><%= activity.label %></h2></div><div class="card-body"><p>StockChief is processing <%= plan.recordsValid.toLocaleString('en-US') %> approved rows. Products and stock appear together after the import passes verification.</p><p>You can leave this page. Reopen it from <a href="/imports">File imports and results</a> or the progress banner elsewhere in this inventory.</p><p data-import-timing></p><%- include('../partials/import-meter',{activity}) %></div></section>
 <% } else if(interrupted){ %>
-  <section class="card section"><div class="card-head"><h2>Import paused before verification</h2></div><div class="card-body"><p>Your source file and approval history are saved. This run has no verified successful result, so StockChief will not start another copy automatically or claim it completed.</p><p>Review this import before continuing. <a href="/imports">Back to your imports</a></p></div></section>
+  <section class="card section"><div class="card-head"><h2>Import paused before verification</h2></div><div class="card-body">
+    <% if(run?.status==='FAILED' && run.stage==='rolled_back' && plan.status==='READY' && plan.approvalStatus==='APPROVED'){ %>
+      <p>This attempt stopped safely before saving. No inventory from this attempt was added. Your file and approval are saved.</p>
+      <p>You can retry the same approved rows. StockChief will check the saved result and prevent a second copy.</p>
+      <form method="post" action="/imports/<%= plan.id %>/retry"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><input type="hidden" name="executionId" value="<%= run.id %>"><button class="btn btn--primary" type="submit">Retry approved import</button></form>
+    <% } else { %><p>Your source file and approval history are saved. This run has no verified successful result, so StockChief will not start another copy automatically or claim it completed.</p><p>Review this import before continuing.</p><% } %>
+    <p><a href="/imports">Back to your imports</a></p></div></section>
 <% } else if(run){ %>
   <div class="card section <%= run.verified?'':'card--warn' %>"><div class="card-head"><h2>Reconciliation</h2>
     <span class="spacer"></span><span class="badge badge--<%= run.verified?'ok':'danger' %>"><%= run.verified?'Verified':'Not verified' %></span></div>

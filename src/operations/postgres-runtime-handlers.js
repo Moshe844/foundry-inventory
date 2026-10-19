@@ -488,7 +488,7 @@ function create(providers=defaultProviders,options={}){return {'system.runtime-s
     return {shipmentId,rateCount:quoted.rates?.length||0};
   }),
   'import.execute-approved':external(async(job,database)=>{
-    const {planId,actorId,integrityHash}=job.payload||{};
+      const {planId,actorId,integrityHash,retryExecutionId}=job.payload||{};
     if(!job.workspaceId||!planId||!actorId||!integrityHash)throw Object.assign(
       new Error('Approved import job is missing its frozen plan identity.'),
       {code:'import_job_invalid',retryable:false});
@@ -505,11 +505,15 @@ function create(providers=defaultProviders,options={}){return {'system.runtime-s
         catch{/* Advisory progress must not abort a transaction with a healthy lease. */}}
     }).catch(()=>{lost=true;});},Math.max(100,Math.min(5000,Math.floor(leaseMs/3)))):null;
     if(timer)timer.unref();
+    const assertImportLease=()=>{if(lost)throw Object.assign(new Error('The import worker lost its execution lease before committing.'),{code:'import_lease_lost',retryable:false});};
+      const verifyImportLease=async()=>{
+        await pending;
+        if(job.leaseToken&&!await jobs.heartbeat(database,job.id,job.leaseToken,{leaseMs}))lost=true;
+        assertImportLease();
+      };
     try{
       const result=await require('../imports/postgres-service').execute(database,
-        {workspaceId:job.workspaceId,actorId},planId,{onProgress:value=>{progress=value;},beforeRow:()=>{
-          if(lost)throw Object.assign(new Error('The import worker lost its execution lease before committing.'),{code:'import_lease_lost',retryable:false});
-        }});
+          {workspaceId:job.workspaceId,actorId},planId,{retryExecutionId,onProgress:value=>{progress=value;},beforeRow:assertImportLease,beforeCommit:verifyImportLease});
       if(!result.verified&&result.execution?.status!=='SUCCEEDED')throw Object.assign(
         new Error('This import has no verified successful execution. Review the saved outcome before trying again.'),
         {code:'import_not_verified',retryable:false});

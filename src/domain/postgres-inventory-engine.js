@@ -29,6 +29,11 @@ async function requirePermission(client, ctx, permission, what) {
   return actor;
 }
 
+function assertActiveTarget(row){
+  if (!Number(row.sku_active) || !Number(row.item_active)) throw new ValidationError('That item variant is archived.');
+  if (!Number(row.location_active)) throw new ValidationError(`${row.location_name} is archived and cannot be used.`);
+}
+
 async function target(client, ctx, skuId, locationId) {
   const result = await client.query(`SELECT s.id, s.item_id, s.is_active AS sku_active,
       i.name, i.tracking_mode, i.allow_negative AS allow_negative_stock, i.is_active AS item_active,
@@ -39,8 +44,7 @@ async function target(client, ctx, skuId, locationId) {
   const row = result.rows[0];
   if (!row) throw new ValidationError('That item variant or location is not in this inventory.');
   if(['lot','serial'].includes(row.tracking_mode))await require('../commercial/enforcement').workspace(client,ctx.workspaceId,'inventory.lot_serial');
-  if (!Number(row.sku_active) || !Number(row.item_active)) throw new ValidationError('That item variant is archived.');
-  if (!Number(row.location_active)) throw new ValidationError(`${row.location_name} is archived and cannot be used.`);
+  assertActiveTarget(row);
   return row;
 }
 
@@ -185,6 +189,36 @@ async function receiveInTransaction(client, rawContext, input) {
     const result = { movementId, groupId, balanceAfter, quantity, lotId: lot?.id || null, serials, serialUnitIds };
     await completeOperation(client, operation, result);
   return { ...result, replayed: false };
+}
+
+async function receiveManyInTransaction(client,rawContext,inputs){
+  const ctx=context(rawContext);if(!Array.isArray(inputs))throw new ValidationError('Stock receipts must be a list.');if(!inputs.length)return [];
+  const values=inputs.map((input,index)=>({input,index,quantity:positiveInteger(input.quantity),key:String(input.idempotencyKey||newId('operation'))}));
+  await requirePermission(client,ctx,permissions.OPERATE,'receive stock');
+  const keys=values.map(value=>value.key),existing=(await client.query("SELECT id FROM stockchief_runtime.business_operations WHERE workspace_id=$1 AND kind='inventory.receive' AND idempotency_key=ANY($2::text[])",[ctx.workspaceId,keys])).rows;
+  async function sequential(){const out=[];for(const value of values)out.push(await receiveInTransaction(client,ctx,{...value.input,idempotencyKey:value.key}));return out;}
+  if(existing.length||new Set(keys).size!==keys.length)return sequential();
+  const pairs=values.map(value=>({position:value.index,sku_id:value.input.skuId,location_id:value.input.locationId}));
+  const targets=(await client.query(`SELECT x.position,s.id,s.item_id,s.is_active AS sku_active,i.tracking_mode,i.allow_negative AS allow_negative_stock,i.is_active AS item_active,l.id AS location_id,l.name AS location_name,l.is_active AS location_active
+   FROM jsonb_to_recordset($2::jsonb) AS x(position integer,sku_id text,location_id text) JOIN skus s ON s.id=x.sku_id AND s.workspace_id=$1 JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id JOIN locations l ON l.id=x.location_id AND l.workspace_id=s.workspace_id ORDER BY x.position`,[ctx.workspaceId,JSON.stringify(pairs)])).rows;
+  if(targets.length!==values.length)throw new ValidationError('That item variant or location is not in this inventory.');
+  for(const row of targets)assertActiveTarget(row);
+  if(targets.some(row=>row.tracking_mode!=='quantity'))return sequential();
+  const positions=[...new Map(pairs.map(row=>[JSON.stringify([row.sku_id,row.location_id]),{sku_id:row.sku_id,location_id:row.location_id}])).values()].sort((a,b)=>a.sku_id.localeCompare(b.sku_id)||a.location_id.localeCompare(b.location_id)),positionJSON=JSON.stringify(positions),at=nowIso();
+  await client.query(`INSERT INTO balances(workspace_id,sku_id,location_id,on_hand,updated_at) SELECT $1,x.sku_id,x.location_id,0,$3 FROM jsonb_to_recordset($2::jsonb) AS x(sku_id text,location_id text) ON CONFLICT(sku_id,location_id) DO NOTHING`,[ctx.workspaceId,positionJSON,at]);
+  const balances=(await client.query(`SELECT b.sku_id,b.location_id,b.on_hand FROM balances b JOIN jsonb_to_recordset($2::jsonb) AS x(sku_id text,location_id text) ON b.sku_id=x.sku_id AND b.location_id=x.location_id WHERE b.workspace_id=$1 ORDER BY b.sku_id,b.location_id FOR UPDATE OF b`,[ctx.workspaceId,positionJSON])).rows;
+  const states=new Map(balances.map(row=>[JSON.stringify([row.sku_id,row.location_id]),{sku_id:row.sku_id,location_id:row.location_id,before:Number(row.on_hand),after:Number(row.on_hand)}])),operations=[],movements=[],results=[];
+  for(const value of values){const row=targets[value.index],state=states.get(JSON.stringify([row.id,row.location_id])),input=value.input,occurredAt=input.occurredAt||nowIso(),before=state.after;state.after+=value.quantity;if(!Number.isSafeInteger(state.after))throw new ValidationError('Stock totals exceed the supported exact range.');
+    if(state.after<0&&!Number(row.allow_negative_stock))throw new InsufficientStockError(`Not enough stock at ${row.location_name}. On hand: ${before}, requested: ${value.quantity}.`,{onHand:before,requested:value.quantity});
+    const result={movementId:newId('mv'),groupId:newId('grp'),balanceAfter:state.after,quantity:value.quantity,lotId:null,serials:[],serialUnitIds:[]};
+    operations.push({id:newId('pgop'),idempotency_key:value.key,result});movements.push({position:value.index,id:result.movementId,group_id:result.groupId,item_id:row.item_id,sku_id:row.id,location_id:row.location_id,quantity_delta:value.quantity,balance_after:state.after,notes:input.notes||null,reference:input.reference||null,occurred_at:occurredAt});results.push({...result,replayed:false});
+  }
+  const inserted=await client.query(`INSERT INTO stockchief_runtime.business_operations(id,workspace_id,kind,idempotency_key) SELECT x.id,$1,'inventory.receive',x.idempotency_key FROM jsonb_to_recordset($2::jsonb) AS x(id text,idempotency_key text) ON CONFLICT(workspace_id,kind,idempotency_key) DO NOTHING`,[ctx.workspaceId,JSON.stringify(operations)]);if(inserted.rowCount!==values.length)throw new InvariantError('That inventory operation is already running.','operation_in_progress');
+  const changed=await client.query(`UPDATE balances b SET on_hand=x.after,updated_at=$3 FROM jsonb_to_recordset($2::jsonb) AS x(sku_id text,location_id text,before bigint,after bigint) WHERE b.workspace_id=$1 AND b.sku_id=x.sku_id AND b.location_id=x.location_id AND b.on_hand=x.before`,[ctx.workspaceId,JSON.stringify([...states.values()]),at]);if(changed.rowCount!==states.size)throw new InvariantError('Stock changed while its receipt was being prepared.','stock_changed');
+  await client.query(`INSERT INTO movements(id,workspace_id,group_id,operation,item_id,sku_id,location_id,quantity_delta,balance_after,notes,reference,actor_user_id,occurred_at)
+   SELECT x.id,$1,x.group_id,'receive',x.item_id,x.sku_id,x.location_id,x.quantity_delta,x.balance_after,x.notes,x.reference,$2,x.occurred_at FROM jsonb_to_recordset($3::jsonb) AS x(position integer,id text,group_id text,item_id text,sku_id text,location_id text,quantity_delta bigint,balance_after bigint,notes text,reference text,occurred_at text) ORDER BY x.position`,[ctx.workspaceId,ctx.actorId,JSON.stringify(movements)]);
+  await client.query(`UPDATE stockchief_runtime.business_operations b SET status='COMPLETED',result=x.result,completed_at=now() FROM jsonb_to_recordset($2::jsonb) AS x(id text,result jsonb) WHERE b.workspace_id=$1 AND b.id=x.id`,[ctx.workspaceId,JSON.stringify(operations)]);
+  return results;
 }
 
 async function receive(database, rawContext, input) {
@@ -393,5 +427,5 @@ async function adjust(database, rawContext, input) {
     { isolation: 'SERIALIZABLE', retrySafe: Boolean(input.idempotencyKey) });
 }
 
-module.exports = { receive, receiveInTransaction, issue, issueInTransaction, transfer, transferInTransaction,
+module.exports = { receive, receiveInTransaction, receiveManyInTransaction, issue, issueInTransaction, transfer, transferInTransaction,
   dispatchTransferInTransaction, receiveTransferInTransaction, adjust,adjustInTransaction };

@@ -64,24 +64,31 @@ async function listForSkus(queryable,workspaceId,skuIds){
   return result;
 }
 
-async function setPriceInTransaction(client,ctx,input){
-  const sku=await requireSku(client,ctx.workspaceId,input.skuId);const amountMinor=input.amountMinor===undefined?toMinor(input.amount,'Price',input.currency||'USD'):input.amountMinor;
-  if(amountMinor!==null&&(!Number.isSafeInteger(Number(amountMinor))||Number(amountMinor)<0))throw new ValidationError('Selling price must be a valid non-negative amount.');
-  const currency=normaliseCurrency(input.currency);const current=await currentPrice(client,ctx.workspaceId,sku.id);
-  if(Object.prototype.hasOwnProperty.call(input,'expectedCurrentId')&&(current.id||null)!==(input.expectedCurrentId||null))
-    throw new ValidationError('The current selling price changed after this preview was prepared. Start again from the latest price.');
-  if(current.id&&current.amount_minor===amountMinor&&current.currency===currency)return {...current,replayed:true};
-  const id=newId('prc');const at=nowIso();
-  await client.query(`INSERT INTO sku_prices
-    (id,workspace_id,sku_id,amount_minor,currency,source,source_detail,created_by_user_id,created_at)
-    VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9)`,[id,ctx.workspaceId,sku.id,amountMinor,currency,
-    trimOrNull(input.source)||'owner',JSON.stringify(input.sourceDetail||{}),ctx.actorId||null,at]);
-  if(amountMinor!==null)await client.query(`UPDATE sales_order_lines SET unit_price_minor=$1,price_source_id=$2,updated_at=$3
-    WHERE workspace_id=$4 AND sku_id=$5 AND unit_price_minor IS NULL
-      AND sales_order_id IN (SELECT id FROM sales_orders WHERE workspace_id=$4 AND status='DRAFT')`,
-  [amountMinor,id,at,ctx.workspaceId,sku.id]);
-  return currentPrice(client,ctx.workspaceId,sku.id);
+async function setPricesInTransaction(client,ctx,inputs){
+  if(!Array.isArray(inputs))throw new ValidationError('Selling prices must be a list.');if(!inputs.length)return [];
+  const skuIds=inputs.map(input=>input.skuId);
+  if(new Set(skuIds).size!==skuIds.length){const results=[];for(const input of inputs)results.push(await setPriceInTransaction(client,ctx,input));return results;}
+  const active=(await client.query('SELECT s.id FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id WHERE s.workspace_id=$1 AND s.id=ANY($2::text[]) AND s.is_active=1 AND i.is_active=1',[ctx.workspaceId,skuIds])).rows;
+  if(active.length!==inputs.length)throw new NotFoundError('That product or variant is not in this inventory.');
+  async function readPrices(){return new Map((await client.query(`SELECT DISTINCT ON(sp.sku_id) sp.*,u.name AS actor_name FROM sku_prices sp LEFT JOIN users u ON u.id=sp.created_by_user_id WHERE sp.workspace_id=$1 AND sp.sku_id=ANY($2::text[]) ORDER BY sp.sku_id,sp.created_at DESC,sp.id DESC`,[ctx.workspaceId,skuIds])).rows.map(row=>[row.sku_id,row]));}
+  const current=await readPrices(),rows=[],unchanged=new Set(),at=nowIso();
+  for(const input of inputs){const amountMinor=input.amountMinor===undefined?toMinor(input.amount,'Price',input.currency||'USD'):input.amountMinor;
+    if(amountMinor!==null&&(!Number.isSafeInteger(Number(amountMinor))||Number(amountMinor)<0))throw new ValidationError('Selling price must be a valid non-negative amount.');
+    const currency=normaliseCurrency(input.currency),before=current.get(input.skuId);
+    if(Object.prototype.hasOwnProperty.call(input,'expectedCurrentId')&&(before?.id||null)!==(input.expectedCurrentId||null))throw new ValidationError('The current selling price changed after this preview was prepared. Start again from the latest price.');
+    if(before&&Number(before.amount_minor)===amountMinor&&before.amount_minor!==null&&before.currency===currency||before&&before.amount_minor===null&&amountMinor===null&&before.currency===currency){unchanged.add(input.skuId);continue;}
+    rows.push({id:newId('prc'),sku_id:input.skuId,amount_minor:amountMinor,currency,source:trimOrNull(input.source)||'owner',source_detail:input.sourceDetail||{}});
+  }
+  if(rows.length){
+    if(ctx.actorId&&!(await client.query('SELECT id FROM users WHERE id=$1 AND workspace_id=$2',[ctx.actorId,ctx.workspaceId])).rows.length)throw new NotFoundError('The acting user does not belong to this inventory.');
+    await client.query(`INSERT INTO sku_prices(id,workspace_id,sku_id,amount_minor,currency,source,source_detail,created_by_user_id,created_at)
+      SELECT x.id,$1,x.sku_id,x.amount_minor,x.currency,x.source,x.source_detail,$2,$3 FROM jsonb_to_recordset($4::jsonb) AS x(id text,sku_id text,amount_minor bigint,currency text,source text,source_detail jsonb)`,[ctx.workspaceId,ctx.actorId||null,at,JSON.stringify(rows)]);
+    await client.query(`UPDATE sales_order_lines line SET unit_price_minor=x.amount_minor,price_source_id=x.id,updated_at=$3 FROM jsonb_to_recordset($2::jsonb) AS x(id text,sku_id text,amount_minor bigint) WHERE line.workspace_id=$1 AND line.sku_id=x.sku_id AND line.unit_price_minor IS NULL AND x.amount_minor IS NOT NULL AND line.sales_order_id IN(SELECT id FROM sales_orders WHERE workspace_id=$1 AND status='DRAFT')`,[ctx.workspaceId,JSON.stringify(rows),at]);
+  }
+  const saved=rows.length?await readPrices():current;
+  return inputs.map(input=>{const row=saved.get(input.skuId),value={...row,isSet:row.amount_minor!==null,amount_minor:row.amount_minor===null?null:Number(row.amount_minor),formatted:formatMinor(row.amount_minor,row.currency)};return unchanged.has(input.skuId)?{...value,replayed:true}:value;});
 }
+async function setPriceInTransaction(client,ctx,input){return (await setPricesInTransaction(client,ctx,[input]))[0];}
 
 async function setPrice(database,ctx,input){return database.transaction((client)=>setPriceInTransaction(client,ctx,input));}
 
@@ -219,11 +226,11 @@ async function cancelPurchaseCostProposal(database,workspaceId,id){
 }
 
 module.exports={normaliseCurrency,toMinor,formatMinor,requireSku,currentPrice,purchaseCost,listForSkus,
-  setPrice,setPriceInTransaction,setPurchaseCost,setPurchaseCostInTransaction,createPriceProposal,getPriceProposal,
+  setPrice,setPriceInTransaction,setPricesInTransaction,setPurchaseCost,setPurchaseCostInTransaction,createPriceProposal,getPriceProposal,
   approvePriceProposal,cancelPriceProposal,createPurchaseCostProposal,getPurchaseCostProposal,
   approvePurchaseCostProposal,cancelPurchaseCostProposal};
 require('../commercial/enforcement').guardExports(module.exports,0,1,{
-  setPrice:'inventory.core',setPriceInTransaction:'inventory.core',createPriceProposal:'inventory.core',
+  setPrice:'inventory.core',setPriceInTransaction:'inventory.core',setPricesInTransaction:'inventory.core',createPriceProposal:'inventory.core',
   approvePriceProposal:'inventory.core',cancelPriceProposal:'inventory.core',setPurchaseCost:'purchasing.suppliers',
   setPurchaseCostInTransaction:'purchasing.suppliers',createPurchaseCostProposal:'purchasing.suppliers',
   approvePurchaseCostProposal:'purchasing.suppliers',cancelPurchaseCostProposal:'purchasing.suppliers'});

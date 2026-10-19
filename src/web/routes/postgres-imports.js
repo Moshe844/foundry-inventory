@@ -132,6 +132,13 @@ function createPostgresImportsRouter(database,{provider=null}={}){
     } catch(error){if(!(error instanceof ValidationError))throw error;req.flash('error',error.message);}
     return res.redirect(303,`/imports/${req.params.id}`);
   }));
+  router.post('/imports/:id/retry',asyncRoute(async(req,res)=>{
+    try{
+      const queued=await imports.retryExecution(database,req.ctx,req.params.id,trimOrNull(req.body.integrityHash),trimOrNull(req.body.executionId));
+      req.flash('success',queued.created?'Retry queued for the same approved file. No second copy will be started.':'That retry is already saved.');
+    }catch(error){if(!(error instanceof ValidationError))throw error;req.flash('error',error.message);}
+    return res.redirect(303,`/imports/${req.params.id}`);
+  }));
   router.post('/imports/:id/cancel',asyncRoute(async(req,res)=>{
     await imports.cancel(database,req.ctx,req.params.id);req.flash('success','Import cancelled. No inventory changed.');
     return res.redirect(303,'/imports');
