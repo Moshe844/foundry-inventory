@@ -665,12 +665,18 @@ async function execute(database, ctx, id, options={}) {
       await flushValues();
       await rowStore.markImported(client,ctx.workspaceId,id,savedRows);
       publishProgress('verifying',rowsImported);
-      const finishedAt=nowIso();
       const checks=[{name:'Rows imported',expected:sourceRows.length,observed:rowsImported,ok:sourceRows.length===rowsImported},
         {name:'Opening units',expected:sourceRows.reduce((sum,row)=>sum+(row.parsed.quantity || 0),0),observed:units,
           ok:sourceRows.reduce((sum,row)=>sum+(row.parsed.quantity || 0),0)===units}];
       const valuedRows=sourceRows.filter((row)=>row.parsed.quantity>0&&row.parsed.unitCostMinor!==null);
       const expectedValue=valuedRows.reduce((sum,row)=>sum+row.parsed.quantity*row.parsed.unitCostMinor,0);
+      // Fresh bulk writes are invisible to the statistics collector. An estimate
+      // of one new entry can otherwise rescan every journal line for each entry.
+      // Use linear joins for this bulk read only; restore the connection setting
+      // after success. A failed transaction automatically restores LOCAL settings.
+      const verificationJoinSetting=valuedRows.length>=500
+        ?(await client.query("SELECT current_setting('enable_nestloop') AS enabled")).rows[0].enabled:null;
+      if(verificationJoinSetting!==null)await client.query("SELECT set_config('enable_nestloop','off',true)");
       const value=(await client.query(`SELECT COALESCE(SUM(c.cost_delta_minor),0)::bigint AS value,
         COUNT(*)::int AS movements FROM accounting_inventory_cost_movements c
         JOIN import_rows r ON r.id=c.cost_source_record_id AND r.workspace_id=c.workspace_id
@@ -684,6 +690,7 @@ async function execute(database, ctx, id, options={}) {
         WHERE e.workspace_id=$1 AND e.source_type='opening_inventory'
           AND e.source_record_type='import_row' AND r.import_id=$2 AND a.system_key='INVENTORY_ASSET'`,
       [ctx.workspaceId,id])).rows[0];
+      if(verificationJoinSetting!==null)await client.query("SELECT set_config('enable_nestloop',$1,true)",[verificationJoinSetting]);
       checks.push({name:'Valued receipt records',expected:valuedRows.length,observed:Number(value.movements),
         ok:valuedRows.length===Number(value.movements)},
       {name:'Opening cost in cents',expected:expectedValue,observed:Number(value.value),
@@ -691,6 +698,8 @@ async function execute(database, ctx, id, options={}) {
       {name:'Inventory asset posted in cents',expected:expectedValue,observed:Number(posted.value),
         ok:expectedValue===Number(posted.value)});
       const verified=checks.every((check)=>check.ok);
+      if(!verified)throw new ValidationError('The imported stock and accounting evidence did not reconcile. No changes from this attempt were saved.',{checks});
+      const finishedAt=nowIso();
       const verificationId=newId('impverify');
       await client.query(`INSERT INTO import_verifications(id,workspace_id,import_id,execution_id,verified,checks,
         observed,problems,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
@@ -707,8 +716,9 @@ async function execute(database, ctx, id, options={}) {
     },{isolation:'SERIALIZABLE',retrySafe:true});
     return result;
   } catch(error) {
-    await database.query(`UPDATE import_executions SET status='FAILED',stage='rolled_back',error_message=$2,finished_at=$3
-      WHERE id=$1`,[executionId,String(error.message).slice(0,1000),nowIso()]);
+    await database.query(`UPDATE import_executions SET status='FAILED',stage='rolled_back',error_message=$2,finished_at=$3,
+      result=COALESCE($4,result) WHERE id=$1`,[executionId,String(error.message).slice(0,1000),nowIso(),
+      error.details?.checks?JSON.stringify({failedChecks:error.details.checks}):null]);
     await database.query(`UPDATE import_plans SET status='READY' WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,id]);
     throw error;
   }
