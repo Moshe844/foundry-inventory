@@ -73,12 +73,12 @@ function createPostgresImportsRouter(database,{provider=null}={}){
       field:Object.keys(plan.fieldMappings).find((key)=>plan.fieldMappings[key]===column.index) || null,
       samples:[...new Set(sampleRows.map((row)=>String(row.raw?.[column.index]??'').trim())
         .filter(Boolean))].slice(0,3).map((value)=>value.slice(0,80))}));
-    const runJob=await importJob(database,req.ctx.workspaceId,plan.id);
+    const [runJob,importProgress]=await Promise.all([importJob(database,req.ctx.workspaceId,plan.id),progress.get(database,req.ctx.workspaceId,plan.id)]);
     return res.page(plan.transformations.dataset==='suppliers'?'imports/supplier-preview':'imports/postgres-preview',
       {title:`Import ${plan.sourceName}`,nav:'imports',plan,rows,counts,
       duplicatePlans,run,locations:locationRows,mappingRows,fieldOptions:fields.FIELDS,page,pageSize:PAGE_SIZE,filter,
       missingLocationRows:missingLocation.rows.length>0,
-      locationKinds:require('../../domain/constants').LOCATION_KINDS,runJob,
+      locationKinds:require('../../domain/constants').LOCATION_KINDS,runJob,importProgress,
     });
   }));
   router.post('/imports/:id/revise',asyncRoute(async(req,res)=>{

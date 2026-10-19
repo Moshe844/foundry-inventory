@@ -4,14 +4,14 @@
    const needsNumberAnswer=numberQuestions.length>0&&!sourceTransforms.confirmCatalogOnly;
    const needsLocation=!plan.defaultLocationId && Boolean(locals.missingLocationRows || rows.some(function(row){return row.problems.some(function(problem){return problem.code==='no_location';});}));
    const needsAnswer=needsIdentity||needsNumberAnswer||needsLocation||plan.conflicts.length>0;
-   const importJob=locals.runJob;
-   const importing=Boolean(importJob&&(['PENDING','RETRY'].includes(importJob.status)||importJob.status==='RUNNING'&&Number(importJob.lease_expires_at)>Date.now()));
-   const interrupted=Boolean(importJob&&!importing&&['DEAD','RUNNING'].includes(importJob.status)&&!run?.verified); %>
+   const activity=locals.importProgress;
+   const importing=Boolean(activity?.active);
+   const interrupted=Boolean(activity&&['PAUSED','NEEDS_REVIEW'].includes(activity.state)&&!run?.verified); %>
 <div class="page-head">
   <div class="titles"><a class="back-link" href="/imports">Bring data in</a><h1><%= plan.sourceName %></h1>
     <div class="page-sub"><%= plan.recordsDetected %> <%= helpers.plural(plan.recordsDetected, 'row') %> read · <% if(needsAnswer){ %>Answer the question below before import<% } else { %><%= plan.recordsValid %> ready · <%= plan.recordsInvalid %> need correction<% } %></div>
   </div>
-  <div class="page-actions"><span class="badge badge--<%= plan.status==='SUCCEEDED'?'ok':'muted' %>"><%= plan.status %></span></div>
+  <div class="page-actions"><span class="badge badge--<%= activity?.verified?'ok':'muted' %>"><%= activity?.label||helpers.columnLabel(plan.status.toLowerCase()) %></span></div>
 </div>
 <% if(duplicatePlans.length && plan.status!=='SUCCEEDED'){ %>
   <div class="notice notice--warn section"><strong>This exact source was already imported.</strong>
@@ -19,7 +19,7 @@
 <% } %>
 <% if(sourceTransforms.proposedLocations?.length && plan.status==='READY'){ %>
   <section class="card section" aria-labelledby="import-new-locations"><div class="card-head"><h2 id="import-new-locations">Locations found in your file</h2></div>
-    <div class="card-body"><p>Your file refers to these <%= sourceTransforms.proposedLocations.length %> location labels. Approving this import adds their records to this inventory. Keep the file labels, enter display names, or match locations already in StockChief.</p>
+    <div class="card-body"><p>Your file refers to these <%= sourceTransforms.proposedLocations.length %> location labels. <% if(plan.approvalStatus==='AWAITING_APPROVAL'){ %>Approving this import adds their records to this inventory. Keep the file labels, enter display names, or match locations already in StockChief.<% } else { %>Your approved import preserves the following names in StockChief.<% } %></p>
       <% if(plan.approvalStatus==='AWAITING_APPROVAL'){ %><form method="post" action="/imports/<%= plan.id %>/revise">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>">
         <div class="table-scroll"><table class="table"><thead><tr><th>Location label in your file</th><th>Name in StockChief</th><th>Type</th><% if(locations.length){ %><th>Or use existing</th><% } %></tr></thead><tbody>
@@ -84,7 +84,7 @@
   </section>
 <% } %>
 <% if(importing){ %>
-  <section class="card section" data-import-progress="/imports/<%= plan.id %>/progress" data-import-detail aria-live="polite"><div class="card-head"><h2 data-import-status><%= importJob.status==='RUNNING'?'Importing your inventory':'Import queued' %></h2></div><div class="card-body"><p>StockChief is processing <%= plan.recordsValid.toLocaleString('en-US') %> approved rows. Products and stock appear together after the import passes verification.</p><p>You can leave this page. Reopen it from <a href="/imports">File imports and results</a> or the progress banner elsewhere in this inventory.</p><p data-import-timing></p></div></section>
+  <section class="card section" data-import-progress="/imports/<%= plan.id %>/progress" data-import-detail aria-live="polite"><div class="card-head"><h2 data-import-status><%= activity.label %></h2></div><div class="card-body"><p>StockChief is processing <%= plan.recordsValid.toLocaleString('en-US') %> approved rows. Products and stock appear together after the import passes verification.</p><p>You can leave this page. Reopen it from <a href="/imports">File imports and results</a> or the progress banner elsewhere in this inventory.</p><p data-import-timing></p></div></section>
 <% } else if(interrupted){ %>
   <section class="card section"><div class="card-head"><h2>Import paused before verification</h2></div><div class="card-body"><p>Your source file and approval history are saved. This run has no verified successful result, so StockChief will not start another copy automatically or claim it completed.</p><p>Review this import before continuing. <a href="/imports">Back to your imports</a></p></div></section>
 <% } else if(run){ %>
