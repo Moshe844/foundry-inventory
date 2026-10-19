@@ -595,7 +595,7 @@
 <% } %>
 
 <span hidden data-connection-host data-workspace-id="<%= currentWorkspaceId||'' %>" data-public-origin="<%= publicOrigin||'' %>"></span>
-<script src="/connection-return.js?v=popup-return-2"></script>
+<script src="/connection-return.js?v=<%= assetVersion %>"></script>
 <script>
 (function () {
   <% if (postgresMode) { %>

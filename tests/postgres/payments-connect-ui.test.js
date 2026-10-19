@@ -44,6 +44,8 @@ test('real Chromium connects each inventory to its own Stripe account without re
     await page.locator('input[name="password"]').fill('stripe-owner-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('stripe-owner-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
     await page.goto(`${base}/settings/connections#payments`);
+    const returnScript=await page.locator('script[src^="/connection-return.js"]').getAttribute('src');
+    assert.equal(new URL(returnScript,base).searchParams.get('v'),String(app.locals.assetVersion),'Return scripts must follow the application asset version, not a stale cached literal');
     assert.match(await page.locator('main').innerText(),/Each inventory uses the business’s own Stripe account/);
     const popupPromise=browserContext.waitForEvent('page');await page.getByRole('link',{name:'Connect existing Stripe account'}).click();
     const popup=await popupPromise;popup.on('pageerror',(error)=>errors.push(`popup: ${error.message}`));
