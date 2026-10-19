@@ -44,11 +44,11 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
-      - name: Install PostgreSQL 17 binaries
+      - name: Install PostgreSQL 16 binaries
         run: |
           sudo apt-get update
-          sudo apt-get install --yes postgresql-17
-          echo "STOCKCHIEF_POSTGRES_BIN=/usr/lib/postgresql/17/bin" >> "$GITHUB_ENV"
+          sudo apt-get install --yes postgresql-16
+          echo "STOCKCHIEF_POSTGRES_BIN=/usr/lib/postgresql/16/bin" >> "$GITHUB_ENV"
       # The fixture helper creates and removes its own cluster with a random
       # port/password per fixture. Do not set DATABASE_URL or use a shared DB.
       # Explicit selection keeps browser, live-model and certification tests out.

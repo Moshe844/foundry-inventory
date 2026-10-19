@@ -10,8 +10,7 @@ with `npm ci` on Ubuntu 24.04 and Node.js 22:
   files covering authentication, accounting, inventory, concurrency, migration,
   backup/restore, HTTP workflows, mail, scheduling, startup and runtime behavior.
 
-The PostgreSQL job installs version 17 binaries, matching the existing test
-helper's Windows default. `tests/helpers/postgres-cluster.js` initializes a
+The PostgreSQL job installs version 16 binaries from Ubuntu 24.04 packages. `tests/helpers/postgres-cluster.js` initializes a
 fresh cluster with a random password and loopback port for each fixture and
 removes it afterward. Tests apply their own migrations. No service database,
 shared database URL, repository secret, production account or production
@@ -28,7 +27,7 @@ There are no path filters or tolerated failures on the automatic gate.
 `.github/workflows/extended-tests.yml` is manual only. Once the workflow is on
 the default branch, open Actions → Extended tests (manual) → Run workflow and
 choose `postgres` (the complete existing `npm run test:postgres`) or `e2e`
-(`npm run test:e2e`). It installs Chromium and PostgreSQL 17. The full
+(`npm run test:e2e`). It installs Chromium and PostgreSQL 16. The full
 PostgreSQL suite includes browser cases and local release/soak checks that
 are deliberately absent from the automatic core job.
 

@@ -27,6 +27,9 @@ async function startCluster() {
   run('initdb', ['-D', data, '--username=stockchief_fixture', `--pwfile=${passwordFile}`,
     '--auth=scram-sha-256', '--encoding=UTF8', '--no-locale']);
   fs.unlinkSync(passwordFile);
+  // Fixtures connect over loopback TCP; avoid system Unix socket directories
+  // that the unprivileged CI runner may not be allowed to write.
+  fs.appendFileSync(path.join(data, 'postgresql.conf'), "\nunix_socket_directories = ''\n");
   const socket = net.createServer();
   await new Promise((resolve, reject) => { socket.once('error', reject); socket.listen(0, '127.0.0.1', resolve); });
   const port = socket.address().port;
