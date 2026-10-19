@@ -7,7 +7,8 @@ const failureReason=value=>typeof value==='string'?require('../../src/assistant/
 
 // The existing goal owns checkpoints. Interrupted consequential calls require
 // reconciliation against canonical records, never blind replay.
-function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyOutcome,onApprovalReady}){
+function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyOutcome,onApprovalReady,serializeGoalWrite=operation=>operation()}){
+ if(typeof serializeGoalWrite!=='function')throw new TypeError('Invalid host goal write coordination.');
  async function notifyApprovals(result){
   if(!result||!onApprovalReady)return result;
   for(const card of result.approvals||[])if(!card.deliveredAt){
@@ -48,7 +49,7 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    return presented?.image?{...presented,screen:{...presented.screen,_stockchiefEvidence:reference}}:{...presented,_stockchiefEvidence:reference};}
   return entry?require('./context').preview(output,entry.id):output;
  }
- async function update(change,{cleanup=false,access}={}){return database.transaction(async client=>{
+ async function update(change,{cleanup=false,access}={}){return serializeGoalWrite(()=>database.transaction(async client=>{
   const goal=(await client.query(`SELECT * FROM ${TABLE} WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 FOR UPDATE`,
    [ctx.workspaceId,ctx.actorId,goalId])).rows[0];
   held(goal,cleanup);
@@ -62,7 +63,7 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,
    [ctx.workspaceId,ctx.actorId,goalId,JSON.stringify(cp),goal.status,goal.answer,goal.tool_calls]);
   return result;
- },{isolation:'SERIALIZABLE',retrySafe:true});}
+ },{isolation:'SERIALIZABLE',retrySafe:true}));}
  async function checkpointUpdate(change){return update(async(h,goal,client)=>{
   // Settled response persistence grants no new model/tool/business operation.
   // Match native checkpoint semantics: current actor, stamp, lease and tenant

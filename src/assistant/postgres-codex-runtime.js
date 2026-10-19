@@ -11,6 +11,7 @@ async function run(database,ctx,id,options={}){
  const cleanup=[],preparations=[],directory=fs.mkdtempSync(path.join(os.tmpdir(),'stockchief-codex-staging-'));
  cleanup.push(()=>fs.rmSync(directory,{recursive:true,force:true}));
  let session;
+ const serializeGoalWrite=require(base+'goal-write-queue').createQueue();
  let auditQueue=Promise.resolve(),auditTimer=null;
  const pendingActivity=[];
  function flushActivity(){
@@ -20,14 +21,14 @@ async function run(database,ctx,id,options={}){
   // Progress is an outbox, not an execution checkpoint. Append a burst under
   // one goal lock so observations cannot queue dozens of competing locks in
   // front of native checkpoints, approval handoff or final verification.
-  auditQueue=auditQueue.catch(()=>{}).then(()=>database.transaction(async client=>{
+  auditQueue=auditQueue.catch(()=>{}).then(()=>serializeGoalWrite(()=>database.transaction(async client=>{
    await client.query('SELECT id FROM stockchief_runtime.assistant_goals WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 FOR UPDATE',[ctx.workspaceId,ctx.actorId,id]);
    await client.query(`INSERT INTO stockchief_runtime.assistant_goal_events(id,goal_id,sequence,kind,detail)
     SELECT entry->>'id',$1,base.sequence+ordinality,'agent_activity',entry->'detail'
     FROM jsonb_array_elements($2::jsonb) WITH ORDINALITY AS entries(entry,ordinality)
     CROSS JOIN (SELECT COALESCE(max(sequence),0) AS sequence FROM stockchief_runtime.assistant_goal_events WHERE goal_id=$1) base`,
     [id,JSON.stringify(batch)]);
-  },{isolation:'SERIALIZABLE',retrySafe:true}));
+  },{isolation:'SERIALIZABLE',retrySafe:true})));
   auditQueue.catch(()=>{});return auditQueue;
  }
  const audit=event=>{
@@ -63,7 +64,7 @@ async function run(database,ctx,id,options={}){
   const gateway=require(base+'gateway').createGateway({database,ctx:{...ctx,goalRunToken:goal.run_token},goal:goal.original_request,goalId:id,
    runToken:goal.run_token,provider,rawProvider:provider,audit,accessGuard:async()=>{await require('../connections/postgres-document-review').authorize(database,ctx,goal.checkpoint.sourceAutomation);return pilot.access(database,ctx,{enabled:true});}});
   const authorize=settings=>gateway.authorize(settings);
-  session=require(base+'session').createSession({database,ctx,goalId:id,runToken:goal.run_token,candidate:'codex',authorize});
+  session=require(base+'session').createSession({database,ctx,goalId:id,runToken:goal.run_token,candidate:'codex',authorize,serializeGoalWrite});
   // Publish is durable in the shared goal outbox. There is no file-review loop
   // and no test operator; the authenticated website owns the human stage.
   const pending=await session.handoffApprovals();if(pending)return pending;

@@ -140,19 +140,23 @@ Canonical execution receipts prove committed effects at their recorded time. The
 Use the complete evidence already in a tool response. Its _stockchiefEvidence reference supplies evidenceId and valuePointerPrefix; prepend that prefix to the JSON Pointer of the displayed value. Retrieve the journal only for missing, truncated, compacted or earlier evidence. Do not retrieve a value again just to report what the current response already shows. Include current-state verification after authorized changes.
 Never claim every part of a request was completed merely because one receipt was verified.`;
 async function verifyFinal(database,ctx,goal,raw,catalogue,options={}){
+ let scope;
  // A settled, input-bound negative review already rejects this conclusion.
  // Reopening all referenced screens cannot make that rejected answer complete.
  // Positive, absent, invalid or mismatched reviews still take the full fresh
  // verifier below. In particular, malformed references retain its typed error
  // and existing bounded correction path. No receipt or completion is invented.
  try{
-  const scope=require('./native-answer-review').checked(goal,raw);
+  scope=require('./native-answer-review').checked(goal,raw);
   if(scope.required===true&&scope.verified===false&&scope.code==='ANSWER_SCOPE_UNVERIFIED')return unavailable(
    'I could not verify that these findings answer the complete request. Your goal and collected evidence are saved.',scope.code,{reason:scope.reason});
  }catch{/* Preserve normal evidence/reference validation and its error. */}
  const result=await verify(database,ctx,goal,raw,catalogue,options);
  if(!result.verified)return result;
- const scope=require('./native-answer-review').checked(goal,raw);
+ // The goal and raw report are this call's immutable inputs. Reuse only this
+ // input-bound review decision; the factual verifier above still re-read all
+ // required CURRENT evidence and canonical outcomes independently.
+ scope??=require('./native-answer-review').checked(goal,raw);
  if(scope.required&&!scope.verified)return {...unavailable('I could not verify that these findings answer the complete request. Your goal and collected evidence are saved.',scope.code,{reason:scope.reason}),receipt:result.receipt};
  return {...result,answerScopeReview:scope.required?'governed_semantic_review':'canonical_or_navigation_lifecycle'};
 }

@@ -19,16 +19,20 @@ async function effects(database,ctx,ids){
  if(!ids.length)return new Map();
  const rows=(await database.query(`WITH owned AS (
   SELECT id,checkpoint FROM stockchief_runtime.assistant_goals WHERE workspace_id=$1 AND actor_user_id=$2 AND id=ANY($3::text[])
+ ), candidate_interactions AS MATERIALIZED (
+  SELECT i.workspace_id,i.actor_user_id,i.intent FROM stockchief_runtime.assistant_interactions i
+   WHERE i.workspace_id=$1 AND i.actor_user_id=$2 AND i.intent->>'proposalId' IS NOT NULL
+    AND EXISTS(SELECT 1 FROM owned g WHERE g.id=i.intent->>'parentGoalId' OR g.id=i.intent->>'batchId'
+     OR left(i.intent->>'batchId',length(g.id)+1)=g.id||':')
  ), interactions AS (
   SELECT parent.id AS goal_id,i.intent->>'proposalId' AS proposal_id
-   FROM stockchief_runtime.assistant_interactions i
+   FROM candidate_interactions i
    JOIN LATERAL(SELECT g.id FROM stockchief_runtime.assistant_goals g
     WHERE g.workspace_id=i.workspace_id AND g.actor_user_id=i.actor_user_id
      AND (g.id=i.intent->>'parentGoalId' OR g.id=i.intent->>'batchId'
       OR left(i.intent->>'batchId',length(g.id)+1)=g.id||':')
     ORDER BY g.created_at DESC,g.id DESC LIMIT 1) parent ON true
    JOIN owned g ON g.id=parent.id
-   WHERE i.workspace_id=$1 AND i.actor_user_id=$2
  ), refs AS (
   SELECT g.id AS goal_id,d.value->>'kind' AS kind,d.value->>'proposalId' AS proposal_id FROM owned g
    CROSS JOIN LATERAL jsonb_each(CASE WHEN jsonb_typeof(g.checkpoint#>'{harness,approvalDeliveries}')='object'

@@ -14,9 +14,12 @@ function packet(goal,raw){
  if(report?.status!=='completed'||report.outcome==='navigation')return null;
  const dependencies=require('../../scripts/environment-agent-demo/waits').dependencies(h);
  if(Object.values(dependencies).some(ids=>ids.length))return null;
- const entries=Object.values(h.evidence||{}),sources=new Map(),refs=require('../../scripts/environment-agent-demo/source-references');
+ const entries=Object.values(h.evidence||{}),sources=new Map(),refs=require('../../scripts/environment-agent-demo/source-references'),sourceIndexes=new Map();
  for(const input of report.claims){
-  const claim=Object.hasOwn(input,'sourceRef')?refs.resolve(entries,input):input;
+  // One immutable packet may cite many values from the same observations.
+  // Build each original-value index once for this packet, not once per claim.
+  // The map never survives this call or substitutes for fresh fact checks.
+  const claim=Object.hasOwn(input,'sourceRef')?refs.resolve(entries,input,sourceIndexes):input;
   const entry=entries.find(e=>e.id===claim.evidenceId);
   if(!entry||entry.truncated||typeof entry.text!=='string'||createHash('sha256').update(entry.text).digest('hex')!==entry.sha256)throw Error('ANSWER_REVIEW_EVIDENCE_UNAVAILABLE');
   if(!sources.has(entry.id)){
