@@ -13,9 +13,9 @@ test('actual Codex SDK opens a governed report link absent from its starting scr
  const pilot=require('../../src/assistant/postgres-codex-pilot'),store=require('../../src/assistant/postgres-goal-store'),started=await pilot.start(db,ctx,'Inspect the reported record without changing anything.');let calls=0,proof;
  function find(v){if(typeof v==='string'){try{const hit=find(JSON.parse(v));if(hit)return hit;}catch{}const match=v.match(/LINK_PROOF=(\{[^\r\n]*\})/);if(match)return JSON.parse(match[1]);}else if(v&&typeof v==='object')for(const child of Object.values(v)){const hit=find(child);if(hit)return hit;}return null;}
  const fake=async(_url,init)=>{const body=JSON.parse(init.body);
-  if(body.text?.format?.name==='native_answer_scope_fit'){
+  if(body.text?.format?.name==='native_answer_scope_fit_v2'){
    const input=JSON.parse(body.input[0].content);assert.equal(input.proposedAnswer,'The reported product is '+proof.product+'.');assert(input.evidence.some(e=>e.observation.rows?.some(r=>r.product===proof.product)));
-   return Response.json({id:'offline-report-review',object:'response',status:'completed',model:body.model,output:[{type:'message',role:'assistant',content:[{type:'output_text',text:JSON.stringify({grounded:true,reason:''})}]}],usage:{input_tokens:200,output_tokens:40,total_tokens:240}});
+   return Response.json({id:'offline-report-review',object:'response',status:'completed',model:body.model,output:[{type:'message',role:'assistant',content:[{type:'output_text',text:JSON.stringify({grounded:true,complete:true,missingOutcomes:[],reason:''})}]}],usage:{input_tokens:200,output_tokens:40,total_tokens:240}});
   }
   calls++;
   if(calls===1)return require('../helpers/codex-offline-response')(body,calls,

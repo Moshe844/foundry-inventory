@@ -11,9 +11,9 @@ test('actual native SDK receives record coordinates through MCP and verifies rea
  const pilot=require('../../src/assistant/postgres-codex-pilot'),store=require('../../src/assistant/postgres-goal-store'),started=await pilot.start(db,ctx,'Inspect the recorded places and report an evidenced location without changing anything.');let calls=0,reviewCalls=0,proof;
  function findProof(v){if(typeof v==='string'){try{const parsed=JSON.parse(v);const found=findProof(parsed);if(found)return found;}catch{}const match=v.match(/ROW_PROOF=(\{[^\r\n]*\})/);if(match){try{return JSON.parse(match[1]);}catch{}}}else if(v&&typeof v==='object')for(const child of Object.values(v)){const found=findProof(child);if(found)return found;}return null;}
  const fake=async(_url,init)=>{const body=JSON.parse(init.body);
-  if(body.text?.format?.name==='native_answer_scope_fit'){
+  if(body.text?.format?.name==='native_answer_scope_fit_v2'){
    reviewCalls++;const input=JSON.parse(body.input[0].content);assert.equal(input.goalId,started.goalId);assert.equal(input.proposedAnswer,'Recorded location: '+proof.name);assert(input.evidence.some(e=>e.observation.outcomes[0].result.rows.some(r=>r.name===proof.name)));
-   return Response.json({id:'offline-scope-review',object:'response',status:'completed',model:body.model,output:[{type:'message',role:'assistant',content:[{type:'output_text',text:JSON.stringify({grounded:true,reason:''})}]}],usage:{input_tokens:200,output_tokens:40,total_tokens:240}});
+   return Response.json({id:'offline-scope-review',object:'response',status:'completed',model:body.model,output:[{type:'message',role:'assistant',content:[{type:'output_text',text:JSON.stringify({grounded:true,complete:true,missingOutcomes:[],reason:''})}]}],usage:{input_tokens:200,output_tokens:40,total_tokens:240}});
   }
   calls++;
   if(calls===1)return require('../helpers/codex-offline-response')(body,calls,`const envelope=await tools.mcp__stockchief__business_operations({stepsJson:JSON.stringify([{capability:'read.locations',arguments:[],dependsOn:[]}])});if(envelope.isError)throw Error('READ_FAILED');const result=JSON.parse(envelope.content[0].text);const key=result._stockchiefSources.valueField;const row=result.outcomes[0].result.rows.filter(r=>r.active).reverse()[0];text('ROW_PROOF='+JSON.stringify({sourceRef:row[key].name,name:row.name}));`);

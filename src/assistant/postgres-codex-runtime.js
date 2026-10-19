@@ -45,7 +45,7 @@ async function run(database,ctx,id,options={}){
    code:event.code||event.reason||null,
    limitKind:typeof event.limitKind==='string'&&/^[a-z_]{1,80}$/.test(event.limitKind)?event.limitKind:null};
   if(event.timings)detail.timings=Object.fromEntries(Object.entries(event.timings).filter(([key,value])=>
-   ['admissionMs','tokenPreflightMs','providerMs','commercialSettlementMs','nativeCheckpointMs','finalVerificationMs'].includes(key)&&Number.isFinite(value)&&value>=0));
+   ['admissionMs','sourceIntegrityMs','tokenPreflightMs','providerMs','commercialSettlementMs','nativeCheckpointMs','finalVerificationMs'].includes(key)&&Number.isFinite(value)&&value>=0));
   pendingActivity.push({id:require('../lib/util').newId('goalevent'),detail});
   if(pendingActivity.length>=32)flushActivity();
   else if(!auditTimer)auditTimer=setTimeout(flushActivity,25);
@@ -192,11 +192,11 @@ async function run(database,ctx,id,options={}){
    const review=await session.answerReview(result.answer);
    if(review.required&&!review.verdict){
     audit({kind:'answer_scope_review_started'});
-    const fit=require('./postgres-control-plane');
-    const verdict=await helper.complete({system:fit.ANSWER_FIT_SYSTEM,prompt:JSON.stringify(review.input),
-     schema:fit.ANSWER_FIT_SCHEMA,schemaName:'native_answer_scope_fit',maxOutputTokens:500});
+    const fit=require('./native-answer-review');
+    const verdict=await helper.complete({system:fit.system,prompt:JSON.stringify(review.input),
+     schema:fit.schema,schemaName:'native_answer_scope_fit_v2',maxOutputTokens:500});
     await session.answerReviewed(result.answer,review.hash,verdict.data);
-    audit({kind:'answer_scope_review_settled',status:verdict.data.grounded?'supported':'needs_correction'});
+    audit({kind:'answer_scope_review_settled',status:verdict.data.grounded&&verdict.data.complete&&!verdict.data.missingOutcomes?.length?'supported':'needs_correction'});
    }
    pendingFinal=null;
    const finalStarted=Date.now();

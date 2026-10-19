@@ -34,13 +34,17 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
    try{
     let size=0;const parts=[];
     for await(const part of req){size+=part.length;if(size>wire.MAX_BODY)throw new Error('REQUEST_TOO_LARGE');parts.push(part);}
-    const authorizationStarted=Date.now();
-    const admissionAccess=await grant.authorize(); // fresh for this HTTP boundary, never reused across calls
-    timings.authorizationMs=Date.now()-authorizationStarted;
-    if(grant.livePermit){
-     await require('./codex-live-permit').assertFresh(grant.livePermit,{budget,task:grant.task});
-     if(grant.lastBlock)throw new Error('CODEX_ATTEMPT_ALREADY_STOPPED');
-    }
+    // Independent read-only checks may overlap. Join BOTH before decoding,
+    // reserving, counting tokens or invoking a provider; no digest or authority
+    // is cached. Keep failure ordering and every financial boundary unchanged.
+    const gateChecks=await Promise.allSettled([
+     (async()=>{const at=Date.now();try{return await grant.authorize();}finally{timings.authorizationMs=Date.now()-at;}})(),
+     (async()=>{if(!grant.livePermit)return;const at=Date.now();try{
+      await require('./codex-live-permit').assertFresh(grant.livePermit,{budget,task:grant.task});
+      if(grant.lastBlock)throw new Error('CODEX_ATTEMPT_ALREADY_STOPPED');
+     }finally{timings.sourceIntegrityMs=Date.now()-at;}})()]);
+    for(const check of gateChecks)if(check.status==='rejected')throw check.reason;
+    const admissionAccess=gateChecks[0].value; // fresh for this exact HTTP boundary
     if(grant.wireProfile!=='codex'&&grant.lastResponse?.empty)throw Object.assign(new Error(require('./finalization').EMPTY_MESSAGE),{code:'EMPTY_MODEL_FINAL'});
     const input=JSON.parse(Buffer.concat(parts).toString('utf8'));
     const outputTokens=grant.provider==='openai'?input.max_output_tokens||wire.MAX_OUTPUT:input.max_tokens||wire.MAX_OUTPUT;

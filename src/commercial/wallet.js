@@ -11,9 +11,11 @@ function normalize(input){const category=CATEGORY_FOR[input.meter]||input.meter;
  return {...input,id:input.id||newId('usage'),meter:category,units,
  idempotencyKey:CATEGORY_FOR[input.meter]?`${input.meter}:${input.idempotencyKey}`:input.idempotencyKey,
  detail:{...input.detail,operation:input.detail?.operation||input.meter}};}
-async function assertScope(database,scope){if(!scope.accountId)throw new ValidationError('Usage requires its commercial account.');
+function assertScopeMatch(scope,matched){if(!scope.accountId)throw new ValidationError('Usage requires its commercial account.');
+ if(scope.workspaceId&&!matched)throw new ValidationError('This usage workspace belongs to another commercial account.');}
+async function assertScope(database,scope){assertScopeMatch(scope,true);
  if(scope.workspaceId){const found=(await database.query('SELECT 1 FROM workspaces WHERE id=$1 AND owner_account_id=$2',
- [scope.workspaceId,scope.accountId])).rows.length;if(!found)throw new ValidationError('This usage workspace belongs to another commercial account.');}}
+ [scope.workspaceId,scope.accountId])).rows.length;assertScopeMatch(scope,Boolean(found));}}
 async function lock(database,scope,category){await database.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
  [`commercial-wallet:${scope.accountId}:${category}`]);}
 async function balances(database,scope,category,bounds,at=new Date()){
@@ -37,4 +39,4 @@ async function allocate(client,event,state){let remaining=Number(event.units);
  [newId('alloc'),event.id,grant.id,units]);remaining-=units;}
  if(remaining)throw new ValidationError('The usage reservation could not be fully funded.');
 }
-module.exports={CATEGORIES,CATEGORY_FOR,normalize,assertScope,lock,balances,allocate};
+module.exports={CATEGORIES,CATEGORY_FOR,normalize,assertScope,assertScopeMatch,lock,balances,allocate};

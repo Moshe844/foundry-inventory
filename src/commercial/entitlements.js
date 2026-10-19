@@ -43,58 +43,70 @@ function operationalAccess(subscription, now = new Date()) {
 
 async function capabilityState(database, scope, capability, options = {}) {
   capability=catalog.canonicalCapability(capability);
-  await wallet.assertScope(database,scope);
-  const definition=catalog.assertCapabilityKey(capability);
-  const subscription = options.subscription || await subscriptionFor(database, scope.accountId);
-  const access = operationalAccess(subscription, options.now);
-  if (!subscription && !config.commercial.requirePaidWorkspace) {
-    return {capability,definition,enabled:definition.readiness!=='DISABLED',source:'development',subscription:null,
-      access:{mode:'DEVELOPMENT',canOperate:true,canRead:true}};
-  }
-  if (!access.canOperate&&!(options.allowReadOnly&&access.canRead&&subscription))
-    return {capability,definition,enabled:false,source:'subscription',subscription,access};
-  const override = (await database.query(`SELECT * FROM commercial_entitlement_overrides
-    WHERE (account_id=$1 OR workspace_id=$2) AND capability=$3 AND starts_at<=COALESCE($4::timestamptz,now())
-      AND (ends_at IS NULL OR ends_at>COALESCE($4::timestamptz,now()))
-    ORDER BY CASE WHEN workspace_id IS NOT NULL THEN 0 ELSE 1 END,created_at DESC LIMIT 1`,
-  [scope.accountId,scope.workspaceId || null,capability,options.now || null])).rows[0];
-  if (override) return {capability,definition,enabled:definition.readiness!=='DISABLED'&&Boolean(Number(override.enabled)),
-    source:'override',override,subscription,access};
-  const row = subscription.plan_version_id
-    ?(await database.query(`SELECT (entry->>'enabled')::bigint AS enabled,COALESCE(entry->'configuration','{}'::jsonb) AS configuration
-      FROM commercial_plan_versions version CROSS JOIN LATERAL jsonb_array_elements(version.entitlements) entry
-      WHERE version.id=$1 AND entry->>'capability'=$2`,[subscription.plan_version_id,capability])).rows[0]
-    :(await database.query(`SELECT enabled,configuration FROM commercial_plan_entitlements
-      WHERE plan_id=$1 AND capability=$2`, [subscription.plan_id,capability])).rows[0];
-  return {capability,definition,enabled:definition.readiness!=='DISABLED'&&Boolean(row && Number(row.enabled)),configuration:row?.configuration || {},
-    source:'plan',subscription,access};
+  return (await capabilityStates(database,scope,[capability],options)).get(capability);
 }
 
+// A fresh authorization snapshot, not a cache or a spending permit. Keep native
+// PostgreSQL types for subscription fields; override bigint text and timestamps
+// are restored losslessly to the same pg result shape as the individual reads.
+async function capabilitySnapshot(database,scope,keys,now){
+ wallet.assertScopeMatch(scope,true);
+ const found=(await database.query(`WITH base AS (
+  SELECT ($2::text IS NULL OR EXISTS(SELECT 1 FROM workspaces WHERE id=$2 AND owner_account_id=$1)) AS scope_valid,
+   subscription.*,version.plan_id AS version_plan_id,version.entitlements AS version_entitlements,
+   plan.public_name AS plan_name,plan.outcome AS plan_outcome,plan.grace_days,plan.currency,plan.monthly_amount_minor,plan.annual_amount_minor
+  FROM (SELECT 1) anchor LEFT JOIN account_subscriptions subscription ON subscription.account_id=$1
+  LEFT JOIN commercial_plans plan ON plan.id=subscription.plan_id
+  LEFT JOIN commercial_plan_versions version ON version.id=subscription.plan_version_id)
+ SELECT base.*,keys.capability AS snapshot_capability,
+  CASE WHEN o.id IS NULL THEN NULL ELSE to_jsonb(o)||jsonb_build_object('enabled',o.enabled::text,'limit_units',o.limit_units::text) END AS snapshot_override,
+  CASE WHEN base.plan_version_id IS NOT NULL AND base.version_plan_id=base.plan_id THEN
+   (SELECT jsonb_build_object('enabled',entry->>'enabled','configuration',COALESCE(entry->'configuration','{}'::jsonb))
+    FROM jsonb_array_elements(base.version_entitlements) entry WHERE entry->>'capability'=keys.capability LIMIT 1)
+  WHEN pe.capability IS NOT NULL THEN jsonb_build_object('enabled',pe.enabled::text,'configuration',pe.configuration) ELSE NULL END AS snapshot_plan
+ FROM base CROSS JOIN unnest($3::text[]) AS keys(capability)
+ LEFT JOIN LATERAL (SELECT * FROM commercial_entitlement_overrides
+  WHERE (account_id=$1 OR workspace_id=$2) AND capability=keys.capability AND starts_at<=COALESCE($4::timestamptz,now())
+   AND (ends_at IS NULL OR ends_at>COALESCE($4::timestamptz,now()))
+  ORDER BY CASE WHEN workspace_id IS NOT NULL THEN 0 ELSE 1 END,created_at DESC LIMIT 1) o ON true
+ LEFT JOIN commercial_plan_entitlements pe ON pe.plan_id=base.plan_id AND pe.capability=keys.capability`,
+ [scope.accountId,scope.workspaceId||null,keys.length?keys:[null],now||null])).rows;
+ wallet.assertScopeMatch(scope,found[0]?.scope_valid===true);
+ const {scope_valid,version_entitlements,snapshot_capability,snapshot_override,snapshot_plan,...value}=found[0];
+ let subscription=value.id?value:null;
+ if(subscription){if(subscription.plan_version_id&&subscription.version_plan_id!==subscription.plan_id)subscription.plan_version_id=null;
+  subscription.cancel_at_period_end=Boolean(Number(subscription.cancel_at_period_end));}
+ const overrides=found.filter(r=>r.snapshot_override).map(r=>{const o=r.snapshot_override;
+  for(const k of ['starts_at','ends_at','created_at'])if(o[k]!==null&&o[k]!==undefined)o[k]=new Date(o[k]);return o;});
+ return {subscription,overrides,rows:found.filter(r=>r.snapshot_plan).map(r=>({capability:r.snapshot_capability,...r.snapshot_plan}))};
+}
 // One fresh snapshot for one catalogue construction, never a cache or an
 // execution permit. Canonical operations still recheck their own entitlement.
 async function capabilityStates(database,scope,capabilities,options={}){
   const keys=[...new Set(capabilities.map(key=>catalog.canonicalCapability(key)))];
   const definitions=new Map(keys.map(key=>[key,catalog.assertCapabilityKey(key)]));
-  await wallet.assertScope(database,scope);
-  const subscription=options.subscription||await subscriptionFor(database,scope.accountId);
+  let snapshot;
+  if(!options.subscription)snapshot=await capabilitySnapshot(database,scope,keys,options.now);
+  else await wallet.assertScope(database,scope);
+  const subscription=options.subscription||snapshot.subscription;
   const access=operationalAccess(subscription,options.now);
   if(!subscription&&!config.commercial.requirePaidWorkspace)return new Map(keys.map(capability=>[capability,{
     capability,definition:definitions.get(capability),enabled:definitions.get(capability).readiness!=='DISABLED',source:'development',
     subscription:null,access:{mode:'DEVELOPMENT',canOperate:true,canRead:true}}]));
   if(!access.canOperate&&!(options.allowReadOnly&&access.canRead&&subscription))return new Map(keys.map(capability=>[capability,{
     capability,definition:definitions.get(capability),enabled:false,source:'subscription',subscription,access}]));
-  const overrides=(await database.query(`SELECT DISTINCT ON (capability) * FROM commercial_entitlement_overrides
+  const overrides=snapshot?.overrides||(await database.query(`SELECT DISTINCT ON (capability) * FROM commercial_entitlement_overrides
     WHERE (account_id=$1 OR workspace_id=$2) AND capability=ANY($3::text[]) AND starts_at<=COALESCE($4::timestamptz,now())
       AND (ends_at IS NULL OR ends_at>COALESCE($4::timestamptz,now()))
     ORDER BY capability,CASE WHEN workspace_id IS NOT NULL THEN 0 ELSE 1 END,created_at DESC`,
     [scope.accountId,scope.workspaceId||null,keys,options.now||null])).rows;
-  const rows=subscription.plan_version_id
+  const rows=snapshot?.rows||(subscription.plan_version_id
     ?(await database.query(`SELECT entry->>'capability' AS capability,(entry->>'enabled')::bigint AS enabled,
       COALESCE(entry->'configuration','{}'::jsonb) AS configuration FROM commercial_plan_versions version
       CROSS JOIN LATERAL jsonb_array_elements(version.entitlements) entry
       WHERE version.id=$1 AND entry->>'capability'=ANY($2::text[])`,[subscription.plan_version_id,keys])).rows
     :(await database.query('SELECT capability,enabled,configuration FROM commercial_plan_entitlements WHERE plan_id=$1 AND capability=ANY($2::text[])',
-      [subscription.plan_id,keys])).rows;
+      [subscription.plan_id,keys])).rows);
   return new Map(keys.map(capability=>{const definition=definitions.get(capability),override=overrides.find(row=>row.capability===capability),row=rows.find(row=>row.capability===capability);
     return [capability,override?{capability,definition,enabled:definition.readiness!=='DISABLED'&&Boolean(Number(override.enabled)),
       source:'override',override,subscription,access}:{capability,definition,enabled:definition.readiness!=='DISABLED'&&Boolean(row&&Number(row.enabled)),

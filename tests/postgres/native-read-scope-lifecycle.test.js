@@ -2,6 +2,7 @@
 process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 test('actual SDK read-only delivery checks scope, preserves reference correction and resumes settled review without more spending',{timeout:180000},async t=>{
+ assert.match(process.env.STOCKCHIEF_OFFLINE_CODEX_IMAGE||'',/^sha256:[a-f0-9]{64}$/,'The actual certified SDK image must be selected explicitly');
  const cluster=await require('../helpers/postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString);
  const keys=['STOCKCHIEF_RUNTIME_ENV','STOCKCHIEF_CODEX_PILOT','STOCKCHIEF_CODEX_PILOT_WORKSPACES','STOCKCHIEF_CODEX_PILOT_EMAILS','FOUNDRY_DATABASE_URL','STOCKCHIEF_CODEX_MODEL_POLICY'],old=Object.fromEntries(keys.map(k=>[k,process.env[k]]));
  t.after(async()=>{for(const[k,v]of Object.entries(old))if(v===undefined)delete process.env[k];else process.env[k]=v;await db.close();await cluster.stop();});await require('../../src/db/migrate-postgres').migratePostgres(db);
@@ -10,14 +11,19 @@ test('actual SDK read-only delivery checks scope, preserves reference correction
  await db.query("UPDATE stockchief_runtime.codex_pilots SET enabled=true,stopped=false,ceiling_micro_usd=1000000,approval_reference='OFFLINE FAKE PROVIDER ONLY' WHERE workspace_id=$1",[ctx.workspaceId]);await require('../../scripts/environment-agent-demo/run-pilot').seedPrices(db);
  const place=await require('../../src/domain/postgres-location-service').createLocation(db,ctx,{name:'Unfamiliar shelf '+randomUUID().slice(0,6),kind:'warehouse'});
  const pilot=require('../../src/assistant/postgres-codex-pilot'),store=require('../../src/assistant/postgres-goal-store'),response=require('../helpers/codex-offline-response');
+ // Exact diagnostic from the recorded paid failure. Length is presentation,
+ // not a missing decision; its original wire response stays durably settled.
+ const recordedReason='The complete attention list supports 27 approval items, 3 messages, 2 connection issues, and 2 stock alerts. All 11 provider-effect records succeeded, and the answer appropriately limits its interruption finding to those records. The evidence shows only read operations.';
+ assert.equal(recordedReason.length,270);
  for(const invalidRef of [false,true]){
   const started=await pilot.start(db,ctx,'Name one currently recorded warehouse and make no changes.');let native=0,reviews=0;
   async function claim(){const g=await store.get(db,ctx,started.goalId),e=Object.values(g.checkpoint.harness.evidence).findLast(e=>e.name==='business_operations'),refs=require('../../scripts/environment-agent-demo/source-references'),wire=refs.present(e,JSON.parse(e.text)),row=wire.outcomes[0].result.rows.find(r=>r.name===place.name);assert(row);return {sourceRef:row[wire._stockchiefSources.valueField].name,historical:false,value:row.name};}
   const fake=async(_url,init)=>{const body=JSON.parse(init.body);
-   if(body.text?.format?.name==='native_answer_scope_fit'){
+   if(body.text?.format?.name==='native_answer_scope_fit_v2'){
     reviews++;const input=JSON.parse(body.input[0].content);assert.equal(input.originalGoal,'Name one currently recorded warehouse and make no changes.');assert.equal(input.goalId,started.goalId);assert(input.evidence[0].source);assert.equal(body.max_output_tokens,500);
     const reject=!invalidRef&&reviews===1;assert.equal(native,reject?2:3,'Reference rejection must not purchase a semantic review');
-    return Response.json({id:'offline-review-'+reviews,object:'response',status:'completed',model:body.model,output:[{type:'message',role:'assistant',content:[{type:'output_text',text:JSON.stringify({grounded:!reject,reason:reject?'A warehouse record does not establish that no interrupted requests remain.':''})}]}],usage:{input_tokens:200,output_tokens:40,total_tokens:240}});
+    assert.equal(body.text.format.schema.properties.reason.maxLength,undefined,'The actual provider wire omits this constraint');
+    return Response.json({id:'offline-review-'+reviews,object:'response',status:'completed',model:body.model,output:[{type:'message',role:'assistant',content:[{type:'output_text',text:JSON.stringify({grounded:true,complete:!reject,missingOutcomes:reject?['A warehouse record does not establish that no interrupted requests remain.']:[],reason:recordedReason})}]}],usage:{input_tokens:200,output_tokens:40,total_tokens:240}});
    }
    native++;
    if(native===1)return response(body,native,`const e=await tools.mcp__stockchief__business_operations({stepsJson:JSON.stringify([{capability:'read.locations',arguments:[],dependsOn:[]}])});if(e.isError)throw Error('READ_FAILED');text(JSON.parse(e.content[0].text));`);
@@ -30,7 +36,9 @@ test('actual SDK read-only delivery checks scope, preserves reference correction
    return response.final(body,native,JSON.stringify({version:3,status:'completed',outcome:'answer',answer,question:null,missingInformation:[],tier:null,reason:null,claims,navigation:null,workProducts:[],nextActions:[]}));
   };
   const done=await pilot.run(db,ctx,started.goalId,{image:process.env.STOCKCHIEF_OFFLINE_CODEX_IMAGE,apiKey:'FAKE',fetchImpl:fake,countInput:async()=>({object:'response.input_tokens',input_tokens:200})});
-  assert.equal(done.status,'COMPLETED',JSON.stringify({answer:done.answer,interruption:done.checkpoint.harness.interruption,failure:done.checkpoint.harness.verificationFailure,native,reviews}));assert.equal(native,3);assert.equal(reviews,invalidRef?1:2);assert.equal(done.checkpoint.harness.verificationCorrections,1);assert.equal(done.checkpoint.harness.codexRequests,native+reviews);assert(!done.answer.includes('interrupted'));
+  assert.equal(done.status,'COMPLETED',JSON.stringify({answer:done.answer,waitingForFunding:done.waitingForFunding,interruption:done.checkpoint?.harness?.interruption,failure:done.checkpoint?.harness?.verificationFailure,native,reviews}));assert.equal(native,3);assert.equal(reviews,invalidRef?1:2);assert.equal(done.checkpoint.harness.verificationCorrections,1);assert.equal(done.checkpoint.harness.codexRequests,native+reviews);assert(!done.answer.includes('interrupted'));
+  assert.equal(done.checkpoint.harness.answerScopeReview.version,2);assert.equal(done.checkpoint.harness.answerScopeReview.verdict.reason.length,200);
+  assert(require('../../scripts/environment-agent-demo/replay-packet').unpack(done.checkpoint.harness.helperDelivery.packet).body.includes(recordedReason),'Exact charged response survives normalization and restart');
   const before=(await db.query('SELECT count(*) AS n,sum(charged) AS charged FROM stockchief_runtime.codex_pilot_calls WHERE goal_id=$1',[started.goalId])).rows[0];
   await db.query("UPDATE stockchief_runtime.assistant_goals SET status='BLOCKED',tool_calls=30,checkpoint=jsonb_set(checkpoint,'{harness,codexRequests}','24') WHERE id=$1",[started.goalId]);await pilot.resume(db,ctx,started.goalId);
   const forbidden=async()=>{throw Error('NO_ADDITIONAL_MODEL_OR_TOKEN_CALL_ALLOWED');};
@@ -43,8 +51,8 @@ test('actual SDK read-only delivery checks scope, preserves reference correction
   const started=await pilot.start(db,ctx,'Name one currently recorded warehouse and make no changes.'),sessions=require('../../scripts/environment-agent-demo/session'),create=sessions.createSession;let native=0,reviews=0,injected=true;
   sessions.createSession=options=>{const s=create(options);if(options.goalId===started.goalId){const save=s.answerReviewed;s.answerReviewed=async(...args)=>{if(injected){injected=false;throw Object.assign(Error('OFFLINE_HOST_INTERRUPTION'),{code:'OFFLINE_HOST_INTERRUPTION'});}return save(...args);};}return s;};
   t.after(()=>{sessions.createSession=create;});
-  const fake=async(_url,init)=>{const body=JSON.parse(init.body);if(body.text?.format?.name==='native_answer_scope_fit'){
-   reviews++;return Response.json({id:'offline-settled-review',object:'response',status:'completed',model:body.model,output:[{type:'message',role:'assistant',content:[{type:'output_text',text:JSON.stringify({grounded:true,reason:''})}]}],usage:{input_tokens:200,output_tokens:40,total_tokens:240}});
+  const fake=async(_url,init)=>{const body=JSON.parse(init.body);if(body.text?.format?.name==='native_answer_scope_fit_v2'){
+   reviews++;return Response.json({id:'offline-settled-review',object:'response',status:'completed',model:body.model,output:[{type:'message',role:'assistant',content:[{type:'output_text',text:JSON.stringify({grounded:true,complete:true,missingOutcomes:[],reason:''})}]}],usage:{input_tokens:200,output_tokens:40,total_tokens:240}});
   }
   native++;if(native===1)return response(body,native,`text(await tools.mcp__stockchief__business_operations({stepsJson:JSON.stringify([{capability:'read.locations',arguments:[],dependsOn:[]}])}));`);
   assert.equal(native,2);const g=await store.get(db,ctx,started.goalId),e=Object.values(g.checkpoint.harness.evidence).findLast(e=>e.name==='business_operations'),wire=require('../../scripts/environment-agent-demo/source-references').present(e,JSON.parse(e.text)),row=wire.outcomes[0].result.rows.find(r=>r.name===place.name);
