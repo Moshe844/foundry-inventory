@@ -40,7 +40,7 @@ const sections=[
     {href:'/inventory/table',label:'Full stock table'},{href:'/inventory/new',label:'Add a product'},
     {href:'/locations',label:'Locations'},{href:'/warehouse',label:'Warehouse tasks and scanning'},
     {href:'/transfers',label:'Transfers and in-transit stock'},{href:'/planning',label:'What StockChief expects to go wrong'},
-    {href:'/pricing/new',label:'Change selling prices'},{href:'/imports/start',label:'Bring data in from a file'}]},
+    {href:'/pricing/new',label:'Change selling prices'},{href:'/imports',label:'File imports and results'}]},
   {title:'Books and accounting',why:'Money says how the business is doing. This is the ledger, for your accountant — you should not be operating it during ordinary work.',links:[
     {href:'/accounting/books',label:'Books dashboard'},{href:'/accounting/transactions',label:'Every transaction'},
     {href:'/accounting/chart',label:'Chart of accounts'},{href:'/accounting/receivables',label:'What customers owe'},

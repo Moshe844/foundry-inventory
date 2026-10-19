@@ -3,6 +3,7 @@
 const crypto=require('node:crypto');
 const express=require('express');
 const imports=require('../../imports/postgres-service');
+const progress=require('../../imports/postgres-progress');
 const fields=require('../../imports/fields');
 const entitlements=require('../../entitlements/postgres-service');
 const commercialControl=require('../../commercial/control-service');
@@ -29,17 +30,15 @@ function createPostgresImportsRouter(database,{provider=null}={}){
   const router=express.Router();
   router.use('/imports',requireAuth);
   async function renderStart(req,res){return res.page('imports/start',{
-    title:'Bring your data in',nav:'imports',recent:await imports.list(database,req.ctx.workspaceId,10),
+    title:'File imports and results',nav:'imports',recent:await progress.list(database,req.ctx.workspaceId,{limit:20}),
     locations:await locations(database,req.ctx.workspaceId),aiConfigured:Boolean(provider||config.ai.configured),canOperate:true,
     usageKey:newId('importpreview'),
   });}
   router.get('/imports/start',asyncRoute(renderStart));
   router.get('/imports',asyncRoute(renderStart));
   router.get('/imports/:id/progress',asyncRoute(async(req,res)=>{
-    const plan=await imports.get(database,req.ctx.workspaceId,req.params.id);
-    const [run,job]=await Promise.all([imports.report(database,req.ctx.workspaceId,plan.id),importJob(database,req.ctx.workspaceId,plan.id)]);
-    const active=Boolean(job&&(['PENDING','RETRY'].includes(job.status)||job.status==='RUNNING'&&Number(job.lease_expires_at)>Date.now()));
-    res.set('Cache-Control','no-store');return res.json({active,working:job?.status==='RUNNING',finished:!active,verified:run?.verified===true,status:plan.status});
+    const state=await progress.get(database,req.ctx.workspaceId,req.params.id);
+    res.set('Cache-Control','no-store');return res.json(state);
   }));
   router.post('/imports',asyncRoute(async(req,res)=>{
     const wantsJson=String(req.get('accept') || '').includes('application/json');

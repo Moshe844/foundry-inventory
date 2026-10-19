@@ -18,7 +18,7 @@ test('Render staging deploys separate PostgreSQL web and worker processes agains
   assert.equal((blueprint.match(/property:\s+connectionString/g) || []).length, 2);
   assert.equal((blueprint.match(/fromGroup:\s+stockchief-staging-runtime/g) || []).length, 2);
   assert.equal((blueprint.match(/preDeployCommand:\s+npm run db:apply:postgres/g) || []).length, 2);
-  assert.match(blueprint, /healthCheckPath:\s+\/readyz/);
+  assert.match(blueprint, /healthCheckPath:\s+\/healthz/);
   assert.equal((blueprint.match(/autoDeployTrigger:\s+off/g) || []).length, 2);
   assert.match(blueprint, /key:\s+SESSION_SECRET\s+generateValue:\s+true/);
   assert.match(blueprint, /key:\s+FOUNDRY_CONNECTION_ENCRYPTION_KEY\s+generateValue:\s+true/);

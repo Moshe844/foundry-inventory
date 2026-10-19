@@ -154,11 +154,12 @@ function createPostgresApp({database,resourceDatabase=database,sessionStore,sess
   app.use(async(req,res,next)=>{
     if(!req.ctx)return next();
     try {
-      const [attentionCount,entry]=await Promise.all([
+      const [attentionCount,entry,importActivity]=await Promise.all([
         postgresProjections.needsCount(database,req.ctx.workspaceId,req.ctx.actorId),
         postgresExploration.state(database,req.ctx.workspaceId,req.account.id),
+        req.method==='GET'&&req.accepts('html')?require('./imports/postgres-progress').list(database,req.ctx.workspaceId,{activeOnly:true,limit:3}):Promise.resolve([]),
       ]);
-      res.locals.attentionCount=attentionCount;res.locals.globalOnboardingEntry=entry;return next();
+      res.locals.attentionCount=attentionCount;res.locals.globalOnboardingEntry=entry;res.locals.globalImportActivity=importActivity;return next();
     }
     catch(error){return next(error);}
   });

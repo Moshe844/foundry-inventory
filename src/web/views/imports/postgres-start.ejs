@@ -42,11 +42,11 @@
   </div>
 </div>
 <% if(recent.length){ %>
-  <div class="card section"><div class="card-head"><h2>Recent imports</h2></div>
+  <div class="card section"><div class="card-head"><h2>File imports and results</h2></div>
     <table class="table"><thead><tr><th>Source</th><th>Rows</th><th>Status</th><th>Created</th></tr></thead><tbody>
       <% recent.forEach(function(plan){ %><tr><td><a href="/imports/<%= plan.id %>"><%= plan.sourceName %></a></td>
-        <td><%= plan.recordsDetected %></td><td><span class="badge badge--muted"><%= plan.status %></span></td>
-        <td><%= helpers.timeAgo(plan.createdAt) %></td></tr><% }) %>
+        <td><%= plan.rows %></td><td><span class="badge badge--muted"><%= plan.label %></span></td>
+        <td><time data-import-time datetime="<%= plan.startedAt||plan.createdAt %>"><%= new Date(plan.startedAt||plan.createdAt).toISOString().replace('T',' ').replace('Z',' UTC') %></time></td></tr><% }) %>
     </tbody></table>
   </div>
 <% } %>

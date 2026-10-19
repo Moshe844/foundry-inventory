@@ -26,6 +26,7 @@
   <link rel="stylesheet" href="/room.css?v=<%= assetVersion %>">
   <link rel="stylesheet" href="/design.css?v=<%= assetVersion %>">
   <link rel="stylesheet" href="/owner-workspaces.css?v=<%= assetVersion %>">
+  <% if(locals.globalImportActivity?.length||nav==='imports'){ %><link rel="stylesheet" href="/import-progress.css?v=<%= assetVersion %>"><% } %>
   <% if (nav === 'home') { %><link rel="stylesheet" href="/home.css?v=<%= assetVersion %>"><% } %>
   <% if (nav === 'ask') { %><link rel="stylesheet" href="/ask.css?v=<%= assetVersion %>"><% } %>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%235B4BE8'/%3E%3Cpath d='M6 8.5 12 5.8l6 2.7v6L12 17.2 6 14.5z' fill='none' stroke='white' stroke-width='1.5' stroke-linejoin='round'/%3E%3C/svg%3E">
@@ -178,6 +179,17 @@
         var live = message.type === 'error' || message.type === 'warn' ? 'alert' : 'status';
       %><div class="flash flash--<%= message.type %>" role="<%= live %>"><span><%= message.message %></span></div><% }) %></div>
     <% } %>
+    <% if(workspace&&locals.globalImportActivity?.length){ %>
+      <section class="import-activity" aria-label="File import activity">
+        <div class="import-activity__head"><span>File import activity</span><a href="/imports">All imports and results</a></div>
+        <% globalImportActivity.forEach(function(importState){ %>
+          <div class="import-activity__row" data-import-progress="<%= importState.href %>/progress" aria-live="polite">
+            <div class="import-activity__copy"><strong data-import-status><%= importState.label %></strong><span><%= importState.sourceName %> · <%= helpers.qty(importState.readyRows) %> approved rows</span><small data-import-note>Products and stock appear after verification finishes.</small><small data-import-timing><%= importState.startedAt?'Started':'Queued' %> <time data-import-time datetime="<%= importState.startedAt||importState.queuedAt||importState.createdAt %>"><%= new Date(importState.startedAt||importState.queuedAt||importState.createdAt).toISOString().replace('T',' ').replace('Z',' UTC') %></time></small></div>
+            <a class="btn btn--secondary btn--sm" href="<%= importState.href %>" data-import-result>View progress</a>
+          </div>
+        <% }) %>
+      </section>
+    <% } %>
     <%#
       The rest of what was said. A message with several parts runs one at a
       time; the next part is offered here, on whatever page the first one led
@@ -221,6 +233,7 @@
   </main>
 </div>
 <script src="/app.js?v=<%= assetVersion %>" defer></script>
+<% if(locals.globalImportActivity?.length||nav==='imports'){ %><script src="/import-progress.js?v=<%= assetVersion %>" defer></script><% } %>
 <% if(locals.agentArrival){ %>
 <div hidden data-agent-arrival data-token="<%= agentArrival.token %>" data-csrf="<%= csrfToken %>"></div>
 <script src="/agent-navigation.js?v=<%= assetVersion %>" defer></script>

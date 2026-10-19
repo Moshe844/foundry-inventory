@@ -64,22 +64,22 @@ Copper Elbow 3/4in	CE-075	Main Warehouse	86"></textarea>
 
 <% if (recent.length) { %>
   <div class="card section">
-    <div class="card-head"><h2>Earlier imports</h2></div>
+    <div class="card-head"><h2>File imports and results</h2></div>
     <table class="table">
       <thead>
         <tr><th>File</th><th>Rows</th><th>Status</th><th>When</th></tr>
       </thead>
       <tbody>
         <% recent.forEach(function (plan) { %>
-          <tr>
+          <tr <% if(plan.active){ %>data-import-progress="<%= plan.href %>/progress"<% } %>>
             <td><a href="/imports/<%= plan.id %>"><%= plan.sourceName %></a></td>
-            <td class="num"><%= plan.recordsDetected %></td>
+            <td class="num"><%= plan.rows??plan.recordsDetected %></td>
             <td>
-              <span class="badge badge--<%= plan.status === 'SUCCEEDED' ? 'ok' : plan.status === 'PARTIAL' || plan.status === 'FAILED' ? 'danger' : 'muted' %>">
-                <%= plan.status === 'READY' ? (plan.approvalStatus === 'APPROVED' ? 'Approved, not run' : 'Waiting for you') : helpers.columnLabel(plan.status.toLowerCase()) %>
+              <span data-import-status class="badge badge--<%= plan.verified ? 'ok' : ['PAUSED','NEEDS_REVIEW'].includes(plan.state) ? 'danger' : 'muted' %>">
+                <%= plan.label||(plan.status==='READY'?(plan.approvalStatus==='APPROVED'?'Approved — ready to start':'Waiting for your approval'):helpers.columnLabel(plan.status.toLowerCase())) %>
               </span>
             </td>
-            <td class="muted"><%= helpers.timeAgo(plan.createdAt) %></td>
+            <td class="muted" data-import-timing><time data-import-time datetime="<%= plan.completedAt||plan.startedAt||plan.createdAt %>"><%= new Date(plan.completedAt||plan.startedAt||plan.createdAt).toISOString().replace('T',' ').replace('Z',' UTC') %></time><div><%= plan.completedAt?'Finished':plan.startedAt?'Started':'Uploaded' %></div></td>
           </tr>
         <% }) %>
       </tbody>

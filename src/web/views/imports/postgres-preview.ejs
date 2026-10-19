@@ -19,10 +19,10 @@
 <% } %>
 <% if(sourceTransforms.proposedLocations?.length && plan.status==='READY'){ %>
   <section class="card section" aria-labelledby="import-new-locations"><div class="card-head"><h2 id="import-new-locations">Locations found in your file</h2></div>
-    <div class="card-body"><p>These <%= sourceTransforms.proposedLocations.length %> locations will be created with this import. The names come from your file; no locations or stock have been created yet. You can change a name or type, or match an existing location.</p>
+    <div class="card-body"><p>Your file refers to these <%= sourceTransforms.proposedLocations.length %> location labels. Approving this import adds their records to this inventory. Keep the file labels, enter display names, or match locations already in StockChief.</p>
       <% if(plan.approvalStatus==='AWAITING_APPROVAL'){ %><form method="post" action="/imports/<%= plan.id %>/revise">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>">
-        <div class="table-scroll"><table class="table"><thead><tr><th>In your file</th><th>New location name</th><th>Type</th><% if(locations.length){ %><th>Or use existing</th><% } %></tr></thead><tbody>
+        <div class="table-scroll"><table class="table"><thead><tr><th>Location label in your file</th><th>Name in StockChief</th><th>Type</th><% if(locations.length){ %><th>Or use existing</th><% } %></tr></thead><tbody>
           <% sourceTransforms.proposedLocations.forEach(function(location,index){ %><tr><th scope="row"><%= location.source %></th><td><label class="visually-hidden" for="new-location-<%= index %>">Name for <%= location.source %></label><input class="input" id="new-location-<%= index %>" name="new_location_<%= index %>_name" value="<%= location.name %>" maxlength="120" required></td>
             <td><select class="select" name="new_location_<%= index %>_kind" aria-label="Type for <%= location.source %>"><% locationKinds.forEach(function(kind){ %><option value="<%= kind.id %>" <%= location.kind===kind.id?'selected':'' %>><%= kind.id==='other'?'Stock location':kind.label %></option><% }) %></select></td>
             <% if(locations.length){ %><td><select class="select" name="new_location_<%= index %>_match" aria-label="Existing match for <%= location.source %>"><option value="">Create as shown</option><% locations.forEach(function(existing){ %><option value="<%= existing.id %>"><%= existing.name %></option><% }) %></select></td><% } %></tr><% }) %>
@@ -84,8 +84,7 @@
   </section>
 <% } %>
 <% if(importing){ %>
-  <section class="card section" data-import-progress="/imports/<%= plan.id %>/progress" aria-live="polite"><div class="card-head"><h2 data-import-status><%= importJob.status==='RUNNING'?'Importing your inventory':'Import queued' %></h2></div><div class="card-body"><p>StockChief will apply the approved <%= plan.recordsValid.toLocaleString('en-US') %> rows through the inventory ledger and verify the saved result. You can leave this page and return. Closing your browser will not interrupt the worker.</p><p>No result will be marked verified before the database checks finish.</p></div></section>
-  <script src="/import-progress.js" defer></script>
+  <section class="card section" data-import-progress="/imports/<%= plan.id %>/progress" data-import-detail aria-live="polite"><div class="card-head"><h2 data-import-status><%= importJob.status==='RUNNING'?'Importing your inventory':'Import queued' %></h2></div><div class="card-body"><p>StockChief is processing <%= plan.recordsValid.toLocaleString('en-US') %> approved rows. Products and stock appear together after the import passes verification.</p><p>You can leave this page. Reopen it from <a href="/imports">File imports and results</a> or the progress banner elsewhere in this inventory.</p><p data-import-timing></p></div></section>
 <% } else if(interrupted){ %>
   <section class="card section"><div class="card-head"><h2>Import paused before verification</h2></div><div class="card-body"><p>Your source file and approval history are saved. This run has no verified successful result, so StockChief will not start another copy automatically or claim it completed.</p><p>Review this import before continuing. <a href="/imports">Back to your imports</a></p></div></section>
 <% } else if(run){ %>

@@ -1,0 +1,6 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict'),{present}=require('../../src/imports/postgres-progress');
+test('import progress requires canonical verification and distinguishes queue, execution, interruption and approval',()=>{
+ const base={id:'fixture',source_name:'source.csv',records_detected:20,records_valid:20,records_invalid:0,plan_status:'READY',approval_status:'APPROVED',created_at:'2026-10-19T00:00:00.000Z',database_now:1000};
+ for(const [input,state]of [[{job_status:'PENDING'},'QUEUED'],[{job_status:'RUNNING',lease_expires_at:2000},'RUNNING'],[{job_status:'RUNNING',lease_expires_at:999},'PAUSED'],[{job_status:'DEAD'},'NEEDS_REVIEW'],[{job_status:'PAUSED'},'PAUSED'],[{job_status:'COMPLETED'},'NEEDS_REVIEW'],[{},'APPROVED'],[{approval_status:'AWAITING_APPROVAL'},'AWAITING_APPROVAL'],[{execution_status:'EXECUTING'},'RUNNING'],[{plan_status:'CANCELLED'},'CANCELLED'],[{plan_status:'SUCCEEDED',execution_status:'SUCCEEDED',verified:0},'NEEDS_REVIEW'],[{plan_status:'SUCCEEDED',execution_status:'SUCCEEDED',verified:1},'VERIFIED']]){const view=present({...base,...input});assert.equal(view.state,state);assert.equal(view.verified,state==='VERIFIED');assert.equal(view.active,['RUNNING','QUEUED'].includes(state));assert.equal(view.finished,!view.active);assert(!JSON.stringify(view).includes('lease_expires_at'));}
+});
