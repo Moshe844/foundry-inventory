@@ -56,15 +56,37 @@ async function list(database,ctx,{before=null,status=''}={}){
  const after=cursor(before);
  if(typeof status!=='string'||status&&!Object.hasOwn(labels,status))throw new ValidationError('Choose an available request status.');
  return database.transaction(async client=>{
-  const total=Number((await client.query(`SELECT count(*) AS n FROM stockchief_runtime.assistant_goals
-   WHERE workspace_id=$1 AND actor_user_id=$2 AND ($3='' OR status=$3)`,[ctx.workspaceId,ctx.actorId,status])).rows[0].n);
-  const rows=(await client.query(`SELECT id,original_request,status,created_at,updated_at,
+  const counts=(await client.query(`SELECT status,count(*) AS total,
+    count(*) FILTER(WHERE expires_at<=now()) AS expired FROM stockchief_runtime.assistant_goals
+   WHERE workspace_id=$1 AND actor_user_id=$2 GROUP BY status`,[ctx.workspaceId,ctx.actorId])).rows;
+  const statusCounts=Object.entries(labels).map(([value,label])=>{
+   const count=counts.find(r=>r.status===value),total=Number(count?.total||0),expired=Number(count?.expired||0);
+   return {status:value,label,total,expired,withinLifetime:total-expired};
+  });
+  const total=status?statusCounts.find(r=>r.status===status).total:statusCounts.reduce((sum,r)=>sum+r.total,0);
+  const rows=(await client.query(`SELECT id,original_request,status,answer,created_at,updated_at,expires_at,
+    jsonb_build_object('lifecycleStage',checkpoint->'lifecycleStage',
+     'navigation',jsonb_build_object('state',checkpoint#>'{navigation,state}'),
+     'conversationState',jsonb_build_object('input',checkpoint#>'{conversationState,input}'),
+     'harness',jsonb_build_object('userQuestion',checkpoint#>'{harness,userQuestion}',
+      'interruption',checkpoint#>'{harness,interruption}','admissionBlock',checkpoint#>'{harness,admissionBlock}',
+      'modelUsagePending',checkpoint#>'{harness,modelUsagePending}',
+      'codexDelivery',jsonb_build_object('state',checkpoint#>'{harness,codexDelivery,state}'),
+      'helperDelivery',jsonb_build_object('state',checkpoint#>'{harness,helperDelivery,state}'))) AS public_checkpoint,
     to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_time FROM stockchief_runtime.assistant_goals
    WHERE workspace_id=$1 AND actor_user_id=$2 AND ($3='' OR status=$3)
     AND ($4::timestamptz IS NULL OR (created_at,id)<($4::timestamptz,$5::text))
    ORDER BY created_at DESC,id DESC LIMIT $6`,[ctx.workspaceId,ctx.actorId,status,after?.[0]||null,after?.[1]||null,pageSize+1])).rows;
   const hasMore=rows.length>pageSize,visible=rows.slice(0,pageSize),recorded=await effects(client,ctx,visible.map(g=>g.id)),last=visible.at(-1);
-  return {total,status,pageSize,hasMore,rows:visible.map(g=>({...g,label:labels[g.status],effects:recorded.get(g.id)||[]})),
+  return {total,status,statusCounts,pageSize,hasMore,rows:visible.map(({public_checkpoint,...g})=>{
+   // Reuse the same public typed lifecycle as chat. Native journals, internal
+   // diagnostics and arbitrary checkpoint data never leave this projection.
+   const state=require('./agent-conversation').state({...g,checkpoint:public_checkpoint}),expired=new Date(g.expires_at).getTime()<=Date.now();
+   const message=state.message.length>500?state.message.slice(0,497)+'…':state.message;
+   const {answer,...record}=g;
+   return {...record,label:state.label,phase:state.phase,publicSummary:message,recovery:state.recovery,
+    expired,effects:recorded.get(g.id)||[]};
+  }),
    next:hasMore?Buffer.from(JSON.stringify([last.cursor_time,last.id])).toString('base64url'):null};
  },{isolation:'REPEATABLE READ',readOnly:true});
 }

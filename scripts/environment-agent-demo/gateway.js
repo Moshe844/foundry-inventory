@@ -148,7 +148,7 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
           outcomes.push({step,args:step.args,provenance:{},result:{status:'CLARIFY',reason:'dependency_waiting'}});continue;
         }
         let result;
-        try{result=await control.executeStep(service.capabilityService(),database,{...ctx,goalId,
+        try{result=await control.executeStep(service.capabilityService({nativeFacts:true}),database,{...ctx,goalId,
           planStepKey:`environment:${goalId}:${call}:${index}`},step,{actor,provider,rawProvider,
           sourceMessage:current.sourceMessage,usageKey:`environment:${goalId}:${call}:${index}`,preparedContent:true});}
         catch(error){effectsStarted||=step.contract.kind!=='read'&&error.effectMayHaveOccurred!==false;throw error;}

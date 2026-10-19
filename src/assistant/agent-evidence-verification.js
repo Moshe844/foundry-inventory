@@ -74,11 +74,12 @@ async function currentValue(database,ctx,goal,entry,{catalogue,browser,outcomeIn
   // happened to share a tool call. Never replay an unused semantic/model read.
   // Sparse output prevents an unrefreshed sibling from masquerading as current.
   if(outcomeIndex!==null&&index!==outcomeIndex)continue;
-  const result=await require('./postgres-control-plane').executeStep(require('./postgres-service').capabilityService(),database,ctx,step,
+  const original=observation.outcomes?.[index]?.result;
+  const result=await require('./postgres-control-plane').executeStep(require('./postgres-service').capabilityService({
+   nativeFacts:original?.readMode==='canonical_facts_v1'}),database,ctx,step,
    {actor,provider,rawProvider:provider,sourceMessage:goal.original_request,usageKey:`verify:${entry.id}`,preparedContent:true});
   if(result.result.status!=='ANSWERED')throw Object.assign(Error('CURRENT_READ_UNVERIFIED'),{
    verificationDetail:{outcomeIndex:index,capability:step.contract.name,returnedStatus:result.result.status}});
-  const original=observation.outcomes?.[index]?.result;
   if(original?.interactionId){
    const recorded=metadata.get(original.interactionId);
    if(!recorded||recorded.message!==goal.original_request||recorded.intent.controlPlane?.capability!==step.contract.name)throw Error('CURRENT_READ_SCOPE_UNVERIFIED');

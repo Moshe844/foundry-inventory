@@ -21,13 +21,23 @@
   </section>
 <% }else{ %>
   <section class="card measure" aria-label="Saved request history">
+    <nav class="form-actions" aria-label="Request status counts">
+      <a class="rm-btn rm-btn--ghost rm-btn--sm" href="/ask/history">All requests · <%= saved.statusCounts.reduce((n,r)=>n+r.total,0) %></a>
+      <% for(const count of saved.statusCounts){ %>
+        <a class="rm-btn rm-btn--ghost rm-btn--sm" href="/ask/history?status=<%= count.status %>"><%= count.label %> · <%= count.total %><% if(count.expired){ %> (<%= count.expired %> expired)<% } %></a>
+      <% } %>
+    </nav>
+    <p class="rm-agent__hint">Counts include saved history. Expired requests cannot continue; a saved status is not proof that an operation ran or that work is still active.</p>
     <form method="get" action="/ask/history"><label for="history-status">Status</label>
       <select id="history-status" name="status"><option value="">All requests</option><% for(const [value,label] of Object.entries(labels)){ %><option value="<%= value %>" <%= saved.status===value?'selected':'' %>><%= label %></option><% } %></select>
       <button class="rm-btn rm-btn--sm" type="submit">Filter</button>
     </form>
     <p><%= saved.total %> saved <%= saved.total===1?'request':'requests' %><%= saved.status?' with this status':'' %>. Showing <%= saved.rows.length %> on this page<%= saved.hasMore?'; more follow.':'.' %></p>
     <div class="table-scroll"><table><thead><tr><th>Requested</th><th>Goal</th><th>Status</th><th>Recorded outcomes</th></tr></thead><tbody>
-    <% for(const goal of saved.rows){ %><tr><td><%= helpers.dateTime(goal.created_at) %></td><td style="min-width:15rem;max-width:30rem;overflow-wrap:anywhere"><a href="/ask/history?goal=<%= encodeURIComponent(goal.id) %>"><%= goal.original_request %></a></td><td><%= goal.label %></td><td>
+      <% for(const goal of saved.rows){ %><tr><td><%= helpers.dateTime(goal.created_at) %></td><td style="min-width:15rem;max-width:30rem;overflow-wrap:anywhere"><a href="/ask/history?goal=<%= encodeURIComponent(goal.id) %>"><%= goal.original_request %></a>
+      <% if(goal.publicSummary){ %><div class="rm-agent__answer"><%- renderAgentAnswer(goal.publicSummary) %></div><% } %>
+      <% if(goal.recovery){ %><p class="rm-agent__hint"><%= goal.recovery %></p><% } %>
+      </td><td><%= goal.label %><% if(goal.expired){ %><p class="rm-agent__hint">Expired · review only</p><% } %></td><td>
       <% const operations=goal.effects.filter(e=>e.kind==='business').length,rules=goal.effects.filter(e=>e.kind==='rule').length; %>
       <%= operations %> recorded <%= operations===1?'operation':'operations' %><% if(rules){ %>; <%= rules %> approved <%= rules===1?'rule':'rules' %><% } %>
     </td></tr><% } %>

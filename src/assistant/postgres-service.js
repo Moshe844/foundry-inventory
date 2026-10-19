@@ -539,6 +539,13 @@ async function lookup(database,ctx,request,options={}) {
     const scope=await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId);
     const access=await entitlements.capabilityState(database,scope,'accounting.explanations');
     const evidence=await evidenceAnswers.businessEvidence(database,ctx.workspaceId,{includeFinancials:access.enabled});
+    // Native agents reason over the canonical facts themselves. Calling a
+    // second model here adds latency and produces prose that cannot be
+    // refreshed by model-free verification. Legacy Ask keeps its answer path.
+    if(options.nativeFacts)return {status:'ANSWERED',readMode:'canonical_facts_v1',
+      answer:'Current recorded business facts; compared periods and financial availability are explicit in each record.',
+      rows:Object.entries(evidence).map(([id,fact])=>({id,...fact})),columns:['id'],
+      reason:null};
     let explained;
     try{explained=await evidenceAnswers.answer(options.provider,options.question||'',evidence,'business');}
     catch(error){if(error.code==='entitlement_required')throw error;
@@ -1667,7 +1674,8 @@ async function storeInteraction(database,ctx,message,intent,result,id=newId('pga
   return id;
 }
 
-function capabilityService(){return {lookup,prepareAction,prepareInstruction,
+function capabilityService({nativeFacts=false}={}){return {
+  lookup:(db,ctx,request,options={})=>lookup(db,ctx,request,{...options,nativeFacts}),prepareAction,prepareInstruction,
   discover:(db,scope)=>require('./postgres-discovery').describe(db,scope),
   verifyProposal:async(db,scope,result)=>{
     if(!result?.proposal?.id)return false;

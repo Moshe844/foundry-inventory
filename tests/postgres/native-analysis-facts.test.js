@@ -1,0 +1,27 @@
+'use strict';
+process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
+test('native business analysis returns canonical facts with current verification and no nested model',{timeout:120000},async t=>{
+ const cluster=await require('../helpers/postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString);
+ t.after(async()=>{await db.close();await cluster.stop();});await require('../../src/db/migrate-postgres').migratePostgres(db);
+ const owner=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'Native facts',businessName:'Facts '+randomUUID(),email:randomUUID()+'@example.test',password:'Offline!'+randomUUID()}),ctx={workspaceId:owner.workspaceId,actorId:owner.userId};
+ const store=require('../../src/assistant/postgres-goal-store'),goal=await store.claim(db,ctx,(await store.create(db,ctx,'Compare recorded order activity and explain what is known without changes.')).id);
+ let calls=0;const provider={name:'offline',model:'none',complete:async()=>{calls++;throw Error('Unexpected nested model');}};
+ const gateway=require('../../scripts/environment-agent-demo/gateway').createGateway({database:db,ctx,goal:goal.original_request,goalId:goal.id,runToken:goal.run_token,provider});
+ const steps=[{capability:'read.business_analysis',arguments:[],dependsOn:[]}],result=await gateway.operate({steps});
+ assert.equal(calls,0);assert.equal(result.outcomes[0].result.status,'ANSWERED');assert.equal(result.outcomes[0].result.readMode,'canonical_facts_v1');
+ const actual=await require('../../src/assistant/postgres-evidence-answer').businessEvidence(db,ctx.workspaceId,{includeFinancials:result.outcomes[0].result.rows.some(r=>r.id==='postedFinancialsCurrent')});
+ assert.deepEqual(JSON.parse(JSON.stringify(result.outcomes[0].result.rows)),JSON.parse(JSON.stringify(Object.entries(actual).map(([id,fact])=>({id,...fact})))));
+ goal.checkpoint.harness={candidate:'codex',sequence:1,calls:{},native:{},evidence:{}};
+ const e=require('../../scripts/environment-agent-demo/observations').store(goal.checkpoint.harness,{id:goal.id+':facts',name:'business_operations',result,source:{version:1,name:'business_operations',input:{steps}}});
+ const refs=require('../../scripts/environment-agent-demo/source-references'),wire=refs.present(e,JSON.parse(e.text)),row=wire.outcomes[0].result.rows.find(r=>r.id==='customerOrders'),claim={sourceRef:row[wire._stockchiefSources.valueField].openCount,value:row.openCount};
+ const catalogue=(await gateway.authorize()).catalogue,verify=require('../../src/assistant/postgres-codex-verification').verify;
+ const report=JSON.stringify({version:1,status:'completed',outcome:'answer',answer:'Current order count verified.',claims:[claim]});assert.equal((await verify(db,ctx,goal,report,catalogue)).verified,true);assert.equal(calls,0);
+ const service=require('../../src/assistant/postgres-service'),legacy=await service.capabilityService().lookup(db,ctx,{view:'business_analysis',timeframe:'all_time'},{provider,nativeFacts:true});
+ assert.equal(legacy.status,'CLARIFY');assert.equal(calls,1,'Legacy service cannot opt itself into native mode using a lookup option');
+ const control=require('../../src/assistant/postgres-control-plane'),step=require('../../src/assistant/postgres-capability-planner').parseSteps({steps},catalogue).steps[0];
+ await assert.rejects(control.executeStep(service.capabilityService({nativeFacts:true}),db,ctx,step,{actor:{role:'viewer',permissions:{}},provider,sourceMessage:goal.original_request}),/permission|allowed|cannot|not authorized/i);
+ assert.equal((await db.query('SELECT count(*) AS n FROM stockchief_runtime.codex_pilot_calls')).rows[0].n,'0');
+ assert.equal((await db.query('SELECT count(*) AS n FROM stockchief_runtime.assistant_action_proposals')).rows[0].n,'0');
+ t.diagnostic(JSON.stringify({nestedModelCallsForNative:0,canonicalFactsPreserved:true,legacyUnchanged:true,currentVerification:true,financialPermissionChecked:true,paidCalls:0}));
+});

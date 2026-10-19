@@ -46,6 +46,9 @@ test('recorded discovery gaps: paginated owned history exposes canonical effects
   assert.equal(options.readOnly,true);return fn(guarded);
  }};
  let page=await history.list(guarded,ctx,{status:'BLOCKED'}),all=[];
+ assert.deepEqual(page.statusCounts.find(r=>r.status==='BLOCKED'),{status:'BLOCKED',label:history.labels.BLOCKED,total:44,expired:44,withinLifetime:0});
+ assert(page.rows.every(r=>r.expired&&r.phase==='failed'&&r.publicSummary==='Saved result before final reporting.'));
+ assert(!JSON.stringify(page).includes('PRIVATE_NATIVE_SECRET'));assert(page.rows.every(r=>!Object.hasOwn(r,'public_checkpoint')&&!Object.hasOwn(r,'answer')));
  while(true){assert.equal(page.total,44);assert(page.rows.length<=20);all.push(...page.rows.map(g=>g.id));if(!page.next)break;page=await history.list(guarded,ctx,{status:'BLOCKED',before:page.next});}
  assert.equal(all.length,44);assert.equal(new Set(all).size,44);assert.deepEqual(new Set(all),new Set(ids));
  await assert.rejects(()=>history.list(guarded,ctx,{status:"BLOCKED' OR TRUE"}),/available request status/);
@@ -74,6 +77,24 @@ test('recorded discovery gaps: paginated owned history exposes canonical effects
  const resetChat=await web.get('/ask');for(const id of Object.values(ruleIds))assert(!resetChat.text.includes('/operating-instructions/'+id));
  assert((await db.query('SELECT status FROM operating_instruction_proposals WHERE workspace_id=$1 AND id=ANY($2::text[])',[ctx.workspaceId,Object.values(ruleIds)])).rows.every(r=>r.status==='PENDING'),'Conversation scoping never cancels, approves or activates the global pending records');
  const detail=await web.get('/ask/history?goal='+ids[0]);assert.equal(detail.status,200);assert.match(detail.text,/Saved result before final reporting/);assert.match(detail.text,/Rule approval does not prove/);assert.match(detail.text,/Operation recorded/);assert(!detail.text.includes('Email delivered'));
+ // The recorded slow investigation had to open four individual clarification
+ // pages and a blocked page because the index omitted these public states.
+ const publicFixtureBefore=(await db.query('SELECT id,status,answer,expires_at,checkpoint,updated_at FROM stockchief_runtime.assistant_goals WHERE id=ANY($1::text[])',[[ids[3],ids[4]]])).rows;
+ await db.query(`UPDATE stockchief_runtime.assistant_goals SET status='WAITING_USER',answer='Which location should this use?',
+  expires_at=now()+interval '1 day',checkpoint=$2::jsonb WHERE id=$1`,[ids[3],JSON.stringify({harness:{userQuestion:{question:'Which location should this use?',missingInformation:['Location']},native:{private:'PRIVATE_NATIVE_SECRET'}},conversationState:{history:[{text:'PRIVATE_HISTORY_PAYLOAD'}]}})]);
+ await db.query(`UPDATE stockchief_runtime.assistant_goals SET answer='TypeError: PRIVATE_DIAGNOSTIC',
+  checkpoint=$2::jsonb WHERE id=$1`,[ids[4],JSON.stringify({harness:{interruption:{code:'DURABLE_TOOL_LIMIT'},native:{private:'PRIVATE_NATIVE_SECRET'}}})]);
+ const publicList=await history.list(guarded,ctx);
+ // Select the status directly because microsecond pagination correctly places
+ // these older records outside the first unfiltered page.
+ const questions=await history.list(guarded,ctx,{status:'WAITING_USER'});assert.equal(questions.total,1);
+ assert.equal(questions.rows[0].publicSummary,'Which location should this use?');assert.equal(questions.rows[0].phase,'clarification');assert.equal(questions.rows[0].expired,false);
+ const stopped=await history.list(guarded,ctx,{status:'BLOCKED'}),limited=stopped.rows.find(r=>r.id===ids[4])||
+  (await history.list(guarded,ctx,{status:'BLOCKED',before:stopped.next})).rows.find(r=>r.id===ids[4]);
+ assert.equal(limited.phase,'goal_limit');assert(limited.publicSummary.includes('allowance'));assert(limited.expired);
+ assert(!JSON.stringify([publicList,questions,stopped,limited]).match(/PRIVATE_NATIVE_SECRET|PRIVATE_HISTORY_PAYLOAD|PRIVATE_DIAGNOSTIC/));
+ const listPage=await web.get('/ask/history?status=WAITING_USER');assert.equal(listPage.status,200);assert.match(listPage.text,/Request status counts/);assert.match(listPage.text,/Which location should this use\?/);assert.match(listPage.text,/expired/i);
+ for(const row of publicFixtureBefore)await db.query('UPDATE stockchief_runtime.assistant_goals SET status=$2,answer=$3,expires_at=$4,checkpoint=$5::jsonb,updated_at=$6 WHERE id=$1',[row.id,row.status,row.answer,row.expires_at,JSON.stringify(row.checkpoint),row.updated_at]);
  assert(!detail.text.includes('PRIVATE_NATIVE_SECRET'));assert(!detail.text.includes('/resume"'));assert(!detail.text.includes('/approval"'));
  for(const id of [otherGoal.id,colleagueGoal.id])assert.equal((await web.get('/ask/history?goal='+id)).status,404);
  // The real restricted renderer discovers this index through the application,
