@@ -149,6 +149,21 @@ Current-state claims after execution require fresh observations. Mark a historic
 Canonical execution receipts prove committed effects at their recorded time. Their result fields may describe an intermediate state that later approved work changed. Claims under canonical_execution_state /operations/N/result must use historical:true; use fresh business records for the final current state. Never treat an earlier confirmed or draft status as a failure merely because the same order has since been fulfilled.
 Use the complete evidence already in a tool response. Its _stockchiefEvidence reference supplies evidenceId and valuePointerPrefix; prepend that prefix to the JSON Pointer of the displayed value. Retrieve the journal only for missing, truncated, compacted or earlier evidence. Do not retrieve a value again just to report what the current response already shows. Include current-state verification after authorized changes.
 Never claim every part of a request was completed merely because one receipt was verified.`;
+function needsBrowser(goal,raw){
+ const report=require('./agent-conversation').parse(raw);if(report?.status!=='completed')return false;
+ try{const scope=require('./native-answer-review').checked(goal,raw);
+  if(scope.required&&scope.verified===false&&scope.code==='ANSWER_SCOPE_UNVERIFIED')return false;
+ }catch{/* The deterministic verifier owns malformed-reference rejection. */}
+ const entries=Object.values(goal.checkpoint.harness?.evidence||{}),byId=new Map(entries.map(e=>[e.id,e]));
+ if(report.outcome==='navigation'&&byId.get(report.navigation?.evidenceId)?.name==='environment_browser')return true;
+ try{
+  const tables=require('../../scripts/environment-agent-demo/source-tables').materialize(goal,report),cache=new Map();
+  return [...report.claims,...tables.claims].some(claim=>{
+   const resolved=Object.hasOwn(claim,'sourceRef')?require('../../scripts/environment-agent-demo/source-references').resolve(entries,claim,cache):claim;
+   return byId.get(resolved.evidenceId)?.name==='environment_browser';
+  });
+ }catch{return false;} // The normal verifier retains its exact rejection.
+}
 async function verifyFinal(database,ctx,goal,raw,catalogue,options={}){
  let scope;
  // A settled, input-bound negative review already rejects this conclusion.
@@ -170,4 +185,4 @@ async function verifyFinal(database,ctx,goal,raw,catalogue,options={}){
  if(scope.required&&!scope.verified)return {...unavailable('I could not verify that these findings answer the complete request. Your goal and collected evidence are saved.',scope.code,{reason:scope.reason}),receipt:result.receipt};
  return {...result,answerScopeReview:scope.required?'governed_semantic_review':'canonical_or_navigation_lifecycle'};
 }
-module.exports={verify,verifyFinal,instructions};
+module.exports={verify,verifyFinal,instructions,needsBrowser};

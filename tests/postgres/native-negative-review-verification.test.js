@@ -13,6 +13,7 @@ test('recorded settled negative review rejects without repeated observations; ev
  const report={version:1,status:'completed',outcome:'answer',answer:'Recorded warehouse: '+location.name+'. The earlier stopped request can safely continue.',claims:[{sourceRef:row[observation._stockchiefSources.valueField].name,value:row.name}],workProducts:[],nextActions:[]},raw=JSON.stringify(report);
  const settled={version:review.version,hash:review.binding(saved,raw).hash,state:'SETTLED',verdict:{grounded:true,complete:false,missingOutcomes:['Verified whether earlier stopped work can continue'],reason:'Its saved status and lack of effects do not establish continuation eligibility.'}};
  saved.checkpoint.harness.answerScopeReview=settled;
+ assert.equal(verifier.needsBrowser(saved,raw),false,'A settled negative report must not prepare an unused renderer');
  const forbidden={query:async()=>{throw Error('REJECTED_FINAL_MUST_NOT_REPEAT_CURRENT_READS');},transaction:async()=>{throw Error('REJECTED_FINAL_MUST_NOT_START_TRANSACTION');}};
  for(const candidate of [saved,JSON.parse(JSON.stringify(saved))]){const result=await verifier.verifyFinal(forbidden,ctx,candidate,raw,catalogue,{browser:{verifyObservation:async()=>{throw Error('REJECTED_FINAL_MUST_NOT_REOPEN_SCREEN');}}});assert.equal(result.verified,false);assert.equal(result.verificationFailure,'ANSWER_SCOPE_UNVERIFIED');assert(!Object.hasOwn(result,'receipt'));}
  // A separate goal needs its own canonical read provenance. Rewriting the

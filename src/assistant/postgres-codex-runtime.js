@@ -120,6 +120,9 @@ async function run(database,ctx,id,options={}){
    const review=await session.answerReview(savedFinal);
    if(review.required&&!review.verdict)pendingFinal=savedFinal;
    else{
+    // A fresh restricted renderer installs tenant policies. Prepare it before
+    // finish locks the goal row; its DDL must never wait on our own transaction.
+    if(require('./postgres-codex-verification').needsBrowser(goal,savedFinal))await ui.prepare();
     const checked=await session.finish(async(client,{goal,access})=>({...await require('./postgres-codex-verification').verifyFinal(client,ctx,goal,savedFinal,access.catalogue,{browser:ui}),verificationSourceHash}),{allowReportCorrection:true});
     if(!checked?.needsCorrection)return store.get(database,ctx,id);
     audit({kind:'native_report_correction',code:checked.code});
@@ -201,6 +204,7 @@ async function run(database,ctx,id,options={}){
    }
    pendingFinal=null;
    const finalStarted=Date.now();
+   if(require('./postgres-codex-verification').needsBrowser(current,result.answer))await ui.prepare();
    const checked=await session.finish(async(client,{goal,access})=>({...await require('./postgres-codex-verification').verifyFinal(client,ctx,goal,result.answer,access.catalogue,{browser:ui}),
     verificationSourceHash:require('./codex-staging-permit').assertBinding(permit,{budget,task:id,image}).sourceHash}),{allowReportCorrection:true});
    audit({kind:'host_final_verification',timings:{finalVerificationMs:Date.now()-finalStarted}});
