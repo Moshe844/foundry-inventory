@@ -3,9 +3,11 @@
   const providerName=provider?.name||connection.display_name||connection.provider_type;
   const connected=connection.status==='connected'&&!connection.paused_at;
   const needsAuthorization=connection.setup_status==='REAUTHORIZATION_REQUIRED'||connection.status==='disconnected';
-  const hasCatalogue=connection.productsMapped+connection.locationsMapped>0;
-  const hasEvent=isMailbox?Boolean(mailboxLastPollAt):Boolean(connection.last_activity_at);
-  const proven=connected&&connection.publicStatus==='Connected'&&(!canDiscover||hasCatalogue)&&hasEvent;
+  const proof=locals.connectionProof||{};
+  const hasCatalogue=Boolean(proof.catalogue_at);
+  const eventAt=isMailbox?mailboxLastPollAt:proof.event_at;
+  const hasEvent=Boolean(eventAt);
+  const proven=connected&&connection.publicStatus==='Connected'&&(!canDiscover||(hasCatalogue&&!connection.itemsNeedingMapping))&&hasEvent;
 %>
 
 <header class="page-head">
@@ -19,6 +21,9 @@
 </header>
 
 <% if(connection.last_error){ %><div class="notice notice--warn section"><div><strong>This connection needs attention.</strong><p><%= connection.last_error %></p></div></div><% } %>
+<% if(connected&&currentUser.role==='owner'&&proof.push_setup_failed){ %>
+<form method="post" action="/settings/connections/<%= encodeURIComponent(connection.id) %>/retry-events" class="section"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--secondary" type="submit">Retry event setup</button></form>
+<% } %>
 <% if(locals.pendingWebhooks?.length){ const receiptLabels={RECEIVED:'Queued',PROCESSING:'Processing',RETRY_PENDING:'Waiting to retry',NEEDS_MAPPING:'Needs a match',NEEDS_REVIEW:'Needs review'}; %>
 <section class="card section" aria-label="Retained provider events">
   <div class="card-head"><h2>Events still being resolved</h2></div>
@@ -46,18 +51,18 @@
   <div class="stat"><strong><%= connection.productsMapped %></strong><span>products mapped</span></div>
   <div class="stat"><strong><%= connection.locationsMapped %></strong><span>locations mapped</span></div>
   <div class="stat"><strong><%= connection.itemsNeedingMapping %></strong><span>need matching</span></div>
-  <div class="stat"><strong><%= isMailbox?(mailboxLastPollAt?helpers.timeAgo(mailboxLastPollAt):'None yet'):(connection.last_activity_at?helpers.timeAgo(connection.last_activity_at):'None yet') %></strong><span><%= isMailbox?'last mailbox check':'last event received' %></span></div>
+  <div class="stat"><strong><%= eventAt?helpers.timeAgo(eventAt):'None yet' %></strong><span><%= isMailbox?'last mailbox check':'last event processed' %></span></div>
 </div>
 <p class="rm-sub">Products mapped <strong><%= connection.productsMapped %></strong> · Locations mapped <strong><%= connection.locationsMapped %></strong> · Need your match <strong><%= connection.itemsNeedingMapping %></strong>.</p>
 
 <section class="setup-journey section">
   <div class="setup-journey__head"><div class="setup-journey__head-copy"><span class="setup-journey__eyebrow">Is it working?</span>
-    <h2><%= proven?'This connection is proven':'Prove the connection before relying on it' %></h2>
+    <h2><%= proven?'Account and activity verified':'Verify setup before relying on automatic updates' %></h2>
     <p><%= isMailbox?'StockChief verifies the connected account and records completed mailbox checks separately.':'Connected is not the same as working. StockChief records the account, catalogue and first real event separately.' %></p></div></div>
   <div class="setup-steps">
     <div class="setup-step <%= connected?'setup-step--done':'setup-step--current' %>"><span class="setup-step__number"><%= connected?'✓':'1' %></span><div><strong>Sign in to the right account</strong><p><%= connection.provider_account_name||'The provider has not returned an account identity yet.' %></p></div><span class="setup-step__state"><%= connected?'Verified':'Waiting' %></span></div>
     <% if(canDiscover){ %><div class="setup-step <%= hasCatalogue?'setup-step--done':connected?'setup-step--current':'' %>"><span class="setup-step__number"><%= hasCatalogue?'✓':'2' %></span><div><strong>Read products and locations</strong><p>Identity records are read first; old sales are never replayed into current stock.</p></div><span class="setup-step__state"><%= hasCatalogue?'Recorded':'Refresh below' %></span></div><% } %>
-    <div class="setup-step <%= hasEvent?'setup-step--done':connected?'setup-step--current':'' %>"><span class="setup-step__number"><%= hasEvent?'✓':canDiscover?'3':'2' %></span><div><strong><%= isMailbox?'Complete a mailbox check':'Receive one real event' %></strong><p><%= isMailbox?'A scheduled check must finish successfully before this connection is called proven.':'StockChief must record a successful exchange before calling this proven.' %></p></div><span class="setup-step__state"><%= hasEvent?(isMailbox?'Checked':'Received once'):'Not yet' %></span></div>
+    <div class="setup-step <%= hasEvent?'setup-step--done':connected?'setup-step--current':'' %>"><span class="setup-step__number"><%= hasEvent?'✓':canDiscover?'3':'2' %></span><div><strong><%= isMailbox?'Complete a mailbox check':'Receive and process a provider event' %></strong><p><%= isMailbox?'A scheduled check must finish successfully.':'Event delivery and individual sales, payments and inventory workflows are verified separately. Signing in alone does not prove delivery.' %></p></div><span class="setup-step__state"><%= hasEvent?(isMailbox?'Checked':'Received once'):'Not yet' %></span></div>
   </div>
 </section>
 <% } %>
@@ -113,13 +118,13 @@
         </div>
       </section>
     <% } %>
-    <section class="card"><div class="card-head"><div><h2>What this connection is doing</h2><p class="muted">Only successful provider evidence counts.</p></div></div><div class="card-body grid"><div class="list-row"><div><strong>Provider account</strong><p><%= connection.provider_account_name||'Not returned yet' %></p></div><span class="badge <%= connected?'badge--ok':'badge--muted' %>"><%= connected?'Connected':'Not connected' %></span></div><div class="list-row"><div><strong><%= isMailbox?'Last completed mailbox check':'Last successful exchange' %></strong><p><%= isMailbox?(mailboxLastPollAt?helpers.timeAgo(mailboxLastPollAt):'No mailbox check has completed yet'):(connection.last_activity_at||connection.last_synced_at||'No successful exchange recorded yet') %></p></div></div></div></section>
+    <section class="card"><div class="card-head"><div><h2>What this connection is doing</h2><p class="muted">Only successful provider evidence counts.</p></div></div><div class="card-body grid"><div class="list-row"><div><strong>Provider account</strong><p><%= connection.provider_account_name||'Not returned yet' %></p></div><span class="badge <%= connected?'badge--ok':'badge--muted' %>"><%= connected?'Connected':'Not connected' %></span></div><div class="list-row"><div><strong><%= isMailbox?'Last completed mailbox check':'Last provider event processed' %></strong><p><%= isMailbox?(mailboxLastPollAt?helpers.timeAgo(mailboxLastPollAt):'No mailbox check has completed yet'):(proof.event_at?helpers.dateTime(proof.event_at):'No provider event has been processed yet') %></p></div></div></div></section>
     <% if(canDiscover){ %><section class="card"><div class="card-head"><div><h2>Products and locations</h2><p class="muted">Exact matches happen automatically. Ambiguous records stay unchanged.</p></div></div><div class="card-body"><% if(query&&query.refresh==='queued'){ %><div class="notice notice--success">Catalogue refresh queued.</div><% } %><% if(connected){ %><form method="post" action="/settings/connections/<%= connection.id %>/refresh"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit">Refresh now</button></form><% } %></div></section><% } %>
   <% } %>
   </div>
 
   <aside class="grid">
     <section class="card"><div class="card-head"><h2>Connection control</h2></div><div class="card-body"><p class="hint">Pausing is reversible. Disconnecting removes the encrypted credential while keeping mappings and audit history.</p><div class="form-actions"><% if(connection.paused_at){ %><form method="post" action="/settings/connections/<%= connection.id %>/resume"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Resume</button></form><% } else if(connection.status==='connected'){ %><form method="post" action="/settings/connections/<%= connection.id %>/pause"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit">Pause</button></form><% } %><% if(connection.status!=='disconnected'){ %><form method="post" action="/settings/connections/<%= connection.id %>/disconnect"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--danger" type="submit">Disconnect and remove credentials</button></form><% } %></div></div></section>
-    <details class="card"><summary class="card-head"><h2>Advanced diagnostics</h2></summary><div class="card-body"><p class="mono">Connection <%= connection.id %></p><p>Provider: <%= connection.provider_type %></p><p>Setup: <%= connection.setup_status %></p><p>Open issues: <%= connection.openIssues %></p><p>Last event: <%= connection.last_activity_at||'none' %></p><p>Last successful sync: <%= connection.last_synced_at||'none' %></p></div></details>
+    <details class="card"><summary class="card-head"><h2>Advanced diagnostics</h2></summary><div class="card-body"><p class="mono">Connection <%= connection.id %></p><p>Provider: <%= connection.provider_type %></p><p>Setup: <%= connection.setup_status %></p><p>Open issues: <%= connection.openIssues %></p><p>Last processed event: <%= proof.event_at||'none' %></p><p>Last successful sync: <%= connection.last_synced_at||'none' %></p></div></details>
   </aside>
 </div>

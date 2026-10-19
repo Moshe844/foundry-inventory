@@ -212,11 +212,25 @@ function createPostgresConnectionsRouter(database,options={}){
     const pendingWebhooks=(await database.query("SELECT id,status,lease_until,received_at,updated_at,result FROM connection_webhook_receipts WHERE workspace_id=$1 AND connector_id=$2 AND status<>'COMPLETED' ORDER BY received_at DESC,id DESC LIMIT 20",[req.ctx.workspaceId,connection.id])).rows;
     const catalogueReview=adapter?.discover&&!isMailbox&&adapter.integrationClass!=='accounting'
       ?await catalogue.describe(database,req.ctx,connection.id):null;
+    const connectionProof=(await database.query(`SELECT
+      (SELECT max(completed_at) FROM connection_sync_runs WHERE workspace_id=$1 AND connector_id=$2
+        AND sync_kind='CATALOG_AND_LOCATIONS' AND status='COMPLETED') AS catalogue_at,
+      (SELECT max(processed_at) FROM connector_feed_events WHERE workspace_id=$1 AND connector_id=$2
+        AND status IN ('COMPLETED','IGNORED') AND error_message IS NULL) AS event_at,
+      EXISTS(SELECT 1 FROM connection_issues WHERE workspace_id=$1 AND connector_id=$2
+        AND issue_type='PUSH_SETUP_FAILED' AND status='OPEN') AS push_setup_failed`,
+    [req.ctx.workspaceId,connection.id])).rows[0];
     return res.page('connections/postgres-detail',{
       title:'Connection',nav:'connections',room:true,backTo:{href:'/settings/connections',label:'Connections'},
       connection,newConnectionToken,provider:adapter?.metadata?.()||{name:connection.display_name},
-      canDiscover:Boolean(adapter?.discover)&&!isMailbox,isMailbox,mailboxLastPollAt,pendingWebhooks,catalogueReview,
+      canDiscover:Boolean(adapter?.discover)&&!isMailbox,isMailbox,mailboxLastPollAt,pendingWebhooks,catalogueReview,connectionProof,
     });
+  }));
+  router.post('/settings/connections/:id/retry-events',requireOwner,asyncRoute(async(req,res)=>{
+    const connection=await providerService.setupWebhookDelivery(database,req.ctx,req.params.id,
+      `${req.protocol}://${req.get('host')}`,{providers:registry,publicOrigin:options.publicOrigin==='request'?`${req.protocol}://${req.get('host')}`:options.publicOrigin});
+    req.flash(connection.last_error?'warning':'success',connection.last_error||'Provider event delivery is configured. Business workflows are verified separately.');
+    return res.redirect(303,`/settings/connections/${encodeURIComponent(connection.id)}`);
   }));
   router.post('/settings/connections/:id/map',requireOwner,asyncRoute(async(req,res)=>{
     await catalogue.mapExternal(database,req.ctx,req.params.id,req.body);

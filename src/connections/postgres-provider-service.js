@@ -130,6 +130,49 @@ async function finishAuthorization(database,connection,actorId,result){
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 
+async function setupWebhookDelivery(database,ctx,connectorId,requestOrigin,options={}){
+  const role=(await database.query('SELECT role FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];
+  if(role?.role!=='owner')throw new (require('../domain/errors').AuthorizationError)('Only an owner can configure provider event delivery.');
+  let connection=await connections.get(database,ctx.workspaceId,connectorId);
+  if(connection.status!=='connected'||connection.paused_at)throw new ValidationError('Reconnect or resume this provider before configuring event delivery.');
+  const providerType=connection.provider_type,adapter=(options.providers||defaultProviders).get(providerType);
+  const mailbox=['gmail','microsoft365'].includes(providerType);
+    if(adapter?.registerWebhooks){
+      const origin=options.publicOrigin||providerOrigin(requestOrigin);
+      const webhookUrl=providerType==='gmail'?`${origin}/api/v1/connections/gmail/webhooks`
+        :`${origin}/api/v1/connections/${providerType}/webhooks/${encodeURIComponent(connectorId)}`;
+      try{
+        const current=await loadProviderCredentials(database,connection,adapter);
+        const registered=await require('../commercial/operations').run(database,connection.workspace_id,{capability:
+          ['gmail','microsoft365'].includes(providerType)?'communications.email_ingestion':'connections.commerce',key:options.operationKey||`webhook-setup:${newId('attempt')}`,
+          provider:providerType,operation:'webhook_registration'},()=>adapter.registerWebhooks({credentials:current,webhookUrl,connection:connection}));
+        if(registered?.credentials)await credentials.put(database,connection.workspace_id,connection.id,'provider',
+          registered.credentials,registered.expiresAt||current.expiresAt||null);
+        const at=nowIso();
+        await database.query(`UPDATE workspace_connectors SET last_error=NULL,updated_at=$3 WHERE workspace_id=$1 AND id=$2`,
+          [connection.workspace_id,connection.id,at]);
+        await database.query(`UPDATE connection_issues SET status='RESOLVED',resolved_at=$3,updated_at=$3
+          WHERE workspace_id=$1 AND fingerprint=$2 AND status='OPEN'`,
+        [connection.workspace_id,`push-setup:${connection.id}`,at]);
+      }catch(error){
+        const at=nowIso();const detail=String(error.message||'Push delivery setup failed.').slice(0,500);
+        await database.query(`UPDATE workspace_connectors SET last_error=$3,updated_at=$4 WHERE workspace_id=$1 AND id=$2`,
+          [connection.workspace_id,connection.id,
+            mailbox?'Push notifications could not be enabled. Scheduled mailbox checks remain active; retry event setup.':'Automatic provider events could not be enabled. Retry event setup before relying on ongoing updates.',at]);
+        await database.query(`INSERT INTO connection_issues
+          (id,workspace_id,connector_id,issue_type,fingerprint,title,detail,resolution_hint,status,created_at,updated_at)
+          VALUES($1,$2,$3,'PUSH_SETUP_FAILED',$4,$5,$6,$7,'OPEN',$8,$8)
+          ON CONFLICT(workspace_id,fingerprint) DO UPDATE SET status='OPEN',resolved_at=NULL,detail=EXCLUDED.detail,
+            resolution_hint=EXCLUDED.resolution_hint,updated_at=EXCLUDED.updated_at`,
+        [newId('conissue'),connection.workspace_id,connection.id,`push-setup:${connection.id}`,
+          mailbox?'Mailbox push notifications need attention':'Automatic provider events need attention',detail,
+          mailbox?'Scheduled mailbox checks remain active. Retry push setup.':'Retry event setup. Do not rely on automatic updates until delivery is verified.',at]);
+      }
+      connection=await connections.get(database,ctx.workspaceId,connectorId);
+    }
+  return connection;
+}
+
 async function completeOAuth(database,providerType,query,requestOrigin,options={}){
   const registry=options.providers||defaultProviders;
   const adapter=registry.get(providerType);
@@ -152,38 +195,7 @@ async function completeOAuth(database,providerType,query,requestOrigin,options={
       await accountingSync.initialize(database,connected,state.actor_id,result.verifiedFact);
       connected=await connections.get(database,state.workspace_id,connectorId);
     }
-    if(adapter.registerWebhooks){
-      const origin=options.publicOrigin||providerOrigin(requestOrigin);
-      const webhookUrl=providerType==='gmail'?`${origin}/api/v1/connections/gmail/webhooks`
-        :`${origin}/api/v1/connections/${providerType}/webhooks/${encodeURIComponent(connectorId)}`;
-      try{
-        const current=await loadProviderCredentials(database,connected,adapter);
-        const registered=await require('../commercial/operations').run(database,connected.workspace_id,{capability:
-          ['gmail','microsoft365'].includes(providerType)?'communications.email_ingestion':'connections.commerce',key:`oauth-webhooks:${state.id}`,
-          provider:providerType,operation:'webhook_registration'},()=>adapter.registerWebhooks({credentials:current,webhookUrl,connection:connected}));
-        if(registered?.credentials)await credentials.put(database,connected.workspace_id,connected.id,'provider',
-          registered.credentials,registered.expiresAt||null);
-        const at=nowIso();
-        await database.query(`UPDATE workspace_connectors SET last_error=NULL,updated_at=$3 WHERE workspace_id=$1 AND id=$2`,
-          [connected.workspace_id,connected.id,at]);
-        await database.query(`UPDATE connection_issues SET status='RESOLVED',resolved_at=$3,updated_at=$3
-          WHERE workspace_id=$1 AND fingerprint=$2 AND status='OPEN'`,
-        [connected.workspace_id,`push-setup:${connected.id}`,at]);
-      }catch(error){
-        const at=nowIso();const detail=String(error.message||'Push delivery setup failed.').slice(0,500);
-        await database.query(`UPDATE workspace_connectors SET last_error=$3,updated_at=$4 WHERE workspace_id=$1 AND id=$2`,
-          [connected.workspace_id,connected.id,
-            'Push notifications could not be enabled. Scheduled polling remains active; reconnect or retry push setup.',at]);
-        await database.query(`INSERT INTO connection_issues
-          (id,workspace_id,connector_id,issue_type,fingerprint,title,detail,resolution_hint,status,created_at,updated_at)
-          VALUES($1,$2,$3,'PUSH_SETUP_FAILED',$4,'Mailbox push notifications need attention',$5,$6,'OPEN',$7,$7)
-          ON CONFLICT(workspace_id,fingerprint) DO UPDATE SET status='OPEN',resolved_at=NULL,detail=EXCLUDED.detail,
-            resolution_hint=EXCLUDED.resolution_hint,updated_at=EXCLUDED.updated_at`,
-        [newId('conissue'),connected.workspace_id,connected.id,`push-setup:${connected.id}`,detail,
-          'Mail is still checked by scheduled polling. Reconnect the mailbox to retry push setup.',at]);
-      }
-      connected=await connections.get(database,state.workspace_id,connectorId);
-    }
+    if(adapter.registerWebhooks)connected=await setupWebhookDelivery(database,{workspaceId:state.workspace_id,actorId:state.actor_id},connectorId,requestOrigin,{...options,operationKey:`oauth-webhooks:${state.id}`});
     if(adapter.discover)await jobs.enqueue(database,{workspaceId:connected.workspace_id,kind:'provider.catalog-sync',
       idempotencyKey:`provider-catalog-sync:${connected.id}:authorization:${connected.updated_at}`,
       payload:{connectorId:connected.id,source:'authorization'},priority:25,maxAttempts:5});
@@ -223,5 +235,5 @@ async function loadProviderCredentials(database,connection,adapter){
 }
 
 module.exports={stateHash,providerOrigin,beginAuthorization,readState,callbackContext,finishAuthorization,
-  completeOAuth,loadProviderCredentials};
-require('../commercial/enforcement').guardExports(module.exports,0,1,{loadProviderCredentials:'workspace.core'});
+  completeOAuth,loadProviderCredentials,setupWebhookDelivery};
+require('../commercial/enforcement').guardExports(module.exports,0,1,{loadProviderCredentials:'workspace.core',setupWebhookDelivery:'workspace.core'});

@@ -120,19 +120,44 @@ async function discover({ credentials }) {
 }
 
 async function registerWebhooks({ credentials, webhookUrl }) {
-  if (credentials.authMode !== 'sandbox_personal') return null;
-  const subscriptions = (await api(credentials, '/v2/webhooks/subscriptions')).body.subscriptions || [];
+  // Subscriptions belong to the application. Merchant OAuth must still own
+  // every business read/write; it cannot administer application subscriptions.
+  let management=credentials;
+  if(credentials.authMode!=='sandbox_personal'){
+    if(credentials.environment!=='sandbox'||!config.connections.square.sandboxAccessToken){
+      if(credentials.webhookSignatureKey||config.connections.square.webhookSignatureKey)
+        return {credentials,externallyConfigured:true};
+      throw new ValidationError('Square event delivery needs an application-owned webhook subscription. Configure its notification URL and signature key before relying on automatic updates.');
+    }
+    management={environment:'sandbox',accessToken:config.connections.square.sandboxAccessToken};
+    const owner=(await api(management,'/oauth2/token/status',{method:'POST'})).body;
+    const merchant=(await api(credentials,'/oauth2/token/status',{method:'POST'})).body;
+    requireVerified(config.connections.square.environment==='sandbox'
+      &&owner.client_id===config.connections.square.applicationId
+      &&merchant.client_id===owner.client_id&&merchant.merchant_id===credentials.merchantId,
+    'Square webhook administration and merchant authorization must belong to the same application.');
+  }
+  const subscriptions=[];let cursor;
+  do{
+    const query=new URLSearchParams({include_disabled:'true',limit:'100'});if(cursor)query.set('cursor',cursor);
+    const page=(await api(management,'/v2/webhooks/subscriptions?'+query)).body;
+    subscriptions.push(...(page.subscriptions||[]));cursor=page.cursor;
+  }while(cursor);
   const existing = subscriptions.find((subscription) => subscription.notification_url === webhookUrl);
   const subscription = { name: 'StockChief inventory events', enabled: true,
     event_types: WEBHOOK_EVENTS, notification_url: webhookUrl, api_version: API_VERSION };
   const response = existing
-    ? await api(credentials, `/v2/webhooks/subscriptions/${encodeURIComponent(existing.id)}`, {
+    ? await api(management, `/v2/webhooks/subscriptions/${encodeURIComponent(existing.id)}`, {
       method: 'PUT', body: JSON.stringify({ subscription }) })
-    : await api(credentials, '/v2/webhooks/subscriptions', { method: 'POST',
-      body: JSON.stringify({ idempotency_key: crypto.randomUUID(), subscription }) });
-  const saved = response.body.subscription;
+    : await api(management, '/v2/webhooks/subscriptions', { method: 'POST',
+      body: JSON.stringify({ idempotency_key: crypto.createHash('sha256').update(webhookUrl).digest('hex').slice(0,45), subscription }) });
+  let saved = response.body.subscription;
+  if(saved?.id&&!saved.signature_key)saved=(await api(management,`/v2/webhooks/subscriptions/${encodeURIComponent(saved.id)}`)).body.subscription;
+  requireVerified(saved?.notification_url===webhookUrl&&saved.enabled===true
+    &&WEBHOOK_EVENTS.every(type=>saved.event_types?.includes(type)),
+  'Square did not confirm the requested webhook destination and event scope.');
   if (!saved?.signature_key) throw new ValidationError('Square created the webhook but did not return its signature key.');
-  return { credentials: { ...credentials, webhookSignatureKey: saved.signature_key }, subscriptionId: saved.id };
+  return { credentials: { ...credentials, webhookSignatureKey: saved.signature_key,webhookSubscriptionId:saved.id }, subscriptionId: saved.id };
 }
 
 function verifyWebhook({ headers, rawBody, webhookUrl, credentials, connection, body }) {
