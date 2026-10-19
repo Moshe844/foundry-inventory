@@ -24,9 +24,9 @@ function oauthReturnPage(res,input){
   const returnOrigin=safeOrigin(input.returnOrigin,input.requestOrigin);
   const returnPath=input.returnPath||(input.connection?.id
     ? `/settings/connections/${encodeURIComponent(input.connection.id)}`:'/settings/connections');
-  return res.status(input.connected?200:400).page('connections/oauth-return',{
+  return res.status(input.connected?200:input.pending?202:400).page('connections/oauth-return',{
     title:`${input.providerName||'Connection'} · StockChief`,layout:false,outcome:{
-      connected:Boolean(input.connected),providerName:input.providerName||'Connection',message:input.message,
+      connected:Boolean(input.connected),pending:Boolean(input.pending),pollPath:input.pollPath||'',providerName:input.providerName||'Connection',message:input.message,
       workspaceId:input.workspaceId||input.connection?.workspace_id||null,returnUrl:`${returnOrigin}${returnPath}`,
       returnOrigin,returnPath,popup:Boolean(input.popup),
     },
@@ -48,6 +48,8 @@ function createPostgresConnectionsRouter(database,options={}){
   }
 
   async function renderConnections(req,res,apiToken=null){
+    const inventorySetup=req.query.setup==='inventory';
+    const providerCatalog=inventorySetup?registry.inventorySources(req.ctx,{oauthOnly:true}):registry.catalog(req.ctx,{oauthOnly:true});
     const qualifiedTestConnect=options.testMode===true&&options.paymentConnectOptions?.testQualifiedConnection===true;
     const launchTicket=crypto.randomBytes(24).toString('base64url');
     req.session.connectionLaunch={ticket:launchTicket,workspaceId:req.ctx.workspaceId,expiresAt:Date.now()+5*60000};
@@ -58,19 +60,19 @@ function createPostgresConnectionsRouter(database,options={}){
       paymentConnect.describe(database,req.ctx.workspaceId),shippingAccounts.describe(database,req.ctx.workspaceId),
     ]);
     return res.page('connections/index',{
-      title:'Connections',nav:'connections',room:true,backTo:{href:'/settings',label:'Settings'},launchTicket,
-      postgresMode:true,connections:connectionRows,
-      providerCatalog:registry.catalog(req.ctx,{oauthOnly:true}),
+      title:inventorySetup?'Connect a platform':'Integrations',nav:'connections',room:true,backTo:inventorySetup?{href:'/onboarding',label:'Inventory setup'}:{href:'/settings',label:'Settings'},launchTicket,
+      postgresMode:true,inventorySetup,connections:inventorySetup?connectionRows.filter(c=>providerCatalog.some(p=>p.type===c.provider_type)):connectionRows,
+      providerCatalog,
       apiToken,apiClients:clients,
       // Preserve existing merchant account details, but do not advertise new
       // self-service Connect or StockChief-funded guided shipping at launch.
-      paymentAccount:{...payment,source:'connect',
+      paymentAccount:inventorySetup?null:{...payment,source:'connect',
         because:!payment.connected&&!qualifiedTestConnect
           ?'No Stripe account is connected to this inventory.'
           :payment.because},
       paymentConnect:{...payment,flow:'oauth',testMode:!payment.liveMode,
         available:payment.available&&(payment.connected||qualifiedTestConnect)},
-      shippingAccount:{...shipping,billingReady:shipping.connected},shippingPlatform:{available:false},
+      shippingAccount:inventorySetup?null:{...shipping,billingReady:shipping.connected},shippingPlatform:{available:false},
       connectionPublicOrigin:requestPublicOrigin,xeroRedirectOrigin:requestPublicOrigin,
       paymentReturnOrigin:requestOrigin,currentWorkspaceId:req.ctx.workspaceId,
       workspaceName:req.workspace?.name||'',webhookSecret:null,outboundWebhooks:[],
@@ -122,6 +124,28 @@ function createPostgresConnectionsRouter(database,options={}){
     const apiToken=req.session.newPublicApiToken||null;
     delete req.session.newPublicApiToken;
     return renderConnections(req,res,apiToken);
+  }));
+  router.get('/settings/connections/woocommerce/return',requireOwner,asyncRoute(async(req,res)=>{
+    const requestOrigin=`${req.protocol}://${req.get('host')}`;
+    try{
+      const value=req.query.state||req.query.user_id;
+      const result=await require('../../connections/postgres-application-authorization').returning(database,req.ctx,value,'woocommerce',req.query.success);
+      const path=`/settings/connections/${encodeURIComponent(result.connection.id)}/complete${result.state.metadata.popup?'?popup=1':''}`;
+      if(req.accepts(['html','json'])==='json')return res.json({status:result.connected?'connected':result.pending?'pending':'declined',path:result.connected?path:null});
+      if(result.connected)return res.redirect(303,path);
+      return oauthReturnPage(res,{connected:false,pending:result.pending,providerName:'WooCommerce',connection:result.connection,
+        requestOrigin,returnOrigin:result.state.metadata.returnOrigin,popup:result.state.metadata.popup,
+        pollPath:'/settings/connections/woocommerce/return?'+new URLSearchParams({state:String(value),success:'1'}),
+        message:result.pending?'Waiting for the store to deliver its secure authorization. This page will return automatically.':'WooCommerce authorization was not approved. You can try again or use API keys.'});
+    }catch(error){if(req.accepts(['html','json'])==='json')return res.status(error.status||400).json({status:'unavailable'});return oauthReturnPage(res,{connected:false,providerName:'WooCommerce',requestOrigin,message:'This authorization is unavailable in the selected business. Return to the business that started the connection, or try again.'});}
+  }));
+  router.post('/settings/connections/woocommerce/api-keys',requireOwner,asyncRoute(async(req,res)=>{
+    if(!await connectionAllowed(req,res,'woocommerce'))return;
+    const requestOrigin=`${req.protocol}://${req.get('host')}`;
+    const connection=await require('../../connections/postgres-application-authorization').manual(database,req.ctx,
+      {...req.body,providerType:'woocommerce'},requestOrigin,{providers:registry,publicOrigin:options.publicOrigin==='request'?requestOrigin:options.publicOrigin});
+    req.flash('success','WooCommerce credentials verified and saved securely. Catalogue discovery and event setup are queued. Review matches before importing stock.');
+    return res.redirect(303,`/settings/connections/${encodeURIComponent(connection.id)}`);
   }));
   router.get('/settings/connections/payments/launch',requireOwner,asyncRoute(async(req,res)=>{
     await entitlements.assertCapability(database,commercialScope(req),'merchant_payments');

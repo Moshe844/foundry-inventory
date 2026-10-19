@@ -29,8 +29,14 @@ const future = Object.freeze([
 ]);
 
 function get(type) { return adapters[type] || null; }
+function withInventoryCapabilities(meta,adapter){
+ const capabilities=typeof adapter?.discover==='function'&&Array.isArray(adapter.catalogueCapabilities)
+  ?[...adapter.catalogueCapabilities]:[];
+ return {...meta,inventoryCapabilities:capabilities,initialInventoryImport:capabilities.some(c=>['products','skus','stock'].includes(c))};
+}
 function catalog(ctx,authorizationOptions) { return [shopify.metadata(), square.metadata(authorizationOptions), clover.metadata(), woocommerce.metadata(), generic,
   ...future, gmail.metadata(), microsoft365.metadata(), quickbooks.metadata(), xero.metadata()]
-  .map(meta=>launchPolicy.metadata(meta,ctx)); }
+  .map(meta=>launchPolicy.metadata(withInventoryCapabilities(meta,get(meta.type)),ctx)); }
+function inventorySources(ctx,options){return catalog(ctx,options).filter(meta=>meta.initialInventoryImport);}
 
-module.exports = { get, catalog, generic };
+module.exports = { get, catalog, generic,inventorySources,withInventoryCapabilities };

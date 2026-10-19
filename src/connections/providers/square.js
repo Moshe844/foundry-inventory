@@ -259,5 +259,5 @@ async function historySummary({ credentials, since, locations = [] }) {
   return { operationalRecords: orderIds.size, periodStart: since };
 }
 
-module.exports = { metadata, authorizationUrl, tryDirectAuthorization, exchangeAuthorization, discover,
+module.exports = { catalogueCapabilities:Object.freeze(['products','skus','stock','locations']), metadata, authorizationUrl, tryDirectAuthorization, exchangeAuthorization, discover,
   registerWebhooks, verifyWebhook, normalizeWebhook, createSandboxCheckout, historySummary, api, orderEvents, API_VERSION };

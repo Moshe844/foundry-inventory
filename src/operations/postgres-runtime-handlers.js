@@ -503,6 +503,7 @@ function create(providers=defaultProviders,options={}){return {'system.runtime-s
   'mail.attachment-extract':external((job,database)=>require('../connections/postgres-attachments').extractMessage(database,job.workspaceId,job.payload.messageId)),
   'mailbox.renew-push':external((job,database)=>mailboxPushRenewal(job,database,providers,options)),
   'provider.catalog-sync':external((job,database)=>providerSync.sync(job,database,providers)),
+    'provider.webhook-setup':external((job,database)=>require('../connections/postgres-application-authorization').setupJob(job,database,providers)),
   'provider.webhook-process':external((job,database)=>require('../connections/postgres-webhook-inbox').job(job,database,providers)),
   'commercial.auto-top-up':external((job,database)=>require('../commercial/addons').runTopup(database,
     {accountId:job.payload.accountId,workspaceId:job.workspaceId},job.payload.category,options.commercialOptions||{})),

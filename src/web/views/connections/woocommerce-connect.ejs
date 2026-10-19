@@ -1,0 +1,16 @@
+<form method="post" action="<%= postgresMode?'/settings/connections/woocommerce/authorize':'/settings/connections/connect' %>" data-oauth-connect="woocommerce" data-provider-name="WooCommerce">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="providerType" value="woocommerce">
+  <label class="field"><span class="field-label">WooCommerce store URL</span><input class="input" type="url" name="storeUrl" placeholder="https://your-store.example" required autocomplete="url"></label>
+  <button class="rm-btn rm-btn--wash" type="submit">Authorize WooCommerce</button>
+  <p class="quiet">Recommended. Sign in to your store and approve StockChief. Your store sends its keys securely.</p>
+</form>
+<% if(postgresMode){ %><details class="rm-more" data-woocommerce-manual><summary>Use Consumer Key and Secret instead</summary><div>
+  <p>Use a read/write key from WooCommerce → Settings → Advanced → REST API. Keys are encrypted and never placed in a link.</p>
+  <form method="post" action="/settings/connections/woocommerce/api-keys" autocomplete="off">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <label class="field"><span class="field-label">Store URL for API keys</span><input class="input" type="url" name="storeUrl" placeholder="https://your-store.example" required></label>
+    <label class="field"><span class="field-label">Consumer Key</span><input class="input" type="password" name="consumerKey" required autocomplete="new-password" spellcheck="false" maxlength="256"></label>
+    <label class="field"><span class="field-label">Consumer Secret</span><input class="input" type="password" name="consumerSecret" required autocomplete="new-password" spellcheck="false" maxlength="256"></label>
+    <button class="rm-btn rm-btn--wash" type="submit">Verify and connect WooCommerce</button>
+  </form>
+</div></details><% } %>

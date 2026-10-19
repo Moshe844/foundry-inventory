@@ -39,6 +39,18 @@ function apiError(res,error){
 function createPostgresProviderWebhooks(database,options={}){
   const router=express.Router();
   const providers=options.providers||providersDefault;
+  router.post('/api/v1/connections/woocommerce/callback',express.json({limit:'16kb'}),async(req,res)=>{
+    try{const connection=await require('../../connections/postgres-application-authorization').complete(database,'woocommerce',req.body||{},requestOrigin(req,options.publicOrigin),{providers,publicOrigin:requestOrigin(req,options.publicOrigin)});
+      return res.status(200).json({connected:true,connectionId:connection.id});
+    }catch(error){
+      // Provider exceptions can contain the submitted credentials or their
+      // request headers. Never serialize or log an authorization exception.
+      const known=error instanceof DomainError;
+      const status=known?error.status:([400,401,403,404,409,422,429,503].includes(Number(error.status))?Number(error.status):500);
+      return res.status(status).json({error:{code:known?error.code:'store_authorization_failed',
+        message:known?error.message:'The store could not verify this authorization. Check the public store address, API access and read/write permission, then try connecting again.'}});
+    }
+  });
   const handler=async(req,res)=>{
     try{
       const providerType=String(req.params.providerType||'').toLowerCase();
@@ -47,13 +59,18 @@ function createPostgresProviderWebhooks(database,options={}){
       if(!rows.length)return res.status(404).json({error:{code:'connection_not_found',
         message:`No active ${providerType} connection matched this webhook.`}});
       const connection={...rows[0],config:typeof rows[0].config==='string'?JSON.parse(rows[0].config||'{}'):(rows[0].config||{})};
+      const rawBody=Buffer.isBuffer(req.body)?req.body:Buffer.from(String(req.body||''),'utf8');
+      // WooCommerce's documented activation ping has no business payload or
+      // signature. Acknowledge liveness only; never record it as verified work.
+      if(providerType==='woocommerce'&&!req.headers['x-wc-webhook-signature']
+          &&/^webhook_id=[1-9][0-9]*$/.test(rawBody.toString('utf8')))
+        return res.status(200).json({ping:true,businessEvent:false});
       const adapter=providers.get(providerType);
       if(!adapter?.verifyWebhook||!adapter?.normalizeWebhook)return res.status(503).json({error:{code:'provider_unavailable',
         message:`${providerType} webhook handling is not configured.`}});
       const providerCredentials=await credentials.get(database,connection.workspace_id,connection.id,'provider');
       if(!providerCredentials)return res.status(409).json({error:{code:'credentials_missing',
         message:'Reconnect this provider before accepting its events.'}});
-      const rawBody=Buffer.isBuffer(req.body)?req.body:Buffer.from(String(req.body||''),'utf8');
       const body=parseBody(rawBody);
       const webhookUrl=`${requestOrigin(req,options.publicOrigin)}${req.originalUrl}`;
       adapter.verifyWebhook({headers:req.headers,rawBody,webhookUrl,credentials:providerCredentials,connection,body});

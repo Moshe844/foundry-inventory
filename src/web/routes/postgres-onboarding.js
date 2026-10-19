@@ -71,7 +71,7 @@ function createPostgresOnboardingRouter(database) {
         (description?'That describes the business, but not its actual products or quantities. Choose where those records live.':null),
       importAction:'/imports',importFieldName:'file',importMultiple:false,importOptionsHref:'/imports'});
   }));
-  router.get('/onboarding/system',requireOwner,(req,res)=>res.redirect(303,'/settings/connections'));
+  router.get('/onboarding/system',requireOwner,(req,res)=>res.redirect(303,'/settings/connections?setup=inventory'));
   router.get('/onboarding/files',requireOwner,(req,res)=>res.redirect(303,'/imports/start'));
   router.get('/onboarding/migrations/new',(req,res)=>res.redirect(303,'/imports'));
   return router;

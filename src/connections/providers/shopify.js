@@ -393,6 +393,6 @@ function normalizeWebhook({ headers, body }) {
   throw new ValidationError(`Shopify topic ${topic || '(missing)'} is not supported.`);
 }
 
-module.exports = { metadata, normalizeShop, validateInput, authorizationUrl, tryDirectAuthorization, refreshCredentials,
+module.exports = { catalogueCapabilities:Object.freeze(['products','skus','stock','locations']), metadata, normalizeShop, validateInput, authorizationUrl, tryDirectAuthorization, refreshCredentials,
   verifyOAuthQuery, exchangeAuthorization, discover, bootstrapSnapshot, registerWebhooks, historySummary, verifyWebhook,
   normalizeWebhook, hydrateWebhook, graphql, API_VERSION };

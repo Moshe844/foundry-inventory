@@ -22,10 +22,10 @@
   </style>
 </head>
 <body>
-  <main class="oauth-return" data-connection-return data-popup="<%= outcome.popup?'true':'false' %>" data-connected="<%= outcome.connected?'true':'false' %>" data-workspace-id="<%= outcome.workspaceId||'' %>" data-return-path="<%= outcome.returnPath %>" data-return-origin="<%= outcome.returnOrigin %>">
+  <main class="oauth-return" data-connection-return data-pending="<%= locals.outcome.pending?'true':'false' %>" data-poll-path="<%= locals.outcome.pollPath||'' %>" data-popup="<%= outcome.popup?'true':'false' %>" data-connected="<%= outcome.connected?'true':'false' %>" data-workspace-id="<%= outcome.workspaceId||'' %>" data-return-path="<%= outcome.returnPath %>" data-return-origin="<%= outcome.returnOrigin %>">
     <div class="panel">
-      <div class="oauth-return__mark" aria-hidden="true"><%= outcome.connected ? '✓' : '!' %></div>
-      <h1><%= outcome.connected ? outcome.providerName + ' is connected' : outcome.providerName + ' was not connected' %></h1>
+      <div class="oauth-return__mark" aria-hidden="true"><%= outcome.connected ? '✓' : locals.outcome.pending?'…':'!' %></div>
+      <h1><%= outcome.connected ? outcome.providerName + ' is connected' : locals.outcome.pending?'Finishing your '+outcome.providerName+' connection':outcome.providerName + ' was not connected' %></h1>
       <p data-connection-return-status role="status"><%= outcome.message %></p>
       <button class="btn btn--primary" type="button" data-connection-return-close hidden>Close window</button>
       <a class="btn btn--primary" data-connection-return-link href="<%= outcome.returnUrl %>">Return to StockChief</a>

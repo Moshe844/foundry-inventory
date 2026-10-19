@@ -208,5 +208,5 @@ async function historySummary({ credentials, since }) {
 
 function webhookUrl({ origin }) { return `${origin}/api/v1/connections/clover/webhooks`; }
 
-module.exports = { metadata, authorizationUrl, exchangeAuthorization, refreshCredentials, discover, verifyWebhook,
+module.exports = { catalogueCapabilities:Object.freeze(['products','skus','stock','locations']), metadata, authorizationUrl, exchangeAuthorization, refreshCredentials, discover, verifyWebhook,
   normalizeWebhook, historySummary, webhookUrl, api, oauthBase, apiBase };

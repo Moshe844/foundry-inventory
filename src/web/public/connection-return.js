@@ -33,6 +33,21 @@
  if(!root||!link){channel?.close();return;}
  let destination;
  try{destination=new URL(link.href);if(destination.origin!==root.dataset.returnOrigin)return;}catch{return;}
+ if(root.dataset.pending==='true'){
+  channel?.close();let poll;try{poll=new URL(root.dataset.pollPath,location.origin);if(poll.origin!==location.origin||!/^\/settings\/connections\/[a-z0-9_-]+\/return$/.test(poll.pathname))return;}catch{return;}
+  let checks=0;
+  const status=root.querySelector('[data-connection-return-status]');
+  async function check(){
+   try{const response=await fetch(poll.href,{headers:{accept:'application/json'},credentials:'same-origin'});
+    if(!response.ok)throw Error('Authorization check unavailable');const result=await response.json();
+    if(result.status==='connected'&&/^\/settings\/connections\/[a-zA-Z0-9_-]+\/complete(?:\?popup=1)?$/.test(result.path)){location.replace(result.path);return;}
+    if(result.status==='declined'){if(status)status.textContent='The store did not approve this connection. Return to StockChief to try again.';return;}
+   }catch{}
+   if(++checks<30)window.setTimeout(check,1000);
+   else if(status)status.textContent='The store has not delivered authorization yet. You can return to StockChief and review the connection. Your existing work is preserved.';
+  }
+  window.setTimeout(check,500);return;
+ }
  if(root.dataset.connected!=='true'){channel?.close();return;}
  let parent;try{parent=window.opener&&!window.opener.closed?window.opener:null;}catch{}
  const popup=root.dataset.popup==='true'||Boolean(parent);

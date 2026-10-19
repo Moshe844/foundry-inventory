@@ -99,6 +99,8 @@ async function finishAuthorization(database,connection,actorId,result){
           AND status='connected' ORDER BY updated_at DESC LIMIT 1 FOR UPDATE`,
       [connection.workspace_id,connection.provider_type,result.accountId,connection.id]);
       if(established.rows.length&&connection.setup_status==='AUTHORIZING'&&!connection.credential_ref){
+        await client.query('UPDATE connection_authorization_states SET connector_id=$3 WHERE workspace_id=$1 AND connector_id=$2',
+          [connection.workspace_id,connection.id,established.rows[0].id]);
         await client.query('DELETE FROM workspace_connectors WHERE workspace_id=$1 AND id=$2',
           [connection.workspace_id,connection.id]);
         target=established.rows[0];

@@ -51,6 +51,7 @@
   var apiClients = typeof apiClients === 'undefined' ? [] : apiClients;
   var outboundWebhooks = typeof outboundWebhooks === 'undefined' ? [] : outboundWebhooks;
   var postgresMode = typeof postgresMode !== 'undefined' && postgresMode;
+  var inventorySetup=Boolean(locals.inventorySetup);
   var includedCommercialCapabilities = new Set(typeof commercialCapabilities === 'undefined' ? [] : commercialCapabilities);
   var commercialPlanUnrestricted = typeof commercialDevelopment === 'undefined' ? true : commercialDevelopment;
   function providerCommercialCapability(type) {
@@ -156,10 +157,10 @@
 %>
 
 <header class="rm-head">
-  <p class="rm-head__eyebrow"><%- helpers.icon('link', { size: 15 }) %> Connections</p>
-  <h1>Where your business already happens</h1>
+  <p class="rm-head__eyebrow"><%- helpers.icon('link', { size: 15 }) %> <%= inventorySetup?'Inventory setup':'Integrations' %></p>
+  <h1><%= inventorySetup?'Connect a platform':'Where your business already happens' %></h1>
   <p>
-    Each inventory has its own accounts. See what is connected, what you can connect now, and what is not ready here yet. StockChief keeps connected sources up to date and asks you when something cannot be matched.
+    <%= inventorySetup?'Choose a platform that can supply your starting products, SKUs or stock. Other operational connections remain available in Integrations after setup.':'Each inventory has its own accounts. Connect your systems, review their status and resolve records that need matching.' %>
   </p>
 </header>
 
@@ -283,6 +284,8 @@
             <input class="input" id="ref-name-<%= provider.type %>" name="displayName" placeholder="<%= provider.integrationMode === 'custom_contract' ? 'Name this ERP or business system' : 'Warehouse ERP' %>" required>
             <button class="rm-btn rm-btn--wash" type="submit"><%= provider.integrationMode === 'custom_contract' ? 'Start verified ERP connection' : 'Create connection' %></button>
           </form>
+        <% } else if (provider.type==='woocommerce') { %>
+          <%- include('woocommerce-connect',{provider,postgresMode,csrfToken}) %>
         <% } else if (postgresMode && ['oauth', 'application_auth'].includes(provider.authMode)
             && !['shopify', 'woocommerce'].includes(provider.type)) { %>
           <a class="rm-btn <%= alreadyConnected ? 'rm-btn--ghost' : 'rm-btn--wash' %>"
@@ -356,7 +359,7 @@
   </div>
 <% }) %>
 
-<details class="rm-work" id="developer-api" <%= postgresMode || apiToken || webhookSecret ? 'open' : '' %>>
+<% if(!inventorySetup){ %><details class="rm-work" id="developer-api" <%= postgresMode || apiToken || webhookSecret ? 'open' : '' %>>
   <summary>Advanced: connect custom software with APIs and webhooks</summary>
   <div class="rm-work__body">
     <p class="quiet"><strong>Most business owners do not need this.</strong> Use it only when your ERP, warehouse system, developer, or reporting tool needs to exchange data directly with StockChief.</p>
@@ -397,7 +400,7 @@
   </section>
     </div>
   </div>
-</details>
+</details><% } %>
 
 <%# ----------------------------------------------------------- taking payment %>
 <%
