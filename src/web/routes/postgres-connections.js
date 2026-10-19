@@ -89,7 +89,7 @@ function createPostgresConnectionsRouter(database,options={}){
       context=await providerService.readState(database,req.query.state,paymentConnect.STATE_PROVIDER);
       const result=await paymentConnect.complete(database,req.query,options.paymentConnectOptions||{});
       return oauthReturnPage(res,{connected:result.connected,providerName:'Stripe',returnPath:'/settings/connections#payments',
-        returnOrigin:result.returnOrigin,requestOrigin,workspaceId:result.workspaceId,
+        returnOrigin:result.returnOrigin,requestOrigin,workspaceId:result.workspaceId,popup:context?.metadata?.popup===true,
         message:result.connected?'This inventory now uses its own Stripe account for customer payments.':result.message});
     }catch(error){
       return oauthReturnPage(res,{connected:false,providerName:'Stripe',returnPath:'/settings/connections#payments',

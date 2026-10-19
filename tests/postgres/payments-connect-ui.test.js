@@ -25,12 +25,12 @@ test('real Chromium connects each inventory to its own Stripe account without re
     await migratePostgres(database);
     const app=createPostgresApp({database,env:'test',sessionSecret:'postgres-payment-connect-secret',
       paymentOptions:{connect}});
-    app.get('/fixture-stripe-consent',(req,res)=>res.send(`<!doctype html><html><body><main>
+    app.get('/fixture-stripe-consent',(req,res)=>res.set('Cross-Origin-Opener-Policy','same-origin').send(`<!doctype html><html><body><main>
       <h1>Stripe test authorization</h1><p>Choose Owner Stripe Sandbox.</p>
       <a href="${req.query.redirect_uri}?code=fixture-stripe-code&amp;state=${encodeURIComponent(req.query.state)}">Authorize Stripe account</a>
       </main></body></html>`));
     const server=await new Promise((resolve)=>{const started=app.listen(0,'127.0.0.1',()=>resolve(started));});
-    connect.authorizeEndpoint=`http://127.0.0.1:${server.address().port}/fixture-stripe-consent`;
+    connect.authorizeEndpoint=`http://localhost:${server.address().port}/fixture-stripe-consent`;
     const browser=await chromium.launch({args:['--disable-popup-blocking']});
     context.after(async()=>{await browser.close();await new Promise((resolve)=>server.close(resolve));
       await app.locals.sessionStore.close();await database.close();await cluster.stop();
@@ -51,7 +51,7 @@ test('real Chromium connects each inventory to its own Stripe account without re
     const popup=await popupPromise;popup.on('pageerror',(error)=>errors.push(`popup: ${error.message}`));
     await popup.waitForURL(/fixture-stripe-consent/);await popup.waitForLoadState('domcontentloaded');
     await popup.getByRole('heading',{name:'Stripe test authorization'}).waitFor();
-    assert.equal(await popup.evaluate(()=>Boolean(window.opener)),true);
+    assert.equal(await popup.evaluate(()=>Boolean(window.opener)),false,'The provider may sever its opener; saved popup intent must survive');
     const callbackRequests=[];popup.on('request',request=>{if(new URL(request.url()).pathname==='/settings/connections/payments/return')callbackRequests.push(request.method());});
     const closed=popup.waitForEvent('close');await popup.getByRole('link',{name:'Authorize Stripe account'}).click();
     await closed;assert.equal(popup.isClosed(),true,'Successful authorization closes its own popup');
