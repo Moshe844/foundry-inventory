@@ -96,10 +96,13 @@
 <% } else if(run){ %>
   <div class="card section <%= run.verified?'':'card--warn' %>"><div class="card-head"><h2>Reconciliation</h2>
     <span class="spacer"></span><span class="badge badge--<%= run.verified?'ok':'danger' %>"><%= run.verified?'Verified':'Not verified' %></span></div>
-    <div class="card-body"><p class="lede"><%= run.rowsImported %> <%= helpers.plural(run.rowsImported, 'row') %> created <%= run.itemsCreated %> <%= helpers.plural(run.itemsCreated, 'product') %>, <%= run.skusCreated %> <%= helpers.plural(run.skusCreated, 'SKU') %> and <%= run.unitsEstablished %> opening <%= helpers.plural(run.unitsEstablished, 'unit') %>.</p>
+    <div class="card-body"><p class="lede"><%= helpers.qty(run.rowsImported) %> <%= helpers.plural(run.rowsImported, 'row') %> created <%= helpers.qty(run.itemsCreated) %> <%= helpers.plural(run.itemsCreated, 'product') %>, <%= helpers.qty(run.skusCreated) %> <%= helpers.plural(run.skusCreated, 'SKU') %> and <%= helpers.qty(run.unitsEstablished) %> opening <%= helpers.plural(run.unitsEstablished, 'unit') %>.</p>
+      <% if(run.verified){ %><p>Your approved inventory is saved. The stock and accounting checks passed.</p><% } %>
+      <% if(activity?.startedAt){ %><p class="muted">Started <time data-import-time datetime="<%= activity.startedAt %>"><%= new Date(activity.startedAt).toUTCString() %></time><% if(activity.completedAt){ %><br>Finished <time data-import-time datetime="<%= activity.completedAt %>"><%= new Date(activity.completedAt).toUTCString() %></time><% } %></p><% } %>
+      <details <% if(!run.verified){ %>open<% } %>><summary>Verification details · <%= run.checks.length %> <%= run.verified?'checks passed':'checks to review' %></summary>
       <table class="table table--tight"><thead><tr><th>Check</th><th>Expected</th><th>Found</th></tr></thead><tbody>
-        <% run.checks.forEach(function(check){ %><tr><td><%= check.name %></td><td><%= check.expected %></td><td><%= check.observed %></td></tr><% }) %>
-      </tbody></table></div><div class="card-foot"><a class="btn btn--primary" href="/inventory">See imported inventory</a></div>
+        <% run.checks.forEach(function(check){ %><tr><td><%= check.name %></td><td><%= helpers.qty(check.expected) %></td><td><%= helpers.qty(check.observed) %></td></tr><% }) %>
+      </tbody></table></details></div><div class="card-foot"><a class="btn btn--primary" href="/inventory">See imported inventory</a></div>
   </div>
 <% } else { %>
   <div class="card section"><div class="card-head"><h2>What will happen</h2><span class="spacer"></span>
