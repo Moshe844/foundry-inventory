@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Unit and integration (Node 22)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Run existing unit and integration suite
+        run: npm test
+
+  postgres:
+    name: PostgreSQL core (Node 22)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Install PostgreSQL 16 binaries
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-16
+          echo "STOCKCHIEF_POSTGRES_BIN=/usr/lib/postgresql/16/bin" >> "$GITHUB_ENV"
+      # The fixture helper creates and removes its own cluster with a random
+      # port/password per fixture. Do not set DATABASE_URL or use a shared DB.
+      # Explicit selection keeps browser, live-model and certification tests out.
+      - name: Run isolated PostgreSQL core tests
+        run: >-
+          node --test --test-concurrency=4
+          tests/postgres/accounting-ledger.test.js
+          tests/postgres/auth-http.test.js
+          tests/postgres/auth-middleware.test.js
+          tests/postgres/auth-service.test.js
+          tests/postgres/backup-restore.test.js
+          tests/postgres/business-migration.test.js
+          tests/postgres/business-workflows.test.js
+          tests/postgres/deployment-contract.test.js
+          tests/postgres/health-probes.test.js
+          tests/postgres/inventory-engine.test.js
+          tests/postgres/mail-polling.test.js
+          tests/postgres/mail-renewal.test.js
+          tests/postgres/mail-webhooks.test.js
+          tests/postgres/production-startup.test.js
+          tests/postgres/reservation-concurrency.test.js
+          tests/postgres/runtime.test.js
+          tests/postgres/scheduler.test.js
+          tests/postgres/web-business.test.js
