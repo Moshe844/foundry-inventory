@@ -28,7 +28,12 @@ const FAILED='I could not finish this request safely. Your goal and recorded wor
 function publicText(value,fallback=FAILED){
  if(typeof value!=='string'||!value.trim())return fallback;
  // Protocol envelopes and exception diagnostics are never a customer answer.
- if(/^\s*(?:[\[{]|```(?:json)?\s*[\[{])/i.test(value)||/Outcome not fully verified\. Agent report:|\b(?:Error|Exception|TypeError):|\b[A-Z][A-Z0-9]+(?:_[A-Z0-9]+){2,}\b|\bat \S+\s*\([^\n]+:\d+:\d+\)/.test(value))return fallback;
+ // Business identifiers often contain several underscores. An identifier in
+ // prose or a table is not an exception diagnostic. Retain rejection of bare
+ // internal codes, explicit diagnostic labels, protocol envelopes and stacks.
+ if(/^\s*(?:[\[{]|```(?:json)?\s*[\[{])/i.test(value)||
+  /^\s*[A-Z][A-Z0-9]+(?:_[A-Z0-9]+){2,}\s*$/.test(value)||
+  /Outcome not fully verified\. Agent report:|\b(?:Error|Exception|TypeError):|\b(?:error(?: code)?|exception|failure code)\s*[:=]\s*[A-Z][A-Z0-9]+(?:_[A-Z0-9]+){2,}\b|\bat \S+\s*\([^\n]+:\d+:\d+\)/i.test(value))return fallback;
  return value.trim().slice(0,20000);
 }
 function classify({report,answer,verified,current='READY',canonicalVerified=true,progress={}}){

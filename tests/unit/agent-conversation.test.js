@@ -2,6 +2,18 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const contract=require('../../src/assistant/agent-conversation'),trace=require('../fixtures/recorded-sales-clarification.json');
 
+test('evidenced business identifiers remain readable in answers and questions without exposing diagnostics',()=>{
+ for(const prefix of ['SKU','ORDER','INVOICE','LOCATION']){
+  const id=prefix+'_'+require('node:crypto').randomBytes(4).toString('hex').toUpperCase()+'_12';
+  for(const answer of ['The saved reference is '+id+'.','| Reference | Units |\n|---|---:|\n| '+id+' | 8 |']){
+   assert.equal(contract.publicText(answer),answer);
+   assert.equal(contract.classify({report:{status:'completed',outcome:'answer',answer,claims:[]},verified:true}).status,'COMPLETED');
+  }
+  const question='Should I use '+id+'?';assert.equal(contract.parse({status:'needs_user',question,missingInformation:['record choice']}).question,question);
+ }
+ for(const diagnostic of ['INTERNAL_ADAPTER_FAILED','Provider error code: MODEL_GATE_CLOSED','TypeError: invalid adapter','at runtime (worker.js:12:4)','{"status":"completed"}'])assert.equal(contract.publicText(diagnostic),contract.FAILED);
+});
+
 test('recorded post-approval exhaustion keeps the executed receipt and stops offering an exhausted continuation',()=>{
  const goal={id:'recorded-boundary',status:'BLOCKED',answer:'The approved email was executed and verified.',checkpoint:{lifecycleStage:'verification',harness:{completionSource:'partial_verified_receipt',admissionBlock:{code:'DURABLE_TOOL_LIMIT'},interruption:{code:'rate_limited'}}}};
  const state=contract.state(goal);assert.equal(state.phase,'goal_limit');assert.equal(state.active,false);assert.equal(state.canReply,false);assert.match(state.message,/email was executed and verified/);assert.match(state.message,/No automatic retry/);

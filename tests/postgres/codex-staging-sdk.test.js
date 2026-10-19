@@ -21,7 +21,7 @@ for(const accountInherited of [false,true])test('actual Staging SDK lifecycle us
   const child=await require('../../src/domain/postgres-auth-service').createWorkspace(db,owner.accountId,{name:'Testing'});
   ctx={workspaceId:child.workspaceId,actorId:child.userId};
  }
- const sku='STAGING-'+randomUUID().slice(0,8),location='SDK shelf '+randomUUID().slice(0,6);
+ const sku='STAGING_'+randomUUID().slice(0,8).toUpperCase()+'_ITEM',location='SDK shelf '+randomUUID().slice(0,6);
  const item=await require('../../src/domain/postgres-catalog-service').createItem(db,ctx,{name:sku,baseCode:sku,trackingMode:'quantity'});
  const loc=await require('../../src/domain/postgres-location-service').createLocation(db,ctx,{name:location,kind:'warehouse'});
  const variant=(await db.query('SELECT id,code FROM skus WHERE item_id=$1',[item.itemId])).rows[0];
@@ -43,7 +43,7 @@ for(const accountInherited of [false,true])test('actual Staging SDK lifecycle us
   assert.equal(calls,3,'No extra model continuation');
   const goal=await store.get(db,ctx,response.goalId),entry=Object.values(goal.checkpoint.harness.evidence).findLast(e=>e.name==='environment_dataset');
   const evidence=JSON.parse(entry.text);
-  return require('../helpers/codex-offline-response').final(body,calls,JSON.stringify({status:'completed',outcome:'answer',answer:'The approved receipt is recorded. Current stock is 3 units.',
+  return require('../helpers/codex-offline-response').final(body,calls,JSON.stringify({status:'completed',outcome:'answer',answer:'The approved receipt for '+variant.code+' is recorded. Current stock is 3 units.',
    claims:[{evidenceId:entry.id,path:'/rows/0/on_hand',value:evidence.rows[0].on_hand}]}));
  };
  const options={image:process.env.STOCKCHIEF_OFFLINE_CODEX_IMAGE||JSON.parse(require('node:fs').readFileSync('data/environment-agent-demo/codex-sdk-approval-handoff/runtime.json')).image,
