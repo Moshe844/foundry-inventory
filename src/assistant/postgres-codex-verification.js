@@ -58,11 +58,19 @@ async function verify(database,ctx,goal,raw,catalogue,options={}){
   if(entry.name==='canonical_execution_state'&&/^\/operations\/\d+\/result(?:\/|$)/.test(claim.path)&&claim.historical!==true)
    return unavailable('A recorded execution result proves what happened then. Current-state claims still need a fresh business record.','EXECUTION_RESULT_REQUIRES_HISTORICAL_SCOPE');
   const presentation=require('../../scripts/environment-agent-demo/evidence-presentation');
-  let selected=presentation.locate(original,claim.path),toolView=false;
+  let selected=presentation.locate(original,claim.path),toolView=false,legacyBrowserWindows=false;
   if(!selected.found||!equal(selected.value,claim.value)){
    // The same lossless codec that delivered this observation is the only
    // alternative representation accepted. No arbitrary projection/subset.
    selected=presentation.locate(presentation.project(entry.name,original),claim.path);
+   // Saved native reports may contain the prior lossless control encoding.
+   // Accept that exact original representation, never a guessed subset. The
+   // metadata gate above still rejects individual inspector-window claims,
+   // and every actual DOM fact is freshly verified below in all encodings.
+   if((!selected.found||!equal(selected.value,claim.value))&&entry.name==='environment_browser'){
+    selected=presentation.locate(presentation.project(entry.name,original,{legacyBrowserWindows:true}),claim.path);
+    legacyBrowserWindows=true;
+   }
    if(!selected.found||!equal(selected.value,claim.value))return unavailable(
     'I could not verify the supporting evidence for this answer. Your request and collected information are saved.',
     selected.found?'EVIDENCE_VALUE_MISMATCH':'EVIDENCE_POINTER_NOT_FOUND',{claimIndex,evidenceId:claim.evidenceId,path:claim.path});
@@ -74,7 +82,7 @@ async function verify(database,ctx,goal,raw,catalogue,options={}){
    try{currentObservation=await currentEvidence(entry,claim.path);}
    catch(error){return unavailable('I could not confirm that the collected information still matches the current records. Your request and recorded work are saved.',error.message,
     {claimIndex,evidenceId:entry.id,path:claim.path,...error.verificationDetail});}
-   const currentClaim=presentation.locate(toolView?presentation.project(entry.name,currentObservation):currentObservation,claim.path);
+   const currentClaim=presentation.locate(toolView?presentation.project(entry.name,currentObservation,{legacyBrowserWindows}):currentObservation,claim.path);
    const current=currentClaim.value,missingCurrent=!currentClaim.found;
    const record=entry.name==='business_operations'?require('./business-row-verification').unchangedRow(original,currentObservation,claim.path):{applicable:false};
    // Controls, like text offsets and loopback ports, have observation-local

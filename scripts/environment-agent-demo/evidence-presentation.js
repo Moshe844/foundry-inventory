@@ -1,8 +1,8 @@
 'use strict';
 // Lossless tool encoding shared by delivery and verification. The journal
 // always keeps original observations. Neither encoding grants execution rights.
-function project(name,value){
- if(name==='environment_browser')return require('./browser-presentation').compact(value);
+function project(name,value,{legacyBrowserWindows=false}={}){
+ if(name==='environment_browser')return require('./browser-presentation').compact(value,{inspectionWindows:!legacyBrowserWindows});
  if(name==='environment_interfaces')return require('./interface-presentation').compact(value);
  if(['business_operations','environment_dataset'].includes(name))return require('./record-presentation').project(value);
  return value;

@@ -6,8 +6,8 @@ function clean(value){if(Array.isArray(value))return value.map(clean);if(!value|
 test('browser transport coordinates stay intact without competing with unfamiliar field evidence',()=>{
  const original={url:'http://localhost/unfamiliar',text:'Unknown form\nChoose package\n',textBlocks:{line0:'Unknown form',line1:'Choose package'},textRegions:[{firstLine:0,count:2,tag:'form',sha256:'original-hash'}],pagination:{controlsNextRef:'next-live'},controls:[{ref:'live:17',evidencePath:'/controls/0',name:'unexpected_field',label:'Choose package',value:'new',min:'2',options:[{value:'new',label:'Novel choice'}]}]};
  const e=entry(original),view=refs.present(e,presentation.project(e.name,original)),key=view._stockchiefSources.valueField;
- assert.deepEqual(clean(view.textRegions),original.textRegions);assert.deepEqual(clean(view.pagination),original.pagination);assert.equal(view.controls[0].ref,'live:17');assert.equal(view.controls[0].evidencePath,'/controls/0');
- assert.equal(view.textRegions[0][key],undefined);assert.equal(view.pagination[key],undefined);assert.equal(view.controls[0][key].ref,undefined);assert.equal(view.controls[0][key].evidencePath,undefined);
+ assert.deepEqual(clean(view.textRegions),original.textRegions);assert.deepEqual(clean(view._stockchiefInspectionWindow.page),original.pagination);assert.equal(view.pagination,undefined);assert.equal(view.controls[0].ref,'live:17');assert.equal(view.controls[0].evidencePath,'/controls/0');
+ assert.equal(view.textRegions[0][key],undefined);assert.equal(view._stockchiefInspectionWindow[key],undefined);assert.equal(view.controls[0][key].ref,undefined);assert.equal(view.controls[0][key].evidencePath,undefined);
  for(const field of ['name','label','value','min'])assert.equal(refs.resolve([e],{sourceRef:view.controls[0][key][field],value:original.controls[0][field]}).path,'/controls/0/'+field);
  assert.equal(refs.resolve([e],{sourceRef:view.controls[0].options[0][key].label,value:'Novel choice'}).path,'/controls/0/options/0/label');
  const oldRef='fv1:'+createHash('sha256').update(JSON.stringify([e.id,e.sha256,'/controls/0/ref'])).digest('base64url').slice(0,16);

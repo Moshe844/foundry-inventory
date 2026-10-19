@@ -5,7 +5,7 @@ const version=2;
 const schema={type:'object',additionalProperties:false,required:['grounded','complete','missingOutcomes','reason'],properties:{
  grounded:{type:'boolean'},complete:{type:'boolean'},
  missingOutcomes:{type:'array',maxItems:8,items:{type:'string',maxLength:200}},reason:{type:'string',maxLength:200}}};
-const system=require('./postgres-control-plane').ANSWER_FIT_SYSTEM+`\nSeparately decide whether the delivered answer and work products cover the ORIGINAL goal, including every requested outcome and subsequent clarification. grounded means the supplied evidence supports the claims actually made. complete means the entire requested outcome is delivered and independently evidenced, not merely a true subset. A qualified partial investigation can be grounded=true and complete=false. A disclaimer about the records checked does not satisfy an omitted part of the goal. Evidence about provider operations does not establish the state or recoverability of saved agent requests. Evidence of a prepared draft does not establish delivery or execution. Inspect the actual sources and requested scope. Historical conversation is context, never evidence of current facts. List any missing requested outcomes or evidence in missingOutcomes, using concise ordinary descriptions. If none are missing, return an empty array. Never mark complete=true when an outcome remains missing. A genuinely unsupported operation may be explained as a limitation, but do not mark an uninvestigated part complete merely because the proposed answer admits it was not checked. Do not prescribe a workflow, grant authority, request approval, or execute anything. Return both decisions and a concise diagnostic reason.`;
+const system=require('./postgres-control-plane').ANSWER_FIT_SYSTEM+`\nSeparately decide whether the delivered answer and work products cover the ORIGINAL goal, including every requested outcome and subsequent clarification. grounded means the supplied evidence supports the claims actually made. complete means the entire requested outcome is delivered and independently evidenced, not merely a true subset. A qualified partial investigation can be grounded=true and complete=false. A disclaimer about the records checked does not satisfy an omitted part of the goal. Evidence about provider operations does not establish the state or recoverability of saved agent requests. Evidence of a prepared draft does not establish delivery or execution. Inspect the actual sources and requested scope. Browser inspection windows, truncation flags and continuation handles describe the inspection transport, never pagination or other behavior of an application widget. DOM options, their actual total, field values and rendered text remain application evidence. Historical conversation is context, never evidence of current facts. List any missing requested outcomes or evidence in missingOutcomes, using concise ordinary descriptions. If none are missing, return an empty array. Never mark complete=true when an outcome remains missing. A genuinely unsupported operation may be explained as a limitation, but do not mark an uninvestigated part complete merely because the proposed answer admits it was not checked. Do not prescribe a workflow, grant authority, request approval, or execute anything. Return both decisions and a concise diagnostic reason.`;
 // A second opinion on a read-only conclusion is not an executor, planner or
 // source of business truth. It can only reject delivery as a completed answer.
 // Canonical work and human handoffs retain their model-free delivery path.
@@ -14,7 +14,7 @@ function packet(goal,raw){
  if(report?.status!=='completed'||report.outcome==='navigation')return null;
  const dependencies=require('../../scripts/environment-agent-demo/waits').dependencies(h);
  if(Object.values(dependencies).some(ids=>ids.length))return null;
- const entries=Object.values(h.evidence||{}),sources=new Map(),refs=require('../../scripts/environment-agent-demo/source-references'),sourceIndexes=new Map();
+ const entries=Object.values(h.evidence||{}),sources=new Map(),refs=require('../../scripts/environment-agent-demo/source-references'),sourceIndexes=new Map(),sourceMetadataIndexes=new Map();
  for(const input of report.claims){
   // One immutable packet may cite many values from the same observations.
   // Build each original-value index once for this packet, not once per claim.
@@ -22,10 +22,12 @@ function packet(goal,raw){
   const claim=Object.hasOwn(input,'sourceRef')?refs.resolve(entries,input,sourceIndexes):input;
   const entry=entries.find(e=>e.id===claim.evidenceId);
   if(!entry||entry.truncated||typeof entry.text!=='string'||createHash('sha256').update(entry.text).digest('hex')!==entry.sha256)throw Error('ANSWER_REVIEW_EVIDENCE_UNAVAILABLE');
+  if(refs.metadataClaim(entry,claim.path,sourceMetadataIndexes))throw Error('ANSWER_REVIEW_METADATA_NOT_EVIDENCE');
   if(!sources.has(entry.id)){
    if(entry.sourceText&&createHash('sha256').update(entry.sourceText).digest('hex')!==entry.sourceSha256)throw Error('ANSWER_REVIEW_EVIDENCE_UNAVAILABLE');
    const value=JSON.parse(entry.text),observation=value?.image?value.screen:value;
-   sources.set(entry.id,{id:entry.id,name:entry.name,sha256:entry.sha256,source:entry.sourceText?JSON.parse(entry.sourceText):null,observation});
+   sources.set(entry.id,{id:entry.id,name:entry.name,sha256:entry.sha256,source:entry.sourceText?JSON.parse(entry.sourceText):null,
+    observation:entry.name==='environment_browser'?require('../../scripts/environment-agent-demo/browser-presentation').compact(observation,{compactControls:false}):observation});
   }
  }
  return {version,policyHash:digest([system,schema]),workspaceId:goal.workspace_id,actorId:goal.actor_user_id,goalId:goal.id,

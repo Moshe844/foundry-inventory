@@ -36,9 +36,9 @@ function encode(entry,value,{legacy=false,indexHeadings=false,indexRepresentatio
    // Keep all values losslessly without issuing redundant factual bindings.
    // Unknown fields, labels, values, constraints and options stay citable.
    entry.name==='environment_browser'&&(
-    ['','/screen'].includes(path)&&['textRegions','controlDefaults','pagination'].includes(k)||
+    ['','/screen'].includes(path)&&['textRegions','controlDefaults','pagination','_stockchiefInspectionWindow'].includes(k)||
     ['','/screen'].includes(path)&&v.textEncoding==='labelled_blocks_and_separators'&&['textEncoding','textSeparators'].includes(k)||
-    /^\/(?:screen\/)?controls\/\d+$/.test(path)&&['ref','evidencePath','optionsNextRef'].includes(k)));
+    /^\/(?:screen\/)?controls\/\d+$/.test(path)&&['ref','evidencePath','optionsNextRef','optionsOffset','optionsTruncated','_stockchiefInspectionWindow'].includes(k)));
   const output=Object.fromEntries(Object.entries(v).filter(([k])=>legacy||!generated.has(k)).map(([k,c])=>[k,heading(k)?c:visit(c,path+'/'+part(k),
    Boolean(path===''&&entry.name==='environment_browser'&&source.image&&k==='screen'))]));
   const values={};
@@ -103,6 +103,12 @@ function index(entry){
 }
 function metadataClaim(entry,pointer,cache=new Map()){
  if(!valid(entry))return false;
+ // Inspector windows and handles are not DOM facts. Old references still
+ // resolve to their original observations, but cannot establish application
+ // behavior such as a paginated picker. Actual option values/counts remain facts.
+ if(entry.name==='environment_browser'&&(
+  /^\/(?:screen\/)?(?:pagination|controlDefaults|textRegions|_stockchiefInspectionWindow)(?:\/|$)/.test(pointer)||
+  /^\/(?:screen\/)?controls\/\d+\/(?:ref|evidencePath|optionsNextRef|optionsOffset|optionsTruncated|_stockchiefInspectionWindow)(?:\/|$)/.test(pointer)))return true;
  if(!cache.has(entry.id)){
   const original=JSON.parse(entry.text),wire=require('./evidence-presentation').project(entry.name,original);
   cache.set(entry.id,[original,wire].map(value=>{const encoded=encode(entry,value);return{metadata:encoded.metadata,field:encoded.field,valueField:encoded.valueField};}));

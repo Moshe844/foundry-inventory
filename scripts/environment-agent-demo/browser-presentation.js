@@ -3,8 +3,37 @@
 // observation; page content, fields, options and live handles are never trimmed.
 const DEFAULTS=Object.freeze({type:null,role:null,name:null,form:null,min:null,max:null,step:null,pattern:null,maxLength:null,
  description:'',disabled:false,required:false,readOnly:false,sensitive:false,multiple:false,optionsTruncated:false});
-function compact(value,{compactControls=true}={}){
- if(value?.screen)return {...value,screen:compact(value.screen,{compactControls})};
+const WINDOW='_stockchiefInspectionWindow';
+const windowNotice='This is paging of the inspection tool response only. It does not mean the application or its select control is paginated. Retrieve nextRef to inspect omitted output; describe the actual DOM separately.';
+function windowed(value){
+ if(!value||typeof value!=='object')return value;
+ const result={...value};
+ if(Object.hasOwn(value,'pagination')&&!Object.hasOwn(value,WINDOW)){
+  delete result.pagination;result[WINDOW]={kind:'inspection_response',notice:windowNotice,page:value.pagination};
+ }
+ if(Array.isArray(value.controls))result.controls=value.controls.map(control=>{
+  if(Object.hasOwn(control,WINDOW))return control;
+  const paging=Object.fromEntries(['optionsOffset','optionsTruncated','optionsNextRef'].filter(k=>Object.hasOwn(control,k)).map(k=>[k,control[k]]));
+  if(!Object.keys(paging).length)return control;
+  const result={...control};for(const key of Object.keys(paging))delete result[key];
+  return {...result,[WINDOW]:{kind:'inspection_response',notice:windowNotice,options:paging}};
+ });
+ return result;
+}
+function unwindowed(value){
+ if(!value||typeof value!=='object')return value;
+ const result={...value};
+ if(value[WINDOW]?.kind==='inspection_response'&&Object.hasOwn(value[WINDOW],'page')){
+  result.pagination=value[WINDOW].page;delete result[WINDOW];
+ }
+ if(Array.isArray(value.controls))result.controls=value.controls.map(control=>{
+  if(control[WINDOW]?.kind!=='inspection_response'||!control[WINDOW].options)return control;
+  const result={...control,...control[WINDOW].options};delete result[WINDOW];return result;
+ });
+ return result;
+}
+function compact(value,{compactControls=true,inspectionWindows=true}={}){
+ if(value?.screen)return {...value,screen:compact(value.screen,{compactControls,inspectionWindows})};
  if(!value||typeof value!=='object')return value;
  // Preserve explicit line labels: asking the model to count an unlabelled
  // page creates unverifiable citations. Encode only the duplicate full text.
@@ -21,14 +50,16 @@ function compact(value,{compactControls=true}={}){
    const {text,...rest}=value;value={...rest,textEncoding:'labelled_blocks_and_separators',textSeparators:separators};
   }
  }
- if(!compactControls||!Array.isArray(value.controls)||!value.controls.length||value.controlDefaults)return value;
+ const encodeWindow=inspectionWindows?windowed:value=>value;
+ if(!compactControls||!Array.isArray(value.controls)||!value.controls.length||value.controlDefaults)return encodeWindow(value);
  const defaults=Object.fromEntries(Object.entries(DEFAULTS).filter(([key])=>value.controls.every(c=>Object.hasOwn(c,key))));
- if(!Object.keys(defaults).length)return value;
- return {...value,controlDefaults:defaults,controls:value.controls.map(c=>Object.fromEntries(Object.entries(c)
-  .filter(([key,v])=>!Object.hasOwn(defaults,key)||v!==defaults[key])))};
+ if(!Object.keys(defaults).length)return encodeWindow(value);
+ return encodeWindow({...value,controlDefaults:defaults,controls:value.controls.map(c=>Object.fromEntries(Object.entries(c)
+  .filter(([key,v])=>!Object.hasOwn(defaults,key)||v!==defaults[key])))});
 }
 function expand(value){
  if(value?.screen)return {...value,screen:expand(value.screen)};
+ value=unwindowed(value);
  if(value?.textEncoding==='labelled_blocks_and_separators'){
   const {textEncoding,textSeparators,...rest}=value,blocks=Object.values(value.textBlocks);
   value={...rest,text:blocks.map((block,index)=>textSeparators[index]+block).join('')+textSeparators.at(-1)};

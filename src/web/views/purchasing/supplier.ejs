@@ -206,7 +206,7 @@
     <div class="table-scroll">
       <table class="table table--tight">
         <thead>
-          <tr><th>Product</th><th><%= supplier.itemCodeLabel %> (vendor)</th><th>Your code</th><th>Pack</th><th class="num">Unit cost</th><th class="num">Lead time</th><th>Minimum</th><th></th></tr>
+          <tr><th>Product</th><th><%= supplier.itemCodeLabel %> (vendor)</th><th>Your code</th><th>Pack</th><th class="num">Unit cost</th><th class="num">Lead time</th><th>Minimum order</th><th>Order multiple</th><th></th></tr>
         </thead>
         <tbody>
           <% items.forEach(function (item) { %>
@@ -222,9 +222,9 @@
               <td class="num"><%= item.lastUnitCost === null ? '—' : item.lastUnitCost %></td>
               <td class="num"><%= item.effectiveLeadTimeDays === null ? '—' : item.effectiveLeadTimeDays + ' days' %></td>
               <td class="muted">
-                <%= item.minimumOrderQuantity ? item.minimumOrderQuantity + ' ' + item.purchaseUnit + '(s)' : '—' %>
-                <% if (item.orderMultiple && item.orderMultiple > 1) { %> · in <%= item.orderMultiple %>s<% } %>
+                <%= item.minimumOrderQuantity == null ? 'Not recorded' : item.minimumOrderQuantity + ' ' + item.purchaseUnit + '(s)' %>
               </td>
+              <td class="muted"><%= item.orderMultiple == null ? 'Not recorded' : item.orderMultiple + ' ' + item.purchaseUnit + '(s)' %></td>
               <td>
                 <% if (permissions.suppliers && item.isActive) { %>
                   <form method="post" action="/suppliers/<%= supplier.id %>/items/<%= item.id %>/remove">
