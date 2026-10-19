@@ -124,7 +124,7 @@ async function readAccountingSnapshot({ credentials, asOf }) {
     version: String(response.body.Header?.Time || asOf), accounts: rows };
 }
 async function entities(credentials,entity,start=1){
- if(!['Account','Customer','Vendor'].includes(entity))throw new ValidationError('Unsupported accounting identity type.');
+ if(!['Account','Customer','Vendor','Item'].includes(entity))throw new ValidationError('Unsupported accounting identity type.');
  const result=[];for(let position=start;;position+=1000){
   const query=encodeURIComponent('select * from '+entity+' startposition '+position+' maxresults 1000');
   const response=await api(credentials,'/v3/company/'+encodeURIComponent(credentials.realmId)+'/query?query='+query+'&minorversion=75');
@@ -140,6 +140,15 @@ async function listPostingParties({ credentials, partyType }) {
     name: row.DisplayName || row.CompanyName || row.GivenName || `${entity} ${row.Id}`,
     company: row.CompanyName || null, email: row.PrimaryEmailAddr?.Address || null,
   }));
+}
+
+async function discover({credentials}){
+ const company=(await api(credentials,`/v3/company/${encodeURIComponent(credentials.realmId)}/companyinfo/${encodeURIComponent(credentials.realmId)}?minorversion=75`)).body.CompanyInfo;
+ if(!company?.CompanyName)throw new ValidationError('QuickBooks did not identify the company for inventory discovery.');
+ const preferences=(await api(credentials,`/v3/company/${encodeURIComponent(credentials.realmId)}/preferences?minorversion=75`)).body.Preferences;
+ const currency=money.code(preferences?.CurrencyPrefs?.HomeCurrency?.value),locationId=String(credentials.realmId),catalog=require('../accounting-catalog');
+ const rows=await entities(credentials,'Item');
+ return {products:rows.filter(row=>row.Active!==false&&['Inventory','NonInventory'].includes(row.Type)).map(row=>catalog.product({id:row.Id,code:row.Sku,name:row.Name,currency,price:row.UnitPrice,tracked:row.Type==='Inventory'&&row.TrackQtyOnHand===true,quantity:row.QtyOnHand,locationId})),locations:[catalog.location(locationId,company.CompanyName)]};
 }
 
 async function createPostingParty({ credentials, partyType, party, idempotencyKey }) {
@@ -195,6 +204,6 @@ async function verifyJournalEntry({credentials,entry,externalId}){
  return {...verifyJournalPayload(entry,remote,homeCurrency),externalId:String(remote.Id),version:remote.SyncToken};
 }
 
-module.exports = { integrationClass: 'accounting', metadata, authorizationUrl, exchangeAuthorization,
+module.exports = { integrationClass: 'accounting',catalogueCapabilities:Object.freeze(['products','skus','stock','locations']),discover, metadata, authorizationUrl, exchangeAuthorization,
   refresh, refreshCredentials, verifyReadOnly, readAccountingSnapshot, listPostingParties, createPostingParty,
   postJournalEntry,verifyJournalEntry,verifyJournalPayload,exactDecimal };

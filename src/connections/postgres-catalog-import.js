@@ -36,11 +36,12 @@ async function mutate(database,ctx,connectorId,input,operation){
   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`provider-sync:${connectorId}`]);
   const state=await read(client,ctx,connectorId,{lock:true});
   if(state.connection.status!=='connected'||state.connection.paused_at)throw new ValidationError('Reconnect or resume this provider before changing its matches.');
-  await require('../commercial/enforcement').workspace(client,ctx.workspaceId,'connections.commerce');
+  const accounting=require('./providers/registry').get(state.connection.provider_type)?.integrationClass==='accounting';
+  await require('../commercial/enforcement').workspace(client,ctx.workspaceId,accounting?'connections.accounting':'connections.commerce');
   if(input.revision&&input.revision!==state.revision)throw new ValidationError('The provider catalogue or its matches changed. Review the current records before confirming.');
   const result=await operation(client,state);
   const remaining=(await client.query("SELECT count(*) AS n FROM connection_external_records WHERE workspace_id=$1 AND connector_id=$2 AND selected=1 AND mapping_status='UNMAPPED'",[ctx.workspaceId,connectorId])).rows[0];
-  await client.query("UPDATE workspace_connectors SET setup_status=$3,updated_at=$4 WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,connectorId,Number(remaining.n)?'MAPPING':'CONNECTED',nowIso()]);
+  await client.query("UPDATE workspace_connectors SET setup_status=$3,updated_at=$4 WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,connectorId,accounting?state.connection.setup_status:Number(remaining.n)?'MAPPING':'CONNECTED',nowIso()]);
   return result;
  },{isolation:'SERIALIZABLE',retrySafe:true});
 }
@@ -61,7 +62,9 @@ async function createLocation(database,ctx,connectorId,input){
   const row=selectedRecord(state,'location',input.externalId);
   if(row.foundry_record_id)return {id:row.foundry_record_id,replayed:true};
   const reason=exclusion(parse(row.provider_data,{}));if(reason)throw new ValidationError(reason);
-  const place=await locations.createLocationInTransaction(client,ctx,{name:row.display_name,kind:'store',note:'Imported from '+state.connection.display_name+'; '+row.external_id});
+  const suppliedKind=parse(row.provider_data,{}).kind;
+  const kind=require('../domain/constants').LOCATION_KIND_IDS.includes(suppliedKind)?suppliedKind:'store';
+  const place=await locations.createLocationInTransaction(client,ctx,{name:row.display_name,kind,note:'Imported from '+state.connection.display_name+'; '+row.external_id});
   await mapping.setMappingInTransaction(client,ctx,{connectorId,entityType:'location',externalId:row.external_id,foundryRecordId:place.id});
   return place;
  });
@@ -127,4 +130,13 @@ async function importProducts(database,ctx,connectorId,input){
  });
 }
 module.exports={describe,mapExternal,createLocation,importProducts,ignore,exclusion};
-require('../commercial/enforcement').guardExports(module.exports,0,1,{mapExternal:'connections.commerce',createLocation:'connections.commerce',importProducts:'connections.commerce',ignore:'connections.commerce'});
+for(const name of ['mapExternal','createLocation','importProducts','ignore']){
+ const original=module.exports[name];
+ module.exports[name]=async(database,ctx,connectorId,...args)=>{
+  const connection=await require('./postgres-service').get(database,ctx.workspaceId,connectorId);
+  const capability=require('./providers/registry').get(connection.provider_type)?.integrationClass==='accounting'?'connections.accounting':'connections.commerce';
+  await require('../commercial/enforcement').workspace(database,ctx.workspaceId,capability);
+  const scope=await require('../commercial/entitlements').ownerScopeForWorkspace(database,ctx.workspaceId),context=require('../commercial/context');
+  return context.run({...context.current(),database,scope,requestId:context.current()?.requestId||newId('operation')},()=>original(database,ctx,connectorId,...args));
+ };
+}

@@ -89,7 +89,6 @@ async function finishAuthorization(database,connection,actorId,result){
     const scope=await entitlements.ownerScopeForWorkspace(client,connection.workspace_id);
     await entitlements.assertCapability(client,scope,['gmail','microsoft365'].includes(connection.provider_type)?'communications.email_ingestion':
       ['quickbooks','xero'].includes(connection.provider_type)?'connections.accounting':'connections.commerce');
-    await entitlements.assertMeterCapacity(client,scope,'connections',0);
     let target=connection;
     if(result.accountId){
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
@@ -106,6 +105,10 @@ async function finishAuthorization(database,connection,actorId,result){
         target=established.rows[0];
       }
     }
+    // A callback has consumed its temporary consent reservation. Re-admit the
+    // actual target atomically; another connection may have taken the slot.
+    const delta=await require('../commercial/connection-capacity').activationDelta(client,target.workspace_id,target.id);
+    await entitlements.assertMeterCapacity(client,scope,'connections',delta);
     await credentials.put(client,target.workspace_id,target.id,'provider',result.credentials,result.expiresAt||null);
     const currentConfig=parseJson(target.config);
     const safeConfig={...currentConfig};

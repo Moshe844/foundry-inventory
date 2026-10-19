@@ -172,7 +172,7 @@ async function meterState(database, scope, meter, options = {}) {
       WHERE workspace.owner_account_id=$1 AND workspace.deletion_requested_at IS NULL AND location.is_active=1`,
     connections:`SELECT COUNT(*) AS used FROM workspace_connectors connector JOIN workspaces workspace ON workspace.id=connector.workspace_id
       WHERE workspace.owner_account_id=$1 AND workspace.deletion_requested_at IS NULL
-        AND (connector.status<>'disconnected' OR connector.setup_status='AUTHORIZING')`,
+        AND ${require('./connection-capacity').predicate}`,
   };
   let used;let reserved=0;
   if(liveQueries[meter])used=Number((await database.query(liveQueries[meter],[scope.accountId])).rows[0].used);

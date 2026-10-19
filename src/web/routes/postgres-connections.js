@@ -243,7 +243,7 @@ function createPostgresConnectionsRouter(database,options={}){
       }
     }
     const pendingWebhooks=(await database.query("SELECT id,status,lease_until,received_at,updated_at,result FROM connection_webhook_receipts WHERE workspace_id=$1 AND connector_id=$2 AND status<>'COMPLETED' ORDER BY received_at DESC,id DESC LIMIT 20",[req.ctx.workspaceId,connection.id])).rows;
-    const catalogueReview=adapter?.discover&&!isMailbox&&adapter.integrationClass!=='accounting'
+    const catalogueReview=adapter?.discover&&!isMailbox
       ?await catalogue.describe(database,req.ctx,connection.id):null;
     const connectionProof=(await database.query(`SELECT
       (SELECT max(completed_at) FROM connection_sync_runs WHERE workspace_id=$1 AND connector_id=$2

@@ -65,13 +65,15 @@ function createPostgresImportsRouter(database,{provider=null}={}){
       {title:`Import ${plan.sourceName}`,nav:'imports',plan,rows,counts,
       duplicatePlans,run,locations:locationRows,mappingRows,fieldOptions:fields.FIELDS,page,pageSize:PAGE_SIZE,filter,
       missingLocationRows:missingLocation.rows.length>0,
+      locationKinds:require('../../domain/constants').LOCATION_KINDS,
     });
   }));
   router.post('/imports/:id/revise',asyncRoute(async(req,res)=>{
     try{
       const plan=await imports.get(database,req.ctx.workspaceId,req.params.id);
-      const locationMappings=Object.fromEntries(plan.conflicts.map((conflict,index)=>
-        [conflict.text,trimOrNull(req.body[`location_${index}`])]).filter((entry)=>entry[1]));
+      const locationMappings=Object.fromEntries([...plan.conflicts.map((conflict,index)=>
+        [conflict.text,trimOrNull(req.body[`location_${index}`])]),...(plan.transformations.proposedLocations||[]).map((row,index)=>
+        [row.source,trimOrNull(req.body[`new_location_${index}_match`])])].filter((entry)=>entry[1]));
       const quantityOverrides=Object.fromEntries(Object.entries(req.body).filter(([key,value])=>
         /^quantity_\d+$/.test(key)&&trimOrNull(value)).map(([key,value])=>[key.slice(9),String(value).trim()]));
       const hasFieldMappings=plan.sourceColumns.some((column)=>
@@ -83,6 +85,10 @@ function createPostgresImportsRouter(database,{provider=null}={}){
         throw new ValidationError('Two source columns cannot have the same import meaning.');
       const fieldMappings=hasFieldMappings?Object.fromEntries(choices):undefined;
       await imports.revise(database,req.ctx,plan.id,{expectedHash:trimOrNull(req.body.integrityHash),
+        proposedLocations:Object.fromEntries((plan.transformations.proposedLocations||[]).map((row,index)=>[row.source,{
+          name:trimOrNull(req.body[`new_location_${index}_name`])||row.name,
+          kind:trimOrNull(req.body[`new_location_${index}_kind`])||row.kind,
+        }])),
         locationMappings,quantityOverrides,fieldMappings,
         defaultLocationId:Object.hasOwn(req.body,'defaultLocationId')?trimOrNull(req.body.defaultLocationId):undefined,
         confirmCatalogOnly:req.body.confirmCatalogOnly==='yes'});

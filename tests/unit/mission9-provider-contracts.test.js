@@ -101,10 +101,11 @@ test('Xero requests read-only scopes by default and write scope only when explic
     calls.push({ url: String(url), options });
     if (String(url).includes('/connect/token')) return json({ access_token: 'access', refresh_token: 'refresh', expires_in: 1800 });
     if (String(url) === 'https://api.xero.com/connections') return json([{ tenantId: 'tenant-1' }]);
-    if (String(url).endsWith('/Organisation')) return json({ Organisations: [{ OrganisationID: 'tenant-1', Name: 'Xero Sandbox Company' }] });
+    if (String(url).endsWith('/Organisation')) return json({ Organisations: [{ OrganisationID: 'tenant-1', Name: 'Xero Sandbox Company', BaseCurrency: 'USD' }] });
     if (String(url).endsWith('/Accounts')) return json({ Accounts: [{ AccountID: 'a-1', Code: '1000', Name: 'Cash', Status: 'ACTIVE' }] });
     if (String(url).includes('/Reports/TrialBalance')) return json({ Reports: [{ ReportTitles: ['Trial Balance', 'USD'], Rows: [
-      { Rows: [{ RowType: 'Row', Cells: [{ Attributes: [{ Id: 'account', Value: 'a-1' }] }, { Value: '42.00' }] }] }]}] });
+      { RowType: 'Header', Cells: [{Value:'Account'},{Value:'Debit'},{Value:'Credit'}] },
+      { RowType:'Section', Rows: [{ RowType: 'Row', Cells: [{ Attributes: [{ Id: 'account', Value: 'a-1' }] }, { Value: '42.00' }, {Value:'0'}] }] }]}] });
     if (String(url).endsWith('/ManualJournals')) return json({ ManualJournals: [{ ManualJournalID: 'mj-1', UpdatedDateUTC: 'v1' }] });
     throw new Error(`Unexpected URL ${url}`);
   };
@@ -118,9 +119,10 @@ test('Xero requests read-only scopes by default and write scope only when explic
   const snapshot = await xero.readAccountingSnapshot({ credentials: connected.credentials, asOf: '2026-09-10' });
   assert.equal(snapshot.accounts[0].balanceMinor, 4200); assert.equal(snapshot.accounts[0].code, '1000');
   const posted = await xero.postJournalEntry({ credentials: connected.credentials, idempotencyKey: 'foundry-xero-1',
-    entry: { entry_number: 1, posting_date: '2026-09-10', description: 'Test', lines: [
+    entry: { entry_number: 1, posting_date: '2026-09-10', description: 'Test', currency:'USD', lines: [
       { debit_minor: 4200, credit_minor: 0, account_code: '1000' },
       { debit_minor: 0, credit_minor: 4200, account_code: '2000' }] } });
   assert.equal(posted.externalId, 'mj-1');
-  assert.equal(calls.find((call) => call.url.endsWith('/ManualJournals')).options.headers['idempotency-key'], 'foundry-xero-1');
+  assert.equal(calls.find((call) => call.url.endsWith('/ManualJournals')).options.headers['idempotency-key'],
+    require('node:crypto').createHash('sha256').update('foundry-xero-1').digest('hex'));
 });

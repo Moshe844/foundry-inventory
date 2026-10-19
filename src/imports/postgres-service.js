@@ -13,6 +13,8 @@ const ledger = require('../accounting/postgres-ledger');
 const costing = require('../accounting/postgres-costing');
 const prices = require('../pricing/price-service');
 const postgresPrices = require('../pricing/postgres-service');
+const plannedLocations = require('./planned-locations');
+const rowStore = require('./postgres-row-store');
 const permissions = require('../actions/permissions');
 const { ValidationError, NotFoundError } = require('../domain/errors');
 const { newId, nowIso, trimOrNull } = require('../lib/util');
@@ -118,8 +120,8 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     let unitCostMinor=null;
     if(costText){try{unitCostMinor=prices.toMinor(costText,'Unit cost');}
       catch{problems.push(problem('bad_unit_cost','Unit cost must be a non-negative money amount.'));}}
-    if(unitCostMinor!==null&&!(quantity>0))
-      problems.push(problem('cost_without_stock','Unit cost cannot be recorded without a positive opening stock quantity. No cost will be silently discarded.'));
+    if(unitCostMinor!==null&&quantity===null)
+      problems.push(problem('cost_without_stock','A source unit cost needs an explicit stock quantity, including zero. No cost will be silently discarded.'));
     const currency=(trimOrNull(textCell(row,mappings.currency))||context.accountingCurrency||'USD').toUpperCase();
     if(unitCostMinor!==null&&quantity>0&&!context.accountingReady)
       problems.push(problem('accounting_not_ready','Configure accounting before importing valued opening stock.'));
@@ -161,6 +163,7 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
       unitLabel:trimOrNull(textCell(row,mappings.unitLabel)) || 'unit',barcode:trimOrNull(textCell(row,mappings.barcode)),
       unitCostMinor,sellingPriceMinor,currency,
       quantity,variants,locationId:location?.id || null,locationName:location?.name || null,locationText,
+      ...(location?.proposed?{proposedLocationName:location.name}:{}),
       serial,lotCode,expiresAt:trimOrNull(textCell(row,mappings.expiresAt)),
       receivedAt:trimOrNull(textCell(row,mappings.receivedAt)),notes:trimOrNull(textCell(row,mappings.notes)),
       trackingMode:proposal.detectedType==='serials'?'serial':proposal.detectedType==='lots'?'lot':'quantity',
@@ -176,7 +179,8 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     unvaluedUnits:rows.filter((row)=>row.status==='VALID'&&row.parsed.unitCostMinor===null)
       .reduce((sum,row)=>sum+(row.parsed.quantity||0),0),
     valuedMinor:rows.filter((row)=>row.status==='VALID'&&row.parsed.unitCostMinor!==null)
-      .reduce((sum,row)=>sum+(row.parsed.quantity||0)*row.parsed.unitCostMinor,0)},
+      .reduce((sum,row)=>sum+(row.parsed.quantity||0)*row.parsed.unitCostMinor,0),
+    sourceCostWithoutStock:rows.filter(row=>row.status==='VALID'&&row.parsed.quantity===0&&row.parsed.unitCostMinor!==null).length},
     conflicts:[...unknownLocations].map(([text,count])=>({kind:'unknown_location',text,count})),
     defaultLocationId:defaultLocation?.id || null };
 }
@@ -194,6 +198,7 @@ function previewWarnings(summary,{hasQuantity=true,hasIdentity=true,unmappedNume
   if(!hasIdentity)warnings.push('StockChief could not safely identify which column names each product. Map a product name or SKU below, then recalculate the preview. Nothing can be imported until you do.');
   if(summary.invalid)warnings.push(`${summary.invalid} row(s) need correction before they can be imported.`);
   if(summary.unvaluedUnits)warnings.push(`${summary.unvaluedUnits} opening unit(s) have no source unit cost. StockChief will retain their quantity but cannot certify their inventory value until cost evidence is supplied.`);
+  if(summary.sourceCostWithoutStock)warnings.push(`${summary.sourceCostWithoutStock} zero-stock row(s) include a source unit cost. That evidence is retained with the imported row; it creates no stock, inventory value or purchase quote.`);
   if(!hasQuantity)warnings.push('No quantity column is mapped. This preview would create or match products without establishing opening stock.');
   if(unmappedNumeric.length)warnings.push(`Unmapped numeric column${unmappedNumeric.length===1?'':'s'}: ${unmappedNumeric.join(', ')}. Map any stock quantity before approval, or explicitly confirm this is catalog-only data.`);
   return warnings;
@@ -201,6 +206,7 @@ function previewWarnings(summary,{hasQuantity=true,hasIdentity=true,unmappedNume
 
 function integrityFor(plan, rows) {
   return digest({sourceHash:plan.sourceHash,detectedType:plan.detectedType,fieldMappings:plan.fieldMappings,
+    ...(plan.transformations?.proposedLocations?.length?{proposedLocations:plan.transformations.proposedLocations}:{}),
     defaultLocationId:plan.defaultLocationId,rows:rows.map((row)=>({rowNumber:row.rowNumber,parsed:row.parsed,status:row.status}))});
 }
 
@@ -284,7 +290,8 @@ async function analyse(database, ctx, input) {
   const context=await workspaceContext(database,ctx.workspaceId);
   if(input.defaultLocationId && !context.locations.some((row)=>row.id===input.defaultLocationId))
     throw new ValidationError('That destination location is not in this inventory.');
-  const validated=validateRows(sheet,proposal.mappings,proposal,context,input);
+  const proposedLocations=plannedLocations.proposals(sheet,proposal.mappings,context,input);
+  const validated=validateRows(sheet,proposal.mappings,proposal,plannedLocations.withProposals(context,proposedLocations),input);
   const unmappedNumeric=unmappedNumericColumns(sheet,proposal.mappings);
   const at=nowIso();
   const plan={id:newId('imp'),workspaceId:ctx.workspaceId,createdByUserId:ctx.actorId,
@@ -294,7 +301,7 @@ async function analyse(database, ctx, input) {
     sheetIndex,sourceColumns:sheet.columns.map((column)=>({index:column.index,name:column.name})),
     fieldMappings:proposal.mappings,transformations:{axisNames:proposal.axisNames,aiUsed:proposal.aiUsed,
       ignoredColumns:proposal.ignoredColumns,sheetCount:parsedWorkbook.sheets.length,
-      unmappedNumericColumns:unmappedNumeric,confirmCatalogOnly:false},trackingModel:{mode:'per-row'},
+      unmappedNumericColumns:unmappedNumeric,confirmCatalogOnly:false,proposedLocations},trackingModel:{mode:'per-row'},
     locationMappings:{},defaultLocationId:validated.defaultLocationId,recordsDetected:validated.summary.total,
     recordsValid:validated.summary.valid,recordsInvalid:validated.summary.invalid,
     warnings:previewWarnings(validated.summary,{hasQuantity:proposal.mappings.quantity!==undefined,
@@ -313,10 +320,7 @@ async function analyse(database, ctx, input) {
       JSON.stringify(plan.transformations),JSON.stringify(plan.trackingModel),'{}',plan.defaultLocationId,
       plan.recordsDetected,plan.recordsValid,plan.recordsInvalid,JSON.stringify(plan.warnings),JSON.stringify(plan.conflicts),
       JSON.stringify(plan.assumptions),plan.approvalStatus,plan.status,1,plan.integrityHash,at]);
-    for(const row of validated.rows)await client.query(`INSERT INTO import_rows(id,import_id,workspace_id,row_number,raw,
-      parsed,status,problems,location_id,quantity,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-    [row.id,plan.id,ctx.workspaceId,row.rowNumber,JSON.stringify(row.raw),JSON.stringify(row.parsed),row.status,
-      JSON.stringify(row.problems),row.parsed.locationId,row.parsed.quantity,at]);
+    await rowStore.insert(client,ctx.workspaceId,plan.id,validated.rows,at);
   },{isolation:'SERIALIZABLE'});
   return get(database,ctx.workspaceId,plan.id);
 }
@@ -425,7 +429,7 @@ async function revise(database,ctx,id,input={}){
     }
     const detectedType=fields.detectType(fieldMappings);
     if(detectedType==='unknown')throw new ValidationError('The selected columns do not identify products.');
-    const allowedLocations=new Set(plan.conflicts.map((entry)=>entry.text));
+    const allowedLocations=new Set([...plan.conflicts.map((entry)=>entry.text),...(plan.transformations.proposedLocations||[]).map(row=>row.source)]);
     const locationMappings={...plan.locationMappings};
     for(const [source,value] of Object.entries(input.locationMappings||{})){
       if(!allowedLocations.has(source))throw new ValidationError('That source location is not in this preview.');
@@ -448,14 +452,16 @@ async function revise(database,ctx,id,input={}){
     const sheet={columns:plan.sourceColumns,rows:current.map((row)=>({cells:row.raw,sourceRow:row.rowNumber}))};
     const axisNames=Object.fromEntries(fields.VARIANT_FIELDS.filter((field)=>fieldMappings[field]!==undefined)
       .map((field)=>[field,plan.sourceColumns.find((column)=>column.index===fieldMappings[field])?.name||field]));
+    const proposedLocations=plannedLocations.proposals(sheet,fieldMappings,context,{locationMappings,
+      proposedLocations:{...Object.fromEntries((plan.transformations.proposedLocations||[]).map(row=>[row.source,row])),...(input.proposedLocations||{})}});
     const validated=validateRows(sheet,fieldMappings,
-      {detectedType,axisNames},context,
+      {detectedType,axisNames},plannedLocations.withProposals(context,proposedLocations),
       {defaultLocationId,locationMappings,quantityOverrides});
     const unmappedNumeric=unmappedNumericColumns(sheet,fieldMappings);
     const confirmCatalogOnly=fieldMappings.quantity===undefined&&input.confirmCatalogOnly===true;
     const revised={...plan,fieldMappings,detectedType,locationMappings,defaultLocationId,
       transformations:{...plan.transformations,axisNames,quantityOverrides,
-        unmappedNumericColumns:unmappedNumeric,confirmCatalogOnly},
+        unmappedNumericColumns:unmappedNumeric,confirmCatalogOnly,proposedLocations},
       recordsValid:validated.summary.valid,recordsInvalid:validated.summary.invalid,
       warnings:previewWarnings(validated.summary,{hasQuantity:fieldMappings.quantity!==undefined,
         hasIdentity:fieldMappings.name!==undefined||fieldMappings.code!==undefined,unmappedNumeric}),
@@ -469,10 +475,7 @@ async function revise(database,ctx,id,input={}){
     [ctx.workspaceId,id,JSON.stringify(locationMappings),JSON.stringify(revised.transformations),
       revised.recordsValid,revised.recordsInvalid,JSON.stringify(revised.warnings),JSON.stringify(revised.conflicts),
       revised.planVersion,revised.integrityHash,JSON.stringify(fieldMappings),detectedType,defaultLocationId||null]);
-    for(const row of validated.rows)await client.query(`UPDATE import_rows SET parsed=$4::jsonb,status=$5,
-      problems=$6::jsonb,location_id=$7,quantity=$8 WHERE workspace_id=$1 AND import_id=$2 AND row_number=$3`,
-    [ctx.workspaceId,id,row.rowNumber,JSON.stringify(row.parsed),row.status,JSON.stringify(row.problems),
-      row.parsed.locationId,row.parsed.quantity]);
+    await rowStore.revise(client,ctx.workspaceId,id,current,validated.rows);
     return revised;
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
@@ -491,6 +494,9 @@ async function approve(database, ctx, id, expectedHash) {
     if(plan.fieldMappings.name===undefined&&plan.fieldMappings.code===undefined)
       throw new ValidationError('Map a product name or SKU and recalculate the preview before approving.');
     if(!plan.recordsValid)throw new ValidationError('There are no valid rows to import.');
+    await plannedLocations.assertOwner(client,ctx,plan.transformations.proposedLocations||[]);
+    if(plan.transformations.proposedLocations?.length)await require('../entitlements/postgres-service').assertMeterCapacity(client,
+      await require('../entitlements/postgres-service').ownerScopeForWorkspace(client,ctx.workspaceId),'locations',plan.transformations.proposedLocations.length);
     if(plan.transformations.dataset!=='suppliers'&&plan.fieldMappings.quantity===undefined&&!plan.transformations.confirmCatalogOnly){
       const sourceRows=(await client.query(`SELECT raw FROM import_rows WHERE workspace_id=$1 AND import_id=$2`,
         [ctx.workspaceId,id])).rows.map((row)=>({cells:json(row.raw,[])}));
@@ -571,6 +577,12 @@ async function execute(database, ctx, id, options={}) {
           [ctx.workspaceId,id,finishedAt]);
         return {executionId,verificationId,verified:true,checks,itemsCreated:0,skusCreated:0,
           rowsImported:created,suppliersCreated:created,units:0};
+      }
+      const newLocations=await plannedLocations.materialize(client,ctx,plan.transformations.proposedLocations||[]);
+      for(const row of sourceRows)if(row.parsed.proposedLocationName){
+        const locationId=newLocations.get(row.parsed.proposedLocationName);
+        if(!locationId)throw new ValidationError('This row has no approved location proposal. Recalculate the import.');
+        row.parsed={...row.parsed,locationId};
       }
       const grouped=new Map();
       for(const row of sourceRows){

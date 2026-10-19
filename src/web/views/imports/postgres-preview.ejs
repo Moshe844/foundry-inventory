@@ -14,9 +14,23 @@
   <div class="notice notice--warn section"><strong>This exact source was already imported.</strong>
     StockChief will not apply the same bytes twice. <a href="/imports/<%= duplicatePlans[0].id %>">See the completed import</a>.</div>
 <% } %>
+<% if(sourceTransforms.proposedLocations?.length && plan.status==='READY'){ %>
+  <section class="card section" aria-labelledby="import-new-locations"><div class="card-head"><h2 id="import-new-locations">Locations found in your file</h2></div>
+    <div class="card-body"><p>These <%= sourceTransforms.proposedLocations.length %> locations will be created with this import. The names come from your file; no locations or stock have been created yet. You can change a name or type, or match an existing location.</p>
+      <% if(plan.approvalStatus==='AWAITING_APPROVAL'){ %><form method="post" action="/imports/<%= plan.id %>/revise">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>">
+        <div class="table-scroll"><table class="table"><thead><tr><th>In your file</th><th>New location name</th><th>Type</th><% if(locations.length){ %><th>Or use existing</th><% } %></tr></thead><tbody>
+          <% sourceTransforms.proposedLocations.forEach(function(location,index){ %><tr><th scope="row"><%= location.source %></th><td><label class="visually-hidden" for="new-location-<%= index %>">Name for <%= location.source %></label><input class="input" id="new-location-<%= index %>" name="new_location_<%= index %>_name" value="<%= location.name %>" maxlength="120" required></td>
+            <td><select class="select" name="new_location_<%= index %>_kind" aria-label="Type for <%= location.source %>"><% locationKinds.forEach(function(kind){ %><option value="<%= kind.id %>" <%= location.kind===kind.id?'selected':'' %>><%= kind.id==='other'?'Stock location':kind.label %></option><% }) %></select></td>
+            <% if(locations.length){ %><td><select class="select" name="new_location_<%= index %>_match" aria-label="Existing match for <%= location.source %>"><option value="">Create as shown</option><% locations.forEach(function(existing){ %><option value="<%= existing.id %>"><%= existing.name %></option><% }) %></select></td><% } %></tr><% }) %>
+        </tbody></table></div><button class="btn btn--secondary" type="submit">Update location choices</button>
+      </form><% } else { %><ul><% sourceTransforms.proposedLocations.forEach(function(location){ %><li><%= location.name %> · <%= location.kind==='other'?'Stock location':location.kind %></li><% }) %></ul><% } %>
+    </div>
+  </section>
+<% } %>
 <% if(plan.status==='READY' && plan.approvalStatus==='AWAITING_APPROVAL' && needsLocation && !needsIdentity && !needsNumberAnswer){ %>
   <section class="card section" aria-labelledby="import-location-question"><div class="card-head"><h2 id="import-location-question">Where is this stock kept?</h2></div>
-    <div class="card-body"><p>The file has stock quantities but does not say which location holds them. Pick one location for these rows. StockChief will recalculate the preview; nothing changes until you approve it.</p>
+    <div class="card-body"><p><%= sourceMappings.location!==undefined?'Some rows still need a location choice. Names already supplied in your file are preserved.':'The file has stock quantities but does not say which location holds them. Pick one location for these rows.' %> StockChief will recalculate the preview; nothing changes until you approve it.</p>
       <% if(locations.length){ %><div class="btn-row"><% locations.forEach(function(location){ %>
         <form method="post" action="/imports/<%= plan.id %>/revise"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>">
           <button class="btn btn--sm" type="submit" name="defaultLocationId" value="<%= location.id %>"><%= location.name %></button></form>

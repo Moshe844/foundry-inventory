@@ -73,10 +73,14 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
       [identity.workspace_id])).rows[0].count,0);
     const supplierPlanId=page.url().split('/').at(-1);
     // Older previews that misclassified Vendor as Product are safely repaired in place.
-    await database.query(`UPDATE import_plans SET transformations='{}'::jsonb,field_mappings='{"name":0}'::jsonb
+    await database.query(`UPDATE import_plans SET transformations='{}'::jsonb,field_mappings='{"name":0}'::jsonb,integrity_hash='legacy-inventory-preview'
       WHERE id=$1`,[supplierPlanId]);
     await page.reload();
+    assert.equal((await imports.get(database,identity.workspace_id,supplierPlanId)).transformations.dataset,undefined,
+      'Viewing a legacy preview must not mutate its interpretation or approval');
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve 2 rows'}).click()]);
     assert.match(await page.locator('main').innerText(),/recognized a supplier directory/i);
+    assert.match(await page.locator('main').innerText(),/preview changed/i);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve 2 suppliers'}).click()]);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Import and verify suppliers'}).click()]);
     assert.match(await page.locator('main').innerText(),/2 supplier records created/i);
@@ -240,7 +244,7 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
     await page.locator('input[type="file"][name="file"]').setInputFiles({
       name:'needs-correction.csv',mimeType:'text/csv',buffer:correctionSource});
     await Promise.all([page.waitForURL(/\/imports\/imp_/),page.getByRole('button',{name:'Continue'}).click()]);
-    assert.match(await page.locator('main').innerText(),/2 rows read · Answer the question below before import/);
+    assert.match(await page.locator('main').innerText(),/Locations found in your file/);
     const correctionId=page.url().split('/').at(-1);
     const staleHash=(await imports.get(database,identity.workspace_id,correctionId)).integrityHash;
     const other=await browser.newPage();
@@ -255,8 +259,9 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
       WHERE a.email='other-imports-pg@example.test'`)).rows[0];
     await assert.rejects(imports.revise(database,{workspaceId:otherIdentity.workspace_id,
       actorId:otherIdentity.actor_id},correctionId,{expectedHash:staleHash}),/not be found/i);
+    await page.getByLabel('Existing match for Old Warehouse',{exact:true}).selectOption({label:'Main Warehouse'});
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Update location choices'}).click()]);
     await page.getByText('Advanced: change how StockChief read a column').click();
-    await page.getByLabel(/Source location “Old Warehouse”/).selectOption({label:'Main Warehouse'});
     await page.getByLabel(/Row 3 · Corrected Valve quantity/).fill('4');
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Recalculate preview'}).click()]);
     assert.match(await page.locator('main').innerText(),/2 rows read · 2 ready · 0 need correction/);

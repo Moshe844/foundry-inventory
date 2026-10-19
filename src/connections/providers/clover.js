@@ -3,6 +3,7 @@
 const config = require('../../config');
 const { ValidationError } = require('../../domain/errors');
 const { safeEqual, requireVerified, jsonRequest } = require('./common');
+const money = require('../../domain/currency');
 
 function oauthBase(environment = config.connections.clover.environment) {
   return environment === 'sandbox' ? 'https://sandbox.dev.clover.com' : 'https://www.clover.com';
@@ -94,6 +95,9 @@ function elements(body) {
 
 async function discover({ credentials }) {
   const merchant = (await api(credentials, `/v3/merchants/${encodeURIComponent(credentials.merchantId)}`)).body;
+  const properties = merchant.currency || merchant.properties?.defaultCurrency ? merchant.properties
+    : (await api(credentials, `/v3/merchants/${encodeURIComponent(credentials.merchantId)}/properties`)).body;
+  const currency = money.code(merchant.currency || properties?.defaultCurrency);
   const rows = [];
   for (let offset = 0; ; offset += 100) {
     const response = await api(credentials,
@@ -103,13 +107,15 @@ async function discover({ credentials }) {
     if (page.length < 100) break;
   }
   const products = rows.filter((item) => !item.hidden && !item.deleted).map((item) => {
-    const rawStock = item.stockCount ?? item.itemStock?.quantity ?? item.itemStock?.stockCount;
-    const stock = Number(rawStock);
+    const rawStock = item.itemStock?.quantity ?? item.stockCount ?? item.itemStock?.stockCount;
+    const stock = rawStock == null || rawStock === '' ? null : Number(rawStock);
+    const validStock = stock !== null && Number.isSafeInteger(stock) && stock >= 0;
     return { entityType: 'sku', externalId: String(item.id), code: item.sku || item.code || null,
       displayName: item.name || item.sku || String(item.id),
       providerData: { itemName: item.name || item.sku || String(item.id), variationName: null,
-        priceMoney: Number.isInteger(Number(item.price)) ? { amount: Number(item.price), currency: merchant.currency || 'USD' } : null,
-        inventoryCounts: Number.isInteger(stock) ? [{ externalLocationId: credentials.merchantId,
+        priceMoney: item.price == null || item.price === '' ? null : { amount: money.integer(item.price,'Clover price'), currency },
+        inventoryCountUnavailable: stock !== null && !validStock ? 'The provider quantity is negative or fractional; opening stock requires review.' : null,
+        inventoryCounts: validStock ? [{ externalLocationId: credentials.merchantId,
           state: 'IN_STOCK', quantity: stock }] : [] } };
   });
   return { products, locations: [{ entityType: 'location', externalId: credentials.merchantId,
