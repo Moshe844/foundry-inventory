@@ -19,7 +19,7 @@ async function queueSetup(db,ctx,id,origin){for(const kind of ['provider.webhook
 async function manual(db,ctx,input,requestOrigin,options={}){
  const type=String(input.providerType||''),{registry,adapter}=adapterFor(type,options);
  if(!adapter.credentialsFromInput||!adapter.metadata().authMethods?.includes('api_keys'))throw new ValidationError('This platform does not accept manual API keys.');
- if(registry===providers)require('./launch-policy').assertNewConnection(type,ctx);
+ if(registry===providers)await require('./launch-policy').assertWorkspaceConnection(db,type,ctx);
  const credentials=adapter.credentialsFromInput(input),fact=await verified(db,ctx,type,adapter,credentials);
  return db.transaction(async client=>{
   await owner(client,ctx);const cdb=scoped(client);
@@ -36,7 +36,7 @@ async function manual(db,ctx,input,requestOrigin,options={}){
 async function findState(db,value,type){if(typeof value!=='string'||value.length<32||value.length>256)throw new AuthenticationError('This store authorization request is invalid or expired.');const row=(await db.query('SELECT * FROM connection_authorization_states WHERE state_hash=$1 AND provider_type=$2 AND expires_at>$3',[service.stateHash(value),type,nowIso()])).rows[0];if(!row)throw new AuthenticationError('This store authorization request is invalid or expired.');return {...row,metadata:connections.parseJson(row.metadata,{})};}
 async function complete(db,type,body,requestOrigin,options={}){
  const {registry,adapter}=adapterFor(type,options),state=await findState(db,body.user_id,type),ctx={workspaceId:state.workspace_id,actorId:state.actor_id};
- if(registry===providers)require('./launch-policy').assertNewConnection(type,ctx);
+ if(registry===providers)await require('./launch-policy').assertWorkspaceConnection(db,type,ctx);
  const credentials=adapter.credentialsFromCallback(body,state.metadata),digest=fingerprint(credentials);
  if(state.used_at){if(state.metadata.credentialFingerprint!==digest)throw new AuthenticationError('This store authorization has already been used.');await owner(db,ctx);return connections.get(db,ctx.workspaceId,state.connector_id);}
  if(body.key_permissions!=='read_write')throw new ValidationError('Approve WooCommerce read/write access so StockChief can receive its events.');

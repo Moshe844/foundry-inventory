@@ -19,7 +19,7 @@ const providerOrigin=(requestOrigin)=>config.connections.publicOrigin||requestOr
 async function beginAuthorization(database,ctx,input,requestOrigin,options={}){
   const registry=options.providers||defaultProviders;
   const providerType=requireText(input.providerType,'Provider',{max:40}).toLowerCase();
-  if(registry===defaultProviders)launchPolicy.assertNewConnection(providerType,ctx);
+  if(registry===defaultProviders)await launchPolicy.assertWorkspaceConnection(database,providerType,ctx);
   const adapter=registry.get(providerType);
   if(!adapter)throw new ValidationError('Choose a supported connection provider.');
   const meta=adapter.metadata({oauthOnly:true});
@@ -179,8 +179,12 @@ async function completeOAuth(database,providerType,query,requestOrigin,options={
   const registry=options.providers||defaultProviders;
   const adapter=registry.get(providerType);
   if(!adapter)throw new NotFoundError('Provider not found.');
+  // Outside the Staging pilot, excluded providers are rejected before reading
+  // or consuming any authorization state. Staging callbacks resolve their
+  // inventory from the saved state, then recheck its current owner below.
+  if(registry===defaultProviders&&process.env.STOCKCHIEF_RUNTIME_ENV!=='staging')launchPolicy.assertNewConnection(providerType);
   const state=await readState(database,query.state,providerType,{consume:true});
-  if(registry===defaultProviders)launchPolicy.assertNewConnection(providerType,{workspaceId:state.workspace_id});
+  if(registry===defaultProviders)await launchPolicy.assertWorkspaceConnection(database,providerType,{workspaceId:state.workspace_id});
   const connection=await connections.get(database,state.workspace_id,state.connector_id);
   try{
     const result=await require('../commercial/operations').run(database,connection.workspace_id,{capability:

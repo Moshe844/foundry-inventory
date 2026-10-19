@@ -49,15 +49,19 @@ function createPostgresConnectionsRouter(database,options={}){
 
   async function renderConnections(req,res,apiToken=null){
     const inventorySetup=req.query.setup==='inventory';
-    const providerCatalog=inventorySetup?registry.inventorySources(req.ctx,{oauthOnly:true}):registry.catalog(req.ctx,{oauthOnly:true});
+    const providerContext=await require('../../connections/launch-policy').resolveWorkspaceContext(database,req.ctx);
+    const providerCatalog=inventorySetup?registry.inventorySources(providerContext,{oauthOnly:true}):registry.catalog(providerContext,{oauthOnly:true});
     const qualifiedTestConnect=require('../../payments/connect-availability').qualified(options);
     const launchTicket=crypto.randomBytes(24).toString('base64url');
     req.session.connectionLaunch={ticket:launchTicket,workspaceId:req.ctx.workspaceId,expiresAt:Date.now()+5*60000};
     const requestOrigin=`${req.protocol}://${req.get('host')}`;
     const requestPublicOrigin=options.publicOrigin==='request'?requestOrigin:(options.publicOrigin||requestOrigin);
-    const [connectionRows,clients,payment,shipping]=await Promise.all([
+    const connectionCapabilities=[['connection.email','communications.email_ingestion'],
+      ['connection.commerce','connections.commerce'],['connection.accounting','connections.accounting']];
+    const [connectionRows,clients,payment,shipping,capabilityStates]=await Promise.all([
       connections.list(database,req.ctx.workspaceId),publicApi.list(database,req.ctx.workspaceId),
       paymentConnect.describe(database,req.ctx.workspaceId),shippingAccounts.describe(database,req.ctx.workspaceId),
+      entitlements.capabilityStates(database,commercialScope(req),connectionCapabilities.map(([,key])=>key)),
     ]);
     return res.page('connections/index',{
       title:inventorySetup?'Connect a platform':'Integrations',nav:'connections',room:true,backTo:inventorySetup?{href:'/onboarding',label:'Inventory setup'}:{href:'/settings',label:'Settings'},launchTicket,
@@ -77,8 +81,10 @@ function createPostgresConnectionsRouter(database,options={}){
       paymentReturnOrigin:requestOrigin,currentWorkspaceId:req.ctx.workspaceId,
       workspaceName:req.workspace?.name||'',webhookSecret:null,outboundWebhooks:[],
       paymentWebhookUrl:`${requestOrigin}/webhooks/payments/stripe`,
-      commercialCapabilities:res.locals.commercial?.capabilities||[],
-      commercialDevelopment:res.locals.commercial?.access?.mode==='DEVELOPMENT',
+      // Render the same current entitlement decision used by authorization,
+      // including scoped overrides, rather than the plan's static summary.
+      commercialCapabilities:connectionCapabilities.filter(([,key])=>capabilityStates.get(key)?.enabled).map(([name])=>name),
+      commercialDevelopment:false,
     });
   }
 

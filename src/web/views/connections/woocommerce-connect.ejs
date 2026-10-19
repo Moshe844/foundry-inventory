@@ -8,7 +8,7 @@
   <p>Use an administrator account for this store. If your store offers WordPress.com and a local username/password login, choose the account that has access to the store. You can sign in during authorization.</p>
 </div></details>
 <% if(postgresMode){ %><details class="rm-more" data-woocommerce-manual><summary>Use Consumer Key and Secret instead</summary><div>
-  <p>Use a read/write key from WooCommerce → Settings → Advanced → REST API. Keys are encrypted and never placed in a link.</p>
+  <p>Enter this store's read/write key from WooCommerce → Settings → Advanced → REST API. StockChief verifies it and stores it encrypted for this inventory's background sync. Saved keys are never displayed or placed in a link.</p>
   <form method="post" action="/settings/connections/woocommerce/api-keys" autocomplete="off">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <label class="field"><span class="field-label">Store URL for API keys</span><input class="input" type="url" name="storeUrl" placeholder="https://your-store.example" required></label>

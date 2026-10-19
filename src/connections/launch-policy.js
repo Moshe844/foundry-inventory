@@ -14,15 +14,41 @@ const EXCLUDED=Object.freeze({
   erp_future:'Custom ERP connections require a qualified contract and are not included in initial self-service launch.'
 });
 
+const accountPilot=Symbol('verified connection pilot owner');
+const configured=name=>String(process.env[name]||'').split(',').map(value=>value.trim()).filter(Boolean);
+
+// Workspace IDs in the deployment configuration anchor an approved account.
+// Resolve ownership from PostgreSQL for every request and callback: another
+// inventory owned by that account must not require another manual rollout.
+// This grants provider availability only, never membership, plan capacity,
+// credentials or authority to use another inventory's connections.
+async function resolveWorkspaceContext(database,ctx={}){
+ const seeds=configured('STOCKCHIEF_STAGING_CONNECTION_WORKSPACES');
+ if(process.env.STOCKCHIEF_RUNTIME_ENV!=='staging'||!ctx.workspaceId||!seeds.length||seeds.includes(ctx.workspaceId))return ctx;
+ const approved=await database.query(`SELECT 1 FROM workspaces target
+  JOIN workspaces approved ON approved.owner_account_id=target.owner_account_id
+  WHERE target.id=$1 AND approved.id=ANY($2::text[])
+   AND target.deletion_requested_at IS NULL AND approved.deletion_requested_at IS NULL LIMIT 1`,[ctx.workspaceId,seeds]);
+ if(!approved.rows.length)return ctx;
+ const resolved={...ctx};
+ Object.defineProperty(resolved,accountPilot,{value:Object.freeze({workspaceId:ctx.workspaceId,seeds:seeds.join('\0')})});
+ return resolved;
+}
+
 function pilotAllowed(providerType,ctx={}){
  if(process.env.STOCKCHIEF_RUNTIME_ENV!=='staging'||!ctx.workspaceId)return false;
- const configured=name=>String(process.env[name]||'').split(',').map(value=>value.trim()).filter(Boolean);
- return configured('STOCKCHIEF_STAGING_CONNECTION_WORKSPACES').includes(ctx.workspaceId)&&configured('STOCKCHIEF_STAGING_CONNECTION_PROVIDERS').includes(String(providerType).toLowerCase())&&['shopify','clover','quickbooks','xero','microsoft365'].includes(String(providerType).toLowerCase());
+ const seeds=configured('STOCKCHIEF_STAGING_CONNECTION_WORKSPACES'),grant=ctx[accountPilot];
+ const approved=seeds.includes(ctx.workspaceId)||grant?.workspaceId===ctx.workspaceId&&grant.seeds===seeds.join('\0');
+ return approved&&configured('STOCKCHIEF_STAGING_CONNECTION_PROVIDERS').includes(String(providerType).toLowerCase())&&['shopify','clover','quickbooks','xero','microsoft365'].includes(String(providerType).toLowerCase());
 }
 function reason(providerType,ctx){return pilotAllowed(providerType,ctx)?null:EXCLUDED[String(providerType||'').toLowerCase()]||null;}
 function assertNewConnection(providerType,ctx){const denied=reason(providerType,ctx);
  if(denied)throw new ValidationError(denied);}
+async function assertWorkspaceConnection(database,providerType,ctx){
+ if(!EXCLUDED[String(providerType||'').toLowerCase()])return;
+ assertNewConnection(providerType,await resolveWorkspaceContext(database,ctx));
+}
 function metadata(meta,ctx){const denied=reason(meta.type,ctx);
  return denied?{...meta,available:false,unavailableReason:denied}:{...meta,pilot:pilotAllowed(meta.type,ctx)};}
 
-module.exports={EXCLUDED,reason,assertNewConnection,metadata,pilotAllowed};
+module.exports={EXCLUDED,reason,assertNewConnection,assertWorkspaceConnection,resolveWorkspaceContext,metadata,pilotAllowed};
