@@ -22,7 +22,8 @@ function present(row){
  return {id:row.id,sourceName:row.source_name,rows:Number(row.records_detected),readyRows:Number(row.records_valid),
   invalidRows:Number(row.records_invalid),state,label,active:['QUEUED','RUNNING'].includes(state),working:state==='RUNNING',
   verified,finished:!['QUEUED','RUNNING'].includes(state),status:row.plan_status,
-  createdAt:iso(row.created_at),queuedAt:iso(row.queued_at),startedAt:iso(row.started_at),completedAt:iso(row.finished_at),
+  createdAt:iso(row.created_at),queuedAt:iso(row.queued_at),startedAt:state==='QUEUED'?null:iso(row.started_at),
+  completedAt:['QUEUED','RUNNING'].includes(state)?null:iso(row.committed_at||row.job_finished_at||row.finished_at),
   stage,stageLabel,processedRows:verified?Number(row.records_valid):known?p.processedRows:null,
   progressPercent:verified?100:known&&p.totalRows?Math.min(99,Math.floor(p.processedRows/p.totalRows*100)):null,
   lastUpdateAt:iso(row.job_updated_at||row.finished_at||row.started_at||row.created_at),
@@ -33,13 +34,13 @@ async function list(database,workspaceId,{id=null,limit=10,activeOnly=false}={})
  if(!workspaceId)throw new TypeError('Import progress requires a workspace.');
  const rows=(await database.query(`SELECT p.id,p.source_name,p.records_detected,p.records_valid,p.records_invalid,
    p.status AS plan_status,p.approval_status,p.created_at,j.status AS job_status,j.lease_expires_at,
-   j.created_at AS queued_at,j.updated_at AS job_updated_at,j.result AS job_result,COALESCE(e.started_at::timestamptz,j.started_at) AS started_at,e.status AS execution_status,
-   e.finished_at,v.verified,floor(extract(epoch FROM clock_timestamp())*1000)::bigint AS database_now
+   j.created_at AS queued_at,j.updated_at AS job_updated_at,j.completed_at AS job_finished_at,j.result AS job_result,COALESCE(j.started_at,e.started_at::timestamptz) AS started_at,e.status AS execution_status,
+   e.finished_at,e.committed_at,v.verified,floor(extract(epoch FROM clock_timestamp())*1000)::bigint AS database_now
   FROM import_plans p
-  LEFT JOIN LATERAL(SELECT job.status,job.lease_expires_at,job.created_at,job.started_at,job.updated_at,job.result FROM stockchief_runtime.jobs job
+  LEFT JOIN LATERAL(SELECT job.status,job.lease_expires_at,job.created_at,job.started_at,job.completed_at,job.updated_at,job.result FROM stockchief_runtime.jobs job
    WHERE job.workspace_id=p.workspace_id AND job.kind='import.execute-approved' AND job.payload->>'planId'=p.id
    ORDER BY job.created_at DESC,job.id DESC LIMIT 1)j ON true
-  LEFT JOIN LATERAL(SELECT run.id,run.status,run.started_at,run.finished_at FROM import_executions run
+  LEFT JOIN LATERAL(SELECT run.id,run.status,run.started_at,run.finished_at,run.committed_at FROM import_executions run
    WHERE run.workspace_id=p.workspace_id AND run.import_id=p.id ORDER BY run.started_at DESC,run.id DESC LIMIT 1)e ON true
   LEFT JOIN import_verifications v ON v.workspace_id=p.workspace_id AND v.execution_id=e.id
   WHERE p.workspace_id=$1 AND ($2::text IS NULL OR p.id=$2)

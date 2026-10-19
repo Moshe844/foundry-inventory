@@ -548,8 +548,9 @@ async function execute(database, ctx, id, options={}) {
       [ctx.workspaceId,executionKey])).rows[0];
     return {replayed:true,execution:replay,planId:replay.import_id};
   }
+  let result;
   try {
-    const result=await database.transaction(async(client)=>{
+    result=await database.transaction(async(client)=>{
       const locked=(await client.query('SELECT * FROM import_plans WHERE workspace_id=$1 AND id=$2 FOR UPDATE',
         [ctx.workspaceId,id])).rows[0];
       if(!locked || locked.approval_status!=='APPROVED' || locked.integrity_hash!==plan.integrityHash)
@@ -714,7 +715,6 @@ async function execute(database, ctx, id, options={}) {
       await options.beforeCommit?.();
       return {executionId,verificationId,verified,checks,itemsCreated,skusCreated,rowsImported,units};
     },{isolation:'SERIALIZABLE',retrySafe:true});
-    return result;
   } catch(error) {
     await database.query(`UPDATE import_executions SET status='FAILED',stage='rolled_back',error_message=$2,finished_at=$3,
       result=COALESCE($4,result) WHERE id=$1`,[executionId,String(error.message).slice(0,1000),nowIso(),
@@ -722,6 +722,15 @@ async function execute(database, ctx, id, options={}) {
     await database.query(`UPDATE import_plans SET status='READY' WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,id]);
     throw error;
   }
+  // Business writes have committed. Keep all advisory work outside the rollback
+  // handler so maintenance failures cannot rewrite saved business truth.
+  const committedAt=nowIso();let commitReceiptPersisted=true;
+  try{await database.query('UPDATE import_executions SET committed_at=$3 WHERE workspace_id=$1 AND id=$2 AND status=\'SUCCEEDED\'',[ctx.workspaceId,result.executionId,committedAt]);}
+  catch{commitReceiptPersisted=false;}
+  let statistics;
+  try{statistics=await require('./postgres-statistics').refreshAfterImport(database,result);}
+  catch(error){statistics={state:'DEFERRED',reason:error.code||error.name};}
+  return {...result,committedAt,commitReceiptPersisted,statistics};
 }
 
 async function queueExecution(database,ctx,id,expectedHash){
