@@ -308,7 +308,7 @@ function createPostgresAskRouter(database,options={}){
       const state=conversation.state(goal);
       selected={id:goal.id,request:goal.original_request,label:history.labels[goal.status],createdAt:goal.created_at,
         conversation:{...state,history:(state.history||[]).map(turn=>({...turn,text:conversation.publicText(turn.text)}))},
-        delivery:delivery.visible(goal),effects:recorded.get(goal.id)||[]};
+        delivery:delivery.visible(goal),effects:recorded.get(goal.id)||[],continuation:await pilot.continuation(database,req.ctx,goal.id)};
     }
     const saved=selected?null:await history.list(database,req.ctx,{before:req.query.before,status:req.query.status||''});
     return res.page('attention/ask-history',{title:'Saved requests',nav:'ask',room:true,selected,saved,

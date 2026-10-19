@@ -18,6 +18,11 @@
     <ul><% for(const effect of selected.effects){ %><li><strong><%= effect.kind==='rule'?'Rule approved':'Operation recorded' %>:</strong> <a href="<%= effect.href %>"><%= effect.summary %></a></li><% } %></ul>
     <% if(selected.effects.some(e=>e.kind==='rule')){ %><p>Rule approval does not prove that its trigger ran.</p><% } %>
     <% if(selected.effects.some(e=>e.kind==='business')){ %><p>Open a record to check its current status.</p><% } %>
+    <% if(selected.continuation){ %><h3>Current continuation availability</h3>
+      <p><%= selected.continuation.reason %></p>
+      <% if(selected.continuation.eligible){ %><p>This is a current eligibility check, not permission to repeat an operation or a promise that all remaining work will finish. Spending, authority and canonical verification remain enforced.</p><% } %>
+      <a href="/ask?goal=<%= encodeURIComponent(selected.id) %>#focused-goal">Open this request in Ask StockChief</a>
+    <% } %>
   </section>
 <% }else{ %>
   <section class="card measure" aria-label="Saved request history">

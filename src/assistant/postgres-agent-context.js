@@ -9,10 +9,14 @@ async function learnedEnvironment(db,ctx,startedAt){
   AND checkpoint#>>'{harness,authorityStamp}'=$3 AND ($4::timestamptz IS NULL OR created_at>$4)
   ORDER BY updated_at DESC LIMIT 6`,[ctx.workspaceId,ctx.actorId,stamp,startedAt])).rows;
  const pages=new Map();for(const row of rows)for(const entry of require('../../scripts/environment-agent-demo/observations').ordered(Object.values(row.evidence||{})).reverse()){
-  if(entry.name!=='environment_browser')continue;let screen;try{const value=JSON.parse(entry.text);screen=value.screen||value;}catch{continue;}
+  if(entry.name!=='environment_browser'||entry.truncated||typeof entry.text!=='string'||createHash('sha256').update(entry.text).digest('hex')!==entry.sha256)continue;let screen;try{const value=JSON.parse(entry.text);screen=value.screen||value;}catch{continue;}
   if(screen.applicationPage!==true||screen.httpStatus!==200)continue;
   let url;try{url=new URL(screen.url);}catch{continue;}
-  const path=require('./agent-navigation-path').localPath(url.pathname);if(!path||pages.has(path))continue;
+  if(url.protocol!=='http:'||url.hostname!=='127.0.0.1'||url.username||url.password||!require('../../scripts/environment-agent-demo/browser-link-evidence').transferable(screen.url))continue;
+  // Query-selected records and forms are part of the observed destination.
+  // Dropping their query invents a different page. Session-bound links are
+  // omitted entirely above, never converted into a credential-free guess.
+  const path=require('./agent-navigation-path').localPath(url.pathname+url.search);if(!path||pages.has(path))continue;
   // Navigation knowledge only: never inherit records, values, live handles,
   // proposals or execution authority from a previous goal.
   pages.set(path,{path,title:String(screen.title||'').slice(0,160),observedAt:entry.at});

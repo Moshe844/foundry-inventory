@@ -1,5 +1,5 @@
 'use strict';
-const {AuthorizationError,ValidationError}=require('../domain/errors');
+const {AuthorizationError,ValidationError,NotFoundError}=require('../domain/errors');
 const store=require('./postgres-goal-store');
 const readonlyAuthorizations=new WeakMap();
 const list=value=>String(value||'').split(',').map(s=>s.trim()).filter(Boolean);
@@ -103,11 +103,12 @@ async function run(db,ctx,id,options={}){
  }
  return require('./postgres-codex-runtime').run(db,ctx,id,options);
 }
-async function resume(db,ctx,id){
- const {pilot}=await access(db,ctx,{enabled:true});const locked=spendingLockMessage(pilot);if(locked)throw new ValidationError(locked);
- const goal=await db.transaction(async client=>{
-  const row=(await client.query('SELECT * FROM stockchief_runtime.assistant_goals WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 FOR UPDATE',[ctx.workspaceId,ctx.actorId,id])).rows[0];
-  if(!row||row.checkpoint.runtime!=='codex-staging'||row.status!=='BLOCKED'||new Date(row.expires_at)<=new Date())throw new ValidationError('This saved request cannot be continued.');
+// Shared read-only eligibility, not an execution grant. The mutation path calls
+// this again on its freshly locked owned row. History may display its decision
+// without clearing a failure, enqueueing, reconciling usage or invoking a model.
+async function continuationState(client,ctx,row){
+  if(!row||row.workspace_id!==ctx.workspaceId||row.actor_user_id!==ctx.actorId||row.checkpoint.runtime!=='codex-staging'||row.status!=='BLOCKED'||new Date(row.expires_at)<=new Date())throw new ValidationError('This saved request cannot be continued.');
+  const id=row.id;
   const h=row.checkpoint.harness||{};
   if(h.inflight||h.codexDelivery?.state==='PENDING'||h.helperDelivery?.state==='PENDING'||(await client.query("SELECT 1 FROM stockchief_runtime.codex_pilot_calls WHERE workspace_id=$1 AND goal_id=$2 AND state IN ('RESERVED','UNKNOWN') LIMIT 1",[ctx.workspaceId,id])).rows.length)
    throw new ValidationError('An earlier step still needs reconciliation. StockChief will not repeat an uncertain operation or charge.');
@@ -120,6 +121,38 @@ async function resume(db,ctx,id){
   const dependencies=require('../../scripts/environment-agent-demo/waits').dependencies(h);
   const state=await require('../../scripts/environment-agent-demo/waits').current(client,ctx,id,dependencies);
   if(state==='BLOCKED')throw new ValidationError('A recorded dependency still needs attention before this request can continue.');
+  return state;
+}
+async function continuation(db,ctx,id){return db.transaction(async client=>{
+ const row=(await client.query('SELECT * FROM stockchief_runtime.assistant_goals WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3',[ctx.workspaceId,ctx.actorId,id])).rows[0];
+ if(!row||row.checkpoint?.runtime!=='codex-staging')return null;
+ const no=reason=>({eligible:false,nextState:null,reason,executionGuaranteed:false});
+ if(row.status==='COMPLETED')return no('This request is complete. No continuation is needed.');
+ if(row.status==='CANCELLED')return no('This request was stopped. Review its recorded work before starting another request.');
+ if(new Date(row.expires_at)<=new Date())return no('This saved request has expired and is available for review only. It cannot continue.');
+ if(row.status==='WAITING_USER')return no('This conversation needs your answer. Reply to its question in Ask StockChief.');
+ if(row.status==='WAITING_APPROVAL')return no('The prepared changes need your approval. Opening history does not approve them.');
+ if(row.status==='WAITING_EVENT')return no('This request is waiting for confirmation. Opening history does not repeat its operations.');
+ if(['READY','RUNNING'].includes(row.status))return no('This request is already queued or working. Do not start a second copy.');
+ try{
+  const {pilot}=await access(client,ctx,{enabled:true}),locked=spendingLockMessage(pilot);if(locked)return no(locked);
+  const nextState=await continuationState(client,ctx,row);
+  return {eligible:true,nextState,executionGuaranteed:false,reason:nextState==='READY'
+   ?'Currently eligible to request continuation of the investigation. StockChief will recheck permissions and spending before work starts; completion is not guaranteed.'
+   :nextState==='WAITING_APPROVAL'?'Currently eligible to reopen at the approval step. The remaining changes still require your approval.'
+   :'Currently eligible to reopen while waiting for external confirmation. No operation is repeated by opening history.'};
+ }catch(error){
+  if(error instanceof NotFoundError)return no('A recorded dependency is unavailable in this business. Your saved request remains available for review; it cannot continue until that dependency is reconciled.');
+  if(error instanceof ValidationError)return no(error.message);
+  if(error instanceof AuthorizationError||error.code==='entitlement_required'||error.message==='SESSION_AUTHORITY_CHANGED')return no('Continuation is not available under your current access. Your recorded work is preserved.');
+  throw error;
+ }
+},{isolation:'REPEATABLE READ',readOnly:true});}
+async function resume(db,ctx,id){
+ const {pilot}=await access(db,ctx,{enabled:true});const locked=spendingLockMessage(pilot);if(locked)throw new ValidationError(locked);
+ const goal=await db.transaction(async client=>{
+  const row=(await client.query('SELECT * FROM stockchief_runtime.assistant_goals WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 FOR UPDATE',[ctx.workspaceId,ctx.actorId,id])).rows[0];
+  const state=await continuationState(client,ctx,row),h=row.checkpoint.harness||{};
   h.failure=null;h.interruption=null;h.admissionBlock=null;h.pendingReport=null;row.checkpoint.harness=h;
   row.status=state==='READY'?'READY':state;row.answer=state==='READY'?'Continuing your saved request. Previously recorded work will not be repeated.':row.answer;
   require('./agent-conversation').sync(row);
@@ -136,4 +169,4 @@ function assertReadAuthorization(token,cluster,ctx){const p=readonlyAuthorizatio
  if(!p||!configured(ctx)||p.connectionString!==cluster.connectionString||p.workspaceId!==ctx.workspaceId||p.actorId!==ctx.actorId)
   throw new AuthorizationError('Invalid Staging renderer identity.');
 }
-module.exports={configured,access,selected,view,toggle,start,inbox,decide,run,resume,readAuthorization,assertReadAuthorization,spendingLockMessage};
+module.exports={configured,access,selected,view,toggle,start,inbox,decide,run,resume,continuation,readAuthorization,assertReadAuthorization,spendingLockMessage};
