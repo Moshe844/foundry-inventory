@@ -1,19 +1,26 @@
 'use strict';
 process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
-test('actual Staging SDK lifecycle uses the real renderer, website approval and PostgreSQL verification with an offline provider',{timeout:240000},async t=>{
+for(const accountInherited of [false,true])test('actual Staging SDK lifecycle uses the real renderer, approval and PostgreSQL verification with an offline provider: '+(accountInherited?'inherited account access':'original rollout'),{timeout:240000},async t=>{
  const cluster=await require('../helpers/postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString);
- const keys=['STOCKCHIEF_RUNTIME_ENV','STOCKCHIEF_CODEX_PILOT','STOCKCHIEF_CODEX_PILOT_WORKSPACES','STOCKCHIEF_CODEX_PILOT_EMAILS','FOUNDRY_DATABASE_URL'];
+ const keys=['STOCKCHIEF_RUNTIME_ENV','STOCKCHIEF_CODEX_PILOT','STOCKCHIEF_CODEX_PILOT_WORKSPACES','STOCKCHIEF_CODEX_PILOT_EMAILS','STOCKCHIEF_CODEX_PILOT_ACCOUNT_ACCESS','FOUNDRY_DATABASE_URL'];
  const old=Object.fromEntries(keys.map(k=>[k,process.env[k]]));
  t.after(async()=>{for(const [k,v]of Object.entries(old))if(v===undefined)delete process.env[k];else process.env[k]=v;await db.close();cluster.stop();});
  await require('../../src/db/migrate-postgres').migratePostgres(db);
  const email=randomUUID()+'@example.test',owner=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'SDK Staging owner',businessName:'Testing',email,password:'Fake!'+randomUUID()});
- const ctx={workspaceId:owner.workspaceId,actorId:owner.userId};process.env.STOCKCHIEF_RUNTIME_ENV='staging';
+ let ctx={workspaceId:owner.workspaceId,actorId:owner.userId};process.env.STOCKCHIEF_RUNTIME_ENV='staging';
  Object.assign(process.env,(await require('../../scripts/provision-codex-staging').provision(db,{businessName:'Testing',emails:[email]})).environment);
  process.env.FOUNDRY_DATABASE_URL=cluster.connectionString;
  await db.query(`UPDATE stockchief_runtime.codex_pilots SET enabled=true,stopped=false,ceiling_micro_usd=500000,
   approval_reference='OFFLINE FAKE PROVIDER ONLY' WHERE workspace_id=$1`,[ctx.workspaceId]);
  await require('../../scripts/environment-agent-demo/run-pilot').seedPrices(db);
+ if(accountInherited){
+  await require('../../scripts/provision-codex-staging').shareWithOwnedBusinesses(db,{fundingWorkspaceId:owner.workspaceId,accountId:owner.accountId});
+  process.env.STOCKCHIEF_CODEX_PILOT_ACCOUNT_ACCESS='1';
+  await db.query("UPDATE accounts SET plan='paid' WHERE id=$1",[owner.accountId]);
+  const child=await require('../../src/domain/postgres-auth-service').createWorkspace(db,owner.accountId,{name:'Testing'});
+  ctx={workspaceId:child.workspaceId,actorId:child.userId};
+ }
  const sku='STAGING-'+randomUUID().slice(0,8),location='SDK shelf '+randomUUID().slice(0,6);
  const item=await require('../../src/domain/postgres-catalog-service').createItem(db,ctx,{name:sku,baseCode:sku,trackingMode:'quantity'});
  const loc=await require('../../src/domain/postgres-location-service').createLocation(db,ctx,{name:location,kind:'warehouse'});
@@ -47,6 +54,7 @@ test('actual Staging SDK lifecycle uses the real renderer, website approval and 
  const browserEvidence=Object.values(first.checkpoint.harness.evidence).find(e=>e.name==='environment_browser');
  assert.equal(new URL(JSON.parse(browserEvidence.text).url).pathname,'/inventory','Agent starts on the user page');
  const ready=await pilot.inbox(db,ctx,response.goalId);assert.equal(ready.approvals.length,1);
+ assert.equal((await require('../../src/assistant/postgres-approval-projection').pending(db,ctx.workspaceId,ctx.actorId)).length,1,'The real decision inbox sees approvals in an inherited business');
  assert.equal(first.checkpoint.harness.native.codex.instructionsProfile,'stockchief-operator-v1');
  assert.equal((await db.query('SELECT count(*) AS n FROM movements WHERE workspace_id=$1 AND reference=$2',[ctx.workspaceId,'OFFLINE-STAGING'])).rows[0].n,'0');
  const card=ready.approvals[0];await pilot.decide(db,ctx,response.goalId,card.id,card.sha256,true,{responseReference:'OFFLINE simulated website human approval'});
@@ -56,6 +64,7 @@ test('actual Staging SDK lifecycle uses the real renderer, website approval and 
  assert.equal((await db.query('SELECT count(*) AS n FROM movements WHERE workspace_id=$1 AND reference=$2',[ctx.workspaceId,'OFFLINE-STAGING'])).rows[0].n,'1');
  const ledger=(await db.query('SELECT state FROM stockchief_runtime.codex_pilot_calls WHERE workspace_id=$1',[ctx.workspaceId])).rows;
  assert.equal(ledger.length,3);assert(ledger.every(c=>c.state==='SETTLED'));
+ assert.equal((await db.query('SELECT count(*) n FROM stockchief_runtime.codex_pilot_calls WHERE workspace_id=$1 AND funding_workspace_id=$2',[ctx.workspaceId,owner.workspaceId])).rows[0].n,'3');
  assert.equal(completed.checkpoint.harness.codexRequests,3);
  assert.equal(completed.checkpoint.harness.native.codex.instructionsProfile,'stockchief-operator-v1','Approval resumption retains the original instruction profile');
  // Produce a real older SDK journal using the unchanged, previously certified

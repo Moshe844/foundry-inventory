@@ -5,6 +5,7 @@ async function owner(db,ctx){const actor=(await db.query('SELECT role FROM users
  [ctx.workspaceId,ctx.actorId])).rows[0];
  if(actor?.role!=='owner'||!ctx.goalId||!(require('./postgres-goal-store').enabled(ctx)||require('./postgres-codex-pilot').configured(ctx)))
   throw new ValidationError('Standing-authority goal tools require the enabled business owner.');
+ if(!require('./postgres-goal-store').enabled(ctx))await require('./postgres-codex-pilot').access(db,ctx,{enabled:true,owner:true});
  const goal=await require('./postgres-goal-store').get(db,ctx,ctx.goalId);
  if(goal?.status!=='RUNNING'||goal.run_token!==ctx.goalRunToken)
   throw new ValidationError('This goal no longer owns an active execution lease.');

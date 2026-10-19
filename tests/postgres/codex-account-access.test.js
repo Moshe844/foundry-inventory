@@ -1,0 +1,71 @@
+'use strict';
+process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
+test('account-owned businesses inherit SDK access and share one immutable funding ceiling',{timeout:120000},async t=>{
+ const cluster=await require('../helpers/postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString);
+ const keys=['STOCKCHIEF_RUNTIME_ENV','STOCKCHIEF_CODEX_PILOT','STOCKCHIEF_CODEX_PILOT_WORKSPACES','STOCKCHIEF_CODEX_PILOT_EMAILS','STOCKCHIEF_CODEX_PILOT_ACCOUNT_ACCESS'];
+ const old=Object.fromEntries(keys.map(k=>[k,process.env[k]]));
+ t.after(async()=>{for(const k of keys)if(old[k]===undefined)delete process.env[k];else process.env[k]=old[k];await db.close();cluster.stop();});
+ await require('../../src/db/migrate-postgres').migratePostgres(db);
+ const auth=require('../../src/domain/postgres-auth-service'),email=randomUUID()+'@example.test',password='Certification!'+randomUUID();
+ const a=await auth.createBusiness(db,{name:'Owner',businessName:'Original',email,password});
+ const outsider=await auth.createBusiness(db,{name:'Other',businessName:'Private',email:randomUUID()+'@example.test',password});
+ // Offline entitlement fixture permits multiple businesses; it grants no AI spend.
+ await db.query("UPDATE accounts SET plan='paid' WHERE id=$1",[a.accountId]);
+ const b=await auth.createWorkspace(db,a.accountId,{name:'Unregistered business'});
+ process.env.STOCKCHIEF_RUNTIME_ENV='staging';
+ const provision=require('../../scripts/provision-codex-staging');
+ Object.assign(process.env,(await provision.provision(db,{businessName:'Original',emails:[email]})).environment);
+ const pilot=require('../../src/assistant/postgres-codex-pilot'),budget=require('../../src/assistant/postgres-codex-budget');
+ const ca={workspaceId:a.workspaceId,actorId:a.userId},cb={workspaceId:b.workspaceId,actorId:b.userId};
+ assert.equal(await pilot.selected(db,cb),false,'Reproduce the old workspace-only rollout restriction');
+ const expiry=new Date(Date.now()+3600000).toISOString();
+ await db.query(`UPDATE stockchief_runtime.codex_pilots SET enabled=true,stopped=false,ceiling_micro_usd=300000,
+  approval_reference='OFFLINE_ACCOUNT_TEST',period_ends_at=$2 WHERE workspace_id=$1`,[a.workspaceId,expiry]);
+ await provision.shareWithOwnedBusinesses(db,{fundingWorkspaceId:a.workspaceId,accountId:a.accountId});
+ assert.equal(await pilot.selected(db,cb),false,'Account scope requires the explicit Staging rollout flag');
+ process.env.STOCKCHIEF_CODEX_PILOT_ACCOUNT_ACCESS='1';
+ assert.equal(await pilot.selected(db,ca),true);assert.equal(await pilot.selected(db,cb),true);
+ const c=await auth.createWorkspace(db,a.accountId,{name:'Created after account approval'}),cc={workspaceId:c.workspaceId,actorId:c.userId};
+ assert.equal(await pilot.selected(db,cc),true,'No business registration or per-business allowance');
+ assert.equal((await db.query('SELECT count(*) n FROM stockchief_runtime.codex_pilots')).rows[0].n,'1');
+ assert.equal(await pilot.selected(db,{workspaceId:outsider.workspaceId,actorId:outsider.userId}),false);
+ await assert.rejects(pilot.access(db,{workspaceId:b.workspaceId,actorId:a.userId}),'Cross-business actor substitution');
+ const store=require('../../src/assistant/postgres-goal-store');
+ const ga=await store.create(db,ca,'Read first business'),gb=await store.create(db,cb,'Read second business');
+ const ba=budget.createBudget(db,ca,ga.id),bb=budget.createBudget(db,cb,gb.id);
+ const results=await Promise.allSettled([ba.reserve({candidate:'codex',task:ga.id,upperBoundMicroUsd:200000}),bb.reserve({candidate:'codex',task:gb.id,upperBoundMicroUsd:200000})]);
+ assert.equal(results.filter(r=>r.status==='fulfilled').length,1,'Concurrent tenants cannot each reserve the same allowance');
+ const winner=results[0].status==='fulfilled'?ba:bb,loser=winner===ba?bb:ba,receipt=results.find(r=>r.status==='fulfilled').value;
+ assert.equal((await ba.status()).committed,200000);assert.equal((await bb.status()).committed,200000);
+ await assert.rejects(loser.settle(receipt,100000),/RECONCILIATION/,'Other tenant cannot settle a receipt');
+ await winner.settle(receipt,200000);
+ await assert.rejects(bb.reserve({candidate:'codex',task:gb.id,upperBoundMicroUsd:100001}),/SHARED_SPENDING_CEILING/);
+ await assert.rejects(bb.reserve({candidate:'codex',task:gb.id,upperBoundMicroUsd:300001}),/INVALID_PILOT_RESERVATION/);
+ const last=await bb.reserve({candidate:'codex',task:gb.id,upperBoundMicroUsd:100000});
+ await bb.unknown(last,'Simulated interrupted provider delivery');
+ assert.equal((await ba.status()).remaining,0);assert.equal((await ba.status()).unresolved,1);
+ await assert.rejects(ba.reserve({candidate:'codex',task:ga.id,upperBoundMicroUsd:1}),/UNRESOLVED_MODEL_CALL/);
+ // A business toggle is local. The shared funding stop remains global.
+ await pilot.toggle(db,cb,false);assert.equal(await pilot.selected(db,cb),false);assert.equal(await pilot.selected(db,ca),true);
+ await pilot.toggle(db,cb,true);assert.equal(await pilot.selected(db,cb),true);
+ await db.query("UPDATE stockchief_runtime.codex_pilots SET worker_seen_at=now() WHERE workspace_id=$1",[a.workspaceId]);
+ assert.equal((await store.progress(db,cb,gb.id)).worker_available,true);
+ assert.equal((await pilot.view(db,cb)).budget.committed,300000);
+ await bb.stop();assert.equal((await ba.status()).stopped,true);
+ await db.query("UPDATE users SET role='member' WHERE id=$1",[b.userId]);
+ assert.equal(await pilot.selected(db,cb),false,'Fresh membership revocation blocks inherited access');
+ await db.query("UPDATE users SET role='owner' WHERE id=$1",[b.userId]);
+ process.env.STOCKCHIEF_RUNTIME_ENV='production';assert.equal(await pilot.selected(db,cc),false);
+ await assert.rejects(provision.shareWithOwnedBusinesses(db,{fundingWorkspaceId:a.workspaceId,accountId:a.accountId}),/STAGING_ONLY/);
+ process.env.STOCKCHIEF_RUNTIME_ENV='staging';
+ const rows=(await db.query('SELECT ceiling_micro_usd,period_ends_at FROM stockchief_runtime.codex_pilots')).rows;
+ assert.equal(Number(rows[0].ceiling_micro_usd),300000);assert.equal(new Date(rows[0].period_ends_at).toISOString(),expiry);
+ assert.equal((await db.query('SELECT count(DISTINCT funding_workspace_id) n FROM stockchief_runtime.codex_pilot_calls')).rows[0].n,'1');
+ const ro=await require('../../scripts/environment-agent-demo/inspection').inspectionDatabase(cluster,db,cb);
+ try{
+  assert.equal((await ro.query('SELECT id FROM workspaces')).rows.length,1);
+  assert.equal((await ro.query('SELECT workspace_id FROM stockchief_runtime.codex_pilot_workspace_access WHERE workspace_id=$1',[outsider.workspaceId])).rows.length,0,'Invoker projection cannot bypass tenant RLS');
+  await assert.rejects(ro.query('UPDATE stockchief_runtime.codex_pilots SET stopped=false'),/read-only|permission denied/);
+ }finally{await ro.close();}
+});

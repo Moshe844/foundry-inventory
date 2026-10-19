@@ -38,6 +38,13 @@ async function inspectionDatabase(cluster,admin,ctx,stagingAuthorization=null){
     `ALTER ROLE ${identifier} SET default_transaction_read_only=on`,
     `GRANT USAGE ON SCHEMA public,stockchief_runtime TO ${identifier}`];
   const guardedTables=[];
+  // This reviewed rollout projection is an invoker view: it cannot bypass the
+  // base-table tenant policies below. Never grant an owner-executed view.
+  const scopeView='stockchief_runtime.codex_pilot_workspace_access';
+  const view=(await admin.query(`SELECT c.reloptions FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+   WHERE n.nspname='stockchief_runtime' AND c.relname='codex_pilot_workspace_access' AND c.relkind='v'`)).rows[0];
+  if(!view?.reloptions?.includes('security_invoker=true'))throw Error('UNSAFE_INSPECTION_ACCESS_VIEW');
+  statements.push(`GRANT SELECT ON ${scopeView} TO ${identifier}`);
   for(const table of tables){
     const name=`${escapeIdentifier(table.table_schema)}.${escapeIdentifier(table.table_name)}`;
     // Owner-executed views can bypass underlying RLS. Never grant them merely
@@ -81,6 +88,7 @@ async function inspectionDatabase(cluster,admin,ctx,stagingAuthorization=null){
   }
   return {query,transaction,close:async()=>{await pool.end();if(stagingAuthorization){
     const cleanupStatements=[];
+    cleanupStatements.push(`REVOKE ALL PRIVILEGES ON ${scopeView} FROM ${identifier}`);
     for(const table of guardedTables){const name=`${escapeIdentifier(table.table_schema)}.${escapeIdentifier(table.table_name)}`;
       cleanupStatements.push(`DROP POLICY IF EXISTS ${escapeIdentifier(role+'_allow')} ON ${name}`);
       cleanupStatements.push(`DROP POLICY IF EXISTS ${escapeIdentifier(role+'_restrict')} ON ${name}`);

@@ -3,7 +3,7 @@ const store=require('./postgres-goal-store');
 const plans=require('./postgres-capability-plans');
 // Poll canonical status without inference. Only a changed, completed dependency wakes reasoning.
 async function refresh(db,ctx,id){
- if(!store.enabled(ctx)&&!require('./postgres-codex-pilot').configured(ctx))return null;
+ if(!store.enabled(ctx)&&!await require('./codex-pilot-scope').availableWorkspace(db,ctx.workspaceId))return null;
  const goal=await store.get(db,ctx,id);if(!goal||!['WAITING_APPROVAL','WAITING_EVENT'].includes(goal.status))return goal;
  if(goal.checkpoint.runtime==='codex-staging')return require('../../scripts/environment-agent-demo/waits').refresh(db,ctx,id);
  const cp=goal.checkpoint;const waiting=cp.waiting;if(!waiting)return goal;
@@ -59,7 +59,7 @@ async function sweep(db){
  const interrupted=(await db.query(`SELECT id,workspace_id,actor_user_id FROM stockchief_runtime.assistant_goals
   WHERE checkpoint->>'runtime'='codex-staging' AND status='RUNNING' AND lease_until<now() AND expires_at>now() LIMIT 100`)).rows;
  for(const row of interrupted){const ctx={workspaceId:row.workspace_id,actorId:row.actor_user_id};
-  if(require('./postgres-codex-pilot').configured(ctx))await require('../../scripts/environment-agent-demo/waits').recover(db,ctx,row.id);
+  if(await require('./codex-pilot-scope').availableWorkspace(db,ctx.workspaceId))await require('../../scripts/environment-agent-demo/waits').recover(db,ctx,row.id);
  }
  await db.query(`UPDATE stockchief_runtime.assistant_goals SET status='BLOCKED',run_token=NULL,lease_until=NULL,
  answer='This goal expired or its previous run was interrupted. Review its recorded work.',updated_at=now()
@@ -67,7 +67,7 @@ async function sweep(db){
  const goals=(await db.query(`SELECT id,workspace_id,actor_user_id,status FROM stockchief_runtime.assistant_goals
  WHERE status IN ('READY','WAITING_APPROVAL','WAITING_EVENT') ORDER BY updated_at LIMIT 100`)).rows;
  let scheduled=0;
- for(const row of goals){const ctx={workspaceId:row.workspace_id,actorId:row.actor_user_id};if(!store.enabled(ctx)&&!require('./postgres-codex-pilot').configured(ctx))continue;
+ for(const row of goals){const ctx={workspaceId:row.workspace_id,actorId:row.actor_user_id};if(!store.enabled(ctx)&&!await require('./codex-pilot-scope').availableWorkspace(db,ctx.workspaceId))continue;
   const goal=row.status==='READY'?await store.get(db,ctx,row.id):await refresh(db,ctx,row.id);
   if(goal?.status==='READY'){const job=await store.enqueue(db,goal);if(job.created)scheduled++;}}
  return scheduled;
@@ -89,19 +89,19 @@ async function refreshWorkspace(db,workspaceId){
  }
  return scheduled;
 }
-async function watchDependencies(db,workspaceIds,wake=()=>{}){
+async function watchDependencies(db,workspaceIds,wake=()=>{},{availableWorkspace=null}={}){
  const allowed=new Set(workspaceIds),pending=new Set();let queue=Promise.resolve();
  // Multiplex the existing dedicated job listener, rather than holding another
  // PostgreSQL connection out of the unchanged foreground pool.
  const stop=await db.listen('stockchief_codex_jobs',message=>{
   let workspaceId=message.payload,dependency=false;
   try{const event=JSON.parse(message.payload);if(event?.kind!=='dependency_changed'||typeof event.workspaceId!=='string')return;workspaceId=event.workspaceId;dependency=true;}catch{}
-  if(!allowed.has(workspaceId))return;
-  if(!dependency){wake();return;}
   if(pending.has(workspaceId))return;
   pending.add(workspaceId);
   queue=queue.catch(()=>{}).then(async()=>{
    pending.delete(workspaceId);
+   if(!allowed.has(workspaceId)&&!await availableWorkspace?.(db,workspaceId))return;
+   if(!dependency){wake();return;}
    // store.enqueue publishes the usual job hint after its durable write. The
    // ordinary worker poll still recovers a lost notification.
    await refreshWorkspace(db,workspaceId);

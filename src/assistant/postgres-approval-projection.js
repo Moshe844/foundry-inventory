@@ -14,8 +14,10 @@ async function pending(database,workspaceId,actorId){
   FROM stockchief_runtime.assistant_goals g
   JOIN users u ON u.workspace_id=g.workspace_id AND u.id=g.actor_user_id
   JOIN accounts a ON a.id=u.account_id
-  JOIN stockchief_runtime.codex_pilots pilot ON pilot.workspace_id=g.workspace_id
-    AND pilot.authorized_actor_ids ? g.actor_user_id
+  JOIN stockchief_runtime.codex_pilot_workspace_access pilot ON pilot.workspace_id=g.workspace_id
+    AND pilot.funding_workspace_id=ANY($4::text[])
+    AND (CASE WHEN pilot.account_inherited THEN a.id=pilot.owner_account_id AND u.role='owner'
+      ELSE (pilot.pilot->'authorized_actor_ids') ? g.actor_user_id END)
   CROSS JOIN LATERAL jsonb_each(CASE WHEN jsonb_typeof(g.checkpoint#>'{harness,approvalDeliveries}')='object'
     THEN g.checkpoint#>'{harness,approvalDeliveries}' ELSE '{}'::jsonb END) d
   LEFT JOIN stockchief_runtime.assistant_action_proposals p ON d.value->>'kind'='business'
@@ -30,7 +32,7 @@ async function pending(database,workspaceId,actorId){
   WHERE g.workspace_id=$1 AND g.actor_user_id=$2 AND lower(a.email)=ANY($3::text[])
     AND g.checkpoint->>'runtime'='codex-staging' AND g.status='WAITING_APPROVAL' AND g.expires_at>now()
     AND (p.id IS NOT NULL OR r.id IS NOT NULL)
-  ORDER BY g.created_at,g.id,d.key`,[workspaceId,actorId,emails])).rows;
+  ORDER BY g.created_at,g.id,d.key`,[workspaceId,actorId,emails,require('./codex-pilot-scope').fundingWorkspaces()])).rows;
  const decisions=new Set(),items=new Map();
  for(const row of rows){
   const card=row.delivery,p=row.proposal;

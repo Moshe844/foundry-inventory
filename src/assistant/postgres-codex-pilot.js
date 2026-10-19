@@ -2,22 +2,22 @@
 const {AuthorizationError,ValidationError,NotFoundError}=require('../domain/errors');
 const store=require('./postgres-goal-store');
 const readonlyAuthorizations=new WeakMap();
-const list=value=>String(value||'').split(',').map(s=>s.trim()).filter(Boolean);
-function configured(ctx){return process.env.STOCKCHIEF_RUNTIME_ENV==='staging'&&process.env.STOCKCHIEF_CODEX_PILOT==='1'&&
- list(process.env.STOCKCHIEF_CODEX_PILOT_WORKSPACES).includes(ctx.workspaceId);}
+const {list,configured,fundingWorkspaces}=require('./codex-pilot-scope');
 async function access(db,ctx,{enabled=false,owner=false}={}){
  if(!configured(ctx))throw new AuthorizationError('The Codex pilot is not available in this business.');
  // One fresh identity/pilot snapshot for this boundary. No authority is cached
  // between reads, model requests or operations.
- const row=(await db.query(`SELECT u.id,u.role,u.permissions,a.email,w.owner_account_id,w.name AS business_name,to_jsonb(p) AS pilot
+ const row=(await db.query(`SELECT u.id,u.role,u.permissions,a.email,a.id AS account_id,w.owner_account_id,w.name AS business_name,p.pilot
   FROM users u JOIN accounts a ON a.id=u.account_id JOIN workspaces w ON w.id=u.workspace_id
-  LEFT JOIN stockchief_runtime.codex_pilots p ON p.workspace_id=u.workspace_id
-  WHERE u.workspace_id=$1 AND u.id=$2`,[ctx.workspaceId,ctx.actorId])).rows[0];
+  LEFT JOIN stockchief_runtime.codex_pilot_workspace_access p ON p.workspace_id=u.workspace_id
+    AND p.funding_workspace_id=ANY($3::text[])
+  WHERE u.workspace_id=$1 AND u.id=$2`,[ctx.workspaceId,ctx.actorId,fundingWorkspaces()])).rows[0];
  const actor=row&&{id:row.id,role:row.role,permissions:row.permissions,email:row.email};
  if(!actor||!list(process.env.STOCKCHIEF_CODEX_PILOT_EMAILS).map(s=>s.toLowerCase()).includes(actor.email.toLowerCase())||owner&&actor.role!=='owner')
   throw new AuthorizationError('This account is not authorized for the Staging pilot.');
  const pilot=row.pilot;
- if(!pilot||!pilot.authorized_actor_ids.includes(ctx.actorId)||enabled&&!pilot.enabled)
+ const authorized=pilot?.account_inherited?row.account_id===row.owner_account_id&&actor?.role==='owner':pilot?.authorized_actor_ids.includes(ctx.actorId);
+ if(!pilot||!authorized||enabled&&!pilot.enabled)
   throw new AuthorizationError('The Staging pilot is disabled for this account.');
  // assertCapability still freshly verifies the commercial ownership scope,
  // subscription, overrides and entitlement; the joined owner avoids a second
@@ -41,7 +41,10 @@ async function view(db,ctx){if(!configured(ctx))return null;try{const {actor,pil
  model:'Codex SDK',reasoning:'Adaptive reasoning'};}catch(e){if(e instanceof AuthorizationError)return null;throw e;}}
 async function toggle(db,ctx,enabled){await access(db,ctx,{owner:true});
  return db.transaction(async client=>{
-  await client.query(`UPDATE stockchief_runtime.codex_pilots SET enabled=$2,revision=revision+1,updated_at=now() WHERE workspace_id=$1`,[ctx.workspaceId,Boolean(enabled)]);
+  const {pilot}=await access(client,ctx,{owner:true});
+  if(pilot.account_inherited)await client.query(`INSERT INTO stockchief_runtime.codex_pilot_workspace_settings(workspace_id,enabled)
+   VALUES($1,$2) ON CONFLICT(workspace_id) DO UPDATE SET enabled=EXCLUDED.enabled,revision=codex_pilot_workspace_settings.revision+1,updated_at=now()`,[ctx.workspaceId,Boolean(enabled)]);
+  else await client.query(`UPDATE stockchief_runtime.codex_pilots SET enabled=$2,revision=revision+1,updated_at=now() WHERE workspace_id=$1`,[ctx.workspaceId,Boolean(enabled)]);
   if(!enabled)await client.query(`UPDATE stockchief_runtime.assistant_goals SET status='CANCELLED',run_token=NULL,lease_until=NULL,
    answer='The Staging agent was disabled. Approved operations retain their canonical recorded status.',updated_at=now()
    WHERE workspace_id=$1 AND checkpoint->>'runtime'='codex-staging' AND status NOT IN ('COMPLETED','CANCELLED','BLOCKED')`,[ctx.workspaceId]);

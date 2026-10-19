@@ -24,5 +24,26 @@ async function main(){
   console.log(JSON.stringify(await provision(db,{businessName:process.argv[2],emails:process.argv.slice(3)}),null,2));}
  finally{await db.close();}
 }
+// Trusted rollout operation, not a chat tool or automatic customer enrollment.
+// This shares one existing approval; it cannot create money or extend time.
+async function shareWithOwnedBusinesses(db,{fundingWorkspaceId,accountId}){
+ if(process.env.STOCKCHIEF_RUNTIME_ENV!=='staging')throw Error('STAGING_ONLY');
+ return db.transaction(async client=>{
+  const p=(await client.query(`SELECT p.*,w.owner_account_id,u.account_id AS approved_account_id,u.role AS approved_role
+   FROM stockchief_runtime.codex_pilots p JOIN workspaces w ON w.id=p.workspace_id
+   JOIN users u ON u.id=p.approved_by AND u.workspace_id=p.workspace_id
+   WHERE p.workspace_id=$1 FOR UPDATE OF p`,[fundingWorkspaceId])).rows[0];
+  if(!accountId||p?.owner_account_id!==accountId||p.approved_account_id!==accountId||p.approved_role!=='owner'||
+    !p.approval_reference||Number(p.ceiling_micro_usd)<=0)throw Error('EXISTING_OWNED_APPROVAL_REQUIRED');
+  await client.query('SELECT id FROM accounts WHERE id=$1 FOR UPDATE',[accountId]);
+  if((await client.query(`SELECT 1 FROM stockchief_runtime.codex_pilots p JOIN workspaces w ON w.id=p.workspace_id
+   WHERE w.owner_account_id=$1 AND p.workspace_id<>$2`,[accountId,fundingWorkspaceId])).rows.length)throw Error('MULTIPLE_FUNDING_SOURCES_REQUIRE_RECONCILIATION');
+  const old=(await client.query('SELECT funding_workspace_id FROM stockchief_runtime.codex_pilot_accounts WHERE account_id=$1',[accountId])).rows[0];
+  if(old&&old.funding_workspace_id!==fundingWorkspaceId)throw Error('FUNDING_SOURCE_IS_IMMUTABLE');
+  await client.query(`INSERT INTO stockchief_runtime.codex_pilot_accounts(account_id,funding_workspace_id)
+   VALUES($1,$2) ON CONFLICT(account_id) DO NOTHING`,[accountId,fundingWorkspaceId]);
+  return {accountId,fundingWorkspaceId,ceilingMicroUsd:Number(p.ceiling_micro_usd),expiresAt:p.period_ends_at};
+ },{isolation:'SERIALIZABLE',retrySafe:true});
+}
 if(require.main===module)main().catch(e=>{console.error(e.code||e.message);process.exitCode=1;});
-module.exports={provision};
+module.exports={provision,shareWithOwnedBusinesses};
