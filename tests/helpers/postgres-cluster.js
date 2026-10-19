@@ -7,6 +7,15 @@ const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 
 async function startCluster() {
+  if(process.env.STOCKCHIEF_POSTGRES_FIXTURE_URL){
+    if(process.env.NODE_ENV!=='test')throw new Error('An external fixture database is test-only.');
+    const address=new URL(process.env.STOCKCHIEF_POSTGRES_FIXTURE_URL);
+    if(!['127.0.0.1','localhost','[::1]'].includes(address.hostname)||address.pathname!=='/postgres')throw new Error('The disposable fixture server must be loopback PostgreSQL.');
+    const {Client}=require('pg'),admin=new Client({connectionString:address.href});await admin.connect();
+    const name='stockchief_fixture_'+crypto.randomUUID().replaceAll('-','');await admin.query('CREATE DATABASE "'+name+'"');
+    address.pathname='/'+name;let stopped=false;
+    return {connectionString:address.href,async stop(){if(stopped)return;stopped=true;try{await admin.query('DROP DATABASE "'+name+'" WITH (FORCE)');}finally{await admin.end();}}};
+  }
   const root = path.resolve(__dirname, '../../data');
   fs.mkdirSync(root, { recursive: true });
   const directory = fs.mkdtempSync(path.join(root, 'postgres-acceptance-'));

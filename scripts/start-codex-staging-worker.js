@@ -1,7 +1,8 @@
 'use strict';
 require('../src/config');
 async function main(){
- if(process.env.STOCKCHIEF_RUNTIME_ENV!=='staging'||process.env.STOCKCHIEF_CODEX_PILOT!=='1')throw Error('STAGING_PILOT_REQUIRED');
+ const scopePolicy=require('../src/assistant/codex-pilot-scope'),commercialRollout=scopePolicy.customerAccess();
+ if(!commercialRollout&&(process.env.STOCKCHIEF_RUNTIME_ENV!=='staging'||process.env.STOCKCHIEF_CODEX_PILOT!=='1'))throw Error('STAGING_PILOT_REQUIRED');
  const address=new URL(process.env.FOUNDRY_DATABASE_URL||process.env.DATABASE_URL);
  if(process.env.FOUNDRY_DATABASE_PRIVATE_NETWORK==='true'||address.searchParams.get('sslmode')!=='verify-full')
   throw Error('LOCAL_STAGING_BRIDGE_REQUIRES_VERIFIED_TLS');
@@ -39,20 +40,21 @@ async function main(){
  // business writes; fresh permissions still gate every goal and browser read.
  const workspaces=String(process.env.STOCKCHIEF_CODEX_PILOT_WORKSPACES||'').split(',').map(s=>s.trim()).filter(Boolean);
  const workerIdentity=require('node:crypto').randomUUID();
- const markAvailable=()=>db.query('UPDATE stockchief_runtime.codex_pilots SET worker_seen_at=now(),worker_identity=$2 WHERE workspace_id=ANY($1::text[])',[workspaces,workerIdentity]);
+ const markAvailable=()=>db.query("UPDATE stockchief_runtime.codex_pilots SET worker_seen_at=now(),worker_identity=$2 WHERE workspace_id=ANY($1::text[]) OR $3 AND admission_kind='COMMERCIAL'",[workspaces,workerIdentity,commercialRollout]);
  await markAvailable();
  let availability=Promise.resolve();
  const availabilityTimer=setInterval(()=>{availability=availability.then(markAvailable).catch(error=>console.warn('Agent availability update failed:',error.code||'DATABASE_UNAVAILABLE'));},10000);availabilityTimer.unref();
  const warmInspection=async()=>{
  const pilots=(await db.query(`SELECT p.workspace_id,u.id AS actor_id FROM stockchief_runtime.codex_pilot_workspace_access p
   JOIN users u ON u.workspace_id=p.workspace_id JOIN accounts a ON a.id=u.account_id
-  WHERE (p.pilot->>'enabled')::boolean AND p.funding_workspace_id=ANY($1::text[])
-  AND lower(a.email)=ANY($2::text[])
-  AND (CASE WHEN p.account_inherited THEN a.id=p.owner_account_id AND u.role='owner'
-    ELSE (p.pilot->'authorized_actor_ids') ? u.id END)
-  AND ($3 OR p.workspace_id=ANY($1::text[])) ORDER BY p.workspace_id,u.id LIMIT 4`,[workspaces,
+  WHERE (p.pilot->>'enabled')::boolean AND
+   ($4 AND p.pilot->>'admission_kind'='COMMERCIAL' AND a.id=p.owner_account_id AND u.role='owner'
+    OR p.funding_workspace_id=ANY($1::text[]) AND lower(a.email)=ANY($2::text[])
+    AND (CASE WHEN p.account_inherited THEN a.id=p.owner_account_id AND u.role='owner'
+      ELSE (p.pilot->'authorized_actor_ids') ? u.id END) AND ($3 OR p.workspace_id=ANY($1::text[])))
+  ORDER BY p.workspace_id,u.id LIMIT 4`,[workspaces,
    require('../src/assistant/codex-pilot-scope').list(process.env.STOCKCHIEF_CODEX_PILOT_EMAILS).map(e=>e.toLowerCase()),
-   require('../src/assistant/codex-pilot-scope').accountAccess()])).rows;
+   require('../src/assistant/codex-pilot-scope').accountAccess(),commercialRollout])).rows;
  for(const row of pilots){
   const lease=await inspectionPool.acquire({database:db,ctx:{workspaceId:row.workspace_id,actorId:row.actor_id},connectionString:address.toString()});
   await lease.release();
@@ -73,15 +75,15 @@ async function main(){
   }
  };
  handler.externalEffect=true;
- const shouldClaim=async()=>Boolean((await db.query(`SELECT 1 FROM stockchief_runtime.codex_pilots WHERE workspace_id=ANY($1::text[])
+ const shouldClaim=async()=>Boolean((await db.query(`SELECT 1 FROM stockchief_runtime.codex_pilots WHERE (workspace_id=ANY($1::text[]) OR $2 AND admission_kind='COMMERCIAL')
   AND enabled AND NOT stopped AND approval_reference IS NOT NULL AND ceiling_micro_usd>0
-  AND period_ends_at>now() LIMIT 1`,[workspaces])).rows.length);
+  AND period_ends_at>now() LIMIT 1`,[workspaces,commercialRollout])).rows.length);
  const worker=require('../src/operations/postgres-worker').start(db,{handlers:{'assistant.run-codex-goal':handler},leaseMs:10*60000,shouldClaim});
  const stopNotifications=await require('../src/assistant/postgres-goal-resume').watchDependencies(db,workspaces,()=>worker.wake(),
   {availableWorkspace:require('../src/assistant/codex-pilot-scope').availableWorkspace})
   .catch(error=>{console.warn('Job/dependency notifications unavailable; durable polling and sweeps remain active:',error.code||'NOTIFICATION_UNAVAILABLE');return async()=>{};});
  const stop=async()=>{clearInterval(keepAlive);clearInterval(warmTimer);clearInterval(availabilityTimer);await stopNotifications();await worker.stop();await warming;await availability;
-  await db.query('UPDATE stockchief_runtime.codex_pilots SET worker_seen_at=NULL,worker_identity=NULL WHERE workspace_id=ANY($1::text[]) AND worker_identity=$2',[workspaces,workerIdentity]).catch(()=>{});
+  await db.query("UPDATE stockchief_runtime.codex_pilots SET worker_seen_at=NULL,worker_identity=NULL WHERE (workspace_id=ANY($1::text[]) OR $3 AND admission_kind='COMMERCIAL') AND worker_identity=$2",[workspaces,workerIdentity,commercialRollout]).catch(()=>{});
   await inspectionPool.close();await sandboxPool.close();await db.close();};
  const keepAlive=setInterval(()=>{},60000);
  process.once('SIGTERM',()=>stop().then(()=>process.exit(0)));process.once('SIGINT',()=>stop().then(()=>process.exit(0)));

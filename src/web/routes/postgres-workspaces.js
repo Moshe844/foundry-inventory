@@ -42,6 +42,19 @@ function createPostgresWorkspacesRouter(database){
     req.session.workspaceId=workspaceId;await sessionCall(req,'save');
     return res.redirect(303,safeNext(req.body.next));
   }));
+  router.get('/inventories/:id/delete',asyncRoute(async(req,res)=>res.page('workspaces/postgres-delete',{
+    title:'Delete inventory',nav:'inventories',review:await require('../../domain/postgres-workspace-removal').describe(database,req.account.id,req.params.id),error:null,
+  })));
+  router.post('/inventories/:id/delete',asyncRoute(async(req,res)=>{
+    try{
+      const result=await require('../../domain/postgres-workspace-removal').remove(database,req.account.id,req.params.id,req.body);
+      if(req.session.workspaceId===req.params.id)req.session.workspaceId=await auth.defaultWorkspaceFor(database,req.account.id);
+      req.flash('success',`${result.name} was deleted from the account. Existing business history is retained.`);
+      await sessionCall(req,'save');return res.redirect(303,'/inventories');
+    }catch(error){if(!error.status||error.status>=500)throw error;return res.status(error.status).page('workspaces/postgres-delete',{
+      title:'Delete inventory',nav:'inventories',review:await require('../../domain/postgres-workspace-removal').describe(database,req.account.id,req.params.id),error:error.message,
+    });}
+  }));
   return router;
 }
 

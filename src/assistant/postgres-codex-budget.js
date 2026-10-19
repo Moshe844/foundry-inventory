@@ -7,7 +7,9 @@ function createBudget(db,ctx,goalId){
   // The reservation path still locks the pilot and repeats fresh authority.
   const row=(await client.query(`SELECT p.pilot,u.*
    FROM stockchief_runtime.codex_pilot_workspace_access p
-   CROSS JOIN LATERAL (SELECT COALESCE(sum(CASE WHEN state='SETTLED' THEN charged ELSE reserved END),0) AS committed,
+   CROSS JOIN LATERAL (SELECT COALESCE(sum(CASE WHEN p.pilot->>'admission_kind'='COMMERCIAL'
+      AND (created_at<(p.pilot->>'period_starts_at')::timestamptz OR created_at>=(p.pilot->>'period_ends_at')::timestamptz)
+      THEN 0 WHEN state='SETTLED' THEN charged ELSE reserved END),0) AS committed,
     count(*) AS calls,count(*) FILTER(WHERE state IN ('RESERVED','UNKNOWN')) AS unresolved
     FROM stockchief_runtime.codex_pilot_calls WHERE funding_workspace_id=p.funding_workspace_id) u
    WHERE p.workspace_id=$1`,[ctx.workspaceId])).rows[0]||{pilot:null,committed:0,calls:0,unresolved:0};

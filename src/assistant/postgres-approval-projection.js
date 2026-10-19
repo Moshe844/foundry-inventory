@@ -7,7 +7,12 @@ const {digest,snapshot}=require('./approval-revision');
 async function pending(database,workspaceId,actorId){
  if(!actorId||!require('./postgres-codex-pilot').configured({workspaceId}))return [];
  const emails=String(process.env.STOCKCHIEF_CODEX_PILOT_EMAILS||'').split(',').map(s=>s.trim().toLowerCase()).filter(Boolean);
- if(!emails.length)return [];
+ let commercial=false;
+ if(require('./codex-pilot-scope').customerAccess()){
+  try{commercial=(await require('./postgres-codex-pilot').access(database,{workspaceId,actorId},{enabled:true})).pilot.admission_kind==='COMMERCIAL';}
+  catch(error){if(error.status===403||error.status===404)return [];throw error;}
+ }
+ if(!emails.length&&!commercial)return [];
  const rows=(await database.query(`SELECT g.id AS goal_id,g.created_at,u.role AS actor_role,u.permissions AS actor_permissions,d.key AS delivery_key,d.value AS delivery,
    CASE d.value->>'kind' WHEN 'business' THEN to_jsonb(p) WHEN 'rule' THEN to_jsonb(r) END AS proposal,
    m.id AS mission_id,m.plan_hash,m.approved_steps,m.approval_status,m.authorization_mode,m.steps AS mission_steps
@@ -15,9 +20,9 @@ async function pending(database,workspaceId,actorId){
   JOIN users u ON u.workspace_id=g.workspace_id AND u.id=g.actor_user_id
   JOIN accounts a ON a.id=u.account_id
   JOIN stockchief_runtime.codex_pilot_workspace_access pilot ON pilot.workspace_id=g.workspace_id
-    AND pilot.funding_workspace_id=ANY($4::text[])
+    AND ($5 AND pilot.pilot->>'admission_kind'='COMMERCIAL' OR pilot.funding_workspace_id=ANY($4::text[])
     AND (CASE WHEN pilot.account_inherited THEN a.id=pilot.owner_account_id AND u.role='owner'
-      ELSE (pilot.pilot->'authorized_actor_ids') ? g.actor_user_id END)
+      ELSE (pilot.pilot->'authorized_actor_ids') ? g.actor_user_id END))
   CROSS JOIN LATERAL jsonb_each(CASE WHEN jsonb_typeof(g.checkpoint#>'{harness,approvalDeliveries}')='object'
     THEN g.checkpoint#>'{harness,approvalDeliveries}' ELSE '{}'::jsonb END) d
   LEFT JOIN stockchief_runtime.assistant_action_proposals p ON d.value->>'kind'='business'
@@ -29,10 +34,10 @@ async function pending(database,workspaceId,actorId){
       AND m.waiting_proposal_id=p.id AND m.status IN ('WAITING','ADVANCING','WAITING_USER','BLOCKED')
       AND m.approval_status IN ('PENDING','APPROVED')
     ORDER BY m.created_at DESC,m.id DESC LIMIT 1) m ON true
-  WHERE g.workspace_id=$1 AND g.actor_user_id=$2 AND lower(a.email)=ANY($3::text[])
+  WHERE g.workspace_id=$1 AND g.actor_user_id=$2 AND ($5 OR lower(a.email)=ANY($3::text[]))
     AND g.checkpoint->>'runtime'='codex-staging' AND g.status='WAITING_APPROVAL' AND g.expires_at>now()
     AND (p.id IS NOT NULL OR r.id IS NOT NULL)
-  ORDER BY g.created_at,g.id,d.key`,[workspaceId,actorId,emails,require('./codex-pilot-scope').fundingWorkspaces()])).rows;
+  ORDER BY g.created_at,g.id,d.key`,[workspaceId,actorId,emails,require('./codex-pilot-scope').fundingWorkspaces(),commercial])).rows;
  const decisions=new Set(),items=new Map();
  for(const row of rows){
   const card=row.delivery,p=row.proposal;

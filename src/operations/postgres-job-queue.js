@@ -97,6 +97,7 @@ async function claim(database, options = {}) {
     await recover(client, now);
     const candidate = await client.query(`SELECT id FROM stockchief_runtime.jobs
       WHERE status IN ('PENDING','RETRY') AND available_at <= $1
+      AND (workspace_id IS NULL OR EXISTS(SELECT 1 FROM public.workspaces w WHERE w.id=jobs.workspace_id AND w.deletion_requested_at IS NULL FOR KEY SHARE SKIP LOCKED))
       AND ($2::text[] IS NULL OR kind = ANY($2::text[])) ORDER BY priority, created_at, id
       LIMIT 1 FOR UPDATE SKIP LOCKED`, [now, kinds]);
     if (!candidate.rows.length) return null;

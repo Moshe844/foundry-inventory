@@ -1,17 +1,21 @@
 'use strict';
 process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
-for(const accountInherited of [false,true])test('actual Staging SDK lifecycle uses the real renderer, approval and PostgreSQL verification with an offline provider: '+(accountInherited?'inherited account access':'original rollout'),{timeout:240000},async t=>{
+for(const mode of ['original','inherited','commercial'])test('actual Staging SDK lifecycle uses the real renderer, approval and PostgreSQL verification with an offline provider: '+({original:'original rollout',inherited:'inherited account access',commercial:'fresh subscription account'}[mode]),{timeout:240000},async t=>{
+ const accountInherited=mode==='inherited',commercial=mode==='commercial';
  const cluster=await require('../helpers/postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString);
- const keys=['STOCKCHIEF_RUNTIME_ENV','STOCKCHIEF_CODEX_PILOT','STOCKCHIEF_CODEX_PILOT_WORKSPACES','STOCKCHIEF_CODEX_PILOT_EMAILS','STOCKCHIEF_CODEX_PILOT_ACCOUNT_ACCESS','FOUNDRY_DATABASE_URL'];
+ const keys=['STOCKCHIEF_RUNTIME_ENV','STOCKCHIEF_CODEX_PILOT','STOCKCHIEF_CODEX_PILOT_WORKSPACES','STOCKCHIEF_CODEX_PILOT_EMAILS','STOCKCHIEF_CODEX_PILOT_ACCOUNT_ACCESS','STOCKCHIEF_CODEX_CUSTOMER_ACCESS','FOUNDRY_DATABASE_URL'];
  const old=Object.fromEntries(keys.map(k=>[k,process.env[k]]));
- t.after(async()=>{for(const [k,v]of Object.entries(old))if(v===undefined)delete process.env[k];else process.env[k]=v;await db.close();cluster.stop();});
+ t.after(async()=>{for(const [k,v]of Object.entries(old))if(v===undefined)delete process.env[k];else process.env[k]=v;await db.close();await cluster.stop();});
  await require('../../src/db/migrate-postgres').migratePostgres(db);
  const email=randomUUID()+'@example.test',owner=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'SDK Staging owner',businessName:'Testing',email,password:'Fake!'+randomUUID()});
  let ctx={workspaceId:owner.workspaceId,actorId:owner.userId};process.env.STOCKCHIEF_RUNTIME_ENV='staging';
- Object.assign(process.env,(await require('../../scripts/provision-codex-staging').provision(db,{businessName:'Testing',emails:[email]})).environment);
+ if(commercial){
+  process.env.STOCKCHIEF_CODEX_CUSTOMER_ACCESS='1';process.env.STOCKCHIEF_CODEX_PILOT='0';delete process.env.STOCKCHIEF_CODEX_PILOT_EMAILS;delete process.env.STOCKCHIEF_CODEX_PILOT_WORKSPACES;
+  await db.query(`INSERT INTO account_subscriptions(id,account_id,plan_id,status,billing_interval,source) VALUES($1,$2,'growth','COMP','CUSTOM','OFFLINE_SDK_SUBSCRIPTION')`,['sub_'+randomUUID(),owner.accountId]);
+ }else Object.assign(process.env,(await require('../../scripts/provision-codex-staging').provision(db,{businessName:'Testing',emails:[email]})).environment);
  process.env.FOUNDRY_DATABASE_URL=cluster.connectionString;
- await db.query(`UPDATE stockchief_runtime.codex_pilots SET enabled=true,stopped=false,ceiling_micro_usd=500000,
+ if(!commercial)await db.query(`UPDATE stockchief_runtime.codex_pilots SET enabled=true,stopped=false,ceiling_micro_usd=500000,
   approval_reference='OFFLINE FAKE PROVIDER ONLY' WHERE workspace_id=$1`,[ctx.workspaceId]);
  await require('../../scripts/environment-agent-demo/run-pilot').seedPrices(db);
  if(accountInherited){
@@ -67,6 +71,11 @@ for(const accountInherited of [false,true])test('actual Staging SDK lifecycle us
  assert.equal((await db.query('SELECT count(*) n FROM stockchief_runtime.codex_pilot_calls WHERE workspace_id=$1 AND funding_workspace_id=$2',[ctx.workspaceId,owner.workspaceId])).rows[0].n,'3');
  assert.equal(completed.checkpoint.harness.codexRequests,3);
  assert.equal(completed.checkpoint.harness.native.codex.instructionsProfile,'stockchief-operator-v1','Approval resumption retains the original instruction profile');
+ if(commercial){
+  assert.equal((await pilot.access(db,ctx)).pilot.admission_kind,'COMMERCIAL');
+  assert.equal(process.env.STOCKCHIEF_CODEX_PILOT_WORKSPACES,undefined);assert.equal(process.env.STOCKCHIEF_CODEX_PILOT_EMAILS,undefined);
+  t.diagnostic(JSON.stringify({actualCodexSDK:true,actualAgentBrowser:true,syntheticProvider:true,freshSubscriptionAccount:true,manualIdentityConfiguration:false,approvalDelivered:true,canonicalReceiptCount:1,verifiedPostgresUnits:3,settledRequests:3,paidProviderCalls:0}));return;
+ }
  // Produce a real older SDK journal using the unchanged, previously certified
  // image and a fake provider. Its missing profile field is the exact legacy
  // persistence shape. The new image must resume it without changing its base.

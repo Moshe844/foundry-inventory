@@ -303,7 +303,7 @@ async function runtimeSweep(job,client,options={}){
   const autonomyDue=(await client.query(`SELECT w.id AS workspace_id,u.id AS actor_id
     FROM workspaces w JOIN LATERAL (SELECT id FROM users WHERE workspace_id=w.id AND role='owner' ORDER BY created_at,id LIMIT 1) u ON true
     LEFT JOIN workspace_autopilot a ON a.workspace_id=w.id
-    WHERE COALESCE(a.paused,0)=0 AND COALESCE(a.suspended,0)=0
+    WHERE w.deletion_requested_at IS NULL AND COALESCE(a.paused,0)=0 AND COALESCE(a.suspended,0)=0
       ${billingFilter}
       AND (a.next_evaluation_at IS NULL OR a.next_evaluation_at<=$1)`,[at])).rows;
   let scheduledAutopilotChecks=0;

@@ -1,0 +1,16 @@
+<section class="rm-head"><div><p class="rm-eyebrow">Your inventories</p><h1>Delete <%= review.workspace.name %></h1>
+ <p class="rm-lede">Remove this inventory from the account and stop its StockChief connections and automation.</p></div></section>
+<% if(error){ %><div class="notice notice--warn" role="alert"><%= error %></div><% } %>
+<section class="rm-card"><h2>Review this inventory</h2><dl class="grid">
+ <div><dt>Products</dt><dd><%= review.summary.products %></dd></div><div><dt>Locations</dt><dd><%= review.summary.locations %></dd></div>
+ <div><dt>Units on hand</dt><dd><%= review.summary.units %></dd></div><div><dt>Connected systems</dt><dd><%= review.summary.connections %></dd></div>
+ <div><dt>People with access</dt><dd><%= review.summary.members %></dd></div></dl>
+ <p>This inventory will disappear for everyone who can access it. Its StockChief API tokens and stored connection credentials will be removed or revoked.</p>
+ <p><strong>Business and billing history is retained for audit.</strong> This action does not permanently erase historical records, cancel orders with providers, refund payments or delete records in connected systems.</p>
+ <p>Your other inventories and their records stay available.</p>
+</section>
+<form method="post" action="/inventories/<%= review.workspace.id %>/delete" class="rm-card">
+ <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+ <label class="field"><span class="field-label">Type <strong><%= review.workspace.name %></strong> to confirm</span><input class="input" name="confirmName" autocomplete="off" required></label>
+ <div class="rm-choices"><a class="rm-btn rm-btn--ghost" href="/inventories">Keep inventory</a><button class="rm-btn" type="submit">Delete this inventory</button></div>
+</form>

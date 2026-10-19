@@ -87,6 +87,6 @@ async function run(database,workspaceId){const id=newId('recon');const started=n
 
 async function dueWorkspaces(database,at=nowIso()){return (await database.query(`SELECT w.id FROM workspaces w
   LEFT JOIN stockchief_runtime.workspace_reconciliation_state state ON state.workspace_id=w.id
-  WHERE state.next_check_at IS NULL OR state.next_check_at<=$1 ORDER BY w.id`,[at])).rows.map((row)=>row.id);}
+  WHERE w.deletion_requested_at IS NULL AND (state.next_check_at IS NULL OR state.next_check_at<=$1) ORDER BY w.id`,[at])).rows.map((row)=>row.id);}
 
 module.exports={INVARIANTS,run,dueWorkspaces};

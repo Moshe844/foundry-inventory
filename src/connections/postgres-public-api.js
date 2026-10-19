@@ -56,7 +56,7 @@ async function authenticate(database,authorization,requiredScope){
       JOIN users account_user ON account_user.id=api.created_by_user_id
         AND account_user.workspace_id=api.workspace_id
       JOIN workspaces workspace ON workspace.id=api.workspace_id
-      WHERE api.token_hash=$1 AND api.revoked_at IS NULL FOR UPDATE OF api`,[hash(match[1])]);
+      WHERE api.token_hash=$1 AND api.revoked_at IS NULL AND workspace.deletion_requested_at IS NULL FOR UPDATE OF api`,[hash(match[1])]);
     const row=result.rows[0];
     if(!row)throw new AuthenticationError('This API token is invalid or revoked.');
     const granted=parse(row.scopes);

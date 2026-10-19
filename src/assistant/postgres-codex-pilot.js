@@ -2,7 +2,7 @@
 const {AuthorizationError,ValidationError,NotFoundError}=require('../domain/errors');
 const store=require('./postgres-goal-store');
 const readonlyAuthorizations=new WeakMap();
-const {list,configured,fundingWorkspaces}=require('./codex-pilot-scope');
+const {list,configured,fundingWorkspaces,customerAccess}=require('./codex-pilot-scope');
 async function access(db,ctx,{enabled=false,owner=false}={}){
  if(!configured(ctx))throw new AuthorizationError('The Codex pilot is not available in this business.');
  // One fresh identity/pilot snapshot for this boundary. No authority is cached
@@ -10,9 +10,17 @@ async function access(db,ctx,{enabled=false,owner=false}={}){
  const row=(await db.query(`SELECT u.id,u.role,u.permissions,a.email,a.id AS account_id,w.owner_account_id,w.name AS business_name,p.pilot
   FROM users u JOIN accounts a ON a.id=u.account_id JOIN workspaces w ON w.id=u.workspace_id
   LEFT JOIN stockchief_runtime.codex_pilot_workspace_access p ON p.workspace_id=u.workspace_id
-    AND p.funding_workspace_id=ANY($3::text[])
-  WHERE u.workspace_id=$1 AND u.id=$2`,[ctx.workspaceId,ctx.actorId,fundingWorkspaces()])).rows[0];
+    AND (p.funding_workspace_id=ANY($3::text[]) OR $4 AND p.pilot->>'admission_kind'='COMMERCIAL')
+  WHERE u.workspace_id=$1 AND u.id=$2 AND w.deletion_requested_at IS NULL`,[ctx.workspaceId,ctx.actorId,fundingWorkspaces(),customerAccess()])).rows[0];
  const actor=row&&{id:row.id,role:row.role,permissions:row.permissions,email:row.email};
+ if(customerAccess()&&actor&&(!row.pilot||row.pilot.admission_kind==='COMMERCIAL')){
+  if(owner&&actor.role!=='owner')throw new AuthorizationError('Only an owner can change agent availability.');
+  const checked=await require('./postgres-codex-enrollment').policy(db,ctx);
+  const pilot=row.pilot||{admission_kind:'COMMERCIAL',enabled:true,unprovisioned:true,ceiling_micro_usd:checked.ceiling,
+   period_ends_at:checked.period.end.toISOString(),approval_reference:'commercial-plan:'+checked.subscription.id,stopped:false};
+  if(enabled&&!pilot.enabled)throw new AuthorizationError('The business agent is disabled in this inventory.');
+  return {actor,pilot,commercialAccess:{scope:checked.scope,entitlement:checked.entitlement},environment:{business:{name:row.business_name},actor:{role:actor.role},clock:{utc:new Date().toISOString()}}};
+ }
  if(!actor||!list(process.env.STOCKCHIEF_CODEX_PILOT_EMAILS).map(s=>s.toLowerCase()).includes(actor.email.toLowerCase())||owner&&actor.role!=='owner')
   throw new AuthorizationError('This account is not authorized for the Staging pilot.');
  const pilot=row.pilot;
@@ -34,12 +42,14 @@ function spendingLockMessage(pilot){
  return null;
 }
 async function view(db,ctx){if(!configured(ctx))return null;try{const {actor,pilot}=await access(db,ctx);
+ if(pilot.admission_kind==='COMMERCIAL')return null;
  const usage=await require('./postgres-codex-budget').createBudget(db,ctx,null).status();return {
  enabled:pilot.enabled,canToggle:actor.role==='owner',funded:!spendingLockMessage(pilot),lockMessage:spendingLockMessage(pilot),
  workerAvailable:Boolean(pilot.worker_seen_at&&Date.now()-new Date(pilot.worker_seen_at).getTime()<30000),
  budget:{ceiling:usage.ceiling,committed:usage.committed,remaining:usage.remaining},
  model:'Codex SDK',reasoning:'Adaptive reasoning'};}catch(e){if(e instanceof AuthorizationError)return null;throw e;}}
 async function toggle(db,ctx,enabled){await access(db,ctx,{owner:true});
+ await require('./postgres-codex-enrollment').ensure(db,ctx);
  return db.transaction(async client=>{
   const {pilot}=await access(client,ctx,{owner:true});
   if(pilot.account_inherited)await client.query(`INSERT INTO stockchief_runtime.codex_pilot_workspace_settings(workspace_id,enabled)
@@ -52,6 +62,7 @@ async function toggle(db,ctx,enabled){await access(db,ctx,{owner:true});
 }
 async function start(db,ctx,message,options={}){
  ctx=await require('./codex-model-routing').context(db,ctx);
+ await require('./postgres-codex-enrollment').ensure(db,ctx);
  const {pilot}=await access(db,ctx,{enabled:true});
  const locked=spendingLockMessage(pilot);if(locked)throw new ValidationError(locked);
  const conversation=await require('./postgres-agent-context').capture(db,ctx,options.startedAt||null);
@@ -96,6 +107,7 @@ async function decide(db,ctx,id,deliveryId,sha256,approved,{responseReference,mi
  if(updated?.status==='READY')await store.enqueue(db,updated);return result;
 }
 async function run(db,ctx,id,options={}){
+ await require('./postgres-codex-enrollment').ensure(db,ctx);
  const {pilot}=await access(db,ctx,{enabled:true});
  if(spendingLockMessage(pilot)){
   const goal=await store.get(db,ctx,id);
@@ -152,6 +164,7 @@ async function continuation(db,ctx,id){return db.transaction(async client=>{
  }
 },{isolation:'REPEATABLE READ',readOnly:true});}
 async function resume(db,ctx,id){
+ await require('./postgres-codex-enrollment').ensure(db,ctx);
  const {pilot}=await access(db,ctx,{enabled:true});const locked=spendingLockMessage(pilot);if(locked)throw new ValidationError(locked);
  const goal=await db.transaction(async client=>{
   const row=(await client.query('SELECT * FROM stockchief_runtime.assistant_goals WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 FOR UPDATE',[ctx.workspaceId,ctx.actorId,id])).rows[0];

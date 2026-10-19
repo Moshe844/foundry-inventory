@@ -1,0 +1,6 @@
+'use strict';const test=require('node:test'),assert=require('node:assert/strict');
+test('Staging test Stripe sign-in never enables production, live credentials or subscription checkout',t=>{
+ const keys=['NODE_ENV','STOCKCHIEF_RUNTIME_ENV','STOCKCHIEF_STRIPE_TEST_CONNECT','STRIPE_SECRET_KEY','STRIPE_PUBLISHABLE_KEY','STRIPE_CONNECT_CLIENT_ID'],old=Object.fromEntries(keys.map(k=>[k,process.env[k]]));t.after(()=>{for(const k of keys)if(old[k]===undefined)delete process.env[k];else process.env[k]=old[k];});const gate=require('../../src/payments/connect-availability');
+ Object.assign(process.env,{NODE_ENV:'production',STOCKCHIEF_RUNTIME_ENV:'staging',STOCKCHIEF_STRIPE_TEST_CONNECT:'1',STRIPE_SECRET_KEY:'sk_test_fixture',STRIPE_PUBLISHABLE_KEY:'pk_test_fixture',STRIPE_CONNECT_CLIENT_ID:'ca_fixture'});assert.equal(gate.qualified(),true);
+ process.env.STOCKCHIEF_RUNTIME_ENV='production';assert.equal(gate.qualified(),false);process.env.STOCKCHIEF_RUNTIME_ENV='staging';process.env.STRIPE_SECRET_KEY='sk_live_fixture';assert.equal(gate.qualified(),false);process.env.STRIPE_SECRET_KEY='sk_test_fixture';delete process.env.STOCKCHIEF_STRIPE_TEST_CONNECT;assert.equal(gate.qualified(),false);assert.equal(gate.qualified({testMode:true,paymentConnectOptions:{testQualifiedConnection:true}}),false,'A test-only option cannot bypass a real deployment');
+});

@@ -43,7 +43,9 @@
         <div class="wsp-meta">
           <% if (workspace.dataMode === 'synthetic') { %><span class="badge badge--variant">Test environment</span><% } %>
           <span class="badge badge--muted"><%= helpers.roleLabel(workspace.role) %></span>
-          <% if (workspace.configuredByStockChief) { %>
+          <% if (locals.postgresMode) { %>
+            <span class="badge badge--muted"><%= workspace.itemCount>0?'Products added':'No products yet' %></span>
+          <% } else if (workspace.configuredByStockChief) { %>
             <span class="badge badge--muted"><%- helpers.icon('foundry', { size: 11 }) %> Set up by StockChief</span>
           <% } else if (!workspace.configured) { %>
             <span class="badge badge--warn">Not set up yet</span>
@@ -79,7 +81,7 @@
           <%# Deleting is a link, not a button: it opens a page that shows what
               would be destroyed and asks for the name. There is no one-click
               path to it anywhere. %>
-          <% if (!locals.postgresMode && !workspace.deleting && workspace.role === 'owner') { %>
+          <% if (!workspace.deleting && workspace.role === 'owner') { %>
             <a class="btn btn--ghost btn--sm" href="/inventories/<%= workspace.workspaceId %>/delete">Delete</a>
           <% } %>
         </div>
@@ -88,7 +90,7 @@
   </div>
 
   <p class="muted" style="font-size:12.5px; margin-top:16px;">
-    <% if (locals.postgresMode) { %>Inventory leaving and permanent deletion are not yet available on this version. Contact support if you need either action.<br><% } %>
+    <% if (locals.postgresMode) { %>Deleting an inventory stops access and connections. Historical business and billing records are retained for audit.<br><% } %>
     <% if (allowance.unlimited) { %>
       <%= workspaces.length %> <%= helpers.plural(workspaces.length, 'inventory', 'inventories') %>.
     <% } else { %>

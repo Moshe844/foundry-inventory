@@ -20,7 +20,14 @@
    returning=true;
    reply({type:'foundry:connection-return-ack',eventId:message.eventId});
    try{window.focus();}catch{}
-   window.setTimeout(()=>window.location.replace(path),100);
+   window.setTimeout(()=>{
+    const destination=new URL(path,window.location.origin);
+    // A fragment-only return does not load the freshly saved connection.
+    // Reload this resource even when the parent is already on its return page.
+    if(destination.pathname===window.location.pathname&&destination.search===window.location.search){
+     window.history.replaceState(null,'',path);window.location.reload();
+    }else window.location.replace(path);
+   },100);
   }
   if(channel)channel.onmessage=event=>receive(event.data,reply=>channel.postMessage(reply));
   window.addEventListener('message',event=>{

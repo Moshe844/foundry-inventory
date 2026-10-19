@@ -50,7 +50,7 @@ function createPostgresConnectionsRouter(database,options={}){
   async function renderConnections(req,res,apiToken=null){
     const inventorySetup=req.query.setup==='inventory';
     const providerCatalog=inventorySetup?registry.inventorySources(req.ctx,{oauthOnly:true}):registry.catalog(req.ctx,{oauthOnly:true});
-    const qualifiedTestConnect=options.testMode===true&&options.paymentConnectOptions?.testQualifiedConnection===true;
+    const qualifiedTestConnect=require('../../payments/connect-availability').qualified(options);
     const launchTicket=crypto.randomBytes(24).toString('base64url');
     req.session.connectionLaunch={ticket:launchTicket,workspaceId:req.ctx.workspaceId,expiresAt:Date.now()+5*60000};
     const requestOrigin=`${req.protocol}://${req.get('host')}`;
@@ -149,6 +149,9 @@ function createPostgresConnectionsRouter(database,options={}){
   }));
   router.get('/settings/connections/payments/launch',requireOwner,asyncRoute(async(req,res)=>{
     await entitlements.assertCapability(database,commercialScope(req),'merchant_payments');
+    const current=await paymentConnect.describe(database,req.ctx.workspaceId);
+    if(!current.connected&&!require('../../payments/connect-availability').qualified(options))
+      return res.status(403).send('New Stripe connections are not enabled on this installation. Existing payment records remain available.');
     const launch=req.session.connectionLaunch;
     delete req.session.connectionLaunch;
     if(!launch||launch.workspaceId!==req.ctx.workspaceId||launch.expiresAt<Date.now()

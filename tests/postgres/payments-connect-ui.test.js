@@ -33,7 +33,7 @@ test('real Chromium connects each inventory to its own Stripe account without re
     connect.authorizeEndpoint=`http://127.0.0.1:${server.address().port}/fixture-stripe-consent`;
     const browser=await chromium.launch({args:['--disable-popup-blocking']});
     context.after(async()=>{await browser.close();await new Promise((resolve)=>server.close(resolve));
-      await app.locals.sessionStore.close();await database.close();cluster.stop();
+      await app.locals.sessionStore.close();await database.close();await cluster.stop();
       if(priorClient===undefined)delete process.env.STRIPE_CONNECT_CLIENT_ID;else process.env.STRIPE_CONNECT_CLIENT_ID=priorClient;
       if(priorSecret===undefined)delete process.env.STRIPE_SECRET_KEY;else process.env.STRIPE_SECRET_KEY=priorSecret;});
     const browserContext=await browser.newContext();const page=await browserContext.newPage({viewport:{width:1440,height:1000}});
@@ -50,11 +50,11 @@ test('real Chromium connects each inventory to its own Stripe account without re
     await popup.waitForURL(/fixture-stripe-consent/);await popup.waitForLoadState('domcontentloaded');
     await popup.getByRole('heading',{name:'Stripe test authorization'}).waitFor();
     assert.equal(await popup.evaluate(()=>Boolean(window.opener)),true);
-    await popup.getByRole('link',{name:'Authorize Stripe account'}).click();
-    await popup.waitForURL(/\/settings\/connections\/payments\/return/);
-    assert.match(await popup.locator('body').innerText(),/Stripe is connected/);
-    await popup.waitForEvent('close');
-    await page.getByText('Owner Stripe Sandbox',{exact:true}).waitFor();
+    const callbackRequests=[];popup.on('request',request=>{if(new URL(request.url()).pathname==='/settings/connections/payments/return')callbackRequests.push(request.method());});
+    const closed=popup.waitForEvent('close');await popup.getByRole('link',{name:'Authorize Stripe account'}).click();
+    await closed;assert.equal(popup.isClosed(),true,'Successful authorization closes its own popup');
+    assert(callbackRequests.length>0,'The actual provider return endpoint completed before popup closure');
+    await page.getByText('Owner Stripe Sandbox',{exact:true}).first().waitFor();
     assert.match(await page.locator('main').innerText(),/Owner Stripe Sandbox/);
     assert.match(await page.locator('main').innerText(),/Stripe review pending/);
     const ownerAccount=(await database.query(`SELECT p.*,w.name AS workspace_name FROM payment_connect_accounts p
