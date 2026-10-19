@@ -11,7 +11,7 @@
   <div class="titles"><a class="back-link" href="/imports">Bring data in</a><h1><%= plan.sourceName %></h1>
     <div class="page-sub"><%= plan.recordsDetected %> <%= helpers.plural(plan.recordsDetected, 'row') %> read · <% if(needsAnswer){ %>Answer the question below before import<% } else { %><%= plan.recordsValid %> ready · <%= plan.recordsInvalid %> need correction<% } %></div>
   </div>
-  <div class="page-actions"><span class="badge badge--<%= activity?.verified?'ok':'muted' %>"><%= activity?.label||helpers.columnLabel(plan.status.toLowerCase()) %></span></div>
+  <div class="page-actions" <% if(activity.active){ %>data-import-progress="<%= activity.href %>/progress"<% } %>><span data-import-status class="badge badge--<%= activity?.verified?'ok':'muted' %>"><%= activity?.label||helpers.columnLabel(plan.status.toLowerCase()) %></span></div>
 </div>
 <% if(duplicatePlans.length && plan.status!=='SUCCEEDED'){ %>
   <div class="notice notice--warn section"><strong>This exact source was already imported.</strong>
@@ -84,7 +84,7 @@
   </section>
 <% } %>
 <% if(importing){ %>
-  <section class="card section" data-import-progress="/imports/<%= plan.id %>/progress" data-import-detail aria-live="polite"><div class="card-head"><h2 data-import-status><%= activity.label %></h2></div><div class="card-body"><p>StockChief is processing <%= plan.recordsValid.toLocaleString('en-US') %> approved rows. Products and stock appear together after the import passes verification.</p><p>You can leave this page. Reopen it from <a href="/imports">File imports and results</a> or the progress banner elsewhere in this inventory.</p><p data-import-timing></p></div></section>
+  <section class="card section" data-import-progress="/imports/<%= plan.id %>/progress" data-import-detail aria-live="polite"><div class="card-head"><h2 data-import-status><%= activity.label %></h2></div><div class="card-body"><p>StockChief is processing <%= plan.recordsValid.toLocaleString('en-US') %> approved rows. Products and stock appear together after the import passes verification.</p><p>You can leave this page. Reopen it from <a href="/imports">File imports and results</a> or the progress banner elsewhere in this inventory.</p><p data-import-timing></p><%- include('../partials/import-meter',{activity}) %></div></section>
 <% } else if(interrupted){ %>
   <section class="card section"><div class="card-head"><h2>Import paused before verification</h2></div><div class="card-body"><p>Your source file and approval history are saved. This run has no verified successful result, so StockChief will not start another copy automatically or claim it completed.</p><p>Review this import before continuing. <a href="/imports">Back to your imports</a></p></div></section>
 <% } else if(run){ %>

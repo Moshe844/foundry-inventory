@@ -5,6 +5,28 @@
 .import-activity__row{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:6px 0;}
 .import-activity__row+.import-activity__row{margin-top:10px;border-top:1px solid var(--line);padding-top:16px;}
 .import-activity__copy{display:grid;gap:4px;min-width:0;}
+.import-activity__row{flex-wrap:wrap;}
+.import-activity__row>.import-meter{flex-basis:100%;}
+.import-meter{width:100%;margin-top:10px;padding:16px;border-radius:12px;background:var(--surface,#fff);border:1px solid var(--line,#e2e3ed);}
+.import-meter__status{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:14px;}
+.import-meter__status>[data-import-count]{margin-left:auto;font-variant-numeric:tabular-nums;font-size:13px;color:var(--ink-2);}
+.import-meter__indicator{width:10px;height:10px;border-radius:50%;background:var(--brand-2,#6554e8);box-shadow:0 0 0 4px #6554e815;animation:import-pulse 1.6s ease-in-out infinite;}
+.import-meter__track{height:8px;border-radius:8px;background:#efedf9;overflow:hidden;margin:15px 0 12px;}
+.import-meter__track>span{display:block;height:100%;background:linear-gradient(90deg,#7764ff,#5040ce);border-radius:inherit;transition:width .4s ease;}
+.import-meter__track.is-indeterminate>span{animation:import-scan 1.8s ease-in-out infinite;}
+.import-meter__steps{display:flex;justify-content:space-between;gap:8px;list-style:none;margin:0;padding:0;color:var(--muted);font-size:12px;}
+.import-meter__steps>.is-current{color:var(--brand-2,#5545d7);font-weight:700;}
+.import-meter__steps>.is-done{color:var(--ink-2);}
+.import-meter__details{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-top:12px;color:var(--muted);font-size:12px;line-height:1.5;}
+.import-meter__details>[data-import-live]{font-variant-numeric:tabular-nums;white-space:nowrap;}
+.import-meter[data-state=verified] .import-meter__indicator{animation:none;background:#25855b;box-shadow:0 0 0 4px #25855b15;}
+.import-meter[data-state=verified] .import-meter__track>span{background:#25855b;}
+.import-meter:not([data-state=running]):not([data-state=queued]) .import-meter__indicator{animation:none;}
+.import-meter:not([data-state=running]):not([data-state=queued]) .import-meter__track>span{animation:none;}
+@keyframes import-pulse{50%{opacity:.4;}}
+@keyframes import-scan{from{transform:translateX(-110%);}to{transform:translateX(410%);}}
+@media(prefers-reduced-motion:reduce){.import-meter__indicator,.import-meter__track.is-indeterminate>span{animation:none;}.import-meter__track>span{transition:none;}}
+@media(max-width:600px){.import-meter{padding:12px;}.import-meter__status>[data-import-count]{margin-left:20px;width:100%;}.import-meter__steps{font-size:11px;}}
 .import-activity__copy>strong{color:var(--ink);font-size:16px;}
 .import-activity__copy>span{color:var(--ink-2);font-size:13px;overflow-wrap:anywhere;}
 .import-activity__copy>small{color:var(--muted);font-size:12px;line-height:1.45;}

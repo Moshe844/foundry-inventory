@@ -497,15 +497,17 @@ function create(providers=defaultProviders,options={}){return {'system.runtime-s
     if(!plan||plan.integrity_hash!==integrityHash||plan.approval_status!=='APPROVED')
       throw Object.assign(new Error('The approved import changed after it was queued.'),
         {code:'import_approval_changed',retryable:false});
-    let lost=false,pending=Promise.resolve();
+    let lost=false,pending=Promise.resolve(),progress=null;
     const leaseMs=job.leaseToken?Math.max(1000,Number(job.leaseExpiresAt)-Date.now()):60000;
     const timer=job.leaseToken?setInterval(()=>{pending=pending.then(async()=>{
       if(!await jobs.heartbeat(database,job.id,job.leaseToken,{leaseMs}))lost=true;
-    }).catch(()=>{lost=true;});},Math.max(100,Math.floor(leaseMs/3))):null;
+      if(!lost&&progress){try{if(!await require('../imports/postgres-progress').record(database,job,progress))lost=true;}
+        catch{/* Advisory progress must not abort a transaction with a healthy lease. */}}
+    }).catch(()=>{lost=true;});},Math.max(100,Math.min(5000,Math.floor(leaseMs/3)))):null;
     if(timer)timer.unref();
     try{
       const result=await require('../imports/postgres-service').execute(database,
-        {workspaceId:job.workspaceId,actorId},planId,{beforeRow:()=>{
+        {workspaceId:job.workspaceId,actorId},planId,{onProgress:value=>{progress=value;},beforeRow:()=>{
           if(lost)throw Object.assign(new Error('The import worker lost its execution lease before committing.'),{code:'import_lease_lost',retryable:false});
         }});
       if(!result.verified&&result.execution?.status!=='SUCCEEDED')throw Object.assign(

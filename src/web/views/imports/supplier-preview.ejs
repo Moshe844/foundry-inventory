@@ -2,13 +2,13 @@
 <div class="page-head"><div class="titles"><a class="back-link" href="/imports">Bring data in</a>
   <h1>Review suppliers from <%= plan.sourceName %></h1>
   <div class="page-sub"><%= plan.recordsDetected %> rows read · <%= plan.recordsValid %> ready · <%= plan.recordsInvalid %> need attention</div>
-</div><div class="page-actions"><span class="badge badge--<%= activity?.verified?'ok':'muted' %>"><%= activity?.label||helpers.columnLabel(plan.status.toLowerCase()) %></span></div></div>
+</div><div class="page-actions" <% if(activity.active){ %>data-import-progress="<%= activity.href %>/progress"<% } %>><span data-import-status class="badge badge--<%= activity?.verified?'ok':'muted' %>"><%= activity?.label||helpers.columnLabel(plan.status.toLowerCase()) %></span></div></div>
 <div class="notice section"><strong>StockChief recognized a supplier directory.</strong>
   Names, contacts and payment terms will create supplier records, not products or stock. Nothing changes until you approve and run this preview.</div>
 <% if(duplicatePlans.length&&plan.status!=='SUCCEEDED'){ %><div class="notice notice--warn section">
   This exact file was already imported. <a href="/imports/<%= duplicatePlans[0].id %>">See the completed import</a>.</div><% } %>
 <% if(activity?.active){ %>
-  <section class="card section" data-import-progress="/imports/<%= plan.id %>/progress" data-import-detail aria-live="polite"><div class="card-head"><h2 data-import-status><%= activity.label %></h2></div><div class="card-body"><p>StockChief is processing <%= plan.recordsValid.toLocaleString('en-US') %> approved supplier rows. The records appear together after verification. You can leave this page and reopen it from <a href="/imports">File imports and results</a>.</p><p data-import-timing></p></div></section>
+  <section class="card section" data-import-progress="/imports/<%= plan.id %>/progress" data-import-detail aria-live="polite"><div class="card-head"><h2 data-import-status><%= activity.label %></h2></div><div class="card-body"><p>StockChief is processing <%= plan.recordsValid.toLocaleString('en-US') %> approved supplier rows. The records appear together after verification. You can leave this page and reopen it from <a href="/imports">File imports and results</a>.</p><p data-import-timing></p><%- include('../partials/import-meter',{activity}) %></div></section>
 <% }else if(activity&&['PAUSED','NEEDS_REVIEW'].includes(activity.state)&&!run?.verified){ %>
   <section class="card section"><div class="card-head"><h2>Import paused before verification</h2></div><div class="card-body"><p>Your file and approval history are saved. Review this import before continuing; StockChief will not automatically start another copy or claim it completed.</p></div></section>
 <% }else if(run){ %><div class="card section"><div class="card-head"><h2>Reconciliation</h2>

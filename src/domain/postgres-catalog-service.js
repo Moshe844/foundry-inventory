@@ -102,12 +102,15 @@ async function createImportedItemInTransaction(client, ctx, input) {
     variants.some((row) => row.options?.length) ? 1 : 0, at]);
   const optionNames = [...new Set(variants.flatMap((variant) => (variant.options || []).map((part) => part.name)))];
   const optionIds = new Map();
+  const optionRows=[];
   for (const [position, optionName] of optionNames.entries()) {
     const optionId = newId('opt');
     optionIds.set(optionName, optionId);
-    await client.query(`INSERT INTO item_options(id,workspace_id,item_id,name,position)
-      VALUES($1,$2,$3,$4,$5)`, [optionId, ctx.workspaceId, itemId, optionName, position]);
+    optionRows.push({id:optionId,name:optionName,position});
   }
+  if(optionRows.length)await client.query(`INSERT INTO item_options(id,workspace_id,item_id,name,position)
+    SELECT x.id,$1,$2,x.name,x.position FROM jsonb_to_recordset($3::jsonb) AS x(id text,name text,position bigint)`,
+    [ctx.workspaceId,itemId,JSON.stringify(optionRows)]);
   const taken = new Set();
   const created = [];
   for (const [position, variant] of variants.entries()) {
@@ -120,10 +123,9 @@ async function createImportedItemInTransaction(client, ctx, input) {
     await client.query(`INSERT INTO skus(id,workspace_id,item_id,code,barcode,variant_label,is_default,position,is_active,created_at)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,1,$9)`,
     [skuId, ctx.workspaceId, itemId, code, trimOrNull(variant.barcode), label, options.length ? 0 : 1, position, at]);
-    for (const part of options) {
-      await client.query('INSERT INTO sku_option_values(sku_id,option_id,value) VALUES($1,$2,$3)',
-        [skuId, optionIds.get(part.name), part.value]);
-    }
+    if(options.length)await client.query(`INSERT INTO sku_option_values(sku_id,option_id,value)
+      SELECT $1,x.option_id,x.value FROM jsonb_to_recordset($2::jsonb) AS x(option_id text,value text)`,
+      [skuId,JSON.stringify(options.map(part=>({option_id:optionIds.get(part.name),value:part.value})))]);
     created.push({ key:variant.key, skuId, code });
   }
   return { itemId, skus:created };

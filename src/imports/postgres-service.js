@@ -555,6 +555,8 @@ async function execute(database, ctx, id, options={}) {
         throw new ValidationError('The approved import is no longer executable.');
       const sourceRows=(await client.query(`SELECT * FROM import_rows WHERE workspace_id=$1 AND import_id=$2
         AND status IN ('VALID','NEEDS_REVIEW') ORDER BY row_number,id FOR UPDATE`,[ctx.workspaceId,id])).rows.map(hydrateRow);
+      const publishProgress=(stage,processedRows)=>options.onProgress?.({stage,processedRows,totalRows:sourceRows.length});
+      publishProgress('preparing',0);
       if(plan.transformations.dataset==='suppliers'){
         let created=0;
         for(const row of sourceRows){
@@ -562,7 +564,9 @@ async function execute(database, ctx, id, options={}) {
           await client.query(`UPDATE import_rows SET status='IMPORTED',imported_at=$3
             WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,row.id,nowIso()]);
           created++;
+          publishProgress('processing',created);
         }
+        publishProgress('verifying',created);
         const finishedAt=nowIso();
         const checks=[{name:'Suppliers created',expected:sourceRows.length,observed:created,
           ok:created===sourceRows.length}];
@@ -592,6 +596,7 @@ async function execute(database, ctx, id, options={}) {
       }
       let itemsCreated=0;let skusCreated=0;let units=0;let rowsImported=0;
       const salePriceBySku=new Map();
+      let savedRows=[];
       for(const [key,group] of grouped){
         if(options.beforeGroup)await options.beforeGroup({key,group,itemsCreated});
         const skuByVariant=new Map();
@@ -649,12 +654,14 @@ async function execute(database, ctx, id, options={}) {
                 sourceType:'opening_inventory',sourceRecordId:row.id});
             }
           }
-          await client.query(`UPDATE import_rows SET status='IMPORTED',item_id=$3,sku_id=$4,location_id=$5,
-            movement_ids=$6,quantity=$7,imported_at=$8 WHERE workspace_id=$1 AND id=$2`,
-          [ctx.workspaceId,row.id,itemId,skuId,row.parsed.locationId,JSON.stringify(movementIds),row.parsed.quantity,nowIso()]);
+          savedRows.push({id:row.id,itemId,skuId,locationId:row.parsed.locationId,movementIds,quantity:row.parsed.quantity,at:nowIso()});
+          if(savedRows.length>=500){await rowStore.markImported(client,ctx.workspaceId,id,savedRows);savedRows=[];}
           rowsImported+=1;
+          publishProgress('processing',rowsImported);
         }
       }
+      await rowStore.markImported(client,ctx.workspaceId,id,savedRows);
+      publishProgress('verifying',rowsImported);
       const finishedAt=nowIso();
       const checks=[{name:'Rows imported',expected:sourceRows.length,observed:rowsImported,ok:sourceRows.length===rowsImported},
         {name:'Opening units',expected:sourceRows.reduce((sum,row)=>sum+(row.parsed.quantity || 0),0),observed:units,

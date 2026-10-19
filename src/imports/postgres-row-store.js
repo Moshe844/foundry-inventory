@@ -17,4 +17,13 @@ async function revise(database,workspaceId,importId,current,rows){
    WHERE saved.workspace_id=$1 AND saved.import_id=$2 AND saved.id=x.id`,[workspaceId,importId,JSON.stringify(batch)]);
  }
 }
-module.exports={insert,revise};
+async function markImported(database,workspaceId,importId,rows){
+ if(!rows.length)return;
+ const batch=rows.map(row=>({id:row.id,item_id:row.itemId,sku_id:row.skuId,location_id:row.locationId,movement_ids:JSON.stringify(row.movementIds),quantity:row.quantity,imported_at:row.at}));
+ const result=await database.query(`UPDATE import_rows saved SET status='IMPORTED',item_id=x.item_id,sku_id=x.sku_id,location_id=x.location_id,
+   movement_ids=x.movement_ids,quantity=x.quantity,imported_at=x.imported_at
+  FROM jsonb_to_recordset($3::jsonb) AS x(id text,item_id text,sku_id text,location_id text,movement_ids text,quantity bigint,imported_at text)
+  WHERE saved.workspace_id=$1 AND saved.import_id=$2 AND saved.id=x.id`,[workspaceId,importId,JSON.stringify(batch)]);
+ if(result.rowCount!==rows.length)throw new Error('The imported row identities did not reconcile.');
+}
+module.exports={insert,revise,markImported};

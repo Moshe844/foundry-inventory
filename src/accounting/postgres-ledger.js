@@ -147,15 +147,16 @@ async function postInTransaction(client, ctx, input) {
     [id,ctx.workspaceId,entryNumber,postingDate,period.id,String(input.description||'Business event'),
       input.sourceType||'business_event',input.sourceRecordType||null,input.sourceRecordId||null,input.sourceEventId||null,
       sourceKey,input.createdByType||'SYSTEM',ctx.actorId||null,JSON.stringify(input.metadata||{}),input.reversalOfEntryId||null,at]);
-    for(const [index,line] of normalized.entries()){
-      await client.query(`INSERT INTO accounting_journal_lines
+    const journalLines=normalized.map((line,index)=>({id:newId('jel'),line_number:index+1,account_id:line.accountId||byKey.get(line.accountKey),debit_minor:line.debit,credit_minor:line.credit,
+      customer_id:line.customerId||null,supplier_id:line.supplierId||null,item_id:line.itemId||null,sku_id:line.skuId||null,location_id:line.locationId||null,memo:line.memo||null,metadata:JSON.stringify(line.metadata||{})}));
+    await client.query(`INSERT INTO accounting_journal_lines
         (id,workspace_id,entry_id,line_number,account_id,debit_minor,credit_minor,currency,customer_id,supplier_id,
          item_id,sku_id,location_id,memo,metadata,created_at)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
-      [newId('jel'),ctx.workspaceId,id,index+1,line.accountId||byKey.get(line.accountKey),line.debit,line.credit,
-        currency,line.customerId||null,line.supplierId||null,line.itemId||null,
-        line.skuId||null,line.locationId||null,line.memo||null,JSON.stringify(line.metadata||{}),at]);
-    }
+        SELECT x.id,$1,$2,x.line_number,x.account_id,x.debit_minor,x.credit_minor,$3,x.customer_id,x.supplier_id,
+          x.item_id,x.sku_id,x.location_id,x.memo,x.metadata,$4
+        FROM jsonb_to_recordset($5::jsonb) AS x(id text,line_number bigint,account_id text,debit_minor bigint,credit_minor bigint,
+          customer_id text,supplier_id text,item_id text,sku_id text,location_id text,memo text,metadata text)`,
+      [ctx.workspaceId,id,currency,at,JSON.stringify(journalLines)]);
   return { entry:{ id,entry_number:entryNumber,posting_date:postingDate,source_key:sourceKey,status:'POSTED' },replayed:false,totalMinor:total };
 }
 

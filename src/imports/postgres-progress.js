@@ -15,10 +15,17 @@ function present(row){
  else if(row.approval_status==='APPROVED'){state='APPROVED';label='Approved — ready to start';}
  else{state='AWAITING_APPROVAL';label='Waiting for your approval';}
  const iso=value=>value?new Date(value).toISOString():null;
+ const detail=typeof row.job_result==='string'?JSON.parse(row.job_result):row.job_result;
+ const p=detail?.importProgress,known=Boolean(p&&['preparing','processing','verifying'].includes(p.stage)&&Number.isSafeInteger(p.processedRows)&&Number.isSafeInteger(p.totalRows)&&p.processedRows>=0&&p.processedRows<=p.totalRows&&p.totalRows===Number(row.records_valid));
+ const stage=verified?'complete':known&&state==='RUNNING'?p.stage:state==='RUNNING'?'processing':state.toLowerCase();
+ const stageLabel={preparing:'Preparing approved records',processing:'Applying products, stock and costs',verifying:'Checking stock and accounting totals',complete:'Inventory saved and verified',queued:'Waiting for an available worker',paused:'Waiting for review',needs_review:'Review required',approved:'Approved and ready to start',awaiting_approval:'Review and approve the preview',cancelled:'Stopped'}[stage];
  return {id:row.id,sourceName:row.source_name,rows:Number(row.records_detected),readyRows:Number(row.records_valid),
   invalidRows:Number(row.records_invalid),state,label,active:['QUEUED','RUNNING'].includes(state),working:state==='RUNNING',
   verified,finished:!['QUEUED','RUNNING'].includes(state),status:row.plan_status,
   createdAt:iso(row.created_at),queuedAt:iso(row.queued_at),startedAt:iso(row.started_at),completedAt:iso(row.finished_at),
+  stage,stageLabel,processedRows:verified?Number(row.records_valid):known?p.processedRows:null,
+  progressPercent:verified?100:known&&p.totalRows?Math.min(99,Math.floor(p.processedRows/p.totalRows*100)):null,
+  lastUpdateAt:iso(row.job_updated_at||row.finished_at||row.started_at||row.created_at),
   href:'/imports/'+encodeURIComponent(row.id)};
 }
 
@@ -26,10 +33,10 @@ async function list(database,workspaceId,{id=null,limit=10,activeOnly=false}={})
  if(!workspaceId)throw new TypeError('Import progress requires a workspace.');
  const rows=(await database.query(`SELECT p.id,p.source_name,p.records_detected,p.records_valid,p.records_invalid,
    p.status AS plan_status,p.approval_status,p.created_at,j.status AS job_status,j.lease_expires_at,
-   j.created_at AS queued_at,COALESCE(e.started_at::timestamptz,j.started_at) AS started_at,e.status AS execution_status,
+   j.created_at AS queued_at,j.updated_at AS job_updated_at,j.result AS job_result,COALESCE(e.started_at::timestamptz,j.started_at) AS started_at,e.status AS execution_status,
    e.finished_at,v.verified,floor(extract(epoch FROM clock_timestamp())*1000)::bigint AS database_now
   FROM import_plans p
-  LEFT JOIN LATERAL(SELECT job.status,job.lease_expires_at,job.created_at,job.started_at FROM stockchief_runtime.jobs job
+  LEFT JOIN LATERAL(SELECT job.status,job.lease_expires_at,job.created_at,job.started_at,job.updated_at,job.result FROM stockchief_runtime.jobs job
    WHERE job.workspace_id=p.workspace_id AND job.kind='import.execute-approved' AND job.payload->>'planId'=p.id
    ORDER BY job.created_at DESC,job.id DESC LIMIT 1)j ON true
   LEFT JOIN LATERAL(SELECT run.id,run.status,run.started_at,run.finished_at FROM import_executions run
@@ -47,4 +54,10 @@ async function get(database,workspaceId,id){
  return rows[0];
 }
 
-module.exports={list,get,present};
+async function record(database,job,value){
+ if(!job.workspaceId||!job.leaseToken||!['preparing','processing','verifying'].includes(value.stage)||!Number.isSafeInteger(value.processedRows)||!Number.isSafeInteger(value.totalRows)||value.processedRows<0||value.processedRows>value.totalRows)throw new TypeError('Invalid import progress.');
+ return (await database.query(`UPDATE stockchief_runtime.jobs SET result=jsonb_build_object('importProgress',$4::jsonb)
+  WHERE workspace_id=$1 AND id=$2 AND lease_token=$3 AND kind='import.execute-approved' AND status='RUNNING'
+   AND lease_expires_at>floor(extract(epoch FROM clock_timestamp())*1000)`,[job.workspaceId,job.id,job.leaseToken,JSON.stringify({stage:value.stage,processedRows:value.processedRows,totalRows:value.totalRows})])).rowCount===1;
+}
+module.exports={list,get,present,record};
