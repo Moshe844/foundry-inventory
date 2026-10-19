@@ -10,6 +10,30 @@ function encode(entry,value,{legacy=false,indexHeadings=false,indexRepresentatio
  collect(source);let field=FIELD,metadata=META,valueField=VALUES;while(keys.has(field))field+='_';while(keys.has(metadata))metadata+='_';while(keys.has(valueField))valueField+='_';
  const original=JSON.parse(entry.text),coordinates=!Object.hasOwn(original,'_stockchiefRecordPaths')&&source?._stockchiefRecordPaths?.field;
  const generated=new Set(coordinates?['_stockchiefRecordPaths',coordinates]:[]);
+ // A canonical report supplies calculation rows and a matching display view.
+ // Offer one citation per displayed cell, rather than two competing refs for
+ // the same column. Raw values remain available for arithmetic, and legacy
+ // indexing still binds every raw reference to its original exact value.
+ // Only inspect the trusted tool's report envelopes, never arbitrary nested
+ // customer objects that happen to contain similarly named arrays.
+ const calculationCells=new Set();
+ function reportCells(report,path){
+  if(!report||report.provenance?.source!=='PostgreSQL'||!report.config||
+    !Array.isArray(report.columns)||!report.columns.every(c=>typeof c==='string')||
+    !Array.isArray(report.rows)||!Array.isArray(report.displayRows)||
+    report.rows.length!==report.displayRows.length)return;
+  report.rows.forEach((row,index)=>{const display=report.displayRows[index];
+   if(!row||!display||typeof row!=='object'||typeof display!=='object'||Array.isArray(row)||Array.isArray(display))return;
+   for(const column of report.columns)if(Object.hasOwn(row,column)&&Object.hasOwn(display,column)&&
+     (row[column]===null||typeof row[column]!=='object')&&
+     (display[column]===null||typeof display[column]!=='object'))calculationCells.add(path+'/rows/'+index+'/'+part(column));
+  });
+ }
+ if(!legacy&&!indexRepresentation){
+  if(entry.name==='environment_dataset')reportCells(source,'');
+  if(entry.name==='business_operations'&&Array.isArray(source?.outcomes))
+   source.outcomes.forEach((outcome,index)=>reportCells(outcome?.result,'/outcomes/'+index+'/result'));
+ }
  const bindings=new Map();
  function fieldReference(pointer){
   const ref='fv1:'+createHash('sha256').update(JSON.stringify([entry.id,entry.sha256,pointer])).digest('base64url').slice(0,16);
@@ -44,7 +68,7 @@ function encode(entry,value,{legacy=false,indexHeadings=false,indexRepresentatio
   const values={};
   for(const[k,value]of Object.entries(v)){
    const pointer=path+'/'+part(k);
-   if(heading(k)||generated.has(k)||entry.name==='environment_browser'&&pointer==='/image'||/^\/(?:screen\/)?viewState(?:\/|$)/.test(pointer))continue;
+   if(heading(k)||generated.has(k)||calculationCells.has(pointer)||entry.name==='environment_browser'&&pointer==='/image'||/^\/(?:screen\/)?viewState(?:\/|$)/.test(pointer))continue;
    // A presented container can contain host labels or projected children.
    // Its displayed JSON is not the original factual value. New reports cite
    // the primitive leaves; historical container bindings remain indexed.
@@ -73,7 +97,7 @@ function encode(entry,value,{legacy=false,indexHeadings=false,indexRepresentatio
  const output=visit(source);
  if(output&&typeof output==='object'&&!Array.isArray(output)){
   const notice=legacy?{version:1,field,meaning:'Legacy object reference; paths are relative to this object.'}:
-   {version:2,valueField,meaning:'Copy the field reference and exact value; no path or observation ID. Browser textBlocks keys are already complete field references. Hidden metadata; no business authority.'};
+   {version:2,valueField,meaning:'Copy the field reference and exact value; no path or observation ID. Report displayRows supply citations for formatted columns; raw rows retain calculation values. Browser textBlocks keys are already complete field references. Hidden metadata; no business authority.'};
   output[metadata]=notice;
   // Screenshot MCP delivery sends screen as its text block and image as a
   // separate block. Bind that delivered object at /screen, not the wrapper.
