@@ -2,8 +2,11 @@
   <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="providerType" value="woocommerce">
   <label class="field"><span class="field-label">WooCommerce store URL</span><input class="input" type="url" name="storeUrl" placeholder="https://your-store.example" required autocomplete="url"></label>
   <button class="rm-btn rm-btn--wash" type="submit">Authorize WooCommerce</button>
-  <p class="quiet">Recommended. Sign in to your store and approve StockChief. Your store sends its keys securely.</p>
+  <p class="quiet">Recommended. Sign in and approve access in the window that opens. Your store sends its keys securely.</p>
 </form>
+<details class="rm-more"><summary>Which login should I use?</summary><div>
+  <p>Use an administrator account for this store. If your store offers WordPress.com and a local username/password login, choose the account that has access to the store. You can sign in during authorization.</p>
+</div></details>
 <% if(postgresMode){ %><details class="rm-more" data-woocommerce-manual><summary>Use Consumer Key and Secret instead</summary><div>
   <p>Use a read/write key from WooCommerce → Settings → Advanced → REST API. Keys are encrypted and never placed in a link.</p>
   <form method="post" action="/settings/connections/woocommerce/api-keys" autocomplete="off">

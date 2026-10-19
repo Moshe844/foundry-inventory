@@ -41,11 +41,25 @@ function credentialsFromInput(input){
 }
 
 async function verifyReadOnly({credentials}){
-  const [products,setting]=await Promise.all([api(credentials,'/products?per_page=1'),api(credentials,'/settings/general/woocommerce_currency')]);
+  const products=await api(credentials,'/products?per_page=1');
   if(!Array.isArray(products.body))throw new ValidationError('This address did not return a WooCommerce product catalogue.');
-  const currency=money.code(setting.body?.value);
+  const currency=await storeCurrency(credentials);
   return {accountId:credentials.storeUrl,accountName:new URL(credentials.storeUrl).hostname,
     capabilities:['read_products','read_inventory','read_orders'],verifiedFact:{currency,checkedAt:new Date().toISOString(),source:'authenticated_woocommerce_api'}};
+}
+
+async function storeCurrency(credentials){
+  let value;
+  try{value=(await api(credentials,'/data/currencies/current')).body?.code;}
+  catch(error){
+    // Older or customized stores can omit this read-only data endpoint.
+    // An authorization failure must never be treated as an absent route.
+    if(error.status!==404)throw error;
+    value=(await api(credentials,'/settings/general/woocommerce_currency')).body?.value;
+  }
+  try{return money.code(value);}catch{
+    throw new ValidationError('WooCommerce did not return a recognized store currency. This attempt did not import products.');
+  }
 }
 
 async function api(credentials, path, options = {}) {
@@ -57,8 +71,15 @@ async function api(credentials, path, options = {}) {
     // keys, provider bodies or authorization headers in logs or usage receipts.
     const known=error instanceof DomainError;
     const status=known?error.status:([400,401,403,404,409,422,429,503].includes(Number(error.status))?Number(error.status):503);
-    const safe=new DomainError(known?error.message:'WooCommerce could not verify this API request. Check the public store address, API access and read/write permission.',
+    const resource=path.startsWith('/products')?'products':path.startsWith('/data/currencies')||path.startsWith('/settings/general/woocommerce_currency')?'currency':path.startsWith('/webhooks')?'webhooks':'api';
+    const messages={401:'WooCommerce did not authorize this request. Check that the keys belong to this store and their WordPress user has access.',
+      403:'WooCommerce denied access. Check the key permissions and the store’s API security settings.',
+      404:resource==='currency'?'The store’s currency could not be read from its WooCommerce API. This attempt did not import products.':
+        'The requested WooCommerce information is not available. Check the store address and its REST API setup.',
+      409:'WooCommerce reported a conflicting request. Its result must be checked before the operation is repeated.'};
+    const safe=new DomainError(known?error.message:messages[status]||'WooCommerce could not complete this API request. Check its REST API access.',
       {status,code:known?error.code:'woocommerce_request_rejected'});
+    safe.providerResource=resource;safe.httpStatus=status;
     for(const flag of ['providerOutcomeUncertain','transient','retryable'])if(typeof error[flag]==='boolean')safe[flag]=error[flag];
     for(const field of ['httpStatus','attempts'])if(Number.isSafeInteger(error[field]))safe[field]=error[field];
     throw safe;
@@ -66,7 +87,7 @@ async function api(credentials, path, options = {}) {
 }
 
 async function discover({ credentials }) {
-  const currency=money.code((await api(credentials,'/settings/general/woocommerce_currency')).body.value);
+  const currency=await storeCurrency(credentials);
   const priceMoney=value=>String(value??'').trim()===''?null:{amount:money.toMinor(value,currency),currency};
   const products = [];
   for (let page = 1; ; page += 1) {
