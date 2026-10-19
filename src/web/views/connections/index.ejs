@@ -260,6 +260,13 @@
           </span>
         </div>
         <p><%= provider.description %></p>
+        <% if (provider.available && provider.authorizationPrerequisite) { %>
+          <div class="rm-note rm-note--warn" data-authorization-prerequisite>
+            <p><%= provider.authorizationPrerequisite.message %>
+              <a href="<%= provider.authorizationPrerequisite.href %>" target="_blank" rel="noopener noreferrer"><%= provider.authorizationPrerequisite.label %></a>
+            </p>
+          </div>
+        <% } %>
 
         <% if (!provider.available) { %>
           <p class="quiet"><%= provider.unavailableReason %></p>

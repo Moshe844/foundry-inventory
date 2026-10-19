@@ -70,7 +70,7 @@ test('recorded clarification and unfamiliar multi-turn domains traverse the real
     return require('../helpers/codex-offline-response').final(body,calls,JSON.stringify({version:1,status:'completed',outcome:'answer',answer:'The approved operation is recorded and its current business state is verified.',claims:[{evidenceId:entry.id,path:sample.path,value:actual}]}));
    }};
   await page.getByLabel('Ask StockChief',{exact:true}).fill(sample.reply); // unsent input must survive the arriving question
-  const first=await pilot.run(db,ctx,goal.id,options);assert.equal(first.status,'WAITING_USER');
+  const first=await pilot.run(db,ctx,goal.id,options);assert.equal(first.status,'WAITING_USER',JSON.stringify({calls,failure:first.checkpoint.harness?.failure,interruption:first.checkpoint.harness?.interruption}));
   await page.locator('[data-goal-phase-text]').last().getByText('Let’s clarify',{exact:true}).waitFor({timeout:10000});
   assert.equal(await page.getByLabel('Ask StockChief',{exact:true}).inputValue(),sample.reply);
   assert(!await page.locator('body').innerText().then(s=>s.includes('"missingInformation"')||s.includes('Could not finish')));
@@ -80,21 +80,22 @@ test('recorded clarification and unfamiliar multi-turn domains traverse the real
   const resumed=await store.latest(db,ctx);assert.equal(resumed.id,goal.id);assert.deepEqual(resumed.checkpoint.messages,[sample.reply]);
   const duplicate=await store.reply(db,ctx,goal.id,sample.reply,{questionId:qid});assert(duplicate.replyReplayed);assert.equal(duplicate.checkpoint.messages.length,1);
   assert.equal(await store.reply(db,{...ctx,actorId:'not-this-actor'},goal.id,'intrusion',{questionId:qid}),null);
-  await pilot.run(db,ctx,goal.id,options);await page.reload();
+  await pilot.run(db,ctx,goal.id,options);
   const second=await store.get(db,ctx,goal.id);assert.equal(second.status,'WAITING_USER',JSON.stringify({calls,failure:second.checkpoint.harness?.failure,interruption:second.checkpoint.harness?.interruption}));assert.notEqual(second.checkpoint.conversationState.input.id,qid);
+  await page.locator('[data-adaptive-goal="'+goal.id+'"] [data-goal-answer]').filter({hasText:sample.follow}).waitFor({timeout:20000});
   assert.equal(await store.reply(db,ctx,goal.id,'stale different answer',{questionId:qid}),null);
   const secondQuestion=second.checkpoint.conversationState.input.id;
   await page.getByLabel('Ask StockChief',{exact:true}).fill(sample.second);
   await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Continue',exact:true}).click()]);
   assert.deepEqual((await store.get(db,ctx,goal.id)).checkpoint.messages,[sample.reply,sample.second]);
   const prepared=await pilot.run(db,ctx,goal.id,options);assert.equal(prepared.status,'WAITING_APPROVAL',prepared.answer);assert.equal(calls,3);
-  await page.reload();const inbox=await pilot.inbox(db,ctx,goal.id);assert.equal(inbox.approvals.length,1);
+  await page.getByRole('button',{name:'Approve this change',exact:true}).waitFor({timeout:20000});const inbox=await pilot.inbox(db,ctx,goal.id);assert.equal(inbox.approvals.length,1);
   const proposal=inbox.approvals[0];assert.equal(proposal.canonicalStatus,'PENDING');
   if(sample.name==='sales'){assert.equal(proposal.payload.lines[0].unitPriceMinor,1275);assert.equal(proposal.payload.currency,'GBP');assert.equal(proposal.payload.shipToAddress,'18 Test Road');}
   assert.equal((await db.query('SELECT count(*) AS n FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1 AND id=$2 AND status=$3',[ctx.workspaceId,proposal.proposalId,'EXECUTED'])).rows[0].n,'0');
   await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve this change',exact:true}).click()]);
   const verified=await pilot.run(db,ctx,goal.id,options);assert.equal(verified.status,'COMPLETED',verified.answer);
-  await page.reload();assert(await page.locator('[data-adaptive-goal="'+goal.id+'"] [data-goal-phase-text]').getByText('Completed',{exact:true}).isVisible());
+  await page.locator('[data-adaptive-goal="'+goal.id+'"] [data-goal-phase-text]').getByText('Completed',{exact:true}).waitFor({timeout:20000});
   assert((await page.locator('body').innerText()).includes(sample.reply));assert((await page.locator('body').innerText()).includes(sample.second));
   assert.equal((await db.query('SELECT status FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,proposal.proposalId])).rows[0].status,'EXECUTED');
   assert.equal((await store.get(db,ctx,goal.id)).original_request,sample.goal);

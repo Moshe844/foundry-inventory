@@ -10,12 +10,13 @@ const system=require('./postgres-control-plane').ANSWER_FIT_SYSTEM+`\nSeparately
 // source of business truth. It can only reject delivery as a completed answer.
 // Canonical work and human handoffs retain their model-free delivery path.
 function packet(goal,raw){
- const report=require('./agent-conversation').parse(raw),h=goal.checkpoint?.harness||{};
+ let report=require('./agent-conversation').parse(raw);const h=goal.checkpoint?.harness||{};
  if(report?.status!=='completed'||report.outcome==='navigation')return null;
  const dependencies=require('../../scripts/environment-agent-demo/waits').dependencies(h);
  if(Object.values(dependencies).some(ids=>ids.length))return null;
+ const sourceTables=(report.workProducts||[]).filter(p=>p.sourceTable).map(p=>p.sourceTable),tables=require('../../scripts/environment-agent-demo/source-tables').materialize(goal,report);report=tables.report;
  const entries=Object.values(h.evidence||{}),sources=new Map(),refs=require('../../scripts/environment-agent-demo/source-references'),sourceIndexes=new Map(),sourceMetadataIndexes=new Map();
- for(const input of report.claims){
+ for(const input of [...report.claims,...tables.claims]){
   // One immutable packet may cite many values from the same observations.
   // Build each original-value index once for this packet, not once per claim.
   // The map never survives this call or substitutes for fresh fact checks.
@@ -34,7 +35,7 @@ function packet(goal,raw){
   originalGoal:goal.original_request,clarifications:goal.checkpoint.messages||[],
   conversationContext:goal.checkpoint.conversation||null,continuation:goal.checkpoint.continuation||null,
   pageHint:goal.checkpoint.page?.path||null,
-  proposedAnswer:report.answer,workProducts:report.workProducts||[],nextActions:report.nextActions||[],claims:report.claims,
+  proposedAnswer:report.answer,workProducts:report.workProducts||[],nextActions:report.nextActions||[],claims:report.claims,...(sourceTables.length?{sourceTables}:{}),
   evidence:[...sources.values()]};
 }
 function binding(goal,raw){const input=packet(goal,raw);return input?{hash:digest(input),input}:null;}

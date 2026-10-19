@@ -15,15 +15,16 @@
   return value;
  }
  function inline(value){
-  const text=String(value),tokens=/(`+)|\[([^\]\n]+)\]\([ \t]*([^\s)]+)[ \t]*\)/g;let out='',at=0,match;
+  const text=String(value),tokens=/(`+)|\[([^\]\n]+)\]\([ \t]*([^\s)]+)[ \t]*\)|\\([\\`*_[\]{}()#+.!|~>-])/g;let out='',at=0,match;
   while((match=tokens.exec(text))){out+=emphasis(text.slice(at,match.index));
    if(match[1]!==undefined){const delimiter=match[1],start=tokens.lastIndex;let end=text.indexOf(delimiter,start);while(end>=0&&(text[end-1]==='`'||text[end+delimiter.length]==='`'))end=text.indexOf(delimiter,end+delimiter.length);if(end>=0){out+='<code>'+escape(text.slice(start,end))+'</code>';tokens.lastIndex=end+delimiter.length;}else out+=escape(delimiter);}
+   else if(match[4]!==undefined)out+=escape(match[4]);
    else{const href=localHref(match[3]);out+=href?'<a href="'+escape(href)+'">'+emphasis(match[2])+'</a>':emphasis(match[2]);}
    at=tokens.lastIndex;
   }
   return out+emphasis(text.slice(at));
  }
- const cells=line=>line.trim().replace(/^\|/,'').replace(/\|$/,'').split('|').map(s=>s.trim());
+ const cells=line=>{const text=line.trim().replace(/^\|/,'').replace(/\|$/,''),result=[];let cell='';for(let i=0;i<text.length;i++){if(text[i]==='\\'&&i+1<text.length){cell+=text[i]+text[++i];continue;}if(text[i]==='|'){result.push(cell.trim());cell='';}else cell+=text[i];}result.push(cell.trim());return result;};
  function render(value){
   const lines=String(value||'').replace(/\r\n?/g,'\n').split('\n'),out=[];let i=0;
   while(i<lines.length){
@@ -34,7 +35,7 @@
    const heading=lines[i].match(/^\s{0,3}#{1,6}\s+(.+?)(?:\s+#+)?\s*$/);
    if(heading){out.push('<h3 class="rm-agent__heading">'+inline(heading[1])+'</h3>');i++;continue;}
    const header=cells(lines[i]),separator=i+1<lines.length?cells(lines[i+1]):[];
-   if(lines[i].includes('|')&&header.length>1&&header.length===separator.length&&separator.every(s=>/^:?-{3,}:?$/.test(s))){
+   if(lines[i].includes('|')&&header.length>=1&&header.length===separator.length&&separator.every(s=>/^:?-{3,}:?$/.test(s))){
     const align=separator.map(s=>s.endsWith(':')?(s.startsWith(':')?'center':'right'):'left');i+=2;
     let body='';while(i<lines.length&&lines[i].includes('|')&&cells(lines[i]).length===header.length){
      body+='<tr>'+cells(lines[i++]).map((s,n)=>`<td style="text-align:${align[n]}">${inline(s)}</td>`).join('')+'</tr>';

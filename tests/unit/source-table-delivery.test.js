@@ -1,0 +1,32 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict'),{createHash}=require('node:crypto');
+const tables=require('../../scripts/environment-agent-demo/source-tables'),refs=require('../../scripts/environment-agent-demo/source-references'),contract=require('../../src/assistant/agent-conversation'),fit=require('../../src/assistant/native-answer-review');
+function fixture(rows,name='environment_dataset'){const value={config:{dataset:'unfamiliar'},columns:Object.keys(rows[0]||{name:''}),rows,extent:{returnedRows:rows.length,totalRows:rows.length,complete:true}},text=JSON.stringify(value),entry={id:'goal:1',name,text,sha256:createHash('sha256').update(text).digest('hex')},goal={id:'goal',workspace_id:'tenant',actor_user_id:'owner',original_request:'Show the complete recorded table.',checkpoint:{harness:{evidence:{[entry.id]:entry}}}},source=tables.catalogue(entry)[0];return{entry,goal,source,report:{version:1,status:'completed',outcome:'answer',answer:'The recorded table is below.',claims:[],workProducts:[{title:'Recorded facts',sourceTable:{sourceRef:source.sourceRef,columns:source.columns,rows:null}}]}};}
+test('large canonical tables fit a compact native handoff without repeating cells or weakening the model claim cap',()=>{
+ const f=fixture(Array.from({length:25},(_,i)=>({name:'Unexpected product '+i,amount:'$'+i+'.00',physical:i,sellable:0,blocker:'Recorded condition '+i}))),wire=require('../../scripts/environment-agent-demo/codex-report'),native={...f.report,version:3,question:null,missingInformation:[],tier:null,reason:null,navigation:null,nextActions:[]};
+ assert(new(require('ajv'))({strict:false}).compile(wire.schema)(native));assert(Buffer.byteLength(JSON.stringify(native))<700);assert(contract.parse(JSON.parse(wire.decode(JSON.stringify(native)))));
+ const made=tables.materialize(f.goal,f.report);assert.equal(made.claims.length,1);assert.equal(made.claims[0].path,'/rows');assert.deepEqual(made.claims[0].value,JSON.parse(f.entry.text).rows);assert.equal(made.report.workProducts[0].content.split('\n').length,27);assert(!made.report.workProducts[0].sourceTable);
+ const packet=fit.binding(f.goal,JSON.stringify(f.report)).input;assert.equal(packet.workProducts[0].content,made.report.workProducts[0].content);assert.equal(packet.evidence[0].sha256,f.entry.sha256);assert.deepEqual(packet.sourceTables,[f.report.workProducts[0].sourceTable]);
+ assert.equal(contract.parse({...f.report,claims:Array.from({length:51},()=>({sourceRef:'fv1:abcdefghijklmnop',value:0}))}),null,'The unchanged 50 model-authored claim cap remains');assert.equal(f.entry.text,JSON.stringify(JSON.parse(f.entry.text)));
+});
+test('table references come only from owned canonical envelopes and survive restart and durable retrieval',()=>{
+ const f=fixture([{unfamiliar:'kept',zero:0,missing:null}]),shown=refs.present(f.entry,JSON.parse(f.entry.text));assert.equal(shown._stockchiefSources.tables[0].sourceRef,f.source.sourceRef);
+ const restarted=JSON.parse(JSON.stringify(f.goal)),journal=require('../../scripts/environment-agent-demo/observations'),retrieved=journal.retrieve(restarted.checkpoint.harness,{id:f.entry.id});assert(JSON.stringify(retrieved).includes(f.source.sourceRef));assert.deepEqual(tables.materialize(restarted,f.report),tables.materialize(f.goal,f.report));
+ const other={...f.goal,checkpoint:{harness:{evidence:{}}}};assert.throws(()=>tables.materialize(other,f.report),/NOT_FOUND/);
+ const bad={...f.entry,text:f.entry.text+' '};assert.throws(()=>tables.catalogue(bad),/INVALID/);
+ restarted.checkpoint.harness.evidence['old:browser']={id:'old:browser',name:'environment_browser',text:'cut off',truncated:true};assert(tables.materialize(restarted,f.report));
+ restarted.checkpoint.harness.evidence['old:dataset']={id:'old:dataset',name:'environment_dataset',text:'cut off',truncated:true};assert(tables.materialize(restarted,f.report),'An unrelated old source cannot invalidate a complete owned table');
+ const nested=fixture([{data:'preserved'}]);nested.entry.name='environment_interfaces';assert.deepEqual(tables.catalogue(nested.entry),[]);
+});
+test('display amounts remain exact; selections cannot invent columns, cells, indices or duplicate rows',()=>{
+ const f=fixture([{amount:'7500',currency:'USD'},{amount:'0',currency:'JPY'}]);let value=JSON.parse(f.entry.text);value.displayRows=[{amount:'$75.00',currency:'USD'},{amount:'¥0',currency:'JPY'}];f.entry.text=JSON.stringify(value);f.entry.sha256=createHash('sha256').update(f.entry.text).digest('hex');f.source=tables.catalogue(f.entry)[0];f.report.workProducts[0].sourceTable.sourceRef=f.source.sourceRef;
+ assert.equal(f.source.path,'/displayRows');assert.match(tables.materialize(f.goal,f.report).report.workProducts[0].content,/\$75\\.00/);
+ const spec=f.report.workProducts[0].sourceTable;for(const changes of [{columns:['not_recorded']},{rows:[2]},{rows:[0,0]},{rows:[-1]}])assert.throws(()=>tables.materialize(f.goal,{...f.report,workProducts:[{title:'Bad selection',sourceTable:{...spec,...changes}}]}),/INVALID/);
+ spec.rows=[1,0];assert.equal(tables.materialize(f.goal,f.report).claims[0].value[0].amount,'$75.00','Reordering presentation does not rewrite the original proof array');
+});
+test('rendered cells preserve literal punctuation and hostile text without adding columns, links or HTML',()=>{
+ const f=fixture([{name:'A | B',notes:'**no emphasis** [link](/admin) <script>alert(1)</script> & 0\rAfter\nLast',empty:'',missing:null}]),made=tables.materialize(f.goal,f.report),html=require('../../src/web/public/agent-answer').render(made.report.workProducts[0].content);
+ assert.equal((html.match(/<td /g)||[]).length,4);assert(html.includes('A | B'));assert(html.includes('**no emphasis**'));assert(!html.includes('<script>'));assert(!html.includes('<a '));assert(!html.includes('<strong>'));assert(html.includes('&amp; 0'));assert(!html.includes('&amp;amp;'));assert(html.includes('Not recorded'));
+ const delivery=require('../../src/assistant/agent-delivery').create(made.report),goal={status:'COMPLETED',checkpoint:{delivery}};assert(require('../../src/assistant/agent-delivery').visible(goal),'Saved Markdown artifacts remain readable with their existing generated ids');
+ f.report.workProducts[0].sourceTable.columns=['name'];const one=require('../../src/web/public/agent-answer').render(tables.materialize(f.goal,f.report).report.workProducts[0].content);assert(one.includes('<table>'));assert.equal((one.match(/<td /g)||[]).length,1);assert(one.includes('A | B'));
+});

@@ -5,15 +5,17 @@ const {isDeepStrictEqual:equal}=require('node:util');
 // Models identify claims; the host checks their values against durable evidence
 // and canonical PostgreSQL effects. A model's success flag alone is insufficient.
 async function verify(database,ctx,goal,raw,catalogue,options={}){
- const conversation=require('./agent-conversation'),report=conversation.parse(raw);
+ const conversation=require('./agent-conversation');let report=conversation.parse(raw);
  if(!report)return {verified:false,answer:conversation.FAILED};
  if(report.status==='needs_user')return {verified:false,answer:report.question,report};
  if(report.status==='blocked')return {verified:false,answer:conversation.publicText(report.answer),report};
  if(conversation.publicText(report.answer,'')!==report.answer)return {verified:false,answer:conversation.FAILED};
  if(report.status==='completed'&&goal.checkpoint.clientIntegration===1&&!['answer','navigation'].includes(report.outcome))
   return {verified:false,answer:'I could not verify delivery of the requested result. A page inspected by the agent is not proof that it opened in your browser.'};
+ let tables;try{tables=require('../../scripts/environment-agent-demo/source-tables').materialize(goal,report);report=tables.report;}
+ catch(error){return unavailable('I could not verify the requested table. Your goal and collected evidence are saved.',error.message);}
  if(report.status!=='completed'||typeof report.answer!=='string'||!Array.isArray(report.claims)||
-  (!report.claims.length&&report.outcome!=='navigation')||report.claims.length>50)
+  (!report.claims.length&&!tables.claims.length&&report.outcome!=='navigation')||report.claims.length>50)
   return {verified:false,answer:conversation.publicText(report.answer)};
  const h=goal.checkpoint.harness;
  const receipt=await require('../../scripts/environment-agent-demo/receipts').collect(database,ctx,goal,h,catalogue);
@@ -34,7 +36,7 @@ async function verify(database,ctx,goal,raw,catalogue,options={}){
   if(!fresh.has(key))fresh.set(key,await require('./agent-evidence-verification').current(database,ctx,goal,entry,{catalogue,...options,outcomeIndex}));
   return fresh.get(key);
  }
- for(const [claimIndex,inputClaim] of report.claims.entries()){
+ for(const [claimIndex,inputClaim] of [...report.claims,...tables.claims].entries()){
   let claim=inputClaim;
   if(Object.hasOwn(claim,'sourceRef'))try{claim=require('../../scripts/environment-agent-demo/source-references').resolve(entries,claim,sourceCache);}
   catch(error){return unavailable('I could not verify the supporting evidence for this answer. Your request and collected information are saved.',error.message,

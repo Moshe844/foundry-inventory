@@ -21,6 +21,9 @@ function metadata() {
     // StockChief record once; later discovery maps back to that same record.
     catalogImportMode: 'automatic',
     sandboxMode: config.connections.square.environment === 'sandbox',
+    authorizationPrerequisite:config.connections.square.environment==='sandbox'?{
+      message:'Before connecting, launch a seller test account from the Square Developer Console and keep it open in this browser. Square Sandbox requires that signed-in seller session; otherwise its authorization window may appear blank.',
+      label:'Open Square Developer Console',href:'https://developer.squareup.com/apps'}:null,
     unavailableReason: config.connections.square.configured ? null : 'StockChief’s Square app credentials have not been configured on this installation.',
   };
 }

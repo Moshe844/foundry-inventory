@@ -2,7 +2,9 @@
 const {z}=require('zod'),{createHash}=require('node:crypto');
 const text=z.string().trim().min(1).max(20000);
 const missing=z.preprocess(value=>typeof value==='string'?[value]:value,z.array(z.string().trim().min(1).max(1000)).min(1).max(30));
-const WorkProducts=z.array(z.object({title:z.string().trim().min(1).max(120),content:z.string().min(1).max(12000)})).max(3);
+const productTitle=z.string().trim().min(1).max(120);
+const SourceTable=z.object({sourceRef:z.string().regex(/^tb1:[A-Za-z0-9_-]{24}$/),columns:z.array(z.string().min(1).max(120)).min(1).max(20),rows:z.array(z.number().int().nonnegative()).max(100).nullable()}).strict();
+const WorkProducts=z.array(z.union([z.object({title:productTitle,content:z.string().min(1).max(12000)}),z.object({title:productTitle,sourceTable:SourceTable}).strict()])).max(3);
 const NextActions=z.array(z.object({label:z.string().trim().min(1).max(80),instruction:z.string().trim().min(1).max(4000)})).max(3);
 // One wire contract for all domains. Model reports express intent, never an
 // approval, an execution grant, or proof that a business outcome occurred.

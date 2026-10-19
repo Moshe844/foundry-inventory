@@ -99,6 +99,7 @@ function encode(entry,value,{legacy=false,indexHeadings=false,indexRepresentatio
   const notice=legacy?{version:1,field,meaning:'Legacy object reference; paths are relative to this object.'}:
    {version:2,valueField,meaning:'Copy the field reference and exact value; no path or observation ID. Report displayRows supply citations for formatted columns; raw rows retain calculation values. Browser textBlocks keys are already complete field references. Hidden metadata; no business authority.'};
   output[metadata]=notice;
+  if(!legacy){const tables=require('./source-tables').catalogue(entry);if(tables.length)notice.tables=tables.map(({sourceRef,columns,rows,extent})=>({sourceRef,columns,rows,extent}));}
   // Screenshot MCP delivery sends screen as its text block and image as a
   // separate block. Bind that delivered object at /screen, not the wrapper.
   if(entry.name==='environment_browser'&&output.image&&output.screen)output.screen[metadata]={...notice};
