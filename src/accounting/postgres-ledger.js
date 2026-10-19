@@ -115,7 +115,10 @@ async function postInTransaction(client, ctx, input) {
   const sourceKey=String(input.sourceKey||'').trim();
   if (!sourceKey) throw new ValidationError('A durable accounting source key is required.');
   const { normalized,total }=normalizeLines(input.lines);
-    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',[`journal-source:${ctx.workspaceId}:${sourceKey}`]);
+    // Journal numbering already serializes this workspace. Take that same
+    // transaction lock before the idempotency lookup, rather than retaining
+    // one additional advisory lock for every source in a bulk operation.
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',[`journal:${ctx.workspaceId}`]);
     const prior=await client.query(`SELECT * FROM accounting_journal_entries
       WHERE workspace_id=$1 AND source_key=$2`,[ctx.workspaceId,sourceKey]);
     if(prior.rows.length)return { entry:prior.rows[0],replayed:true,totalMinor:total };
@@ -134,9 +137,8 @@ async function postInTransaction(client, ctx, input) {
     if(keys.some((key)=>!byKey.has(key))||ids.some((id)=>!byId.has(id))||normalized.some((line)=>!line.accountKey&&!line.accountId))
       throw new ValidationError('One or more accounting control accounts are missing or inactive.');
     const at=nowIso(); const id=newId('je');
-    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',[`journal:${ctx.workspaceId}`]);
-    const count=await client.query(`SELECT COUNT(*) AS count FROM accounting_journal_entries WHERE workspace_id=$1`,[ctx.workspaceId]);
-    const entryNumber=Number(count.rows[0].count)+1;
+    const sequence=await client.query(`SELECT COALESCE(MAX(entry_number),0)+1 AS next FROM accounting_journal_entries WHERE workspace_id=$1`,[ctx.workspaceId]);
+    const entryNumber=Number(sequence.rows[0].next);
     await client.query(`INSERT INTO accounting_journal_entries
       (id,workspace_id,entry_number,posting_date,period_id,description,status,source_type,source_record_type,
        source_record_id,source_event_id,source_key,created_by_type,created_by_user_id,engine_version,metadata,
