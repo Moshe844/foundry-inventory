@@ -7,7 +7,7 @@ function source(entry){
  if(value.version!==1||value.name!==entry.name)throw Error('INVALID_EVIDENCE_SOURCE');
  return value;
 }
-async function currentValue(database,ctx,goal,entry,{catalogue,browser}={}){
+async function currentValue(database,ctx,goal,entry,{catalogue,browser,outcomeIndex=null}={}){
  // session.finish holds the goal in an existing transaction. Read engines
  // reuse that same client; they must not open a second transaction/connection.
  if(typeof database.transaction!=='function'){
@@ -63,15 +63,21 @@ async function currentValue(database,ctx,goal,entry,{catalogue,browser}={}){
  if(!Array.isArray(steps)||!steps.length||steps.some(step=>!['read','navigation'].includes(catalogue.get(step.capability)?.kind)))throw Error('PURE_READ_EVIDENCE_REQUIRED');
  const parsed=require('./postgres-capability-planner').parseSteps({steps},catalogue);
  if(!parsed.steps?.length||parsed.clarifyingQuestion||parsed.steps.some(step=>!['read','navigation'].includes(step.contract.kind)))throw Error('PURE_READ_EVIDENCE_REQUIRED');
+ if(outcomeIndex!==null&&(!Number.isSafeInteger(outcomeIndex)||outcomeIndex<0||outcomeIndex>=parsed.steps.length))throw Error('INVALID_CURRENT_READ_SCOPE');
  const provider={name:'host-read-verification',model:'none',complete:async()=>{throw Error('VERIFICATION_NEEDS_MODEL');}};
  const observation=JSON.parse(entry.text),ids=(observation.outcomes||[]).map(o=>o.result?.interactionId).filter(id=>typeof id==='string');
  const metadata=ids.length?new Map((await database.query(`SELECT id,message,intent FROM stockchief_runtime.assistant_interactions
   WHERE workspace_id=$1 AND actor_user_id=$2 AND id=ANY($3::text[])`,[ctx.workspaceId,ctx.actorId,ids])).rows.map(row=>[row.id,row])):new Map();
  const outcomes=[];
  for(const [index,step]of parsed.steps.entries()){
+  // A claim is scoped to its original outcome, not every unrelated read that
+  // happened to share a tool call. Never replay an unused semantic/model read.
+  // Sparse output prevents an unrefreshed sibling from masquerading as current.
+  if(outcomeIndex!==null&&index!==outcomeIndex)continue;
   const result=await require('./postgres-control-plane').executeStep(require('./postgres-service').capabilityService(),database,ctx,step,
    {actor,provider,rawProvider:provider,sourceMessage:goal.original_request,usageKey:`verify:${entry.id}`,preparedContent:true});
-  if(result.result.status!=='ANSWERED')throw Error('CURRENT_READ_UNVERIFIED');
+  if(result.result.status!=='ANSWERED')throw Object.assign(Error('CURRENT_READ_UNVERIFIED'),{
+   verificationDetail:{outcomeIndex:index,capability:step.contract.name,returnedStatus:result.result.status}});
   const original=observation.outcomes?.[index]?.result;
   if(original?.interactionId){
    const recorded=metadata.get(original.interactionId);
@@ -79,7 +85,7 @@ async function currentValue(database,ctx,goal,entry,{catalogue,browser}={}){
    result.result=require('./capability-outcome-presentation').present(goal.original_request,{step,...result},{
     interactionId:recorded.id,batchId:recorded.intent.batchId||null,planId:recorded.intent.controlPlane?.planId||null,index,count:parsed.steps.length});
   }
-  outcomes.push({capability:step.contract.name,result:result.result});
+  outcomes[index]={capability:step.contract.name,result:result.result};
  }
  return {missionId:null,outcomes};
 }

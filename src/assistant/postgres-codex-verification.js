@@ -28,6 +28,12 @@ async function verify(database,ctx,goal,raw,catalogue,options={}){
   return [...entries,...journal].find(e=>e?.id===id||e?.evidenceId===id)||observed.find(e=>e?._stockchiefEvidence?.evidenceId===id);
  }
  const verified=[],fresh=new Map(),sourceCache=new Map(),sourceMetadataCache=new Map();
+ async function currentEvidence(entry,path){
+  const match=entry.name==='business_operations'&&/^\/outcomes\/(0|[1-9]\d*)(?:\/|$)/.exec(path);
+  const outcomeIndex=match?Number(match[1]):null,key=JSON.stringify([entry.id,outcomeIndex]);
+  if(!fresh.has(key))fresh.set(key,await require('./agent-evidence-verification').current(database,ctx,goal,entry,{catalogue,...options,outcomeIndex}));
+  return fresh.get(key);
+ }
  for(const [claimIndex,inputClaim] of report.claims.entries()){
   let claim=inputClaim;
   if(Object.hasOwn(claim,'sourceRef'))try{claim=require('../../scripts/environment-agent-demo/source-references').resolve(entries,claim,sourceCache);}
@@ -64,22 +70,25 @@ async function verify(database,ctx,goal,raw,catalogue,options={}){
   }
   const value=selected.value;
   if(claim.historical!==true){
-   if(!fresh.has(entry.id)){
-    try{fresh.set(entry.id,await require('./agent-evidence-verification').current(database,ctx,goal,entry,{catalogue,...options}));}
-    catch(error){return unavailable('I could not confirm that the collected information still matches the current records. Your request and recorded work are saved.',error.message);}
-   }
-   const currentClaim=presentation.locate(toolView?presentation.project(entry.name,fresh.get(entry.id)):fresh.get(entry.id),claim.path);
+   let currentObservation;
+   try{currentObservation=await currentEvidence(entry,claim.path);}
+   catch(error){return unavailable('I could not confirm that the collected information still matches the current records. Your request and recorded work are saved.',error.message,
+    {claimIndex,evidenceId:entry.id,path:claim.path,...error.verificationDetail});}
+   const currentClaim=presentation.locate(toolView?presentation.project(entry.name,currentObservation):currentObservation,claim.path);
    const current=currentClaim.value,missingCurrent=!currentClaim.found;
+   const record=entry.name==='business_operations'?require('./business-row-verification').unchangedRow(original,currentObservation,claim.path):{applicable:false};
    // Controls, like text offsets and loopback ports, have observation-local
    // identity. Verify their complete semantic facts before trusting an array
    // position, even when an unrelated field happens to contain the same value.
    const control=entry.name==='environment_browser'?require('./browser-control-verification').unchangedControl(
-    JSON.parse(entry.text),fresh.get(entry.id),claim.path):{applicable:false};
-   if(control.applicable){
+    JSON.parse(entry.text),currentObservation,claim.path):{applicable:false};
+   if(record.applicable){
+    if(!record.matched||!equal(record.value,claim.value))return unavailable('The business record changed during this request. Its earlier value is no longer verified as current. Your request and recorded work are saved.','CURRENT_RECORDS_CHANGED',{evidenceId:claim.evidenceId,path:claim.path});
+   }else if(control.applicable){
     if(!control.matched)return unavailable('The form changed during this request. Its earlier fields are no longer verified as current. Your request and recorded work are saved.','CURRENT_FORM_CHANGED',{evidenceId:claim.evidenceId,path:claim.path});
    }else if(missingCurrent||!equal(current,claim.value)){
     const moved=entry.name==='environment_browser'?require('./browser-text-verification').unchangedLine(
-     JSON.parse(entry.text),fresh.get(entry.id),claim.path):{matched:false};
+     JSON.parse(entry.text),currentObservation,claim.path):{matched:false};
     if(!moved.matched||!equal(moved.value,claim.value))return unavailable('The business records changed during this request. The earlier figures are no longer verified as current. Your request and recorded work are saved.','CURRENT_RECORDS_CHANGED',{evidenceId:claim.evidenceId,path:claim.path});
    }
   }
@@ -109,11 +118,7 @@ async function verify(database,ctx,goal,raw,catalogue,options={}){
   // Navigation is itself an evidence-backed result, independent of optional
   // factual claims in the prose. Revalidate its source even when claims=[];
   // an old destination or an unrelated claim cannot bypass current authority.
-  if(!fresh.has(entry.id)){
-   try{fresh.set(entry.id,await require('./agent-evidence-verification').current(database,ctx,goal,entry,{catalogue,...options}));}
-   catch{return fail();}
-  }
-  let current=fresh.get(entry.id);
+  let current;try{current=await currentEvidence(entry,n.path);}catch{return fail();}
   for(const part of n.path.slice(1).split('/')){
    const key=part.replace(/~1/g,'/').replace(/~0/g,'~');
    if(['__proto__','constructor','prototype'].includes(key)||current===null||typeof current!=='object'||!Object.hasOwn(current,key))return fail();

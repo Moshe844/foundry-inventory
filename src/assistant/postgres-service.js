@@ -571,7 +571,7 @@ async function lookup(database,ctx,request,options={}) {
     // The canonical inbox already applied workspace, actor and permission
     // filters. Preserve that full read; the durable tool transport pages large
     // observations without forcing browser exploration to recover missing rows.
-    const rows=needs.map((item)=>evidenceRow({decision:item.title,importance:item.importance,
+    const rows=needs.map((item)=>evidenceRow({...(item.sourceId?{id:JSON.stringify([item.kind,item.sourceId])}:{}),decision:item.title,importance:item.importance,
       reason:item.why||item.happened||'',kind:item.kind,recordedAt:instant(item.createdAt),timeLabel:item.timeLabel||'Record created',updatedAt:instant(item.updatedAt),dueDate:item.dueDate||null,...(item.approval?{approval:item.approval}:{})},item.href));
     const answer=needs.length?`${needs.length} ${needs.length===1?'thing needs':'things need'} your attention. First: ${needs[0].title}.`:
       checkMissing?'No decisions are waiting yet, but StockChief has not run its first check. This is not an all-clear.':
@@ -617,7 +617,7 @@ async function lookup(database,ctx,request,options={}) {
       FROM locations l LEFT JOIN balances b ON b.location_id=l.id AND b.workspace_id=l.workspace_id
       WHERE l.workspace_id=$1 AND ($2::text IS NULL OR l.name ILIKE '%'||$2||'%')
       GROUP BY l.id ORDER BY l.name LIMIT 101`,[ctx.workspaceId,search])).rows;
-    const truncated=rows.length>100,visible=rows.slice(0,100).map(row=>evidenceRow({name:row.name,kind:row.kind,
+    const truncated=rows.length>100,visible=rows.slice(0,100).map(row=>evidenceRow({id:row.id,name:row.name,kind:row.kind,
       active:Boolean(Number(row.is_active)),receivingLocationEligible:Boolean(Number(row.is_active)),units:Number(row.units)},`/inventory?location=${row.id}`));
     return {answer:visible.length?`${truncated?'Showing the first 100 matching locations':`${visible.length} location${visible.length===1?'':'s'}`}, including inactive locations. `+
       'An active location meets the receiving-location activity check; product, tracking, quantity, permission and approval checks still apply.':

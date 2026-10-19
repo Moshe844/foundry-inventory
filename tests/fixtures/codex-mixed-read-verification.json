@@ -1,0 +1,7 @@
+{
+  "failure": "CURRENT_READ_UNVERIFIED",
+  "recordedBatch": ["read.needs_you", "read.business_analysis"],
+  "citedOutcome": 0,
+  "uncitedModelDependentOutcome": 1,
+  "providerCallsDuringVerification": 0
+}
