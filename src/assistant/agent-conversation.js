@@ -52,7 +52,7 @@ function classify({report,answer,verified,current='READY',canonicalVerified=true
  return {status:'BLOCKED',answer:report?.status==='blocked'?publicText(report.answer):FAILED,
   failure:{code:progress.finalReason||'OUTCOME_UNVERIFIED',requiresUserInput:false}};
 }
-const labels={queued:'Getting started',working:'Working on your request',clarification:'Let’s clarify',approval:'Ready for your approval',
+const labels={queued:'Waiting to start',working:'Working on your request',clarification:'Let’s clarify',approval:'Ready for your approval',
  external_wait:'Waiting for confirmation',navigation:'Ready to open in your browser',verification:'Finishing remaining work',completed:'Completed',
  interrupted:'Work paused',goal_limit:'Request allowance reached',funding:'Spending limit reached',capacity:'Daily work limit reached',service_wait:'AI service temporarily unavailable',usage_review:'Checking interrupted AI work',failed:'Could not finish',cancelled:'Stopped'};
 const lifecycleMessages=Object.freeze({
@@ -87,7 +87,7 @@ function state(goal){
   // A durable external wait is canonical lifecycle state, not an approval
   // request or a model answer. Older rows may still carry the prior approval
   // text; render the current phase safely without editing native evidence.
-  terminal:['completed','failed','cancelled'].includes(phase),message:phase==='external_wait'?lifecycleMessages.external_wait:['goal_limit','funding','capacity','service_wait','usage_review'].includes(phase)?[partial,phase==='goal_limit'?goalLimitMessage:phase==='funding'?fundingMessage:phase==='capacity'?capacityMessage:phase==='usage_review'?usageMessage:serviceMessage].filter(Boolean).join('\n\n'):input?.question||publicText(goal.answer,['queued','working','verification'].includes(phase)?'':FAILED),input,
+  terminal:['completed','failed','cancelled'].includes(phase),message:phase==='queued'?'Your request is saved and waiting for an available agent.':phase==='external_wait'?lifecycleMessages.external_wait:['goal_limit','funding','capacity','service_wait','usage_review'].includes(phase)?[partial,phase==='goal_limit'?goalLimitMessage:phase==='funding'?fundingMessage:phase==='capacity'?capacityMessage:phase==='usage_review'?usageMessage:serviceMessage].filter(Boolean).join('\n\n'):input?.question||publicText(goal.answer,['queued','working','verification'].includes(phase)?'':FAILED),input,
   canReply:phase==='clarification'&&Boolean(input),revision:saved?.revision||0,
   history:history.filter(m=>m.role==='user'||m.phase==='clarification'||!m.phase&&questions.has(m.id))
    .map(m=>({id:m.id,role:m.role,text:publicText(m.text,''),at:m.at,phase:m.phase})),

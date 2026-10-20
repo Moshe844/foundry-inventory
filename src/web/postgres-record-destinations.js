@@ -45,7 +45,7 @@ const RECORDS=Object.freeze({
     sql:`SELECT id,COALESCE(NULLIF(subject,''),external_message_id) AS title
       FROM connection_email_messages WHERE workspace_id=$1`,
     href:(row)=>`/mail/${encodeURIComponent(row.id)}`},
-  journal_entry:{description:'A posted accounting journal entry.',permission:permissions.VIEW_ACCOUNTING,collection:{href:'/accounting',label:'Accounting journal'},
+  journal_entry:{description:'A posted accounting journal entry.',permission:permissions.VIEW_ACCOUNTING,collection:{href:'/accounting/transactions',label:'Accounting journal'},
     sql:`SELECT id,entry_number::text AS title FROM accounting_journal_entries WHERE workspace_id=$1`,
     href:(row)=>`/accounting/entries/${encodeURIComponent(row.id)}`},
 });

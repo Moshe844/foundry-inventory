@@ -1081,33 +1081,48 @@ async function lookupRecords(database,ctx,request,options={}) {
     const payable=request.view==='payables';const table=payable?'accounting_supplier_bills':'accounting_customer_invoices';
     const parties=payable?'suppliers':'customers';const partyKey=payable?'supplier_id':'customer_id';
     const documentColumn=payable?'bill_number':'invoice_number';const href=payable?'/accounting/payables':'/accounting/receivables';
-    const result=await database.query(`SELECT d.id,d.${documentColumn} AS document,d.status,d.due_date,d.currency,
-      d.balance_minor,p.name AS party FROM ${table} d JOIN ${parties} p ON p.id=d.${partyKey}
+    // Complete counts and currency totals share the same statement snapshot as
+    // the bounded detail page. A page limit must never become a balance total.
+    const snapshot=(await database.query(`WITH matched AS MATERIALIZED (
+      SELECT d.id,d.${documentColumn} AS document,d.status,d.due_date,d.currency,
+      d.balance_minor::text AS balance_minor,p.name AS party,d.created_at FROM ${table} d
+      JOIN ${parties} p ON p.id=d.${partyKey} AND p.workspace_id=d.workspace_id
       WHERE d.workspace_id=$1 AND d.status IN ('OPEN','PARTIALLY_PAID') AND d.balance_minor>0
-      AND ($2::text IS NULL OR p.name ILIKE '%'||$2||'%' OR d.${documentColumn} ILIKE '%'||$2||'%')
-      ORDER BY COALESCE(d.due_date,'9999-12-31'),d.created_at DESC LIMIT 100`,[ctx.workspaceId,search]);
+      AND ($2::text IS NULL OR p.name ILIKE '%'||$2||'%' OR d.${documentColumn} ILIKE '%'||$2||'%'))
+      ${payable?`,disputed AS MATERIALIZED (SELECT d.id,d.bill_number,d.supplier_invoice_number,d.currency,p.name AS party,d.due_date,d.created_at
+        FROM accounting_supplier_bills d JOIN suppliers p ON p.id=d.supplier_id AND p.workspace_id=d.workspace_id
+        WHERE d.workspace_id=$1 AND d.status='DISPUTED' AND ($2::text IS NULL OR p.name ILIKE '%'||$2||'%'
+         OR d.bill_number ILIKE '%'||$2||'%' OR COALESCE(d.supplier_invoice_number,'') ILIKE '%'||$2||'%'))`:''}
+      SELECT (SELECT count(*)::int FROM matched) AS total,
+       COALESCE((SELECT jsonb_agg(to_jsonb(detail)) FROM
+        (SELECT * FROM matched ORDER BY COALESCE(due_date,'9999-12-31'),created_at DESC,id LIMIT 100) detail),'[]'::jsonb) AS records,
+       COALESCE((SELECT jsonb_agg(to_jsonb(amount) ORDER BY currency) FROM
+        (SELECT currency,count(*)::int AS documents,sum(balance_minor::bigint)::text AS balance_minor FROM matched GROUP BY currency) amount),'[]'::jsonb) AS totals,
+       ${payable?'(SELECT count(*)::int FROM disputed)':'0::int'} AS disputed_total,
+       ${payable?`COALESCE((SELECT jsonb_agg(to_jsonb(detail)) FROM
+        (SELECT * FROM disputed ORDER BY created_at DESC,id LIMIT 100) detail),'[]'::jsonb)`:`'[]'::jsonb`} AS disputed_records`,[ctx.workspaceId,search])).rows[0];
+    const exactMinor=value=>{const amount=Number(value);if(!Number.isSafeInteger(amount)||amount<0)throw new InvariantError('Recorded balance exceeds exact supported precision.');return amount;};
+    const result={rows:snapshot.records};
     const postedRows=result.rows.map((row)=>evidenceRow({party:row.party,document:row.document,status:row.status,
-      due:row.due_date||'Not set',balance:pricing.formatMinor(Number(row.balance_minor),row.currency),
-      balanceMinor:Number(row.balance_minor),currency:row.currency},href));
-    const disputedRows=payable?(await database.query(`SELECT d.bill_number,d.supplier_invoice_number,d.currency,
-      p.name AS party,d.due_date FROM accounting_supplier_bills d
-      JOIN suppliers p ON p.id=d.supplier_id AND p.workspace_id=d.workspace_id
-      WHERE d.workspace_id=$1 AND d.status='DISPUTED'
-        AND ($2::text IS NULL OR p.name ILIKE '%'||$2||'%' OR d.bill_number ILIKE '%'||$2||'%'
-          OR COALESCE(d.supplier_invoice_number,'') ILIKE '%'||$2||'%')
-      ORDER BY d.created_at DESC LIMIT 100`,[ctx.workspaceId,search])).rows.map((row)=>
+      due:row.due_date||'Not set',balance:pricing.formatMinor(exactMinor(row.balance_minor),row.currency),
+      balanceMinor:exactMinor(row.balance_minor),currency:row.currency},href));
+    const disputed=snapshot.disputed_records;
+    const disputedRows=disputed.map((row)=>
       evidenceRow({party:row.party,document:row.supplier_invoice_number||row.bill_number,
         status:'DISPUTED — not posted debt',due:row.due_date||'Not set',balance:'Excluded from payable',
-        balanceMinor:null,currency:row.currency},href)):[];
+        balanceMinor:null,currency:row.currency},href));
     const rows=[...postedRows,...disputedRows];
-    const totals=new Map();for(const row of result.rows)totals.set(row.currency,(totals.get(row.currency)||0)+Number(row.balance_minor));
-    const totalText=[...totals.entries()].map(([currency,amount])=>`${pricing.formatMinor(amount,currency)} ${currency}`).join(' and ');
+    const totalsByCurrency=snapshot.totals.map(row=>({currency:row.currency,documents:row.documents,balanceMinor:exactMinor(row.balance_minor),balance:pricing.formatMinor(exactMinor(row.balance_minor),row.currency)}));
+    const totalText=totalsByCurrency.map(row=>`${row.balance} ${row.currency}`).join(' and '),postedCount=snapshot.total,disputedCount=snapshot.disputed_total;
     const noun=payable?'open supplier bill':'open customer invoice';
-    const answer=(postedRows.length
-      ?`${payable?'We currently owe suppliers':'Customers currently owe us'} ${totalText} across ${postedRows.length} ${noun}${postedRows.length===1?'':'s'}.`
+    const answer=(postedCount
+      ?`${payable?'We currently owe suppliers':'Customers currently owe us'} ${totalText} across ${postedCount} ${noun}${postedCount===1?'':'s'}.`
       :payable?'We currently owe suppliers nothing on open bills.':'Customers currently owe us nothing on open invoices.')+
-      (disputedRows.length?` ${disputedRows.length} disputed supplier invoice document${disputedRows.length===1?' is':'s are'} excluded from posted payables.`:'');
-    return {answer,rows,columns:['party','document','status','due','balance','currency']};
+      (disputedCount?` ${disputedCount} disputed supplier invoice document${disputedCount===1?' is':'s are'} excluded from posted payables.`:'');
+    return {answer,rows,columns:['party','document','status','due','balance','currency'],totalsByCurrency,
+      totalsComplete:true,scope:{timeframe:'all_time',search:search||null,postedStatuses:['OPEN','PARTIALLY_PAID'],disputedExcludedFromBalances:true},
+      extent:{rowKind:'documents',returnedRows:rows.length,totalRows:postedCount+disputedCount,complete:postedRows.length===postedCount&&disputedRows.length===disputedCount,
+        postedDocuments:postedCount,disputedDocuments:disputedCount},handoff:{href,label:payable?'Open supplier bills':'Open customer invoices'}};
   }
   const sourceRows=(await database.query(`WITH committed AS (
       SELECT sol.sku_id,SUM(a.quantity) AS quantity FROM sales_order_allocations a

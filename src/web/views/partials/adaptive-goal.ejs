@@ -13,7 +13,7 @@
 <section class="rm-agent" aria-label="Goal progress" data-adaptive-goal="<%= goal.id %>" data-goal-status="<%= goal.status %>" data-goal-created="<%= new Date(goal.created_at).toISOString() %>" data-goal-updated="<%= new Date(goal.updated_at).toISOString() %>" data-goal-latest="<%= locals.isLatest?'true':'false' %>">
   <div class="rm-agent__header">
     <p class="rm-agent__phase" role="status" data-goal-phase><span class="rm-agent__dot" aria-hidden="true"></span><span data-goal-phase-text><%= phase %></span></p>
-    <span class="rm-agent__elapsed" data-goal-elapsed data-run-started="<%= goal.checkpoint.runStartedAt||new Date(goal.created_at).toISOString() %>" <%= goal.status==='RUNNING'?'':'hidden' %>></span>
+    <span class="rm-agent__elapsed" data-goal-elapsed data-run-started="<%= goal.checkpoint.runStartedAt||new Date(goal.created_at).toISOString() %>" <%= active?'':'hidden' %>></span>
     <% if(!['COMPLETED','CANCELLED','BLOCKED'].includes(goal.status)){ %>
       <form method="post" action="/ask/goals/<%= goal.id %>/cancel"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">Stop</button></form>
     <% } %>
@@ -28,7 +28,7 @@
       <a class="rm-btn rm-btn--sm" href="<%= handoff.href %>"><%= handoff.label %></a>
     <% } %>
   </div>
-  <p class="rm-agent__hint" data-goal-hint><%= active?'You can leave this page. I’ll keep working and show any required approval here.':'' %></p>
+  <p class="rm-agent__hint" data-goal-hint><%= goal.status==='READY'?'You can leave this page. Your request will start when an agent is available.':active?'You can leave this page. I’ll keep working and show any required approval here.':'' %></p>
   <form method="post" action="/ask/goals/<%= goal.id %>/navigate" data-goal-navigation <%= pendingNavigation?'':'hidden' %>>
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <input type="hidden" name="automatic" value="0">

@@ -1,6 +1,6 @@
 'use strict';
 (() => {
- const phases={READY:'Getting started',RUNNING:'Working on your request',WAITING_APPROVAL:'Ready for your approval',WAITING_EVENT:'Waiting for confirmation',WAITING_USER:'Your input is needed',COMPLETED:'Completed',BLOCKED:'Could not finish',CANCELLED:'Stopped'};
+ const phases={READY:'Waiting to start',RUNNING:'Working on your request',WAITING_APPROVAL:'Ready for your approval',WAITING_EVENT:'Waiting for confirmation',WAITING_USER:'Your input is needed',COMPLETED:'Completed',BLOCKED:'Could not finish',CANCELLED:'Stopped'};
  function activity(event){
   const d=event.detail||{};
   if(event.kind==='approval_ready')return 'Prepared a change for your approval';
@@ -40,13 +40,14 @@
   function elapsed(){
    window.clearTimeout(elapsedTimer);
    const active=['READY','RUNNING'].includes(status);
-   const timer=panel.querySelector('[data-goal-elapsed]');timer.hidden=status!=='RUNNING';
-   const start=new Date(timer.dataset.runStarted||panel.dataset.goalCreated).getTime(),end=Date.now();
+   const timer=panel.querySelector('[data-goal-elapsed]');timer.hidden=!active;
+   const start=new Date(status==='READY'?panel.dataset.goalCreated:timer.dataset.runStarted||panel.dataset.goalCreated).getTime(),end=Date.now();
    const seconds=Math.max(0,Math.floor((end-start)/1000));
-   panel.querySelector('[data-goal-elapsed]').textContent=seconds>=60?`${Math.floor(seconds/60)}m ${seconds%60}s`:`${seconds}s`;
+   timer.textContent=(status==='READY'?'Waiting ':'')+(seconds>=60?`${Math.floor(seconds/60)}m ${seconds%60}s`:`${seconds}s`);
    if(disconnected)hint.textContent='Connection lost. Current progress is unknown; your request is saved.';
    else if(['READY','RUNNING'].includes(status)&&!workerAvailable)hint.textContent='The agent is temporarily unavailable. Your request is saved and will wait for service to return.';
-   else if(['READY','RUNNING'].includes(status))hint.textContent=seconds>=60?'This is taking longer than usual. You can leave this page; I’ll keep working.':'You can leave this page. I’ll keep working and show any required approval here.';
+   else if(status==='READY')hint.textContent='You can leave this page. Your request will start when an agent is available.';
+   else if(status==='RUNNING')hint.textContent=seconds>=60?'This is taking longer than usual. You can leave this page; I’ll keep working.':'You can leave this page. I’ll keep working and show any required approval here.';
    else hint.textContent='';
    panel.dataset.active=String(active);
    if(active)elapsedTimer=window.setTimeout(elapsed,1000);
@@ -94,7 +95,8 @@
      // A second tab can decide a proposal while this page keeps polling.
      // Remove obsolete decision forms immediately without losing draft text.
      if(status!=='WAITING_APPROVAL')for(const card of panel.querySelectorAll('[data-approval-id]'))card.remove();
-     rows=activities(goal.events||[]);phase.textContent=conversation?.label||(phases[status]||'Checking progress');
+     rows=activities(goal.events||[]);phase.textContent=status==='RUNNING'&&(!conversation||conversation.phase==='working')&&rows.length
+      ?rows.at(-1).label:conversation?.label||(phases[status]||'Checking progress');
      const answer=panel.querySelector('[data-goal-answer]');
      const message=conversation?.message||'';
      if(window.StockChiefAnswer)answer.innerHTML=window.StockChiefAnswer.render(message);else answer.textContent=message;

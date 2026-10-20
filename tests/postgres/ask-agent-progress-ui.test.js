@@ -15,7 +15,8 @@ test('agent conversation keeps requests in order with compact responsive progres
  const store=require('../../src/assistant/postgres-goal-store');
  const first=await store.create(db,ctx,'Investigate the first request.'),second=await store.create(db,ctx,'Investigate the next request.');
  await db.query(`UPDATE stockchief_runtime.assistant_goals SET checkpoint=checkpoint||'{"runtime":"codex-staging"}'::jsonb WHERE id=ANY($1::text[])`,[[first.id,second.id]]);
- await store.cancel(db,ctx,first.id);await store.claim(db,ctx,second.id);
+ await store.cancel(db,ctx,first.id);
+ await db.query("UPDATE stockchief_runtime.assistant_goals SET checkpoint=jsonb_set(checkpoint,'{runStartedAt}',to_jsonb(now()-interval '2 minutes')) WHERE id=$1",[second.id]);
  for(let sequence=1;sequence<=12;sequence++)await db.query(`INSERT INTO stockchief_runtime.assistant_goal_events(id,goal_id,sequence,kind,detail) VALUES($1,$2,$3,'agent_activity',$4::jsonb)`,[randomUUID(),second.id,sequence,JSON.stringify({kind:sequence%2?'agent_tool_started':'agent_tool_completed',tool:'environment_browser'})]);
  const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:randomUUID(),aiProvider:{complete:async()=>{throw Error('NO_PAID_MODELS');}}});t.after(()=>app.locals.sessionStore.close());
  const server=await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));});t.after(()=>new Promise(resolve=>server.close(resolve)));
@@ -27,12 +28,22 @@ test('agent conversation keeps requests in order with compact responsive progres
  assert.equal(await page.locator('script[src^="/adaptive-goal.js?v="]').count(),1,'Progress uses the release version so a cached old script cannot drive the new UI');
  assert.deepEqual((await page.locator('.rm-turn--you .rm-turn__said').allTextContents()).map(s=>s.trim()),[first.original_request,second.original_request]);
  const panel=page.locator(`[data-adaptive-goal="${second.id}"]`);
+ await panel.getByRole('status').filter({hasText:'Waiting to start'}).waitFor();
+ assert.equal(await panel.locator('[data-goal-elapsed]').isVisible(),true);
+ assert.match(await panel.locator('[data-goal-elapsed]').innerText(),/^Waiting \d+s$/,'Queued time uses creation, not a previous run start');
+ assert.match(await panel.locator('[data-goal-answer]').innerText(),/waiting for an available agent/);
+ // This fixture has no actual worker. Record its simulated availability only
+ // when claiming; an unavailable service must retain its truthful own hint.
+ await db.query('UPDATE stockchief_runtime.codex_pilots SET worker_seen_at=now() WHERE workspace_id=$1',[ctx.workspaceId]);
+ await store.claim(db,ctx,second.id);
  await panel.getByRole('status').filter({hasText:'Looking through your StockChief screens'}).waitFor();
+ assert(!/Waiting/.test(await panel.locator('[data-goal-elapsed]').innerText()),'Running time is separate from queue wait');
  assert.equal(await panel.locator('details').getAttribute('open'),null);
  assert.equal(await panel.locator('[data-goal-timeline] li').count(),1);
  assert((await panel.boundingBox()).height<180,'Desktop progress stays compact');
  await page.setViewportSize({width:390,height:800});assert((await panel.boundingBox()).height<240,'Mobile progress wraps without narrow event columns');
  await db.query("UPDATE stockchief_runtime.assistant_goals SET checkpoint=jsonb_set(checkpoint,'{runStartedAt}',to_jsonb(now()-interval '2 minutes')) WHERE id=$1",[second.id]);
+ await db.query('UPDATE stockchief_runtime.codex_pilots SET worker_seen_at=now() WHERE workspace_id=$1',[ctx.workspaceId]);
  await page.reload();await panel.getByText('This is taking longer than usual.',{exact:false}).waitFor();
  assert.match(await panel.locator('[data-goal-elapsed]').innerText(),/\d+m \d+s/);
  let navigations=0;page.on('framenavigated',()=>navigations++);

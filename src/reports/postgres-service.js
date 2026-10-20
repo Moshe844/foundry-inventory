@@ -202,13 +202,18 @@ async function run(database,ctx,actor,spec,options={}){
   const grouped=Boolean(config.groups.length||config.summary);
   const columns=grouped?[...config.groups,AGGREGATE_COLUMN[config.aggregate]]
     :config.columns;
-  const columnLabels=config.aggregate==='ratio'&&grouped
-    ?{ratio:dataset.metrics[config.measure].label}:{};
   const currencyFilter=config.filters.find((filter)=>filter.field==='currency'
     &&filter.operator==='equals')?.value||null;
   const monetaryColumn=(column)=>grouped
     ?column===columns.at(-1)&&config.aggregate!=='count'&&dataset.fields[config.measure]==='money_minor'
     :dataset.fields[column]==='money_minor';
+  // The displayed monetary cells are formatted amounts, not raw minor units.
+  // Derive headings from their declared type; retain raw field keys and values.
+  const columnLabels=Object.fromEntries(columns.map(column=>{
+    if(config.aggregate==='ratio'&&grouped&&column===columns.at(-1))return [column,dataset.metrics[config.measure].label];
+    const label=(monetaryColumn(column)?column.replace(/_minor$/,''):column).replaceAll('_',' ').replace(/([a-z])([A-Z])/g,'$1 $2');
+    return [column,label.charAt(0).toUpperCase()+label.slice(1)];
+  }));
   const displayRows=rows.map((row)=>Object.fromEntries(columns.map((column)=>{
     const value=row[column];
     if(grouped&&config.aggregate==='ratio'&&column===columns.at(-1))
