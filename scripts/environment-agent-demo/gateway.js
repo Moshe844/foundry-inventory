@@ -119,24 +119,29 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
       const packet=()=>({operations,operationIndex,navigationSignatures,navigationAccess:'Exact signatures apply to each grouped name. Use known contracts; inspect uncertain details. Navigation gives no record facts; authority and user arrival are rechecked.',datasetIndex,datasetFieldsComplete:datasetIndex.every(d=>d.fields),indexComplete:true,total:contracts.length,complete:operations.length===contracts.length,
         datasetAccess:'Scoped projections, not SQL/pages. Use known typed fields/filters; inspect missing metadata. Extent distinguishes rows/groups and complete first-page source totals. Reads recheck scope/permissions.',
         coverage:'All authorized names, bounded details. Browser discovers screens; environment_interfaces supplies omissions. Fresh canonical checks remain.'});
+      const size=()=>Buffer.byteLength(JSON.stringify(require('./interface-presentation').compact(packet())));
+      const details=datasets.map((dataset,index)=>({index,fields:dataset.fields,bytes:Buffer.byteLength(JSON.stringify(dataset.fields))})).sort((a,b)=>a.bytes-b.bytes);
+      // Reserve a small part of the SAME packet budget for compact typed
+      // datasets, so long operation descriptions cannot starve every schema.
+      const indexBytes=size();
+      for(const detail of details){
+        datasetIndex[detail.index].fields=detail.fields;
+        if(size()-indexBytes>1800)delete datasetIndex[detail.index].fields;
+      }
       for(const contract of contracts.filter(c=>c.kind==='read')){
         const complete=describe(contract);
         const entry=Buffer.byteLength(JSON.stringify(complete))<=4096?complete:
           {name:contract.name,kind:contract.kind,description:contract.description,required:(contract.required||[]).map(name=>nativeFieldName(contract,name)),detailsByName:true};
         operations.push(entry);
-        // The model receives the lossless compact representation below, not
-        // this repeated raw metadata. Measuring before that codec discarded
-        // useful authorized read contracts and forced paid rediscovery turns.
-        // Keep the SAME byte boundary on the complete delivered packet.
         if(Buffer.byteLength(JSON.stringify(require('./interface-presentation').compact(packet())))>18000)operations.pop();
       }
-      // Names stay complete; optional field details use only space left after
-      // the executable read contracts. Nothing silently disappears from the
-      // index when richer metadata needs exact-name retrieval.
-      for(const [index,dataset]of datasets.entries()){
-        datasetIndex[index].fields=dataset.fields;
-        if(Buffer.byteLength(JSON.stringify(require('./interface-presentation').compact(packet())))>18000)
-          delete datasetIndex[index].fields;
+      // Include compact dataset schemas before oversized descriptions consume
+      // the entire packet. Selection depends on metadata size only, never the
+      // request, route or business domain. Every name remains discoverable.
+      for(const detail of details.filter(d=>!datasetIndex[d.index].fields)){
+        datasetIndex[detail.index].fields=detail.fields;
+        // Keep the unchanged bound on the actual lossless delivered packet.
+        if(Buffer.byteLength(JSON.stringify(require('./interface-presentation').compact(packet())))>18000)delete datasetIndex[detail.index].fields;
       }
       if(Buffer.byteLength(JSON.stringify(require('./interface-presentation').compact(packet())))>18000)
         throw Error('INITIAL_INTERFACE_INDEX_LIMIT');

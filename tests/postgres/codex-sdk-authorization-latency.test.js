@@ -24,6 +24,8 @@ test('native bookkeeping avoids repeated catalogue construction while retaining 
   assert.deepEqual(dataset.fields,reportRegistry.list(full.actor).find(d=>d.key===dataset.name).fields);
  assert(initial.datasetIndex.some(d=>d.name==='customer_invoices'));
  assert.equal(initial.datasetFieldsComplete,initial.datasetIndex.every(d=>Boolean(d.fields)));
+ assert(initial.datasetIndex.filter(d=>d.fields).length>=10,'Compact dataset schemas must not be starved by long operation descriptions');
+ for(const name of ['suppliers','customers','payments'])assert(initial.datasetIndex.find(d=>d.name===name)?.fields,'Ordinary directory and financial schemas are available without paid rediscovery: '+name);
  assert(!JSON.stringify(initial.datasetIndex).includes('SELECT '),'SQL implementation is never interface metadata');
  assert(initial.operations.some(c=>c.name==='read.payments'&&c.fields),'Recorded live cash investigation must not lose its read contract by measuring the uncompressed intermediate representation');
  const navigation=full.catalogue.list().filter(c=>c.kind==='navigation');
@@ -32,7 +34,7 @@ test('native bookkeeping avoids repeated catalogue construction while retaining 
   const current=(await gateway.interfaces({names:[name]})).operations.find(c=>c.name===name);
   assert(current);for(const field of ['required','fields','authority','unavailable'])assert.deepEqual(group[field],current[field]);
  }
- t.diagnostic(JSON.stringify({initialBytes:Buffer.byteLength(JSON.stringify(codec.compact(initial))),navigationContractsSupplied:navigation.length,navigationSignatures:initial.navigationSignatures.length}));
+ t.diagnostic(JSON.stringify({initialBytes:Buffer.byteLength(JSON.stringify(codec.compact(initial))),initialDatasetSchemas:initial.datasetIndex.filter(d=>d.fields).length,navigationContractsSupplied:navigation.length,navigationSignatures:initial.navigationSignatures.length}));
  queries=0;const fresh=await gateway.authorize({catalogue:false}),lightQueries=queries;
  assert.deepEqual(fresh.actor,full.actor);assert.equal(fresh.catalogue,undefined);
  assert(fullQueries<=lightQueries+5,'One catalogue snapshot, not a subscription lookup per capability: '+JSON.stringify({fullQueries,lightQueries}));

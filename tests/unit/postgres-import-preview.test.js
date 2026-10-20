@@ -20,6 +20,14 @@ test('a legacy staged import with absent money fields never presents NaN as a pr
   assert.match(html,/Not provided/);
 });
 
+test('complete source identifiers do not ask for another upload or tracking confirmation',()=>{
+ const html=ejs.render(fs.readFileSync(path.join(__dirname,'../../src/web/views/imports/postgres-preview.ejs'),'utf8'),{
+  plan:{id:'complete',sourceName:'mixed.xlsx',fieldMappings:{name:0,quantity:1,serial:2,serialTracked:3},transformations:{},recordsDetected:1,recordsValid:1,recordsInvalid:0,status:'READY',warnings:[],conflicts:[],approvalStatus:'AWAITING_APPROVAL',integrityHash:'frozen'},
+  duplicatePlans:[],run:null,importProgress:{active:false,label:'Preview awaiting approval'},csrfToken:'csrf',mappingRows:[],fieldOptions:[],locations:[],counts:{VALID:1},rows:[],page:1,pageSize:50,
+  trackingQuestion:{state:'complete',groups:[{mode:'serial',label:'Serial-number',sourceSkus:1,missingSkus:0,decision:'source',canUseQuantity:false}]},helpers:{plural:(n,s)=>n===1?s:s+'s'}});
+ assert.match(html,/No tracking information is missing/);assert.doesNotMatch(html,/Upload the completed source|name="tracking_serial"|StockChief needs one confirmation/);assert.match(html,/Approve 1 row<\/button>/);
+});
+
 test('a quantity-only interpretation still prompts for an identity column and cannot be approved',()=>{
   const template=fs.readFileSync(path.join(__dirname,'../../src/web/views/imports/postgres-preview.ejs'),'utf8');
   const html=ejs.render(template,{

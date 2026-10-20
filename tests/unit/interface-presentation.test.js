@@ -11,3 +11,9 @@ test('interface metadata sharing is lossless and preserves complete contracts, o
  const conflictingRef={...value,originalSchema:{$ref:'#/_stockchiefDefinitions/existing'}};assert.deepEqual(compact(conflictingRef),conflictingRef);
  assert.deepEqual(compact({_stockchiefDefinitions:{existing:true},operations:[],datasets:[]}),{_stockchiefDefinitions:{existing:true},operations:[],datasets:[]});
 });
+
+test('shared defaults preserve empty properties, explicit differences and complete dataset lookup',()=>{
+ const original={operations:[{name:'read.a',kind:'read',required:[],authority:{mode:'none'},unavailable:[]},{name:'read.b',kind:'read',required:[],authority:{mode:'none'},unavailable:[]}],datasetIndex:[{name:'directory',detailsByName:true,fields:{name:'text'}},{name:'totals',detailsByName:true}]};
+ const wire=compact(original);assert.deepEqual(expand(wire),original);assert.deepEqual(compact(wire),wire);assert.equal(wire._stockchiefOperationDefaults.kind,'read');assert.equal(wire._stockchiefDatasetDefaults.detailsByName,true);
+ const different={operations:[original.operations[0],{name:'write.a',kind:'mutation',required:['amount'],authority:{mode:'owner_review'},unavailable:['missing_scope']}]};assert.deepEqual(expand(compact(different)),different);
+});
