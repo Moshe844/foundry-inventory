@@ -426,22 +426,28 @@ async function lookup(database,ctx,request,options={}) {
       columns:['product','sku','location','change','physicalStockChange','bookCostChange','recordedUnitCost','currency','source','reference','at']};
   }
   if(request.view==='prices'){
-    const rows=(await database.query(`SELECT i.id AS item_id,i.name AS product,s.code AS sku,
-      COALESCE(s.variant_label,'') AS variant,p.amount_minor,p.currency,p.created_at
+    const sourceRows=(await database.query(`SELECT i.id AS item_id,i.name AS product,s.code AS sku,
+      COALESCE(s.variant_label,'') AS variant,p.amount_minor,p.currency,p.created_at,
+      i.is_active AS product_active,s.is_active AS variant_active,count(*) OVER() AS total_matches
       FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
       LEFT JOIN LATERAL (SELECT amount_minor,currency,created_at FROM sku_prices
         WHERE workspace_id=s.workspace_id AND sku_id=s.id ORDER BY created_at DESC,id DESC LIMIT 1) p ON true
-      WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1
+      WHERE s.workspace_id=$1
       AND ($2::text IS NULL OR i.name ILIKE '%'||$2||'%' OR s.code ILIKE '%'||$2||'%'
         OR COALESCE(s.variant_label,'') ILIKE '%'||$2||'%')
-      ORDER BY i.name,s.code LIMIT 100`,[ctx.workspaceId,search])).rows.map((row)=>
+      ORDER BY i.name,s.code LIMIT 100`,[ctx.workspaceId,search])).rows;
+    const rows=sourceRows.map((row)=>
       evidenceRow({product:row.product,sku:row.sku,variant:row.variant,
+        productStatus:row.product_active===1?'active':'inactive',variantStatus:row.variant_active===1?'active':'inactive',
         sellingPrice:row.amount_minor===null?'Not recorded':pricing.formatMinor(Number(row.amount_minor),row.currency),
+        sellingPriceRecorded:row.amount_minor!==null,
         sellingPriceMinor:row.amount_minor===null?null:Number(row.amount_minor),currency:row.currency||null,
         priceRecordedAt:row.created_at||''},`/inventory/${row.item_id}`));
-    return {answer:rows.length?`Showing current recorded selling prices for ${rows.length}${rows.length===100?'+':''} SKUs.`:
+    const total=sourceRows.length?Number(sourceRows[0].total_matches):0;
+    return {answer:rows.length?`Showing current saved selling prices for ${rows.length} of ${total} matching SKUs, including inactive records.`:
       'No product or SKU matched that price request.',rows,
-      columns:['product','sku','variant','sellingPrice','currency','priceRecordedAt']};
+      extent:{returnedRows:rows.length,totalRows:total,complete:rows.length===total,scope:'Matching SKUs including inactive products and variants. Only the latest saved price is current; zero is a recorded price. Use the catalogue dataset to filter or summarize larger results.'},
+      columns:['product','sku','variant','productStatus','variantStatus','sellingPrice','currency','priceRecordedAt']};
   }
   if(request.view==='purchase_costs'){
     const rows=(await database.query(`SELECT i.id AS item_id,i.name AS product,s.code AS sku,

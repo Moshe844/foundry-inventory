@@ -146,13 +146,15 @@ function createPostgresApp({database,resourceDatabase=database,sessionStore,sess
   app.use(require('./commercial/enforcement').contextMiddleware(database));
   app.use(async(req,res,next)=>{try{const commercialAccountId=req.workspace?.owner_account_id||req.account?.id;
     res.locals.commercial=req.account
-      ?await postgresEntitlements.summary(database,{accountId:commercialAccountId,workspaceId:req.ctx?.workspaceId})
+      ?await postgresEntitlements.summary(database,{accountId:commercialAccountId,workspaceId:req.ctx?.workspaceId},{includePresentation:Boolean(req.accepts('html'))})
       :{subscription:null,access:postgresEntitlements.operationalAccess(null),capabilities:[],meters:[]};
     return next();}catch(error){return next(error);}});
   app.use(requireOperationalSubscription);
   app.use(require('./commercial/enforcement').middleware(database));
   app.use(async(req,res,next)=>{
-    if(!req.ctx)return next();
+    // JSON endpoints retain authentication, subscription access and canonical
+    // enforcement above. They do not render navigation, onboarding or banners.
+    if(!req.ctx||!req.accepts('html'))return next();
     try {
       const [attentionCount,entry,importActivity]=await Promise.all([
         postgresProjections.needsCount(database,req.ctx.workspaceId,req.ctx.actorId),

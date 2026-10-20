@@ -352,11 +352,12 @@ async function recordUsage(database, scope, input) {
   });
 }
 
-async function summary(database, scope) {
+async function summary(database, scope, {includePresentation=true}={}) {
   const subscription = await subscriptionFor(database,scope.accountId);
   if (!subscription) return {subscription:null,
     access:config.commercial.requirePaidWorkspace?operationalAccess(null):{mode:'DEVELOPMENT',canOperate:true,canRead:true},
     capabilities:[],meters:[]};
+  if(!includePresentation)return {subscription,access:operationalAccess(subscription),capabilities:[],meters:[]};
   const capabilities = subscription.plan_version_id
     ?(await database.query(`SELECT entry->>'capability' AS capability FROM commercial_plan_versions version
       CROSS JOIN LATERAL jsonb_array_elements(version.entitlements) entry WHERE version.id=$1

@@ -6,18 +6,23 @@ const permissions=require('../actions/permissions');
 // builder never accepts SQL, table names, expressions, or joins from a user or
 // model. Adding a field here is a deliberate product/permission decision.
 const datasets=Object.freeze({
-  catalogue:{label:'Product and SKU catalogue',permission:permissions.VIEW,
+  catalogue:{label:'Product and SKU catalogue, including inactive records and current saved selling prices',permission:permissions.VIEW,
     source:`SELECT i.id AS record_id,i.name AS product,s.code AS sku,
       COALESCE(s.variant_label,'') AS variant,COALESCE(s.barcode,'') AS barcode,
       i.unit_label AS unit,i.tracking_mode AS tracking,
       CASE WHEN i.is_active=1 AND s.is_active=1 THEN 'active' ELSE 'inactive' END AS status,
       CASE WHEN i.is_active=1 THEN 'active' ELSE 'inactive' END AS product_status,
       CASE WHEN s.is_active=1 THEN 'active' ELSE 'inactive' END AS variant_status,
+      p.amount_minor AS selling_price_minor,p.currency,
+      CASE WHEN p.amount_minor IS NOT NULL THEN 'yes' ELSE 'no' END AS selling_price_recorded,
       LEFT(i.created_at,10) AS created_on
       FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
+      LEFT JOIN LATERAL (SELECT amount_minor,currency FROM sku_prices
+        WHERE workspace_id=s.workspace_id AND sku_id=s.id ORDER BY created_at DESC,id DESC LIMIT 1) p ON true
       WHERE s.workspace_id=$1`,recordHref:(row)=>`/inventory/${row.record_id}`,
-    enumFields:['status','product_status','variant_status'],filterValues:{status:['active','inactive'],product_status:['active','inactive'],variant_status:['active','inactive']},fields:{product:'text',sku:'text',variant:'text',barcode:'text',unit:'text',tracking:'text',
-      status:'text',product_status:'text',variant_status:'text',created_on:'date'}},
+    moneyCompleteness:{selling_price_minor:{field:'selling_price_recorded',value:'yes'}},
+    enumFields:['status','product_status','variant_status','selling_price_recorded'],filterValues:{status:['active','inactive'],product_status:['active','inactive'],variant_status:['active','inactive'],selling_price_recorded:['yes','no']},fields:{product:'text',sku:'text',variant:'text',barcode:'text',unit:'text',tracking:'text',
+      status:'text',product_status:'text',variant_status:'text',selling_price_minor:'money_minor',currency:'text',selling_price_recorded:'text',created_on:'date'}},
   stock:{label:'Stock by product and location',permission:permissions.VIEW,
     source:`SELECT i.id AS record_id,i.name AS product,s.code AS sku,l.name AS location,
       b.on_hand::bigint AS on_hand,LEFT(b.updated_at,10) AS as_of

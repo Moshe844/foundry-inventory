@@ -55,7 +55,7 @@
   if(panel.dataset.goalLatest!=='true'&&!['READY','RUNNING','WAITING_EVENT','WAITING_APPROVAL'].includes(status))continue;
   async function poll(){
    try{
-    const result=await fetch(`/ask/goals/${encodeURIComponent(panel.dataset.adaptiveGoal)}`,{credentials:'same-origin',cache:'no-store'});
+    const result=await fetch(`/ask/goals/${encodeURIComponent(panel.dataset.adaptiveGoal)}`,{credentials:'same-origin',cache:'no-store',headers:{Accept:'application/json'}});
     if(!result.ok)throw Error('Progress unavailable');
     if(result.ok){
      const goal=await result.json();
