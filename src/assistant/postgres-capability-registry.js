@@ -277,7 +277,7 @@ const READS={
   inventory_valuation:'Complete matching physical units, costed units, missing-cost units and recorded inventory book-cost totals with currency, plus a bounded product/location detail page. Totals cover the full matching scope independently of detail pagination; distinct from supplier purchase quotes.',
   inventory_cost_movements:'Recorded changes in inventory book cost with import file and row provenance.',
   inventory_summary:'Business-wide current and historical inventory setup evidence: active product and SKU counts, total on-hand units, and count of every product record ever created, including inactive records. Valid even when this business is empty; requires no product or location.',
-  prices:'Current saved selling prices including inactive products and variants. Zero is recorded; missing or cleared prices are not. Exact coverage is returned; use the catalogue dataset for filtered or larger results.',purchase_costs:'Purchase quotes, current inventory book cost, and historical opening-import cost by SKU; all are separate. Missing quote does not imply uncosted stock.',
+  prices:'Current saved selling prices including inactive products and variants. Zero is recorded; missing or cleared prices are not. Exact coverage is returned; use the catalogue dataset for filtered or larger results.',purchase_costs:'Purchase quotes, current inventory book cost, and historical opening-import cost by SKU, including inactive records; all are separate. Missing quote does not imply uncosted stock. Exact paged coverage is returned; follow nextOffset with the same search.',
   supplier_items:'Active supplier-product links with exact paged coverage, saved product lead-time overrides, inherited supplier defaults, minimum quantities, order multiples, pack sizes and costs. A missing value is not zero or one. Read suppliers for defaults and exact link counts, including suppliers with no linked products.',needs_you:'Owner decisions awaiting attention.',
   operating_rules:'Approved operating rules and settings. Stock warnings include enabled rows, inactiveStockWarnings, exact stockWarningCoverage and recorded evaluation receipts; follow nextOffset for more saved rules. Other setting kinds are bounded current in-force rows. Do not substitute the general capability catalogue.',
   replenishment:'Recorded replenishment recommendations and their state.',locations:'Inventory locations.',
@@ -296,7 +296,7 @@ const READS={
 };
 const READ_RECORD_KINDS={sales_orders:'sales_order',purchase_orders:'purchase_order',
   transfers:'transfer',customer_returns:'customer_return'};
-const PAGED_READS=new Set(['operating_rules','suppliers','customers','supplier_items']);
+const PAGED_READS=new Set(['operating_rules','suppliers','customers','supplier_items','purchase_costs']);
 for(const [view,description] of Object.entries(READS))add(`read.${view}`,description,
   ['search','timeframe',...(PAGED_READS.has(view)?['offset']:[])],'read',permissions.VIEW,'none',
   async(service,db,ctx,text,args,options)=>service.lookup(db,ctx,{view,search:args.search||null,
