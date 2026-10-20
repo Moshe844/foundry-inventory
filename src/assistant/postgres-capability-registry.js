@@ -269,7 +269,7 @@ for(const [name,required] of Object.entries(REQUIRED)){
 }
 
 const READS={
-  pricing:'Approved versioned customer price lists, quantity tiers, promotions, coupons, bundles, schedules and margin safeguards. These rules affect future quotes; historical order prices remain frozen. Rule IDs and revisions are current business records, not authorization to change them.',
+  pricing:'Approved and pending pricing policies from visual setup and Ask: schedules, disabled rules, approvals and margin safeguards. Scope and currency determine quote applicability; historical prices stay frozen. Rule IDs grant no execution authority.',
   inventory:'Current SKU physical stock, commitments, and uncommitted quantities across the business. An uncommitted quantity is not proof that all fulfillment prerequisites are met; canonical execution also checks its applicable costing, order and authority requirements. Incoming purchase-order units are new supply; planned/in-transit internal transfers relocate existing stock and must not be added to business-wide incoming supply.',
   inventory_positions:'Current on-hand stock by product and location only. It does not account for commitments and cannot establish what is available to ship.',
   inventory_movements:'Recorded physical stock movements with verified source kind: import, supplier purchase receipt, customer return, internal transfer, customer sale fulfillment, or other. Count movements by source without treating imports or returns as supplier deliveries.',

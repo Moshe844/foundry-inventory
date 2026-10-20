@@ -179,8 +179,8 @@ async function lookup(database,ctx,request,options={}) {
     answer:'I cannot verify that time period from this summary. Use an authorized date-filtered report or a reader whose contract supports that period; no unfiltered records were substituted.',
     rows:[],columns:[],scope:{requestedTimeframe:request.timeframe,supportedTimeframes:require('./read-timeframes').supported(request.view)}};
   if(request.view==='pricing'){
-    const all=await require('../pricing/postgres-promotions').list(database,ctx),rows=all.filter(r=>!search||[r.id,r.name,r.code].some(v=>String(v||'').toLowerCase().includes(search.toLowerCase())));
-    return {answer:`${rows.length} approved pricing rules found. Current policy is separate from historical transaction prices.`,rows,columns:['id','name','kind','currency','version','priority','enabled','startsAt','endsAt','scope','entries','discount','code','stacking','excludes','minimumMarginBps','maximumDiscountBps'],handoff:{href:'/sales/pricing',label:'Manage pricing and promotions'}};
+    const state=await require('../pricing/postgres-promotions').inspect(database,ctx,{search});
+    return {...state,answer:`${state.rows.length} approved pricing rules and ${state.pending.length} pending pricing-policy proposals found. Pending proposals do not affect prices. Approved rules include enabled, disabled, scheduled and expired policies; applicability is decided by the canonical quote engine. Current policy is separate from historical transaction prices.`,columns:['id','name','kind','currency','version','priority','enabled','lifecycle','startsAt','endsAt','scope','entries','discount','code','stacking','excludes','minimumMarginBps','maximumDiscountBps'],handoff:{href:'/sales/pricing',label:'Manage pricing and promotions'}};
   }
   if(request.view==='operating_rules'){
     const [alerts,replenishment,guards,automation,preferences]=await Promise.all([

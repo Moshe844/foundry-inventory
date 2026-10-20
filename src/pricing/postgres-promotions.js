@@ -25,6 +25,28 @@ async function rules(db,ctx,{lock=false}={}){
   return rows.map(r=>({...r.definition,id:r.id,version:r.revision,redemptions:r.redemptions,createdAt:r.created_at}));
 }
 async function list(db,ctx){await authorize(db,ctx,access.VIEW_SALES);const rows=await rules(db,ctx);return rows;}
+async function inspect(db,ctx,{search=null}={}){
+ return db.transaction(client=>inspectSnapshot(client,ctx,{search}),{isolation:'REPEATABLE READ',readOnly:true,retrySafe:true});
+}
+async function inspectSnapshot(db,ctx,{search}){
+ await authorize(db,ctx,access.VIEW_SALES);
+ const all=await rules(db,ctx),at=Date.now(),matches=r=>!search||[r.id,r.name,r.code].some(v=>String(v||'').toLowerCase().includes(search.toLowerCase()));
+ const rows=all.filter(matches).map(rule=>({...rule,lifecycle:calculator.lifecycle(rule,at)}));
+ const pending=(await db.query(`SELECT id,rule_id,expected_revision,definition,created_at,'pricing' AS source
+  FROM stockchief_runtime.pricing_proposals WHERE workspace_id=$1 AND status='PENDING'
+  UNION ALL
+  SELECT id,payload->>'ruleId' AS rule_id,(payload->>'expectedRevision')::integer AS expected_revision,
+   payload->'definition' AS definition,created_at,'assistant' AS source
+  FROM stockchief_runtime.assistant_action_proposals
+  WHERE workspace_id=$1 AND action_type='pricing.rule.configure' AND status='PENDING'
+  ORDER BY created_at,id`,[ctx.workspaceId])).rows.filter(r=>matches({...r.definition,id:r.id})).map(r=>({
+   id:r.id,ruleId:r.rule_id,expectedRevision:r.expected_revision,status:'PENDING',definition:r.definition,
+   createdAt:r.created_at,source:r.source,href:r.source==='assistant'?'/actions/'+r.id:'/sales/pricing/rules/proposals/'+r.id}));
+ return {rows,pending,asOf:new Date(at).toISOString(),coverage:{approvedRulesComplete:true,pendingProposalsComplete:true,
+  scope:search?'Rules and pending proposals matching the literal ID, name or code filter':'All pricing rules and pending pricing-policy proposals in this business'},
+  authority:{activationRequiresApproval:true,pendingProposalsAffectPricing:false,
+   applicability:'ACTIVE means enabled within its schedule. Customer/product scope, currency, quantity, codes, exclusions and guard checks are applied by the canonical quote engine.'}};
+}
 async function identities(db,ctx,definition){
   const groups={skuIds:new Set([...(definition.scope?.skuIds||[]),...(definition.entries||[]).map(e=>e.skuId),...(definition.discount?.items||[]).map(e=>e.skuId)]),customerIds:new Set(definition.scope?.customerIds||[]),categoryIds:new Set(definition.scope?.categoryIds||[])};
   const specs={skuIds:['skus','id'],customerIds:['customers','id'],categoryIds:['catalogue_item_facts','category']};
@@ -131,4 +153,4 @@ async function saveQuote(c,ctx,orderId,quote,lineIds){
   return id;
 }
 async function history(db,ctx,id){await authorize(db,ctx,access.VIEW_SALES);return(await db.query('SELECT revision,definition,created_at FROM stockchief_runtime.pricing_rule_versions WHERE workspace_id=$1 AND rule_id=$2 ORDER BY revision DESC',[ctx.workspaceId,id])).rows;}
-module.exports={list,propose,getProposal,decide,prepareQuote,saveQuote,history,hash,quoteHash,configuration,activateInTransaction,revisionQuote};
+module.exports={list,inspect,propose,getProposal,decide,prepareQuote,saveQuote,history,hash,quoteHash,configuration,activateInTransaction,revisionQuote};

@@ -30,8 +30,13 @@ function allocate(amount,weights){
   for(const part of ranked){if(!remainder)break;part.value++;remainder--;}
   return parts.map(p=>number(p.value));
 }
-function active(rule,at,currency){return rule.enabled!==false&&rule.currency===currency&&
-  (!rule.startsAt||Date.parse(rule.startsAt)<=at)&&(!rule.endsAt||at<Date.parse(rule.endsAt));}
+function lifecycle(rule,at){
+ if(rule.enabled===false)return 'DISABLED';
+ if(rule.startsAt&&Date.parse(rule.startsAt)>at)return 'SCHEDULED';
+ if(rule.endsAt&&at>=Date.parse(rule.endsAt))return 'EXPIRED';
+ return 'ACTIVE';
+}
+function active(rule,at,currency){return rule.currency===currency&&lifecycle(rule,at)==='ACTIVE';}
 function eligible(scope={},line,customerId){return (!scope.customerIds?.length||scope.customerIds.includes(customerId))&&
   (!scope.skuIds?.length||scope.skuIds.includes(line.skuId))&&(!scope.categoryIds?.length||scope.categoryIds.includes(line.categoryId));}
 function stable(a,b){return (b.priority||0)-(a.priority||0)||String(a.id).localeCompare(String(b.id),'en');}
@@ -165,4 +170,4 @@ function monetaryPortion(snapshot,quantity,before,take){
  const grossMinor=sum([goodsNet,discountMinor]),taxMinor=sum([goodsTaxMinor,chargeTaxMinor]),revenueMinor=number(BigInt(goodsNet)+BigInt(chargesMinor));
  return {allocationVersion:2,grossMinor,discountMinor,goodsNetMinor:goodsNet,chargesMinor,chargeTaxMinor,goodsTaxMinor,taxMinor,revenueMinor,totalMinor:sum([revenueMinor,taxMinor])};
 }
-module.exports={quote,validateRule,allocate,ratio,portion,monetaryPortion};
+module.exports={quote,validateRule,allocate,ratio,portion,monetaryPortion,lifecycle};
