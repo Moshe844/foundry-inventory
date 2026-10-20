@@ -22,6 +22,7 @@ async function run(options){
   return result;
  }
  catch(error){
+  require('./dependency-diagnostics').record(error,{goalId:session.identity?.goalId,phase:'native_worker'});
   if(error instanceof require('./approval-handoff').ApprovalHandoff)return error.result;
   if(error instanceof require('./context').VerifiedCompletion)return error.result;
   const committed=await session.completed?.();if(committed)return committed;

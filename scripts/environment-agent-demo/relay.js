@@ -185,6 +185,7 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
      'cache-control':'no-store'});res.end(Buffer.concat(output));
    }finally{active--;}
   }catch(error){
+   require('./dependency-diagnostics').record(error,{goalId:grant?.ctx?.goalId||grant?.task,phase:'provider_relay'});
    // Never expose provider responses, secrets, SQL or internal stack traces.
    const providerUncertain=attempted&&!settled&&['request','body'].includes(transport.phase);
    const timedOut=providerUncertain&&providerSignal?.aborted;

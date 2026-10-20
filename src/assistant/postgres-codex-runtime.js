@@ -236,6 +236,7 @@ async function run(database,ctx,id,options={}){
   }
   return store.get(database,ctx,id);
  }catch(error){
+  require(base+'dependency-diagnostics').record(error,{goalId:id,phase:'agent_runtime'});
   audit({kind:'runtime_failed',code:error.code||'STAGING_RUNTIME_STOPPED'});
   if(session){const ready=await session.handoffApprovals().catch(()=>null);if(ready)return ready;
    return session.stop({code:error.code||error.message||'STAGING_RUNTIME_STOPPED',limitKind:error.limitKind||null});}
