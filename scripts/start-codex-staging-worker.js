@@ -56,8 +56,7 @@ async function main(){
    require('../src/assistant/codex-pilot-scope').list(process.env.STOCKCHIEF_CODEX_PILOT_EMAILS).map(e=>e.toLowerCase()),
    require('../src/assistant/codex-pilot-scope').accountAccess(),commercialRollout])).rows;
  for(const row of pilots){
-  const lease=await inspectionPool.acquire({database:db,ctx:{workspaceId:row.workspace_id,actorId:row.actor_id},connectionString:address.toString()});
-  await lease.release();
+  await inspectionPool.warm({database:db,ctx:{workspaceId:row.workspace_id,actorId:row.actor_id},connectionString:address.toString()});
  }
  };
  // Warming is optional: a busy schema must not take the entire worker offline.

@@ -59,12 +59,15 @@ function createPostgresImportsRouter(database,{provider=null}={}){
     const page=Math.max(1,Number(req.query.page)||1);
     const allowed=['VALID','INVALID','IMPORTED','FAILED'];
     const filter=allowed.includes(req.query.rows)?req.query.rows:null;
+    const savedSummary=require('../../imports/tracking-review').savedSummary(plan);
+    const frozenPreview=plan.status==='READY'&&['AWAITING_APPROVAL','APPROVED'].includes(plan.approvalStatus)&&plan.recordsValid+plan.recordsInvalid===plan.recordsDetected;
     const [rows,counts,duplicatePlans,run,locationRows,sampleRows,missingLocation]=await Promise.all([
       imports.rowsFor(database,req.ctx.workspaceId,plan.id,{status:filter,limit:PAGE_SIZE,offset:(page-1)*PAGE_SIZE}),
-      imports.counts(database,req.ctx.workspaceId,plan.id),imports.duplicates(database,req.ctx.workspaceId,plan),
+      frozenPreview?Promise.resolve(Object.fromEntries([['VALID',plan.recordsValid],['INVALID',plan.recordsInvalid]].filter(([,count])=>count>0))):imports.counts(database,req.ctx.workspaceId,plan.id),imports.duplicates(database,req.ctx.workspaceId,plan),
       imports.report(database,req.ctx.workspaceId,plan.id),locations(database,req.ctx.workspaceId),
       imports.rowsFor(database,req.ctx.workspaceId,plan.id,{limit:8,offset:0}),
-      plan.status==='READY'&&!plan.defaultLocationId&&plan.recordsInvalid>0
+      savedSummary&&Number.isSafeInteger(savedSummary.missingLocationRows)&&savedSummary.missingLocationRows>=0
+        ?Promise.resolve({rows:savedSummary.missingLocationRows?[{}]:[]}):plan.status==='READY'&&!plan.defaultLocationId&&plan.recordsInvalid>0
         ?database.query(`SELECT 1 FROM import_rows WHERE workspace_id=$1 AND import_id=$2
           AND problems::jsonb @> '[{"code":"no_location"}]'::jsonb LIMIT 1`,
         [req.ctx.workspaceId,plan.id]):Promise.resolve({rows:[]}),

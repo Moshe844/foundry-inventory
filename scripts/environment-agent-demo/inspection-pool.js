@@ -11,8 +11,7 @@ function createPool({idleMs=4*60000,maxEntries=4}={}){
   entries.delete(key);clearTimeout(entry.expiry);
   const server=await entry.promise.catch(()=>null);if(server)await server.close();
  }
- return {
-  async acquire({database,ctx,connectionString}){
+ async function acquire({database,ctx,connectionString,warmOnly=false}){
    if(closed)throw Error('INSPECTION_POOL_CLOSED');
    const pilot=require('../../src/assistant/postgres-codex-pilot');
    await pilot.access(database,ctx,{enabled:true});
@@ -20,6 +19,7 @@ function createPool({idleMs=4*60000,maxEntries=4}={}){
    let entry=entries.get(key);
    if(!entry){
     if(entries.size>=maxEntries){
+     if(warmOnly)return null;
      const idle=[...entries].find(([,value])=>!value.leases);
      if(!idle)throw Error('INSPECTION_POOL_CAPACITY');
      await retire(...idle);
@@ -42,7 +42,10 @@ function createPool({idleMs=4*60000,maxEntries=4}={}){
      entry.expiry=setTimeout(()=>retire(key,entry).catch(()=>{}),idleMs);entry.expiry.unref();
     }
    }};
-  },
+ }
+ return {
+  acquire,
+  async warm(options){const lease=await acquire({...options,warmOnly:true});if(!lease)return false;await lease.release();return true;},
   async close(){
    closed=true;
    await Promise.allSettled([...entries].map(([key,entry])=>retire(key,entry)));
