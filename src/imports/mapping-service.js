@@ -76,6 +76,7 @@ The fields you may choose from:
 - location: where the stock is.
 - serial: an individual unit's serial number, unique to one physical unit.
 - lotCode: a lot or batch code, shared by many units.
+- serialTracked, lotTracked: yes/no requirements for tracking, never actual identifiers.
 - expiresAt, receivedAt: dates.
 - notes: free text.
 - ignore: anything else. Use this generously.
@@ -167,7 +168,9 @@ function reconcile(proposed, { columns, deterministic, confident, profilesByInde
       try{return prices.toMinor(value)!==null;}
       catch{return false;}
     }).length/moneySamples.length:0;
-    const incompatible=entry.field==='quantity'&&profile.filled>0&&profile.numericRate<0.6
+    const incompatible=['serial','lotCode'].includes(entry.field)&&profile.booleanRate===1
+      ?'contains tracking flags, not individual unit or batch identifiers'
+      :entry.field==='quantity'&&profile.filled>0&&profile.numericRate<0.6
       ?'does not hold numbers'
       :entry.field==='location'&&profile.filled>0&&profile.numericRate>=0.8
         ?'contains numeric values rather than location names'
@@ -276,7 +279,7 @@ async function proposeMappings(sheet, options = {}) {
     };
   }
 
-  const provider = options.provider || (config.ai.configured ? createProviderForTier('fast') : null);
+  const provider = options.allowModel===false?null:options.provider || (config.ai.configured ? createProviderForTier('fast') : null);
   // Without a provider the deterministic mapping stands on its own. An import
   // is still perfectly possible; the person just does more of the naming.
   if (!provider) return base;

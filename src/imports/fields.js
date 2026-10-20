@@ -45,6 +45,8 @@ const FIELDS = [
   { id: 'location', label: 'Location' },
   { id: 'serial', label: 'Serial number' },
   { id: 'lotCode', label: 'Lot or batch' },
+  { id: 'serialTracked', label: 'Serial tracking required (yes/no)' },
+  { id: 'lotTracked', label: 'Lot tracking required (yes/no)' },
   { id: 'expiresAt', label: 'Expiration date' },
   { id: 'receivedAt', label: 'Received date' },
   { id: 'notes', label: 'Notes' },
@@ -139,6 +141,8 @@ const PATTERNS = {
     // like two different positions and was added together instead of compared.
     /\b(?:where|held\s*(?:at|in)?|stored\s*(?:at|in)?|kept\s*(?:at|in)?|depot|premises|place)\b/,
   ],
+  serialTracked: [/\b(?:serial|imei)\b.*\b(?:tracked|tracking|required|enabled)\b/],
+  lotTracked: [/\b(?:lot|batch)\b.*\b(?:tracked|tracking|required|enabled)\b/],
   serial: [/\b(?:serial|imei|s\/n|sn)\b/],
   lotCode: [/\b(?:lot|batch)\b/],
   expiresAt: [/\b(?:expir\w*|exp\.?|best\s*before|use\s*by|sell\s*by|bbd)\b/],
@@ -263,6 +267,7 @@ function profileColumn(rows, index) {
     fillRate: rows.length ? values.length / rows.length : 0,
     numericRate: values.length ? numeric / values.length : 0,
     distinct: unique.size,
+    booleanRate: values.length ? values.filter(v=>/^(?:yes|no|true|false)$/i.test(v)).length/values.length : 0,
     samples: values.slice(0, 4),
   };
 }
@@ -344,6 +349,7 @@ function guessMappings(columns, rows) {
     const profile = profiles[position];
     for (const candidate of bestFieldScores(column.name)) {
       let weight = candidate.score;
+      if (['serial','lotCode'].includes(candidate.field) && profile.booleanRate===1) continue;
 
       // "Units" is a quantity when it holds numbers and a unit of measure when
       // it holds words. The header alone genuinely cannot tell you.

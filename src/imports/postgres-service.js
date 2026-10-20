@@ -104,7 +104,7 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
   const defaultLocation=context.locations.find((row)=>row.id===input.defaultLocationId) ||
     (context.locations.length===1 ? context.locations[0] : null);
   for (const [position,row] of sheet.rows.entries()) {
-    const problems=[];
+    const problems=proposal.problemsIndex===undefined?[...(row.problems||[])]:json(textCell(row,proposal.problemsIndex),[]);
     const code=trimOrNull(textCell(row,mappings.code));
     const name=trimOrNull(textCell(row,mappings.name)) || code;
     const quantitySource=Object.hasOwn(input.quantityOverrides||{},row.sourceRow)
@@ -144,21 +144,26 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     }
     if(!name)problems.push(problem('no_product','A product name or SKU is required.'));
     if(quantity !== null && quantity > 0 && !location)problems.push(problem('no_location','Choose where this opening stock is held.'));
-    const variants=fields.VARIANT_FIELDS.map((field)=>({name:proposal.axisNames[field] || fields.FIELD_LABEL[field],
+    const variants=proposal.variantColumns?.length?proposal.variantColumns.map(part=>({name:part.name,value:trimOrNull(textCell(row,part.index))})).filter(part=>part.value):
+      fields.VARIANT_FIELDS.map((field)=>({name:proposal.axisNames[field] || fields.FIELD_LABEL[field],
       value:trimOrNull(textCell(row,mappings[field]))})).filter((entry)=>entry.value);
     const serial=trimOrNull(textCell(row,mappings.serial));
     const lotCode=trimOrNull(textCell(row,mappings.lotCode));
-    if(proposal.detectedType==='serials'){
-      if(!serial)problems.push(problem('missing_serial','A serial number is required for this row.'));
+    const flag=field=>{const value=textCell(row,mappings[field]);if(!value)return false;if(/^(?:yes|true|1)$/i.test(value))return true;if(/^(?:no|false|0)$/i.test(value))return false;problems.push(problem('invalid_tracking_flag','A tracking requirement must be an explicit yes/no value.'));return false;};
+    const serialRequired=proposal.detectedType==='serials'||flag('serialTracked');
+    const lotRequired=proposal.detectedType==='lots'||flag('lotTracked');
+    if(serialRequired&&lotRequired)problems.push(problem('invalid_tracking_flag','A product cannot use both serial and lot tracking in the same import row.'));
+    if(serialRequired){
+      if(!serial&&quantity!==0)problems.push(problem('missing_serial','A serial number is required for this row.'));
       if(quantity === null)quantity=1;
-      if(quantity !== 1)problems.push(problem('serial_quantity','Each serial-number row must represent exactly one unit.'));
+      if(quantity !== 1&&quantity!==0)problems.push(problem('serial_quantity','Each serial-number row must represent exactly one unit.'));
     }
-    if(proposal.detectedType==='lots' && quantity > 0 && !lotCode)problems.push(problem('missing_lot','A lot or batch number is required.'));
+    if(lotRequired && quantity > 0 && !lotCode)problems.push(problem('missing_lot','A lot or batch number is required.'));
     const existingMatches=code ? (context.skuByCode.get(code.toLowerCase()) || []) : [];
     if(existingMatches.length>1)problems.push(problem('ambiguous_existing_code','This SKU code matches more than one active record.'));
     const blocking=new Set(['bad_quantity','negative_quantity','fractional_quantity','bad_unit_cost','cost_without_stock','bad_selling_price',
       'accounting_not_ready','cost_currency_mismatch','cost_overflow','no_product','unknown_location','no_location',
-      'missing_serial','serial_quantity','missing_lot','ambiguous_existing_code']);
+      'missing_serial','serial_quantity','missing_lot','invalid_tracking_flag','ambiguous_existing_code','workbook_unmatched_key','workbook_stock_mismatch']);
     const parsed={name,code,description:trimOrNull(textCell(row,mappings.description)),
       unitLabel:trimOrNull(textCell(row,mappings.unitLabel)) || 'unit',barcode:trimOrNull(textCell(row,mappings.barcode)),
       unitCostMinor,sellingPriceMinor,currency,
@@ -166,7 +171,8 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
       ...(location?.proposed?{proposedLocationName:location.name}:{}),
       serial,lotCode,expiresAt:trimOrNull(textCell(row,mappings.expiresAt)),
       receivedAt:trimOrNull(textCell(row,mappings.receivedAt)),notes:trimOrNull(textCell(row,mappings.notes)),
-      trackingMode:proposal.detectedType==='serials'?'serial':proposal.detectedType==='lots'?'lot':'quantity',
+      trackingMode:serialRequired?'serial':lotRequired?'lot':'quantity',
+      ...(proposal.provenanceIndex!==undefined?{sourceRows:json(textCell(row,proposal.provenanceIndex),{})}:{}),
       existingSkuId:existingMatches.length===1?existingMatches[0].id:null,
       existingItemId:existingMatches.length===1?existingMatches[0].item_id:null};
     const blocked=problems.some((entry)=>blocking.has(entry.code));
@@ -204,11 +210,22 @@ function previewWarnings(summary,{hasQuantity=true,hasIdentity=true,unmappedNume
   return warnings;
 }
 
-function integrityFor(plan, rows) {
-  return digest({sourceHash:plan.sourceHash,detectedType:plan.detectedType,fieldMappings:plan.fieldMappings,
+function integrityStream(plan) {
+  const metadata={sourceHash:plan.sourceHash,detectedType:plan.detectedType,fieldMappings:plan.fieldMappings,
+    ...(plan.transformations?.workbook?{workbook:plan.transformations.workbook}:{}),
     ...(plan.transformations?.proposedLocations?.length?{proposedLocations:plan.transformations.proposedLocations}:{}),
-    defaultLocationId:plan.defaultLocationId,rows:rows.map((row)=>({rowNumber:row.rowNumber,parsed:row.parsed,status:row.status}))});
+    defaultLocationId:plan.defaultLocationId};
+  // Identical canonical bytes to stable({...metadata,rows:[...]}), without
+  // constructing a second complete row array and giant JSON string. The
+  // original approvals remain compatible; large workbooks have bounded hash
+  // working memory instead of duplicating the full preview.
+  const hash=crypto.createHash('sha256'),keys=[...Object.keys(metadata),'rows'].sort(),at=keys.indexOf('rows');hash.update('{');
+  for(let i=0;i<at;i++)hash.update((i?',':'')+JSON.stringify(keys[i])+':'+stable(metadata[keys[i]]));
+  hash.update((at?',':'')+'"rows":[');let count=0,finished=false;
+  return {append(row){if(finished)throw new Error('IMPORT_HASH_ALREADY_FINISHED');if(count++)hash.update(',');hash.update(stable({rowNumber:row.rowNumber,parsed:row.parsed,status:row.status}));},
+    finish(){if(finished)throw new Error('IMPORT_HASH_ALREADY_FINISHED');finished=true;hash.update(']');for(let i=at+1;i<keys.length;i++)hash.update(','+JSON.stringify(keys[i])+':'+stable(metadata[keys[i]]));hash.update('}');return hash.digest('hex');}};
 }
+function integrityFor(plan,rows){const stream=integrityStream(plan);for(const row of rows)stream.append(row);return stream.finish();}
 
 async function assertOperator(database, ctx) {
   const result=await database.query('SELECT role,permissions FROM users WHERE id=$1 AND workspace_id=$2',[ctx.actorId,ctx.workspaceId]);
@@ -269,7 +286,7 @@ async function analyse(database, ctx, input) {
     isImage?await require('./image-table').parse(buffer):
       parser.parse(buffer?{buffer,filename:input.filename}:{text,filename:input.filename});
   const sheetIndex=Number.isInteger(input.sheetIndex)?input.sheetIndex:parsedWorkbook.primarySheet;
-  const sheet=parsedWorkbook.sheets[sheetIndex];
+  let sheet=parsedWorkbook.sheets[sheetIndex];
   if(!sheet?.rows.length)throw new ValidationError('That source has no inventory rows.');
   const supplierMapping=supplierDataset.classify(sheet.columns);
   if(supplierMapping)return saveSupplierPreview(database,ctx,{bytes,sourceHash,filename:input.filename,
@@ -280,8 +297,15 @@ async function analyse(database, ctx, input) {
   [ctx.workspaceId,sourceHash])).rows[0];
   const modelProvider=input.allowModel===false?null:input.provider||(require('../config').ai.configured?
     require('../ai/provider').createProviderUnobserved(require('../config').ai.provider,require('../config').ai.tier('fast')):null);
-  const proposal=await mappingService.proposeMappings({...sheet,sourceName:input.filename || 'pasted data'},
-    {provider:modelProvider?require('../commercial/model').wrap(database,ctx,modelProvider,'import_mapping',input.usageKey||require('./usage-key').analysisUsageKey(sourceHash)):null,
+  const wrappedProvider=modelProvider?require('../commercial/model').wrap(database,ctx,modelProvider,'import_mapping',input.usageKey||require('./usage-key').analysisUsageKey(sourceHash)):null;
+  const workbook=parsedWorkbook.format==='xlsx'&&parsedWorkbook.sheets.length>1
+    ?await require('./workbook-relations').interpret(parsedWorkbook,{provider:wrappedProvider,
+      contract:input.workbookContract,onBeforeAi:input.onBeforeAi,onUsage:input.onUsage}):null;
+  if(workbook)sheet=workbook.sheet;
+  const proposal=workbook?{mappings:workbook.mappings,detectedType:workbook.variantColumns.length?'variant_inventory':fields.detectType(workbook.mappings),
+    axisNames:workbook.axisNames,variantColumns:workbook.variantColumns,provenanceIndex:workbook.provenanceIndex,problemsIndex:workbook.problemsIndex,
+    aiUsed:!input.workbookContract,ignoredColumns:[],assumptions:[]}:await mappingService.proposeMappings({...sheet,sourceName:input.filename || 'pasted data'},
+    {provider:wrappedProvider,allowModel:input.allowModel,
       mappings:input.mappings || json(prior?.field_mappings,null),detectedType:input.detectedType || prior?.detected_type,
       onBeforeAi:input.onBeforeAi,onUsage:input.onUsage});
   // An uncertain interpretation is a review task, not an upload failure. Keep
@@ -291,7 +315,9 @@ async function analyse(database, ctx, input) {
   if(input.defaultLocationId && !context.locations.some((row)=>row.id===input.defaultLocationId))
     throw new ValidationError('That destination location is not in this inventory.');
   const proposedLocations=plannedLocations.proposals(sheet,proposal.mappings,context,input);
-  const validated=validateRows(sheet,proposal.mappings,proposal,plannedLocations.withProposals(context,proposedLocations),input);
+  const streaming=Boolean(workbook)&&sheet.rows.length>500;
+  const validationContext=plannedLocations.withProposals(context,proposedLocations);
+  const validated=validateRows(streaming?{...sheet,rows:[]}:sheet,proposal.mappings,proposal,validationContext,input);
   const unmappedNumeric=unmappedNumericColumns(sheet,proposal.mappings);
   const at=nowIso();
   const plan={id:newId('imp'),workspaceId:ctx.workspaceId,createdByUserId:ctx.actorId,
@@ -300,12 +326,16 @@ async function analyse(database, ctx, input) {
     sourceHash,sourceBytes:bytes.length,detectedType:proposal.detectedType,sheetName:sheet.name,
     sheetIndex,sourceColumns:sheet.columns.map((column)=>({index:column.index,name:column.name})),
     fieldMappings:proposal.mappings,transformations:{axisNames:proposal.axisNames,aiUsed:proposal.aiUsed,
+      ...(workbook?{workbook:{version:1,contract:workbook.contract,coverage:workbook.coverage,sourceRows:workbook.sourceRows,
+        outputRows:workbook.outputRows,physicalUnits:workbook.physicalUnits,issues:workbook.issues,issueCount:workbook.issueCount},
+        variantColumns:workbook.variantColumns,provenanceIndex:workbook.provenanceIndex,problemsIndex:workbook.problemsIndex}:{}),
       ignoredColumns:proposal.ignoredColumns,sheetCount:parsedWorkbook.sheets.length,
       unmappedNumericColumns:unmappedNumeric,confirmCatalogOnly:false,proposedLocations},trackingModel:{mode:'per-row'},
-    locationMappings:{},defaultLocationId:validated.defaultLocationId,recordsDetected:validated.summary.total,
+    locationMappings:{},defaultLocationId:validated.defaultLocationId,recordsDetected:streaming?sheet.rows.length:validated.summary.total,
     recordsValid:validated.summary.valid,recordsInvalid:validated.summary.invalid,
-    warnings:previewWarnings(validated.summary,{hasQuantity:proposal.mappings.quantity!==undefined,
-      hasIdentity:proposal.mappings.name!==undefined||proposal.mappings.code!==undefined,unmappedNumeric}),
+    warnings:[...(parsedWorkbook.sheets.length>1&&!workbook?[`Only “${sheet.name}” was interpreted. The other ${parsedWorkbook.sheets.length-1} sheets have not been linked or imported; review the complete workbook before approval.`]:[]),
+      ...previewWarnings(validated.summary,{hasQuantity:proposal.mappings.quantity!==undefined,
+      hasIdentity:proposal.mappings.name!==undefined||proposal.mappings.code!==undefined,unmappedNumeric})],
     conflicts:validated.conflicts,assumptions:proposal.assumptions || [],approvalStatus:'AWAITING_APPROVAL',
     status:'READY',planVersion:1,createdAt:at};
   plan.integrityHash=integrityFor(plan,validated.rows);
@@ -320,7 +350,20 @@ async function analyse(database, ctx, input) {
       JSON.stringify(plan.transformations),JSON.stringify(plan.trackingModel),'{}',plan.defaultLocationId,
       plan.recordsDetected,plan.recordsValid,plan.recordsInvalid,JSON.stringify(plan.warnings),JSON.stringify(plan.conflicts),
       JSON.stringify(plan.assumptions),plan.approvalStatus,plan.status,1,plan.integrityHash,at]);
-    await rowStore.insert(client,ctx.workspaceId,plan.id,validated.rows,at);
+    if(!streaming){await rowStore.insert(client,ctx.workspaceId,plan.id,validated.rows,at);return;}
+    const hash=integrityStream(plan),summary={...validated.summary},conflicts=new Map();
+    for(let start=0;start<sheet.rows.length;start+=500){
+      const batch=validateRows({...sheet,rows:sheet.rows.slice(start,start+500)},proposal.mappings,proposal,validationContext,input);
+      for(const row of batch.rows)hash.append(row);
+      for(const key of Object.keys(summary))summary[key]+=batch.summary[key];
+      for(const c of batch.conflicts)conflicts.set(c.text,{...c,count:(conflicts.get(c.text)?.count||0)+c.count});
+      await rowStore.insert(client,ctx.workspaceId,plan.id,batch.rows,at);
+    }
+    plan.integrityHash=hash.finish();plan.recordsValid=summary.valid;plan.recordsInvalid=summary.invalid;plan.conflicts=[...conflicts.values()];
+    plan.warnings=previewWarnings(summary,{hasQuantity:proposal.mappings.quantity!==undefined,
+      hasIdentity:proposal.mappings.name!==undefined||proposal.mappings.code!==undefined,unmappedNumeric});
+    await client.query(`UPDATE import_plans SET records_valid=$3,records_invalid=$4,warnings=$5,conflicts=$6,integrity_hash=$7 WHERE workspace_id=$1 AND id=$2`,
+      [ctx.workspaceId,plan.id,plan.recordsValid,plan.recordsInvalid,JSON.stringify(plan.warnings),JSON.stringify(plan.conflicts),plan.integrityHash]);
   },{isolation:'SERIALIZABLE'});
   return get(database,ctx.workspaceId,plan.id);
 }
@@ -455,7 +498,8 @@ async function revise(database,ctx,id,input={}){
     const proposedLocations=plannedLocations.proposals(sheet,fieldMappings,context,{locationMappings,
       proposedLocations:{...Object.fromEntries((plan.transformations.proposedLocations||[]).map(row=>[row.source,row])),...(input.proposedLocations||{})}});
     const validated=validateRows(sheet,fieldMappings,
-      {detectedType,axisNames},plannedLocations.withProposals(context,proposedLocations),
+      {detectedType,axisNames,variantColumns:plan.transformations.variantColumns,provenanceIndex:plan.transformations.provenanceIndex,
+        problemsIndex:plan.transformations.problemsIndex},plannedLocations.withProposals(context,proposedLocations),
       {defaultLocationId,locationMappings,quantityOverrides});
     const unmappedNumeric=unmappedNumericColumns(sheet,fieldMappings);
     const confirmCatalogOnly=fieldMappings.quantity===undefined&&input.confirmCatalogOnly===true;
@@ -494,6 +538,7 @@ async function approve(database, ctx, id, expectedHash) {
     if(plan.fieldMappings.name===undefined&&plan.fieldMappings.code===undefined)
       throw new ValidationError('Map a product name or SKU and recalculate the preview before approving.');
     if(!plan.recordsValid)throw new ValidationError('There are no valid rows to import.');
+    if(plan.transformations.workbook&&plan.recordsInvalid)throw new ValidationError('This workbook still has unresolved source rows. Resolve them before approving the complete inventory; StockChief will not silently import only part of it.');
     await plannedLocations.assertOwner(client,ctx,plan.transformations.proposedLocations||[]);
     if(plan.transformations.proposedLocations?.length)await require('../entitlements/postgres-service').assertMeterCapacity(client,
       await require('../entitlements/postgres-service').ownerScopeForWorkspace(client,ctx.workspaceId),'locations',plan.transformations.proposedLocations.length);

@@ -17,6 +17,16 @@
   <div class="notice notice--warn section"><strong>This exact source was already imported.</strong>
     StockChief will not apply the same bytes twice. <a href="/imports/<%= duplicatePlans[0].id %>">See the completed import</a>.</div>
 <% } %>
+<% if(sourceTransforms.workbook){ const book=sourceTransforms.workbook; %>
+<section class="card section" aria-labelledby="workbook-scope"><div class="card-head"><h2 id="workbook-scope">How this workbook will be imported</h2></div><div class="card-body">
+  <p><strong><%= Number(book.sourceRows).toLocaleString('en-US') %> source records</strong> across <%= book.coverage.length %> worksheets. Stock is prepared as <%= Number(book.outputRows).toLocaleString('en-US') %> product/location rows. Location counts are checked against the physical totals; totals and historical movements are not added again.</p>
+  <p>Review the worksheets below. Data marked “Not imported” will not create orders, bills, reservations or other business records.</p>
+  <div class="table-scroll"><table class="table"><thead><tr><th>Worksheet</th><th>Source rows</th><th>Use in this import</th><th>Details</th></tr></thead><tbody>
+  <% book.coverage.forEach(function(part){ %><tr><th scope="row"><%= part.name %></th><td><%= Number(part.rows).toLocaleString('en-US') %></td><td><%= part.role==='not_imported'?'Not imported':part.role==='reference'?'Related reference':'Opening inventory' %></td><td><%= part.reason %></td></tr><% }) %>
+  </tbody></table></div>
+  <% if(plan.recordsInvalid){ %><p class="text-danger"><strong><%= Number(plan.recordsInvalid).toLocaleString('en-US') %> rows still need attention.</strong> Missing serial/lot identifiers or inconsistent source quantities are shown below; StockChief will not invent them.</p><% } %>
+</div></section>
+<% } %>
 <% if(sourceTransforms.proposedLocations?.length && plan.status==='READY'){ %>
   <section class="card section" aria-labelledby="import-new-locations"><div class="card-head"><h2 id="import-new-locations">Locations found in your file</h2></div>
     <div class="card-body"><p>Your file refers to these <%= sourceTransforms.proposedLocations.length %> location labels. <% if(plan.approvalStatus==='AWAITING_APPROVAL'){ %>Approving this import adds their records to this inventory. Keep the file labels, enter display names, or match locations already in StockChief.<% } else { %>Your approved import preserves the following names in StockChief.<% } %></p>
@@ -113,7 +123,7 @@
     </div>
     <div class="card-foot"><div class="btn-row">
       <% if(plan.approvalStatus==='APPROVED'){ %><form method="post" action="/imports/<%= plan.id %>/run"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><button class="btn btn--primary" type="submit">Import and verify</button></form>
-      <% } else { %><form method="post" action="/imports/<%= plan.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><button class="btn btn--primary" type="submit" <%= !plan.recordsValid || (sourceMappings.name===undefined && sourceMappings.code===undefined) || duplicatePlans.length || (sourceMappings.quantity===undefined && sourceTransforms.unmappedNumericColumns?.length && !sourceTransforms.confirmCatalogOnly)?'disabled':'' %>>Approve <%= plan.recordsValid %> <%= helpers.plural(plan.recordsValid, 'row') %></button></form><% } %>
+      <% } else { %><form method="post" action="/imports/<%= plan.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><button class="btn btn--primary" type="submit" <%= !plan.recordsValid || (sourceTransforms.workbook && plan.recordsInvalid>0) || (sourceMappings.name===undefined && sourceMappings.code===undefined) || duplicatePlans.length || (sourceMappings.quantity===undefined && sourceTransforms.unmappedNumericColumns?.length && !sourceTransforms.confirmCatalogOnly)?'disabled':'' %>>Approve <%= plan.recordsValid %> <%= helpers.plural(plan.recordsValid, 'row') %></button></form><% } %>
       <form method="post" action="/imports/<%= plan.id %>/cancel"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost" type="submit">Cancel</button></form>
     </div></div>
   </div>

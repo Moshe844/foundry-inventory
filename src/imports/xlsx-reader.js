@@ -215,6 +215,17 @@ function serialToDate(serial) {
   return date.toISOString().slice(0, 10);
 }
 
+// Excel serializes binary floating point, including 8.130000000000001.
+// Remove only roundoff within four machine epsilons of an exact cent. Genuine
+// extra precision, text amounts and large numeric identifiers remain intact.
+function numericCell(raw) {
+  if(!/^-?\d+(?:\.\d+)?(?:e[+-]?\d+)?$/i.test(raw))return raw;
+  const number=Number(raw),cents=Math.round(number*100),rounded=cents/100;
+  if(!Number.isFinite(number)||!Number.isSafeInteger(cents))return raw;
+  return Math.abs(number-rounded)<=Math.max(1,Math.abs(number))*Number.EPSILON*4
+    ?String(rounded):raw;
+}
+
 function readSheet(xml, sharedStrings, dateStyles) {
   const text = xml.toString('utf8');
   const rows = [];
@@ -258,7 +269,7 @@ function readSheet(xml, sharedStrings, dateStyles) {
       } else if (raw !== '') {
         const styleIndex = style ? Number(style[1]) : 0;
         const asDate = dateStyles.has(styleIndex) ? serialToDate(raw) : null;
-        value = asDate || raw;
+        value = asDate || numericCell(raw);
       }
 
       while (cells.length < index) cells.push('');
