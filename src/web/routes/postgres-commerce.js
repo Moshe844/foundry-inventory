@@ -237,6 +237,24 @@ function createPostgresCommerceRouter(database,options={}){
   const router=express.Router();
   router.use(['/purchasing','/orders','/sales'],requireAuth);
 
+  for(const collection of [
+    {path:'/returns',title:'Customer returns',nav:'sales',permission:permissions.VIEW_SALES,
+      list:returns.listCustomerReturns,back:'/orders',backLabel:'Customer orders',customer:true},
+    {path:'/supplier-returns',title:'Supplier returns',nav:'purchasing',permission:permissions.VIEW_PURCHASING,
+      list:returns.listSupplierReturns,back:'/purchasing/orders',backLabel:'Purchase orders',customer:false},
+  ])router.get(collection.path,requireAuth,requirePermission(collection.permission,'see '+collection.title.toLowerCase()),asyncRoute(async(req,res)=>{
+    const offset=Number(req.query.offset||0);
+    if(!Number.isSafeInteger(offset)||offset<0||offset>1000000)throw new ValidationError('Choose a valid return-list page.');
+    const found=await collection.list(database,req.ctx.workspaceId,null,{limit:51,offset});
+    const records=found.slice(0,50).map(row=>({id:row.id,number:row.return_number,status:row.status,
+      party:collection.customer?row.customer_name:row.supplier_name,createdAt:row.created_at,
+      href:collection.path+'/'+encodeURIComponent(row.id),
+      orderHref:collection.customer?'/orders/'+encodeURIComponent(row.sales_order_id):row.purchase_order_id?'/purchasing/orders/'+encodeURIComponent(row.purchase_order_id):null,
+      orderLabel:collection.customer?row.order_number:'Purchase order'}));
+    return res.page('returns/list',{title:collection.title,nav:collection.nav,collection,records,
+      previous:offset?Math.max(0,offset-50):null,next:found.length>50?offset+50:null});
+  }));
+
   router.get('/suppliers',requireAuth,requirePermission(permissions.VIEW_PURCHASING,'see suppliers'),asyncRoute(async(req,res)=>{
     const rows=(await database.query(`SELECT s.*,
       COALESCE((SELECT COUNT(*) FROM supplier_items si WHERE si.workspace_id=s.workspace_id AND si.supplier_id=s.id AND si.is_active=1),0)::integer AS item_count,

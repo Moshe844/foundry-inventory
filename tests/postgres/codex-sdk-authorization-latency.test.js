@@ -11,6 +11,7 @@ test('native bookkeeping avoids repeated catalogue construction while retaining 
  const gateway=require('../../scripts/environment-agent-demo/gateway').createGateway({database:measured,ctx,goal:goal.original_request,goalId:goal.id,runToken:goal.run_token});
  queries=0;const full=await gateway.authorize(),fullQueries=queries;assert(full.catalogue.list().length);
  const initial=await gateway.initialContracts(),codec=require('../../scripts/environment-agent-demo/interface-presentation');
+ t.diagnostic(JSON.stringify({initialBytes:Buffer.byteLength(JSON.stringify(codec.compact(initial))),deliveredDatasets:initial.datasetIndex.filter(d=>d.fields).map(d=>d.name),deliveredReads:initial.operations.filter(c=>c.fields).map(c=>c.name)}));
  assert(Buffer.byteLength(JSON.stringify(codec.compact(initial)))<=18000,'The complete actually delivered metadata stays inside the unchanged bound');
  assert.deepEqual(codec.expand(codec.compact(initial)),initial,'Packing changes no contract, field or authority fact');
  assert.deepEqual(Object.entries(initial.operationIndex).flatMap(([kind,names])=>names.map(name=>({name,kind}))).sort((a,b)=>a.name.localeCompare(b.name)),

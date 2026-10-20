@@ -7,7 +7,17 @@ test('recorded journal read preserves money units, posted scope, currency separa
  const create=async()=>{const u=await auth.createBusiness(db,{name:'Owner',businessName:'Books',email:randomUUID()+'@example.test',password:'Offline!'+randomUUID()});const ctx={workspaceId:u.workspaceId,actorId:u.userId};await ledger.configure(db,ctx,{startDate:'2026-01-01',currency:'USD'});return ctx;};
  const ctx=await create(),foreign=await create(),today=new Date().toISOString().slice(0,10);
  const post=(scope,key,amount,currency,date=today)=>ledger.post(db,scope,{postingDate:date,sourceKey:key,description:'Unit evidence',currency,lines:[{accountKey:'CASH',debitMinor:amount},{accountKey:'SALES_REVENUE',creditMinor:amount}]});
- const usd=await post(ctx,'recorded-minor-unit-total',15250,'USD');await post(ctx,'independent-currency',4300,'EUR','2026-01-02');await post(foreign,'foreign-tenant',40000,'USD');
+ const usd=await post(ctx,'recorded-minor-unit-total',15250,'USD');
+ await assert.rejects(post(ctx,'foreign-currency-must-not-post',4300,'EUR','2026-01-02'),/verified currency conversion/);
+ // Represent retained legacy multi-currency evidence directly in this
+ // disposable fixture. New canonical posting must reject it; the read still
+ // has to display historical currencies separately rather than relabel them.
+ const legacy=randomUUID();
+ await db.query(`INSERT INTO accounting_journal_entries(id,workspace_id,entry_number,posting_date,period_id,description,status,source_type,source_key,created_by_type,engine_version,created_at)
+ SELECT $1,workspace_id,2,'2026-01-02',period_id,'Retained legacy currency evidence','POSTED',source_type,$1,created_by_type,engine_version,created_at FROM accounting_journal_entries WHERE id=$2`,[legacy,usd.entry.id]);
+ await db.query(`INSERT INTO accounting_journal_lines(id,workspace_id,entry_id,line_number,account_id,debit_minor,credit_minor,currency,created_at)
+ SELECT $1||line_number,workspace_id,$1,line_number,account_id,CASE WHEN debit_minor>0 THEN 4300 ELSE 0 END,CASE WHEN credit_minor>0 THEN 4300 ELSE 0 END,'EUR',created_at FROM accounting_journal_lines WHERE entry_id=$2`,[legacy,usd.entry.id]);
+ await post(foreign,'foreign-tenant',40000,'USD');
  const draft='draft-'+randomUUID();
  await db.query(`INSERT INTO accounting_journal_entries(id,workspace_id,entry_number,posting_date,period_id,description,status,source_type,source_key,created_by_type,engine_version,created_at)
  SELECT $1,workspace_id,99,posting_date,period_id,'Unposted draft','DRAFT',source_type,$1,created_by_type,engine_version,created_at FROM accounting_journal_entries WHERE id=$2`,[draft,usd.entry.id]);

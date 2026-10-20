@@ -2,9 +2,9 @@
 // Lossless presentation of governed contract metadata. The original response
 // remains in the durable evidence journal. Never applied to business rows,
 // browser observations or authority checks.
-const KEY='_stockchiefDefinitions',PREFIX='#/'+KEY+'/',DEFAULTS='_stockchiefOperationDefaults',DATASETS='_stockchiefDatasetDefaults';
+const KEY='_stockchiefDefinitions',PREFIX='#/'+KEY+'/',DEFAULTS='_stockchiefOperationDefaults',DATASETS='_stockchiefDatasetDefaults',INDEX='_stockchiefOperationIndexEncoding';
 function compact(value){
- if(!value||!Array.isArray(value.operations)||value.datasets!==undefined&&!Array.isArray(value.datasets)||[KEY,DEFAULTS,DATASETS].some(key=>Object.hasOwn(value,key)))return value;
+ if(!value||!Array.isArray(value.operations)||value.datasets!==undefined&&!Array.isArray(value.datasets)||[KEY,DEFAULTS,DATASETS,INDEX].some(key=>Object.hasOwn(value,key)))return value;
  const occurrences=new Map();let existingReference=false;
  function count(v){if(!v||typeof v!=='object')return;const encoded=JSON.stringify(v);
   if(typeof v.$ref==='string'&&v.$ref.startsWith(PREFIX))existingReference=true;
@@ -38,10 +38,21 @@ function compact(value){
   result[DATASETS]={detailsByName:true};
   result.datasetIndex=result.datasetIndex.map(({detailsByName,...rest})=>rest);
  }
+ // The complete name index repeats names already present in operations. Keep
+ // its exact ordering and all omitted contracts, encoding only those repeated
+ // names as positions in this same metadata packet. No business row or
+ // evidence coordinate uses this encoding.
+ if(result.operationIndex&&Object.values(result.operationIndex).every(names=>Array.isArray(names)&&names.every(name=>typeof name==='string'))){
+  const positions=new Map(result.operations.map((operation,index)=>[operation.name,index]));
+  const packed=Object.fromEntries(Object.entries(result.operationIndex).map(([kind,names])=>[kind,names.map(name=>positions.has(name)?positions.get(name):name)]));
+  if(Buffer.byteLength(JSON.stringify(packed))+100<Buffer.byteLength(JSON.stringify(result.operationIndex))){
+   result.operationIndex=packed;result[INDEX]='operation_numbers';
+  }
+ }
  return Buffer.byteLength(JSON.stringify(result))<Buffer.byteLength(JSON.stringify(value))?result:value;
 }
 function expand(value){
- if(!value||![KEY,DEFAULTS,DATASETS].some(key=>Object.hasOwn(value,key)))return value;const definitions=value[KEY]||{};
+ if(!value||![KEY,DEFAULTS,DATASETS,INDEX].some(key=>Object.hasOwn(value,key)))return value;const definitions=value[KEY]||{};
  function visit(v){if(!v||typeof v!=='object')return v;
   if(Object.keys(v).length===1&&typeof v.$ref==='string'&&v.$ref.startsWith(PREFIX)){
    const key=v.$ref.slice(PREFIX.length);if(!Object.hasOwn(definitions,key))throw Error('INTERFACE_REFERENCE_UNAVAILABLE');
@@ -50,9 +61,17 @@ function expand(value){
   }
   return Array.isArray(v)?v.map(visit):Object.fromEntries(Object.entries(v).map(([key,child])=>[key,visit(child)]));
  }
- const {[KEY]:ignored,[DEFAULTS]:defaults,[DATASETS]:datasetDefaults,...rest}=value;
+ const {[KEY]:ignored,[DEFAULTS]:defaults,[DATASETS]:datasetDefaults,[INDEX]:indexEncoding,...rest}=value;
  if(defaults)rest.operations=rest.operations.map(op=>({...defaults,...op}));
  if(datasetDefaults)rest.datasetIndex=rest.datasetIndex.map(dataset=>({...datasetDefaults,...dataset}));
+ if(indexEncoding){
+  if(indexEncoding!=='operation_numbers')throw Error('INVALID_INTERFACE_INDEX_ENCODING');
+  rest.operationIndex=Object.fromEntries(Object.entries(rest.operationIndex).map(([kind,names])=>[kind,names.map(name=>{
+   if(typeof name==='string')return name;
+   if(!Number.isSafeInteger(name)||name<0||typeof rest.operations[name]?.name!=='string')throw Error('INTERFACE_INDEX_REFERENCE_UNAVAILABLE');
+   return rest.operations[name].name;
+  })]));
+ }
  return visit(rest);
 }
 module.exports={compact,expand};

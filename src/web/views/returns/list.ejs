@@ -1,0 +1,25 @@
+<p class="rm-stamp"><a href="<%= collection.back %>"><%= collection.backLabel %></a></p>
+<h1><%= collection.title %></h1>
+<p class="rm-sub"><%= collection.customer
+  ? 'Follow each request through physical receipt, inspection and any refund or invoice credit. A request alone changes neither stock nor money.'
+  : 'Follow each return through authorization, physical dispatch and the supplier’s credit or refund. Authorization alone does not mean goods have left.' %></p>
+<section class="card" aria-label="<%= collection.title %>">
+  <% if(!records.length){ %>
+    <p class="quiet-note"><%= previous===null?'No '+collection.title.toLowerCase()+' are recorded in this business.':'There are no returns on this page.' %></p>
+  <% } else { %>
+    <div class="table-scroll"><table>
+      <thead><tr><th>Return</th><th><%= collection.customer?'Customer':'Supplier' %></th><th>Recorded stage</th><th>Original order</th><th>Requested</th></tr></thead>
+      <tbody><% records.forEach(function(row){ %><tr>
+        <td><a href="<%= row.href %>"><strong><%= row.number %></strong></a></td>
+        <td><%= row.party %></td><td><%= row.status.replaceAll('_',' ').toLowerCase() %></td>
+        <td><% if(row.orderHref){ %><a href="<%= row.orderHref %>"><%= row.orderLabel %></a><% } else { %>Not linked<% } %></td>
+        <td><time datetime="<%= row.createdAt %>" title="<%= row.createdAt %>"><%= helpers.dateTime(row.createdAt) %></time></td>
+      </tr><% }) %></tbody>
+    </table></div>
+  <% } %>
+  <% if(previous!==null||next!==null){ %><nav aria-label="Return pages">
+    <% if(previous!==null){ %><a class="button secondary" href="<%= collection.path %>?offset=<%= previous %>">Previous</a><% } %>
+    <% if(next!==null){ %><a class="button secondary" href="<%= collection.path %>?offset=<%= next %>">Next</a><% } %>
+  </nav><% } %>
+</section>
+<p class="rm-sub">To start a return, open its <%= collection.customer?'original fulfilled customer order':'original purchase order' %>. Open a recorded return to review its evidence and permitted next steps.</p>

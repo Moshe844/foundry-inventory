@@ -43,6 +43,8 @@ test('real Chromium completes a PostgreSQL customer return without splitting inv
       JOIN users u ON u.workspace_id=w.id JOIN accounts a ON a.id=u.account_id
       WHERE a.email='returns-ui@example.test'`)).rows[0];
     const ctx = { workspaceId: identity.workspace_id, actorId: identity.actor_id };
+    assert.equal((await page.goto(`${base}/returns`)).status(),200);
+    assert.match(await page.locator('main').innerText(),/No customer returns are recorded/);
     const main = await locations.createLocation(database, ctx, { name: 'Main Warehouse', kind: 'warehouse' });
     const quarantine = await locations.createLocation(database, ctx, { name: 'Returns Quarantine', kind: 'warehouse' });
     const restock = await locations.createLocation(database, ctx, { name: 'Sellable Stock', kind: 'warehouse' });
@@ -167,5 +169,17 @@ test('real Chromium completes a PostgreSQL customer return without splitting inv
     const balances = await database.query(`SELECT COALESCE(SUM(on_hand),0)::bigint AS quantity
       FROM balances WHERE workspace_id=$1`, [ctx.workspaceId]);
     assert.equal(Number(physical.rows[0].quantity), Number(balances.rows[0].quantity));
+    await page.goto(`${base}/orders`);
+    await page.getByRole('link',{name:'Customer returns and refunds',exact:true}).click();
+    assert.equal(new URL(page.url()).pathname,'/returns');
+    assert.equal(await page.locator(`a[href="/returns/${returnId}"]`).count(),1);
+    const savedReturns=(await database.query('SELECT id FROM customer_returns WHERE workspace_id=$1',[ctx.workspaceId])).rows;
+    assert.equal(await page.locator('time[datetime]').count(),savedReturns.length);
+    for(const saved of savedReturns)assert.equal(await page.locator(`a[href="/returns/${saved.id}"]`).count(),1);
+    assert.equal((await page.goto(`${base}/returns?offset=50`)).status(),200);
+    assert.match(await page.locator('main').innerText(),/no returns on this page/i);
+    assert.equal((await page.goto(`${base}/returns?offset=-1`)).status(),400);
+    await database.query(`UPDATE users SET role='member',permissions='["VIEW"]'::jsonb WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,ctx.actorId]);
+    assert.equal((await page.goto(`${base}/returns`)).status(),403);
     assert.deepEqual(errors, []);
   });

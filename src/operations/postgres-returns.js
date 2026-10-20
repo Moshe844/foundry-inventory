@@ -100,12 +100,21 @@ async function getCustomerReturn(database, workspaceId, id) {
   return readReturn(database, workspaceId, id, false);
 }
 
-async function listCustomerReturns(database, workspaceId, salesOrderId = null) {
+function pageBounds(page){
+  if(!page)return null;
+  const limit=Number(page.limit),offset=Number(page.offset||0);
+  if(!Number.isSafeInteger(limit)||limit<1||limit>201||!Number.isSafeInteger(offset)||offset<0||offset>1000000)
+    throw new ValidationError('Choose a valid return-list page.');
+  return {limit,offset};
+}
+
+async function listCustomerReturns(database, workspaceId, salesOrderId = null, page = null) {
+  const bounds=pageBounds(page);
   const result = await database.query(`SELECT r.*,so.order_number,c.name AS customer_name
     FROM customer_returns r JOIN sales_orders so ON so.id=r.sales_order_id AND so.workspace_id=r.workspace_id
     JOIN customers c ON c.id=so.customer_id AND c.workspace_id=r.workspace_id
     WHERE r.workspace_id=$1 AND ($2::text IS NULL OR r.sales_order_id=$2)
-    ORDER BY r.created_at DESC,r.id DESC`, [workspaceId, salesOrderId]);
+    ORDER BY r.created_at DESC,r.id DESC${bounds?' LIMIT $3 OFFSET $4':''}`, [workspaceId, salesOrderId,...(bounds?[bounds.limit,bounds.offset]:[])]);
   return result.rows;
 }
 
@@ -628,12 +637,13 @@ async function getSupplierReturn(database, workspaceId, id) {
   return readSupplierReturn(database, workspaceId, id, false);
 }
 
-async function listSupplierReturns(database, workspaceId, purchaseOrderId = null) {
+async function listSupplierReturns(database, workspaceId, purchaseOrderId = null, page = null) {
+  const bounds=pageBounds(page);
   const result = await database.query(`SELECT r.*,s.name AS supplier_name,b.purchase_order_id
     FROM supplier_returns r JOIN suppliers s ON s.id=r.supplier_id AND s.workspace_id=r.workspace_id
     LEFT JOIN accounting_supplier_bills b ON b.id=r.supplier_bill_id AND b.workspace_id=r.workspace_id
     WHERE r.workspace_id=$1 AND ($2::text IS NULL OR b.purchase_order_id=$2)
-    ORDER BY r.created_at DESC,r.id DESC`, [workspaceId, purchaseOrderId]);
+    ORDER BY r.created_at DESC,r.id DESC${bounds?' LIMIT $3 OFFSET $4':''}`, [workspaceId, purchaseOrderId,...(bounds?[bounds.limit,bounds.offset]:[])]);
   return result.rows;
 }
 

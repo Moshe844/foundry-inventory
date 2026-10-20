@@ -17,3 +17,12 @@ test('shared defaults preserve empty properties, explicit differences and comple
  const wire=compact(original);assert.deepEqual(expand(wire),original);assert.deepEqual(compact(wire),wire);assert.equal(wire._stockchiefOperationDefaults.kind,'read');assert.equal(wire._stockchiefDatasetDefaults.detailsByName,true);
  const different={operations:[original.operations[0],{name:'write.a',kind:'mutation',required:['amount'],authority:{mode:'owner_review'},unavailable:['missing_scope']}]};assert.deepEqual(expand(compact(different)),different);
 });
+
+test('complete operation indexes retain exact order and unknown details without repeating delivered names',()=>{
+ const operations=Array.from({length:30},(_,i)=>({name:'read.long_record_type_'+i,kind:'read',required:[],fields:{},authority:{mode:'none'},unavailable:[]}));
+ const original={operations,operationIndex:{read:[operations[9].name,'read.details_not_delivered',...operations.map(o=>o.name)],mutation:['write.undelivered']},indexComplete:true};
+ const before=JSON.stringify(original),wire=compact(original);assert.equal(wire._stockchiefOperationIndexEncoding,'operation_numbers');assert.equal(wire.operationIndex.read[0],9);assert.equal(wire.operationIndex.read[1],'read.details_not_delivered');assert.deepEqual(wire.operationIndex.mutation,['write.undelivered']);
+ assert.deepEqual(expand(JSON.parse(JSON.stringify(wire))),original);assert.equal(JSON.stringify(original),before);assert.deepEqual(compact(wire),wire);assert.equal(wire.indexComplete,true);
+ for(const bad of [-1,1.5,1000,null])assert.throws(()=>expand({...wire,operationIndex:{read:[bad]}}),/INTERFACE_INDEX_REFERENCE_UNAVAILABLE/);
+ assert.throws(()=>expand({...wire,_stockchiefOperationIndexEncoding:'unrecognized'}),/INVALID_INTERFACE_INDEX_ENCODING/);
+});

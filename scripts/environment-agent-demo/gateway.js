@@ -11,7 +11,9 @@ const {nativeFieldName}=require('./contracts');
 function describe(c){return {name:c.name,kind:c.kind,description:c.description,required:(c.required||[]).map(name=>nativeFieldName(c,name)),
   fields:Object.fromEntries(c.fields.map(name=>[nativeFieldName(c,name),{type:FIELDS[name]?.type||'string',...(FIELDS[name]?.type==='string'?{maxLength:FIELDS[name].maxLength||2000}:{}),description:c.agentHints?.[name]||FIELDS[nativeFieldName(c,name)]?.description||name,
    ...(c.argumentSchemas?.[name]?{jsonSchema:c.argumentSchemas[name]()}:{})}])),
-  authority:c.authority,unavailable:c.commercialUnavailable||[]};}
+  authority:c.authority,unavailable:c.commercialUnavailable||[],
+  ...(c.recordKind&&require('../../src/web/postgres-record-destinations').RECORDS[c.recordKind]?.collection
+    ?{collection:require('../../src/web/postgres-record-destinations').RECORDS[c.recordKind].collection}:{})};}
 function discoveryPage(entries,offset,summary){
  const page=[];let bytes=0;
  for(const entry of entries.slice(offset)){
@@ -126,12 +128,16 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
       const indexBytes=size();
       for(const detail of details){
         datasetIndex[detail.index].fields=detail.fields;
-        if(size()-indexBytes>1800)delete datasetIndex[detail.index].fields;
+        if(size()-indexBytes>3000)delete datasetIndex[detail.index].fields;
       }
-      for(const contract of contracts.filter(c=>c.kind==='read')){
-        const complete=describe(contract);
+      // Pack reusable small read contracts before larger descriptions. This
+      // depends only on authorized metadata size, not the request or domain.
+      // Every name remains in the complete index and exact lookup is unchanged.
+      const readDetails=contracts.filter(c=>c.kind==='read').map(describe)
+        .sort((a,b)=>Buffer.byteLength(JSON.stringify(a))-Buffer.byteLength(JSON.stringify(b))||a.name.localeCompare(b.name));
+      for(const complete of readDetails){
         const entry=Buffer.byteLength(JSON.stringify(complete))<=4096?complete:
-          {name:contract.name,kind:contract.kind,description:contract.description,required:(contract.required||[]).map(name=>nativeFieldName(contract,name)),detailsByName:true};
+          {name:complete.name,kind:complete.kind,description:complete.description,required:complete.required,detailsByName:true};
         operations.push(entry);
         if(Buffer.byteLength(JSON.stringify(require('./interface-presentation').compact(packet())))>18000)operations.pop();
       }

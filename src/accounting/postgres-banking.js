@@ -135,4 +135,33 @@ async function reconcile(database,ctx,bankId,input){
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 
-module.exports={importOne,match,reconcile};
+// A read of recorded reconciliation evidence, not a new reconciliation or a
+// claim that an external account is balanced. Keep this separate from the
+// journal's posting-date filter: statement activity has its own dates/states.
+async function inspect(database,ctx){
+  const permissions=require('../actions/permissions');
+  const actor=(await database.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',
+    [ctx.workspaceId,ctx.actorId])).rows[0];
+  permissions.assertCan(actor,permissions.VIEW_ACCOUNTING,'view banking and reconciliation');
+  const r=(await database.query(`SELECT
+    (SELECT count(*)::int FROM accounting_bank_accounts WHERE workspace_id=$1) account_count,
+    (SELECT count(*)::int FROM accounting_bank_accounts WHERE workspace_id=$1 AND active=1) active_account_count,
+    (SELECT count(*)::int FROM accounting_bank_transactions WHERE workspace_id=$1) transaction_count,
+    (SELECT max(imported_at) FROM accounting_bank_transactions WHERE workspace_id=$1) last_imported_at,
+    COALESCE((SELECT jsonb_object_agg(status,n) FROM
+      (SELECT status,count(*)::int n FROM accounting_bank_transactions WHERE workspace_id=$1 GROUP BY status) s),'{}'::jsonb) transaction_states,
+    (SELECT count(*)::int FROM accounting_reconciliations WHERE workspace_id=$1) statement_count,
+    (SELECT max(completed_at) FROM accounting_reconciliations WHERE workspace_id=$1 AND status='COMPLETED') last_completed_at,
+    COALESCE((SELECT jsonb_object_agg(status,n) FROM
+      (SELECT status,count(*)::int n FROM accounting_reconciliations WHERE workspace_id=$1 GROUP BY status) s),'{}'::jsonb) statement_states,
+    (SELECT count(*)::int FROM accounting_reconciliations WHERE workspace_id=$1 AND difference_minor<>0) statements_with_difference`,
+    [ctx.workspaceId])).rows[0];
+  return {available:true,complete:true,
+    scope:'All recorded financial accounts, imported statement lines and saved statement reconciliations in this business; independent of the journal posting-date filter.',
+    accounts:{total:r.account_count,active:r.active_account_count},
+    transactions:{total:r.transaction_count,states:r.transaction_states,lastImportedAt:r.last_imported_at},
+    statements:{total:r.statement_count,states:r.statement_states,withRecordedDifference:r.statements_with_difference,lastCompletedAt:r.last_completed_at},
+    interpretation:'Absent state counts mean zero recorded rows in this scope. No imported activity or completed statements means reconciliation is unestablished, not that balances match. Completion applies only to its saved statement date; this does not contact a bank, establish current funds, or verify external accounting connections.'};
+}
+
+module.exports={importOne,match,reconcile,inspect};

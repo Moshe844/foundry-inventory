@@ -51,6 +51,7 @@
 
 
 <p class="rm-stamp"><%= counts.stuck %> fulfilment exceptions · <%= waiting.length %> waiting for stock · <%= counts.ready + counts.moving %> ready or moving · <%= counts.unpaid %> unpaid · <%= counts.done %> done</p>
+<p><a href="/returns">Customer returns and refunds</a></p>
 <h1 class="rm-figure">
   <% if (view === 'stuck') { %><%= counts.stuck %> order<%= counts.stuck === 1 ? ' needs' : 's need' %> you.
   <% } else if (view === 'ready') { %><%= counts.ready %> order<%= counts.ready === 1 ? ' is' : 's are' %> ready to pick.

@@ -43,6 +43,8 @@ test('real Chromium separates PostgreSQL supplier-return shipment from credit an
       JOIN users u ON u.workspace_id=w.id JOIN accounts a ON a.id=u.account_id
       WHERE a.email='supplier-returns-ui@example.test'`)).rows[0];
     const ctx = { workspaceId: identity.workspace_id, actorId: identity.actor_id };
+    assert.equal((await page.goto(`${base}/supplier-returns`)).status(),200);
+    assert.match(await page.locator('main').innerText(),/No supplier returns are recorded/);
     const main = await locations.createLocation(database, ctx, { name: 'Supplier Return Warehouse', kind: 'warehouse' });
     const item = await catalog.createItem(database, ctx, { name: 'Supplier Return Boot', baseCode: 'SRTN',
       trackingMode: 'quantity', unitLabel: 'pair' });
@@ -120,5 +122,14 @@ test('real Chromium separates PostgreSQL supplier-return shipment from credit an
     const movementCount = Number((await database.query(`SELECT COUNT(*) AS count FROM movements WHERE workspace_id=$1`,
       [ctx.workspaceId])).rows[0].count);
     assert.equal(movementCount, 3);
+    await page.goto(`${base}/purchasing`);
+    await page.getByRole('link',{name:'Supplier returns and credits',exact:true}).click();
+    assert.equal(new URL(page.url()).pathname,'/supplier-returns');
+    assert.equal(await page.locator(`a[href="/supplier-returns/${firstReturnId}"]`).count(),1);
+    assert.equal(await page.locator(`a[href="/supplier-returns/${mismatchReturnId}"]`).count(),1);
+    assert.equal(await page.locator('time[datetime]').count(),2);
+    assert.equal((await page.goto(`${base}/supplier-returns?offset=1000001`)).status(),400);
+    await database.query(`UPDATE users SET role='member',permissions='["VIEW"]'::jsonb WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,ctx.actorId]);
+    assert.equal((await page.goto(`${base}/supplier-returns`)).status(),403);
     assert.deepEqual(errors, []);
   });

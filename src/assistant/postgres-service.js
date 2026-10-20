@@ -174,6 +174,15 @@ async function salesActivity(database,ctx,timeframe){
 }
 
 async function lookup(database,ctx,request,options={}) {
+  const result=await lookupRecords(database,ctx,request,options);
+  const kind=require('./postgres-capability-registry').registry.get('read.'+request.view)?.recordKind;
+  const collection=kind&&require('../web/postgres-record-destinations').RECORDS[kind]?.collection;
+  // A collection remains discoverable when its result has no record links.
+  // It is navigation metadata, never a record fact or an execution grant.
+  return collection&&!result.handoff?{...result,handoff:{...collection}}:result;
+}
+
+async function lookupRecords(database,ctx,request,options={}) {
   const search=trimOrNull(request.search);
   if(!require('./read-timeframes').accepted({...request,search}))return {status:require('./read-timeframes').supported('sales_activity').includes(request.timeframe)?'UNSUPPORTED_PERIOD':'CLARIFY',
     answer:'I cannot verify that time period from this summary. Use an authorized date-filtered report or a reader whose contract supports that period; no unfiltered records were substituted.',
@@ -1035,8 +1044,11 @@ async function lookup(database,ctx,request,options={}) {
             normalBalance:account.normal_balance,netMinor:account.net_minor,currency:balance.currency}))};
       }catch(error){if(error.code!=='entitlement_required')throw error;position={available:false,reason:'The current plan does not permit accounting reports.'};}
     }
+    let bankReconciliation;
+    try{bankReconciliation=await require('../accounting/postgres-banking').inspect(database,ctx);}
+    catch(error){if(error.code!=='forbidden')throw error;bankReconciliation={available:false,reason:'Accounting visibility is not granted.'};}
     return {answer:`The posted journal contains ${Number(result.posted).toLocaleString('en-US')} entries${period?` for ${period.from} through ${period.to}`:''}. Complete entry-state counts: ${states}. States absent from these scoped records have zero entries; this does not establish which additional states the application supports. Posted debits and credits are ${totals.every(row=>row.debits===row.credits)?'balanced':'not balanced'} within each recorded currency. ${amounts}`.trim(),
-      rows,columns:['measure','value','currency'],position,handoff:{href:'/money',label:'Open Money'},configuration:result.configuration||{configured:false,enabled:false,baseCurrency:null,costingMethod:null,startDate:null},entryStates:{complete:true,total:Number(result.total),counts:stateCounts,
+      rows,columns:['measure','value','currency'],position,bankReconciliation,handoff:{href:'/money',label:'Open Money'},configuration:result.configuration||{configured:false,enabled:false,baseCurrency:null,costingMethod:null,startDate:null},entryStates:{complete:true,total:Number(result.total),counts:stateCounts,
         scope:period?{postingDateFrom:period.from,postingDateTo:period.to}:{timeframe:'all_time'},monetaryScope:'POSTED only, separated by currency'}};
   }
   if(request.view==='payments'){
