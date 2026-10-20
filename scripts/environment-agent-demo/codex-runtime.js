@@ -1,6 +1,8 @@
 'use strict';
 const {spawn}=require('node:child_process'),{createInterface}=require('node:readline');
 const {createHash}=require('node:crypto');
+const {z}=require('zod');
+if(typeof z.toJSONSchema!=='function')throw Object.assign(Error('The native tool schema compiler is unavailable.'),{code:'NATIVE_SCHEMA_COMPILER_UNAVAILABLE'});
 const defaultPolicy=require('./codex-wire');
 const INSTRUCTIONS=`You operate StockChief for the user's business goal. Discover the running application using the browser and other provided tools. Choose your own plan, inspect results, adapt to obstacles, and verify outcomes.
 Programmatic tool results use the MCP transport envelope: content is an array, and successful text blocks contain the JSON application result. Check isError before decoding diagnostic text, and never evaluate tool data as code. Decode successful JSON text before accessing fields or printing application evidence; printing the whole envelope obscures and repeatedly escapes the same data. Native exec supports variables, conditionals and multiple awaited tool calls. You may compose related mechanical steps in one exec, choosing each next target from newly returned live links, fields or discovered contracts; another reasoning turn is needed for a new decision, not for every already-understood click. Browser operations must stay sequential and every governed authority/verification boundary remains mandatory.
@@ -114,7 +116,7 @@ async function run(options){
  // operator receiving a tab's initial state. Do not choose a destination from
  // the goal, infer routes, or replay a prior observation. Native resumption
  // already owns its context and must not repeat this initialization.
- const tools=common.map(t=>({name:t.name,description:t.description,inputSchema:require('zod').z.toJSONSchema(t.schema)}));
+ const tools=common.map(t=>({name:t.name,description:t.description,inputSchema:z.toJSONSchema(t.schema)}));
  const messages=saved.goalContext.messages||[];
  const newMessages=messages.slice(state?.deliveredMessages||0);
  let answer='',usage=null,threadId=state?.threadId||null,failed=null,completed=false,chain=Promise.resolve();
@@ -226,4 +228,11 @@ async function run(options){
   return {answer:require('./codex-report').decode(answer),reportedUsage:usage,threadId,runtime:{sdk:'@openai/codex-sdk',version:policy.VERSION,requestedModel:policy.MODEL,reasoningEffort:policy.EFFORT}};
  }finally{clearTimeout(timer);signal?.removeEventListener('abort',interrupt);stop();lines.close();if(!options.preparedCodexSandbox)await sandbox.close();}
 }
-module.exports={run,INSTRUCTIONS,digest,prepareSandbox,prepareContext,savedFinal};
+function verifyToolSchemas(){
+ // Compile the actual current host tools before advertising worker readiness.
+ // Closures are constructed only; no tool, database or provider is invoked.
+ const tools=require('./candidates').sharedTools({browser:{},gateway:{},sandbox:{},session:{}});
+ for(const tool of tools)z.toJSONSchema(tool.schema);
+ return {tools:tools.length,compiler:'zod',ready:true};
+}
+module.exports={run,INSTRUCTIONS,digest,prepareSandbox,prepareContext,savedFinal,verifyToolSchemas};
