@@ -50,13 +50,7 @@ async function available(database,ctx){
       AND paused_at IS NULL AND provider_type IN ('gmail','microsoft365')) AS mailboxes`,
   [ctx.workspaceId]),entitlements.ownerScopeForWorkspace(database,ctx.workspaceId)]);
   const facts=factsResult.rows[0];
-  const write=await entitlements.capabilityState(database,scope,'ask.prepare_actions');
   const readPermissions=require('./postgres-control-plane').READ_PERMISSIONS;
-  const checks=new Map();
-  const enabled=async(key)=>{
-    if(!checks.has(key))checks.set(key,entitlements.capabilityState(database,scope,key).then(state=>state.enabled));
-    return checks.get(key);
-  };
   const entries=[],permitted=[];
   for(const contract of registry.list()){
     if(contract.adaptiveOnly&&(!ctx.goalId||!require('./postgres-goal-store').enabled(ctx)))continue;
@@ -65,19 +59,21 @@ async function available(database,ctx){
     const permission=contract.kind==='read'?readPermissions[contract.view]||contract.permission:contract.permission;
     if(!permissions.can(actor,permission))continue;
     if(contract.ownerOnly&&actor.role!=='owner')continue;
-    if(['mutation','policy'].includes(contract.kind)&&!write.enabled)continue;
     permitted.push({contract,discovery});
   }
-  // These are fresh read-only checks for the same request and scope. Retain
-  // every entitlement; bounded database pools handle their concurrency.
-  const keys=new Set(permitted.flatMap(({contract,discovery})=>[
-    contract.commercialCapability||discovery.commercialCapability,...(contract.additionalCommercialCapabilities||[])]).filter(Boolean));
-  await Promise.all([...keys].map(enabled));
+  // Reuse the central service's fresh multi-capability snapshot for this one
+  // page. Repeating the same subscription/override joins for each suggestion
+  // adds database round trips and pool contention, not execution authority.
+  const keys=new Set(['ask.prepare_actions',...permitted.flatMap(({contract,discovery})=>[
+    contract.commercialCapability||discovery.commercialCapability,...(contract.additionalCommercialCapabilities||[])]).filter(Boolean)]);
+  const states=await entitlements.capabilityStates(database,scope,[...keys]);
+  const enabled=key=>states.get(require('../commercial/catalog').canonicalCapability(key)).enabled;
   for(const {contract,discovery} of permitted){
+    if(['mutation','policy'].includes(contract.kind)&&!enabled('ask.prepare_actions'))continue;
     if((contract.commercialCapability||discovery.commercialCapability)&&
-      !await enabled(contract.commercialCapability||discovery.commercialCapability))continue;
+      !enabled(contract.commercialCapability||discovery.commercialCapability))continue;
     if((contract.additionalCommercialCapabilities||[]).length&&
-      !(await Promise.all(contract.additionalCommercialCapabilities.map(enabled))).every(Boolean))continue;
+      !contract.additionalCommercialCapabilities.map(enabled).every(Boolean))continue;
     if(discovery.requires==='mailbox'&&!Number(facts.mailboxes))continue;
     if(discovery.requires==='product'&&!Number(facts.products))continue;
     const emptyCatalog=Number(facts.products)===0;

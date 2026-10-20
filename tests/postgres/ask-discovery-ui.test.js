@@ -27,7 +27,9 @@ test('Ask suggestions come only from registered, currently available capabilitie
       businessName:'Discovery Business',email:'discovery@example.test',password:'password-for-testing'});
     const ctx=(await database.query(`SELECT w.id AS "workspaceId",u.id AS "actorId" FROM workspaces w
       JOIN users u ON u.workspace_id=w.id WHERE w.name='Discovery Business'`)).rows[0];
-    const capabilities=await discovery.available(database,ctx);
+    let discoveryQueries=0;const measured={...database,query:(...args)=>{discoveryQueries++;return database.query(...args);}};
+    const capabilities=await discovery.available(measured,ctx);
+    assert(discoveryQueries<=4,'Suggestion discovery must use one fresh central capability snapshot, not one subscription query per capability');
     const examples=await discovery.suggestions(database,ctx);
     assert.equal(examples[0],'What can you help me do here?');
     assert.ok(capabilities.length>0);
