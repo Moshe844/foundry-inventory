@@ -18,6 +18,15 @@ Record useful evidence and limitations. A final answer is a claim: independent P
 If a genuinely missing user decision prevents progress, return a final JSON object with status "needs_user", question and missingInformation. Do not use this for exhausted investigation, internal failure or repeated observations.`;
 
 function sharedTools({browser,gateway,sandbox,session,fullEvidence=false,audit=()=>{}}){
+  const querySyntax=require('../../src/reports/postgres-service').querySyntax;
+  const query=z.object({dataset:z.string().max(60),columns:z.array(z.string().max(60)).max(12).optional(),
+    groups:z.array(z.string().max(60)).max(3).optional(),summary:z.boolean().optional(),
+    aggregate:z.enum(querySyntax.aggregates).optional(),measure:z.string().max(60).optional(),
+    filters:z.array(z.object({field:z.string().max(60),operator:z.enum(querySyntax.operators),
+      value:z.union([z.string().max(120),z.number(),z.boolean()]).optional()})).max(12).optional(),
+    dateGrain:z.enum(querySyntax.dateGrains).optional(),sort:z.string().max(60).optional(),
+    direction:z.enum(['asc','desc']).optional(),chart:z.enum(['table','bar','line']).optional(),
+    layout:z.enum(['chart_first','table_first','dashboard']).optional(),title:z.string().max(100).optional()});
   const tools=[
     {name:'environment_notebook',description:'Save a concise working plan, unresolved questions and evidence references for resumption. Notes are unverified agent hypotheses, never authority or completion proof.',
       schema:z.object({note:z.string().max(1200),evidenceIds:z.array(z.string().max(160)).max(8)}),execute:async input=>({saved:true,...input})},
@@ -28,10 +37,11 @@ function sharedTools({browser,gateway,sandbox,session,fullEvidence=false,audit=(
       schema:z.object({id:z.string().max(160),offset:z.number().int().min(0).max(128000)}),execute:input=>session.evidence(input)},
     {name:'environment_interfaces',description:'Search authorized canonical execution contracts and curated report datasets. This catalogue is not a map of everything in the application. Discover unlisted screens, forms and records through the live browser. Supply discovered names to inspect contract fields.',
       schema:z.object({search:z.string().max(200),offset:z.number().int().min(0).max(10000),names:z.array(z.string()).max(6)}),execute:input=>gateway.interfaces(input)},
-    {name:'environment_dataset',description:'Read a tenant-scoped dataset. A discovered dataset name alone gives a bounded inspection with default columns and available fields. Explicit columns, filters and groups/aggregate support tailored reads. Extent distinguishes returned rows, complete first-page totals and groups. No SQL.',
-      schema:z.object({specJson:z.string().max(16000),offset:z.number().int().min(0).max(1000000)}),
-      execute:async({specJson,offset})=>{
-        const result=await gateway.dataset({spec:require('./contracts').parseJson(specJson),offset});
+    {name:'environment_dataset',description:'Read a tenant-scoped dataset using the structured spec. A dataset name alone inspects a bounded page and available fields. For exact computed results use canonical filters and aggregation: summary:true aggregates the complete filtered dataset; groups aggregates by those fields. aggregate count needs no measure; other aggregates use a registered numeric measure. Money totals require currency grouping or an exact currency filter plus any completeness filter. Page extent counts returned records or groups, not a different filtered population. Fields and detailed rules are discoverable through environment_interfaces. specJson remains accepted for saved tool calls; supply exactly one of spec or specJson. No SQL.',
+      schema:z.object({spec:query.optional(),specJson:z.string().max(16000).optional(),offset:z.number().int().min(0).max(1000000)}),
+      execute:async({spec,specJson,offset})=>{
+        if((spec!==undefined)===(specJson!==undefined))throw Object.assign(new Error('Supply exactly one structured spec or legacy specJson.'),{code:'TOOL_CONTRACT_INVALID',effectMayHaveOccurred:false});
+        const result=await gateway.dataset({spec:spec===undefined?require('./contracts').parseJson(specJson):spec,offset});
         await browser?.observeDatasetLinks?.(result);return result;
       }},
     {name:'business_operations',description:'Invoke discovered canonical contracts. JSON array of {capability,arguments:[{name,value}],dependsOn:[]}. Values accept strings and the discovered numeric types. Changes require existing authority or human approval.',

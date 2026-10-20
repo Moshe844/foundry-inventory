@@ -10,6 +10,10 @@ const OPERATORS=new Set(['equals','contains','at_least','at_most','after','befor
 const AGGREGATES=new Set(['count','sum','average','minimum','maximum','ratio']);
 const DATE_GRAINS=new Set(['exact','day','week','month','quarter','year']);
 const AGGREGATE_COLUMN=Object.freeze({count:'count',sum:'total',average:'average',minimum:'minimum',maximum:'maximum',ratio:'ratio'});
+// The native tool shares this grammar. Dataset fields, permissions, money
+// completeness and currency rules remain owned by queryContract.
+const querySyntax=Object.freeze({operators:Object.freeze([...OPERATORS]),aggregates:Object.freeze([...AGGREGATES]),
+ dateGrains:Object.freeze([...DATE_GRAINS])});
 // Discovery and execution share the same registered fields and validator enums.
 function queryContract(key,actor){
  if(key==='composed')return composed.queryContract(actor);
@@ -315,5 +319,5 @@ async function load(database,ctx,actor,id){
   return {...row,definition:normalize(row.definition,actor)};
 }
 
-module.exports={normalize,inspectionSpec,queryContract,queryFor,run,countAtMost,save,list,load,drilldownSpec,comparableGroupAmounts,
+module.exports={normalize,inspectionSpec,queryContract,querySyntax,queryFor,run,countAtMost,save,list,load,drilldownSpec,comparableGroupAmounts,
   aggregateColumn:AGGREGATE_COLUMN};
