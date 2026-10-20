@@ -463,7 +463,7 @@ async function verifyExistingExport(database,ctx,effectId){
  }catch(error){await providerEffects.finishError(database,ctx.workspaceId,effectId,effect.claimToken,error,{ambiguous:true});throw error;}
 }
 
-async function state(database,workspaceId,connectorId){
+async function state(database,workspaceId,connectorId,{includeFinancialEntries=true}={}){
   let current=null;try{current=await policy(database,workspaceId,connectorId);}catch{return null;}
   const [latest,mappings,accounts,pending,posted,openingBooks]=await Promise.all([
     database.query(`SELECT * FROM accounting_shadow_runs WHERE workspace_id=$1 AND connector_id=$2
@@ -472,17 +472,17 @@ async function state(database,workspaceId,connectorId){
       FROM accounting_posting_account_mappings mapping JOIN accounting_accounts account ON account.id=mapping.foundry_account_id
       WHERE mapping.workspace_id=$1 AND mapping.connector_id=$2 ORDER BY account.code`,[workspaceId,connectorId]),
     database.query(`SELECT * FROM accounting_accounts WHERE workspace_id=$1 AND active=1 ORDER BY code`,[workspaceId]),
-    pendingEntries(database,workspaceId,connectorId),
-    database.query(`SELECT journal.entry_number,journal.description,identity.external_id,identity.last_seen_at
+    includeFinancialEntries?pendingEntries(database,workspaceId,connectorId):[],
+    includeFinancialEntries?database.query(`SELECT journal.entry_number,journal.description,identity.external_id,identity.last_seen_at
       FROM accounting_external_identities identity JOIN accounting_journal_entries journal ON journal.id=identity.foundry_record_id
       WHERE identity.workspace_id=$1 AND identity.connector_id=$2 AND identity.entity_type='journal_entry'
-      ORDER BY journal.entry_number DESC LIMIT 20`,[workspaceId,connectorId]),
-    openingBooksPreview(database,workspaceId,connectorId),
+      ORDER BY journal.entry_number DESC LIMIT 20`,[workspaceId,connectorId]):{rows:[]},
+    includeFinancialEntries?openingBooksPreview(database,workspaceId,connectorId):null,
   ]);
   const latestRow=latest.rows[0]||null;
   return {policy:current,canVerifyWrites:typeof providers.get(current.provider_type)?.verifyJournalEntry==='function',latestShadow:latestRow?{...latestRow,isCurrent:current.last_shadow_run_id===latestRow.id,differences:json(latestRow.differences,[]),
     externalSnapshot:json(latestRow.external_snapshot,{})}:null,mappings:mappings.rows,accounts:accounts.rows,
-    pendingEntries:pending,postedEntries:posted.rows,openingBooks};
+    pendingEntries:pending,postedEntries:posted.rows,openingBooks,financialEntriesIncluded:includeFinancialEntries};
 }
 
 module.exports={hash,policy,initialize,chooseAuthority,localSnapshot,compare,shadow,mapAccount,mapParty,enableWrites,openingBooksPreview,importOpeningBooks,

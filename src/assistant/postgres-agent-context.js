@@ -4,7 +4,10 @@ const stable=v=>Array.isArray(v)?v.map(stable):v&&typeof v==='object'?Object.fro
 async function learnedEnvironment(db,ctx,startedAt){
  const actor=(await db.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];
  if(!actor)return {pages:[]};const stamp=createHash('sha256').update(JSON.stringify(stable(actor))).digest('hex');
- const rows=(await db.query(`SELECT checkpoint#>'{harness,evidence}' AS evidence FROM stockchief_runtime.assistant_goals
+ const rows=(await db.query(`SELECT (SELECT COALESCE(jsonb_object_agg(e.key,e.value),'{}'::jsonb)
+  FROM jsonb_each(CASE WHEN jsonb_typeof(checkpoint#>'{harness,evidence}')='object'
+   THEN checkpoint#>'{harness,evidence}' ELSE '{}'::jsonb END) e
+  WHERE e.value->>'name'='environment_browser') AS evidence FROM stockchief_runtime.assistant_goals
   WHERE workspace_id=$1 AND actor_user_id=$2 AND checkpoint->>'runtime'='codex-staging'
   AND checkpoint#>>'{harness,authorityStamp}'=$3 AND ($4::timestamptz IS NULL OR created_at>$4)
   ORDER BY updated_at DESC LIMIT 6`,[ctx.workspaceId,ctx.actorId,stamp,startedAt])).rows;
@@ -29,7 +32,7 @@ async function learnedEnvironment(db,ctx,startedAt){
 // Prior conversation is reference material, never an execution grant. Keep it
 // separate from this goal's durable decisions, proposals and idempotency keys.
 async function capture(db,ctx,startedAt=null){
- const rows=(await db.query(`SELECT * FROM (
+ const [recent,memory,environment]=await Promise.all([db.query(`SELECT * FROM (
   (SELECT id,original_request AS message,answer,status,created_at,checkpoint->'conversationState' AS conversation_state FROM stockchief_runtime.assistant_goals
    WHERE workspace_id=$1 AND actor_user_id=$2 AND ($3::timestamptz IS NULL OR created_at>$3)
    ORDER BY created_at DESC,id DESC LIMIT 6)
@@ -40,12 +43,14 @@ async function capture(db,ctx,startedAt=null){
     WHERE g.workspace_id=i.workspace_id AND g.actor_user_id=i.actor_user_id
      AND (i.intent->>'batchId'=g.id OR starts_with(i.intent->>'batchId',g.id||':')))
    ORDER BY i.created_at DESC,i.id DESC LIMIT 6)
- ) recent ORDER BY created_at DESC,id DESC LIMIT 6`,[ctx.workspaceId,ctx.actorId,startedAt])).rows.reverse();
+ ) recent ORDER BY created_at DESC,id DESC LIMIT 6`,[ctx.workspaceId,ctx.actorId,startedAt]),
+ require('./postgres-business-memory').plannerContext(db,ctx.workspaceId,{limit:12}),
+ learnedEnvironment(db,ctx,startedAt)]);
+ const rows=recent.rows.reverse();
  return {turns:rows.map(({conversation_state,...row})=>({...row,message:row.message.slice(0,1600),answer:require('./agent-conversation').publicText(row.answer,'').slice(0,2000),
   exchanges:(conversation_state?.history||[]).slice(-8).map(m=>({role:m.role,text:require('./agent-conversation').publicText(m.text,'').slice(0,1600)})),
   truncated:row.message.length>1600||String(row.answer||'').length>2000||(conversation_state?.history||[]).length>8})),
-  memory:await require('./postgres-business-memory').plannerContext(db,ctx.workspaceId,{limit:12}),
-  environment:await learnedEnvironment(db,ctx,startedAt),
+  memory,environment,
   notice:'Historical conversation only. Unfinished requests are not new instructions. Recheck current records and obtain fresh approval for changes.'};
 }
 function prompt(context){

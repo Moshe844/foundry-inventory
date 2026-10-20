@@ -318,13 +318,18 @@ function createPostgresAskRouter(database,options={}){
     const remembered=req.session.postgresAskPageContext;
     const requestedPath=req.query.from===undefined&&remembered?.workspaceId===req.ctx.workspaceId
       ?remembered.path:req.query.from;
-    const sourcePage=await require('../../assistant/postgres-page-context').load(
-      database,req.ctx.workspaceId,requestedPath);
+    const startedAt=req.session.postgresAskStartedAt||null;
+    const [sourcePage,interactions,nameRows,pilotView]=await Promise.all([
+      require('../../assistant/postgres-page-context').load(database,req.ctx.workspaceId,requestedPath),
+      assistant.listInteractions(database,req.ctx.workspaceId,100,{actorId:req.ctx.actorId,startedAt}),
+      database.query(`SELECT name FROM suppliers WHERE workspace_id=$1 AND name ~ '[0-9]{4,}'
+        UNION SELECT name FROM customers WHERE workspace_id=$1 AND name ~ '[0-9]{4,}'
+        UNION SELECT name FROM items WHERE workspace_id=$1 AND name ~ '[0-9]{4,}'
+        UNION SELECT name FROM locations WHERE workspace_id=$1 AND name ~ '[0-9]{4,}'`,[req.ctx.workspaceId]),
+      options.agentInspection?null:pilot.view(database,req.ctx)
+    ]);
     if(req.query.from!==undefined)req.session.postgresAskPageContext=sourcePage
       ?{workspaceId:req.ctx.workspaceId,path:sourcePage.path}:null;
-    const startedAt=req.session.postgresAskStartedAt||null;
-    const interactions=await assistant.listInteractions(database,req.ctx.workspaceId,100,
-      {actorId:req.ctx.actorId,startedAt});
     const visible=interactions.slice(-12);const latest=visible.at(-1)||null;
     const emailBodyContinuation=latest?.status==='CLARIFY'
       &&latest.intent?.controlPlane?.capability==='communication.send_email'
@@ -343,25 +348,29 @@ function createPostgresAskRouter(database,options={}){
         proposal.deliveryStatus=deliveryStatus;
     }
     let transcript=transcriptFor(visible,proposals);
-    const protectedNames=(await database.query(`SELECT name FROM suppliers WHERE workspace_id=$1
-        AND name ~ '[0-9]{4,}'
-      UNION SELECT name FROM customers WHERE workspace_id=$1
-        AND name ~ '[0-9]{4,}'
-      UNION SELECT name FROM items WHERE workspace_id=$1
-        AND name ~ '[0-9]{4,}'
-      UNION SELECT name FROM locations WHERE workspace_id=$1
-        AND name ~ '[0-9]{4,}'`,
-    [req.ctx.workspaceId])).rows.map((row)=>row.name);
-    const pilotView=options.agentInspection?null:await pilot.view(database,req.ctx);
+    const protectedNames=nameRows.rows.map(row=>row.name);
     const focusedGoalId=typeof req.query.goal==='string'&&req.query.goal.length<=160?req.query.goal:null;
     // The restricted renderer must show the actor's real native conversation,
     // even though it cannot select/enqueue the pilot or stage its approvals.
     // Hiding that history made recovery investigations search unrelated pages.
-    const recentGoals=goalStore.enabled(req.ctx)||pilotView||options.agentInspection?await goalStore.recent(database,req.ctx,startedAt,focusedGoalId):[];
+    // Paid execution eligibility and a Staging-only banner are not history
+    // permissions. An actor's owned saved conversation remains readable in
+    // commercial accounts, after disabling the pilot, and during rollback.
+    let recentGoals=await goalStore.recent(database,req.ctx,startedAt,focusedGoalId);
+    const hasActiveNative=recentGoals.some(goal=>goal.checkpoint.runtime==='codex-staging'&&!['COMPLETED','CANCELLED','BLOCKED'].includes(goal.status));
+    const nativeInboxAvailable=!options.agentInspection&&hasActiveNative&&pilot.configured(req.ctx)
+      &&Boolean(pilotView||await pilot.selected(database,req.ctx));
+    const canContinue=goal=>['COMPLETED','CANCELLED','BLOCKED'].includes(goal.status)||options.agentInspection
+      ||(goal.checkpoint.runtime==='codex-staging'?nativeInboxAvailable:goalStore.enabled(req.ctx));
+    // When execution is deliberately disabled, unfinished work is readable in
+    // saved requests rather than exposed as a live composer that would fail.
+    if(recentGoals.some(goal=>goal.id===focusedGoalId&&!canContinue(goal)))
+      return res.redirect(303,'/ask/history?goal='+encodeURIComponent(focusedGoalId));
+    recentGoals=recentGoals.filter(canContinue);
     const activeGoal=recentGoals.at(-1)||null;
     const focusedGoal=recentGoals.find(goal=>goal.id===focusedGoalId);
     for(const goal of recentGoals){
-      if(!options.agentInspection&&goal.checkpoint.runtime==='codex-staging'&&!['COMPLETED','CANCELLED','BLOCKED'].includes(goal.status)){
+      if(nativeInboxAvailable&&goal.checkpoint.runtime==='codex-staging'&&!['COMPLETED','CANCELLED','BLOCKED'].includes(goal.status)){
         const inbox=await pilot.inbox(database,req.ctx,goal.id);Object.assign(goal,inbox.goal);goal.approvalCards=inbox.approvals;
       }else goal.approvalCards=[];
       goal.conversation=conversation.state(goal);

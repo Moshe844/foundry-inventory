@@ -918,13 +918,10 @@ async function lookup(database,ctx,request,options={}) {
       rows,columns:['shipment','order','status','carrier','tracking']};
   }
   if(request.view==='connections'){
-    const rows=(await database.query(`SELECT id,display_name,status,last_synced_at,last_error FROM workspace_connectors
-      WHERE workspace_id=$1 AND ($2::text IS NULL OR display_name ILIKE '%'||$2||'%' OR connector_key ILIKE '%'||$2||'%')
-      ORDER BY display_name LIMIT 100`,[ctx.workspaceId,search])).rows.map((row)=>evidenceRow({name:row.display_name,status:row.status,
-      lastSynced:row.last_synced_at || 'Never',error:row.last_error || ''},`/settings/connections/${row.id}`));
+    const result=await require('../connections/postgres-inspection').inspect(database,ctx,{search}),rows=result.rows;
     const unhealthy=rows.filter((row)=>row.status!=='connected').length;
-    return {answer:rows.length?`${rows.length-unhealthy} of ${rows.length} connection${rows.length===1?' is':'s are'} connected.`:
-      'No connections are configured.',rows,columns:['name','status','lastSynced','error']};
+    return {...result,answer:rows.length?`${rows.length-unhealthy} of ${rows.length} returned connection${rows.length===1?' is':'s are'} connected. Saved setup details and granted capabilities are separate from verified provider access and posting authority.`:
+      'No connections matched this scope.',columns:['name','provider','status','health','lastSynced','error']};
   }
   if(request.view==='accounting'){
     if(search==='profit_change')return explainProfitChange(database,ctx);

@@ -288,7 +288,7 @@ const READS={
   suppliers:'Supplier records.',customers:'Customer records.',shipping:'Shipping records.',
   payments:'Recorded payment transactions.',payables:'Posted open supplier bill balances, with disputed supplier invoice documents shown separately as excluded from debt.',
   receivables:'Open customer invoice balances.',accounting:'Posted journal counts and currency totals, as-of account balances and recorded cash. Report permission applies to balances.',
-  connections:'Connected business systems.',messages:'Business email records.',
+  connections:'Saved connection health, mappings and granted capabilities; authorized accounting setup includes posting direction, requested authority and reconciliation state. No provider call or write permission is implied.',messages:'Business email records.',
   business_analysis:'Verified comparisons across multiple recorded business datasets.',
   general_knowledge:'General business explanation that does not claim to read this workspace’s records.',
 };

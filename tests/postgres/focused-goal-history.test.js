@@ -15,6 +15,12 @@ test('actual Ask page displays an owned focused goal outside the recent window w
  const actorGoal=await goals.create(db,{workspaceId:ctx.workspaceId,actorId:actor},'PRIVATE OTHER ACTOR REQUEST');
  app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:randomUUID(),aiProvider:{complete:async()=>{throw Error('NO_MODEL_CALLS');}}});
  const web=request.agent(app),login=await web.get('/login'),csrf=/name="_csrf" value="([^"]+)"/.exec(login.text)[1],signed=await web.post('/login').type('form').send({_csrf:csrf,email,password});
+ process.env.STOCKCHIEF_ADAPTIVE_ASK='0';
+ const disabledHistory=await web.get('/ask');assert.equal(disabledHistory.status,200);assert(disabledHistory.text.includes('data-adaptive-goal="'+ids.at(-1)+'"'),'Owned saved conversation must remain visible without the pilot banner or legacy adaptive flag');
+ const paused=await goals.create(db,ctx,'Saved question while execution is disabled');await db.query("UPDATE stockchief_runtime.assistant_goals SET status='WAITING_USER',checkpoint=checkpoint||$2::jsonb WHERE id=$1",[paused.id,JSON.stringify({runtime:'codex-staging',harness:{userQuestion:{question:'Which quantity?',missingInformation:['Quantity']}}})]);
+ const pausedPage=await web.get('/ask?goal='+paused.id);assert.equal(pausedPage.status,303);assert.equal(pausedPage.headers.location,'/ask/history?goal='+paused.id);assert(!(await web.get('/ask')).text.includes('data-adaptive-goal="'+paused.id+'"'),'Disabled execution must not expose an unusable live reply form');
+ const savedPaused=await web.get(pausedPage.headers.location);assert.equal(savedPaused.status,200);assert(savedPaused.text.includes('Saved question while execution is disabled'));assert(savedPaused.text.includes('Which quantity?'));
+ process.env.STOCKCHIEF_ADAPTIVE_ASK='1';
  const ordinary=await web.get('/ask');assert.equal(ordinary.status,200);assert(!ordinary.text.includes('data-adaptive-goal="'+ids[0]+'"'));
  const focused=await web.get('/ask?goal='+ids[0]);assert.equal(focused.status,200);assert(focused.text.includes('data-adaptive-goal="'+ids[0]+'"'),'Focused owned goal must survive BOTH the database window and merged transcript window');
  assert(focused.text.includes('id="focused-goal"'));assert(focused.text.includes('The original final verification remains blocked.'));assert(!focused.text.includes('PRIVATE OTHER TENANT REQUEST'));assert(!focused.text.includes('PRIVATE OTHER ACTOR REQUEST'));
