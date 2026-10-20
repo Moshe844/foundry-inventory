@@ -14,17 +14,21 @@ const parseJson=(value,fallback)=>{
 };
 const hash=(value)=>crypto.createHash('sha256').update(String(value)).digest('hex');
 
-function publicStatus(row,now=Date.now()){
-  if(row.status==='disconnected')return 'Disconnected';
-  if(row.status==='error'||row.paused_at||row.last_error||Number(row.open_issues)>0)return 'Needs attention';
+function publicHealth(row,now=Date.now()){
+  const reasons=[];
+  if(row.status==='disconnected')reasons.push('DISCONNECTED');
+  if(row.status==='error'||row.last_error)reasons.push('RECORDED_ERROR');
+  if(row.paused_at)reasons.push('PAUSED');
+  if(Number(row.open_issues)>0)reasons.push('OPEN_ISSUES');
   const evidence=Math.max(...[row.last_activity_at,row.last_synced_at,row.created_at]
-    .map((value)=>Date.parse(value||'')).filter(Number.isFinite));
-  const expectedMinutes=Number(row.expected_interval_minutes);
-  const grace=['gmail','microsoft365'].includes(row.provider_type)?2:1;
-  if(Number.isFinite(evidence)&&expectedMinutes>0
-      && evidence+expectedMinutes*grace*60000<now)return 'Needs attention';
-  return 'Connected';
+    .map(value=>Date.parse(value||'')).filter(Number.isFinite));
+  const expectedMinutes=Number(row.expected_interval_minutes),grace=['gmail','microsoft365'].includes(row.provider_type)?2:1;
+  if(Number.isFinite(evidence)&&expectedMinutes>0&&evidence+expectedMinutes*grace*60000<now)reasons.push('ACTIVITY_OVERDUE');
+  return {status:row.status==='disconnected'?'Disconnected':reasons.length?'Needs attention':'Connected',
+    reasons,lastRecordedActivityAt:Number.isFinite(evidence)?new Date(evidence).toISOString():null,
+    expectedIntervalMinutes:Number.isFinite(expectedMinutes)?expectedMinutes:null,activityGraceMultiplier:grace};
 }
+function publicStatus(row,now=Date.now()){return publicHealth(row,now).status;}
 
 function hydrate(row,now){
   if(!row)return null;
@@ -140,5 +144,5 @@ async function authenticate(database,authorization){
   },{isolation:'READ COMMITTED'});
 }
 
-module.exports={TOKEN_PREFIX,parseJson,publicStatus,hydrate,list,get,disconnect,pause,resume,createFeed,authenticate};
+module.exports={publicHealth,TOKEN_PREFIX,parseJson,publicStatus,hydrate,list,get,disconnect,pause,resume,createFeed,authenticate};
 require('../commercial/enforcement').guardExports(module.exports,0,1,{createFeed:'connections.custom_api',resume:'workspace.core'});
