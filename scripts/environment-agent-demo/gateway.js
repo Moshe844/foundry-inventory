@@ -131,8 +131,8 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
       const datasets=require('../../src/reports/postgres-registry').list(actor);
       const datasetIndex=datasets.map(({key:name,label,filterValues})=>({name,label,detailsByName:true,
         ...(filterValues?{filterValues}:{})}));
-      const packet=()=>({operations,operationIndex,navigationSignatures,recordCollections,readSignatures,readArgumentsComplete:true,
-        readAccess:'Every authorized read name has its complete input fields, required arguments and authority in readSignatures. Use a known read directly when it fits the goal; descriptions omitted here remain discoverable. No execution grant or business fact is implied.',
+      const packet=()=>({operations,operationIndex,navigationSignatures,recordCollections,readSignatures,readArgumentsComplete:true,readDescriptionsComplete:true,
+        readAccess:'Every authorized read name has its complete input fields, required arguments and authority in readSignatures. Every read description is supplied in operations. Use a known complete read directly when it fits the goal; interface discovery remains available for missing execution details. No execution grant or business fact is implied.',
         navigationAccess:'Exact signatures apply to each grouped name. recordCollections are owning list paths for browser inspection, not individual record references. Navigation gives no record facts; authority and user arrival are rechecked.',datasetIndex,datasetFieldsComplete:datasetIndex.every(d=>d.fields),indexComplete:true,total:contracts.length,complete:operations.length===contracts.length,
         datasetAccess:'Scoped projections, not SQL/pages. Use known typed fields/filters; inspect missing metadata. Extent distinguishes rows/groups and complete first-page source totals. Reads recheck scope/permissions.',
         coverage:'All authorized names, bounded details. Browser discovers screens; environment_interfaces supplies omissions. Fresh canonical checks remain.'});
@@ -146,25 +146,23 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
         if(size()-indexBytes>3000)delete datasetIndex[detail.index].fields;
       }
       // All read inputs are already present in the seven or so shared
-      // signatures. Spend the remaining SAME bound on reusable descriptions,
-      // rather than omit input schemas and force paid discovery of known reads.
-      const readDetails=contracts.filter(c=>c.kind==='read').map(describe)
-        .sort((a,b)=>Buffer.byteLength(JSON.stringify(a))-Buffer.byteLength(JSON.stringify(b))||a.name.localeCompare(b.name));
-      for(const complete of readDetails){
-        const entry={name:complete.name,kind:complete.kind,description:complete.description,fieldsBySignature:true,detailsByName:true,
-          ...(complete.collection?{collection:complete.collection}:{})};
-        operations.push(entry);
-        if(Buffer.byteLength(JSON.stringify(require('./interface-presentation').compact(packet())))>18000)operations.pop();
-      }
+      // signatures. Include every authorized purpose before optional dataset details;
+      // otherwise the longest, most complete readers disappear from the packet.
+      // The initial packet has its own 28 KB ceiling; tool discovery pages retain
+      // their existing 18 KB bound. Native token counting and money caps do not change.
+      const readDetails=contracts.filter(c=>c.kind==='read').map(describe).sort((a,b)=>a.name.localeCompare(b.name));
+      for(const complete of readDetails)operations.push({name:complete.name,kind:complete.kind,
+        description:complete.description,fieldsBySignature:true,detailsByName:true,
+        ...(complete.collection?{collection:complete.collection}:{})});
       // Include compact dataset schemas before oversized descriptions consume
       // the entire packet. Selection depends on metadata size only, never the
       // request, route or business domain. Every name remains discoverable.
       for(const detail of details.filter(d=>!datasetIndex[d.index].fields)){
         datasetIndex[detail.index].fields=detail.fields;
-        // Keep the unchanged bound on the actual lossless delivered packet.
-        if(Buffer.byteLength(JSON.stringify(require('./interface-presentation').compact(packet())))>18000)delete datasetIndex[detail.index].fields;
+        // Bound the actual lossless delivered initial packet.
+        if(Buffer.byteLength(JSON.stringify(require('./interface-presentation').compact(packet())))>28000)delete datasetIndex[detail.index].fields;
       }
-      if(Buffer.byteLength(JSON.stringify(require('./interface-presentation').compact(packet())))>18000)
+      if(Buffer.byteLength(JSON.stringify(require('./interface-presentation').compact(packet())))>28000)
         throw Error('INITIAL_INTERFACE_INDEX_LIMIT');
       return packet();
     },

@@ -42,16 +42,18 @@ test('shared message evidence includes real saved replies and distinguishes draf
  await require('../../src/operations/postgres-commerce').createSupplier(db,ctx,{name:'Known fixture supplier',email:'supplier@example.test'});
  const connection=(await db.query('SELECT * FROM workspace_connectors WHERE id=$1',[id])).rows[0],mail=require('../../src/connections/postgres-mail'),captured=await mail.capture(db,connection,{externalMessageId:'reply-'+randomUUID(),sender:'supplier@example.test',subject:'Question about delivery',bodyText:'Can you confirm the delivery details?',receivedAt:at});assert(captured.accepted);
  await mail.saveDraft(db,ctx,captured.messageId,{subject:'Reviewed delivery reply',body:'This is a saved owner reply, awaiting the required sending decision.'});
- for(const status of ['PREPARED','SENT','FAILED'])await db.query(`INSERT INTO customer_communications(id,workspace_id,recipient,subject,body,status,idempotency_key,created_at,updated_at,sent_at)
- VALUES($1,$2,'customer@example.test',$3,'Fixture message',$4,$1,$5,$5,$6)`,['cc_'+randomUUID(),ctx.workspaceId,'Fixture '+status,status,at,status==='SENT'?at:null]);
+ const customer=await require('../../src/operations/postgres-commerce').createCustomer(db,ctx,{name:'Known message customer',email:'customer@example.test'});
+ for(const status of ['PREPARED','SENT','FAILED'])await db.query(`INSERT INTO customer_communications(id,workspace_id,recipient,subject,body,status,idempotency_key,created_at,updated_at,sent_at,customer_id)
+ VALUES($1,$2,'customer@example.test',$3,'Fixture message',$4,$1,$5,$5,$6,$7)`,['cc_'+randomUUID(),ctx.workspaceId,'Fixture '+status,status,at,status==='SENT'?at:null,customer.id]);
  const lookup=()=>require('../../src/assistant/postgres-service').lookup(db,ctx,{view:'messages',search:null,timeframe:'all_time'}),read=await lookup();
- const draft=read.rows.find(row=>row.kind==='draft reply');assert(draft);assert.equal(draft.status,'DRAFT');assert.equal(draft.approvalStage,'not approved for sending');assert.equal(draft.href,'/mail/'+captured.messageId);
- const prepared=read.rows.find(row=>row.subject==='Fixture PREPARED');assert.equal(prepared.kind,'draft customer email');assert.equal(prepared.approvalStage,'not approved for sending');assert.match(prepared.href,/^\/messages\/customer\//);
+ const draft=read.rows.find(row=>row.kind==='draft reply');assert(draft);assert.equal(draft.status,'DRAFT');assert.equal(draft.approvalStage,'Prepared; no sending approval recorded here');assert.equal(draft.href,'/mail/'+captured.messageId);
+ const prepared=read.rows.find(row=>row.subject==='Fixture PREPARED');assert.equal(prepared.kind,'draft customer email');assert.equal(prepared.recipientKind,'customer','The fixture must have a real customer link before calling it customer email');assert.equal(prepared.approvalStage,'Prepared; no sending approval recorded here');assert.match(prepared.href,/^\/messages\/customer\//);
  assert.equal(read.rows.find(row=>row.subject==='Fixture SENT').kind,'sent customer email');
- assert.equal(read.rows.find(row=>row.subject==='Fixture FAILED').approvalStage,'sending approval not recorded','Delivery status alone never invents approval authority');
+ assert.equal(read.rows.find(row=>row.subject==='Fixture SENT').approvalStage,'Approval evidence not recorded here','A sent state alone must not manufacture human authority');
+ assert.equal(read.rows.find(row=>row.subject==='Fixture FAILED').approvalStage,'Approval evidence not recorded here','Delivery status alone never invents approval authority');
  await db.query(`INSERT INTO stockchief_runtime.email_reply_outbox(id,workspace_id,message_id,connector_id,idempotency_key,recipient,subject,body,status)
  VALUES($1,$2,$3,$4,$1,'supplier@example.test','Reviewed delivery reply','Saved reply','AMBIGUOUS')`,['out_'+randomUUID(),ctx.workspaceId,captured.messageId,id]);
- const current=await lookup(),uncertain=current.rows.find(row=>row.kind==='draft reply');assert.equal(uncertain.status,'AMBIGUOUS');assert.equal(uncertain.approvalStage,'authorized; see delivery status');assert(!current.rows.some(row=>row.subject==='Reviewed delivery reply'&&row.kind.startsWith('sent')));
+ const current=await lookup(),uncertain=current.rows.find(row=>row.kind==='draft reply');assert.equal(uncertain.status,'AMBIGUOUS');assert.equal(uncertain.approvalStage,'Sending authorization recorded');assert(!current.rows.some(row=>row.subject==='Reviewed delivery reply'&&row.kind.startsWith('sent')));
  const filtered=await require('../../src/assistant/postgres-service').lookup(db,ctx,{view:'messages',search:'draft',timeframe:'all_time'});assert.equal(filtered.rows.length,2);
  assert.equal(Number((await db.query('SELECT count(*) AS n FROM stockchief_runtime.provider_effects')).rows[0].n),0,'Inspecting saved work never queues an email or changes authority');
  assert.equal(Number((await db.query('SELECT count(*) AS n FROM stockchief_runtime.codex_pilot_calls')).rows[0].n),0);

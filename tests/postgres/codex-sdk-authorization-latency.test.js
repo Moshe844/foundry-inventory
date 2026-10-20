@@ -12,7 +12,7 @@ test('native bookkeeping avoids repeated catalogue construction while retaining 
  queries=0;const full=await gateway.authorize(),fullQueries=queries;assert(full.catalogue.list().length);
  const initial=await gateway.initialContracts(),codec=require('../../scripts/environment-agent-demo/interface-presentation');
  t.diagnostic(JSON.stringify({initialBytes:Buffer.byteLength(JSON.stringify(codec.compact(initial))),deliveredDatasets:initial.datasetIndex.filter(d=>d.fields).map(d=>d.name),deliveredReads:initial.operations.filter(c=>c.fields).map(c=>c.name)}));
- assert(Buffer.byteLength(JSON.stringify(codec.compact(initial)))<=18000,'The complete actually delivered metadata stays inside the unchanged bound');
+ assert(Buffer.byteLength(JSON.stringify(codec.compact(initial)))<=28000,'The complete initial contract packet stays inside its own bounded 28 KB allocation');
  assert.deepEqual(codec.expand(codec.compact(initial)),initial,'Packing changes no contract, field or authority fact');
  assert.deepEqual(Object.entries(initial.operationIndex).flatMap(([kind,names])=>names.map(name=>({name,kind}))).sort((a,b)=>a.name.localeCompare(b.name)),
   full.catalogue.list().map(({name,kind})=>({name,kind})).sort((a,b)=>a.name.localeCompare(b.name)),
@@ -29,6 +29,10 @@ test('native bookkeeping avoids repeated catalogue construction while retaining 
  for(const name of ['suppliers','customers','payments'])assert(initial.datasetIndex.find(d=>d.name===name)?.fields,'Ordinary directory and financial schemas are available without paid rediscovery: '+name);
  assert(!JSON.stringify(initial.datasetIndex).includes('SELECT '),'SQL implementation is never interface metadata');
  const readContracts=full.catalogue.list().filter(c=>c.kind==='read');
+ assert.equal(initial.readDescriptionsComplete,true);
+ assert.deepEqual(initial.operations.filter(c=>c.kind==='read').map(c=>({name:c.name,description:c.description})).sort((a,b)=>a.name.localeCompare(b.name)),readContracts.map(c=>({name:c.name,description:c.description})).sort((a,b)=>a.name.localeCompare(b.name)),'Every current authorized read purpose must reach the native agent; long descriptions may not silently disappear');
+ assert(initial.operations.find(c=>c.name==='read.inventory').description.includes('units missing cost'));
+
  assert.equal(initial.readArgumentsComplete,true);
  assert.deepEqual(initial.readSignatures.flatMap(s=>s.names).sort(),readContracts.map(c=>c.name).sort(),'Every authorized read has upfront arguments, not only the descriptions that fit');
  for(const signature of initial.readSignatures)for(const name of signature.names){
