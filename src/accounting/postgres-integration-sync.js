@@ -245,19 +245,26 @@ async function mapAccount(database,ctx,connectorId,input={}){
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 
+// One ordered set of canonical prerequisites for inspection and enablement.
+// Passing these checks is not a posting grant or a live provider verification.
+function postingRequirements({current,canVerifyWrites,capabilities,shadowStatus}){
+  const requirements=[
+    {code:'PROVIDER_VERIFICATION',satisfied:Boolean(canVerifyWrites),message:'Posting is unavailable for this connection. Read-only accounting remains available.'},
+    {code:'POSTING_AUTHORITY',satisfied:current.posting_direction==='FOUNDRY_TO_EXTERNAL'&&current.requested_authority==='POST',message:'Choose StockChief as the accounting source and request posting authority first.'},
+    {code:'MATCHED_RECONCILIATION',satisfied:shadowStatus==='MATCHED',message:'A matching shadow reconciliation is required before writes can be enabled.'},
+    {code:'POSTING_SCOPE',satisfied:capabilities.includes('accounting:post'),message:'This authorization is read-only. Reconnect and explicitly grant posting scope first.'},
+  ];
+  return {readyToEnable:requirements.every(r=>r.satisfied),requirements};
+}
 async function enableWrites(database,ctx,connectorId){return database.transaction(async(client)=>{
   const current=await policy(client,ctx.workspaceId,connectorId,true);
   const connection=(await client.query(`SELECT * FROM workspace_connectors
     WHERE workspace_id=$1 AND id=$2 FOR UPDATE`,[ctx.workspaceId,connectorId])).rows[0];
   const capabilities=json(connection?.capabilities,[]);
-  if(!providers.get(connection?.provider_type)?.verifyJournalEntry)throw new ValidationError('Posting is unavailable for this connection. Read-only accounting remains available.');
-  if(current.posting_direction!=='FOUNDRY_TO_EXTERNAL'||current.requested_authority!=='POST')throw new ValidationError(
-    'Choose StockChief as the accounting source and request posting authority first.');
   const run=current.last_shadow_run_id&&(await client.query(`SELECT status FROM accounting_shadow_runs
     WHERE id=$1 AND workspace_id=$2 AND connector_id=$3`,[current.last_shadow_run_id,ctx.workspaceId,connectorId])).rows[0];
-  if(run?.status!=='MATCHED')throw new ValidationError('A matching shadow reconciliation is required before writes can be enabled.');
-  if(!capabilities.includes('accounting:post'))throw new ValidationError(
-    'This authorization is read-only. Reconnect and explicitly grant posting scope first.');
+  const readiness=postingRequirements({current,canVerifyWrites:Boolean(providers.get(connection?.provider_type)?.verifyJournalEntry),capabilities,shadowStatus:run?.status});
+  const missing=readiness.requirements.find(r=>!r.satisfied);if(missing)throw new ValidationError(missing.message);
   const at=nowIso();await client.query(`UPDATE accounting_sync_policies SET stage='WRITE_ENABLED',
     write_enabled_by_user_id=$3,write_enabled_at=$4,updated_at=$4 WHERE workspace_id=$1 AND connector_id=$2`,
   [ctx.workspaceId,connectorId,ctx.actorId,at]);
@@ -480,12 +487,14 @@ async function state(database,workspaceId,connectorId,{includeFinancialEntries=t
     includeFinancialEntries?openingBooksPreview(database,workspaceId,connectorId):null,
   ]);
   const latestRow=latest.rows[0]||null;
-  return {policy:current,canVerifyWrites:typeof providers.get(current.provider_type)?.verifyJournalEntry==='function',latestShadow:latestRow?{...latestRow,isCurrent:current.last_shadow_run_id===latestRow.id,differences:json(latestRow.differences,[]),
+  const currentRun=!current.last_shadow_run_id?null:current.last_shadow_run_id===latestRow?.id?latestRow:
+    (await database.query('SELECT status FROM accounting_shadow_runs WHERE workspace_id=$1 AND connector_id=$2 AND id=$3',[workspaceId,connectorId,current.last_shadow_run_id])).rows[0];
+  return {policy:current,currentShadowStatus:currentRun?.status||null,canVerifyWrites:typeof providers.get(current.provider_type)?.verifyJournalEntry==='function',latestShadow:latestRow?{...latestRow,isCurrent:current.last_shadow_run_id===latestRow.id,differences:json(latestRow.differences,[]),
     externalSnapshot:json(latestRow.external_snapshot,{})}:null,mappings:mappings.rows,accounts:accounts.rows,
     pendingEntries:pending,postedEntries:posted.rows,openingBooks,financialEntriesIncluded:includeFinancialEntries};
 }
 
-module.exports={hash,policy,initialize,chooseAuthority,localSnapshot,compare,shadow,mapAccount,mapParty,enableWrites,openingBooksPreview,importOpeningBooks,
+module.exports={hash,policy,initialize,chooseAuthority,localSnapshot,compare,shadow,mapAccount,mapParty,postingRequirements,enableWrites,openingBooksPreview,importOpeningBooks,
   entry,pendingEntries,queuePending,executeExportEffect,verifyExistingExport,state};
 require('../commercial/enforcement').guardExports(module.exports,0,1,{chooseAuthority:'connections.accounting',
  enableWrites:'accounting.post_connected',queuePending:'accounting.post_connected',executeExportEffect:'accounting.post_connected',verifyExistingExport:'connections.accounting',shadow:'accounting.sync',importOpeningBooks:'accounting.core'});

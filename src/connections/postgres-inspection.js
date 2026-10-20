@@ -21,6 +21,7 @@ async function inspect(database,ctx,{search=null}={}){
       postingDirection:state.policy.posting_direction,stage:state.policy.stage,
       savedPostingScopeGranted:c.capabilities.includes('accounting:post'),providerHasWriteVerifier:state.canVerifyWrites,
       writeEnabledAt:state.policy.write_enabled_at||null,accountMappings:state.mappings.length,
+      postingEnablement:require('../accounting/postgres-integration-sync').postingRequirements({current:state.policy,canVerifyWrites:state.canVerifyWrites,capabilities:c.capabilities,shadowStatus:state.currentShadowStatus}),
       latestShadow:state.latestShadow?{status:state.latestShadow.status,current:state.latestShadow.isCurrent,
        differenceCount:state.latestShadow.differences.length,completedAt:state.latestShadow.completed_at||null}:null}:
       {available:false,reason:'The saved accounting setup could not be verified from current records.'};

@@ -14,7 +14,28 @@ test('connection evidence reuses canonical accounting setup without loading secr
  let journalQueries=0;const measured={...db,query:async(...args)=>{if(/FROM accounting_journal_entries|FROM accounting_external_identities/.test(args[0]))journalQueries++;return db.query(...args);}};
  const snapshot=await assistant.lookup(measured,ctx,{view:'connections'}),row=snapshot.rows.find(r=>r.id===id);assert(row);assert.equal(row.status,'connected');assert.equal(row.setup,'AUTHORITY_REQUIRED');assert.equal(row.accounting.requestedAuthority,'OBSERVE');assert.equal(row.accounting.stage,'READ_ONLY_VERIFIED');assert.equal(row.accounting.savedPostingScopeGranted,true);assert.equal(row.accounting.writeEnabledAt,null);assert.equal(row.accounting.latestShadow,null);assert.equal(row.accounting.accountMappings,0);assert.equal(journalQueries,0,'A setup inspection must not load individual journals or external opening balances');
  assert.equal(snapshot.coverage.complete,true);assert.equal(snapshot.coverage.matchingConnections,1);assert.equal(snapshot.administrativeDetailsAvailable,true);assert(!JSON.stringify(snapshot).includes('PRIVATE_'));assert(snapshot.verification.includes('does not contact a provider'));
+ assert.equal(row.accounting.postingEnablement.readyToEnable,false);
+ assert.deepEqual(row.accounting.postingEnablement.requirements.filter(r=>!r.satisfied).map(r=>r.code),['POSTING_AUTHORITY','MATCHED_RECONCILIATION']);
  assert.deepEqual((await db.query('SELECT * FROM accounting_sync_policies WHERE workspace_id=$1',[ctx.workspaceId])).rows,before);
+ await assert.rejects(sync.enableWrites(db,ctx,id),/request posting authority/);
+ // Inspection must use the exact run the policy owns, not a newer unrelated
+ // result, and must not interpret granted API scope as business authority.
+ const linked='run_'+randomUUID(),newer='run_'+randomUUID();
+ for(const [run,status,date]of [[linked,'MISMATCH','2026-01-01T00:00:00.000Z'],[newer,'MATCHED','2026-01-02T00:00:00.000Z']])await db.query(`INSERT INTO accounting_shadow_runs(id,workspace_id,connector_id,status,as_of,local_snapshot,external_snapshot,started_at) VALUES($1,$2,$3,$4,'2026-01-01','{}','{}',$5)`,[run,ctx.workspaceId,id,status,date]);
+ await db.query("UPDATE accounting_sync_policies SET requested_authority='POST',posting_direction='FOUNDRY_TO_EXTERNAL',last_shadow_run_id=$3 WHERE workspace_id=$1 AND connector_id=$2",[ctx.workspaceId,id,linked]);
+ let inspected=(await assistant.lookup(db,ctx,{view:'connections'})).rows[0].accounting;
+ assert.equal(inspected.latestShadow.status,'MATCHED');assert.equal(inspected.latestShadow.current,false);
+ assert.deepEqual(inspected.postingEnablement.requirements.filter(r=>!r.satisfied).map(r=>r.code),['MATCHED_RECONCILIATION']);
+ await assert.rejects(sync.enableWrites(db,ctx,id),/matching shadow reconciliation/);
+ await db.query("UPDATE accounting_shadow_runs SET status='MATCHED' WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,linked]);
+ await db.query("UPDATE workspace_connectors SET capabilities='[\"accounting:read\"]' WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,id]);
+ inspected=(await assistant.lookup(db,ctx,{view:'connections'})).rows[0].accounting;
+ assert.deepEqual(inspected.postingEnablement.requirements.filter(r=>!r.satisfied).map(r=>r.code),['POSTING_SCOPE']);
+ await assert.rejects(sync.enableWrites(db,ctx,id),/authorization is read-only/);
+ await db.query("UPDATE workspace_connectors SET capabilities='[\"accounting:read\",\"accounting:post\"]' WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,id]);
+ inspected=(await assistant.lookup(db,ctx,{view:'connections'})).rows[0].accounting;
+ assert.equal(inspected.postingEnablement.readyToEnable,true);assert.equal(inspected.writeEnabledAt,null,'A readiness inspection must not grant posting authority');
+ assert.equal((await sync.policy(db,ctx.workspaceId,id)).write_enabled_at,null);
  await db.query("UPDATE users SET role='staff',permissions='{}'::jsonb WHERE id=$1",[ctx.actorId]);const restricted=await assistant.lookup(db,ctx,{view:'connections'});assert.equal(restricted.administrativeDetailsAvailable,false);assert.equal(restricted.rows[0].accounting,undefined);assert.equal(restricted.rows[0].savedGrantedCapabilities,undefined);
  assert.equal((await db.query('SELECT count(*)::int AS n FROM stockchief_runtime.provider_effects')).rows[0].n,0);
  t.diagnostic(JSON.stringify({connectedIsNotPosting:true,grantedScopeIsNotAuthority:true,canonicalAccountingStateReused:true,secretAndTenantIsolation:true,adminDetailsRestricted:true,noProviderEffects:true,modelCalls:0}));
