@@ -256,8 +256,17 @@ async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null,ob
   // access: every GET is still checked by the restricted application identity.
   function observeReadLinks(outcomes){
     for(const outcome of outcomes||[]){
-      if(require('../../src/assistant/postgres-capability-registry').registry.get(outcome.capability)?.kind!=='read'||outcome.result?.status!=='ANSWERED')continue;
-      observeDatasetLinks(outcome.result);
+      const kind=require('../../src/assistant/postgres-capability-registry').registry.get(outcome.capability)?.kind;
+      if(outcome.result?.status!=='ANSWERED')continue;
+      if(kind==='read')observeDatasetLinks(outcome.result);
+      // A successful governed navigation result is also a discovered link.
+      // The host supplies it; model arguments cannot manufacture this result.
+      // Opening it still performs a fresh tenant/permission-checked GET and
+      // grants no submission authority or user-browser arrival confirmation.
+      if(kind==='navigation'){
+        const href=outcome.result.navigation?.href,path=require('../../src/assistant/agent-navigation-path').localPath(href);
+        if(path&&require('./browser-link-evidence').transferable(href))knownPaths.add(path);
+      }
     }
   }
   // Called only by the host after a governed read, never by a browser tool
