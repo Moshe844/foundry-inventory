@@ -494,7 +494,8 @@ async function lookup(database,ctx,request,options={}) {
         'inventoryBookCost','inventoryCurrency','openingImportUnits','openingImportCost','openingImportCurrency']};
   }
   if(request.view==='supplier_items'){
-    const rows=(await database.query(`SELECT i.id AS item_id,i.name AS product,sku.code AS sku,
+    const offset=Number(request.offset??0);if(!Number.isSafeInteger(offset)||offset<0||offset>1000000)throw new ValidationError('Choose a valid supplier-product page offset.');
+    const result=await database.query(`WITH scoped AS (SELECT si.id,i.id AS item_id,i.name AS product,sku.code AS sku,
       supplier.name AS supplier,supplier.currency,si.supplier_sku,si.last_unit_cost,si.last_cost_at,
       si.lead_time_days,supplier.default_lead_time_days,
       COALESCE(si.lead_time_days,supplier.default_lead_time_days) AS effective_lead_time_days,
@@ -505,8 +506,12 @@ async function lookup(database,ctx,request,options={}) {
       WHERE si.workspace_id=$1 AND si.is_active=1 AND supplier.status='active'
       AND ($2::text IS NULL OR i.name ILIKE '%'||$2||'%' OR sku.code ILIKE '%'||$2||'%'
         OR supplier.name ILIKE '%'||$2||'%')
-      ORDER BY i.name,si.is_preferred DESC,supplier.name LIMIT 100`,[ctx.workspaceId,search])).rows.map((row)=>
-      evidenceRow({product:row.product,sku:row.sku,supplier:row.supplier,
+      ), coverage AS (SELECT COUNT(*)::int AS total_matches FROM scoped),
+      page AS (SELECT * FROM scoped ORDER BY product,is_preferred DESC,supplier,id LIMIT 100 OFFSET $3)
+      SELECT page.*,coverage.total_matches FROM coverage LEFT JOIN page ON true
+      ORDER BY page.product,page.is_preferred DESC,page.supplier,page.id`,[ctx.workspaceId,search,offset]);
+    const rows=result.rows.filter(row=>row.id).map((row)=>
+      evidenceRow({id:row.id,product:row.product,sku:row.sku,supplier:row.supplier,
         supplierCode:row.supplier_sku||'',lastUnitCost:row.last_unit_cost===null?'Not recorded':Number(row.last_unit_cost),
         currency:row.currency||null,
         costRecordedAt:row.last_cost_at||'',leadTimeDays:row.lead_time_days===null?'Not recorded':Number(row.lead_time_days),
@@ -516,8 +521,11 @@ async function lookup(database,ctx,request,options={}) {
         orderMultiple:row.order_multiple===null?'Not recorded':Number(row.order_multiple),
         preferred:Boolean(row.is_preferred),purchaseUnit:row.purchase_unit,
         unitsPerPurchaseUnit:Number(row.units_per_purchase_unit)},`/inventory/${row.item_id}`));
-    return {answer:rows.length?`${rows.length}${rows.length===100?'+':''} active supplier-product relationships matched.`:
+    const total=Number(result.rows[0].total_matches);
+    return {answer:rows.length?`Showing ${rows.length} of ${total} active supplier-product relationships.`:
       'No active supplier-product relationship matched that request.',rows,
+      extent:{returnedRows:rows.length,totalRows:total,offset,nextOffset:offset+rows.length<total?offset+rows.length:null,
+        complete:offset===0&&rows.length===total,scope:'Active supplier-product links for active suppliers, including links to inactive products. Exact count is independent of pagination; no rows means no matching active links only when totalRows is zero.'},
       columns:['product','sku','supplier','supplierCode','lastUnitCost','currency','costRecordedAt','leadTimeDays',
         'supplierLeadTimeDays','effectiveLeadTimeDays','minimumOrderQuantity','orderMultiple','preferred','purchaseUnit','unitsPerPurchaseUnit']};
   }
@@ -932,15 +940,24 @@ async function lookup(database,ctx,request,options={}) {
     const supplier=request.view==='suppliers';
     const table=supplier?'suppliers':'customers';
     const state=supplier?"status='active'":"record_state<>'ARCHIVED'";
-    const result=await database.query(`SELECT COUNT(*) OVER() AS total_matches,id,name,email,phone FROM ${table} WHERE workspace_id=$1 AND ${state}
-      AND ($2::text IS NULL OR name ILIKE '%'||$2||'%' OR COALESCE(email,'') ILIKE '%'||$2||'%') ORDER BY name LIMIT 100`,
-    [ctx.workspaceId,search]);
-    const rows=result.rows.map((row)=>evidenceRow({name:row.name,email:row.email || 'Not recorded',phone:row.phone || 'Not recorded'},
+    const offset=Number(request.offset??0);if(!Number.isSafeInteger(offset)||offset<0||offset>1000000)throw new ValidationError('Choose a valid directory page offset.');
+    const fields=supplier?'currency,payment_terms,default_lead_time_days,minimum_order_amount':'company,shipping_address,record_state';
+    const result=await database.query(`WITH scoped AS (SELECT id,name,email,phone,${fields} FROM ${table} WHERE workspace_id=$1 AND ${state}
+      AND ($2::text IS NULL OR name ILIKE '%'||$2||'%' OR COALESCE(email,'') ILIKE '%'||$2||'%')),
+      coverage AS (SELECT COUNT(*)::int AS total_matches FROM scoped),
+      page AS (SELECT * FROM scoped ORDER BY name,id LIMIT 100 OFFSET $3)
+      SELECT page.*,coverage.total_matches${supplier?',(SELECT COUNT(*)::int FROM supplier_items link JOIN skus sku ON sku.id=link.sku_id AND sku.workspace_id=link.workspace_id JOIN items product ON product.id=sku.item_id AND product.workspace_id=link.workspace_id WHERE link.workspace_id=$1 AND link.supplier_id=page.id AND link.is_active=1) AS active_product_links':''}
+      FROM coverage LEFT JOIN page ON true ORDER BY page.name,page.id`,[ctx.workspaceId,search,offset]);
+    const total=Number(result.rows[0].total_matches),rows=result.rows.filter(row=>row.id).map((row)=>evidenceRow({id:row.id,name:row.name,email:row.email || 'Not recorded',phone:row.phone || 'Not recorded',
+      ...(supplier?{currency:row.currency,paymentTerms:row.payment_terms||null,
+        defaultLeadTimeDays:row.default_lead_time_days===null?null:Number(row.default_lead_time_days),
+        minimumOrderAmount:row.minimum_order_amount===null?null:String(row.minimum_order_amount),activeProductLinks:Number(row.active_product_links)}:
+        {company:row.company||null,shippingAddress:row.shipping_address||null,recordState:row.record_state})},
       supplier?`/suppliers/${row.id}`:`/sales/customers/${row.id}`));
     return {answer:rows.length?`${rows.length} ${supplier?'supplier':'customer'}${rows.length===1?'':'s'} matched.`:
-      `No ${supplier?'supplier':'customer'} matched that request.`,rows,columns:['name','email','phone'],
-      extent:{returnedRows:rows.length,totalRows:result.rows.length?Number(result.rows[0].total_matches):0,
-        complete:!result.rows.length||Number(result.rows[0].total_matches)===rows.length,
+      `No ${supplier?'supplier':'customer'} matched that request.`,rows,columns:['name','email','phone',...(supplier?['currency','paymentTerms','defaultLeadTimeDays','minimumOrderAmount','activeProductLinks']:['company','shippingAddress','recordState'])],
+      extent:{returnedRows:rows.length,totalRows:total,offset,nextOffset:offset+rows.length<total?offset+rows.length:null,
+        complete:offset===0&&total===rows.length,
         scope:supplier?'Active suppliers matching the supplied search.':'Non-archived customers matching the supplied search.'},
       scope:{includesInactive:false,recordState:supplier?'active':'non_archived'}};
   }
