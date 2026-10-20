@@ -27,7 +27,8 @@ function queryContract(key,actor){
    field,operator:{enum:[...OPERATORS]},value:{type:['string','number','boolean']}}}},
   sort:{type:'string',enum:[...fields,...Object.values(AGGREGATE_COLUMN)]},direction:{enum:['asc','desc']},
   chart:{enum:['table','bar','line']},layout:{enum:['chart_first','table_first','dashboard']},title:{type:'string',maxLength:100}
- }},rules:['Choose columns, groups, or summary:true. Grouped and whole-dataset summaries require a valid aggregate and numeric measure except count.',
+ }},filterValues:dataset.filterValues||{},rules:['Choose columns, groups, or summary:true. Grouped and whole-dataset summaries require a valid aggregate and numeric measure except count.',
+  'Text equality is case-sensitive. Use the exact registered filterValues codes where supplied; other values are rejected rather than reported as an empty population.',
   'Date filters use YYYY-MM-DD. contains requires text; after/before require dates; numeric comparisons require numeric or date fields.',
   'Money is in minor currency units. Monetary aggregation requires an exact currency filter or currency grouping, and any registered completeness filter.'],
   fields:dataset.fields,metrics:dataset.metrics||{},moneyCompleteness:dataset.moneyCompleteness||{}};
@@ -79,6 +80,9 @@ function normalize(spec,actor){
     const field=safeText(filter.field,60),operator=safeText(filter.operator,30),value=safeText(filter.value);
     if(!Object.hasOwn(dataset.fields,field)||!OPERATORS.has(operator)||(!value&&operator!=='is_null'))
       invalid('Choose valid report filters.');
+    const choices=dataset.filterValues?.[field];
+    if(operator==='equals'&&choices&&!choices.includes(value))
+      invalid(`Use an exact ${field} value: ${choices.join(', ')}.`);
     const type=dataset.fields[field];
     if(['at_least','at_most'].includes(operator)&&!['number','money_minor','date'].includes(type))
       invalid('This field cannot be compared numerically.');

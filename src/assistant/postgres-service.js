@@ -350,8 +350,34 @@ async function lookup(database,ctx,request,options={}) {
         averageRecordedUnitCost:row.quantity_units>0
           ?pricing.formatMinor(Math.round(Number(row.total_cost_minor)/Number(row.quantity_units)),currency):'Not available',
         valuedAt:row.updated_at},`/inventory/${row.item_id}`));
-    return {answer:rows.length?`Showing recorded inventory book cost for ${rows.length}${rows.length===100?'+':''} product-location positions. This is not a current supplier quote.`:
-      'No recorded inventory-cost position matched that request.',rows,
+    // Detail pagination must not make a whole-business financial question
+    // depend on summing a sample. Read the same literal scope completely,
+    // including physical positions that have no recorded cost layer.
+    const summary=(await database.query(`WITH physical AS (
+      SELECT sku_id,location_id,on_hand FROM balances WHERE workspace_id=$1
+    ),costed AS (
+      SELECT sku_id,location_id,quantity_units,total_cost_minor FROM accounting_inventory_cost_balances WHERE workspace_id=$1
+    ),positions AS (
+      SELECT COALESCE(p.sku_id,c.sku_id) AS sku_id,COALESCE(p.location_id,c.location_id) AS location_id,
+        COALESCE(p.on_hand,0) AS physical_units,COALESCE(c.quantity_units,0) AS costed_units,
+        COALESCE(c.total_cost_minor,0) AS cost_minor,c.sku_id IS NOT NULL AS has_cost_record
+      FROM physical p FULL OUTER JOIN costed c ON c.sku_id=p.sku_id AND c.location_id=p.location_id
+    ) SELECT count(*)::text AS positions,count(*) FILTER(WHERE p.has_cost_record)::text AS cost_positions,
+      COALESCE(sum(p.physical_units),0)::text AS physical_units,COALESCE(sum(p.costed_units),0)::text AS costed_units,
+      COALESCE(sum(p.cost_minor),0)::text AS cost_minor,
+      COALESCE(sum(GREATEST(p.physical_units-p.costed_units,0)),0)::text AS missing_cost_units
+    FROM positions p JOIN skus s ON s.workspace_id=$1 AND s.id=p.sku_id
+    JOIN items i ON i.workspace_id=$1 AND i.id=s.item_id JOIN locations l ON l.workspace_id=$1 AND l.id=p.location_id
+    WHERE ($2::text IS NULL OR i.name ILIKE '%'||$2||'%' OR s.code ILIKE '%'||$2||'%' OR l.name ILIKE '%'||$2||'%')`,[ctx.workspaceId,search])).rows[0];
+    const exact=value=>{const n=Number(value);if(!Number.isSafeInteger(n))throw new ValidationError('This inventory total exceeds the exact reporting range. Choose a narrower scope.');return n;};
+    const totals={physicalUnits:exact(summary.physical_units),costedUnits:exact(summary.costed_units),
+      inventoryBookCostMinor:exact(summary.cost_minor),currency,missingCostUnits:exact(summary.missing_cost_units),complete:true};
+    totals.inventoryBookCost=pricing.formatMinor(totals.inventoryBookCostMinor,currency);
+    return {answer:rows.length?`Showing recorded inventory book cost for ${rows.length} product-location positions. The totals cover every matching position, including any uncosted physical stock. This is not a current supplier quote.`:
+      'No recorded inventory-cost position matched that request. Complete matching physical-stock and cost totals are supplied separately.',totals,
+      coverage:{scope:search?'All positions matching the literal name or code filter':'All inventory positions in this business',
+        totalPositions:exact(summary.positions),costPositions:exact(summary.cost_positions),returnedCostPositions:rows.length,
+        detailComplete:rows.length===exact(summary.cost_positions)},rows,
       columns:['product','sku','location','costedUnits','onHand','inventoryBookCost','averageRecordedUnitCost','currency','valuedAt']};
   }
   if(request.view==='inventory_cost_movements'){

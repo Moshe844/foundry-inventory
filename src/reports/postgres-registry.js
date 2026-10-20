@@ -16,7 +16,7 @@ const datasets=Object.freeze({
       LEFT(i.created_at,10) AS created_on
       FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
       WHERE s.workspace_id=$1`,recordHref:(row)=>`/inventory/${row.record_id}`,
-    enumFields:['status','product_status','variant_status'],fields:{product:'text',sku:'text',variant:'text',barcode:'text',unit:'text',tracking:'text',
+    enumFields:['status','product_status','variant_status'],filterValues:{status:['active','inactive'],product_status:['active','inactive'],variant_status:['active','inactive']},fields:{product:'text',sku:'text',variant:'text',barcode:'text',unit:'text',tracking:'text',
       status:'text',product_status:'text',variant_status:'text',created_on:'date'}},
   stock:{label:'Stock by product and location',permission:permissions.VIEW,
     source:`SELECT i.id AS record_id,i.name AS product,s.code AS sku,l.name AS location,
@@ -67,7 +67,7 @@ const datasets=Object.freeze({
       COALESCE(c.email,'') AS email,c.record_state,LEFT(c.created_at,10) AS created_on
       FROM customers c WHERE c.workspace_id=$1`,
     recordHref:(row)=>`/sales/customers/${row.record_id}`,
-    enumFields:['record_state'],
+    enumFields:['record_state'],filterValues:{record_state:['ACTIVE','PROVISIONAL','ARCHIVED']},
     fields:{customer:'text',company:'text',email:'text',record_state:'text',created_on:'date'}},
   sales_orders:{label:'Customer orders',permission:permissions.VIEW_SALES,
     source:`SELECT o.id AS record_id,o.order_number,c.name AS customer,o.status,o.currency,
@@ -84,6 +84,7 @@ const datasets=Object.freeze({
         FROM sales_order_lines WHERE workspace_id=o.workspace_id AND sales_order_id=o.id) lines ON TRUE
       WHERE o.workspace_id=$1`,recordHref:(row)=>`/orders/${row.record_id}`,
     moneyCompleteness:{quoted_line_total_minor:{field:'pricing_complete',value:'yes'},quoted_total_minor:{field:'pricing_complete',value:'yes'}},
+    filterValues:{status:['DRAFT','CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED','FULFILLED','CANCELLED']},
     fields:{order_number:'text',customer:'text',status:'text',currency:'text',order_date:'date',needed_by:'date',
       ordered_units:'number',quoted_line_total_minor:'money_minor',quoted_discount_minor:'money_minor',quoted_tax_minor:'money_minor',quoted_total_minor:'money_minor',pricing_complete:'text',quoted_charges_minor:'money_minor'}},
   sales_order_lines:{label:'Customer order lines by product',permission:permissions.VIEW_SALES,
@@ -106,7 +107,7 @@ const datasets=Object.freeze({
       s.default_lead_time_days::bigint AS lead_time_days,LEFT(s.created_at,10) AS created_on
       FROM suppliers s WHERE s.workspace_id=$1`,
     recordHref:(row)=>`/suppliers/${row.record_id}`,
-    enumFields:['status'],fields:{supplier:'text',supplier_code:'text',email:'text',
+    enumFields:['status'],filterValues:{status:['active','inactive']},fields:{supplier:'text',supplier_code:'text',email:'text',
       status:'text',currency:'text',lead_time_days:'number',created_on:'date'}},
   purchase_orders:{label:'Supplier purchase orders',permission:permissions.VIEW_PURCHASING,
     source:`SELECT o.id AS record_id,o.po_number,s.name AS supplier,o.status,
@@ -367,6 +368,7 @@ const datasets=Object.freeze({
 
 function list(actor){return Object.entries(datasets).filter(([,dataset])=>permissions.can(actor,dataset.permission))
   .map(([key,dataset])=>({key,label:dataset.label,fields:dataset.fields,
-    metrics:dataset.metrics||{},moneyCompleteness:dataset.moneyCompleteness||null}));}
+    metrics:dataset.metrics||{},moneyCompleteness:dataset.moneyCompleteness||null,
+    ...(dataset.filterValues?{filterValues:dataset.filterValues}:{})}));}
 function get(key){return datasets[key]||null;}
 module.exports={datasets,list,get};

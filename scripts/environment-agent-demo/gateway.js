@@ -104,7 +104,8 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
       const operationIndex=Object.fromEntries([...new Set(contracts.map(c=>c.kind))]
         .map(kind=>[kind,contracts.filter(c=>c.kind===kind).map(c=>c.name)]));
       const datasets=require('../../src/reports/postgres-registry').list(actor);
-      const datasetIndex=datasets.map(({key:name,label})=>({name,label,detailsByName:true}));
+      const datasetIndex=datasets.map(({key:name,label,filterValues})=>({name,label,detailsByName:true,
+        ...(filterValues?{filterValues}:{})}));
       const packet=()=>({operations,operationIndex,datasetIndex,datasetFieldsComplete:datasetIndex.every(d=>d.fields),indexComplete:true,total:contracts.length,complete:operations.length===contracts.length,
         datasetAccess:'These are current authorized read projections, not application pages or database tables. environment_dataset accepts a discovered dataset name alone for a bounded inspection with default columns and available field metadata. Supply explicit columns or discover query schemas for tailored reads and aggregation. Extent states returned rows and an exact total only when the first page is complete; groups are not underlying record counts. All dataset reads recheck permissions and tenant scope.',
         coverage:'Current authorized interface contracts within the existing metadata bound. This is not an environment map. Discover pages and forms through the browser; use environment_interfaces for omitted contract details. All operations repeat fresh authority and canonical verification.'});
