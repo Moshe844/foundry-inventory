@@ -18,3 +18,8 @@ test('processed rows remain provisional until canonical verification and never i
  for(const bad of [{...progress,totalRows:900},{...progress,processedRows:801},{...progress,processedRows:-1},{...progress,stage:'private_exception'}])assert.equal(present({...base,job_result:{importProgress:bad}}).processedRows,null);
  const complete=present({...base,plan_status:'SUCCEEDED',execution_status:'SUCCEEDED',verified:1});assert.equal(complete.progressPercent,100);assert.equal(complete.stage,'complete');
 });
+test('an unresolved source question remains pending input rather than requesting an unusable approval',()=>{
+ const row={id:'question',plan_status:'READY',approval_status:'AWAITING_APPROVAL',records_detected:4,records_valid:2,records_invalid:2,needs_source_review:true};
+ const question=present(row);assert.equal(question.state,'NEEDS_INPUT');assert.equal(question.label,'Needs your answer');assert.equal(question.stageLabel,'Resolve the preview questions');assert.equal(question.active,false);assert.equal(question.verified,false);
+ assert.equal(present({...row,needs_source_review:false}).state,'AWAITING_APPROVAL');assert.equal(present({...row,approval_status:'APPROVED'}).state,'APPROVED');
+});

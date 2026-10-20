@@ -13,12 +13,13 @@ function present(row){
  else if(['RUNNING','PAUSED'].includes(row.job_status)){state='PAUSED';label='Import paused before verification';}
  else if(['DEAD','COMPLETED'].includes(row.job_status)||['FAILED','SUCCEEDED'].includes(row.execution_status)||['FAILED','SUCCEEDED'].includes(row.plan_status)){state='NEEDS_REVIEW';label='Import needs review';}
  else if(row.approval_status==='APPROVED'){state='APPROVED';label='Approved — ready to start';}
+ else if(row.needs_source_review===true){state='NEEDS_INPUT';label='Needs your answer';}
  else{state='AWAITING_APPROVAL';label='Waiting for your approval';}
  const iso=value=>value?new Date(value).toISOString():null;
  const detail=typeof row.job_result==='string'?JSON.parse(row.job_result):row.job_result;
  const p=detail?.importProgress,known=Boolean(p&&['preparing','processing','verifying'].includes(p.stage)&&Number.isSafeInteger(p.processedRows)&&Number.isSafeInteger(p.totalRows)&&p.processedRows>=0&&p.processedRows<=p.totalRows&&p.totalRows===Number(row.records_valid));
  const stage=verified?'complete':known&&state==='RUNNING'?p.stage:state==='RUNNING'?'processing':state.toLowerCase();
- const stageLabel={preparing:'Preparing approved records',processing:'Applying products, stock and costs',verifying:'Checking stock and accounting totals',complete:'Inventory saved and verified',queued:'Waiting for an available worker',paused:'Waiting for review',needs_review:'Review required',approved:'Approved and ready to start',awaiting_approval:'Review and approve the preview',cancelled:'Stopped'}[stage];
+ const stageLabel={preparing:'Preparing approved records',processing:'Applying products, stock and costs',verifying:'Checking stock and accounting totals',complete:'Inventory saved and verified',queued:'Waiting for an available worker',paused:'Waiting for review',needs_review:'Review required',needs_input:'Resolve the preview questions',approved:'Approved and ready to start',awaiting_approval:'Review and approve the preview',cancelled:'Stopped'}[stage];
  return {id:row.id,sourceName:row.source_name,rows:Number(row.records_detected),readyRows:Number(row.records_valid),
   invalidRows:Number(row.records_invalid),state,label,active:['QUEUED','RUNNING'].includes(state),working:state==='RUNNING',
   verified,finished:!['QUEUED','RUNNING'].includes(state),status:row.plan_status,
@@ -33,7 +34,11 @@ function present(row){
 async function list(database,workspaceId,{id=null,limit=10,activeOnly=false}={}){
  if(!workspaceId)throw new TypeError('Import progress requires a workspace.');
  const rows=(await database.query(`SELECT p.id,p.source_name,p.records_detected,p.records_valid,p.records_invalid,
-   p.status AS plan_status,p.approval_status,p.created_at,j.status AS job_status,j.lease_expires_at,
+   p.status AS plan_status,p.approval_status,p.created_at,
+   (p.status='READY' AND p.approval_status='AWAITING_APPROVAL' AND (
+     NOT (p.field_mappings::jsonb ? 'name' OR p.field_mappings::jsonb ? 'code') OR
+     p.records_invalid>0 AND (p.transformations::jsonb ? 'workbook' OR p.field_mappings::jsonb ? 'serialTracked' OR p.field_mappings::jsonb ? 'lotTracked'))) AS needs_source_review,
+   j.status AS job_status,j.lease_expires_at,
    j.created_at AS queued_at,j.updated_at AS job_updated_at,j.completed_at AS job_finished_at,j.result AS job_result,COALESCE(j.started_at,e.started_at::timestamptz) AS started_at,e.status AS execution_status,
    e.finished_at,e.committed_at,v.verified,floor(extract(epoch FROM clock_timestamp())*1000)::bigint AS database_now
   FROM import_plans p

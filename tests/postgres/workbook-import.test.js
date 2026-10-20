@@ -27,6 +27,7 @@ test('a saved tracking clarification is explicit, reversible, paged and cannot e
  const text='Code,Name,Quantity,Location,Serial Tracked,Lot Tracked\n'+Array.from({length:510},(_,i)=>`ZX-${i},Component ${i},2,Depot,${i%2?'No':'Yes'},${i%2?'Yes':'No'}`).join('\n');
  let plan=await imports.analyse(db,ctx,{text,filename:'Many tracked positions.csv',allowModel:false});assert.equal(plan.recordsInvalid,510);const originalHash=plan.integrityHash;
  let question=await review.read(db,ctx.workspaceId,plan);assert.equal(question.state,'needs_input');assert.equal(question.groups[0].sourceSkus,255);assert.equal(question.groups[1].missingSkus,255);
+ assert.equal((await require('../../src/imports/postgres-progress').get(db,ctx.workspaceId,plan.id)).state,'NEEDS_INPUT');
  await assert.rejects(imports.revise(db,ctx,plan.id,{expectedHash:originalHash,trackingReview:{serial:'quantity',lot:'quantity'}}),/Confirm/);
  assert.equal((await imports.get(db,ctx.workspaceId,plan.id)).integrityHash,originalHash);
  plan=await imports.revise(db,ctx,plan.id,{expectedHash:originalHash,trackingReview:{serial:'quantity',lot:'quantity'},confirmTrackingChange:true});assert.equal(plan.recordsInvalid,0);assert.equal(plan.recordsValid,510);assert.notEqual(plan.integrityHash,originalHash);assert.equal(plan.transformations.trackingReview.confirmedBy,ctx.actorId);assert.equal(plan.approvalStatus,'AWAITING_APPROVAL');
@@ -40,6 +41,7 @@ test('a saved tracking clarification is explicit, reversible, paged and cannot e
   // Use the same owner session as a customer, rather than submitting a
   // developer-only mutation or approving stock on the customer's behalf.
   await page.goto(base+'/login');await page.getByLabel('Work email').fill(email);await page.locator('[name=password]').fill(password);await Promise.all([page.waitForURL(base+'/'),page.getByRole('button',{name:'Sign in',exact:true}).click()]);await page.goto(base+'/imports/'+plan.id);
+  assert.equal(await page.locator('[data-import-status]').innerText(),'Needs your answer');
   const form=page.locator('[data-import-preview-revise]');assert.match(await form.innerText(),/Nothing is imported/);assert.equal(await form.locator('[name=tracking_serial]').inputValue(),'source');
   await form.locator('[name=tracking_serial]').selectOption('quantity');await form.locator('[name=tracking_lot]').selectOption('quantity');await form.locator('[name=confirmTrackingChange]').check();await Promise.all([page.waitForURL(base+'/imports/'+plan.id,{waitUntil:'load'}),form.getByRole('button',{name:'Save choices and recalculate preview'}).click()]);
   await page.waitForFunction(()=>document.querySelector('h2#import-tracking-question')?.textContent==='Tracking requirements reviewed');
