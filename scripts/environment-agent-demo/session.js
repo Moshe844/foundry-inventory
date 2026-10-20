@@ -49,8 +49,15 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    return presented?.image?{...presented,screen:{...presented.screen,_stockchiefEvidence:reference}}:{...presented,_stockchiefEvidence:reference};}
   return entry?require('./context').preview(output,entry.id):output;
  }
- async function update(change,{cleanup=false,access}={}){return serializeGoalWrite(()=>database.transaction(async client=>{
-  const goal=(await client.query(`SELECT * FROM ${TABLE} WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 FOR UPDATE`,
+ async function update(change,{cleanup=false,access,checkpointAuthority=false}={}){return serializeGoalWrite(()=>database.transaction(async client=>{
+  // Native response persistence needs both locks, but no separate round trip
+  // between them. The correlated actor read follows the same scoped goal lock;
+  // no authority is reused from an earlier model or tool boundary.
+  const goal=(await client.query(checkpointAuthority?`SELECT held.*,
+   (SELECT jsonb_build_object('role',u.role,'permissions',u.permissions)
+    FROM users u WHERE u.workspace_id=held.workspace_id AND u.id=held.actor_user_id FOR SHARE OF u) AS checkpoint_actor
+   FROM (SELECT * FROM ${TABLE} WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 FOR UPDATE) held`:
+   `SELECT * FROM ${TABLE} WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 FOR UPDATE`,
    [ctx.workspaceId,ctx.actorId,goalId])).rows[0];
   held(goal,cleanup);
   const cp=goal.checkpoint;checkAuthority(harness(goal),access);
@@ -68,11 +75,10 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
   // Settled response persistence grants no new model/tool/business operation.
   // Match native checkpoint semantics: current actor, stamp, lease and tenant
   // in the same transaction, including after a spending pause.
-  const actor=(await client.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2 FOR SHARE',
-   [ctx.workspaceId,ctx.actorId])).rows[0];
+  const actor=goal.checkpoint_actor;
   if(!actor||!h.authorityStamp)throw Error('SESSION_AUTHORITY_CHANGED');checkAuthority(h,{actor});
   return change(h,goal,client);
- });}
+ },{checkpointAuthority:true});}
  return {
   identity:Object.freeze({workspaceId:ctx.workspaceId,actorId:ctx.actorId,goalId,candidate}),
   async approvalInbox(){return candidate==='codex'?notifyApprovals(await require('./approval-handoff').inbox(database,ctx,goalId)):null;},

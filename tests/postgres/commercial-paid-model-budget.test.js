@@ -60,7 +60,20 @@ test('candidate AI pack funds a bounded, grant-linked provider budget, including
  await db.transaction(client=>addons.receivePayment(client,paid));
  assert.equal(Number((await db.query('SELECT COUNT(*) AS n FROM commercial_model_grant_budgets WHERE purchase_id=$1',[purchase.id])).rows[0].n),1);
  assert.equal(Number((await db.query('SELECT budget_minor FROM commercial_model_grant_budgets WHERE purchase_id=$1',[purchase.id])).rows[0].budget_minor),1470);
- await usage.recordUsage(db,scope,{meter:'ai_work_credits',units:650,idempotencyKey:'included-consumed'});
+ await usage.recordUsage(db,scope,{meter:'ai_work_credits',units:649,idempotencyKey:'included-consumed'});
+ await usage.reserveUsage(db,scope,{meter:'ai_work_credits',units:7,idempotencyKey:'mixed-funding'});
+ const mixedHold=await budget.reserveNative(db,scope,{name:'anthropic',model:MODEL},
+  {inputTokens:1000,outputTokens:100},'ask','mixed-provider-call','mixed-funding');
+ const mixed=(await db.query('SELECT source,grant_id,maximum_minor FROM commercial_model_cost_hold_allocations WHERE hold_id=$1 ORDER BY source',[mixedHold.id])).rows;
+ assert.deepEqual(mixed.map(row=>row.source),['INCLUDED','PURCHASED']);
+ assert.equal(mixed[0].grant_id,null);assert(mixed[1].grant_id);
+ assert(Math.abs(mixed.reduce((sum,row)=>sum+Number(row.maximum_minor),0)-Number(mixedHold.maximum_minor))<1e-6,
+  'Atomically inserted included and purchased portions preserve the whole rounded reservation');
+ assert(Math.abs(Number(mixed[0].maximum_minor)/Number(mixedHold.maximum_minor)-1/7)<.0001,
+  'Mixed funding preserves the canonical credit proportions');
+ await budget.release(db,scope,'mixed-provider-call');
+ await usage.reverseUsage(db,scope,{meter:'ai_work_credits',idempotencyKey:'mixed-funding'});
+ await usage.recordUsage(db,scope,{meter:'ai_work_credits',units:1,idempotencyKey:'included-final-unit'});
  const request={system:'Answer inventory.',prompt:'How much stock?',schema:{type:'object',properties:{answer:{type:'string'}},required:['answer'],additionalProperties:false}};
  await usage.reserveUsage(db,scope,{meter:'ai_work_credits',units:7,idempotencyKey:'policy-funded'});
  await budget.reserve(db,scope,{name:'anthropic',model:'claude-sonnet-5'},request,model.POLICIES.instruction,

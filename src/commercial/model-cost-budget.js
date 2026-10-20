@@ -88,26 +88,28 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
    [`commercial-model-cost:${scope.accountId}:${bounds.start.toISOString()}`]);
   if(goalScope.goalId){
-   const goal=(await client.query(`SELECT budget_minor,status,expires_at FROM stockchief_runtime.assistant_goals
-    WHERE id=$1 AND workspace_id=$2 AND actor_user_id=$3 FOR UPDATE`,
+   // The account-period lock is already held. Read the goal and its exposure
+   // in the same serializable snapshot, preserving the goal row lock without
+   // another network round trip for an independently changing balance.
+   const goal=(await client.query(`SELECT g.budget_minor,g.status,g.expires_at,
+    (SELECT COALESCE(SUM(CASE WHEN h.status IN ('RESERVED','UNKNOWN') THEN h.maximum_minor
+      WHEN h.status='SETTLED' THEN h.actual_minor ELSE 0 END),0)
+      FROM commercial_model_cost_holds h WHERE h.goal_id=g.id) AS exposure
+    FROM stockchief_runtime.assistant_goals g
+    WHERE g.id=$1 AND g.workspace_id=$2 AND g.actor_user_id=$3 FOR UPDATE OF g`,
     [goalScope.goalId,scope.workspaceId,goalScope.actorId])).rows[0];
    if(!goal||['CANCELLED','COMPLETED','BLOCKED'].includes(goal.status)||new Date(goal.expires_at)<=new Date())
     throw new ValidationError('This goal is no longer authorized to use a model.');
-   const exposure=(await client.query(`SELECT COALESCE(SUM(CASE WHEN status IN ('RESERVED','UNKNOWN')
-    THEN maximum_minor WHEN status='SETTLED' THEN actual_minor ELSE 0 END),0) AS amount
-    FROM commercial_model_cost_holds WHERE goal_id=$1`,[goalScope.goalId])).rows[0];
-   if(Number(exposure.amount)+bound.maximumMinor>Number(goal.budget_minor))
+   if(Number(goal.exposure)+bound.maximumMinor>Number(goal.budget_minor))
     throw Object.assign(new RateLimitError('This goal reached its cumulative model-cost ceiling. No model call was made.'),{limitKind:'goal_cost'});
   }
-  const grantIds=(await client.query(`SELECT DISTINCT a.grant_id FROM commercial_usage_events e
-    JOIN commercial_usage_allocations a ON a.event_id=e.id WHERE e.account_id=$1 AND e.workspace_id=$2
-    AND e.meter='ai_work_credits' AND e.idempotency_key=$3
-    AND e.status IN ('RESERVED','COMMITTED') AND a.grant_id IS NOT NULL`,
-   [scope.accountId,scope.workspaceId,fundingUsageKey])).rows.map(row=>row.grant_id);
-  const fundedRequest=(await client.query(`SELECT id FROM commercial_usage_events
-    WHERE account_id=$1 AND workspace_id=$2 AND meter='ai_work_credits'
-      AND idempotency_key=$3 AND status IN ('RESERVED','COMMITTED')`,
+  const fundedRequest=(await client.query(`SELECT e.id,ARRAY(
+    SELECT DISTINCT a.grant_id FROM commercial_usage_allocations a
+    WHERE a.event_id=e.id AND a.grant_id IS NOT NULL) AS grant_ids
+    FROM commercial_usage_events e WHERE e.account_id=$1 AND e.workspace_id=$2
+      AND e.meter='ai_work_credits' AND e.idempotency_key=$3 AND e.status IN ('RESERVED','COMMITTED')`,
    [scope.accountId,scope.workspaceId,fundingUsageKey])).rows[0];
+  const grantIds=fundedRequest?.grant_ids||[];
   if(grantIds.length)await client.query('SELECT id FROM commercial_usage_grants WHERE id=ANY($1::text[]) ORDER BY id FOR UPDATE',[grantIds]);
   const usage=(await client.query(`SELECT a.grant_id,a.units,k.version AS pack_version,b.budget_minor,b.cost_model_key,
     b.approved_model_rate_ceiling,
@@ -169,18 +171,25 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
    if(Number(exposure.amount)+source.maximumMinor>effective+1e-6)
     throw new RateLimitError('This purchased AI pack reached its provider-cost safety budget. No model call was made.');
   }
-  const hold=(await client.query(`INSERT INTO commercial_model_cost_holds
+  // Calculations and rounding remain in the canonical engine above. Persist
+  // the exact hold and all of its allocations atomically in one statement.
+  const hold=(await client.query(`WITH held AS (INSERT INTO commercial_model_cost_holds
    (id,account_id,workspace_id,idempotency_key,period_start,period_end,provider,model,operation,maximum_minor,detail,goal_id)
-   VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12) RETURNING *`,
+   VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12) RETURNING *),
+   allocated AS (INSERT INTO commercial_model_cost_hold_allocations(id,hold_id,source,grant_id,maximum_minor)
+    SELECT entry.id,held.id,entry.source,entry.grant_id,entry.maximum_minor
+    FROM held CROSS JOIN jsonb_to_recordset($13::jsonb)
+      AS entry(id text,source text,grant_id text,maximum_minor numeric)
+    RETURNING id)
+   SELECT held.* FROM held CROSS JOIN (SELECT count(*) FROM allocated) saved`,
    [newId('modelhold'),scope.accountId,scope.workspaceId,idempotencyKey,bounds.start.toISOString(),bounds.end.toISOString(),
     bound.provider,bound.model,operation,bound.maximumMinor,
     JSON.stringify({inputTokenUpperBound:bound.inputTokens,outputTokenLimit:bound.outputTokens,
       providerExecutions:bound.providerExecutions,providerVersion:bound.providerVersion,rateSources:bound.rateSources,
       operationCapMinor:operationCap,accountPeriodCapMinor:accountCap,workspacePeriodCapMinor:workspaceCap,
-      funding:sources.map(row=>({source:row.source,grantId:row.grantId,maximumMinor:row.maximumMinor}))}),goalScope.goalId||null])).rows[0];
-  for(const source of sources)await client.query(`INSERT INTO commercial_model_cost_hold_allocations
-   (id,hold_id,source,grant_id,maximum_minor) VALUES($1,$2,$3,$4,$5)`,
-   [newId('modelallocation'),hold.id,source.source,source.grantId,source.maximumMinor]);
+      funding:sources.map(row=>({source:row.source,grantId:row.grantId,maximumMinor:row.maximumMinor}))}),goalScope.goalId||null,
+    JSON.stringify(sources.map(source=>({id:newId('modelallocation'),source:source.source,
+      grant_id:source.grantId,maximum_minor:source.maximumMinor})))])).rows[0];
  return {...hold,outputTokenLimit:bound.outputTokens};};
  return typeof database.transaction==='function'?database.transaction(transaction,{isolation:'SERIALIZABLE',retrySafe:true}):transaction(database);
 }

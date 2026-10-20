@@ -22,6 +22,19 @@ test('native SDK cost holds require funded credit and obey durable goal, price a
  await assert.rejects(()=>costs.reserveNative(db,scope,provider,bound,'ask','missing-call','missing-funding',goalScope),/no funded Ask/);
  const funding=`${ctx.workspaceId}:fixture-funding`;
  await usage.reserveUsage(db,scope,{meter:'ai_work_credits',units:1,idempotencyKey:funding});
+ const inspected={...db,transaction:async(operation,settings)=>db.transaction(async client=>{
+  let queries=0;const hold=await operation({query:(...args)=>{queries++;return client.query(...args);}});
+  // Included funding and one goal use one lock, one goal/exposure snapshot,
+  // two funding reads, one account-exposure read and one atomic insert.
+  assert.equal(queries,6,'Native funding avoids a round trip per scalar balance or allocation');return hold;
+ },settings)};
+ const measured=await costs.reserveNative(inspected,scope,provider,bound,'ask','measured-call',funding,goalScope);
+ const allocations=(await db.query('SELECT source,grant_id,maximum_minor FROM commercial_model_cost_hold_allocations WHERE hold_id=$1',[measured.id])).rows;
+ assert.equal(allocations.length,1);assert.equal(allocations[0].source,'INCLUDED');assert.equal(allocations[0].grant_id,null);
+ assert.equal(Number(allocations[0].maximum_minor),Number(measured.maximum_minor),'The complete reservation is allocated, with no rounding loss');
+ await assert.rejects(costs.reserveNative(db,scope,provider,bound,'ask','measured-call',funding,goalScope),{code:'23505'});
+ assert.equal((await db.query('SELECT count(*)::int n FROM commercial_model_cost_hold_allocations WHERE hold_id=$1',[measured.id])).rows[0].n,1,'A duplicate reservation cannot duplicate its allocation');
+ await costs.release(db,scope,'measured-call');
  await assert.rejects(()=>costs.reserveNative(db,scope,{name:'openai',model:'unpriced'},bound,'ask','unpriced',funding,goalScope),/verified price/);
  await assert.rejects(()=>costs.reserveNative(db,scope,provider,{inputTokens:1000000,outputTokens:3000},'ask','oversized',funding,goalScope),/per-operation/);
  let accepted=0;
