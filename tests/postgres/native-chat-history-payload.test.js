@@ -1,0 +1,20 @@
+'use strict';process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
+test('chat history omits native replay payload while preserving every conversation state and the original recovery checkpoint',{timeout:120000},async t=>{
+ const cluster=await require('../helpers/postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString);t.after(async()=>{await db.close();await cluster.stop();});await require('../../src/db/migrate-postgres').migratePostgres(db);
+ const auth=require('../../src/domain/postgres-auth-service'),owner=await auth.createBusiness(db,{name:'History fixture',businessName:randomUUID(),email:randomUUID()+'@example.test',password:'Fixture!'+randomUUID()}),ctx={workspaceId:owner.workspaceId,actorId:owner.userId},store=require('../../src/assistant/postgres-goal-store'),conversation=require('../../src/assistant/agent-conversation'),saved=[];
+ const payload='Recorded native replay data '.repeat(20000);
+ for(const status of ['READY','RUNNING','WAITING_USER','WAITING_APPROVAL','WAITING_EVENT','COMPLETED','BLOCKED','CANCELLED']){
+  const goal=await store.create(db,ctx,'Saved goal '+status),cp={runtime:'codex-staging',runStartedAt:new Date().toISOString(),page:{path:'/orders'},messages:[{role:'user',content:'A saved clarification'}],navigation:{state:'PENDING',href:'/orders',label:'Orders'},prerequisiteHandoffs:[{href:'/money',label:'Money'}],delivery:{version:1,id:'saved-result'},harness:{native:{codex:payload},evidence:{recorded:{text:payload}},codexDelivery:{state:'PENDING',hash:'hash',packet:payload},helperDelivery:{state:'SETTLED',packet:payload},answerScopeReview:{version:2,hash:'bound',state:'SETTLED',input:payload,verdict:{grounded:true,complete:true,missingOutcomes:[],reason:'Supported'}},userQuestion:{id:'question',question:'Which location?',missingInformation:['Location']},interruption:{code:'PROVIDER_TRANSPORT_UNCERTAIN'},approvalDeliveries:{saved:{proposalId:'pending'}}}};
+  await db.query('UPDATE stockchief_runtime.assistant_goals SET status=$2,answer=$3,checkpoint=$4::jsonb WHERE id=$1',[goal.id,status,'Saved answer',JSON.stringify(cp)]);saved.push(await store.get(db,ctx,goal.id));
+ }
+ const legacy=await store.create(db,ctx,'Original runtime history'),legacyCp={observations:[{result:{answer:'Legacy result'}}],waiting:{proposalIds:['saved-proposal']},messages:[]};await db.query('UPDATE stockchief_runtime.assistant_goals SET checkpoint=$2::jsonb WHERE id=$1',[legacy.id,JSON.stringify(legacyCp)]);
+ const rows=await store.recent(db,ctx);assert.equal(rows.length,9);
+ for(const original of saved){const row=rows.find(r=>r.id===original.id);assert(row);const {checkpoint,...rest}=row;assert.deepEqual(rest,Object.fromEntries(Object.entries(original).filter(([k])=>k!=='checkpoint')));assert.deepEqual(conversation.state(row),conversation.state(original));
+  assert.deepEqual(row.checkpoint.harness.approvalDeliveries,original.checkpoint.harness.approvalDeliveries);assert.deepEqual(row.checkpoint.delivery,original.checkpoint.delivery);assert.deepEqual(row.checkpoint.messages,original.checkpoint.messages);
+  assert.equal(row.checkpoint.harness.native,undefined);assert.equal(row.checkpoint.harness.evidence,undefined);assert.equal(row.checkpoint.harness.codexDelivery.packet,undefined);assert.equal(row.checkpoint.harness.codexDelivery.state,'PENDING');assert.equal(row.checkpoint.harness.answerScopeReview.input,undefined);assert.deepEqual(row.checkpoint.harness.answerScopeReview.verdict,original.checkpoint.harness.answerScopeReview.verdict);
+  assert.deepEqual(await store.get(db,ctx,original.id),original,'The full durable checkpoint is unchanged and remains available for resumption and verification');assert(Buffer.byteLength(JSON.stringify(row))<5000);
+ }
+ assert.deepEqual(rows.find(r=>r.id===legacy.id).checkpoint,legacyCp);assert.equal((await store.recent(db,{...ctx,actorId:'other-actor'})).length,0);
+ t.diagnostic(JSON.stringify({statuses:saved.length,legacyPreserved:true,replayRetainedForRecovery:true,conversationStatesIdentical:true,modelCalls:0}));
+});

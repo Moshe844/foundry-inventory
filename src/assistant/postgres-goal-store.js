@@ -102,6 +102,9 @@ async function recent(db,ctx,startedAt=null,focusedGoalId=null){
  const focus=typeof focusedGoalId==='string'&&focusedGoalId.length<=160?focusedGoalId:null;
  // Keep ordinary history bounded. A direct link can add one owned goal from
  // this conversation, without loading every historical checkpoint.
+ // This is a read-only chat projection. Native replay files, original tool
+ // evidence and provider packets remain in get() for recovery/verification;
+ // chat still receives delivery, approval, clarification and uncertainty state.
  return (await db.query(`WITH visible_ids AS (
   (SELECT id FROM ${TABLE}
    WHERE workspace_id=$1 AND actor_user_id=$2 AND ($3::timestamptz IS NULL OR created_at>$3)
@@ -109,7 +112,15 @@ async function recent(db,ctx,startedAt=null,focusedGoalId=null){
   UNION
   SELECT id FROM ${TABLE}
    WHERE workspace_id=$1 AND actor_user_id=$2 AND ($3::timestamptz IS NULL OR created_at>$3) AND id=$4
- ) SELECT goal.* FROM ${TABLE} goal JOIN visible_ids visible ON visible.id=goal.id
+ ) SELECT goal.id,goal.workspace_id,goal.actor_user_id,goal.request_key,goal.original_request,
+ goal.status,goal.answer,goal.turns,goal.tool_calls,goal.recoveries,goal.budget_minor,
+ goal.run_token,goal.lease_until,goal.expires_at,goal.created_at,goal.updated_at,
+ CASE WHEN goal.checkpoint->>'runtime'='codex-staging' THEN
+  goal.checkpoint #- '{harness,native}' #- '{harness,evidence}'
+   #- '{harness,codexDelivery,packet}' #- '{harness,helperDelivery,packet}'
+   #- '{harness,answerScopeReview,input}'
+ ELSE goal.checkpoint END AS checkpoint
+ FROM ${TABLE} goal JOIN visible_ids visible ON visible.id=goal.id
  WHERE goal.workspace_id=$1 AND goal.actor_user_id=$2
  ORDER BY goal.created_at,goal.id`,[ctx.workspaceId,ctx.actorId,startedAt,focus])).rows;
 }

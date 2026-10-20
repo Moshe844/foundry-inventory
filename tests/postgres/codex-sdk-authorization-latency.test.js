@@ -26,6 +26,13 @@ test('native bookkeeping avoids repeated catalogue construction while retaining 
  assert.equal(initial.datasetFieldsComplete,initial.datasetIndex.every(d=>Boolean(d.fields)));
  assert(!JSON.stringify(initial.datasetIndex).includes('SELECT '),'SQL implementation is never interface metadata');
  assert(initial.operations.some(c=>c.name==='read.payments'&&c.fields),'Recorded live cash investigation must not lose its read contract by measuring the uncompressed intermediate representation');
+ const navigation=full.catalogue.list().filter(c=>c.kind==='navigation');
+ assert.deepEqual(initial.navigationSignatures.flatMap(s=>s.names).sort(),navigation.map(c=>c.name).sort(),'All authorized navigation signatures are available without another discovery round');
+ for(const group of initial.navigationSignatures)for(const name of group.names){
+  const current=(await gateway.interfaces({names:[name]})).operations.find(c=>c.name===name);
+  assert(current);for(const field of ['required','fields','authority','unavailable'])assert.deepEqual(group[field],current[field]);
+ }
+ t.diagnostic(JSON.stringify({initialBytes:Buffer.byteLength(JSON.stringify(codec.compact(initial))),navigationContractsSupplied:navigation.length,navigationSignatures:initial.navigationSignatures.length}));
  queries=0;const fresh=await gateway.authorize({catalogue:false}),lightQueries=queries;
  assert.deepEqual(fresh.actor,full.actor);assert.equal(fresh.catalogue,undefined);
  assert(fullQueries<=lightQueries+5,'One catalogue snapshot, not a subscription lookup per capability: '+JSON.stringify({fullQueries,lightQueries}));

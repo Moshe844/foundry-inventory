@@ -103,11 +103,21 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
       // from fresh authorized contracts, never a page/route discovery boundary.
       const operationIndex=Object.fromEntries([...new Set(contracts.map(c=>c.kind))]
         .map(kind=>[kind,contracts.filter(c=>c.kind===kind).map(c=>c.name)]));
+      // Navigation contracts share a few argument/authority signatures. Keep
+      // every signature available without repeating forty page descriptions
+      // or making the agent buy a discovery round for an argument-free page.
+      const groupedNavigation=new Map();
+      for(const contract of contracts.filter(c=>c.kind==='navigation')){
+        const {required,fields,authority,unavailable}=describe(contract),signature={required,fields,authority,unavailable},key=JSON.stringify(signature);
+        if(!groupedNavigation.has(key))groupedNavigation.set(key,{names:[],...signature});
+        groupedNavigation.get(key).names.push(contract.name);
+      }
+      const navigationSignatures=[...groupedNavigation.values()];
       const datasets=require('../../src/reports/postgres-registry').list(actor);
       const datasetIndex=datasets.map(({key:name,label,filterValues})=>({name,label,detailsByName:true,
         ...(filterValues?{filterValues}:{})}));
-      const packet=()=>({operations,operationIndex,datasetIndex,datasetFieldsComplete:datasetIndex.every(d=>d.fields),indexComplete:true,total:contracts.length,complete:operations.length===contracts.length,
-        datasetAccess:'These are current authorized read projections, not application pages or database tables. environment_dataset accepts a discovered dataset name alone for a bounded inspection with default columns and available field metadata. Supply explicit columns or discover query schemas for tailored reads and aggregation. Extent states returned rows and an exact total only when the first page is complete; groups are not underlying record counts. All dataset reads recheck permissions and tenant scope.',
+      const packet=()=>({operations,operationIndex,navigationSignatures,navigationAccess:'Each named operation in a navigation signature has exactly the supplied fields, required arguments and authority. Use it directly for a requested page change when its name is unambiguous; retrieve its description if uncertain. A page change supplies no record facts. The host and user browser still verify authority and arrival.',datasetIndex,datasetFieldsComplete:datasetIndex.every(d=>d.fields),indexComplete:true,total:contracts.length,complete:operations.length===contracts.length,
+        datasetAccess:'These are current authorized read projections, not application pages or database tables. Use the supplied fields, filterValues and typed query schema directly for a known read, filter or aggregate. A preliminary inspection is needed only for missing metadata or uncertain business context. A dataset name alone provides bounded default rows and available metadata. Extent states returned rows and an exact total only when the first page is complete; groups are not underlying record counts. All dataset reads recheck permissions and tenant scope.',
         coverage:'Current authorized interface contracts within the existing metadata bound. This is not an environment map. Discover pages and forms through the browser; use environment_interfaces for omitted contract details. All operations repeat fresh authority and canonical verification.'});
       for(const contract of contracts.filter(c=>c.kind==='read')){
         const complete=describe(contract);
