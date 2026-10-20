@@ -20,6 +20,9 @@ test('ambiguous joins, incomplete coverage, duplicate pivots and invented column
 test('unmatched records and inconsistent physical totals remain blocking evidence after persistence',()=>{
  const book=fixture();book.sheets[1].rows[0].cells[3]='4';book.sheets[1].rows.pop();const result=relations.compile(book,contract());assert.equal(result.outputRows,4);assert.equal(result.issueCount,1);const all=result.sheet.rows.flatMap(r=>JSON.parse(r.cells[result.problemsIndex]));assert(all.some(p=>p.code==='workbook_unmatched_key'));assert(all.some(p=>p.code==='workbook_stock_mismatch'));
 });
+test('contextual references are accounted for without pretending their records were joined or imported',()=>{
+ const spec=contract();spec.coverage[2]={sheet:2,role:'reference',reason:'Read as historical context, not replayed.'};const result=relations.compile(fixture(),spec);assert.equal(result.physicalUnits,9);assert.equal(result.coverage[2].role,'not_imported');assert.equal(result.coverage[2].contextOnly,true);assert.equal(result.coverage[2].joined,false);spec.coverage[2].role='inventory';assert.throws(()=>relations.compile(fixture(),spec),/coverage disagrees/);
+});
 test('tracking flags cannot masquerade as serial or lot identifiers',()=>{
  const s=sheet('Flags',[['SKU','Serial Tracked','Lot Tracked'],['XX-1','No','No'],['XX-2','Yes','No']]);const guess=fields.guessMappings(s.columns,s.rows);assert.equal(guess.mappings.serial,undefined);assert.equal(guess.mappings.lotCode,undefined);assert.equal(guess.mappings.serialTracked,1);assert.equal(guess.mappings.lotTracked,2);
 });

@@ -46,7 +46,7 @@ function compile(workbook,spec){
  if(new Set(spec.stock.locations.map(r=>`${r.sheet}:${r.column}`)).size!==spec.stock.locations.length)throw new ValidationError('A location component is repeated.');
  if(new Set(spec.stock.locations.map(r=>sheetAt(r.sheet).columns.find(c=>c.index===r.column).name.toLowerCase())).size!==spec.stock.locations.length)throw new ValidationError('Two stock components have the same location label; their relationship needs review.');
  if(spec.coverage.length!==sheets.length||new Set(spec.coverage.map(c=>c.sheet)).size!==sheets.length)throw new ValidationError('Every worksheet must be accounted for in the import review.');
- for(const c of spec.coverage){sheetAt(c.sheet);if((used.has(c.sheet))===(c.role==='not_imported'))throw new ValidationError('Workbook coverage disagrees with the selected source relationships.');}
+ for(const c of spec.coverage){sheetAt(c.sheet);if(used.has(c.sheet)&&c.role==='not_imported'||!used.has(c.sheet)&&c.role==='inventory')throw new ValidationError('Workbook coverage disagrees with the selected source relationships.');}
  const columns=[],indexes=new Map(),mappings={},axisNames={},variantColumns=[];
  function index(r){reference(r);const id=`${r.sheet}:${r.column}`;if(!indexes.has(id)){indexes.set(id,columns.length);columns.push({index:columns.length,name:`${sheets[r.sheet].name} · ${sheets[r.sheet].columns.find(c=>c.index===r.column).name}`,source:r});}return indexes.get(id);}
  // Retain all joined source columns, including unsupported business fields,
@@ -78,7 +78,11 @@ function compile(workbook,spec){
   values[problemsIndex]=JSON.stringify(problems);
   for(const component of components){const cells=[...values];if(component){cells[mappings.quantity]=component.value;cells[mappings.location]=component.location;}rows.push({sourceRow:rows.length+1,cells,problems});if(rows.length>require('./parser').LIMITS.maxRows)throw new ValidationError('The expanded workbook exceeds the deployment’s row capacity; no rows were silently truncated.');}
  }
- const coverage=spec.coverage.map(c=>({...c,name:sheets[c.sheet].name,rows:sheets[c.sheet].rows.length}));
+ // A contextual reference is not necessarily a relational join. The host,
+ // rather than the model's role label, determines whether its records are
+ // imported. Do not reject README/supporting references or imply their
+ // suppliers, historical orders or other records were created.
+ const coverage=spec.coverage.map(c=>({...c,role:used.has(c.sheet)?c.role:'not_imported',contextOnly:!used.has(c.sheet)&&c.role==='reference',joined:used.has(c.sheet),name:sheets[c.sheet].name,rows:sheets[c.sheet].rows.length}));
  return {sheet:{name:base.name,columns,rows},mappings,axisNames,variantColumns,provenanceIndex,problemsIndex,
   contract:spec,coverage,sourceRows:base.rows.length,outputRows:rows.length,physicalUnits,issues:issues.slice(0,100),issueCount:issues.length};
 }
