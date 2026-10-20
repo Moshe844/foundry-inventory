@@ -1,6 +1,8 @@
 'use strict';
 const {createHash}=require('node:crypto');
 const stable=v=>Array.isArray(v)?v.map(stable):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,stable(v[k])])):v;
+function fullReadAccess(actor){const permission=require('../actions/permissions');return [permission.VIEW,permission.VIEW_PURCHASING,permission.VIEW_SALES,
+ permission.VIEW_ACCOUNTING,permission.VIEW_TRANSFERS,permission.ADMIN].every(required=>permission.can(actor,required));}
 async function learnedEnvironment(db,ctx,startedAt,actor){
  if(!actor)return {pages:[]};const stamp=createHash('sha256').update(JSON.stringify(stable(actor))).digest('hex');
  const rows=(await db.query(`SELECT (SELECT COALESCE(jsonb_object_agg(e.key,e.value),'{}'::jsonb)
@@ -33,8 +35,7 @@ async function learnedEnvironment(db,ctx,startedAt,actor){
 async function capture(db,ctx,startedAt=null){
  const actor=(await db.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];
  if(!actor)return {turns:[],memory:[],environment:{pages:[]},notice:'No current membership context is available.'};
- const permission=require('../actions/permissions'),fullBusinessRead=[permission.VIEW,permission.VIEW_PURCHASING,permission.VIEW_SALES,
-  permission.VIEW_ACCOUNTING,permission.VIEW_TRANSFERS,permission.ADMIN].every(required=>permission.can(actor,required));
+ const fullBusinessRead=fullReadAccess(actor);
  const stamp=createHash('sha256').update(JSON.stringify(stable(actor))).digest('hex');
  // Shared legacy memory is not classified by audience. Do not disclose its
  // financial, customer or administrative payload to a restricted membership.
@@ -57,7 +58,7 @@ async function capture(db,ctx,startedAt=null){
  fullBusinessRead?require('./postgres-business-memory').plannerContext(db,ctx.workspaceId,{limit:12}):[],
  learnedEnvironment(db,ctx,startedAt,actor)]);
  const rows=recent.rows.reverse();
- return {turns:rows.map(({conversation_state,...row})=>({...row,message:row.message.slice(0,1600),answer:require('./agent-conversation').publicText(row.answer,'').slice(0,2000),
+ return {authorityStamp:stamp,turns:rows.map(({conversation_state,...row})=>({...row,message:row.message.slice(0,1600),answer:require('./agent-conversation').publicText(row.answer,'').slice(0,2000),
   exchanges:(conversation_state?.history||[]).slice(-8).map(m=>({role:m.role,text:require('./agent-conversation').publicText(m.text,'').slice(0,1600)})),
   truncated:row.message.length>1600||String(row.answer||'').length>2000||(conversation_state?.history||[]).length>8})),
   memory,environment,
@@ -71,4 +72,4 @@ function prompt(context){
   JSON.stringify({page:context.page||null,conversation:context.conversation||null}));
  return parts.join('\n\n');
 }
-module.exports={capture,prompt};
+module.exports={capture,prompt,fullReadAccess};

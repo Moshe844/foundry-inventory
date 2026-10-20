@@ -92,6 +92,9 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    return {answer:goal.answer,completionSource:h.completionSource,checkedAt:h.receipt.checkedAt};
   },
   async load(){return authorizedUpdate((h,goal,client,access)=>{
+   const snapshot=goal.checkpoint.conversation;
+   if(snapshot&&!require('../../src/assistant/postgres-agent-context').fullReadAccess(access?.actor)&&
+    snapshot.authorityStamp!==h.authorityStamp)throw Error('SESSION_AUTHORITY_CHANGED');
    let environment=null;
    if(access?.environment){
     const id=`${goalId}:environment:${createHash('sha256').update(JSON.stringify(access.environment)).digest('hex').slice(0,24)}`;
