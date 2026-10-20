@@ -128,6 +128,16 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    // SDK save its settled state if the spending lock changes mid-response.
    return checkpointUpdate(h=>{h.native={...h.native,...native};});
   },
+  async navigationContext(){return authorizedUpdate((h,_goal,_client,access)=>{
+   // Initial authorized interface metadata already supplies these owning lists.
+   // Journal their exact source for navigation, without inventing record facts,
+   // spending a tool/model request or allowing the agent to supply destinations.
+   const result={collections:require('./gateway').navigationCollections(access.catalogue)},
+    id=`${goalId}:navigation-context:${createHash('sha256').update(JSON.stringify(result)).digest('hex').slice(0,24)}`;
+   require('./observations').store(h,{id,name:'authorized_navigation',result,
+    source:{version:1,name:'authorized_navigation',input:{}}});
+   return {evidenceId:id,...result};
+  },{catalogue:true});},
   async executionState(){return authorizedUpdate(async(h,goal,client,access)=>{
    const receipt=await require('./receipts').collect(client,ctx,goal,h,access.catalogue);
    if(!receipt.operations.length&&!receipt.humanDecisions.length)return null;

@@ -21,6 +21,10 @@ async function currentValue(database,ctx,goal,entry,{catalogue,browser,outcomeIn
   if(!row)throw Error('CURRENT_AUTHORITY_REQUIRED');
   return {business:{name:row.name},actor:{role:row.role},clock:{utc:new Date().toISOString()}};
  }
+ if(entry.name==='authorized_navigation'){
+  source(entry);if(!catalogue)throw Error('CURRENT_AUTHORITY_REQUIRED');
+  return {collections:require('../../scripts/environment-agent-demo/gateway').navigationCollections(catalogue)};
+ }
  let saved;
  if(entry.name==='environment_interfaces'&&!entry.sourceText){
   // Older journals already contain the host-generated exact-name selection.

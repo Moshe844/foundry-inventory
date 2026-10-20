@@ -51,6 +51,7 @@ async function verify(database,ctx,goal,raw,catalogue,options={}){
   // earlier observation before that check discards valid durable knowledge
   // and forces unnecessary model/tool turns without improving verification.
   const original=entry.text?JSON.parse(entry.text):entry.value??entry.output??entry.result??entry;
+  if(entry.name==='authorized_navigation')return unavailable('Navigation metadata cannot substantiate business facts.','TRANSPORT_METADATA_NOT_EVIDENCE');
   if(require('../../scripts/environment-agent-demo/source-references').metadataClaim(entry,claim.path,sourceMetadataCache))
    return unavailable('The answer needs supporting business facts, not internal source references.','TRANSPORT_METADATA_NOT_EVIDENCE');
   if(entry.name==='environment_browser'&&/^\/(?:screen\/)?viewState(?:\/|$)/.test(claim.path))
@@ -129,6 +130,10 @@ async function verify(database,ctx,goal,raw,catalogue,options={}){
    const outcome=match&&observation.outcomes?.[Number(match[1])];
    if(!outcome||catalogue.get(outcome.capability)?.kind!=='navigation'||outcome.result?.status!=='ANSWERED')return fail();
    path=outcome.result.navigation?.href;label=outcome.result.navigation?.label;observedDestination=path;
+  }else if(entry.name==='authorized_navigation'){
+   const match=/^\/collections\/([A-Za-z0-9_.-]{1,120})\/href$/.exec(n.path||''),
+    collection=match&&Object.hasOwn(observation.collections||{},match[1])&&observation.collections[match[1]];
+   if(!collection)return fail();path=collection.href;label=collection.label;observedDestination=path;
   }else return fail();
   const href=require('./agent-navigation-path').localPath(path);
   if(!href)return fail();
@@ -149,6 +154,7 @@ async function verify(database,ctx,goal,raw,catalogue,options={}){
 }
 const instructions=`\nFor a completed result, use the native final-output schema with outcome "answer" or "navigation", the usable answer, and its supporting claims. The host alone verifies completion.
 The browser tool controls a private inspection browser, NOT the user's website. When the user asks to open a page, use outcome "navigation" and navigation: {evidenceId,path:"/url"} referencing an actual successful applicationPage observation (use /screen/url if wrapped). The host will deliver that page to the user's browser and verify its arrival without another model call. Do not claim it has already opened for the user. Do not return outcome "answer" to fulfill a navigation request. For questions or completed business changes that do not request moving the user's browser, use outcome "answer".
+Host-recorded owning-list navigation evidence supplies an exact evidenceId and /collections/KEY/href pointer for a recordCollections entry. You may report that destination directly without an extra browser/tool/model round; the host freshly rechecks its authority and destination and verifies the actual user-browser arrival. This metadata cannot substantiate business facts or business execution. Individual records and unlisted destinations still require discovered current evidence.
 A governed navigation operation also supplies a safe destination: reference its actual /outcomes/N/result/navigation/href in navigation.path. When that authorized destination is already available, you do not need to visit it in the private browser merely to open it for the user. Unlisted pages remain discoverable through browser exploration.
 For new factual claims use schema v3: {sourceRef,historical,value}, copying the issued fv1 field reference and its exact primitive value from the original observation. Legacy evidence-ID/JSON-Pointer reports remain readable but must not be generated for new factual claims.
 Use the smallest recorded values that substantiate the answer. Do not copy unrelated rows or an entire observation into claims when individual fields or visible text blocks suffice. Preserve enough claims to support all reported facts; concise evidence never removes canonical outcome verification.

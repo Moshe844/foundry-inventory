@@ -19,6 +19,8 @@ function describe(c){return {name:c.name,kind:c.kind,description:c.description,r
 function collections(catalogue){return Object.fromEntries(catalogue.list().filter(c=>c.kind==='navigation'&&c.recordKind)
   .flatMap(c=>{const collection=require('../../src/web/postgres-record-destinations').RECORDS[c.recordKind]?.collection;
     return collection?[[c.name,{...collection,recordReferenceRequired:(c.required||[]).includes('recordReference')}]]:[];}));}
+function navigationCollections(catalogue){return Object.fromEntries(Object.entries(collections(catalogue)).filter(([name,collection])=>
+ !(catalogue.get(name)?.commercialUnavailable||[]).length&&require('../../src/assistant/agent-navigation-path').localPath(collection.href)===collection.href));}
 function discoveryPage(entries,offset,summary){
  const page=[];let bytes=0;
  for(const entry of entries.slice(offset)){
@@ -210,4 +212,4 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
     }
   };
 }
-module.exports={createGateway,interfaceSnapshot};
+module.exports={createGateway,interfaceSnapshot,navigationCollections};
