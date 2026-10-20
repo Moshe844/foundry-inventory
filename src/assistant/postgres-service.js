@@ -1102,7 +1102,7 @@ async function lookup(database,ctx,request,options={}) {
       COALESCE(ti.in_transit_quantity,0) AS internal_transfer_in_transit,
       COALESCE(costed.quantity,0) AS costed_units,
       COALESCE(STRING_AGG(DISTINCT l.name, ', ') FILTER (WHERE b.on_hand<>0),'') AS locations
-    FROM items i JOIN skus s ON s.item_id=i.id LEFT JOIN balances b ON b.sku_id=s.id
+    FROM items i JOIN skus s ON s.item_id=i.id AND s.workspace_id=i.workspace_id AND s.is_active=1 LEFT JOIN balances b ON b.sku_id=s.id
     LEFT JOIN locations l ON l.id=b.location_id AND l.workspace_id=b.workspace_id
     LEFT JOIN committed c ON c.sku_id=s.id
     LEFT JOIN purchase_incoming pi ON pi.sku_id=s.id

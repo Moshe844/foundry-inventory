@@ -11,6 +11,17 @@ test('related sheets are joined by actual keys, matrices preserve zeroes and his
  const result=relations.compile(fixture(),contract());assert.equal(result.rows,undefined);assert.equal(result.sourceRows,2);assert.equal(result.outputRows,4);assert.equal(result.physicalUnits,9);assert.equal(result.variantColumns.length,4);
  const rows=result.sheet.rows,m=result.mappings;assert.deepEqual(rows.map(r=>r.cells[m.quantity]),['2','4','3','0']);assert.deepEqual(rows.map(r=>r.cells[m.location]),['North counter','Back room','North counter','Back room']);assert.deepEqual(JSON.parse(rows[0].cells[result.provenanceIndex]),{'Versions':2,'Physical counts':3});assert.equal(result.coverage[2].role,'not_imported');
 });
+
+test('equivalent worksheet relationships retain exact records regardless of serialization direction or order',()=>{
+ const original=contract(),reversed=contract();reversed.joins=[{sheet:0,fromSheet:1,fromColumn:0,toColumn:0}];
+ const expected=relations.compile(fixture(),original),actual=relations.compile(fixture(),reversed);assert.deepEqual(actual.sheet,expected.sheet);assert.deepEqual(actual.contract,expected.contract);assert.equal(reversed.joins[0].sheet,0,'Source interpretation is not mutated');
+ const book=fixture();book.sheets.push(sheet('Other attributes',[['Reference','Grade code'],['ZX-11','X'],['ZX-27','Y']]));
+ const a=contract();a.coverage.push({sheet:3,role:'reference',reason:'Complementary attributes.'});a.joins.push({sheet:3,fromSheet:1,fromColumn:0,toColumn:0});const b=structuredClone(a);b.joins.reverse();assert.deepEqual(relations.compile(book,b).sheet,relations.compile(book,a).sheet);
+ const cycle=contract();cycle.joins.push({...cycle.joins[0]});assert.throws(()=>relations.compile(fixture(),cycle),/repeated or circular/);
+ const self=contract();self.joins=[{sheet:0,fromSheet:0,fromColumn:0,toColumn:0}];assert.throws(()=>relations.compile(fixture(),self),/repeated or circular/);
+ const disconnected=contract();disconnected.joins=[{sheet:1,fromSheet:2,fromColumn:1,toColumn:0}];assert.throws(()=>relations.compile(fixture(),disconnected),/could not safely match/);
+ const duplicate=fixture();duplicate.sheets[1].rows.push({...duplicate.sheets[1].rows[0]});assert.throws(()=>relations.compile(duplicate,reversed),/duplicate join key/,'Reorientation must never multiply stock');
+});
 test('ambiguous joins, incomplete coverage, duplicate pivots and invented columns are rejected',()=>{
  const book=fixture();book.sheets[1].rows.push({...book.sheets[1].rows[0]});assert.throws(()=>relations.compile(book,contract()),/duplicate join key/);
  const missing=contract();missing.coverage.pop();assert.throws(()=>relations.compile(fixture(),missing),/Every worksheet/);

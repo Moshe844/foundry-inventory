@@ -142,11 +142,9 @@ async function run(database,ctx,id,options={}){
    preparedContext=require(base+'codex-runtime').prepareContext({session,browser:ui,gateway,audit});
    preparations.push(preparedContext);preparedContext.catch(()=>{});
   };
-  // Prepare the browser only when the user actually supplied page context.
-  // Otherwise the native agent can choose records without opening Chromium.
-  if(!pendingFinal&&goal.checkpoint.page?.path&&!goal.checkpoint.harness?.native?.codex?.threadId){
-   const initialBrowser=ui.prepare();preparations.push(initialBrowser);initialBrowser.catch(()=>{});
-  }
+  // Page context remains in the native prompt. The existing lazy browser
+  // initializes on the agent's first browser tool or mandatory verification,
+  // avoiding an unconditional renderer/DOM read for governed-record questions.
   if(!pendingFinal)prepareNative();
   const fundingKey=`codex-staging:${id}`;
   const entitlements=require('../commercial/entitlements');

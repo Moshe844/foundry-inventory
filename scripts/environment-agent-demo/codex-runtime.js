@@ -52,16 +52,6 @@ function savedFinal(h,{profile,messages=[]}={}){
   return require('../../src/assistant/agent-conversation').parse(decoded)?.status==='completed'?decoded:null;
  }catch{return null;}
 }
-async function initialObservation(options,saved,state){
- if(state?.threadId)return null;
- const initialTools=require('./candidates').sharedTools({...options,sandbox:null,fullEvidence:true});
- try{return await initialTools.find(t=>t.name==='environment_browser').execute(
-  {action:'inspect',ref:null,value:null},{source:'host_initial_observation'});}
- catch(error){
-  await options.gateway.authorize({catalogue:false});
-  return {unavailable:true,notice:'The current application view could not be loaded. Investigate with the available authorized tools; no business action was performed.'};
- }
-}
 const preparedSandboxes=new WeakSet();
 const preparedContexts=new WeakSet();
 async function prepareContext(options){
@@ -69,14 +59,13 @@ async function prepareContext(options){
   options.audit?.({kind:'context_preparation_timing',phase,ms:Date.now()-at});
  }};
  const saved=await measure('durable_session',()=>options.session.load());
- const [initialView,initialContracts,executionState]=await Promise.all([
-  // A supplied user page is actual conversation context. A previously learned
-  // private page is only navigation knowledge; loading it must not delay every
-  // general question. The native agent chooses when it needs that browser.
-  measure('current_page',()=>saved.goalContext.page?.path?initialObservation(options,saved,saved.native.codex):null),
+ const [initialContracts,executionState]=await Promise.all([
+  // Preserve the supplied page as navigation context. The native agent can
+  // inspect that exact page whenever it needs rendered facts or form controls;
+  // a page hint alone does not require Chromium, a renderer or a DOM snapshot.
   measure('execution_contracts',()=>saved.native.codex?.threadId?null:options.gateway.initialContracts?.()||null),
   measure('execution_receipt',()=>saved.native.codex?.threadId?options.session.executionState?.()||null:null)]);
- const prepared={session:options.session,saved,initialView,initialContracts,executionState};
+ const prepared={session:options.session,saved,initialView:null,initialContracts,executionState};
  preparedContexts.add(prepared);return prepared;
 }
 async function prepareSandbox(image){
