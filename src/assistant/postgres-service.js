@@ -184,8 +184,8 @@ async function lookup(database,ctx,request,options={}) {
   }
   if(request.view==='operating_rules'){
     const [alerts,replenishment,guards,automation,preferences]=await Promise.all([
-      database.query(`SELECT s.code AS sku,i.name AS product,l.name AS location,r.threshold,r.metric,
-        r.comparator,r.armed,r.updated_at,a.id AS warning_id,a.status AS warning_status,
+      database.query(`SELECT r.id,s.code AS sku,i.name AS product,l.name AS location,r.threshold,r.metric,
+        r.comparator,r.armed,r.updated_at,r.last_evaluated_at,r.last_evaluation,a.id AS warning_id,a.status AS warning_status,
         a.title AS warning_title,a.metrics AS warning_metrics,a.last_evaluated_at AS warning_evaluated_at
         FROM stockchief_runtime.stock_threshold_rules r
         JOIN skus s ON s.id=r.sku_id AND s.workspace_id=r.workspace_id
@@ -220,9 +220,10 @@ async function lookup(database,ctx,request,options={}) {
       [ctx.workspaceId,search]),
     ]);
     const rows=[
-      ...alerts.rows.map((row)=>({kind:'stock_warning',sku:row.sku,product:row.product,
+      ...alerts.rows.map((row)=>({id:row.id,kind:'stock_warning',sku:row.sku,product:row.product,
         location:row.location||'All locations',threshold:Number(row.threshold),metric:row.metric,
         comparator:row.comparator,monitoringEnabled:true,armed:row.armed,
+        lastEvaluation:row.last_evaluated_at?{checkedAt:row.last_evaluated_at,...row.last_evaluation}:null,
         currentWarning:row.warning_id?{id:row.warning_id,status:row.warning_status,title:row.warning_title,
           metrics:typeof row.warning_metrics==='string'?JSON.parse(row.warning_metrics):row.warning_metrics,
           lastEvaluatedAt:row.warning_evaluated_at}:null,
@@ -250,6 +251,7 @@ async function lookup(database,ctx,request,options={}) {
       columns:['kind','sku','product','location','threshold','metric','comparator','updatedAt'],
       semantics:{stockWarnings:{monitoringEnabled:'Whether this approved rule is enabled.',
         armed:'Ready to notify on the next threshold crossing. False suppresses duplicate notifications until stock recovers; it does not disable monitoring or resolve an existing warning.',
+        lastEvaluation:'Receipt written by the canonical checker on every successful evaluation, including unchanged conditions. Null means no receipt is recorded; a saved/enabled rule alone does not prove checking. checkedAt is an observation time, not a guarantee of future monitoring.',
         currentWarning:'The independently persisted Needs You warning. Its status is separate from the rule\'s next-notification flag.'}}};
   }
   if(request.view==='inventory_positions'){

@@ -78,6 +78,12 @@ async function evaluate(database,{workspaceId=null}={}){
         AND status IN ('OPEN','ACKNOWLEDGED')`,[rule.workspace_id,fingerprint,
         'Stock recovered beyond the approved alert level.',at]);rearmed+=1;
     }
+    // Receipt every successful check, including unchanged conditions and rules
+    // that have never triggered. Do not edit approval/configuration timestamps,
+    // reopen dismissed warnings or issue another notification for the same crossing.
+    await database.query(`UPDATE stockchief_runtime.stock_threshold_rules SET
+      last_evaluated_at=$3,last_evaluation=$4::jsonb WHERE workspace_id=$1 AND id=$2`,
+    [rule.workspace_id,rule.id,at,JSON.stringify({version:1,metric,comparator,observed,onHand,committed,threshold,conditionMet:triggered})]);
   }
   return {checked:result.rows.length,alerted,rearmed};
 }
