@@ -8,7 +8,7 @@ async function verify(database,ctx,goal,raw,catalogue,options={}){
  const conversation=require('./agent-conversation');let report=conversation.parse(raw);
  if(!report)return {verified:false,answer:conversation.FAILED};
  if(report.status==='needs_user')return {verified:false,answer:report.question,report};
- if(report.status==='blocked')return {verified:false,answer:conversation.publicText(report.answer),report};
+ if(['blocked','refused'].includes(report.status))return {verified:false,answer:conversation.publicText(report.answer),report};
  if(conversation.publicText(report.answer,'')!==report.answer)return {verified:false,answer:conversation.FAILED};
  if(report.status==='completed'&&goal.checkpoint.clientIntegration===1&&!['answer','navigation'].includes(report.outcome))
   return {verified:false,answer:'I could not verify delivery of the requested result. A page inspected by the agent is not proof that it opened in your browser.'};

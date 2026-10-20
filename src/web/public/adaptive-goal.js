@@ -65,7 +65,7 @@
      disconnected=false;
      status=goal.status;updated=goal.updatedAt;panel.dataset.goalStatus=status;
      if(typeof goal.workerAvailable==='boolean')workerAvailable=goal.workerAvailable;
-     const resume=panel.querySelector('[data-goal-resume]');if(resume)resume.hidden=status!=='BLOCKED'||['usage_review','goal_limit'].includes(conversation?.phase);
+     const resume=panel.querySelector('[data-goal-resume]');if(resume)resume.hidden=status!=='BLOCKED'||['usage_review','goal_limit','refused'].includes(conversation?.phase);
      if(goal.runStartedAt)panel.querySelector('[data-goal-elapsed]').dataset.runStarted=goal.runStartedAt;
      elapsed();
      const prerequisites=panel.querySelector('[data-goal-prerequisites]');

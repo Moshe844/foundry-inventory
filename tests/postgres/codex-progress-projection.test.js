@@ -13,7 +13,7 @@ test('customer progress never transports the growing native journal and retains 
  const other=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'Other owner',businessName:'Other',email:randomUUID()+'@example.test',password});
  const ctx={workspaceId:owner.workspaceId,actorId:owner.userId},pilot=require('../../src/assistant/postgres-codex-pilot'),store=require('../../src/assistant/postgres-goal-store');
  process.env.STOCKCHIEF_RUNTIME_ENV='staging';Object.assign(process.env,(await require('../../scripts/provision-codex-staging').provision(db,{businessName:'Testing',emails:[email]})).environment);
- await db.query('UPDATE stockchief_runtime.codex_pilots SET enabled=true WHERE workspace_id=$1',[ctx.workspaceId]);
+ await db.query("UPDATE stockchief_runtime.codex_pilots SET enabled=true,stopped=false,ceiling_micro_usd=1000000,approval_reference='OFFLINE FAKE ONLY' WHERE workspace_id=$1",[ctx.workspaceId]);
  let fullReads=0;const measured={...db,query:async(sql,...args)=>{if(/SELECT\s+\*\s+FROM\s+stockchief_runtime\.assistant_goals/i.test(sql))fullReads++;return db.query(sql,...args);}};
  const goal=await store.create(db,ctx,'Investigate a customer request while the browser history grows.');
  const secret='PRIVATE_NATIVE_JOURNAL_'+randomUUID();
@@ -37,6 +37,19 @@ test('customer progress never transports the growing native journal and retains 
  assert.deepEqual(pending.body.approvalIds,[ready.approvals[0].id]);assert(!JSON.stringify(pending.body).includes(secret));
  const cards=(await db.query("SELECT count(*) AS n FROM stockchief_runtime.assistant_goal_events WHERE goal_id=$1 AND kind='approval_ready'",[goal.id])).rows[0].n;
  await web.get('/ask/goals/'+goal.id);assert.equal((await db.query("SELECT count(*) AS n FROM stockchief_runtime.assistant_goal_events WHERE goal_id=$1 AND kind='approval_ready'",[goal.id])).rows[0].n,cards);
+
+ const declined=await store.create(db,ctx,'Perform work beyond the authorized business.');
+ await db.query("UPDATE stockchief_runtime.assistant_goals SET checkpoint=checkpoint||'{\"runtime\":\"codex-staging\"}'::jsonb WHERE id=$1",[declined.id]);
+ const claimed=await store.claim(db,ctx,declined.id),refusalGateway=require('../../scripts/environment-agent-demo/gateway').createGateway({database:db,ctx,goal:claimed.original_request,goalId:declined.id,runToken:claimed.run_token});
+ const refusalSession=require('../../scripts/environment-agent-demo/session').createSession({database:db,ctx,goalId:declined.id,runToken:claimed.run_token,candidate:'codex',authorize:refusalGateway.authorize});
+ await refusalSession.load();
+ const report={version:1,status:'refused',answer:'I cannot operate another business without its authorization.'};
+ await refusalSession.finish(client=>require('../../src/assistant/postgres-codex-verification').verifyFinal(client,ctx,claimed,JSON.stringify(report),null));
+ const saved=await store.get(db,ctx,declined.id);assert.equal(saved.status,'BLOCKED');assert.equal(saved.checkpoint.harness.failure.code,'REQUEST_REFUSED');
+ assert.equal(saved.checkpoint.harness.verificationFailure,null);assert.equal(saved.checkpoint.harness.completionSource,'declined_request');
+ assert.equal((await pilot.continuation(db,ctx,declined.id)).eligible,false);await assert.rejects(pilot.resume(db,ctx,declined.id),/declined/);
+ const refusalProgress=await web.get('/ask/goals/'+declined.id);assert.equal(refusalProgress.body.conversation.phase,'refused');
+ assert.equal(refusalProgress.body.conversation.terminal,true);const selectedHistory=await web.get('/ask/history?goal='+declined.id);assert.equal(selectedHistory.status,200);assert.match(selectedHistory.text,/Request declined/);const history=await require('../../src/assistant/postgres-goal-history').list(db,ctx);assert.equal(history.rows.find(r=>r.id===declined.id).phase,'refused');assert.equal(refusalProgress.body.conversation.canReply,false);
  process.env.STOCKCHIEF_CODEX_PILOT_EMAILS='revoked@example.test';assert.equal((await web.get('/ask/goals/'+goal.id)).status,403);
  assert.equal((await db.query('SELECT count(*) AS n FROM stockchief_runtime.codex_pilot_calls WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,'0');
  t.diagnostic(JSON.stringify({nativeHistoryBytes:2*1024*1024,publicProgressBytes:Buffer.byteLength(JSON.stringify(response.body)),fullNativeReadsWhileNoApproval:0,paidCalls:0}));

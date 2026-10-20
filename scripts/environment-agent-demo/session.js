@@ -353,9 +353,9 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
      goal.status='WAITING_EVENT';goal.answer=`Ready to open ${navigation.label} in your browser.`;
     }
     h.failure=classified.failure||null;h.userQuestion=classified.question||null;
-    h.verificationFailure=failure;
+    h.verificationFailure=classified.failure?.code==='REQUEST_REFUSED'?null:failure;
     h.pendingReport=null;goal.checkpoint.lifecycleStage=null;
-    h.completionSource=goal.status==='COMPLETED'?'host_verified_answer':'unverified_answer';
+    h.completionSource=goal.status==='COMPLETED'?'host_verified_answer':classified.failure?.code==='REQUEST_REFUSED'?'declined_request':'unverified_answer';
     // A rejected narrative must not hide canonically committed work. Keep the
     // goal blocked and its precise verification failure; report only freshly
     // verified execution receipts, never promote a partial effect to success.

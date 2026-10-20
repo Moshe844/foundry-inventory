@@ -306,7 +306,7 @@ function createPostgresAskRouter(database,options={}){
       if(!goal)return res.sendStatus(404);
       const recorded=await history.effects(database,req.ctx,[goal.id]);
       const state=conversation.state(goal);
-      selected={id:goal.id,request:goal.original_request,label:history.labels[goal.status],createdAt:goal.created_at,
+      selected={id:goal.id,request:goal.original_request,label:state.label,createdAt:goal.created_at,
         conversation:{...state,history:(state.history||[]).map(turn=>({...turn,text:conversation.publicText(turn.text)}))},
         delivery:delivery.visible(goal),effects:recorded.get(goal.id)||[],continuation:await pilot.continuation(database,req.ctx,goal.id)};
     }

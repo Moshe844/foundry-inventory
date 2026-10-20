@@ -136,6 +136,7 @@ async function continuationState(client,ctx,row){
   const dependencies=require('../../scripts/environment-agent-demo/waits').dependencies(h);
   const state=await require('../../scripts/environment-agent-demo/waits').current(client,ctx,id,dependencies);
   if(state==='BLOCKED')throw new ValidationError('A recorded dependency still needs attention before this request can continue.');
+  if(state==='READY'&&h.failure?.code==='REQUEST_REFUSED')throw new ValidationError('This request was declined. Start a new request with work you are authorized to perform.');
   return state;
 }
 async function continuation(db,ctx,id){return db.transaction(async client=>{

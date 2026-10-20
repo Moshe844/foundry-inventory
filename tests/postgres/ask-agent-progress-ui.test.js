@@ -54,7 +54,15 @@ test('agent conversation keeps requests in order with compact responsive progres
  assert.equal(await panel.getByRole('button',{name:'Stop',exact:true}).isVisible(),false);
  assert.equal(await panel.locator('[data-goal-hint]').innerText(),'');
  assert.match(await panel.locator('[data-goal-answer]').innerText(),/failed before any business change/);
+ assert.equal(await panel.getByRole('button',{name:'Continue this request',exact:true}).isVisible(),true,'Recoverable failures keep their existing continuation');
  await db.query("UPDATE stockchief_runtime.assistant_goals SET status='RUNNING',answer='' WHERE id=$1",[second.id]);await page.reload();
+ await db.query("UPDATE stockchief_runtime.assistant_goals SET status='BLOCKED',answer='I cannot perform work outside your authorized business.',checkpoint=jsonb_set(checkpoint,'{harness}',COALESCE(checkpoint->'harness','{}')||'{\"failure\":{\"code\":\"REQUEST_REFUSED\",\"requiresUserInput\":false}}'::jsonb),updated_at=now() WHERE id=$1",[second.id]);
+ await panel.getByRole('status').filter({hasText:'Request declined'}).waitFor();
+ assert.equal(await panel.getByRole('button',{name:'Continue this request',exact:true}).isVisible(),false,'Live polling does not offer a paid refusal retry');
+ assert.equal(await panel.getAttribute('data-active'),'false');
+ await page.reload();await panel.getByRole('status').filter({hasText:'Request declined'}).waitFor();
+ assert.equal(await panel.getByRole('button',{name:'Continue this request',exact:true}).isVisible(),false,'Server rendering agrees after reopening');
+ await db.query("UPDATE stockchief_runtime.assistant_goals SET status='RUNNING',answer='',checkpoint=checkpoint#-'{harness,failure}' WHERE id=$1",[second.id]);await page.reload();
  const tableAnswer='Your current inventory:\n\n| Item | SKU | On hand |\n|---|---|---:|\n| Sample A | A | 20 |\n| Sample B | B | 8 |\n| Sample C | C | 0 |\n\nSample C is out of stock, with 2 units on order.';
  await db.query("UPDATE stockchief_runtime.assistant_goals SET status='COMPLETED',answer=$2,updated_at=now() WHERE id=$1",[second.id,tableAnswer]);
  await panel.getByRole('columnheader',{name:'On hand',exact:true}).waitFor();

@@ -17,7 +17,8 @@ const Report=z.discriminatedUnion('status',[
    z.object({evidenceId:z.string(),path:z.string(),value:z.unknown(),historical:z.boolean().optional()})
   ])).max(50),
   navigation:z.object({evidenceId:z.string(),path:z.string()}).optional(),workProducts:WorkProducts.optional(),nextActions:NextActions.optional()}),
- z.object({version:z.literal(1).optional(),status:z.literal('blocked'),answer:text})
+ z.object({version:z.literal(1).optional(),status:z.literal('blocked'),answer:text}),
+ z.object({version:z.literal(1).optional(),status:z.literal('refused'),answer:text})
 ]);
 function parse(raw){
  let value=raw;
@@ -49,12 +50,14 @@ function classify({report,answer,verified,current='READY',canonicalVerified=true
   failure:{code:progress.finalReason,requiresUserInput:false}};
  if(report?.status==='needs_user')return {status:'WAITING_USER',answer:publicText(report.question),
   question:{question:publicText(report.question),missingInformation:report.missingInformation}};
+ if(report?.status==='refused'&&canonicalVerified)return {status:'BLOCKED',answer:publicText(report.answer),
+  failure:{code:'REQUEST_REFUSED',requiresUserInput:false}};
  return {status:'BLOCKED',answer:report?.status==='blocked'?publicText(report.answer):FAILED,
   failure:{code:progress.finalReason||'OUTCOME_UNVERIFIED',requiresUserInput:false}};
 }
 const labels={queued:'Waiting to start',working:'Working on your request',clarification:'Let’s clarify',approval:'Ready for your approval',
  external_wait:'Waiting for confirmation',navigation:'Ready to open in your browser',verification:'Finishing remaining work',completed:'Completed',
- interrupted:'Work paused',goal_limit:'Request allowance reached',funding:'Spending limit reached',capacity:'Daily work limit reached',service_wait:'AI service temporarily unavailable',usage_review:'Checking interrupted AI work',failed:'Could not finish',cancelled:'Stopped'};
+ interrupted:'Work paused',goal_limit:'Request allowance reached',funding:'Spending limit reached',capacity:'Daily work limit reached',service_wait:'AI service temporarily unavailable',usage_review:'Checking interrupted AI work',refused:'Request declined',failed:'Could not finish',cancelled:'Stopped'};
 const lifecycleMessages=Object.freeze({
  external_wait:'StockChief is waiting for confirmation of the authorized work. No further approval is needed at this stage.',
  verification:'The authorized work is recorded. I’m checking the complete result.'
@@ -68,7 +71,7 @@ function state(goal){
  const cp=goal.checkpoint||{},h=cp.harness||{},saved=cp.conversationState;
  const phase=({READY:cp.lifecycleStage==='verification'?'verification':'queued',RUNNING:cp.lifecycleStage==='verification'?'verification':'working',
   WAITING_USER:'clarification',WAITING_APPROVAL:'approval',WAITING_EVENT:['PENDING','DELIVERING'].includes(cp.navigation?.state)?'navigation':'external_wait',COMPLETED:'completed',
-  BLOCKED:h.modelUsagePending===true||h.codexDelivery?.state==='PENDING'||h.helperDelivery?.state==='PENDING'||['PROVIDER_REQUEST_TIMEOUT','PROVIDER_TRANSPORT_UNCERTAIN','UNRESOLVED_MODEL_CALL','CODEX_RESPONSE_RECONCILIATION_REQUIRED'].includes(h.interruption?.code)?'usage_review':h.interruption?.limitKind==='goal_cost'||['DURABLE_TOOL_LIMIT','DURABLE_MODEL_REQUEST_LIMIT'].includes(h.admissionBlock?.code||h.interruption?.code)?'goal_limit':h.interruption?.code==='SHARED_SPENDING_CEILING'?'funding':h.interruption?.limitKind==='daily_model_attempts'?'capacity':h.interruption?.code==='CODEX_TOKEN_COUNT_UNAVAILABLE'?'service_wait':h.interruption?'interrupted':'failed',CANCELLED:'cancelled'})[goal.status]||'failed';
+  BLOCKED:h.modelUsagePending===true||h.codexDelivery?.state==='PENDING'||h.helperDelivery?.state==='PENDING'||['PROVIDER_REQUEST_TIMEOUT','PROVIDER_TRANSPORT_UNCERTAIN','UNRESOLVED_MODEL_CALL','CODEX_RESPONSE_RECONCILIATION_REQUIRED'].includes(h.interruption?.code)?'usage_review':h.interruption?.limitKind==='goal_cost'||['DURABLE_TOOL_LIMIT','DURABLE_MODEL_REQUEST_LIMIT'].includes(h.admissionBlock?.code||h.interruption?.code)?'goal_limit':h.interruption?.code==='SHARED_SPENDING_CEILING'?'funding':h.interruption?.limitKind==='daily_model_attempts'?'capacity':h.interruption?.code==='CODEX_TOKEN_COUNT_UNAVAILABLE'?'service_wait':h.interruption?'interrupted':h.failure?.code==='REQUEST_REFUSED'||h.requestRefused===true?'refused':'failed',CANCELLED:'cancelled'})[goal.status]||'failed';
  const question=goal.status==='WAITING_USER'?(h.userQuestion||saved?.input||{question:goal.answer,missingInformation:['Your decision']}):null;
  const input=question?{id:question.id||createHash('sha256').update(JSON.stringify([goal.id,cp.messages?.length||0,question.question])).digest('hex'),
   question:publicText(question.question,'What would you like me to use?'),missingInformation:missing.safeParse(question.missingInformation).success?missing.parse(question.missingInformation):[]}:null;
@@ -83,11 +86,11 @@ function state(goal){
  const usageMessage='An AI request lost its confirmation. Your goal and recorded work are saved. Paid work is paused while its usage is checked; no automatic retry will run.';
  const goalLimitMessage='This request reached its work or spending allowance before all remaining work was verified. Recorded operations are saved. No automatic retry will run, and completed operations must not be repeated.';
  const partial=['partial_verified_receipt','partial_observation_report'].includes(h.completionSource)?publicText(goal.answer,''):'';
- return ConversationState.parse({version:1,goalId:goal.id,phase,label:labels[phase],active:!['completed','failed','cancelled','interrupted','goal_limit','funding','capacity','service_wait','usage_review'].includes(phase),
+ return ConversationState.parse({version:1,goalId:goal.id,phase,label:labels[phase],active:!['completed','refused','failed','cancelled','interrupted','goal_limit','funding','capacity','service_wait','usage_review'].includes(phase),
   // A durable external wait is canonical lifecycle state, not an approval
   // request or a model answer. Older rows may still carry the prior approval
   // text; render the current phase safely without editing native evidence.
-  terminal:['completed','failed','cancelled'].includes(phase),message:phase==='queued'?'Your request is saved and waiting for an available agent.':phase==='external_wait'?lifecycleMessages.external_wait:['goal_limit','funding','capacity','service_wait','usage_review'].includes(phase)?[partial,phase==='goal_limit'?goalLimitMessage:phase==='funding'?fundingMessage:phase==='capacity'?capacityMessage:phase==='usage_review'?usageMessage:serviceMessage].filter(Boolean).join('\n\n'):input?.question||publicText(goal.answer,['queued','working','verification'].includes(phase)?'':FAILED),input,
+  terminal:['completed','refused','failed','cancelled'].includes(phase),message:phase==='queued'?'Your request is saved and waiting for an available agent.':phase==='external_wait'?lifecycleMessages.external_wait:['goal_limit','funding','capacity','service_wait','usage_review'].includes(phase)?[partial,phase==='goal_limit'?goalLimitMessage:phase==='funding'?fundingMessage:phase==='capacity'?capacityMessage:phase==='usage_review'?usageMessage:serviceMessage].filter(Boolean).join('\n\n'):input?.question||publicText(goal.answer,['queued','working','verification'].includes(phase)?'':FAILED),input,
   canReply:phase==='clarification'&&Boolean(input),revision:saved?.revision||0,
   history:history.filter(m=>m.role==='user'||m.phase==='clarification'||!m.phase&&questions.has(m.id))
    .map(m=>({id:m.id,role:m.role,text:publicText(m.text,''),at:m.at,phase:m.phase})),
@@ -107,6 +110,7 @@ const instructions=`\nStockChief conversation contract v1: End a turn with ONE J
 Clarification: {version:1,status:"needs_user",question:string,missingInformation:string[]}. Ask only the smallest set of genuinely missing user choices needed for the next step. First use authorized records, existing conversation, form defaults and business settings to derive facts safely. Do not ask the user to repeat known information, supply internal IDs, or fill every possible field. Resolve a selected record's prices, currency, contact details and other stored defaults from evidence before asking about absent values. Do not infer a user's choice from multiple possible records. Internal errors, unavailable tools, loops and budget limits are not user questions.
 Completion: {version:1,status:"completed",outcome:"answer"|"navigation",answer:string,claims:[{evidenceId:string,path:string,value:any,historical?:boolean}],navigation?:{evidenceId:string,path:string},workProducts?:[{title:string,content:string}],nextActions?:[{label:string,instruction:string}]}. Only the host verifier can mark completion.
 When the requested result is something the user can use or edit, deliver its full content as a workProduct, not merely prose describing it. The host durably saves each workProduct and offers a downloadable copy and free-form continuation. Keep answer a short outcome summary; do not repeat the workProduct there. A usable workProduct should include meaningful nextActions rather than leave the user at a dead end: these are natural-language follow-up requests chosen by you, not execution grants or approval. Choose their labels honestly and their instructions precisely; clicking one starts the same governed agent workflow under fresh authority, limits and approvals. Discover applicable operations when needed. Do not invent capabilities, imply a downloadable work product is a canonical business record, or claim a draft was sent. If the requested scope includes an actual business operation, prepare/execute its canonical contract rather than returning a workProduct as a substitute.
-Blocked: {version:1,status:"blocked",answer:string}. Use this for refusals, unavailable access and unsupported requests, including when the user explicitly requested a refusal. Keep the useful explanation here instead of reporting a claimless completed business answer. Do not call tools merely to manufacture a citation for a refusal. Describe the limitation in ordinary language without internal error codes, stack traces or protocol data.
+Refusal: {version:1,status:"refused",answer:string}. Use this when declining a request on authority, privacy or safety grounds, including an explicit request for a refusal. This ends the request without claiming a verified business outcome or offering a retry.
+Blocked: {version:1,status:"blocked",answer:string}. Use this for recoverable unavailable access, service problems and unsupported capabilities. Keep the useful explanation here instead of reporting a claimless completed business answer. Do not call tools merely to manufacture a citation for a refusal. Describe the limitation in ordinary language without internal error codes, stack traces or protocol data.
 Clarification does not complete or abandon the goal. The next human reply continues this same goal with its durable evidence, canonical proposals, limits and original instructions. Human input alone is never approval of a business operation.`;
 module.exports={Report,ConversationState,WorkProducts,NextActions,parse,classify,state,sync,publicText,instructions,FAILED,lifecycleMessages};

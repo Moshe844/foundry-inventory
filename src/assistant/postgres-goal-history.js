@@ -72,7 +72,7 @@ async function list(database,ctx,{before=null,status=''}={}){
     jsonb_build_object('lifecycleStage',checkpoint->'lifecycleStage',
      'navigation',jsonb_build_object('state',checkpoint#>'{navigation,state}'),
      'conversationState',jsonb_build_object('input',checkpoint#>'{conversationState,input}'),
-     'harness',jsonb_build_object('userQuestion',checkpoint#>'{harness,userQuestion}',
+     'harness',jsonb_build_object('requestRefused',COALESCE(checkpoint#>>'{harness,failure,code}'='REQUEST_REFUSED',false),'userQuestion',checkpoint#>'{harness,userQuestion}',
       'interruption',checkpoint#>'{harness,interruption}','admissionBlock',checkpoint#>'{harness,admissionBlock}',
       'modelUsagePending',checkpoint#>'{harness,modelUsagePending}',
       'codexDelivery',jsonb_build_object('state',checkpoint#>'{harness,codexDelivery,state}'),

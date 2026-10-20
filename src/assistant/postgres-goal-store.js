@@ -10,7 +10,7 @@ async function progress(db,ctx,id){return (await db.query(`SELECT id,status,answ
  COALESCE((SELECT p.worker_seen_at>now()-interval '30 seconds' FROM stockchief_runtime.codex_pilot_workspace_access p WHERE p.workspace_id=assistant_goals.workspace_id),false) AS worker_available,
  jsonb_build_object('runtime',checkpoint->'runtime','runStartedAt',checkpoint->'runStartedAt',
  'conversationState',checkpoint->'conversationState','delivery',checkpoint->'delivery','prerequisiteHandoffs',checkpoint->'prerequisiteHandoffs','lifecycleStage',checkpoint->'lifecycleStage',
- 'harness',jsonb_build_object('userQuestion',checkpoint#>'{harness,userQuestion}','interruption',checkpoint#>'{harness,interruption}',
+ 'harness',jsonb_build_object('requestRefused',COALESCE(checkpoint#>>'{harness,failure,code}'='REQUEST_REFUSED',false),'userQuestion',checkpoint#>'{harness,userQuestion}','interruption',checkpoint#>'{harness,interruption}',
  'completionSource',checkpoint#>'{harness,completionSource}','admissionBlock',checkpoint#>'{harness,admissionBlock}',
  'modelUsagePending',COALESCE(checkpoint#>>'{harness,codexDelivery,state}'='PENDING',false) OR COALESCE(checkpoint#>>'{harness,helperDelivery,state}'='PENDING',false)),
  'navigation',jsonb_build_object('id',checkpoint#>'{navigation,id}','label',checkpoint#>'{navigation,label}',
