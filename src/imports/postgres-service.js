@@ -297,10 +297,14 @@ async function analyse(database, ctx, input) {
     WHERE workspace_id=$1 AND source_hash=$2 AND approval_status='APPROVED' AND status<>'CANCELLED'
     ORDER BY created_at DESC,id DESC LIMIT 1`,
   [ctx.workspaceId,sourceHash])).rows[0];
+  // Relational source interpretation requires reasoning about joins, coverage
+  // and reconciliation. Use the existing standard tier for that task; fast
+  // extraction remains appropriate for an ordinary single source table.
+  const relationalWorkbook=parsedWorkbook.format==='xlsx'&&parsedWorkbook.sheets.length>1;
   const modelProvider=input.allowModel===false?null:input.provider||(require('../config').ai.configured?
-    require('../ai/provider').createProviderUnobserved(require('../config').ai.provider,require('../config').ai.tier('fast')):null);
+    require('../ai/provider').createProviderUnobserved(require('../config').ai.provider,require('../config').ai.tier(relationalWorkbook?'standard':'fast')):null);
   const wrappedProvider=modelProvider?require('../commercial/model').wrap(database,ctx,modelProvider,'import_mapping',input.usageKey||require('./usage-key').analysisUsageKey(sourceHash)):null;
-  const workbook=parsedWorkbook.format==='xlsx'&&parsedWorkbook.sheets.length>1
+  const workbook=relationalWorkbook
     ?await require('./workbook-relations').interpret(parsedWorkbook,{provider:wrappedProvider,
       contract:input.workbookContract,onBeforeAi:input.onBeforeAi,onUsage:input.onUsage}):null;
   if(workbook)sheet=workbook.sheet;
