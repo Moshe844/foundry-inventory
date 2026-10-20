@@ -28,6 +28,9 @@ test('recorded banking evidence separates statement states and permissions while
  // Explicitly revoke accounting visibility on the same membership. The read
  // cannot release banking state, and direct engine inspection also rejects it.
  await db.query("UPDATE users SET role='member',permissions='[\"VIEW\"]'::jsonb WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,ctx.actorId]);
+ const restrictedCollections=await gateway.collections();
+ assert(restrictedCollections['navigate.record.product']);
+ for(const kind of ['customer_return','supplier_return','journal_entry','connection'])assert(!restrictedCollections['navigate.record.'+kind],kind+' must not leak through initial navigation metadata');
  await assert.rejects(banking.inspect(db,ctx),{code:'forbidden'});const denied=await assistant.lookup(db,ctx,{view:'accounting'});assert.equal(denied.bankReconciliation.available,false);assert.equal(denied.bankReconciliation.accounts,undefined);
  await assert.rejects(banking.inspect(db,{...ctx,actorId:foreign.actorId}),{code:'forbidden'});
 });

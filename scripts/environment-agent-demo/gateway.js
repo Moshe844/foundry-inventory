@@ -14,6 +14,11 @@ function describe(c){return {name:c.name,kind:c.kind,description:c.description,r
   authority:c.authority,unavailable:c.commercialUnavailable||[],
   ...(c.recordKind&&require('../../src/web/postgres-record-destinations').RECORDS[c.recordKind]?.collection
     ?{collection:require('../../src/web/postgres-record-destinations').RECORDS[c.recordKind].collection}:{})};}
+// Current authorized interface metadata, not record facts or new operations.
+// Keep owning lists distinct from record navigators that require an identifier.
+function collections(catalogue){return Object.fromEntries(catalogue.list().filter(c=>c.kind==='navigation'&&c.recordKind)
+  .flatMap(c=>{const collection=require('../../src/web/postgres-record-destinations').RECORDS[c.recordKind]?.collection;
+    return collection?[[c.name,{...collection,recordReferenceRequired:(c.required||[]).includes('recordReference')}]]:[];}));}
 function discoveryPage(entries,offset,summary){
  const page=[];let bytes=0;
  for(const entry of entries.slice(offset)){
@@ -94,6 +99,7 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
   }
   return {
     authorize:access,
+    async collections(){return collections((await access()).catalogue);},
     async initialContracts(){
       const {catalogue,actor}=await access(),operations=[];
       // Ordinary questions must be able to choose a governed read immediately,
@@ -114,11 +120,11 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
         if(!groupedNavigation.has(key))groupedNavigation.set(key,{names:[],...signature});
         groupedNavigation.get(key).names.push(contract.name);
       }
-      const navigationSignatures=[...groupedNavigation.values()];
+      const navigationSignatures=[...groupedNavigation.values()],recordCollections=collections(catalogue);
       const datasets=require('../../src/reports/postgres-registry').list(actor);
       const datasetIndex=datasets.map(({key:name,label,filterValues})=>({name,label,detailsByName:true,
         ...(filterValues?{filterValues}:{})}));
-      const packet=()=>({operations,operationIndex,navigationSignatures,navigationAccess:'Exact signatures apply to each grouped name. Use known contracts; inspect uncertain details. Navigation gives no record facts; authority and user arrival are rechecked.',datasetIndex,datasetFieldsComplete:datasetIndex.every(d=>d.fields),indexComplete:true,total:contracts.length,complete:operations.length===contracts.length,
+      const packet=()=>({operations,operationIndex,navigationSignatures,recordCollections,navigationAccess:'Exact signatures apply to each grouped name. recordCollections are owning list paths for browser inspection, not individual record references. Navigation gives no record facts; authority and user arrival are rechecked.',datasetIndex,datasetFieldsComplete:datasetIndex.every(d=>d.fields),indexComplete:true,total:contracts.length,complete:operations.length===contracts.length,
         datasetAccess:'Scoped projections, not SQL/pages. Use known typed fields/filters; inspect missing metadata. Extent distinguishes rows/groups and complete first-page source totals. Reads recheck scope/permissions.',
         coverage:'All authorized names, bounded details. Browser discovers screens; environment_interfaces supplies omissions. Fresh canonical checks remain.'});
       const size=()=>Buffer.byteLength(JSON.stringify(require('./interface-presentation').compact(packet())));

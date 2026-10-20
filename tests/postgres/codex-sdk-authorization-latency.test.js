@@ -30,6 +30,13 @@ test('native bookkeeping avoids repeated catalogue construction while retaining 
  assert(!JSON.stringify(initial.datasetIndex).includes('SELECT '),'SQL implementation is never interface metadata');
  assert(initial.operations.some(c=>c.name==='read.payments'&&c.fields),'Recorded live cash investigation must not lose its read contract by measuring the uncompressed intermediate representation');
  const navigation=full.catalogue.list().filter(c=>c.kind==='navigation');
+ assert.deepEqual(initial.recordCollections,await gateway.collections());
+ for(const [name,collection]of Object.entries(initial.recordCollections)){
+  const contract=full.catalogue.get(name);assert(contract?.recordKind);
+  assert.deepEqual({href:collection.href,label:collection.label},require('../../src/web/postgres-record-destinations').RECORDS[contract.recordKind].collection);
+  assert.equal(collection.recordReferenceRequired,true,'Owning lists never supply the missing identifier for an individual record');
+ }
+ assert.equal(Object.keys(initial.recordCollections).length,navigation.filter(c=>c.recordKind).length);
  assert.deepEqual(initial.navigationSignatures.flatMap(s=>s.names).sort(),navigation.map(c=>c.name).sort(),'All authorized navigation signatures are available without another discovery round');
  for(const group of initial.navigationSignatures)for(const name of group.names){
   const current=(await gateway.interfaces({names:[name]})).operations.find(c=>c.name===name);

@@ -5,7 +5,7 @@ const {randomUUID,createHash}=require('node:crypto');
 // No task text, selectors from test cases, route maps or business workflows enter
 // this module. This is NOT the authorization boundary: use a read-only app and
 // a separate canonical execution gateway as well.
-async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null,observedPaths=[]}){
+async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null,observedPaths=[],interfacePaths=[]}){
   const context=await browser.newContext({viewport:{width:1280,height:900},serviceWorkers:'block',acceptDownloads:false});
   await context.addInitScript(()=>{
     const hide=()=>{for(const e of document.querySelectorAll('input,textarea')){
@@ -54,7 +54,9 @@ async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null,ob
     return Object.fromEntries(Object.entries(surface).map(([key,value])=>[key,createHash('sha256').update(JSON.stringify(value)).digest('hex')]));
   }
   const generation=randomUUID();
-  const knownPaths=new Set(observedPaths.map(p=>require('../../src/assistant/agent-navigation-path').localPath(p)).filter(Boolean));
+  // interfacePaths come only from the host's freshly authorized canonical
+  // metadata. They grant navigation knowledge, never records or permission.
+  const knownPaths=new Set([...observedPaths,...interfacePaths].map(p=>require('../../src/assistant/agent-navigation-path').localPath(p)).filter(Boolean));
   page.on('response',response=>{if(response.request().isNavigationRequest()&&response.frame()===page.mainFrame()){
     httpStatus=response.status();applicationPage=response.headers()['x-stockchief-page']==='1';}});
   const cursor=value=>{const ref=`${generation}:page:${randomUUID()}`;continuations.set(ref,value);return ref;};
@@ -285,6 +287,8 @@ async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null,ob
   // argument. Report record links use the same local-path guard as canonical
   // reads. A remembered link is navigation knowledge, not a permission grant.
   function observeDatasetLinks(result){
+    const handoff=require('../../src/assistant/agent-navigation-path').localPath(result?.handoff?.href);
+    if(handoff&&require('./browser-link-evidence').transferable(handoff))knownPaths.add(handoff);
     for(const row of Array.isArray(result?.rows)?result.rows:[]){
       const path=require('../../src/assistant/agent-navigation-path').localPath(row?.href);
       if(path)knownPaths.add(path);
