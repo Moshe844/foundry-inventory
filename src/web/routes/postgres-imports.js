@@ -73,12 +73,13 @@ function createPostgresImportsRouter(database,{provider=null}={}){
       field:Object.keys(plan.fieldMappings).find((key)=>plan.fieldMappings[key]===column.index) || null,
       samples:[...new Set(sampleRows.map((row)=>String(row.raw?.[column.index]??'').trim())
         .filter(Boolean))].slice(0,3).map((value)=>value.slice(0,80))}));
-    const [runJob,importProgress]=await Promise.all([importJob(database,req.ctx.workspaceId,plan.id),progress.get(database,req.ctx.workspaceId,plan.id)]);
+    const [runJob,importProgress,trackingQuestion]=await Promise.all([importJob(database,req.ctx.workspaceId,plan.id),progress.get(database,req.ctx.workspaceId,plan.id),
+      require('../../imports/tracking-review').read(database,req.ctx.workspaceId,plan)]);
     return res.page(plan.transformations.dataset==='suppliers'?'imports/supplier-preview':'imports/postgres-preview',
       {title:`Import ${plan.sourceName}`,nav:'imports',plan,rows,counts,
       duplicatePlans,run,locations:locationRows,mappingRows,fieldOptions:fields.FIELDS,page,pageSize:PAGE_SIZE,filter,
       missingLocationRows:missingLocation.rows.length>0,
-      locationKinds:require('../../domain/constants').LOCATION_KINDS,runJob,importProgress,
+      locationKinds:require('../../domain/constants').LOCATION_KINDS,runJob,importProgress,trackingQuestion,
     });
   }));
   router.post('/imports/:id/revise',asyncRoute(async(req,res)=>{
@@ -103,6 +104,9 @@ function createPostgresImportsRouter(database,{provider=null}={}){
           kind:trimOrNull(req.body[`new_location_${index}_kind`])||row.kind,
         }])),
         locationMappings,quantityOverrides,fieldMappings,
+        trackingReview:Object.hasOwn(req.body,'tracking_serial')||Object.hasOwn(req.body,'tracking_lot')
+          ?Object.fromEntries(['serial','lot'].filter(mode=>Object.hasOwn(req.body,'tracking_'+mode)).map(mode=>[mode,req.body['tracking_'+mode]])):undefined,
+        confirmTrackingChange:req.body.confirmTrackingChange==='yes',
         defaultLocationId:Object.hasOwn(req.body,'defaultLocationId')?trimOrNull(req.body.defaultLocationId):undefined,
         confirmCatalogOnly:req.body.confirmCatalogOnly==='yes'});
       req.flash('success','Preview corrected and recalculated. Review all rows again before approving.');

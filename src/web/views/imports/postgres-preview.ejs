@@ -3,7 +3,9 @@
    const numberQuestions=sourceMappings.quantity===undefined?(mappingRows||[]).filter(function(row){return (sourceTransforms.unmappedNumericColumns||[]).includes(row.column);}):[];
    const needsNumberAnswer=numberQuestions.length>0&&!sourceTransforms.confirmCatalogOnly;
    const needsLocation=!plan.defaultLocationId && Boolean(locals.missingLocationRows || rows.some(function(row){return row.problems.some(function(problem){return problem.code==='no_location';});}));
-   const needsAnswer=needsIdentity||needsNumberAnswer||needsLocation||plan.conflicts.length>0;
+   const trackingQuestion=locals.trackingQuestion;
+   const needsTrackingAnswer=trackingQuestion?.state==='needs_input';
+   const needsAnswer=needsIdentity||needsNumberAnswer||needsLocation||needsTrackingAnswer||plan.conflicts.length>0;
    const activity=locals.importProgress;
    const importing=Boolean(activity?.active);
    const interrupted=Boolean(activity&&['PAUSED','NEEDS_REVIEW'].includes(activity.state)&&!run?.verified); %>
@@ -13,6 +15,26 @@
   </div>
   <div class="page-actions" <% if(activity.active){ %>data-import-progress="<%= activity.href %>/progress"<% } %>><span data-import-status class="badge badge--<%= activity?.verified?'ok':'muted' %>"><%= activity?.label||helpers.columnLabel(plan.status.toLowerCase()) %></span></div>
 </div>
+<% if(trackingQuestion && plan.status==='READY'){ %>
+<section class="card section" aria-labelledby="import-tracking-question"><div class="card-head"><h2 id="import-tracking-question"><%= needsTrackingAnswer?'StockChief needs one confirmation':'Tracking requirements reviewed' %></h2></div><div class="card-body">
+  <% if(needsTrackingAnswer){ %><p>Your file marks some products as serial- or lot-tracked, but does not identify all of their stock. StockChief found the quantities; it cannot safely invent serial numbers or batch allocations.</p><% } else { %><p>The original tracking flags are preserved with this preview. Review your choices below before approving inventory changes.</p><% } %>
+  <div class="table-scroll"><table class="table"><thead><tr><th>Source requirement</th><th>SKUs marked in file</th><th>SKUs needing identifiers</th></tr></thead><tbody><% trackingQuestion.groups.forEach(function(group){ %><tr><th scope="row"><%= group.label %></th><td><%= group.sourceSkus.toLocaleString('en-US') %></td><td><%= group.missingSkus.toLocaleString('en-US') %></td></tr><% }) %></tbody></table></div>
+  <% if(plan.approvalStatus==='AWAITING_APPROVAL'){ %>
+  <form method="post" action="/imports/<%= plan.id %>/revise" class="stack-form" data-import-preview-revise>
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>">
+    <% trackingQuestion.groups.forEach(function(group){ %><label class="field"><span class="field-label"><%= group.label %> requirements</span><select class="select" name="tracking_<%= group.mode %>">
+      <option value="source" <%= group.decision==='source'?'selected':'' %>>Keep the file's tracking requirements</option>
+      <% if(group.canUseQuantity){ %><option value="quantity" <%= group.decision==='quantity'?'selected':'' %>>These flags do not apply; track these products by quantity</option><% } %>
+    </select></label><% }) %>
+    <p>If the requirements are intentional, keep them and include one serial number per unit, or lot numbers with quantities that reconcile to each location, in the source file. <a href="/imports/start">Upload the completed source</a> to prepare a new preview.</p>
+    <% if(trackingQuestion.groups.some(function(group){return group.canUseQuantity;})){ %><label class="field"><span><input type="checkbox" name="confirmTrackingChange" value="yes"> If I selected quantity tracking, I confirm those flags do not apply to this inventory.</span></label><% } %>
+    <p class="muted">This updates the preview only. Nothing is imported until you review and approve the recalculated result.</p>
+    <button class="btn btn--primary" type="submit">Save choices and recalculate preview</button><p class="muted" data-import-preview-status role="status" hidden></p>
+  </form>
+  <% } %>
+  <% if(trackingQuestion.confirmedAt){ %><p class="muted">Choices saved <time data-import-time datetime="<%= trackingQuestion.confirmedAt %>"><%= new Date(trackingQuestion.confirmedAt).toUTCString() %></time>.</p><% } %>
+</div></section>
+<% } %>
 <% if(duplicatePlans.length && plan.status!=='SUCCEEDED'){ %>
   <div class="notice notice--warn section"><strong>This exact source was already imported.</strong>
     StockChief will not apply the same bytes twice. <a href="/imports/<%= duplicatePlans[0].id %>">See the completed import</a>.</div>
@@ -117,7 +139,7 @@
 <% } else { %>
   <div class="card section"><div class="card-head"><h2>What will happen</h2><span class="spacer"></span>
     <span class="badge badge--muted">No inventory changed yet</span></div>
-    <div class="card-body"><p class="lede"><% if(needsIdentity){ %>I read <%= plan.recordsDetected %> <%= helpers.plural(plan.recordsDetected,'row') %>. Answer the product question above before anything can be imported.<% } else if(needsNumberAnswer){ %>I found the products. Answer the number question above before StockChief changes stock.<% } else if(needsLocation||plan.conflicts.length){ %>Answer the location question above so StockChief knows where to put this stock.<% } else { %>StockChief will create or match <%= plan.recordsValid %> valid <%= helpers.plural(plan.recordsValid, 'row') %> and establish only the quantities shown below through the inventory ledger.<% } %></p>
+    <div class="card-body"><p class="lede"><% if(needsIdentity){ %>I read <%= plan.recordsDetected %> <%= helpers.plural(plan.recordsDetected,'row') %>. Answer the product question above before anything can be imported.<% } else if(needsNumberAnswer){ %>I found the products. Answer the number question above before StockChief changes stock.<% } else if(needsTrackingAnswer){ %>Resolve the tracking requirements above. The complete source stays saved and no stock or value has been imported.<% } else if(needsLocation||plan.conflicts.length){ %>Answer the location question above so StockChief knows where to put this stock.<% } else { %>StockChief will create or match <%= plan.recordsValid %> valid <%= helpers.plural(plan.recordsValid, 'row') %> and establish only the quantities shown below through the inventory ledger.<% } %></p>
       <% if(plan.warnings.length){ %><details><summary>Review notes about this file</summary><ul class="plain-list"><% plan.warnings.forEach(function(warning){ %><li class="is-warn"><%= warning %></li><% }) %></ul></details><% } %>
       <% if(plan.conflicts.length){ %><p><strong>Missing setup:</strong> Add or correct these locations before importing: <%= plan.conflicts.map(function(c){return c.text;}).join(', ') %>.</p><% } %>
     </div>

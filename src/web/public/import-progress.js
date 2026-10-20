@@ -2,6 +2,11 @@
 (()=>{
  const format=iso=>new Intl.DateTimeFormat(undefined,{year:'numeric',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',second:'2-digit',timeZoneName:'short'}).format(new Date(iso));
  document.querySelectorAll('[data-import-time]').forEach(time=>{if(Number.isFinite(Date.parse(time.dateTime))){time.textContent=format(time.dateTime);time.title=time.dateTime;}});
+ document.querySelectorAll('[data-import-preview-revise]').forEach(form=>form.addEventListener('submit',event=>{
+  if(form.dataset.submitting==='yes'){event.preventDefault();return;}form.dataset.submitting='yes';form.setAttribute('aria-busy','true');
+  form.querySelectorAll('button[type="submit"]').forEach(button=>{button.disabled=true;button.textContent='Recalculating preview…';});
+  const status=form.querySelector('[data-import-preview-status]');if(status){status.hidden=false;status.textContent='StockChief is checking your saved rows again. No stock or value is being imported.';}
+ }));
  const groups=new Map();
  document.querySelectorAll('[data-import-progress]').forEach(panel=>{const url=new URL(panel.dataset.importProgress,window.location.origin);if(url.origin!==window.location.origin)return;const entry=groups.get(url.pathname)||{panels:[],finished:false};entry.panels.push(panel);groups.set(url.pathname,entry);});
  if(!groups.size)return;

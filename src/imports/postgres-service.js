@@ -150,8 +150,9 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     const serial=trimOrNull(textCell(row,mappings.serial));
     const lotCode=trimOrNull(textCell(row,mappings.lotCode));
     const flag=field=>{const value=textCell(row,mappings[field]);if(!value)return false;if(/^(?:yes|true|1)$/i.test(value))return true;if(/^(?:no|false|0)$/i.test(value))return false;problems.push(problem('invalid_tracking_flag','A tracking requirement must be an explicit yes/no value.'));return false;};
-    const serialRequired=proposal.detectedType==='serials'||flag('serialTracked');
-    const lotRequired=proposal.detectedType==='lots'||flag('lotTracked');
+    const serialFlag=flag('serialTracked'),lotFlag=flag('lotTracked');
+    const serialRequired=mappings.serial!==undefined||proposal.detectedType==='serials'||(serialFlag&&proposal.trackingReview?.serial!=='quantity');
+    const lotRequired=mappings.lotCode!==undefined||proposal.detectedType==='lots'||(lotFlag&&proposal.trackingReview?.lot!=='quantity');
     if(serialRequired&&lotRequired)problems.push(problem('invalid_tracking_flag','A product cannot use both serial and lot tracking in the same import row.'));
     if(serialRequired){
       if(!serial&&quantity!==0)problems.push(problem('missing_serial','A serial number is required for this row.'));
@@ -213,6 +214,7 @@ function previewWarnings(summary,{hasQuantity=true,hasIdentity=true,unmappedNume
 function integrityStream(plan) {
   const metadata={sourceHash:plan.sourceHash,detectedType:plan.detectedType,fieldMappings:plan.fieldMappings,
     ...(plan.transformations?.workbook?{workbook:plan.transformations.workbook}:{}),
+    ...(plan.transformations?.trackingReview?{trackingReview:plan.transformations.trackingReview}:{}),
     ...(plan.transformations?.proposedLocations?.length?{proposedLocations:plan.transformations.proposedLocations}:{}),
     defaultLocationId:plan.defaultLocationId};
   // Identical canonical bytes to stable({...metadata,rows:[...]}), without
@@ -457,8 +459,6 @@ async function revise(database,ctx,id,input={}){
     if(plan.transformations.dataset==='suppliers')
       throw new ValidationError('This is a supplier directory, not an inventory catalog. Review supplier rows on the preview.');
     if(plan.integrityHash!==input.expectedHash)throw new ValidationError('The preview changed. Review it before correcting rows.');
-    const current=(await client.query(`SELECT * FROM import_rows WHERE workspace_id=$1 AND import_id=$2
-      ORDER BY row_number,id FOR UPDATE`,[ctx.workspaceId,id])).rows.map(hydrateRow);
     let fieldMappings=plan.fieldMappings;
     if(input.fieldMappings!==undefined){
       const sourceIndexes=new Set(plan.sourceColumns.map((column)=>column.index));
@@ -470,6 +470,8 @@ async function revise(database,ctx,id,input={}){
       if(fieldMappings.name===undefined&&fieldMappings.code===undefined)
         throw new ValidationError('Map a product name or SKU before recalculating this preview.');
     }
+    if(plan.transformations.workbook&&(fieldMappings.quantity!==plan.fieldMappings.quantity||fieldMappings.location!==plan.fieldMappings.location||Object.keys(input.quantityOverrides||{}).length))
+      throw new ValidationError('Correct quantities or location columns in the source workbook and prepare a new preview so the physical totals can be checked again.');
     const detectedType=fields.detectType(fieldMappings);
     if(detectedType==='unknown')throw new ValidationError('The selected columns do not identify products.');
     const allowedLocations=new Set([...plan.conflicts.map((entry)=>entry.text),...(plan.transformations.proposedLocations||[]).map(row=>row.source)]);
@@ -480,10 +482,23 @@ async function revise(database,ctx,id,input={}){
     }
     const mappingChanged=stable(fieldMappings)!==stable(plan.fieldMappings);
     const quantityOverrides=mappingChanged?{}:{...(plan.transformations.quantityOverrides||{})};
-    const rowNumbers=new Set(current.map((row)=>String(row.rowNumber)));
     for(const [number,value] of Object.entries(input.quantityOverrides||{})){
-      if(!rowNumbers.has(String(number)))throw new ValidationError('That row is not in this preview.');
+      if(!/^\d+$/.test(number)||!(await client.query('SELECT 1 FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND row_number=$3',[ctx.workspaceId,id,number])).rows.length)
+        throw new ValidationError('That row is not in this preview.');
       if(String(value).trim())quantityOverrides[number]=String(value).trim();
+    }
+    let trackingReview=mappingChanged?null:plan.transformations.trackingReview;
+    if(input.trackingReview!==undefined){
+      const choices=input.trackingReview;
+      if(!choices||typeof choices!=='object'||Array.isArray(choices)||Object.keys(choices).some(k=>!['serial','lot'].includes(k))||
+        Object.values(choices).some(v=>!['source','quantity'].includes(v)))throw new ValidationError('Choose how to handle each tracking requirement in this preview.');
+      for(const [mode,flagField,identifier] of [['serial','serialTracked','serial'],['lot','lotTracked','lotCode']]){
+        if(choices[mode]==='quantity'&&(fieldMappings[flagField]===undefined||fieldMappings[identifier]!==undefined))
+          throw new ValidationError('Actual serial or lot identifiers cannot be discarded through a tracking-flag confirmation.');
+      }
+      if(input.confirmTrackingChange!==true&&Object.values(choices).includes('quantity'))
+        throw new ValidationError('Confirm that the selected tracking flags do not apply before preparing quantity-only stock.');
+      trackingReview={serial:choices.serial||'source',lot:choices.lot||'source',confirmedBy:ctx.actorId,confirmedAt:nowIso()};
     }
     const context=await workspaceContext(client,ctx.workspaceId);
     if(Object.values(locationMappings).some((value)=>!context.locations.some((row)=>row.id===value)))
@@ -492,25 +507,43 @@ async function revise(database,ctx,id,input={}){
       ?plan.defaultLocationId:String(input.defaultLocationId||'');
     if(defaultLocationId&&!context.locations.some((row)=>row.id===defaultLocationId))
       throw new ValidationError('Choose a location in this inventory for this stock.');
-    const sheet={columns:plan.sourceColumns,rows:current.map((row)=>({cells:row.raw,sourceRow:row.rowNumber}))};
     const axisNames=Object.fromEntries(fields.VARIANT_FIELDS.filter((field)=>fieldMappings[field]!==undefined)
       .map((field)=>[field,plan.sourceColumns.find((column)=>column.index===fieldMappings[field])?.name||field]));
-    const proposedLocations=plannedLocations.proposals(sheet,fieldMappings,context,{locationMappings,
+    // Location labels are distinct source facts, not the entire (potentially
+    // very large) row set. Row validation and updates below use bounded pages.
+    const locationFacts=fieldMappings.location===undefined?[]:(await client.query(`SELECT DISTINCT raw::jsonb ->> $3::int AS value FROM import_rows WHERE workspace_id=$1 AND import_id=$2`,[ctx.workspaceId,id,fieldMappings.location])).rows;
+    const locationSheet={columns:plan.sourceColumns,rows:locationFacts.map(row=>({cells:{[fieldMappings.location]:row.value}}))};
+    const proposedLocations=plannedLocations.proposals(locationSheet,fieldMappings,context,{locationMappings,
       proposedLocations:{...Object.fromEntries((plan.transformations.proposedLocations||[]).map(row=>[row.source,row])),...(input.proposedLocations||{})}});
-    const validated=validateRows(sheet,fieldMappings,
-      {detectedType,axisNames,variantColumns:plan.transformations.variantColumns,provenanceIndex:plan.transformations.provenanceIndex,
-        problemsIndex:plan.transformations.problemsIndex},plannedLocations.withProposals(context,proposedLocations),
-      {defaultLocationId,locationMappings,quantityOverrides});
-    const unmappedNumeric=unmappedNumericColumns(sheet,fieldMappings);
+    let unmappedNumeric=[];
+    if(fieldMappings.quantity===undefined){
+      const numericSource=(await client.query('SELECT raw FROM import_rows WHERE workspace_id=$1 AND import_id=$2 ORDER BY row_number,id',[ctx.workspaceId,id])).rows;
+      unmappedNumeric=unmappedNumericColumns({columns:plan.sourceColumns,rows:numericSource.map(row=>({cells:json(row.raw,[])}))},fieldMappings);
+    }
     const confirmCatalogOnly=fieldMappings.quantity===undefined&&input.confirmCatalogOnly===true;
     const revised={...plan,fieldMappings,detectedType,locationMappings,defaultLocationId,
       transformations:{...plan.transformations,axisNames,quantityOverrides,
+        ...(trackingReview?{trackingReview}:{}),
         unmappedNumericColumns:unmappedNumeric,confirmCatalogOnly,proposedLocations},
-      recordsValid:validated.summary.valid,recordsInvalid:validated.summary.invalid,
-      warnings:previewWarnings(validated.summary,{hasQuantity:fieldMappings.quantity!==undefined,
-        hasIdentity:fieldMappings.name!==undefined||fieldMappings.code!==undefined,unmappedNumeric}),
-      conflicts:validated.conflicts,planVersion:plan.planVersion+1};
-    revised.integrityHash=integrityFor(revised,validated.rows);
+      planVersion:plan.planVersion+1};
+    if(!trackingReview)delete revised.transformations.trackingReview;
+    const hash=integrityStream(revised),summary={total:0,valid:0,invalid:0,units:0,unvaluedUnits:0,valuedMinor:0,sourceCostWithoutStock:0},conflicts=new Map();
+    let lastRow=0,lastId='';
+    for(;;){
+      const current=(await client.query(`SELECT * FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND (row_number,id)>($3::bigint,$4::text) ORDER BY row_number,id LIMIT 500 FOR UPDATE`,[ctx.workspaceId,id,lastRow,lastId])).rows.map(hydrateRow);
+      if(!current.length)break;
+      const validated=validateRows({columns:plan.sourceColumns,rows:current.map(row=>({cells:row.raw,sourceRow:row.rowNumber}))},fieldMappings,
+        {detectedType,axisNames,variantColumns:plan.transformations.variantColumns,provenanceIndex:plan.transformations.provenanceIndex,problemsIndex:plan.transformations.problemsIndex,trackingReview},plannedLocations.withProposals(context,proposedLocations),
+        {defaultLocationId,locationMappings,quantityOverrides});
+      for(const row of validated.rows)hash.append(row);
+      for(const key of Object.keys(summary))summary[key]+=validated.summary[key];
+      for(const conflict of validated.conflicts)conflicts.set(conflict.text,(conflicts.get(conflict.text)||0)+conflict.count);
+      await rowStore.revise(client,ctx.workspaceId,id,current,validated.rows);
+      lastRow=current.at(-1).rowNumber;lastId=current.at(-1).id;
+    }
+    revised.integrityHash=hash.finish();revised.recordsValid=summary.valid;revised.recordsInvalid=summary.invalid;
+    revised.warnings=previewWarnings(summary,{hasQuantity:fieldMappings.quantity!==undefined,hasIdentity:fieldMappings.name!==undefined||fieldMappings.code!==undefined,unmappedNumeric});
+    revised.conflicts=[...conflicts].map(([text,count])=>({kind:'unknown_location',text,count}));
     await client.query(`UPDATE import_plans SET location_mappings=$3::jsonb,transformations=$4::jsonb,
       records_valid=$5,records_invalid=$6,warnings=$7::jsonb,conflicts=$8::jsonb,
       plan_version=$9,integrity_hash=$10,field_mappings=$11::jsonb,detected_type=$12,
@@ -519,7 +552,6 @@ async function revise(database,ctx,id,input={}){
     [ctx.workspaceId,id,JSON.stringify(locationMappings),JSON.stringify(revised.transformations),
       revised.recordsValid,revised.recordsInvalid,JSON.stringify(revised.warnings),JSON.stringify(revised.conflicts),
       revised.planVersion,revised.integrityHash,JSON.stringify(fieldMappings),detectedType,defaultLocationId||null]);
-    await rowStore.revise(client,ctx.workspaceId,id,current,validated.rows);
     return revised;
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }

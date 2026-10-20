@@ -26,6 +26,9 @@ test('contextual references are accounted for without pretending their records w
 test('tracking flags cannot masquerade as serial or lot identifiers',()=>{
  const s=sheet('Flags',[['SKU','Serial Tracked','Lot Tracked'],['XX-1','No','No'],['XX-2','Yes','No']]);const guess=fields.guessMappings(s.columns,s.rows);assert.equal(guess.mappings.serial,undefined);assert.equal(guess.mappings.lotCode,undefined);assert.equal(guess.mappings.serialTracked,1);assert.equal(guess.mappings.lotTracked,2);
 });
+test('workbook profiles discover categories and tracking requirements appearing after the first rows',()=>{
+ const rows=[['Reference','Unfamiliar attribute','Serial Tracked'],...Array.from({length:120},(_,i)=>['REF-'+i,i===119?'Carton of six':'Each',i===119?'Yes':'No'])],s=sheet('Late distinctions',rows),p=relations.profile({sheets:[s]})[0];assert.equal(p.columns[1].distinct,2);assert.deepEqual(p.columns[1].samples,['Each','Carton of six']);assert.deepEqual(p.columns[2].samples,['No','Yes']);assert.equal(p.columns[2].booleanRate,1);
+});
 test('numeric Excel roundoff is normalized, genuine precision and text are preserved',()=>{
  const XLSX=require('xlsx'),book=XLSX.utils.book_new();XLSX.utils.book_append_sheet(book,XLSX.utils.aoa_to_sheet([['SKU','Unit Cost','Sell Price','Exact text'],['XX-1',8.130000000000001,1.234,'8.130000000000001']]),'Data');const result=parser.parse({buffer:XLSX.write(book,{type:'buffer',bookType:'xlsx'})});assert.deepEqual(result.sheets[0].rows[0].cells,['XX-1','8.13','1.234','8.130000000000001']);
 });

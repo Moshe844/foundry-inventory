@@ -268,7 +268,10 @@ function profileColumn(rows, index) {
     numericRate: values.length ? numeric / values.length : 0,
     distinct: unique.size,
     booleanRate: values.length ? values.filter(v=>/^(?:yes|no|true|false)$/i.test(v)).length/values.length : 0,
-    samples: values.slice(0, 4),
+    // A late category may change a column's meaning. Repeating the first four
+    // identical values hid tracking flags and configuration axes in large
+    // exports. Profile the complete column and show distinct source examples.
+    samples: [...new Set(values)].slice(0, 4),
   };
 }
 
