@@ -21,6 +21,11 @@ const profiles=Object.freeze({
  'sol-low-fast':Object.freeze({id:'sol-low-fast',model:'gpt-6.1-sol',effort:'low',serviceTier:'fast',providerVersion:'responses-fast-2026-10-13',
   prices:Object.freeze({input:5,output:20}),
   rates:Object.freeze({model_input:4,model_output:20,cache_write_5m:5,cache_write_1h:5,cache_read:.2})}),
+ // Optional processing profile for bounded semantic checks. Same model and
+ // reasoning; pricing verified against the official table on 2026-10-20.
+ 'sol-low-ultrafast':Object.freeze({id:'sol-low-ultrafast',model:'gpt-6.1-sol',effort:'low',serviceTier:'ultrafast',providerVersion:'responses-ultrafast-2026-10-20',
+  prices:Object.freeze({input:15,output:60}),
+  rates:Object.freeze({model_input:12,model_output:60,cache_write_5m:15,cache_write_1h:15,cache_read:.6})}),
  'astra-high':Object.freeze({id:'astra-high',model:'gpt-6-astra',effort:'high',
   prices:Object.freeze({input:12.5,output:50}),
   rates:Object.freeze({model_input:10,model_output:50,cache_write_5m:12.5,cache_write_1h:12.5,cache_read:1})}),

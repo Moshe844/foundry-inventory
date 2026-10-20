@@ -49,9 +49,9 @@ function normalize(input){
 }
 function receipt(value){
  if(value.returnedModel!==MODEL)throw new Error('CODEX_RETURNED_MODEL_MISMATCH');
- const tiers=PROFILE.serviceTier==='fast'?['fast','priority','default','standard']:['default','standard'];
+ const tiers=PROFILE.serviceTier==='ultrafast'?['ultrafast','default','standard']:PROFILE.serviceTier==='fast'?['fast','priority','default','standard']:['default','standard'];
  if(value.returnedServiceTier&&!tiers.includes(value.returnedServiceTier))throw new Error('CODEX_RETURNED_SERVICE_TIER_MISMATCH');
- if(PROFILE.serviceTier==='fast'&&!value.returnedServiceTier)throw new Error('CODEX_RETURNED_SERVICE_TIER_MISSING');
+ if(PROFILE.serviceTier&&!value.returnedServiceTier)throw new Error('CODEX_RETURNED_SERVICE_TIER_MISSING');
  return {...value,conservativeMicroUsd:Math.ceil(value.inputTokens*PRICES.input+value.outputTokens*PRICES.output)};
 }
 const result=Object.freeze({MODEL,EFFORT,PROFILE,VERSION,PRICES,source,normalize,receipt,countRequest,counted,MAX_INPUT_TOKENS,REQUEST_CEILING_MICRO_USD,nativeCompactionTokenLimit});

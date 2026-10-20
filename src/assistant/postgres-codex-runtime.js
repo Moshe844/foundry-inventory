@@ -177,7 +177,19 @@ async function run(database,ctx,id,options={}){
    codexPolicy:helperPolicy,
    wireProfile:'codex',livePermit:permit,requestGate:access=>session.codexRequest(access)});
   helperTransport.setNativeSession(session.helperDelivery());
-  helper=require(base+'codex-helper-provider').create({transport:helperTransport,policy:helperPolicy});
+  // Optional host-owned faster processing for checks that fit the SAME cost
+  // ceiling and verification strength. Native exploration remains unchanged.
+  let preferredHelper=null;
+  if(process.env.STOCKCHIEF_CODEX_HELPER_PROFILE){
+   const policy=require(base+'codex-wire').forProfile(process.env.STOCKCHIEF_CODEX_HELPER_PROFILE);
+   if(policy.MODEL===helperPolicy.MODEL&&policy.EFFORT===helperPolicy.EFFORT){
+    await require('./codex-staging-readiness').verifyPricing(database,policy.PROFILE);
+    const transport=relay.grant({candidate:'codex',provider:'openai',task:id,ctx,goalId:id,budget,fundingKey,authorize:()=>authorize({catalogue:false}),
+     codexPolicy:policy,wireProfile:'codex',livePermit:permit,requestGate:access=>session.codexRequest(access)});
+    transport.setNativeSession(session.helperDelivery());preferredHelper={transport,policy};
+   }
+  }
+  helper=require(base+'codex-helper-provider').create({transport:helperTransport,policy:helperPolicy,preferred:preferredHelper});
   audit({kind:'runtime_starting',status:'Starting the Codex SDK session'});
   result=pendingFinal?{answer:pendingFinal}:await require(base+'worker').run({candidate:'codex',session,gateway:{...gateway,authorize},browser:ui,budget,transport,
    codexPolicy:modelPolicy,modelRoutingInstructions:routing.instructions(ctx,modelProfile),
@@ -212,7 +224,7 @@ async function run(database,ctx,id,options={}){
    if(!checked?.needsCorrection)break;
    audit({kind:'native_report_correction',code:checked.code});
   }
-  transport.revoke();helperTransport.revoke();
+  transport.revoke();helperTransport.revoke();preferredHelper?.transport.revoke();
   if(preparedSandbox)await (await preparedSandbox).sandbox.close();
   prepareNative();
   }

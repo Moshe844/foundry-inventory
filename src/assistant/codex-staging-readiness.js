@@ -10,7 +10,7 @@ async function verifyPricing(database,profile=null) {
  for(const [operation,dollars]of Object.entries(wire.PROFILE.rates)){
   const rate=prices.get(operation);
   if(!rate||!['VERIFIED_PUBLIC','VERIFIED_CONTRACT'].includes(rate.pricing_basis)||
-   Number(rate.cost_per_unit_minor)!==dollars/10000)
+   Number(rate.cost_per_unit_minor)!==Number((dollars/10000).toFixed(8)))
    throw Object.assign(Error('The Staging agent is unavailable because its approved model pricing is missing or inconsistent. No model call was made.'),{code:'STAGING_MODEL_PRICE_UNVERIFIED',operation});
  }
  return {model:wire.MODEL,reasoning:wire.EFFORT,pricingVerified:true};

@@ -14,3 +14,11 @@ test('all settlement and reservation rates must be verified and match the approv
  }
  assert.equal((await verifyPricing({query:async()=>({rows:rates()})})).pricingVerified,true);
 });
+
+test('verified decimal rates compare exactly at PostgreSQL NUMERIC precision and still reject a changed stored price',async()=>{
+ const profile=require('../../scripts/environment-agent-demo/codex-models').getProfile('sol-low-ultrafast');
+ const rows=Object.entries(profile.rates).map(([operation,dollars])=>({operation,cost_per_unit_minor:(dollars/10000).toFixed(8),pricing_basis:'VERIFIED_PUBLIC'}));
+ assert.equal((await verifyPricing({query:async()=>({rows})},profile)).pricingVerified,true);
+ const changed=rows.map(row=>row.operation==='cache_read'?{...row,cost_per_unit_minor:(Number(row.cost_per_unit_minor)+.00000001).toFixed(8)}:row);
+ await assert.rejects(verifyPricing({query:async()=>({rows:changed})},profile),{code:'STAGING_MODEL_PRICE_UNVERIFIED',operation:'cache_read'});
+});
