@@ -3,8 +3,24 @@ const {RateLimitError}=require('../domain/errors');
 function ceiling(name,fallback){const value=process.env[name];if(value===undefined)return fallback;
  const parsed=Number(value);if(!Number.isSafeInteger(parsed)||parsed<1)throw Error(`${name} must be a positive whole number`);
  return parsed;}
+function attemptCeiling(accountId,now=Date.now()){
+ const normal=ceiling('STOCKCHIEF_AI_MAX_MODEL_ATTEMPTS_PER_DAY',250);
+ const raw=process.env.STOCKCHIEF_AI_MODEL_ATTEMPT_APPROVALS;
+ if(!raw)return normal;
+ // Temporary operator approvals are scoped to one account and checked at
+ // every admission. They never reset counters or change the failure ceiling.
+ if(process.env.STOCKCHIEF_RUNTIME_ENV!=='staging')throw Error('Temporary model-attempt approvals are Staging-only');
+ const approvals=JSON.parse(raw);
+ if(!Array.isArray(approvals))throw Error('Model-attempt approvals must be an array');
+ for(const approval of approvals){
+  if(typeof approval.accountId!=='string'||!approval.accountId||!Number.isSafeInteger(approval.maximum)||approval.maximum<1||
+   !Number.isFinite(Date.parse(approval.expiresAt)))throw Error('Invalid model-attempt approval');
+ }
+ const active=approvals.filter(a=>a.accountId===accountId&&Date.parse(a.expiresAt)>now);
+ return Math.max(normal,...active.map(a=>a.maximum));
+}
 async function begin(database,accountId){
- const maxAttempts=ceiling('STOCKCHIEF_AI_MAX_MODEL_ATTEMPTS_PER_DAY',250);
+ const maxAttempts=attemptCeiling(accountId);
  const maxFailures=ceiling('STOCKCHIEF_AI_MAX_FAILED_MODEL_ATTEMPTS_PER_DAY',12);
  const row=(await database.query(`INSERT INTO commercial_model_daily_attempts(account_id,day,attempts)
   VALUES($1,(now() AT TIME ZONE 'UTC')::date,1)
@@ -17,4 +33,4 @@ async function begin(database,accountId){
 }
 async function failed(database,accountId,day){await database.query(`UPDATE commercial_model_daily_attempts
  SET failures=failures+1 WHERE account_id=$1 AND day=$2`,[accountId,day]);}
-module.exports={begin,failed,ceiling};
+module.exports={begin,failed,ceiling,attemptCeiling};
