@@ -3,7 +3,7 @@
 // address their original observation; only current record lookup uses identity.
 const {isDeepStrictEqual:equal}=require('node:util'),{locate}=require('../../scripts/environment-agent-demo/evidence-presentation');
 function unchangedRow(original,current,pointer){
- const match=/^(\/outcomes\/(?:0|[1-9]\d*)\/result\/rows)\/(0|[1-9]\d*)(\/.*)?$/.exec(pointer);
+ const match=/^(\/outcomes\/(?:0|[1-9]\d*)\/result\/(?:rows|inactiveStockWarnings|pending))\/(0|[1-9]\d*)(\/.*)?$/.exec(pointer);
  if(!match)return {applicable:false};
  const before=locate(original,match[1]).value,after=locate(current,match[1]).value,index=Number(match[2]),suffix=match[3]||'';
  if(!Array.isArray(before)||!Array.isArray(after)||!before[index]||typeof before[index]!=='object')return {applicable:true,matched:false};

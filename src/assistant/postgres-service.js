@@ -183,18 +183,25 @@ async function lookup(database,ctx,request,options={}) {
     return {...state,answer:`${state.rows.length} approved pricing rules and ${state.pending.length} pending pricing-policy proposals found. Pending proposals do not affect prices. Approved rules include enabled, disabled, scheduled and expired policies; applicability is decided by the canonical quote engine. Current policy is separate from historical transaction prices.`,columns:['id','name','kind','currency','version','priority','enabled','lifecycle','startsAt','endsAt','scope','entries','discount','code','stacking','excludes','minimumMarginBps','maximumDiscountBps'],handoff:{href:'/sales/pricing',label:'Manage pricing and promotions'}};
   }
   if(request.view==='operating_rules'){
+    const warningOffset=Number(request.offset??0);if(!Number.isSafeInteger(warningOffset)||warningOffset<0||warningOffset>1000000)throw new ValidationError('Choose a valid saved-rule page offset.');
     const [alerts,replenishment,guards,automation,preferences]=await Promise.all([
-      database.query(`SELECT r.id,s.code AS sku,i.name AS product,l.name AS location,r.threshold,r.metric,
+      database.query(`WITH scoped AS (SELECT r.id,r.is_active,s.code AS sku,i.name AS product,l.name AS location,r.threshold,r.metric,
         r.comparator,r.armed,r.updated_at,r.last_evaluated_at,r.last_evaluation,a.id AS warning_id,a.status AS warning_status,
-        a.title AS warning_title,a.metrics AS warning_metrics,a.last_evaluated_at AS warning_evaluated_at
+        a.title AS warning_title,a.metrics AS warning_metrics,a.last_evaluated_at AS warning_evaluated_at,
+        row_number() OVER (PARTITION BY r.is_active ORDER BY r.updated_at DESC,r.id) AS state_position
         FROM stockchief_runtime.stock_threshold_rules r
         JOIN skus s ON s.id=r.sku_id AND s.workspace_id=r.workspace_id
         JOIN items i ON i.id=s.item_id AND i.workspace_id=r.workspace_id
         LEFT JOIN locations l ON l.id=r.location_id AND l.workspace_id=r.workspace_id
         LEFT JOIN attention_items a ON a.workspace_id=r.workspace_id AND a.fingerprint='stock-threshold:'||r.id
-        WHERE r.workspace_id=$1 AND r.is_active=TRUE AND ($2::text IS NULL OR s.code ILIKE '%'||$2||'%'
+        WHERE r.workspace_id=$1 AND ($2::text IS NULL OR s.code ILIKE '%'||$2||'%'
           OR i.name ILIKE '%'||$2||'%' OR l.name ILIKE '%'||$2||'%')
-        ORDER BY r.updated_at DESC LIMIT 100`,[ctx.workspaceId,search]),
+        ), coverage AS (SELECT count(*)::int AS matching_saved_count,
+          count(*) FILTER (WHERE is_active)::int AS enabled_count,
+          count(*) FILTER (WHERE NOT is_active)::int AS disabled_count FROM scoped)
+        SELECT scoped.*,coverage.* FROM coverage LEFT JOIN scoped
+          ON scoped.state_position>$3 AND scoped.state_position<=$3+100
+        ORDER BY scoped.is_active DESC,scoped.state_position`,[ctx.workspaceId,search,warningOffset]),
       database.query(`SELECT s.code AS sku,i.name AS product,l.name AS location,p.reorder_point,
         p.target_stock,p.safety_stock,p.updated_at FROM reorder_policies p
         JOIN skus s ON s.id=p.sku_id AND s.workspace_id=p.workspace_id
@@ -219,16 +226,23 @@ async function lookup(database,ctx,request,options={}) {
         AND ($2::text IS NULL OR key ILIKE '%'||$2||'%') ORDER BY updated_at DESC LIMIT 100`,
       [ctx.workspaceId,search]),
     ]);
-    const rows=[
-      ...alerts.rows.map((row)=>({id:row.id,kind:'stock_warning',sku:row.sku,product:row.product,
+    const warningRow=row=>({id:row.id,kind:'stock_warning',sku:row.sku,product:row.product,
         location:row.location||'All locations',threshold:Number(row.threshold),metric:row.metric,
-        comparator:row.comparator,monitoringEnabled:true,armed:row.armed,
+        comparator:row.comparator,monitoringEnabled:row.is_active,armed:row.armed,
         lastEvaluation:row.last_evaluated_at?{checkedAt:row.last_evaluated_at,...row.last_evaluation}:null,
         currentWarning:row.warning_id?{id:row.warning_id,status:row.warning_status,title:row.warning_title,
           metrics:typeof row.warning_metrics==='string'?JSON.parse(row.warning_metrics):row.warning_metrics,
           lastEvaluatedAt:row.warning_evaluated_at}:null,
         externalEmail:false,automaticPurchase:false,
-        updatedAt:row.updated_at})),
+        updatedAt:row.updated_at});
+    const enabledWarnings=alerts.rows.filter(row=>row.id&&row.is_active).map(warningRow),inactiveStockWarnings=alerts.rows.filter(row=>row.id&&!row.is_active).map(warningRow),counts=alerts.rows[0];
+    const warningHasMore=warningOffset+100<Math.max(counts.enabled_count,counts.disabled_count);
+    const stockWarningCoverage={matchingSaved:counts.matching_saved_count,enabled:counts.enabled_count,disabled:counts.disabled_count,
+      returnedEnabled:enabledWarnings.length,returnedDisabled:inactiveStockWarnings.length,offset:warningOffset,nextOffset:warningHasMore?warningOffset+100:null,
+      complete:warningOffset===0&&enabledWarnings.length===counts.enabled_count&&inactiveStockWarnings.length===counts.disabled_count,
+      scope:'All matching approved saved stock-warning rules, including enabled and disabled rules. Pending proposals are not activated rules. Each page returns up to 100 of each state; follow nextOffset with the same search to retrieve the rest.'};
+    const rows=[
+      ...enabledWarnings,
       ...replenishment.rows.map((row)=>({kind:'replenishment_setting',sku:row.sku,
         product:row.product,location:row.location||'All locations',reorderPoint:row.reorder_point,
         targetStock:row.target_stock,safetyStock:row.safety_stock,automaticPurchase:false,
@@ -247,7 +261,7 @@ async function lookup(database,ctx,request,options={}) {
       ?`${row.sku} ${row.location}: monitoring enabled for a Needs You warning ${row.comparator==='below'?'strictly below':'at or below'} ${row.threshold} ${row.metric==='available_to_fulfill'?'available to fulfill':'physically on hand'}; it does not email or purchase. Next threshold notification: ${row.armed?'ready':'waiting for stock recovery before another notification'}. Recorded warning: ${row.currentWarning?row.currentWarning.status+' — '+row.currentWarning.title:'none'}.`
       :`${row.kind.replaceAll('_',' ')}: ${JSON.stringify(row)}`).join(' ');
     return {answer:rows.length?`Current in-force settings: ${detail}`:
-      'No current approved operating rule matched that request.',rows,
+      'No current approved operating rule matched that request.',rows,inactiveStockWarnings,stockWarningCoverage,
       columns:['kind','sku','product','location','threshold','metric','comparator','updatedAt'],
       semantics:{stockWarnings:{monitoringEnabled:'Whether this approved rule is enabled.',
         armed:'Ready to notify on the next threshold crossing. False suppresses duplicate notifications until stock recovers; it does not disable monitoring or resolve an existing warning.',
