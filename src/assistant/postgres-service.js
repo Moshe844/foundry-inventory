@@ -671,6 +671,7 @@ async function lookup(database,ctx,request,options={}) {
     return {answer:visible.length?`${truncated?'Showing the first 100 matching locations':`${visible.length} location${visible.length===1?'':'s'}`}, including inactive locations. `+
       'An active location meets the receiving-location activity check; product, tracking, quantity, permission and approval checks still apply.':
       'No location matched that request.',rows:visible,columns:['name','kind','active','receivingLocationEligible','units'],
+      extent:{returnedRows:visible.length,totalRows:truncated?null:visible.length,complete:!truncated,scope:'Matching locations including inactive locations.'},
       scope:{includesInactive:true,eligibilityBasis:'location_activity_only',truncated,limit:100}};
   }
   if(request.view==='transfers'){
@@ -915,13 +916,17 @@ async function lookup(database,ctx,request,options={}) {
     const supplier=request.view==='suppliers';
     const table=supplier?'suppliers':'customers';
     const state=supplier?"status='active'":"record_state<>'ARCHIVED'";
-    const result=await database.query(`SELECT id,name,email,phone FROM ${table} WHERE workspace_id=$1 AND ${state}
+    const result=await database.query(`SELECT COUNT(*) OVER() AS total_matches,id,name,email,phone FROM ${table} WHERE workspace_id=$1 AND ${state}
       AND ($2::text IS NULL OR name ILIKE '%'||$2||'%' OR COALESCE(email,'') ILIKE '%'||$2||'%') ORDER BY name LIMIT 100`,
     [ctx.workspaceId,search]);
     const rows=result.rows.map((row)=>evidenceRow({name:row.name,email:row.email || 'Not recorded',phone:row.phone || 'Not recorded'},
       supplier?`/suppliers/${row.id}`:`/sales/customers/${row.id}`));
     return {answer:rows.length?`${rows.length} ${supplier?'supplier':'customer'}${rows.length===1?'':'s'} matched.`:
-      `No ${supplier?'supplier':'customer'} matched that request.`,rows,columns:['name','email','phone']};
+      `No ${supplier?'supplier':'customer'} matched that request.`,rows,columns:['name','email','phone'],
+      extent:{returnedRows:rows.length,totalRows:result.rows.length?Number(result.rows[0].total_matches):0,
+        complete:!result.rows.length||Number(result.rows[0].total_matches)===rows.length,
+        scope:supplier?'Active suppliers matching the supplied search.':'Non-archived customers matching the supplied search.'},
+      scope:{includesInactive:false,recordState:supplier?'active':'non_archived'}};
   }
   if(request.view==='shipping'){
     const rows=(await database.query(`SELECT sh.id,sh.shipment_number,sh.status,sh.carrier,sh.tracking_number,so.order_number

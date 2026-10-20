@@ -22,6 +22,14 @@ test('equivalent worksheet relationships retain exact records regardless of seri
  const disconnected=contract();disconnected.joins=[{sheet:1,fromSheet:2,fromColumn:1,toColumn:0}];assert.throws(()=>relations.compile(fixture(),disconnected),/could not safely match/);
  const duplicate=fixture();duplicate.sheets[1].rows.push({...duplicate.sheets[1].rows[0]});assert.throws(()=>relations.compile(duplicate,reversed),/duplicate join key/,'Reorientation must never multiply stock');
 });
+
+test('a redundant total alias cannot add aggregate stock or relax conflicting matrix sources',()=>{
+ const spec=contract(),original=relations.compile(fixture(),spec);spec.fields.push({field:'quantity',source:{...spec.stock.total}});const normalized=relations.compile(fixture(),spec);assert.deepEqual(normalized.sheet,original.sheet);assert.equal(normalized.physicalUnits,9);assert.equal(normalized.contract.fields.some(f=>f.field==='quantity'),false);assert(spec.fields.some(f=>f.field==='quantity'),'The original source interpretation remains unchanged');
+ const conflicting=contract();conflicting.fields.push({field:'quantity',source:{sheet:1,column:1}});assert.throws(()=>relations.compile(fixture(),conflicting),/cannot also import its aggregate/);
+ const location=contract();location.fields.push({field:'location',source:{sheet:1,column:1}});assert.throws(()=>relations.compile(fixture(),location),/cannot also import its aggregate/);
+ const missing=contract();missing.stock.total=null;assert.throws(()=>relations.compile(fixture(),missing),/one physical total/);
+ const mismatch=fixture();mismatch.sheets[1].rows[0].cells[3]='99';assert(relations.compile(mismatch,spec).sheet.rows.some(r=>r.problems.some(p=>p.code==='workbook_stock_mismatch')));
+});
 test('ambiguous joins, incomplete coverage, duplicate pivots and invented columns are rejected',()=>{
  const book=fixture();book.sheets[1].rows.push({...book.sheets[1].rows[0]});assert.throws(()=>relations.compile(book,contract()),/duplicate join key/);
  const missing=contract();missing.coverage.pop();assert.throws(()=>relations.compile(fixture(),missing),/Every worksheet/);
