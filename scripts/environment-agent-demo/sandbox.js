@@ -28,7 +28,7 @@ function validateInspection(info,image){
   if(!h.Tmpfs[directory]?.includes(`size=${size}`)||!h.Tmpfs[directory]?.includes('uid=1000'))throw new Error('SANDBOX_DISK_LIMIT_MISMATCH');
  return true;
 }
-async function createSandbox({image,containerId=null}){
+async function createSandbox({image,containerId=null,runtimeFiles=null}){
  async function docker(args,options={}){return run('docker',args,{windowsHide:true,timeout:25000,maxBuffer:128*1024,...options});}
  const created=!containerId;const name=`stockchief-demo-${randomUUID()}`;
  if(created)containerId=(await docker(createArgs({image,name}))).stdout.trim();
@@ -66,9 +66,9 @@ async function createSandbox({image,containerId=null}){
   },
   async certify(){
    const info=await inspect();if(!/^\d+$/.test(info.HostConfig.CpusetCpus))throw Error('SANDBOX_CPU_AFFINITY_MISMATCH');
-   const result=await command(['node','-e',`const fs=require('fs'),net=require('net');if(process.getuid()!==1000)throw Error('root');for(const k of Object.keys(process.env))if(/API_KEY|DATABASE_URL|OAUTH_TOKEN/.test(k))throw Error('secret');try{fs.writeFileSync('/root-write-test','x');throw Error('writable root')}catch(e){if(e.message==='writable root')throw e}const s=net.connect({host:'1.1.1.1',port:443});s.setTimeout(1000);s.on('connect',()=>{s.destroy();process.exit(9)});s.on('error',()=>process.stdout.write('isolated'));s.on('timeout',()=>{s.destroy();process.stdout.write('isolated')});`]);
+   const result=await command(['node','-e',`const fs=require('fs'),net=require('net');${runtimeFiles?require('./codex-image-contract').probe(runtimeFiles):''}if(process.getuid()!==1000)throw Error('root');for(const k of Object.keys(process.env))if(/API_KEY|DATABASE_URL|OAUTH_TOKEN/.test(k))throw Error('secret');try{fs.writeFileSync('/root-write-test','x');throw Error('writable root')}catch(e){if(e.message==='writable root')throw e}const s=net.connect({host:'1.1.1.1',port:443});s.setTimeout(1000);s.on('connect',()=>{s.destroy();process.exit(9)});s.on('error',()=>process.stdout.write('isolated'));s.on('timeout',()=>{s.destroy();process.stdout.write('isolated')});`]);
    if(result.stdout!=='isolated')throw new Error('SANDBOX_PROBE_FAILED');
-   return {passed:true,containerId,image,cpuSet:info.HostConfig.CpusetCpus,checkedAt:new Date().toISOString(),checks:['non-root','network-none','no-host-mounts','read-only-root','cpu-memory-pids-disk-bounds','single-cpu-affinity','no-provider-credentials']};
+   return {passed:true,containerId,image,cpuSet:info.HostConfig.CpusetCpus,checkedAt:new Date().toISOString(),checks:['non-root','network-none','no-host-mounts','read-only-root','cpu-memory-pids-disk-bounds','single-cpu-affinity','no-provider-credentials',...(runtimeFiles?['native-runtime-source-match']:[])]};
   },
   async close(){
    // Native report correction can retire a sandbox before the outer lifetime

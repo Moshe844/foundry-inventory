@@ -71,7 +71,7 @@ async function prepareContext(options){
  preparedContexts.add(prepared);return prepared;
 }
 async function prepareSandbox(image){
- const sandbox=await require('./sandbox').createSandbox({image});
+ const sandbox=await require('./sandbox').createSandbox({image,runtimeFiles:require('./codex-image-contract').expectedFiles()});
  try{const prepared={sandbox,isolation:await sandbox.certify(),image};preparedSandboxes.add(prepared);return prepared;}
  catch(error){await sandbox.close().catch(()=>{});throw error;}
 }
