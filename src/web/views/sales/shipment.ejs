@@ -16,7 +16,8 @@
   var isOpen = s.status === 'PICKING' || s.status === 'PACKED';
   var badge = { PICKING: 'info', PACKED: 'info', SHIPPED: 'ok', DELIVERED: 'ok', CANCELLED: 'muted' }[s.status];
   var words = s.status === 'SHIPPED' && s.handover === 'COLLECTED' ? 'Collected'
-    : s.status === 'SHIPPED' && s.handover === 'DELIVERED_BY_US' ? 'Delivered by us'
+    : s.status === 'SHIPPED' && s.handover === 'DELIVERED_BY_US' ? 'Out for delivery with us'
+    : s.status === 'DELIVERED' && s.handover === 'DELIVERED_BY_US' ? 'Delivered by us'
     : { PICKING: 'Being picked', PACKED: 'Packed', SHIPPED: 'Shipped',
       DELIVERED: 'Delivered', CANCELLED: 'Cancelled' }[s.status];
   var plannedHandover = s.delivery_method === 'PICKUP' ? 'COLLECTED'
@@ -744,6 +745,7 @@
       <div class="panel-head"><div><h2><%= s.handover === 'COLLECTED' ? 'Collected by the customer' : s.status === 'DELIVERED' ? 'Delivered' : s.handover === 'DELIVERED_BY_US' ? 'Out for delivery with us' : 'On its way' %></h2></div></div>
       <div class="card-body">
         <dl class="detail-list">
+          <div><dt>Physical handover</dt><dd><%= s.handover === 'COLLECTED' ? 'Collected by the customer' : s.handover === 'DELIVERED_BY_US' ? 'Delivered by us' : s.handover === 'CARRIER' ? 'Sent by carrier' : 'Not recorded' %></dd></div>
           <div><dt><%= s.handover === 'COLLECTED' ? 'Collected' : 'Left' %></dt><dd><%= helpers.shortDate(s.shipped_at) %></dd></div>
           <% if (s.carrierName) { %><div><dt>Carrier</dt><dd><%= s.carrierName %><% if (s.service) { %> · <%= s.service %><% } %></dd></div><% } %>
           <% if (s.tracking_number) { %>

@@ -53,6 +53,24 @@ async function accountBalance(database, key) {
   return Number(result.rows[0].balance);
 }
 
+test('order and shipment evidence retain physical handover, bounded coverage and preparation state',{timeout:120000},async t=>{
+ const cluster=await startCluster(),db=openPostgres(cluster.connectionString);t.after(async()=>{await db.close();cluster.stop();});await migratePostgres(db);const ctx=await seed(db);
+ const order=await workflows.createSalesOrder(db,ctx,{customerId:'customer',deliveryMethod:'SHIP',idempotencyKey:'read:shipment:order',lines:[{skuId:'sku',quantity:1,unitPriceMinor:1200}]});
+ for(let i=0;i<21;i++){
+  const at=new Date(Date.UTC(2026,8,24,0,0,i)).toISOString();
+  await db.query(`INSERT INTO sales_shipments(id,workspace_id,sales_order_id,shipment_number,status,handover,ship_from_location_id,ship_to_address,created_at,updated_at)
+    VALUES($1,'workspace',$2,$3,$4,$5,'main','10 Jobsite Rd',$6,$6)`,['fixture-shipment-'+i,order.salesOrderId,'SHP-'+i,i===0?'DELIVERED':i===1?'SHIPPED':'PACKED',i===0?'DELIVERED_BY_US':'CARRIER',at]);
+ }
+ const result=await assistant.lookup(db,ctx,{view:'sales_orders'}),row=result.rows[0];
+ assert.equal(result.extent.complete,true);assert.equal(result.extent.totalRows,1);assert.equal(row.shipments,21);assert.equal(row.shipmentDetails.length,20);assert.equal(row.shipmentDetailsComplete,false);
+ assert.deepEqual(row.shipmentDetails.slice(0,3).map(s=>[s.status,s.handover,s.handedOver]),[['DELIVERED','DELIVERED_BY_US',true],['SHIPPED','CARRIER',true],['PACKED','CARRIER',false]]);
+ assert.match(row.shipmentProgress,/SHP-0: delivered · delivered by us/);assert.match(row.shipmentProgress,/SHP-2: packed; SHP-3/);assert.doesNotMatch(row.shipmentProgress,/packed · carrier/);
+ const shipping=await assistant.lookup(db,ctx,{view:'shipping'});assert(shipping.rows.some(s=>s.handover==='DELIVERED_BY_US'&&s.handedOver));assert(shipping.rows.some(s=>s.status==='PACKED'&&!s.handedOver));
+ const registry=require('../../src/reports/postgres-registry');assert.equal(registry.get('shipments').fields.handover,'text');assert.equal(registry.get('shipments').fields.handed_over,'text');
+ const other={workspaceId:'not-this-workspace',actorId:'not-this-actor'},foreign=await assistant.lookup(db,other,{view:'sales_orders'});assert.deepEqual(foreign.rows,[]);assert.equal(foreign.extent.totalRows,0,'A tenant-scoped internal read cannot return another business\'s orders');
+ assert.equal((await db.query('SELECT count(*)::int n FROM movements')).rows[0].n,0,'Reading delivery evidence never moves stock');
+});
+
 test('full reservation refuses shortages atomically while ordinary confirmation can backorder',
   {timeout:120000},async(context)=>{
     const cluster=await startCluster();

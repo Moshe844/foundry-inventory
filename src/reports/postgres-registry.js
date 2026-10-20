@@ -183,7 +183,8 @@ const datasets=Object.freeze({
     fields:{sender:'text',subject:'text',received_on:'date',trust_status:'text',classification:'text',
       processing_status:'text',reply_state:'text'}},
   shipments:{label:'Shipment progress',permission:permissions.VIEW_SALES,
-    source:`SELECT s.id AS record_id,s.shipment_number,o.order_number,s.status,s.currency,
+    source:`SELECT s.id AS record_id,s.shipment_number,o.order_number,s.status,s.currency,s.handover,
+      CASE WHEN s.status IN ('SHIPPED','DELIVERED') THEN 'yes' ELSE 'no' END AS handed_over,
       COALESCE(s.carrier,'') AS carrier,COALESCE(s.tracking_number,'') AS tracking_number,
       s.shipping_cost_minor::bigint AS shipping_cost_minor,
       CASE WHEN s.shipping_cost_minor IS NULL THEN 'no' ELSE 'yes' END AS cost_recorded,
@@ -191,7 +192,7 @@ const datasets=Object.freeze({
       FROM sales_shipments s JOIN sales_orders o ON o.id=s.sales_order_id AND o.workspace_id=s.workspace_id
       WHERE s.workspace_id=$1`,recordHref:(row)=>`/fulfilment/${row.record_id}`,
     moneyCompleteness:{shipping_cost_minor:{field:'cost_recorded',value:'yes'}},
-    fields:{shipment_number:'text',order_number:'text',status:'text',currency:'text',carrier:'text',tracking_number:'text',
+    fields:{shipment_number:'text',order_number:'text',status:'text',currency:'text',handover:'text',handed_over:'text',carrier:'text',tracking_number:'text',
       shipping_cost_minor:'money_minor',cost_recorded:'text',created_on:'date'}},
   shipment_rates:{label:'Recorded carrier rate quotes',permission:permissions.VIEW_SALES,
     source:`SELECT r.shipment_id AS record_id,s.shipment_number,o.order_number,

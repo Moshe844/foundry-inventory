@@ -826,7 +826,7 @@ async function lookup(database,ctx,request,options={}) {
       'invoiceDocumentsReceived','postedPayable','invoiceDocuments','invoiceDocumentsTruncated']};
   }
   if(request.view==='sales_orders'){
-    const rows=(await database.query(`SELECT so.id,so.order_number,so.status,so.currency,so.reference,c.name AS customer,
+    const result=await database.query(`SELECT COUNT(*) OVER() AS total_matches,so.id,so.order_number,so.status,so.currency,so.reference,c.name AS customer,
       COALESCE(lines.ordered_units,0) AS ordered_units,
       COALESCE(lines.fulfilled_units,0) AS fulfilled_units,
       COALESCE(lines.line_count,0) AS line_count,
@@ -842,7 +842,7 @@ async function lookup(database,ctx,request,options={}) {
       COALESCE(payments.paid_minor,0) AS paid_minor,
       COALESCE(posted.revenue_minor,0) AS posted_revenue_minor,
       COALESCE(posted.cogs_minor,0) AS posted_cogs_minor,
-      COALESCE(shipments.shipment_count,0) AS shipment_count
+      COALESCE(shipments.shipment_count,0) AS shipment_count,COALESCE(shipments.details,'[]'::json) AS shipment_details
       FROM sales_orders so JOIN customers c ON c.id=so.customer_id AND c.workspace_id=so.workspace_id
       LEFT JOIN stockchief_runtime.pricing_order_snapshots pricing ON pricing.workspace_id=so.workspace_id
         AND pricing.sales_order_id=so.id AND pricing.id=so.pricing_quote_id
@@ -877,11 +877,17 @@ async function lookup(database,ctx,request,options={}) {
         WHERE entry.workspace_id=so.workspace_id AND entry.source_record_type='sales_order'
           AND entry.source_record_id=so.id AND entry.source_type='sale_fulfillment'
           AND entry.status='POSTED') posted ON true
-      LEFT JOIN LATERAL (SELECT COUNT(*)::int AS shipment_count FROM sales_shipments
-        WHERE workspace_id=so.workspace_id AND sales_order_id=so.id) shipments ON true
+      LEFT JOIN LATERAL (SELECT COALESCE(MAX(batch.total_matches),0)::int AS shipment_count,
+        JSON_AGG(JSON_BUILD_OBJECT('shipment',batch.shipment_number,'status',batch.status,'handover',batch.handover,
+          'handedOver',batch.status IN ('SHIPPED','DELIVERED'),'carrier',batch.carrier,'tracking',batch.tracking_number,
+          'shippedAt',batch.shipped_at,'deliveredAt',batch.delivered_at,'href','/fulfilment/'||batch.id)
+          ORDER BY batch.created_at,batch.id) AS details
+        FROM (SELECT shipment.*,COUNT(*) OVER() AS total_matches FROM sales_shipments shipment
+          WHERE workspace_id=so.workspace_id AND sales_order_id=so.id ORDER BY created_at,id LIMIT 20) batch) shipments ON true
       WHERE so.workspace_id=$1 AND ($2::text IS NULL OR so.order_number ILIKE '%'||$2||'%' OR c.name ILIKE '%'||$2||'%'
-        OR so.status ILIKE '%'||$2||'%' OR COALESCE(so.reference,'') ILIKE '%'||$2||'%') ORDER BY so.created_at DESC LIMIT 100`,
-    [ctx.workspaceId,search])).rows.map((row)=>evidenceRow({order:row.order_number,status:row.status,customer:row.customer,reference:row.reference,
+        OR so.status ILIKE '%'||$2||'%' OR COALESCE(so.reference,'') ILIKE '%'||$2||'%') ORDER BY so.created_at DESC,so.id LIMIT 100`,
+    [ctx.workspaceId,search]);
+    const rows=result.rows.map((row)=>evidenceRow({order:row.order_number,status:row.status,customer:row.customer,reference:row.reference,
       orderedUnits:Number(row.ordered_units),heldUnits:Number(row.held_units),
       fulfilledUnits:Number(row.fulfilled_units),openUnits:Number(row.open_units),
       lineCount:Number(row.line_count),orderTotal:pricing.formatMinor(Number(row.order_total_minor),row.currency),
@@ -905,12 +911,16 @@ async function lookup(database,ctx,request,options={}) {
       invoicedMinor:Number(row.invoiced_minor),paidMinor:Number(row.paid_minor),outstandingMinor:Number(row.outstanding_minor),
       postedRevenueMinor:Number(row.posted_revenue_minor),postedProductCostMinor:Number(row.posted_cogs_minor),
       postedGrossProfitMinor:Number(row.posted_revenue_minor)-Number(row.posted_cogs_minor),
-      shipments:Number(row.shipment_count)},`/orders/${row.id}`));
+      shipments:Number(row.shipment_count),shipmentDetails:row.shipment_details,
+      shipmentProgress:row.shipment_details.map(s=>`${s.shipment}: ${s.status.toLowerCase().replace(/_/g,' ')}${s.handedOver&&s.handover?' · '+s.handover.toLowerCase().replace(/_/g,' '):''}`).join('; ')||'No shipment recorded',
+      shipmentDetailsComplete:Number(row.shipment_count)<=row.shipment_details.length},`/orders/${row.id}`));
     return {answer:summarizeCustomerOrders(rows,search),
       rows,columns:['order','status','customer','lineCount','lineItems','subtotal','discount','tax','charges','chargeDetails','orderTotal','currency','deliveryMethod','shippingAddress',
         'orderedUnits','heldUnits','fulfilledUnits','openUnits',
         'invoiceCount','invoiced','paid','outstanding','postedRevenue','postedProductCost',
-        'postedGrossProfit','shipments','reference']};
+        'postedGrossProfit','shipments','shipmentProgress','reference'],
+      extent:{returnedRows:rows.length,totalRows:result.rows.length?Number(result.rows[0].total_matches):0,
+        complete:!result.rows.length||Number(result.rows[0].total_matches)===rows.length}};
   }
   if(['suppliers','customers'].includes(request.view)){
     const supplier=request.view==='suppliers';
@@ -929,14 +939,15 @@ async function lookup(database,ctx,request,options={}) {
       scope:{includesInactive:false,recordState:supplier?'active':'non_archived'}};
   }
   if(request.view==='shipping'){
-    const rows=(await database.query(`SELECT sh.id,sh.shipment_number,sh.status,sh.carrier,sh.tracking_number,so.order_number
-      FROM sales_shipments sh JOIN sales_orders so ON so.id=sh.sales_order_id WHERE sh.workspace_id=$1
+    const rows=(await database.query(`SELECT sh.id,sh.shipment_number,sh.status,sh.handover,sh.carrier,sh.tracking_number,sh.shipped_at,sh.delivered_at,so.order_number
+      FROM sales_shipments sh JOIN sales_orders so ON so.id=sh.sales_order_id AND so.workspace_id=sh.workspace_id WHERE sh.workspace_id=$1
       AND ($2::text IS NULL OR sh.shipment_number ILIKE '%'||$2||'%' OR COALESCE(sh.tracking_number,'') ILIKE '%'||$2||'%'
         OR so.order_number ILIKE '%'||$2||'%' OR sh.status ILIKE '%'||$2||'%') ORDER BY sh.created_at DESC LIMIT 100`,
     [ctx.workspaceId,search])).rows.map((row)=>evidenceRow({shipment:row.shipment_number,order:row.order_number,status:row.status,
+      handover:row.handover,handedOver:['SHIPPED','DELIVERED'].includes(row.status),shippedAt:row.shipped_at,deliveredAt:row.delivered_at,
       carrier:row.carrier || 'Not chosen',tracking:row.tracking_number || 'Not assigned'},`/fulfilment/${row.id}`));
     return {answer:rows.length?`${rows.length} shipment${rows.length===1?'':'s'} matched.`:'No shipment matched that request.',
-      rows,columns:['shipment','order','status','carrier','tracking']};
+      rows,columns:['shipment','order','status','handover','handedOver','carrier','tracking']};
   }
   if(request.view==='connections'){
     const result=await require('../connections/postgres-inspection').inspect(database,ctx,{search}),rows=result.rows;
