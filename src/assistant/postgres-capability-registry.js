@@ -287,7 +287,7 @@ const READS={
   sales_activity:'Recorded customer order counts, fulfilled units, posted revenue, cost of sales and gross profit for supported time windows. Order counts use order date; financial totals use canonical posting date, with exact minor amounts and currency.',
   suppliers:'Supplier records.',customers:'Customer records.',shipping:'Shipping records.',
   payments:'Recorded payment transactions.',payables:'Posted open supplier bill balances, with disputed supplier invoice documents shown separately as excluded from debt.',
-  receivables:'Open customer invoice balances.',accounting:'Posted financial records and reports.',
+  receivables:'Open customer invoice balances.',accounting:'Posted journal counts and currency totals, as-of account balances and recorded cash. Report permission applies to balances.',
   connections:'Connected business systems.',messages:'Business email records.',
   business_analysis:'Verified comparisons across multiple recorded business datasets.',
   general_knowledge:'General business explanation that does not claim to read this workspace’s records.',

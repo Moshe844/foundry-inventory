@@ -980,8 +980,26 @@ async function lookup(database,ctx,request,options={}) {
         {measure:'Credits',value:pricing.formatMinor(row.credits,row.currency),unit:'money',amountMinor:row.credits,currency:row.currency}])];
     const amounts=totals.map(row=>`${row.currency}: debits ${pricing.formatMinor(row.debits,row.currency)}, credits ${pricing.formatMinor(row.credits,row.currency)}.`).join(' ');
     const states=result.states.map(row=>`${row.status}: ${Number(row.count).toLocaleString('en-US')}`).join(', ')||'none';
+    // Reuse the canonical balance-sheet engine for current book balances.
+    // A journal's gross debits/credits are not its cash or account balances.
+    // Report entitlement still applies; journal visibility never grants it.
+    let position={available:false,reason:'Accounting has not been configured.'};
+    if(result.configuration?.enabled){
+      try{
+        const balance=await accountingReports.balanceSheet(database,ctx.workspaceId,period?{asOf:period.to}:{});
+        const cashMinor=balance.assets.filter(account=>account.subtype==='CASH').reduce((sum,account)=>sum+account.net_minor,0);
+        if(!Number.isSafeInteger(cashMinor))throw new InvariantError('Cash balance exceeds exact supported precision.');
+        position={available:true,asOf:balance.asOf,currency:balance.currency,cashMinor,
+          cash:pricing.formatMinor(cashMinor,balance.currency),cashScope:'Posted cash-account balances; not bank-verified available funds',
+          assetMinor:balance.assetMinor,liabilityMinor:balance.liabilityMinor,equityMinor:balance.postedEquityMinor,
+          currentEarningsMinor:balance.currentEarningsMinor,balanced:balance.balanced,
+          accounts:[...balance.assets,...balance.liabilities,...balance.equities].map(account=>({
+            code:account.code,name:account.name,type:account.account_type,subtype:account.subtype,
+            normalBalance:account.normal_balance,netMinor:account.net_minor,currency:balance.currency}))};
+      }catch(error){if(error.code!=='entitlement_required')throw error;position={available:false,reason:'The current plan does not permit accounting reports.'};}
+    }
     return {answer:`The posted journal contains ${Number(result.posted).toLocaleString('en-US')} entries${period?` for ${period.from} through ${period.to}`:''}. Complete entry-state counts: ${states}. States absent from these scoped records have zero entries; this does not establish which additional states the application supports. Posted debits and credits are ${totals.every(row=>row.debits===row.credits)?'balanced':'not balanced'} within each recorded currency. ${amounts}`.trim(),
-      rows,columns:['measure','value','currency'],configuration:result.configuration||{configured:false,enabled:false,baseCurrency:null,costingMethod:null,startDate:null},entryStates:{complete:true,total:Number(result.total),counts:stateCounts,
+      rows,columns:['measure','value','currency'],position,handoff:{href:'/money',label:'Open Money'},configuration:result.configuration||{configured:false,enabled:false,baseCurrency:null,costingMethod:null,startDate:null},entryStates:{complete:true,total:Number(result.total),counts:stateCounts,
         scope:period?{postingDateFrom:period.from,postingDateTo:period.to}:{timeframe:'all_time'},monetaryScope:'POSTED only, separated by currency'}};
   }
   if(request.view==='payments'){
