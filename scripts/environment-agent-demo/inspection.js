@@ -16,10 +16,16 @@ async function inspectionDatabase(cluster,admin,ctx,stagingAuthorization=null){
   if(!stagingAuthorization&&connection.hostname!=='127.0.0.1')throw new Error('Inspection must use the isolated local fixture.');
   const role=`demo_read_${randomBytes(8).toString('hex')}`;
   const password=randomBytes(32).toString('hex');const identifier=escapeIdentifier(role);
-  const tables=(await admin.query(`SELECT c.table_schema,c.table_name,array_agg(c.column_name::text) AS columns
-    FROM information_schema.columns c JOIN pg_namespace n ON n.nspname=c.table_schema
-    JOIN pg_class t ON t.relnamespace=n.oid AND t.relname=c.table_name AND t.relkind IN ('r','p')
-    WHERE c.table_schema IN ('public','stockchief_runtime') GROUP BY c.table_schema,c.table_name ORDER BY c.table_schema,c.table_name`)).rows;
+  // Discover only physical, non-dropped columns. information_schema.columns
+  // expands type/privilege metadata we do not consume and is expensive on the
+  // full application schema. This host-owned catalogue query changes no grant
+  // or policy; views still require their separate security-invoker check.
+  const tables=(await admin.query(`SELECT n.nspname::text AS table_schema,t.relname::text AS table_name,
+    array_agg(a.attname::text ORDER BY a.attnum) AS columns
+    FROM pg_class t JOIN pg_namespace n ON n.oid=t.relnamespace
+    JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum>0 AND NOT a.attisdropped
+    WHERE n.nspname IN ('public','stockchief_runtime') AND t.relkind IN ('r','p')
+    GROUP BY n.nspname,t.relname ORDER BY n.nspname,t.relname`)).rows;
   const accountId=(await admin.query('SELECT account_id FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0].account_id;
   const foreignKeys=(await admin.query(`SELECT n.nspname AS schema,c.relname AS child,pn.nspname AS parent_schema,p.relname AS parent,
    array_agg(a.attname::text ORDER BY k.ordinality) AS child_columns,array_agg(pa.attname::text ORDER BY k.ordinality) AS parent_columns

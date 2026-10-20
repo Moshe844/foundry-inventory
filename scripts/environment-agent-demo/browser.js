@@ -99,18 +99,30 @@ async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null,ob
     references=new Map();continuations=new Map();revision++;
     const nodes=await page.locator('a,button,input,select,textarea,summary,[role="button"],[role="link"],[role="textbox"],[role="combobox"],[role="checkbox"],[role="radio"],[contenteditable="true"]').elementHandles();
     const controls=[];let total=0,controlChars=0,full=false;
-    for(const node of nodes){
-      if(!await node.isVisible()){await node.dispose();continue;}
-      const index=total++;if(index<controlOffset||controls.length>=200||full){await node.dispose();continue;}
+    // These are independent reads of the same live document, not concurrent
+    // browser actions. Bound the CDP work while retaining original DOM order,
+    // Playwright visibility, continuation windows and each exact element handle.
+    for(let offset=0;offset<nodes.length;offset+=16){
+      const batch=nodes.slice(offset,offset+16),visible=await Promise.all(batch.map(node=>node.isVisible())),selected=[],discard=[];
+      for(let i=0;i<batch.length;i++){
+        const node=batch[i];if(!visible[i]){discard.push(node);continue;}
+        const index=total++;if(index<controlOffset||controls.length+selected.length>=200||full){discard.push(node);continue;}
+        selected.push(node);
+      }
+      const descriptions=await Promise.all(selected.map(node=>describe(node,0,10)));
+      for(let i=0;i<selected.length;i++){
+      const node=selected[i],data=descriptions[i];
       // Bound source observations before journaling, not by silently cutting
       // their tail. Remaining controls/options get live continuation handles.
-      const data=await describe(node,0,10),size=JSON.stringify(data).length+200;
+      const size=JSON.stringify(data).length+200;
       if(data.href){try{const target=new URL(data.href,allowed);if(target.origin===allowed){const path=require('../../src/assistant/agent-navigation-path').localPath(target.pathname+target.search);if(path)knownPaths.add(path);}}catch{}}
-      if(controls.length&&controlChars+size>90000){full=true;await node.dispose();continue;}
+      if(full||controls.length&&controlChars+size>90000){full=true;discard.push(node);continue;}
       controlChars+=size;
       const indexInObservation=controls.length,ref=`${generation}:${revision}:${indexInObservation}`;
       references.set(ref,node);controls.push({ref,...data,evidencePath:`/controls/${indexInObservation}`});
       if(data.optionsTruncated)controls.at(-1).optionsNextRef=cursor({kind:'options',ref,offset:10});
+      }
+      await Promise.all(discard.map(node=>node.dispose()));
     }
     const snapshot=await page.evaluate(()=>{
       // Record headers are often ordinary divs. Capture their complete local

@@ -1,0 +1,12 @@
+'use strict';process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
+test('inventory evidence distinguishes complete empty, small, filtered and capped SKU sets without losing variants or tenant scope',{timeout:120000},async t=>{
+ const cluster=await require('../helpers/postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString);t.after(async()=>{await db.close();await cluster.stop();});await require('../../src/db/migrate-postgres').migratePostgres(db);
+ const auth=require('../../src/domain/postgres-auth-service'),owner=await auth.createBusiness(db,{name:'Coverage',businessName:'Unfamiliar evidence',email:randomUUID()+'@example.test',password:randomUUID()}),ctx={workspaceId:owner.workspaceId,actorId:owner.userId},lookup=()=>require('../../src/assistant/postgres-service').lookup(db,ctx,{view:'inventory'}),catalog=require('../../src/domain/postgres-catalog-service');
+ let r=await lookup();assert.equal(r.extent.complete,true);assert.equal(r.extent.totalRows,0);
+ for(let i=0;i<3;i++)await catalog.createItem(db,ctx,{name:'Unfamiliar part '+i,baseCode:'PART-'+i,trackingMode:'quantity'});r=await lookup();assert.equal(r.rows.length,3);assert.equal(r.extent.totalRows,3);assert.equal(r.extent.complete,true);assert(r.rows.every(row=>row.onHand===0));
+ const foreign=await auth.createBusiness(db,{name:'Other',businessName:'Other evidence',email:randomUUID()+'@example.test',password:randomUUID()});await catalog.createItem(db,{workspaceId:foreign.workspaceId,actorId:foreign.userId},{name:'Private foreign part',baseCode:'OTHER',trackingMode:'quantity'});
+ for(let i=3;i<103;i++)await catalog.createItem(db,ctx,{name:'Unfamiliar part '+i,baseCode:'PART-'+i,trackingMode:'quantity'});r=await lookup();assert.equal(r.rows.length,100);assert.equal(r.extent.totalRows,103);assert.equal(r.extent.complete,false);assert(!r.rows.some(row=>row.sku==='OTHER'));
+ const filtered=await require('../../src/assistant/postgres-service').lookup(db,ctx,{view:'inventory',search:'PART-102'});assert.equal(filtered.rows.length,1);assert.equal(filtered.extent.totalRows,1);assert.equal(filtered.extent.complete,true);assert.equal(filtered.rows[0].sku,'PART-102');
+ const missing=await require('../../src/assistant/postgres-service').lookup(db,ctx,{view:'inventory',search:'UNAVAILABLE-'+randomUUID()});assert.equal(missing.extent.complete,true);assert.equal(missing.extent.totalRows,0);
+});

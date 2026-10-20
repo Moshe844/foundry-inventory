@@ -13,7 +13,10 @@ function windowed(value){
  }
  if(Array.isArray(value.controls))result.controls=value.controls.map(control=>{
   if(Object.hasOwn(control,WINDOW))return control;
-  const paging=Object.fromEntries(['optionsOffset','optionsTruncated','optionsNextRef'].filter(k=>Object.hasOwn(control,k)).map(k=>[k,control[k]]));
+  // describe() has optional undefined JS properties even on ordinary links
+  // and inputs. They are absent on the JSON wire; do not manufacture an empty
+  // options window (and repeat its notice) for every non-select control.
+  const paging=Object.fromEntries(['optionsOffset','optionsTruncated','optionsNextRef'].filter(k=>Object.hasOwn(control,k)&&control[k]!==undefined).map(k=>[k,control[k]]));
   if(!Object.keys(paging).length)return control;
   const result={...control};for(const key of Object.keys(paging))delete result[key];
   return {...result,[WINDOW]:{kind:'inspection_response',notice:windowNotice,options:paging}};

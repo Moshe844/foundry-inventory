@@ -1073,7 +1073,7 @@ async function lookup(database,ctx,request,options={}) {
       (disputedRows.length?` ${disputedRows.length} disputed supplier invoice document${disputedRows.length===1?' is':'s are'} excluded from posted payables.`:'');
     return {answer,rows,columns:['party','document','status','due','balance','currency']};
   }
-  const rows=(await database.query(`WITH committed AS (
+  const sourceRows=(await database.query(`WITH committed AS (
       SELECT sol.sku_id,SUM(a.quantity) AS quantity FROM sales_order_allocations a
       JOIN sales_order_lines sol ON sol.id=a.sales_order_line_id WHERE a.workspace_id=$1 GROUP BY sol.sku_id
     ), purchase_incoming AS (
@@ -1095,7 +1095,7 @@ async function lookup(database,ctx,request,options={}) {
       SELECT sku_id,SUM(quantity_units) AS quantity FROM accounting_inventory_cost_balances
       WHERE workspace_id=$1 GROUP BY sku_id
     )
-    SELECT i.id,i.name,s.code,s.variant_label,COALESCE(SUM(b.on_hand),0) AS on_hand,
+    SELECT COUNT(*) OVER() AS total_matches,i.id,i.name,s.code,s.variant_label,COALESCE(SUM(b.on_hand),0) AS on_hand,
       COALESCE(c.quantity,0) AS committed,COALESCE(pi.quantity,0) AS incoming,
       COALESCE(pi.quantity,0) AS purchase_incoming,
       COALESCE(ti.planned_quantity,0) AS internal_transfer_planned,
@@ -1111,8 +1111,9 @@ async function lookup(database,ctx,request,options={}) {
     WHERE i.workspace_id=$1 AND i.is_active=1 AND ($2::text IS NULL OR i.name ILIKE ANY($3::text[])
       OR s.code ILIKE ANY($3::text[]) OR COALESCE(s.variant_label,'') ILIKE ANY($3::text[]))
     GROUP BY i.id,s.id,c.quantity,pi.quantity,ti.planned_quantity,ti.in_transit_quantity,costed.quantity
-    ORDER BY i.name,s.position LIMIT 100`,
-  [ctx.workspaceId,search,lookupSearchPatterns(search)])).rows.map((row)=>{
+    ORDER BY i.name,s.position,s.code,s.id LIMIT 100`,
+  [ctx.workspaceId,search,lookupSearchPatterns(search)])).rows;
+  const rows=sourceRows.map((row)=>{
       const onHand=Number(row.on_hand),committed=Number(row.committed),incoming=Number(row.incoming),
         costedUnits=Number(row.costed_units);
       return evidenceRow({product:row.variant_label?`${row.name} · ${row.variant_label}`:row.name,sku:row.code,
@@ -1130,7 +1131,9 @@ async function lookup(database,ctx,request,options={}) {
   const missingCost=rows.reduce((sum,row)=>sum+row.unitsMissingCost,0);
   const costWarning=missingCost?` ${missingCost} on-hand units have no recorded inventory cost and cannot be posted as a sale until their cost is established.`:'';
   return {answer:rows.length?`${rows.length} SKU${rows.length===1?'':'s'} matched with ${totals.onHand.toLocaleString('en-US')} units on hand, ${totals.committed.toLocaleString('en-US')} committed, ${totals.available.toLocaleString('en-US')} available and ${totals.incoming.toLocaleString('en-US')} incoming.${where}${costWarning}`:
-    'No product or SKU matched that request.',rows,columns:['product','sku','onHand','committed','available',
+    'No product or SKU matched that request.',rows,extent:{returnedRows:rows.length,totalRows:sourceRows.length?Number(sourceRows[0].total_matches):0,
+      complete:!sourceRows.length||Number(sourceRows[0].total_matches)===rows.length,
+      scope:search?'Active SKUs matching the supplied search across all locations.':'All active SKUs across all locations.'},columns:['product','sku','onHand','committed','available',
       'incoming','incomingOnPurchaseOrders','internalTransferPlanned','internalTransferInTransit',
       'costedUnits','unitsMissingCost','locations']};
 }
