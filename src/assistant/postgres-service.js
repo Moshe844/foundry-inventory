@@ -450,8 +450,9 @@ async function lookup(database,ctx,request,options={}) {
       columns:['product','sku','variant','productStatus','variantStatus','sellingPrice','currency','priceRecordedAt']};
   }
   if(request.view==='purchase_costs'){
-    const rows=(await database.query(`SELECT i.id AS item_id,i.name AS product,s.code AS sku,
+    const sourceRows=(await database.query(`SELECT i.id AS item_id,i.name AS product,s.code AS sku,
       COALESCE(s.variant_label,'') AS variant,c.amount_minor,c.currency,c.created_at,
+      i.is_active AS product_active,s.is_active AS variant_active,count(*) OVER() AS total_matches,
       COALESCE(stock.on_hand,0) AS on_hand,COALESCE(costed.quantity_units,0) AS costed_units,
       COALESCE(costed.total_cost_minor,0) AS inventory_book_minor,
       COALESCE(opening.quantity_units,0) AS opening_import_units,
@@ -469,11 +470,13 @@ async function lookup(database,ctx,request,options={}) {
         SUM(cost_delta_minor) AS total_cost_minor FROM accounting_inventory_cost_movements
         WHERE workspace_id=$1 AND cost_source_type='opening_inventory' GROUP BY sku_id) opening ON opening.sku_id=s.id
       LEFT JOIN accounting_settings settings ON settings.workspace_id=s.workspace_id
-      WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1
+      WHERE s.workspace_id=$1
       AND ($2::text IS NULL OR i.name ILIKE '%'||$2||'%' OR s.code ILIKE '%'||$2||'%'
         OR COALESCE(s.variant_label,'') ILIKE '%'||$2||'%')
-      ORDER BY i.name,s.code LIMIT 100`,[ctx.workspaceId,search])).rows.map((row)=>
+      ORDER BY i.name,s.code LIMIT 100`,[ctx.workspaceId,search])).rows;
+    const rows=sourceRows.map((row)=>
       evidenceRow({product:row.product,sku:row.sku,variant:row.variant,
+        productStatus:Number(row.product_active)===1?'active':'inactive',variantStatus:Number(row.variant_active)===1?'active':'inactive',
         purchaseCost:row.amount_minor===null?'Not recorded':pricing.formatMinor(Number(row.amount_minor),row.currency),
         purchaseCostMinor:row.amount_minor===null?null:Number(row.amount_minor),currency:row.currency||null,
         costRecordedAt:row.created_at||'',onHand:Number(row.on_hand),costedUnits:Number(row.costed_units),
@@ -488,9 +491,11 @@ async function lookup(database,ctx,request,options={}) {
         openingImportCostMinor:Number(row.opening_import_units)>0?Number(row.opening_import_minor):null,
         openingImportCurrency:Number(row.opening_import_units)>0?(row.accounting_currency||'USD'):null},
       `/inventory/${row.item_id}`));
-    return {answer:rows.length?`Showing current purchase quotes, recorded inventory book cost, and historical opening-import cost separately for ${rows.length}${rows.length===100?'+':''} SKUs. A missing current purchase cost does not mean stock lacks book cost.`:
+    const total=sourceRows.length?Number(sourceRows[0].total_matches):0;
+    return {answer:rows.length?`Showing current purchase quotes, recorded inventory book cost, and historical opening-import cost separately for ${rows.length} of ${total} matching SKUs, including inactive records. A missing current purchase cost does not mean stock lacks book cost.`:
       'No product or SKU matched that cost request.',rows,
-      columns:['product','sku','variant','purchaseCost','currency','costRecordedAt','onHand','costedUnits','unitsMissingCost',
+      extent:{returnedRows:rows.length,totalRows:total,complete:rows.length===total,scope:'Matching SKUs including inactive products and variants. Only the latest saved purchase quote is current; zero is a recorded cost. Purchase quotes, inventory book cost and historical opening-import cost are separate facts.'},
+      columns:['product','sku','variant','productStatus','variantStatus','purchaseCost','currency','costRecordedAt','onHand','costedUnits','unitsMissingCost',
         'inventoryBookCost','inventoryCurrency','openingImportUnits','openingImportCost','openingImportCurrency']};
   }
   if(request.view==='supplier_items'){
