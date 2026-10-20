@@ -112,12 +112,15 @@ const datasets=Object.freeze({
       s.default_lead_time_days::bigint AS lead_time_days,
       (SELECT COUNT(*)::bigint FROM supplier_items link JOIN skus sku ON sku.id=link.sku_id AND sku.workspace_id=link.workspace_id
         JOIN items product ON product.id=sku.item_id AND product.workspace_id=link.workspace_id
+        WHERE link.workspace_id=s.workspace_id AND link.supplier_id=s.id) AS product_links,
+      (SELECT COUNT(*)::bigint FROM supplier_items link JOIN skus sku ON sku.id=link.sku_id AND sku.workspace_id=link.workspace_id
+        JOIN items product ON product.id=sku.item_id AND product.workspace_id=link.workspace_id
         WHERE link.workspace_id=s.workspace_id AND link.supplier_id=s.id AND link.is_active=1) AS active_product_links,
       LEFT(s.created_at,10) AS created_on
       FROM suppliers s WHERE s.workspace_id=$1`,
     recordHref:(row)=>`/suppliers/${row.record_id}`,
     enumFields:['status'],filterValues:{status:['active','inactive']},fields:{supplier:'text',supplier_code:'text',email:'text',
-      status:'text',currency:'text',lead_time_days:'number',active_product_links:'number',created_on:'date'}},
+      status:'text',currency:'text',lead_time_days:'number',product_links:'number',active_product_links:'number',created_on:'date'}},
   purchase_orders:{label:'Supplier purchase orders',permission:permissions.VIEW_PURCHASING,
     source:`SELECT o.id AS record_id,o.po_number,s.name AS supplier,o.status,
       o.order_date,o.expected_date,COALESCE(lines.units,0)::bigint AS ordered_units,
