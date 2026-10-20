@@ -290,13 +290,13 @@ const READS={
   customers:'Non-archived customer records, including saved email and phone. For archived or all recorded customers use the governed customers dataset.',shipping:'Shipment progress, handover, carrier and tracking. Handover is confirmed only when handedOver=true.',
   payments:'Recorded payment transactions.',payables:'Posted open supplier bill balances, with disputed supplier invoice documents shown separately as excluded from debt.',
   receivables:'Open customer invoice balances.',accounting:'Posted journal counts and currency totals, as-of account balances and recorded cash. Report permission applies to balances.',
-  connections:'Saved connection health, mappings and granted capabilities; authorized accounting setup includes posting direction, requested authority and reconciliation state. No provider call or write permission is implied.',messages:'Business email records.',
+  connections:'Saved connection health, mappings and granted capabilities; authorized accounting setup includes posting direction, requested authority and reconciliation state. No provider call or write permission is implied.',messages:'Recorded business email lifecycle: communications, incoming messages, unsent replies and pending email proposals. Exact paged coverage and complete state counts distinguish recipient kinds, preparation, sending approval and confirmed provider acceptance. Absent state-count combinations mean zero within the declared scope. Free-form chat drafts are outside this index.',
   business_analysis:'Verified comparisons across multiple recorded business datasets.',
   general_knowledge:'General business explanation that does not claim to read this workspace’s records.',
 };
 const READ_RECORD_KINDS={sales_orders:'sales_order',purchase_orders:'purchase_order',
   transfers:'transfer',customer_returns:'customer_return'};
-const PAGED_READS=new Set(['operating_rules','suppliers','customers','supplier_items','purchase_costs']);
+const PAGED_READS=new Set(['operating_rules','suppliers','customers','supplier_items','purchase_costs','messages']);
 for(const [view,description] of Object.entries(READS))add(`read.${view}`,description,
   ['search','timeframe',...(PAGED_READS.has(view)?['offset']:[])],'read',permissions.VIEW,'none',
   async(service,db,ctx,text,args,options)=>service.lookup(db,ctx,{view,search:args.search||null,

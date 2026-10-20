@@ -540,34 +540,8 @@ async function lookup(database,ctx,request,options={}) {
       columns:['product','sku','supplier','supplierCode','lastUnitCost','currency','costRecordedAt','leadTimeDays',
         'supplierLeadTimeDays','effectiveLeadTimeDays','minimumOrderQuantity','orderMultiple','preferred','purchaseUnit','unitsPerPurchaseUnit']};
   }
-  if(request.view==='messages'){
-    const rows=(await database.query(`SELECT kind,recipient,subject,body,status,approval_stage,at,href FROM (
-      SELECT CASE WHEN status='SENT' THEN 'sent supplier email' WHEN status='PREPARED' THEN 'draft supplier email' ELSE 'outgoing supplier email' END AS kind,
-        recipient,subject,left(body,2000) AS body,status,
-        CASE WHEN status='PREPARED' THEN 'not approved for sending' WHEN status='SENT' THEN 'sent'
-          WHEN status='CANCELLED' THEN 'cancelled; not sent' WHEN approved_at IS NOT NULL THEN 'authorized; see delivery status' ELSE 'sending approval not recorded' END AS approval_stage,
-        COALESCE(sent_at,created_at) AS at,workspace_id,'/messages/supplier/'||id AS href FROM supplier_communications
-      UNION ALL SELECT CASE WHEN status='SENT' THEN 'sent customer email' WHEN status='PREPARED' THEN 'draft customer email' ELSE 'outgoing customer email' END,
-        recipient,subject,left(body,2000),status,
-        CASE WHEN status='PREPARED' THEN 'not approved for sending' WHEN status='SENT' THEN 'sent'
-          WHEN status='CANCELLED' THEN 'cancelled; not sent' WHEN approved_at IS NOT NULL THEN 'authorized; see delivery status' ELSE 'sending approval not recorded' END,
-        COALESCE(sent_at,created_at),workspace_id,'/messages/customer/'||id FROM customer_communications
-      UNION ALL SELECT 'received business email',sender,subject,left(body_text,2000),reply_state,'not an outgoing draft',
-        received_at,workspace_id,'/mail/'||id FROM connection_email_messages
-      UNION ALL SELECT 'draft reply',m.sender,COALESCE(m.draft_subject,m.subject),left(m.draft_body,2000),
-        COALESCE(outbox.status,'DRAFT'),CASE WHEN outbox.id IS NULL THEN 'not approved for sending' ELSE 'authorized; see delivery status' END,
-        COALESCE(m.draft_at,m.received_at),m.workspace_id,'/mail/'||m.id
-        FROM connection_email_messages m LEFT JOIN LATERAL (SELECT id,status FROM stockchief_runtime.email_reply_outbox o
-          WHERE o.workspace_id=m.workspace_id AND o.message_id=m.id ORDER BY o.started_at DESC,o.id DESC LIMIT 1) outbox ON true
-        WHERE m.draft_body IS NOT NULL AND trim(m.draft_body)<>'' AND m.reply_sent_at IS NULL
-    ) mail WHERE workspace_id=$1 AND ($2::text IS NULL OR recipient ILIKE '%'||$2||'%'
-      OR COALESCE(subject,'') ILIKE '%'||$2||'%' OR kind ILIKE '%'||$2||'%' OR status ILIKE '%'||$2||'%') ORDER BY at DESC LIMIT 100`,
-    [ctx.workspaceId,search])).rows.map((row)=>({kind:row.kind,party:row.recipient,subject:row.subject||'',
-      message:row.body||'',status:row.status,approvalStage:row.approval_stage,at:row.at,href:row.href}));
-    return {answer:rows.length?`Showing ${rows.length}${rows.length===100?'+':''} recorded business messages matching the request.`:
-      'No recorded business message matched that request.',rows,
-      columns:['kind','party','subject','message','status','approvalStage','at']};
-  }
+  if(request.view==='messages')return require('./postgres-message-evidence').read(database,ctx,{search,offset:request.offset??0});
+
   if(['sales_activity','business_analysis'].includes(request.view)&&search)return {status:'CLARIFY',
     answer:'I cannot apply a named record filter to a business-wide summary. Ask me to show matching customer orders, or ask for the unfiltered summary.',
     rows:[],columns:[],reason:'unverified'};

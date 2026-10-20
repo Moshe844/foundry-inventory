@@ -74,7 +74,12 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
       res.writeHead(replay.status,{'content-type':replay.contentType,'cache-control':'no-store'});res.end(replay.body);return;}
      // Both processing choices preserve the exact semantic request. A settled
      // receipt from either remains reusable; a pending/unknown one still blocks.
-     const preferred=grant.preferredCodexPolicy,preferredNormalized=preferred?.normalize(input),preferredHash=preferredNormalized?hashRequest(preferredNormalized):null;
+     const preferred=grant.preferredCodexPolicy,preferredNormalized=preferred?.normalize(input);
+     // Both processing choices belong to the same host-authorized tenant and
+     // actor. Re-normalizing the preferred request must not discard that cache
+     // identity or restore the SDK's per-thread/client-supplied value.
+     if(preferredNormalized&&normalized.body.prompt_cache_key)preferredNormalized.body.prompt_cache_key=normalized.body.prompt_cache_key;
+     const preferredHash=preferredNormalized?hashRequest(preferredNormalized):null;
      if(preferredHash&&preferredHash!==requestHash){const saved=await grant.nativeSession?.codexReplay(preferredHash,admissionAccess);
       if(saved){grant.lastResponse=saved.outcome;audit({kind:'codex_response_replayed',requestHash:preferredHash,paidCalls:0});res.writeHead(saved.status,{'content-type':saved.contentType,'cache-control':'no-store'});res.end(saved.body);return;}}
      await grant.requestGate(admissionAccess);
