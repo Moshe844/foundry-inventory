@@ -114,7 +114,13 @@ async function main(start){
    compact_prompt:'You are performing CONTEXT CHECKPOINT COMPACTION for this existing StockChief session. Write a concise continuation handoff of at most 1,000 tokens. Preserve the original goal, safety constraints, current conclusions, unresolved decisions, next useful step, and identifiers of pending approvals or uncertain effects. Full observations, documents, field-reference maps and tool results already persist in the tenant-scoped environment_evidence journal. Preserve only the few evidence IDs needed next; use environment_evidence with those IDs or @index after compaction to retrieve exact facts and references. Do not copy document bodies, record tables, tool transcripts, execution-contract schemas, field-reference catalogues or instructions into this summary. Do not invent missing facts or approvals. Clearly distinguish observed, prepared, approved, executed and verified work. Historical browser handles are not current handles. This is a context handoff, not a customer answer or permission to execute. Keep it under 1,000 tokens so native compaction fits the existing response ceiling.',
    ...(start.instructionsProfile==='stockchief-operator-v1'?{model_instructions_file:'/opt/stockchief/codex-operator-instructions.txt'}:{}),
    // Test-only trigger changes WHEN native Codex compacts; never its algorithm.
-   model_auto_compact_token_limit:start.offlineCompact?1:start.nativeCompactionTokenLimit}});
+   model_auto_compact_token_limit:start.offlineCompact?1:start.nativeCompactionTokenLimit,
+   // Native compaction carries the original user/environment prefix. Counting
+   // that unchanged prefix again can compact on every subsequent tool result,
+   // discarding references that are then retrieved and compacted repeatedly.
+   // Let the SDK measure growth after its carried prefix. The host still
+   // counts the ENTIRE request and enforces the unchanged request/goal caps.
+   model_auto_compact_token_limit_scope:'body_after_prefix'}});
  const options={model:profile.model,modelReasoningEffort:profile.effort,workingDirectory:'/workspace',skipGitRepoCheck:true,
   sandboxMode:'read-only',approvalPolicy:'never',webSearchMode:'disabled',networkAccessEnabled:false};
  thread=start.threadId?codex.resumeThread(start.threadId,options):codex.startThread(options);
