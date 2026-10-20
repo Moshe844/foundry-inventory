@@ -18,13 +18,17 @@ function createPool({idleMs=4*60000,maxEntries=4}={}){
    const key=createHash('sha256').update(JSON.stringify([connectionString,ctx.workspaceId,ctx.actorId])).digest('hex');
    let entry=entries.get(key);
    if(!entry){
+    let retirement=null;
     if(entries.size>=maxEntries){
      if(warmOnly)return null;
      const idle=[...entries].find(([,value])=>!value.leases);
      if(!idle)throw Error('INSPECTION_POOL_CAPACITY');
-     await retire(...idle);
+     retirement=retire(...idle);
     }
     const promise=(async()=>{
+     // Reserve the replacement entry synchronously before awaiting cleanup.
+     // Otherwise background warm-up can take its freed slot mid-retirement.
+     if(retirement)await retirement;
      const token=await pilot.readAuthorization(database,ctx,connectionString);
      return require('./inspection').createInspectionServer({cluster:{connectionString},database,ctx,stagingAuthorization:token});
     })();

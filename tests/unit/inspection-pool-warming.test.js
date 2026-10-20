@@ -7,3 +7,11 @@ test('background warming cannot evict a recent business renderer and real acquis
  const reused=await pool.acquire(options('actor-a'));assert.equal(reused.server,first.server);const actual=await pool.acquire(options('actor-c'));assert.deepEqual(closed,['actor-b']);assert.equal(actual.server.actor,'actor-c');await actual.release();await reused.release();
  revoked=true;await assert.rejects(pool.acquire(options('actor-a')),/revoked/);assert(accesses.filter(id=>id==='actor-a').length>=3,'Cached renderers never cache an authority decision');assert.equal(created.length,3);
 });
+test('an asynchronous replacement reserves its slot before competing background warm-up',async t=>{
+ const pilot=require('../../src/assistant/postgres-codex-pilot'),inspection=require('../../scripts/environment-agent-demo/inspection');let startClose,finishClose;
+ const closing=new Promise(resolve=>{startClose=resolve;}),release=new Promise(resolve=>{finishClose=resolve;});const created=[];
+ t.mock.method(pilot,'access',async()=>{});t.mock.method(pilot,'readAuthorization',async()=>({hostOnly:true}));t.mock.method(inspection,'createInspectionServer',async({ctx})=>{created.push(ctx.actorId);return{actor:ctx.actorId,close:async()=>{if(ctx.actorId==='a'){startClose();await release;}}};});
+ const pool=require('../../scripts/environment-agent-demo/inspection-pool').createPool({maxEntries:1});t.after(()=>pool.close());const options=actorId=>({database:{},ctx:{workspaceId:actorId,actorId},connectionString:'fixture'});
+ const first=await pool.acquire(options('a'));await first.release();const replacing=pool.acquire(options('b'));await closing;
+ const warmed=await pool.warm(options('c'));finishClose();const replacement=await replacing;await replacement.release();assert.equal(warmed,false);assert.deepEqual(created,['a','b']);
+});
