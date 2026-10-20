@@ -43,7 +43,7 @@ function materialize(goal,report){
   const content=lines.join('\n');if(content.length>12000)throw Error('TABLE_DELIVERY_TOO_LARGE');
   // Seal the entire original sequence. A changed row, added record or reordered
   // source must pass the unchanged fresh-source verifier, not a copied label.
-  claims.push({evidenceId:entry.id,path:selected.path,value:rows,historical:false});
+  claims.push({evidenceId:entry.id,path:selected.path,value:rows,historical:false,tableColumns:spec.columns});
   if(selected.path.endsWith('/displayRows')){const rawPath=selected.path.slice(0,-'displayRows'.length)+'rows';claims.push({evidenceId:entry.id,path:rawPath,value:locate(original,rawPath).value,historical:false});}
   return{title:product.title,content};
  });

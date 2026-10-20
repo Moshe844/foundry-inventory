@@ -49,7 +49,10 @@ async function run(database,ctx,id,options={}){
    ['admissionMs','sourceIntegrityMs','tokenPreflightMs','providerMs','commercialSettlementMs','nativeCheckpointMs','finalVerificationMs'].includes(key)&&Number.isFinite(value)&&value>=0));
   pendingActivity.push({id:require('../lib/util').newId('goalevent'),detail});
   if(pendingActivity.length>=32)flushActivity();
-  else if(!auditTimer)auditTimer=setTimeout(flushActivity,25);
+  // The chat polls once a second. Coalesce adjacent provider/tool progress
+  // within that window instead of competing with durable execution writes
+  // for a goal lock after nearly every event. Finalization still drains it.
+  else if(!auditTimer)auditTimer=setTimeout(flushActivity,250);
  };
  try{
   const budget=require('./postgres-codex-budget').createBudget(database,ctx,id);

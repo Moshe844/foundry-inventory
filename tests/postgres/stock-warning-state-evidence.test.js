@@ -22,7 +22,15 @@ test('recorded live draft cannot confuse a suppressed repeat notification with a
  assert.equal((await verify(report)).verified,true);const wrong=structuredClone(report);wrong.claims[0].value='RESOLVED';assert.equal((await verify(wrong)).verificationFailure,'EVIDENCE_VALUE_MISMATCH');
  assert.equal((await alerts.evaluate(db,{workspaceId:ctx.workspaceId})).alerted,0);
  row=(await read()).rows.find(r=>r.id===ruleId);assert(new Date(row.lastEvaluation.checkedAt)>new Date(firstReceipt));assert.equal((await verify(report)).verified,true,'A newer observation cannot invalidate an unchanged fact on the same canonical rule');
+ const observedAt=data.outcomes[0].result.rows[index].lastEvaluation.checkedAt,
+  timestampReport={...report,answer:'As of the recorded observation, the last check was '+observedAt+'. The warning is open.',claims:[...report.claims,{evidenceId:entry.id,path:'/outcomes/0/result/rows/'+index+'/lastEvaluation/checkedAt',value:observedAt,historical:true}]};
+ assert.equal((await verify(timestampReport)).verified,true,'An explicitly historical check receipt remains true after the next successful check');
+ const staleCurrent=structuredClone(timestampReport);staleCurrent.claims.at(-1).historical=false;assert.equal((await verify(staleCurrent)).verificationFailure,'CURRENT_RECORDS_CHANGED','Historical receipt support never relaxes current-value verification');
+ const table=require('../../scripts/environment-agent-demo/source-tables').catalogue(entry)[0],tableReport={...report,workProducts:[{title:'Observed warning settings',sourceTable:{sourceRef:table.sourceRef,columns:['sku','product','threshold'],rows:null}}]};
+ assert.equal((await verify(tableReport)).verified,true,'A host table of unchanged settings must not assert unselected moving evaluation timestamps');
  await db.query("UPDATE attention_items SET status='ACKNOWLEDGED' WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,row.currentWarning.id]);assert.equal((await verify(report)).verificationFailure,'CURRENT_RECORDS_CHANGED','Warning status is rechecked independently of the unchanged rule timestamp');
+ assert.equal((await verify(timestampReport)).verificationFailure,'CURRENT_RECORDS_CHANGED','Historical timestamps cannot certify a changed current warning status');
+ assert.equal((await verify(tableReport)).verificationFailure,'CURRENT_RECORDS_CHANGED','A displayed table cannot suppress a separate changed current-state claim');
  const other=await auth.createBusiness(db,{name:'Other owner',businessName:'Other warnings',email:randomUUID()+'@example.test',password:'Offline!'+randomUUID()});assert.deepEqual((await assistant.lookup(db,{workspaceId:other.workspaceId,actorId:other.userId},{view:'operating_rules'})).rows,[]);
  await inventory.receive(db,ctx,{skuId:item.skuIds[0],locationId:place.id,quantity:4,reference:'LOCAL-RECOVERY',idempotencyKey:randomUUID()});assert.equal((await alerts.evaluate(db,{workspaceId:ctx.workspaceId})).rearmed,1);
  row=(await read()).rows.find(r=>r.kind==='stock_warning');assert.equal(row.monitoringEnabled,true);assert.equal(row.armed,true);assert.equal(row.currentWarning.status,'RESOLVED');

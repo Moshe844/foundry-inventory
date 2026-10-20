@@ -28,4 +28,15 @@ function unchangedRow(original,current,pointer){
  const selected=suffix?locate(comparable[index],suffix):{found:true,value:comparable[index]};
  return {applicable:true,matched:selected.found,value:selected.value};
 }
-module.exports={unchangedRow};
+// A host-rendered table claims its selected columns and source membership.
+// With unique canonical IDs, an unrelated timestamp/field changing must not
+// invalidate the displayed cells. Sources without IDs retain strict equality;
+// labels, prices and positions never become inferred identities.
+function unchangedTable(before,after,columns){
+ if(!Array.isArray(before)||!Array.isArray(after)||!Array.isArray(columns)||!columns.length||new Set(columns).size!==columns.length)return {applicable:true,matched:false};
+ const identifiable=rows=>rows.every(row=>row&&typeof row==='object'&&!Array.isArray(row)&&['string','number'].includes(typeof row.id)&&row.id!=='')&&new Set(rows.map(row=>row.id)).size===rows.length;
+ if(!before.length||!identifiable(before))return {applicable:false};
+ if(!identifiable(after)||before.length!==after.length||[...before,...after].some(row=>columns.some(c=>!Object.hasOwn(row,c))))return {applicable:true,matched:false};
+ return {applicable:true,matched:before.every((row,index)=>equal(row.id,after[index].id)&&columns.every(column=>equal(row[column],after[index][column])))};
+}
+module.exports={unchangedRow,unchangedTable};

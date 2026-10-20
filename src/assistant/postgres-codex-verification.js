@@ -86,13 +86,19 @@ async function verify(database,ctx,goal,raw,catalogue,options={}){
     {claimIndex,evidenceId:entry.id,path:claim.path,...error.verificationDetail});}
    const currentClaim=presentation.locate(toolView?presentation.project(entry.name,currentObservation,{legacyBrowserWindows}):currentObservation,claim.path);
    const current=currentClaim.value,missingCurrent=!currentClaim.found;
+   // Only host-materialized table claims may select a column projection.
+   // The model's ordinary claim schema cannot supply this private scope.
+   const table=claimIndex>=report.claims.length&&Array.isArray(inputClaim.tableColumns)
+    ?require('./business-row-verification').unchangedTable(value,current,inputClaim.tableColumns):{applicable:false};
    const record=entry.name==='business_operations'?require('./business-row-verification').unchangedRow(original,currentObservation,claim.path):{applicable:false};
    // Controls, like text offsets and loopback ports, have observation-local
    // identity. Verify their complete semantic facts before trusting an array
    // position, even when an unrelated field happens to contain the same value.
    const control=entry.name==='environment_browser'?require('./browser-control-verification').unchangedControl(
     JSON.parse(entry.text),currentObservation,claim.path):{applicable:false};
-   if(record.applicable){
+   if(table.applicable){
+    if(!table.matched)return unavailable('The displayed business records changed during this request. Your request and collected information are saved.','CURRENT_RECORDS_CHANGED',{evidenceId:claim.evidenceId,path:claim.path});
+   }else if(record.applicable){
     if(!record.matched||!equal(record.value,claim.value))return unavailable('The business record changed during this request. Its earlier value is no longer verified as current. Your request and recorded work are saved.','CURRENT_RECORDS_CHANGED',{evidenceId:claim.evidenceId,path:claim.path});
    }else if(control.applicable){
     if(!control.matched)return unavailable('The form changed during this request. Its earlier fields are no longer verified as current. Your request and recorded work are saved.','CURRENT_FORM_CHANGED',{evidenceId:claim.evidenceId,path:claim.path});
@@ -102,7 +108,8 @@ async function verify(database,ctx,goal,raw,catalogue,options={}){
     if(!moved.matched||!equal(moved.value,claim.value))return unavailable('The business records changed during this request. The earlier figures are no longer verified as current. Your request and recorded work are saved.','CURRENT_RECORDS_CHANGED',{evidenceId:claim.evidenceId,path:claim.path});
    }
   }
-  verified.push({evidenceId:claim.evidenceId,path:claim.path,sha256:createHash('sha256').update(JSON.stringify(value)).digest('hex')});
+  verified.push({evidenceId:claim.evidenceId,path:claim.path,sha256:createHash('sha256').update(JSON.stringify(value)).digest('hex'),
+   ...(claimIndex>=report.claims.length&&Array.isArray(inputClaim.tableColumns)?{columns:inputClaim.tableColumns}:{} )});
  }
  let navigation=null;
  if(report.outcome==='navigation'){
@@ -146,6 +153,7 @@ A governed navigation operation also supplies a safe destination: reference its 
 Each factual claim must reference actual durable evidence by ID and a JSON Pointer to its exact recorded value.
 Use the smallest recorded values that substantiate the answer. Do not copy unrelated rows or an entire observation into claims when individual fields or visible text blocks suffice. Preserve enough claims to support all reported facts; concise evidence never removes canonical outcome verification.
 Current-state claims after execution require fresh observations. Mark a historical claim historical:true and describe its time/scope explicitly.
+Evaluation, synchronization and monitoring timestamps are point-in-time receipts: a background check may legitimately advance them while you answer. Cite the recorded timestamp with historical:true and say when it was observed; keep claims about the current business condition nonhistorical so changes to stock, warning status, amounts or authority are still freshly checked. Do not claim a previously observed timestamp is the latest at delivery time.
 Canonical execution receipts prove committed effects at their recorded time. Their result fields may describe an intermediate state that later approved work changed. Claims under canonical_execution_state /operations/N/result must use historical:true; use fresh business records for the final current state. Never treat an earlier confirmed or draft status as a failure merely because the same order has since been fulfilled.
 Use the complete evidence already in a tool response. Its _stockchiefEvidence reference supplies evidenceId and valuePointerPrefix; prepend that prefix to the JSON Pointer of the displayed value. Retrieve the journal only for missing, truncated, compacted or earlier evidence. Do not retrieve a value again just to report what the current response already shows. Include current-state verification after authorized changes.
 Never claim every part of a request was completed merely because one receipt was verified.`;
