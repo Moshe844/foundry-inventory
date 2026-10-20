@@ -149,7 +149,7 @@ function decodeXml(text) {
 /** All the text inside one element, runs included. */
 function textOf(fragment) {
   const parts = [];
-  const re = /<(?:[\w.-]+:)?t(?:\s[^>]*)?>([\s\S]*?)<\/(?:[\w.-]+:)?t>|<(?:[\w.-]+:)?t\s*\/>/g;
+  const re = /<(?:[\w.-]+:)?t\b[^>]*?(?:\/>|>([\s\S]*?)<\/(?:[\w.-]+:)?t>)/g;
   let match;
   while ((match = re.exec(fragment)) !== null) parts.push(decodeXml(match[1] || ''));
   return parts.join('');
@@ -160,7 +160,7 @@ function readSharedStrings(files) {
   if (!xml) return [];
   const text = xml.toString('utf8');
   const strings = [];
-  const re = /<(?:[\w.-]+:)?si(?:\s[^>]*)?>([\s\S]*?)<\/(?:[\w.-]+:)?si>|<(?:[\w.-]+:)?si\s*\/>/g;
+  const re = /<(?:[\w.-]+:)?si\b[^>]*?(?:\/>|>([\s\S]*?)<\/(?:[\w.-]+:)?si>)/g;
   let match;
   while ((match = re.exec(text)) !== null) strings.push(textOf(match[1] || ''));
   return strings;
@@ -229,7 +229,7 @@ function numericCell(raw) {
 function readSheet(xml, sharedStrings, dateStyles) {
   const text = xml.toString('utf8');
   const rows = [];
-  const rowRe = /<(?:[\w.-]+:)?row(?:\s[^>]*)?>([\s\S]*?)<\/(?:[\w.-]+:)?row>|<(?:[\w.-]+:)?row\s[^>]*\/>/g;
+  const rowRe = /<(?:[\w.-]+:)?row\b[^>]*?(?:\/>|>([\s\S]*?)<\/(?:[\w.-]+:)?row>)/g;
   let rowMatch;
 
   while ((rowMatch = rowRe.exec(text)) !== null) {
@@ -238,7 +238,9 @@ function readSheet(xml, sharedStrings, dateStyles) {
     }
     const body = rowMatch[1] || '';
     const cells = [];
-    const cellRe = /<(?:[\w.-]+:)?c\b([^>]*)(?:\/>|>([\s\S]*?)<\/(?:[\w.-]+:)?c>)/g;
+    // Stop at a self-closing cell before looking for a closing tag. Greedy
+    // attributes consumed its slash and attached the next cell's value to it.
+    const cellRe = /<(?:[\w.-]+:)?c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/(?:[\w.-]+:)?c>)/g;
     let cellMatch;
 
     while ((cellMatch = cellRe.exec(body)) !== null) {

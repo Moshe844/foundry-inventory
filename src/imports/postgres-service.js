@@ -151,8 +151,17 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     const lotCode=trimOrNull(textCell(row,mappings.lotCode));
     const flag=field=>{const value=textCell(row,mappings[field]);if(!value)return false;if(/^(?:yes|true|1)$/i.test(value))return true;if(/^(?:no|false|0)$/i.test(value))return false;problems.push(problem('invalid_tracking_flag','A tracking requirement must be an explicit yes/no value.'));return false;};
     const serialFlag=flag('serialTracked'),lotFlag=flag('lotTracked');
-    const serialRequired=mappings.serial!==undefined||proposal.detectedType==='serials'||(serialFlag&&proposal.trackingReview?.serial!=='quantity');
-    const lotRequired=mappings.lotCode!==undefined||proposal.detectedType==='lots'||(lotFlag&&proposal.trackingReview?.lot!=='quantity');
+    // Identifier columns can coexist in mixed catalogues. Their presence is
+    // not a requirement on every product: use this row's identifiers/flags.
+    // A lone identifier column without requirement flags still describes a
+    // tracked source, so missing identifiers must continue to block stock.
+    const hasFlags=mappings.serialTracked!==undefined||mappings.lotTracked!==undefined;
+    const serialRequired=Boolean(serial)||(serialFlag&&proposal.trackingReview?.serial!=='quantity')||
+      (!hasFlags&&mappings.lotCode===undefined&&(mappings.serial!==undefined||proposal.detectedType==='serials'));
+    const lotRequired=Boolean(lotCode)||(lotFlag&&proposal.trackingReview?.lot!=='quantity')||
+      (!hasFlags&&mappings.serial===undefined&&(mappings.lotCode!==undefined||proposal.detectedType==='lots'));
+    if(!hasFlags&&mappings.serial!==undefined&&mappings.lotCode!==undefined&&quantity>0&&!serial&&!lotCode)
+      problems.push(problem('missing_tracking_identifier','This stock needs a serial number, a lot number, or an explicit tracking requirement for this product.'));
     if(serialRequired&&lotRequired)problems.push(problem('invalid_tracking_flag','A product cannot use both serial and lot tracking in the same import row.'));
     if(serialRequired){
       if(!serial&&quantity!==0)problems.push(problem('missing_serial','A serial number is required for this row.'));
@@ -164,7 +173,7 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     if(existingMatches.length>1)problems.push(problem('ambiguous_existing_code','This SKU code matches more than one active record.'));
     const blocking=new Set(['bad_quantity','negative_quantity','fractional_quantity','bad_unit_cost','cost_without_stock','bad_selling_price',
       'accounting_not_ready','cost_currency_mismatch','cost_overflow','no_product','unknown_location','no_location',
-      'missing_serial','serial_quantity','missing_lot','invalid_tracking_flag','ambiguous_existing_code','workbook_unmatched_key','workbook_stock_mismatch']);
+      'missing_serial','serial_quantity','missing_lot','missing_tracking_identifier','invalid_tracking_flag','ambiguous_existing_code','workbook_unmatched_key','workbook_stock_mismatch']);
     const parsed={name,code,description:trimOrNull(textCell(row,mappings.description)),
       unitLabel:trimOrNull(textCell(row,mappings.unitLabel)) || 'unit',barcode:trimOrNull(textCell(row,mappings.barcode)),
       unitCostMinor,sellingPriceMinor,currency,
