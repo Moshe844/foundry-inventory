@@ -169,9 +169,14 @@ async function run(database,ctx,id,options={}){
   // the previously configured verification strength and their own exact rates.
   const helperPolicy=modelProfile.verificationProfile?require(base+'codex-wire').forProfile(modelProfile.verificationProfile):modelPolicy;
   if(helperPolicy!==modelPolicy)await require('./codex-staging-readiness').verifyPricing(database,helperPolicy.PROFILE);
+  const economical=modelProfile.fallbackProcessingProfile?require(base+'codex-wire').forProfile(modelProfile.fallbackProcessingProfile):null;
+  if(economical){
+   if(economical.MODEL!==modelPolicy.MODEL||economical.EFFORT!==modelPolicy.EFFORT)throw Error('PROCESSING_FALLBACK_STRENGTH_MISMATCH');
+   await require('./codex-staging-readiness').verifyPricing(database,economical.PROFILE);
+  }
   audit({kind:'model_profile_selected',status:`${modelProfile.model} · ${modelProfile.effort}`});
   const transport=relay.grant({candidate:'codex',provider:'openai',task:id,ctx,goalId:id,budget,fundingKey,authorize:()=>authorize({catalogue:false}),
-   codexPolicy:modelPolicy,
+   codexPolicy:economical||modelPolicy,preferredCodexPolicy:economical?modelPolicy:null,
    wireProfile:'codex',livePermit:permit,requestGate:access=>session.codexRequest(access)});
   // Optional host-owned faster processing for checks that fit the SAME cost
   // ceiling and verification strength. Native exploration remains unchanged.

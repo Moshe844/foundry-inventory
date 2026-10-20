@@ -3,8 +3,12 @@
 // the host policy selects a profile, and every request is counted and funded.
 const source='https://developers.openai.com/api/docs/pricing';
 const nativePolicy=Object.freeze({maxInputTokens:180000,maxOutputTokens:3000,requestCeilingMicroUsd:300000,compactionHeadroom:.7});
-function compactionTokenLimit(profile){return Math.floor(nativePolicy.compactionHeadroom*Math.min(nativePolicy.maxInputTokens,
- Math.floor((nativePolicy.requestCeilingMicroUsd-nativePolicy.maxOutputTokens*profile.prices.output)/profile.prices.input)));}
+function compactionTokenLimit(profile){
+ const economical=profile.fallbackProcessingProfile?getProfile(profile.fallbackProcessingProfile):profile;
+ if(economical.model!==profile.model||economical.effort!==profile.effort)throw Error('PROCESSING_FALLBACK_STRENGTH_MISMATCH');
+ return Math.floor(nativePolicy.compactionHeadroom*Math.min(nativePolicy.maxInputTokens,
+ Math.floor((nativePolicy.requestCeilingMicroUsd-nativePolicy.maxOutputTokens*economical.prices.output)/economical.prices.input)));
+}
 const profiles=Object.freeze({
  'luna-low-fast':Object.freeze({id:'luna-low-fast',model:'gpt-6-luna',effort:'low',serviceTier:'fast',providerVersion:'responses-fast-2026-10-13',verificationProfile:'sol-low-fast',
   prices:Object.freeze({input:.25,output:1}),
@@ -18,7 +22,7 @@ const profiles=Object.freeze({
  'sol-high':Object.freeze({id:'sol-high',model:'gpt-6.1-sol',effort:'high',
   prices:Object.freeze({input:2.5,output:10}),
   rates:Object.freeze({model_input:2,model_output:10,cache_write_5m:2.5,cache_write_1h:2.5,cache_read:.1})}),
- 'sol-low-fast':Object.freeze({id:'sol-low-fast',model:'gpt-6.1-sol',effort:'low',serviceTier:'fast',providerVersion:'responses-fast-2026-10-13',
+ 'sol-low-fast':Object.freeze({id:'sol-low-fast',model:'gpt-6.1-sol',effort:'low',serviceTier:'fast',providerVersion:'responses-fast-2026-10-13',fallbackProcessingProfile:'sol-low',
   prices:Object.freeze({input:5,output:20}),
   rates:Object.freeze({model_input:4,model_output:20,cache_write_5m:5,cache_write_1h:5,cache_read:.2})}),
  // Optional processing profile for bounded semantic checks. Same model and

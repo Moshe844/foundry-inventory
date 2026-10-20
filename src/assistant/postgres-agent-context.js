@@ -1,8 +1,7 @@
 'use strict';
 const {createHash}=require('node:crypto');
 const stable=v=>Array.isArray(v)?v.map(stable):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,stable(v[k])])):v;
-async function learnedEnvironment(db,ctx,startedAt){
- const actor=(await db.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];
+async function learnedEnvironment(db,ctx,startedAt,actor){
  if(!actor)return {pages:[]};const stamp=createHash('sha256').update(JSON.stringify(stable(actor))).digest('hex');
  const rows=(await db.query(`SELECT (SELECT COALESCE(jsonb_object_agg(e.key,e.value),'{}'::jsonb)
   FROM jsonb_each(CASE WHEN jsonb_typeof(checkpoint#>'{harness,evidence}')='object'
@@ -32,20 +31,31 @@ async function learnedEnvironment(db,ctx,startedAt){
 // Prior conversation is reference material, never an execution grant. Keep it
 // separate from this goal's durable decisions, proposals and idempotency keys.
 async function capture(db,ctx,startedAt=null){
+ const actor=(await db.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];
+ if(!actor)return {turns:[],memory:[],environment:{pages:[]},notice:'No current membership context is available.'};
+ const permission=require('../actions/permissions'),fullBusinessRead=[permission.VIEW,permission.VIEW_PURCHASING,permission.VIEW_SALES,
+  permission.VIEW_ACCOUNTING,permission.VIEW_TRANSFERS,permission.ADMIN].every(required=>permission.can(actor,required));
+ const stamp=createHash('sha256').update(JSON.stringify(stable(actor))).digest('hex');
+ // Shared legacy memory is not classified by audience. Do not disclose its
+ // financial, customer or administrative payload to a restricted membership.
+ // Canonical tools and standing-rule engines retain their own current grants.
+ // Same-actor history is retained only under its recorded permission identity;
+ // unclassified legacy history requires full business-read authority.
  const [recent,memory,environment]=await Promise.all([db.query(`SELECT * FROM (
   (SELECT id,original_request AS message,answer,status,created_at,checkpoint->'conversationState' AS conversation_state FROM stockchief_runtime.assistant_goals
    WHERE workspace_id=$1 AND actor_user_id=$2 AND ($3::timestamptz IS NULL OR created_at>$3)
+   AND ($5::boolean OR checkpoint#>>'{harness,authorityStamp}'=$4)
    ORDER BY created_at DESC,id DESC LIMIT 6)
   UNION ALL
   (SELECT i.id,i.message,i.answer,i.status,i.created_at,NULL::jsonb AS conversation_state FROM stockchief_runtime.assistant_interactions i
-   WHERE i.workspace_id=$1 AND i.actor_user_id=$2 AND ($3::timestamptz IS NULL OR i.created_at>$3)
+   WHERE i.workspace_id=$1 AND i.actor_user_id=$2 AND ($3::timestamptz IS NULL OR i.created_at>$3) AND $5::boolean
    AND NOT EXISTS(SELECT 1 FROM stockchief_runtime.assistant_goals g
     WHERE g.workspace_id=i.workspace_id AND g.actor_user_id=i.actor_user_id
      AND (i.intent->>'batchId'=g.id OR starts_with(i.intent->>'batchId',g.id||':')))
    ORDER BY i.created_at DESC,i.id DESC LIMIT 6)
- ) recent ORDER BY created_at DESC,id DESC LIMIT 6`,[ctx.workspaceId,ctx.actorId,startedAt]),
- require('./postgres-business-memory').plannerContext(db,ctx.workspaceId,{limit:12}),
- learnedEnvironment(db,ctx,startedAt)]);
+ ) recent ORDER BY created_at DESC,id DESC LIMIT 6`,[ctx.workspaceId,ctx.actorId,startedAt,stamp,fullBusinessRead]),
+ fullBusinessRead?require('./postgres-business-memory').plannerContext(db,ctx.workspaceId,{limit:12}):[],
+ learnedEnvironment(db,ctx,startedAt,actor)]);
  const rows=recent.rows.reverse();
  return {turns:rows.map(({conversation_state,...row})=>({...row,message:row.message.slice(0,1600),answer:require('./agent-conversation').publicText(row.answer,'').slice(0,2000),
   exchanges:(conversation_state?.history||[]).slice(-8).map(m=>({role:m.role,text:require('./agent-conversation').publicText(m.text,'').slice(0,1600)})),
