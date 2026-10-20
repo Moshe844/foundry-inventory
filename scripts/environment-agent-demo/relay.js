@@ -48,7 +48,7 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
     if(grant.wireProfile!=='codex'&&grant.lastResponse?.empty)throw Object.assign(new Error(require('./finalization').EMPTY_MESSAGE),{code:'EMPTY_MODEL_FINAL'});
     const input=JSON.parse(Buffer.concat(parts).toString('utf8'));
     const outputTokens=grant.provider==='openai'?input.max_output_tokens||wire.MAX_OUTPUT:input.max_tokens||wire.MAX_OUTPUT;
-    const nativeCodex=grant.wireProfile==='codex',codex=grant.codexPolicy;
+    const nativeCodex=grant.wireProfile==='codex';let codex=grant.codexPolicy;
     const fitOptions=nativeCodex?null:{memory:await grant.contextSource?.(),
      maxInputTokens:Math.min(60000,await commercial.inputAllowance?.({provider:grant.provider,outputTokens})??60000)};
     const fit=value=>nativeCodex?codex.normalize(value):grant.accountingMode==='native'?require('./wire-context').fit(grant.provider,value,fitOptions):wire.normalize(grant.provider,value);
@@ -61,9 +61,10 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
       .update(JSON.stringify([grant.ctx.workspaceId,grant.ctx.actorId,normalized.body.model])).digest('hex');
     }
     require('./protocol').validate(grant.provider,normalized.body);
-    const requestHash=nativeCodex?require('node:crypto').createHash('sha256').update(JSON.stringify({
-     input:require('./codex-wire').countRequest(normalized.body),outputTokens:normalized.outputTokens,stream:normalized.body.stream,
-     serviceTier:normalized.body.service_tier})).digest('hex'):null;
+    const hashRequest=value=>require('node:crypto').createHash('sha256').update(JSON.stringify({
+     input:require('./codex-wire').countRequest(value.body),outputTokens:value.outputTokens,stream:value.body.stream,
+     serviceTier:value.body.service_tier})).digest('hex');
+    let requestHash=nativeCodex?hashRequest(normalized):null;
     if(nativeCodex){
      if(typeof countCodexInput!=='function')throw new Error('NATIVE_TOKEN_PREFLIGHT_REQUIRED');
      if(credentials.openai!=='FAKE'&&!grant.nativeSession)throw new Error('DURABLE_CODEX_SESSION_REQUIRED');
@@ -71,6 +72,11 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
      const replay=await grant.nativeSession?.codexReplay(requestHash,admissionAccess);
      if(replay){grant.lastResponse=replay.outcome;audit({kind:'codex_response_replayed',requestHash,paidCalls:0});
       res.writeHead(replay.status,{'content-type':replay.contentType,'cache-control':'no-store'});res.end(replay.body);return;}
+     // Both processing choices preserve the exact semantic request. A settled
+     // receipt from either remains reusable; a pending/unknown one still blocks.
+     const preferred=grant.preferredCodexPolicy,preferredNormalized=preferred?.normalize(input),preferredHash=preferredNormalized?hashRequest(preferredNormalized):null;
+     if(preferredHash&&preferredHash!==requestHash){const saved=await grant.nativeSession?.codexReplay(preferredHash,admissionAccess);
+      if(saved){grant.lastResponse=saved.outcome;audit({kind:'codex_response_replayed',requestHash:preferredHash,paidCalls:0});res.writeHead(saved.status,{'content-type':saved.contentType,'cache-control':'no-store'});res.end(saved.body);return;}}
      await grant.requestGate(admissionAccess);
      timings.sessionAdmissionMs=Date.now()-sessionStarted;
      if(countCodexInput){
@@ -80,7 +86,10 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
       const countBody=codex.countRequest(normalized.body);
       const countStarted=Date.now(),count=await countCodexInput(structuredClone(countBody));
       timings.tokenPreflightMs=Date.now()-countStarted;
-      normalized=codex.counted(normalized,count);
+      if(preferred){const faster=preferred.counted(preferredNormalized,count);
+       if(faster.upperBoundMicroUsd<=preferred.REQUEST_CEILING_MICRO_USD){codex=preferred;normalized=faster;requestHash=preferredHash;}
+       else normalized=codex.counted(normalized,count);
+      }else normalized=codex.counted(normalized,count);
       audit({kind:'codex_input_count',inputTokens:normalized.inputTokens,
        maxOutputTokens:normalized.outputTokens,upperBoundMicroUsd:normalized.upperBoundMicroUsd,
        requestHash:require('node:crypto').createHash('sha256').update(JSON.stringify(countBody)).digest('hex')});
@@ -105,7 +114,7 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
     id=await budget.reserve({candidate:grant.candidate,task:grant.task,upperBoundMicroUsd:normalized.upperBoundMicroUsd,detail:callDetail});
     timings.budgetReservationMs=Date.now()-reservationStarted;
     const commercialStarted=Date.now();
-    held=await commercial.begin({...grant,id,...normalized,admissionAccess});
+    held=await commercial.begin({...grant,id,...normalized,...(nativeCodex?{codexPolicy:codex}:{}),admissionAccess});
     timings.commercialReservationMs=Date.now()-commercialStarted;
     const secret=credentials[grant.provider];if(!secret)throw new Error('PROVIDER_CREDENTIAL_UNAVAILABLE');
     const headers={'content-type':'application/json',...(grant.provider==='openai'
@@ -205,7 +214,7 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
  server.listen(0,'127.0.0.1');await once(server,'listening');
  const origin=`http://127.0.0.1:${server.address().port}`;
  return {
-  grant({candidate,task,provider,authorize,fundingKey,goalId,ctx,accountingMode='native',wireProfile=null,requestGate=null,livePermit=null,codexPolicy=null}){
+  grant({candidate,task,provider,authorize,fundingKey,goalId,ctx,accountingMode='native',wireProfile=null,requestGate=null,livePermit=null,codexPolicy=null,preferredCodexPolicy=null}){
    if(!wire.MODELS[provider]||typeof authorize!=='function'||!goalId||!ctx||!fundingKey)throw new Error('A funded, authorized durable goal is required.');
    if(!['native','existing'].includes(accountingMode))throw new Error('Unsupported commercial accounting mode.');
    if(wireProfile!==null&&(wireProfile!=='codex'||provider!=='openai'||accountingMode!=='native'||typeof requestGate!=='function'))throw new Error('INVALID_CODEX_GATE');
@@ -217,7 +226,9 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
     codexPolicy||=require('./codex-wire').forProfile(require('./codex-wire').PROFILE.id);
     if(!require('./codex-wire').isPolicy(codexPolicy))throw Error('INVALID_HOST_MODEL_POLICY');
    }
-   const token=randomBytes(32).toString('hex');grants.set(token,{candidate,task,provider,authorize,fundingKey,goalId,ctx,accountingMode,wireProfile,requestGate,livePermit,codexPolicy});
+   if(preferredCodexPolicy&&(!require('./codex-wire').isPolicy(preferredCodexPolicy)||wireProfile!=='codex'||
+    preferredCodexPolicy.MODEL!==codexPolicy.MODEL||preferredCodexPolicy.EFFORT!==codexPolicy.EFFORT))throw Error('INVALID_HOST_PROCESSING_PREFERENCE');
+   const token=randomBytes(32).toString('hex');grants.set(token,{candidate,task,provider,authorize,fundingKey,goalId,ctx,accountingMode,wireProfile,requestGate,livePermit,codexPolicy,preferredCodexPolicy});
    return {token,openaiBaseURL:origin+'/openai/v1',anthropicBaseURL:origin+'/anthropic',
     setContextSource:source=>{if(wireProfile==='codex')throw new Error('NATIVE_CODEX_CONTEXT_OWNED_BY_SDK');if(typeof source!=='function')throw new Error('Host context source required.');grants.get(token).contextSource=source;},
     setControlSource:source=>{if(wireProfile==='codex')throw new Error('NATIVE_CODEX_CONTROL_OWNED_BY_SDK');if(typeof source!=='function')throw new Error('Host control source required.');grants.get(token).controlSource=source;},

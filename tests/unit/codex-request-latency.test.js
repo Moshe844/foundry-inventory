@@ -9,7 +9,7 @@ test('browser presentation preserves unknown form fields, values, options, safet
  const original={url:'http://example.test/unknown',text:'Actual screen',controls,pagination:{controlsNextRef:'next:cursor'}};
  const encoded=compact(original);assert.deepEqual(expand(encoded),original);assert.equal(original.controls[0].required,false,'Source observations are immutable');
  assert.equal(encoded.controls[17].disabled,true);assert.equal(encoded.controls[17].required,true);assert.equal(encoded.controls[17].sensitive,true);
- assert.equal(encoded.controls[0].checked,false);assert.equal(encoded.controls[0].value,'');assert.equal(encoded.pagination.controlsNextRef,'next:cursor');
+ assert.equal(encoded.controls[0].checked,false);assert.equal(encoded.controls[0].value,'');assert.equal(encoded._stockchiefInspectionWindow.page.controlsNextRef,'next:cursor');
  assert(Buffer.byteLength(JSON.stringify(encoded))<Buffer.byteLength(JSON.stringify(original))*.65);
  const partial={controls:[{label:'No invented defaults',name:'unknown'}]};assert.deepEqual(expand(compact(partial)),partial);
  const wrapped={error:{code:'STALE_BROWSER_REFERENCE'},screen:original};assert.deepEqual(expand(compact(wrapped)),wrapped);
