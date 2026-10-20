@@ -28,7 +28,14 @@ test('native bookkeeping avoids repeated catalogue construction while retaining 
  assert(initial.datasetIndex.filter(d=>d.fields).length>=10,'Compact dataset schemas must not be starved by long operation descriptions');
  for(const name of ['suppliers','customers','payments'])assert(initial.datasetIndex.find(d=>d.name===name)?.fields,'Ordinary directory and financial schemas are available without paid rediscovery: '+name);
  assert(!JSON.stringify(initial.datasetIndex).includes('SELECT '),'SQL implementation is never interface metadata');
- assert(initial.operations.some(c=>c.name==='read.payments'&&c.fields),'Recorded live cash investigation must not lose its read contract by measuring the uncompressed intermediate representation');
+ const readContracts=full.catalogue.list().filter(c=>c.kind==='read');
+ assert.equal(initial.readArgumentsComplete,true);
+ assert.deepEqual(initial.readSignatures.flatMap(s=>s.names).sort(),readContracts.map(c=>c.name).sort(),'Every authorized read has upfront arguments, not only the descriptions that fit');
+ for(const signature of initial.readSignatures)for(const name of signature.names){
+  const complete=(await gateway.interfaces({names:[name]})).operations.find(c=>c.name===name);
+  for(const field of ['required','fields','authority','unavailable'])assert.deepEqual(signature[field],complete[field],name+' '+field);
+ }
+ assert(initial.readSignatures.some(s=>s.names.includes('read.payments')&&s.fields),'The recorded cash read retains its complete input contract');
  const navigation=full.catalogue.list().filter(c=>c.kind==='navigation');
  assert.deepEqual(initial.recordCollections,await gateway.collections());
  for(const [name,collection]of Object.entries(initial.recordCollections)){

@@ -120,11 +120,18 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
         if(!groupedNavigation.has(key))groupedNavigation.set(key,{names:[],...signature});
         groupedNavigation.get(key).names.push(contract.name);
       }
-      const navigationSignatures=[...groupedNavigation.values()],recordCollections=collections(catalogue);
+      const navigationSignatures=[...groupedNavigation.values()],recordCollections=collections(catalogue),groupedReads=new Map();
+      for(const contract of contracts.filter(c=>c.kind==='read')){
+        const {required,fields,authority,unavailable}=describe(contract),signature={required,fields,authority,unavailable},key=JSON.stringify(signature);
+        if(!groupedReads.has(key))groupedReads.set(key,{names:[],...signature});groupedReads.get(key).names.push(contract.name);
+      }
+      const readSignatures=[...groupedReads.values()];
       const datasets=require('../../src/reports/postgres-registry').list(actor);
       const datasetIndex=datasets.map(({key:name,label,filterValues})=>({name,label,detailsByName:true,
         ...(filterValues?{filterValues}:{})}));
-      const packet=()=>({operations,operationIndex,navigationSignatures,recordCollections,navigationAccess:'Exact signatures apply to each grouped name. recordCollections are owning list paths for browser inspection, not individual record references. Navigation gives no record facts; authority and user arrival are rechecked.',datasetIndex,datasetFieldsComplete:datasetIndex.every(d=>d.fields),indexComplete:true,total:contracts.length,complete:operations.length===contracts.length,
+      const packet=()=>({operations,operationIndex,navigationSignatures,recordCollections,readSignatures,readArgumentsComplete:true,
+        readAccess:'Every authorized read name has its complete input fields, required arguments and authority in readSignatures. Use a known read directly when it fits the goal; descriptions omitted here remain discoverable. No execution grant or business fact is implied.',
+        navigationAccess:'Exact signatures apply to each grouped name. recordCollections are owning list paths for browser inspection, not individual record references. Navigation gives no record facts; authority and user arrival are rechecked.',datasetIndex,datasetFieldsComplete:datasetIndex.every(d=>d.fields),indexComplete:true,total:contracts.length,complete:operations.length===contracts.length,
         datasetAccess:'Scoped projections, not SQL/pages. Use known typed fields/filters; inspect missing metadata. Extent distinguishes rows/groups and complete first-page source totals. Reads recheck scope/permissions.',
         coverage:'All authorized names, bounded details. Browser discovers screens; environment_interfaces supplies omissions. Fresh canonical checks remain.'});
       const size=()=>Buffer.byteLength(JSON.stringify(require('./interface-presentation').compact(packet())));
@@ -136,14 +143,14 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
         datasetIndex[detail.index].fields=detail.fields;
         if(size()-indexBytes>3000)delete datasetIndex[detail.index].fields;
       }
-      // Pack reusable small read contracts before larger descriptions. This
-      // depends only on authorized metadata size, not the request or domain.
-      // Every name remains in the complete index and exact lookup is unchanged.
+      // All read inputs are already present in the seven or so shared
+      // signatures. Spend the remaining SAME bound on reusable descriptions,
+      // rather than omit input schemas and force paid discovery of known reads.
       const readDetails=contracts.filter(c=>c.kind==='read').map(describe)
         .sort((a,b)=>Buffer.byteLength(JSON.stringify(a))-Buffer.byteLength(JSON.stringify(b))||a.name.localeCompare(b.name));
       for(const complete of readDetails){
-        const entry=Buffer.byteLength(JSON.stringify(complete))<=4096?complete:
-          {name:complete.name,kind:complete.kind,description:complete.description,required:complete.required,detailsByName:true};
+        const entry={name:complete.name,kind:complete.kind,description:complete.description,fieldsBySignature:true,detailsByName:true,
+          ...(complete.collection?{collection:complete.collection}:{})};
         operations.push(entry);
         if(Buffer.byteLength(JSON.stringify(require('./interface-presentation').compact(packet())))>18000)operations.pop();
       }
