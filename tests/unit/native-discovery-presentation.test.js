@@ -43,14 +43,15 @@ test('governed dataset links survive lazy creation and journal restoration witho
  assert.equal(created,0);assert.equal(seen.length,0);
  await ui.act({action:'inspect'});assert.deepEqual(seen,[report]);
  const restored=[];require('../../scripts/environment-agent-demo/read-navigation').restoreReadLinks({observeDatasetLinks:r=>restored.push(r)},
-  {full:{name:'environment_dataset',text:JSON.stringify(report)},truncated:{name:'environment_dataset',text:JSON.stringify(report),truncated:true},
-   model:{name:'environment_notebook',text:JSON.stringify(report)},broken:{name:'environment_dataset',text:'broken'}});
+  {full:{name:'environment_dataset',text:JSON.stringify(report),sha256:require('node:crypto').createHash('sha256').update(JSON.stringify(report)).digest('hex')},truncated:{name:'environment_dataset',text:JSON.stringify(report),sha256:require('node:crypto').createHash('sha256').update(JSON.stringify(report)).digest('hex'),truncated:true},
+   model:{name:'environment_notebook',text:JSON.stringify(report),sha256:require('node:crypto').createHash('sha256').update(JSON.stringify(report)).digest('hex')},
+   broken:{name:'environment_dataset',text:'broken',sha256:require('node:crypto').createHash('sha256').update('broken').digest('hex')},
+   unsealed:{name:'environment_dataset',text:JSON.stringify(report)},tampered:{name:'environment_dataset',text:JSON.stringify(report)+' ',sha256:require('node:crypto').createHash('sha256').update(JSON.stringify(report)).digest('hex')}});
  assert.deepEqual(restored,[report]);
  await assert.rejects(()=>require('../../scripts/environment-agent-demo/candidates').sharedTools({browser:ui,gateway:{dataset:async()=>{throw Error('DENIED');}}})
   .find(t=>t.name==='environment_dataset').execute({specJson:'{}',offset:0}),/DENIED/);
  assert.equal(seen.length,1,'Failed/unauthorized reads cannot seed navigation');
- const legacy=[];require('../../scripts/environment-agent-demo/read-navigation').restoreReadLinks({observeReadLinks:r=>legacy.push(r)},
-  {wrong:{name:'business_operations',text:'{"outcomes":"invalid"}'},empty:{name:'business_operations',text:'null'},
-   valid:{name:'business_operations',text:JSON.stringify({outcomes:[null,{capability:'read.locations',result:{status:'ANSWERED',rows:[]}}]})}});
+ const legacy=[],seal=value=>{const text=JSON.stringify(value);return {name:'business_operations',text,sha256:require('node:crypto').createHash('sha256').update(text).digest('hex')};};require('../../scripts/environment-agent-demo/read-navigation').restoreReadLinks({observeReadLinks:r=>legacy.push(r)},
+  {wrong:seal({outcomes:'invalid'}),empty:seal(null),valid:seal({outcomes:[null,{capability:'read.locations',result:{status:'ANSWERED',rows:[]}}]})});
  assert.deepEqual(legacy,[[{capability:'read.locations',result:{status:'ANSWERED',rows:[]}}]],'Malformed legacy records cannot break restoration of valid observations');
 });

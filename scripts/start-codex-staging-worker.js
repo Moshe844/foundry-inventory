@@ -1,5 +1,17 @@
 'use strict';
 require('../src/config');
+async function inspectionWarmTargets(database,{workspaces,emails,accountAccess,commercialRollout}){
+ return (await database.query(`SELECT p.workspace_id,u.id AS actor_id FROM stockchief_runtime.codex_pilot_workspace_access p
+  JOIN users u ON u.workspace_id=p.workspace_id JOIN accounts a ON a.id=u.account_id
+  WHERE (p.pilot->>'enabled')::boolean AND
+   ($4 AND p.pilot->>'admission_kind'='COMMERCIAL' AND a.id=p.owner_account_id AND u.role='owner'
+    OR p.funding_workspace_id=ANY($1::text[]) AND lower(a.email)=ANY($2::text[])
+    AND (CASE WHEN p.account_inherited THEN a.id=p.owner_account_id AND u.role='owner'
+      ELSE (p.pilot->'authorized_actor_ids') ? u.id END) AND ($3 OR p.workspace_id=ANY($1::text[])))
+  ORDER BY (SELECT max(g.updated_at) FROM stockchief_runtime.assistant_goals g
+    WHERE g.workspace_id=p.workspace_id AND g.actor_user_id=u.id) DESC NULLS LAST,p.workspace_id,u.id LIMIT 4`,
+  [workspaces,emails,accountAccess,commercialRollout])).rows;
+}
 async function main(){
  const scopePolicy=require('../src/assistant/codex-pilot-scope'),commercialRollout=scopePolicy.customerAccess();
  if(!commercialRollout&&(process.env.STOCKCHIEF_RUNTIME_ENV!=='staging'||process.env.STOCKCHIEF_CODEX_PILOT!=='1'))throw Error('STAGING_PILOT_REQUIRED');
@@ -41,20 +53,14 @@ async function main(){
  const workspaces=String(process.env.STOCKCHIEF_CODEX_PILOT_WORKSPACES||'').split(',').map(s=>s.trim()).filter(Boolean);
  const workerIdentity=require('node:crypto').randomUUID();
  const markAvailable=()=>db.query("UPDATE stockchief_runtime.codex_pilots SET worker_seen_at=now(),worker_identity=$2 WHERE workspace_id=ANY($1::text[]) OR $3 AND admission_kind='COMMERCIAL'",[workspaces,workerIdentity,commercialRollout]);
- await markAvailable();
- let availability=Promise.resolve();
- const availabilityTimer=setInterval(()=>{availability=availability.then(markAvailable).catch(error=>console.warn('Agent availability update failed:',error.code||'DATABASE_UNAVAILABLE'));},10000);availabilityTimer.unref();
+ let availability=Promise.resolve(),availabilityTimer;
  const warmInspection=async()=>{
- const pilots=(await db.query(`SELECT p.workspace_id,u.id AS actor_id FROM stockchief_runtime.codex_pilot_workspace_access p
-  JOIN users u ON u.workspace_id=p.workspace_id JOIN accounts a ON a.id=u.account_id
-  WHERE (p.pilot->>'enabled')::boolean AND
-   ($4 AND p.pilot->>'admission_kind'='COMMERCIAL' AND a.id=p.owner_account_id AND u.role='owner'
-    OR p.funding_workspace_id=ANY($1::text[]) AND lower(a.email)=ANY($2::text[])
-    AND (CASE WHEN p.account_inherited THEN a.id=p.owner_account_id AND u.role='owner'
-      ELSE (p.pilot->'authorized_actor_ids') ? u.id END) AND ($3 OR p.workspace_id=ANY($1::text[])))
-  ORDER BY p.workspace_id,u.id LIMIT 4`,[workspaces,
-   require('../src/assistant/codex-pilot-scope').list(process.env.STOCKCHIEF_CODEX_PILOT_EMAILS).map(e=>e.toLowerCase()),
-   require('../src/assistant/codex-pilot-scope').accountAccess(),commercialRollout])).rows;
+ if(process.env.STOCKCHIEF_RUNTIME_ENV==='staging'&&!commercialRollout){
+  try{await require('./environment-agent-demo/inspection-role-lifecycle').cleanupExpired(db);}catch(error){console.warn('Expired inspection cleanup deferred:',error.code||'INSPECTION_CLEANUP_UNAVAILABLE');}
+ }
+ const pilots=await inspectionWarmTargets(db,{workspaces,
+   emails:require('../src/assistant/codex-pilot-scope').list(process.env.STOCKCHIEF_CODEX_PILOT_EMAILS).map(e=>e.toLowerCase()),
+   accountAccess:require('../src/assistant/codex-pilot-scope').accountAccess(),commercialRollout});
  for(const row of pilots){
   await inspectionPool.warm({database:db,ctx:{workspaceId:row.workspace_id,actorId:row.actor_id},connectionString:address.toString()});
  }
@@ -66,10 +72,14 @@ async function main(){
   if(error.code!=='55P03')throw error;
   console.warn('Read-only browser warm-up deferred: SCHEMA_BUSY');
  }
+ // Availability means the worker can accept goals, not that startup and its
+ // tenant-scoped renderer preparation are still holding the queue.
+ await markAvailable();availabilityTimer=setInterval(()=>{availability=availability.then(markAvailable).catch(error=>console.warn('Agent availability update failed:',error.code||'DATABASE_UNAVAILABLE'));},10000);availabilityTimer.unref();
  let warming=Promise.resolve();
  const warmTimer=setInterval(()=>{warming=warming.then(warmInspection).catch(error=>console.warn('Read-only browser warm-up unavailable:',error.code||'INSPECTION_UNAVAILABLE'));},2*60000);warmTimer.unref();
  const handler=async job=>{
   const ctx={workspaceId:job.workspaceId,actorId:job.payload.actorId};
+  const retained=inspectionPool.retain({ctx,connectionString:address.toString()});
   try{return await require('../src/assistant/postgres-codex-pilot').run(db,ctx,job.payload.goalId,{sandboxPool,inspectionPool});}
   catch(error){
    // A failure before claim must not leave a permanent "Getting started".
@@ -78,7 +88,7 @@ async function main(){
     WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 AND status='READY'`,
     [ctx.workspaceId,ctx.actorId,job.payload.goalId,JSON.stringify({candidate:'codex',failure:{code:'WORKER_START_FAILED',requiresUserInput:false}})]).catch(()=>{});
    throw error;
-  }
+  }finally{await retained?.release();}
  };
  handler.externalEffect=true;
  const shouldClaim=async()=>Boolean((await db.query(`SELECT 1 FROM stockchief_runtime.codex_pilots WHERE (workspace_id=ANY($1::text[]) OR $2 AND admission_kind='COMMERCIAL')
@@ -97,4 +107,4 @@ async function main(){
  }catch(error){await inspectionPool.close();await sandboxPool.close();if(db)await db.close();throw error;}
 }
 if(require.main===module)main().catch(e=>{console.error(e.code||e.message);process.exitCode=1;});
-module.exports={main};
+module.exports={main,inspectionWarmTargets};

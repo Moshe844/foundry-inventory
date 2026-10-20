@@ -40,7 +40,7 @@ async function inspectionDatabase(cluster,admin,ctx,stagingAuthorization=null){
    table.table_name==='workspaces'?`id=${escapeLiteral(ctx.workspaceId)}`:
    table.table_name==='accounts'?`id=${escapeLiteral(accountId)}`:
    table.columns.includes('account_id')?`account_id=${escapeLiteral(accountId)}`:null;
-  const statements=[`CREATE ROLE ${identifier} LOGIN PASSWORD ${escapeLiteral(password)} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS`,
+  const statements=[`CREATE ROLE ${identifier} LOGIN PASSWORD ${escapeLiteral(password)} VALID UNTIL ${escapeLiteral(require('./inspection-role-lifecycle').expires())} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS`,
     `ALTER ROLE ${identifier} SET default_transaction_read_only=on`,
     `GRANT USAGE ON SCHEMA public,stockchief_runtime TO ${identifier}`];
   const guardedTables=[];
@@ -92,7 +92,8 @@ async function inspectionDatabase(cluster,admin,ctx,stagingAuthorization=null){
       await client.query('COMMIT');return result;
     }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
   }
-  return {query,transaction,close:async()=>{await pool.end();if(stagingAuthorization){
+  let poolClosed=false,roleCleaned=false;
+  return {query,transaction,renewLease:()=>admin.query(`ALTER ROLE ${identifier} VALID UNTIL ${escapeLiteral(require('./inspection-role-lifecycle').expires())}`),close:async()=>{if(!poolClosed){await pool.end();poolClosed=true;}if(stagingAuthorization&&!roleCleaned){
     const cleanupStatements=[];
     cleanupStatements.push(`REVOKE ALL PRIVILEGES ON ${scopeView} FROM ${identifier}`);
     for(const table of guardedTables){const name=`${escapeIdentifier(table.table_schema)}.${escapeIdentifier(table.table_name)}`;
@@ -100,7 +101,9 @@ async function inspectionDatabase(cluster,admin,ctx,stagingAuthorization=null){
       cleanupStatements.push(`DROP POLICY IF EXISTS ${escapeIdentifier(role+'_restrict')} ON ${name}`);
       cleanupStatements.push(`REVOKE ALL PRIVILEGES ON ${name} FROM ${identifier}`);}
     cleanupStatements.push(`REVOKE USAGE ON SCHEMA public,stockchief_runtime FROM ${identifier}`,`DROP ROLE ${identifier}`);
-    await require('./inspection-schema').mutate(admin,guardedTables,client=>client.query(cleanupStatements.join(';\n')));
+    await require('./inspection-schema').mutate(admin,guardedTables,async client=>{
+      if((await client.query('SELECT 1 FROM pg_roles WHERE rolname=$1',[role])).rows.length)await client.query(cleanupStatements.join(';\n'));
+    });roleCleaned=true;
   }},accountId,topology:{engine:'postgresql',shared:true,multiWriter:false}};
 }
 
@@ -116,7 +119,7 @@ async function createInspectionServer({cluster,database,ctx,beforeRead=()=>{},st
   // Install the identical restricted telemetry role/policies atomically,
   // instead of seven serial trips to the remote Staging database.
   const telemetryTables=[{table_schema:'public',table_name:'commercial_resource_measurements'}];
-  try{await require('./inspection-schema').mutate(database,telemetryTables,client=>client.query(`CREATE ROLE ${identifier} LOGIN PASSWORD ${escapeLiteral(password)} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+  try{await require('./inspection-schema').mutate(database,telemetryTables,client=>client.query(`CREATE ROLE ${identifier} LOGIN PASSWORD ${escapeLiteral(password)} VALID UNTIL ${escapeLiteral(require('./inspection-role-lifecycle').expires())} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
     GRANT USAGE ON SCHEMA public TO ${identifier};
     GRANT INSERT ON commercial_resource_measurements TO ${identifier};
     GRANT SELECT(id) ON commercial_resource_measurements TO ${identifier};
@@ -133,13 +136,14 @@ async function createInspectionServer({cluster,database,ctx,beforeRead=()=>{},st
   // Preparing the renderer alone left both TLS pools cold on the first page.
   // Open their existing bounded capacity before publishing the ready server.
   // No record, permission result or page content is cached by this warm-up.
+  let telemetryClosed=false,telemetryRoleCleaned=false;
   const closeTelemetry=async()=>{
-    await telemetry.end();
-    if(stagingAuthorization)await require('./inspection-schema').mutate(database,telemetryTables,client=>client.query(`DROP POLICY IF EXISTS ${identifier} ON commercial_resource_measurements;
+    if(!telemetryClosed){await telemetry.end();telemetryClosed=true;}
+    if(stagingAuthorization&&!telemetryRoleCleaned){await require('./inspection-schema').mutate(database,telemetryTables,async client=>{if((await client.query('SELECT 1 FROM pg_roles WHERE rolname=$1',[role])).rows.length)await client.query(`DROP POLICY IF EXISTS ${identifier} ON commercial_resource_measurements;
       DROP POLICY IF EXISTS ${escapeIdentifier(role+'_conflict')} ON commercial_resource_measurements;
       REVOKE SELECT(id) ON commercial_resource_measurements FROM ${identifier};
       REVOKE ALL PRIVILEGES ON commercial_resource_measurements FROM ${identifier};
-      REVOKE USAGE ON SCHEMA public FROM ${identifier};DROP ROLE ${identifier};`));
+      REVOKE USAGE ON SCHEMA public FROM ${identifier};DROP ROLE ${identifier};`);});telemetryRoleCleaned=true;}
   };
   try{await Promise.all([...Array.from({length:4},()=>readonly.query('SELECT 1')),
     ...Array.from({length:2},()=>telemetry.query('SELECT 1'))]);}
@@ -168,6 +172,7 @@ async function createInspectionServer({cluster,database,ctx,beforeRead=()=>{},st
   gate.use((req,res,next)=>require('./network-guard').restricted({databaseUrl:cluster.connectionString,stagingAuthorization,ctx},()=>app(req,res,next)));
   const server=await new Promise(resolve=>{const server=gate.listen(0,'127.0.0.1',()=>resolve(server));});
   return {origin:`http://127.0.0.1:${server.address().port}`,readonly,telemetryErrors,
+    renewLease:async()=>{await readonly.renewLease();await database.query(`ALTER ROLE ${identifier} VALID UNTIL ${escapeLiteral(require('./inspection-role-lifecycle').expires())}`);},
     flushTelemetry:()=>Promise.allSettled([...pendingTelemetry]),
     async close(){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));
       const results=await Promise.allSettled([readonly.close(),closeTelemetry()]);
