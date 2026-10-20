@@ -59,7 +59,14 @@ async function main(){
   const lease=await inspectionPool.acquire({database:db,ctx:{workspaceId:row.workspace_id,actorId:row.actor_id},connectionString:address.toString()});
   await lease.release();
  }
- };await warmInspection();
+ };
+ // Warming is optional: a busy schema must not take the entire worker offline.
+ // Tenant authorization, browser isolation and tool checks still run on every
+ // real acquire. A failed warm-up grants no renderer and spends nothing.
+ try{await warmInspection();}catch(error){
+  if(error.code!=='55P03')throw error;
+  console.warn('Read-only browser warm-up deferred: SCHEMA_BUSY');
+ }
  let warming=Promise.resolve();
  const warmTimer=setInterval(()=>{warming=warming.then(warmInspection).catch(error=>console.warn('Read-only browser warm-up unavailable:',error.code||'INSPECTION_UNAVAILABLE'));},2*60000);warmTimer.unref();
  const handler=async job=>{

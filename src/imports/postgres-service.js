@@ -340,6 +340,8 @@ async function analyse(database, ctx, input) {
       hasIdentity:proposal.mappings.name!==undefined||proposal.mappings.code!==undefined,unmappedNumeric})],
     conflicts:validated.conflicts,assumptions:proposal.assumptions || [],approvalStatus:'AWAITING_APPROVAL',
     status:'READY',planVersion:1,createdAt:at};
+  const trackingSummary=require('./tracking-review').tracker(plan.fieldMappings);
+  if(trackingSummary&&!streaming){trackingSummary.add(validated.rows);plan.transformations.trackingSummary=trackingSummary.finish(plan);}
   plan.integrityHash=integrityFor(plan,validated.rows);
   await database.transaction(async(client)=>{
     await client.query(`INSERT INTO import_plans(id,workspace_id,created_by_user_id,source_name,source_kind,source_hash,
@@ -356,16 +358,18 @@ async function analyse(database, ctx, input) {
     const hash=integrityStream(plan),summary={...validated.summary},conflicts=new Map();
     for(let start=0;start<sheet.rows.length;start+=500){
       const batch=validateRows({...sheet,rows:sheet.rows.slice(start,start+500)},proposal.mappings,proposal,validationContext,input);
+      trackingSummary?.add(batch.rows);
       for(const row of batch.rows)hash.append(row);
       for(const key of Object.keys(summary))summary[key]+=batch.summary[key];
       for(const c of batch.conflicts)conflicts.set(c.text,{...c,count:(conflicts.get(c.text)?.count||0)+c.count});
       await rowStore.insert(client,ctx.workspaceId,plan.id,batch.rows,at);
     }
     plan.integrityHash=hash.finish();plan.recordsValid=summary.valid;plan.recordsInvalid=summary.invalid;plan.conflicts=[...conflicts.values()];
+    if(trackingSummary)plan.transformations.trackingSummary=trackingSummary.finish(plan);
     plan.warnings=previewWarnings(summary,{hasQuantity:proposal.mappings.quantity!==undefined,
       hasIdentity:proposal.mappings.name!==undefined||proposal.mappings.code!==undefined,unmappedNumeric});
-    await client.query(`UPDATE import_plans SET records_valid=$3,records_invalid=$4,warnings=$5,conflicts=$6,integrity_hash=$7 WHERE workspace_id=$1 AND id=$2`,
-      [ctx.workspaceId,plan.id,plan.recordsValid,plan.recordsInvalid,JSON.stringify(plan.warnings),JSON.stringify(plan.conflicts),plan.integrityHash]);
+    await client.query(`UPDATE import_plans SET records_valid=$3,records_invalid=$4,warnings=$5,conflicts=$6,integrity_hash=$7,transformations=$8::jsonb WHERE workspace_id=$1 AND id=$2`,
+      [ctx.workspaceId,plan.id,plan.recordsValid,plan.recordsInvalid,JSON.stringify(plan.warnings),JSON.stringify(plan.conflicts),plan.integrityHash,JSON.stringify(plan.transformations)]);
   },{isolation:'SERIALIZABLE'});
   return get(database,ctx.workspaceId,plan.id);
 }
@@ -527,7 +531,7 @@ async function revise(database,ctx,id,input={}){
         unmappedNumericColumns:unmappedNumeric,confirmCatalogOnly,proposedLocations},
       planVersion:plan.planVersion+1};
     if(!trackingReview)delete revised.transformations.trackingReview;
-    const hash=integrityStream(revised),summary={total:0,valid:0,invalid:0,units:0,unvaluedUnits:0,valuedMinor:0,sourceCostWithoutStock:0},conflicts=new Map();
+    const hash=integrityStream(revised),summary={total:0,valid:0,invalid:0,units:0,unvaluedUnits:0,valuedMinor:0,sourceCostWithoutStock:0},conflicts=new Map(),trackingSummary=require('./tracking-review').tracker(fieldMappings);
     let lastRow=0,lastId='';
     for(;;){
       const current=(await client.query(`SELECT * FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND (row_number,id)>($3::bigint,$4::text) ORDER BY row_number,id LIMIT 500 FOR UPDATE`,[ctx.workspaceId,id,lastRow,lastId])).rows.map(hydrateRow);
@@ -536,12 +540,14 @@ async function revise(database,ctx,id,input={}){
         {detectedType,axisNames,variantColumns:plan.transformations.variantColumns,provenanceIndex:plan.transformations.provenanceIndex,problemsIndex:plan.transformations.problemsIndex,trackingReview},plannedLocations.withProposals(context,proposedLocations),
         {defaultLocationId,locationMappings,quantityOverrides});
       for(const row of validated.rows)hash.append(row);
+      trackingSummary?.add(validated.rows);
       for(const key of Object.keys(summary))summary[key]+=validated.summary[key];
       for(const conflict of validated.conflicts)conflicts.set(conflict.text,(conflicts.get(conflict.text)||0)+conflict.count);
       await rowStore.revise(client,ctx.workspaceId,id,current,validated.rows);
       lastRow=current.at(-1).rowNumber;lastId=current.at(-1).id;
     }
     revised.integrityHash=hash.finish();revised.recordsValid=summary.valid;revised.recordsInvalid=summary.invalid;
+    if(trackingSummary)revised.transformations.trackingSummary=trackingSummary.finish(revised);else delete revised.transformations.trackingSummary;
     revised.warnings=previewWarnings(summary,{hasQuantity:fieldMappings.quantity!==undefined,hasIdentity:fieldMappings.name!==undefined||fieldMappings.code!==undefined,unmappedNumeric});
     revised.conflicts=[...conflicts].map(([text,count])=>({kind:'unknown_location',text,count}));
     await client.query(`UPDATE import_plans SET location_mappings=$3::jsonb,transformations=$4::jsonb,
@@ -571,6 +577,7 @@ async function approve(database, ctx, id, expectedHash) {
       throw new ValidationError('Map a product name or SKU and recalculate the preview before approving.');
     if(!plan.recordsValid)throw new ValidationError('There are no valid rows to import.');
     if(plan.transformations.workbook&&plan.recordsInvalid)throw new ValidationError('This workbook still has unresolved source rows. Resolve them before approving the complete inventory; StockChief will not silently import only part of it.');
+    if(plan.recordsInvalid&&(plan.fieldMappings.serialTracked!==undefined||plan.fieldMappings.lotTracked!==undefined))throw new ValidationError('Resolve the tracking requirements and invalid rows before approving this inventory. StockChief will not silently skip part of the source.');
     await plannedLocations.assertOwner(client,ctx,plan.transformations.proposedLocations||[]);
     if(plan.transformations.proposedLocations?.length)await require('../entitlements/postgres-service').assertMeterCapacity(client,
       await require('../entitlements/postgres-service').ownerScopeForWorkspace(client,ctx.workspaceId),'locations',plan.transformations.proposedLocations.length);
