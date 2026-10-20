@@ -17,6 +17,9 @@ test('current price evidence covers inactive records and distinguishes zero, mis
  const readOnly={query:(sql,args)=>{assert.match(sql.trim(),/^(SELECT|WITH)\b/i);return db.query(sql,args);}};
  const read=await assistant.lookup(readOnly,ctx,{view:'prices'}),rows=new Map(read.rows.map(row=>[row.sku,row]));
  assert.equal(read.extent.totalRows,5);assert.equal(read.extent.complete,true);assert.equal(rows.get('FREE').sellingPriceMinor,0);assert.equal(rows.get('FREE').sellingPriceRecorded,true);assert.equal(rows.get('FREE').currency,'CAD');
+ assert.equal(rows.get('FREE').productStatus,'active');assert.equal(rows.get('FREE').variantStatus,'active');
+ assert.equal(rows.get('MISSING').productStatus,'active');assert.equal(rows.get('MISSING').variantStatus,'active');
+ assert.equal(rows.get('INACTIVE').productStatus,'active');assert.equal(rows.get('ARCHIVED').variantStatus,'active');
  for(const code of ['MISSING','CLEARED','ARCHIVED']){assert.equal(rows.get(code).sellingPriceMinor,null);assert.equal(rows.get(code).sellingPriceRecorded,false);}
  assert.equal(rows.get('INACTIVE').variantStatus,'inactive');assert.equal(rows.get('INACTIVE').sellingPriceMinor,700);assert.equal(rows.get('INACTIVE').currency,'GBP');assert.equal(rows.get('ARCHIVED').productStatus,'inactive');assert(!JSON.stringify(read).includes('PRIVATE-FOREIGN'));
  const spec={dataset:'catalogue',columns:['sku','product_status','variant_status','selling_price_minor','selling_price_recorded','currency'],sort:'sku',direction:'asc'};

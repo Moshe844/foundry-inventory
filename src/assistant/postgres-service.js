@@ -438,7 +438,7 @@ async function lookup(database,ctx,request,options={}) {
       ORDER BY i.name,s.code LIMIT 100`,[ctx.workspaceId,search])).rows;
     const rows=sourceRows.map((row)=>
       evidenceRow({product:row.product,sku:row.sku,variant:row.variant,
-        productStatus:row.product_active===1?'active':'inactive',variantStatus:row.variant_active===1?'active':'inactive',
+        productStatus:Number(row.product_active)===1?'active':'inactive',variantStatus:Number(row.variant_active)===1?'active':'inactive',
         sellingPrice:row.amount_minor===null?'Not recorded':pricing.formatMinor(Number(row.amount_minor),row.currency),
         sellingPriceRecorded:row.amount_minor!==null,
         sellingPriceMinor:row.amount_minor===null?null:Number(row.amount_minor),currency:row.currency||null,
