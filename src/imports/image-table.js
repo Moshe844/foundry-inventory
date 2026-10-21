@@ -7,6 +7,31 @@ const {ValidationError}=require('../domain/errors');
 const MAX_IMAGE_BYTES=20*1024*1024;
 const MAX_PIXELS=12*1000*1000;
 
+function removeTableRules(canvas){
+  // Thin, long grid rules can make OCR read an entire table as line art.
+  // Remove only geometric rules from the working copy, preserving the
+  // original uploaded image and broad filled headings for review.
+  const ctx=canvas.getContext('2d'),pixels=ctx.getImageData(0,0,canvas.width,canvas.height),{data}=pixels,w=canvas.width,h=canvas.height,
+    dark=(x,y)=>{const i=(y*w+x)*4;return data[i+3]>100&&(data[i]+data[i+1]+data[i+2])/3<180;},marks=[];
+  for(const horizontal of [true,false]){
+    const outer=horizontal?h:w,inner=horizontal?w:h,minLength=Math.max(40,Math.ceil(inner*.12)),maxThickness=Math.max(2,Math.ceil(Math.max(w,h)*.004)),lines=[];
+    for(let at=0;at<outer;at++){const runs=[];let start=-1;for(let n=0;n<=inner;n++){
+      if(n<inner&&dark(horizontal?n:at,horizontal?at:n)){if(start<0)start=n;}
+      else if(start>=0){if(n-start>=minLength)runs.push({start,end:n});start=-1;}
+    }if(runs.length)lines.push({at,runs});}
+    for(let i=0;i<lines.length;){let end=i+1;while(end<lines.length&&lines[end].at===lines[end-1].at+1)end++;
+      if(lines[end-1].at-lines[i].at+1<=maxThickness)for(const line of lines.slice(i,end))for(const run of line.runs)marks.push({horizontal,at:line.at,...run});i=end;
+    }
+  }
+  const separation=Math.max(2,Math.ceil(Math.max(w,h)*.004)),rules=marks.filter(line=>{
+    const intersections=marks.filter(other=>other.horizontal!==line.horizontal&&other.at>=line.start&&other.at<line.end&&line.at>=other.start&&line.at<other.end).map(other=>other.at).sort((a,b)=>a-b);
+    return intersections.length>1&&intersections.at(-1)-intersections[0]>separation;
+  });
+  const margin=Math.max(1,Math.ceil(Math.max(w,h)/2000));
+  for(const line of rules)for(let at=Math.max(0,line.at-margin);at<=Math.min((line.horizontal?h:w)-1,line.at+margin);at++)for(let n=Math.max(0,line.start-margin);n<Math.min(line.horizontal?w:h,line.end+margin);n++){const i=((line.horizontal?at:n)*w+(line.horizontal?n:at))*4;data[i]=data[i+1]=data[i+2]=255;data[i+3]=255;}
+  ctx.putImageData(pixels,0,0);return rules.length;
+}
+
 function darkHeader(canvas){
   const {data}=canvas.getContext('2d').getImageData(0,0,canvas.width,canvas.height),bands=[];let band=null;
   for(let y=0;y<canvas.height;y++){
@@ -35,7 +60,7 @@ async function readDarkTable(canvas,worker){
     const found=new Set(cells.flatMap(c=>require('./fields').bestFieldScores(c.text).slice(0,1).map(s=>s.field)));
     if(found.size<3||!found.has('code')&&!found.has('name'))continue;
     const body=createCanvas(canvas.width,canvas.height-band.bottom-1);body.getContext('2d').drawImage(canvas,0,band.bottom+1,canvas.width,body.height,0,0,body.width,body.height);
-    const bodyWords=words(await worker.recognize(body.toBuffer('image/png'),{}, {blocks:true})).filter(w=>w.confidence>=35);
+    const bodyWords=words(await worker.recognize(body.toBuffer('image/png'),{}, {blocks:true}));
     const heights=bodyWords.map(w=>w.bbox.y1-w.bbox.y0).sort((a,b)=>a-b),typical=heights[Math.floor(heights.length/2)]||20,rows=[];
     for(const word of bodyWords.sort((a,b)=>(a.bbox.y0+a.bbox.y1)-(b.bbox.y0+b.bbox.y1)||a.bbox.x0-b.bbox.x0)){
       if(word.bbox.y1-word.bbox.y0>typical*2)continue;
@@ -134,6 +159,7 @@ async function parse(buffer){
   const scale=Math.max(1,Math.min(3,Math.floor(Math.sqrt(MAX_PIXELS/(size.width*size.height)))));
   const canvas=createCanvas(Math.floor(size.width*scale),Math.floor(size.height*scale));
   const context=canvas.getContext('2d');context.drawImage(image,0,0,canvas.width,canvas.height);
+  removeTableRules(canvas);
   const {createWorker}=require('tesseract.js');
   const english=require('@tesseract.js-data/eng');
   const worker=await createWorker(english.code,1,
@@ -149,4 +175,4 @@ async function parse(buffer){
   return {sheets:[{name:'Image table',...sheet}],primarySheet:0,format:'image'};
 }
 
-module.exports={parse,dimensions};
+module.exports={parse,dimensions,removeTableRules};

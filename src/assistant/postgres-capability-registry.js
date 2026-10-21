@@ -26,6 +26,7 @@ const FIELDS=Object.freeze({
   postingDate:{type:'string',description:'Accounting posting date, YYYY-MM-DD. Defaults to today and is shown for approval; closed periods cannot be used.'},
   ruleChanges:{type:'string',description:'A JSON array of proposed typed operating-rule changes using the discovered canonical schema. Supply only established facts and requested effects. Canonical identity resolution, intent verification and owner approval still apply.'},
   search:{type:'string',description:'Name, code, or status explicitly being sought.'},
+  priceScope:{type:'string',enum:['current','history'],description:'Current prices or saved history with prior values, currencies and current-price markers. Proposals alone prove no change.'},
   offset:{type:'integer',description:'Nonnegative page offset. Start at zero and follow the returned nextOffset with the same search. Saved stock-warning pages use stockWarningCoverage.nextOffset and separate enabled/disabled counts; directory and supplier-product pages use extent.nextOffset.'},
   baseCode:{type:'string',description:'Exact new product SKU or base code explicitly supplied by the owner.'},
   sku:{type:'string',entity:'sku',description:'Product, variant, or SKU identity.'},
@@ -281,7 +282,7 @@ const READS={
   inventory_valuation:'Complete matching physical units, costed units, missing-cost units and recorded inventory book-cost totals with currency, plus product/location detail including positions with no cost record. Each detail row distinguishes physical, costed and missing-cost units; an unrecorded book cost is not zero. Totals cover the full matching scope independently of detail pagination; distinct from supplier purchase quotes.',
   inventory_cost_movements:'Recorded changes in inventory book cost with import file and row provenance.',
   inventory_summary:'Business-wide current and historical inventory setup evidence: active product and SKU counts, total on-hand units, and count of every product record ever created, including inactive records. Valid even when this business is empty; requires no product or location.',
-  prices:'Current saved selling prices including inactive products and variants. Zero is recorded; missing or cleared prices are not. Exact coverage is returned; use the catalogue dataset for filtered or larger results.',purchase_costs:'Purchase quotes, current inventory book cost, and historical opening-import cost by SKU, including inactive records; all are separate. Missing quote does not imply uncosted stock. Exact paged coverage is returned; follow nextOffset with the same search.',
+  prices:'Current selling prices or priceScope=history: actual saved prior prices, dates, currencies and current markers. Zero, cleared and missing prices differ. Includes inactive SKUs. Follow nextOffset; proposals alone prove no executed change.',purchase_costs:'Purchase quotes, current inventory book cost, and historical opening-import cost by SKU, including inactive records; all are separate. Missing quote does not imply uncosted stock. Exact paged coverage is returned; follow nextOffset with the same search.',
   supplier_items:'Active supplier-product links with exact paged coverage, saved product lead-time overrides, inherited supplier defaults, minimum quantities, order multiples, pack sizes and costs. A missing value is not zero or one. Read suppliers for defaults and exact link counts, including suppliers with no linked products.',needs_you:'Owner decisions awaiting attention.',
   operating_rules:'Approved operating rules and settings. Stock warnings include enabled rows, inactiveStockWarnings, exact stockWarningCoverage and recorded evaluation receipts; follow nextOffset for more saved rules. Other setting kinds are bounded current in-force rows. Do not substitute the general capability catalogue.',
   replenishment:'Recorded replenishment recommendations and their state.',locations:'Inventory locations.',
@@ -300,11 +301,11 @@ const READS={
 };
 const READ_RECORD_KINDS={sales_orders:'sales_order',purchase_orders:'purchase_order',
   transfers:'transfer',customer_returns:'customer_return'};
-const PAGED_READS=new Set(['operating_rules','suppliers','customers','supplier_items','purchase_costs','messages']);
+const PAGED_READS=new Set(['operating_rules','suppliers','customers','supplier_items','purchase_costs','messages','prices']);
 for(const [view,description] of Object.entries(READS))add(`read.${view}`,description,
-  ['search','timeframe',...(PAGED_READS.has(view)?['offset']:[])],'read',permissions.VIEW,'none',
+  ['search','timeframe',...(PAGED_READS.has(view)?['offset']:[]),...(view==='prices'?['priceScope']:[])],'read',permissions.VIEW,'none',
   async(service,db,ctx,text,args,options)=>service.lookup(db,ctx,{view,search:args.search||null,
-    timeframe:args.timeframe||'all_time',...(PAGED_READS.has(view)?{offset:args.offset??0}:{})},{provider:options.answerProvider,question:text}),
+    timeframe:args.timeframe||'all_time',...(PAGED_READS.has(view)?{offset:args.offset??0}:{}),...(view==='prices'?{priceScope:args.priceScope||'current'}:{})},{provider:options.answerProvider,question:text}),
   async(_service,_db,_ctx,result)=>Boolean(result&&Array.isArray(result.rows)),
   {view,recordKind:READ_RECORD_KINDS[view]||null,
     argumentSchemas:{timeframe:()=>({type:'string',enum:require('./read-timeframes').supported(view)})},

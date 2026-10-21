@@ -439,6 +439,31 @@ async function lookupRecords(database,ctx,request,options={}) {
       columns:['product','sku','location','change','physicalStockChange','bookCostChange','recordedUnitCost','currency','source','reference','at']};
   }
   if(request.view==='prices'){
+    const priceScope=request.priceScope||'current',offset=Number(request.offset??0);
+    if(!['current','history'].includes(priceScope)||!Number.isSafeInteger(offset)||offset<0||offset>1000000)throw new ValidationError('Choose a valid price scope and page offset.');
+    if(priceScope==='history'){
+      const result=(await database.query(`WITH ordered AS (
+        SELECT p.*,lag(id) OVER w AS previous_id,lag(amount_minor) OVER w AS previous_minor,lag(currency) OVER w AS previous_currency,
+          row_number() OVER(PARTITION BY sku_id ORDER BY created_at DESC,id DESC)=1 AS is_current
+        FROM sku_prices p WHERE workspace_id=$1 WINDOW w AS(PARTITION BY sku_id ORDER BY created_at,id)
+      ), scoped AS (SELECT p.*,i.id AS item_id,i.name AS product,s.code AS sku,COALESCE(s.variant_label,'') AS variant
+        FROM ordered p JOIN skus s ON s.workspace_id=p.workspace_id AND s.id=p.sku_id
+        JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
+        WHERE $2::text IS NULL OR i.name ILIKE '%'||$2||'%' OR s.code ILIKE '%'||$2||'%' OR COALESCE(s.variant_label,'') ILIKE '%'||$2||'%')
+        SELECT (SELECT count(*) FROM scoped) AS total_matches,COALESCE(jsonb_agg(page ORDER BY page.created_at DESC,page.id DESC),'[]'::jsonb) AS records
+        FROM(SELECT * FROM scoped ORDER BY created_at DESC,id DESC LIMIT 100 OFFSET $3) page`,[ctx.workspaceId,search,offset])).rows[0];
+      const sourceRows=result.records,total=Number(result.total_matches),rows=sourceRows.map(row=>evidenceRow({product:row.product,sku:row.sku,variant:row.variant,
+        priceChangeId:row.id,previousPriceChangeId:row.previous_id||null,
+        sellingPrice:row.amount_minor===null?'Not recorded':pricing.formatMinor(Number(row.amount_minor),row.currency),
+        sellingPriceRecorded:row.amount_minor!==null,sellingPriceMinor:row.amount_minor===null?null:Number(row.amount_minor),currency:row.currency,
+        previousSellingPrice:row.previous_id&&row.previous_minor!==null?pricing.formatMinor(Number(row.previous_minor),row.previous_currency):'Not recorded',
+        previousSellingPriceRecorded:Boolean(row.previous_id)&&row.previous_minor!==null,previousSellingPriceMinor:row.previous_minor===null?null:Number(row.previous_minor),previousCurrency:row.previous_currency||null,
+        isCurrent:row.is_current,priceRecordedAt:row.created_at,source:row.source},`/inventory/${row.item_id}`));
+      return {answer:rows.length?`Showing ${rows.length} of ${total} saved selling-price changes, newest first.`:'No saved selling-price changes matched this page.',rows,
+        extent:{returnedRows:rows.length,totalRows:total,offset,nextOffset:offset+rows.length<total?offset+rows.length:null,complete:offset===0&&rows.length===total,
+          scope:'Immutable saved price changes, including cleared prices and inactive products. Previous values come from the immediately preceding saved record for the same SKU. isCurrent identifies the latest saved price; proposals alone prove no executed change.'},
+        columns:['product','sku','variant','previousSellingPrice','previousCurrency','sellingPrice','currency','priceRecordedAt','isCurrent','source']};
+    }
     const sourceRows=(await database.query(`SELECT i.id AS item_id,i.name AS product,s.code AS sku,
       COALESCE(s.variant_label,'') AS variant,p.amount_minor,p.currency,p.created_at,
       i.is_active AS product_active,s.is_active AS variant_active,count(*) OVER() AS total_matches
@@ -448,7 +473,7 @@ async function lookupRecords(database,ctx,request,options={}) {
       WHERE s.workspace_id=$1
       AND ($2::text IS NULL OR i.name ILIKE '%'||$2||'%' OR s.code ILIKE '%'||$2||'%'
         OR COALESCE(s.variant_label,'') ILIKE '%'||$2||'%')
-      ORDER BY i.name,s.code LIMIT 100`,[ctx.workspaceId,search])).rows;
+      ORDER BY i.name,s.code LIMIT 100 OFFSET $3`,[ctx.workspaceId,search,offset])).rows;
     const rows=sourceRows.map((row)=>
       evidenceRow({product:row.product,sku:row.sku,variant:row.variant,
         productStatus:Number(row.product_active)===1?'active':'inactive',variantStatus:Number(row.variant_active)===1?'active':'inactive',
@@ -456,10 +481,10 @@ async function lookupRecords(database,ctx,request,options={}) {
         sellingPriceRecorded:row.amount_minor!==null,
         sellingPriceMinor:row.amount_minor===null?null:Number(row.amount_minor),currency:row.currency||null,
         priceRecordedAt:row.created_at||''},`/inventory/${row.item_id}`));
-    const total=sourceRows.length?Number(sourceRows[0].total_matches):0;
+    const total=sourceRows.length?Number(sourceRows[0].total_matches):offset?Number((await database.query(`SELECT count(*) AS n FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id WHERE s.workspace_id=$1 AND ($2::text IS NULL OR i.name ILIKE '%'||$2||'%' OR s.code ILIKE '%'||$2||'%' OR COALESCE(s.variant_label,'') ILIKE '%'||$2||'%')`,[ctx.workspaceId,search])).rows[0].n):0;
     return {answer:rows.length?`Showing current saved selling prices for ${rows.length} of ${total} matching SKUs, including inactive records.`:
       'No product or SKU matched that price request.',rows,
-      extent:{returnedRows:rows.length,totalRows:total,complete:rows.length===total,scope:'Matching SKUs including inactive products and variants. Only the latest saved price is current; zero is a recorded price. Use the catalogue dataset to filter or summarize larger results.'},
+      extent:{returnedRows:rows.length,totalRows:total,offset,nextOffset:offset+rows.length<total?offset+rows.length:null,complete:offset===0&&rows.length===total,scope:'Matching SKUs including inactive products and variants. Only the latest saved price is current; zero is a recorded price. Follow nextOffset with the same search for more matching SKUs.'},
       columns:['product','sku','variant','productStatus','variantStatus','sellingPrice','currency','priceRecordedAt']};
   }
   if(request.view==='purchase_costs'){
