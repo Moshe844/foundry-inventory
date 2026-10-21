@@ -4,3 +4,8 @@ test('decision filters and exact instants preserve identities and never turn due
  const all=present(items);assert.equal(all.total,3);assert.equal(all.rows.find(i=>i.sourceId==='po').createdAt,null);assert.equal(all.rows.find(i=>i.sourceId==='po').dueDate,'2026-10-16');assert.equal(present(items,{category:'mail'}).rows.length,1);assert.equal(present(items,{q:'oak'}).rows.length,1);assert.equal(present(items,{q:'absent'}).total,3);assert.equal(present(items,{q:'absent'}).rows.length,0);assert.equal(present(items,{sort:'newest'}).rows[0].sourceId,'message');assert.equal(present(items,{sort:'oldest'}).rows.at(-1).sourceId,'po');
  assert.equal(present(items,{category:'mail'}).rows[0].id,all.rows[0].id);assert.match(present(items,{q:'Oak & Sons'}).groups[0].href,/Oak\+%26\+Sons/);assert.equal(present(items,{category:'invalid',sort:'invalid'}).category,'all');
 });
+
+test('unanswered agent questions have a distinct searchable category and exact asked time',()=>{
+ const item={kind:'clarification',sourceId:'private-goal:question:revision',title:'Answer StockChief’s question',happened:'Which location should receive these units?',href:'/ask?goal=private-goal#focused-goal',createdAt:'2026-10-21T12:34:56.000Z',timeLabel:'Question asked'};
+ const inbox=present([item],{category:'clarification',q:'location'});assert.equal(inbox.rows.length,1);assert.equal(inbox.rows[0].createdAt,item.createdAt);assert.equal(inbox.groups.find(g=>g.key==='clarification').label,'Questions');assert.equal(inbox.groups.find(g=>g.key==='clarification').count,1);assert.equal(present([item],{category:'approval'}).rows.length,0);assert.equal(inbox.rows[0].href,item.href);
+});

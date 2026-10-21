@@ -1,7 +1,7 @@
 'use strict';
 const {createHash}=require('node:crypto');
-const GROUPS=[['all','Everything'],['approval','Approvals'],['mail','Messages'],['inventory','Inventory'],['accounting','Money'],['orders','Orders & deliveries'],['connection','Connections'],['other','Other issues']];
-function group(kind){return ['approval','recovery'].includes(kind)?'approval':['order','purchase','shipping'].includes(kind)?'orders':['mail','inventory','accounting','connection'].includes(kind)?kind:'other';}
+const GROUPS=[['all','Everything'],['approval','Approvals'],['clarification','Questions'],['mail','Messages'],['inventory','Inventory'],['accounting','Money'],['orders','Orders & deliveries'],['connection','Connections'],['other','Other issues']];
+function group(kind){return ['approval','recovery'].includes(kind)?'approval':['order','purchase','shipping'].includes(kind)?'orders':['clarification','mail','inventory','accounting','connection'].includes(kind)?kind:'other';}
 function instant(value){if(!value)return null;const text=value instanceof Date?value.toISOString():String(value);if(!/T|\d \d{2}:/.test(text))return null;const time=Date.parse(text);return Number.isFinite(time)?new Date(time).toISOString():null;}
 function identity(item){return createHash('sha256').update(JSON.stringify([item.kind,item.sourceId||item.approval?.proposalId||'',item.href,item.title,item.createdAt||item.at])).digest('hex').slice(0,20);}
 function present(items,query={}){

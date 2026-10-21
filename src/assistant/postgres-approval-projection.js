@@ -1,7 +1,7 @@
 'use strict';
 const {digest,snapshot}=require('./approval-revision');
 
-// Actor-private durable approvals belong in the existing decision inbox too.
+// Actor-private durable approvals and questions belong in the decision inbox.
 // This projection is SELECT-only. In particular, do not call inbox()/stage(),
 // acknowledge a card, or turn a frozen mission into an execution grant here.
 async function pending(database,workspaceId,actorId){
@@ -13,7 +13,11 @@ async function pending(database,workspaceId,actorId){
   catch(error){if(error.status===403||error.status===404)return [];throw error;}
  }
  if(!emails.length&&!commercial)return [];
- const rows=(await database.query(`SELECT g.id AS goal_id,g.created_at,u.role AS actor_role,u.permissions AS actor_permissions,d.key AS delivery_key,d.value AS delivery,
+ const rows=(await database.query(`SELECT g.id AS goal_id,g.created_at,g.updated_at,g.status,g.answer,
+   CASE WHEN g.status='WAITING_USER' THEN g.checkpoint#>'{harness,userQuestion}' END AS user_question,
+   CASE WHEN g.status='WAITING_USER' THEN g.checkpoint->'conversationState' END AS conversation_state,
+   CASE WHEN g.status='WAITING_USER' THEN g.checkpoint#>>'{harness,authorityStamp}' END AS authority_stamp,
+   u.role AS actor_role,u.permissions AS actor_permissions,d.key AS delivery_key,d.value AS delivery,
    CASE d.value->>'kind' WHEN 'business' THEN to_jsonb(p) WHEN 'rule' THEN to_jsonb(r) END AS proposal,
    m.id AS mission_id,m.plan_hash,m.approved_steps,m.approval_status,m.authorization_mode,m.steps AS mission_steps
   FROM stockchief_runtime.assistant_goals g
@@ -23,8 +27,8 @@ async function pending(database,workspaceId,actorId){
     AND ($5 AND pilot.pilot->>'admission_kind'='COMMERCIAL' OR pilot.funding_workspace_id=ANY($4::text[])
     AND (CASE WHEN pilot.account_inherited THEN a.id=pilot.owner_account_id AND u.role='owner'
       ELSE (pilot.pilot->'authorized_actor_ids') ? g.actor_user_id END))
-  CROSS JOIN LATERAL jsonb_each(CASE WHEN jsonb_typeof(g.checkpoint#>'{harness,approvalDeliveries}')='object'
-    THEN g.checkpoint#>'{harness,approvalDeliveries}' ELSE '{}'::jsonb END) d
+  LEFT JOIN LATERAL jsonb_each(CASE WHEN g.status='WAITING_APPROVAL' AND jsonb_typeof(g.checkpoint#>'{harness,approvalDeliveries}')='object'
+    THEN g.checkpoint#>'{harness,approvalDeliveries}' ELSE '{}'::jsonb END) d ON true
   LEFT JOIN stockchief_runtime.assistant_action_proposals p ON d.value->>'kind'='business'
     AND p.id=d.value->>'proposalId' AND p.workspace_id=g.workspace_id AND p.actor_user_id=g.actor_user_id AND p.status='PENDING'
   LEFT JOIN operating_instruction_proposals r ON d.value->>'kind'='rule'
@@ -35,11 +39,31 @@ async function pending(database,workspaceId,actorId){
       AND m.approval_status IN ('PENDING','APPROVED')
     ORDER BY m.created_at DESC,m.id DESC LIMIT 1) m ON true
   WHERE g.workspace_id=$1 AND g.actor_user_id=$2 AND ($5 OR lower(a.email)=ANY($3::text[]))
-    AND g.checkpoint->>'runtime'='codex-staging' AND g.status='WAITING_APPROVAL' AND g.expires_at>now()
-    AND (p.id IS NOT NULL OR r.id IS NOT NULL)
+    AND g.checkpoint->>'runtime'='codex-staging' AND g.status IN ('WAITING_APPROVAL','WAITING_USER') AND g.expires_at>now()
+    AND (g.status='WAITING_USER' OR p.id IS NOT NULL OR r.id IS NOT NULL)
   ORDER BY g.created_at,g.id,d.key`,[workspaceId,actorId,emails,require('./codex-pilot-scope').fundingWorkspaces(),commercial])).rows;
  const decisions=new Set(),items=new Map();
  for(const row of rows){
+  if(row.status==='WAITING_USER'){
+   const permissions=require('../actions/permissions'),actor={role:row.actor_role,permissions:row.actor_permissions};
+   // Questions may mention facts from the original permission context. A
+   // changed membership must not expose that prior private conversation.
+   const stamp=require('node:crypto').createHash('sha256').update(JSON.stringify({permissions:actor.permissions,role:actor.role})).digest('hex');
+   if(!permissions.can(actor,permissions.VIEW)||row.authority_stamp!==stamp)continue;
+   const question=row.user_question||row.conversation_state?.input;
+   const state=require('./agent-conversation').state({id:row.goal_id,status:row.status,answer:row.answer,
+    checkpoint:{harness:{userQuestion:question?{...question,id:row.conversation_state?.input?.id||question.id}:null},conversationState:row.conversation_state}});
+   if(!state.canReply||!state.input?.question)continue;
+   const askedAt=state.history.findLast(m=>m.role==='assistant'&&m.phase==='clarification'&&m.text===state.input.question)?.at||null;
+   const sourceId=row.goal_id+':question:'+state.input.id;
+   items.set(sourceId,{kind:'clarification',requiredPermissions:[permissions.VIEW],importance:'Important',priority:85,
+    sourceId,title:'Answer StockChief’s question',happened:state.input.question,
+    why:'Your request is waiting for information or a business choice.',
+    recommendation:'Reply in Ask StockChief to continue the same request.',
+    href:'/ask?goal='+encodeURIComponent(row.goal_id)+'#focused-goal',actionLabel:'Answer question',
+    createdAt:askedAt,timeLabel:askedAt?'Question asked':'Question time unavailable',updatedAt:row.updated_at,at:askedAt});
+   continue;
+  }
   const card=row.delivery,p=row.proposal;
   if(!p||!['business','rule'].includes(card?.kind))continue;
   // Ownership does not preserve authority after a membership is changed.
