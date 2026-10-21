@@ -772,7 +772,7 @@ async function lookupRecords(database,ctx,request,options={}) {
       'cashReturned','unpaidInvoiceCredited']};
   }
   if(request.view==='purchase_orders'){
-    const rows=(await database.query(`SELECT po.id,po.po_number,po.status,po.currency,s.name AS supplier,
+    const result=await database.query(`SELECT COUNT(*) OVER() AS total_matches,po.id,po.po_number,po.status,po.currency,s.name AS supplier,
       COALESCE(SUM(pol.quantity_units),0) AS ordered_units,
       COALESCE(SUM(pol.quantity_received_units),0) AS received_units,
       COALESCE(SUM(pol.quantity_units-pol.quantity_received_units),0) AS outstanding_units,
@@ -801,8 +801,11 @@ async function lookupRecords(database,ctx,request,options={}) {
       WHERE po.workspace_id=$1 AND ($2::text IS NULL OR po.po_number ILIKE '%'||$2||'%' OR s.name ILIKE '%'||$2||'%'
         OR po.status ILIKE '%'||$2||'%') GROUP BY po.id,s.name,bills.invoice_count,bills.disputed_count,
         bills.invoice_documents_minor,bills.posted_payable_minor,bills.invoice_documents
-      ORDER BY po.created_at DESC LIMIT 100`,
-    [ctx.workspaceId,search])).rows.map((row)=>{
+      ORDER BY po.created_at DESC,po.id LIMIT 100`,
+    [ctx.workspaceId,search]);
+    const openStatuses=require('../purchasing/position').OPEN_STATUSES;
+    const rows=result.rows.map((row)=>{
+      const outstandingUnits=Number(row.outstanding_units),isOpen=openStatuses.includes(row.status)&&outstandingUnits>0;
       const documents=Array.isArray(row.invoice_documents)?row.invoice_documents:[];
       const invoiceDocuments=documents.map((invoice)=>{
         const exceptions=Array.isArray(invoice.exceptions)?invoice.exceptions.map((entry)=>entry.kind).filter(Boolean):[];
@@ -813,7 +816,7 @@ async function lookupRecords(database,ctx,request,options={}) {
       });
       return evidenceRow({order:row.po_number,status:row.status,supplier:row.supplier,
       orderedUnits:Number(row.ordered_units),receivedUnits:Number(row.received_units),
-      outstandingUnits:Number(row.outstanding_units),currency:row.currency,
+      outstandingUnits,isOpen,incomingUnits:isOpen?outstandingUnits:0,currency:row.currency,
       total:Number(row.unpriced_lines)?null:pricing.formatMinor(Math.round(Number(row.total_amount)*100),row.currency),
       unpricedLines:Number(row.unpriced_lines),invoiceCount:Number(row.invoice_count),
       disputedInvoiceCount:Number(row.disputed_count),
@@ -823,15 +826,18 @@ async function lookupRecords(database,ctx,request,options={}) {
       `/purchasing/orders/${row.id}`);
     });
     const answer=rows.length===1?`${rows[0].order} is ${rows[0].status.toLowerCase().replace(/_/g,' ')}: `+
-      `${rows[0].orderedUnits} ordered, ${rows[0].receivedUnits} received, ${rows[0].outstandingUnits} still expected; `+
+      `${rows[0].orderedUnits} planned, ${rows[0].receivedUnits} received, ${rows[0].incomingUnits} still expected on an open order; `+
       `total ${rows[0].total===null?'not fully priced':rows[0].total}; `+
       `${rows[0].invoiceCount} supplier invoice${rows[0].invoiceCount===1?'':'s'} recorded, `+
       `${rows[0].postedPayable} posted payable.`:
-      rows.length?`${rows.length} purchase orders matched; ${rows.reduce((sum,row)=>sum+row.outstandingUnits,0).toLocaleString('en-US')} units remain outstanding.`:
+      rows.length?`${rows.length} purchase orders shown; ${rows.filter(row=>row.isOpen).length} are open with `+
+        `${rows.reduce((sum,row)=>sum+row.incomingUnits,0).toLocaleString('en-US')} units still expected. Draft and cancelled quantities are not incoming stock.`:
         'No purchase order matched that request.';
     return {answer,rows,columns:['order','status','supplier','orderedUnits','receivedUnits',
-      'outstandingUnits','total','currency','unpricedLines','invoiceCount','disputedInvoiceCount',
-      'invoiceDocumentsReceived','postedPayable','invoiceDocuments','invoiceDocumentsTruncated']};
+      'outstandingUnits','isOpen','incomingUnits','total','currency','unpricedLines','invoiceCount','disputedInvoiceCount',
+      'invoiceDocumentsReceived','postedPayable','invoiceDocuments','invoiceDocumentsTruncated'],
+      extent:{rowKind:'records',returnedRows:rows.length,totalRows:result.rows.length?Number(result.rows[0].total_matches):0,
+        complete:!result.rows.length||Number(result.rows[0].total_matches)===rows.length}};
   }
   if(request.view==='sales_orders'){
     const result=await database.query(`SELECT COUNT(*) OVER() AS total_matches,so.id,so.order_number,so.status,so.currency,so.reference,c.name AS customer,
