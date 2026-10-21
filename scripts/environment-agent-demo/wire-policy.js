@@ -23,6 +23,11 @@ function normalize(provider,input,{nativeTokenPreflight=false}={}){
  if(body.service_tier&&!['default','standard_only','auto'].includes(body.service_tier))throw new Error('UNAPPROVED_SERVICE_TIER');
  body.service_tier=provider==='openai'?'default':'standard_only';
  if(provider==='openai'){
+  // These profiles reserve/cache-price 30-minute writes only. Request and
+  // content-block overrides must not opt into a more expensive lifetime.
+  // The older maximum-retention setting is independent of the write TTL.
+  if(body.prompt_cache_options!=null&&(typeof body.prompt_cache_options!=='object'||Array.isArray(body.prompt_cache_options)||
+    body.prompt_cache_options.ttl!=null&&body.prompt_cache_options.ttl!=='30m'))throw new Error('UNPRICED_CACHE_LIFETIME');
   body.store=false;
   if((body.tools||[]).some(tool=>!['function','custom',...(nativeTokenPreflight?['namespace']:[])].includes(tool.type)))throw new Error('HOSTED_TOOLS_DISABLED');
   if((body.tools||[]).some(tool=>tool.defer_loading))throw new Error('HIDDEN_TOOL_CONTEXT_DISABLED');
@@ -62,6 +67,8 @@ function normalize(provider,input,{nativeTokenPreflight=false}={}){
    return {type:'bounded_image',tokenUpperBound:20000};
   }
   const copy={};for(const [key,child]of Object.entries(value)){
+   if(provider==='openai'&&key==='prompt_cache_breakpoint'&&child!=null&&
+     (typeof child!=='object'||Array.isArray(child)||child.ttl!=null&&child.ttl!=='30m'))throw new Error('UNPRICED_CACHE_LIFETIME');
    if(['file_id','file_url','video_url','audio'].includes(key))throw new Error('UNBOUNDED_REMOTE_INPUT');
    copy[key]=scan(child);
   }
@@ -98,6 +105,10 @@ function usage(provider,events){
  const cacheWrite1h=provider==='openai'?0:raw.cache_creation?.ephemeral_1h_input_tokens||0;
  const cacheWrite5m=provider==='openai'?raw.input_tokens_details?.cache_write_tokens||0:
   raw.cache_creation?.ephemeral_5m_input_tokens??Math.max(0,(raw.cache_creation_input_tokens||0)-cacheWrite1h);
+ const cacheDetails=provider==='openai'?raw.input_tokens_details?.cache_write_tokens_details:null;
+ if(cacheDetails!=null&&(!finite(cacheDetails.ttl_30m_tokens)||!finite(cacheDetails.ttl_12h_tokens)||
+   cacheDetails.ttl_30m_tokens+cacheDetails.ttl_12h_tokens!==cacheWrite5m))throw new Error('INVALID_CACHE_USAGE');
+ if(cacheDetails?.ttl_12h_tokens)throw new Error('UNPRICED_CACHE_LIFETIME');
  if(![cacheRead,cacheWrite5m,cacheWrite1h].every(finite))throw new Error('UNKNOWN_CACHE_USAGE');
  const allInput=provider==='openai'?raw.input_tokens:raw.input_tokens+cacheRead+cacheWrite5m+cacheWrite1h;
  if(provider==='openai'&&cacheRead+cacheWrite5m+cacheWrite1h>allInput)throw new Error('INVALID_CACHE_USAGE');
