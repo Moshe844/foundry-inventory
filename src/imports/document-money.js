@@ -30,11 +30,11 @@ const NUMERIC = /^-?[\d,]+(?:\.\d+)?$/;
 
 /** "1,234.50" → 123450. Anything that is not a plain amount → null. */
 function toMinor(raw) {
-  const text = String(raw ?? '').replace(/[$£€\s]/g, '').trim();
-  if (!text || !NUMERIC.test(text)) return null;
-  const value = Number(text.replace(/,/g, ''));
-  if (!Number.isFinite(value)) return null;
-  return Math.round(value * 100);
+  try {
+    const text=require('../domain/human-number').decimal(raw);
+    if(!text)return null;
+    return require('../domain/currency').toMinor(text,'USD',{signed:true});
+  } catch { return null; }
 }
 
 /** Columns whose heading names a charge rather than a product fact. */

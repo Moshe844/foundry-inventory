@@ -26,7 +26,7 @@
           <div class="ledger-note"><%= entry.notes %></div>
         <% } %>
       </div>
-      <span class="ledger-when"><%= helpers.dateTime(entry.occurredAt) %></span>
+      <span class="ledger-when"><time data-local-time datetime="<%= entry.occurredAt %>"><%= helpers.dateTime(entry.occurredAt) %></time></span>
     </div>
   <% }) %>
 </div>

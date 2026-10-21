@@ -254,7 +254,7 @@
           <span class="rm-provider__mark <%= String(provider.mark).length > 2 ? 'is-word' : '' %>" aria-hidden="true"><%= provider.mark %></span>
           <span class="rm-provider__n"><%= provider.name %></span>
           <span class="rm-provider__s">
-          <% if(provider.pilot){ %><span class="rm-pillbadge">Staging pilot</span><% } %>
+          <% if(provider.pilot){ %><span class="rm-pillbadge">Test connection</span><% } %>
           <% if (alreadyConnected) { %><span class="rm-pillbadge is-ok">Connected</span>
             <% } else if (!provider.available) { %><span class="rm-pillbadge">Not ready to connect</span>
             <% } else if (!includedOnPlan) { %><span class="rm-pillbadge">Growth</span><% } %>
@@ -397,7 +397,7 @@
     <% outboundWebhooks.forEach(function(hook) { %><div class="rm-told__row"><span class="rm-told__t"><%= hook.name %><small><%= hook.endpoint_url %> · <%= hook.eventTypes.join(', ') %></small></span><span class="rm-told__m <%= hook.status === 'ACTIVE' ? 'is-ok' : '' %>"><%= hook.status %></span><% if (hook.status === 'ACTIVE' && currentUser.role === 'owner') { %><form method="post" action="/settings/connections/outbound-webhooks/<%= hook.id %>/revoke" data-confirm="Stop sending all future events to this webhook?"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost" type="submit">Revoke</button></form><% } %></div><% }) %>
     <% if (currentUser.role === 'owner') { %><form method="post" action="/settings/connections/outbound-webhooks" class="grid" style="margin-top:16px"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label class="field"><span class="field-label">Webhook name</span><input class="input" name="name" placeholder="Data warehouse" required></label><label class="field"><span class="field-label">HTTPS endpoint</span><input class="input" type="url" name="endpointUrl" placeholder="https://example.com/foundry-events" required></label><label class="field"><span class="field-label">Events</span><select class="select" name="eventTypes" multiple required><option value="*">All business events</option><option value="inventory.received">Inventory received</option><option value="inventory.issued">Inventory issued</option><option value="purchase_order.completed">Purchase order completed</option><option value="sales_order.fulfilled">Sales order fulfilled</option></select><span class="field-help">Use Ctrl/Cmd to choose several.</span></label><button class="rm-btn rm-btn--wash" type="submit">Create signed webhook</button></form><% } %>
     <details class="rm-more"><summary>How to prove this webhook works</summary><div><p>Use an HTTPS test receiver you control. Create the webhook for <strong>Inventory received</strong>, receive one unit in StockChief, and confirm the receiver gets one signed event with its StockChief event ID.</p><p>Return an error once to prove StockChief records the failure and retries durably. Then accept the retry and confirm the same event is not delivered as a second business effect. Revoke the webhook and confirm later events are not sent.</p></div></details>
-    <% } else { %><p>Outbound webhooks are not available in the production PostgreSQL implementation.</p><% } %>
+    <% } else { %><p>Sending automatic updates to your own external endpoint is not available yet.</p><% } %>
   </section>
     </div>
   </div>
@@ -515,7 +515,7 @@
             <% } %>
           </p>
           <% if (grant.testMode) { %>
-            <details class="rm-more"><summary>Stripe is in test mode on this installation</summary>
+            <details class="rm-more"><summary>Test payments only</summary>
               <p class="quiet">StockChief is using Stripe test credentials, so this setup creates or finishes a sandbox account and cannot move real money. Going live requires the platform’s live Stripe keys on the server.</p>
             </details>
           <% } %>

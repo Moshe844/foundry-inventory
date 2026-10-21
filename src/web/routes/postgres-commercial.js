@@ -69,7 +69,18 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     title:'Privacy',heading:'Privacy notice',kind:'privacy',supportEmail:config.supportEmail})));
   router.get('/terms',asyncRoute(async(req,res)=>renderPublic(req,res,'public/legal',{
     title:'Terms',heading:'Terms of service',kind:'terms',supportEmail:config.supportEmail})));
-  router.get('/contact',asyncRoute(async(req,res)=>renderPublic(req,res,'public/contact',{title:'Talk to StockChief',nav:'contact',supportEmail:config.supportEmail})));
+  const support=require('../../operations/postgres-support');
+  const supportData=async req=>({supportEmail:support.SUPPORT_EMAIL,supportRequestKey:newId('supportform'),supportContactEmail:req.account?.email||'',
+    supportRequests:await support.list(database,req.account?.id),supportSourcePath:String(req.query.from||'').split('?')[0]});
+  router.get('/contact',asyncRoute(async(req,res)=>renderPublic(req,res,'public/contact',{title:'Contact StockChief',nav:'contact',...await supportData(req)})));
+  router.get('/support',asyncRoute(async(req,res,next)=>{if(req.account)return next();return renderPublic(req,res,'public/contact',{title:'StockChief support',nav:'contact',...await supportData(req)});}));
+  router.post('/support/requests',asyncRoute(async(req,res)=>{
+    const data=await supportData(req);
+    try{data.supportReceipt=await support.create(database,{accountId:req.account?.id,workspaceId:req.ctx?.workspaceId,email:req.account?.email,ip:req.ip},req.body);}
+    catch(error){if(!error.status||error.status>=500)throw error;res.status(error.status);data.supportError=error.message;data.supportRequestKey=req.body.requestKey||data.supportRequestKey;}
+    if(req.account)return res.page('support',{title:'Help and support',nav:null,...data});
+    return renderPublic(req,res,'public/contact',{title:'Contact StockChief',nav:'contact',...data});
+  }));
   router.post('/commercial/events',asyncRoute(async(req,res)=>{const allowed=new Set(['plan_selected','signup_started','upgrade_viewed']);
     if(!allowed.has(req.body.eventName))return res.status(204).end();await commercial.track(database,{eventName:req.body.eventName,
       anonymousId:req.sessionID,accountId:req.account?.id||null,planId:req.body.planId||null,sourcePath:req.body.sourcePath||null});

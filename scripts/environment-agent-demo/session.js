@@ -397,7 +397,7 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
     // native thread once. This uses the existing request/goal/period gates,
     // keeps every rejected assertion unverified and never repeats an effect.
     // Persist the allowance so interruptions cannot reset it into a loop.
-    const correctable=['SOURCE_REFERENCE_NOT_FOUND','INVALID_SOURCE_REFERENCE','FIELD_REFERENCE_MUST_NOT_SUPPLY_PATH','EVIDENCE_VALUE_MISMATCH','EVIDENCE_POINTER_NOT_FOUND','ANSWER_SCOPE_UNVERIFIED'].includes(failure?.code);
+    const correctable=['SOURCE_REFERENCE_NOT_FOUND','INVALID_SOURCE_REFERENCE','FIELD_REFERENCE_MUST_NOT_SUPPLY_PATH','EVIDENCE_VALUE_MISMATCH','EVIDENCE_POINTER_NOT_FOUND','ANSWER_SCOPE_UNVERIFIED','CURRENT_RECORDS_CHANGED','CURRENT_FORM_CHANGED'].includes(failure?.code);
     if(candidate==='codex'&&allowReportCorrection&&correctable&&current==='READY'&&h.receipt.dependencyState==='READY'&&canonicalVerified&&!h.admissionBlock&&
      Number(h.codexRequests||0)<24&&Number(h.verificationCorrections||0)<1){
      h.verificationCorrections=1;h.verificationFailure=failure;h.pendingReport=null;h.failure=null;h.userQuestion=null;

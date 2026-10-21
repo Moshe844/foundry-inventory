@@ -205,6 +205,15 @@ function createPostgresApp({database,resourceDatabase=database,sessionStore,sess
     return res.redirect(products.rows.length?'/inventory':'/onboarding');
     } catch(error) { return next(error); }
   });
+  // Express's default final handler exposes an unbranded "Cannot GET" page.
+  // Keep API errors machine readable and render the same recovery screen for
+  // every unknown browser address, including a signed-out visitor's address.
+  app.use((req,res)=>{
+    if(req.path.startsWith('/api/')||!req.accepts('html'))
+      return res.status(404).json({error:{code:'not_found',message:'That address was not found.'}});
+    return res.status(404).page('error',{title:'Page not found',status:404,
+      message:'That page may have moved, or the address may be incorrect. Your records have not changed.'});
+  });
   app.use(commonMiddleware.errorHandler(env==='production'));
   return app;
 }

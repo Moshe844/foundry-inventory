@@ -22,7 +22,8 @@
   </div>
 <% } %>
 
-<form class="filters" method="get" action="/inventory">
+<% if(locals.postgresNative&&currentUser.role==='owner'&&items.length){ %><form id="catalog-bulk-form" class="card card-body form-inline" method="post" action="/inventory/bulk"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label><input type="checkbox" data-select-all-products> Select all products on this page</label><label for="catalog-bulk-action">With selected products</label><select class="select" name="kind" id="catalog-bulk-action"><option value="export">Export selection</option><option value="price">Change selling prices</option><option value="move">Request stock to move</option><option value="archive">Archive products with zero stock</option><option value="restore">Restore archived products</option></select><button class="btn" type="submit">Continue</button></form><% } %>
+<form class="filters" method="get" action="<%= locals.postgresNative?'/inventory/table':'/inventory' %>">
   <input class="input filter-search" type="search" name="q" value="<%= filters.q %>" placeholder="Search items, SKUs, serials, lots" aria-label="Search inventory">
   <select class="select" name="tracking" aria-label="Tracking type" data-auto-submit>
     <option value="">All tracking types</option>
@@ -49,7 +50,7 @@
   <% if (sourceDocument) { %><input type="hidden" name="sourceDocument" value="<%= sourceDocument %>"><% } %>
   <button class="btn btn--sm" type="submit">Apply</button>
   <% if (filters.q || filters.trackingMode || filters.locationId) { %>
-    <a class="btn btn--ghost btn--sm" href="/inventory<%= helpers.queryString({}, { archived: filters.archivedOnly ? 'only' : null, sourceDocument: sourceDocument, fromConnection: fromConnection, fromMessage: fromMessage }) %>">Clear</a>
+    <a class="btn btn--ghost btn--sm" href="<%= locals.postgresNative?'/inventory/table':'/inventory' %><%= helpers.queryString({}, { archived: filters.archivedOnly ? 'only' : null, sourceDocument: sourceDocument, fromConnection: fromConnection, fromMessage: fromMessage }) %>">Clear</a>
   <% } %>
 </form>
 
@@ -103,9 +104,9 @@
         %>
         <thead>
           <tr>
-            <th><a class="sort <%= filters.sort === 'name' ? 'is-asc' : '' %>" href="/inventory<%= helpers.queryString(query, { sort: 'name', page: null }) %>" title="Sort by name">Product</a></th>
+            <th><a class="sort <%= filters.sort === 'name' ? 'is-asc' : '' %>" href="<%= locals.postgresNative?'/inventory/table':'/inventory' %><%= helpers.queryString(query, { sort: 'name', page: null }) %>" title="Sort by name">Product</a></th>
             <th>Status</th>
-            <th class="num"><a class="sort <%= filters.sort === 'stock_asc' ? 'is-asc' : filters.sort === 'stock_desc' ? 'is-desc' : '' %>" href="/inventory<%= helpers.queryString(query, { sort: filters.sort === 'stock_desc' ? 'stock_asc' : 'stock_desc', page: null }) %>" title="Sort by stock"><%= filters.locationId ? 'At location' : 'On hand' %></a></th>
+            <th class="num"><a class="sort <%= filters.sort === 'stock_asc' ? 'is-asc' : filters.sort === 'stock_desc' ? 'is-desc' : '' %>" href="<%= locals.postgresNative?'/inventory/table':'/inventory' %><%= helpers.queryString(query, { sort: filters.sort === 'stock_desc' ? 'stock_asc' : 'stock_desc', page: null }) %>" title="Sort by stock"><%= filters.locationId ? 'At location' : 'On hand' %></a></th>
             <th class="num">Committed</th>
             <th class="num"><%= typeof postgresNative!=='undefined'&&postgresNative?'Uncommitted':'Available' %></th>
             <th class="num">On order</th>
@@ -134,7 +135,7 @@
               var tracksUnits = item.tracking_mode !== 'quantity';
             %>
             <tr>
-              <td class="cell-main">
+              <td class="cell-main"><% if(locals.postgresNative&&currentUser.role==='owner'){ %><input type="checkbox" name="itemIds" form="catalog-bulk-form" value="<%= item.id %>" aria-label="Select <%= item.name %>" data-product-selection><% } %>
                 <a class="cell-title" href="/inventory/<%= item.id %>"><%= item.name %></a>
                 <span class="cell-sub">
                   <span class="mono"><%= item.base_code || item.first_sku_code %></span><%
@@ -170,10 +171,10 @@
         <span class="muted"><%= items.length %> on this page · page <%= page %></span>
         <span class="spacer" style="margin-left:auto;"></span>
         <% if (page > 1) { %>
-          <a class="btn btn--sm" href="/inventory<%= helpers.queryString(query, { page: page - 1 }) %>">Previous</a>
+          <a class="btn btn--sm" href="<%= locals.postgresNative ? '/inventory/table' : '/inventory' %><%= helpers.queryString(query, { page: page - 1 }) %>">Previous</a>
         <% } %>
         <% if (hasMore) { %>
-          <a class="btn btn--sm" href="/inventory<%= helpers.queryString(query, { page: page + 1 }) %>">Next</a>
+          <a class="btn btn--sm" href="<%= locals.postgresNative ? '/inventory/table' : '/inventory' %><%= helpers.queryString(query, { page: page + 1 }) %>">Next</a>
         <% } %>
       </div>
     <% } %>

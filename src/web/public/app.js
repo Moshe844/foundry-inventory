@@ -6,6 +6,11 @@
    everything else degrades to plain pages and form posts. */
 (function () {
   'use strict';
+  document.querySelectorAll('[data-select-all-products]').forEach(all=>all.addEventListener('change',()=>document.querySelectorAll('[data-product-selection]').forEach(box=>{box.checked=all.checked;})));
+  function updateLocalGreeting(){const hour=new Date().getHours();
+    document.querySelectorAll('[data-local-greeting]').forEach(node=>{node.textContent=hour<12?'Good morning':hour<18?'Good afternoon':'Good evening';});}
+  updateLocalGreeting();window.setInterval(updateLocalGreeting,60000);
+  document.addEventListener('visibilitychange',updateLocalGreeting);
 
   // StockChief has a long home page and many links return to a specific section
   // on it. Browser scroll restoration can win the race against a fragment and

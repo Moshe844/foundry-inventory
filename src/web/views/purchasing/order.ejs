@@ -359,7 +359,7 @@
         <div class="act-ledger">
           <div class="act-row act-row--total">
             <span class="act-place">
-              <%= helpers.dateTime(receipt.receivedAt) %>
+              <time data-local-time datetime="<%= receipt.receivedAt %>"><%= helpers.dateTime(receipt.receivedAt) %></time>
               <% if (receipt.reference) { %> · <%= receipt.reference %><% } %>
               <% if (receipt.overReceiptApproved) { %> · <span class="is-warn">over-receipt accepted</span><% } %>
             </span>
@@ -387,11 +387,11 @@
   <div class="card-head"><h2>What has happened to this order</h2></div>
   <div class="card-body">
     <ul class="plain-list">
-      <% supplierDocuments.forEach(function(document) { %><li><strong><%= document.document_type.replaceAll('_', ' ') %> from <%= document.sender %></strong><span class="muted"><%= document.status === 'NEEDS_REVIEW' ? 'Needs your decision' : document.status === 'IGNORED' ? 'Ignored—no effect' : 'Matched to this order' %> · <%= helpers.dateTime(document.received_at) %></span></li><% }) %>
+      <% supplierDocuments.forEach(function(document) { %><li><strong><%= document.document_type.replaceAll('_', ' ') %> from <%= document.sender %></strong><span class="muted"><%= document.status === 'NEEDS_REVIEW' ? 'Needs your decision' : document.status === 'IGNORED' ? 'Ignored—no effect' : 'Matched to this order' %> · <time data-local-time datetime="<%= document.received_at %>"><%= helpers.dateTime(document.received_at) %></time></span></li><% }) %>
       <% events.forEach(function (event) { %>
         <li>
           <strong><%= event.event %></strong>
-          <span class="muted"><%= event.actorName ? event.actorName + ' · ' : '' %><%= helpers.dateTime(event.createdAt) %></span>
+          <span class="muted"><%= event.actorName ? event.actorName + ' · ' : '' %><time data-local-time datetime="<%= event.createdAt %>"><%= helpers.dateTime(event.createdAt) %></time></span>
         </li>
       <% }) %>
     </ul>

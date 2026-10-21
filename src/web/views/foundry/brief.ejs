@@ -1,6 +1,7 @@
 <%
-  var hour = new Date().getHours();
-  var greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+  // The browser supplies the greeting in the viewer's local time zone.
+  // A neutral server fallback also works without JavaScript.
+  var greeting = 'Hello';
   var firstName = currentUser && currentUser.name ? currentUser.name.split(/\s+/)[0] : '';
   var needs = home.needsYou || [];
   var coverageErrors = home.coverageErrors || [];
@@ -22,14 +23,15 @@
     : urgentCount ? (urgentCount === 1 ? 'One urgent thing needs you.' : urgentCount + ' urgent things need you.')
     : firstCheck ? 'Your inventory is here. Let’s do the first check.'
     : stale ? 'Here’s where things stood at the last check.'
-    : needsCount ? 'Everything else is under control.'
-    : 'Everything is under control.';
+    : needsCount ? needsCount + (needsCount === 1 ? ' thing needs your attention.' : ' things need your attention.')
+    : observations.length ? 'Here’s what StockChief noticed.'
+    : 'No decisions are waiting on you.';
 %>
 <div class="sc-home <%= urgentCount || coverageErrors.length ? 'sc-home--urgent' : '' %>">
   <%- include('../manager/coverage-warning', { inbox:home }) %>
   <header class="sc-home__hero" aria-labelledby="sc-home-title">
     <div class="sc-home__hero-main">
-      <p class="sc-home__greeting"><%= greeting %><%= firstName ? ', ' + firstName : '' %></p>
+      <p class="sc-home__greeting"><span data-local-greeting><%= greeting %></span><%= firstName ? ', ' + firstName : '' %></p>
       <h1 id="sc-home-title"><%= headline %></h1>
       <% if (coverageErrors.length) { %>
         <p class="sc-home__sentence">StockChief could not check every exception source. The known decisions below are not a complete all-clear.</p>

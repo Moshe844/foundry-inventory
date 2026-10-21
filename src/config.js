@@ -83,7 +83,7 @@ const config = {
   dataDir,
   env: process.env.NODE_ENV || 'development',
   port: Number(process.env.PORT || 4000),
-  get supportEmail() { return process.env.FOUNDRY_SUPPORT_EMAIL || null; },
+  get supportEmail() { return 'support@stockchiefhq.com'; },
   databasePath: process.env.DATABASE_PATH
     ? path.resolve(process.env.DATABASE_PATH)
     : path.join(dataDir, 'foundry-inventory.db'),

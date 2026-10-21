@@ -29,6 +29,9 @@ function unitLabel(quantity, label) {
   if (Number(quantity) === 1) return word;
   if (INVARIANT.has(word.toLowerCase())) return word;
   if (ALREADY_PLURAL.test(word)) return word;
+  // A supplied regular plural (shirts, bolts, spoons) is already a unit label.
+  // Keep singular sibilants such as glass/class for the rule below.
+  if(/[^su]s$/i.test(word))return word;
   // Abbreviations and anything with punctuation or digits are left exactly as
   // the customer wrote them.
   if (word.length <= 2 || !/^[a-z]+$/i.test(word)) return word;

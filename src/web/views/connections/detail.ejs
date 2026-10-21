@@ -11,6 +11,15 @@
   </div>
   <span class="badge <%= connection.publicStatus === 'Connected' ? 'badge--ok' : connection.publicStatus === 'Needs attention' ? 'badge--warn' : 'badge--muted' %>"><%= connection.publicStatus %></span>
 </header>
+<% if(connection.provider_type==='square'&&connection.status==='connected'&&
+  (!connection.capabilities.includes('ITEMS_WRITE')||!connection.capabilities.includes('INVENTORY_WRITE'))){ %>
+<section class="notice notice--warn section"><div><strong>Square is connected for reading only.</strong>
+<p>StockChief can read your products, stock and sales. Square has not granted permission to update product prices or quantities.</p>
+<% if(currentUser.role==='owner'){ %><form method="post" action="/settings/connections/square/authorize" data-provider-reauthorize="Square">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="connectorId" value="<%= connection.id %>">
+<button class="btn btn--primary" type="submit">Grant Square write access</button></form><% } %>
+<p>Granting access preserves your matching and history. Inventory and price changes still follow the synchronization settings and approvals you choose.</p></div></section>
+<% } %>
 
 <% if (!isMailbox && !isAccounting) { %><div class="stats-row section">
   <div class="stat"><strong><%= connection.productsMapped %></strong><span>products mapped</span></div>

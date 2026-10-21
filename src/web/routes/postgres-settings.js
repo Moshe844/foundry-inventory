@@ -222,19 +222,17 @@ function createPostgresSettingsRouter(database,options={}){const router=express.
     return res.page('guide',{title:'How to use StockChief',nav:'guide',guidance:{checklistActive:false,steps:[],next},topics:guideTopics});
   }));
   router.get('/support',requireAuth,asyncRoute(async(req,res)=>res.page('support',{
-    title:'Help and support',nav:null,supportEmail:config.supportEmail,
+    title:'Help and support',nav:null,supportEmail:require('../../operations/postgres-support').SUPPORT_EMAIL,
+    supportRequestKey:newId('supportform'),supportContactEmail:req.account.email,
+    supportRequests:await require('../../operations/postgres-support').list(database,req.account.id),supportSourcePath:String(req.query.from||'').split('?')[0],
   })));
   router.get('/foundry',requireAuth,(req,res)=>res.redirect(302,'/what-you-told-me'));
-  router.get('/settings/export',requireOwner,asyncRoute(async(req,res)=>{const tables=['users','locations','items','skus',
-    'balances','movements','suppliers','supplier_items','purchase_orders','purchase_order_lines','customers','sales_orders',
-    'sales_order_lines','sales_order_allocations','sales_shipments','accounting_accounts','accounting_journal_entries',
-    'accounting_journal_lines','workspace_connectors'];const payload={exportedAt:new Date().toISOString(),workspaceId:req.ctx.workspaceId,tables:{}};
-    const workspace=(await database.query('SELECT * FROM workspaces WHERE id=$1',[req.ctx.workspaceId])).rows[0];
-    payload.tables.workspaces=workspace?[workspace]:[];
-    for(const table of tables)payload.tables[table]=(await database.query(`SELECT * FROM ${table} WHERE workspace_id=$1`,[req.ctx.workspaceId])).rows;
-    const safeName=String(workspace?.name||'stockchief-inventory').replace(/[^a-z0-9_-]+/gi,'-').replace(/^-+|-+$/g,'').toLowerCase()||'stockchief-inventory';
-    res.set('Content-Type','application/json; charset=utf-8');res.set('Content-Disposition',`attachment; filename="${safeName}-${new Date().toISOString().slice(0,10)}.json"`);
-    return res.send(`${JSON.stringify(payload,null,2)}\n`);
+  router.get('/settings/export',requireOwner,asyncRoute(async(req,res)=>{
+    const result=await require('../../operations/postgres-export').workbook(database,req.ctx.workspaceId);
+    const safeName=String(result.name).replace(/[^a-z0-9_-]+/gi,'-').replace(/^-+|-+$/g,'').toLowerCase()||'stockchief-inventory';
+    res.set('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.set('Content-Disposition',`attachment; filename="${safeName}-${new Date().toISOString().slice(0,10)}.xlsx"`);
+    return res.send(result.buffer);
   }));
   return router;
 }

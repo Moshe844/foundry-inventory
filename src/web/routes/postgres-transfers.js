@@ -35,19 +35,25 @@ function createPostgresTransfersRouter(database) {
       database.query(`SELECT * FROM locations WHERE workspace_id=$1 AND is_active=1 ORDER BY lower(name),id`,
         [req.ctx.workspaceId]),
       database.query(`SELECT s.*,i.name AS item_name,i.tracking_mode FROM skus s JOIN items i ON i.id=s.item_id
-        WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 ORDER BY lower(i.name),s.position,s.code`,
-      [req.ctx.workspaceId]),
+        WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1
+          AND ($2::text[] IS NULL OR s.item_id=ANY($2::text[])) ORDER BY lower(i.name),s.position,s.code`,
+      [req.ctx.workspaceId,req.query.itemIds?values(req.query.itemIds):null]),
     ]);
+    if(req.query.itemIds){await require('../../domain/postgres-catalog-bulk').selected(database,req.ctx,values(req.query.itemIds));
+      return res.page('transfers/bulk-new',{title:'Request selected stock to move',nav:'transfers',locations:locations.rows,skus:skus.rows,operationKey:newId('transfer-request')});}
     return res.page('transfers/new', { title: 'Request transfer', nav: 'transfers', room: true,
       locations: locations.rows, skus: skus.rows });
   }));
   router.post('/transfers', asyncRoute(async (req, res) => {
+    let lines=null;if(req.body.lines){const entries=Array.isArray(req.body.lines)?req.body.lines:Object.values(req.body.lines);lines=[];
+      for(const entry of entries){const raw=String(entry.quantity||'').trim();if(!raw||raw==='0')continue;if(!/^\d+$/.test(raw)||!Number.isSafeInteger(Number(raw))||Number(raw)>1000000000)throw new (require('../../domain/errors').ValidationError)('Transfer quantities must be supported nonnegative whole units.');lines.push({skuId:entry.skuId,quantity:Number(raw)});}
+      if(!lines.length)throw new (require('../../domain/errors').ValidationError)('Enter a quantity for at least one selected product.');}
     const transfer = await transfers.request(database, req.ctx, {
       idempotencyKey: trimOrNull(req.body.idempotencyKey) || newId('transfer-request'),
       fromLocationId: req.body.fromLocationId, toLocationId: req.body.toLocationId,
       expectedArrivalDate: trimOrNull(req.body.expectedArrivalDate), reason: req.body.reason,
       notes: req.body.notes, reference: req.body.reference,
-      lines: [{ skuId: req.body.skuId, quantity: req.body.quantity,
+      lines: lines||[{ skuId: req.body.skuId, quantity: req.body.quantity,
         lotId: trimOrNull(req.body.lotId), serialUnitIds: values(req.body.serialUnitIds) }],
     });
     req.flash('success', `${transfer.transfer_number} was requested. No stock moved yet.`);

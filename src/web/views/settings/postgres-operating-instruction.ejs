@@ -23,7 +23,7 @@
         <button class="rm-btn rm-btn--quiet" type="submit">Discard</button></form></div>
   </section>
 <% } else if (proposal.status === 'APPROVED') { %>
-  <section class="rm-card"><h2>Approved changes</h2><p>Approved <%= helpers.dateTime(proposal.approvedAt) %>. Later instructions or settings changes may replace these changes.</p>
+  <section class="rm-card"><h2>Approved changes</h2><p>Approved <time data-local-time datetime="<%= proposal.approvedAt %>"><%= helpers.dateTime(proposal.approvedAt) %></time>. Later instructions or settings changes may replace these changes.</p>
     <p>To change or stop this instruction, tell StockChief what you want. It will check the current settings and prepare any change for approval.</p>
     <a class="rm-btn rm-btn--ghost" href="/ask?about=<%= encodeURIComponent('Standing instruction: '+proposal.statedAs) %>">Request a change</a>
   </section>

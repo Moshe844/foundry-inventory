@@ -13,7 +13,7 @@
     <div class="rm-turn rm-turn--foundry<%= isLatest ? ' rm-turn--latest' : ' rm-turn--past' %>" <%= isLatest ? 'id="latest"' : '' %>>
       <p class="rm-turn__who">StockChief</p><div class="rm-said<%= turn.status === 'FAILED' ? ' rm-said--problem' : '' %>
         <p class="rm-said__text"><%= helpers.figures(turn.answer, protectedNames) %></p>
-        <p class="rm-said__meta"><span class="rm-pill rm-pill--<%= turn.status === 'ANSWERED' || turn.status === 'PREPARED' ? 'ok' : 'warn' %>"><%= turn.status === 'PREPARED' ? 'Prepared — approval required' : turn.status === 'CLARIFY' ? 'Needs an answer' : turn.status.toLowerCase() %></span><span>Read from this inventory at <%= helpers.dateTime(turn.created_at) %>.</span></p>
+        <p class="rm-said__meta"><span class="rm-pill rm-pill--<%= turn.status === 'ANSWERED' || turn.status === 'PREPARED' ? 'ok' : 'warn' %>"><%= turn.status === 'PREPARED' ? 'Prepared — approval required' : turn.status === 'CLARIFY' ? 'Needs an answer' : turn.status.toLowerCase() %></span><span>Read from this inventory at <time data-local-time datetime="<%= turn.created_at %>"><%= helpers.dateTime(turn.created_at) %></time>.</span></p>
         <% if (turn.status === 'CLARIFY' && turn.intent && turn.intent.proposalHref) { %><p><a class="rm-btn rm-btn--ghost" href="<%= turn.intent.proposalHref %>">Answer this standing rule</a></p><% } %>
         <% if (evidence.length) { var columns=Object.keys(evidence[0]).filter(function(key){return key!=='href';}); %>
           <details class="rm-chat-evidence"><summary><span><%- helpers.icon('layers', { size: 15 }) %> Records behind this</span><small><%= helpers.qty(evidence.length) %> matches</small></summary>

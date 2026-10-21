@@ -14,7 +14,7 @@ function normaliseCurrency(value,fallback='USD'){
 
 function toMinor(value,label='Price',currency='USD'){
   if(value===null||value===undefined||String(value).trim()==='')return null;
-  const clean=String(value).trim().replace(/[$£€¥,\s]/g,'');
+  const clean=require('../domain/human-number').decimal(value,{label,fractionDigits:money.exponent(currency)});
   const minor=money.toMinor(clean,currency,{label});
   if(!Number.isSafeInteger(minor)||minor<0||minor>99999999999)throw new ValidationError(`${label} is outside the supported range.`);
   return minor;

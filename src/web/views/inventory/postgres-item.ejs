@@ -69,7 +69,7 @@
   <div class="rm-panel__head"><%- helpers.icon('activity', { size: 15, className: 'rm-quiet' }) %><h2>Recent activity</h2></div>
   <% if (!recent.length) { %><div class="empty"><h3>No stock activity yet</h3><p>Receive opening stock when you are ready.</p></div><% } else { %>
     <div class="table-wrap"><table class="table"><thead><tr><th>When</th><th>What happened</th><th>Location</th><th class="num">Change</th><th>Reference</th></tr></thead><tbody>
-      <% recent.forEach(function (row) { %><tr><td><%= helpers.dateTime(row.occurred_at) %></td><td><%= helpers.operationLabel(row.operation) %> <%= row.variant_label || row.code %></td><td><%= row.location_name %></td><td class="num"><strong><%= Number(row.quantity_delta) > 0 ? '+' : '' %><%= helpers.qty(row.quantity_delta) %></strong></td><td><%= row.reference || '—' %></td></tr><% }) %>
+      <% recent.forEach(function (row) { %><tr><td><time data-local-time datetime="<%= row.occurred_at %>"><%= helpers.dateTime(row.occurred_at) %></time></td><td><%= helpers.operationLabel(row.operation) %> <%= row.variant_label || row.code %></td><td><%= row.location_name %></td><td class="num"><strong><%= Number(row.quantity_delta) > 0 ? '+' : '' %><%= helpers.qty(row.quantity_delta) %></strong></td><td><%= row.reference || '—' %></td></tr><% }) %>
     </tbody></table></div>
   <% } %>
 </section>

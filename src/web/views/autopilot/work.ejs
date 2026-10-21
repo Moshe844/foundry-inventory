@@ -262,7 +262,7 @@
         <tr>
           <td><%= helpers.columnLabel(event.event.replace(/_/g, ' ')) %></td>
           <td class="muted"><%= event.actorName || 'StockChief' %></td>
-          <td class="muted"><%= helpers.dateTime(event.createdAt) %></td>
+          <td class="muted"><time data-local-time datetime="<%= event.createdAt %>"><%= helpers.dateTime(event.createdAt) %></time></td>
         </tr>
       <% }) %>
     </tbody>

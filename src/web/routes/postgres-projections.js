@@ -149,7 +149,7 @@ function createPostgresProjectionsRouter(database){
       if(entry.kind!=='navigation'&&entry.name!=='read.capabilities')offer(entry);
     }
     res.locals.attentionCount=result.brief.needs.length;
-    return res.page('foundry/brief',{title:'StockChief',nav:'home',room:true,suppressBack:true,postgresAsk:true,...result,
+    return res.page('foundry/brief',{title:'Home',nav:'home',room:true,suppressBack:true,postgresAsk:true,...result,
       askSuggestions,
       stats:result.brief.stats,brief:{body:'',source:'deterministic',createdAt:null},activeMigration:null,
       routineProposal:null,financialPulse:null,observedBrief:'',canOperate:permissions.can(req.user,permissions.OPERATE)});

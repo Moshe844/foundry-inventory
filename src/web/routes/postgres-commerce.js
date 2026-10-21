@@ -492,7 +492,15 @@ function createPostgresCommerceRouter(database,options={}){
         WHERE si.workspace_id=$1 AND si.sku_id=$2 AND si.is_active=1 AND s.status='active'
         ORDER BY si.is_preferred DESC,s.name`,[req.ctx.workspaceId,sku.id])]);
     return res.page('purchasing/postgres-why',{title:`Reorder settings · ${sku.product}`,nav:'purchasing',
-      sku,policies:policyResult.rows,positions:positionResult.rows,suppliers:supplierResult.rows});
+      sku,policies:policyResult.rows,positions:positionResult.rows,suppliers:supplierResult.rows,
+      locations:(await database.query('SELECT id,name FROM locations WHERE workspace_id=$1 AND is_active=1 ORDER BY name,id',[req.ctx.workspaceId])).rows,
+      canManage: req.user.role==='owner'&&permissions.can(req.user,permissions.MANAGE_REPLENISHMENT)});
+  }));
+  router.post('/purchasing/why/:skuId/propose',requirePermission(permissions.MANAGE_REPLENISHMENT,'prepare reorder settings'),asyncRoute(async(req,res)=>{
+    const sku=await require('../../pricing/postgres-service').requireSku(database,req.ctx.workspaceId,req.params.skuId);
+    let location='';if(req.body.locationId){const row=(await database.query('SELECT name FROM locations WHERE workspace_id=$1 AND id=$2 AND is_active=1',[req.ctx.workspaceId,req.body.locationId])).rows[0];if(!row)throw new ValidationError('Choose an active location in this inventory.');location=row.name;}
+    const proposal=await require('../../manager/postgres-operating-instructions').prepareReorderForm(database,req.ctx,{...req.body,sku:sku.code,location});
+    return res.redirect(303,'/operating-instructions/'+proposal.id);
   }));
   router.post('/purchasing/setup/policies',requirePermission(permissions.MANAGE_REPLENISHMENT,'set reorder policies'),asyncRoute(async(req,res)=>{
     const skuIds=Array.isArray(req.body.skuIds)?req.body.skuIds:[req.body.skuIds].filter(Boolean);const rows=await planning.position(database,req.ctx.workspaceId);

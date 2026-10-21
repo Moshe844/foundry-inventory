@@ -24,7 +24,7 @@
     <h1><%= m.subject || 'No subject' %> <span class="badge badge--<%= badge %>"><%= visibleReplyState %></span></h1>
     <p class="page-sub">
       From <%= m.sender %><% if (m.supplier_name) { %> · <%= m.supplier_name %><% } %>
-      · <%= helpers.dateTime(m.received_at) %>
+      · <time data-local-time datetime="<%= m.received_at %>"><%= helpers.dateTime(m.received_at) %></time>
       · arrived in <%= m.connector_name %>
     </p>
   </div>
@@ -147,7 +147,7 @@
       <div>
         <h2><%= draft ? 'The reply' : 'Reply to this' %></h2>
         <% if (draft && draft.sentAt) { %>
-          <span class="t-xs t-muted">Sent <%= helpers.dateTime(draft.sentAt) %></span>
+          <span class="t-xs t-muted">Sent <time data-local-time datetime="<%= draft.sentAt %>"><%= helpers.dateTime(draft.sentAt) %></time></span>
         <% } else if (draft) { %>
           <span class="t-xs t-muted">
             <%= draft.source === 'model' ? 'Written by StockChief from your records'

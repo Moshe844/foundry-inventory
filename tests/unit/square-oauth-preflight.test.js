@@ -21,7 +21,9 @@ test('Square OAuth availability requires the application secret even when a pers
  assert.equal(url.origin,'https://connect.squareupsandbox.com');assert.equal(url.searchParams.get('client_id'),'sandbox-test-app');assert.equal(url.searchParams.get('state'),'test-state');
  assert(!url.toString().includes('test-application-secret'));assert(!url.toString().includes('test-personal-token'));
  assert.equal(auth.metadata.redirectUri,'https://app.example.test/settings/connections/square/callback');
+ global.fetch=async url=>{requests++;const pathname=new URL(url).pathname;assert(['/oauth2/token','/oauth2/token/status'].includes(pathname));return Response.json(pathname==='/oauth2/token'?{access_token:'fake-oauth-token',refresh_token:'fake-refresh',merchant_id:'fixture-merchant'}:{client_id:'sandbox-test-app',merchant_id:'fixture-merchant',scopes:['ITEMS_READ','INVENTORY_READ']});};
+ const granted=await adapter.exchangeAuthorization({query:{code:'fake-code'},metadata:auth.metadata});assert.deepEqual(granted.capabilities,['ITEMS_READ','INVENTORY_READ'],'Requested write scopes must not be confused with actually granted scopes');assert(!granted.capabilities.includes('ITEMS_WRITE'));
  process.env.SQUARE_ENVIRONMENT='production';delete process.env.SQUARE_APPLICATION_SECRET;
  assert.equal(adapter.metadata({oauthOnly:true}).available,false);assert.equal(await adapter.tryDirectAuthorization(),null);
- assert.equal(requests,1,'Production must not use the personal sandbox helper');
+ assert.equal(requests,3,'Production must not use the personal sandbox helper');
 });

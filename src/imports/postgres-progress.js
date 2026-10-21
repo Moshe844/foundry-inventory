@@ -19,13 +19,13 @@ function present(row){
  const detail=typeof row.job_result==='string'?JSON.parse(row.job_result):row.job_result;
  const p=detail?.importProgress,known=Boolean(p&&['preparing','processing','verifying'].includes(p.stage)&&Number.isSafeInteger(p.processedRows)&&Number.isSafeInteger(p.totalRows)&&p.processedRows>=0&&p.processedRows<=p.totalRows&&p.totalRows===Number(row.records_valid));
  const stage=verified?'complete':known&&state==='RUNNING'?p.stage:state==='RUNNING'?'processing':state.toLowerCase();
- const stageLabel={preparing:'Preparing approved records',processing:'Applying products, stock and costs',verifying:'Checking stock and accounting totals',complete:'Inventory saved and verified',queued:'Waiting for an available worker',paused:'Waiting for review',needs_review:'Review required',needs_input:'Resolve the preview questions',approved:'Approved and ready to start',awaiting_approval:'Review and approve the preview',cancelled:'Stopped'}[stage];
+ const stageLabel=(known&&state==='RUNNING'&&p.attempt>1?'Retrying safely after a rolled-back attempt · ':'')+({preparing:'Preparing approved records',processing:'Applying products, stock and costs',verifying:'Checking stock and accounting totals',complete:'Inventory saved and verified',queued:'Waiting for an available worker',paused:'Waiting for review',needs_review:'Review required',needs_input:'Resolve the preview questions',approved:'Approved and ready to start',awaiting_approval:'Review and approve the preview',cancelled:'Stopped'}[stage]||'Checking saved progress');
  return {id:row.id,sourceName:row.source_name,rows:Number(row.records_detected),readyRows:Number(row.records_valid),
   invalidRows:Number(row.records_invalid),state,label,active:['QUEUED','RUNNING'].includes(state),working:state==='RUNNING',
   verified,finished:!['QUEUED','RUNNING'].includes(state),status:row.plan_status,
   createdAt:iso(row.created_at),queuedAt:iso(row.queued_at),startedAt:state==='QUEUED'?null:iso(row.started_at),
   completedAt:['QUEUED','RUNNING'].includes(state)?null:iso(row.committed_at||row.job_finished_at||row.finished_at),
-  stage,stageLabel,processedRows:verified?Number(row.records_valid):known?p.processedRows:null,
+  stage,stageLabel,attempt:known?Number(p.attempt||1):null,processedRows:verified?Number(row.records_valid):known?p.processedRows:null,
   progressPercent:verified?100:known&&p.totalRows?Math.min(99,Math.floor(p.processedRows/p.totalRows*100)):null,
   lastUpdateAt:iso(row.job_updated_at||row.finished_at||row.started_at||row.created_at),
   href:'/imports/'+encodeURIComponent(row.id)};
@@ -36,6 +36,10 @@ async function list(database,workspaceId,{id=null,limit=10,activeOnly=false}={})
  const rows=(await database.query(`SELECT p.id,p.source_name,p.records_detected,p.records_valid,p.records_invalid,
    p.status AS plan_status,p.approval_status,p.created_at,
    (p.status='READY' AND p.approval_status='AWAITING_APPROVAL' AND (
+     p.records_valid=0 OR
+     (p.transformations::jsonb->>'existingStockRows')::int>0 AND NULLIF(p.transformations::jsonb->>'importMode','') IS NULL OR
+     p.records_invalid>0 AND COALESCE(p.transformations::jsonb->>'allowPartialImport','false')<>'true' OR
+     p.conflicts::jsonb<>'[]'::jsonb OR
      NOT (p.field_mappings::jsonb ? 'name' OR p.field_mappings::jsonb ? 'code') OR
      p.source_kind='image' AND COALESCE(p.transformations::jsonb->>'imageReadingConfirmed','false')<>'true' OR
      p.records_invalid>0 AND (p.transformations::jsonb ? 'workbook' OR p.field_mappings::jsonb ? 'serialTracked' OR p.field_mappings::jsonb ? 'lotTracked'))) AS needs_source_review,
@@ -63,8 +67,11 @@ async function get(database,workspaceId,id){
 
 async function record(database,job,value){
  if(!job.workspaceId||!job.leaseToken||!['preparing','processing','verifying'].includes(value.stage)||!Number.isSafeInteger(value.processedRows)||!Number.isSafeInteger(value.totalRows)||value.processedRows<0||value.processedRows>value.totalRows)throw new TypeError('Invalid import progress.');
- return (await database.query(`UPDATE stockchief_runtime.jobs SET result=jsonb_build_object('importProgress',$4::jsonb)
+ return (await database.query(`UPDATE stockchief_runtime.jobs SET result=CASE WHEN
+   result->'importProgress' IS NULL OR COALESCE((result->'importProgress'->>'attempt')::int,1)<$5
+   OR COALESCE((result->'importProgress'->>'attempt')::int,1)=$5 AND COALESCE((result->'importProgress'->>'processedRows')::int,0)<=$6
+   THEN jsonb_build_object('importProgress',$4::jsonb) ELSE result END
   WHERE workspace_id=$1 AND id=$2 AND lease_token=$3 AND kind='import.execute-approved' AND status='RUNNING'
-   AND lease_expires_at>floor(extract(epoch FROM clock_timestamp())*1000)`,[job.workspaceId,job.id,job.leaseToken,JSON.stringify({stage:value.stage,processedRows:value.processedRows,totalRows:value.totalRows})])).rowCount===1;
+   AND lease_expires_at>floor(extract(epoch FROM clock_timestamp())*1000)`,[job.workspaceId,job.id,job.leaseToken,JSON.stringify({stage:value.stage,processedRows:value.processedRows,totalRows:value.totalRows,attempt:value.attempt||1}),value.attempt||1,value.processedRows])).rowCount===1;
 }
 module.exports={list,get,present,record};

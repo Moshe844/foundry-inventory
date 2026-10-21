@@ -319,6 +319,25 @@ async function interpret(database,ctx,instruction,options={}){const clean=String
 async function assertOwner(client,ctx){const actor=(await client.query('SELECT role FROM users WHERE workspace_id=$1 AND id=$2',
   [ctx.workspaceId,ctx.actorId])).rows[0];if(actor?.role!=='owner')throw new ValidationError('Only an owner can approve standing operating rules.');}
 
+// Explicit form fields already state their effect. Reuse the same entity
+// resolution, compiled policy, immutable proposal and approval engine without
+// paying a model to reinterpret values the owner has just selected.
+async function prepareReorderForm(database,ctx,input){
+ await assertOwner(database,ctx);
+ const read=name=>{const raw=String(input[name]??'').trim();if(raw==='')return -1;const n=Number(raw);
+   if(!/^\d+$/.test(raw)||!Number.isSafeInteger(n)||n>require('../domain/physical-stock-input').MAX_QUANTITY)throw new ValidationError('Reorder quantities must be nonnegative whole units in the supported range.');return n;};
+ const raw={domain:'replenishment',operation:'set',sku:String(input.sku||''),location:String(input.location||''),
+   reorderPoint:read('reorderPoint'),targetStock:read('targetStock'),safetyStock:read('safetyStock')};
+ if(raw.reorderPoint<0&&raw.targetStock<0&&raw.safetyStock<0)throw new ValidationError('Enter at least one reorder setting.');
+ if(raw.targetStock>=0&&raw.reorderPoint>=0&&raw.targetStock<raw.reorderPoint)throw new ValidationError('Target stock must be at least the reorder point.');
+ const change=await resolveChange(database,ctx.workspaceId,raw);if(change.questions.length)throw new ValidationError(change.questions[0]);
+ const {questions,...resolved}=change;resolved.policyContract=policyContracts.compile(resolved);
+ const statedAs=describe(resolved),id=newId('oin'),at=nowIso(),resolvedChanges=[resolved];
+ await database.query(`INSERT INTO operating_instruction_proposals(id,workspace_id,created_by_user_id,stated_as,summary,changes,resolved_changes,questions,status,integrity_hash,created_at,updated_at)
+   VALUES($1,$2,$3,$4,$4,$5,$6,'[]','PENDING',$7,$8,$8)`,[id,ctx.workspaceId,ctx.actorId,statedAs,JSON.stringify([cleanChange(raw)]),JSON.stringify(resolvedChanges),hash({statedAs,resolvedChanges}),at]);
+ return get(database,ctx.workspaceId,id);
+}
+
 async function applyChange(client,ctx,change){const at=nowIso();
   if(change.domain==='stock_alert'){
     const prior=(await client.query(`SELECT id FROM stockchief_runtime.stock_threshold_rules
@@ -359,15 +378,9 @@ async function applyChange(client,ctx,change){const at=nowIso();
     const locationId=change.locationId||null;
     if(change.operation==='remove'){await client.query('DELETE FROM reorder_policies WHERE workspace_id=$1 AND sku_id=$2 AND location_id IS NOT DISTINCT FROM $3',
       [ctx.workspaceId,change.skuId,locationId]);return {kind:'reorder_policy',skuId:change.skuId,locationId,removed:true};}
-    const prior=(await client.query(`SELECT * FROM reorder_policies WHERE workspace_id=$1 AND sku_id=$2 AND location_id IS NOT DISTINCT FROM $3`,
-      [ctx.workspaceId,change.skuId,locationId])).rows[0];const id=prior?.id||newId('rpol');const values=[number(change.reorderPoint)??prior?.reorder_point??null,
-      number(change.targetStock)??prior?.target_stock??null,number(change.safetyStock)??prior?.safety_stock??null];
-    if(prior)await client.query(`UPDATE reorder_policies SET reorder_point=$3,target_stock=$4,safety_stock=$5,
-      source='foundry',notes='Approved through Ask StockChief.',updated_at=$6 WHERE workspace_id=$1 AND id=$2`,
-    [ctx.workspaceId,id,...values,at]);else await client.query(`INSERT INTO reorder_policies
-      (id,workspace_id,sku_id,location_id,reorder_point,target_stock,safety_stock,source,notes,created_at,updated_at)
-      VALUES($1,$2,$3,$4,$5,$6,$7,'foundry','Approved through Ask StockChief.',$8,$8)`,
-    [id,ctx.workspaceId,change.skuId,locationId,...values,at]);return {kind:'reorder_policy',id,skuId:change.skuId,locationId};}
+    const values=Object.fromEntries(['reorderPoint','targetStock','safetyStock'].filter(k=>number(change[k])!==null).map(k=>[k,number(change[k])]));
+    const saved=(await require('../operations/postgres-reorder-policies').setManyInTransaction(client,ctx,[{skuId:change.skuId,locationId,...values,source:'foundry',notes:'Approved through Ask StockChief.'}]))[0];
+    return {kind:'reorder_policy',id:saved.id,skuId:change.skuId,locationId};}
   if(change.domain==='supplier_terms'){
     if(change.operation==='remove'){await client.query(`UPDATE supplier_items SET is_active=0,updated_at=$4
       WHERE workspace_id=$1 AND supplier_id=$2 AND sku_id=$3`,[ctx.workspaceId,change.supplierId,change.skuId,at]);
@@ -472,5 +485,5 @@ async function answer(database,ctx,id,value,options={}){const proposal=await get
   await database.query(`UPDATE operating_instruction_proposals SET status='SUPERSEDED',updated_at=$3
     WHERE workspace_id=$1 AND id=$2 AND status='PENDING'`,[ctx.workspaceId,id,nowIso()]);return replacement;}
 
-module.exports={SCHEMA,SYSTEM,PROPOSED_CHANGES_SCHEMA,interpret,get,approve,cancel,answer,describe};
-require('../commercial/enforcement').guardExports(module.exports,0,1,{interpret:'ask.prepare_actions',answer:'ask.prepare_actions',approve:'ask.prepare_actions'});
+module.exports={SCHEMA,SYSTEM,PROPOSED_CHANGES_SCHEMA,interpret,get,approve,cancel,answer,describe,prepareReorderForm};
+require('../commercial/enforcement').guardExports(module.exports,0,1,{interpret:'ask.prepare_actions',answer:'ask.prepare_actions',approve:'ask.prepare_actions',prepareReorderForm:'ask.prepare_actions'});

@@ -10,7 +10,7 @@
 
   <section class="card"><div class="card-head"><div><h2>What happened</h2><p class="hint">One business event, shown in plain language.</p></div></div>
     <div class="card-body"><div class="grid grid--3">
-      <div class="stat"><span>Customer sale</span><strong><%= review.order.order_number %></strong><small><%= review.order.customer.name %> · shipped <%= helpers.dateTime(review.saleEvent.created_at) %></small></div>
+      <div class="stat"><span>Customer sale</span><strong><%= review.order.order_number %></strong><small><%= review.order.customer.name %> · shipped <time data-local-time datetime="<%= review.saleEvent.created_at %>"><%= helpers.dateTime(review.saleEvent.created_at) %></time></small></div>
       <div class="stat"><span>Sales value</span><strong><%= helpers.money(review.revenueMinor, review.order.currency) %></strong><small>From the approved Sales Order price</small></div>
       <div class="stat"><span>Inventory effect</span><strong>Already completed</strong><small>StockChief will not reduce stock again</small></div>
     </div></div>

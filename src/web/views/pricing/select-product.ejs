@@ -1,0 +1,7 @@
+<div class="page-head"><div><h1>Change selling prices</h1><p>Choose a product or variant. You will review the exact new price before it changes.</p></div></div>
+<section class="card"><div class="card-body">
+<form method="get" action="/pricing/new" class="form-inline"><label for="price-product-search">Find a product or SKU</label><input class="input" id="price-product-search" name="q" value="<%= q %>" maxlength="160"><button class="btn" type="submit">Search</button></form>
+<ul class="list-rows"><% skus.forEach(function(sku){ %><li class="list-row"><div><strong><%= sku.name %><%= sku.variant_label?' / '+sku.variant_label:'' %></strong><p><%= sku.code %></p></div><a class="btn btn--sm" href="/pricing/new?skuId=<%= encodeURIComponent(sku.id) %>">Set price</a></li><% }); %></ul>
+<% if(!skus.length){ %><p>No matching active products. <a href="/inventory/new">Add a product</a> or try another search.</p><% } %>
+<% if(hasMore){ %><p>Showing the first 50 matches. Narrow your search to find another product.</p><% } %>
+</div></section>

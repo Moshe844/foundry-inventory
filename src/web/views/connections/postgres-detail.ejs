@@ -30,7 +30,7 @@
   <div class="card-head"><h2>Events still being resolved</h2></div>
   <div class="card-body"><p>Original provider evidence is retained securely. Completed operations are kept; resuming handles the remaining steps only.</p>
   <% pendingWebhooks.forEach(function(receipt){ %><div class="section">
-    <strong><%= receiptLabels[receipt.status]||'Waiting' %></strong> · Received <time datetime="<%= new Date(receipt.received_at).toISOString() %>" title="<%= new Date(receipt.received_at).toISOString() %>"><%= helpers.dateTime(receipt.received_at) %></time>
+    <strong><%= receiptLabels[receipt.status]||'Waiting' %></strong> · Received <time datetime="<%= new Date(receipt.received_at).toISOString() %>" title="<%= new Date(receipt.received_at).toISOString() %>"><time data-local-time datetime="<%= receipt.received_at %>"><%= helpers.dateTime(receipt.received_at) %></time></time>
     <% if(currentUser.role==='owner'&&(['NEEDS_MAPPING','NEEDS_REVIEW','RETRY_PENDING'].includes(receipt.status)||(receipt.status==='PROCESSING'&&new Date(receipt.lease_until||0).getTime()<=Date.now()))){ %>
     <form method="post" action="/settings/connections/<%= encodeURIComponent(connection.id) %>/receipts/<%= encodeURIComponent(receipt.id) %>/resume">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--secondary btn--sm" type="submit">Resume after resolving</button>
@@ -63,7 +63,7 @@
   <div class="card-body grid">
     <p role="status" aria-live="polite" data-connection-sync-progress><%= sync.mode==='active'?'Automatic checks are on.':sync.mode==='paused'?'Automatic updates are temporarily paused.':sync.mode==='off'?'Automatic updates are off.':'Sign in to start automatic updates.' %></p>
     <a class="btn" href="/settings/connections/<%= connection.id %>" data-connection-sync-updated hidden>View updated products and matches</a>
-    <dl class="grid"><div><dt>Last completed check</dt><dd data-sync-last><% if(sync.lastCheckAt){ %><time datetime="<%= new Date(sync.lastCheckAt).toISOString() %>"><%= helpers.dateTime(sync.lastCheckAt) %></time><% }else{ %>Waiting for the first check<% } %></dd></div>
+    <dl class="grid"><div><dt>Last completed check</dt><dd data-sync-last><% if(sync.lastCheckAt){ %><time datetime="<%= new Date(sync.lastCheckAt).toISOString() %>"><time data-local-time datetime="<%= sync.lastCheckAt %>"><%= helpers.dateTime(sync.lastCheckAt) %></time></time><% }else{ %>Waiting for the first check<% } %></dd></div>
       <div><dt>Next check</dt><dd data-sync-next><%= sync.retryAt?'Waiting for the provider until '+helpers.dateTime(sync.retryAt):sync.nextCheckAt?helpers.dateTime(sync.nextCheckAt):sync.mode==='disconnected'?'Sign in to resume updates':sync.mode==='off'?'Automatic updates are off':'Resume to schedule updates' %></dd></div></dl>
     <% if(sync.providerLimitNote){ %><p class="hint"><%= sync.providerLimitNote %></p><% } %>
     <p class="hint">Supported webhooks are processed as they arrive. Scheduled checks provide a fallback; provider limits and retries can delay them. Stock observations do not create receipts or inventory cost. Accounting posting and other consequential actions keep their existing authority checks.</p>

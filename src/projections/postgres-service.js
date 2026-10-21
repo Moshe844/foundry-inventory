@@ -9,6 +9,7 @@ async function needsCount(database,workspaceId,actorId=null){
   if(actorId){const actor=await membership(database,workspaceId,actorId),p=require('../actions/permissions');if(!actor)return 0;if(![p.VIEW,p.VIEW_ACCOUNTING,p.VIEW_SALES,p.VIEW_PURCHASING,p.ADMIN].every(key=>p.can(actor,key)))return (await needs(database,workspaceId,actorId)).length;}
   const [result,nativeApprovals]=await Promise.all([database.query(`SELECT
     (SELECT COUNT(*) FROM attention_items WHERE workspace_id=$1 AND status='OPEN')+
+    (SELECT COUNT(*) FROM catalog_bulk_reviews WHERE workspace_id=$1 AND status='PENDING')+
     (SELECT COUNT(*) FROM connection_issues WHERE workspace_id=$1 AND status='OPEN')+
     (SELECT COUNT(*) FROM work_items WHERE workspace_id=$1 AND approval_requirement<>'NONE'
       AND execution_status NOT IN ('COMPLETED','CANCELLED','FAILED'))+
@@ -52,7 +53,7 @@ async function runtimeFailures(database,workspaceId){
 async function needs(database,workspaceId,actorId=null){
   const actor=await membership(database,workspaceId,actorId);if(actorId&&!actor)return [];
   const [attention,connections,work,imports,bills,supplierReturns,shippingExceptions,mail,orders,purchases,
-    repairs,ambiguousEffects,nativeApprovals]=await Promise.all([
+    repairs,ambiguousEffects,nativeApprovals,bulkReviews]=await Promise.all([
     database.query(`SELECT id,title,concise_summary,explanation,recommendation,severity,priority_score,item_id,first_detected_at
       FROM attention_items WHERE workspace_id=$1 AND status='OPEN' ORDER BY priority_score DESC,first_detected_at`,[workspaceId]),
     database.query(`SELECT i.id,i.title,i.detail,i.resolution_hint,i.created_at,i.updated_at,i.connector_id,
@@ -120,8 +121,10 @@ async function needs(database,workspaceId,actorId=null){
         AND issue.external_event_id=effect.aggregate_id AND issue.status='OPEN'))
       ORDER BY effect.completed_at DESC,effect.id`,[workspaceId]),
     require('../assistant/postgres-approval-projection').pending(database,workspaceId,actorId),
+    database.query("SELECT id,kind,payload,created_at FROM catalog_bulk_reviews WHERE workspace_id=$1 AND status='PENDING' ORDER BY created_at,id",[workspaceId]),
   ]);
   const items=[...nativeApprovals];
+  for(const row of bulkReviews.rows)items.push({kind:'approval',requiredPermissions:[require('../actions/permissions').ADMIN],importance:'Important',priority:70,title:row.kind==='price'?'Review selected selling prices':row.kind==='restore'?'Restore selected products':'Archive selected products',happened:(row.payload.items||[]).length+' selected products are prepared; nothing has changed.',why:'Your approval is required before these product changes are applied.',recommendation:'Review the exact products and changes, then approve or cancel.',href:'/inventory/bulk/reviews/'+row.id,actionLabel:'Review changes',sourceId:row.id,createdAt:row.created_at,timeLabel:'Prepared',at:row.created_at});
   for(const row of attention.rows)items.push({kind:'inventory',importance:row.severity==='critical'?'Urgent':row.severity==='important'?'Important':'Watch',
     priority:number(row.priority_score),title:row.title,happened:row.concise_summary,why:row.explanation,
     recommendation:row.recommendation,href:row.item_id?`/inventory/${row.item_id}`:'/inventory',actionLabel:'Review inventory',sourceId:row.id,createdAt:row.first_detected_at,timeLabel:'First detected',at:row.first_detected_at});

@@ -147,6 +147,12 @@
 .sc-home__ask .rm-composer:focus-within { border-color:#927cff; box-shadow:0 0 0 3px rgba(146,124,255,.19); }
 .sc-home__ask .rm-composer__input { flex:1 1 350px; min-height:46px; padding:10px 12px; font-size:15px; }
 .sc-home__ask .rm-composer__foot { flex:none; padding:0; }
+.sc-home__ask .rm-composer__input{min-width:0;position:static;width:auto}
+@media(max-width:620px){
+ .sc-home__ask .rm-composer{display:grid;grid-template-columns:minmax(0,1fr)}
+ .sc-home__ask .rm-composer__input{width:100%;padding:10px 12px;min-height:70px}
+ .sc-home__ask .rm-composer__foot{position:static;justify-self:end}
+}
 .sc-home__suggestions { gap:7px; margin-top:11px; }
 .sc-home__suggestions a { padding:7px 11px; border-color:#e4e0f6; color:#5d5681; background:#fff; font-weight:620; }
 .sc-home__suggestions a:hover { background:#f9f7ff; border-color:#a99bfd; }

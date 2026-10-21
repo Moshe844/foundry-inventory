@@ -22,8 +22,8 @@
     && guidance.state.movementCount > 0;
   var guidanceInProgress = typeof guidance !== 'undefined' && guidance && !coreInventoryReady;
 
-  var hour = new Date().getHours();
-  var greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+  var hour = null;
+  var greeting = 'Hello';
   var firstName = currentUser && currentUser.name ? currentUser.name.split(/\s+/)[0] : '';
 
   /*
@@ -60,7 +60,7 @@
 <%- include('manager/coverage-warning', { inbox: decisions }) %>
 <header class="briefing <%= needing || coverageErrors.length ? 'briefing--attention' : 'briefing--clear' %>">
   <div class="briefing__copy">
-    <p class="briefing__greeting"><%= greeting %><%= firstName ? ', ' + firstName : '' %></p>
+    <p class="briefing__greeting"><span data-local-greeting><%= greeting %></span><%= firstName ? ', ' + firstName : '' %></p>
     <h1 class="briefing__verdict"><%= verdict %></h1>
     <p class="briefing__sub">
       <% if (isEmpty_) { %>

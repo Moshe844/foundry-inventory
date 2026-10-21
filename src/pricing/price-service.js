@@ -15,7 +15,7 @@ function normaliseCurrency(value, fallback = 'USD') {
 /** Money is persisted as integer minor units so 3 × 12.10 is exactly 36.30. */
 function toMinor(value, label = 'Price') {
   if (value === null || value === undefined || String(value).trim() === '') return null;
-  const clean = String(value).trim().replace(/[$£€¥,\s]/g, '');
+  const clean = require('../domain/human-number').decimal(value,{label});
   if (!/^\d+(?:\.\d{1,2})?$/.test(clean)) throw new ValidationError(`${label} must be a positive amount with no more than two decimal places.`);
   const [whole, fraction = ''] = clean.split('.');
   const minor = Number(whole) * 100 + Number(fraction.padEnd(2, '0'));

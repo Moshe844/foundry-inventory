@@ -1019,7 +1019,7 @@
 <% } %>
 
 <% var eventLabels = { CREATED: 'Order created', CONFIRMED: 'Customer order confirmed and stock checked', CHANGED: 'Order changed and reservations recalculated', ALLOCATION_CHANGED: 'Stock reservation updated automatically', PARTIALLY_FULFILLED: 'Part of the order left', FULFILLED: 'The whole order left', ALLOCATED_FROM_STOCK: 'Stock that arrived was committed to this customer', CANCELLED: 'Remaining order cancelled' }; %>
-<details class="card order-activity fold"><summary class="card-head"><h2>Order activity</h2><span class="spacer"></span><span class="fold-note"><%= order.events.length %> <%= order.events.length === 1 ? 'entry' : 'entries' %></span></summary><div class="list-rows"><% order.events.slice().reverse().forEach(function(event){ %><div class="list-row"><span><strong><%= eventLabels[event.event_type] || event.event_type.replace(/_/g,' ').toLowerCase() %></strong><small><%= event.actor_name || 'StockChief' %> · <%= helpers.dateTime(event.created_at) %></small></span></div><% }) %></div></details>
+<details class="card order-activity fold"><summary class="card-head"><h2>Order activity</h2><span class="spacer"></span><span class="fold-note"><%= order.events.length %> <%= order.events.length === 1 ? 'entry' : 'entries' %></span></summary><div class="list-rows"><% order.events.slice().reverse().forEach(function(event){ %><div class="list-row"><span><strong><%= eventLabels[event.event_type] || event.event_type.replace(/_/g,' ').toLowerCase() %></strong><small><%= event.actor_name || 'StockChief' %> · <time data-local-time datetime="<%= event.created_at %>"><%= helpers.dateTime(event.created_at) %></time></small></span></div><% }) %></div></details>
 
 <%#
   Taking a payment without losing the order.

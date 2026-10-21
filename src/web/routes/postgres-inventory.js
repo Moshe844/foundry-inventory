@@ -66,9 +66,33 @@ function createPostgresInventoryRouter(database) {
       ...(await presenters.inventoryPosition(database,req.ctx.workspaceId))});
   }));
   router.get('/inventory/table',asyncRoute(renderList));
+  router.post('/inventory/bulk',requireOwner,asyncRoute(async(req,res)=>{
+    const bulk=require('../../domain/postgres-catalog-bulk'),items=await bulk.selected(database,req.ctx,values(req.body.itemIds));
+    if(req.body.kind==='export'){
+      const result=await require('../../operations/postgres-export').workbook(database,req.ctx.workspaceId,{itemIds:items.map(i=>i.id)});
+      res.set('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');res.set('Content-Disposition','attachment; filename="stockchief-selected-products.xlsx"');return res.send(result.buffer);
+    }
+    if(req.body.kind==='price')return res.page('inventory/bulk-price',{title:'Change selected selling prices',nav:'inventory',items});
+    if(req.body.kind==='move')return res.redirect(303,'/transfers/new?'+new URLSearchParams(items.map(i=>['itemIds',i.id])));
+    const review=await bulk.prepare(database,req.ctx,{itemIds:items.map(i=>i.id),kind:req.body.kind});return res.redirect(303,'/inventory/bulk/reviews/'+review.id);
+  }));
+  router.post('/inventory/bulk/prices',requireOwner,asyncRoute(async(req,res)=>{
+    const review=await require('../../domain/postgres-catalog-bulk').prepare(database,req.ctx,{itemIds:values(req.body.itemIds),kind:'price',amount:req.body.amount,currency:req.body.currency});return res.redirect(303,'/inventory/bulk/reviews/'+review.id);
+  }));
+  router.get('/inventory/bulk/reviews/:reviewId',requireOwner,asyncRoute(async(req,res)=>res.page('inventory/bulk-review',{title:'Review selected product changes',nav:'inventory',review:await require('../../domain/postgres-catalog-bulk').get(database,req.ctx,req.params.reviewId)})));
+  router.post('/inventory/bulk/reviews/:reviewId/approve',requireOwner,asyncRoute(async(req,res)=>{
+    await require('../../domain/postgres-catalog-bulk').approve(database,req.ctx,req.params.reviewId,req.body.integrityHash);req.flash('success','The reviewed product changes are complete.');return res.redirect(303,'/inventory/bulk/reviews/'+req.params.reviewId);
+  }));
+  router.post('/inventory/bulk/reviews/:reviewId/cancel',requireOwner,asyncRoute(async(req,res)=>{
+    await require('../../domain/postgres-catalog-bulk').cancel(database,req.ctx,req.params.reviewId);req.flash('success','The bulk changes were cancelled.');return res.redirect(303,'/inventory/table');
+  }));
   router.get('/inventory/new',(req,res)=>res.page('inventory/new',{title:'Add an item',nav:'inventory',
     form:req.query.name?{name:String(req.query.name).slice(0,240)}:{},resumeInstructionId:null,
     fromConfiguration:false}));
+  router.get('/inventory/:id/duplicate',requireOwner,asyncRoute(async(req,res)=>res.page('inventory/duplicate',{title:'Duplicate product',nav:'inventory',idempotencyKey:newId('copy'),source:await require('../../domain/postgres-catalog-copy').describe(database,req.ctx,req.params.id)})));
+  router.post('/inventory/:id/duplicate',requireOwner,asyncRoute(async(req,res)=>{
+    const created=await require('../../domain/postgres-catalog-copy').copy(database,req.ctx,req.params.id,req.body);req.flash('success','Product duplicated with zero stock. No inventory value or history was copied.');return res.redirect(303,'/inventory/'+created.itemId);
+  }));
   router.post('/inventory',asyncRoute(async(req,res)=>{
     const hasVariants=req.body.hasVariants==='1' || req.body.hasVariants==='on';
     try {
@@ -85,6 +109,7 @@ function createPostgresInventoryRouter(database) {
   }));
   router.get('/inventory/:id',asyncRoute(async(req,res)=>{
     const detail=await catalog.getItem(database,req.ctx.workspaceId,req.params.id,{page:req.query.page});
+    const importedDetails=await require('../../domain/postgres-catalog-facts').listForSkus(database,req.ctx.workspaceId,detail.skus.map(s=>s.id));
     const priceState=await pricing.listForSkus(database,req.ctx.workspaceId,detail.skus.map((sku)=>sku.id));
     detail.skus=detail.skus.map((sku)=>({...sku,...priceState.get(sku.id)}));
     const costRows=detail.skus.length?(await database.query(`SELECT b.sku_id,b.on_hand,COALESCE(c.quantity_units,0) AS costed_units,COALESCE(c.total_cost_minor,0) AS total_cost_minor,
@@ -117,6 +142,8 @@ function createPostgresInventoryRouter(database) {
     return res.page('inventory/item',{title:detail.item.name,nav:'inventory',room:true,...detail,attention:[],findingTotal:0,
       purchasingLines,commitments:[],outlook:[],canOperate:permissions.can(req.user,permissions.OPERATE),
       canEstablishCost:['owner','accountant'].includes(req.user.role)&&permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
+      importedDetails,
+      stockOpKeys:Object.fromEntries(['receive','issue','transfer','adjust'].map(kind=>[kind,newId('stockform')])),
       kitDefinitions:Object.fromEntries(detail.skus.map((sku)=>[sku.id,{isKit:false,components:[]}]))});
   }));
   router.post('/inventory/:id/details',requirePermission(permissions.OPERATE,'edit products'),asyncRoute(async(req,res)=>{
@@ -140,9 +167,11 @@ function createPostgresInventoryRouter(database) {
       input.serials=String(req.body.serials || '').split(/[\r\n,]+/).map((v)=>v.trim()).filter(Boolean);
       input.quantity=input.serials.length;
     }
+    if(input.reference&&(await database.query(`SELECT 1 FROM movements WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3 AND operation='receive' AND reference=$4 LIMIT 1`,[req.ctx.workspaceId,input.skuId,input.locationId,input.reference])).rows.length)
+      throw new ValidationError(`Receipt reference ${input.reference} was already recorded for this product and location. Review Activity before receiving it again.`);
     const result=await inventory.receive(database,req.ctx,input);
     await onboarding.reconcileWithInventoryTruth(database,req.ctx.workspaceId);
-    req.flash('success',`Received ${result.quantity} units.`);
+    req.flash(result.replayed?'warning':'success',result.replayed?'This receipt was already recorded. No stock was added again.':`Received ${result.quantity} ${result.quantity===1?'unit':'units'}.`);
     return res.redirect(303,`/inventory/${req.params.id}`);
   }));
   router.post('/inventory/:id/issue',asyncRoute(async(req,res)=>{
@@ -153,7 +182,7 @@ function createPostgresInventoryRouter(database) {
       quantity:serialUnitIds.length || req.body.quantity,lotId:trimOrNull(req.body.lotId),serialUnitIds,
       occurredAt:trimOrNull(req.body.occurredAt),reasonCode:req.body.reasonCode,notes:trimOrNull(req.body.notes),
       reference:trimOrNull(req.body.reference),idempotencyKey:operationKey(req,'issue')});
-    req.flash('success',`Issued ${result.quantity} units.`);
+    req.flash('success',`Issued ${result.quantity} ${result.quantity===1?'unit':'units'}.`);
     return res.redirect(303,`/inventory/${req.params.id}`);
   }));
   router.post('/inventory/:id/transfer',asyncRoute(async(req,res)=>{

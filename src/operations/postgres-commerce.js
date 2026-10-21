@@ -46,26 +46,7 @@ async function createSupplier(database, ctx, input) {
     {isolation:'SERIALIZABLE',retrySafe:true});
 }
 
-async function linkSupplierItemInTransaction(client,ctx,input){
-  await requirePermission(client,ctx,access.MANAGE_SUPPLIERS,'link supplier products');
-  const supplierId=trimOrNull(input.supplierId);const skuId=trimOrNull(input.skuId);
-  if(!supplierId||!skuId)throw new ValidationError('Choose one existing supplier and one exact SKU.');
-  const supplier=(await client.query(`SELECT id,status FROM suppliers WHERE workspace_id=$1 AND id=$2 FOR UPDATE`,
-    [ctx.workspaceId,supplierId])).rows[0];
-  const sku=(await client.query(`SELECT s.id FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
-      WHERE s.workspace_id=$1 AND s.id=$2 AND s.is_active=1 AND i.is_active=1`,[ctx.workspaceId,skuId])).rows[0];
-  if(!supplier||supplier.status!=='active'||!sku)throw new ValidationError(
-    'The supplier and active product must both belong to this inventory.');
-  await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',
-    [`supplier-product:${ctx.workspaceId}:${skuId}`]);
-  const current=(await client.query(`SELECT * FROM supplier_items
-    WHERE workspace_id=$1 AND supplier_id=$2 AND sku_id=$3 FOR UPDATE`,
-  [ctx.workspaceId,supplierId,skuId])).rows[0]||null;
-  if(input.expectAbsent&&current)throw new ValidationError(
-    'This supplier-product link was added after review. Ask again before changing its terms.');
-  if(input.expectedUpdatedAt&&new Date(current?.updated_at||0).toISOString()!==
-    new Date(input.expectedUpdatedAt).toISOString())throw new ValidationError(
-    'The supplier-product terms changed after review. Ask again before approving.');
+function supplierItemValues(input,current){
   const text=(name,fallback)=>Object.hasOwn(input,name)?trimOrNull(input[name]):fallback;
   const whole=(name,fallback,min,max,nullable=false)=>{if(!Object.hasOwn(input,name))return fallback;
     if(input[name]==null||String(input[name]).trim()===''){
@@ -85,25 +66,37 @@ async function linkSupplierItemInTransaction(client,ctx,input){
     orderMultiple:whole('orderMultiple',current?.order_multiple==null?null:Number(current.order_multiple),1,100000,true),
     isPreferred:Object.hasOwn(input,'isPreferred')?[true,1,'true','1'].includes(input.isPreferred):Boolean(current?.is_preferred),
     notes:text('notes',current?.notes||null)};
-  if(value.isPreferred)await client.query(`UPDATE supplier_items SET is_preferred=0,updated_at=$3
-    WHERE workspace_id=$1 AND sku_id=$2 AND supplier_id<>$4 AND is_preferred=1`,
-  [ctx.workspaceId,skuId,nowIso(),supplierId]);
-  const at=nowIso();const id=current?.id||newId('supitem');
-  const result=await client.query(`INSERT INTO supplier_items(id,workspace_id,supplier_id,sku_id,supplier_sku,purchase_unit,
-    units_per_purchase_unit,last_unit_cost,last_cost_at,lead_time_days,minimum_order_quantity,order_multiple,
-    is_preferred,is_active,notes,created_at,updated_at)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,1,$14,$15,$15)
-    ON CONFLICT(workspace_id,supplier_id,sku_id) DO UPDATE SET supplier_sku=EXCLUDED.supplier_sku,
-      purchase_unit=EXCLUDED.purchase_unit,units_per_purchase_unit=EXCLUDED.units_per_purchase_unit,
-      last_unit_cost=EXCLUDED.last_unit_cost,last_cost_at=EXCLUDED.last_cost_at,
-      lead_time_days=EXCLUDED.lead_time_days,minimum_order_quantity=EXCLUDED.minimum_order_quantity,
-      order_multiple=EXCLUDED.order_multiple,is_preferred=EXCLUDED.is_preferred,is_active=1,
-      notes=EXCLUDED.notes,updated_at=EXCLUDED.updated_at RETURNING id,supplier_id,sku_id,is_active`,
-  [id,ctx.workspaceId,supplierId,skuId,value.supplierSku,value.purchaseUnit,value.unitsPerPurchaseUnit,
-    value.lastUnitCost,value.lastUnitCost===null?null:at,value.leadTimeDays,
-    value.minimumOrderQuantity,value.orderMultiple,value.isPreferred?1:0,value.notes,current?.created_at||at]);
-  return result.rows[0];
+
+ return value;
 }
+async function linkSupplierItemsInTransaction(client,ctx,inputs){
+ if(!inputs.length)return [];
+ if(inputs.length>1000)throw new ValidationError('Link at most 1,000 supplier products per batch.');
+ await requirePermission(client,ctx,access.MANAGE_SUPPLIERS,'link supplier products');
+ await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['supplier-links:'+ctx.workspaceId]);
+ const unique=new Map();for(const input of inputs){const supplierId=trimOrNull(input.supplierId),skuId=trimOrNull(input.skuId);if(!supplierId||!skuId)throw new ValidationError('Choose one existing supplier and one exact SKU.');
+  const key=JSON.stringify([supplierId,skuId]),prior=unique.get(key);if(prior){for(const [name,value]of Object.entries(input))if(Object.hasOwn(prior,name)&&prior[name]!==value)throw new ValidationError('Conflicting supplier-product terms need review.');unique.set(key,{...prior,...input});}else unique.set(key,{...input,supplierId,skuId});}inputs=[...unique.values()];
+ const pairs=inputs.map(i=>({supplier_id:i.supplierId,sku_id:i.skuId}));
+ const valid=(await client.query(`SELECT x.supplier_id,x.sku_id FROM jsonb_to_recordset($2::jsonb) AS x(supplier_id text,sku_id text)
+  JOIN suppliers p ON p.workspace_id=$1 AND p.id=x.supplier_id AND p.status='active'
+  JOIN skus s ON s.workspace_id=$1 AND s.id=x.sku_id AND s.is_active=1 JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id AND i.is_active=1`,[ctx.workspaceId,JSON.stringify(pairs)])).rows;
+ if(valid.length!==pairs.length)throw new ValidationError('The supplier and active product must both belong to this inventory.');
+ const current=(await client.query(`SELECT p.* FROM supplier_items p JOIN jsonb_to_recordset($2::jsonb) AS x(supplier_id text,sku_id text) ON p.supplier_id=x.supplier_id AND p.sku_id=x.sku_id WHERE p.workspace_id=$1 FOR UPDATE OF p`,[ctx.workspaceId,JSON.stringify(pairs)])).rows;
+ const indexed=new Map(current.map(r=>[JSON.stringify([r.supplier_id,r.sku_id]),r])),at=nowIso(),preferred=new Map();
+ const rows=inputs.map(input=>{const prior=indexed.get(JSON.stringify([input.supplierId,input.skuId]));
+  if(input.expectAbsent&&prior)throw new ValidationError('This supplier-product link was added after review. Ask again before changing its terms.');
+  if(input.expectedUpdatedAt&&new Date(prior?.updated_at||0).toISOString()!==new Date(input.expectedUpdatedAt).toISOString())throw new ValidationError('The supplier-product terms changed after review. Ask again before approving.');
+  const value=supplierItemValues(input,prior);if(value.isPreferred){if(preferred.has(input.skuId)&&preferred.get(input.skuId)!==input.supplierId)throw new ValidationError('Choose one preferred supplier per product.');preferred.set(input.skuId,input.supplierId);}
+  return {id:prior?.id||newId('supitem'),supplier_id:input.supplierId,sku_id:input.skuId,supplier_sku:value.supplierSku,purchase_unit:value.purchaseUnit,units_per_purchase_unit:value.unitsPerPurchaseUnit,last_unit_cost:value.lastUnitCost,last_cost_at:value.lastUnitCost===null?null:at,lead_time_days:value.leadTimeDays,minimum_order_quantity:value.minimumOrderQuantity,order_multiple:value.orderMultiple,is_preferred:value.isPreferred?1:0,notes:value.notes,created_at:prior?.created_at||at};
+ });
+ if(preferred.size)await client.query(`UPDATE supplier_items p SET is_preferred=0,updated_at=$3 FROM jsonb_to_recordset($2::jsonb) AS x(sku_id text,supplier_id text) WHERE p.workspace_id=$1 AND p.sku_id=x.sku_id AND p.supplier_id<>x.supplier_id AND p.is_preferred=1`,[ctx.workspaceId,JSON.stringify([...preferred].map(([sku_id,supplier_id])=>({sku_id,supplier_id}))),at]);
+ const result=await client.query(`INSERT INTO supplier_items(id,workspace_id,supplier_id,sku_id,supplier_sku,purchase_unit,units_per_purchase_unit,last_unit_cost,last_cost_at,lead_time_days,minimum_order_quantity,order_multiple,is_preferred,is_active,notes,created_at,updated_at)
+  SELECT x.id,$1,x.supplier_id,x.sku_id,x.supplier_sku,x.purchase_unit,x.units_per_purchase_unit,x.last_unit_cost,x.last_cost_at,x.lead_time_days,x.minimum_order_quantity,x.order_multiple,x.is_preferred,1,x.notes,x.created_at,$3
+  FROM jsonb_to_recordset($2::jsonb) AS x(id text,supplier_id text,sku_id text,supplier_sku text,purchase_unit text,units_per_purchase_unit bigint,last_unit_cost numeric,last_cost_at text,lead_time_days bigint,minimum_order_quantity bigint,order_multiple bigint,is_preferred bigint,notes text,created_at text)
+  ON CONFLICT(workspace_id,supplier_id,sku_id) DO UPDATE SET supplier_sku=EXCLUDED.supplier_sku,purchase_unit=EXCLUDED.purchase_unit,units_per_purchase_unit=EXCLUDED.units_per_purchase_unit,last_unit_cost=EXCLUDED.last_unit_cost,last_cost_at=EXCLUDED.last_cost_at,lead_time_days=EXCLUDED.lead_time_days,minimum_order_quantity=EXCLUDED.minimum_order_quantity,order_multiple=EXCLUDED.order_multiple,is_preferred=EXCLUDED.is_preferred,is_active=1,notes=EXCLUDED.notes,updated_at=EXCLUDED.updated_at RETURNING id,supplier_id,sku_id,is_active`,[ctx.workspaceId,JSON.stringify(rows),at]);
+ return result.rows;
+}
+async function linkSupplierItemInTransaction(client,ctx,input){return (await linkSupplierItemsInTransaction(client,ctx,[input]))[0];}
 
 async function linkSupplierItem(database,ctx,input){return database.transaction(
   client=>linkSupplierItemInTransaction(client,ctx,input),{isolation:'SERIALIZABLE',retrySafe:true});}
@@ -291,8 +284,8 @@ async function salesOrder(database, workspaceId, id) {
     paymentRequests:paymentRequests.rows.map((row)=>({...row,amount_minor:Number(row.amount_minor),paid_minor:Number(row.paid_minor)}))};
 }
 
-module.exports={createSupplier,createSupplierInTransaction,linkSupplierItem,linkSupplierItemInTransaction,
+module.exports={linkSupplierItemsInTransaction,createSupplier,createSupplierInTransaction,linkSupplierItem,linkSupplierItemInTransaction,
   createCustomer,createCustomerInTransaction,suppliers,customers,catalogue,locations,purchaseOrders,purchaseOrder,salesOrders,salesOrder};
 require('../commercial/enforcement').guardExports(module.exports,0,1,{createSupplier:'purchasing.suppliers',createSupplierInTransaction:'purchasing.suppliers',
-  linkSupplierItem:'purchasing.suppliers',linkSupplierItemInTransaction:'purchasing.suppliers',
+  linkSupplierItem:'purchasing.suppliers',linkSupplierItemInTransaction:'purchasing.suppliers',linkSupplierItemsInTransaction:'purchasing.suppliers',
   createCustomer:'sales_orders.core',createCustomerInTransaction:'sales_orders.core'});

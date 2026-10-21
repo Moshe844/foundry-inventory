@@ -122,7 +122,7 @@
   <div class="card section">
     <div class="card-head"><div><h2>Price evidence</h2><p class="muted">Trusted supplier documents, kept as purchasing history—not accounting entries.</p></div></div>
     <div class="table-scroll"><table class="table table--tight"><thead><tr><th>Product</th><th>Observed</th><th class="num">Unit cost</th></tr></thead><tbody>
-      <% priceHistory.forEach(function(entry) { %><tr><td><%= entry.item_name %> · <span class="mono"><%= entry.sku_code %></span></td><td class="muted"><%= helpers.dateTime(entry.observed_at) %></td><td class="num"><%= entry.currency %> <%= Number(entry.unit_cost).toFixed(2) %></td></tr><% }) %>
+      <% priceHistory.forEach(function(entry) { %><tr><td><%= entry.item_name %> · <span class="mono"><%= entry.sku_code %></span></td><td class="muted"><time data-local-time datetime="<%= entry.observed_at %>"><%= helpers.dateTime(entry.observed_at) %></time></td><td class="num"><%= entry.currency %> <%= Number(entry.unit_cost).toFixed(2) %></td></tr><% }) %>
     </tbody></table></div>
   </div>
 <% } %>

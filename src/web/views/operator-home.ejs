@@ -14,8 +14,8 @@
    * moved to the guide where somebody can go looking for them, and the
    * vocabulary is the operation's rather than StockChief's.
    */
-  var hour = new Date().getHours();
-  var greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+  var hour = null;
+  var greeting = 'Hello';
   var firstName = currentUser && currentUser.name ? currentUser.name.split(/\s+/)[0] : '';
   var needsCount = home.needsYou.length;
   var coverageErrors = home.coverageErrors || [];
@@ -68,7 +68,7 @@
 <%- include('manager/coverage-warning', { inbox:home }) %>
 <header class="briefing <%= paused ? 'briefing--paused' : coverageErrors.length || needsCount ? 'briefing--attention' : 'briefing--clear' %>">
   <div class="briefing__copy">
-    <p class="briefing__greeting"><%= greeting %><%= firstName ? ', ' + firstName : '' %></p>
+    <p class="briefing__greeting"><span data-local-greeting><%= greeting %></span><%= firstName ? ', ' + firstName : '' %></p>
     <h1 class="briefing__verdict"><%= verdict %></h1>
     <p class="briefing__sub"><%= subVerdict %></p>
 

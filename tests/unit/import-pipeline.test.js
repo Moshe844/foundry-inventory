@@ -93,11 +93,9 @@ test('the obvious columns are recognised without asking a model', () => {
   assert.equal(sheet.columns[mappings.quantity].name, 'Qty On Hand');
   // The cost is what the stock is worth, so it is read rather than dropped.
   assert.equal(sheet.columns[mappings.unitCost].name, 'Unit Cost');
-  // Recognised, and deliberately not imported.
-  assert.deepEqual(
-    ignored.map((column) => column.name).sort(),
-    ['Supplier']
-  );
+  // Supplier is now an explicit governed import field rather than discarded.
+  assert.equal(sheet.columns[mappings.supplierName].name,'Supplier');
+  assert.deepEqual(ignored,[]);
 });
 
 test('AI-assisted mapping reports provider usage exactly once', async () => {

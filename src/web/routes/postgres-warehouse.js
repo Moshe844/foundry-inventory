@@ -9,6 +9,13 @@ const {newId}=require('../../lib/util');
 function createPostgresWarehouseRouter(database){
   const router=express.Router();
   router.use('/warehouse',requireAuth);
+  router.get('/warehouse/labels/sku/:id',asyncRoute(async(req,res)=>{
+    const sku=await require('../../pricing/postgres-service').requireSku(database,req.ctx.workspaceId,req.params.id);
+    const labels=require('../../warehouse/labels'),label={kind:'sku',id:sku.id,title:sku.display_name,
+      subtitle:`SKU ${sku.code}`,barcode:sku.barcode||sku.code};
+    return res.page('warehouse/label',{title:`Print ${label.title}`,nav:'warehouse',room:true,
+      label,barcodeSvg:labels.code128Svg(label.barcode),verified:labels.verifyRoundTrip(label)});
+  }));
   router.get('/warehouse',(req,res)=>res.redirect(302,'/warehouse/operations'));
   router.get('/warehouse/operations',asyncRoute(async(req,res)=>res.page('warehouse/postgres-operations',{
     title:'Warehouse operations',nav:'warehouse',room:true,

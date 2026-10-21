@@ -303,7 +303,7 @@
               <tr><td class="muted">Risk</td><td class="right"><%= action.safetyLevel === 'HIGH' ? 'Higher — read the warning' : action.isMutation ? 'Changes stock' : 'Changes a record, not a count' %></td></tr>
               <tr><td class="muted">Approval</td><td class="right"><%= action.approvalRequirement === 'CONFIRM_WITH_WARNING' ? 'Explicit, with warning' : 'Explicit' %></td></tr>
               <tr><td class="muted">Proposed</td><td class="right"><%= helpers.timeAgo(action.createdAt) %></td></tr>
-              <tr><td class="muted">Valid until</td><td class="right"><%= helpers.dateTime(action.expiresAt) %></td></tr>
+              <tr><td class="muted">Valid until</td><td class="right"><time data-local-time datetime="<%= action.expiresAt %>"><%= helpers.dateTime(action.expiresAt) %></time></td></tr>
               <tr><td class="muted">Asked for by</td><td class="right"><%= action.sourceType === 'ATTENTION_ITEM' ? 'A StockChief finding' : action.sourceType === 'COMPENSATION' ? 'Reversing an earlier action' : 'You' %></td></tr>
             </tbody>
           </table>
@@ -342,7 +342,7 @@
           <tr>
             <td>
               <span class="cell-title"><%= event.event.toLowerCase().replace(/_/g, ' ') %></span>
-              <span class="cell-sub"><%= event.actorName || 'StockChief' %> · <%= helpers.dateTime(event.createdAt) %></span>
+              <span class="cell-sub"><%= event.actorName || 'StockChief' %> · <time data-local-time datetime="<%= event.createdAt %>"><%= helpers.dateTime(event.createdAt) %></time></span>
             </td>
           </tr>
         <% }) %>

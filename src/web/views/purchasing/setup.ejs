@@ -44,7 +44,7 @@
         <tbody>
           <% assessment.proposals.forEach(function (line) { %>
             <tr>
-              <td><input type="checkbox" name="skuIds" value="<%= line.skuId %>" checked></td>
+              <td><input type="checkbox" name="skuIds" aria-label="Select <%= line.displayName %>" value="<%= line.skuId %>" checked></td>
               <td>
                 <strong><%= line.displayName %></strong>
                 <div class="muted">
@@ -122,7 +122,7 @@
           <tbody>
             <% assessment.proposals.concat(assessment.blocked, assessment.configured).forEach(function (line) { %>
               <tr>
-                <td><input type="checkbox" name="skuIds" value="<%= line.skuId %>" <%= line.hasSupplier ? '' : 'checked' %>></td>
+                <td><input type="checkbox" name="skuIds" aria-label="Select <%= line.displayName %>" value="<%= line.skuId %>" <%= line.hasSupplier ? '' : 'checked' %>></td>
                 <td><%= line.displayName %></td>
                 <td class="muted"><%= line.hasSupplier ? line.suppliers[0].supplierName : '—' %></td>
               </tr>

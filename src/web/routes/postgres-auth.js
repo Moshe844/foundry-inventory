@@ -55,6 +55,8 @@ function createPostgresAuthRouter(database,options={}) {
       });
       await sessionCall(req,'regenerate');
       req.session.accountId=account.id;
+      try{require('../../domain/auth-service').checkPasswordStrength(req.body.password);}
+      catch{req.session.passwordUpgradeRequired=true;}
       req.session.cookie.maxAge=req.body.rememberMe==='1'?30*86400000:null;
       const workspaceId=await auth.defaultWorkspaceFor(database,account.id);
       if(workspaceId)req.session.workspaceId=workspaceId;
@@ -173,13 +175,29 @@ function createPostgresAuthRouter(database,options={}) {
   router.get('/forgot-password',(req,res)=>res.render('auth/forgot-password',{
     title:'Reset your password',csrfToken:res.locals.csrfToken,flash:res.locals.flash,appName:res.locals.appName,
   }));
+  router.get('/settings/password',require('../middleware').requireAccount,(req,res)=>res.page('auth/change-password',{
+    title:'Update your password',nav:null,error:null}));
+  router.post('/settings/password',require('../middleware').requireAccount,async(req,res,next)=>{
+    try{
+      const verified=await auth.authenticate(database,req.account.email,req.body.currentPassword,{ip:req.ip||req.socket.remoteAddress});
+      if(!verified||verified.id!==req.account.id)throw new ValidationError('Your current password did not match.');
+      matchingPasswords(req.body);const passwordAuth=require('../../domain/auth-service');
+      passwordAuth.checkPasswordStrength(req.body.password);const nextHash=passwordAuth.hashPassword(req.body.password);
+      await database.transaction(async client=>{
+        const changed=await client.query('UPDATE accounts SET password_hash=$3 WHERE id=$1 AND password_hash=$2 RETURNING id',[req.account.id,verified.password_hash,nextHash]);
+        if(!changed.rows.length)throw new ValidationError('Your password changed in another session. Sign in again.');
+        await client.query("DELETE FROM stockchief_runtime.sessions WHERE data->>'accountId'=$1 AND sid<>$2",[req.account.id,req.sessionID]);
+      });
+      delete req.session.passwordUpgradeRequired;req.flash('success','Password updated. Other signed-in sessions have been closed.');await sessionCall(req,'save');return res.redirect(303,'/');
+    }catch(error){if(error.status&&error.status<500)return res.status(error.status).page('auth/change-password',{title:'Update your password',nav:null,error:error.message});return next(error);}
+  });
   router.post('/forgot-password',async(req,res)=>{
     try{await passwordRecovery.request(database,req.body.email,{origin:config.connections.publicOrigin||res.locals.origin,
       ip:req.ip||req.socket.remoteAddress});}
     catch(error){try{await monitoring.raise(database,{severity:'ERROR',kind:'password_recovery.failed',
       title:'Password recovery could not be queued',detail:error.message,fingerprint:'password_recovery.failed'});}catch{}
     }
-    return res.render('auth/forgot-password',{title:'Check your email',csrfToken:res.locals.csrfToken,
+    return res.render('auth/forgot-password',{title:'Check your email',submitted:true,csrfToken:res.locals.csrfToken,
       flash:[{type:'success',message:'If an account uses that email, a reset link is on its way.'}],appName:res.locals.appName});
   });
   router.get('/reset-password',async(req,res,next)=>{try{const valid=await passwordRecovery.inspect(database,req.query.token||'');

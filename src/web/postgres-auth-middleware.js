@@ -25,6 +25,7 @@ function loadUser(database,{readonly=false}={}) {
       res.locals.workspace = null;
       res.locals.workspaces = [];
       res.locals.account = null;
+      res.locals.passwordUpgradeRequired=Boolean(req.session?.passwordUpgradeRequired);
       if (!req.session?.accountId) return next();
 
       const account = await auth.getAccount(database, req.session.accountId);
@@ -45,7 +46,9 @@ function loadUser(database,{readonly=false}={}) {
         if (resolved) req.session.workspaceId = workspaceId;
       }
       if (!resolved) return next();
-      if (!readonly&&account.last_workspace_id !== workspaceId) await auth.rememberWorkspace(database, account.id, workspaceId);
+      // Merely reading an older tab must not overwrite the inventory explicitly
+      // selected in another session. Creation and the switch form persist that
+      // preference; sign-in uses it through defaultWorkspaceFor.
 
       const { workspace,membership } = resolved;
       req.user = { ...membership,email:account.email,plan:account.plan };

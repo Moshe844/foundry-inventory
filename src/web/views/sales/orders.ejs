@@ -176,7 +176,7 @@
           <small>
             <%= sale.itemSummary %> · <%= sale.totalUnits %> unit<%= sale.totalUnits === 1 ? '' : 's' %>
             · <%= sale.locations.join(', ') %> · <%= sale.providerName %>
-            · <%= helpers.dateTime(sale.occurredAt) %>
+            · <time data-local-time datetime="<%= sale.occurredAt %>"><%= helpers.dateTime(sale.occurredAt) %></time>
           </small>
         </span>
         <span class="rm-told__m">

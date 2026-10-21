@@ -85,49 +85,52 @@ async function createItem(database, ctx, input) {
     { isolation: 'SERIALIZABLE' });
 }
 
-async function createImportedItemInTransaction(client, ctx, input) {
-  const name = requireText(input.name, 'Item name', { max: 240 });
-  const trackingMode = requireOneOf(input.trackingMode, TRACKING_MODE_IDS, 'Tracking type');
-  if(['lot','serial'].includes(trackingMode))await require('../commercial/enforcement').workspace(client,ctx.workspaceId,'inventory.lot_serial');
-  const variants = Array.isArray(input.variants) && input.variants.length ? input.variants : [{}];
-  const description = trimOrNull(input.description);
-  const unitLabel = trimOrNull(input.unitLabel) || 'unit';
-  await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`catalog:${ctx.workspaceId}`]);
-  const at = nowIso();
-  const itemId = newId('item');
-  await client.query(`INSERT INTO items(id,workspace_id,name,base_code,description,unit_label,tracking_mode,
-    has_variants,allow_negative,is_active,created_at,updated_at)
-    VALUES($1,$2,$3,NULL,$4,$5,$6,$7,0,1,$8,$8)`,
-  [itemId, ctx.workspaceId, name, description, unitLabel, trackingMode,
-    variants.some((row) => row.options?.length) ? 1 : 0, at]);
-  const optionNames = [...new Set(variants.flatMap((variant) => (variant.options || []).map((part) => part.name)))];
-  const optionIds = new Map();
-  const optionRows=[];
-  for (const [position, optionName] of optionNames.entries()) {
-    const optionId = newId('opt');
-    optionIds.set(optionName, optionId);
-    optionRows.push({id:optionId,name:optionName,position});
+async function createImportedItemInTransaction(client,ctx,input){
+  return (await createImportedItemsInTransaction(client,ctx,[input]))[0];
+}
+
+// One canonical imported-catalog implementation for single and bulk callers.
+// All records are validated before writes; the enclosing caller owns atomicity.
+async function createImportedItemsInTransaction(client,ctx,inputs){
+  if(!Array.isArray(inputs))throw new ValidationError('Imported products must be a list.');
+  if(!inputs.length)return [];
+  const normalized=inputs.map(input=>({...input,name:requireText(input.name,'Item name',{max:240}),
+    trackingMode:requireOneOf(input.trackingMode,TRACKING_MODE_IDS,'Tracking type'),
+    variants:Array.isArray(input.variants)&&input.variants.length?input.variants:[{}]}));
+  if(normalized.some(i=>['lot','serial'].includes(i.trackingMode)))
+    await require('../commercial/enforcement').workspace(client,ctx.workspaceId,'inventory.lot_serial');
+  await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['catalog:'+ctx.workspaceId]);
+  const candidates=normalized.flatMap(input=>input.variants.map(v=>trimOrNull(v.code)||[codeSlug(input.name),...(v.options||[]).map(p=>codeSlug(p.value))].filter(Boolean).join('-')||'SKU'));
+  const existing=new Set((await client.query('SELECT lower(code) AS code FROM skus WHERE workspace_id=$1 AND lower(code)=ANY($2::text[])',[ctx.workspaceId,[...new Set(candidates.map(c=>c.toLowerCase()))]])).rows.map(r=>r.code));
+  const taken=new Set(),itemRows=[],optionRows=[],skuRows=[],valueRows=[],created=[],at=nowIso();let ci=0;
+  for(const input of normalized){
+    const itemId=newId('item'),options=new Map(),result={itemId,skus:[]};
+    const optionNames=[...new Set(input.variants.flatMap(v=>(v.options||[]).map(p=>requireText(p.name,'Option name',{max:120}))))];
+    for(const [position,name]of optionNames.entries()){const id=newId('opt');options.set(name,id);optionRows.push({id,item_id:itemId,name,position});}
+    for(const [position,v]of input.variants.entries()){
+      const parts=(v.options||[]).map(p=>({name:p.name,value:requireText(p.value,'Option value',{max:120})}));
+      let candidate=requireText(candidates[ci++],'SKU code',{max:240});
+      const code=taken.has(candidate.toLowerCase())||existing.has(candidate.toLowerCase())?await uniqueCode(client,ctx.workspaceId,candidate,taken):candidate;
+      taken.add(code.toLowerCase());const skuId=newId('sku'),label=parts.length?parts.map(p=>p.value).join(' / '):trimOrNull(v.label);
+      skuRows.push({id:skuId,item_id:itemId,code,barcode:trimOrNull(v.barcode),variant_label:label,is_default:parts.length?0:1,position});
+      for(const p of parts)valueRows.push({sku_id:skuId,option_id:options.get(p.name),value:p.value});
+      result.skus.push({key:v.key,skuId,code});
+    }
+    itemRows.push({id:itemId,name:input.name,base_code:optionNames.length?null:result.skus[0].code,
+      description:trimOrNull(input.description),unit_label:trimOrNull(input.unitLabel)||'unit',tracking_mode:input.trackingMode,has_variants:optionNames.length?1:0});
+    created.push(result);
   }
+  await client.query(`INSERT INTO items(id,workspace_id,name,base_code,description,unit_label,tracking_mode,has_variants,allow_negative,is_active,created_at,updated_at)
+    SELECT x.id,$1,x.name,x.base_code,x.description,x.unit_label,x.tracking_mode,x.has_variants,0,1,$2,$2
+    FROM jsonb_to_recordset($3::jsonb) AS x(id text,name text,base_code text,description text,unit_label text,tracking_mode text,has_variants bigint)`,[ctx.workspaceId,at,JSON.stringify(itemRows)]);
   if(optionRows.length)await client.query(`INSERT INTO item_options(id,workspace_id,item_id,name,position)
-    SELECT x.id,$1,$2,x.name,x.position FROM jsonb_to_recordset($3::jsonb) AS x(id text,name text,position bigint)`,
-    [ctx.workspaceId,itemId,JSON.stringify(optionRows)]);
-  const taken = new Set();
-  const created=[],candidates=variants.map(variant=>trimOrNull(variant.code)||[codeSlug(name),...(variant.options||[]).map(part=>codeSlug(part.value))].filter(Boolean).join('-')||'SKU');
-  const existingCodes=new Set((await client.query('SELECT code FROM skus WHERE workspace_id=$1 AND code=ANY($2::text[])',[ctx.workspaceId,[...new Set(candidates)]])).rows.map(row=>row.code));
-  let skuRows=[],valueRows=[];
-  async function flushVariants(){if(!skuRows.length)return;
-    await client.query(`INSERT INTO skus(id,workspace_id,item_id,code,barcode,variant_label,is_default,position,is_active,created_at)
-      SELECT x.id,$1,$2,x.code,x.barcode,x.variant_label,x.is_default,x.position,1,$3 FROM jsonb_to_recordset($4::jsonb) AS x(id text,code text,barcode text,variant_label text,is_default bigint,position bigint) ORDER BY x.position`,[ctx.workspaceId,itemId,at,JSON.stringify(skuRows)]);
-    if(valueRows.length)await client.query(`INSERT INTO sku_option_values(sku_id,option_id,value) SELECT x.sku_id,x.option_id,x.value FROM jsonb_to_recordset($1::jsonb) AS x(sku_id text,option_id text,value text)`,[JSON.stringify(valueRows)]);skuRows=[];valueRows=[];
-  }
-  for(const [position,variant]of variants.entries()){
-    const options=variant.options||[],candidate=candidates[position],code=taken.has(candidate.toLowerCase())||existingCodes.has(candidate)?await uniqueCode(client,ctx.workspaceId,candidate,taken):candidate;
-    taken.add(code.toLowerCase());const skuId=newId('sku'),label=options.length?options.map(part=>part.value).join(' / '):trimOrNull(variant.label);
-    skuRows.push({id:skuId,code,barcode:trimOrNull(variant.barcode),variant_label:label,is_default:options.length?0:1,position});for(const part of options)valueRows.push({sku_id:skuId,option_id:optionIds.get(part.name),value:part.value});
-    created.push({key:variant.key,skuId,code});if(skuRows.length>=500)await flushVariants();
-  }
-  await flushVariants();
-  return { itemId, skus:created };
+    SELECT x.id,$1,x.item_id,x.name,x.position FROM jsonb_to_recordset($2::jsonb) AS x(id text,item_id text,name text,position bigint)`,[ctx.workspaceId,JSON.stringify(optionRows)]);
+  await client.query(`INSERT INTO skus(id,workspace_id,item_id,code,barcode,variant_label,is_default,position,is_active,created_at)
+    SELECT x.id,$1,x.item_id,x.code,x.barcode,x.variant_label,x.is_default,x.position,1,$2
+    FROM jsonb_to_recordset($3::jsonb) AS x(id text,item_id text,code text,barcode text,variant_label text,is_default bigint,position bigint)`,[ctx.workspaceId,at,JSON.stringify(skuRows)]);
+  if(valueRows.length)await client.query(`INSERT INTO sku_option_values(sku_id,option_id,value)
+    SELECT x.sku_id,x.option_id,x.value FROM jsonb_to_recordset($1::jsonb) AS x(sku_id text,option_id text,value text)`,[JSON.stringify(valueRows)]);
+  return created;
 }
 
 function listOrder(sort) {
@@ -377,7 +380,7 @@ async function setItemActive(database, ctx, itemId, active) {
   },{isolation:'SERIALIZABLE'});
 }
 
-module.exports = { createItem, createItemInTransaction, createImportedItemInTransaction,
+module.exports = { createItem, createItemInTransaction, createImportedItemInTransaction, createImportedItemsInTransaction,
   listItems, getItem, updateItem, addVariant, setItemActive };
 require('../commercial/enforcement').guardExports(module.exports,0,1,{createItem:'inventory.core',createItemInTransaction:'inventory.core',
- createImportedItemInTransaction:'inventory.core',updateItem:'inventory.core',addVariant:'inventory.core',setItemActive:'inventory.core'});
+ createImportedItemInTransaction:'inventory.core',createImportedItemsInTransaction:'inventory.core',updateItem:'inventory.core',addVariant:'inventory.core',setItemActive:'inventory.core'});

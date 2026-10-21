@@ -18,8 +18,8 @@
   <div class="card-head"><div><h2>What happened before</h2><p class="muted">The complete history attached to this exact file.</p></div></div>
   <div class="card-body">
     <dl class="kv">
-      <dt>Originally imported</dt><dd><%= helpers.dateTime(review.snapshot.source.originallyImportedAt) %></dd>
-      <dt>Removed</dt><dd><%= helpers.dateTime(review.snapshot.source.removedAt) %></dd>
+      <dt>Originally imported</dt><dd><time data-local-time datetime="<%= review.snapshot.source.originallyImportedAt %>"><%= helpers.dateTime(review.snapshot.source.originallyImportedAt) %></time></dd>
+      <dt>Removed</dt><dd><time data-local-time datetime="<%= review.snapshot.source.removedAt %>"><%= helpers.dateTime(review.snapshot.source.removedAt) %></time></dd>
       <dt>Supplier</dt><dd><%= review.snapshot.source.supplier || 'Not stated' %></dd>
       <dt>This review</dt><dd><%= review.snapshot.productCount %> products · <%= review.snapshot.variantCount %> variants · <%= review.snapshot.totalUnits %> <%= review.snapshot.unitLabel %><%= review.snapshot.totalUnits === 1 ? '' : 's' %></dd>
     </dl>

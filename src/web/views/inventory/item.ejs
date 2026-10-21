@@ -56,7 +56,7 @@
       </h1>
       <p>
         <span class="mono"><%= item.base_code || skus[0].code %></span>
-        · <%= modeInfo.label %><% if (item.has_variants) { %> · <%= variantTotal %> variants<% } %>
+        · <%= modeInfo.label %><% if (item.has_variants) { %> · <%= variantTotal %> <%= helpers.plural(variantTotal, 'variant') %><% } %>
         <% if (item.description) { %> · <%= item.description %><% } %>
       </p>
     </div>
@@ -595,10 +595,10 @@
     <section class="rm-panel">
       <div class="rm-panel__head">
         <%- helpers.icon('tag', { size: 15, className: 'rm-quiet' }) %>
-        <h2>Details</h2>
+        <h2>Details</h2><% if(currentUser.role==='owner'){ %><a class="rm-btn rm-btn--ghost rm-btn--sm right" href="/inventory/<%= item.id %>/duplicate">Duplicate product</a><% } %>
       </div>
       <div class="rm-bands" style="box-shadow:none;border:0;border-radius:0">
-        <div class="rm-band"><span class="rm-band__k">Item code</span><span class="rm-band__v mono"><%= item.base_code || '—' %></span></div>
+        <div class="rm-band"><span class="rm-band__k">Item code</span><span class="rm-band__v mono"><%= item.base_code || (item.has_variants?'See variant SKUs':skus[0]?.code||'—') %></span></div>
         <div class="rm-band"><span class="rm-band__k">Tracking</span><span class="rm-band__v"><%= modeInfo.staffLabel %><%= item.has_variants ? ', by variant' : '' %></span></div>
         <div class="rm-band"><span class="rm-band__k">Counted in</span><span class="rm-band__v"><%= helpers.plural(2, item.unit_label) %></span></div>
         <% if (item.has_variants) { %>
@@ -611,6 +611,9 @@
       </div>
     </section>
 
+    <% if(locals.importedDetails?.length){ %><section class="rm-panel"><div class="rm-panel__head"><h2>Imported details</h2></div><div class="rm-panel__body"><p>Original category and custom details are retained with their source row. Reorder settings and supplier links use their normal business controls.</p>
+      <dl><% importedDetails.slice(0,200).forEach(function(fact){ %><dt><strong><%= fact.name %></strong> · <%= fact.code %><%= fact.location_name?' · '+fact.location_name:'' %></dt><dd><%= fact.value %> <small><a href="/imports/<%= fact.source_import_id %>">Source row <%= fact.source_row %></a></small></dd><% }); %></dl>
+      <% if(importedDetails.length>200){ %><p><%= importedDetails.length %> saved details. The first 200 are displayed; <a href="/settings/export">export all details</a> to review the complete history.</p><% } %></div></section><% } %>
     <% if (locationTotals.length > 0) { %>
       <section class="rm-panel">
         <div class="rm-panel__head">
@@ -738,6 +741,7 @@
   <!-- Receive -->
   <dialog class="modal" id="modal-receive">
     <form method="post" action="/inventory/<%= item.id %>/receive" data-stock-form>
+<% if(locals.stockOpKeys){ %><input type="hidden" name="idempotencyKey" value="<%= stockOpKeys.receive %>"><% } %>
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <div class="modal-head">
         <span class="ledger-icon ledger-icon--receive"><%- helpers.icon('receive', { size: 16 }) %></span>
@@ -816,6 +820,7 @@
   <!-- Issue -->
   <dialog class="modal" id="modal-issue">
     <form method="post" action="/inventory/<%= item.id %>/issue" data-stock-form>
+<% if(locals.stockOpKeys){ %><input type="hidden" name="idempotencyKey" value="<%= stockOpKeys.issue %>"><% } %>
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <div class="modal-head">
         <span class="ledger-icon ledger-icon--issue"><%- helpers.icon('issue', { size: 16 }) %></span>
@@ -889,6 +894,7 @@
   <!-- Transfer -->
   <dialog class="modal" id="modal-transfer">
     <form method="post" action="/inventory/<%= item.id %>/transfer" data-stock-form>
+<% if(locals.stockOpKeys){ %><input type="hidden" name="idempotencyKey" value="<%= stockOpKeys.transfer %>"><% } %>
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <div class="modal-head">
         <span class="ledger-icon ledger-icon--transfer"><%- helpers.icon('transfer', { size: 16 }) %></span>
@@ -962,6 +968,7 @@
   <!-- Adjust -->
   <dialog class="modal" id="modal-adjust">
     <form method="post" action="/inventory/<%= item.id %>/adjust" data-stock-form>
+<% if(locals.stockOpKeys){ %><input type="hidden" name="idempotencyKey" value="<%= stockOpKeys.adjust %>"><% } %>
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <div class="modal-head">
         <span class="ledger-icon ledger-icon--adjust"><%- helpers.icon('adjust', { size: 16 }) %></span>

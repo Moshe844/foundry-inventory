@@ -13,7 +13,7 @@
         <td><a href="<%= row.href %>"><strong><%= row.number %></strong></a></td>
         <td><%= row.party %></td><td><%= row.status.replaceAll('_',' ').toLowerCase() %></td>
         <td><% if(row.orderHref){ %><a href="<%= row.orderHref %>"><%= row.orderLabel %></a><% } else { %>Not linked<% } %></td>
-        <td><time datetime="<%= row.createdAt %>" title="<%= row.createdAt %>"><%= helpers.dateTime(row.createdAt) %></time></td>
+        <td><time datetime="<%= row.createdAt %>" title="<%= row.createdAt %>"><time data-local-time datetime="<%= row.createdAt %>"><%= helpers.dateTime(row.createdAt) %></time></time></td>
       </tr><% }) %></tbody>
     </table></div>
   <% } %>

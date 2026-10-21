@@ -3,10 +3,12 @@
 const { newId, nowIso } = require('../lib/util');
 const { ValidationError, InsufficientStockError, InvariantError } = require('./errors');
 const permissions = require('../actions/permissions');
+const physicalInput=require('./physical-stock-input');
 
 function positiveInteger(value, label = 'Quantity') {
   const number = Number(value);
   if (!Number.isSafeInteger(number) || number <= 0) throw new ValidationError(`${label} must be a whole number above zero.`);
+  if(number>physicalInput.MAX_QUANTITY)throw new ValidationError(`${label} exceeds the supported maximum of ${physicalInput.MAX_QUANTITY.toLocaleString('en-US')} units per movement.`);
   return number;
 }
 
@@ -122,6 +124,7 @@ async function recordMovementSerials(client, ctx, movementId, serialUnitIds) {
 }
 
 async function resolveLot(client, ctx, row, input, at, create) {
+  physicalInput.validate({...input,lotReceivedAt:input.lotReceivedAt||at});
   if (input.lotId) {
     const found = await client.query(`SELECT * FROM lots WHERE id = $1 AND workspace_id = $2 AND sku_id = $3 FOR UPDATE`,
       [input.lotId, ctx.workspaceId, row.id]);
@@ -141,6 +144,7 @@ async function resolveLot(client, ctx, row, input, at, create) {
 }
 
 async function receiveInTransaction(client, rawContext, input) {
+  physicalInput.validate(input);
   const ctx = context(rawContext);
   const quantity = positiveInteger(input.quantity);
   await requirePermission(client, ctx, permissions.OPERATE, 'receive stock');
@@ -171,12 +175,17 @@ async function receiveInTransaction(client, rawContext, input) {
       } else {
         serials = [...new Set((input.serials || []).map(String))];
         if (serials.length !== quantity) throw new ValidationError('Provide one unique serial number for every received unit.');
+        const duplicate=await client.query(`SELECT serial FROM serial_units WHERE workspace_id=$1 AND sku_id=$2
+          AND status='in_stock' AND serial=ANY($3::text[]) LIMIT 1`,[ctx.workspaceId,row.id,serials]);
+        if(duplicate.rows.length)throw new ValidationError(`Serial ${duplicate.rows[0].serial} is already in stock. Use a transfer to move it between locations.`);
         for (const serial of serials) {
           const serialUnitId = newId('serial');
-          await client.query(`INSERT INTO serial_units
+          const inserted=await client.query(`INSERT INTO serial_units
             (id, workspace_id, sku_id, serial, status, location_id, received_at, note, updated_at)
-            VALUES ($1,$2,$3,$4,'in_stock',$5,$6,$7,$6)`,
+            VALUES ($1,$2,$3,$4,'in_stock',$5,$6,$7,$6)
+            ON CONFLICT (workspace_id,sku_id,serial) WHERE status='in_stock' DO NOTHING RETURNING id`,
           [serialUnitId, ctx.workspaceId, row.id, serial, row.location_id, at, input.notes || null]);
+          if(!inserted.rows.length)throw new ValidationError(`Serial ${serial} is already in stock. Use a transfer to move it between locations.`);
           serialUnitIds.push(serialUnitId);
         }
       }
@@ -193,7 +202,7 @@ async function receiveInTransaction(client, rawContext, input) {
 
 async function receiveManyInTransaction(client,rawContext,inputs){
   const ctx=context(rawContext);if(!Array.isArray(inputs))throw new ValidationError('Stock receipts must be a list.');if(!inputs.length)return [];
-  const values=inputs.map((input,index)=>({input,index,quantity:positiveInteger(input.quantity),key:String(input.idempotencyKey||newId('operation'))}));
+  const values=inputs.map((input,index)=>({input:physicalInput.validate(input),index,quantity:positiveInteger(input.quantity),key:String(input.idempotencyKey||newId('operation'))}));
   await requirePermission(client,ctx,permissions.OPERATE,'receive stock');
   const keys=values.map(value=>value.key),existing=(await client.query("SELECT id FROM stockchief_runtime.business_operations WHERE workspace_id=$1 AND kind='inventory.receive' AND idempotency_key=ANY($2::text[])",[ctx.workspaceId,keys])).rows;
   async function sequential(){const out=[];for(const value of values)out.push(await receiveInTransaction(client,ctx,{...value.input,idempotencyKey:value.key}));return out;}
@@ -227,6 +236,7 @@ async function receive(database, rawContext, input) {
 }
 
 async function issueInTransaction(client, rawContext, input) {
+  physicalInput.validate(input);
   const ctx = context(rawContext);
   const quantity = positiveInteger(input.quantity);
   await requirePermission(client, ctx, permissions.OPERATE, 'issue stock');
@@ -389,6 +399,7 @@ async function adjustInTransaction(client,rawContext,input){
   const ctx = context(rawContext);
   const counted = Number(input.countedQuantity);
   if (!Number.isSafeInteger(counted) || counted < 0) throw new ValidationError('Counted quantity must be a whole number of zero or more.');
+  if(counted>physicalInput.MAX_QUANTITY)throw new ValidationError('Counted quantity exceeds the supported range.');
   if (!input.reasonCode) throw new ValidationError('A count correction requires a reason.');
     await requirePermission(client, ctx, permissions.ADJUST, 'correct counts');
     const operation = await beginOperation(client, ctx, 'inventory.adjust', input.idempotencyKey);

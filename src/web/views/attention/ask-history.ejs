@@ -5,7 +5,7 @@
 <% if(selected){ %>
   <section class="card measure" aria-label="Saved request">
     <p><a href="/ask/history">← All saved requests</a></p>
-    <p class="rm-stamp"><%= helpers.dateTime(selected.createdAt) %> · <%= selected.label %></p>
+    <p class="rm-stamp"><time data-local-time datetime="<%= selected.createdAt %>"><%= helpers.dateTime(selected.createdAt) %></time> · <%= selected.label %></p>
     <h2 style="white-space:pre-wrap;overflow-wrap:anywhere"><%= selected.request %></h2>
     <p class="rm-agent__hint">This is a saved result. Business records may have changed since it was recorded.</p>
     <% for(const turn of selected.conversation.history||[]){ %>
@@ -39,7 +39,7 @@
     </form>
     <p><%= saved.total %> saved <%= saved.total===1?'request':'requests' %><%= saved.status?' with this status':'' %>. Showing <%= saved.rows.length %> on this page<%= saved.hasMore?'; more follow.':'.' %></p>
     <div class="table-scroll"><table><thead><tr><th>Requested</th><th>Goal</th><th>Status</th><th>Recorded outcomes</th></tr></thead><tbody>
-      <% for(const goal of saved.rows){ %><tr><td><%= helpers.dateTime(goal.created_at) %></td><td style="min-width:15rem;max-width:30rem;overflow-wrap:anywhere"><a href="/ask/history?goal=<%= encodeURIComponent(goal.id) %>"><%= goal.original_request %></a>
+      <% for(const goal of saved.rows){ %><tr><td><time data-local-time datetime="<%= goal.created_at %>"><%= helpers.dateTime(goal.created_at) %></time></td><td style="min-width:15rem;max-width:30rem;overflow-wrap:anywhere"><a href="/ask/history?goal=<%= encodeURIComponent(goal.id) %>"><%= goal.original_request %></a>
       <% if(goal.publicSummary){ %><div class="rm-agent__answer"><%- renderAgentAnswer(goal.publicSummary) %></div><% } %>
       <% if(goal.recovery){ %><p class="rm-agent__hint"><%= goal.recovery %></p><% } %>
       </td><td><%= goal.label %><% if(goal.expired){ %><p class="rm-agent__hint">Expired · review only</p><% } %></td><td>

@@ -50,6 +50,13 @@ const FIELDS = [
   { id: 'expiresAt', label: 'Expiration date' },
   { id: 'receivedAt', label: 'Received date' },
   { id: 'notes', label: 'Notes' },
+  { id: 'category', label: 'Category' },
+  { id: 'subcategory', label: 'Subcategory' },
+  { id: 'reorderPoint', label: 'Reorder point / low-stock threshold' },
+  { id: 'targetStock', label: 'Target stock' },
+  { id: 'safetyStock', label: 'Safety stock' },
+  { id: 'supplierName', label: 'Supplier name' },
+  { id: 'leadTimeDays', label: 'Lead time in days' },
 ];
 
 const FIELD_IDS = FIELDS.map((field) => field.id);
@@ -72,6 +79,13 @@ const DETECTED_TYPES = [
  * even though both patterns match part of it.
  */
 const PATTERNS = {
+  category:[/^(?:product\s*)?categor(?:y|ies)$/],
+  subcategory:[/^sub\s*categor(?:y|ies)$/],
+  reorderPoint:[/^(?:reorder\s*(?:point|level)|low\s*stock\s*(?:threshold|level)|min(?:imum)?\s*stock)$/],
+  targetStock:[/^(?:target\s*(?:stock|level)|max(?:imum)?\s*stock|order\s*up\s*to)$/],
+  safetyStock:[/^safety\s*stock$/],
+  supplierName:[/^(?:supplier|vendor)(?:\s*name)?$/],
+  leadTimeDays:[/^(?:supplier\s*)?lead\s*time(?:\s*(?:in\s*)?days)?$/],
   sellingPrice: [
     /\b(?:selling|sale|retail|customer|list)\s*price\b/,
     /\b(?:msrp|rrp)\b/,

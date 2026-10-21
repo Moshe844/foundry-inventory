@@ -23,6 +23,23 @@
 
 /* ---------------------------------------------------------------- 1. tokens */
 
+.authority-settings{display:grid;gap:24px;min-width:0}
+.authority-settings .card{margin:0}
+.authority-settings .choice{display:flex;gap:12px;align-items:flex-start;padding:16px;border:1px solid #dedee8;border-radius:12px}
+.authority-settings .choice span,.authority-settings .choice small{display:block}
+.authority-settings .choice input{width:18px;min-height:18px;flex:none}
+.authority-settings .job{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:18px 0;border-bottom:1px solid #e6e6ee}
+.authority-settings .job-body>*{display:block;margin-bottom:6px}
+.authority-settings .job-state{font-size:12px;color:#625b7e}
+.authority-settings .job-action{margin:0}
+.authority-settings label:not(.choice){display:grid;gap:8px}
+.authority-settings input:not([type=checkbox]):not([type=radio]):not([type=hidden]){width:100%;padding:10px;border:1px solid #cbcbd9;border-radius:8px}
+.table-scroll{position:relative;max-width:100%;overflow-x:auto}
+@media(max-width:620px){
+ .authority-settings .job{grid-template-columns:minmax(0,1fr)}
+ .table-scroll::before{content:'Swipe sideways to see all columns →';display:block;position:sticky;left:0;padding:9px 12px;color:#655a84;font-size:12px;background:#f6f4ff}
+}
+@media(max-width:620px){.page-inventory .rm-scroll:has(.rm-vtable)::before{content:'Swipe sideways to see all columns →';display:block;position:sticky;left:0;padding:9px 12px;color:#655a84;font-size:12px;background:#f6f4ff}}
 :root {
   /* Neutrals. A single cool-graphite ramp; everything grey is drawn from it. */
   --n-0:   #FFFFFF;
@@ -2961,6 +2978,7 @@ a.rm-group:hover { background: var(--surface-2); color: inherit; }
  * depth and breathing room. Dense tables remain dense where density is useful;
  * the frame and decision surfaces no longer inherit that visual language.
  */
+@media(max-width:620px){.page-inventory .rm-scroll:has(.rm-vtable)::before{content:'Swipe sideways to see all columns →';display:block;position:sticky;left:0;padding:9px 12px;color:#655a84;font-size:12px;background:#f6f4ff}}
 :root {
   --bg: #F3F5FA;
   --bg-2: #EAEDF5;
@@ -3274,13 +3292,15 @@ a.rm-stat:hover, a.stat:hover, .card--link.stat:hover {
  */
 
 @media (max-width: 1180px) {
-  :root { --page-pad: 20px; }
+  @media(max-width:620px){.page-inventory .rm-scroll:has(.rm-vtable)::before{content:'Swipe sideways to see all columns →';display:block;position:sticky;left:0;padding:9px 12px;color:#655a84;font-size:12px;background:#f6f4ff}}
+:root { --page-pad: 20px; }
   .grid--sidebar, .rm-split { grid-template-columns: minmax(0, 1fr); }
   .rm-span-2 { grid-column: auto; }
 }
 
 @media (max-width: 900px) {
-  :root { --page-pad: 16px; --rail-h: 50px; }
+  @media(max-width:620px){.page-inventory .rm-scroll:has(.rm-vtable)::before{content:'Swipe sideways to see all columns →';display:block;position:sticky;left:0;padding:9px 12px;color:#655a84;font-size:12px;background:#f6f4ff}}
+:root { --page-pad: 16px; --rail-h: 50px; }
 
   .rm-rail { gap: 0; padding: 0 12px; }
   .rm-rail__nav { display: flex; align-items: center; gap: 2px; }
@@ -3335,7 +3355,8 @@ a.rm-stat:hover, a.stat:hover, .card--link.stat:hover {
  * a control that has to be scrolled to is a control most people never find.
  */
 @media (max-width: 720px) {
-  :root { --rail-h: 94px; }
+  @media(max-width:620px){.page-inventory .rm-scroll:has(.rm-vtable)::before{content:'Swipe sideways to see all columns →';display:block;position:sticky;left:0;padding:9px 12px;color:#655a84;font-size:12px;background:#f6f4ff}}
+:root { --rail-h: 94px; }
   .rm-rail {
     height: auto;
     min-height: var(--rail-h);
@@ -3390,7 +3411,8 @@ a.rm-stat:hover, a.stat:hover, .card--link.stat:hover {
 }
 
 @media (max-width: 620px) {
-  :root { --page-pad: 12px; }
+  @media(max-width:620px){.page-inventory .rm-scroll:has(.rm-vtable)::before{content:'Swipe sideways to see all columns →';display:block;position:sticky;left:0;padding:9px 12px;color:#655a84;font-size:12px;background:#f6f4ff}}
+:root { --page-pad: 12px; }
   .rm-canvas { padding-bottom: var(--s8); }
   .rm-rail a.rm-tab, .rm-rail button.rm-tab { padding: 6px 8px; font-size: var(--t-sm); }
   .rm-pulse, .stat-grid, .stats-row, .stat-strip { grid-template-columns: minmax(0, 1fr); }
@@ -3435,7 +3457,8 @@ a.rm-stat:hover, a.stat:hover, .card--link.stat:hover {
  * without the application chrome already; this makes them print like paper.
  */
 @media print {
-  :root { --page-w: none; --page-pad: 0; }
+  @media(max-width:620px){.page-inventory .rm-scroll:has(.rm-vtable)::before{content:'Swipe sideways to see all columns →';display:block;position:sticky;left:0;padding:9px 12px;color:#655a84;font-size:12px;background:#f6f4ff}}
+:root { --page-w: none; --page-pad: 0; }
   body { background: #fff; font-size: 11pt; }
   .rm-rail, .skip-link, div.page-actions, .rm-disclose, .filters,
   .rm-toasts, .flash-stack, .btn, .rm-btn, .rm-button, .tabs { display: none !important; }

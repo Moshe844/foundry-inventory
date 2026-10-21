@@ -6,7 +6,9 @@
    const trackingQuestion=locals.trackingQuestion;
    const needsTrackingAnswer=trackingQuestion?.state==='needs_input';
    const needsImageAnswer=plan.sourceKind==='image'&&sourceTransforms.imageReadingConfirmed!==true;
-   const needsAnswer=needsIdentity||needsNumberAnswer||needsLocation||needsTrackingAnswer||needsImageAnswer||plan.conflicts.length>0;
+   const needsPartialAnswer=plan.recordsInvalid>0&&!sourceTransforms.allowPartialImport;
+   const needsStockIntent=sourceTransforms.existingStockRows>0&&!sourceTransforms.importMode;
+   const needsAnswer=needsIdentity||needsNumberAnswer||needsLocation||needsTrackingAnswer||needsImageAnswer||needsPartialAnswer||needsStockIntent||plan.conflicts.length>0;
    const activity=locals.importProgress;
    const importing=Boolean(activity?.active);
    const interrupted=Boolean(activity&&['PAUSED','NEEDS_REVIEW'].includes(activity.state)&&!run?.verified); %>
@@ -16,6 +18,16 @@
   </div>
   <div class="page-actions" <% if(activity.active){ %>data-import-progress="<%= activity.href %>/progress"<% } %>><span data-import-status class="badge badge--<%= activity?.verified?'ok':'muted' %>"><%= activity?.label||helpers.columnLabel(plan.status.toLowerCase()) %></span></div>
 </div>
+<% if(sourceTransforms.existingStockRows>0&&plan.status==='READY'&&plan.approvalStatus==='AWAITING_APPROVAL'){ %>
+<section class="card card-body"><h2>Does this file replace counts or add a delivery?</h2><p><%= sourceTransforms.existingStockRows %> rows match existing products. StockChief will not assume these quantities are additional stock.</p>
+<form method="post" action="/imports/<%= plan.id %>/revise"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>">
+<label class="field"><span>How to use the quantities</span><select class="select" name="importMode" required><option value="">Choose before approval</option><option value="set" <%= sourceTransforms.importMode==='set'?'selected':'' %>>Set on-hand to the file counts</option><option value="add" <%= sourceTransforms.importMode==='add'?'selected':'' %>>Receive these as additional stock</option></select></label>
+<p>Setting a count preserves existing unit costs. New units use the source cost when provided; reductions of valued stock record a count adjustment in Money. An unchanged count creates no movement or new value. Tracked stock still requires exact serial or lot movements.</p><button class="btn" type="submit">Recalculate stock changes</button></form></section>
+<% } %>
+<% if(plan.recordsInvalid>0&&plan.status==='READY'&&plan.approvalStatus==='AWAITING_APPROVAL'&&!needsIdentity&&!needsNumberAnswer&&!needsLocation&&!needsTrackingAnswer&&!needsImageAnswer&&!sourceTransforms.workbook&&sourceMappings.serialTracked===undefined&&sourceMappings.lotTracked===undefined){ %>
+<section class="card card-body"><h2>Some rows need correction</h2><p><%= plan.recordsInvalid %> rows will not be imported. Correct them below, or choose a partial import deliberately. The source stays saved; a later corrected preview can import the remaining rows without adding successful rows twice.</p>
+<form method="post" action="/imports/<%= plan.id %>/revise"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><label><input type="checkbox" name="allowPartialImport" value="yes" required> Import only the <%= plan.recordsValid %> valid rows after my separate approval; leave invalid rows unexecuted.</label><button class="btn" type="submit">Review partial import</button></form></section>
+<% } %>
 <% if(plan.sourceKind==='image'&&plan.status==='READY'){ %>
 <section class="card section" aria-label="Review image reading"><div class="card-head"><h2><%= needsImageAnswer?'Confirm what StockChief read from the image':'Image reading confirmed' %></h2></div><div class="card-body">
 <p>StockChief reads the visible product table. Dashboard summary totals are not extra inventory rows. Images can contain unclear characters: compare the product codes, quantities and money below with your original before approving.</p>
@@ -150,12 +162,13 @@
   <div class="card section"><div class="card-head"><h2>What will happen</h2><span class="spacer"></span>
     <span class="badge badge--muted">No inventory changed yet</span></div>
     <div class="card-body"><p class="lede"><% if(needsIdentity){ %>I read <%= plan.recordsDetected %> <%= helpers.plural(plan.recordsDetected,'row') %>. Answer the product question above before anything can be imported.<% } else if(needsNumberAnswer){ %>I found the products. Answer the number question above before StockChief changes stock.<% } else if(needsTrackingAnswer){ %>Resolve the tracking requirements above. The complete source stays saved and no stock or value has been imported.<% } else if(needsLocation||plan.conflicts.length){ %>Answer the location question above so StockChief knows where to put this stock.<% } else { %>StockChief will create or match <%= plan.recordsValid %> valid <%= helpers.plural(plan.recordsValid, 'row') %> and establish only the quantities shown below through the inventory ledger.<% } %></p>
+      <p>Category and custom columns are retained as imported product details. Mapped reorder levels, supplier names and lead times update their business settings only when you approve this preview. Importing them authorizes no purchase, supplier bill, payment or email.</p>
       <% if(plan.warnings.length){ %><details><summary>Review notes about this file</summary><ul class="plain-list"><% plan.warnings.forEach(function(warning){ %><li class="is-warn"><%= warning %></li><% }) %></ul></details><% } %>
       <% if(plan.conflicts.length){ %><p><strong>Missing setup:</strong> Add or correct these locations before importing: <%= plan.conflicts.map(function(c){return c.text;}).join(', ') %>.</p><% } %>
     </div>
     <div class="card-foot"><div class="btn-row">
       <% if(plan.approvalStatus==='APPROVED'){ %><form method="post" action="/imports/<%= plan.id %>/run"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><button class="btn btn--primary" type="submit">Import and verify</button></form>
-      <% } else { %><form method="post" action="/imports/<%= plan.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><button class="btn btn--primary" type="submit" <%= needsImageAnswer || !plan.recordsValid || ((sourceTransforms.workbook || sourceMappings.serialTracked!==undefined || sourceMappings.lotTracked!==undefined) && plan.recordsInvalid>0) || (sourceMappings.name===undefined && sourceMappings.code===undefined) || duplicatePlans.length || (sourceMappings.quantity===undefined && sourceTransforms.unmappedNumericColumns?.length && !sourceTransforms.confirmCatalogOnly)?'disabled':'' %>>Approve <%= plan.recordsValid %> <%= helpers.plural(plan.recordsValid, 'row') %></button></form><% } %>
+      <% } else { %><form method="post" action="/imports/<%= plan.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><button class="btn btn--primary" type="submit" <%= needsAnswer || !plan.recordsValid || ((sourceTransforms.workbook || sourceMappings.serialTracked!==undefined || sourceMappings.lotTracked!==undefined) && plan.recordsInvalid>0) || duplicatePlans.length?'disabled':'' %>>Approve <%= plan.recordsValid %> <%= helpers.plural(plan.recordsValid, 'row') %></button></form><% } %>
       <form method="post" action="/imports/<%= plan.id %>/cancel"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost" type="submit">Cancel</button></form>
     </div></div>
   </div>
@@ -167,7 +180,7 @@
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>">
         <% mappingRows.forEach(function(column){ %><label class="field"><span class="field-label">Source column “<%= column.column %>”</span>
-          <select class="select" name="mapping_<%= column.index %>"><option value="">Not imported</option>
+          <select class="select" name="mapping_<%= column.index %>"><option value="">Keep as source detail</option>
             <% fieldOptions.forEach(function(field){ %><option value="<%= field.id %>" <%= column.field===field.id?'selected':'' %>><%= field.label %></option><% }) %>
           </select></label><% }) %>
         <% if(sourceMappings.quantity===undefined && sourceTransforms.unmappedNumericColumns?.length){ %>
@@ -196,11 +209,11 @@
   <div class="btn-row"><a class="btn btn--sm" href="/imports/<%= plan.id %>">All <%= plan.recordsDetected %></a>
     <% Object.keys(counts).forEach(function(status){ %><a class="btn btn--sm" href="/imports/<%= plan.id %>?rows=<%= status %>"><%= status %> <%= counts[status] %></a><% }) %></div></div>
   <div class="table-scroll"><table class="table table--tight"><thead><tr><th>Row</th><th>Product</th><th>SKU / variant</th><th>Qty</th><th>Unit cost</th><th>Selling price</th><th>Location</th><th>Result</th></tr></thead><tbody>
-    <% rows.forEach(function(row){ %><tr class="<%= row.status==='INVALID'?'is-warn-row':'' %>"><td><%= row.rowNumber %></td><td><%= row.parsed.name || '—' %></td>
+    <% rows.forEach(function(row){ %><tr class="<%= row.status==='INVALID'?'is-warn-row':'' %>"><td><%= row.rowNumber %></td><td><%= row.parsed.name || '—' %><% if(Object.keys(row.parsed.sourceFacts||{}).length){ %><details><summary>Source details</summary><dl><% Object.entries(row.parsed.sourceFacts).forEach(function(pair){ %><dt><%= pair[0] %></dt><dd><%= pair[1] %></dd><% }); %></dl></details><% } %><% if(Object.keys(row.parsed.reorder||{}).length){ %><p>Reorder settings: <%= Object.entries(row.parsed.reorder).map(pair=>pair[0]+': '+pair[1]).join(' · ') %></p><% } %></td>
       <td><%= [row.parsed.code,(row.parsed.variants || []).map(function(part){return part.name+': '+part.value;}).join(' / ')].filter(Boolean).join(' · ') || '—' %></td>
-      <td><%= row.parsed.quantity==null?'—':row.parsed.quantity %></td>
-      <td><%= Number.isFinite(row.parsed.unitCostMinor)?(row.parsed.currency||'USD')+' '+(row.parsed.unitCostMinor/100).toFixed(2):'Not provided' %></td>
-      <td><%= Number.isFinite(row.parsed.sellingPriceMinor)?(row.parsed.currency||'USD')+' '+(row.parsed.sellingPriceMinor/100).toFixed(2):'—' %></td>
+      <td><%= row.parsed.quantity==null?'—':row.parsed.quantity %><% if(sourceTransforms.importMode==='set'&&row.parsed.existingSkuId){ %><small class="muted">Was <%= row.parsed.inventoryBefore?.physical %> · change <%= row.parsed.countQuantityDelta %> · value change <%= helpers.money?helpers.money(row.parsed.countCostDeltaMinor||0,row.parsed.currency):row.parsed.countCostDeltaMinor %></small><% } %></td>
+      <td><%= Number.isFinite(row.parsed.unitCostMinor)?helpers.money(row.parsed.unitCostMinor,row.parsed.currency||'USD'):'Not provided' %></td>
+      <td><%= Number.isFinite(row.parsed.sellingPriceMinor)?helpers.money(row.parsed.sellingPriceMinor,row.parsed.currency||'USD'):'—' %></td>
       <td><%= row.parsed.locationName || row.parsed.locationText || '—' %></td>
       <td><span class="badge badge--<%= row.status==='IMPORTED'?'ok':row.status==='INVALID'?'danger':'muted' %>"><%= row.status %></span>
         <% row.problems.forEach(function(item){ %><div class="muted"><%= item.message %></div><% }) %></td></tr><% }) %>

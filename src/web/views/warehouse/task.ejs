@@ -34,7 +34,7 @@
 <% if (!['COMPLETED','CANCELLED'].includes(task.status)) { %><div class="rm-actions"><form method="post" action="/warehouse/tasks/<%= task.id %>/status"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="status" value="<%= task.status === 'PAUSED' ? 'IN_PROGRESS' : 'PAUSED' %>"><button class="rm-button" type="submit"><%= task.status === 'PAUSED' ? 'Resume task' : 'Pause task' %></button></form></div><% } %>
 
 <section class="rm-panel"><div class="rm-panel__head"><div><p class="rm-kicker">Evidence</p><h2>Recent scans</h2></div></div>
-  <% if (!task.scans.length) { %><p class="rm-muted">Nothing scanned yet.</p><% } else { %><div class="rm-list"><% task.scans.forEach(function(scan) { %><div class="rm-row"><span><strong><%= scan.status %> · <%= scan.item_barcode || 'no product' %></strong><small><%= scan.message %></small></span><time><%= helpers.dateTime(scan.scanned_at) %></time></div><% }) %></div><% } %>
+  <% if (!task.scans.length) { %><p class="rm-muted">Nothing scanned yet.</p><% } else { %><div class="rm-list"><% task.scans.forEach(function(scan) { %><div class="rm-row"><span><strong><%= scan.status %> · <%= scan.item_barcode || 'no product' %></strong><small><%= scan.message %></small></span><time><time data-local-time datetime="<%= scan.scanned_at %>"><%= helpers.dateTime(scan.scanned_at) %></time></time></div><% }) %></div><% } %>
 </section>
 
 <script>

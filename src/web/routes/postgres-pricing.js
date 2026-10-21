@@ -8,8 +8,15 @@ const {requireAuth,requireOwner,asyncRoute}=require('../middleware');
 function createPostgresPricingRouter(database){
   const router=express.Router();router.use('/pricing',requireAuth);
   router.get('/pricing/new',asyncRoute(async(req,res)=>{
-    if(!req.query.skuId){req.flash('info','Open a product and choose the exact SKU whose selling price should change.');
-      return res.redirect(302,'/inventory');}
+    if(!req.query.skuId){
+      const q=String(req.query.q||'').trim().slice(0,160);
+      const skus=(await database.query(`SELECT s.id,s.code,s.variant_label,i.name FROM skus s
+        JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
+        WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1
+          AND ($2='' OR i.name ILIKE '%'||$2||'%' OR s.code ILIKE '%'||$2||'%')
+        ORDER BY i.name,s.position,s.id LIMIT 51`,[req.ctx.workspaceId,q])).rows;
+      return res.page('pricing/select-product',{title:'Change selling prices',nav:'inventory',q,skus:skus.slice(0,50),hasMore:skus.length>50});
+    }
     const sku=await pricing.requireSku(database,req.ctx.workspaceId,req.query.skuId);
     return res.page('pricing/new',{title:'Set selling price',nav:'inventory',sku,screenGuide:null,
       current:await pricing.currentPrice(database,req.ctx.workspaceId,sku.id),

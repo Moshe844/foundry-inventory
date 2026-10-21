@@ -30,6 +30,7 @@ async function sendResend(message, options = {}) {
       from,
       to: [message.to],
       subject: message.subject,
+      ...(message.replyTo?{reply_to:message.replyTo}:{}),
       html: message.html,
       text: message.text,
     }),

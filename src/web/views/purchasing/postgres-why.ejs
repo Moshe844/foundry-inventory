@@ -10,6 +10,14 @@
     <% positions.forEach(function(row){ %><tr><td><%= row.location_name %></td><td><%= row.on_hand %></td></tr><% }) %>
   </tbody></table><% } %>
 </div></section>
+<% if(locals.canManage){ %><section class="card"><div class="card-head"><h2>Change reorder settings</h2></div><div class="card-body">
+<form method="post" action="/purchasing/why/<%= sku.id %>/propose" class="stack-form"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<label class="field"><span>Location</span><select class="select" name="locationId"><option value="">All locations</option><% locations.forEach(function(l){ %><option value="<%= l.id %>"><%= l.name %></option><% }); %></select></label>
+<label class="field"><span>Reorder when stock reaches</span><input class="input" name="reorderPoint" type="number" min="0" step="1"></label>
+<label class="field"><span>Order up to this stock level</span><input class="input" name="targetStock" type="number" min="0" step="1"></label>
+<label class="field"><span>Safety stock</span><input class="input" name="safetyStock" type="number" min="0" step="1"></label>
+<p>Blank fields keep their existing setting. Review the exact proposal next; saving a reorder rule does not authorize purchases or email.</p><button class="btn btn--primary" type="submit">Review reorder settings</button></form>
+</div></section><% } %>
 
 <section class="card"><div class="card-head"><h2>Approved reorder rules</h2></div><div class="card-body">
   <% if(!policies.length){ %><p>No reorder point or target is set for this SKU.</p><% } else { %>

@@ -304,7 +304,7 @@
             <tbody>
               <% item.movements.forEach(function (movement) { %>
                 <tr>
-                  <td><%= helpers.dateTime(movement.occurredAt) %></td>
+                  <td><time data-local-time datetime="<%= movement.occurredAt %>"><%= helpers.dateTime(movement.occurredAt) %></time></td>
                   <td>
                     <a class="cell-title" href="/inventory/<%= movement.itemId %>"><%= movement.itemName %></a>
                     <span class="cell-sub"><%= helpers.operationLabel(movement.operation) %><% if (movement.reason) { %> · <%= helpers.reasonText(movement.operation, movement.reason) %><% } %></span>
@@ -366,7 +366,7 @@
       <div class="table-wrap">
         <table class="table">
           <tbody>
-            <tr><td class="muted">First detected</td><td class="right"><%= helpers.dateTime(item.firstDetectedAt) %></td></tr>
+            <tr><td class="muted">First detected</td><td class="right"><time data-local-time datetime="<%= item.firstDetectedAt %>"><%= helpers.dateTime(item.firstDetectedAt) %></time></td></tr>
             <tr><td class="muted">Last checked</td><td class="right"><%= helpers.timeAgo(item.lastEvaluatedAt) %></td></tr>
             <tr><td class="muted">Confidence</td><td class="right"><%= item.confidence %></td></tr>
             <tr><td class="muted">Detection rules</td><td class="right mono"><%= item.detectionRuleVersion %></td></tr>

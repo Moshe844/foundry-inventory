@@ -7,12 +7,9 @@
   <p><a class="btn btn--primary" href="/guide">Open the step-by-step guide</a></p>
   <p><a class="btn" href="/activity">Open Activity and audit history</a></p>
   <p><a class="btn" href="/settings/connections">Check connection health</a></p>
-  <% if (supportEmail) { %>
-    <p><a class="btn" href="mailto:<%= supportEmail %>">Email <%= supportEmail %></a></p>
-  <% } else { %>
-    <div class="quiet-note"><strong>Support contact is not configured for this deployment.</strong> The operator must set <code>FOUNDRY_SUPPORT_EMAIL</code> before inviting beta businesses.</div>
-  <% } %>
+  <p>Support email: <strong>support@stockchiefhq.com</strong></p>
 </section>
+<% if(locals.supportRequestKey){ %><%- include('partials/support-form') %><% } %>
 
 <section class="card card-body stack">
   <h2>When something looks wrong</h2>

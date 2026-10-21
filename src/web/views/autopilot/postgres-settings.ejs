@@ -1,4 +1,4 @@
-<div class="rm-head"><div class="rm-title"><div><p class="rm-stamp">Standing authority</p><h1>Decide what StockChief may handle without you</h1>
+<div class="authority-settings"><div class="rm-head"><div class="rm-title"><div><p class="rm-stamp">Standing authority</p><h1>Decide what StockChief may handle without you</h1>
   <p class="rm-prose">StockChief uses inventory, commitments, incoming supply, supplier packs, lead times and explicit reorder rules. A model never grants authority.</p></div></div></div>
 
 <% if(state.suspended){ %><div class="notice notice--warn"><div><strong>Automatic work is stopped.</strong><p><%= state.suspendedReason || 'A business check needs attention before automatic work can continue.' %></p></div></div><% } %>
@@ -41,3 +41,5 @@
     <% if(!state.paused){ %><form method="post" action="/autopilot/pause"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn">Pause automatic work</button></form><% } %></div>
   <% if(!recent.length){ %><p class="muted">No transfer or replenishment decisions have been prepared yet.</p><% } else { %><div class="list-rows"><% recent.forEach(function(item){ %><div class="list-row"><div><strong><%= item.recommendedAction.displayName %></strong><p><%= item.recommendedAction.type==='transfer'?'Transfer':'Purchase' %> <%= item.recommendedAction.quantity %> units · <%= String(item.execution_status).replaceAll('_',' ').toLowerCase() %></p></div><a class="btn btn--sm" href="/autopilot/work/<%= item.id %>">Open</a></div><% }) %></div><% } %>
 </div></section>
+
+</div>

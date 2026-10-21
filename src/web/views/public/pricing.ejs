@@ -5,7 +5,7 @@
  enterprise:{verb:'Fit your operation',headline:'Agree the scale your business needs.',features:['Everything in Pro','Contract-defined capacity','Implemented custom API and event feeds','Provider qualification scoped to supported workflows']}
 }; %>
 <section class="pricing-intro"><div><span class="pub-kicker">Plans by operating responsibility</span><h1>Choose the work StockChief can handle for your business.</h1><p>Every plan connects inventory, purchasing, sales orders and native accounting. Higher plans add connected workflows and bounded authority.</p></div><p>Monthly billing</p></section>
-<% if(!checkoutOpen){ %><div class="pub-notice">Checkout is closed pending production commercial launch approval. Monthly prices and usage allowances will be published only after final approval.</div><% } %>
+<% if(!checkoutOpen){ %><div class="pub-notice">Paid signup is coming soon. Pricing and included usage will be published when signup opens.</div><% } %>
 <% if(checkoutCancelled){ %><div class="pub-notice">Checkout was cancelled.</div><% } %>
 <section class="plan-ladder"><% plans.forEach(function(plan,index){var story=stories[plan.id]||stories.starter; %>
 <article class="plan-card plan-card--<%= plan.id %> <%= plan.is_recommended?'is-recommended':'' %>" id="<%= plan.id %>">

@@ -67,10 +67,14 @@ async function exchangeAuthorization({ query,metadata={} }) {
       code: query.code, grant_type: 'authorization_code',
       ...(metadata.redirectUri?{redirect_uri:metadata.redirectUri}:{}),
     }) });
-  return { credentials: { accessToken: body.access_token, refreshToken: body.refresh_token,
-      merchantId: body.merchant_id, expiresAt: body.expires_at, environment: config.connections.square.environment },
+  const credentials={accessToken:body.access_token,refreshToken:body.refresh_token,
+    merchantId:body.merchant_id,expiresAt:body.expires_at,environment:config.connections.square.environment};
+  const granted=(await api(credentials,'/oauth2/token/status',{method:'POST'})).body;
+  requireVerified(granted.merchant_id===body.merchant_id&&granted.client_id===config.connections.square.applicationId,
+    'Square did not verify the authorized merchant and application.');
+  return { credentials,
     accountId: body.merchant_id, accountName: `Square merchant ${String(body.merchant_id).slice(-6)}`,
-    capabilities: SCOPES, expiresAt: body.expires_at };
+    capabilities: Array.isArray(granted.scopes)?granted.scopes:[], expiresAt: body.expires_at };
 }
 
 async function api(credentials, path, options = {}) {
