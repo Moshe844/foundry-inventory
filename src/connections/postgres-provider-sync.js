@@ -165,8 +165,9 @@ async function sync(job,client,providers=defaultProviders){
     discovered_locations=$3,auto_mapped=$4,needs_mapping=$5,completed_at=$6 WHERE id=$1`,
   [runId,products.length,locations.length,autoMapped,needsMapping,completedAt]);
   await client.query(`UPDATE workspace_connectors SET status='connected',setup_status=$3,last_synced_at=$4,
-    last_error=NULL,config=(config::jsonb-'syncRetryAt'-'syncFailureCount')::text,updated_at=$4 WHERE workspace_id=$1 AND id=$2`,
-  [job.workspaceId,connectorId,adapter.integrationClass==='accounting'?connection.setup_status:needsMapping?'MAPPING':'CONNECTED',completedAt]);
+    last_error=NULL,config=jsonb_set(config::jsonb-'syncRetryAt'-'syncFailureCount','{syncCadenceStartedAt}',to_jsonb($5::text),true)::text,
+    updated_at=$4 WHERE workspace_id=$1 AND id=$2`,
+  [job.workspaceId,connectorId,adapter.integrationClass==='accounting'?connection.setup_status:needsMapping?'MAPPING':'CONNECTED',completedAt,startedAt]);
   await client.query(`UPDATE connection_issues SET status='RESOLVED',resolved_at=$3,updated_at=$3
     WHERE workspace_id=$1 AND connector_id=$2 AND status='OPEN'
       AND issue_type IN ('PROVIDER_REFRESH_REQUIRED','CONNECTION_SYNC_FAILED')`,

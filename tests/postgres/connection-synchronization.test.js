@@ -41,6 +41,20 @@ test('scheduled provider checks, browser controls, backoff and tenant authority 
   await runtime['provider.catalog-sync'](job,db);assert.equal(discoveries,1);
   await db.query("UPDATE stockchief_runtime.jobs SET status='COMPLETED',completed_at=$2 WHERE id=$1",[job.id,new Date().toISOString()]);
   assert.equal((await sweep()).scheduledProviderChecks,0,'fresh evidence is not polled again immediately');
+  const completedCheck=(await db.query('SELECT config,last_synced_at FROM workspace_connectors WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id])).rows[0];
+  const completedConfig=JSON.parse(completedCheck.config);
+  assert(Number.isFinite(Date.parse(completedConfig.syncCadenceStartedAt)));
+  assert(Date.parse(completedConfig.syncCadenceStartedAt)<=Date.parse(completedCheck.last_synced_at));
+  const nextMinute=Math.floor(Date.now()/60000)*60000+60000;
+  await db.query('UPDATE workspace_connectors SET last_synced_at=$3,config=$4 WHERE workspace_id=$1 AND id=$2',
+    [ctx.workspaceId,id,new Date(nextMinute+1000).toISOString(),JSON.stringify({...completedConfig,syncCadenceStartedAt:new Date(nextMinute-3000).toISOString()})]);
+  assert.equal((await db.transaction(c=>runtime['system.runtime-sweep']({payload:{now:nextMinute+57000}},c))).scheduledProviderChecks,1,
+    'completion after a boundary cannot suppress the next minute check');
+  assert.equal((await db.transaction(c=>runtime['system.runtime-sweep']({payload:{now:nextMinute+57500}},c))).scheduledProviderChecks,0,
+    'an active check still excludes a second scheduled job');
+  await db.query("UPDATE stockchief_runtime.jobs SET status='COMPLETED',completed_at=$2 WHERE workspace_id=$1 AND kind='provider.catalog-sync' AND status='PENDING'",[ctx.workspaceId,new Date().toISOString()]);
+  await db.query('UPDATE workspace_connectors SET last_synced_at=$3,config=$4 WHERE workspace_id=$1 AND id=$2',
+    [ctx.workspaceId,id,completedCheck.last_synced_at,completedCheck.config]);
   await page.goto(base+'/settings/connections/'+id);
   const panel=page.getByRole('region',{name:'Automatic synchronization'});
   await assert.equal(await panel.getByLabel('Check frequency').inputValue(),'1');

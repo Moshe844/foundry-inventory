@@ -18,3 +18,16 @@ test('a long provider Retry-After is deferred without an early second request',a
  await assert.rejects(providerFetch('https://example.test/',{}, {provider:'Fixture',fetch:async()=>{calls++;return new Response('{}',{status:429,headers:{'retry-after':'180'}});},sleep:async()=>{throw Error('must defer');}}),e=>e.retryAfterMs===180000&&e.httpStatus===429);
  assert.equal(calls,1);
 });
+test('a successful check crossing a clock boundary retains its next cadence slot and provider cooldown',()=>{
+ const row={status:'connected',provider_type:'clover',expected_interval_minutes:1,created_at:'2026-10-21T15:00:00.000Z',
+  last_synced_at:'2026-10-21T15:03:01.000Z',config:{syncCadenceStartedAt:'2026-10-21T15:02:57.000Z'}};
+ const adapter={discover(){}};
+ assert.equal(policy.describe(row,adapter).nextCheckAt,'2026-10-21T15:03:00.000Z');
+ assert.equal(policy.describe({...row,config:{...row.config,syncRetryAt:'2026-10-21T15:06:00.000Z'}},adapter).nextCheckAt,'2026-10-21T15:06:00.000Z');
+ assert.equal(policy.describe({...row,config:{syncCadenceStartedAt:'not-a-date'}},adapter).nextCheckAt,'2026-10-21T15:04:00.000Z');
+ assert.equal(policy.describe({...row,config:{syncCadenceStartedAt:'2026-10-21T15:09:00.000Z'}},adapter).nextCheckAt,'2026-10-21T15:04:00.000Z');
+ assert.equal(policy.describe({...row,provider_type:'gmail'}, {poll(){}}).nextCheckAt,'2026-10-21T15:03:00.000Z');
+ assert.equal(policy.describe({...row,expected_interval_minutes:5},adapter).nextCheckAt,'2026-10-21T15:07:00.000Z',
+  'longer intervals remain relative to the last check instead of shortening to a global five-minute boundary');
+ assert.equal(policy.describe({...row,provider_type:'xero'},adapter).nextCheckAt,'2026-10-21T15:07:00.000Z');
+});

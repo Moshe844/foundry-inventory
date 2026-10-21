@@ -15,9 +15,14 @@ function describe(connection,adapter,now=Date.now()){
   const supported=supports(adapter),disabled=config.syncDisabled===true;
   const mode=disabled?'off':connection.paused_at?'paused':connection.status!=='connected'?'disconnected':'active';
   const lastCheckAt=connection.last_synced_at||null;
+  // Use the start of the successful check for cadence. A check can cross a
+  // clock boundary before completion; using its finish skips the next slot.
+  const started=Date.parse(config.syncCadenceStartedAt||''),completed=Date.parse(lastCheckAt||'');
+  const cadenceAt=Number.isFinite(started)&&Number.isFinite(completed)&&started<=completed
+    ?started:Date.parse(lastCheckAt||connection.created_at);
   const cooldownAt=Date.parse(config.syncRetryAt||'');
   const intervalMs=effectiveMinutes*60_000;
-  const dueAt=(Math.floor((Date.parse(lastCheckAt||connection.created_at)||now)/intervalMs)+1)*intervalMs;
+  const dueAt=Math.floor((Number.isFinite(cadenceAt)?cadenceAt:now)/60_000)*60_000+intervalMs;
   return {supported,mode,requestedMinutes,effectiveMinutes,minimumMinutes,lastCheckAt,
     nextCheckAt:supported&&mode==='active'?new Date(Math.max(dueAt,Number.isFinite(cooldownAt)?cooldownAt:0)).toISOString():null,
     retryAt:Number.isFinite(cooldownAt)&&cooldownAt>now?new Date(cooldownAt).toISOString():null,

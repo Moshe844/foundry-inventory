@@ -39,6 +39,7 @@ async function mailboxPoll(job,client,providers=defaultProviders){
   if(!provider?.poll)throw Object.assign(new Error('This mailbox provider has no polling implementation.'),
     {code:'mailbox_poll_unavailable',retryable:false});
   const database=scopedDatabase(client);
+  const startedAt=nowIso();
   let credentials;
   const result=await require('../commercial/operations').run(database,job.workspaceId,{capability:'communications.email_ingestion',
     key:`mailbox-poll:${job.id}`,retryReversed:true,operation:'mailbox_poll',provider:connection.provider_type},
@@ -55,8 +56,9 @@ async function mailboxPoll(job,client,providers=defaultProviders){
     else if(captured.setAside)setAside+=1;
   }
   const at=nowIso();
-  await client.query(`UPDATE workspace_connectors SET last_synced_at=$3,last_error=NULL,updated_at=$3
-    WHERE workspace_id=$1 AND id=$2`,[job.workspaceId,connectorId,at]);
+  await client.query(`UPDATE workspace_connectors SET last_synced_at=$3,last_error=NULL,updated_at=$3,
+    config=jsonb_set(config::jsonb,'{syncCadenceStartedAt}',to_jsonb($4::text),true)::text
+    WHERE workspace_id=$1 AND id=$2`,[job.workspaceId,connectorId,at,startedAt]);
   await client.query(`UPDATE connection_issues SET status='RESOLVED',resolved_at=$3,updated_at=$3
     WHERE workspace_id=$1 AND fingerprint=$2 AND status='OPEN'`,[job.workspaceId,`connector-stale:${connectorId}`,at]);
   return {accepted,setAside,replayed,ignoredOwn,checked:(result.messages||[]).length,cursor:result.cursor||null,at};
@@ -271,7 +273,7 @@ async function runtimeSweep(job,client,options={}){
       if(config.commercial.requirePaidWorkspace){const access=await entitlements.operationalAccessForWorkspace(
         scopedDatabase(client),connector.workspace_id,{now:at});if(!access.access.canOperate)continue;}
       const intervalMs=syncPolicy.effectiveMinutes*60_000;
-      const due=Math.floor(Date.parse(connector.last_synced_at||connector.created_at)/intervalMs)<Math.floor(now/intervalMs);
+      const due=Date.parse(syncPolicy.nextCheckAt)<=now;
       const active=await client.query(`SELECT 1 FROM stockchief_runtime.jobs WHERE workspace_id=$1
         AND kind='provider.catalog-sync' AND payload->>'connectorId'=$2 AND status IN ('PENDING','RUNNING','RETRY') LIMIT 1`,
       [connector.workspace_id,connector.id]);
@@ -295,8 +297,8 @@ async function runtimeSweep(job,client,options={}){
           priority:35,maxAttempts:5,availableAt:now,now});
         if(renewal.created)scheduledMailboxRenewals+=1;
       }
-      const intervalMs=Number(connector.expected_interval_minutes)*60_000;
-      const due=Math.floor(Date.parse(connector.last_synced_at||connector.created_at)/intervalMs)<Math.floor(now/intervalMs);
+      const intervalMs=syncPolicy.effectiveMinutes*60_000;
+      const due=Date.parse(syncPolicy.nextCheckAt)<=now;
       const active=await client.query(`SELECT 1 FROM stockchief_runtime.jobs WHERE workspace_id=$1
         AND kind='mailbox.poll' AND payload->>'connectorId'=$2 AND status IN ('PENDING','RUNNING','RETRY') LIMIT 1`,
       [connector.workspace_id,connector.id]);
