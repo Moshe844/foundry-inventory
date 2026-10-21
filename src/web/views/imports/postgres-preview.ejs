@@ -72,7 +72,7 @@
   <div class="table-scroll"><table class="table"><thead><tr><th>Worksheet</th><th>Source rows</th><th>Use in this import</th><th>Details</th></tr></thead><tbody>
   <% book.coverage.forEach(function(part){ %><tr><th scope="row"><%= part.name %></th><td><%= Number(part.rows).toLocaleString('en-US') %></td><td><%= part.role==='not_imported'?'Not imported':part.role==='reference'?'Related reference':'Opening inventory' %></td><td><%= part.reason %></td></tr><% }) %>
   </tbody></table></div>
-  <% if(plan.recordsInvalid){ %><p class="text-danger"><strong><%= Number(plan.recordsInvalid).toLocaleString('en-US') %> rows still need attention.</strong> Missing serial/lot identifiers or inconsistent source quantities are shown below; StockChief will not invent them.</p><% } %>
+  <% if(plan.recordsInvalid){ %><p class="text-danger"><strong><%= Number(plan.recordsInvalid).toLocaleString('en-US') %> rows still need attention.</strong> Answer the required questions and review the row explanations below before approving the complete workbook. StockChief will not invent missing values.</p><% } %>
 </div></section>
 <% } %>
 <% if(sourceTransforms.proposedLocations?.length && plan.status==='READY'){ %>

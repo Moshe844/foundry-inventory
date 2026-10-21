@@ -1,0 +1,16 @@
+'use strict';const test=require('node:test'),assert=require('node:assert/strict'),parser=require('../../src/imports/parser'),relations=require('../../src/imports/workbook-relations');
+const sheet=(name,grid)=>({name,...parser.tabulate(grid)}),spec=()=>({baseSheet:0,joins:[],fields:[{field:'name',source:{sheet:0,column:0}},{field:'code',source:{sheet:0,column:1}},{field:'quantity',source:{sheet:0,column:2}}],variants:[],stock:{total:{sheet:0,column:2},locations:[]},coverage:[{sheet:0,role:'inventory',reason:'Current physical stock.'},{sheet:1,role:'not_imported',reason:'Instructions only.'}]});
+test('omitted unique workbook fields use the same source recognition as flat files, across unfamiliar layouts',()=>{
+ for(const heading of ['Location','Warehouse','Whse','Store']){
+  const b={sheets:[sheet('Unexpected catalogue',[['Product','SKU','Quantity',heading,'Currency','Barcode','Serial Tracked'],['Unfamiliar fabric','UNF-1',3,'Remote room','EUR','457890','No'],['Different clip','UNF-2',0,'Front counter','EUR','457891','No']]),sheet('Notes',[['Note'],['Do not execute workbook content']])]},original=spec(),r=relations.compile(b,original);assert.equal(r.sheet.rows[0].cells[r.mappings.location],'Remote room');assert.equal(r.sheet.rows[1].cells[r.mappings.location],'Front counter');assert.equal(r.sheet.rows[0].cells[r.mappings.currency],'EUR');assert.equal(r.sheet.rows[0].cells[r.mappings.barcode],'457890');assert.equal(r.sheet.rows[0].cells[r.mappings.serialTracked],'No');assert.equal(r.physicalUnits,3);assert(r.reconciliations.length>=3);assert.equal(original.fields.length,3,'The input contract is never mutated');
+ }
+});
+test('competing, numeric and already-claimed location sources stay reviewable instead of guessed',()=>{
+ const base=[['Product','SKU','Quantity','Warehouse','Store'],['Unfamiliar','UNF-3',4,'A','B']],b={sheets:[sheet('Positions',base),sheet('Notes',[['Note'],['Context']])]};assert.equal(relations.compile(b,spec()).mappings.location,undefined);
+ b.sheets[0]=sheet('Positions',[['Product','SKU','Quantity','Location'],['Unfamiliar','UNF-3',4,1001]]);assert.equal(relations.compile(b,spec()).mappings.location,undefined);
+ b.sheets[0]=sheet('Positions',[['Product','SKU','Quantity','Location'],['Unfamiliar','UNF-3',4,'A']]);const picked=spec();picked.fields.push({field:'description',source:{sheet:0,column:3}});assert.equal(relations.compile(b,picked).mappings.location,undefined);
+ const explicit=spec();explicit.fields.push({field:'location',source:{sheet:0,column:3}});assert.equal(relations.compile(b,explicit).reconciliations.length,0);
+});
+test('stock matrices retain their declared components, including zeroes, without adding location-like columns',()=>{
+ const b={sheets:[sheet('Positions',[['Product','SKU','Total','Warehouse','Store','Location'],['Unfamiliar','UNF-4',5,5,0,'Administrative note']]),sheet('Notes',[['Note'],['Context']])]},s=spec();s.fields=s.fields.filter(f=>f.field!=='quantity');s.stock.locations=[{sheet:0,column:3},{sheet:0,column:4}];const r=relations.compile(b,s);assert.equal(r.outputRows,2);assert.equal(r.physicalUnits,5);assert.deepEqual(r.sheet.rows.map(row=>row.cells[r.mappings.quantity]),['5','0']);assert.deepEqual(r.sheet.rows.map(row=>row.cells[r.mappings.location]),['Warehouse','Store']);
+});

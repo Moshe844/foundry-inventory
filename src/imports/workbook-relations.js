@@ -64,6 +64,24 @@ function compile(workbook,spec){
   const lookup=new Map();for(const row of target.rows){const value=key(row.cells[join.toColumn]);if(!value||lookup.has(value))throw new ValidationError(`“${target.name}” has a missing or duplicate join key; StockChief will not multiply stock through that join.`);lookup.set(value,row);}
   used.add(join.sheet);lookups.push({join,lookup});
  }
+ // The same confident source recognition used for a flat file must also
+ // survive a multi-sheet interpretation. Fill only omitted, unique fields
+ // from unused real columns. Never replace a selected source, infer stock
+ // components, or choose between competing columns.
+ const selected=new Set(spec.fields.map(f=>f.field)),claimed=new Set([
+  ...spec.fields.map(f=>`${f.source.sheet}:${f.source.column}`),...spec.variants.map(r=>`${r.sheet}:${r.column}`),
+  ...spec.stock.locations.map(r=>`${r.sheet}:${r.column}`),...(spec.stock.total?[`${spec.stock.total.sheet}:${spec.stock.total.column}`]:[])]),candidates=new Map(),reconciliations=[];
+ for(const s of used)for(const column of sheets[s].columns){
+  const source={sheet:s,column:column.index},id=`${s}:${column.index}`;
+  if(claimed.has(id)||!fields.bestFieldScores(column.name).length)continue;
+  const guess=fields.guessMappings([column],sheets[s].rows);
+  for(const field of guess.confident){
+   if(selected.has(field)||field==='quantity'||fields.VARIANT_FIELDS.includes(field)||spec.stock.locations.length&&field==='location'||guess.mappings[field]!==column.index)continue;
+   const list=candidates.get(field)||[];list.push(source);candidates.set(field,list);
+  }
+ }
+ const added=[];for(const [field,sources]of candidates){if(sources.length!==1)continue;const source=sources[0],id=`${source.sheet}:${source.column}`;if(claimed.has(id))continue;claimed.add(id);added.push({field,source});reconciliations.push(`Recognized ${fields.FIELD_LABEL[field]} from ${sheets[source.sheet].name} · ${sheets[source.sheet].columns.find(c=>c.index===source.column).name}.`);}
+ if(added.length)spec={...spec,fields:[...spec.fields,...added]};
  // A repeated reference to the exact reconciled total is one source fact,
  // not an additional stock component. Canonicalize that redundant alias only;
  // any different quantity or location source remains an ambiguous mapping.
@@ -98,6 +116,7 @@ function compile(workbook,spec){
   values[provenanceIndex]=JSON.stringify(origins);
   const problems=[];if(missing)problems.push({code:'workbook_unmatched_key',message:'This record is missing a required related worksheet row.'});
   let components=[null];
+  if(!pivot&&mappings.quantity!==undefined){const quantity=readQuantity(values[mappings.quantity]);if(quantity.ok&&Number.isSafeInteger(quantity.value))physicalUnits+=quantity.value;}
   if(pivot){
    const total=readQuantity(joined.get(spec.stock.total.sheet)?.cells[spec.stock.total.column]);
    const quantities=spec.stock.locations.map(r=>readQuantity(joined.get(r.sheet)?.cells[r.column]));
@@ -114,7 +133,7 @@ function compile(workbook,spec){
  // suppliers, historical orders or other records were created.
  const coverage=spec.coverage.map(c=>({...c,role:used.has(c.sheet)?c.role:'not_imported',contextOnly:!used.has(c.sheet)&&c.role==='reference',joined:used.has(c.sheet),name:sheets[c.sheet].name,rows:sheets[c.sheet].rows.length}));
  return {sheet:{name:base.name,columns,rows},mappings,axisNames,variantColumns,provenanceIndex,problemsIndex,
-  contract:spec,coverage,sourceRows:base.rows.length,outputRows:rows.length,physicalUnits,issues:issues.slice(0,100),issueCount:issues.length};
+  contract:spec,coverage,sourceRows:base.rows.length,outputRows:rows.length,physicalUnits,reconciliations,issues:issues.slice(0,100),issueCount:issues.length};
 }
 
 async function interpret(workbook,{provider,onBeforeAi,onUsage,contract}={}){

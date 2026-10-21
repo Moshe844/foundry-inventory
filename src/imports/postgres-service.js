@@ -409,7 +409,7 @@ async function analyse(database, ctx, input) {
   if(workbook)sheet=workbook.sheet;
   const proposal=workbook?{mappings:workbook.mappings,detectedType:workbook.variantColumns.length?'variant_inventory':fields.detectType(workbook.mappings),
     axisNames:workbook.axisNames,variantColumns:workbook.variantColumns,provenanceIndex:workbook.provenanceIndex,problemsIndex:workbook.problemsIndex,
-    aiUsed:!input.workbookContract,ignoredColumns:[],assumptions:[]}:await mappingService.proposeMappings({...sheet,sourceName:input.filename || 'pasted data'},
+    aiUsed:!input.workbookContract,ignoredColumns:[],assumptions:workbook.reconciliations||[]}:await mappingService.proposeMappings({...sheet,sourceName:input.filename || 'pasted data'},
     {provider:wrappedProvider,allowModel:input.allowModel,
       mappings:input.mappings || json(prior?.field_mappings,null),detectedType:input.detectedType || prior?.detected_type,
       onBeforeAi:input.onBeforeAi,onUsage:input.onUsage});
@@ -703,7 +703,6 @@ async function approve(database, ctx, id, expectedHash) {
     if(plan.transformations.existingStockRows>0&&!plan.transformations.importMode)throw new ValidationError('This file matches existing stock. Choose set on-hand quantities or receive additional stock before approval.');
     if((await client.query(`SELECT 1 FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND problems::jsonb @> '[{"code":"accounting_not_ready"}]'::jsonb LIMIT 1`,[ctx.workspaceId,id])).rows.length)
       throw new ValidationError('Finish Money setup and recheck this file before approving its inventory values. No stock or value was imported.');
-    if(plan.recordsInvalid&&!plan.transformations.allowPartialImport)throw new ValidationError('Correct the invalid rows, or explicitly review and choose a partial import first.');
     // A required location answer is a plan-level question, even when zero-stock
     // rows happen to be valid. It must never authorize a tiny accidental subset.
     if((await client.query(`SELECT 1 FROM import_rows WHERE workspace_id=$1 AND import_id=$2
@@ -711,6 +710,7 @@ async function approve(database, ctx, id, expectedHash) {
       throw new ValidationError('Answer where this stock is held and recalculate the preview before approving.');
     if(plan.transformations.workbook&&plan.recordsInvalid)throw new ValidationError('This workbook still has unresolved source rows. Resolve them before approving the complete inventory; StockChief will not silently import only part of it.');
     if(plan.recordsInvalid&&(plan.fieldMappings.serialTracked!==undefined||plan.fieldMappings.lotTracked!==undefined))throw new ValidationError('Resolve the tracking requirements and invalid rows before approving this inventory. StockChief will not silently skip part of the source.');
+    if(plan.recordsInvalid&&!plan.transformations.allowPartialImport)throw new ValidationError('Correct the invalid rows, or explicitly review and choose a partial import first.');
     await plannedLocations.assertOwner(client,ctx,plan.transformations.proposedLocations||[]);
     if(plan.transformations.proposedLocations?.length)await require('../entitlements/postgres-service').assertMeterCapacity(client,
       await require('../entitlements/postgres-service').ownerScopeForWorkspace(client,ctx.workspaceId),'locations',plan.transformations.proposedLocations.length);
