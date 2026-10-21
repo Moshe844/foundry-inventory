@@ -1565,7 +1565,7 @@ async function prepareAction(database,ctx,message,request,options={}) {
     if(request.amount===null||request.amount<=0)return {status:'CLARIFY',answer:`How much was paid toward ${bill.bill_number}?`,awaitingField:'amount'};
     if(!request.paymentDate||!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(request.paymentDate))return {status:'CLARIFY',answer:'What exact date was the supplier paid, in YYYY-MM-DD format?',awaitingField:'paymentDate'};
     if(!request.paymentMethod)return {status:'CLARIFY',answer:'How was the supplier paid, for example ACH, check, wire, or card?',awaitingField:'paymentMethod'};
-    const amountMinor=pricing.toMinor(String(request.amount),'Payment amount');const currency=request.currency||bill.currency;
+    const currency=request.currency||bill.currency;const amountMinor=pricing.toMinor(String(request.amount),'Payment amount',currency);
     if(request.currency&&request.currency!==bill.currency)return {status:'CLARIFY',answer:`${bill.bill_number} is in ${bill.currency}, not ${request.currency}. Nothing was prepared.`};
     if(amountMinor>Number(bill.balance_minor))return {status:'CLARIFY',answer:`${bill.bill_number} has ${pricing.formatMinor(Number(bill.balance_minor),bill.currency)} outstanding, so ${pricing.formatMinor(amountMinor,currency)} cannot be applied.`};
     return createProposal(database,ctx,message,'supplier_payment.record',{supplierId:party.row.id,supplierBillId:bill.id,
@@ -1630,10 +1630,10 @@ async function prepareAction(database,ctx,message,request,options={}) {
         :null;
       if(orderLines?.answer)return {status:'CLARIFY',answer:orderLines.answer,carryForward:orderContext};
       const current=multipleLines?null:await pricing.currentPrice(database,ctx.workspaceId,sku.row.id);
-      const amountMinor=multipleLines?null:request.amount===null?current.amount_minor:
-        pricing.toMinor(String(request.amount),'Selling price');
-      if(!multipleLines&&amountMinor===null)return {status:'CLARIFY',answer:`What selling price per unit should this order use for ${sku.row.name}?`,awaitingField:'amount',carryForward:orderContext};
       const currency=orderLines?.currency||request.currency||current?.currency||'USD';
+      const amountMinor=multipleLines?null:request.amount===null?current.amount_minor:
+        pricing.toMinor(String(request.amount),'Selling price',currency);
+      if(!multipleLines&&amountMinor===null)return {status:'CLARIFY',answer:`What selling price per unit should this order use for ${sku.row.name}?`,awaitingField:'amount',carryForward:orderContext};
       const lines=orderLines?.lines||[{skuId:sku.row.id,quantity:request.quantity,unitPriceMinor:amountMinor,priceOverride:request.amount!==null&&request.amount!==undefined}];
       return createProposal(database,ctx,message,'sales_order.create',{customerId:party.row.id,
         deliveryMethod,shipToAddress:destination,fulfillmentLocationId,orderDate:request.orderDate,
@@ -1687,7 +1687,7 @@ async function prepareAction(database,ctx,message,request,options={}) {
       await pricing.currentPrice(database,ctx.workspaceId,sku.row.id):await pricing.purchaseCost(database,ctx.workspaceId,sku.row.id);
     const actionType=request.action==='set_price'?'catalog.set_price':'catalog.set_purchase_cost';
     const label=request.action==='set_price'?'selling price':'purchase cost';
-    const amountMinor=pricing.toMinor(String(request.amount),label);
+    const amountMinor=pricing.toMinor(String(request.amount),label,currency);
     if(Number(current?.amount_minor)===amountMinor&&current?.amount_minor!==null&&current?.amount_minor!==undefined
       &&current?.currency===currency)return {status:'ANSWERED',
       answer:`${sku.row.name}${sku.row.variant_label?` · ${sku.row.variant_label}`:''} already has a ${label} of ${pricing.formatMinor(amountMinor,currency)}. Nothing changed.`};
