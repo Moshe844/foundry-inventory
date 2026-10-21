@@ -26,4 +26,34 @@ async function textPage(database,workspaceId,messageId,id,offset=0){
  const text=row.extracted_text||'';if(offset>text.length)throw new ValidationError('That document page is unavailable.');
  return {id:row.id,filename:row.filename,contentHash:row.content_hash,status:row.extraction_status,error:row.extraction_error,text:text.slice(offset,offset+6000),offset,total:text.length,next:offset+6000<text.length?offset+6000:null,previous:offset?Math.max(0,offset-6000):null};
 }
-module.exports={extractMessage,textPage};
+async function requestRecheck(database,ctx,messageId){
+ const actor=(await database.query('SELECT u.role,u.permissions FROM users u JOIN workspaces w ON w.id=u.workspace_id WHERE u.workspace_id=$1 AND u.id=$2 AND w.deletion_requested_at IS NULL',[ctx.workspaceId,ctx.actorId])).rows[0];
+ if(!actor)throw new (require('../domain/errors').AuthorizationError)('Current business membership is required.');
+ require('../actions/permissions').assertCan(actor,require('../actions/permissions').OPERATE,'read saved attachments again');
+ const entitlements=require('../entitlements/postgres-service'),scope=await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId);await entitlements.assertCapability(database,scope,'email.auto_extract');
+ return database.transaction(async client=>{
+  const message=(await client.query('SELECT id FROM connection_email_messages WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,messageId])).rows[0];
+  if(!message)throw new NotFoundError('That message is not in this business.');
+  const rows=(await client.query('SELECT id FROM connection_email_attachments WHERE workspace_id=$1 AND message_id=$2',[ctx.workspaceId,messageId])).rows;
+  if(!rows.length)throw new ValidationError('This message has no saved attachment to read.');
+  const active=(await client.query("SELECT id,status FROM stockchief_runtime.jobs WHERE workspace_id=$1 AND kind='mail.attachment-extract' AND payload->>'messageId'=$2 AND status IN ('PENDING','RUNNING','RETRY') ORDER BY created_at DESC LIMIT 1",[ctx.workspaceId,messageId])).rows[0];
+  if(active)return {jobId:active.id,status:active.status,replayed:true};
+  const scoped={query:(sql,values)=>client.query(sql,values),transaction:work=>work(client)},job=await require('../operations/postgres-job-queue').enqueue(scoped,{workspaceId:ctx.workspaceId,kind:'mail.attachment-extract',idempotencyKey:'attachment-recheck:'+messageId+':'+require('node:crypto').randomUUID(),payload:{messageId},priority:45,maxAttempts:2});
+  await client.query("UPDATE connection_email_attachments SET extraction_status='PENDING',extracted_text=NULL,extraction_error=NULL WHERE workspace_id=$1 AND message_id=$2",[ctx.workspaceId,messageId]);
+  return {jobId:job.job.id,status:job.job.status,replayed:false};
+ },{isolation:'SERIALIZABLE',retrySafe:true});
+}
+async function readingStatus(database,workspaceId,messageId){
+ // Own record, file states and current job share one database snapshot.
+ const row=(await database.query(`SELECT m.id,files.attachments,job.status AS job_state,job.created_at AS job_created_at
+  FROM connection_email_messages m
+  LEFT JOIN LATERAL (SELECT coalesce(jsonb_agg(to_jsonb(f) ORDER BY f.filename,f.id),'[]'::jsonb) AS attachments
+   FROM (SELECT id,filename,mime_type,extraction_status,extraction_error FROM connection_email_attachments WHERE workspace_id=m.workspace_id AND message_id=m.id) f) files ON true
+  LEFT JOIN LATERAL (SELECT status,created_at FROM stockchief_runtime.jobs WHERE workspace_id=m.workspace_id AND kind='mail.attachment-extract' AND payload->>'messageId'=m.id
+   ORDER BY (status IN ('PENDING','RUNNING','RETRY')) DESC,created_at DESC,id DESC LIMIT 1) job ON true
+  WHERE m.workspace_id=$1 AND m.id=$2`,[workspaceId,messageId])).rows[0];
+ if(!row)throw new NotFoundError('That message is not in this business.');
+ const active=['PENDING','RUNNING','RETRY'].includes(row.job_state),ready=row.attachments.filter(f=>f.extraction_status==='READABLE').length;
+ return {attachments:row.attachments,active,jobState:row.job_state||null,startedAt:active?row.job_created_at:null,ready,total:row.attachments.length,stopped:row.job_state==='DEAD'};
+}
+module.exports={extractMessage,textPage,requestRecheck,readingStatus};

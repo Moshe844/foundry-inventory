@@ -68,20 +68,26 @@
       <% } %>
 
       <% if (attachments.length) { %>
+        <div id="attachments" <% if(typeof attachmentReading!=='undefined'){ %>data-mail-attachments data-status-url="/mail/<%= message.id %>/attachments/status"<% } %>>
         <h3 class="t-sm" style="margin-top:18px;">Attached</h3>
         <ul class="plain-list">
           <% attachments.forEach(function (file) { %>
-            <li>
+            <li style="overflow-wrap:anywhere">
               <%= file.filename %>
+              <% if(typeof attachmentReading!=='undefined'){ %><span class="tag tag--quiet" data-attachment-state="<%= file.id %>"><%= file.extraction_status==='READABLE'?'Ready to read':attachmentReading.active?'Reading':'Needs review' %></span><% } %>
                 <% if(typeof productionMail!=='undefined'&&productionMail){ %> · <a href="/mail/<%= message.id %>/attachments/<%= file.id %>/text">Read attachment</a><% } %>
               <% if (file.mime_type) { %><span class="t-xs t-muted"> · <%= file.mime_type %></span><% } %>
             </li>
           <% }) %>
         </ul>
         <p class="hint">
+          <% if(typeof attachmentReading!=='undefined'){ %><span role="status" aria-live="polite" data-attachment-progress><%= attachmentReading.active?'Reading attached documents. ':attachmentReading.stopped?'Reading stopped. ':'' %><%= attachmentReading.ready %> of <%= attachmentReading.total %> documents ready.</span><br><% } %>
           What StockChief did with these is on
           <a href="/settings/connections/<%= m.connector_id %>#message-<%= m.id %>">the mailbox connection</a>.
         </p>
+        <% if(typeof attachmentReading!=='undefined'&&typeof canWriteReply!=='undefined'&&canWriteReply){ %><form method="post" action="/mail/<%= message.id %>/attachments/recheck"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost" data-attachment-recheck type="submit" <%= attachmentReading.active?'disabled':'' %>>Read saved attachments again</button></form><% } %>
+        </div>
+        <% if(typeof attachmentReading!=='undefined'){ %><script src="/mail-attachments.js?v=<%= assetVersion %>" defer></script><% } %>
       <% } %>
     </div>
   </div>

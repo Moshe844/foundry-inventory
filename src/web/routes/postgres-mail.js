@@ -50,9 +50,8 @@ function createPostgresMailRouter(database,options={}){
   }));
   router.get('/mail/:id',requirePermission(permissions.VIEW,'read the mailbox'),asyncRoute(async(req,res)=>{
     const raw=await mail.get(database,req.ctx.workspaceId,req.params.id);const message=messageForView(raw);
-    const [attachmentRows,orderRows]=await Promise.all([
-      database.query(`SELECT id,filename,mime_type,extraction_status,extraction_error FROM connection_email_attachments WHERE workspace_id=$1 AND message_id=$2 ORDER BY filename`,
-        [req.ctx.workspaceId,message.id]),
+    const [attachmentState,orderRows]=await Promise.all([
+      require('../../connections/postgres-attachments').readingStatus(database,req.ctx.workspaceId,message.id),
       database.query(`SELECT so.id,so.order_number,so.status,c.name AS customer_name FROM sales_orders so
         JOIN customers c ON c.id=so.customer_id AND c.workspace_id=so.workspace_id
         WHERE so.workspace_id=$1 AND so.source_email_message_id=$2 ORDER BY so.created_at DESC LIMIT 1`,
@@ -66,7 +65,15 @@ function createPostgresMailRouter(database,options={}){
     return res.page('mail/message',{title:message.subject||'Message',nav:'mail',message,draft,productionMail:true,
       canImproveDraft,canWriteReply:permissions.can(req.user,permissions.OPERATE),
       prepared:{order:orderRows.rows[0]||null,because:message.order_draft_reason||null},
-      attachments:attachmentRows.rows,drawers:DRAWERS});
+      attachments:attachmentState.attachments,attachmentReading:attachmentState,drawers:DRAWERS});
+  }));
+  router.get('/mail/:id/attachments/status',requirePermission(permissions.VIEW,'read the mailbox'),asyncRoute(async(req,res)=>{
+    res.set('Cache-Control','no-store');return res.json(await require('../../connections/postgres-attachments').readingStatus(database,req.ctx.workspaceId,req.params.id));
+  }));
+  router.post('/mail/:id/attachments/recheck',requirePermission(permissions.OPERATE,'read saved attachments again'),asyncRoute(async(req,res)=>{
+    await require('../../connections/postgres-attachments').requestRecheck(database,req.ctx,req.params.id);
+    if(req.accepts(['html','json'])==='json')return res.status(202).json(await require('../../connections/postgres-attachments').readingStatus(database,req.ctx.workspaceId,req.params.id));
+    req.flash('success','StockChief is reading the saved attachments again.');return res.redirect(303,'/mail/'+encodeURIComponent(req.params.id)+'#attachments');
   }));
   router.get('/mail/:id/attachments/:attachmentId/text',requirePermission(permissions.VIEW,'read the mailbox'),asyncRoute(async(req,res)=>{
     const document=await require('../../connections/postgres-attachments').textPage(database,req.ctx.workspaceId,req.params.id,req.params.attachmentId,Number(req.query.offset||0));
