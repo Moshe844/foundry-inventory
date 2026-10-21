@@ -9,6 +9,10 @@ const {randomUUID}=require('node:crypto');
 const {nativeFieldName}=require('./contracts');
 
 function describe(c){return {name:c.name,kind:c.kind,description:c.description,required:(c.required||[]).map(name=>nativeFieldName(c,name)),
+  ...(['mutation','policy'].includes(c.kind)&&c.authority?.mode==='explicit_approval'
+    ?{invocation:{stage:'prepare_review',reviewRecord:'governed_proposal',
+      execution:'separate_authenticated_approval',
+      meaning:'Invoking this contract prepares or revisits a proposal for review. The described business effects require separate approval and canonical execution; the proposal is not a posted business record.'}}:{}),
   fields:Object.fromEntries(c.fields.map(name=>[nativeFieldName(c,name),{type:FIELDS[name]?.type||'string',...(FIELDS[name]?.type==='string'?{maxLength:FIELDS[name].maxLength||2000}:{}),description:c.agentHints?.[name]||FIELDS[nativeFieldName(c,name)]?.description||name,
    ...(c.argumentSchemas?.[name]?{jsonSchema:c.argumentSchemas[name]()}:{})}])),
   authority:c.authority,unavailable:c.commercialUnavailable||[],

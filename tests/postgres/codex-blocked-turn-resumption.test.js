@@ -1,0 +1,26 @@
+'use strict';process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
+for(const continuation of ['needs_user','blocked_again'])test('an explicit continuation resumes the exact blocked SDK turn after a host change: '+continuation,{timeout:180000},async t=>{
+ const cluster=await require('../helpers/postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString),keys=['STOCKCHIEF_RUNTIME_ENV','STOCKCHIEF_CODEX_PILOT','STOCKCHIEF_CODEX_PILOT_WORKSPACES','STOCKCHIEF_CODEX_PILOT_EMAILS','FOUNDRY_DATABASE_URL'],old=Object.fromEntries(keys.map(k=>[k,process.env[k]]));
+ t.after(async()=>{for(const[k,v]of Object.entries(old))if(v===undefined)delete process.env[k];else process.env[k]=v;await db.close();await cluster.stop();});await require('../../src/db/migrate-postgres').migratePostgres(db);
+ const email=randomUUID()+'@example.test',owner=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'Owner',businessName:randomUUID(),email,password:'Offline!'+randomUUID()}),ctx={workspaceId:owner.workspaceId,actorId:owner.userId};process.env.STOCKCHIEF_RUNTIME_ENV='staging';Object.assign(process.env,(await require('../../scripts/provision-codex-staging').provision(db,{businessName:owner.businessName,emails:[email]})).environment);process.env.FOUNDRY_DATABASE_URL=cluster.connectionString;
+ await db.query("UPDATE stockchief_runtime.codex_pilots SET enabled=true,stopped=false,ceiling_micro_usd=1000000,period_ends_at=now()+interval '1 hour',approval_reference='OFFLINE ONLY' WHERE workspace_id=$1",[ctx.workspaceId]);await require('../../scripts/environment-agent-demo/run-pilot').seedPrices(db);
+ const pilot=require('../../src/assistant/postgres-codex-pilot'),store=require('../../src/assistant/postgres-goal-store'),request='Investigate the unfamiliar requested operation and ask for any genuinely missing business choice. Do not execute changes.',started=await pilot.start(db,ctx,request);let calls=0;
+ const fake=async(_url,init)=>{const body=JSON.parse(init.body);calls++;assert(calls<=2,'No new paid reasoning without another explicit continuation');return require('../helpers/codex-offline-response').final(body,calls,JSON.stringify(calls===1?{status:'blocked',answer:'The requested record state is not currently available.'}:continuation==='needs_user'?{status:'needs_user',question:'Which existing location should this review cover?',missingInformation:['Business location scope']}:{status:'blocked',answer:'The requested access remains unavailable.'}));};
+ const options={image:process.env.STOCKCHIEF_OFFLINE_CODEX_IMAGE,apiKey:'FAKE',fetchImpl:fake,countInput:async()=>({object:'response.input_tokens',input_tokens:200})};assert(options.image);
+ const first=await pilot.run(db,ctx,started.goalId,options);assert.equal(first.status,'BLOCKED');assert.equal(calls,1);const thread=first.checkpoint.harness.native.codex.threadId,digest=first.checkpoint.harness.native.codex.digest,firstFailure=first.checkpoint.harness.verificationFailure;
+ // Reproduce a saved blocked turn whose host source hash is from an earlier
+ // deployment. That is not a verified goal outcome to replay on Continue.
+ await db.query("UPDATE stockchief_runtime.assistant_goals SET checkpoint=jsonb_set(checkpoint,'{harness,verificationFailure,sourceHash}',$2::jsonb) WHERE id=$1",[started.goalId,JSON.stringify('0'.repeat(64))]);
+ await pilot.resume(db,ctx,started.goalId);const result=await pilot.run(db,ctx,started.goalId,options);assert.equal(calls,2);assert.equal(result.original_request,request);assert.equal(result.budget_minor,first.budget_minor);assert.equal(result.checkpoint.harness.native.codex.threadId,thread);assert.equal(result.checkpoint.harness.codexRequests,2);assert.equal(result.recoveries,1);
+ if(continuation==='needs_user'){assert.equal(result.status,'WAITING_USER');assert.equal(require('../../src/assistant/agent-conversation').state(result).phase,'clarification');assert.match(result.answer,/Which existing location/);}
+ else{
+  assert.equal(result.status,'BLOCKED');assert.notEqual(result.checkpoint.harness.native.codex.digest,digest);
+  // A delivered NEW blocked turn stays blocked. Calling the worker again
+  // without a second authenticated Continue cannot enqueue or spend on it.
+  const recovered=await pilot.run(db,ctx,started.goalId,{...options,fetchImpl:async()=>{throw Error('OLD_CONTINUATION_MUST_NOT_RETRY_NEW_TURN');},countInput:async()=>{throw Error('NEW_BLOCKED_REPORT_IS_FREE_TO_DELIVER');}});assert.equal(recovered.status,'BLOCKED');assert.equal(calls,2);assert.equal(recovered.checkpoint.harness.codexRequests,2);
+ }
+ for(const table of ['movements','accounting_journal_entries','accounting_supplier_bills','stockchief_runtime.assistant_action_proposals'])assert.equal((await db.query(`SELECT count(*)::int n FROM ${table} WHERE workspace_id=$1`,[ctx.workspaceId])).rows[0].n,0);
+ assert.equal((await db.query('SELECT count(*)::int n FROM stockchief_runtime.codex_pilot_calls WHERE goal_id=$1',[started.goalId])).rows[0].n,2);
+ t.diagnostic(JSON.stringify({actualSDK:true,fakeProviderOnly:true,sameGoalAndNativeThread:true,oneExplicitContinuation:true,noImplicitRetryOfNewBlockedTurn:true,originalAllowanceAndCountersPreserved:true,paidCalls:0}));
+});

@@ -1,0 +1,6 @@
+'use strict';const test=require('node:test'),assert=require('node:assert/strict');
+test('all explicit-approval mutations and policies describe preparation separately from execution',()=>{
+ const {registry}=require('../../src/assistant/postgres-capability-registry'),gateway=require('../../scripts/environment-agent-demo/gateway'),actor={role:'owner',permissions:{}},entries=registry.list();let reviewed=0;
+ for(let offset=0;offset<entries.length;offset+=6){const group=entries.slice(offset,offset+6),view=gateway.interfaceSnapshot(registry,actor,{names:group.map(c=>c.name)});for(const c of group){const result=view.operations.find(o=>o.name===c.name);assert(result);if(['mutation','policy'].includes(c.kind)&&c.authority?.mode==='explicit_approval'){reviewed++;assert.equal(result.invocation.stage,'prepare_review');assert.equal(result.invocation.reviewRecord,'governed_proposal');assert.equal(result.invocation.execution,'separate_authenticated_approval');assert.match(result.invocation.meaning,/not a posted business record/);}else assert.equal(result.invocation,undefined,'Read, navigation and existing-authority contracts must not be mislabeled as proposal-only');assert.deepEqual(result.authority,c.authority);}}
+ assert(reviewed>20,'The contract is shared across unrelated business domains');
+});

@@ -44,7 +44,7 @@ function sharedTools({browser,gateway,sandbox,session,fullEvidence=false,audit=(
         const result=await gateway.dataset({spec:spec===undefined?require('./contracts').parseJson(specJson):spec,offset});
         await browser?.observeDatasetLinks?.(result);return result;
       }},
-    {name:'business_operations',description:'Invoke discovered canonical contracts. JSON array of {capability,arguments:[{name,value}],dependsOn:[]}. Values accept strings and the discovered numeric types. Changes require existing authority or human approval.',
+    {name:'business_operations',description:'Invoke discovered canonical contracts. For mutation or policy contracts with authority.mode explicit_approval, this call prepares or revisits a governed proposal for human review; approval and execution of its described business effects are separate stages. A proposal is not a posted business record. Read and existing-standing-authority contracts retain their own semantics. JSON array of {capability,arguments:[{name,value}],dependsOn:[]}. Values accept strings and the discovered numeric types. Never infer approval from preparation.',
       schema:z.object({stepsJson:z.string().max(24000)}),execute:async({stepsJson},callId)=>{
         const result=await gateway.operate({steps:require('./contracts').parseJson(stepsJson),callId});
         await browser?.observeReadLinks?.(result.outcomes);return result;
