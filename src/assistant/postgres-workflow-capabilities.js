@@ -1137,6 +1137,20 @@ const SPECS=Object.freeze([
     verify:async(client,ctx,r,p)=>Boolean(r.id===p.recordId&&
       (await client.query('SELECT paused_at FROM workspace_connectors WHERE workspace_id=$1 AND id=$2',
       [ctx.workspaceId,p.recordId])).rows[0]?.paused_at)},
+  {name:'connection.synchronization',description:'Set the regular check frequency or turn automatic synchronization off/on for an existing connection. Preserve credentials, mappings, business approvals and temporary pauses; obey provider limits.',
+    record:'connection',fields:['recordReference','checkIntervalMinutes','enabled'],permission:permissions.ADMIN,ownerOnly:true,
+    build:(_db,_ctx,row,args)=>{
+      const policy=require('../connections/synchronization-policy');
+      if(!policy.supports(require('../connections/providers/registry').get(row.provider_type)))throw new ValidationError('This connection has no scheduled check.');
+      const minutes=policy.interval(args.checkIntervalMinutes??row.expected_interval_minutes??1);
+      if(args.enabled!=null&&!['true','false'].includes(String(args.enabled)))throw new ValidationError('Choose whether automatic updates should be on or off.');
+      const disabled=args.enabled==null?policy.object(row.config).syncDisabled===true:String(args.enabled)==='false';
+      return prepareResult({recordId:row.id,minutes,disabled},disabled?`Turn automatic updates off for ${row.display_name}. Keep credentials and history.`:
+        `Check ${row.display_name} every ${minutes} minute${minutes===1?'':'s'}, subject to provider limits and any temporary pause. Existing business authority is unchanged.`);},
+    execute:(client,ctx,p)=>require('../connections/postgres-synchronization').configure(sameClient(client),ctx,p.recordId,p),
+    verify:async(client,ctx,r,p)=>{const row=(await client.query('SELECT expected_interval_minutes,config,paused_at FROM workspace_connectors WHERE workspace_id=$1 AND id=$2',
+      [ctx.workspaceId,p.recordId])).rows[0];return Boolean(row&&r.connectorId===p.recordId&&Number(row.expected_interval_minutes)===p.minutes&&
+        require('../connections/synchronization-policy').object(row.config).syncDisabled===p.disabled&&(!p.disabled||row.paused_at));}},
   {name:'connection.resume',description:'Resume one paused existing connection only if its credentials remain present; a disconnected account still needs the provider authorization flow.',
     record:'connection',fields:['recordReference'],permission:permissions.ADMIN,ownerOnly:true,
     build:(_db,_ctx,row)=>{if(!row.paused_at||row.status==='disconnected')throw new ValidationError(

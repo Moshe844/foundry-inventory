@@ -201,6 +201,7 @@ async function processOne(database, handlers, options = {}) {
     } catch (error) {
       return fail(database, job.id, job.leaseToken, error, {
         ...options, retryable: error.retryable !== false,
+        ...(Number.isFinite(error.retryAfterMs)&&error.retryAfterMs>0?{retryAfterMs:error.retryAfterMs}:{}),
       });
     }
   }

@@ -114,6 +114,9 @@ async function sync(job,client,providers=defaultProviders){
     [job.workspaceId,connectorId])).rows[0];
   if(!connection)return {skipped:'connection_missing'};
   if(connection.status!=='connected'||connection.paused_at)return {skipped:'connection_not_active'};
+  const syncConfig=require('./synchronization-policy').object(connection.config);
+  if(syncConfig.syncDisabled===true)return {skipped:'synchronization_disabled'};
+  if(Date.parse(syncConfig.syncRetryAt||'')>Date.now())return {skipped:'provider_backoff',retryAt:syncConfig.syncRetryAt};
   const adapter=providers.get(connection.provider_type);
   if(!adapter?.discover)throw Object.assign(new Error('This provider does not expose catalogue discovery.'),
     {code:'provider_discovery_unavailable',retryable:false});
@@ -121,6 +124,7 @@ async function sync(job,client,providers=defaultProviders){
   const runId=newId('csync');const startedAt=nowIso();
   await client.query(`INSERT INTO connection_sync_runs(id,workspace_id,connector_id,sync_kind,status,started_at)
     VALUES($1,$2,$3,'CATALOG_AND_LOCATIONS','RUNNING',$4)`,[runId,job.workspaceId,connectorId,startedAt]);
+  try{
   const found=await require('../commercial/operations').run(client,job.workspaceId,{capability:
     adapter.integrationClass==='accounting'?'connections.accounting':'connections.commerce',key:`catalog-sync:${job.id}`,
     provider:connection.provider_type,operation:'catalog_sync',retryReversed:true},async()=>{
@@ -161,7 +165,7 @@ async function sync(job,client,providers=defaultProviders){
     discovered_locations=$3,auto_mapped=$4,needs_mapping=$5,completed_at=$6 WHERE id=$1`,
   [runId,products.length,locations.length,autoMapped,needsMapping,completedAt]);
   await client.query(`UPDATE workspace_connectors SET status='connected',setup_status=$3,last_synced_at=$4,
-    last_error=NULL,updated_at=$4 WHERE workspace_id=$1 AND id=$2`,
+    last_error=NULL,config=(config::jsonb-'syncRetryAt'-'syncFailureCount')::text,updated_at=$4 WHERE workspace_id=$1 AND id=$2`,
   [job.workspaceId,connectorId,adapter.integrationClass==='accounting'?connection.setup_status:needsMapping?'MAPPING':'CONNECTED',completedAt]);
   await client.query(`UPDATE connection_issues SET status='RESOLVED',resolved_at=$3,updated_at=$3
     WHERE workspace_id=$1 AND connector_id=$2 AND status='OPEN'
@@ -171,7 +175,40 @@ async function sync(job,client,providers=defaultProviders){
   };
   const result=await database.transaction(apply,{isolation:'SERIALIZABLE',retrySafe:true});
   if(!result.skipped)await require('./postgres-webhook-inbox').reconcileCancellationObservations(database,connection,adapter);
+  if(!result.skipped&&syncConfig.autoImportCatalog===true&&adapter.integrationClass!=='accounting'){
+    try{
+      result.imported=await require('./postgres-catalog-import').importAutomatic(database,
+        {workspaceId:job.workspaceId,actorId:connection.authorized_by_user_id},connectorId);
+      await client.query(`UPDATE connection_issues SET status='RESOLVED',resolved_at=$3,updated_at=$3
+        WHERE workspace_id=$1 AND connector_id=$2 AND fingerprint=$4 AND status='OPEN'`,
+      [job.workspaceId,connectorId,nowIso(),`catalogue-import:${connectorId}`]);
+    }catch(error){
+      result.importNeedsReview=true;
+      const at=nowIso();await client.query(`INSERT INTO connection_issues(id,workspace_id,connector_id,issue_type,fingerprint,title,detail,
+        resolution_hint,status,created_at,updated_at) VALUES($1,$2,$3,'CATALOG_IMPORT_REVIEW',$4,$5,$6,$7,'OPEN',$8,$8)
+        ON CONFLICT(workspace_id,fingerprint) DO UPDATE SET status='OPEN',resolved_at=NULL,updated_at=EXCLUDED.updated_at`,
+      [newId('conissue'),job.workspaceId,connectorId,`catalogue-import:${connectorId}`,'Review newly discovered products',
+        'The provider was checked, but some new records could not be imported safely. Completed imports are preserved.',
+        'Open the connection to review its product and location matches before importing the remaining records.',at]);
+    }
+  }
   return result;
+  }catch(error){
+    const failureCount=Math.min(8,Number(syncConfig.syncFailureCount||0)+1);
+    const delay=Math.max(Number.isFinite(error.retryAfterMs)?error.retryAfterMs:0,
+      Math.min(60*60_000,60_000*2**(failureCount-1)));
+    const at=nowIso(),retryAt=new Date(Date.now()+delay).toISOString();
+    await database.transaction(async queryable=>{
+      await queryable.query(`UPDATE connection_sync_runs SET status='FAILED',completed_at=$2 WHERE id=$1`,[runId,at]);
+      await queryable.query(`UPDATE workspace_connectors SET
+        config=(config::jsonb||$3::jsonb)::text,last_error=$4,updated_at=$5
+        WHERE workspace_id=$1 AND id=$2 AND status='connected' AND paused_at IS NULL`,
+      [job.workspaceId,connectorId,JSON.stringify({syncRetryAt:retryAt,syncFailureCount:failureCount}),
+        error.status===429?'The provider asked StockChief to wait. Updates will retry automatically.':
+          'The latest provider check did not finish. Your saved records are preserved; StockChief will retry automatically.',at]);
+    },{isolation:'SERIALIZABLE',retrySafe:true});
+    error.retryAfterMs=delay;throw error;
+  }
 }
 
 async function setMappingInTransaction(client,ctx,input){

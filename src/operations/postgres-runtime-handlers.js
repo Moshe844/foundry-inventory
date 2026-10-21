@@ -243,13 +243,15 @@ async function runtimeSweep(job,client,options={}){
   }
   const connectors=(await client.query(`SELECT id,workspace_id,display_name,provider_type,expected_interval_minutes,
       GREATEST(COALESCE(last_activity_at,''),COALESCE(last_synced_at,''),created_at) AS evidence_at,
-      last_synced_at,created_at,status,paused_at
+      last_synced_at,created_at,status,paused_at,config
     FROM workspace_connectors WHERE status='connected' AND paused_at IS NULL AND expected_interval_minutes>0`)).rows;
-  let staleConnectors=0;let recoveredConnectors=0;let scheduledMailboxPolls=0;let scheduledMailboxRenewals=0;
+  let staleConnectors=0;let recoveredConnectors=0;let scheduledMailboxPolls=0;let scheduledMailboxRenewals=0;let scheduledProviderChecks=0;
   for(const connector of connectors){
+    const adapter=(options.providers||defaultProviders).get(connector.provider_type);
+    const syncPolicy=require('../connections/synchronization-policy').describe(connector,adapter,now);
     const fingerprint=`connector-stale:${connector.id}`;
     const grace=['gmail','microsoft365'].includes(connector.provider_type)?2:1;
-    const stale=Date.parse(connector.evidence_at)+Number(connector.expected_interval_minutes)*grace*60_000<now;
+    const stale=Date.parse(connector.evidence_at)+syncPolicy.effectiveMinutes*Math.max(2,grace)*60_000<now;
     if(stale){
       staleConnectors+=1;
       await client.query(`INSERT INTO connection_issues(id,workspace_id,connector_id,issue_type,fingerprint,title,detail,
@@ -263,6 +265,22 @@ async function runtimeSweep(job,client,options={}){
       const resolved=await client.query(`UPDATE connection_issues SET status='RESOLVED',resolved_at=$3,updated_at=$3
         WHERE workspace_id=$1 AND fingerprint=$2 AND status='OPEN' RETURNING id`,[connector.workspace_id,fingerprint,at]);
       recoveredConnectors+=resolved.rowCount;
+    }
+    if(syncPolicy.mode!=='active'||syncPolicy.retryAt)continue;
+    if(!['gmail','microsoft365'].includes(connector.provider_type)&&typeof adapter?.discover==='function'){
+      if(config.commercial.requirePaidWorkspace){const access=await entitlements.operationalAccessForWorkspace(
+        scopedDatabase(client),connector.workspace_id,{now:at});if(!access.access.canOperate)continue;}
+      const intervalMs=syncPolicy.effectiveMinutes*60_000;
+      const due=Date.parse(connector.last_synced_at||connector.created_at)+intervalMs<=now;
+      const active=await client.query(`SELECT 1 FROM stockchief_runtime.jobs WHERE workspace_id=$1
+        AND kind='provider.catalog-sync' AND payload->>'connectorId'=$2 AND status IN ('PENDING','RUNNING','RETRY') LIMIT 1`,
+      [connector.workspace_id,connector.id]);
+      if(due&&!active.rows.length){
+        const scheduled=await jobs.enqueue(scopedDatabase(client),{workspaceId:connector.workspace_id,kind:'provider.catalog-sync',
+          idempotencyKey:`provider-check:${connector.id}:${Math.floor(now/intervalMs)}`,payload:{connectorId:connector.id,scheduled:true},
+          priority:45,maxAttempts:5,availableAt:now,now});
+        if(scheduled.created)scheduledProviderChecks+=1;
+      }
     }
     if(['gmail','microsoft365'].includes(connector.provider_type)){
       if(config.commercial.requirePaidWorkspace){const commercialAccess=await entitlements.operationalAccessForWorkspace(
@@ -340,7 +358,7 @@ async function runtimeSweep(job,client,options={}){
   const stockAlerts=await require('../manager/postgres-stock-threshold-alerts').evaluate(client);
   return {expiredSessions:sessions.rowCount,suspendedSubscriptions:suspendedSubscriptions.rowCount,recoveredImports:staleImports.rowCount,
     ambiguousEmails:uncertainEmails.rowCount,ambiguousProviderEffects:staleProviderEffects.rowCount,
-    staleConnectors,recoveredConnectors,scheduledMailboxPolls,
+    staleConnectors,recoveredConnectors,scheduledMailboxPolls,scheduledProviderChecks,
     scheduledMailboxRenewals,scheduledAlertDeliveries,scheduledAutopilotChecks,scheduledReconciliations,
     scheduledMissionResumes,scheduledGoals,stockAlerts,at};
 }
@@ -458,7 +476,7 @@ async function systemEmail(job,database,options={}){
   return accepted(result);
 }
 
-function create(providers=defaultProviders,options={}){return {'system.runtime-sweep':(job,client)=>runtimeSweep(job,client,options),
+function create(providers=defaultProviders,options={}){return {'system.runtime-sweep':(job,client)=>runtimeSweep(job,client,{...options,providers}),
   'assistant.run-goal':external(async(job,database)=>{
     const ctx={workspaceId:job.workspaceId,actorId:job.payload.actorId};
     const goal=await require('../assistant/postgres-goal-store').get(database,ctx,job.payload.goalId);

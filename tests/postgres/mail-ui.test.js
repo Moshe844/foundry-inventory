@@ -21,6 +21,7 @@ test('real Chromium qualifies PostgreSQL business-mail filtering, exact replies 
     const adapter={
       metadata(){return {type:'gmail',name:'Gmail',mark:'G',category:'email',authMode:'oauth',available:true,
         description:'Fixture business mailbox.',provides:['business mail']};},
+      async poll(){return {messages:[]};},
       async send({credentials:providerCredentials,message}){
         providerCalls+=1;assert.equal(providerCredentials.accessToken,'encrypted-fixture-token');
         if(message.subject.includes('Ambiguous')){const error=new Error('Provider connection ended before delivery was confirmed.');
@@ -106,8 +107,8 @@ test('real Chromium qualifies PostgreSQL business-mail filtering, exact replies 
     assert.equal(await page.getByRole('link',{name:'View business emails'}).getAttribute('href'),'/mail');
     assert.equal(await page.getByRole('link',{name:'Open Mail'}).getAttribute('href'),'/mail');
     assert.equal(await page.getByRole('link',{name:'Review set-aside senders'}).getAttribute('href'),'/mail/set-aside');
-    await page.getByLabel('Check for new mail').selectOption('10');
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Save timing'}).click()]);
+    await page.getByLabel('Check frequency').selectOption('10');
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Save synchronization'}).click()]);
     const cadence=(await database.query('SELECT expected_interval_minutes,config FROM workspace_connectors WHERE id=$1',
       [connectorId])).rows[0];
     assert.equal(Number(cadence.expected_interval_minutes),10);

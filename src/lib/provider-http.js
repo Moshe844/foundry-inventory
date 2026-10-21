@@ -50,9 +50,9 @@ function retryAfterMs(response) {
   const header = response && response.headers && response.headers.get && response.headers.get('retry-after');
   if (!header) return null;
   const seconds = Number(header);
-  if (Number.isFinite(seconds)) return Math.min(seconds * 1000, 30_000);
+  if (Number.isFinite(seconds)) return Math.max(0,Math.min(seconds * 1000, 24*60*60_000));
   const at = Date.parse(header);
-  return Number.isFinite(at) ? Math.max(0, Math.min(at - Date.now(), 30_000)) : null;
+  return Number.isFinite(at) ? Math.max(0, Math.min(at - Date.now(), 24*60*60_000)) : null;
 }
 
 function record(provider, detail) {
@@ -119,11 +119,13 @@ async function providerFetch(url, init = {}, options = {}) {
     if (RETRY_STATUSES.has(response.status)) {
       lastStatus = response.status;
       record(provider, { latencyMs: Date.now() - started, outcome: response.status === 429 ? 'rate_limited' : 'provider_error', error: `HTTP ${response.status}` });
-      if (attempt <= retries) { await wait(retryAfterMs(response) ?? backoff(attempt)); continue; }
+      const providerDelay=retryAfterMs(response);
+      if (attempt <= retries&&(providerDelay===null||providerDelay<=30_000)) { await wait(providerDelay ?? backoff(attempt)); continue; }
       const writing=!['GET','HEAD','OPTIONS'].includes(String(init.method||'GET').toUpperCase());
       const message=writing?provider+' did not confirm the operation (HTTP '+response.status+'). Its outcome must be checked before it is repeated.':response.status===429
         ?provider+' is rate-limiting reads. StockChief will retry safely shortly.':provider+' is not working right now (HTTP '+response.status+'). StockChief will retry this read safely.';
       const error = new ProviderUnavailableError(provider,message,{attempts:attempt,httpStatus:response.status});
+      if(providerDelay!==null)error.retryAfterMs=providerDelay;
       error.providerOutcomeUncertain=writing;
       noteUnavailable(provider, error);
       throw error;

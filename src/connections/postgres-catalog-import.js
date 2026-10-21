@@ -36,6 +36,10 @@ async function mutate(database,ctx,connectorId,input,operation){
   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`provider-sync:${connectorId}`]);
   const state=await read(client,ctx,connectorId,{lock:true});
   if(state.connection.status!=='connected'||state.connection.paused_at)throw new ValidationError('Reconnect or resume this provider before changing its matches.');
+  const currentPolicy=parse(state.connection.config,{});
+  if(input.automatic===true&&(currentPolicy.autoImportCatalog!==true||
+      (input.includeOpening===true&&currentPolicy.autoImportOpeningStock!==true)))
+    throw new ValidationError('Automatic import authority changed. Review the current connection settings before continuing.');
   const accounting=require('./providers/registry').get(state.connection.provider_type)?.integrationClass==='accounting';
   await require('../commercial/enforcement').workspace(client,ctx.workspaceId,accounting?'connections.accounting':'connections.commerce');
   if(input.revision&&input.revision!==state.revision)throw new ValidationError('The provider catalogue or its matches changed. Review the current records before confirming.');
@@ -129,7 +133,33 @@ async function importProducts(database,ctx,connectorId,input){
   return result;
  });
 }
-module.exports={describe,mapExternal,createLocation,importProducts,ignore,exclusion};
+async function importAutomatic(database,ctx,connectorId){
+ const state=await read(database,ctx,connectorId);
+ if(parse(state.connection.config,{}).autoImportCatalog!==true)return {skipped:'catalogue_import_not_enabled'};
+ const summary={locations:0,products:0,prices:0,openingUnits:0};
+ for(const row of state.rows.filter(r=>r.entity_type==='location'&&!r.foundry_record_id&&r.mapping_status!=='IGNORED'&&!exclusion(parse(r.provider_data,{})))){
+  await createLocation(database,ctx,connectorId,{externalId:row.external_id,automatic:true});summary.locations++;
+ }
+ const current=await read(database,ctx,connectorId);
+ const ids=current.rows.filter(r=>r.entity_type==='sku'&&!r.foundry_record_id&&r.mapping_status!=='IGNORED'&&!exclusion(parse(r.provider_data,{}))).map(r=>r.external_id);
+ for(let offset=0;offset<ids.length;offset+=500){
+  // The owner authorizes initial quantities explicitly at connection/setup.
+  // Reuse the canonical new-record-only receipt and stable idempotency keys;
+  // never replay historical orders or reset stock on subsequent snapshots.
+  const imported=await importProducts(database,ctx,connectorId,{externalIds:ids.slice(offset,offset+500),automatic:true,
+    includeOpening:parse(state.connection.config,{}).autoImportOpeningStock===true});
+  summary.products+=imported.mapped;summary.prices+=imported.prices;
+  summary.openingUnits+=imported.openingUnits;
+ }
+ return summary;
+}
+module.exports={describe,mapExternal,createLocation,importProducts,ignore,exclusion,importAutomatic};
+for(const name of ['importAutomatic']){
+ const original=module.exports[name];module.exports[name]=async(database,ctx,connectorId)=>{
+  const scope=await require('../commercial/entitlements').ownerScopeForWorkspace(database,ctx.workspaceId),context=require('../commercial/context');
+  return context.run({...context.current(),database,scope,requestId:context.current()?.requestId||newId('operation')},()=>original(database,ctx,connectorId));
+ };
+}
 for(const name of ['mapExternal','createLocation','importProducts','ignore']){
  const original=module.exports[name];
  module.exports[name]=async(database,ctx,connectorId,...args)=>{

@@ -217,6 +217,7 @@ function createPostgresConnectionsRouter(database,options={}){
     delete req.session.newConnectionToken;
     const connection=await connections.get(database,req.ctx.workspaceId,req.params.id);
     const adapter=registry.get(connection.provider_type);
+    connection.synchronization=require('../../connections/synchronization-policy').describe(connection,adapter);
     const isMailbox=['gmail','microsoft365'].includes(connection.provider_type);
     let mailboxLastPollAt=null;
     if(isMailbox){
@@ -307,13 +308,21 @@ function createPostgresConnectionsRouter(database,options={}){
     const connection=await connections.get(database,req.ctx.workspaceId,req.params.id);
     if(!['gmail','microsoft365'].includes(connection.provider_type))
       throw new ValidationError('This connection is not a mailbox.');
-    const minutes=Number(req.body.minutes);
-    if(![1,5,10,15,30].includes(minutes))throw new ValidationError('Choose a supported mailbox check interval.');
-    await database.query(`UPDATE workspace_connectors SET expected_interval_minutes=$3,
-      config=jsonb_set(config::jsonb,'{mailboxCheckMinutes}',$4::jsonb,true)::text,updated_at=$5
-      WHERE workspace_id=$1 AND id=$2`,[req.ctx.workspaceId,connection.id,minutes,JSON.stringify(minutes),new Date().toISOString()]);
+    const {minutes}=await require('../../connections/postgres-synchronization').configure(database,req.ctx,connection.id,
+      {minutes:req.body.minutes},{providers:registry});
     req.flash('success',`Mailbox checks now run every ${minutes} minute${minutes===1?'':'s'}.`);
     return res.redirect(303,`/settings/connections/${connection.id}`);
+  }));
+  router.post('/settings/connections/:id/synchronization',requireOwner,asyncRoute(async(req,res)=>{
+    const changed=await require('../../connections/postgres-synchronization').configure(database,req.ctx,req.params.id,
+      {minutes:req.body.minutes,disabled:req.body.mode==='off',autoImportCatalog:req.body.autoImportCatalog==='1'},{providers:registry});
+    req.flash('success',changed.disabled?'Automatic synchronization is off. Credentials and history are kept.':
+      `Check timing saved: every ${changed.minutes} minute${changed.minutes===1?'':'s'}. Provider limits and any temporary pause still apply.`);
+    return res.redirect(303,`/settings/connections/${req.params.id}`);
+  }));
+  router.get('/settings/connections/:id/synchronization-state',asyncRoute(async(req,res)=>{
+    res.set('Cache-Control','no-store');return res.json(await require('../../connections/postgres-synchronization')
+      .state(database,req.ctx.workspaceId,req.params.id,{providers:registry}));
   }));
   router.post('/settings/connections/:id/accounting/authority',requireOwner,asyncRoute(async(req,res)=>{
     await entitlements.assertCapability(database,commercialScope(req),'connection.accounting');

@@ -47,6 +47,28 @@
 <% } %>
 <% if(newConnectionToken){ %><div class="notice notice--warn section"><div><strong>Copy this secure connection key now. StockChief will not show it again.</strong><input class="input mono" aria-label="Connection token" value="<%= newConnectionToken %>" readonly onclick="this.select()"></div></div><% } %>
 
+<% const sync=connection.synchronization; if(sync?.supported){ %>
+<section class="card section" aria-label="Automatic synchronization" data-connection-synchronization="<%= connection.id %>" data-last-check="<%= sync.lastCheckAt||'' %>">
+  <div class="card-head"><div><h2>Automatic synchronization</h2><p class="muted"><%= sync.scope==='mailbox'?'Check for new business email.':'Check products, variants, prices and provider stock observations. Sales and accounting follow their verified event and approval workflows.' %></p></div><span class="badge <%= sync.mode==='active'?'badge--ok':'badge--muted' %>"><%= {active:'On',paused:'Paused',off:'Off',disconnected:'Sign-in needed'}[sync.mode] %></span></div>
+  <div class="card-body grid">
+    <p role="status" aria-live="polite" data-connection-sync-progress><%= sync.mode==='active'?'Automatic checks are on.':sync.mode==='paused'?'Automatic updates are temporarily paused.':sync.mode==='off'?'Automatic updates are off.':'Sign in to start automatic updates.' %></p>
+    <a class="btn" href="/settings/connections/<%= connection.id %>" data-connection-sync-updated hidden>View updated products and matches</a>
+    <dl class="grid"><div><dt>Last completed check</dt><dd><% if(sync.lastCheckAt){ %><time datetime="<%= new Date(sync.lastCheckAt).toISOString() %>"><%= helpers.dateTime(sync.lastCheckAt) %></time><% }else{ %>Waiting for the first check<% } %></dd></div>
+      <div><dt>Next check</dt><dd><%= sync.retryAt?'Waiting for the provider until '+helpers.dateTime(sync.retryAt):sync.nextCheckAt?helpers.dateTime(sync.nextCheckAt):sync.mode==='disconnected'?'Sign in to resume updates':sync.mode==='off'?'Automatic updates are off':'Resume to schedule updates' %></dd></div></dl>
+    <% if(sync.providerLimitNote){ %><p class="hint"><%= sync.providerLimitNote %></p><% } %>
+    <p class="hint">Supported webhooks are processed as they arrive. Scheduled checks provide a fallback; provider limits and retries can delay them. Stock observations do not create receipts or inventory cost. Accounting posting and other consequential actions keep their existing authority checks.</p>
+    <% if(currentUser.role==='owner'){ %><form method="post" action="/settings/connections/<%= connection.id %>/synchronization" class="form-actions">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <label class="field"><span class="field-label">Automatic updates</span><select class="select" name="mode"><option value="on" <%= sync.mode!=='off'?'selected':'' %>>On</option><option value="off" <%= sync.mode==='off'?'selected':'' %>>Off</option></select></label>
+      <label class="field"><span class="field-label">Check frequency</span><select class="select" name="minutes"><% const choices=[...new Set([1,5,10,15,30,60,sync.requestedMinutes])].sort((a,b)=>a-b); choices.forEach(function(minutes){ %><option value="<%= minutes %>" <%= sync.requestedMinutes===minutes?'selected':'' %>>Every <%= minutes %> minute<%= minutes===1?'':'s' %></option><% }); %></select></label>
+      <% if(canDiscover&&!accounting){ %><label class="checkbox"><input type="checkbox" name="autoImportCatalog" value="1" <%= connection.config.autoImportCatalog===true?'checked':'' %>> Automatically import new products, initial prices, locations and their reported opening stock once. Do not invent missing quantities, inventory cost or supplier bills.</label><% } %>
+      <button class="btn btn--primary" type="submit">Save synchronization</button>
+    </form><% } %>
+  </div>
+</section>
+<script src="/connection-sync.js?v=<%= assetVersion %>" defer></script>
+<% } %>
+
 <% if(!accounting){ %>
 <div class="stats-row section">
   <div class="stat"><strong><%= connection.productsMapped %></strong><span>products mapped</span></div>
@@ -110,11 +132,6 @@
           <div class="form-actions"><a class="btn btn--primary" href="/mail">View business emails</a><a class="btn" href="/mail/set-aside">Review set-aside senders</a></div>
           <p class="hint">Add or update a supplier or customer email address on that contact's record. StockChief matches the sender to those addresses; connecting a mailbox alone does not approve every sender.</p>
           <% if(currentUser.role==='owner'){ %>
-            <form method="post" action="/settings/connections/<%= connection.id %>/mailbox-cadence" class="form-actions">
-              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-              <label class="field"><span class="field-label">Check for new mail</span><select class="select" name="minutes"><% [1,5,10,15,30].forEach(function(minutes){ %><option value="<%= minutes %>" <%= Number(connection.expected_interval_minutes||5)===minutes?'selected':'' %>>Every <%= minutes %> minute<%= minutes===1?'':'s' %></option><% }) %></select></label>
-              <button class="btn" type="submit">Save timing</button>
-            </form>
             <% if(connected){ %><form method="post" action="/settings/connections/<%= connection.id %>/check-mail"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit">Check mailbox now</button></form><% } %>
           <% } %>
           <p class="hint">Last completed check: <%= mailboxLastPollAt?helpers.timeAgo(mailboxLastPollAt):'not yet' %>. Queuing a check is not proof that it completed.</p>

@@ -23,8 +23,10 @@ function publicHealth(row,now=Date.now()){
   const evidence=Math.max(...[row.last_activity_at,row.last_synced_at,row.created_at]
     .map(value=>Date.parse(value||'')).filter(Number.isFinite));
   const expectedMinutes=Number(row.expected_interval_minutes),grace=['gmail','microsoft365'].includes(row.provider_type)?2:1;
-  if(Number.isFinite(evidence)&&expectedMinutes>0&&evidence+expectedMinutes*grace*60000<now)reasons.push('ACTIVITY_OVERDUE');
-  return {status:row.status==='disconnected'?'Disconnected':reasons.length?'Needs attention':'Connected',
+  const effectiveMinutes=require('./synchronization-policy').describe(row,null,now).effectiveMinutes;
+  if(!row.paused_at&&Number.isFinite(evidence)&&expectedMinutes>0&&evidence+effectiveMinutes*Math.max(2,grace)*60000<now)reasons.push('ACTIVITY_OVERDUE');
+  return {status:row.status==='disconnected'?'Disconnected':row.paused_at?
+    (parseJson(row.config,{}).syncDisabled===true?'Sync off':'Paused'):reasons.length?'Needs attention':'Connected',
     reasons,lastRecordedActivityAt:Number.isFinite(evidence)?new Date(evidence).toISOString():null,
     expectedIntervalMinutes:Number.isFinite(expectedMinutes)?expectedMinutes:null,activityGraceMultiplier:grace};
 }
@@ -35,7 +37,8 @@ function hydrate(row,now){
   return {...row,capabilities:parseJson(row.capabilities,[]),provides:parseJson(row.provides,[]),
     config:parseJson(row.config,{}),openIssues:Number(row.open_issues||0),
     productsMapped:Number(row.products_mapped||0),locationsMapped:Number(row.locations_mapped||0),
-    itemsNeedingMapping:Number(row.items_needing_mapping||0),publicStatus:publicStatus(row,now)};
+    itemsNeedingMapping:Number(row.items_needing_mapping||0),publicStatus:publicStatus(row,now),
+    synchronization:require('./synchronization-policy').describe(row,require('./providers/registry').get(row.provider_type),now)};
 }
 
 const SELECT=`SELECT connector.*,
@@ -89,6 +92,7 @@ async function pause(database,workspaceId,connectorId){
 
 async function resume(database,workspaceId,connectorId){
   const result=await database.query(`UPDATE workspace_connectors SET paused_at=NULL,
+    config=jsonb_set(config::jsonb,'{syncDisabled}','false'::jsonb,true)::text,
     status=CASE WHEN credential_ref IS NULL THEN 'disconnected' ELSE 'connected' END,updated_at=$3
     WHERE workspace_id=$1 AND id=$2 RETURNING id`,[workspaceId,connectorId,nowIso()]);
   if(!result.rows.length)throw new NotFoundError('Connection not found.');

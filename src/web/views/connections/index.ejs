@@ -261,6 +261,7 @@
           </span>
         </div>
         <p><%= provider.description %></p>
+      <% if(postgresMode&&provider.initialInventoryImport&&provider.integrationClass!=='accounting'){ %><p class="hint">Connecting imports new products, initial prices, locations and reported opening stock once. Missing quantities and costs need review. Historical sales are not replayed.</p><% } %>
         <% if (provider.available && provider.authorizationPrerequisite) { %>
           <div class="rm-note rm-note--warn" data-authorization-prerequisite>
             <p><%= provider.authorizationPrerequisite.message %>

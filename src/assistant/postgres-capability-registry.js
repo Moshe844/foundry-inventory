@@ -99,6 +99,7 @@ const FIELDS=Object.freeze({
   unitLabel:{type:'string',description:'New unit label for an existing product.'},
   allowNegative:{type:'string',description:'Explicit true or false for whether this product permits negative stock.'},
   enabled:{type:'string',description:'Explicit true or false for the named setting.'},
+  checkIntervalMinutes:{type:'integer',description:'Requested connection check interval in minutes: 1, 5, 10, 15, 30 or 60. Provider limits may require a slower effective interval.'},
   minimumSeverity:{type:'string',description:'Email alert threshold: critical, important, or all.'},
   mailboxState:{type:'string',description:'The requested business-message state: needs reply, waiting, or handled.'},
   recipientEmails:{type:'string',description:'Comma-separated exact email addresses for business alerts.'},

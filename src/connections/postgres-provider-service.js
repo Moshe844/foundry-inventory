@@ -46,9 +46,9 @@ async function beginAuthorization(database,ctx,input,requestOrigin,options={}){
       await client.query(`INSERT INTO workspace_connectors
         (id,workspace_id,connector_key,display_name,provider_type,status,capabilities,provides,config,
          expected_interval_minutes,setup_status,authorized_by_user_id,created_at,updated_at)
-        VALUES($1,$2,$3,$4,$5,'disconnected','[]',$6,'{}',$7,'AUTHORIZING',$8,$9,$9)`,
+        VALUES($1,$2,$3,$4,$5,'disconnected','[]',$6,$10,$7,'AUTHORIZING',$8,$9,$9)`,
       [connectorId,ctx.workspaceId,`${providerType}:${connectorId}`,input.displayName||meta.name,providerType,
-        JSON.stringify(meta.provides||[]),['gmail','microsoft365'].includes(providerType)?5:360,ctx.actorId,now]);
+        JSON.stringify(meta.provides||[]),1,ctx.actorId,now,JSON.stringify({autoImportCatalog:Boolean(adapter.catalogueCapabilities?.length)&&adapter.integrationClass!=='accounting',autoImportOpeningStock:Boolean(adapter.catalogueCapabilities?.length)&&adapter.integrationClass!=='accounting'})]);
     }
     auth=adapter.authorizationUrl({state,input:{...input,
       redirectUri:`${origin}/settings/connections/${providerType}/callback`,

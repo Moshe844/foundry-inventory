@@ -114,7 +114,8 @@ async function discover({ credentials }) {
       displayName: item.name || item.sku || String(item.id),
       providerData: { itemName: item.name || item.sku || String(item.id), variationName: null,
         priceMoney: item.price == null || item.price === '' ? null : { amount: money.integer(item.price,'Clover price'), currency },
-        inventoryCountUnavailable: stock !== null && !validStock ? 'The provider quantity is negative or fractional; opening stock requires review.' : null,
+        inventoryCountUnavailable: stock===null?'Clover has not supplied tracked stock for this item. No opening quantity or inventory cost will be invented.':
+          !validStock ? 'The provider quantity is negative or fractional; opening stock requires review.' : null,
         inventoryCounts: validStock ? [{ externalLocationId: credentials.merchantId,
           state: 'IN_STOCK', quantity: stock }] : [] } };
   });

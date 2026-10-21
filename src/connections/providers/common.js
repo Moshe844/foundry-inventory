@@ -69,6 +69,11 @@ async function jsonRequest(url, options = {}) {
       || body?.message || body?.error_description || body?.errors?.[0]?.detail;
     const error = new Error(providerDetail || `Provider returned HTTP ${response.status}.`);
     error.status = response.status; error.providerBody = body;
+    if(response.status===429||response.status===503){
+      const retry=response.headers.get('retry-after'),seconds=Number(retry);
+      const delay=retry?(Number.isFinite(seconds)?seconds*1000:Date.parse(retry)-Date.now()):60_000;
+      error.retryAfterMs=Math.max(60_000,Math.min(24*60*60_000,Number.isFinite(delay)?delay:60_000));
+    }
     throw error;
   }
   return { body, headers: response.headers, status: response.status };
