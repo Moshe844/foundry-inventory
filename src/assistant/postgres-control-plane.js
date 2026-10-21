@@ -161,7 +161,10 @@ async function executeStep(service,database,ctx,step,{actor,provider,rawProvider
     return {result,args:step.args,provenance:{}};
   }
   if(contract.kind==='read'){
-    const args={search:step.args.search||null,timeframe:step.args.timeframe||'all_time'};
+    if(!contract.validate(step.args))throw new (require('../domain/errors').ValidationError)('That read contains an undeclared input. Nothing changed.');
+    const args={...step.args,
+      ...(contract.fields.includes('search')?{search:step.args.search||null}:{}),
+      ...(contract.fields.includes('timeframe')?{timeframe:step.args.timeframe||'all_time'}:{})};
     const result=await contract.prepare(service,database,ctx,sourceMessage,args,
       {answerProvider:provider,priorReport:contract.name==='read.custom_report'?priorReport:null});
     if(!await contract.verify(service,database,ctx,result))return {result:{status:'CLARIFY',
