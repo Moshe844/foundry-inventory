@@ -645,17 +645,7 @@ async function lookupRecords(database,ctx,request,options={}) {
       handoff:{href:needs.length?(complete?'/needs-you':'/needs-you/all'):'/',label:needs.length?'Review what needs you':'Open Home'}};
   }
   if(request.view==='inventory_summary'){
-    const count=(await database.query(`SELECT
-      (SELECT COUNT(*) FROM items WHERE workspace_id=$1 AND is_active=1) AS products,
-      (SELECT COUNT(*) FROM items WHERE workspace_id=$1) AS products_ever,
-      (SELECT COUNT(*) FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
-        WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1) AS skus,
-      (SELECT COALESCE(SUM(b.on_hand),0) FROM balances b
-        JOIN skus s ON s.id=b.sku_id AND s.workspace_id=b.workspace_id
-        JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
-        WHERE b.workspace_id=$1 AND s.is_active=1 AND i.is_active=1) AS on_hand`,[ctx.workspaceId])).rows[0];
-    const products=Number(count.products),productsEver=Number(count.products_ever),
-      skus=Number(count.skus),onHand=Number(count.on_hand);
+    const {products,productsEver,skus,onHand}=await require('./postgres-inventory-summary').read(database,ctx.workspaceId);
     const question=String(options.question||'');
     const asksSkus=/\bSKUs?\b/i.test(question);
     const asksProducts=/\b(?:products?|items?)\b/i.test(question);

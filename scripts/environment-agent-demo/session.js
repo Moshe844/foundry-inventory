@@ -117,15 +117,20 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    if(h.receipt?.requestHash!==require('./receipts').requestHash(goal))throw new Error('COMPLETION_REQUEST_MISMATCH');
    return {answer:goal.answer,completionSource:h.completionSource,checkedAt:h.receipt.checkedAt};
   },
-  async load(){return authorizedUpdate((h,goal,client,access)=>{
+  async load(){return authorizedUpdate(async(h,goal,client,access)=>{
    const snapshot=goal.checkpoint.conversation;
    if(snapshot&&!require('../../src/assistant/postgres-agent-context').fullReadAccess(access?.actor)&&
     snapshot.authorityStamp!==h.authorityStamp)throw Error('SESSION_AUTHORITY_CHANGED');
    let environment=null;
    if(access?.environment){
-    const id=`${goalId}:environment:${createHash('sha256').update(JSON.stringify(access.environment)).digest('hex').slice(0,24)}`;
-    require('./observations').store(h,{id,name:'authorized_environment',result:access.environment});
-    environment=present(h,access.environment,{full:true});
+    // A small current application overview is available to every authorized
+    // native session, independent of its question. Reuse the canonical read;
+    // no intent routing, cached facts, business authority or hidden tool is added.
+    const inventorySummary=candidate==='codex'?await require('../../src/assistant/postgres-inventory-summary').context(client,ctx.workspaceId,access.actor):null;
+    const context={...access.environment,...(inventorySummary?{inventorySummary}:{})};
+    const id=`${goalId}:environment:${createHash('sha256').update(JSON.stringify(context)).digest('hex').slice(0,24)}`;
+    require('./observations').store(h,{id,name:'authorized_environment',result:context});
+    environment=present(h,context,{full:true});
    }
    return {...structuredClone(h),goalContext:{environment,
    originalRequest:goal.original_request,messages:structuredClone(goal.checkpoint.messages||[]),

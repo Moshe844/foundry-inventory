@@ -16,10 +16,15 @@ async function currentValue(database,ctx,goal,entry,{catalogue,browser,outcomeIn
  }
  if(entry.name==='canonical_execution_state')return require('../../scripts/environment-agent-demo/receipts').collect(database,ctx,goal,goal.checkpoint.harness,catalogue);
  if(entry.name==='authorized_environment'){
-  const row=(await database.query(`SELECT w.name,u.role FROM users u JOIN workspaces w ON w.id=u.workspace_id
+  const row=(await database.query(`SELECT w.name,u.role,u.permissions FROM users u JOIN workspaces w ON w.id=u.workspace_id
    WHERE u.workspace_id=$1 AND u.id=$2`,[ctx.workspaceId,ctx.actorId])).rows[0];
   if(!row)throw Error('CURRENT_AUTHORITY_REQUIRED');
-  return {business:{name:row.name},actor:{role:row.role},clock:{utc:new Date().toISOString()}};
+  // Recompute supplied startup facts under current permission, exactly as
+  // other cited read evidence. Old identity-only observations keep their shape.
+  const observed=JSON.parse(entry.text),inventorySummary=Object.hasOwn(observed,'inventorySummary')
+   ?await require('./postgres-inventory-summary').context(database,ctx.workspaceId,row):null;
+  return {business:{name:row.name},actor:{role:row.role},clock:{utc:new Date().toISOString()},
+   ...(inventorySummary?{inventorySummary}:{})};
  }
  if(entry.name==='authorized_navigation'){
   source(entry);if(!catalogue)throw Error('CURRENT_AUTHORITY_REQUIRED');
