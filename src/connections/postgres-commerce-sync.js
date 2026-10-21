@@ -129,6 +129,32 @@ async function queue(db,c,p,l,expected){
  await db.query('UPDATE connection_commerce_positions SET pending_effect_id=$3,updated_at=now() WHERE workspace_id=$1 AND id=$2',[p.workspace_id,p.id,queued.effect.id]);
  return queued;
 }
+// Commit the price and its authorized delivery together. The adapter rereads the
+// actual provider value and compares it with this verified baseline before writing.
+async function publishPriceChangesInTransaction(db,ctx,changes){
+ const result=new Map();if(!changes.length)return result;
+ const origins=new Map(changes.map(change=>[change.skuId,change.sourceConnectorId])),skuIds=[...origins.keys()];
+ const positions=(await db.query(`SELECT * FROM connection_commerce_positions WHERE workspace_id=$1
+  AND sku_id=ANY($2::text[]) AND field='price' AND mode IN ('outbound','two_way') ORDER BY id FOR UPDATE`,[ctx.workspaceId,skuIds])).rows;
+ for(const p of positions){
+  if(origins.get(p.sku_id)===p.connector_id)continue;
+  const delivery=result.get(p.sku_id)||{effectIds:[],synchronizationHolds:[]};result.set(p.sku_id,delivery);
+  const c=(await db.query('SELECT * FROM workspace_connectors WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,p.connector_id])).rows[0];
+  const owner=(await db.query('SELECT role FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,p.authorized_by_user_id])).rows[0];
+  let reason=null;
+  if(!c||c.status!=='connected'||c.paused_at||parse(c.config,{}).syncDisabled===true)reason='The channel is disconnected or synchronization is paused.';
+  else if(owner?.role!=='owner'||p.provider_account_id!==c.provider_account_id||!await mapped(db,p))reason='The channel authorization, account or mapping changed. Review its synchronization policy.';
+  if(reason){await issue(db,p,reason);delivery.synchronizationHolds.push({positionId:p.id,reason});continue;}
+  if(p.pending_effect_id){const pending=await effects.get(db,p.workspace_id,p.pending_effect_id);
+   if(pending.status!=='SUCCEEDED')throw new ValidationError('A previous price delivery still needs verification or review. Resolve it before changing this price again.');
+  }
+  const l=await local(db,p);
+  if(l.value===null||p.baseline_provider===null){reason='A verified local price and provider baseline are required before publishing.';await issue(db,p,reason);delivery.synchronizationHolds.push({positionId:p.id,reason});continue;}
+  if(same(l.value,p.baseline_provider))continue;
+  const queued=await queue(db,c,p,l,p.baseline_provider);delivery.effectIds.push(queued.effect.id);
+ }
+ return result;
+}
 async function reconcile(db,c){
  const positions=(await db.query("SELECT * FROM connection_commerce_positions WHERE workspace_id=$1 AND connector_id=$2 AND mode<>'off' ORDER BY id FOR UPDATE",[c.workspace_id,c.id])).rows;
  const result={queued:0,inboundPrices:0,conflicts:0};
@@ -184,7 +210,8 @@ async function execute(db,workspaceId,effectId,options={}){
    await db.query("UPDATE stockchief_runtime.provider_effects SET status='PENDING',claim_token=NULL,claimed_at=NULL,error_code='provider_rate_limited',error_message='The provider requested a delay. StockChief will reread the current value before retrying.',updated_at=now() WHERE workspace_id=$1 AND id=$2 AND claim_token=$3",[workspaceId,e.id,token]);
    error.retryable=true;error.retryAfterMs=Math.max(60000,Math.ceil(Number(error.retryAfterMs)||60000));throw error;
   }
-  const ambiguous=attempted&&(error.providerOutcomeUncertain===true||!effects.definiteFailure(error));
+  const rejectedBeforeWrite=error.code==='commerce_sync_conflict'&&error.providerWriteAttempted===false;
+  const ambiguous=attempted&&!rejectedBeforeWrite&&(error.providerOutcomeUncertain===true||!effects.definiteFailure(error));
   await effects.finishError(db,workspaceId,e.id,token,error,{ambiguous,apply:async(tx)=>{
    const p=(await tx.query('SELECT * FROM connection_commerce_positions WHERE workspace_id=$1 AND id=$2',[workspaceId,e.payload.positionId])).rows[0];
    if(p)await issue(tx,p,attempted?'The provider did not verify this delivery. The operation was retained without an automatic repeat.':'The prepared delivery changed before it was sent. Review the current product, price and stock.');
@@ -258,4 +285,4 @@ async function acceptCountInTransaction(db,ctx,payload){
  await audit(db,p,'connection.commerce_sync.count_confirmed',{before:l.physical,after:payload.countedQuantity,adjustmentId:physical.adjustmentId,journalEntryId:journal?.entry.id||null});
  return {...physical,positionId:p.id,journalEntryId:journal?.entry.id||null,verified:true};
 }
-module.exports={prepare,configureInTransaction,reconcile,execute,verifyDelivery,list,local,same,prepareCount,acceptCountInTransaction};
+module.exports={prepare,configureInTransaction,reconcile,execute,verifyDelivery,list,local,same,prepareCount,acceptCountInTransaction,publishPriceChangesInTransaction};

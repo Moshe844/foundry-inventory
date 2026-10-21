@@ -163,6 +163,16 @@ async function scopeReadToRelatedParty(database,ctx,steps,index,contract,args){
 }
 
 async function externalState(database,workspaceId,result={},options={}){
+  if(result.synchronizationHolds?.length)return {state:'BLOCKED',reason:'channel_synchronization_held',detail:result.synchronizationHolds};
+  if(result.effectIds?.length){
+    const pending=[];
+    for(const id of new Set(result.effectIds)){
+      const state=await externalState(database,workspaceId,{effectId:id},options);
+      if(state.state==='BLOCKED')return state;
+      if(state.state!=='DONE')pending.push(state.condition);
+    }
+    return pending.length?{state:'WAITING_EVENT',condition:{kind:'provider_effects',effects:pending}}:{state:'DONE'};
+  }
   if(result.effectId){const row=(await database.query(`SELECT status,error_code,error_message
       FROM stockchief_runtime.provider_effects WHERE workspace_id=$1 AND id=$2`,
     [workspaceId,result.effectId])).rows[0];

@@ -6,7 +6,7 @@ const money=require('../../domain/currency');
 const {ValidationError}=require('../../domain/errors');
 const stable=v=>v===null||typeof v!=='object'?JSON.stringify(v):Array.isArray(v)?'['+v.map(stable).join(',')+']':'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+stable(v[k])).join(',')+'}';
 const eq=(a,b)=>stable(a)===stable(b);
-const conflict=()=>Object.assign(new ValidationError('The provider value changed after synchronization was prepared. Review both values before trying again.'),{code:'commerce_sync_conflict',status:409,retryable:false});
+const conflict=()=>Object.assign(new ValidationError('The provider value changed after synchronization was prepared. Review both values before trying again.'),{code:'commerce_sync_conflict',status:409,retryable:false,providerWriteAttempted:false});
 function integer(value){const n=Number(value);if(value==null||value===''||!Number.isSafeInteger(n)||n<0)throw new ValidationError('Provider stock must be an explicit non-negative whole count.');return n;}
 function amount(value,currency){return value==null||value===''?null:{amount:money.integer(value),currency:money.code(currency)};}
 function checkErrors(body){if(body?.userErrors?.length||body?.errors?.length)throw Object.assign(new ValidationError('The provider refused this synchronization. Review its permissions and the current product.'),{code:'commerce_sync_rejected',status:422});}

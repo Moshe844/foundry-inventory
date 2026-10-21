@@ -275,7 +275,8 @@ test('fit sees post-approval read dependencies and clears impossible pending fla
     assert.equal(candidate.proposedSteps[1].continuesPending,false);
     assert.match(candidate.proposedSteps[1].description,/fulfilled and open units/);
     assert.match(request.system,/AFTER approval/);
-    assert.match(request.system,/redundant read steps/);
+    assert.match(request.system,/Read steps are non-mutating evidence gathering/);
+    assert.match(request.system,/redundant read is not a reason to block/);
     assert.match(request.system,/CONCRETE mismatch/);
     return {data:{aligned:true,reason:''}};
   }};

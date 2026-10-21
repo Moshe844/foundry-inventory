@@ -17,7 +17,7 @@ test('shared channel policy governs prices, costed sellable quantities, conflict
  const c=(await db.query('SELECT * FROM workspace_connectors WHERE id=$1',[id])).rows[0];
  const cache=require('../../src/connections/postgres-provider-sync').cacheRecord;
  let remote={price:{amount:1299,currency:'USD'},quantity:0},writes=0,uncertain=false,rateLimited=false;
- const adapter={readSyncPosition:async p=>({value:remote[p.field],version:null}),writeSyncPosition:async p=>{assert.deepEqual(remote[p.field],p.expected);if(rateLimited)throw Object.assign(new Error('provider rate limit'),{status:429,retryAfterMs:60001.3});writes++;remote[p.field]=p.value;if(uncertain)throw Object.assign(new Error('lost acknowledgement'),{providerOutcomeUncertain:true});return {externalId:p.externalId,value:p.value,verified:true};}};
+ const adapter={readSyncPosition:async p=>({value:remote[p.field],version:null}),writeSyncPosition:async p=>{if(!sync.same(remote[p.field],p.expected))throw Object.assign(new (require('../../src/domain/errors').ValidationError)('provider value changed'),{code:'commerce_sync_conflict',status:409,providerWriteAttempted:false});if(rateLimited)throw Object.assign(new Error('provider rate limit'),{status:429,retryAfterMs:60001.3});writes++;remote[p.field]=p.value;if(uncertain)throw Object.assign(new Error('lost acknowledgement'),{providerOutcomeUncertain:true});return {externalId:p.externalId,value:p.value,verified:true};}};
  const registry={get:()=>adapter};
  const cacheRemote=()=>db.transaction(async tx=>{await cache(tx,c,{entityType:'sku',externalId:'variant-9',code:'ORC-7',displayName:'Orchid vessel',providerData:{itemName:'Orchid vessel',priceMoney:remote.price,inventoryCounts:[{externalLocationId:'room-3',quantity:remote.quantity}]}});await cache(tx,c,{entityType:'location',externalId:'room-3',displayName:'Packing room'});});
  await prices.setPrice(db,ctx,{skuId:sku,amountMinor:1299,currency:'USD'});
@@ -33,15 +33,17 @@ test('shared channel policy governs prices, costed sellable quantities, conflict
   VALUES($1,$2,$1,'Another connection','fixture_sync','fixture-merchant','connected','[]','[]','{}','CONNECTED',$3,$4,$4)`,[duplicateId,ctx.workspaceId,ctx.actorId,at]);
  await assert.rejects(db.query(`INSERT INTO connection_commerce_positions(id,workspace_id,connector_id,provider_account_id,provider_type,sku_id,location_id,external_id,external_location_id,field,mode,authorized_by_user_id)
   VALUES($1,$2,$3,'fixture-merchant','fixture_sync',$4,$5,'variant-9','different-provider-room','price','outbound',$6)`,['cspos_'+randomUUID(),ctx.workspaceId,duplicateId,sku,loc.id,ctx.actorId]),/uq_commerce_outbound_authority/,'a second connection cannot drive the same provider price, even at another location');
- await prices.setPrice(db,ctx,{skuId:sku,amountMinor:0,currency:'USD'});
- assert.equal((await db.transaction(tx=>sync.reconcile(tx,c))).queued,1);
+ const zero=await prices.setPrice(db,ctx,{skuId:sku,amountMinor:0,currency:'USD'});
+ assert.equal(zero.effectIds.length,1,'the canonical price transaction immediately queues its governed delivery');
+ assert.equal((await db.transaction(tx=>sync.reconcile(tx,c))).queued,0,'periodic reconciliation cannot duplicate an already queued write');
  let p=(await db.query("SELECT * FROM connection_commerce_positions WHERE connector_id=$1 AND field='price'",[id])).rows[0];
  await sync.execute(db,ctx.workspaceId,p.pending_effect_id,{providers:registry});assert.equal(remote.price.amount,0);assert.equal(writes,1);
  await sync.execute(db,ctx.workspaceId,p.pending_effect_id,{providers:registry});assert.equal(writes,1,'successful replay sends no duplicate');
  await cacheRemote();assert.equal((await db.transaction(tx=>sync.reconcile(tx,c))).queued,0);
  remote.price={amount:1500,currency:'USD'};await cacheRemote();assert.equal((await db.transaction(tx=>sync.reconcile(tx,c))).inboundPrices,1);assert.equal((await prices.currentPrice(db,ctx.workspaceId,sku)).amount_minor,1500);
- await prices.setPrice(db,ctx,{skuId:sku,amountMinor:1600,currency:'USD'});remote.price={amount:1700,currency:'USD'};await cacheRemote();assert.equal((await db.transaction(tx=>sync.reconcile(tx,c))).conflicts,1);assert.equal(writes,1);assert.equal((await prices.currentPrice(db,ctx.workspaceId,sku)).amount_minor,1600);
- await prices.setPrice(db,ctx,{skuId:sku,amountMinor:1700,currency:'USD'});await db.transaction(tx=>sync.reconcile(tx,c));
+ const conflicted=await prices.setPrice(db,ctx,{skuId:sku,amountMinor:1600,currency:'USD'});remote.price={amount:1700,currency:'USD'};await cacheRemote();
+ await assert.rejects(sync.execute(db,ctx.workspaceId,conflicted.effectIds[0],{providers:registry}));assert.equal(writes,1,'the fresh provider comparison prevents overwriting its concurrent change');assert.equal((await prices.currentPrice(db,ctx.workspaceId,sku)).amount_minor,1600);
+ const reviewedConflict=await sync.prepare(db,ctx,c,{sku:'ORC-7',location:loc.id,priceSyncMode:'two_way',initialSyncSource:'provider'},{providers:registry});await db.transaction(tx=>sync.configureInTransaction(tx,ctx,reviewedConflict.payload));await db.transaction(tx=>sync.reconcile(tx,c));
  remote.quantity=4;await cacheRemote();assert.equal((await db.transaction(tx=>sync.reconcile(tx,c))).conflicts,1);
  assert.equal((await db.query('SELECT count(*)::int n FROM movements WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,0,'provider count is not fabricated physical receipt');
  const count=await sync.prepareCount(db,ctx,c,{sku:'ORC-7',location:loc.id,countedQuantity:4,reason:'Owner confirmed the four physical test units'},{providers:registry});

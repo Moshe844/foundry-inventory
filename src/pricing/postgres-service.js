@@ -86,7 +86,9 @@ async function setPricesInTransaction(client,ctx,inputs){
     await client.query(`UPDATE sales_order_lines line SET unit_price_minor=x.amount_minor,price_source_id=x.id,updated_at=$3 FROM jsonb_to_recordset($2::jsonb) AS x(id text,sku_id text,amount_minor bigint) WHERE line.workspace_id=$1 AND line.sku_id=x.sku_id AND line.unit_price_minor IS NULL AND x.amount_minor IS NOT NULL AND line.sales_order_id IN(SELECT id FROM sales_orders WHERE workspace_id=$1 AND status='DRAFT')`,[ctx.workspaceId,JSON.stringify(rows),at]);
   }
   const saved=rows.length?await readPrices():current;
-  return inputs.map(input=>{const row=saved.get(input.skuId),value={...row,isSet:row.amount_minor!==null,amount_minor:row.amount_minor===null?null:Number(row.amount_minor),formatted:formatMinor(row.amount_minor,row.currency)};return unchanged.has(input.skuId)?{...value,replayed:true}:value;});
+  const deliveries=rows.length?await require('../connections/postgres-commerce-sync').publishPriceChangesInTransaction(client,ctx,
+    rows.map(row=>({skuId:row.sku_id,sourceConnectorId:row.source==='provider_catalog_sync'?row.source_detail.connectorId:null}))):new Map();
+  return inputs.map(input=>{const row=saved.get(input.skuId),value={...row,isSet:row.amount_minor!==null,amount_minor:row.amount_minor===null?null:Number(row.amount_minor),formatted:formatMinor(row.amount_minor,row.currency),...deliveries.get(input.skuId)};return unchanged.has(input.skuId)?{...value,replayed:true}:value;});
 }
 async function setPriceInTransaction(client,ctx,input){return (await setPricesInTransaction(client,ctx,[input]))[0];}
 

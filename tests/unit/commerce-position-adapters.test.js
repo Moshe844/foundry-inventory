@@ -28,5 +28,5 @@ for(const type of ['shopify','square','clover','woocommerce'])test(type+' transp
  const a=adapter(type,transport);await a.writeSyncPosition({...input,value:{amount:0,currency:'USD'},expected:price,idempotencyKey:'delivery-key'});assert.equal(price.amount,0);
  await a.writeSyncPosition({...input,field:'quantity',value:0,expected:4,idempotencyKey:'delivery-key'});assert.equal(quantity,0);assert.equal(writes.length,2);
  await assert.rejects(a.writeSyncPosition({...input,value:{amount:100,currency:'EUR'},expected:price,idempotencyKey:'delivery-key'}),/currency/);assert.equal(writes.length,2);
- await assert.rejects(a.writeSyncPosition({...input,field:'quantity',value:3,expected:4,idempotencyKey:'delivery-key'}),/changed/);assert.equal(writes.length,2);
+ await assert.rejects(a.writeSyncPosition({...input,field:'quantity',value:3,expected:4,idempotencyKey:'delivery-key'}),error=>error.code==='commerce_sync_conflict'&&error.status===409&&error.providerWriteAttempted===false);assert.equal(writes.length,2);
 });
