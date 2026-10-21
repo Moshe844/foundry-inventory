@@ -172,7 +172,7 @@ async function registerWebhooks({ credentials, webhookUrl }) {
     &&WEBHOOK_EVENTS.every(type=>saved.event_types?.includes(type)),
   'Square did not confirm the requested webhook destination and event scope.');
   if (!saved?.signature_key) throw new ValidationError('Square created the webhook but did not return its signature key.');
-  return { credentials: { ...credentials, webhookSignatureKey: saved.signature_key,webhookSubscriptionId:saved.id }, subscriptionId: saved.id };
+  return { credentials: { ...credentials, webhookSignatureKey: saved.signature_key,webhookSubscriptionId:saved.id,webhookNotificationUrl:webhookUrl }, subscriptionId: saved.id };
 }
 
 function verifyWebhook({ headers, rawBody, webhookUrl, credentials, connection, body }) {

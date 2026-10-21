@@ -86,6 +86,27 @@ function createPostgresProviderWebhooks(database,options={}){
   for(const providerType of ['shopify','square','woocommerce'])router.post(
     `/api/v1/connections/:providerType(${providerType})/webhooks/:connectorId`,
     express.raw({type:'*/*',limit:'1mb'}),handler);
+  // Square subscriptions belong to the application, not individual merchants.
+  // One signed destination serves any number of authorized merchant connections;
+  // the merchant identity is authenticated again before tenant-scoped retention.
+  // Existing connector-specific destinations remain supported during migration.
+  router.post('/api/v1/connections/square/webhooks',express.raw({type:'*/*',limit:'1mb'}),async(req,res)=>{
+    try{
+      const rawBody=Buffer.isBuffer(req.body)?req.body:Buffer.from(String(req.body||''),'utf8'),body=parseBody(rawBody);
+      if(typeof body.merchant_id!=='string'||!body.merchant_id||body.merchant_id.length>160)return res.status(400).json({error:{code:'merchant_identity_required',message:'The Square merchant identity is missing.'}});
+      const rows=(await database.query(`SELECT c.* FROM workspace_connectors c JOIN workspaces w ON w.id=c.workspace_id
+        WHERE c.provider_type='square' AND c.provider_account_id=$1 AND c.status='connected' AND c.paused_at IS NULL AND w.deletion_requested_at IS NULL`,[body.merchant_id])).rows;
+      if(!rows.length)return res.status(200).json({received:true,ignored:true});
+      const adapter=providers.get('square');if(!adapter?.verifyWebhook||!adapter?.normalizeWebhook)return res.status(503).json({error:{code:'provider_unavailable',message:'Square event handling is not configured.'}});
+      const verified=[];for(const row of rows){const connection={...row,config:typeof row.config==='string'?JSON.parse(row.config||'{}'):(row.config||{})},providerCredentials=await credentials.get(database,row.workspace_id,row.id,'provider');if(!providerCredentials)continue;
+        try{adapter.verifyWebhook({headers:req.headers,rawBody,body,webhookUrl:`${requestOrigin(req,options.publicOrigin)}${req.originalUrl}`,credentials:providerCredentials,connection});verified.push(connection);}
+        catch(error){if(!(error instanceof DomainError))throw error;}
+      }
+      if(!verified.length)return res.status(401).json({error:{code:'invalid_provider_signature',message:'This Square event did not pass signature and merchant verification.'}});
+      const receipts=[];for(const connection of verified){const receipt=await webhookInbox.receive(database,connection,{headers:req.headers,rawBody,body});receipts.push({id:receipt.receiptId,status:receipt.status});}
+      return res.status(receipts.every(r=>r.status==='COMPLETED')?200:202).json({received:true,receipts});
+    }catch(error){return apiError(res,error);}
+  });
   router.post('/api/v1/connections/clover/webhooks',express.raw({type:'*/*',limit:'1mb'}),async(req,res)=>{
     try{
       const rawBody=Buffer.isBuffer(req.body)?req.body:Buffer.from(String(req.body||''),'utf8');

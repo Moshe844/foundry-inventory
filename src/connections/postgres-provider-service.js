@@ -145,6 +145,7 @@ async function setupWebhookDelivery(database,ctx,connectorId,requestOrigin,optio
     if(adapter?.registerWebhooks){
       const origin=options.publicOrigin||providerOrigin(requestOrigin);
       const webhookUrl=providerType==='gmail'?`${origin}/api/v1/connections/gmail/webhooks`
+        :providerType==='square'?`${origin}/api/v1/connections/square/webhooks`
         :`${origin}/api/v1/connections/${providerType}/webhooks/${encodeURIComponent(connectorId)}`;
       try{
         const current=await loadProviderCredentials(database,connection,adapter);
