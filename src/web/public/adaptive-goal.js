@@ -7,8 +7,11 @@
   if(d.kind==='runtime_starting')return d.status==='Opening the isolated business browser'?'Opening your business screens':d.status==='Starting the Codex SDK session'?'Starting the investigation':'Checking access and spending limits';
   if(d.kind==='runtime_failed')return 'The agent stopped before finishing';
   if(d.kind==='agent_tool_failed'||d.kind==='model_call_blocked')return 'A step needs attention';
+  if(d.kind==='answer_scope_review_started')return 'Checking the answer against your request';
+  if(d.kind==='host_final_verification')return 'Verifying the result';
+  if(d.kind==='native_report_correction')return 'Rechecking the supporting information';
   if(d.kind!=='agent_tool_started')return null;
-  return ({environment_browser:'Looking through your StockChief screens',environment_interfaces:'Checking available business actions',business_dataset:'Checking your business records',business_operations:'Preparing an authorized business operation',environment_evidence:'Reviewing collected evidence'})[d.tool]||'Checking the information needed for your request';
+  return ({environment_browser:'Looking through your StockChief screens',environment_interfaces:'Checking available business actions',business_dataset:'Checking your business records',environment_dataset:'Checking your business records',business_operations:'Working with your business records',environment_evidence:'Reviewing collected evidence'})[d.tool]||'Checking the information needed for your request';
  }
  function activities(events){
   const rows=[];

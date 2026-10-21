@@ -2,6 +2,22 @@
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const store=require('./postgres-goal-store'),pilot=require('./postgres-codex-pilot');
 const base='../../scripts/environment-agent-demo/';
+const internalActivity=new Set(['codex_event','codex_resources','codex_isolation','model_profile_selected','codex_input_count',
+ 'model_call','model_response','native_completion_checkpoint','canonical_operation','agent_tool_completed','answer_scope_review_settled']);
+const timingFields=['admissionMs','sourceIntegrityMs','tokenPreflightMs','providerMs','commercialSettlementMs','nativeCheckpointMs','finalVerificationMs'];
+function timingDetail(event){return Object.fromEntries(Object.entries(event.timings||{}).filter(([key,value])=>
+ timingFields.includes(key)&&Number.isFinite(value)&&value>=0));}
+function activityDetail(event){
+ // Provider receipts, native checkpoints and tool results have their own
+ // durable ledgers. Empty customer events used to acquire the same goal lock
+ // as those checkpoints, although the browser discarded every one of them.
+ if(internalActivity.has(event.kind))return null;
+ const detail={kind:event.source==='host_initial_observation'?event.kind.replace('agent_tool_','initial_page_'):event.kind,
+  tool:event.name||event.tool||null,action:event.action||null,status:event.status||null,
+  code:event.code||event.reason||null,
+  limitKind:typeof event.limitKind==='string'&&/^[a-z_]{1,80}$/.test(event.limitKind)?event.limitKind:null};
+ if(event.timings)detail.timings=timingDetail(event);return detail;
+}
 async function run(database,ctx,id,options={}){
  if((options.fetchImpl||options.countInput||options.apiKey)&&!(process.env.NODE_ENV==='test'&&options.apiKey==='FAKE'&&options.fetchImpl&&options.countInput))
   throw Error('TEST_TRANSPORT_REQUIRES_FAKE_CREDENTIALS');
@@ -36,23 +52,20 @@ async function run(database,ctx,id,options={}){
    if(process.env.STOCKCHIEF_CODEX_TIMING==='1')console.log(JSON.stringify({kind:event.kind,goalId:id,phase:event.phase,ms:event.ms}));
    return;
   }
-  // Native SDK events are retained in its durable journal. These two event
-  // kinds previously wrote empty UI records and locked the goal on every SDK
-  // acknowledgement/checkpoint, competing with actual session work.
-  if(['codex_event','codex_resources'].includes(event.kind))return;
-  // The customer timeline stores activity, not raw prompts, tokens or fields.
-  const detail={kind:event.source==='host_initial_observation'?event.kind.replace('agent_tool_','initial_page_'):event.kind,
-   tool:event.name||event.tool||null,action:event.action||null,status:event.status||null,
-   code:event.code||event.reason||null,
-   limitKind:typeof event.limitKind==='string'&&/^[a-z_]{1,80}$/.test(event.limitKind)?event.limitKind:null};
-  if(event.timings)detail.timings=Object.fromEntries(Object.entries(event.timings).filter(([key,value])=>
-   ['admissionMs','sourceIntegrityMs','tokenPreflightMs','providerMs','commercialSettlementMs','nativeCheckpointMs','finalVerificationMs'].includes(key)&&Number.isFinite(value)&&value>=0));
+  const detail=activityDetail(event);
+  if(!detail){
+   // Timing diagnostics remain host-only metadata. Never log provider bodies,
+   // prompts, SDK events, tool results, credentials or business fields.
+   if(process.env.STOCKCHIEF_CODEX_TIMING==='1'&&event.timings)
+    console.log(JSON.stringify({kind:event.kind,goalId:id,timings:timingDetail(event)}));
+   return;
+  }
   pendingActivity.push({id:require('../lib/util').newId('goalevent'),detail});
   if(pendingActivity.length>=32)flushActivity();
   // The chat polls once a second. Coalesce adjacent provider/tool progress
   // within that window instead of competing with durable execution writes
   // for a goal lock after nearly every event. Finalization still drains it.
-  else if(!auditTimer)auditTimer=setTimeout(flushActivity,250);
+  else if(!auditTimer)auditTimer=setTimeout(flushActivity,1000);
  };
  try{
   const budget=require('./postgres-codex-budget').createBudget(database,ctx,id);
@@ -255,4 +268,4 @@ async function run(database,ctx,id,options={}){
   await flushActivity().catch(()=>{});
  }
 }
-module.exports={run};
+module.exports={run,activityDetail};
