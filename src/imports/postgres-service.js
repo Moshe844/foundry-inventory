@@ -203,7 +203,7 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     if(lotRequired && quantity > 0 && !lotCode)problems.push(problem('missing_lot','A lot or batch number is required.'));
     const existingMatches=code ? (context.skuByCode.get(code.toLowerCase()) || []) : [];
     if(existingMatches.length>1)problems.push(problem('ambiguous_existing_code','This SKU code matches more than one active record.'));
-    if(existingMatches.some(s=>s.sku_active===0||s.item_active===0))problems.push(problem('archived_existing_code','This SKU belongs to an archived product or variant. Restore it before updating its stock; a duplicate product will not be created.'));
+    if(existingMatches.some(s=>Number(s.sku_active)===0||Number(s.item_active)===0))problems.push(problem('archived_existing_code','This SKU belongs to an archived product or variant. Restore it before updating its stock; a duplicate product will not be created.'));
     const trackingMode=serialRequired?'serial':lotRequired?'lot':'quantity';
     if(existingMatches.length===1&&existingMatches[0].tracking_mode!==trackingMode&&quantity>0)problems.push(problem('tracking_mismatch','This SKU uses a different tracking method. Preserve its serial or lot information before importing stock.'));
     if(serial&&quantity>0){const serialKey=JSON.stringify([(code||name||'').toLowerCase(),serial]);
@@ -701,6 +701,8 @@ async function approve(database, ctx, id, expectedHash) {
       throw new ValidationError('Map a product name or SKU and recalculate the preview before approving.');
     if(!plan.recordsValid)throw new ValidationError('There are no valid rows to import.');
     if(plan.transformations.existingStockRows>0&&!plan.transformations.importMode)throw new ValidationError('This file matches existing stock. Choose set on-hand quantities or receive additional stock before approval.');
+    if((await client.query(`SELECT 1 FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND problems::jsonb @> '[{"code":"accounting_not_ready"}]'::jsonb LIMIT 1`,[ctx.workspaceId,id])).rows.length)
+      throw new ValidationError('Finish Money setup and recheck this file before approving its inventory values. No stock or value was imported.');
     if(plan.recordsInvalid&&!plan.transformations.allowPartialImport)throw new ValidationError('Correct the invalid rows, or explicitly review and choose a partial import first.');
     // A required location answer is a plan-level question, even when zero-stock
     // rows happen to be valid. It must never authorize a tiny accidental subset.

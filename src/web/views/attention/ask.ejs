@@ -165,7 +165,7 @@
         <details class="rm-turn__said"><summary><%= turn.message.slice(0, 160) %>…</summary><p style="white-space:pre-line;margin:8px 0 0"><%= turn.message %></p></details>
       <% } else { %><p class="rm-turn__said"><%= turn.message %></p><% } %>
     </div>
-    <% if(turn.agentGoal){ %><%- include('../partials/adaptive-goal',{goal:turn.agentGoal,codexApprovals:turn.agentGoal.approvalCards||[],isLatest:turnIndex===latestIndex}) %><% } %>
+    <% if(turn.agentGoal){ %><%- include('../partials/adaptive-goal',{goal:turn.agentGoal,codexApprovals:turn.agentGoal.approvalCards||[],isLatest:locals.focusedGoalId?turn.agentGoal.id===locals.focusedGoalId:turnIndex===latestIndex}) %><% } %>
     <% if(turn.agentGoal&&turn.goals.length){ %><details class="rm-agent-results"><summary>Recorded steps · <%= turn.goals.length %></summary><% } %>
     <% turn.goals.forEach(function (goal) { %>
       <% if (goal.id === currentGoalId && error) { %>

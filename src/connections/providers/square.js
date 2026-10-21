@@ -2,7 +2,7 @@
 
 const crypto = require('node:crypto');
 const config = require('../../config');
-const { ValidationError } = require('../../domain/errors');
+const { ValidationError, AuthenticationError } = require('../../domain/errors');
 const { safeEqual, requireVerified, jsonRequest, postalAddress } = require('./common');
 const facts=require('../commerce-facts');
 
@@ -68,13 +68,40 @@ async function exchangeAuthorization({ query,metadata={} }) {
       ...(metadata.redirectUri?{redirect_uri:metadata.redirectUri}:{}),
     }) });
   const credentials={accessToken:body.access_token,refreshToken:body.refresh_token,
-    merchantId:body.merchant_id,expiresAt:body.expires_at,environment:config.connections.square.environment};
+    merchantId:body.merchant_id,expiresAt:body.expires_at,obtainedAt:new Date().toISOString(),environment:config.connections.square.environment};
   const granted=(await api(credentials,'/oauth2/token/status',{method:'POST'})).body;
   requireVerified(granted.merchant_id===body.merchant_id&&granted.client_id===config.connections.square.applicationId,
     'Square did not verify the authorized merchant and application.');
   return { credentials,
     accountId: body.merchant_id, accountName: `Square merchant ${String(body.merchant_id).slice(-6)}`,
     capabilities: Array.isArray(granted.scopes)?granted.scopes:[], expiresAt: body.expires_at };
+}
+
+async function refreshCredentials(credentials) {
+  if(credentials.authMode==='sandbox_personal')return {credentials,refreshed:false};
+  const expires=Date.parse(credentials.expiresAt),obtained=Date.parse(credentials.obtainedAt);
+  // Renew weekly while regular synchronization is active, with an earlier
+  // check for short-lived grants. Older grants did not save their issue date.
+  const renewAt=Math.min(Number.isFinite(obtained)?obtained+7*86400000:
+    Number.isFinite(expires)?expires-23*86400000:0,
+    Number.isFinite(expires)?expires-5*60000:Infinity);
+  if(Date.now()<renewAt)return {credentials,refreshed:false,expiresAt:credentials.expiresAt};
+  if(!credentials.refreshToken)throw new AuthenticationError('Sign in to Square again to restore automatic renewal.');
+  assertOAuthConfigured();
+  requireVerified(['sandbox','production'].includes(credentials.environment)&&credentials.environment===config.connections.square.environment,
+    'Square authorization belongs to a different application environment.');
+  const origin=credentials.environment==='sandbox'?'https://connect.squareupsandbox.com':'https://connect.squareup.com';
+  const {body}=await jsonRequest(origin+'/oauth2/token',{method:'POST',headers:{'content-type':'application/json','square-version':API_VERSION},
+    body:JSON.stringify({client_id:config.connections.square.applicationId,client_secret:config.connections.square.applicationSecret,
+      grant_type:'refresh_token',refresh_token:credentials.refreshToken})});
+  if(!body.access_token||!body.refresh_token||!Number.isFinite(Date.parse(body.expires_at))||Date.parse(body.expires_at)<=Date.now())
+    throw Object.assign(new Error('Square did not confirm a usable renewed authorization.'),{code:'PROVIDER_REFRESH_UNCONFIRMED',status:503,transient:true});
+  requireVerified(body.merchant_id===credentials.merchantId,'Square renewed authorization for a different merchant.');
+  const next={...credentials,accessToken:body.access_token,refreshToken:body.refresh_token,expiresAt:body.expires_at,obtainedAt:new Date().toISOString()};
+  const granted=(await api(next,'/oauth2/token/status',{method:'POST'})).body;
+  requireVerified(granted.merchant_id===credentials.merchantId&&granted.client_id===config.connections.square.applicationId,
+    'Square did not verify the renewed merchant and application.');
+  return {credentials:next,refreshed:true,expiresAt:next.expiresAt};
 }
 
 async function api(credentials, path, options = {}) {
@@ -276,6 +303,6 @@ async function historySummary({ credentials, since, locations = [] }) {
   return { operationalRecords: orderIds.size, periodStart: since };
 }
 
-module.exports = { catalogueCapabilities:Object.freeze(['products','skus','stock','locations']), metadata, authorizationUrl, tryDirectAuthorization, exchangeAuthorization, discover,
+module.exports = { catalogueCapabilities:Object.freeze(['products','skus','stock','locations']), metadata, authorizationUrl, tryDirectAuthorization, exchangeAuthorization, refreshCredentials, discover,
   registerWebhooks, verifyWebhook, normalizeWebhook, createSandboxCheckout, historySummary, api, orderEvents, API_VERSION };
 Object.assign(module.exports,require('./commerce-position').adapter('square',{api}));

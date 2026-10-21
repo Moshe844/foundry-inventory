@@ -37,6 +37,7 @@ async function list(database,workspaceId,{id=null,limit=10,activeOnly=false}={})
    p.status AS plan_status,p.approval_status,p.created_at,
    (p.status='READY' AND p.approval_status='AWAITING_APPROVAL' AND (
      p.records_valid=0 OR
+     EXISTS(SELECT 1 FROM import_rows r WHERE r.workspace_id=p.workspace_id AND r.import_id=p.id AND r.problems::jsonb @> '[{"code":"accounting_not_ready"}]'::jsonb) OR
      (p.transformations::jsonb->>'existingStockRows')::int>0 AND NULLIF(p.transformations::jsonb->>'importMode','') IS NULL OR
      p.records_invalid>0 AND COALESCE(p.transformations::jsonb->>'allowPartialImport','false')<>'true' OR
      p.conflicts::jsonb<>'[]'::jsonb OR

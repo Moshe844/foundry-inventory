@@ -168,9 +168,23 @@ function createPostgresProjectionsRouter(database){
       recentOnly:true,...(await activityPage(database,req.ctx.workspaceId,req.query))});
   }));
   router.get(['/money','/accounting'],requireAuth,asyncRoute(async(req,res)=>{
+    const settings=(await database.query('SELECT * FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId])).rows[0];
+    if(!Number(settings?.enabled))return res.redirect(302,'/accounting/setup');
     const result=await presenters.money(database,req.ctx.workspaceId,period(req.query),req.ctx.actorId);
     return res.page('accounting/money',{title:'Money',nav:'accounting',room:true,...result,
       configured:{enabled:true,currency:result.story.currency},period:{key:'custom',from:result.from,to:result.to,label:'Current period'}});
+  }));
+  router.get('/accounting/setup',requireAuth,requirePermission(permissions.MANAGE_ACCOUNTING,'set up Money'),asyncRoute(async(req,res)=>{
+    const settings=(await database.query('SELECT * FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId])).rows[0];
+    const importId=String(req.query.import||'').slice(0,160),plan=importId?await require('../../imports/postgres-service').get(database,req.ctx.workspaceId,importId):null;
+    return res.page('accounting/setup',{title:'Set up Money',nav:'accounting',settings,plan,today:new Date().toISOString().slice(0,10),currencies:Intl.supportedValuesOf('currency')});
+  }));
+  router.post('/accounting/setup',requireAuth,requirePermission(permissions.MANAGE_ACCOUNTING,'set up Money'),asyncRoute(async(req,res)=>{
+    const settings=(await database.query('SELECT * FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId])).rows[0];
+    const importId=String(req.body.importId||'').slice(0,160),plan=importId?await require('../../imports/postgres-service').get(database,req.ctx.workspaceId,importId):null;
+    if(!Number(settings?.enabled))await ledger.configure(database,req.ctx,{startDate:req.body.startDate,currency:req.body.currency});
+    if(plan?.status==='READY'&&plan.approvalStatus==='AWAITING_APPROVAL')await require('../../imports/postgres-service').revise(database,req.ctx,plan.id,{expectedHash:plan.integrityHash});
+    req.flash('success','Money is ready. Review the recalculated file before approving any stock or value.');return res.redirect(303,plan?'/imports/'+plan.id:'/money');
   }));
   router.get(['/accounting/books','/money/books'],requireAuth,(req,res)=>res.redirect(302,'/money'));
   router.get('/accounting/transactions',requireAuth,requirePermission(permissions.VIEW_ACCOUNTING,'view accounting transactions'),asyncRoute(async(req,res)=>{const dates=period(req.query);

@@ -81,7 +81,7 @@
   <% if (!empty) { %>
     <a class="sc-home__inventory-line" href="/inventory" aria-label="Open inventory">
       <span class="sc-home__inventory-line-icon"><%- helpers.icon('inventory', { size: 17 }) %></span>
-      <span><small>Inventory now</small><strong><%= Number(stats.itemCount).toLocaleString() %> <%= stats.itemCount === 1 ? 'product' : 'products' %> · <%= Number(stats.unitsOnHand).toLocaleString() %> units on hand<% if (stats.available != null && Number.isFinite(Number(stats.available))) { %> · <%= Number(stats.available).toLocaleString() %> available for orders<% } %></strong></span>
+      <span><small>Inventory now</small><strong><%= Number(stats.itemCount).toLocaleString() %> <%= helpers.plural(Number(stats.itemCount),'product') %> · <%= Number(stats.unitsOnHand).toLocaleString() %> <%= helpers.plural(Number(stats.unitsOnHand),'unit') %> on hand<% if (stats.available != null && Number.isFinite(Number(stats.available))) { %> · <%= Number(stats.available).toLocaleString() %> not reserved<% } %></strong></span>
       <%- helpers.icon('arrowRight', { size: 16 }) %>
     </a>
   <% } %>

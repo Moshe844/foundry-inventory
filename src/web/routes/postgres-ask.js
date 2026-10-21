@@ -368,8 +368,8 @@ function createPostgresAskRouter(database,options={}){
     if(recentGoals.some(goal=>goal.id===focusedGoalId&&!canContinue(goal)))
       return res.redirect(303,'/ask/history?goal='+encodeURIComponent(focusedGoalId));
     recentGoals=recentGoals.filter(canContinue);
-    const activeGoal=recentGoals.at(-1)||null;
     const focusedGoal=recentGoals.find(goal=>goal.id===focusedGoalId);
+    const activeGoal=focusedGoal||recentGoals.at(-1)||null;
     for(const goal of recentGoals){
       if(nativeInboxAvailable&&goal.checkpoint.runtime==='codex-staging'&&!['COMPLETED','CANCELLED','BLOCKED'].includes(goal.status)){
         const inbox=await pilot.inbox(database,req.ctx,goal.id);Object.assign(goal,inbox.goal);goal.approvalCards=inbox.approvals;
@@ -387,7 +387,7 @@ function createPostgresAskRouter(database,options={}){
     const rules=await instructionLists(database,req.ctx,visibleProposalIds);
     rules.pendingRules=rules.pendingRules.filter(rule=>!nativeRuleIds.has(rule.id));
     transcript=require('../../assistant/goal-transcript').mergeGoalTranscript(transcript,recentGoals,{focusedGoalId:focusedGoal?.id});
-    const continuationGoal=transcript.at(-1)?.agentGoal;
+    const continuationGoal=focusedGoal||transcript.at(-1)?.agentGoal;
     return res.page('attention/ask',{title:'Ask StockChief',nav:'ask',room:true,suppressBack:true,postgresAsk:true,...rules,
       codexPilot:pilotView,adaptiveGoal:activeGoal,agentInspection:Boolean(options.agentInspection),focusedGoalId:focusedGoal?.id||null,renderAgentAnswer:require('../public/agent-answer').render,
       about:String(req.query.about||'').slice(0,2000),stockActivity:req.query.task==='stock-activity'&&sourcePage?.path==='/inventory',
@@ -456,7 +456,7 @@ function createPostgresAskRouter(database,options={}){
   }
   router.post('/ask',asyncRoute(async(req,res)=>{
     const result=await runAsk(req);
-    return res.redirect(303,result.navigation?.href||'/ask#latest');
+    return res.redirect(303,result.navigation?.href||(result.goalId?'/ask?goal='+encodeURIComponent(result.goalId)+'#focused-goal':'/ask#latest'));
   }));
   router.post('/ask/email/continue',asyncRoute(async(req,res)=>{
     await assistant.continueEmail(database,req.ctx,req.body,{provider:options.provider,
@@ -485,7 +485,7 @@ function createPostgresAskRouter(database,options={}){
   }));
   router.post('/foundry/tell',requireAuth,asyncRoute(async(req,res)=>{
     const result=await runAsk(req);
-    return res.redirect(303,result.navigation?.href||'/ask#latest');
+    return res.redirect(303,result.navigation?.href||(result.goalId?'/ask?goal='+encodeURIComponent(result.goalId)+'#focused-goal':'/ask#latest'));
   }));
   router.post('/ask/leave-the-rest',asyncRoute(async(req,res)=>{
     delete req.session.assistantQueue;

@@ -177,7 +177,7 @@
      const newApproval=approvalDelta.added.length>0;
      if((changed||newApproval)&&status==='WAITING_APPROVAL'){
       const draft=document.querySelector('#tell-foundry textarea[name="message"]');
-      if(!(draft?.value||'').trim()){window.location.reload();return;}
+      if(!(draft?.value||'').trim()){window.location.assign('/ask?goal='+encodeURIComponent(goal.id)+'#focused-goal');return;}
       hint.textContent='A change is ready for review. Your draft is preserved; reload when you are ready to review the approval.';
      }
     }

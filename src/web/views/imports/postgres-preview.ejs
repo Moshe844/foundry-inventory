@@ -6,9 +6,10 @@
    const trackingQuestion=locals.trackingQuestion;
    const needsTrackingAnswer=trackingQuestion?.state==='needs_input';
    const needsImageAnswer=plan.sourceKind==='image'&&sourceTransforms.imageReadingConfirmed!==true;
+   const needsAccounting=Boolean(locals.missingAccountingSetup);
    const needsPartialAnswer=plan.recordsInvalid>0&&!sourceTransforms.allowPartialImport;
    const needsStockIntent=sourceTransforms.existingStockRows>0&&!sourceTransforms.importMode;
-   const needsAnswer=needsIdentity||needsNumberAnswer||needsLocation||needsTrackingAnswer||needsImageAnswer||needsPartialAnswer||needsStockIntent||plan.conflicts.length>0;
+   const needsAnswer=needsIdentity||needsNumberAnswer||needsLocation||needsTrackingAnswer||needsImageAnswer||needsAccounting||needsPartialAnswer||needsStockIntent||plan.conflicts.length>0;
    const activity=locals.importProgress;
    const importing=Boolean(activity?.active);
    const interrupted=Boolean(activity&&['PAUSED','NEEDS_REVIEW'].includes(activity.state)&&!run?.verified); %>
@@ -18,13 +19,16 @@
   </div>
   <div class="page-actions" <% if(activity.active){ %>data-import-progress="<%= activity.href %>/progress"<% } %>><span data-import-status class="badge badge--<%= activity?.verified?'ok':'muted' %>"><%= activity?.label||helpers.columnLabel(plan.status.toLowerCase()) %></span></div>
 </div>
+<% if(needsAccounting&&plan.status==='READY'&&plan.approvalStatus==='AWAITING_APPROVAL'){ %>
+<section class="card card-body" role="status"><h2>Set up Money once before importing inventory value</h2><p>Your file contains unit costs. StockChief read those amounts, but this inventory does not yet have its accounting currency and opening date. This is one setup step for the whole file; you do not need to repair each row.</p><p>No products, stock or value have been imported.</p><a class="btn btn--primary" href="/accounting/setup?import=<%= encodeURIComponent(plan.id) %>">Set up Money and recheck this file</a></section>
+<% } %>
 <% if(sourceTransforms.existingStockRows>0&&plan.status==='READY'&&plan.approvalStatus==='AWAITING_APPROVAL'){ %>
 <section class="card card-body"><h2>Does this file replace counts or add a delivery?</h2><p><%= sourceTransforms.existingStockRows %> rows match existing products. StockChief will not assume these quantities are additional stock.</p>
 <form method="post" action="/imports/<%= plan.id %>/revise"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>">
 <label class="field"><span>How to use the quantities</span><select class="select" name="importMode" required><option value="">Choose before approval</option><option value="set" <%= sourceTransforms.importMode==='set'?'selected':'' %>>Set on-hand to the file counts</option><option value="add" <%= sourceTransforms.importMode==='add'?'selected':'' %>>Receive these as additional stock</option></select></label>
 <p>Setting a count preserves existing unit costs. New units use the source cost when provided; reductions of valued stock record a count adjustment in Money. An unchanged count creates no movement or new value. Tracked stock still requires exact serial or lot movements.</p><button class="btn" type="submit">Recalculate stock changes</button></form></section>
 <% } %>
-<% if(plan.recordsInvalid>0&&plan.status==='READY'&&plan.approvalStatus==='AWAITING_APPROVAL'&&!needsIdentity&&!needsNumberAnswer&&!needsLocation&&!needsTrackingAnswer&&!needsImageAnswer&&!sourceTransforms.workbook&&sourceMappings.serialTracked===undefined&&sourceMappings.lotTracked===undefined){ %>
+<% if(plan.recordsInvalid>0&&plan.status==='READY'&&plan.approvalStatus==='AWAITING_APPROVAL'&&!needsIdentity&&!needsNumberAnswer&&!needsLocation&&!needsTrackingAnswer&&!needsImageAnswer&&!needsAccounting&&!sourceTransforms.workbook&&sourceMappings.serialTracked===undefined&&sourceMappings.lotTracked===undefined){ %>
 <section class="card card-body"><h2>Some rows need correction</h2><p><%= plan.recordsInvalid %> rows will not be imported. Correct them below, or choose a partial import deliberately. The source stays saved; a later corrected preview can import the remaining rows without adding successful rows twice.</p>
 <form method="post" action="/imports/<%= plan.id %>/revise"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><label><input type="checkbox" name="allowPartialImport" value="yes" required> Import only the <%= plan.recordsValid %> valid rows after my separate approval; leave invalid rows unexecuted.</label><button class="btn" type="submit">Review partial import</button></form></section>
 <% } %>

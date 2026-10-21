@@ -64,7 +64,7 @@ function supplierItemValues(input,current){
     lastUnitCost:cost,leadTimeDays:whole('leadTimeDays',current?.lead_time_days==null?null:Number(current.lead_time_days),0,365,true),
     minimumOrderQuantity:whole('minimumOrderQuantity',current?.minimum_order_quantity==null?null:Number(current.minimum_order_quantity),0,100000,true),
     orderMultiple:whole('orderMultiple',current?.order_multiple==null?null:Number(current.order_multiple),1,100000,true),
-    isPreferred:Object.hasOwn(input,'isPreferred')?[true,1,'true','1'].includes(input.isPreferred):Boolean(current?.is_preferred),
+    isPreferred:Object.hasOwn(input,'isPreferred')?[true,1,'true','1'].includes(input.isPreferred):Boolean(Number(current?.is_preferred)),
     notes:text('notes',current?.notes||null)};
 
  return value;

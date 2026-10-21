@@ -61,7 +61,7 @@ function createPostgresImportsRouter(database,{provider=null}={}){
     const filter=allowed.includes(req.query.rows)?req.query.rows:null;
     const savedSummary=require('../../imports/tracking-review').savedSummary(plan);
     const frozenPreview=plan.status==='READY'&&['AWAITING_APPROVAL','APPROVED'].includes(plan.approvalStatus)&&plan.recordsValid+plan.recordsInvalid===plan.recordsDetected;
-    const [rows,counts,duplicatePlans,run,locationRows,sampleRows,missingLocation]=await Promise.all([
+    const [rows,counts,duplicatePlans,run,locationRows,sampleRows,missingLocation,missingAccounting]=await Promise.all([
       imports.rowsFor(database,req.ctx.workspaceId,plan.id,{status:filter,limit:PAGE_SIZE,offset:(page-1)*PAGE_SIZE}),
       frozenPreview?Promise.resolve(Object.fromEntries([['VALID',plan.recordsValid],['INVALID',plan.recordsInvalid]].filter(([,count])=>count>0))):imports.counts(database,req.ctx.workspaceId,plan.id),imports.duplicates(database,req.ctx.workspaceId,plan),
       imports.report(database,req.ctx.workspaceId,plan.id),locations(database,req.ctx.workspaceId),
@@ -71,6 +71,7 @@ function createPostgresImportsRouter(database,{provider=null}={}){
         ?database.query(`SELECT 1 FROM import_rows WHERE workspace_id=$1 AND import_id=$2
           AND problems::jsonb @> '[{"code":"no_location"}]'::jsonb LIMIT 1`,
         [req.ctx.workspaceId,plan.id]):Promise.resolve({rows:[]}),
+      plan.status==='READY'&&plan.recordsInvalid>0?database.query(`SELECT 1 FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND problems::jsonb @> '[{"code":"accounting_not_ready"}]'::jsonb LIMIT 1`,[req.ctx.workspaceId,plan.id]):Promise.resolve({rows:[]}),
     ]);
     const mappingRows=plan.sourceColumns.map((column)=>({index:column.index,column:column.name,
       field:Object.keys(plan.fieldMappings).find((key)=>plan.fieldMappings[key]===column.index) || null,
@@ -82,6 +83,7 @@ function createPostgresImportsRouter(database,{provider=null}={}){
       {title:`Import ${plan.sourceName}`,nav:'imports',plan,rows,counts,
       duplicatePlans,run,locations:locationRows,mappingRows,fieldOptions:fields.FIELDS,page,pageSize:PAGE_SIZE,filter,
       missingLocationRows:missingLocation.rows.length>0,
+      missingAccountingSetup:missingAccounting.rows.length>0,
       locationKinds:require('../../domain/constants').LOCATION_KINDS,runJob,importProgress,trackingQuestion,
     });
   }));
