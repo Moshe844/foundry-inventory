@@ -137,7 +137,13 @@ async function run(database,ctx,id,options={}){
   if(savedFinal){
    audit({kind:'saved_native_result_verifying'});
    const review=await session.answerReview(savedFinal);
-   if(review.required&&!review.verdict)pendingFinal=savedFinal;
+   // A deployment may change the host hash without changing the exact saved
+   // scope review. Rechecking its settled rejection and stopping again would
+   // consume the owner's Continue without ever resuming the SDK. Keep the
+   // rejection/feedback and resume the same thread under its existing limits.
+   if(review.required&&review.verdict&&(!review.verdict.grounded||!review.verdict.complete||review.verdict.missingOutcomes?.length)){
+    savedFinal=null;audit({kind:'native_report_correction',code:'ANSWER_SCOPE_UNVERIFIED'});
+   }else if(review.required&&!review.verdict)pendingFinal=savedFinal;
    else{
     // A fresh restricted renderer installs tenant policies. Prepare it before
     // finish locks the goal row; its DDL must never wait on our own transaction.
