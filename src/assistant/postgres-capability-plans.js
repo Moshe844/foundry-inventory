@@ -302,11 +302,25 @@ async function resume(database,ctx,proposalId,{service,provider,rawProvider,reco
           ?{...stored.args,recordReference:produced[0].args.recordReference}:stored.args;
         const executionArgs=await scopeReadToRelatedParty(database,ctx,steps,next,contract,
           scopeReadToCompletedRecord(steps,next,contract,mutationArgs));
+        // A proposal may already have been prepared independently before an
+        // earlier mission effect committed. Revalidate through the same
+        // canonical preparation key, preserving its exact reviewed revision
+        // instead of creating a second orphan proposal under a plan-only key.
+        let preparationKey=`plan:${claimed.id}:${next}`;
+        let preparationMessage=claimed.source_message;
+        if(stored.proposalId){
+          const prepared=(await database.query(`SELECT idempotency_key,source_message FROM stockchief_runtime.assistant_action_proposals
+            WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,stored.proposalId])).rows[0];
+          if(!prepared)throw Error('MISSION_PREPARED_SCOPE_CHANGED');
+          preparationKey=prepared.idempotency_key;
+          // Preserve the preparation's original authenticated clarifications.
+          preparationMessage=prepared.source_message;
+        }
         let outcome;
         try{
-          outcome=await executeStep(service,database,{...ctx,planStepKey:`plan:${claimed.id}:${next}`},
+          outcome=await executeStep(service,database,{...ctx,planStepKey:preparationKey},
             {contract,args:executionArgs,dependsOn:stored.dependsOn,continuesPending:false},
-            {actor,provider,rawProvider,sourceMessage:claimed.source_message,pending:null,page:null,
+            {actor,provider,rawProvider,sourceMessage:preparationMessage,pending:null,page:null,
               usageKey:`plan:${claimed.id}:${next}`,dependencyArgs});
         }catch(error){
           console.warn('[stockchief] Ask plan step failed',JSON.stringify({

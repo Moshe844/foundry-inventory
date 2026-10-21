@@ -174,12 +174,18 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
       const {actor,catalogue}=await access();
       const parsed=planner.parseSteps({steps:require('./contracts').operationSteps(steps,catalogue)},catalogue);
       if(!parsed.steps?.length||parsed.clarifyingQuestion)throw new Error(parsed.clarifyingQuestion||'Invalid operation contract.');
+      // Preparing an independent proposal needs no earlier effect to commit.
+      // Preserve the native agent's actual data dependencies separately from
+      // the canonical mission's additional execution-order constraints.
+      const preparationDependencies=parsed.steps.map(step=>[...step.dependsOn]);
       planner.sequenceApprovedMutations(parsed.steps);
       const outcomes=[];const call=callId;
       for(const [index,step]of parsed.steps.entries()){
         const current=await access();
         if(JSON.stringify(current.actor)!==JSON.stringify(actor))throw new Error('Authority changed during the operation.');
-        if(step.dependsOn.some(i=>outcomes[i]?.result.status!=='ANSWERED')){
+        const dependencies=step.contract.kind==='mutation'&&step.contract.authority?.mode==='explicit_approval'
+          ?preparationDependencies[index]:step.dependsOn;
+        if(dependencies.some(i=>outcomes[i]?.result.status!=='ANSWERED')){
           outcomes.push({step,args:step.args,provenance:{},result:{status:'CLARIFY',reason:'dependency_waiting'}});continue;
         }
         let result;
