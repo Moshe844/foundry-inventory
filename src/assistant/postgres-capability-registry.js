@@ -13,6 +13,9 @@ const {destinationById}=require('../web/postgres-navigation');
 const governedReports=require('../reports/postgres-registry');
 
 const FIELDS=Object.freeze({
+  quantitySyncMode:{type:'string',enum:['off','inbound','outbound','two_way'],description:'Channel quantity direction. Outbound publishes costed, uncommitted sellable units. Incoming count differences require physical confirmation; no sale, receipt or inventory cost is invented.'},
+  priceSyncMode:{type:'string',enum:['off','inbound','outbound','two_way'],description:'Selling price direction for one mapped product. Two-way uses verified baselines, exact currency, historical prices and conflict review.'},
+  initialSyncSource:{type:'string',enum:['require_equal','stockchief','provider'],description:'Explicitly selected initial authority if current values differ. require_equal blocks a disagreement. Never infer authority to replace a different value.'},
   invoiceDocument:{type:'string',maxLength:16000,description:'Complete supplier invoice JSON read from actual source evidence: supplierInvoiceNumber, issueDate, dueDate if present, currency, documentTotalMinor, taxMinor, lines [{sku or purchaseOrderLineId, quantity, unitCostMinor, description}], charges [{kind freight/insurance/duty/discount/other,label,amountMinor signed}], optional sourceMessageId and sourceAttachmentHash. Use exact minor amounts and PO product identities; never infer physical receipt or payment from an invoice.'},
   couponCodes:{type:'string',description:'Comma-separated promotion codes explicitly supplied by the customer or owner. The pricing engine verifies eligibility, dates, stacking and limits; a code is not approval to bypass safeguards.'},
   priceListId:{type:'string',description:'Exact eligible price-list ID discovered in current approved pricing records; omit to use the deterministic customer/quantity pricing hierarchy.'},

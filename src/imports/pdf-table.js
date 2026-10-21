@@ -21,7 +21,7 @@ async function ocrCanvasRows(canvas,worker){
       const height=Math.max(1,word.bbox.y1-word.bbox.y0);
       // A normal word space is much smaller than the gap between table
       // columns. Preserve phrases such as "Desk lamp" as one cell.
-      if(!current||word.bbox.x0-current.right>Math.max(16,height*1.1)){
+      if(!current||word.bbox.x0-current.right>Math.max(6,height*0.65)){
         current={x:word.bbox.x0,right:word.bbox.x1,text:word.text};cells.push(current);
       }else{current.text+=` ${word.text}`;current.right=word.bbox.x1;}
     }
@@ -54,7 +54,12 @@ function groupRows(items){
 function anchorColumns(rows){
   const candidates=rows.filter((row)=>row.cells.length>=2).slice(0,30);
   if(!candidates.length)return [];
-  const likely=candidates.find((row)=>row.cells.every((item)=>!/^[-+]?\d+(?:[.,]\d+)?$/.test(item.text)))||candidates[0];
+  const fields=require('./fields');
+  // Recognise the table's header, rather than the first dashboard title or
+  // summary cards. This uses the same field vocabulary as CSV/workbooks.
+  const scored=candidates.map(row=>{const found=new Set(row.cells.flatMap(c=>fields.bestFieldScores(c.text).slice(0,1).map(s=>s.field)));
+    return {row,score:found.size*4+(found.has('name')||found.has('code')?8:0)-row.cells.filter(c=>/^[$£€]?[-+]?\d[\d,.]*$/.test(c.text)).length*3};}).sort((a,b)=>b.score-a.score);
+  const likely=scored[0].score>=12?scored[0].row:candidates.find((row)=>row.cells.every((item)=>!/^[-+]?\d+(?:[.,]\d+)?$/.test(item.text)))||candidates[0];
   return likely.cells.map((item)=>item.x);
 }
 

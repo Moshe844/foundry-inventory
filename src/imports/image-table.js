@@ -7,6 +7,72 @@ const {ValidationError}=require('../domain/errors');
 const MAX_IMAGE_BYTES=20*1024*1024;
 const MAX_PIXELS=12*1000*1000;
 
+function darkHeader(canvas){
+  const {data}=canvas.getContext('2d').getImageData(0,0,canvas.width,canvas.height),bands=[];let band=null;
+  for(let y=0;y<canvas.height;y++){
+    let dark=0;for(let x=0;x<canvas.width;x++){const i=(y*canvas.width+x)*4;if((data[i]+data[i+1]+data[i+2])/3<115)dark++;}
+    if(dark/canvas.width>0.45){if(!band)band={top:y,bottom:y};band.bottom=y;}
+    else if(band){bands.push(band);band=null;}
+  }
+  if(band)bands.push(band);
+  const merged=[];for(const b of bands){const prior=merged.at(-1);if(prior&&b.top-prior.bottom<=Math.max(2,Math.ceil(canvas.height/200)))prior.bottom=b.bottom;else merged.push({...b});}
+  return merged.filter(b=>b.bottom-b.top>=18&&b.bottom-b.top<canvas.height/5);
+}
+const words=result=>(result.data.blocks||[]).flatMap(b=>b.paragraphs||[]).flatMap(p=>p.lines||[]).flatMap(l=>l.words||[])
+  .filter(w=>w.bbox&&String(w.text).trim()&&!/^[|#_=~]+$/.test(w.text));
+async function readDarkTable(canvas,worker){
+  const {createCanvas}=require('@napi-rs/canvas'),{PSM}=require('tesseract.js');
+  for(const band of darkHeader(canvas)){
+    const header=createCanvas(canvas.width,band.bottom-band.top+1),ctx=header.getContext('2d');
+    ctx.drawImage(canvas,0,band.top,canvas.width,header.height,0,0,header.width,header.height);
+    const pixels=ctx.getImageData(0,0,header.width,header.height),data=pixels.data;
+    for(let i=0;i<data.length;i+=4){const v=(data[i]+data[i+1]+data[i+2])/3>160?0:255;data[i]=data[i+1]=data[i+2]=v;}
+    ctx.putImageData(pixels,0,0);await worker.setParameters({tessedit_pageseg_mode:PSM.SPARSE_TEXT});
+    const labels=words(await worker.recognize(header.toBuffer('image/png'),{}, {blocks:true})).filter(w=>w.confidence>=35).sort((a,b)=>a.bbox.x0-b.bbox.x0),cells=[];
+    for(const word of labels){const last=cells.at(-1),height=word.bbox.y1-word.bbox.y0;
+      if(last&&word.bbox.x0-last.right<Math.max(6,height*.65)){last.text+=' '+word.text;last.right=word.bbox.x1;}
+      else cells.push({x:word.bbox.x0,right:word.bbox.x1,text:word.text});}
+    const found=new Set(cells.flatMap(c=>require('./fields').bestFieldScores(c.text).slice(0,1).map(s=>s.field)));
+    if(found.size<3||!found.has('code')&&!found.has('name'))continue;
+    const body=createCanvas(canvas.width,canvas.height-band.bottom-1);body.getContext('2d').drawImage(canvas,0,band.bottom+1,canvas.width,body.height,0,0,body.width,body.height);
+    const bodyWords=words(await worker.recognize(body.toBuffer('image/png'),{}, {blocks:true})).filter(w=>w.confidence>=35);
+    const heights=bodyWords.map(w=>w.bbox.y1-w.bbox.y0).sort((a,b)=>a-b),typical=heights[Math.floor(heights.length/2)]||20,rows=[];
+    for(const word of bodyWords.sort((a,b)=>(a.bbox.y0+a.bbox.y1)-(b.bbox.y0+b.bbox.y1)||a.bbox.x0-b.bbox.x0)){
+      if(word.bbox.y1-word.bbox.y0>typical*2)continue;
+      const y=(word.bbox.y0+word.bbox.y1)/2;let row=rows.find(r=>Math.abs(r.y-y)<typical*.7);
+      if(!row){row={y,words:[]};rows.push(row);}row.words.push(word);
+    }
+    const anchors=cells.map(c=>(c.x+c.right)/2);
+    const nearest=x=>{let closest=0;for(let i=1;i<anchors.length;i++)if(Math.abs(anchors[i]-x)<Math.abs(anchors[closest]-x))closest=i;return closest;};
+    // A dense screenshot can mix pictures and codes in one OCR block. Read an
+    // identified code column independently, using its actual glyph bounds,
+    // rather than guessing missing identifiers from product names.
+    const columnFields=cells.map(c=>require('./fields').bestFieldScores(c.text)[0]?.field),codeColumn=columnFields.indexOf('code');
+    for(const field of ['code','quantity','unitCost','sellingPrice']){
+      const index=columnFields.indexOf(field);if(index<0)continue;
+      const observed=bodyWords.filter(w=>nearest((w.bbox.x0+w.bbox.x1)/2)===index);
+      if(observed.length){
+        const left=Math.max(0,Math.min(...observed.map(w=>w.bbox.x0))-5),right=Math.min(body.width,Math.max(...observed.map(w=>w.bbox.x1))+5),column=createCanvas(right-left,body.height);
+        column.getContext('2d').drawImage(body,left,0,column.width,column.height,0,0,column.width,column.height);
+        await worker.setParameters({tessedit_pageseg_mode:PSM.SINGLE_BLOCK,tessedit_char_whitelist:field==='code'?'':field==='quantity'?'0123456789,.-+':'0123456789,.-+$£€¥'});
+        const reread=words(await worker.recognize(column.toBuffer('image/png'),{}, {blocks:true}));
+        for(const row of rows){const aligned=reread.filter(w=>Math.abs((w.bbox.y0+w.bbox.y1)/2-row.y)<typical*.7);
+          row.columnEvidence||={};row.columnEvidence[index]=aligned;}
+      }
+    }
+    const grid=rows.sort((a,b)=>a.y-b.y).map(row=>{
+      const values=Array(cells.length).fill('');for(const word of row.words.sort((a,b)=>a.bbox.x0-b.bbox.x0)){
+        const x=(word.bbox.x0+word.bbox.x1)/2,closest=nearest(x);
+        values[closest]+=(values[closest]?' ':'')+word.text;
+      }for(const [index,evidence] of Object.entries(row.columnEvidence||{}))if(evidence.length)values[index]=evidence.map(w=>w.text).join(' ');return values;});
+    const table=parser.tabulate([cells.map(c=>c.text),...grid]);
+    if(codeColumn>=0)for(const row of table.rows){const evidence=rows[row.sourceRow-2]?.columnEvidence?.[codeColumn];
+      if(!row.cells[codeColumn]||evidence?.some(w=>w.confidence<60))row.problems=[{code:'image_identity_uncertain',message:'The image SKU needs confirmation against the original. StockChief will not invent or silently replace it.'}];}
+    return table;
+  }
+  return null;
+}
+
 function dimensions(buffer){
   if(buffer.length>=24&&buffer.subarray(0,8).equals(Buffer.from('89504e470d0a1a0a','hex')))
     return {width:buffer.readUInt32BE(16),height:buffer.readUInt32BE(20)};
@@ -44,15 +110,20 @@ async function parse(buffer){
   }
   if(image.width!==size.width||image.height!==size.height)
     throw new ValidationError('That image has inconsistent dimensions. No inventory changed.');
-  const canvas=createCanvas(size.width,size.height);
-  canvas.getContext('2d').drawImage(image,0,0);
+  // Small dashboard text needs more pixels for OCR. Bound the working image
+  // independently of the original size, and invert uniformly dark heading
+  // bands so white-on-colour labels remain readable.
+  const scale=Math.max(1,Math.min(3,Math.floor(Math.sqrt(MAX_PIXELS/(size.width*size.height)))));
+  const canvas=createCanvas(Math.floor(size.width*scale),Math.floor(size.height*scale));
+  const context=canvas.getContext('2d');context.drawImage(image,0,0,canvas.width,canvas.height);
   const {createWorker}=require('tesseract.js');
   const english=require('@tesseract.js-data/eng');
   const worker=await createWorker(english.code,1,
     {langPath:english.langPath,gzip:english.gzip,cacheMethod:'readOnly'});
-  let rows;
-  try{rows=tables.withoutSeparatedFooter(await tables.ocrCanvasRows(canvas,worker));}
+  let rows,structured;
+  try{structured=await readDarkTable(canvas,worker);if(!structured)rows=tables.withoutSeparatedFooter(await tables.ocrCanvasRows(canvas,worker));}
   finally{await worker.terminate();}
+  if(structured?.rows.length)return {sheets:[{name:'Image table',...structured}],primarySheet:0,format:'image'};
   const anchors=tables.anchorColumns(rows);
   if(anchors.length<2)throw new ValidationError('StockChief could not read a product table in that image. No inventory changed.');
   const sheet=parser.tabulate(tables.tabulatePage(rows,anchors));

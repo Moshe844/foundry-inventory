@@ -8,11 +8,11 @@ const reads=['read_orders','read_products','read_locations','read_inventory','re
 function configure(){process.env.SHOPIFY_CLIENT_ID='fixture-client';process.env.SHOPIFY_CLIENT_SECRET='fixture-secret';process.env.SHOPIFY_ACCESS_SCOPES_BY_SHOP=JSON.stringify({[shop]:writes});}
 function signedQuery(){const query={code:'fixture-code',shop,state:'fixture-state'};const text=Object.keys(query).sort().map(key=>key+'='+query[key]).join('&');return {...query,hmac:crypto.createHmac('sha256',process.env.SHOPIFY_CLIENT_SECRET).update(text).digest('hex')};}
 test.afterEach(()=>{process.env={...originalEnv};global.fetch=originalFetch;});
-test('legacy consent requests the configured store permissions and preserves read-only defaults elsewhere',()=>{
+test('legacy consent requests configured permissions and the shared stock/price write scopes',()=>{
  configure();const auth=shopify.authorizationUrl({state:'fixture-state',input:{shop,redirectUri:'https://app.example.test/callback'}});
  const url=new URL(auth.url);assert.deepEqual(url.searchParams.get('scope').split(','),[...reads,...writes]);assert.deepEqual(auth.metadata.requestedScopes,[...reads,...writes]);assert.equal(url.searchParams.get('state'),'fixture-state');
  const other=shopify.authorizationUrl({state:'other-state',input:{shop:'other-fixture.myshopify.com',redirectUri:'https://app.example.test/callback'}});
- assert.deepEqual(new URL(other.url).searchParams.get('scope').split(','),reads);
+ assert.deepEqual(new URL(other.url).searchParams.get('scope').split(','),[...reads,'write_products','write_inventory']);
  process.env.SHOPIFY_ACCESS_SCOPES_BY_SHOP=JSON.stringify({[shop]:['write_unrelated_privilege']});
  assert.throws(()=>shopify.authorizationUrl({state:'fixture',input:{shop}}),/unsupported access/);
 });

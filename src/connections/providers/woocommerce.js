@@ -235,3 +235,4 @@ function normalizeWebhook(input){
 module.exports = { metadata, validateInput, authorizationUrl, credentialsFromCallback, discover, registerWebhooks,
   historySummary, verifyWebhook, normalizeWebhook, api,credentialsFromInput,verifyReadOnly,
   catalogueCapabilities:Object.freeze(['products','skus','stock','locations']) };
+Object.assign(module.exports,require('./commerce-position').adapter('woocommerce',{api,storeCurrency}));

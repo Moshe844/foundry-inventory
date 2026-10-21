@@ -25,9 +25,9 @@ const sign=(body)=>crypto.createHmac('sha256',webhookSecret).update(body).digest
 
 for(const legacyStart of [true,false])test('real Chromium qualifies signed Shopify order creation, fulfillment and cancellation on PostgreSQL: '+(legacyStart?'interrupted shipment handoff':'fresh complete handoff'),
   {timeout:180000},async(context)=>{
-    const oldSecret=process.env.SHOPIFY_CLIENT_SECRET,oldFetch=global.fetch;process.env.SHOPIFY_CLIENT_SECRET=webhookSecret;let providerRequests=0;
+    const oldSecret=process.env.SHOPIFY_CLIENT_SECRET,oldClient=process.env.SHOPIFY_CLIENT_ID,oldFetch=global.fetch;process.env.SHOPIFY_CLIENT_SECRET=webhookSecret;process.env.SHOPIFY_CLIENT_ID='fixture-shopify-client';let providerRequests=0;
     global.fetch=async(value,options)=>{const url=new URL(value);if(url.hostname==='127.0.0.1')return oldFetch(value,options);assert.equal(url.hostname,'shopify-store-1.myshopify.com','The wire fixture must never contact an actual store');providerRequests++;const id=JSON.parse(options.body).variables.id,node=/\/Order\/(1001|1002)$/.test(id)?{id}:/\/Fulfillment\/700[12]$/.test(id)?{id,order:{id:'gid://shopify/Order/'+(id.endsWith('7002')?'1002':'1001')}}:/\/Refund\/800[1-4]$/.test(id)?{id,order:{id:'gid://shopify/Order/'+(id.endsWith('8002')?'1001':'1002'),displayFinancialStatus:id.endsWith('8002')?'PAID':'VOIDED'}}:null;return Response.json({data:{node}});};
-    context.after(()=>{global.fetch=oldFetch;if(oldSecret===undefined)delete process.env.SHOPIFY_CLIENT_SECRET;else process.env.SHOPIFY_CLIENT_SECRET=oldSecret;});
+    context.after(()=>{global.fetch=oldFetch;if(oldSecret===undefined)delete process.env.SHOPIFY_CLIENT_SECRET;else process.env.SHOPIFY_CLIENT_SECRET=oldSecret;if(oldClient===undefined)delete process.env.SHOPIFY_CLIENT_ID;else process.env.SHOPIFY_CLIENT_ID=oldClient;});
     const eventDay=new Date().toISOString().slice(0,10);
     const cluster=await startCluster();
     const database=openPostgres(cluster.connectionString,{applicationName:'stockchief-postgres-shopify-webhooks'});

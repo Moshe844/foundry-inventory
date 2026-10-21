@@ -93,6 +93,7 @@ function createPostgresImportsRouter(database,{provider=null}={}){
         [row.source,trimOrNull(req.body[`new_location_${index}_match`])])].filter((entry)=>entry[1]));
       const quantityOverrides=Object.fromEntries(Object.entries(req.body).filter(([key,value])=>
         /^quantity_\d+$/.test(key)&&trimOrNull(value)).map(([key,value])=>[key.slice(9),String(value).trim()]));
+      const codeOverrides=Object.fromEntries(Object.entries(req.body).filter(([key])=>/^image_code_\d+$/.test(key)).map(([key,value])=>[key.slice(11),String(value).trim()]));
       const hasFieldMappings=plan.sourceColumns.some((column)=>
         Object.hasOwn(req.body,`mapping_${column.index}`));
       const choices=hasFieldMappings?plan.sourceColumns
@@ -106,7 +107,7 @@ function createPostgresImportsRouter(database,{provider=null}={}){
           name:trimOrNull(req.body[`new_location_${index}_name`])||row.name,
           kind:trimOrNull(req.body[`new_location_${index}_kind`])||row.kind,
         }])),
-        locationMappings,quantityOverrides,fieldMappings,
+        locationMappings,quantityOverrides,fieldMappings,...(Object.keys(codeOverrides).length?{codeOverrides}:{}),confirmImageReading:req.body.confirmImageReading==='yes',
         trackingReview:Object.hasOwn(req.body,'tracking_serial')||Object.hasOwn(req.body,'tracking_lot')
           ?Object.fromEntries(['serial','lot'].filter(mode=>Object.hasOwn(req.body,'tracking_'+mode)).map(mode=>[mode,req.body['tracking_'+mode]])):undefined,
         confirmTrackingChange:req.body.confirmTrackingChange==='yes',

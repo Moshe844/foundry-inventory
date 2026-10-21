@@ -7,9 +7,9 @@ const { safeEqual, requireVerified, jsonRequest, postalAddress } = require('./co
 const facts=require('../commerce-facts');
 
 const API_VERSION = '2026-08-19';
-const SCOPES = ['ITEMS_READ', 'ORDERS_READ', 'PAYMENTS_READ', 'MERCHANT_PROFILE_READ', 'INVENTORY_READ'];
+const SCOPES = ['ITEMS_READ', 'ORDERS_READ', 'PAYMENTS_READ', 'MERCHANT_PROFILE_READ', 'INVENTORY_READ','ITEMS_WRITE','INVENTORY_WRITE'];
 const WEBHOOK_EVENTS = ['payment.created', 'payment.updated', 'refund.created', 'refund.updated','order.created','order.updated','order.fulfillment.updated',
-  'catalog.version.updated', 'location.created', 'location.updated'];
+  'catalog.version.updated', 'inventory.count.updated', 'location.created', 'location.updated'];
 
 function base() { return config.connections.square.environment === 'sandbox' ? 'https://connect.squareupsandbox.com' : 'https://connect.squareup.com'; }
 function oauthConfigured() { return Boolean(config.connections.square.applicationId && config.connections.square.applicationSecret); }
@@ -41,6 +41,7 @@ function authorizationUrl({ state, input }) {
   url.searchParams.set('client_id', config.connections.square.applicationId);
   url.searchParams.set('scope', SCOPES.join(' '));
   url.searchParams.set('state', state);
+  url.searchParams.set('redirect_uri',input.redirectUri);
   url.searchParams.set('session', config.connections.square.environment === 'production' ? 'false' : 'true');
   return { url: url.toString(), metadata: { redirectUri: input.redirectUri } };
 }
@@ -57,13 +58,14 @@ async function tryDirectAuthorization() {
     capabilities: [...SCOPES, 'WEBHOOKS'] };
 }
 
-async function exchangeAuthorization({ query }) {
+async function exchangeAuthorization({ query,metadata={} }) {
   if (query.error) throw new ValidationError(query.error_description || 'Square authorization was not completed.');
   assertOAuthConfigured();
   const { body } = await jsonRequest(`${base()}/oauth2/token`, { method: 'POST',
     headers: { 'content-type': 'application/json', 'square-version': API_VERSION }, body: JSON.stringify({
       client_id: config.connections.square.applicationId, client_secret: config.connections.square.applicationSecret,
       code: query.code, grant_type: 'authorization_code',
+      ...(metadata.redirectUri?{redirect_uri:metadata.redirectUri}:{}),
     }) });
   return { credentials: { accessToken: body.access_token, refreshToken: body.refresh_token,
       merchantId: body.merchant_id, expiresAt: body.expires_at, environment: config.connections.square.environment },
@@ -93,16 +95,24 @@ async function discover({ credentials }) {
   const itemNames = new Map(objects.filter((o) => o.type === 'ITEM').map((o) => [o.id, o.item_data?.name || o.id]));
   const variations = objects.filter((o) => o.type === 'ITEM_VARIATION');
   const countsByVariation = new Map();
-  if (variations.length) {
-    const counts = (await api(credentials, '/v2/inventory/counts/batch-retrieve', { method: 'POST',
-      body: JSON.stringify({ catalog_object_ids: variations.map((variation) => variation.id), states: ['IN_STOCK'] }) }))
-      .body.counts || [];
-    for (const count of counts) {
+  // Square accepts at most 1,000 catalog IDs and paginates the resulting
+  // location counts independently. Never silently omit a later store or SKU.
+  for (let offset=0;offset<variations.length;offset+=1000) {
+    const ids=variations.slice(offset,offset+1000).map(variation=>variation.id);
+    let countCursor=null;const seen=new Set();
+    do {
+      const page=(await api(credentials, '/v2/inventory/counts/batch-retrieve', { method: 'POST',
+        body: JSON.stringify({catalog_object_ids:ids,states:['IN_STOCK'],limit:1000,...(countCursor?{cursor:countCursor}:{})}) })).body;
+      for (const count of page.counts||[]) {
       const rows = countsByVariation.get(count.catalog_object_id) || [];
       rows.push({ externalLocationId: count.location_id, state: count.state, quantity: count.quantity,
         calculatedAt: count.calculated_at });
       countsByVariation.set(count.catalog_object_id, rows);
-    }
+      }
+      countCursor=page.cursor||null;
+      if(countCursor&&seen.has(countCursor))throw new ValidationError('Square inventory pagination did not advance. No stock was assumed for missing pages.');
+      if(countCursor)seen.add(countCursor);
+    }while(countCursor);
   }
   const products = variations.map((variation) => ({ entityType: 'sku',
     externalId: variation.id, parentExternalId: variation.item_variation_data?.item_id,
@@ -114,6 +124,7 @@ async function discover({ credentials }) {
       barcode: variation.item_variation_data?.upc || null,
       trackInventory: !!variation.item_variation_data?.track_inventory,
       priceMoney: variation.item_variation_data?.price_money || null,
+      locationPriceOverrides:variation.item_variation_data?.location_overrides||[],
       inventoryCounts: countsByVariation.get(variation.id) || [] },
   }));
   return { products, locations };
@@ -206,6 +217,8 @@ async function normalizeWebhook({ body, credentials }) {
     requireVerified(order?.id===externalId,'Square did not confirm that order.');
     return orderEvents(order,eventId,occurredAt);
   }
+  if(type==='inventory.count.updated')return [{eventId,type:'product.changed',occurredAt,
+    data:{inventoryCountChanged:true}}];
   if (type.startsWith('catalog.')) return [{ eventId, type: 'product.changed', occurredAt,
     data: { catalogVersion: body.data?.object?.catalog_version?.updated_at || occurredAt } }];
   if (type.startsWith('location.')) {
@@ -261,3 +274,4 @@ async function historySummary({ credentials, since, locations = [] }) {
 
 module.exports = { catalogueCapabilities:Object.freeze(['products','skus','stock','locations']), metadata, authorizationUrl, tryDirectAuthorization, exchangeAuthorization, discover,
   registerWebhooks, verifyWebhook, normalizeWebhook, createSandboxCheckout, historySummary, api, orderEvents, API_VERSION };
+Object.assign(module.exports,require('./commerce-position').adapter('square',{api}));

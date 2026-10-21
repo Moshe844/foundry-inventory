@@ -31,6 +31,7 @@ async function inspect(database,ctx,{search=null}={}){
    row.productsAwaitingMapping=row.selectedCatalogueStates.find(r=>r.entityType==='sku'&&r.status==='UNMAPPED')?.count||0;
    row.locationsAwaitingMapping=row.selectedCatalogueStates.find(r=>r.entityType==='location'&&r.status==='UNMAPPED')?.count||0;
    row.recordedSynchronizationStates=states.filter(r=>r.source!=='catalogue');
+   row.stockAndPriceSynchronization=await require('./postgres-commerce-sync').list(database,ctx.workspaceId,c.id);
    if(providers.get(c.provider_type)?.integrationClass==='accounting'){
     if(!financial)row.accounting={available:false,reason:'Accounting visibility is not granted.'};
     else if(c.status!=='connected')row.accounting={available:false,reason:'This saved connection is disconnected; it cannot post.'};

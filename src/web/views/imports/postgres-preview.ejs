@@ -5,7 +5,8 @@
    const needsLocation=!plan.defaultLocationId && Boolean(locals.missingLocationRows || rows.some(function(row){return row.problems.some(function(problem){return problem.code==='no_location';});}));
    const trackingQuestion=locals.trackingQuestion;
    const needsTrackingAnswer=trackingQuestion?.state==='needs_input';
-   const needsAnswer=needsIdentity||needsNumberAnswer||needsLocation||needsTrackingAnswer||plan.conflicts.length>0;
+   const needsImageAnswer=plan.sourceKind==='image'&&sourceTransforms.imageReadingConfirmed!==true;
+   const needsAnswer=needsIdentity||needsNumberAnswer||needsLocation||needsTrackingAnswer||needsImageAnswer||plan.conflicts.length>0;
    const activity=locals.importProgress;
    const importing=Boolean(activity?.active);
    const interrupted=Boolean(activity&&['PAUSED','NEEDS_REVIEW'].includes(activity.state)&&!run?.verified); %>
@@ -15,6 +16,15 @@
   </div>
   <div class="page-actions" <% if(activity.active){ %>data-import-progress="<%= activity.href %>/progress"<% } %>><span data-import-status class="badge badge--<%= activity?.verified?'ok':'muted' %>"><%= activity?.label||helpers.columnLabel(plan.status.toLowerCase()) %></span></div>
 </div>
+<% if(plan.sourceKind==='image'&&plan.status==='READY'){ %>
+<section class="card section" aria-label="Review image reading"><div class="card-head"><h2><%= needsImageAnswer?'Confirm what StockChief read from the image':'Image reading confirmed' %></h2></div><div class="card-body">
+<p>StockChief reads the visible product table. Dashboard summary totals are not extra inventory rows. Images can contain unclear characters: compare the product codes, quantities and money below with your original before approving.</p>
+<% if(plan.approvalStatus==='AWAITING_APPROVAL'){ %><form method="post" action="/imports/<%= plan.id %>/revise" data-import-preview-revise>
+<input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>">
+<div class="table-scroll"><table class="table"><thead><tr><th>Row</th><th>Product read</th><th>Confirm or correct SKU</th><th>Physical units</th></tr></thead><tbody>
+  <% rows.forEach(function(row){ %><tr><td><%= row.rowNumber %></td><td><%= row.parsed.name||'Unclear product' %></td><td><input class="input" aria-label="Image SKU for row <%= row.rowNumber %>" name="image_code_<%= row.rowNumber %>" value="<%= row.parsed.code||'' %>" maxlength="240"></td><td><input class="input" aria-label="Image quantity for row <%= row.rowNumber %>" name="quantity_<%= row.rowNumber %>" value="<%= row.parsed.quantity??'' %>" inputmode="numeric"></td></tr><% }); %>
+</tbody></table></div><label class="field"><span><input type="checkbox" name="confirmImageReading" value="yes" required> I checked the image’s product codes, quantities and prices against the original.</span></label><p>These corrections update the preview only. Importing stock and value requires the separate approval below.</p><button class="btn btn--primary" type="submit">Save image review</button><p role="status" data-import-preview-status hidden></p></form><% } %>
+</div></section><% } %>
 <% if(trackingQuestion && plan.status==='READY'){ %>
 <section class="card section" aria-labelledby="import-tracking-question"><div class="card-head"><h2 id="import-tracking-question"><%= needsTrackingAnswer?'StockChief needs one confirmation':trackingQuestion.state==='complete'?'Tracking details':'Tracking requirements reviewed' %></h2></div><div class="card-body">
   <% if(needsTrackingAnswer){ %><p>Your file marks some products as serial- or lot-tracked, but does not identify all of their stock. StockChief found the quantities; it cannot safely invent serial numbers or batch allocations.</p><% } else if(trackingQuestion.state==='complete'){ %><p>No tracking information is missing. The source flags and identifiers are preserved with this preview.</p><% } else { %><p>The original tracking flags are preserved with this preview. Review your choices below before approving inventory changes.</p><% } %>
@@ -145,7 +155,7 @@
     </div>
     <div class="card-foot"><div class="btn-row">
       <% if(plan.approvalStatus==='APPROVED'){ %><form method="post" action="/imports/<%= plan.id %>/run"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><button class="btn btn--primary" type="submit">Import and verify</button></form>
-      <% } else { %><form method="post" action="/imports/<%= plan.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><button class="btn btn--primary" type="submit" <%= !plan.recordsValid || ((sourceTransforms.workbook || sourceMappings.serialTracked!==undefined || sourceMappings.lotTracked!==undefined) && plan.recordsInvalid>0) || (sourceMappings.name===undefined && sourceMappings.code===undefined) || duplicatePlans.length || (sourceMappings.quantity===undefined && sourceTransforms.unmappedNumericColumns?.length && !sourceTransforms.confirmCatalogOnly)?'disabled':'' %>>Approve <%= plan.recordsValid %> <%= helpers.plural(plan.recordsValid, 'row') %></button></form><% } %>
+      <% } else { %><form method="post" action="/imports/<%= plan.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><button class="btn btn--primary" type="submit" <%= needsImageAnswer || !plan.recordsValid || ((sourceTransforms.workbook || sourceMappings.serialTracked!==undefined || sourceMappings.lotTracked!==undefined) && plan.recordsInvalid>0) || (sourceMappings.name===undefined && sourceMappings.code===undefined) || duplicatePlans.length || (sourceMappings.quantity===undefined && sourceTransforms.unmappedNumericColumns?.length && !sourceTransforms.confirmCatalogOnly)?'disabled':'' %>>Approve <%= plan.recordsValid %> <%= helpers.plural(plan.recordsValid, 'row') %></button></form><% } %>
       <form method="post" action="/imports/<%= plan.id %>/cancel"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost" type="submit">Cancel</button></form>
     </div></div>
   </div>

@@ -390,7 +390,7 @@ async function providerEffect(job,database,options={},providers=defaultProviders
   const effect=await providerEffects.get(database,job.workspaceId,effectId);
   const capability={'shipping.label.purchase':'shipping.labels','mail.reply.send':'communications.send_approved',
     'mail.outbound.send':'communications.send_approved','payment.request.create':'payments.customer',
-    'payment.refund.create':'payments.customer','accounting.journal.export':'accounting.post_connected'}[effect.kind];
+    'payment.refund.create':'payments.customer','accounting.journal.export':'accounting.post_connected','commerce.position.publish':'connections.commerce'}[effect.kind];
   if(capability&&effect.status==='PENDING'){
     const scope=await entitlements.ownerScopeForWorkspace(database,job.workspaceId);
     await entitlements.assertCapability(database,scope,capability);
@@ -432,6 +432,7 @@ async function providerEffect(job,database,options={},providers=defaultProviders
     provider:options.accountingProviderResolver?options.accountingProviderResolver(effect.provider):providers.get(effect.provider),
     credentials:options.accountingCredentials,
   });
+  if(effect.kind==='commerce.position.publish')return require('../connections/postgres-commerce-sync').execute(database,job.workspaceId,effectId,{providers});
   throw Object.assign(new Error(`No provider-effect handler is registered for ${effect.kind}.`),
     {code:'provider_effect_handler_missing',retryable:false});
 }
@@ -556,6 +557,7 @@ function create(providers=defaultProviders,options={}){return {'system.runtime-s
   'commercial.stripe-financial-sync':external((job,database)=>require('../commercial/stripe-financials').sync(database,job,options.commercialOptions||{})),
     'commercial.stripe-invoice-sync':external((job,database)=>require('../commercial/stripe-financials').syncInvoice(database,job,options.commercialOptions||{})),
   'provider.effect':external((job,database)=>providerEffect(job,database,options,providers)),
+  'provider.commerce-verify':external((job,database)=>require('../connections/postgres-commerce-sync').verifyDelivery(database,job.workspaceId,job.payload.effectId,{providers})),
   'autopilot.evaluate':autopilotEvaluate};}
 
 module.exports={create,runtimeSweep,mailboxPoll,mailReplyDraft,mailboxPushRenewal,mailboxWebhookUrl,pushExpiration,autopilotEvaluate,

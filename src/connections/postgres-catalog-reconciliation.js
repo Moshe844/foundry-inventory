@@ -73,6 +73,8 @@ async function reconcile(client,c,previous){
     state.nameBase=wantedName;
    }
   }
+  const pricePolicy=(await client.query("SELECT 1 FROM connection_commerce_positions WHERE workspace_id=$1 AND connector_id=$2 AND sku_id=$3 AND field='price' AND mode<>'off' LIMIT 1",[c.workspace_id,c.id,row.foundry_record_id])).rows.length;
+  if(pricePolicy){await save(client,c.workspace_id,row.mapping_id,state);continue;}
   const wanted=data.priceMoney;let validPrice=true;
   if(wanted){try{require('../domain/currency').code(wanted.currency);validPrice=Number.isSafeInteger(wanted.amount)&&wanted.amount>=0;}catch{validPrice=false;}}
   if(wanted&&!validPrice){state.priceConflict=true;await issue(client,c,row,'price',true);result.conflicts++;}

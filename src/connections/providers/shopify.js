@@ -8,7 +8,7 @@ const money = require('../../domain/currency');
 const facts = require('../commerce-facts');
 
 const API_VERSION = '2026-07';
-const SCOPES = ['read_orders', 'read_products', 'read_locations', 'read_inventory', 'read_fulfillments'];
+const SCOPES = ['read_orders', 'read_products', 'read_locations', 'read_inventory', 'read_fulfillments','write_products','write_inventory'];
 const SUPPORTED_SCOPES = new Set([...SCOPES,'write_products','write_inventory','write_orders',
   'write_fulfillments','write_merchant_managed_fulfillment_orders']);
 
@@ -182,7 +182,7 @@ async function bootstrapSnapshot({ credentials }) {
         product{id title status isGiftCard}
         inventoryItem{id tracked inventoryLevels(first:250){nodes{
           location{id name isActive}
-          quantities(names:["on_hand"]){name quantity}
+          quantities(names:["on_hand","available"]){name quantity}
         } pageInfo{hasNextPage endCursor}}}
       } pageInfo{hasNextPage endCursor}}
     }`, { after: cursor });
@@ -190,7 +190,7 @@ async function bootstrapSnapshot({ credentials }) {
     for (const variant of data.productVariants.nodes) {
       const levels=variant.inventoryItem?.inventoryLevels;
       while(levels?.pageInfo?.hasNextPage){
-        const next=await graphql(credentials,`query InventoryLevelPage($id:ID!,$after:String!){inventoryItem(id:$id){inventoryLevels(first:250,after:$after){nodes{location{id name isActive} quantities(names:["on_hand"]){name quantity}} pageInfo{hasNextPage endCursor}}}}`,
+        const next=await graphql(credentials,`query InventoryLevelPage($id:ID!,$after:String!){inventoryItem(id:$id){inventoryLevels(first:250,after:$after){nodes{location{id name isActive} quantities(names:["on_hand","available"]){name quantity}} pageInfo{hasNextPage endCursor}}}}`,
           {id:variant.inventoryItem.id,after:levels.pageInfo.endCursor});
         const page=next.inventoryItem.inventoryLevels;
         if(page.pageInfo.hasNextPage&&page.pageInfo.endCursor===levels.pageInfo.endCursor)throw new ValidationError('Shopify inventory pagination did not advance. No opening stock was imported.');
@@ -216,6 +216,7 @@ async function bootstrapSnapshot({ credentials }) {
           name: level.location.name,
           active: !!level.location.isActive,
           onHand: Number(level.quantities?.find((quantity) => quantity.name === 'on_hand')?.quantity || 0),
+          available: level.quantities?.find(quantity=>quantity.name==='available')?.quantity??null,
         })),
       });
       productsById.set(product.externalId, product);
@@ -251,6 +252,7 @@ async function discover({ credentials }) {
       inventoryCounts: variant.inventoryLevels.map((level) => ({
         externalLocationId: level.externalLocationId, state: 'IN_STOCK', quantity: level.onHand,
       })),
+      syncCounts:variant.inventoryLevels.map(level=>({externalLocationId:level.externalLocationId,quantity:level.available})),
     },
   })));
   const locations = snapshot.locations.map((location) => ({ entityType: 'location', externalId: location.externalId,
@@ -261,7 +263,7 @@ async function discover({ credentials }) {
 async function registerWebhooks({ credentials, webhookUrl }) {
   const topics = ['ORDERS_CREATE', 'ORDERS_UPDATED', 'ORDERS_CANCELLED', 'ORDERS_FULFILLED',
     'FULFILLMENTS_CREATE', 'REFUNDS_CREATE',
-    'PRODUCTS_CREATE', 'PRODUCTS_UPDATE', 'LOCATIONS_CREATE', 'LOCATIONS_UPDATE', 'APP_UNINSTALLED'];
+    'PRODUCTS_CREATE', 'PRODUCTS_UPDATE', 'INVENTORY_LEVELS_UPDATE', 'LOCATIONS_CREATE', 'LOCATIONS_UPDATE', 'APP_UNINSTALLED'];
   const listed = await graphql(credentials, `query StockChiefWebhooks {
     webhookSubscriptions(first:250){nodes{id topic uri}}
   }`);
@@ -385,6 +387,8 @@ function normalizeWebhook({ headers, body }) {
     observationProof:{noFinancialTransactions:Array.isArray(body.transactions)&&body.transactions.length===0,
       sourceOrderUnpaid:['PENDING','VOIDED','EXPIRED'].includes(body._stockchiefOrderFinancialStatus)},
   }));
+  if(topic==='inventory_levels/update')return [{eventId:delivery,type:'product.changed',version,occurredAt,
+    data:{inventoryItemId:shopifyGid('InventoryItem',body.inventory_item_id),inventoryCountChanged:true}}];
   if (topic.startsWith('products/')) return [{ eventId: delivery, type: 'product.changed', version, occurredAt,
     data: { externalProductId: shopifyGid('Product', body.id), name: body.title, variants: body.variants || [] } }];
   if (topic.startsWith('locations/')) return [{ eventId: delivery, type: 'location.changed', version, occurredAt,
@@ -396,3 +400,4 @@ function normalizeWebhook({ headers, body }) {
 module.exports = { catalogueCapabilities:Object.freeze(['products','skus','stock','locations']), metadata, normalizeShop, validateInput, authorizationUrl, tryDirectAuthorization, refreshCredentials,
   verifyOAuthQuery, exchangeAuthorization, discover, bootstrapSnapshot, registerWebhooks, historySummary, verifyWebhook,
   normalizeWebhook, hydrateWebhook, graphql, API_VERSION };
+Object.assign(module.exports,require('./commerce-position').adapter('shopify',{graphql}));

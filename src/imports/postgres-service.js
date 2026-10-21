@@ -105,12 +105,14 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     (context.locations.length===1 ? context.locations[0] : null);
   for (const [position,row] of sheet.rows.entries()) {
     const problems=proposal.problemsIndex===undefined?[...(row.problems||[])]:json(textCell(row,proposal.problemsIndex),[]);
-    const code=trimOrNull(textCell(row,mappings.code));
+    const code=trimOrNull(Object.hasOwn(input.codeOverrides||{},row.sourceRow)?input.codeOverrides[row.sourceRow]:textCell(row,mappings.code));
     const name=trimOrNull(textCell(row,mappings.name)) || code;
     const quantitySource=Object.hasOwn(input.quantityOverrides||{},row.sourceRow)
       ?input.quantityOverrides[row.sourceRow]:textCell(row,mappings.quantity);
     const quantityRead=rowValues.readQuantity(quantitySource);
     let quantity=quantityRead.ok ? quantityRead.value : null;
+    if(input.imageSource&&mappings.quantity!==undefined&&quantity===null)
+      problems.push(problem('image_quantity_uncertain','Read and confirm the physical quantity from the image; a blank cell is not zero.'));
     if(!quantityRead.ok)problems.push(problem(quantityRead.problem,'Quantity must be a whole number of zero or more.'));
     const costText=trimOrNull(textCell(row,mappings.unitCost));
     const sellingText=trimOrNull(textCell(row,mappings.sellingPrice));
@@ -171,7 +173,7 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     if(lotRequired && quantity > 0 && !lotCode)problems.push(problem('missing_lot','A lot or batch number is required.'));
     const existingMatches=code ? (context.skuByCode.get(code.toLowerCase()) || []) : [];
     if(existingMatches.length>1)problems.push(problem('ambiguous_existing_code','This SKU code matches more than one active record.'));
-    const blocking=new Set(['bad_quantity','negative_quantity','fractional_quantity','bad_unit_cost','cost_without_stock','bad_selling_price',
+    const blocking=new Set(['bad_quantity','negative_quantity','fractional_quantity','image_quantity_uncertain','bad_unit_cost','cost_without_stock','bad_selling_price',
       'accounting_not_ready','cost_currency_mismatch','cost_overflow','no_product','unknown_location','no_location',
       'missing_serial','serial_quantity','missing_lot','missing_tracking_identifier','invalid_tracking_flag','ambiguous_existing_code','workbook_unmatched_key','workbook_stock_mismatch']);
     const parsed={name,code,description:trimOrNull(textCell(row,mappings.description)),
@@ -296,6 +298,7 @@ async function analyse(database, ctx, input) {
   const parsedWorkbook=isPdf?await require('./pdf-table').parse(buffer):
     isImage?await require('./image-table').parse(buffer):
       parser.parse(buffer?{buffer,filename:input.filename}:{text,filename:input.filename});
+  if(parsedWorkbook.format==='image')input={...input,imageSource:true};
   const sheetIndex=Number.isInteger(input.sheetIndex)?input.sheetIndex:parsedWorkbook.primarySheet;
   let sheet=parsedWorkbook.sheets[sheetIndex];
   if(!sheet?.rows.length)throw new ValidationError('That source has no inventory rows.');
@@ -341,6 +344,7 @@ async function analyse(database, ctx, input) {
     sourceHash,sourceBytes:bytes.length,detectedType:proposal.detectedType,sheetName:sheet.name,
     sheetIndex,sourceColumns:sheet.columns.map((column)=>({index:column.index,name:column.name})),
     fieldMappings:proposal.mappings,transformations:{axisNames:proposal.axisNames,aiUsed:proposal.aiUsed,
+      ...(parsedWorkbook.format==='image'?{imageReadingConfirmed:false,codeOverrides:{}}:{}),
       ...(workbook?{workbook:{version:1,contract:workbook.contract,coverage:workbook.coverage,sourceRows:workbook.sourceRows,
         outputRows:workbook.outputRows,physicalUnits:workbook.physicalUnits,issues:workbook.issues,issueCount:workbook.issueCount},
         variantColumns:workbook.variantColumns,provenanceIndex:workbook.provenanceIndex,problemsIndex:workbook.problemsIndex}:{}),
@@ -498,6 +502,13 @@ async function revise(database,ctx,id,input={}){
       if(value)locationMappings[source]=String(value);
     }
     const mappingChanged=stable(fieldMappings)!==stable(plan.fieldMappings);
+    const codeOverrides=mappingChanged?{}:{...(plan.transformations.codeOverrides||{})};
+    if(input.codeOverrides!==undefined&&plan.sourceKind!=='image')throw new ValidationError('Image identifier corrections belong to an image preview.');
+    for(const [number,value] of Object.entries(input.codeOverrides||{})){
+      if(!/^\d+$/.test(number)||typeof value!=='string'||value.length>240||!(await client.query('SELECT 1 FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND row_number=$3',[ctx.workspaceId,id,number])).rows.length)throw new ValidationError('Choose an actual image row and a valid SKU correction.');
+      codeOverrides[number]=value.trim();
+    }
+    const imageReadingConfirmed=plan.sourceKind==='image'&&(input.confirmImageReading===true||!mappingChanged&&plan.transformations.imageReadingConfirmed===true);
     const quantityOverrides=mappingChanged?{}:{...(plan.transformations.quantityOverrides||{})};
     for(const [number,value] of Object.entries(input.quantityOverrides||{})){
       if(!/^\d+$/.test(number)||!(await client.query('SELECT 1 FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND row_number=$3',[ctx.workspaceId,id,number])).rows.length)
@@ -540,6 +551,7 @@ async function revise(database,ctx,id,input={}){
     const confirmCatalogOnly=fieldMappings.quantity===undefined&&input.confirmCatalogOnly===true;
     const revised={...plan,fieldMappings,detectedType,locationMappings,defaultLocationId,
       transformations:{...plan.transformations,axisNames,quantityOverrides,
+        ...(plan.sourceKind==='image'?{codeOverrides,imageReadingConfirmed,imageReadingConfirmedBy:imageReadingConfirmed?ctx.actorId:null}:{}),
         ...(trackingReview?{trackingReview}:{}),
         unmappedNumericColumns:unmappedNumeric,confirmCatalogOnly,proposedLocations},
       planVersion:plan.planVersion+1};
@@ -549,9 +561,9 @@ async function revise(database,ctx,id,input={}){
     for(;;){
       const current=(await client.query(`SELECT * FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND (row_number,id)>($3::bigint,$4::text) ORDER BY row_number,id LIMIT 500 FOR UPDATE`,[ctx.workspaceId,id,lastRow,lastId])).rows.map(hydrateRow);
       if(!current.length)break;
-      const validated=validateRows({columns:plan.sourceColumns,rows:current.map(row=>({cells:row.raw,sourceRow:row.rowNumber}))},fieldMappings,
+      const validated=validateRows({columns:plan.sourceColumns,rows:current.map(row=>({cells:row.raw,sourceRow:row.rowNumber,problems:plan.sourceKind==='image'&&!imageReadingConfirmed?row.problems.filter(p=>p.code==='image_identity_uncertain'):[]}))},fieldMappings,
         {detectedType,axisNames,variantColumns:plan.transformations.variantColumns,provenanceIndex:plan.transformations.provenanceIndex,problemsIndex:plan.transformations.problemsIndex,trackingReview},plannedLocations.withProposals(context,proposedLocations),
-        {defaultLocationId,locationMappings,quantityOverrides});
+          {defaultLocationId,locationMappings,quantityOverrides,codeOverrides,imageSource:plan.sourceKind==='image'});
       for(const row of validated.rows)hash.append(row);
       trackingSummary?.add(validated.rows);
       for(const key of Object.keys(summary))summary[key]+=validated.summary[key];
@@ -586,6 +598,7 @@ async function approve(database, ctx, id, expectedHash) {
       throw new ValidationError('This is a supplier directory. Reopen its preview so StockChief can safely classify it before approval.');
     if(plan.isExpired)throw new ValidationError('This preview is more than 24 hours old. Read the source again before importing.');
     if(plan.integrityHash!==expectedHash)throw new ValidationError('The preview changed. Review the current rows before approving.');
+    if(plan.sourceKind==='image'&&plan.transformations.imageReadingConfirmed!==true)throw new ValidationError('Review the image’s product codes, quantities and prices against the original, save any SKU corrections and confirm the reading before approving.');
     if(plan.fieldMappings.name===undefined&&plan.fieldMappings.code===undefined)
       throw new ValidationError('Map a product name or SKU and recalculate the preview before approving.');
     if(!plan.recordsValid)throw new ValidationError('There are no valid rows to import.');

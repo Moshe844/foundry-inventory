@@ -39,6 +39,7 @@
 </section><% } %>
 <% if(needsAuthorization&&currentUser.role==='owner'&&provider?.available){ %>
   <section class="rm-note" aria-label="Restore provider authorization"><p><strong>Sign in again to <%= providerName %></strong></p><p>This restores the existing connection. Its records, mappings and history are kept.</p>
+    <% if(provider.authorizationPrerequisite){ %><p><strong>Sandbox testing only.</strong> <%= provider.authorizationPrerequisite.message %> <a href="<%= provider.authorizationPrerequisite.href %>" target="_blank" rel="noopener noreferrer"><%= provider.authorizationPrerequisite.label %></a> Real customer connections use the provider’s normal sign-in and consent screen.</p><% } %>
     <form method="post" action="/settings/connections/<%= encodeURIComponent(connection.provider_type) %>/authorize"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="connectorId" value="<%= connection.id %>">
       <% if(connection.config.shop){ %><input type="hidden" name="shop" value="<%= connection.config.shop %>"><% } %><% if(connection.config.storeUrl){ %><input type="hidden" name="storeUrl" value="<%= connection.config.storeUrl %>"><% } %>
       <button class="btn btn--primary" type="submit">Sign in again to <%= providerName %></button>
@@ -47,6 +48,15 @@
 <% } %>
 <% if(newConnectionToken){ %><div class="notice notice--warn section"><div><strong>Copy this secure connection key now. StockChief will not show it again.</strong><input class="input mono" aria-label="Connection token" value="<%= newConnectionToken %>" readonly onclick="this.select()"></div></div><% } %>
 
+<% if(['shopify','square','clover','woocommerce'].includes(connection.provider_type)){ %>
+<section class="card section" aria-label="Stock and price synchronization"><div class="card-head"><h2>Stock and price synchronization</h2></div><div class="card-body">
+<p>Outgoing stock is costed, uncommitted stock available to sell. Incoming count differences need physical confirmation. Conflicts are held for review; a queued delivery is complete only after provider read-back.</p>
+  <% if(!locals.commercePositions?.length){ %><p>No stock or price write-back has been authorized yet. Ask StockChief to prepare the direction and starting source for the products and locations you want to synchronize.</p><% }else{ %>
+  <div class="table-scroll"><table class="table"><thead><tr><th>SKU</th><th>Location</th><th>Field</th><th>Direction</th><th>Last verified values</th><th>Delivery</th></tr></thead><tbody>
+  <% commercePositions.forEach(function(p){ const show=function(v){return v===null?'Unknown':typeof v==='object'?helpers.money(v.amount,v.currency):v;}; %>
+  <tr><td><%= p.code %></td><td><%= p.location %></td><td><%= p.field==='quantity'?'Sellable units':'Selling price' %></td><td><%= {off:'Off',inbound:'Provider → StockChief',outbound:'StockChief → provider',two_way:'Both directions'}[p.mode] %></td><td>StockChief: <%= show(p.baseline_local) %><br>Provider: <%= show(p.baseline_provider) %></td><td><%= p.mode==='off'?'Off':p.pending_effect_id?({PENDING:'Queued',RUNNING:'Verifying with provider',AMBIGUOUS:'Needs review: delivery uncertain',FAILED:'Needs review: delivery failed'}[p.delivery_status]||'Awaiting provider verification'):p.last_verified_at?'Verified':'Awaiting first check' %></td></tr>
+  <% }); %></tbody></table></div><% } %><p><a href="/ask?from=<%= encodeURIComponent('/settings/connections/'+connection.id) %>">Ask StockChief to review or change these settings</a></p>
+</div></section><% } %>
 <% const sync=connection.synchronization; if(sync?.supported){ %>
 <section class="card section" aria-label="Automatic synchronization" data-connection-synchronization="<%= connection.id %>" data-last-check="<%= sync.lastCheckAt||'' %>" data-products-mapped="<%= connection.productsMapped %>" data-locations-mapped="<%= connection.locationsMapped %>">
   <div class="card-head"><div><h2>Automatic synchronization</h2><p class="muted"><%= sync.scope==='mailbox'?'Check for new business email.':'Check products, variants, prices and provider stock observations. Sales and accounting follow their verified event and approval workflows.' %></p></div><span class="badge <%= sync.mode==='active'?'badge--ok':'badge--muted' %>"><%= {active:'On',paused:'Paused',off:'Off',disconnected:'Sign-in needed'}[sync.mode] %></span></div>

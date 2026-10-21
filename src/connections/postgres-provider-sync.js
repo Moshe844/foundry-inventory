@@ -155,6 +155,7 @@ async function sync(job,client,providers=defaultProviders){
   }
   const reconciled=syncConfig.autoImportCatalog===true&&adapter.integrationClass!=='accounting'
     ?await require('./postgres-catalog-reconciliation').reconcile(client,current,previous):{names:0,prices:0,conflicts:0};
+  const commerceReconciled=await require('./postgres-commerce-sync').reconcile(client,current);
   const completedAt=nowIso();
   await client.query(`UPDATE connection_issues issue SET status='RESOLVED',resolved_at=$3,updated_at=$3
     WHERE issue.workspace_id=$1 AND issue.connector_id=$2 AND issue.status='OPEN'
@@ -176,7 +177,7 @@ async function sync(job,client,providers=defaultProviders){
     WHERE workspace_id=$1 AND connector_id=$2 AND status='OPEN'
       AND issue_type IN ('PROVIDER_REFRESH_REQUIRED','CONNECTION_SYNC_FAILED')`,
   [job.workspaceId,connectorId,completedAt]);
-  return {runId,products:products.length,locations:locations.length,autoMapped,needsMapping,ignored,completedAt,reconciled};
+  return {runId,products:products.length,locations:locations.length,autoMapped,needsMapping,ignored,completedAt,reconciled,commerceReconciled};
   };
   const result=await database.transaction(apply,{isolation:'SERIALIZABLE',retrySafe:true});
   if(!result.skipped)await require('./postgres-webhook-inbox').reconcileCancellationObservations(database,connection,adapter);

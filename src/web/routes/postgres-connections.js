@@ -257,6 +257,7 @@ function createPostgresConnectionsRouter(database,options={}){
     return res.page('connections/postgres-detail',{
       title:'Connection',nav:'connections',room:true,backTo:{href:'/settings/connections',label:'Connections'},
       connection,newConnectionToken,provider:adapter?.metadata?.()||{name:connection.display_name},
+      commercePositions:await require('../../connections/postgres-commerce-sync').list(database,req.ctx.workspaceId,connection.id),
       canDiscover:Boolean(adapter?.discover)&&!isMailbox,isMailbox,mailboxLastPollAt,pendingWebhooks,catalogueReview,connectionProof,
     });
   }));

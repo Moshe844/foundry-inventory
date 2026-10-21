@@ -37,6 +37,7 @@ async function list(database,workspaceId,{id=null,limit=10,activeOnly=false}={})
    p.status AS plan_status,p.approval_status,p.created_at,
    (p.status='READY' AND p.approval_status='AWAITING_APPROVAL' AND (
      NOT (p.field_mappings::jsonb ? 'name' OR p.field_mappings::jsonb ? 'code') OR
+     p.source_kind='image' AND COALESCE(p.transformations::jsonb->>'imageReadingConfirmed','false')<>'true' OR
      p.records_invalid>0 AND (p.transformations::jsonb ? 'workbook' OR p.field_mappings::jsonb ? 'serialTracked' OR p.field_mappings::jsonb ? 'lotTracked'))) AS needs_source_review,
    j.status AS job_status,j.lease_expires_at,
    j.created_at AS queued_at,j.updated_at AS job_updated_at,j.completed_at AS job_finished_at,j.result AS job_result,COALESCE(j.started_at,e.started_at::timestamptz) AS started_at,e.status AS execution_status,
