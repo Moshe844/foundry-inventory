@@ -381,7 +381,7 @@ async function autopilotEvaluate(job,client){
   return autonomy.run(scopedDatabase(client),{workspaceId:job.workspaceId,actorId:job.payload.actorId});
 }
 
-function external(handler){handler.externalEffect=true;return handler;}
+function external(handler,workerLane){handler.externalEffect=true;if(workerLane)handler.workerLane=workerLane;return handler;}
 
 async function providerEffect(job,database,options={},providers=defaultProviders){
   const effectId=job.payload?.effectId;
@@ -542,7 +542,7 @@ function create(providers=defaultProviders,options={}){return {'system.runtime-s
         {code:'import_not_verified',retryable:false});
       return result;
     }finally{if(timer)clearInterval(timer);await pending;}
-  }),
+  },'bulk'),
   'system.alert-delivery':external((job,database)=>alertDelivery(job,database,options)),
   'system.email-send':external((job,database)=>systemEmail(job,database,options)),
   'mailbox.poll':external((job,database)=>mailboxPoll(job,database,providers)),

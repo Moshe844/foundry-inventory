@@ -4,7 +4,7 @@ const os = require('node:os');
 const crypto = require('node:crypto');
 const jobs = require('./postgres-job-queue');
 
-function start(database, options = {}) {
+function startSingle(database, options = {}) {
   const owner = options.owner || `${process.pid}@${os.hostname()}:${crypto.randomUUID()}`;
   const interval = options.intervalMs ?? 1000;
   if (!Number.isSafeInteger(interval) || interval < 10) throw new TypeError('Worker interval must be at least ten milliseconds.');
@@ -39,6 +39,26 @@ function start(database, options = {}) {
     clearTimeout(timer);
     if (active) await active.catch(() => {});
   } };
+}
+
+function start(database, options = {}) {
+  const groups = new Map();
+  for (const [kind,handler] of Object.entries(options.handlers || {})) {
+    if (typeof handler !== 'function') continue;
+    const lane = handler.workerLane || 'default';
+    if (!/^[a-z][a-z0-9_-]{0,31}$/.test(lane)) throw new TypeError('Invalid worker execution lane.');
+    if (!groups.has(lane)) groups.set(lane, {});
+    groups.get(lane)[kind] = handler;
+  }
+  if (groups.size <= 1) return startSingle(database, options);
+  if (groups.size > 4) throw new TypeError('A worker may use at most four bounded execution lanes.');
+  const owner = options.owner || `${process.pid}@${os.hostname()}:${crypto.randomUUID()}`;
+  // Each lane retains one in-flight job and uses the same durable claims and
+  // leases. A bulk transaction must not occupy routine synchronization's slot.
+  const lanes = [...groups].map(([lane,handlers]) => startSingle(database,
+    {...options, owner: `${owner}:${lane}`, handlers}));
+  return {owner, wake: () => lanes.forEach(lane => lane.wake()),
+    stop: async () => { await Promise.all(lanes.map(lane => lane.stop())); }};
 }
 
 module.exports = { start };
