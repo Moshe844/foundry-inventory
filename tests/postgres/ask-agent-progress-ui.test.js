@@ -12,6 +12,7 @@ test('agent conversation keeps requests in order with compact responsive progres
  const ctx={workspaceId:owner.workspaceId,actorId:owner.userId};process.env.STOCKCHIEF_RUNTIME_ENV='staging';
  Object.assign(process.env,(await require('../../scripts/provision-codex-staging').provision(db,{businessName:'Progress fixture',emails:[email]})).environment);
  await require('../../src/assistant/postgres-codex-pilot').toggle(db,ctx,true);
+ await db.query("UPDATE stockchief_runtime.codex_pilots SET stopped=false,approval_reference='OFFLINE UI ONLY',ceiling_micro_usd=1000000,period_ends_at=now()+interval '1 hour' WHERE workspace_id=$1",[ctx.workspaceId]);
  const store=require('../../src/assistant/postgres-goal-store');
  const first=await store.create(db,ctx,'Investigate the first request.'),second=await store.create(db,ctx,'Investigate the next request.');
  await db.query(`UPDATE stockchief_runtime.assistant_goals SET checkpoint=checkpoint||'{"runtime":"codex-staging"}'::jsonb WHERE id=ANY($1::text[])`,[[first.id,second.id]]);
@@ -55,6 +56,20 @@ test('agent conversation keeps requests in order with compact responsive progres
  assert.equal(await panel.locator('[data-goal-hint]').innerText(),'');
  assert.match(await panel.locator('[data-goal-answer]').innerText(),/failed before any business change/);
  assert.equal(await panel.getByRole('button',{name:'Continue this request',exact:true}).isVisible(),true,'Recoverable failures keep their existing continuation');
+ await db.query("UPDATE stockchief_runtime.assistant_goals SET status='RUNNING',answer='' WHERE id=$1",[second.id]);await page.reload();
+ await db.query("UPDATE stockchief_runtime.codex_pilots SET period_ends_at=now()-interval '1 minute' WHERE workspace_id=$1",[ctx.workspaceId]);
+ await db.query("UPDATE stockchief_runtime.assistant_goals SET status='BLOCKED',checkpoint=jsonb_set(checkpoint,'{harness}',COALESCE(checkpoint->'harness','{}')||'{\"interruption\":{\"code\":\"PAID_TESTING_LOCKED\"}}'::jsonb),updated_at=now() WHERE id=$1",[second.id]);
+ await panel.getByRole('status').filter({hasText:'Paid work paused'}).waitFor();
+ assert.equal(await panel.getByRole('button',{name:'Continue this request',exact:true}).isVisible(),false);
+ assert.match(await panel.locator('[data-goal-recovery-reason]').innerText(),/period has expired/);
+ assert.doesNotMatch(await panel.locator('[data-goal-answer]').innerText(),/budget increase|PAID_TESTING_LOCKED/);
+ await page.reload();assert.equal(await panel.locator('[data-goal-resume]').isVisible(),false,'Reopened history agrees with live polling');
+ const beforeDenied=(await db.query('SELECT status,checkpoint FROM stockchief_runtime.assistant_goals WHERE id=$1',[second.id])).rows[0];
+ const denied=await page.request.post(`http://127.0.0.1:${server.address().port}/ask/goals/${second.id}/resume`,{form:{_csrf:await panel.locator('input[name="_csrf"]').first().inputValue()}});
+ assert.equal(denied.status(),200,'Browser form errors redirect to an HTML page with the decision reason');assert.match(await denied.text(),/period has expired/);assert.deepEqual((await db.query('SELECT status,checkpoint FROM stockchief_runtime.assistant_goals WHERE id=$1',[second.id])).rows[0],beforeDenied);
+ await db.query("UPDATE stockchief_runtime.codex_pilots SET period_ends_at=now()+interval '1 hour' WHERE workspace_id=$1",[ctx.workspaceId]);
+ await page.reload();assert.equal(await panel.locator('[data-goal-resume]').isVisible(),true,'Fresh eligibility restores continuation after authorization, despite the historical pause reason');
+ await db.query("UPDATE stockchief_runtime.assistant_goals SET checkpoint=checkpoint#-'{harness,interruption}' WHERE id=$1",[second.id]);
  await db.query("UPDATE stockchief_runtime.assistant_goals SET status='RUNNING',answer='' WHERE id=$1",[second.id]);await page.reload();
  await db.query("UPDATE stockchief_runtime.assistant_goals SET status='BLOCKED',answer='I cannot perform work outside your authorized business.',checkpoint=jsonb_set(checkpoint,'{harness}',COALESCE(checkpoint->'harness','{}')||'{\"failure\":{\"code\":\"REQUEST_REFUSED\",\"requiresUserInput\":false}}'::jsonb),updated_at=now() WHERE id=$1",[second.id]);
  await panel.getByRole('status').filter({hasText:'Request declined'}).waitFor();

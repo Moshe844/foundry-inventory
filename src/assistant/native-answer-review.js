@@ -1,7 +1,7 @@
 'use strict';
 const {createHash}=require('node:crypto');
 const digest=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
-const version=2;
+const version=3;
 const schema={type:'object',additionalProperties:false,required:['grounded','complete','missingOutcomes','reason'],properties:{
  grounded:{type:'boolean'},complete:{type:'boolean'},
  missingOutcomes:{type:'array',maxItems:8,items:{type:'string',maxLength:200}},reason:{type:'string',maxLength:200}}};
@@ -28,7 +28,10 @@ function packet(goal,raw){
    if(entry.sourceText&&createHash('sha256').update(entry.sourceText).digest('hex')!==entry.sourceSha256)throw Error('ANSWER_REVIEW_EVIDENCE_UNAVAILABLE');
    const value=JSON.parse(entry.text),observation=value?.image?value.screen:value;
    sources.set(entry.id,{id:entry.id,name:entry.name,sha256:entry.sha256,source:entry.sourceText?JSON.parse(entry.sourceText):null,
-    observation:entry.name==='environment_browser'?require('../../scripts/environment-agent-demo/browser-presentation').compact(observation,{compactControls:false}):observation});
+    // Preserve every business field, control, option and inspection boundary.
+    // The existing reversible encoding factors repeated control defaults out
+    // once instead of spending another request on hundreds of copies.
+    observation:entry.name==='environment_browser'?require('../../scripts/environment-agent-demo/browser-presentation').compact(observation):observation});
   }
  }
  return {version,policyHash:digest([system,schema]),workspaceId:goal.workspace_id,actorId:goal.actor_user_id,goalId:goal.id,

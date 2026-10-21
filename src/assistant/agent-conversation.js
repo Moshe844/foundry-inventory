@@ -57,7 +57,7 @@ function classify({report,answer,verified,current='READY',canonicalVerified=true
 }
 const labels={queued:'Waiting to start',working:'Working on your request',clarification:'Let’s clarify',approval:'Ready for your approval',
  external_wait:'Waiting for confirmation',navigation:'Ready to open in your browser',verification:'Finishing remaining work',completed:'Completed',
- interrupted:'Work paused',goal_limit:'Request allowance reached',funding:'Spending limit reached',capacity:'Daily work limit reached',service_wait:'AI service temporarily unavailable',usage_review:'Checking interrupted AI work',refused:'Request declined',failed:'Could not finish',cancelled:'Stopped'};
+ interrupted:'Work paused',goal_limit:'Request allowance reached',funding:'Paid work paused',capacity:'Daily work limit reached',service_wait:'AI service temporarily unavailable',usage_review:'Checking interrupted AI work',refused:'Request declined',failed:'Could not finish',cancelled:'Stopped'};
 const lifecycleMessages=Object.freeze({
  external_wait:'StockChief is waiting for confirmation of the authorized work. No further approval is needed at this stage.',
  verification:'The authorized work is recorded. I’m checking the complete result.'
@@ -71,7 +71,7 @@ function state(goal){
  const cp=goal.checkpoint||{},h=cp.harness||{},saved=cp.conversationState;
  const phase=({READY:cp.lifecycleStage==='verification'?'verification':'queued',RUNNING:cp.lifecycleStage==='verification'?'verification':'working',
   WAITING_USER:'clarification',WAITING_APPROVAL:'approval',WAITING_EVENT:['PENDING','DELIVERING'].includes(cp.navigation?.state)?'navigation':'external_wait',COMPLETED:'completed',
-  BLOCKED:h.modelUsagePending===true||h.codexDelivery?.state==='PENDING'||h.helperDelivery?.state==='PENDING'||['PROVIDER_REQUEST_TIMEOUT','PROVIDER_TRANSPORT_UNCERTAIN','UNRESOLVED_MODEL_CALL','CODEX_RESPONSE_RECONCILIATION_REQUIRED'].includes(h.interruption?.code)?'usage_review':h.interruption?.limitKind==='goal_cost'||['DURABLE_TOOL_LIMIT','DURABLE_MODEL_REQUEST_LIMIT'].includes(h.admissionBlock?.code||h.interruption?.code)?'goal_limit':h.interruption?.code==='SHARED_SPENDING_CEILING'?'funding':h.interruption?.limitKind==='daily_model_attempts'?'capacity':h.interruption?.code==='CODEX_TOKEN_COUNT_UNAVAILABLE'?'service_wait':h.interruption?'interrupted':h.failure?.code==='REQUEST_REFUSED'||h.requestRefused===true?'refused':'failed',CANCELLED:'cancelled'})[goal.status]||'failed';
+  BLOCKED:h.modelUsagePending===true||h.codexDelivery?.state==='PENDING'||h.helperDelivery?.state==='PENDING'||['PROVIDER_REQUEST_TIMEOUT','PROVIDER_TRANSPORT_UNCERTAIN','UNRESOLVED_MODEL_CALL','CODEX_RESPONSE_RECONCILIATION_REQUIRED'].includes(h.interruption?.code)?'usage_review':h.interruption?.limitKind==='goal_cost'||['DURABLE_TOOL_LIMIT','DURABLE_MODEL_REQUEST_LIMIT'].includes(h.admissionBlock?.code||h.interruption?.code)?'goal_limit':['SHARED_SPENDING_CEILING','PAID_TESTING_LOCKED'].includes(h.interruption?.code)?'funding':h.interruption?.limitKind==='daily_model_attempts'?'capacity':h.interruption?.code==='CODEX_TOKEN_COUNT_UNAVAILABLE'?'service_wait':h.interruption?'interrupted':h.failure?.code==='REQUEST_REFUSED'||h.requestRefused===true?'refused':'failed',CANCELLED:'cancelled'})[goal.status]||'failed';
  const question=goal.status==='WAITING_USER'?(h.userQuestion||saved?.input||{question:goal.answer,missingInformation:['Your decision']}):null;
  const input=question?{id:question.id||createHash('sha256').update(JSON.stringify([goal.id,cp.messages?.length||0,question.question])).digest('hex'),
   question:publicText(question.question,'What would you like me to use?'),missingInformation:missing.safeParse(question.missingInformation).success?missing.parse(question.missingInformation):[]}:null;
@@ -80,7 +80,9 @@ function state(goal){
  // message is the clarification, without matching any words or domain.
  for(const entry of history){if(entry.role==='assistant')precedingAssistant=entry.id;
   else if(entry.questionId&&precedingAssistant)questions.add(precedingAssistant);}
- const fundingMessage='Your request is saved. The approved spending allowance cannot cover another model request, so paid work has stopped. A separately approved budget increase is required to continue.';
+ const fundingMessage=h.interruption?.code==='PAID_TESTING_LOCKED'
+  ?'Your request and recorded work are saved. Paid work is paused because its spending authorization is unavailable or its approved period has ended. Restore the authorization before continuing; nothing will be retried automatically.'
+  :'Your request is saved. The approved spending allowance cannot cover another model request, so paid work has stopped. A separately approved budget increase is required to continue.';
  const capacityMessage='Your business has used today’s AI work allowance. Your request and any completed work are saved. You can continue after the daily allowance resets.';
  const serviceMessage='StockChief’s AI service was temporarily unavailable. Your request and recorded work are saved. No further paid AI request was sent.';
  const usageMessage='An AI request lost its confirmation. Your goal and recorded work are saved. Paid work is paused while its usage is checked; no automatic retry will run.';

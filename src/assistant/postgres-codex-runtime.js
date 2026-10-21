@@ -190,6 +190,12 @@ async function run(database,ctx,id,options={}){
    if(economical.MODEL!==modelPolicy.MODEL||economical.EFFORT!==modelPolicy.EFFORT)throw Error('PROCESSING_FALLBACK_STRENGTH_MISMATCH');
    await require('./codex-staging-readiness').verifyPricing(database,economical.PROFILE);
   }
+  const helperFallbackId=helperPolicy.PROFILE.fallbackProcessingProfile;
+  const helperFallback=helperFallbackId?(economical?.PROFILE.id===helperFallbackId?economical:require(base+'codex-wire').forProfile(helperFallbackId)):null;
+  if(helperFallback){
+   if(helperFallback.MODEL!==helperPolicy.MODEL||helperFallback.EFFORT!==helperPolicy.EFFORT)throw Error('PROCESSING_FALLBACK_STRENGTH_MISMATCH');
+   if(helperFallback!==economical)await require('./codex-staging-readiness').verifyPricing(database,helperFallback.PROFILE);
+  }
   audit({kind:'model_profile_selected',status:`${modelProfile.model} · ${modelProfile.effort}`});
   const transport=relay.grant({candidate:'codex',provider:'openai',task:id,ctx,goalId:id,budget,fundingKey,authorize:()=>authorize({catalogue:false}),
    codexPolicy:economical||modelPolicy,preferredCodexPolicy:economical?modelPolicy:null,
@@ -205,7 +211,7 @@ async function run(database,ctx,id,options={}){
    }
   }
   const helperTransport=relay.grant({candidate:'codex',provider:'openai',task:id,ctx,goalId:id,budget,fundingKey,authorize:()=>authorize({catalogue:false}),
-   codexPolicy:helperPolicy,preferredCodexPolicy:preferredHelperPolicy,
+   codexPolicy:helperFallback||helperPolicy,preferredCodexPolicy:preferredHelperPolicy||(helperFallback?helperPolicy:null),
    wireProfile:'codex',livePermit:permit,requestGate:access=>session.codexRequest(access)});
   helperTransport.setNativeSession(session.helperDelivery());
   helper=require(base+'codex-helper-provider').create({transport:helperTransport,policy:helperPolicy});

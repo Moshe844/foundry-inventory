@@ -263,10 +263,11 @@ function createPostgresAskRouter(database,options={}){
       WHERE goal_id=$1 AND kind IN ('agent_activity','approval_ready') ORDER BY sequence DESC LIMIT 20`,[goal.id])).rows:[];
     const navigation=agentNavigation.visible(goal);
     const state=conversation.state(goal);
+    const continuation=isPilot&&goal.status==='BLOCKED'?await pilot.continuation(database,req.ctx,goal.id):null;
     const safeEvents=events.map(e=>({sequence:e.sequence,kind:e.kind,created_at:e.created_at,
       detail:{kind:e.detail.kind,tool:typeof e.detail.tool==='string'?e.detail.tool:null,status:e.detail.kind==='runtime_starting'?e.detail.status:null}}));
     return res.json({id:goal.id,status:goal.status,answer:state.message,conversation:state,createdAt:goal.created_at,updatedAt:goal.updated_at,runStartedAt:goal.checkpoint.runStartedAt,turns:goal.turns,tools:goal.tool_calls,events:safeEvents,
-      workerAvailable,approvalIds:(approvalInbox?.approvals||[]).map(card=>card.id),
+      workerAvailable,continuation,approvalIds:(approvalInbox?.approvals||[]).map(card=>card.id),
       delivery:delivery.visible(goal),prerequisiteHandoffs:goal.checkpoint.prerequisiteHandoffs||[],navigation:navigation?{...navigation,automatic:req.session.postgresAskNavigationGoal===goal.id}:null});
   }));
   router.post('/ask/goals/:id/reply',asyncRoute(async(req,res)=>{
@@ -374,6 +375,8 @@ function createPostgresAskRouter(database,options={}){
         const inbox=await pilot.inbox(database,req.ctx,goal.id);Object.assign(goal,inbox.goal);goal.approvalCards=inbox.approvals;
       }else goal.approvalCards=[];
       goal.conversation=conversation.state(goal);
+      goal.continuation=!options.agentInspection&&goal.checkpoint.runtime==='codex-staging'&&goal.status==='BLOCKED'
+        ?await pilot.continuation(database,req.ctx,goal.id):null;
     }
     const nativeRuleIds=new Set(recentGoals.flatMap(goal=>(goal.approvalCards||[]).filter(card=>card.kind==='rule').map(card=>card.proposalId)));
     // Conversation replies must come from these visible, actor-owned turns

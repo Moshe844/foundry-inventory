@@ -19,6 +19,13 @@ test('recorded post-approval exhaustion keeps the executed receipt and stops off
  const state=contract.state(goal);assert.equal(state.phase,'goal_limit');assert.equal(state.active,false);assert.equal(state.canReply,false);assert.match(state.message,/email was executed and verified/);assert.match(state.message,/No automatic retry/);
  goal.checkpoint.harness.codexDelivery={state:'PENDING'};assert.equal(contract.state(goal).phase,'usage_review','Unknown provider usage still outranks a known tool ceiling');
 });
+
+test('unavailable paid-work authorization is a saved funding pause, not exhausted money or a business clarification',()=>{
+ const goal={id:'authorization-pause',status:'BLOCKED',answer:'A previously approved operation was verified.',checkpoint:{harness:{completionSource:'partial_verified_receipt',interruption:{code:'PAID_TESTING_LOCKED'}}}};
+ const state=contract.state(goal);assert.equal(state.phase,'funding');assert.equal(state.label,'Paid work paused');assert.equal(state.active,false);assert.equal(state.terminal,false);assert.equal(state.canReply,false);assert.match(state.message,/previously approved operation was verified/);assert.match(state.message,/approved period has ended/);assert.doesNotMatch(state.message,/budget increase|PAID_TESTING_LOCKED/);
+ goal.checkpoint.harness.codexDelivery={state:'PENDING'};assert.equal(contract.state(goal).phase,'usage_review','Uncertain usage must still be reconciled first');
+ goal.status='WAITING_APPROVAL';assert.equal(contract.state(goal).phase,'approval','Funding cannot erase a recorded human decision stage');
+});
 test('exact recorded response demonstrates the former string-only failure and becomes a typed clarification',()=>{
  const raw=JSON.parse(trace.rawFinal);
  assert.equal(typeof raw.missingInformation==='string',false,'Original classifier rejected this successful model turn');

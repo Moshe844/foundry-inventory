@@ -39,10 +39,11 @@ test('real browser distinguishes two approvals, pending external delivery and fi
  const page=await context.newPage(),other=await context.newPage(),url=origin+'/ask?goal='+goal.id+'#focused-goal';
  const artifacts=path.resolve('data/approval-transition-browser');fs.mkdirSync(artifacts,{recursive:true});
  const panel=page.locator('[data-adaptive-goal="'+goal.id+'"]'),otherPanel=other.locator('[data-adaptive-goal="'+goal.id+'"]');
- await page.goto(url);await other.goto(url);assert.equal(await panel.locator('[data-approval-id]').count(),1);
+ await page.goto(url);await other.goto(url);assert.equal(await panel.locator('[data-approval-id]').count(),2,'Both independent changes must be reviewable before either approval');
  // Real form submissions call the same durable human-decision and canonical
  // execution path as the recorded request; there is no model or real email.
- await Promise.all([page.waitForNavigation(),panel.getByRole('button',{name:'Approve this change',exact:true}).click()]);
+ const quoteCard=(await pilot.inbox(db,ctx,goal.id)).approvals.find(card=>card.proposal.action_type==='catalog.set_purchase_cost');assert(quoteCard);
+ await Promise.all([page.waitForNavigation(),panel.locator('[data-approval-id="'+quoteCard.id+'"]').getByRole('button',{name:'Approve this change',exact:true}).click()]);
  const next=(await pilot.inbox(db,ctx,goal.id)).approvals;assert.equal(next.length,1);assert.equal(next[0].proposal.action_type,'communication.send_email');
  await Promise.all([page.waitForNavigation(),panel.getByRole('button',{name:'Approve this change',exact:true}).click()]);
  const saved=await store.get(db,ctx,goal.id);assert.equal(saved.status,'WAITING_EVENT');
