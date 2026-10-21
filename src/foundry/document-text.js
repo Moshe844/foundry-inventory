@@ -1,5 +1,5 @@
 'use strict';
-const path=require('node:path'),XLSX=require('xlsx'),mammoth=require('mammoth'),{createCanvas}=require('@napi-rs/canvas'),{createWorker}=require('tesseract.js'),englishOcr=require('@tesseract.js-data/eng'),{requireText}=require('../lib/util'),{ValidationError}=require('../domain/errors');
+const path=require('node:path'),{requireText}=require('../lib/util'),{ValidationError}=require('../domain/errors');
 const MAX_TEXT = 24000;
 // A photo or screenshot of a document is a document. It is read the same way
 // an image-only PDF page is: by OCR, into text the ordinary reader then
@@ -10,6 +10,7 @@ const SUPPORTED = ['.pdf', '.docx', '.xlsx', '.xls', '.csv', '.tsv', '.txt', ...
 function clean(value) { return String(value || '').replace(/\u0000/g, '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim(); }
 
 async function renderPdfPage(page) {
+  const {createCanvas}=require('@napi-rs/canvas');
   const viewport = page.getViewport({ scale: 2 });
   if(!Number.isFinite(viewport.width)||!Number.isFinite(viewport.height)||viewport.width<=0||viewport.height<=0||viewport.width>10000||viewport.height>10000||viewport.width*viewport.height>8000000)throw new ValidationError('This scanned page exceeds the safe image-processing limit. Use a smaller scan.');
   const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
@@ -19,6 +20,7 @@ async function renderPdfPage(page) {
 }
 
 async function createOcrWorker() {
+  const {createWorker}=require('tesseract.js'),englishOcr=require('@tesseract.js-data/eng');
   return createWorker(englishOcr.code, 1, {
     langPath: englishOcr.langPath,
     gzip: englishOcr.gzip,
@@ -99,8 +101,9 @@ async function extractText(file,limits={}) {
     }
     text = pages.join('\n\n');
   } else if (ext === '.docx') {
-    text = (await mammoth.extractRawText({ buffer })).value;
+    text = (await require('mammoth').extractRawText({ buffer })).value;
   } else if (['.xlsx', '.xls'].includes(ext)) {
+    const XLSX=require('xlsx');
     const book = XLSX.read(buffer, { type: 'buffer', cellDates: true });
     text = book.SheetNames.map((name) => {
       const rows = XLSX.utils.sheet_to_json(book.Sheets[name], { header: 1, defval: '' });
