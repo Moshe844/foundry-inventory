@@ -57,18 +57,19 @@ test('native bookkeeping avoids repeated catalogue construction while retaining 
  queries=0;const fresh=await gateway.authorize({catalogue:false}),lightQueries=queries;
  assert.deepEqual(fresh.actor,full.actor);assert.equal(fresh.catalogue,undefined);
  assert(fullQueries<=lightQueries+5,'One catalogue snapshot, not a subscription lookup per capability: '+JSON.stringify({fullQueries,lightQueries}));
- let transactions=0,checkpointQueries=0;const sessionDb={...db,transaction:(operation,settings)=>{transactions++;return db.transaction(client=>operation({query:(...args)=>{checkpointQueries++;return client.query(...args);}}),settings);}};
+ let transactions=0,checkpointQueries=0,atomicQueries=0;const sessionDb={...db,query:(...args)=>{atomicQueries++;return db.query(...args);},transaction:(operation,settings)=>{transactions++;return db.transaction(client=>operation({query:(...args)=>{checkpointQueries++;return client.query(...args);}}),settings);}};
  const calls=[];const session=require('../../scripts/environment-agent-demo/session').createSession({database:sessionDb,ctx,goalId:goal.id,runToken:goal.run_token,candidate:'codex',authorize:settings=>{calls.push(settings);return gateway.authorize(settings);}});
  // The live trace crossed twelve model rounds and seventeen tool rounds.
  // Repeat native checkpoint boundaries at that scale without inference.
  for(let index=0;index<17;index++){await session.load();await session.checkpoint({browserStep:index});}
  const packet={status:200,contentType:'application/json',body:'{}',outcome:{terminal:false,tool:true}};
  for(let index=0;index<12;index++){await session.codexRequest();await session.codexPending('round-'+index);await session.codexDelivered('round-'+index,packet,packet.outcome);}
- assert.equal(transactions,17*2+12*3,'Authority stamps commit with their protected checkpoint, not in separate transactions');
+ assert.equal(transactions,17,'Only session loading uses the full checkpoint transaction; transport writes remain individually atomic');
+ assert.equal(atomicQueries,17+12*3,'Every native checkpoint/request/pending/delivery write still reaches PostgreSQL');
  assert(calls.every(c=>c.catalogue===false));
  assert.equal(calls.length,17+12*2,'Native checkpoints and settled response persistence keep fresh actor/lease validation without another commercial admission');
- checkpointQueries=0;await session.checkpoint({singleSnapshot:true});
- assert.equal(checkpointQueries,2,'A native checkpoint locks the goal and current actor together, then saves; no extra actor round trip');
+ checkpointQueries=0;atomicQueries=0;await session.checkpoint({singleSnapshot:true});
+ assert.equal(checkpointQueries,0);assert.equal(atomicQueries,1,'One statement freshly locks the goal and actor and saves native state');
  const requestAccess=await gateway.authorize({catalogue:false}),admissions=calls.length;
  await session.codexPending('same-http-boundary',requestAccess);
  assert.equal(calls.length,admissions,'Pending delivery uses only this HTTP request\'s fresh admission');

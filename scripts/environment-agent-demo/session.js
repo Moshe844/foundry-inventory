@@ -9,6 +9,7 @@ const failureReason=value=>typeof value==='string'?require('../../src/assistant/
 // reconciliation against canonical records, never blind replay.
 function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyOutcome,onApprovalReady,serializeGoalWrite=operation=>operation()}){
  if(typeof serializeGoalWrite!=='function')throw new TypeError('Invalid host goal write coordination.');
+ let checkpointIdentity=null;
  async function notifyApprovals(result){
   if(!result||!onApprovalReady)return result;
   for(const card of result.approvals||[])if(!card.deliveredAt){
@@ -20,6 +21,9 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
  function checkAuthority(h,access){if(access?.actor){
   const stamp=createHash('sha256').update(JSON.stringify(stable(access.actor))).digest('hex');
   if(h.authorityStamp&&h.authorityStamp!==stamp)throw new Error('SESSION_AUTHORITY_CHANGED');h.authorityStamp=stamp;
+  // An expected identity, never cached authority. The atomic bookkeeping
+  // statement locks and compares the CURRENT database actor on every write.
+  checkpointIdentity={actor:structuredClone(access.actor),stamp};
  }}
  // Validate the fresh authority and persist its stamp in the SAME transaction
  // as the checkpoint it protects. No authority is cached between operations.
@@ -79,6 +83,22 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
   if(!actor||!h.authorityStamp)throw Error('SESSION_AUTHORITY_CHANGED');checkAuthority(h,{actor});
   return change(h,goal,client);
  },{checkpointAuthority:true});}
+ async function nativeTransport(operation,data,fallback){
+  if(candidate!=='codex'||!checkpointIdentity)return fallback();
+  const result=await serializeGoalWrite(async()=>{
+   const row=await require('./native-transport-checkpoint').persist(database,{ctx,goalId,runToken,identity:checkpointIdentity,operation,data});
+   held(row);if(!row.current_actor||!row.stamp)throw Error('SESSION_AUTHORITY_CHANGED');
+   checkAuthority({authorityStamp:row.stamp},{actor:row.current_actor});
+   if(row.candidate!==candidate)throw Error('SESSION_CANDIDATE_MISMATCH');
+   if(operation==='request'&&Number(row.requests)>=24)throw Error('DURABLE_MODEL_REQUEST_LIMIT');
+   if(operation==='pending'&&row.delivery_state==='PENDING')throw Error('CODEX_RESPONSE_RECONCILIATION_REQUIRED');
+   if(operation==='delivered'&&(row.delivery_state!=='PENDING'||row.delivery_hash!==data.hash))throw Error('CODEX_RESPONSE_SEQUENCE_MISMATCH');
+   return row.changed?{value:operation==='request'?{request:Number(row.requests)+1}:undefined}:{fallback:true};
+  });
+  // Legacy/malformed presentation or a near-limit checkpoint uses the exact
+  // existing validation/size path. Release the write queue before entering it.
+  return result.fallback?fallback():result.value;
+ }
  return {
   identity:Object.freeze({workspaceId:ctx.workspaceId,actorId:ctx.actorId,goalId,candidate}),
   async approvalInbox(){return candidate==='codex'?notifyApprovals(await require('./approval-handoff').inbox(database,ctx,goalId)):null;},
@@ -132,7 +152,7 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    // actor stamp in this transaction; those effect boundaries still perform
    // their own complete commercial/authority admission. This also lets the
    // SDK save its settled state if the spending lock changes mid-response.
-   return checkpointUpdate(h=>{h.native={...h.native,...native};});
+   return nativeTransport('native',{native},()=>checkpointUpdate(h=>{h.native={...h.native,...native};}));
   },
   async navigationContext(){return authorizedUpdate((h,_goal,_client,access)=>{
    // Initial authorized interface metadata already supplies these owning lists.
@@ -173,7 +193,9 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    if(h.codexRequests>=24)throw new Error('DURABLE_MODEL_REQUEST_LIMIT');
    h.codexRequests++;
    return {request:h.codexRequests};
-  };return admissionAccess?.actor?update(change,{access:admissionAccess}):authorizedUpdate(change);},
+  };const access=admissionAccess?.actor?admissionAccess:await authorize({catalogue:false});
+   if(checkpointIdentity)checkAuthority({authorityStamp:checkpointIdentity.stamp},access);
+   return nativeTransport('request',{},()=>update(change,{access}));},
   async codexReplay(hash,admissionAccess=null){return read(h=>{
    if(candidate!=='codex')throw new Error('NOT_A_CODEX_SESSION');
    if(h.codexDelivery?.state==='PENDING')throw new Error('CODEX_RESPONSE_RECONCILIATION_REQUIRED');
@@ -182,11 +204,13 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
   async codexPending(hash,admissionAccess=null){const change=h=>{
    if(candidate!=='codex'||h.codexDelivery?.state==='PENDING')throw new Error('CODEX_RESPONSE_RECONCILIATION_REQUIRED');
    h.codexDelivery={hash,state:'PENDING'};
-  };return admissionAccess?.actor?update(change,{access:admissionAccess}):authorizedUpdate(change);},
-  async codexDelivered(hash,packet,outcome){return checkpointUpdate(h=>{
+  };const access=admissionAccess?.actor?admissionAccess:await authorize({catalogue:false});
+   if(checkpointIdentity)checkAuthority({authorityStamp:checkpointIdentity.stamp},access);
+   return nativeTransport('pending',{hash},()=>update(change,{access}));},
+  async codexDelivered(hash,packet,outcome){return nativeTransport('delivered',{hash,packet:require('./replay-packet').pack(packet),outcome:{...outcome}},()=>checkpointUpdate(h=>{
    if(candidate!=='codex'||h.codexDelivery?.hash!==hash||h.codexDelivery.state!=='PENDING')throw new Error('CODEX_RESPONSE_SEQUENCE_MISMATCH');
    h.codexDelivery={hash,state:'SETTLED',packet:require('./replay-packet').pack(packet)};h.lastCodexResponse={...outcome,request:h.codexRequests};
-  });},
+  }));},
   // A helper's delivery must never overwrite the SDK response/checkpoint.
   // Its own durable slot still prevents spending again on an unknown outcome.
   helperDelivery(){return {
@@ -198,11 +222,13 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    codexPending:async(hash,admissionAccess=null)=>{const change=h=>{
     if(h.helperDelivery?.state==='PENDING')throw Error('CODEX_RESPONSE_RECONCILIATION_REQUIRED');
     h.helperDelivery={hash,state:'PENDING'};
-   };return admissionAccess?.actor?update(change,{access:admissionAccess}):authorizedUpdate(change);},
-   codexDelivered:async(hash,packet)=>{return checkpointUpdate(h=>{
+   };const access=admissionAccess?.actor?admissionAccess:await authorize({catalogue:false});
+    if(checkpointIdentity)checkAuthority({authorityStamp:checkpointIdentity.stamp},access);
+    return nativeTransport('pending',{hash,slot:'helperDelivery'},()=>update(change,{access}));},
+   codexDelivered:async(hash,packet)=>{return nativeTransport('delivered',{hash,slot:'helperDelivery',packet:require('./replay-packet').pack(packet)},()=>checkpointUpdate(h=>{
     if(h.helperDelivery?.hash!==hash||h.helperDelivery.state!=='PENDING')throw Error('CODEX_RESPONSE_SEQUENCE_MISMATCH');
     h.helperDelivery={hash,state:'SETTLED',packet:require('./replay-packet').pack(packet)};
-   });}
+   }));}
   };},
   async answerReview(raw){return authorizedUpdate((h,goal)=>{
    const review=require('../../src/assistant/native-answer-review');let bound;
