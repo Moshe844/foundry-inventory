@@ -60,54 +60,10 @@ function interfaceSnapshot(catalogue,actor,{search='',offset=0,names=[]}={}){
   policy:'Browser inspection cannot commit changes. Operations use canonical engines. Prepared means awaiting authority, never completed. No approval tool is available.'};
 }
 
-// ctx, original goal and database are host-bound. Models cannot supply tenant,
-// actor, approval, SQL, provider credentials or an alternative source message.
-function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=provider,audit=()=>{},accessGuard=null}){
-  if(accessGuard!==null&&typeof accessGuard!=='function')throw new Error('INVALID_HOST_ACCESS_GUARD');
-  async function access({catalogue=true}={}){
-    // A native Staging guard checks pilot identity AND the Ask entitlement on
-    // every boundary. Repeating the identical commercial check here adds
-    // remote database round trips, not authority. No result is cached or
-    // carried into another call; gateways without a guard retain their check.
-    const [guard,stateResult]=await Promise.all([
-     accessGuard?accessGuard():null,
-     database.query(`SELECT original_request,status,run_token,lease_until,expires_at,checkpoint->'messages' AS user_messages FROM stockchief_runtime.assistant_goals
-      WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,goalId])]);
-    const state=stateResult.rows[0];
-    if(!state||state.original_request!==goal||state.status!=='RUNNING'||state.run_token!==runToken||
-      new Date(state.lease_until).getTime()<=Date.now()||new Date(state.expires_at).getTime()<=Date.now())throw new Error('Goal is not held by this agent run.');
-    // A host guard may supply the membership/permissions it JUST checked in
-    // this call. Reuse that snapshot only for this boundary and exact actor.
-    const actor=guard?.actor?.id===ctx.actorId&&Object.hasOwn(guard.actor,'permissions')
-      ?{role:guard.actor.role,permissions:guard.actor.permissions}
-      :(await database.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',
-        [ctx.workspaceId,ctx.actorId])).rows[0];
-    if(!actor)throw new Error('Actor no longer belongs to this business.');
-    if(!accessGuard)await require('../../src/commercial/enforcement').workspace(database,ctx.workspaceId,'ask.lookup');
-    // Native checkpoint/transport bookkeeping needs current lease, membership,
-    // permissions and Ask entitlement, not every business execution contract.
-    // Actual interface discovery, operations and verification retain the full
-    // fresh catalogue; this does not cache authority or commercial decisions.
-    const clarifications=Array.isArray(state.user_messages)?state.user_messages.filter(m=>typeof m==='string'):[];
-    let interfaces;
-    if(catalogue){
-      interfaces=await control.planningCatalogue(database,{...ctx,goalId},actor);
-      if(require('../../src/commercial/relay-provider').ownsAccounting(provider)){
-        const entries=interfaces.list().map(c=>c.agentFields?Object.freeze({...c,fields:[...c.fields,...c.agentFields]}):c);
-        const byName=new Map(entries.map(c=>[c.name,c]));
-        interfaces={list:(kind=null)=>entries.filter(c=>!kind||c.kind===kind),get:name=>byName.get(name)||null};
-      }
-    }
-    return {actor,sourceMessage:[goal,...clarifications.map(m=>'User clarification: '+m)].join('\n'),
-      ...(guard?.commercialAccess?{commercialAccess:guard.commercialAccess}:{}),
-      ...(guard?.environment?{environment:guard.environment}:{}),
-      ...(catalogue?{catalogue:interfaces}:{})};
-  }
-  return {
-    authorize:access,
-    async collections(){return collections((await access()).catalogue);},
-    async initialContracts(){
-      const {catalogue,actor}=await access(),operations=[];
+// Pure interface metadata for one already authorized context boundary. This
+// snapshot is neither an execution grant nor permission to reuse authority.
+function initialContractsSnapshot(catalogue,actor){
+ const operations=[];
       // Ordinary questions must be able to choose a governed read immediately,
       // not pay for a separate discovery turn or a browser tour first. This is
       // current authorized metadata, not a map limiting environment discovery.
@@ -169,7 +125,55 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
       if(Buffer.byteLength(JSON.stringify(require('./interface-presentation').compact(packet())))>28000)
         throw Error('INITIAL_INTERFACE_INDEX_LIMIT');
       return packet();
-    },
+}
+
+// ctx, original goal and database are host-bound. Models cannot supply tenant,
+// actor, approval, SQL, provider credentials or an alternative source message.
+function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=provider,audit=()=>{},accessGuard=null}){
+  if(accessGuard!==null&&typeof accessGuard!=='function')throw new Error('INVALID_HOST_ACCESS_GUARD');
+  async function access({catalogue=true}={}){
+    // A native Staging guard checks pilot identity AND the Ask entitlement on
+    // every boundary. Repeating the identical commercial check here adds
+    // remote database round trips, not authority. No result is cached or
+    // carried into another call; gateways without a guard retain their check.
+    const [guard,stateResult]=await Promise.all([
+     accessGuard?accessGuard():null,
+     database.query(`SELECT original_request,status,run_token,lease_until,expires_at,checkpoint->'messages' AS user_messages FROM stockchief_runtime.assistant_goals
+      WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,goalId])]);
+    const state=stateResult.rows[0];
+    if(!state||state.original_request!==goal||state.status!=='RUNNING'||state.run_token!==runToken||
+      new Date(state.lease_until).getTime()<=Date.now()||new Date(state.expires_at).getTime()<=Date.now())throw new Error('Goal is not held by this agent run.');
+    // A host guard may supply the membership/permissions it JUST checked in
+    // this call. Reuse that snapshot only for this boundary and exact actor.
+    const actor=guard?.actor?.id===ctx.actorId&&Object.hasOwn(guard.actor,'permissions')
+      ?{role:guard.actor.role,permissions:guard.actor.permissions}
+      :(await database.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',
+        [ctx.workspaceId,ctx.actorId])).rows[0];
+    if(!actor)throw new Error('Actor no longer belongs to this business.');
+    if(!accessGuard)await require('../../src/commercial/enforcement').workspace(database,ctx.workspaceId,'ask.lookup');
+    // Native checkpoint/transport bookkeeping needs current lease, membership,
+    // permissions and Ask entitlement, not every business execution contract.
+    // Actual interface discovery, operations and verification retain the full
+    // fresh catalogue; this does not cache authority or commercial decisions.
+    const clarifications=Array.isArray(state.user_messages)?state.user_messages.filter(m=>typeof m==='string'):[];
+    let interfaces;
+    if(catalogue){
+      interfaces=await control.planningCatalogue(database,{...ctx,goalId},actor);
+      if(require('../../src/commercial/relay-provider').ownsAccounting(provider)){
+        const entries=interfaces.list().map(c=>c.agentFields?Object.freeze({...c,fields:[...c.fields,...c.agentFields]}):c);
+        const byName=new Map(entries.map(c=>[c.name,c]));
+        interfaces={list:(kind=null)=>entries.filter(c=>!kind||c.kind===kind),get:name=>byName.get(name)||null};
+      }
+    }
+    return {actor,sourceMessage:[goal,...clarifications.map(m=>'User clarification: '+m)].join('\n'),
+      ...(guard?.commercialAccess?{commercialAccess:guard.commercialAccess}:{}),
+      ...(guard?.environment?{environment:guard.environment}:{}),
+      ...(catalogue?{catalogue:interfaces}:{})};
+  }
+  return {
+    authorize:access,
+    async collections(){return collections((await access()).catalogue);},
+    async initialContracts(){const {catalogue,actor}=await access();return initialContractsSnapshot(catalogue,actor);},
     async interfaces(input={}){const {actor,catalogue}=await access();return interfaceSnapshot(catalogue,actor,input);},
     async operate({steps,callId=randomUUID()}){
       let effectsStarted=false;
@@ -220,4 +224,4 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
     }
   };
 }
-module.exports={createGateway,interfaceSnapshot,navigationCollections};
+module.exports={createGateway,interfaceSnapshot,navigationCollections,initialContractsSnapshot};

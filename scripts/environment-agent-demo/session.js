@@ -99,25 +99,7 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
   // existing validation/size path. Release the write queue before entering it.
   return result.fallback?fallback():result.value;
  }
- return {
-  identity:Object.freeze({workspaceId:ctx.workspaceId,actorId:ctx.actorId,goalId,candidate}),
-  async approvalInbox(){return candidate==='codex'?notifyApprovals(await require('./approval-handoff').inbox(database,ctx,goalId)):null;},
-  async handoffApprovals(){return candidate==='codex'?notifyApprovals(await require('./approval-handoff').inbox(database,ctx,goalId,{pause:true,runToken})):null;},
-  async completed(){
-   // A committed completion survives loss of the SDK/process acknowledgement.
-   // This read needs no execution lease, but still binds tenant, actor, current
-   // permissions, candidate and the exact original request.
-   const goal=(await database.query(`SELECT * FROM ${TABLE} WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,goalId])).rows[0];
-   const h=goal?.checkpoint.harness;
-   if(goal?.status!=='COMPLETED'||h?.candidate!==candidate||!['host_verified_receipt','host_verified_answer'].includes(h.completionSource))return null;
-   const actor=(await database.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];
-   if(!actor||!h.authorityStamp||createHash('sha256').update(JSON.stringify(stable(actor))).digest('hex')!==h.authorityStamp)
-    throw new Error('SESSION_AUTHORITY_CHANGED');
-   await require('../../src/commercial/enforcement').workspace(database,ctx.workspaceId,'ask.lookup');
-   if(h.receipt?.requestHash!==require('./receipts').requestHash(goal))throw new Error('COMPLETION_REQUEST_MISMATCH');
-   return {answer:goal.answer,completionSource:h.completionSource,checkedAt:h.receipt.checkedAt};
-  },
-  async load(){return authorizedUpdate(async(h,goal,client,access)=>{
+ async function loadSnapshot(h,goal,client,access){
    const snapshot=goal.checkpoint.conversation;
    if(snapshot&&!require('../../src/assistant/postgres-agent-context').fullReadAccess(access?.actor)&&
     snapshot.authorityStamp!==h.authorityStamp)throw Error('SESSION_AUTHORITY_CHANGED');
@@ -149,17 +131,8 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    modelRouting:structuredClone(goal.checkpoint.modelRouting||null),
    executionBudget:{toolsUsed:goal.tool_calls,toolsRemaining:Math.max(0,30-goal.tool_calls),
     modelRequestsUsed:Number(h.codexRequests||0),modelRequestsRemaining:Math.max(0,24-Number(h.codexRequests||0))}}};
-  });},
-  async checkpoint(native){
-   if(candidate!=='codex')return authorizedUpdate(h=>{h.native={...h.native,...native};});
-   // Native persistence is host bookkeeping, not a new grant to read records,
-   // call a model or execute an operation. Keep the lease, tenant and fresh
-   // actor stamp in this transaction; those effect boundaries still perform
-   // their own complete commercial/authority admission. This also lets the
-   // SDK save its settled state if the spending lock changes mid-response.
-   return nativeTransport('native',{native},()=>checkpointUpdate(h=>{h.native={...h.native,...native};}));
-  },
-  async navigationContext(){return authorizedUpdate((h,_goal,_client,access)=>{
+ }
+ async function navigationSnapshot(h,_goal,_client,access){
    // Initial authorized interface metadata already supplies these owning lists.
    // Journal their exact source for navigation, without inventing record facts,
    // spending a tool/model request or allowing the agent to supply destinations.
@@ -168,8 +141,8 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    require('./observations').store(h,{id,name:'authorized_navigation',result,
     source:{version:1,name:'authorized_navigation',input:{}}});
    return {evidenceId:id,...result};
-  },{catalogue:true});},
-  async executionState(){return authorizedUpdate(async(h,goal,client,access)=>{
+ }
+ async function executionSnapshot(h,goal,client,access){
    const receipt=await require('./receipts').collect(client,ctx,goal,h,access.catalogue);
    if(!receipt.operations.length&&!receipt.humanDecisions.length)return null;
    const id=`${goalId}:host-receipt:${createHash('sha256').update(JSON.stringify(receipt)).digest('hex').slice(0,24)}`;
@@ -180,7 +153,48 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    const recorded=require('./receipts').render(receipt);
    if(recorded&&goal.checkpoint.lifecycleStage==='verification')goal.answer=recorded;
    return present(h,receipt,{full:true});
+ }
+ return {
+  identity:Object.freeze({workspaceId:ctx.workspaceId,actorId:ctx.actorId,goalId,candidate}),
+  async approvalInbox(){return candidate==='codex'?notifyApprovals(await require('./approval-handoff').inbox(database,ctx,goalId)):null;},
+  async handoffApprovals(){return candidate==='codex'?notifyApprovals(await require('./approval-handoff').inbox(database,ctx,goalId,{pause:true,runToken})):null;},
+  async completed(){
+   // A committed completion survives loss of the SDK/process acknowledgement.
+   // This read needs no execution lease, but still binds tenant, actor, current
+   // permissions, candidate and the exact original request.
+   const goal=(await database.query(`SELECT * FROM ${TABLE} WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,goalId])).rows[0];
+   const h=goal?.checkpoint.harness;
+   if(goal?.status!=='COMPLETED'||h?.candidate!==candidate||!['host_verified_receipt','host_verified_answer'].includes(h.completionSource))return null;
+   const actor=(await database.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];
+   if(!actor||!h.authorityStamp||createHash('sha256').update(JSON.stringify(stable(actor))).digest('hex')!==h.authorityStamp)
+    throw new Error('SESSION_AUTHORITY_CHANGED');
+   await require('../../src/commercial/enforcement').workspace(database,ctx.workspaceId,'ask.lookup');
+   if(h.receipt?.requestHash!==require('./receipts').requestHash(goal))throw new Error('COMPLETION_REQUEST_MISMATCH');
+   return {answer:goal.answer,completionSource:h.completionSource,checkedAt:h.receipt.checkedAt};
+  },
+  async load(){return authorizedUpdate(loadSnapshot);},
+  async prepareContext(){return authorizedUpdate(async(h,goal,client,access)=>{
+   // One initialization boundary owns the current catalogue, environment and
+   // durable navigation/receipt observations. They grant no later authority;
+   // every model, tool and business boundary still performs its fresh checks.
+   const resumed=Boolean(h.native?.codex?.threadId);
+   const initialContracts=resumed?null:require('./gateway').initialContractsSnapshot(access.catalogue,access.actor);
+   const executionState=resumed?await executionSnapshot(h,goal,client,access):null;
+   const initialNavigation=resumed?null:await navigationSnapshot(h,goal,client,access);
+   const saved=await loadSnapshot(h,goal,client,access);
+   return {saved,initialView:null,initialContracts,executionState,initialNavigation};
   },{catalogue:true});},
+  async checkpoint(native){
+   if(candidate!=='codex')return authorizedUpdate(h=>{h.native={...h.native,...native};});
+   // Native persistence is host bookkeeping, not a new grant to read records,
+   // call a model or execute an operation. Keep the lease, tenant and fresh
+   // actor stamp in this transaction; those effect boundaries still perform
+   // their own complete commercial/authority admission. This also lets the
+   // SDK save its settled state if the spending lock changes mid-response.
+   return nativeTransport('native',{native},()=>checkpointUpdate(h=>{h.native={...h.native,...native};}));
+  },
+  async navigationContext(){return authorizedUpdate(navigationSnapshot,{catalogue:true});},
+  async executionState(){return authorizedUpdate(executionSnapshot,{catalogue:true});},
   async promoteReasoning(request){return authorizedUpdate((h,goal)=>{
    if(candidate!=='codex'||h.pendingReport?.status!=='needs_reasoning')throw Error('INVALID_MODEL_TIER_HANDOFF');
    const routing=require('../../src/assistant/codex-model-routing').promote(goal,ctx,request);

@@ -61,6 +61,10 @@ async function prepareContext(options){
  const measure=async(phase,operation)=>{const at=Date.now();try{return await operation();}finally{
   options.audit?.({kind:'context_preparation_timing',phase,ms:Date.now()-at});
  }};
+ if(options.session.prepareContext){
+  const context=await measure('durable_context',()=>options.session.prepareContext());
+  const prepared={session:options.session,...context};preparedContexts.add(prepared);return prepared;
+ }
  const saved=await measure('durable_session',()=>options.session.load());
  const [initialContracts,executionState,initialNavigation]=await Promise.all([
   // Preserve the supplied page as navigation context. The native agent can
