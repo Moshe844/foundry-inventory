@@ -25,6 +25,8 @@ function operationSteps(steps,catalogue){
    const maxLength=FIELDS[field]?.maxLength||2000;
    if(typeof value!=='string'||value.length>maxLength)invalid(`${field} requires ${type==='string'?'a string':`a ${type} or its string representation`}, at most ${maxLength} characters. Objects, null and booleans are not accepted.`);
    if(['number','integer'].includes(type)&&value.trim()&&(!Number.isFinite(Number(value))||type==='integer'&&!Number.isSafeInteger(Number(value))))invalid(`${field} requires a finite ${type}.`);
+   const allowed=FIELDS[field]?.enum;
+   if(Array.isArray(allowed)&&!allowed.includes(value.trim()))invalid(`${field} must be one of: ${allowed.join(', ')}. No operation ran; correct this input using the discovered contract.`);
    return {name:field,value:value.trim()};
   });
   if(step.dependsOn.some(n=>!Number.isInteger(n)||n<0||n>=index))invalid(`Step ${index}: dependencies must refer to earlier steps.`);

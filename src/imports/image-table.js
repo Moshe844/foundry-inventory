@@ -51,8 +51,8 @@ async function readDarkTable(canvas,worker){
     for(const field of ['code','quantity','unitCost','sellingPrice']){
       const index=columnFields.indexOf(field);if(index<0)continue;
       const observed=bodyWords.filter(w=>nearest((w.bbox.x0+w.bbox.x1)/2)===index);
-      if(observed.length){
-        const left=Math.max(0,Math.min(...observed.map(w=>w.bbox.x0))-5),right=Math.min(body.width,Math.max(...observed.map(w=>w.bbox.x1))+5),column=createCanvas(right-left,body.height);
+      {
+        const left=Math.max(0,observed.length?Math.min(...observed.map(w=>w.bbox.x0))-5:Math.floor(index?(anchors[index-1]+anchors[index])/2:0)),right=Math.min(body.width,observed.length?Math.max(...observed.map(w=>w.bbox.x1))+5:Math.ceil(index+1<anchors.length?(anchors[index]+anchors[index+1])/2:body.width)),column=createCanvas(right-left,body.height);
         column.getContext('2d').drawImage(body,left,0,column.width,column.height,0,0,column.width,column.height);
         await worker.setParameters({tessedit_pageseg_mode:PSM.SINGLE_BLOCK,tessedit_char_whitelist:field==='code'?'':field==='quantity'?'0123456789,.-+':'0123456789,.-+$£€¥'});
         const reread=words(await worker.recognize(column.toBuffer('image/png'),{}, {blocks:true}));
@@ -64,10 +64,28 @@ async function readDarkTable(canvas,worker){
       const values=Array(cells.length).fill('');for(const word of row.words.sort((a,b)=>a.bbox.x0-b.bbox.x0)){
         const x=(word.bbox.x0+word.bbox.x1)/2,closest=nearest(x);
         values[closest]+=(values[closest]?' ':'')+word.text;
-      }for(const [index,evidence] of Object.entries(row.columnEvidence||{}))if(evidence.length)values[index]=evidence.map(w=>w.text).join(' ');return values;});
+      }row.originalValues=[...values];for(const [index,evidence] of Object.entries(row.columnEvidence||{}))if(evidence.length)values[index]=evidence.map(w=>w.text).join(' ');return values;});
+    const numeric=v=>String(v||'').replace(/[$£€¥,\s]/g,''),valid=v=>/^\d+(?:\.\d+)?$/.test(numeric(v));
+    for(const field of ['unitCost','sellingPrice']){
+      const index=columnFields.indexOf(field);if(index<0)continue;
+      const filled=grid.filter(v=>valid(v[index])),decimalColumn=filled.length>1&&filled.filter(v=>numeric(v[index]).includes('.')).length/filled.length>=.6;
+      for(let i=0;i<grid.length;i++){
+        const initial=grid[i][index],original=rows[i].originalValues[index];
+        if(!(decimalColumn&&valid(initial)&&!numeric(initial).includes('.')||valid(original)&&valid(initial)&&numeric(original)!==numeric(initial)))continue;
+        // An isolated high-resolution line provides independent evidence for
+        // lost punctuation. Disagreement still requires owner review; never
+        // manufacture a decimal from neighboring amounts or a selling price.
+        const left=Math.max(0,Math.floor(index?(anchors[index-1]+anchors[index])/2:0)),right=Math.min(body.width,Math.ceil(index+1<anchors.length?(anchors[index]+anchors[index+1])/2:body.width)),top=Math.max(0,Math.floor(rows[i].y-typical*.85)),height=Math.min(body.height-top,Math.ceil(typical*1.7)),cell=createCanvas((right-left)*2,height*2),cx=cell.getContext('2d');
+        cx.fillStyle='#fff';cx.fillRect(0,0,cell.width,cell.height);cx.drawImage(body,left,top,right-left,height,0,0,cell.width,cell.height);
+        await worker.setParameters({tessedit_pageseg_mode:PSM.SINGLE_LINE,tessedit_char_whitelist:'0123456789,.-+$£€¥'});
+        const reading=words(await worker.recognize(cell.toBuffer('image/png'),{}, {blocks:true})).map(w=>w.text).join(' ');
+        if(valid(reading))grid[i][index]=reading;
+        (rows[i].readingProblems||=[]).push({code:'image_money_uncertain',field,readings:[original,initial,reading].filter(Boolean),message:'The image has an uncertain '+(field==='unitCost'?'unit cost':'selling price')+'. Confirm the digits and decimal point against the original before approving.'});
+      }
+    }
     const table=parser.tabulate([cells.map(c=>c.text),...grid]);
-    if(codeColumn>=0)for(const row of table.rows){const evidence=rows[row.sourceRow-2]?.columnEvidence?.[codeColumn];
-      if(!row.cells[codeColumn]||evidence?.some(w=>w.confidence<60))row.problems=[{code:'image_identity_uncertain',message:'The image SKU needs confirmation against the original. StockChief will not invent or silently replace it.'}];}
+    for(const row of table.rows){const source=rows[row.sourceRow-2],evidence=source?.columnEvidence?.[codeColumn];row.problems=[...(source?.readingProblems||[])];
+      if(codeColumn>=0&&(!row.cells[codeColumn]||evidence?.some(w=>w.confidence<60)))row.problems.push({code:'image_identity_uncertain',message:'The image SKU needs confirmation against the original. StockChief will not invent or silently replace it.'});}
     return table;
   }
   return null;

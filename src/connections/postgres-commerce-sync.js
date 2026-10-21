@@ -89,7 +89,7 @@ async function prepare(db,ctx,c,args,options={}){
  return {payload,summary:`Synchronize ${sku[0].code} at ${loc[0].name} with ${c.display_name}: ${definitions.map(([f,m])=>f+' '+m).join(', ')}. Initial source: ${source}. Outbound quantity is costed, uncommitted sellable stock; provider count differences need physical confirmation. This authorizes future changes only for these exact matches, with conflicts held for review.`};
 }
 async function configureInTransaction(db,ctx,payload){
- const {integrity,...body}=payload;if(hash(body)!==integrity)throw new ValidationError('The synchronization proposal changed. Prepare it again.');
+ const {integrity,idempotencyKey:executionKey,...body}=payload;if(hash(body)!==integrity)throw new ValidationError('The synchronization proposal changed. Prepare it again.');
  const c=await connection(db,ctx,payload.recordId,{allowInactive:payload.positions.every(p=>p.mode==='off')});await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['provider-sync:'+c.id]);
  for(const p of payload.positions){
   if(p.workspace_id!==ctx.workspaceId||p.connector_id!==c.id||p.provider_account_id!==c.provider_account_id||!await mapped(db,p))throw new ValidationError('The approved channel account or mapping changed. Prepare synchronization again.');
@@ -229,25 +229,27 @@ async function prepareCount(db,ctx,c,args,options={}){
  const settings=(await db.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1 AND enabled=1',[ctx.workspaceId])).rows[0],postingDate=args.postingDate||new Date().toISOString().slice(0,10);
  if(!/^\d{4}-\d{2}-\d{2}$/.test(postingDate)||Number.isNaN(Date.parse(postingDate+'T00:00:00Z'))||new Date(postingDate+'T00:00:00Z').toISOString().slice(0,10)!==postingDate)throw new ValidationError('Choose a valid count posting date.');
  if(costMinor&&!settings)throw new ValidationError('Configure accounting before correcting valued inventory.');
- const payload={recordId:c.id,positionId:p.id,revision:p.revision,skuId:p.sku_id,locationId:p.location_id,local:l,providerValue:r.value,countedQuantity:counted,reason:String(args.reason).trim(),costMinor,postingDate,currency:settings?.base_currency||null,idempotencyKey:newId('channelcount')};payload.integrity=hash(payload);
+ const payload={recordId:c.id,positionId:p.id,revision:p.revision,skuId:p.sku_id,locationId:p.location_id,local:l,providerValue:r.value,countedQuantity:counted,reason:String(args.reason).trim(),costMinor,postingDate,currency:settings?.base_currency||null,countOperationKey:newId('channelcount')};payload.integrity=hash(payload);
  return {payload,summary:`Confirm the evidenced physical count for ${args.sku} at ${args.location}: ${l.physical} → ${counted} units. Evidence: ${payload.reason}. ${costMinor?'Record '+prices.formatMinor(costMinor,settings.base_currency)+' inventory count loss on '+postingDate+' using the existing weighted-average cost.':'No new inventory cost, supplier liability or payment is created.'} This is a physical count correction; it is not a sale, delivery or refund.`};
 }
 async function acceptCountInTransaction(db,ctx,payload){
- const {integrity,...body}=payload;if(hash(body)!==integrity)throw new ValidationError('The count correction changed. Prepare it again.');
+ const {integrity,idempotencyKey:executionKey,...body}=payload;if(hash(body)!==integrity)throw new ValidationError('The count correction changed. Prepare it again.');
+ const operationKey=payload.countOperationKey;
+ if(typeof operationKey!=='string'||!operationKey)throw new ValidationError('The count correction needs its frozen operation identity.');
  const currentConnection=await connection(db,ctx,payload.recordId);
- const prior=(await db.query("SELECT result FROM stockchief_runtime.business_operations WHERE workspace_id=$1 AND kind='inventory.adjust' AND idempotency_key=$2 AND status='COMPLETED'",[ctx.workspaceId,payload.idempotencyKey])).rows[0];
- if(prior){const journal=(await db.query('SELECT id FROM accounting_journal_entries WHERE workspace_id=$1 AND source_key=$2',[ctx.workspaceId,payload.idempotencyKey])).rows[0];return {...prior.result,positionId:payload.positionId,journalEntryId:journal?.id||null,verified:true,replayed:true};}
+ const prior=(await db.query("SELECT result FROM stockchief_runtime.business_operations WHERE workspace_id=$1 AND kind='inventory.adjust' AND idempotency_key=$2 AND status='COMPLETED'",[ctx.workspaceId,operationKey])).rows[0];
+ if(prior){const journal=(await db.query('SELECT id FROM accounting_journal_entries WHERE workspace_id=$1 AND source_key=$2',[ctx.workspaceId,operationKey])).rows[0];return {...prior.result,positionId:payload.positionId,journalEntryId:journal?.id||null,verified:true,replayed:true};}
  const p=(await db.query('SELECT * FROM connection_commerce_positions WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,payload.positionId])).rows[0];
  if(!p||p.connector_id!==payload.recordId||p.provider_account_id!==currentConnection.provider_account_id||p.revision!==payload.revision||p.pending_effect_id||!['inbound','two_way'].includes(p.mode)||!await mapped(db,p))throw new ValidationError('The count synchronization changed. Review a fresh correction.');
  const l=await local(db,p);if(!same(l,payload.local))throw new ValidationError('Stock, commitments or cost changed after this count was prepared. Review the new position.');
- const physical=await require('../domain/postgres-inventory-engine').adjustInTransaction(db,ctx,{skuId:p.sku_id,locationId:p.location_id,countedQuantity:payload.countedQuantity,reasonCode:'channel_physical_count',notes:payload.reason,reference:p.external_id,idempotencyKey:payload.idempotencyKey});
+ const physical=await require('../domain/postgres-inventory-engine').adjustInTransaction(db,ctx,{skuId:p.sku_id,locationId:p.location_id,countedQuantity:payload.countedQuantity,reasonCode:'channel_physical_count',notes:payload.reason,reference:p.external_id,idempotencyKey:operationKey});
  let journal=null;
  if(payload.countedQuantity<l.physical&&l.costed>0){
   const costing=require('../accounting/postgres-costing'),prepared=await costing.prepareIssueInTransaction(db,ctx,{movementId:physical.movementId});
   if(prepared.totalCostMinor!==payload.costMinor)throw new ValidationError('The inventory cost changed after this count was reviewed.');
   const setting=(await db.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1 AND enabled=1',[ctx.workspaceId])).rows[0];
   if(!setting||setting.base_currency!==payload.currency)throw new ValidationError('The accounting currency changed after count review.');
-  if(prepared.totalCostMinor)journal=await require('../accounting/postgres-ledger').postInTransaction(db,ctx,{sourceType:'channel_physical_count',sourceRecordId:physical.adjustmentId,sourceKey:payload.idempotencyKey,postingDate:payload.postingDate,currency:setting.base_currency,
+  if(prepared.totalCostMinor)journal=await require('../accounting/postgres-ledger').postInTransaction(db,ctx,{sourceType:'channel_physical_count',sourceRecordId:physical.adjustmentId,sourceKey:operationKey,postingDate:payload.postingDate,currency:setting.base_currency,
    description:'Confirmed channel physical count: '+payload.reason,lines:[{accountKey:'INVENTORY_ADJUSTMENTS',debitMinor:prepared.totalCostMinor,creditMinor:0},{accountKey:'INVENTORY_ASSET',debitMinor:0,creditMinor:prepared.totalCostMinor}]});
   await costing.commitIssueInTransaction(db,ctx,prepared,{journalEntryId:journal?.entry.id||null,sourceType:'channel_physical_count',sourceRecordId:physical.adjustmentId});
  }

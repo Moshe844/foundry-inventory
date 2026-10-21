@@ -25,7 +25,8 @@ test('shared channel policy governs prices, costed sellable quantities, conflict
  await assert.rejects(sync.prepare(db,{...ctx,actorId:'other'},c,{sku:'ORC-7',location:loc.id,priceSyncMode:'two_way'},{providers:registry}),/owner/);
  const prepared=await sync.prepare(db,ctx,c,{sku:'ORC-7',location:loc.id,priceSyncMode:'two_way',quantitySyncMode:'two_way'},{providers:registry});
  const stored=(await db.query('SELECT $1::jsonb AS payload',[JSON.stringify(prepared.payload)])).rows[0].payload;
- await db.transaction(tx=>sync.configureInTransaction(tx,ctx,stored));
+ const assistant=require('../../src/assistant/postgres-service'),proposal=await assistant.createProposal(db,ctx,'Authorize the reviewed fixture synchronization.','connection.commerce_sync',stored,prepared.summary);
+ const canonical=await assistant.executeProposal(db,ctx,proposal.proposal.id);assert.equal(canonical.status,'EXECUTED','policy approval uses the real canonical executor, including its execution idempotency key');
  assert.equal((await sync.list(db,ctx.workspaceId,id)).length,2);
  const duplicateId='con_'+randomUUID();
  await db.query(`INSERT INTO workspace_connectors(id,workspace_id,connector_key,display_name,provider_type,provider_account_id,status,capabilities,provides,config,setup_status,authorized_by_user_id,created_at,updated_at)
@@ -44,7 +45,7 @@ test('shared channel policy governs prices, costed sellable quantities, conflict
  remote.quantity=4;await cacheRemote();assert.equal((await db.transaction(tx=>sync.reconcile(tx,c))).conflicts,1);
  assert.equal((await db.query('SELECT count(*)::int n FROM movements WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,0,'provider count is not fabricated physical receipt');
  const count=await sync.prepareCount(db,ctx,c,{sku:'ORC-7',location:loc.id,countedQuantity:4,reason:'Owner confirmed the four physical test units'},{providers:registry});
- await db.transaction(tx=>sync.acceptCountInTransaction(tx,ctx,count.payload));
+ const countProposal=await assistant.createProposal(db,ctx,'Confirm the reviewed physical test count.','connection.confirm_count',count.payload,count.summary);assert.equal((await assistant.executeProposal(db,ctx,countProposal.proposal.id)).status,'EXECUTED');
  const quantity=(await db.query("SELECT * FROM connection_commerce_positions WHERE connector_id=$1 AND field='quantity'",[id])).rows[0];
  assert.equal((await sync.local(db,quantity)).value,0,'uncosted units are not published as sellable');
  assert.equal((await db.query('SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2',[ctx.workspaceId,sku])).rows[0].on_hand,'4');

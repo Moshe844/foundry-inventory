@@ -1,0 +1,14 @@
+'use strict';
+process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
+test('invalid enum input is corrected before operation admission and preserves the usable native session',{timeout:120000},async t=>{
+ const cluster=await require('../helpers/postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString);await require('../../src/db/migrate-postgres').migratePostgres(db);t.after(async()=>{await db.close();await cluster.stop();});
+ const owner=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'Owner',businessName:'Contract validation',email:randomUUID()+'@example.test',password:'Test!'+randomUUID()}),ctx={workspaceId:owner.workspaceId,actorId:owner.userId};await db.query("UPDATE account_subscriptions SET plan_id='growth',plan_version_id=NULL WHERE account_id=$1",[owner.accountId]);
+ const store=require('../../src/assistant/postgres-goal-store'),goal=await store.claim(db,ctx,(await store.create(db,ctx,'Review channel settings without business effects.')).id),gateway=require('../../scripts/environment-agent-demo/gateway').createGateway({database:db,ctx,goal:goal.original_request,goalId:goal.id,runToken:goal.run_token}),session=require('../../scripts/environment-agent-demo/session').createSession({database:db,ctx,goalId:goal.id,runToken:goal.run_token,candidate:'codex',authorize:s=>gateway.authorize(s)});
+ let dispatches=0;const wrapped={...gateway,operate:async input=>{dispatches++;return gateway.operate(input);}},tool=require('../../scripts/environment-agent-demo/candidates').sharedTools({gateway:wrapped,session,browser:{},sandbox:{}}).find(t=>t.name==='business_operations');
+ const invalid=await tool.execute({stepsJson:JSON.stringify([{capability:'connection.commerce_sync',arguments:[{name:'recordReference',value:'missing-record'},{name:'initialSyncSource',value:'external-platform-name'}],dependsOn:[]}])});
+ assert.equal(invalid.error.code,'TOOL_CONTRACT_INVALID');assert.equal(invalid.effectMayHaveOccurred,false);assert.match(invalid.error.message,/require_equal, stockchief, provider/);assert.equal(dispatches,0,'invalid contract values never enter canonical dispatch');
+ const state=await session.load();assert.equal(state.inflight,undefined);assert.equal((await store.get(db,ctx,goal.id)).status,'RUNNING','an input error is not an interrupted business effect');
+ const corrected=await tool.execute({stepsJson:JSON.stringify([{capability:'read.connections',arguments:[],dependsOn:[]}])});assert.equal(corrected.outcomes[0].result.status,'ANSWERED');assert.equal(dispatches,1);
+ assert.equal((await db.query('SELECT count(*)::int n FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,0);assert.equal((await db.query('SELECT count(*)::int n FROM movements WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,0);
+});

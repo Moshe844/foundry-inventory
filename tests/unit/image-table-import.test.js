@@ -15,6 +15,13 @@ test('clear inventory image becomes an OCR table without header rewriting', {tim
   assert.match(parsed.sheets[0].rows[1].cells.join(' '),/Wall Light.*LIGHT-20.*4/);
 });
 
+test('inconsistent image money punctuation requires review without manufacturing cents',{timeout:120000},async()=>{
+ const {createCanvas}=require('@napi-rs/canvas'),canvas=createCanvas(1300,500),c=canvas.getContext('2d');c.fillStyle='#fff';c.fillRect(0,0,1300,500);c.fillStyle='#173852';c.fillRect(0,30,1300,60);c.fillStyle='#fff';c.font='25px Arial';
+ for(const[x,s]of [[30,'SKU'],[350,'Product Name'],[800,'Quantity'],[1050,'Unit Cost']])c.fillText(s,x,70);
+ c.fillStyle='#172c40';for(const[i,row]of [['TRAY-41','Copper tray','2','$640'],['CUP-59','Ceramic cup','3','$8.25'],['BOWL-76','Stone bowl','4','$4.50']].entries())for(const[j,x]of [30,350,800,1050].entries())c.fillText(row[j],x,160+i*75);
+ const sheet=(await parse(canvas.toBuffer('image/png'))).sheets[0];assert.equal(sheet.rows.length,3);assert.equal(sheet.rows[0].cells[3].replace(/[$, ]/g,''),'640');assert(sheet.rows[0].problems.some(p=>p.code==='image_money_uncertain'&&p.field==='unitCost'),'mixed punctuation is a review question, never an invented decimal');
+});
+
 test('image parser refuses unsafe dimensions and other binary content',async()=>{
   const huge=Buffer.from(scannedTableImage());
   huge.writeUInt32BE(100000,16);

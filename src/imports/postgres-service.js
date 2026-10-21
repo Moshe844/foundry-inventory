@@ -114,8 +114,9 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     if(input.imageSource&&mappings.quantity!==undefined&&quantity===null)
       problems.push(problem('image_quantity_uncertain','Read and confirm the physical quantity from the image; a blank cell is not zero.'));
     if(!quantityRead.ok)problems.push(problem(quantityRead.problem,'Quantity must be a whole number of zero or more.'));
-    const costText=trimOrNull(textCell(row,mappings.unitCost));
-    const sellingText=trimOrNull(textCell(row,mappings.sellingPrice));
+    const moneyOverrides=input.moneyOverrides?.[row.sourceRow]||{};
+    const costText=trimOrNull(Object.hasOwn(moneyOverrides,'unitCost')?moneyOverrides.unitCost:textCell(row,mappings.unitCost));
+    const sellingText=trimOrNull(Object.hasOwn(moneyOverrides,'sellingPrice')?moneyOverrides.sellingPrice:textCell(row,mappings.sellingPrice));
     let sellingPriceMinor=null;
     if(sellingText){try{sellingPriceMinor=prices.toMinor(sellingText,'Selling price');}
       catch{problems.push(problem('bad_selling_price','Selling price must be a non-negative money amount.'));}}
@@ -508,6 +509,12 @@ async function revise(database,ctx,id,input={}){
       if(!/^\d+$/.test(number)||typeof value!=='string'||value.length>240||!(await client.query('SELECT 1 FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND row_number=$3',[ctx.workspaceId,id,number])).rows.length)throw new ValidationError('Choose an actual image row and a valid SKU correction.');
       codeOverrides[number]=value.trim();
     }
+    const moneyOverrides=mappingChanged?{}:{...(plan.transformations.moneyOverrides||{})};
+    if(input.moneyOverrides!==undefined&&plan.sourceKind!=='image')throw new ValidationError('Image money corrections belong to an image preview.');
+    for(const [number,values] of Object.entries(input.moneyOverrides||{})){
+      if(!/^\d+$/.test(number)||!values||typeof values!=='object'||Array.isArray(values)||Object.keys(values).some(k=>!['unitCost','sellingPrice'].includes(k)||fieldMappings[k]===undefined)||Object.values(values).some(v=>typeof v!=='string'||v.length>80)||!(await client.query('SELECT 1 FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND row_number=$3',[ctx.workspaceId,id,number])).rows.length)throw new ValidationError('Choose an actual image row and a valid money correction.');
+      moneyOverrides[number]={...(moneyOverrides[number]||{}),...values};
+    }
     const imageReadingConfirmed=plan.sourceKind==='image'&&(input.confirmImageReading===true||!mappingChanged&&plan.transformations.imageReadingConfirmed===true);
     const quantityOverrides=mappingChanged?{}:{...(plan.transformations.quantityOverrides||{})};
     for(const [number,value] of Object.entries(input.quantityOverrides||{})){
@@ -551,7 +558,7 @@ async function revise(database,ctx,id,input={}){
     const confirmCatalogOnly=fieldMappings.quantity===undefined&&input.confirmCatalogOnly===true;
     const revised={...plan,fieldMappings,detectedType,locationMappings,defaultLocationId,
       transformations:{...plan.transformations,axisNames,quantityOverrides,
-        ...(plan.sourceKind==='image'?{codeOverrides,imageReadingConfirmed,imageReadingConfirmedBy:imageReadingConfirmed?ctx.actorId:null}:{}),
+        ...(plan.sourceKind==='image'?{codeOverrides,moneyOverrides,imageReadingConfirmed,imageReadingConfirmedBy:imageReadingConfirmed?ctx.actorId:null}:{}),
         ...(trackingReview?{trackingReview}:{}),
         unmappedNumericColumns:unmappedNumeric,confirmCatalogOnly,proposedLocations},
       planVersion:plan.planVersion+1};
@@ -561,9 +568,9 @@ async function revise(database,ctx,id,input={}){
     for(;;){
       const current=(await client.query(`SELECT * FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND (row_number,id)>($3::bigint,$4::text) ORDER BY row_number,id LIMIT 500 FOR UPDATE`,[ctx.workspaceId,id,lastRow,lastId])).rows.map(hydrateRow);
       if(!current.length)break;
-      const validated=validateRows({columns:plan.sourceColumns,rows:current.map(row=>({cells:row.raw,sourceRow:row.rowNumber,problems:plan.sourceKind==='image'&&!imageReadingConfirmed?row.problems.filter(p=>p.code==='image_identity_uncertain'):[]}))},fieldMappings,
+        const validated=validateRows({columns:plan.sourceColumns,rows:current.map(row=>({cells:row.raw,sourceRow:row.rowNumber,problems:plan.sourceKind==='image'&&!imageReadingConfirmed?row.problems.filter(p=>['image_identity_uncertain','image_money_uncertain'].includes(p.code)):[]}))},fieldMappings,
         {detectedType,axisNames,variantColumns:plan.transformations.variantColumns,provenanceIndex:plan.transformations.provenanceIndex,problemsIndex:plan.transformations.problemsIndex,trackingReview},plannedLocations.withProposals(context,proposedLocations),
-          {defaultLocationId,locationMappings,quantityOverrides,codeOverrides,imageSource:plan.sourceKind==='image'});
+          {defaultLocationId,locationMappings,quantityOverrides,codeOverrides,moneyOverrides,imageSource:plan.sourceKind==='image'});
       for(const row of validated.rows)hash.append(row);
       trackingSummary?.add(validated.rows);
       for(const key of Object.keys(summary))summary[key]+=validated.summary[key];
