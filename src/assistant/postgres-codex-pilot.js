@@ -137,6 +137,25 @@ async function continuationState(client,ctx,row){
   const state=await require('../../scripts/environment-agent-demo/waits').current(client,ctx,id,dependencies);
   if(state==='BLOCKED')throw new ValidationError('A recorded dependency still needs attention before this request can continue.');
   if(state==='READY'&&h.failure?.code==='REQUEST_REFUSED')throw new ValidationError('This request was declined. Start a new request with work you are authorized to perform.');
+  if(state==='READY'&&h.interruption?.limitKind==='goal_cost'){
+   // Preserve free verification and canonical approval/event recovery. A
+   // previously denied paid step is different: do not offer the same futile
+   // Continue while its exact reservation still exceeds this goal's balance.
+   let freeVerification=false;
+   try{const saved=require('../../scripts/environment-agent-demo/codex-runtime').savedFinal(h,
+     {profile:require('./codex-model-routing').selected(row,ctx),messages:row.checkpoint.messages||[]});
+    if(saved){const check=require('./native-answer-review').checked(row,saved);freeVerification=!check.required||check.verified;}
+   }catch{/* An invalid or unreviewed saved report cannot bypass the allowance. */}
+   if(!freeVerification){
+    const denied=(await client.query(`SELECT reserved FROM stockchief_runtime.codex_pilot_calls
+     WHERE workspace_id=$1 AND actor_id=$2 AND goal_id=$3 AND state='SETTLED' AND charged=0
+      AND detail->>'reason'='rate_limited' AND detail->>'upstreamAttempted'='false'
+     ORDER BY created_at DESC,id DESC LIMIT 1`,[ctx.workspaceId,ctx.actorId,id])).rows[0];
+    if(denied&&await require('../../scripts/environment-agent-demo/commercial').createCommercialAccounting(client)
+      .goalRemainingMicroUsd({ctx,goalId:id})<Number(denied.reserved))
+     throw new ValidationError('This request’s remaining allowance cannot cover its next step. Recorded work is saved. An allowance change requires authorization; nothing will retry automatically.');
+   }
+  }
   return state;
 }
 async function continuation(db,ctx,id){return db.transaction(async client=>{
