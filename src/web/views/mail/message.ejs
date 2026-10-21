@@ -9,7 +9,9 @@
   var productionMail = typeof productionMail !== 'undefined' && productionMail;
   var allowReplyChanges = !productionMail || Boolean(locals.canWriteReply);
   var sending = m.outbox_status === 'PENDING' || m.outbox_status === 'SENDING';
-  var badge = sending ? 'info' : { NEEDS_REPLY: 'warn', WAITING: 'info', HANDLED: 'ok' }[m.reply_state];
+  var attachmentOnlyReplyState = productionMail && attachments.length > 0 && m.reply_state === 'HANDLED' && !m.decidedByPerson && !m.reply_sent_at && !sending && m.outbox_status !== 'AMBIGUOUS';
+  var visibleReplyState = attachmentOnlyReplyState ? 'No reply requested' : m.stateWords;
+  var badge = sending || attachmentOnlyReplyState ? 'info' : { NEEDS_REPLY: 'warn', WAITING: 'info', HANDLED: 'ok' }[m.reply_state];
 %>
 <div class="breadcrumb">
   <a href="/mail">Mail</a>
@@ -19,7 +21,7 @@
 <% if(typeof productionMail!=='undefined'&&productionMail&&message.native_review_goal_id){ %><section class="card"><div class="card-body"><h2>StockChief’s document review</h2><p>This supplier document has a saved agent request under your existing authority. Open it for its current status, required approvals and verified outcomes.</p><a class="btn" href="/ask?goal=<%= message.native_review_goal_id %>#focused-goal">Open this review</a></div></section><% }else if(typeof productionMail!=='undefined'&&productionMail&&message.native_review_state==='NEEDS_REVIEW'){ %><div class="notice notice--warn"><strong>This document needs attention</strong><p><%= message.native_review_reason %></p></div><% } %>
 <div class="page-head">
   <div>
-    <h1><%= m.subject || 'No subject' %> <span class="badge badge--<%= badge %>"><%= m.stateWords %></span></h1>
+    <h1><%= m.subject || 'No subject' %> <span class="badge badge--<%= badge %>"><%= visibleReplyState %></span></h1>
     <p class="page-sub">
       From <%= m.sender %><% if (m.supplier_name) { %> · <%= m.supplier_name %><% } %>
       · <%= helpers.dateTime(m.received_at) %>
@@ -33,8 +35,8 @@
 
 <div class="notice notice--<%= m.reply_state === 'NEEDS_REPLY' && !sending ? 'warn' : 'info' %>">
   <div>
-    <strong><%= sending ? 'StockChief is sending your approved reply.' : m.decidedByPerson ? 'You put this in ' + m.stateWords.toLowerCase() + '.' : m.stateWords + '.' %></strong><br>
-    <%= sending ? 'No second reply or manual filing is needed. The conversation will move to Waiting on them after provider verification.' : m.reply_reason %>
+    <strong><%= sending ? 'StockChief is sending your approved reply.' : m.decidedByPerson ? 'You put this in ' + m.stateWords.toLowerCase() + '.' : visibleReplyState + '.' %></strong><br>
+    <%= sending ? 'No second reply or manual filing is needed. The conversation will move to Waiting on them after provider verification.' : attachmentOnlyReplyState ? 'StockChief received the attachments. Check their reading status and any document review below.' : m.reply_reason %>
   </div>
 </div>
 
@@ -138,6 +140,7 @@
   </section>
 <% } %>
 
+<% if(productionMail){ %><p><a class="btn btn--ghost" href="/ask?from=<%= encodeURIComponent('/mail/'+m.id) %>">Review with Ask StockChief</a></p><% } %>
 <section class="section" id="reply">
   <div class="panel">
     <div class="panel-head">
@@ -264,9 +267,6 @@
             </button>
           <% } %>
         <% }) %>
-        <% if (!m.decidedByPerson) { %>
-          <button class="btn btn--ghost" type="submit" name="state" value="RETHINK">Ask StockChief to look again</button>
-        <% } %>
       </div>
     </form>
   </div>

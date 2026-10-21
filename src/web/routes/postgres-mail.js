@@ -81,9 +81,9 @@ function createPostgresMailRouter(database,options={}){
   }));
   router.post('/mail/:id/state',requirePermission(permissions.OPERATE,'sort the mailbox'),asyncRoute(async(req,res)=>{
     const state=req.body.state==='RETHINK'?'NEEDS_REPLY':req.body.state;
-    const reason=req.body.state==='RETHINK'?'Asked StockChief to review this conversation again.':req.body.reason;
+    const reason=req.body.state==='RETHINK'?'Marked as needing another reply review.':req.body.reason;
     await mail.setState(database,req.ctx,req.params.id,state,reason);
-    req.flash('success',req.body.state==='RETHINK'?'Marked for another review. No business action was invented.':'Mailbox state updated.');
+    req.flash('success',req.body.state==='RETHINK'?'Marked as needing a reply.':'Mailbox state updated.');
     return res.redirect(303,trimOrNull(req.body.returnTo)||`/mail/${req.params.id}`);
   }));
   router.post('/mail/:id/draft',requirePermission(permissions.OPERATE,'write replies'),asyncRoute(async(req,res)=>{
