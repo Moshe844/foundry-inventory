@@ -57,7 +57,7 @@ function classify({report,answer,verified,current='READY',canonicalVerified=true
 }
 const labels={queued:'Waiting to start',working:'Working on your request',clarification:'Let’s clarify',approval:'Ready for your approval',
  external_wait:'Waiting for confirmation',navigation:'Ready to open in your browser',verification:'Finishing remaining work',completed:'Completed',
- interrupted:'Work paused',goal_limit:'Request allowance reached',funding:'Paid work paused',capacity:'Daily work limit reached',service_wait:'AI service temporarily unavailable',usage_review:'Checking interrupted AI work',refused:'Request declined',failed:'Could not finish',cancelled:'Stopped'};
+ interrupted:'Work paused',goal_limit:'Request allowance reached',funding:'Paid work paused',capacity:'Daily work limit reached',service_wait:'AI service temporarily unavailable',usage_review:'AI work paused for review',refused:'Request declined',failed:'Could not finish',cancelled:'Stopped'};
 const lifecycleMessages=Object.freeze({
  external_wait:'StockChief is waiting for confirmation of the authorized work. No further approval is needed at this stage.',
  verification:'The authorized work is recorded. I’m checking the complete result.'
@@ -88,7 +88,7 @@ function state(goal){
  const usageMessage='An AI request lost its confirmation. Your goal and recorded work are saved. Paid work is paused while its usage is checked; no automatic retry will run.';
  const goalLimitMessage='This request reached its work or spending allowance before all remaining work was verified. Recorded operations are saved. No automatic retry will run, and completed operations must not be repeated.';
  const partial=['partial_verified_receipt','partial_observation_report'].includes(h.completionSource)?publicText(goal.answer,''):'';
- return ConversationState.parse({version:1,goalId:goal.id,phase,label:labels[phase],active:!['completed','refused','failed','cancelled','interrupted','goal_limit','funding','capacity','service_wait','usage_review'].includes(phase),
+ return ConversationState.parse({version:1,goalId:goal.id,phase,label:phase==='funding'&&h.interruption?.code==='SHARED_SPENDING_CEILING'?'Spending limit reached':labels[phase],active:!['completed','refused','failed','cancelled','interrupted','goal_limit','funding','capacity','service_wait','usage_review'].includes(phase),
   // A durable external wait is canonical lifecycle state, not an approval
   // request or a model answer. Older rows may still carry the prior approval
   // text; render the current phase safely without editing native evidence.
