@@ -82,6 +82,12 @@ test('scheduled provider checks, browser controls, backoff and tenant authority 
   const replayed=await runtime['provider.catalog-sync']({...job,id:crypto.randomUUID()},db);
   assert.equal(replayed.imported.openingUnits,0);assert.equal(replayed.imported.products,0);
   assert.deepEqual((await db.query('SELECT count(*)::int AS n,COALESCE(sum(quantity_delta),0)::int AS units FROM movements WHERE workspace_id=$1',[ctx.workspaceId])).rows[0],movements,'repeated provider snapshots cannot duplicate stock');
+  await page.reload();const importedTable=page.getByRole('table',{name:'Imported products · latest provider observations'});
+  assert.equal(await importedTable.getByRole('row').count(),3);
+  assert.match(await importedTable.innerText(),/Cobalt pack[\s\S]*Not reported/);
+  assert.match(await importedTable.innerText(),/Amber pack[\s\S]*\$0\.00/);
+  await page.waitForFunction(()=>document.querySelector('[data-sync-last]')?.textContent.includes('UTC')||
+    /[A-Z]{2,5}$/.test(document.querySelector('[data-sync-last]')?.textContent||''));
   await db.query("UPDATE workspace_connectors SET config='{}' WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,id]);
   await assert.rejects(require('../../src/connections/postgres-catalog-import').createLocation(db,ctx,id,
     {externalId:'annex',automatic:true}),/Automatic import authority changed/,'already prepared automatic work must recheck current owner authority');

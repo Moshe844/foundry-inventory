@@ -139,11 +139,28 @@ async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null,ob
       }
       const elements=[...new Set([...headingGroups,...document.querySelectorAll(
         'main,form,table,tr,section,article,fieldset,details,dialog,[role="dialog"],[role="main"],[role="region"],[role="row"],[role="group"]')])];
+      // A complete paragraph is an independently displayed statement. Give it
+      // a host-owned DOM/heading identity so a clock or newly visible link in
+      // another region cannot invalidate it. This records whole statements,
+      // never model-selected words, numbers or application-specific selectors.
+      const statements=Array.from(document.querySelectorAll('main p,[role="main"] p')).filter(element=>
+        element.getClientRects().length&&getComputedStyle(element).visibility!=='hidden'&&
+        !element.querySelector('input,select,textarea,button,[contenteditable="true"]')).slice(0,100).map(element=>{
+        const path=[],headings=[];let node=element;
+        for(let depth=0;node&&depth<16;depth++,node=node.parentElement){
+          const tag=node.tagName.toLowerCase(),siblings=node.parentElement?Array.from(node.parentElement.children).filter(child=>child.tagName===node.tagName):[node];
+          path.unshift([tag,node.id||null,siblings.indexOf(node)]);
+          const heading=node.querySelector(':scope > h1,:scope > h2,:scope > h3,:scope > h4,:scope > header > h1,:scope > header > h2,:scope > [role="heading"]');
+          if(heading&&heading!==element)headings.unshift(heading.innerText);
+          if(tag==='main'||node.getAttribute('role')==='main')break;
+        }
+        return {tag:'p',kind:'statement',identity:JSON.stringify({path,headings}),text:element.innerText};
+      });
       return {text:document.body.innerText,openDisclosures:Array.from(document.querySelectorAll('details[open]'))
         .map(element=>element.querySelector(':scope > summary')?.textContent?.replace(/\s+/g,' ').trim()).filter(Boolean),regions:elements
         .filter(element=>element.getClientRects().length&&getComputedStyle(element).visibility!=='hidden').slice(0,80)
         .map(element=>({tag:element.tagName.toLowerCase(),role:element.getAttribute('role'),
-          ...(headingGroups.has(element)?{kind:'heading_container'}:{}),text:element.innerText})).filter(region=>region.text.length<=18000)};
+          ...(headingGroups.has(element)?{kind:'heading_container'}:{}),text:element.innerText})).concat(statements).filter(region=>region.text.length<=18000)};
     });
     const text=snapshot.text,visibleText=text.slice(textOffset,textOffset+18000);
     // Address actual visible lines directly. A claim about one fact should
@@ -154,12 +171,13 @@ async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null,ob
     // they confer no permission and contain no interaction capabilities.
     const lines=Object.values(textBlocks),textRegions=[];
     for(const region of snapshot.regions){
-      const content=region.text.split(/\r?\n/).map(line=>line.trim()).filter(Boolean);if(content.length<2)continue;
+      const content=region.text.split(/\r?\n/).map(line=>line.trim()).filter(Boolean);if(content.length<(region.kind==='statement'?1:2))continue;
       const matches=[];
       for(let start=0;start+content.length<=lines.length;start++)if(content.every((line,index)=>line===lines[start+index])){
         matches.push(start);if(matches.length>1)break;
       }
       if(matches.length===1)textRegions.push({firstLine:matches[0],count:content.length,tag:region.tag,...(region.role?{role:region.role}:{}),...(region.kind?{kind:region.kind}:{}),
+        ...(region.identity?{identity:createHash('sha256').update(region.identity).digest('hex')}:{}),
         sha256:createHash('sha256').update(JSON.stringify(content)).digest('hex')});
     }
     return {url:page.url(),title:await page.title(),text:visibleText,textBlocks,textRegions,

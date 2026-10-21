@@ -16,8 +16,8 @@ function describe(connection,adapter,now=Date.now()){
   const mode=disabled?'off':connection.paused_at?'paused':connection.status!=='connected'?'disconnected':'active';
   const lastCheckAt=connection.last_synced_at||null;
   const cooldownAt=Date.parse(config.syncRetryAt||'');
-  const dueAt=Math.max(Date.parse(lastCheckAt||connection.created_at)||now,
-    0)+effectiveMinutes*60_000;
+  const intervalMs=effectiveMinutes*60_000;
+  const dueAt=(Math.floor((Date.parse(lastCheckAt||connection.created_at)||now)/intervalMs)+1)*intervalMs;
   return {supported,mode,requestedMinutes,effectiveMinutes,minimumMinutes,lastCheckAt,
     nextCheckAt:supported&&mode==='active'?new Date(Math.max(dueAt,Number.isFinite(cooldownAt)?cooldownAt:0)).toISOString():null,
     retryAt:Number.isFinite(cooldownAt)&&cooldownAt>now?new Date(cooldownAt).toISOString():null,

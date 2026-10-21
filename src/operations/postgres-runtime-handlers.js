@@ -271,7 +271,7 @@ async function runtimeSweep(job,client,options={}){
       if(config.commercial.requirePaidWorkspace){const access=await entitlements.operationalAccessForWorkspace(
         scopedDatabase(client),connector.workspace_id,{now:at});if(!access.access.canOperate)continue;}
       const intervalMs=syncPolicy.effectiveMinutes*60_000;
-      const due=Date.parse(connector.last_synced_at||connector.created_at)+intervalMs<=now;
+      const due=Math.floor(Date.parse(connector.last_synced_at||connector.created_at)/intervalMs)<Math.floor(now/intervalMs);
       const active=await client.query(`SELECT 1 FROM stockchief_runtime.jobs WHERE workspace_id=$1
         AND kind='provider.catalog-sync' AND payload->>'connectorId'=$2 AND status IN ('PENDING','RUNNING','RETRY') LIMIT 1`,
       [connector.workspace_id,connector.id]);
@@ -296,7 +296,7 @@ async function runtimeSweep(job,client,options={}){
         if(renewal.created)scheduledMailboxRenewals+=1;
       }
       const intervalMs=Number(connector.expected_interval_minutes)*60_000;
-      const due=Date.parse(connector.last_synced_at||connector.created_at)+intervalMs<=now;
+      const due=Math.floor(Date.parse(connector.last_synced_at||connector.created_at)/intervalMs)<Math.floor(now/intervalMs);
       const active=await client.query(`SELECT 1 FROM stockchief_runtime.jobs WHERE workspace_id=$1
         AND kind='mailbox.poll' AND payload->>'connectorId'=$2 AND status IN ('PENDING','RUNNING','RETRY') LIMIT 1`,
       [connector.workspace_id,connector.id]);

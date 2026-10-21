@@ -11,6 +11,11 @@
     <ul><% quantityNotes.forEach(function(row){ %><li><%= row.display_name %>: <%= row.data.inventoryCountNote %></li><% }); %></ul></div></div>
   <% } %>
   <% if(!unlinked.length){ %><p class="notice notice--success">All current physical products and locations are matched or explicitly excluded.</p><% } %>
+  <% const matched=catalogueReview.rows.filter(r=>r.entity_type==='sku'&&r.foundry_record_id); if(matched.length){ %>
+   <div class="table-scroll"><table class="table"><caption>Imported products · latest provider observations</caption><thead><tr><th scope="col">Product</th><th scope="col">Provider selling price</th><th scope="col">Provider stock</th></tr></thead><tbody>
+    <% matched.slice(0,25).forEach(function(row){ const data=row.data; %><tr><th scope="row"><%= row.display_name %></th><td><%= data.priceMoney?helpers.money(data.priceMoney.amount,data.priceMoney.currency):'Not supplied' %></td><td><%= data.inventoryCounts?.length?data.inventoryCounts.reduce((sum,count)=>sum+Number(count.quantity||0),0):'Not reported' %></td></tr><% }); %>
+   </tbody></table></div><p class="hint">Showing <%= Math.min(matched.length,25) %> of <%= matched.length %> matched variants. Provider observations do not reset StockChief quantities or overwrite a price changed in StockChief.</p><a class="btn" href="/inventory/table">Open inventory</a>
+  <% } %>
   <% if(places.length){ %><h3>1. Match locations</h3><p>Each provider location stays separate. Matching a location never moves stock.</p>
    <% places.forEach(function(row){ %><div class="card" data-external-location="<%= row.external_id %>"><div class="card-body grid"><strong><%= row.display_name %></strong>
     <% if(row.exclusion){ %><p><%= row.exclusion %></p><% } else if(currentUser.role==='owner'){ %>

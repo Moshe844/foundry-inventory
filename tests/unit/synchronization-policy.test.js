@@ -6,6 +6,8 @@ test('provider cadence retains requested timing, respects off and Xero allowance
  const result=policy.describe(row,{discover(){}},now);
  assert.equal(result.requestedMinutes,1);assert.equal(result.effectiveMinutes,5);assert.equal(result.lastCheckAt,null);
  assert.equal(result.nextCheckAt,'2026-10-21T15:05:00.000Z');
+ assert.equal(policy.describe({...row,provider_type:'clover',last_synced_at:'2026-10-21T15:00:09.000Z'},{discover(){}},now).nextCheckAt,
+   '2026-10-21T15:01:00.000Z','finishing seconds after a scheduler tick must not defer the next check by another minute');
  assert.equal(policy.describe({...row,config:'{"syncDisabled":true}'},{discover(){}},now).nextCheckAt,null);
  assert.equal(policy.describe({...row,paused_at:row.created_at},{discover(){}},now).mode,'paused');
  assert.equal(policy.describe({...row,status:'disconnected'},{discover(){}},now).mode,'disconnected');
