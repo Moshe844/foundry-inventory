@@ -90,7 +90,13 @@ function createPostgresProviderWebhooks(database,options={}){
     try{
       const rawBody=Buffer.isBuffer(req.body)?req.body:Buffer.from(String(req.body||''),'utf8');
       const body=parseBody(rawBody);
-      if(body.verificationCode)return res.status(200).json({verificationCode:body.verificationCode});
+      if(Object.hasOwn(body,'verificationCode')){
+        if(Object.keys(body).length!==1)return res.status(400).json({error:{code:'invalid_verification_challenge',
+          message:'Webhook verification must not include business events.'}});
+        await require('../../connections/postgres-webhook-verification').retain(database,{provider:'clover',
+          appId:config.connections.clover.clientId,environment:config.connections.clover.environment,code:body.verificationCode});
+        return res.status(200).json({verificationCode:body.verificationCode});
+      }
       const adapter=providers.get('clover');
       if(!adapter?.verifyWebhook||!adapter?.normalizeWebhook)return res.status(503).json({error:{code:'provider_unavailable',
         message:'Clover webhook handling is not configured.'}});

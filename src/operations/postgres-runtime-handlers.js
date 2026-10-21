@@ -172,7 +172,9 @@ async function runtimeSweep(job,client,options={}){
       jsonb_build_object('workspaceId',workspace_id,'usageKey',idempotency_key,'reservationRetained',true)
     FROM commercial_usage_events WHERE status='RESERVED' AND occurred_at<$1::timestamptz-interval '30 minutes'
     ON CONFLICT(fingerprint) DO NOTHING`,[at]);
-  const sessions=await client.query('DELETE FROM stockchief_runtime.sessions WHERE expires_at <= $1 RETURNING sid',[now]);
+  const sessions=await client.query(`WITH expired_webhook_challenges AS
+    (DELETE FROM stockchief_runtime.provider_webhook_challenges WHERE expires_at <= $1)
+    DELETE FROM stockchief_runtime.sessions WHERE expires_at <= $1 RETURNING sid`,[now]);
   const suspendedSubscriptions=await client.query(`UPDATE account_subscriptions SET status='SUSPENDED',updated_at=now()
     WHERE (status='GRACE' AND grace_ends_at IS NOT NULL AND grace_ends_at<=now())
       OR (status='TRIALING' AND trial_ends_at IS NOT NULL AND trial_ends_at<=now())
