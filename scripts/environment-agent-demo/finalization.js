@@ -25,10 +25,11 @@ class ResponseState{
    if(event.type==='response.refusal.delta'&&event.delta?.trim())this.visible=true;
    this.block(event.item);
    const response=event.response||event;
-   if(response.object==='response'||['response.completed','response.incomplete'].includes(event.type)){
+   if(response.object==='response'||['response.completed','response.incomplete','response.failed'].includes(event.type)){
     for(const item of response.output||[]){this.block(item);for(const b of item.content||[])this.block(b);}
     if(['completed','incomplete','failed'].includes(response.status)){
      this.terminal=true;this.reason=response.incomplete_details?.reason||response.status;
+     if(response.status==='failed')this.failed=true;
     }
    }
   }else{
@@ -43,7 +44,7 @@ class ResponseState{
   }
  }
  result(){return {terminal:this.terminal,visible:this.visible,tool:this.tool,stopReason:this.reason,
-  empty:this.terminal&&!this.visible&&!this.tool};}
+  empty:this.terminal&&!this.visible&&!this.tool,...(this.failed?{failed:true}:{})};}
 }
 const EMPTY_MESSAGE='The provider ended without a visible final answer. Its usage was recorded. No automatic paid continuation is allowed; StockChief will verify existing evidence and report the result or the remaining gap.';
 module.exports={request,INSTRUCTION,ResponseState,EMPTY_MESSAGE};

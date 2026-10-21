@@ -15,7 +15,7 @@ test('native progress-display beta is normalized and encrypted thinking receives
  const encrypted=wire.normalize('openai',{model:wire.MODELS.openai,input:[{type:'reasoning',encrypted_content:'opaque',summary:[]}]});
  assert.ok(encrypted.inputTokens>=open.inputTokens+3000);
 });
-async function setup(t,{upstream,commercialOverrides={},ceiling=10000000,allowedProviders}={}){
+async function setup(t,{upstream,commercialOverrides={},ceiling=10000000,allowedProviders,provider='anthropic'}={}){
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'stockchief-relay-'));const filename=path.join(dir,'budget.sqlite');
  const budget=new ExperimentBudget(filename,'offline');
  budget.approve({ceilingMicroUsd:ceiling,approvalReference:'LOCAL FAKE PROVIDER TEST ONLY',expiresAt:new Date(Date.now()+60000).toISOString()});
@@ -25,12 +25,12 @@ async function setup(t,{upstream,commercialOverrides={},ceiling=10000000,allowed
  const relay=await createRelay({budget,credentials:{anthropic:'FAKE_SECRET_NEVER_NETWORKED',openai:'FAKE_SECRET'},commercial,allowedProviders,
   fetchImpl:async(url,options)=>{calls++;assert.ok(budget.status().unresolved);assert.equal(options.redirect,'error');
    events.push('upstream');return upstream?upstream(url,options):Response.json({type:'message',usage:{input_tokens:100,output_tokens:30},content:[]});}});
- const transport=relay.grant({candidate:'claude',task:'offline',provider:'anthropic',authorize:async()=>events.push('authority'),
+ const transport=relay.grant({candidate:provider==='openai'?'openai':'claude',task:'offline',provider,authorize:async()=>events.push('authority'),
   fundingKey:'funded',goalId:'goal',ctx:{workspaceId:'workspace',actorId:'actor'}});
  t.after(async()=>{await relay.close();budget.close();fs.rmSync(dir,{recursive:true,force:true});});
- const call=(body=request,token=transport.token)=>fetch(transport.anthropicBaseURL+'/v1/messages',{
+ const call=(body=request,token=transport.token)=>fetch(provider==='openai'?transport.openaiBaseURL+'/responses':transport.anthropicBaseURL+'/v1/messages',{
   method:'POST',headers:{'x-api-key':token,'content-type':'application/json'},body:JSON.stringify(body)});
- return {budget,events,call,calls:()=>calls,filename};
+ return {budget,events,call,calls:()=>calls,filename,transport};
 }
 test('relay settles before releasing output, includes retries, and persists across reopen',async t=>{
  const s=await setup(t);assert.equal((await s.call()).status,200);assert.equal((await s.call()).status,200);
@@ -81,4 +81,15 @@ test('stream parser handles split UTF-8, cache creation durations, and missing t
 test('usage exceeding its token reservation stops the experiment, without releasing output',async t=>{
  const s=await setup(t,{upstream:async()=>Response.json({type:'message',usage:{input_tokens:999999,output_tokens:30}})});
  assert.equal((await s.call()).status,403);assert.equal(s.budget.status().stopped,1);assert.equal(s.budget.status().unresolved,1);
+});
+
+test('failed OpenAI responses retain verified usage but never become successful output',async t=>{
+ const s=await setup(t,{provider:'openai',upstream:async()=>new Response('data: '+JSON.stringify({type:'response.failed',response:{object:'response',id:'resp_fixture',status:'failed',model:wire.MODELS.openai,error:{code:'server_error',message:'private provider text'},usage:{input_tokens:20,output_tokens:3},output:[]}})+'\n\n',{headers:{'content-type':'text/event-stream'}})});
+ const body={model:wire.MODELS.openai,input:[{role:'user',content:'Inspect current stock.'}],max_output_tokens:100};assert.equal((await s.call(body)).status,403);assert.equal(s.calls(),1,JSON.stringify(s.transport.lastBlock()));assert.equal(s.budget.status().unresolved,0);assert.equal(s.budget.status().committed,145);assert(s.events.includes('commercial_settled'));assert.equal(s.transport.lastBlock().code,'PROVIDER_RESPONSE_FAILED');assert.equal(s.transport.lastBlock().usageSettled,true);assert.equal((await s.call(body)).status,403);assert.equal(s.calls(),1,'a settled failure is not permission for an automatic paid retry');assert.equal(s.budget.status().committed,145);
+});
+
+test('missing failure usage stays held and diagnostics expose only bounded protocol metadata',()=>{
+ const p=new wire.UsageParser('openai');p.append(Buffer.from('data: '+JSON.stringify({type:'response.failed',response:{object:'response',status:'failed',error:{code:'server_error',message:'DO_NOT_LOG_PRIVATE_MESSAGE'},usage:null,output:[]}})+'\n\n'));
+ assert.throws(()=>p.finish(),/UNKNOWN_USAGE/);assert.deepEqual(p.diagnostics(),{eventCount:1,streamEnded:true,terminalStatus:'failed',failureCode:'server_error',usagePresent:false});assert(!JSON.stringify(p.diagnostics()).includes('DO_NOT_LOG'));assert.equal(p.response.result().failed,true);
+ const partial=new wire.UsageParser('openai');partial.append(Buffer.from('data: {"type":"response.created","response":{"status":"in_progress"}}\n\n'));assert.throws(()=>partial.finish(),/UNKNOWN_USAGE/);assert.equal(partial.diagnostics().terminalStatus,null);
 });

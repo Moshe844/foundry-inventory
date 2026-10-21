@@ -45,6 +45,7 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
      }finally{timings.sourceIntegrityMs=Date.now()-at;}})()]);
     for(const check of gateChecks)if(check.status==='rejected')throw check.reason;
     const admissionAccess=gateChecks[0].value; // fresh for this exact HTTP boundary
+    if(grant.lastResponse?.failed)throw Object.assign(new Error('The provider reported a failed response.'),{code:'PROVIDER_RESPONSE_FAILED'});
     if(grant.wireProfile!=='codex'&&grant.lastResponse?.empty)throw Object.assign(new Error(require('./finalization').EMPTY_MESSAGE),{code:'EMPTY_MODEL_FINAL'});
     const input=JSON.parse(Buffer.concat(parts).toString('utf8'));
     const outputTokens=grant.provider==='openai'?input.max_output_tokens||wire.MAX_OUTPUT:input.max_tokens||wire.MAX_OUTPUT;
@@ -164,7 +165,7 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
     timings.commercialSettlementMs=Date.now()-settlementStarted;
     await budget.settle(id,receipt.conservativeMicroUsd,{provider:grant.provider,model:normalized.body.model,
      requestedServiceTier:normalized.body.service_tier,returnedServiceTier:receipt.returnedServiceTier||null,
-     usage:receipt.raw,latencyMs:Date.now()-start,timings,transport:{...transport,providerResponseId:parser.responseId||null},accounting:'conservative standard-price charge'});
+     usage:receipt.raw,latencyMs:Date.now()-start,timings,transport:{...transport,providerResponseId:parser.responseId||null},protocol:parser.diagnostics(),accounting:'conservative standard-price charge'});
     settled=true;
     transport.phase='delivery';
     audit({kind:'model_call',id,candidate:grant.candidate,task:grant.task,usage:receipt,
@@ -177,6 +178,7 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
     // empty terminal response into an unapproved paid continuation.
     await grant.responseSink?.(outcome);
     audit({kind:'model_response',id,provider:grant.provider,...outcome});
+    if(outcome.failed)throw Object.assign(new Error('The provider reported a failed response.'),{code:'PROVIDER_RESPONSE_FAILED'});
     // Codex owns continuation of incomplete/reasoning-only responses. It still
     // crosses every request/goal/period hold; the legacy forced-final controller
     // must not turn a settled native response into a fabricated transport error.
@@ -190,11 +192,12 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
    const providerUncertain=attempted&&!settled&&['request','body'].includes(transport.phase);
    const timedOut=providerUncertain&&providerSignal?.aborted;
    const networkFailure=providerUncertain&&['UND_ERR_CONNECT_TIMEOUT','UND_ERR_HEADERS_TIMEOUT','UND_ERR_BODY_TIMEOUT','UND_ERR_SOCKET','ECONNRESET','EPIPE','ETIMEDOUT','EAI_AGAIN'].includes(error.cause?.code||error.code);
-   const reason=timedOut?'PROVIDER_REQUEST_TIMEOUT':networkFailure?'PROVIDER_TRANSPORT_UNCERTAIN':String(error.code||error.message||'RELAY_FAILURE').slice(0,180);
+   const protocol=parser?.diagnostics();
+   const reason=timedOut?'PROVIDER_REQUEST_TIMEOUT':networkFailure?'PROVIDER_TRANSPORT_UNCERTAIN':protocol?.terminalStatus==='failed'?'PROVIDER_RESPONSE_FAILED':String(error.code||error.message||'RELAY_FAILURE').slice(0,180);
    if(providerStarted!==null&&!timings.providerMs)timings.providerMs=Date.now()-providerStarted;
    const limitKind=timedOut||networkFailure?'provider_transport':error.limitKind||null;
    const uncertainDetail={...callDetail,latencyMs:Date.now()-start,timings,
-    transport:{...transport,providerResponseId:parser?.responseId||null},
+    transport:{...transport,providerResponseId:parser?.responseId||null},...(protocol?{protocol}:{}),
     ...(receipt?{usage:receipt.raw}:{}),accounting:receipt?'provider usage retained; local settlement requires reconciliation':'full reservation retained; provider usage unverified',upstreamAttempted:attempted,usageSettled:settled};
    const finalGate=['EMPTY_MODEL_FINAL','FINAL_REQUEST_EXHAUSTED'].includes(reason);
    const message=reason==='EMPTY_MODEL_FINAL'?require('./finalization').EMPTY_MESSAGE:

@@ -90,7 +90,7 @@ function usage(provider,events){
   model=event.response?.model||event.message?.model||event.model||model;
   tier=event.response?.service_tier||event.service_tier||tier;
   if(provider==='openai'){
-   if(event.type==='response.completed'||event.type==='response.incomplete'){
+   if(['response.completed','response.incomplete','response.failed'].includes(event.type)){
     raw=event.response?.usage;complete=true;
    }else if(event.object==='response'&&event.usage){raw=event.usage;complete=true;}
   }else{
@@ -116,7 +116,7 @@ function usage(provider,events){
   conservativeMicroUsd:allInput*PRICES[provider].input+raw.output_tokens*PRICES[provider].output};
 }
 class UsageParser{
- constructor(provider){this.provider=provider;this.pending='';this.events=[];this.bytes=0;this.decoder=new TextDecoder();
+ constructor(provider){this.provider=provider;this.pending='';this.events=[];this.bytes=0;this.decoder=new TextDecoder();this.eventCount=0;this.terminalStatus=null;this.failureCode=null;this.usagePresent=false;this.streamEnded=false;
   this.response=new (require('./finalization').ResponseState)(provider);}
  append(chunk){this.bytes+=chunk.byteLength;if(this.bytes>8*1024*1024)throw new Error('RESPONSE_LIMIT');
   this.pending+=this.decoder.decode(chunk,{stream:true});
@@ -126,14 +126,21 @@ class UsageParser{
    if(data&&data!=='[DONE]'){try{const event=JSON.parse(data);this.observe(event);if(event.usage||event.response?.usage||event.message?.usage||event.type==='message_stop')this.events.push(event);}catch{throw new Error('MALFORMED_USAGE_STREAM');}}
   }
  }
- finish(){this.pending+=this.decoder.decode();if(this.pending.trim()){
+ finish(){this.streamEnded=true;this.pending+=this.decoder.decode();if(this.pending.trim()){
    try{const event=JSON.parse(this.pending);this.observe(event);this.events.push(event);}catch{throw new Error('INCOMPLETE_USAGE_STREAM');}}
   return usage(this.provider,this.events);
  }
  observe(event){
+  this.eventCount++;
+  const response=event.response||event;
+  if(['completed','incomplete','failed'].includes(response.status))this.terminalStatus=response.status;
+  if(event.usage||event.response?.usage||event.message?.usage)this.usagePresent=true;
+  const code=response.error?.code||event.error?.code;
+  if(code)this.failureCode=['server_error','rate_limit_exceeded','invalid_prompt','data_residency_mismatch','bio_policy','misalignment_policy_violation','vector_store_timeout','invalid_image','invalid_image_format','invalid_base64_image','invalid_image_url','image_too_large','image_too_small','image_parse_error','image_content_policy_violation','invalid_image_mode','image_file_too_large','unsupported_image_media_type','empty_image_file','failed_to_download_image','image_file_not_found'].includes(code)?code:'unrecognized_provider_error';
   const id=this.provider==='openai'?(event.response||event).id:(event.message||event).id;
   if(typeof id==='string'&&/^(resp|msg)_[A-Za-z0-9_-]{1,180}$/.test(id))this.responseId=id;
   this.response.observe(event);
  }
+ diagnostics(){return {eventCount:this.eventCount,streamEnded:this.streamEnded,terminalStatus:this.terminalStatus,failureCode:this.failureCode,usagePresent:this.usagePresent};}
 }
 module.exports={MODELS,PRICES,MAX_OUTPUT,MAX_BODY,normalize,usage,UsageParser};
