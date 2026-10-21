@@ -13,6 +13,12 @@ test('atomic native transport checkpoints preserve exact delivery, lease, actor,
  await f.session.checkpoint({browserUrl:'http://127.0.0.1/current',codex:{threadId:'native-thread',files:{original:'unchanged'}}});
  assert.deepEqual(await f.session.codexRequest(access),{request:1});await f.session.codexPending('first-response',access);await f.session.codexDelivered('first-response',packet,packet.outcome);
  assert.equal(writes,4,'Four transport boundaries use four wire statements');assert.equal(transactions,0,'No separate begin/read/update/commit round trips');
+ const typedReport={version:1,status:'needs_user',question:'Which saved location should receive these units?',missingInformation:['Receiving location']};
+ writes=0;transactions=0;await f.session.recordReport(typedReport);
+ assert.equal(writes,1,'The typed handoff persists in one scoped statement');assert.equal(transactions,0);
+ assert.deepEqual((await store.get(db,ctx,f.goal.id)).checkpoint.harness.pendingReport,typedReport);
+ await f.session.recordReport({status:'completed',answer:'Untrusted incomplete envelope'});
+ assert.deepEqual((await store.get(db,ctx,f.goal.id)).checkpoint.harness.pendingReport,typedReport,'Invalid protocol data cannot replace the typed report');
  const done=await store.get(db,ctx,f.goal.id);assert.deepEqual(done.checkpoint.conversationState,before.checkpoint.conversationState);assert.equal(done.tool_calls,before.tool_calls);assert.equal(done.status,'RUNNING');assert.equal(done.run_token,f.goal.run_token);assert.equal(done.checkpoint.harness.codexRequests,1);
  assert.deepEqual(await f.session.codexReplay('first-response',access),packet);await f.session.checkpoint({codex:{threadId:'same-thread',files:{original:'still preserved'}}});
  assert.equal((await store.get(db,ctx,f.goal.id)).checkpoint.harness.native.browserUrl,'http://127.0.0.1/current');
@@ -22,7 +28,7 @@ test('atomic native transport checkpoints preserve exact delivery, lease, actor,
  const nativeBefore=(await store.get(db,ctx,f.goal.id)).checkpoint.harness.codexDelivery;assert.equal(nativeBefore.state,'PENDING','Settling helper does not settle native uncertainty');
  await f.session.codexDelivered('pending-response',packet,packet.outcome);
  const unchanged=await store.get(db,ctx,f.goal.id);await db.query("UPDATE users SET role='member',permissions='{}'::jsonb WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,ctx.actorId]);
- for(const act of [()=>f.session.checkpoint({mustNotSave:true}),()=>f.session.codexRequest(access),()=>f.session.codexPending('revoked',access),()=>helper.codexPending('revoked-helper',access)])await assert.rejects(act(),/AUTHORITY_CHANGED/);
+ for(const act of [()=>f.session.checkpoint({mustNotSave:true}),()=>f.session.recordReport({...typedReport,question:'Revoked handoff must not save'}),()=>f.session.codexRequest(access),()=>f.session.codexPending('revoked',access),()=>helper.codexPending('revoked-helper',access)])await assert.rejects(act(),/AUTHORITY_CHANGED/);
  assert.deepEqual((await store.get(db,ctx,f.goal.id)).checkpoint,unchanged.checkpoint,'A stale admission cannot bypass fresh actor verification');
  await db.query("UPDATE users SET role='owner' WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,ctx.actorId]);
  const g=await fresh(),other=g.attach();await other.load();const a=await g.gateway.authorize({catalogue:false});

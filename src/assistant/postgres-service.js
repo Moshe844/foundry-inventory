@@ -355,22 +355,35 @@ async function lookupRecords(database,ctx,request,options={}) {
   if(request.view==='inventory_valuation'){
     const currency=(await database.query(`SELECT base_currency FROM accounting_settings
       WHERE workspace_id=$1 AND enabled=1`,[ctx.workspaceId])).rows[0]?.base_currency||'USD';
-    const rows=(await database.query(`SELECT i.id AS item_id,i.name AS product,s.code AS sku,
-      l.name AS location,b.quantity_units,b.total_cost_minor,b.updated_at,
-      stock.on_hand
-      FROM accounting_inventory_cost_balances b
-      JOIN skus s ON s.id=b.sku_id AND s.workspace_id=b.workspace_id
-      JOIN items i ON i.id=s.item_id AND i.workspace_id=b.workspace_id
-      JOIN locations l ON l.id=b.location_id AND l.workspace_id=b.workspace_id
-      LEFT JOIN balances stock ON stock.workspace_id=b.workspace_id
-        AND stock.sku_id=b.sku_id AND stock.location_id=b.location_id
-      WHERE b.workspace_id=$1 AND ($2::text IS NULL OR i.name ILIKE '%'||$2||'%'
+    // Cost coverage must include physical positions without a cost record.
+    // Use the same scoped source for detail and totals, preserving missing
+    // cost as unknown rather than displaying an invented zero valuation.
+    const positions=`WITH physical AS (
+      SELECT sku_id,location_id,on_hand FROM balances WHERE workspace_id=$1
+    ),costed AS (
+      SELECT sku_id,location_id,quantity_units,total_cost_minor FROM accounting_inventory_cost_balances WHERE workspace_id=$1
+    ),positions AS (
+      SELECT COALESCE(p.sku_id,c.sku_id) AS sku_id,COALESCE(p.location_id,c.location_id) AS location_id,
+        COALESCE(p.on_hand,0) AS physical_units,COALESCE(c.quantity_units,0) AS costed_units,
+        c.total_cost_minor AS cost_minor,c.sku_id IS NOT NULL AS has_cost_record
+      FROM physical p FULL OUTER JOIN costed c ON c.sku_id=p.sku_id AND c.location_id=p.location_id
+    ) `;
+    const rows=(await database.query(positions+`SELECT i.id AS item_id,i.name AS product,s.code AS sku,
+      l.name AS location,p.costed_units AS quantity_units,p.cost_minor AS total_cost_minor,
+      p.has_cost_record,b.updated_at,p.physical_units AS on_hand,
+      GREATEST(p.physical_units-p.costed_units,0) AS missing_cost_units
+      FROM positions p JOIN skus s ON s.id=p.sku_id AND s.workspace_id=$1
+      JOIN items i ON i.id=s.item_id AND i.workspace_id=$1
+      JOIN locations l ON l.id=p.location_id AND l.workspace_id=$1
+      LEFT JOIN accounting_inventory_cost_balances b ON b.workspace_id=$1 AND b.sku_id=p.sku_id AND b.location_id=p.location_id
+      WHERE ($2::text IS NULL OR i.name ILIKE '%'||$2||'%'
         OR s.code ILIKE '%'||$2||'%' OR l.name ILIKE '%'||$2||'%')
       ORDER BY i.name,s.code,l.name LIMIT 100`,[ctx.workspaceId,search])).rows.map((row)=>
       evidenceRow({product:row.product,sku:row.sku,location:row.location,
         costedUnits:Number(row.quantity_units),onHand:row.on_hand===null?null:Number(row.on_hand),
-        inventoryBookCost:pricing.formatMinor(Number(row.total_cost_minor),currency),
-        inventoryBookCostMinor:Number(row.total_cost_minor),currency,
+        missingCostUnits:Number(row.missing_cost_units),hasCostRecord:row.has_cost_record,
+        inventoryBookCost:row.has_cost_record?pricing.formatMinor(Number(row.total_cost_minor),currency):'Not recorded',
+        inventoryBookCostMinor:row.has_cost_record?Number(row.total_cost_minor):null,currency,
         averageRecordedUnitCostMinor:row.quantity_units>0?Math.round(Number(row.total_cost_minor)/Number(row.quantity_units)):null,
         averageRecordedUnitCost:row.quantity_units>0
           ?pricing.formatMinor(Math.round(Number(row.total_cost_minor)/Number(row.quantity_units)),currency):'Not available',
@@ -378,16 +391,7 @@ async function lookupRecords(database,ctx,request,options={}) {
     // Detail pagination must not make a whole-business financial question
     // depend on summing a sample. Read the same literal scope completely,
     // including physical positions that have no recorded cost layer.
-    const summary=(await database.query(`WITH physical AS (
-      SELECT sku_id,location_id,on_hand FROM balances WHERE workspace_id=$1
-    ),costed AS (
-      SELECT sku_id,location_id,quantity_units,total_cost_minor FROM accounting_inventory_cost_balances WHERE workspace_id=$1
-    ),positions AS (
-      SELECT COALESCE(p.sku_id,c.sku_id) AS sku_id,COALESCE(p.location_id,c.location_id) AS location_id,
-        COALESCE(p.on_hand,0) AS physical_units,COALESCE(c.quantity_units,0) AS costed_units,
-        COALESCE(c.total_cost_minor,0) AS cost_minor,c.sku_id IS NOT NULL AS has_cost_record
-      FROM physical p FULL OUTER JOIN costed c ON c.sku_id=p.sku_id AND c.location_id=p.location_id
-    ) SELECT count(*)::text AS positions,count(*) FILTER(WHERE p.has_cost_record)::text AS cost_positions,
+    const summary=(await database.query(positions+`SELECT count(*)::text AS positions,count(*) FILTER(WHERE p.has_cost_record)::text AS cost_positions,
       COALESCE(sum(p.physical_units),0)::text AS physical_units,COALESCE(sum(p.costed_units),0)::text AS costed_units,
       COALESCE(sum(p.cost_minor),0)::text AS cost_minor,
       COALESCE(sum(GREATEST(p.physical_units-p.costed_units,0)),0)::text AS missing_cost_units
@@ -398,12 +402,12 @@ async function lookupRecords(database,ctx,request,options={}) {
     const totals={physicalUnits:exact(summary.physical_units),costedUnits:exact(summary.costed_units),
       inventoryBookCostMinor:exact(summary.cost_minor),currency,missingCostUnits:exact(summary.missing_cost_units),complete:true};
     totals.inventoryBookCost=pricing.formatMinor(totals.inventoryBookCostMinor,currency);
-    return {answer:rows.length?`Showing recorded inventory book cost for ${rows.length} product-location positions. The totals cover every matching position, including any uncosted physical stock. This is not a current supplier quote.`:
+    return {answer:rows.length?`Showing inventory cost coverage for ${rows.length} product-location positions, including positions without a cost record. The totals cover every matching position. Missing cost is not zero cost or a current supplier quote.`:
       'No recorded inventory-cost position matched that request. Complete matching physical-stock and cost totals are supplied separately.',totals,
       coverage:{scope:search?'All positions matching the literal name or code filter':'All inventory positions in this business',
-        totalPositions:exact(summary.positions),costPositions:exact(summary.cost_positions),returnedCostPositions:rows.length,
-        detailComplete:rows.length===exact(summary.cost_positions)},rows,
-      columns:['product','sku','location','costedUnits','onHand','inventoryBookCost','averageRecordedUnitCost','currency','valuedAt']};
+        totalPositions:exact(summary.positions),costPositions:exact(summary.cost_positions),returnedPositions:rows.length,
+        returnedCostPositions:rows.filter(row=>row.hasCostRecord).length,detailComplete:rows.length===exact(summary.positions)},rows,
+      columns:['product','sku','location','costedUnits','onHand','missingCostUnits','inventoryBookCost','averageRecordedUnitCost','currency','valuedAt']};
   }
   if(request.view==='inventory_cost_movements'){
     const currency=(await database.query(`SELECT base_currency FROM accounting_settings

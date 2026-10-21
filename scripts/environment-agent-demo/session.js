@@ -184,7 +184,10 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
   async recordReport(raw){
    const report=require('../../src/assistant/agent-conversation').parse(raw);
    if(!report)return;
-   return authorizedUpdate(h=>{h.pendingReport=report;});
+   // Saving the SDK's typed handoff is bookkeeping, not acceptance of its
+   // claims or authority to execute. Persist before acknowledging the event;
+   // completion still runs independent current-evidence verification.
+   return nativeTransport('report',{report},()=>authorizedUpdate(h=>{h.pendingReport=report;}));
   },
   async workingMemory(){return authorizedUpdate(h=>require('./memory').working(h));},
   async codexRequest(admissionAccess=null){const change=h=>{

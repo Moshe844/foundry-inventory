@@ -3,7 +3,7 @@
 // goal lock and a fresh actor row lock; no model/tool/business admission is
 // granted here. All financial and canonical execution gates stay separate.
 async function persist(database,{ctx,goalId,runToken,identity,operation,data}){
- if(!['native','request','pending','delivered'].includes(operation)||!identity?.actor||!identity.stamp)throw Error('INVALID_NATIVE_CHECKPOINT');
+ if(!['native','request','pending','delivered','report'].includes(operation)||!identity?.actor||!identity.stamp)throw Error('INVALID_NATIVE_CHECKPOINT');
  const slot=data.slot||'codexDelivery';if(!['codexDelivery','helperDelivery'].includes(slot))throw Error('INVALID_NATIVE_CHECKPOINT');
  const encoded=JSON.stringify(data);if(Buffer.byteLength(encoded)>8*1024*1024)throw Error('SESSION_SIZE_LIMIT');
  return (await database.query(`WITH held AS MATERIALIZED (
@@ -22,6 +22,7 @@ async function persist(database,{ctx,goalId,runToken,identity,operation,data}){
     CASE $7::text
      WHEN 'native' THEN jsonb_set(checkpoint,'{harness,native}',COALESCE(checkpoint#>'{harness,native}','{}'::jsonb)||($8::jsonb->'native'))
      WHEN 'request' THEN jsonb_set(checkpoint,'{harness,codexRequests}',to_jsonb(COALESCE((checkpoint#>>'{harness,codexRequests}')::integer,0)+1))
+     WHEN 'report' THEN jsonb_set(checkpoint,'{harness,pendingReport}',$8::jsonb->'report')
      WHEN 'pending' THEN jsonb_set(checkpoint,ARRAY['harness',$9::text],jsonb_build_object('hash',$8::jsonb->'hash','state','PENDING'))
      WHEN 'delivered' THEN jsonb_set(checkpoint,'{harness}',(checkpoint->'harness')||
       jsonb_build_object($9::text,jsonb_build_object('hash',$8::jsonb->'hash','state','SETTLED','packet',$8::jsonb->'packet'))||
