@@ -14,15 +14,15 @@ function operationLimit(operation){return configuredUsd(`STOCKCHIEF_AI_MAX_COST_
  DEFAULTS.operation[operation]);}
 function periodLimit(plan){return configuredUsd(`STOCKCHIEF_AI_PERIOD_COST_CAP_USD_${String(plan||'').toUpperCase()}`,
  DEFAULTS.period[plan]);}
-function estimateMaximumMinor(request,policy,inputRateMinor,outputRateMinor){
+function estimateMaximumMinor(request,policy,inputRateMinor,outputRateMinor,providerExecutions=MAX_PROVIDER_EXECUTIONS){
+ if(!Number.isInteger(providerExecutions)||providerExecutions<1||providerExecutions>MAX_PROVIDER_EXECUTIONS)throw new ValidationError('Invalid trusted provider execution bound.');
  const bytes=Buffer.byteLength(String(request.system||''))+Buffer.byteLength(String(request.prompt||''))+
   Buffer.byteLength(JSON.stringify(request.schema||{}));
  const inputTokens=bytes+INPUT_OVERHEAD_TOKENS;
  const outputTokens=Number.isSafeInteger(request.maxOutputTokens)&&request.maxOutputTokens>0
    ?Math.min(request.maxOutputTokens,policy.maxOutputTokens):policy.maxOutputTokens;
  return {maximumMinor:Math.ceil((inputTokens*inputRateMinor+outputTokens*outputRateMinor)*
-  MAX_PROVIDER_EXECUTIONS*1e6)/1e6,inputTokens,outputTokens,
-  providerExecutions:MAX_PROVIDER_EXECUTIONS};}
+  providerExecutions*1e6)/1e6,inputTokens,outputTokens,providerExecutions};}
 async function rate(database,provider,model,operation,version){return (await database.query(`SELECT cost_per_unit_minor,
  pricing_basis,confidence,source FROM commercial_cost_rates WHERE provider=$1 AND model=$2 AND provider_version=$3
  AND operation=$4 AND unit='token' AND effective_from<=now() AND (effective_until IS NULL OR effective_until>now())
@@ -47,13 +47,13 @@ async function pricedBound(database,provider,request,policy,operation,nativeBoun
  const bound=nativeBound?{
   maximumMinor:Math.ceil((nativeBound.inputTokens*inputRate+nativeBound.outputTokens*outputRate)*1e6)/1e6,
   inputTokens:nativeBound.inputTokens,outputTokens:nativeBound.outputTokens,providerExecutions:1
- }:estimateMaximumMinor(request,policy,inputRate,outputRate);
+ }:estimateMaximumMinor(request,policy,inputRate,outputRate,require('./provider-call-contract').executions(provider));
  return {...bound,provider:name,model,providerVersion:version,inputRateMinor:inputRate,rateSources:prices.map(row=>row.source)};}
 async function promptByteAllowance(database,provider,request,operation='ask'){
  const policy=require('./model').POLICIES[operation];
  const empty=await pricedBound(database,provider,{...request,prompt:''},policy,operation);
  return Math.max(0,Math.floor((operationLimit(operation)*100-empty.maximumMinor)/
-  (empty.inputRateMinor*MAX_PROVIDER_EXECUTIONS)));
+  (empty.inputRateMinor*empty.providerExecutions)));
 }
 async function nativeInputTokenAllowance(database,provider,outputTokens,operation='ask'){
  const empty=await pricedBound(database,provider,{},require('./model').POLICIES[operation],operation,{inputTokens:0,outputTokens});
@@ -64,7 +64,8 @@ async function reserve(database,scope,provider,request,policy,operation,idempote
  return reserveBound(database,scope,bound,operation,idempotencyKey,fundingUsageKey,goalScope);
 }
 // A trusted transport reserves each actual SDK HTTP request separately, including
-// retries. Existing complete() callers retain their three-execution allowance.
+// retries. Unregistered complete() transports retain the conservative
+// three-execution allowance; verified commercial transports can reserve one.
 // Token bounds come from the validated native wire protocol, never model text.
 async function reserveNative(database,scope,provider,{inputTokens,outputTokens},operation,idempotencyKey,fundingUsageKey,goalScope={}){
  if(!Number.isSafeInteger(inputTokens)||inputTokens<1||inputTokens>1100000||

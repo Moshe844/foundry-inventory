@@ -163,7 +163,7 @@ function create(options = {}) {
 
   const client = new Anthropic({ apiKey, maxRetries: 2, timeout: 120000 });
 
-  return {
+  return require('../../commercial/provider-call-contract').registerSingle({
     name: 'anthropic',
     model,
 
@@ -242,7 +242,7 @@ function create(options = {}) {
         usage,
       };
     },
-  };
+  });
 }
 
 /**
