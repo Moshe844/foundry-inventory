@@ -219,28 +219,52 @@ async function completeOAuth(database,providerType,query,requestOrigin,options={
 
 async function loadProviderCredentials(database,connection,adapter){
   if(connection.setup_status==='REAUTHORIZATION_REQUIRED')throw new AuthenticationError('Reconnect this provider before using its authorization again.');
-  let providerCredentials=await credentials.get(database,connection.workspace_id,connection.id,'provider');
+  const refresh=async queryable=>{
+  if(adapter?.refreshCredentials){
+    // Refresh tokens can be single use. Serialize readers of the same grant
+    // and read the current ciphertext after the lock, never an earlier token.
+    await queryable.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
+      [`provider-credentials:${connection.workspace_id}:${connection.id}`]);
+  }
+  const current=(await queryable.query('SELECT status,setup_status FROM workspace_connectors WHERE workspace_id=$1 AND id=$2',
+    [connection.workspace_id,connection.id])).rows[0];
+  if(!current||current.status==='disconnected'||current.setup_status==='REAUTHORIZATION_REQUIRED')
+    throw new AuthenticationError('Reconnect this provider before using its authorization again.');
+  let providerCredentials=await credentials.get(queryable,connection.workspace_id,connection.id,'provider');
   if(!providerCredentials)throw new AuthenticationError('Reconnect this provider before syncing.');
   if(adapter?.refreshCredentials){
+    if(adapter.metadata?.().available===false)throw Object.assign(new Error(
+      'This connection is waiting for StockChief’s provider configuration. Its saved authorization is preserved.'),
+    {code:'PROVIDER_CONFIGURATION_REQUIRED',status:503,transient:true,retryable:true});
+    const refreshed=await adapter.refreshCredentials(providerCredentials);
+    if(!refreshed?.credentials)throw Object.assign(new Error('The provider did not confirm refreshed authorization.'),
+      {code:'PROVIDER_REFRESH_UNCONFIRMED',status:503,transient:true});
+    providerCredentials=refreshed.credentials;
+    if(refreshed.refreshed)await credentials.put(queryable,connection.workspace_id,connection.id,'provider',
+      providerCredentials,refreshed.expiresAt||null);
+  }
+  return providerCredentials;
+  };
     try{
-      const refreshed=await adapter.refreshCredentials(providerCredentials);
-      providerCredentials=refreshed.credentials;
-      if(refreshed.refreshed)await credentials.put(database,connection.workspace_id,connection.id,'provider',
-        providerCredentials,refreshed.expiresAt||null);
+      return typeof database.transaction==='function'?await database.transaction(refresh,
+        {isolation:'READ COMMITTED',retrySafe:false}):await refresh(database);
     }catch(error){
       if(error.code==='entitlement_required'||error.status===402)throw error;
-      if(error.transient||error.status===429||error.status>=500){
-        await database.query('UPDATE workspace_connectors SET last_error=$3,updated_at=$4 WHERE workspace_id=$1 AND id=$2',
-          [connection.workspace_id,connection.id,'The provider is temporarily unavailable. Retry safely; authorization was preserved.',nowIso()]);
+      const invalidClient=/invalid_client|unauthorized_client/.test(String(error.providerBody?.error||''));
+      const rejectedGrant=error instanceof AuthenticationError||error.status===401||error.status===403||
+        String(error.providerBody?.error||'')==='invalid_grant';
+      if(!rejectedGrant||invalidClient||error.transient||error.status===429||error.status>=500){
+        await database.query("UPDATE workspace_connectors SET last_error=$3,updated_at=$4 WHERE workspace_id=$1 AND id=$2 AND status<>'disconnected'",
+          [connection.workspace_id,connection.id,error.code==='PROVIDER_CONFIGURATION_REQUIRED'||invalidClient?
+            'StockChief’s provider configuration needs attention. Your authorization is preserved; signing in again is not required.':
+            'The provider check could not finish. StockChief will retry safely; authorization was preserved.',nowIso()]);
       }else{
         await database.query(`UPDATE workspace_connectors SET status='error',setup_status='REAUTHORIZATION_REQUIRED',
-          last_error=$3,updated_at=$4 WHERE workspace_id=$1 AND id=$2`,[connection.workspace_id,connection.id,
-          String(error.message).slice(0,500),nowIso()]);
+          last_error=$3,updated_at=$4 WHERE workspace_id=$1 AND id=$2 AND status<>'disconnected'`,[connection.workspace_id,connection.id,
+          'The provider could not renew this authorization. Sign in again to restore updates; your records are preserved.',nowIso()]);
       }
       throw error;
     }
-  }
-  return providerCredentials;
 }
 
 module.exports={stateHash,providerOrigin,beginAuthorization,readState,callbackContext,finishAuthorization,

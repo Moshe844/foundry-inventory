@@ -10,7 +10,7 @@ test('scheduled provider checks, browser controls, backoff and tenant authority 
   const adapter={metadata:()=>({type:'fixture_sync',name:'Fixture Sync',available:true,authMode:'oauth',provides:['products']}),
     discover:async()=>{discoveries++;if(unavailable)throw Object.assign(new Error('Private provider detail must not reach the page'),{status:429,retryAfterMs:180000});
       return includeCatalog?{products:[{externalId:'amber',code:'AMBER-NEW',displayName:'Amber pack',providerData:{itemName:'Amber pack',priceMoney:{amount:0,currency:'USD'},inventoryCounts:[{externalLocationId:'annex',quantity:7}]}},
-        {externalId:'cobalt',code:'COBALT-NEW',displayName:'Cobalt pack',providerData:{itemName:'Cobalt pack',priceMoney:{amount:850,currency:'USD'},inventoryCounts:[]}}],
+        {externalId:'cobalt',code:'COBALT-NEW',displayName:'Cobalt pack',providerData:{itemName:'Cobalt pack',priceMoney:{amount:850,currency:'USD'},inventoryCountNote:'The provider has not supplied tracked stock.',inventoryCounts:[]}}],
         locations:[{externalId:'annex',displayName:'Supplier annex',providerData:{kind:'store'}}]}:{products:[],locations:[]};}};
   const registry={get:type=>type==='fixture_sync'?adapter:null,catalog:()=>[adapter.metadata()]};
   const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:crypto.randomUUID(),connectionProviders:registry});
