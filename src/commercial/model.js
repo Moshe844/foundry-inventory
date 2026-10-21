@@ -5,7 +5,9 @@ const POLICIES=Object.freeze({ask:{capability:'ask.lookup',maxPromptCharacters:1
  instruction:{capability:'ask.prepare_actions',maxPromptCharacters:180000,maxOutputTokens:8000},
  import_mapping:{capability:'imports.spreadsheet',maxPromptCharacters:180000,maxOutputTokens:3000}});
 function wrap(database,ctx,provider,operation,key,options={}){const policy=POLICIES[operation];if(!policy)throw new ValidationError('Unregistered commercial model operation.');
- return {...provider,async complete(request){const scope=await usage.ownerScopeForWorkspace(database,ctx.workspaceId);
+ return {...provider,...(require('./relay-provider').ownsAccounting(provider)?{}:{
+  promptByteAllowance:request=>require('./model-cost-budget').promptByteAllowance(database,provider,request,operation)}),
+ async complete(request){const scope=await usage.ownerScopeForWorkspace(database,ctx.workspaceId);
   await usage.assertCapability(database,scope,policy.capability);
   if(String(request.system||'').length+String(request.prompt||'').length>policy.maxPromptCharacters)throw new ValidationError('This request is too large for the approved operation budget.');
   const configured=(await database.query('SELECT * FROM commercial_operation_policies WHERE operation=$1',[operation])).rows[0];
