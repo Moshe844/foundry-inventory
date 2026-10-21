@@ -113,6 +113,24 @@ test('real Chromium qualifies PostgreSQL business-mail filtering, exact replies 
     assert.equal(Number(cadence.expected_interval_minutes),10);
     assert.equal(JSON.parse(cadence.config).mailboxCheckMinutes,10);
 
+    const oldCheck=await jobs.enqueue(database,{workspaceId:ctx.workspaceId,kind:'mailbox.poll',
+      payload:{connectorId},idempotencyKey:'mail-ui-historical-check'});
+    const historicalCheck=await database.query("UPDATE stockchief_runtime.jobs SET status='COMPLETED',completed_at=$2 WHERE id=$1 RETURNING id",
+      [oldCheck.job.id,'2026-09-23T12:00:00.000Z']);
+    assert.equal(historicalCheck.rows.length,1);
+    await database.query("UPDATE workspace_connectors SET setup_status='REAUTHORIZATION_REQUIRED',last_error='Token has expired or been revoked.' WHERE id=$1",[connectorId]);
+    await page.goto(`${base}/settings/connections/${connectorId}`);
+    const expiredText=await page.locator('main').innerText();
+    assert.match(expiredText,/Saved mailbox:/);assert.doesNotMatch(expiredText,/Connected mailbox:/);
+    assert.match(expiredText,/Waiting for sign-in/);assert.match(expiredText,/Previous checks remain in history/);
+    const mailboxCheck=page.locator('.setup-step').filter({hasText:'Complete a mailbox check'});
+    assert.equal(await mailboxCheck.evaluate(node=>node.classList.contains('setup-step--done')),false);
+    assert.match(expiredText,/Last completed mailbox check/);
+    await database.query("UPDATE workspace_connectors SET setup_status='CONNECTED',last_error=NULL WHERE id=$1",[connectorId]);
+    await page.reload();
+    assert.match(await page.locator('main').innerText(),/Connected mailbox:/);
+    assert.equal(await page.locator('.setup-step').filter({hasText:'Complete a mailbox check'}).evaluate(node=>node.classList.contains('setup-step--done')),true);
+
     await page.goto(`${base}/mail`);
     assert.equal(await page.locator('a[href="/needs-you"] .nav-count').innerText(),'2');
     const inboxText=await page.locator('main').innerText();assert.match(inboxText,/Can we ship the balance Friday/);

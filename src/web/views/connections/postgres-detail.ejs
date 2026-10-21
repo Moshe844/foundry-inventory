@@ -1,12 +1,13 @@
 <%
   const accounting=connection.accounting||null;
   const providerName=provider?.name||connection.display_name||connection.provider_type;
-  const connected=connection.status==='connected'&&!connection.paused_at;
   const needsAuthorization=connection.setup_status==='REAUTHORIZATION_REQUIRED'||connection.status==='disconnected';
+  const connected=connection.status==='connected'&&!connection.paused_at&&!needsAuthorization;
   const proof=locals.connectionProof||{};
   const hasCatalogue=Boolean(proof.catalogue_at);
   const eventAt=isMailbox?mailboxLastPollAt:proof.event_at;
   const hasEvent=Boolean(eventAt);
+  const currentActivity=hasEvent&&(!isMailbox||connected);
   const proven=connected&&connection.publicStatus==='Connected'&&(!canDiscover||(hasCatalogue&&!connection.itemsNeedingMapping))&&hasEvent;
 %>
 
@@ -62,7 +63,7 @@
   <div class="setup-steps">
     <div class="setup-step <%= connected?'setup-step--done':'setup-step--current' %>"><span class="setup-step__number"><%= connected?'✓':'1' %></span><div><strong>Sign in to the right account</strong><p><%= connection.provider_account_name||'The provider has not returned an account identity yet.' %></p></div><span class="setup-step__state"><%= connected?'Verified':'Waiting' %></span></div>
     <% if(canDiscover){ %><div class="setup-step <%= hasCatalogue?'setup-step--done':connected?'setup-step--current':'' %>"><span class="setup-step__number"><%= hasCatalogue?'✓':'2' %></span><div><strong>Read products and locations</strong><p>Identity records are read first; old sales are never replayed into current stock.</p></div><span class="setup-step__state"><%= hasCatalogue?'Recorded':'Refresh below' %></span></div><% } %>
-    <div class="setup-step <%= hasEvent?'setup-step--done':connected?'setup-step--current':'' %>"><span class="setup-step__number"><%= hasEvent?'✓':canDiscover?'3':'2' %></span><div><strong><%= isMailbox?'Complete a mailbox check':'Receive and process a provider event' %></strong><p><%= isMailbox?'A scheduled check must finish successfully.':'Event delivery and individual sales, payments and inventory workflows are verified separately. Signing in alone does not prove delivery.' %></p></div><span class="setup-step__state"><%= hasEvent?(isMailbox?'Checked':'Received once'):'Not yet' %></span></div>
+    <div class="setup-step <%= currentActivity?'setup-step--done':connected?'setup-step--current':'' %>"><span class="setup-step__number"><%= currentActivity?'✓':canDiscover?'3':'2' %></span><div><strong><%= isMailbox?'Complete a mailbox check':'Receive and process a provider event' %></strong><p><%= isMailbox?(connected?'A scheduled check must finish successfully.':'Sign in again before StockChief can check for new mail. Previous checks remain in history.'):'Event delivery and individual sales, payments and inventory workflows are verified separately. Signing in alone does not prove delivery.' %></p></div><span class="setup-step__state"><%= currentActivity?(isMailbox?'Checked':'Received once'):isMailbox&&!connected?'Waiting for sign-in':'Not yet' %></span></div>
   </div>
 </section>
 <% } %>
@@ -105,7 +106,7 @@
       <section class="card" aria-label="Mailbox settings">
         <div class="card-head"><div><h2>Business email</h2><p class="muted">Only mail from a known customer or supplier, or a reply to a conversation StockChief sent, enters the business inbox. Other senders are set aside without saving their message body or attachments.</p></div></div>
         <div class="card-body grid">
-          <p><strong>Connected mailbox:</strong> <%= connection.provider_account_name||'Account identity unavailable' %></p>
+          <p><strong><%= connected?'Connected mailbox:':'Saved mailbox:' %></strong> <%= connection.provider_account_name||'Account identity unavailable' %></p>
           <div class="form-actions"><a class="btn btn--primary" href="/mail">View business emails</a><a class="btn" href="/mail/set-aside">Review set-aside senders</a></div>
           <p class="hint">Add or update a supplier or customer email address on that contact's record. StockChief matches the sender to those addresses; connecting a mailbox alone does not approve every sender.</p>
           <% if(currentUser.role==='owner'){ %>
