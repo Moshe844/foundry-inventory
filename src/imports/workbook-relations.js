@@ -121,12 +121,13 @@ async function interpret(workbook,{provider,onBeforeAi,onUsage,contract}={}){
  if(contract)return compile(workbook,contract);
  if(!provider)return null;
  onBeforeAi&&await onBeforeAi({schemaName:'inventory_workbook_sources'});
- const profiles=profile(workbook),request={system:SYSTEM,prompt:JSON.stringify(compactProfile(profiles)),schema:SCHEMA,schemaName:'inventory_workbook_sources'};
+ const profiles=profile(workbook),fullPrompt=JSON.stringify({worksheets:profiles}),request={system:SYSTEM,prompt:fullPrompt,schema:SCHEMA,schemaName:'inventory_workbook_sources'};
  if(typeof provider.promptByteAllowance==='function'){
   let fits=false;
-  for(const maxOutputTokens of [3000,2500,2000]){
+  for(const maxOutputTokens of [8000,6000,4000,3000,2500,2000]){
    request.maxOutputTokens=maxOutputTokens;
    const allowance=await provider.promptByteAllowance(request);
+   if(Buffer.byteLength(fullPrompt)<=allowance){request.prompt=fullPrompt;fits=true;break;}
    for(const sampleCharacters of [200,96,48,24,12]){
     request.prompt=JSON.stringify(compactProfile(profiles,{sampleCharacters}));
     if(Buffer.byteLength(request.prompt)<=allowance){fits=true;break;}

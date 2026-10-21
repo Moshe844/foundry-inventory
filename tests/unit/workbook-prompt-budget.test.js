@@ -10,4 +10,5 @@ test('workbook interpretation fits the existing provider allowance before its si
  const provider={promptByteAllowance:async request=>request.maxOutputTokens===2000?10000:0,complete:async request=>{calls++;observed=request;return {data:contract};}};
  const result=await relations.interpret(book,{provider});assert.equal(calls,1);assert.equal(observed.maxOutputTokens,2000);assert.equal(result.sourceRows,1);assert.equal(result.sheet.rows[0].cells[result.mappings.code],'AX-7');
  await assert.rejects(relations.interpret(book,{provider:{...provider,promptByteAllowance:async()=>1}}),/complete source description/);assert.equal(calls,1,'An inadmissible prompt makes no paid attempt');
+ await relations.interpret(book,{provider:{...provider,promptByteAllowance:async()=>10000}});assert.equal(observed.maxOutputTokens,8000,'Complex relationship output may use a larger response only when the same dollar bound permits it');assert.equal(require('../../src/commercial/model').POLICIES.import_mapping.maxOutputTokens,8000);
 });

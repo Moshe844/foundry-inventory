@@ -3,7 +3,7 @@ const usage=require('./entitlements');const operations=require('./operations');c
 const {ValidationError}=require('../domain/errors');
 const POLICIES=Object.freeze({ask:{capability:'ask.lookup',maxPromptCharacters:180000,maxOutputTokens:3000},
  instruction:{capability:'ask.prepare_actions',maxPromptCharacters:180000,maxOutputTokens:8000},
- import_mapping:{capability:'imports.spreadsheet',maxPromptCharacters:180000,maxOutputTokens:3000}});
+ import_mapping:{capability:'imports.spreadsheet',maxPromptCharacters:180000,maxOutputTokens:8000}});
 function wrap(database,ctx,provider,operation,key,options={}){const policy=POLICIES[operation];if(!policy)throw new ValidationError('Unregistered commercial model operation.');
  return {...provider,...(require('./relay-provider').ownsAccounting(provider)?{}:{
   promptByteAllowance:request=>require('./model-cost-budget').promptByteAllowance(database,provider,request,operation)}),

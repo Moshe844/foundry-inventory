@@ -316,6 +316,7 @@ async function proposeMappings(sheet, options = {}) {
       ),
       schema: MAPPING_SCHEMA,
       schemaName: 'inventory_import_mapping',
+      maxOutputTokens: 3000,
     });
     if (options.onUsage && response.usage) {
       await options.onUsage(response.usage, { schemaName:'inventory_import_mapping' });
