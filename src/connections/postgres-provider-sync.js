@@ -141,6 +141,8 @@ async function sync(job,client,providers=defaultProviders){
     return {skipped:'connection_changed',runId};}
   await require('../commercial/enforcement').workspace(client,job.workspaceId,
     adapter.integrationClass==='accounting'?'connections.accounting':'connections.commerce');
+  const previous=new Map((await client.query("SELECT external_id,provider_data FROM connection_external_records WHERE workspace_id=$1 AND connector_id=$2 AND entity_type='sku'",[job.workspaceId,connectorId])).rows
+    .map(row=>[row.external_id,require('./postgres-service').parseJson(row.provider_data,{})]));
   await client.query(`UPDATE connection_external_records SET selected=0,updated_at=$3
     WHERE workspace_id=$1 AND connector_id=$2`,[job.workspaceId,connectorId,nowIso()]);
   let autoMapped=0;let needsMapping=0;let ignored=0;
@@ -151,6 +153,8 @@ async function sync(job,client,providers=defaultProviders){
     else if(result==='unmapped')needsMapping+=1;
     else ignored+=1;
   }
+  const reconciled=syncConfig.autoImportCatalog===true&&adapter.integrationClass!=='accounting'
+    ?await require('./postgres-catalog-reconciliation').reconcile(client,current,previous):{names:0,prices:0,conflicts:0};
   const completedAt=nowIso();
   await client.query(`UPDATE connection_issues issue SET status='RESOLVED',resolved_at=$3,updated_at=$3
     WHERE issue.workspace_id=$1 AND issue.connector_id=$2 AND issue.status='OPEN'
@@ -172,7 +176,7 @@ async function sync(job,client,providers=defaultProviders){
     WHERE workspace_id=$1 AND connector_id=$2 AND status='OPEN'
       AND issue_type IN ('PROVIDER_REFRESH_REQUIRED','CONNECTION_SYNC_FAILED')`,
   [job.workspaceId,connectorId,completedAt]);
-  return {runId,products:products.length,locations:locations.length,autoMapped,needsMapping,ignored,completedAt};
+  return {runId,products:products.length,locations:locations.length,autoMapped,needsMapping,ignored,completedAt,reconciled};
   };
   const result=await database.transaction(apply,{isolation:'SERIALIZABLE',retrySafe:true});
   if(!result.skipped)await require('./postgres-webhook-inbox').reconcileCancellationObservations(database,connection,adapter);
@@ -236,7 +240,7 @@ async function setMappingInTransaction(client,ctx,input){
   }
   const at=nowIso();
   if(current){
-    await client.query(`UPDATE connection_mappings SET foundry_record_id=$5,confidence='approved',
+    await client.query(`UPDATE connection_mappings SET catalog_sync_state=CASE WHEN foundry_record_id<>$5 THEN '{}' ELSE catalog_sync_state END,foundry_record_id=$5,confidence='approved',
       approved_by_user_id=$6,updated_at=$7 WHERE workspace_id=$1 AND connector_id=$2 AND entity_type=$3 AND external_id=$4`,
     [ctx.workspaceId,connection.id,entityType,externalId,targetId,ctx.actorId,at]);
   }else{

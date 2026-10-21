@@ -120,6 +120,7 @@ async function importProducts(database,ctx,connectorId,input){
     await mapping.setMappingInTransaction(client,ctx,{connectorId,entityType:'sku',externalId:row.external_id,foundryRecordId:sku.skuId});result.mapped++;
     if(data.priceMoney){const amount=data.priceMoney.amount;if(!Number.isSafeInteger(amount)||amount<0)throw new ValidationError('The provider price is invalid.');
      await prices.setPriceInTransaction(client,ctx,{skuId:sku.skuId,amountMinor:amount,currency:data.priceMoney.currency,source:'provider_opening_catalog',sourceDetail:{connectorId,externalId:row.external_id}});result.prices++;}
+    await require('./postgres-catalog-reconciliation').register(client,ctx,connectorId,row.external_id,sku.skuId);
     if(includeOpening)for(const count of data.inventoryCounts||[]){
      const amount=Number(count.quantity);if(!amount)continue;
      const place=(await client.query("SELECT foundry_record_id FROM connection_mappings WHERE workspace_id=$1 AND connector_id=$2 AND entity_type='location' AND external_id=$3",[ctx.workspaceId,connectorId,String(count.externalLocationId)])).rows[0];

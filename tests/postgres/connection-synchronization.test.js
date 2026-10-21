@@ -6,11 +6,11 @@ test('scheduled provider checks, browser controls, backoff and tenant authority 
   const cluster=await require('../helpers/postgres-cluster').startCluster();
   const db=require('../../src/db/postgres').openPostgres(cluster.connectionString);
   await require('../../src/db/migrate-postgres').migratePostgres(db);
-  let discoveries=0,unavailable=false,includeCatalog=false;
+  let discoveries=0,unavailable=false,includeCatalog=false,cobaltName='Cobalt pack',cobaltPrice={amount:850,currency:'USD'};
   const adapter={metadata:()=>({type:'fixture_sync',name:'Fixture Sync',available:true,authMode:'oauth',provides:['products']}),
     discover:async()=>{discoveries++;if(unavailable)throw Object.assign(new Error('Private provider detail must not reach the page'),{status:429,retryAfterMs:180000});
       return includeCatalog?{products:[{externalId:'amber',code:'AMBER-NEW',displayName:'Amber pack',providerData:{itemName:'Amber pack',priceMoney:{amount:0,currency:'USD'},inventoryCounts:[{externalLocationId:'annex',quantity:7}]}},
-        {externalId:'cobalt',code:'COBALT-NEW',displayName:'Cobalt pack',providerData:{itemName:'Cobalt pack',priceMoney:{amount:850,currency:'USD'},inventoryCountNote:'The provider has not supplied tracked stock.',inventoryCounts:[]}}],
+        {externalId:'cobalt',code:'COBALT-NEW',displayName:cobaltName,providerData:{itemName:cobaltName,priceMoney:cobaltPrice,inventoryCountNote:'The provider has not supplied tracked stock.',inventoryCounts:[]}}],
         locations:[{externalId:'annex',displayName:'Supplier annex',providerData:{kind:'store'}}]}:{products:[],locations:[]};}};
   const registry={get:type=>type==='fixture_sync'?adapter:null,catalog:()=>[adapter.metadata()]};
   const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:crypto.randomUUID(),connectionProviders:registry});
@@ -102,6 +102,51 @@ test('scheduled provider checks, browser controls, backoff and tenant authority 
   assert.match(await importedTable.innerText(),/Amber pack[\s\S]*\$0\.00/);
   await page.waitForFunction(()=>document.querySelector('[data-sync-last]')?.textContent.includes('UTC')||
     /[A-Z]{2,5}$/.test(document.querySelector('[data-sync-last]')?.textContent||''));
+  const cobalt=(await db.query("SELECT * FROM skus WHERE workspace_id=$1 AND code='COBALT-NEW'",[ctx.workspaceId])).rows[0];
+  const amber=(await db.query("SELECT * FROM skus WHERE workspace_id=$1 AND code='AMBER-NEW'",[ctx.workspaceId])).rows[0];
+  const pricing=require('../../src/pricing/postgres-service'),catalog=require('../../src/domain/postgres-catalog-service');
+  const oldPrice=await pricing.currentPrice(db,ctx.workspaceId,cobalt.id);
+  const registered=JSON.parse((await db.query("SELECT catalog_sync_state FROM connection_mappings WHERE workspace_id=$1 AND connector_id=$2 AND external_id='cobalt'",[ctx.workspaceId,id])).rows[0].catalog_sync_state);
+  assert.equal(registered.imported,true);assert.equal(registered.priceId,oldPrice.id,'New imports record their exact canonical provenance');
+  await db.query("UPDATE connection_mappings SET catalog_sync_state='{}' WHERE workspace_id=$1 AND connector_id=$2 AND external_id='cobalt'",[ctx.workspaceId,id]);
+  const customer=await require('../../src/operations/postgres-commerce').createCustomer(db,ctx,{name:'Recorded price buyer'});
+  const order=await require('../../src/operations/postgres-business-workflows').createSalesOrder(db,ctx,{customerId:customer.id,deliveryMethod:'PICKUP',
+    currency:'USD',lines:[{skuId:cobalt.id,quantity:1,unitPriceMinor:850}],idempotencyKey:'catalog-history-order'});
+  const history=await db.query('SELECT * FROM sales_order_lines WHERE workspace_id=$1 AND sales_order_id=$2',[ctx.workspaceId,order.salesOrderId]);
+  cobaltName='Renamed provider pack';cobaltPrice={amount:0,currency:'EUR'};
+  const changed=await runtime['provider.catalog-sync']({...job,id:crypto.randomUUID()},db);
+  assert.deepEqual(changed.reconciled,{names:1,prices:1,conflicts:0});
+  assert.equal((await db.query('SELECT name FROM items WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,cobalt.item_id])).rows[0].name,cobaltName);
+  const newPrice=await pricing.currentPrice(db,ctx.workspaceId,cobalt.id);assert.equal(newPrice.amount_minor,0);assert.equal(newPrice.currency,'EUR');
+  assert.equal((await db.query('SELECT amount_minor FROM sku_prices WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,oldPrice.id])).rows[0].amount_minor,'850','Original price evidence remains immutable');
+  assert.deepEqual((await db.query('SELECT * FROM sales_order_lines WHERE workspace_id=$1 AND sales_order_id=$2',[ctx.workspaceId,order.salesOrderId])).rows,history.rows,'Existing orders retain their captured pricing');
+  await page.goto(base+'/inventory/'+cobalt.item_id);assert((await page.locator('main').innerText()).includes(cobaltName),'Canonical inventory page displays the provider update');
+  const priceCount=(await db.query('SELECT count(*)::int n FROM sku_prices WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n;
+  const repeated=await runtime['provider.catalog-sync']({...job,id:crypto.randomUUID()},db);assert.deepEqual(repeated.reconciled,{names:0,prices:0,conflicts:0});
+  assert.equal((await db.query('SELECT count(*)::int n FROM sku_prices WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,priceCount,'Repeated snapshots cannot duplicate price history');
+  assert.equal((await db.query("SELECT count(*)::int n FROM domain_events WHERE workspace_id=$1 AND event_type='connection.catalog.updated'",[ctx.workspaceId])).rows[0].n,2,'Name and price changes have durable provenance');
+  cobaltPrice={amount:-1,currency:'USD'};
+  const invalid=await runtime['provider.catalog-sync']({...job,id:crypto.randomUUID()},db);assert.equal(invalid.reconciled.conflicts,1);
+  assert.equal((await pricing.currentPrice(db,ctx.workspaceId,cobalt.id)).id,newPrice.id,'Invalid provider money cannot clear or replace the saved price');
+  await catalog.updateItem(db,ctx,cobalt.item_id,{name:'Owner chosen label'});
+  await pricing.setPrice(db,ctx,{skuId:cobalt.id,amountMinor:950,currency:'USD'});
+  cobaltName='Another provider label';cobaltPrice={amount:1100,currency:'USD'};
+  const conflicting=await runtime['provider.catalog-sync']({...job,id:crypto.randomUUID()},db);assert.equal(conflicting.reconciled.conflicts,2);
+  assert.equal((await db.query('SELECT name FROM items WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,cobalt.item_id])).rows[0].name,'Owner chosen label');
+  assert.equal((await pricing.currentPrice(db,ctx.workspaceId,cobalt.id)).amount_minor,950,'Local price edits are preserved');
+  assert.equal((await db.query("SELECT count(*)::int n FROM connection_issues WHERE workspace_id=$1 AND connector_id=$2 AND issue_type='CATALOG_SYNC_CONFLICT' AND status='OPEN'",[ctx.workspaceId,id])).rows[0].n,2);
+  cobaltName='Owner chosen label';cobaltPrice={amount:950,currency:'USD'};
+  await runtime['provider.catalog-sync']({...job,id:crypto.randomUUID()},db);
+  assert.equal((await db.query("SELECT count(*)::int n FROM connection_issues WHERE workspace_id=$1 AND connector_id=$2 AND issue_type='CATALOG_SYNC_CONFLICT' AND status='OPEN'",[ctx.workspaceId,id])).rows[0].n,0,'Agreed values resolve conflicts');
+  const sync=require('../../src/connections/postgres-provider-sync');
+  await sync.setMapping(db,ctx,{connectorId:id,entityType:'sku',externalId:'cobalt',foundryRecordId:amber.id,expectedFoundryRecordId:cobalt.id});
+  assert.equal(JSON.parse((await db.query("SELECT catalog_sync_state FROM connection_mappings WHERE workspace_id=$1 AND connector_id=$2 AND external_id='cobalt'",[ctx.workspaceId,id])).rows[0].catalog_sync_state).imported,undefined);
+  await runtime['provider.catalog-sync']({...job,id:crypto.randomUUID()},db);
+  assert.equal((await db.query('SELECT name FROM items WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,amber.item_id])).rows[0].name,'Amber pack','Remapping does not transfer import authority');
+  assert.equal((await pricing.currentPrice(db,ctx.workspaceId,amber.id)).amount_minor,0,'A manually matched local product retains its own price');
+  assert.deepEqual((await db.query('SELECT count(*)::int AS n,COALESCE(sum(quantity_delta),0)::int AS units FROM movements WHERE workspace_id=$1',[ctx.workspaceId])).rows[0],movements,'Ongoing catalog updates never replay opening quantities');
+  await assert.rejects(db.transaction(async client=>require('../../src/connections/postgres-catalog-reconciliation').reconcile(client,
+    {...(await connectionService.get(db,ctx.workspaceId,id)),authorized_by_user_id:'unrelated'},new Map())),/Automatic catalogue authority changed/);
   await db.query("UPDATE workspace_connectors SET config='{}' WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,id]);
   await assert.rejects(require('../../src/connections/postgres-catalog-import').createLocation(db,ctx,id,
     {externalId:'annex',automatic:true}),/Automatic import authority changed/,'already prepared automatic work must recheck current owner authority');
