@@ -92,8 +92,10 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
       const countBody=codex.countRequest(normalized.body);
       const countStarted=Date.now(),count=await countCodexInput(structuredClone(countBody));
       timings.tokenPreflightMs=Date.now()-countStarted;
+      const goalRoom=await commercial.goalRemainingMicroUsd?.(grant)??Infinity;
+      const processingRoom=Math.min(state.remaining,goalRoom);
       if(preferred){const faster=preferred.counted(preferredNormalized,count);
-       if(faster.upperBoundMicroUsd<=preferred.REQUEST_CEILING_MICRO_USD){codex=preferred;normalized=faster;requestHash=preferredHash;}
+       if(faster.upperBoundMicroUsd<=Math.min(preferred.REQUEST_CEILING_MICRO_USD,processingRoom)){codex=preferred;normalized=faster;requestHash=preferredHash;}
        else normalized=codex.counted(normalized,count);
       }else normalized=codex.counted(normalized,count);
       audit({kind:'codex_input_count',inputTokens:normalized.inputTokens,

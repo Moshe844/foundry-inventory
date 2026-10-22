@@ -1,5 +1,16 @@
 'use strict';const test=require('node:test'),assert=require('node:assert/strict'),wire=require('../../scripts/environment-agent-demo/codex-wire'),provider=require('../../scripts/environment-agent-demo/codex-helper-provider');
 const regular=wire.forProfile('sol-low-fast'),quick=wire.forProfile('sol-low-ultrafast');
+test('optional fast processing falls back when it fits the request cap but exceeds the remaining goal allowance',async t=>{
+ const {ExperimentBudget}=require('../../scripts/environment-agent-demo/budget'),{createRelay}=require('../../scripts/environment-agent-demo/relay'),base=wire.forProfile(regular.PROFILE.fallbackProcessingProfile),budget=new ExperimentBudget(':memory:','goal-room');
+ budget.approve({ceilingMicroUsd:1000000,approvalReference:'OFFLINE ONLY',expiresAt:new Date(Date.now()+60000).toISOString()});let sent=0,reservations=0;
+ const relay=await createRelay({budget,credentials:{openai:'FAKE'},allowedProviders:['openai'],countCodexInput:async()=>({object:'response.input_tokens',input_tokens:30000}),
+  commercial:{goalRemainingMicroUsd:async()=>100000,begin:async call=>{reservations++;assert.equal(call.body.service_tier,'default');assert(call.upperBoundMicroUsd<=100000);return{};},complete:async()=>{},unknown:async()=>assert.fail('No unknown outcome'),release:async()=>{}},
+  fetchImpl:async(_url,init)=>{sent++;const body=JSON.parse(init.body);assert.equal(body.model,regular.MODEL);assert.equal(body.reasoning.effort,regular.EFFORT);return Response.json({object:'response',id:'offline-goal-room',status:'completed',model:body.model,service_tier:body.service_tier,usage:{input_tokens:30000,output_tokens:10},output:[{type:'message',content:[{type:'output_text',text:'{"complete":true}'}]}]});}});
+ t.after(async()=>{await relay.close();budget.close();});
+ const transport=relay.grant({candidate:'codex',task:'goal-room',goalId:'offline-goal',fundingKey:'offline',ctx:{workspaceId:'offline',actorId:'offline'},provider:'openai',authorize:async()=>({}),codexPolicy:base,preferredCodexPolicy:regular,wireProfile:'codex',requestGate:async()=>{}});
+ assert.equal((await provider.create({transport,policy:regular}).complete({system:'Check every supplied fact.',prompt:'Full unchanged evidence.',schema:{type:'object',properties:{complete:{type:'boolean'}},required:['complete']},maxOutputTokens:500})).data.complete,true);
+ assert.equal(sent,1);assert.equal(reservations,1);assert.equal(budget.status().unresolved,0);
+});
 test('faster semantic processing preserves model, reasoning and exact native financial bounds',()=>{
  const small={system:'Verify the supplied facts and completeness.',prompt:'A small unfamiliar evidence packet.',schema:{type:'object'},maxOutputTokens:500};
  const normalized=quick.normalize({model:quick.MODEL,reasoning:{effort:'low'},instructions:small.system,input:[{role:'user',content:small.prompt}],max_output_tokens:500});assert.equal(normalized.body.service_tier,'ultrafast');assert.equal(normalized.outputTokens,500);assert.equal(quick.counted(normalized,{object:'response.input_tokens',input_tokens:1000}).upperBoundMicroUsd,45000);

@@ -37,7 +37,7 @@ test('actual SDK read-only delivery checks scope, preserves reference correction
   };
   const done=await pilot.run(db,ctx,started.goalId,{image:process.env.STOCKCHIEF_OFFLINE_CODEX_IMAGE,apiKey:'FAKE',fetchImpl:fake,countInput:async()=>({object:'response.input_tokens',input_tokens:200})});
   assert.equal(done.status,'COMPLETED',JSON.stringify({answer:done.answer,waitingForFunding:done.waitingForFunding,interruption:done.checkpoint?.harness?.interruption,failure:done.checkpoint?.harness?.verificationFailure,native,reviews}));assert.equal(native,3);assert.equal(reviews,invalidRef?1:2);assert.equal(done.checkpoint.harness.verificationCorrections,1);assert.equal(done.checkpoint.harness.codexRequests,native+reviews);assert(!done.answer.includes('interrupted'));
-  assert.equal(done.checkpoint.harness.answerScopeReview.version,2);assert.equal(done.checkpoint.harness.answerScopeReview.verdict.reason.length,200);
+  assert.equal(done.checkpoint.harness.answerScopeReview.version,4);assert.equal(done.checkpoint.harness.answerScopeReview.verdict.reason.length,200);
   assert(require('../../scripts/environment-agent-demo/replay-packet').unpack(done.checkpoint.harness.helperDelivery.packet).body.includes(recordedReason),'Exact charged response survives normalization and restart');
   const before=(await db.query('SELECT count(*) AS n,sum(charged) AS charged FROM stockchief_runtime.codex_pilot_calls WHERE goal_id=$1',[started.goalId])).rows[0];
   await db.query("UPDATE stockchief_runtime.assistant_goals SET status='BLOCKED',tool_calls=30,checkpoint=jsonb_set(checkpoint,'{harness,codexRequests}','24') WHERE id=$1",[started.goalId]);await pilot.resume(db,ctx,started.goalId);

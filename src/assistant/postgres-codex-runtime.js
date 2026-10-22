@@ -241,7 +241,7 @@ async function run(database,ctx,id,options={}){
    if(review.required&&!review.verdict){
     audit({kind:'answer_scope_review_started'});
     const fit=require('./native-answer-review');
-    const verdict=await helper.complete({system:fit.system,prompt:JSON.stringify(review.input),
+    const verdict=await helper.complete({system:fit.system,prompt:JSON.stringify(fit.presentation(review.input)),
      schema:fit.schema,schemaName:'native_answer_scope_fit_v2',maxOutputTokens:500});
     await session.answerReviewed(result.answer,review.hash,verdict.data);
     audit({kind:'answer_scope_review_settled',status:verdict.data.grounded&&verdict.data.complete&&!verdict.data.missingOutcomes?.length?'supported':'needs_correction'});

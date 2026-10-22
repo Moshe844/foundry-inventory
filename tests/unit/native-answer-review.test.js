@@ -64,7 +64,7 @@ test('large unfamiliar browser review preserves every field and contradiction us
  const text=JSON.stringify(original),entry={id:'browser-review',name:'environment_browser',text,sha256:createHash('sha256').update(text).digest('hex'),truncated:false};goal.checkpoint.harness.evidence={[entry.id]:entry};
  const report=JSON.stringify({status:'completed',outcome:'answer',answer:'The unfamiliar page title is Unfamiliar record review.',claims:[{evidenceId:entry.id,path:'/title',value:original.title}]});
  const bound=review.binding(goal,report),compact=bound.input.evidence[0].observation;
- assert.equal(bound.input.version,3);assert.equal(compact.controls.length,180);assert.deepEqual(browser.expand(compact),original,'Every business value, option, false/null default and inspection boundary survives');
+ assert.equal(bound.input.version,4);assert.equal(compact.controls.length,180);assert.deepEqual(browser.expand(compact),original,'Every business value, option, false/null default and inspection boundary survives');
  assert.equal(compact.controls[179].disabled,true);assert.equal(compact.controls[179].value,'Waiting for approval','Unclaimed contradictory evidence is not hidden');
  assert(Buffer.byteLength(JSON.stringify(compact))<Buffer.byteLength(text)*.65,'Duplicate defaults should not dominate the verifier input');assert.equal(entry.text,text,'The original evidence journal is unchanged');
  goal.checkpoint.harness.answerScopeReview={version:2,hash:bound.hash,state:'SETTLED',verdict:{grounded:true,complete:true,missingOutcomes:[],reason:''}};assert.equal(review.checked(goal,report).verified,false,'An old review must not authorize the changed packet');
