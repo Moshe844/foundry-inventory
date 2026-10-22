@@ -870,10 +870,10 @@ async function execute(database, ctx, id, options={}) {
         [ctx.workspaceId,id])).rows[0];
       if(!locked || locked.approval_status!=='APPROVED' || locked.integrity_hash!==plan.integrityHash)
         throw new ValidationError('The approved import is no longer executable.');
-      const sourceRows=(await client.query(`SELECT * FROM import_rows WHERE workspace_id=$1 AND import_id=$2
-        AND status IN ('VALID','NEEDS_REVIEW') ORDER BY row_number,id FOR UPDATE`,[ctx.workspaceId,id])).rows.map(hydrateRow);
-      const publishProgress=(stage,processedRows)=>options.onProgress?.({stage,processedRows,totalRows:sourceRows.length,attempt:executionAttempt});
+      const publishProgress=(stage,processedRows,preparedRows)=>options.onProgress?.({stage,processedRows,totalRows:plan.recordsValid,attempt:executionAttempt,...(preparedRows===undefined?{}:{preparedRows})});
       publishProgress('preparing',0);
+      const sourceRows=await rowStore.executionRows(client,ctx.workspaceId,id,prepared=>publishProgress('preparing',0,prepared));
+      if(sourceRows.length!==plan.recordsValid)throw new ValidationError('The approved row count changed before execution. Recheck the saved preview before importing.');
       if(plan.transformations.dataset==='suppliers'){
         let created=0;
         for(const row of sourceRows){

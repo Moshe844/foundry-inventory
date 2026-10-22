@@ -1,5 +1,26 @@
 'use strict';
 (()=>{
+ function nextStep(){
+  const query=new URL(location.href).searchParams;if(query.has('page')||query.has('rows'))return;
+  const active=document.querySelector('[data-preview-revision][data-revision-active="yes"]')||document.querySelector('[data-import-current-step] [data-import-detail]');
+  const approved=document.querySelector('[data-import-current-step] form[action$="/run"], [data-import-current-step] form[action$="/retry"]');
+  const result=document.querySelector('[data-import-current-step] .badge--ok');
+  const target=active||((approved||result)?document.querySelector('[data-import-current-step]'):null)||document.querySelector('#import-approval-review a[href^="#"]');
+  if(!target)return;
+  const step=target.matches('a')?document.querySelector(target.getAttribute('href')):target;
+  if(!step)return;
+  if(approved||result||active){
+   document.querySelectorAll('[data-import-source-details]').forEach(details=>details.open=false);
+   const current=active?.closest('[id]')||document.querySelector('[data-import-current-step]');
+   if(current?.id)history.replaceState(history.state,'',location.pathname+location.search+'#'+current.id);
+  }
+  // A former question's hash must not keep a completed or running import
+  // scrolled to an obsolete step after a redirect or progress refresh.
+  if(step.closest('details'))step.closest('details').open=true;
+  step.setAttribute('tabindex','-1');step.focus({preventScroll:true});step.scrollIntoView({block:'start',behavior:'instant'});
+ }
+ const advance=()=>requestAnimationFrame(()=>requestAnimationFrame(nextStep));
+ if(document.readyState==='complete')advance();else window.addEventListener('load',advance,{once:true});
  const format=iso=>new Intl.DateTimeFormat(undefined,{year:'numeric',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',second:'2-digit',timeZoneName:'short',...(document.documentElement.dataset.timeZone?{timeZone:document.documentElement.dataset.timeZone}:{})}).format(new Date(iso));
  document.querySelectorAll('[data-import-time]').forEach(time=>{if(Number.isFinite(Date.parse(time.dateTime))){time.textContent=format(time.dateTime);time.title=time.dateTime;}});
  document.querySelectorAll('[data-import-file-upload]').forEach(form=>form.querySelector('[type=file]')?.addEventListener('change',()=>{const key=form.querySelector('[name=uploadKey]');if(key)key.value=crypto.randomUUID();}));
@@ -56,7 +77,7 @@
  function updateMeter(panel,state){
   const meter=panel.querySelector('[data-import-meter]');if(!meter)return;meter.dataset.state=state.state.toLowerCase();
   meter.querySelector('[data-import-stage]').textContent=state.stageLabel;
-  meter.querySelector('[data-import-count]').textContent=state.processedRows===null?'':(state.attempt>1?'Attempt '+state.attempt+': ':'')+state.processedRows.toLocaleString()+' / '+state.readyRows.toLocaleString()+' rows processed';
+  meter.querySelector('[data-import-count]').textContent=state.stage==='preparing'&&state.preparedRows!==null&&state.preparedRows!==undefined?state.preparedRows.toLocaleString()+' / '+state.readyRows.toLocaleString()+' approved rows prepared':state.processedRows===null?'':(state.attempt>1?'Attempt '+state.attempt+': ':'')+state.processedRows.toLocaleString()+' / '+state.readyRows.toLocaleString()+' rows processed';
   const bar=meter.querySelector('[data-import-bar]');bar.classList.toggle('is-indeterminate',state.progressPercent===null);
   if(state.progressPercent===null)bar.removeAttribute('aria-valuenow');else bar.setAttribute('aria-valuenow',String(state.progressPercent));
   bar.firstElementChild.style.width=(state.progressPercent===null?32:state.progressPercent)+'%';

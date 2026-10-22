@@ -1,5 +1,22 @@
 'use strict';
 const CHUNK=500;
+// Read only the frozen execution inputs, in index order. Reading and sorting
+// every raw source row in one statement makes the first step grow with the
+// complete workbook and can time out before progress is published.
+async function executionRows(client,workspaceId,importId,onProgress){
+ const rows=[];let lastRow=-1,lastId='';
+ for(;;){
+  const page=(await client.query(`SELECT id,row_number,parsed FROM import_rows
+   WHERE workspace_id=$1 AND import_id=$2 AND status IN ('VALID','NEEDS_REVIEW')
+    AND (row_number,id)>($3::bigint,$4::text)
+   ORDER BY row_number,id LIMIT ${CHUNK} FOR UPDATE`,[workspaceId,importId,lastRow,lastId])).rows;
+  if(!page.length)break;
+  for(const row of page)rows.push({id:row.id,rowNumber:Number(row.row_number),parsed:typeof row.parsed==='string'?JSON.parse(row.parsed):row.parsed});
+  lastRow=Number(page.at(-1).row_number);lastId=page.at(-1).id;
+  await onProgress?.(rows.length);
+ }
+ return rows;
+}
 async function insert(database,workspaceId,importId,rows,at){
  for(let start=0;start<rows.length;start+=CHUNK){
   const batch=rows.slice(start,start+CHUNK).map(row=>({id:row.id,row_number:row.rowNumber,raw:row.raw,parsed:row.parsed,status:row.status,problems:row.problems,location_id:row.parsed.locationId||null,quantity:row.parsed.quantity??null}));
@@ -28,4 +45,4 @@ async function markImported(database,workspaceId,importId,rows){
   WHERE saved.workspace_id=$1 AND saved.import_id=$2 AND saved.id=ANY($4::text[]) AND saved.id=x.id`,[workspaceId,importId,JSON.stringify(batch),batch.map(r=>r.id)]);
  if(result.rowCount!==rows.length)throw new Error('The imported row identities did not reconcile.');
 }
-module.exports={insert,revise,markImported};
+module.exports={insert,revise,markImported,executionRows};

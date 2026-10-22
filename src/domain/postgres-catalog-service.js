@@ -123,16 +123,16 @@ async function createImportedItemsInTransaction(client,ctx,inputs){
       description:trimOrNull(input.description),unit_label:trimOrNull(input.unitLabel)||'unit',tracking_mode:input.trackingMode,has_variants:optionNames.length?1:0});
     created.push(result);
   }
-  await client.query(`INSERT INTO items(id,workspace_id,name,base_code,description,unit_label,tracking_mode,has_variants,allow_negative,is_active,created_at,updated_at)
+  for(let start=0;start<itemRows.length;start+=500)await client.query(`INSERT INTO items(id,workspace_id,name,base_code,description,unit_label,tracking_mode,has_variants,allow_negative,is_active,created_at,updated_at)
     SELECT x.id,$1,x.name,x.base_code,x.description,x.unit_label,x.tracking_mode,x.has_variants,0,1,$2,$2
-    FROM jsonb_to_recordset($3::jsonb) AS x(id text,name text,base_code text,description text,unit_label text,tracking_mode text,has_variants bigint)`,[ctx.workspaceId,at,JSON.stringify(itemRows)]);
-  if(optionRows.length)await client.query(`INSERT INTO item_options(id,workspace_id,item_id,name,position)
-    SELECT x.id,$1,x.item_id,x.name,x.position FROM jsonb_to_recordset($2::jsonb) AS x(id text,item_id text,name text,position bigint)`,[ctx.workspaceId,JSON.stringify(optionRows)]);
-  await client.query(`INSERT INTO skus(id,workspace_id,item_id,code,barcode,variant_label,is_default,position,is_active,created_at)
+    FROM jsonb_to_recordset($3::jsonb) AS x(id text,name text,base_code text,description text,unit_label text,tracking_mode text,has_variants bigint)`,[ctx.workspaceId,at,JSON.stringify(itemRows.slice(start,start+500))]);
+  for(let start=0;start<optionRows.length;start+=500)await client.query(`INSERT INTO item_options(id,workspace_id,item_id,name,position)
+    SELECT x.id,$1,x.item_id,x.name,x.position FROM jsonb_to_recordset($2::jsonb) AS x(id text,item_id text,name text,position bigint)`,[ctx.workspaceId,JSON.stringify(optionRows.slice(start,start+500))]);
+  for(let start=0;start<skuRows.length;start+=500)await client.query(`INSERT INTO skus(id,workspace_id,item_id,code,barcode,variant_label,is_default,position,is_active,created_at)
     SELECT x.id,$1,x.item_id,x.code,x.barcode,x.variant_label,x.is_default,x.position,1,$2
-    FROM jsonb_to_recordset($3::jsonb) AS x(id text,item_id text,code text,barcode text,variant_label text,is_default bigint,position bigint)`,[ctx.workspaceId,at,JSON.stringify(skuRows)]);
-  if(valueRows.length)await client.query(`INSERT INTO sku_option_values(sku_id,option_id,value)
-    SELECT x.sku_id,x.option_id,x.value FROM jsonb_to_recordset($1::jsonb) AS x(sku_id text,option_id text,value text)`,[JSON.stringify(valueRows)]);
+    FROM jsonb_to_recordset($3::jsonb) AS x(id text,item_id text,code text,barcode text,variant_label text,is_default bigint,position bigint)`,[ctx.workspaceId,at,JSON.stringify(skuRows.slice(start,start+500))]);
+  for(let start=0;start<valueRows.length;start+=500)await client.query(`INSERT INTO sku_option_values(sku_id,option_id,value)
+    SELECT x.sku_id,x.option_id,x.value FROM jsonb_to_recordset($1::jsonb) AS x(sku_id text,option_id text,value text)`,[JSON.stringify(valueRows.slice(start,start+500))]);
   return created;
 }
 

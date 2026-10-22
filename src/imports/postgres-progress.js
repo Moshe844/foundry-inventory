@@ -28,7 +28,7 @@ function present(row){
   verified,finished:!['QUEUED','RUNNING','UPDATING_PREVIEW'].includes(state),status:row.plan_status,
   createdAt:iso(row.created_at),queuedAt:iso(row.queued_at),startedAt:state==='QUEUED'?null:iso(row.started_at),
   completedAt:['QUEUED','RUNNING','UPDATING_PREVIEW'].includes(state)?null:iso(row.committed_at||row.job_finished_at||row.finished_at),
-  stage,stageLabel,attempt:known?Number(p.attempt||1):null,processedRows:verified?Number(row.records_valid):known?p.processedRows:null,
+  stage,stageLabel,attempt:known?Number(p.attempt||1):null,preparedRows:known&&Number.isSafeInteger(p.preparedRows)?p.preparedRows:null,processedRows:verified?Number(row.records_valid):known?p.processedRows:null,
   progressPercent:verified?100:known&&p.totalRows?Math.min(99,Math.floor(p.processedRows/p.totalRows*100)):null,
   lastUpdateAt:iso(revising?row.preview_updated_at:row.job_updated_at||row.finished_at||row.started_at||row.created_at),
   href:'/imports/'+encodeURIComponent(row.id)};

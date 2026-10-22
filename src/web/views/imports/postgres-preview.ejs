@@ -24,6 +24,45 @@
  <% }else{ %><p id="import-approval-explanation">Required choices are complete. Review the rows and planned changes below, then approve this preview. Approval saves your authorization; “Import and verify” starts the import.</p><a class="btn btn--primary" href="#import-approval-actions">Review and approve</a><% } %>
 </section><% } %>
 <%- include('preview-revision',{sourceTransforms}) %>
+<section id="import-current-step" data-import-current-step tabindex="-1" aria-label="Current import step">
+<% if(importing){ %>
+  <section class="card section" data-import-progress="/imports/<%= plan.id %>/progress" data-import-detail aria-live="polite"><div class="card-head"><h2 data-import-status><%= activity.label %></h2></div><div class="card-body"><p>StockChief is processing <%= plan.recordsValid.toLocaleString('en-US') %> approved rows. Products and stock appear together after the import passes verification.</p><p>You can leave this page. Reopen it from <a href="/imports">File imports and results</a> or the progress banner elsewhere in this inventory.</p><p data-import-timing></p><%- include('../partials/import-meter',{activity}) %></div></section>
+<% } else if(interrupted){ %>
+  <section class="card section"><div class="card-head"><h2>Import paused before verification</h2></div><div class="card-body"><% if(activity.reason){ %><p role="alert"><strong><%= activity.reason %></strong></p><% } %>
+    <% if(run?.status==='FAILED' && run.stage==='rolled_back' && plan.status==='READY' && plan.approvalStatus==='APPROVED'){ %>
+      <p>This attempt stopped safely before saving. No inventory from this attempt was added. Your file and approval are saved.</p>
+      <p>You can retry the same approved rows. StockChief will check the saved result and prevent a second copy.</p>
+      <form method="post" action="/imports/<%= plan.id %>/retry"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><input type="hidden" name="executionId" value="<%= run.id %>"><button class="btn btn--primary" type="submit">Retry approved import</button></form>
+    <% } else { %><p>Your source file and approval history are saved. This run has no verified successful result, so StockChief will not start another copy automatically or claim it completed.</p><p>Review this import before continuing.</p><% } %>
+    <p><a href="/imports">Back to your imports</a></p></div></section>
+<% } else if(run){ %>
+  <div class="card section <%= run.verified?'':'card--warn' %>"><div class="card-head"><h2>Reconciliation</h2>
+    <span class="spacer"></span><span class="badge badge--<%= run.verified?'ok':'danger' %>"><%= run.verified?'Verified':'Not verified' %></span></div>
+    <div class="card-body"><p class="lede"><%= helpers.qty(run.rowsImported) %> <%= helpers.plural(run.rowsImported, 'row') %> created <%= helpers.qty(run.itemsCreated) %> <%= helpers.plural(run.itemsCreated, 'product') %><% if(run.itemsUpdated>0){ %>, updated <%= helpers.qty(run.itemsUpdated) %> <%= helpers.plural(run.itemsUpdated, 'product') %><% } %>, <%= helpers.qty(run.skusCreated) %> <%= helpers.plural(run.skusCreated, 'SKU') %> and <%= helpers.qty(run.unitsEstablished) %> opening <%= helpers.plural(run.unitsEstablished, 'unit') %>.</p>
+      <% if(run.verified){ %><p>Your approved inventory is saved. The stock and accounting checks passed.</p><% } %>
+      <% if(activity?.startedAt){ %><p class="muted">Started <time data-import-time datetime="<%= activity.startedAt %>"><%= new Date(activity.startedAt).toUTCString() %></time><% if(activity.completedAt){ %><br>Finished <time data-import-time datetime="<%= activity.completedAt %>"><%= new Date(activity.completedAt).toUTCString() %></time><% } %></p><% } %>
+      <details <% if(!run.verified){ %>open<% } %>><summary>Verification details · <%= run.checks.length %> <%= run.verified?'checks passed':'checks to review' %></summary>
+      <table class="table table--tight"><thead><tr><th>Check</th><th>Expected</th><th>Found</th></tr></thead><tbody>
+        <% run.checks.forEach(function(check){ %><tr><td><%= check.name %></td><td><%= helpers.qty(check.expected) %></td><td><%= helpers.qty(check.observed) %></td></tr><% }) %>
+      </tbody></table></details></div><div class="card-foot"><a class="btn btn--primary" href="/inventory">See imported inventory</a></div>
+  </div>
+<% } else { %>
+  <div class="card section"><div class="card-head"><h2>What will happen</h2><span class="spacer"></span>
+    <span class="badge badge--muted">No inventory changed yet</span></div>
+    <div class="card-body"><p class="lede"><% if(needsIdentity){ %>I read <%= plan.recordsDetected %> <%= helpers.plural(plan.recordsDetected,'row') %>. Answer the product question above before anything can be imported.<% } else if(needsNumberAnswer){ %>I found the products. Answer the number question above before StockChief changes stock.<% } else if(needsTrackingAnswer){ %>Resolve the tracking requirements above. The complete source stays saved and no stock or value has been imported.<% } else if(needsLocation||plan.conflicts.length){ %>Answer the location question above so StockChief knows where to put this stock.<% } else { %>StockChief will create or match <%= plan.recordsValid %> valid <%= helpers.plural(plan.recordsValid, 'row') %> and establish only the quantities shown below through the inventory ledger.<% } %></p>
+      <p>Matched SKU names and mapped selling prices will be updated from this file. Product names that conflict across variants need correction before execution. Stock quantities follow the selected set/add choice; absent columns do not erase saved details.</p><p>Category and custom columns are retained as imported product details. Mapped reorder levels, supplier names and lead times update their business settings only when you approve this preview. Importing them authorizes no purchase, supplier bill, payment or email.</p>
+      <% if(plan.warnings.length){ %><details><summary>Review notes about this file</summary><ul class="plain-list"><% plan.warnings.forEach(function(warning){ %><li class="is-warn"><%= warning %></li><% }) %></ul></details><% } %>
+      <% if(plan.conflicts.length){ %><p><strong>Missing setup:</strong> Add or correct these locations before importing: <%= plan.conflicts.map(function(c){return c.text;}).join(', ') %>.</p><% } %>
+    </div>
+    <div class="card-foot" id="import-approval-actions"><% if(plan.approvalStatus==='AWAITING_APPROVAL'&&!review.canApprove){ %><p><strong>Approval is unavailable:</strong> <%= review.blockers.map(step=>step.title).join('; ') %>. <a href="<%= review.blockers[0].href %>"><%= review.blockers[0].action %></a>.</p><% } %><div class="btn-row">
+      <% if(plan.approvalStatus==='APPROVED'){ %><form method="post" action="/imports/<%= plan.id %>/run"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><button class="btn btn--primary" type="submit">Import and verify</button></form>
+      <% } else if(review.canApprove){ %><form method="post" action="/imports/<%= plan.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><button class="btn btn--primary" type="submit" aria-describedby="import-approval-explanation">Approve <%= plan.recordsValid %> <%= helpers.plural(plan.recordsValid, 'row') %></button></form><% }else if(review.blockers.length){ %><a class="btn btn--primary" data-import-next-step href="<%= review.blockers[0].href %>"><%= review.blockers[0].action %></a><% } %>
+      <form method="post" action="/imports/<%= plan.id %>/cancel"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost" type="submit">Cancel</button></form>
+    </div></div>
+  </div>
+<% } %>
+</section>
+<% if(plan.approvalStatus==='APPROVED'||plan.status==='SUCCEEDED'){ %><details class="card card-body section" data-import-source-details><summary>Source details and saved choices</summary><% } %>
 <% if(sourceTransforms.analysisNotice){ %><section class="card card-body" role="status"><h2>Your file was read; automatic interpretation is paused</h2><p><%= sourceTransforms.analysisNotice.message %></p><p>The original file and this unapproved preview are saved. No stock or inventory value changed. Review the column meanings<%= sourceTransforms.sheetCount>1?' and complete worksheet coverage':'' %> before approval. A usage limit does not mean your file is corrupt.</p>
 <% if(plan.status==='READY'&&plan.approvalStatus==='AWAITING_APPROVAL'){ %><form method="post" action="/imports/<%= plan.id %>/reanalyse"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><button class="btn" type="submit">Retry automatic interpretation from saved file</button></form><% } %></section><% } %>
 <% const roleRows=rows.filter(row=>row.parsed?.documentEvidence?.kind==='uncertain');if(roleRows.length&&plan.status==='READY'&&plan.approvalStatus==='AWAITING_APPROVAL'){ %><section class="card card-body"><h2>Products or document information?</h2><p>These rows have a different identity structure from the product table. Confirm their meaning so a total or note cannot increase stock.</p><form method="post" action="/imports/<%= plan.id %>/revise"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><% roleRows.forEach(row=>{ %><label class="field"><span>Source row <%= row.rowNumber %>: <%= row.parsed.documentEvidence.label %></span><select name="document_role_<%= row.rowNumber %>" required><option value="">Choose meaning</option><option value="document">Document total, charge or note — exclude from stock</option><option value="product">Product — review its quantity and other fields</option></select></label><% }); %><button class="btn" type="submit">Recheck row meanings</button></form></section><% } %>
@@ -154,42 +193,7 @@
     </div>
   </section>
 <% } %>
-<% if(importing){ %>
-  <section class="card section" data-import-progress="/imports/<%= plan.id %>/progress" data-import-detail aria-live="polite"><div class="card-head"><h2 data-import-status><%= activity.label %></h2></div><div class="card-body"><p>StockChief is processing <%= plan.recordsValid.toLocaleString('en-US') %> approved rows. Products and stock appear together after the import passes verification.</p><p>You can leave this page. Reopen it from <a href="/imports">File imports and results</a> or the progress banner elsewhere in this inventory.</p><p data-import-timing></p><%- include('../partials/import-meter',{activity}) %></div></section>
-<% } else if(interrupted){ %>
-  <section class="card section"><div class="card-head"><h2>Import paused before verification</h2></div><div class="card-body"><% if(activity.reason){ %><p role="alert"><strong><%= activity.reason %></strong></p><% } %>
-    <% if(run?.status==='FAILED' && run.stage==='rolled_back' && plan.status==='READY' && plan.approvalStatus==='APPROVED'){ %>
-      <p>This attempt stopped safely before saving. No inventory from this attempt was added. Your file and approval are saved.</p>
-      <p>You can retry the same approved rows. StockChief will check the saved result and prevent a second copy.</p>
-      <form method="post" action="/imports/<%= plan.id %>/retry"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><input type="hidden" name="executionId" value="<%= run.id %>"><button class="btn btn--primary" type="submit">Retry approved import</button></form>
-    <% } else { %><p>Your source file and approval history are saved. This run has no verified successful result, so StockChief will not start another copy automatically or claim it completed.</p><p>Review this import before continuing.</p><% } %>
-    <p><a href="/imports">Back to your imports</a></p></div></section>
-<% } else if(run){ %>
-  <div class="card section <%= run.verified?'':'card--warn' %>"><div class="card-head"><h2>Reconciliation</h2>
-    <span class="spacer"></span><span class="badge badge--<%= run.verified?'ok':'danger' %>"><%= run.verified?'Verified':'Not verified' %></span></div>
-    <div class="card-body"><p class="lede"><%= helpers.qty(run.rowsImported) %> <%= helpers.plural(run.rowsImported, 'row') %> created <%= helpers.qty(run.itemsCreated) %> <%= helpers.plural(run.itemsCreated, 'product') %><% if(run.itemsUpdated>0){ %>, updated <%= helpers.qty(run.itemsUpdated) %> <%= helpers.plural(run.itemsUpdated, 'product') %><% } %>, <%= helpers.qty(run.skusCreated) %> <%= helpers.plural(run.skusCreated, 'SKU') %> and <%= helpers.qty(run.unitsEstablished) %> opening <%= helpers.plural(run.unitsEstablished, 'unit') %>.</p>
-      <% if(run.verified){ %><p>Your approved inventory is saved. The stock and accounting checks passed.</p><% } %>
-      <% if(activity?.startedAt){ %><p class="muted">Started <time data-import-time datetime="<%= activity.startedAt %>"><%= new Date(activity.startedAt).toUTCString() %></time><% if(activity.completedAt){ %><br>Finished <time data-import-time datetime="<%= activity.completedAt %>"><%= new Date(activity.completedAt).toUTCString() %></time><% } %></p><% } %>
-      <details <% if(!run.verified){ %>open<% } %>><summary>Verification details · <%= run.checks.length %> <%= run.verified?'checks passed':'checks to review' %></summary>
-      <table class="table table--tight"><thead><tr><th>Check</th><th>Expected</th><th>Found</th></tr></thead><tbody>
-        <% run.checks.forEach(function(check){ %><tr><td><%= check.name %></td><td><%= helpers.qty(check.expected) %></td><td><%= helpers.qty(check.observed) %></td></tr><% }) %>
-      </tbody></table></details></div><div class="card-foot"><a class="btn btn--primary" href="/inventory">See imported inventory</a></div>
-  </div>
-<% } else { %>
-  <div class="card section"><div class="card-head"><h2>What will happen</h2><span class="spacer"></span>
-    <span class="badge badge--muted">No inventory changed yet</span></div>
-    <div class="card-body"><p class="lede"><% if(needsIdentity){ %>I read <%= plan.recordsDetected %> <%= helpers.plural(plan.recordsDetected,'row') %>. Answer the product question above before anything can be imported.<% } else if(needsNumberAnswer){ %>I found the products. Answer the number question above before StockChief changes stock.<% } else if(needsTrackingAnswer){ %>Resolve the tracking requirements above. The complete source stays saved and no stock or value has been imported.<% } else if(needsLocation||plan.conflicts.length){ %>Answer the location question above so StockChief knows where to put this stock.<% } else { %>StockChief will create or match <%= plan.recordsValid %> valid <%= helpers.plural(plan.recordsValid, 'row') %> and establish only the quantities shown below through the inventory ledger.<% } %></p>
-      <p>Matched SKU names and mapped selling prices will be updated from this file. Product names that conflict across variants need correction before execution. Stock quantities follow the selected set/add choice; absent columns do not erase saved details.</p><p>Category and custom columns are retained as imported product details. Mapped reorder levels, supplier names and lead times update their business settings only when you approve this preview. Importing them authorizes no purchase, supplier bill, payment or email.</p>
-      <% if(plan.warnings.length){ %><details><summary>Review notes about this file</summary><ul class="plain-list"><% plan.warnings.forEach(function(warning){ %><li class="is-warn"><%= warning %></li><% }) %></ul></details><% } %>
-      <% if(plan.conflicts.length){ %><p><strong>Missing setup:</strong> Add or correct these locations before importing: <%= plan.conflicts.map(function(c){return c.text;}).join(', ') %>.</p><% } %>
-    </div>
-    <div class="card-foot" id="import-approval-actions"><% if(plan.approvalStatus==='AWAITING_APPROVAL'&&!review.canApprove){ %><p><strong>Approval is unavailable:</strong> <%= review.blockers.map(step=>step.title).join('; ') %>. <a href="<%= review.blockers[0].href %>"><%= review.blockers[0].action %></a>.</p><% } %><div class="btn-row">
-      <% if(plan.approvalStatus==='APPROVED'){ %><form method="post" action="/imports/<%= plan.id %>/run"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><button class="btn btn--primary" type="submit">Import and verify</button></form>
-      <% } else if(review.canApprove){ %><form method="post" action="/imports/<%= plan.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><button class="btn btn--primary" type="submit" aria-describedby="import-approval-explanation">Approve <%= plan.recordsValid %> <%= helpers.plural(plan.recordsValid, 'row') %></button></form><% }else if(review.blockers.length){ %><a class="btn btn--primary" data-import-next-step href="<%= review.blockers[0].href %>"><%= review.blockers[0].action %></a><% } %>
-      <form method="post" action="/imports/<%= plan.id %>/cancel"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost" type="submit">Cancel</button></form>
-    </div></div>
-  </div>
-<% } %>
+<% if(plan.approvalStatus==='APPROVED'||plan.status==='SUCCEEDED'){ %></details><% } %>
 <% if(plan.status==='READY' && plan.approvalStatus==='AWAITING_APPROVAL'){ %>
   <details class="card section" id="column-mapping"><summary class="card-head">Advanced: change how StockChief read a column</summary>
     <div class="card-body"><p>This form changes column meanings, source locations and invalid quantities. It does not answer separate tracking or image-review questions. No stock changes.</p><% if(needsTrackingAnswer){ %><p><strong>Tracking is still unanswered.</strong> <a href="#import-tracking-question">Confirm tracking choices above</a> to resolve that step.</p><% } %>
@@ -219,7 +223,7 @@
 <% } %>
 <details class="card section"><summary class="card-head">See how the file was read</summary>
   <table class="table table--tight"><thead><tr><th>Source column</th><th>Meaning</th></tr></thead><tbody>
-    <% mappingRows.forEach(function(row){ %><tr><td><%= row.column %></td><td><%= row.field ? (fieldOptions.find(function(field){return field.id===row.field;}) || {}).label : 'Not imported' %></td></tr><% }) %>
+    <% mappingRows.forEach(function(row){ %><tr><td><%= row.column %></td><td><%= row.field ? (fieldOptions.find(function(field){return field.id===row.field;}) || {}).label : 'Saved automatically as a custom product detail' %></td></tr><% }) %>
   </tbody></table>
 </details>
 <div class="card section" id="import-rows"><div class="card-head"><h2>Every row</h2><span class="spacer"></span>
