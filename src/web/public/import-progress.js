@@ -22,9 +22,14 @@
   };
   const timer=setInterval(refresh,2500);document.addEventListener('visibilitychange',refresh);refresh();
  }
+ document.querySelectorAll('[data-tracking-review]').forEach(form=>form.addEventListener('invalid',()=>{const error=form.querySelector('[data-tracking-answer-error]');if(error)error.hidden=false;},true));
  document.querySelectorAll('[data-import-preview-revise]').forEach(form=>form.addEventListener('submit',event=>{
   if(form.dataset.submitting==='yes'){event.preventDefault();return;}form.dataset.submitting='yes';form.setAttribute('aria-busy','true');
-  form.querySelectorAll('button[type="submit"]').forEach(button=>{button.disabled=true;button.textContent='Recalculating preview…';});
+  // Disabled submitters are omitted from the browser's form payload. Preserve
+  // the exact named decision before showing its busy state, including the
+  // explicit confirmation; never infer a choice from merely opening the form.
+  if(event.submitter?.name){const decision=document.createElement('input');decision.type='hidden';decision.name=event.submitter.name;decision.value=event.submitter.value;form.appendChild(decision);}
+  form.querySelectorAll('button[type="submit"]').forEach(button=>{button.disabled=true;button.textContent=button.dataset.busyLabel||'Updating saved preview…';});
   const status=form.querySelector('[data-import-preview-status]');if(status){status.hidden=false;status.textContent='StockChief is checking your saved rows again. No stock or value is being imported.';}
  }));
  document.querySelectorAll('[data-preview-revision][data-revision-active="yes"]').forEach(panel=>{

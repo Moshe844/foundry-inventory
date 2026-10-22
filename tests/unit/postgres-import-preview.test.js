@@ -43,7 +43,7 @@ test('a quantity-only interpretation still prompts for an identity column and ca
   assert.match(html,/which values identify your products/);
   assert.match(html,/You do not need to change or re-upload your file/);
   assert.match(html,/Before you can import/);
-  assert.match(html,/disabled[^>]*>Review required before approval/);
+  assert.doesNotMatch(html,/action="[^"]*\/approve"/);assert.match(html,/data-import-next-step/);
 });
 
 test('tracking clarification is presented in the product with an explicit preview-only choice',()=>{
@@ -51,5 +51,5 @@ test('tracking clarification is presented in the product with an explicit previe
  const html=render(template,{plan:{id:'tracking',sourceName:'tracked.xlsx',fieldMappings:{name:0,quantity:1,serialTracked:2},transformations:{workbook:{sourceRows:400,outputRows:800,coverage:[]}},recordsDetected:800,recordsValid:0,recordsInvalid:800,status:'READY',warnings:[],conflicts:[],approvalStatus:'AWAITING_APPROVAL',integrityHash:'frozen'},
  duplicatePlans:[],run:null,importProgress:{active:false,label:'Preview awaiting approval'},csrfToken:'csrf',mappingRows:[],fieldOptions:[],locations:[],counts:{INVALID:800},rows:[],page:1,pageSize:50,
  trackingQuestion:{kind:'tracking_requirements',state:'needs_input',groups:[{mode:'serial',label:'Serial-number',sourceSkus:400,missingSkus:400,decision:'source',canUseQuantity:true}]},helpers:{plural:(n,s)=>n===1?s:s+'s'}});
- assert.match(html,/Do these products need serial numbers or batch tracking/);assert.match(html,/name="tracking_serial"/);assert.match(html,/value="" selected>Choose how these products are tracked/);assert.match(html,/name="confirmTrackingChange"/);assert.match(html,/Nothing is imported until you review and approve/);assert.match(html,/disabled[^>]*>Review required before approval/);assert.doesNotMatch(html,/undefined|NaN/);
+ assert.match(html,/Do these products need serial numbers or batch tracking/);assert.match(html,/name="tracking_serial"/);assert.match(html,/type="radio"/);assert.doesNotMatch(html,/value="quantity" checked/);assert.match(html,/name="confirmTrackingChange"/);assert.match(html,/Nothing is imported until you review and approve/);assert.doesNotMatch(html,/action="[^"]*\/approve"/);assert.match(html,/data-import-next-step/);assert.doesNotMatch(html,/undefined|NaN/);
 });

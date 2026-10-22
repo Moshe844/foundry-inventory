@@ -45,8 +45,8 @@ test('a saved tracking clarification is explicit, reversible, paged and cannot e
   // developer-only mutation or approving stock on the customer's behalf.
   await page.goto(base+'/login');await page.getByLabel('Work email').fill(email);await page.locator('[name=password]').fill(password);await Promise.all([page.waitForURL(base+'/'),page.getByRole('button',{name:'Sign in',exact:true}).click()]);await page.goto(base+'/imports/'+plan.id);
   assert.equal(await page.locator('[data-import-status]').innerText(),'Needs your answer');
-  const form=page.locator('[data-import-preview-revise]');assert.match(await form.innerText(),/Nothing is imported/);assert.equal(await form.locator('[name=tracking_serial]').inputValue(),'source');
-  await form.locator('[name=tracking_serial]').selectOption('quantity');await form.locator('[name=tracking_lot]').selectOption('quantity');await form.locator('[name=confirmTrackingChange]').check();await Promise.all([page.waitForURL(base+'/imports/'+plan.id,{waitUntil:'load'}),form.getByRole('button',{name:'Save choices and recalculate preview'}).click()]);
+  const form=page.locator('[data-import-preview-revise]');assert.match(await form.innerText(),/Nothing is imported/);assert(await form.locator('[name=tracking_serial][value=source]').isChecked());
+  await form.locator('[name=tracking_serial][value=quantity]').check();await form.locator('[name=tracking_lot][value=quantity]').check();await Promise.all([page.waitForURL(base+'/imports/'+plan.id,{waitUntil:'load'}),form.getByRole('button',{name:'Confirm tracking choices'}).click()]);
   assert.match(await page.locator('#preview-update').innerText(),/Preview update queued/);
   const completed=await require('../../src/operations/postgres-job-queue').processOne(db,{'import.revise-preview':require('../../src/operations/postgres-runtime-handlers').create({})['import.revise-preview']},{owner:'workbook-review-fixture'});assert.equal(completed.status,'COMPLETED');
   await page.waitForFunction(()=>document.querySelector('h2#import-tracking-question')?.textContent==='Tracking requirements reviewed');

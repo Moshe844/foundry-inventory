@@ -20,7 +20,7 @@
 <section class="card card-body section" id="import-approval-review" aria-labelledby="import-review-title">
  <h2 id="import-review-title"><%= review.canApprove?'Ready for your approval':'Before you can import' %></h2>
  <% if(review.blockers.length){ %><p id="import-approval-explanation">Your file is saved. Approval is unavailable until the following <%= review.blockers.length===1?'step is':'steps are' %> complete. No stock or Money has changed.</p>
- <ol><% review.blockers.forEach(function(step){ %><li><strong><%= step.title %></strong><p><%= step.detail %></p><a class="btn btn--secondary" href="<%= step.href %>"><%= step.action %></a></li><% }) %></ol>
+ <ol><% review.blockers.forEach(function(step,index){ %><li><strong><%= step.title %></strong><p><%= step.detail %></p><a class="btn <%= index===0?'btn--primary':'btn--secondary' %>" href="<%= step.href %>"><%= step.action %></a></li><% }) %></ol>
  <% }else{ %><p id="import-approval-explanation">Required choices are complete. Review the rows and planned changes below, then approve this preview. Approval saves your authorization; “Import and verify” starts the import.</p><a class="btn btn--primary" href="#import-approval-actions">Review and approve</a><% } %>
 </section><% } %>
 <%- include('preview-revision',{sourceTransforms}) %>
@@ -58,17 +58,17 @@
   <% if(needsTrackingAnswer){ %><p>Your file marks some products as serial- or lot-tracked, but does not identify all of their stock. StockChief found the quantities; it cannot safely invent serial numbers or batch allocations.</p><% } else if(trackingQuestion.state==='complete'){ %><p>No tracking information is missing. The source flags and identifiers are preserved with this preview.</p><% } else { %><p>The original tracking flags are preserved with this preview. Review your choices below before approving inventory changes.</p><% } %>
   <div class="table-scroll"><table class="table"><thead><tr><th>Source requirement</th><th>SKUs marked in file</th><th>SKUs needing identifiers</th></tr></thead><tbody><% trackingQuestion.groups.forEach(function(group){ %><tr><th scope="row"><%= group.label %></th><td><%= group.sourceSkus.toLocaleString('en-US') %></td><td><%= group.missingSkus.toLocaleString('en-US') %></td></tr><% }) %></tbody></table></div>
   <% if(plan.approvalStatus==='AWAITING_APPROVAL' && trackingQuestion.state!=='complete'){ %>
-  <form method="post" action="/imports/<%= plan.id %>/revise" class="stack-form" data-import-preview-revise>
+  <form method="post" action="/imports/<%= plan.id %>/revise" class="stack-form" data-import-preview-revise data-tracking-review>
     <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>">
-    <% trackingQuestion.groups.forEach(function(group){ const unanswered=group.missingSkus>0&&!trackingQuestion.confirmedAt; %><label class="field"><span class="field-label"><%= group.label %> requirements</span><select class="select" name="tracking_<%= group.mode %>" required>
-      <% if(unanswered){ %><option value="" selected>Choose how these products are tracked</option><% } %>
-      <option value="source" <%= !unanswered&&group.decision==='source'?'selected':'' %>>Yes — keep this requirement; supply the missing identifiers before import</option>
-      <% if(group.canUseQuantity){ %><option value="quantity" <%= group.decision==='quantity'?'selected':'' %>>No — these flags do not apply; track by quantity</option><% } %>
-    </select></label><% }) %>
-    <p><strong>If you choose Yes:</strong> include one serial number per unit, or batch numbers with quantities for each location, in your file. <a href="/imports/start">Upload the completed source</a> to prepare a new preview. Saving “Yes” alone cannot make missing identifiers available.</p><p><strong>If you choose No:</strong> confirm below that the file's flags do not apply. StockChief will recalculate the complete preview using quantity tracking. You can then review and approve it; this choice does not import anything.</p>
-    <% if(trackingQuestion.groups.some(function(group){return group.canUseQuantity;})){ %><label class="field"><span><input type="checkbox" name="confirmTrackingChange" value="yes"> If I selected quantity tracking, I confirm those flags do not apply to this inventory.</span></label><% } %>
+    <p data-tracking-answer-error role="alert" class="notice notice--warn" hidden>Choose an answer for each tracking requirement below, then confirm your choices. Nothing has been recalculated or imported yet.</p>
+    <% trackingQuestion.groups.forEach(function(group){ const unanswered=group.missingSkus>0&&!trackingQuestion.confirmedAt; %><fieldset class="section"><legend><strong><%= group.label %> tracking · <%= group.sourceSkus.toLocaleString('en-US') %> SKUs</strong></legend>
+      <label class="field"><span><input type="radio" name="tracking_<%= group.mode %>" value="source" <%= !unanswered&&group.decision==='source'?'checked':'' %> required> Keep <%= group.mode==='serial'?'individual serial numbers':'batch / lot tracking' %>. I will supply the missing identifiers before import.</span></label>
+      <% if(group.canUseQuantity){ %><label class="field"><span><input type="radio" name="tracking_<%= group.mode %>" value="quantity" <%= group.decision==='quantity'?'checked':'' %> required> Track these products by quantity. The <%= group.mode==='serial'?'serial-number':'batch / lot' %> flag in the file does not apply.</span></label><% } %>
+    </fieldset><% }) %>
+    <p>Keeping tracking requires one serial number per unit, or batch numbers with quantities for each location. <a href="/imports/start">Upload the completed source</a> if those identifiers are needed.</p>
+    <p>By confirming quantity tracking, you confirm those selected file flags do not apply. StockChief will recheck the complete preview before making approval available.</p>
     <p class="muted">This updates the preview only. Nothing is imported until you review and approve the recalculated result.</p>
-    <button class="btn btn--primary" type="submit">Save choices and recalculate preview</button><p class="muted" data-import-preview-status role="status" hidden></p>
+    <button class="btn btn--primary" type="submit" name="confirmTrackingChange" value="yes" data-busy-label="Saving tracking choices…">Confirm tracking choices</button><p class="muted" data-import-preview-status role="status" hidden></p>
   </form>
   <% } %>
   <% if(trackingQuestion.confirmedAt){ %><p class="muted">Choices saved <time data-import-time datetime="<%= trackingQuestion.confirmedAt %>"><%= new Date(trackingQuestion.confirmedAt).toUTCString() %></time>.</p><% } %>
@@ -185,14 +185,14 @@
     </div>
     <div class="card-foot" id="import-approval-actions"><% if(plan.approvalStatus==='AWAITING_APPROVAL'&&!review.canApprove){ %><p><strong>Approval is unavailable:</strong> <%= review.blockers.map(step=>step.title).join('; ') %>. <a href="<%= review.blockers[0].href %>"><%= review.blockers[0].action %></a>.</p><% } %><div class="btn-row">
       <% if(plan.approvalStatus==='APPROVED'){ %><form method="post" action="/imports/<%= plan.id %>/run"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><button class="btn btn--primary" type="submit">Import and verify</button></form>
-      <% } else { %><form method="post" action="/imports/<%= plan.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><button class="btn btn--primary" type="submit" aria-describedby="import-approval-explanation" <%= review.canApprove?'':'disabled' %>><% if(review.canApprove){ %>Approve <%= plan.recordsValid %> <%= helpers.plural(plan.recordsValid, 'row') %><% }else{ %>Review required before approval<% } %></button></form><% } %>
+      <% } else if(review.canApprove){ %><form method="post" action="/imports/<%= plan.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><button class="btn btn--primary" type="submit" aria-describedby="import-approval-explanation">Approve <%= plan.recordsValid %> <%= helpers.plural(plan.recordsValid, 'row') %></button></form><% }else if(review.blockers.length){ %><a class="btn btn--primary" data-import-next-step href="<%= review.blockers[0].href %>"><%= review.blockers[0].action %></a><% } %>
       <form method="post" action="/imports/<%= plan.id %>/cancel"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost" type="submit">Cancel</button></form>
     </div></div>
   </div>
 <% } %>
 <% if(plan.status==='READY' && plan.approvalStatus==='AWAITING_APPROVAL'){ %>
   <details class="card section" id="column-mapping"><summary class="card-head">Advanced: change how StockChief read a column</summary>
-    <div class="card-body"><p>No stock changes while you correct a column meaning, source location or invalid quantity. Review every recalculated row before approval.</p>
+    <div class="card-body"><p>This form changes column meanings, source locations and invalid quantities. It does not answer separate tracking or image-review questions. No stock changes.</p><% if(needsTrackingAnswer){ %><p><strong>Tracking is still unanswered.</strong> <a href="#import-tracking-question">Confirm tracking choices above</a> to resolve that step.</p><% } %>
       <form method="post" action="/imports/<%= plan.id %>/revise" class="stack-form">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>">
@@ -212,7 +212,7 @@
           <label class="field"><span class="field-label">Row <%= row.rowNumber %> · <%= row.parsed.name || row.parsed.code || 'product' %> quantity</span>
             <input class="input" name="quantity_<%= row.rowNumber %>" type="number" min="0" step="1" value="<%= sourceTransforms.quantityOverrides?.[row.rowNumber] || '' %>" placeholder="Whole units"></label>
         <% }) %>
-        <button class="btn btn--primary" type="submit">Recalculate preview</button>
+        <button class="btn btn--primary" type="submit">Save column mapping and recheck rows</button>
       </form>
     </div>
   </details>
