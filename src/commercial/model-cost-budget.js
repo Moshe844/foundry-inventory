@@ -73,7 +73,7 @@ async function reserveNative(database,scope,provider,{inputTokens,outputTokens},
    throw new ValidationError('Invalid native model request bound.');
  const policy=require('./model').POLICIES[operation];if(!policy)throw new ValidationError('Unregistered model operation.');
  const bound=await pricedBound(database,provider,{},policy,operation,{inputTokens,outputTokens});
- return reserveBound(database,scope,bound,operation,idempotencyKey,fundingUsageKey,goalScope);
+ return reserveBound(database,scope,bound,operation,idempotencyKey,fundingUsageKey,{...goalScope,nativeTransport:true});
 }
 async function reserveBound(database,scope,bound,operation,idempotencyKey,fundingUsageKey,goalScope){
  const operationCap=operationLimit(operation)*100;
@@ -82,17 +82,18 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
  // A native relay may pass the subscription checked at this same HTTP
  // admission. No snapshot is retained for a later request or resumption.
  const subscription=goalScope.subscription||await entitlements.subscriptionFor(database,scope.accountId);
- const plan=subscription?.plan_id||'starter';const accountCap=periodLimit(plan)*100;
- const workspaceCap=configuredUsd('STOCKCHIEF_AI_WORKSPACE_PERIOD_COST_CAP_USD',accountCap/100)*100;
+ const plan=subscription?.plan_id||'starter';const normalAccountCap=periodLimit(plan)*100;
+ const normalWorkspaceCap=configuredUsd('STOCKCHIEF_AI_WORKSPACE_PERIOD_COST_CAP_USD',normalAccountCap/100)*100;
  const bounds=entitlements.periodBounds(subscription);
  const transaction=async client=>{
+  let accountCap=normalAccountCap,workspaceCap=normalWorkspaceCap,temporaryCostApproval=null;
   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
    [`commercial-model-cost:${scope.accountId}:${bounds.start.toISOString()}`]);
   if(goalScope.goalId){
    // The account-period lock is already held. Read the goal and its exposure
    // in the same serializable snapshot, preserving the goal row lock without
    // another network round trip for an independently changing balance.
-   const goal=(await client.query(`SELECT g.budget_minor,g.status,g.expires_at,
+   const goal=(await client.query(`SELECT g.budget_minor,g.status,g.expires_at,g.checkpoint->>'runtime' AS runtime,
     (SELECT COALESCE(SUM(CASE WHEN h.status IN ('RESERVED','UNKNOWN') THEN h.maximum_minor
       WHEN h.status='SETTLED' THEN h.actual_minor ELSE 0 END),0)
       FROM commercial_model_cost_holds h WHERE h.goal_id=g.id) AS exposure
@@ -103,6 +104,14 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
     throw new ValidationError('This goal is no longer authorized to use a model.');
    if(Number(goal.exposure)+bound.maximumMinor>Number(goal.budget_minor))
     throw Object.assign(new RateLimitError('This goal reached its cumulative model-cost ceiling. No model call was made.'),{limitKind:'goal_cost'});
+   if(goalScope.nativeTransport&&process.env.STOCKCHIEF_STAGING_NATIVE_COST_APPROVALS){
+    const funding=(await client.query(`SELECT funding_workspace_id,pilot FROM stockchief_runtime.codex_pilot_workspace_access
+     WHERE workspace_id=$1 AND owner_account_id=$2`,[scope.workspaceId,scope.accountId])).rows[0],pilot=funding?.pilot;
+    temporaryCostApproval=require('./staging-native-cost-approval').approved({accountId:scope.accountId,
+     fundingWorkspaceId:funding?.funding_workspace_id,nativeTransport:true,goalRuntime:goal.runtime,
+     fundingActive:Boolean(pilot?.enabled&&!pilot.stopped&&Date.parse(pilot.period_ends_at)>Date.now())});
+    if(temporaryCostApproval){accountCap=Math.max(accountCap,temporaryCostApproval.maximumMinor);workspaceCap=Math.max(workspaceCap,temporaryCostApproval.maximumMinor);}
+   }
   }
   const fundedRequest=(await client.query(`SELECT e.id,ARRAY(
     SELECT DISTINCT a.grant_id FROM commercial_usage_allocations a
@@ -189,6 +198,8 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
     JSON.stringify({inputTokenUpperBound:bound.inputTokens,outputTokenLimit:bound.outputTokens,
       providerExecutions:bound.providerExecutions,providerVersion:bound.providerVersion,rateSources:bound.rateSources,
       operationCapMinor:operationCap,accountPeriodCapMinor:accountCap,workspacePeriodCapMinor:workspaceCap,
+      ...(temporaryCostApproval?{temporaryCostApproval:{approvalReference:temporaryCostApproval.approvalReference,
+       fundingWorkspaceId:temporaryCostApproval.fundingWorkspaceId,maximumMinor:temporaryCostApproval.maximumMinor,expiresAt:temporaryCostApproval.expiresAt}}:{}),
       funding:sources.map(row=>({source:row.source,grantId:row.grantId,maximumMinor:row.maximumMinor}))}),goalScope.goalId||null,
     JSON.stringify(sources.map(source=>({id:newId('modelallocation'),source:source.source,
       grant_id:source.grantId,maximum_minor:source.maximumMinor})))])).rows[0];
