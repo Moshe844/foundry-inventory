@@ -1,16 +1,17 @@
 'use strict';
 
 const {FIELDS,registry}=require('./postgres-capability-registry');
+const {MAX_OPERATIONS}=require('./operation-limits');
 
 function schemaFor(catalogue=registry){
   return {type:'object',additionalProperties:false,required:['steps','clarifyingQuestion'],properties:{
-    steps:{type:'array',minItems:0,maxItems:8,items:{type:'object',additionalProperties:false,
+    steps:{type:'array',minItems:0,maxItems:MAX_OPERATIONS,items:{type:'object',additionalProperties:false,
       required:['capability','arguments','dependsOn','continuesPending'],properties:{
         capability:{type:'string',enum:catalogue.list().map((entry)=>entry.name)},
         arguments:{type:'array',maxItems:32,items:{type:'object',additionalProperties:false,
           required:['name','value'],properties:{name:{type:'string',enum:Object.keys(FIELDS)},
             value:{type:'string',maxLength:Math.max(2000,...Object.values(FIELDS).map(f=>f.maxLength||2000))}}}},
-        dependsOn:{type:'array',maxItems:7,items:{type:'integer',minimum:0,maximum:7}},
+        dependsOn:{type:'array',maxItems:MAX_OPERATIONS-1,items:{type:'integer',minimum:0,maximum:MAX_OPERATIONS-1}},
         continuesPending:{type:'boolean'},
       }}},
     clarifyingQuestion:{type:'string',maxLength:300},
@@ -19,7 +20,7 @@ function schemaFor(catalogue=registry){
 }
 
 const PLANNING_RULES=[
-  "Plan the owner's CURRENT goal by meaning, not phrase matching. Use only registered contracts (n=name, d=effect, a=allowed inputs). At most eight steps; use the fewest that actually accomplish the goal.",
+  `Plan the owner's CURRENT goal by meaning, not phrase matching. Use only registered contracts (n=name, d=effect, a=allowed inputs). At most ${MAX_OPERATIONS} steps; use the fewest that actually accomplish the goal.`,
   'Include only argument fields declared for each contract. Preserve every product, party, record, amount, location, date and address the owner supplied. Omit unknown values; never guess a default entity, fabricate a placeholder, or supply fields for a capability with no inputs. The resolver verifies unique records or asks for missing inputs.',
   'Broad stock reads work in empty workspaces; zero products means zero stock anywhere. Counts only route; read records. Navigate only when asked.',
   'A requested report, chart, graph, or customized tabular analysis needs read.custom_report; a normal stock, order, or finance lookup cannot create that report artifact. A request to save or schedule a report needs report.template.create and approval.',
@@ -202,8 +203,9 @@ async function completeRepair(provider,catalogue,prompt){
 
 function parseSteps(raw,catalogue=registry){
   if(!raw||!Array.isArray(raw.steps))return {steps:[],clarifyingQuestion:'I could not reliably understand that request. Nothing changed.'};
+  if(raw.steps.length>MAX_OPERATIONS)return {steps:[],clarifyingQuestion:`This request exceeds the ${MAX_OPERATIONS}-operation workflow limit. Nothing was truncated or changed.`};
   const steps=[];
-  for(const [index,step] of raw.steps.slice(0,8).entries()){
+  for(const [index,step] of raw.steps.entries()){
     const contract=catalogue.get(step?.capability);
     if(!contract)return {steps:[],clarifyingQuestion:'StockChief does not have a registered capability for that request. Nothing changed.'};
     const args={};
@@ -332,7 +334,7 @@ function coverExplicitOrderReservation(steps,message,catalogue,pending){
   const creates=steps.map((step,index)=>({step,index})).filter(({step})=>step.contract.name==='sales_order.create');
   const confirm=catalogue.get(fullReservation&&!acceptsShortage&&!reservesAvailable
     ?'sales_order.reserve_all':'sales_order.confirm');
-  if(creates.length!==1||!confirm||steps.length>=8)return steps;
+  if(creates.length!==1||!confirm||steps.length>=MAX_OPERATIONS)return steps;
   steps.push({contract:confirm,args:{},dependsOn:[creates[0].index],continuesPending:false});
   return steps;
 }

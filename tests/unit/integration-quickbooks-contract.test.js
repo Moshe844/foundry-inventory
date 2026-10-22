@@ -1,6 +1,10 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),qbo=require('../../src/connections/providers/quickbooks');
 function fixture(){const entry={posting_date:'2026-10-18',currency:'USD',lines:[{external_account_id:'cash',debit_minor:123,credit_minor:0},{external_account_id:'ar',debit_minor:0,credit_minor:123,external_customer_id:'customer-1'}]},remote={Id:'journal-1',TxnDate:entry.posting_date,CurrencyRef:{value:'USD'},Line:[{DetailType:'JournalEntryLineDetail',Amount:1.23,JournalEntryLineDetail:{AccountRef:{value:'ar'},PostingType:'Credit',Entity:{Type:'Customer',EntityRef:{value:'customer-1'}}}},{DetailType:'JournalEntryLineDetail',Amount:1.23,JournalEntryLineDetail:{AccountRef:{value:'cash'},PostingType:'Debit'}}]};return {entry,remote};}
+
+test('QuickBooks connection identity is the authorized realm, not the company-info resource ID',async t=>{
+ const original=global.fetch;t.after(()=>{global.fetch=original;});const realm='unfamiliar-sandbox-company';global.fetch=async value=>{assert.match(new URL(value).pathname,new RegExp('/company/'+realm+'/companyinfo/'+realm+'$'));return Response.json({CompanyInfo:{Id:'1',CompanyName:'Offline company'}});};assert.equal((await qbo.verifyReadOnly({credentials:{realmId:realm,accessToken:'FAKE'}})).externalId,realm);
+});
 test('accounting read-back verifies canonical date, currency, exact money, account and entity as a multiset',()=>{
  const {entry,remote}=fixture();assert.equal(qbo.verifyJournalPayload(entry,remote).verified,true);
  for(const change of [r=>r.TxnDate='2026-10-17',r=>r.CurrencyRef.value='EUR',r=>r.Line[0].Amount=1.24,r=>r.Line[0].JournalEntryLineDetail.AccountRef.value='another-ar',r=>r.Line[0].JournalEntryLineDetail.Entity.EntityRef.value='another-customer',r=>r.Line.push({...r.Line[0]})]){const altered=structuredClone(remote);change(altered);assert.throws(()=>qbo.verifyJournalPayload(entry,altered));}

@@ -20,7 +20,7 @@ const READ_PERMISSIONS={payables:permissions.VIEW_ACCOUNTING,receivables:permiss
   sales_orders:permissions.VIEW_SALES,sales_activity:permissions.VIEW_SALES,customers:permissions.VIEW_SALES};
 const ANSWER_SCHEMA={type:'object',additionalProperties:false,required:['answer','supported','usedSteps'],properties:{
   answer:{type:'string',maxLength:350},supported:{type:'boolean'},
-  usedSteps:{type:'array',maxItems:8,items:{type:'integer',minimum:0,maximum:7}},
+  usedSteps:{type:'array',maxItems:require('./operation-limits').MAX_OPERATIONS,items:{type:'integer',minimum:0,maximum:require('./operation-limits').MAX_OPERATIONS-1}},
   additionalReads:{type:'array',maxItems:2,items:{type:'string',enum:registry.list('read').map((entry)=>entry.name)}},
 }};
 const ANSWER_FIT_SCHEMA={type:'object',additionalProperties:false,required:['grounded','reason'],properties:{

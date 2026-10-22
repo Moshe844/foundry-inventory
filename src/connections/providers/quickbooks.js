@@ -69,7 +69,9 @@ async function verifyReadOnly({ credentials }) {
   const response = await api(credentials, `/v3/company/${encodeURIComponent(credentials.realmId)}/companyinfo/${encodeURIComponent(credentials.realmId)}?minorversion=75`);
   const company = response.body.CompanyInfo;
   if (!company?.CompanyName) throw new ValidationError('QuickBooks did not return a company identity.');
-  return { label: 'QuickBooks company', value: company.CompanyName, externalId: company.Id || credentials.realmId };
+  // CompanyInfo.Id identifies this resource inside the company (commonly 1).
+  // The OAuth realm identifies the connected accounting company.
+  return { label: 'QuickBooks company', value: company.CompanyName, externalId: credentials.realmId };
 }
 
 async function readAccountingSnapshot({ credentials, asOf }) {

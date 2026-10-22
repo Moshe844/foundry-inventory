@@ -84,4 +84,15 @@ test('native chat supports exact individual or full-mission approval, with durab
  assert.equal((await db.query('SELECT count(*)::int n FROM locations WHERE workspace_id=$1 AND name=$2',[ctx.workspaceId,newLocation])).rows[0].n,0);
  assert.equal((await db.query('SELECT count(*)::int n FROM suppliers WHERE workspace_id=$1 AND name=$2',[ctx.workspaceId,newSupplier])).rows[0].n,0);
  assert.equal(Number((await db.query('SELECT count(*) AS n FROM stockchief_runtime.codex_pilot_calls WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n),0);
+ // Full approvals must include and execute operations beyond the old transport
+ // boundary. This varies entities and scope without teaching any business flow.
+ const fullNames=Array.from({length:12},()=> 'Whole mission '+randomUUID());
+ const whole=await prepared(fullNames.map(recipient=>({capability:'contact.create',args:{recipient,recipientKind:'supplier'},dependsOn:[]})));
+ const wholeScope={kind:'mission',id:whole.card.mission.id,sha256:whole.card.mission.sha256};
+ assert.equal((await pilot.inbox(db,ctx,whole.goal.id)).approvals.length,fullNames.length);
+ assert.equal((await db.query('SELECT count(*)::int n FROM suppliers WHERE workspace_id=$1 AND name=ANY($2::text[])',[ctx.workspaceId,fullNames])).rows[0].n,0);
+ await pilot.decide(db,ctx,whole.goal.id,whole.card.id,whole.card.sha256,true,{responseReference:'OFFLINE exact complete review',missionScope:wholeScope});
+ assert.equal((await db.query('SELECT count(*)::int n FROM suppliers WHERE workspace_id=$1 AND name=ANY($2::text[])',[ctx.workspaceId,fullNames])).rows[0].n,fullNames.length);
+ await pilot.decide(db,ctx,whole.goal.id,whole.card.id,whole.card.sha256,true,{responseReference:'OFFLINE exact complete review',missionScope:wholeScope});
+ assert.equal((await db.query('SELECT count(*)::int n FROM suppliers WHERE workspace_id=$1 AND name=ANY($2::text[])',[ctx.workspaceId,fullNames])).rows[0].n,fullNames.length);
 });

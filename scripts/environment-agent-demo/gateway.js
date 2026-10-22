@@ -178,7 +178,8 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
     async operate({steps,callId=randomUUID()}){
       let effectsStarted=false;
       try{
-      if(!Array.isArray(steps)||!steps.length||steps.length>8)throw new Error('Provide one to eight dependent canonical operations.');
+      const {MAX_OPERATIONS}=require('../../src/assistant/operation-limits');
+      if(!Array.isArray(steps)||!steps.length||steps.length>MAX_OPERATIONS)throw new Error(`Provide one to ${MAX_OPERATIONS} dependent canonical operations.`);
       const {actor,catalogue}=await access();
       const parsed=planner.parseSteps({steps:require('./contracts').operationSteps(steps,catalogue)},catalogue);
       if(!parsed.steps?.length||parsed.clarifyingQuestion)throw new Error(parsed.clarifyingQuestion||'Invalid operation contract.');

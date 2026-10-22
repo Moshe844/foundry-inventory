@@ -2,10 +2,11 @@
 // Transport adaptation only. Canonical validation, resolution and execution
 // remain responsible for business meaning and authority.
 const {FIELDS}=require('../../src/assistant/postgres-capability-registry');
+const {MAX_OPERATIONS}=require('../../src/assistant/operation-limits');
 function invalid(message){throw Object.assign(new Error(message),{code:'TOOL_CONTRACT_INVALID',effectMayHaveOccurred:false});}
 function nativeFieldName(contract,field){return Object.entries(contract.agentArgumentAliases||{}).find(([,target])=>target===field)?.[0]||field;}
 function operationSteps(steps,catalogue){
- if(!Array.isArray(steps)||!steps.length||steps.length>8)invalid('Provide one to eight operations.');
+ if(!Array.isArray(steps)||!steps.length||steps.length>MAX_OPERATIONS)invalid(`Provide one to ${MAX_OPERATIONS} operations.`);
  return steps.map((step,index)=>{
   const contract=catalogue.get(step?.capability);
   if(!contract)invalid(`Step ${index}: discover an authorized registered capability before calling it.`);
