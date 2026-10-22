@@ -68,9 +68,9 @@ function createPostgresImportsRouter(database,{provider=null}={}){
       savedSummary&&Number.isSafeInteger(savedSummary.missingLocationRows)&&savedSummary.missingLocationRows>=0
         ?Promise.resolve({rows:savedSummary.missingLocationRows?[{}]:[]}):plan.status==='READY'&&!plan.defaultLocationId&&plan.recordsInvalid>0
         ?database.query(`SELECT 1 FROM import_rows WHERE workspace_id=$1 AND import_id=$2
-          AND problems::jsonb @> '[{"code":"no_location"}]'::jsonb LIMIT 1`,
+          AND status='INVALID' AND problems::jsonb @> '[{"code":"no_location"}]'::jsonb LIMIT 1`,
         [req.ctx.workspaceId,plan.id]):Promise.resolve({rows:[]}),
-      plan.status==='READY'&&plan.recordsInvalid>0?database.query(`SELECT 1 FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND problems::jsonb @> '[{"code":"accounting_not_ready"}]'::jsonb LIMIT 1`,[req.ctx.workspaceId,plan.id]):Promise.resolve({rows:[]}),
+      plan.status==='READY'&&plan.recordsInvalid>0?database.query(`SELECT 1 FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND status='INVALID' AND problems::jsonb @> '[{"code":"accounting_not_ready"}]'::jsonb LIMIT 1`,[req.ctx.workspaceId,plan.id]):Promise.resolve({rows:[]}),
     ]);
     const mappingRows=plan.sourceColumns.map((column)=>({index:column.index,column:column.name,
       field:Object.keys(plan.fieldMappings).find((key)=>plan.fieldMappings[key]===column.index) || null,

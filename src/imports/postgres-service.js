@@ -132,7 +132,8 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     const rawName=trimOrNull(textCell(row,mappings.name));
     const name=rawName || code;
     if(mappings.name!==undefined&&!rawName)problems.push(problem('missing_product_name','Product name is missing. Enter a name or explicitly map the code as its name before approval.'));
-    const state=context.validationState;
+    const role=documentRows.get(row.sourceRow),aggregate=Boolean(role&&role.kind!=='uncertain');
+    const state=aggregate?{serials:new Set(),prices:new Map(),positions:new Set(),reorders:new Map(),quantityTotal:0}:context.validationState;
     const quantitySource=Object.hasOwn(input.quantityOverrides||{},row.sourceRow)
       ?input.quantityOverrides[row.sourceRow]:textCell(row,mappings.quantity);
     const quantityRead=rowValues.readQuantity(quantitySource);
@@ -142,7 +143,6 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     if(!quantityRead.ok)problems.push(problem(quantityRead.problem,quantityRead.message||({negative_quantity:'Quantity cannot be negative.',fractional_quantity:'This inventory records whole stock units. Convert fractional measures to an appropriate base unit before importing.'}[quantityRead.problem]||'Quantity must be a valid whole number of zero or more.')));
     // A labeled aggregate without a SKU is document evidence, not another
     // product, when its quantity reconciles to the preceding source rows.
-    const role=documentRows.get(row.sourceRow),aggregate=Boolean(role&&role.kind!=='uncertain');
     if(role?.kind==='uncertain')problems.push(problem('document_role_uncertain','This row lacks the product identity used by the preceding table. Confirm whether it is a product or document information before importing.'));
     if(input.imageSource&&!input.imageReadingConfirmed&&sourceCode&&!problems.some(p=>p.code==='image_identity_uncertain'))
       problems.push(problem('image_identity_uncertain','Confirm this extracted product code against the original image or scan before approval.'));
@@ -181,7 +181,7 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
       else if(matches.length===1)location=matches[0];
       else {
         location=null;
-        unknownLocations.set(locationText,(unknownLocations.get(locationText) || 0)+1);
+        if(!aggregate)unknownLocations.set(locationText,(unknownLocations.get(locationText) || 0)+1);
         problems.push(problem('unknown_location',matches.length?'More than one location has this name.':'This location does not exist in this inventory.'));
       }
     }
@@ -751,7 +751,7 @@ async function approve(database, ctx, id, expectedHash) {
       throw new ValidationError('Map a product name or SKU and recalculate the preview before approving.');
     if(!plan.recordsValid)throw new ValidationError('There are no valid rows to import.');
     if(plan.transformations.existingStockRows>0&&!plan.transformations.importMode)throw new ValidationError('This file matches existing stock. Choose set on-hand quantities or receive additional stock before approval.');
-    if((await client.query(`SELECT 1 FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND problems::jsonb @> '[{"code":"accounting_not_ready"}]'::jsonb LIMIT 1`,[ctx.workspaceId,id])).rows.length)
+    if((await client.query(`SELECT 1 FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND status='INVALID' AND problems::jsonb @> '[{"code":"accounting_not_ready"}]'::jsonb LIMIT 1`,[ctx.workspaceId,id])).rows.length)
       throw new ValidationError('Finish Money setup and recheck this file before approving its inventory values. No stock or value was imported.');
     // A required location answer is a plan-level question, even when zero-stock
     // rows happen to be valid. It must never authorize a tiny accidental subset.

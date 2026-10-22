@@ -2,7 +2,7 @@
    const needsIdentity=sourceMappings.name===undefined&&sourceMappings.code===undefined;
    const numberQuestions=sourceMappings.quantity===undefined?(mappingRows||[]).filter(function(row){return (sourceTransforms.unmappedNumericColumns||[]).includes(row.column);}):[];
    const needsNumberAnswer=numberQuestions.length>0&&!sourceTransforms.confirmCatalogOnly;
-   const needsLocation=!plan.defaultLocationId && Boolean(locals.missingLocationRows || rows.some(function(row){return row.problems.some(function(problem){return problem.code==='no_location';});}));
+   const needsLocation=!plan.defaultLocationId && Boolean(locals.missingLocationRows || rows.some(function(row){return row.status==='INVALID'&&row.problems.some(function(problem){return problem.code==='no_location';});}));
    const trackingQuestion=locals.trackingQuestion;
    const needsTrackingAnswer=trackingQuestion?.state==='needs_input';
    const needsImageAnswer=(plan.sourceKind==='image'||sourceTransforms.visualSource===true)&&sourceTransforms.imageReadingConfirmed!==true;

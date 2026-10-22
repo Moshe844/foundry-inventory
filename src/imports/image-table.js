@@ -89,13 +89,14 @@ async function readDarkTable(canvas,worker){
     // identified code column independently, using its actual glyph bounds,
     // rather than guessing missing identifiers from product names.
     const columnFields=cells.map(c=>require('./fields').bestFieldScores(c.text)[0]?.field),codeColumn=columnFields.indexOf('code');
-    for(const field of ['code','quantity','unitCost','sellingPrice']){
+    const integerFields=new Set(['quantity','reorderPoint','targetStock','safetyStock','leadTimeDays']);
+    for(const field of ['code',...integerFields,'unitCost','sellingPrice']){
       const index=columnFields.indexOf(field);if(index<0)continue;
       const observed=bodyWords.filter(w=>nearest((w.bbox.x0+w.bbox.x1)/2)===index);
       {
-        const left=Math.max(0,observed.length?Math.min(...observed.map(w=>w.bbox.x0))-5:Math.floor(index?(anchors[index-1]+anchors[index])/2:0)),right=Math.min(body.width,observed.length?Math.max(...observed.map(w=>w.bbox.x1))+5:Math.ceil(index+1<anchors.length?(anchors[index]+anchors[index+1])/2:body.width)),column=createCanvas(right-left,body.height);
-        column.getContext('2d').drawImage(body,left,0,column.width,column.height,0,0,column.width,column.height);
-        await worker.setParameters({tessedit_pageseg_mode:PSM.SINGLE_BLOCK,tessedit_char_whitelist:field==='quantity'?'0123456789,.-+':''});
+        const left=Math.max(0,observed.length?Math.min(...observed.map(w=>w.bbox.x0))-5:Math.floor(index?(anchors[index-1]+anchors[index])/2:0)),right=Math.min(body.width,observed.length?Math.max(...observed.map(w=>w.bbox.x1))+5:Math.ceil(index+1<anchors.length?(anchors[index]+anchors[index+1])/2:body.width)),padding=Math.max(12,Math.ceil(typical*.8)),column=createCanvas(right-left+padding*2,body.height),cx=column.getContext('2d');
+        cx.fillStyle='#fff';cx.fillRect(0,0,column.width,column.height);cx.drawImage(body,left,0,right-left,body.height,padding,0,right-left,body.height);
+        await worker.setParameters({tessedit_pageseg_mode:PSM.SINGLE_BLOCK,tessedit_char_whitelist:integerFields.has(field)?'0123456789,.-+':''});
         const reread=words(await worker.recognize(column.toBuffer('image/png'),{}, {blocks:true}));
         for(const row of rows){const aligned=reread.filter(w=>Math.abs((w.bbox.y0+w.bbox.y1)/2-row.y)<typical*.7);
           row.columnEvidence||={};row.columnEvidence[index]=aligned;}
@@ -106,6 +107,19 @@ async function readDarkTable(canvas,worker){
         const x=(word.bbox.x0+word.bbox.x1)/2,closest=nearest(x);
         values[closest]+=(values[closest]?' ':'')+word.text;
       }row.originalValues=[...values];for(const [index,evidence] of Object.entries(row.columnEvidence||{}))if(evidence.length)values[index]=evidence.map(w=>w.text).join(' ');return values;});
+    for(const field of integerFields){const index=columnFields.indexOf(field);if(index<0)continue;
+      for(let i=0;i<grid.length;i++){
+        if(!String(grid[i][index]).trim()||/^[-+]?\d+(?:[.,]\d+)?$/.test(grid[i][index]))continue;
+        // A narrow column can turn a digit into punctuation. Re-read that
+        // actual cell with surrounding whitespace; never infer it from other
+        // rows or replace an unreadable/empty source with zero.
+        const left=Math.max(0,Math.floor(index?(anchors[index-1]+anchors[index])/2:0)),right=Math.min(body.width,Math.ceil(index+1<anchors.length?(anchors[index]+anchors[index+1])/2:body.width)),top=Math.max(0,Math.floor(rows[i].y-typical*.85)),height=Math.min(body.height-top,Math.ceil(typical*1.7)),cell=createCanvas((right-left)*2,height*2),cx=cell.getContext('2d');
+        cx.fillStyle='#fff';cx.fillRect(0,0,cell.width,cell.height);cx.drawImage(body,left,top,right-left,height,0,0,cell.width,cell.height);
+        await worker.setParameters({tessedit_pageseg_mode:PSM.SINGLE_LINE,tessedit_char_whitelist:'0123456789,.-+'});
+        const reading=words(await worker.recognize(cell.toBuffer('image/png'),{}, {blocks:true})).map(w=>w.text).join(' ');
+        if(/^[-+]?\d+(?:[.,]\d+)?$/.test(reading))grid[i][index]=reading;
+      }
+    }
     const numeric=v=>require('./source-money').clean(v).replace(/[$¥,\s]/g,''),valid=v=>/^\d+(?:\.\d+)?$/.test(numeric(v));
     for(const field of ['unitCost','sellingPrice']){
       const index=columnFields.indexOf(field);if(index<0)continue;
