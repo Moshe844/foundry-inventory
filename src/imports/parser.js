@@ -233,6 +233,12 @@ function parseWorkbook(buffer) {
   return { sheets: sheets.map((sheet) => ({ name: sheet.name, grid: sheet.rows })) };
 }
 
+function decodeText(buffer){
+  const encoding=buffer[0]===0xff&&buffer[1]===0xfe?'utf-16le':buffer[0]===0xfe&&buffer[1]===0xff?'utf-16be':'utf-8';
+  try{return new TextDecoder(encoding,{fatal:true}).decode(buffer);}
+  catch{throw new SpreadsheetError('This text file’s character encoding could not be read safely. Save it as UTF-8 or UTF-16 and upload it again. No inventory changed.');}
+}
+
 /**
  * Reads an upload or a paste into named sheets of tabulated rows.
  *
@@ -249,8 +255,11 @@ function parse(input) {
   const looksXlsx =
     Boolean(input.buffer) && input.buffer.length > 4 && input.buffer.readUInt32LE(0) === 0x04034b50;
 
-  const sourceText=input.text ?? (input.buffer || Buffer.alloc(0)).toString('utf8'),extension=String(input.filename||'').split('.').at(-1).toLowerCase();
+  const extension=String(input.filename||'').split('.').at(-1).toLowerCase();
   if(['heic','heif','tif','tiff'].includes(extension))throw new SpreadsheetError(extension.toUpperCase()+' images are not readable by this installation yet. Export the pages as PNG or JPEG, or upload their original spreadsheet. No inventory changed.');
+  // Decode text only. Binary archives retain their bytes and do not allocate a
+  // second, lossy UTF-8 copy before the bounded workbook reader opens them.
+  const sourceText=input.text ?? (looksXlsx?'':decodeText(input.buffer||Buffer.alloc(0)));
   if(extension==='xml'||/^\s*<\?xml|^\s*<[a-zA-Z][^>]*>/.test(sourceText)&&!looksXlsx)throw new SpreadsheetError('XML product imports are not supported yet. Export the product list as JSON, CSV or XLSX; no inventory changed.');
   const parsed = looksXlsx
     ? require('./structured-files').archive(input.buffer)||parseWorkbook(input.buffer)
