@@ -24,6 +24,25 @@ test('attachment recovery preserves drafts, survives reopen and stopped workers,
  await retry.click();await page.waitForFunction(()=>document.querySelector('[data-attachment-progress]').textContent.includes('Reading attached documents.'));assert.equal((await run()).status,'COMPLETED');await page.waitForFunction(()=>document.querySelector('[data-attachment-progress]').textContent==='1 of 1 documents ready.');
  const after=(await db.query('SELECT content,content_hash,extracted_text FROM connection_email_attachments WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,saved.id])).rows[0];assert(after.content.equals(content));assert.equal(after.content_hash,saved.content_hash);assert.match(after.extracted_text,/31.75/);
  await page.setViewportSize({width:390,height:844});assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Long attachment names and recovery controls must fit a phone');
+ // Exercise the asynchronous handoff using persisted goal states, with no
+ // provider/model calls. The live certification separately runs the real SDK.
+ assert.equal(await page.locator('[data-document-review]').isVisible(),false);
+ await retry.click();await page.waitForFunction(()=>document.querySelector('[data-attachment-progress]').textContent.includes('Reading attached documents.'));
+ const goal=await require('../../src/assistant/postgres-goal-store').create(db,ctx,'Review the captured supplier document and prepare required decisions.');
+ await db.query("UPDATE connection_email_messages SET native_review_goal_id=$3,native_review_state='QUEUED' WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,captured.messageId,goal.id]);
+ assert.equal((await run()).status,'COMPLETED');
+ await page.waitForFunction(()=>document.querySelector('[data-document-review-status]').textContent==='Waiting to start');
+ assert.equal(await page.locator('[data-document-review-link]').getAttribute('href'),origin+'/ask?goal='+goal.id+'#focused-goal');assert(await retry.isDisabled());
+ const show=async(status,label)=>{await db.query('UPDATE stockchief_runtime.assistant_goals SET status=$3,updated_at=now() WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,goal.id,status]);await page.evaluate(()=>window.dispatchEvent(new Event('focus')));await page.waitForFunction(label=>document.querySelector('[data-document-review-status]').textContent===label,label);};
+ await show('RUNNING','Working on your request');assert(await retry.isDisabled());
+ await show('WAITING_USER','Let’s clarify');assert(await retry.isEnabled());
+ await show('WAITING_APPROVAL','Ready for your approval');
+ await show('WAITING_EVENT','Waiting for confirmation');assert(await retry.isDisabled());
+ await db.query("UPDATE stockchief_runtime.assistant_goals SET status='COMPLETED',updated_at=now() WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,goal.id]);
+ await page.waitForFunction(()=>document.querySelector('[data-document-review-status]').textContent==='Completed');assert(await retry.isEnabled());
+ assert.equal(await page.locator('textarea[name=body]').inputValue(),draft,'Live review updates must preserve unsent owner input');
+ const status=await attachments.readingStatus(db,ctx.workspaceId,captured.messageId);assert.equal(status.review.phase,'completed');assert.equal(status.review.active,false);assert.equal(status.review.href,'/ask?goal='+goal.id+'#focused-goal');
+ await assert.rejects(()=>attachments.readingStatus(db,'unrelated-business',captured.messageId),/not in this business/);
  await db.query("UPDATE users SET role='staff',permissions='[\"VIEW\"]' WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,ctx.actorId]);await page.reload();assert.equal(await page.getByRole('button',{name:'Read saved attachments again'}).count(),0);
  const denied=await page.evaluate(async({href,csrf})=>({post:(await fetch(href+'/attachments/recheck',{method:'POST',headers:{Accept:'application/json','Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({_csrf:csrf})})).status,foreign:(await fetch('/mail/foreign-message/attachments/status',{headers:{Accept:'application/json'}})).status}),{href,csrf});assert.deepEqual(denied,{post:403,foreign:404});assert.deepEqual(errors,[]);
  for(const table of ['movements','accounting_supplier_bills','accounting_payments'])assert.equal((await db.query('SELECT count(*) n FROM '+table+' WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,'0');

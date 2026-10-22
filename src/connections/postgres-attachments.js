@@ -45,8 +45,15 @@ async function requestRecheck(database,ctx,messageId){
 }
 async function readingStatus(database,workspaceId,messageId){
  // Own record, file states and current job share one database snapshot.
- const row=(await database.query(`SELECT m.id,files.attachments,job.status AS job_state,job.created_at AS job_created_at
+ const row=(await database.query(`SELECT m.id,m.native_review_goal_id,m.native_review_state,m.native_review_reason,
+  g.status AS review_status,jsonb_build_object('lifecycleStage',g.checkpoint->'lifecycleStage',
+   'navigation',g.checkpoint->'navigation','harness',jsonb_build_object(
+    'requestRefused',g.checkpoint#>'{harness,requestRefused}','failure',g.checkpoint#>'{harness,failure}',
+    'interruption',g.checkpoint#>'{harness,interruption}','admissionBlock',g.checkpoint#>'{harness,admissionBlock}',
+    'modelUsagePending',g.checkpoint#>'{harness,modelUsagePending}')) AS review_checkpoint,
+  files.attachments,job.status AS job_state,job.created_at AS job_created_at
   FROM connection_email_messages m
+  LEFT JOIN stockchief_runtime.assistant_goals g ON g.workspace_id=m.workspace_id AND g.id=m.native_review_goal_id
   LEFT JOIN LATERAL (SELECT coalesce(jsonb_agg(to_jsonb(f) ORDER BY f.filename,f.id),'[]'::jsonb) AS attachments
    FROM (SELECT id,filename,mime_type,extraction_status,extraction_error FROM connection_email_attachments WHERE workspace_id=m.workspace_id AND message_id=m.id) f) files ON true
   LEFT JOIN LATERAL (SELECT status,created_at FROM stockchief_runtime.jobs WHERE workspace_id=m.workspace_id AND kind='mail.attachment-extract' AND payload->>'messageId'=m.id
@@ -54,6 +61,11 @@ async function readingStatus(database,workspaceId,messageId){
   WHERE m.workspace_id=$1 AND m.id=$2`,[workspaceId,messageId])).rows[0];
  if(!row)throw new NotFoundError('That message is not in this business.');
  const active=['PENDING','RUNNING','RETRY'].includes(row.job_state),ready=row.attachments.filter(f=>f.extraction_status==='READABLE').length;
- return {attachments:row.attachments,active,jobState:row.job_state||null,startedAt:active?row.job_created_at:null,ready,total:row.attachments.length,stopped:row.job_state==='DEAD'};
+ let review=null;
+ if(row.native_review_goal_id&&row.review_status){const state=require('../assistant/agent-conversation').state({id:row.native_review_goal_id,status:row.review_status,checkpoint:row.review_checkpoint});
+  review={phase:state.phase,label:state.label,active:['queued','working','verification','external_wait','navigation'].includes(state.phase),href:'/ask?goal='+encodeURIComponent(row.native_review_goal_id)+'#focused-goal'};
+ }else if(row.native_review_goal_id)review={phase:'unavailable',label:'Review is unavailable',active:false,href:null};
+ else if(row.native_review_state==='NEEDS_REVIEW')review={phase:'needs_review',label:'This document needs attention',reason:row.native_review_reason,active:false,href:null};
+ return {attachments:row.attachments,active,jobState:row.job_state||null,startedAt:active?row.job_created_at:null,ready,total:row.attachments.length,stopped:row.job_state==='DEAD',review};
 }
 module.exports={extractMessage,textPage,requestRecheck,readingStatus};
