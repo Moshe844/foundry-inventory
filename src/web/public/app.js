@@ -923,9 +923,16 @@
         submit.removeAttribute('aria-busy');
         submit.textContent = 'Retry reading files';
         submit.hidden = false;
-        errorBox.textContent = result && result.message
-          ? result.message
-          : 'StockChief could not read that upload. The selected filenames remain above so you can correct the exact file.';
+        const explanation = result && (result.message || result.error && result.error.message);
+        errorBox.textContent = typeof explanation === 'string' && explanation.trim()
+          ? explanation
+          : request.status === 401 || request.status === 403
+            ? 'Your upload was not accepted. Sign in again or check your access, then retry. Your selected file is still here.'
+            : request.status === 413
+              ? 'This upload exceeds the file size allowed by the server. Check the upload limit before retrying.'
+              : request.status === 429
+                ? 'This upload was paused by a usage limit. Your file is still selected; nothing was imported.'
+                : 'The server did not finish preparing your preview. Your selected file is still here; nothing was imported. Try again, or report this problem if it continues.';
         errorBox.hidden = false;
       });
       request.addEventListener('error',() => {

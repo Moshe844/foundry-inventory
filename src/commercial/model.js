@@ -51,7 +51,7 @@ function wrap(database,ctx,provider,operation,key,options={}){const policy=POLIC
       idempotencyKey,{operation});usageRecorded=true;
     await require('./model-cost-budget').settle(database,scope,idempotencyKey);
     if(!internal)await usage.commitUsage(database,scope,{meter:'ai_work_credits',idempotencyKey});return response;
-  }catch(error){if(modelAttemptDay)await require('./model-budget').failed(database,scope.accountId,modelAttemptDay);
+  }catch(error){error.modelStarted=providerStarted;if(modelAttemptDay)await require('./model-budget').failed(database,scope.accountId,modelAttemptDay);
     if(!usageRecorded&&(error.usage||response?.usage))await operations.modelUsage(database,scope,
       error.usage||response.usage,idempotencyKey,{operation,failed:true});
     else if(providerStarted&&!response)await require('./control-service').recordCost(database,scope,{provider:provider.name||'unknown',model:provider.model||'',

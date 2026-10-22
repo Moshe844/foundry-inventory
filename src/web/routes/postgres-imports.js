@@ -87,6 +87,24 @@ function createPostgresImportsRouter(database,{provider=null}={}){
     });
   }
   router.get('/imports/:id',asyncRoute((req,res)=>renderPreview(req,res)));
+  router.post('/imports/:id/reanalyse',asyncRoute(async(req,res)=>{
+    const plan=await imports.get(database,req.ctx.workspaceId,req.params.id);
+    if(plan.status!=='READY'||plan.approvalStatus!=='AWAITING_APPROVAL'||req.body.integrityHash!==plan.integrityHash)
+      throw new ValidationError('This preview changed or was approved. Reopen it before reading its source again.');
+    const source=(await database.query(`SELECT source_hash,source_content FROM import_source_snapshots
+      WHERE workspace_id=$1 AND import_id=$2`,[req.ctx.workspaceId,plan.id])).rows[0];
+    if(!source)throw new ValidationError('This older preview has no saved original file. Upload it again to prepare a new preview.');
+    if(crypto.createHash('sha256').update(source.source_content).digest('hex')!==source.source_hash||source.source_hash!==plan.sourceHash)
+      throw new ValidationError('The saved source failed its integrity check. Nothing was imported.');
+    const selected=String(req.body.sheetIndex??'');
+    if(selected!==''&&(!/^\d+$/.test(selected)||Number(selected)>=plan.transformations.sheetCount))
+      throw new ValidationError('Choose an actual worksheet from this source.');
+    const revised=await imports.analyse(database,req.ctx,{buffer:source.source_content,filename:plan.sourceName,
+      ...(selected!==''?{sheetIndex:Number(selected),allowModel:false}:{}),
+      sourceContext:plan.transformations.sourceContext,provider,
+      usageKey:require('../../imports/usage-key').analysisUsageKey(plan.sourceHash)});
+    return res.redirect(303,`/imports/${revised.id}`);
+  }));
   router.post('/imports/:id/revise',asyncRoute(async(req,res)=>{
     try{
       const plan=await imports.get(database,req.ctx.workspaceId,req.params.id);
@@ -111,6 +129,7 @@ function createPostgresImportsRouter(database,{provider=null}={}){
           kind:trimOrNull(req.body[`new_location_${index}_kind`])||row.kind,
         }])),
         locationMappings,quantityOverrides,documentRowRoles:Object.fromEntries(Object.entries(req.body).filter(([key,value])=>/^document_role_\d+$/.test(key)&&value).map(([key,value])=>[key.slice(14),value])),fieldMappings,...(Object.keys(codeOverrides).length?{codeOverrides}:{}),...(Object.keys(moneyOverrides).length?{moneyOverrides}:{}),confirmImageReading:req.body.confirmImageReading==='yes',
+        ...(req.body.confirmImageReading==='yes'?{reviewedRowNumbers:Object.keys(codeOverrides)}:{}),
         trackingReview:Object.hasOwn(req.body,'tracking_serial')||Object.hasOwn(req.body,'tracking_lot')
           ?Object.fromEntries(['serial','lot'].filter(mode=>Object.hasOwn(req.body,'tracking_'+mode)).map(mode=>[mode,req.body['tracking_'+mode]])):undefined,
         confirmTrackingChange:req.body.confirmTrackingChange==='yes',

@@ -229,8 +229,9 @@ function parseText(text) {
 }
 
 function parseWorkbook(buffer) {
-  const { sheets } = readWorkbook(buffer);
-  return { sheets: sheets.map((sheet) => ({ name: sheet.name, grid: sheet.rows })) };
+  // Normalize a worksheet before reading the next one, rather than retaining
+  // all raw grids alongside another complete copy of the normalized workbook.
+  return readWorkbook(buffer, { transformSheet: (sheet) => ({ name: sheet.name, ...tabulate(sheet.rows) }) });
 }
 
 function decodeText(buffer){
@@ -277,7 +278,7 @@ function parse(input) {
     }
   }
 
-  const sheets = parsed.sheets.map((sheet) => ({ name: sheet.name, ...tabulate(sheet.grid) }));
+  const sheets = parsed.sheets.map((sheet) => sheet.columns ? sheet : ({ name: sheet.name, ...tabulate(sheet.grid) }));
   // The sheet with the most rows is nearly always the data; the rest are notes.
   const primary = sheets.reduce(
     (best, sheet, index) => (sheet.rows.length > sheets[best].rows.length ? index : best),

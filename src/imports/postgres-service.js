@@ -126,7 +126,8 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
   context.validationState.inDocumentTail=documentRows.inDocumentTail;
   for (const [position,row] of sheet.rows.entries()) {
     const problems=proposal.problemsIndex===undefined?[...(row.problems||[])]:json(textCell(row,proposal.problemsIndex),[]);
-    if(input.imageReadingConfirmed)for(let i=problems.length-1;i>=0;i--)if(['image_identity_uncertain','image_money_uncertain'].includes(problems[i].code))problems.splice(i,1);
+    const imageRowConfirmed=input.imageReadingConfirmed===true||Boolean(input.imageReviewedRows?.has(Number(row.sourceRow)));
+    if(imageRowConfirmed)for(let i=problems.length-1;i>=0;i--)if(['image_identity_uncertain','image_money_uncertain'].includes(problems[i].code))problems.splice(i,1);
     const sourceCode=trimOrNull(Object.hasOwn(input.codeOverrides||{},row.sourceRow)?input.codeOverrides[row.sourceRow]:textCell(row,mappings.code));
     const sourceIdentity=require('./source-identity'),variants=sourceIdentity.options(row,mappings,proposal);
     const code=sourceCode&&(proposal.variantBases||[]).includes(sourceCode.toLowerCase())&&!context.skuByCode.has(sourceCode.toLowerCase())?sourceIdentity.derived(sourceCode,variants):sourceCode;
@@ -145,7 +146,7 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     // A labeled aggregate without a SKU is document evidence, not another
     // product, when its quantity reconciles to the preceding source rows.
     if(role?.kind==='uncertain')problems.push(problem('document_role_uncertain','This row lacks the product identity used by the preceding table. Confirm whether it is a product or document information before importing.'));
-    if(input.imageSource&&!input.imageReadingConfirmed&&sourceCode&&!problems.some(p=>p.code==='image_identity_uncertain'))
+    if(input.imageSource&&!imageRowConfirmed&&sourceCode&&!problems.some(p=>p.code==='image_identity_uncertain'))
       problems.push(problem('image_identity_uncertain','Confirm this extracted product code against the original image or scan before approval.'));
     const moneyOverrides=input.moneyOverrides?.[row.sourceRow]||{};
     const costText=trimOrNull(Object.hasOwn(moneyOverrides,'unitCost')?moneyOverrides.unitCost:textCell(row,mappings.unitCost));
@@ -394,6 +395,8 @@ async function saveSupplierPreview(database,ctx,{bytes,sourceHash,filename,sheet
       plan.detectedType,plan.sheetName,plan.sheetIndex,JSON.stringify(plan.sourceColumns),JSON.stringify(mappings),
       JSON.stringify(plan.transformations),JSON.stringify(plan.trackingModel),'{}',null,plan.recordsDetected,
       valid,plan.recordsInvalid,JSON.stringify(plan.warnings),'[]','[]',plan.approvalStatus,plan.status,1,plan.integrityHash,at]);
+    await client.query(`INSERT INTO import_source_snapshots(import_id,workspace_id,source_hash,source_content)
+      VALUES($1,$2,$3,$4)`,[plan.id,ctx.workspaceId,sourceHash,bytes]);
     for(const row of rows)await client.query(`INSERT INTO import_rows(id,import_id,workspace_id,row_number,raw,parsed,
       status,problems,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
     [row.id,plan.id,ctx.workspaceId,row.rowNumber,JSON.stringify(row.raw),JSON.stringify(row.parsed),row.status,
@@ -428,22 +431,32 @@ async function analyse(database, ctx, input) {
   // Relational source interpretation requires reasoning about joins, coverage
   // and reconciliation. Use the existing standard tier for that task; fast
   // extraction remains appropriate for an ordinary single source table.
-  const relationalWorkbook=['xlsx','image'].includes(parsedWorkbook.format)&&parsedWorkbook.sheets.length>1;
+  const relationalWorkbook=['xlsx','image'].includes(parsedWorkbook.format)&&parsedWorkbook.sheets.length>1&&!Number.isInteger(input.sheetIndex);
   const modelProvider=input.allowModel===false?null:input.provider||(require('../config').ai.configured?
     require('../ai/provider').createProviderUnobserved(require('../config').ai.provider,require('../config').ai.tier(relationalWorkbook?'standard':'fast')):null);
   const wrappedProvider=modelProvider?require('../commercial/model').wrap(database,ctx,modelProvider,'import_mapping',input.usageKey||require('./usage-key').analysisUsageKey(sourceHash)):null;
   const combined=relationalWorkbook&&!input.workbookContract&&!Number.isInteger(input.sheetIndex)&&!input.mappings
     ?await require('./workbook-tables').combine(parsedWorkbook):null;
-  const workbook=combined||(relationalWorkbook
-    ?await require('./workbook-relations').interpret(parsedWorkbook,{provider:wrappedProvider,
-      contract:input.workbookContract,onBeforeAi:input.onBeforeAi,onUsage:input.onUsage}):null);
+  let analysisNotice=null,workbook=combined||(!input.workbookContract&&relationalWorkbook?require('./workbook-evidence').infer(parsedWorkbook):null);
+  if(!workbook&&relationalWorkbook){
+    try{workbook=await require('./workbook-relations').interpret(parsedWorkbook,{provider:wrappedProvider,
+      contract:input.workbookContract,onBeforeAi:input.onBeforeAi,onUsage:input.onUsage});}
+    catch(error){
+      // A denied model admission is not an unreadable file. Preserve a
+      // conservative, unapproved worksheet preview with explicit scope review.
+      // Never catch a started/unknown paid attempt or a bad source contract.
+      if(error.code!=='rate_limited'||error.modelStarted!==false)throw error;
+      analysisNotice={code:error.limitKind||error.code,message:error.message,modelCalled:false};
+    }
+  }
   if(workbook)sheet=workbook.sheet;
   const proposal=workbook?{mappings:workbook.mappings,detectedType:workbook.variantColumns.length?'variant_inventory':fields.detectType(workbook.mappings),
     axisNames:workbook.axisNames,variantColumns:workbook.variantColumns,provenanceIndex:workbook.provenanceIndex,problemsIndex:workbook.problemsIndex,
     aiUsed:workbook.aiUsed??!input.workbookContract,ignoredColumns:[],assumptions:workbook.reconciliations||[]}:await mappingService.proposeMappings({...sheet,sourceName:input.filename || 'pasted data'},
-    {provider:wrappedProvider,allowModel:input.allowModel,
+    {provider:wrappedProvider,allowModel:analysisNotice?false:input.allowModel,
       mappings:input.mappings || json(prior?.field_mappings,null),allowAdditionalMappings:!input.mappings&&Boolean(prior),detectedType:input.detectedType || prior?.detected_type,
       onBeforeAi:input.onBeforeAi,onUsage:input.onUsage});
+  if(!analysisNotice&&proposal.aiError)analysisNotice={code:'interpretation_unavailable',message:proposal.aiError};
   // An uncertain interpretation is a review task, not an upload failure. Keep
   // the source columns and rows in an unapproved preview so the operator can
   // identify the product column without editing and re-uploading the file.
@@ -452,7 +465,7 @@ async function analyse(database, ctx, input) {
     throw new ValidationError('That destination location is not in this inventory.');
   proposal.variantBases=require('./source-identity').bases(sheet,proposal.mappings,proposal,input);
   const proposedLocations=plannedLocations.proposals(sheet,proposal.mappings,context,input);
-  const streaming=Boolean(workbook)&&sheet.rows.length>500;
+  const streaming=sheet.rows.length>500;
   const validationContext=plannedLocations.withProposals(context,proposedLocations);
   const validated=validateRows(streaming?{...sheet,rows:[]}:sheet,proposal.mappings,proposal,validationContext,input);
   const unmappedNumeric=unmappedNumericColumns(sheet,proposal.mappings);
@@ -462,7 +475,7 @@ async function analyse(database, ctx, input) {
       ?'pdf':parsedWorkbook.format==='image'?'image':parsedWorkbook.format==='xlsx'?'xlsx':'csv':'paste',
     sourceHash,sourceBytes:bytes.length,detectedType:proposal.detectedType,sheetName:sheet.name,
     sheetIndex,sourceColumns:sheet.columns.map((column)=>({index:column.index,name:column.name})),
-    fieldMappings:proposal.mappings,transformations:{...(input.sourceContext?{sourceContext:String(input.sourceContext).slice(0,4000)}:{}),axisNames:proposal.axisNames,variantBases:proposal.variantBases,aiUsed:proposal.aiUsed,
+    fieldMappings:proposal.mappings,transformations:{...(analysisNotice?{analysisNotice}:{}),...(input.sourceContext?{sourceContext:String(input.sourceContext).slice(0,4000)}:{}),axisNames:proposal.axisNames,variantBases:proposal.variantBases,aiUsed:proposal.aiUsed,
       ...(input.imageSource?{visualSource:true,imageReadingConfirmed:false,codeOverrides:{}}:{}),
       ...(workbook?{workbook:{version:1,contract:workbook.contract,coverage:workbook.coverage,sourceRows:workbook.sourceRows,
         outputRows:workbook.outputRows,physicalUnits:workbook.physicalUnits,issues:workbook.issues,issueCount:workbook.issueCount},
@@ -491,6 +504,8 @@ async function analyse(database, ctx, input) {
       JSON.stringify(plan.transformations),JSON.stringify(plan.trackingModel),'{}',plan.defaultLocationId,
       plan.recordsDetected,plan.recordsValid,plan.recordsInvalid,JSON.stringify(plan.warnings),JSON.stringify(plan.conflicts),
       JSON.stringify(plan.assumptions),plan.approvalStatus,plan.status,1,plan.integrityHash,at]);
+    await client.query(`INSERT INTO import_source_snapshots(import_id,workspace_id,source_hash,source_content)
+      VALUES($1,$2,$3,$4)`,[plan.id,ctx.workspaceId,sourceHash,bytes]);
     if(!streaming){await rowStore.insert(client,ctx.workspaceId,plan.id,validated.rows,at);return;}
     const hash=integrityStream(plan),summary={...validated.summary},conflicts=new Map();
     for(let start=0;start<sheet.rows.length;start+=500){
@@ -643,7 +658,16 @@ async function revise(database,ctx,id,input={}){
       if(!/^\d+$/.test(number)||!values||typeof values!=='object'||Array.isArray(values)||Object.keys(values).some(k=>!['unitCost','sellingPrice'].includes(k)||fieldMappings[k]===undefined)||Object.values(values).some(v=>typeof v!=='string'||v.length>80)||!(await client.query('SELECT 1 FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND row_number=$3',[ctx.workspaceId,id,number])).rows.length)throw new ValidationError('Choose an actual image row and a valid money correction.');
       moneyOverrides[number]={...(moneyOverrides[number]||{}),...values};
     }
-    const imageReadingConfirmed=visualSource(plan)&&(input.confirmImageReading===true||!mappingChanged&&plan.transformations.imageReadingConfirmed===true);
+    const imageReviewedRows=new Set(mappingChanged?[]:plan.transformations.imageReviewedRows||[]);
+    if(input.confirmImageReading===true&&input.reviewedRowNumbers!==undefined){
+      if(!Array.isArray(input.reviewedRowNumbers)||!input.reviewedRowNumbers.length||input.reviewedRowNumbers.some(n=>!/^\d+$/.test(String(n))))
+        throw new ValidationError('Review the image rows shown on this page before confirming.');
+      const actual=(await client.query(`SELECT row_number FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND row_number=ANY($3::bigint[])`,[ctx.workspaceId,id,input.reviewedRowNumbers])).rows;
+      if(actual.length!==new Set(input.reviewedRowNumbers.map(Number)).size)throw new ValidationError('The reviewed rows must belong to this image preview.');
+      for(const row of actual)imageReviewedRows.add(Number(row.row_number));
+    }
+    const unreviewed=visualSource(plan)&&imageReviewedRows.size?(await client.query(`SELECT 1 FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND status<>'EXCLUDED' AND NOT(row_number=ANY($3::bigint[])) LIMIT 1`,[ctx.workspaceId,id,[...imageReviewedRows]])).rows.length>0:true;
+    const imageReadingConfirmed=visualSource(plan)&&(!mappingChanged&&plan.transformations.imageReadingConfirmed===true||input.confirmImageReading===true&&input.reviewedRowNumbers===undefined||!unreviewed);
     const documentRowRoles=mappingChanged?{}:{...(plan.transformations.documentRowRoles||{})};
     for(const [number,value] of Object.entries(input.documentRowRoles||{})){if(!/^\d+$/.test(number)||!['product','document'].includes(value)||!(await client.query('SELECT 1 FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND row_number=$3',[ctx.workspaceId,id,number])).rows.length)throw new ValidationError('Choose a source row and whether it is a product or document information.');documentRowRoles[number]=value;}
     const quantityOverrides=mappingChanged?{}:{...(plan.transformations.quantityOverrides||{})};
@@ -690,7 +714,7 @@ async function revise(database,ctx,id,input={}){
     const revised={...plan,fieldMappings,detectedType,locationMappings,defaultLocationId,
       transformations:{...plan.transformations,axisNames,quantityOverrides,documentRowRoles,
         ...(worksheetScope?{worksheetScope}:{}),
-        ...(visualSource(plan)?{codeOverrides,moneyOverrides,imageReadingConfirmed,imageReadingConfirmedBy:imageReadingConfirmed?ctx.actorId:null}:{}),
+        ...(visualSource(plan)?{codeOverrides,moneyOverrides,imageReviewedRows:[...imageReviewedRows],imageReadingConfirmed,imageReadingConfirmedBy:imageReadingConfirmed?ctx.actorId:null}:{}),
         ...(trackingReview?{trackingReview}:{}),
         unmappedNumericColumns:unmappedNumeric,confirmCatalogOnly,proposedLocations,
         allowPartialImport:input.allowPartialImport===undefined?Boolean(plan.transformations.allowPartialImport):input.allowPartialImport===true},
@@ -710,7 +734,7 @@ async function revise(database,ctx,id,input={}){
       if(!current.length)break;
         const validated=validateRows({columns:plan.sourceColumns,rows:current.map(row=>({cells:row.raw,sourceRow:row.rowNumber,problems:visualSource(plan)&&!imageReadingConfirmed?row.problems.filter(p=>['image_identity_uncertain','image_money_uncertain'].includes(p.code)):[]}))},fieldMappings,
         {detectedType,axisNames,variantBases,variantColumns:plan.transformations.variantColumns,provenanceIndex:plan.transformations.provenanceIndex,problemsIndex:plan.transformations.problemsIndex,trackingReview},plannedLocations.withProposals(context,proposedLocations),
-          {defaultLocationId,locationMappings,quantityOverrides,codeOverrides,moneyOverrides,documentRowRoles,imageSource:visualSource(plan),imageReadingConfirmed,confirmCatalogOnly,importMode:revised.transformations.importMode});
+          {defaultLocationId,locationMappings,quantityOverrides,codeOverrides,moneyOverrides,documentRowRoles,imageSource:visualSource(plan),imageReadingConfirmed,imageReviewedRows,confirmCatalogOnly,importMode:revised.transformations.importMode});
       for(const row of validated.rows)hash.append(row);
       trackingSummary?.add(validated.rows);
       for(const key of Object.keys(summary))summary[key]+=validated.summary[key];

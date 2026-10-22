@@ -87,7 +87,7 @@ const PATTERNS = {
   supplierName:[/^(?:supplier|vendor)(?:\s*name)?$/],
   leadTimeDays:[/^(?:supplier\s*)?lead\s*time(?:\s*(?:in\s*)?days)?$/],
   sellingPrice: [
-    /\b(?:selling|sale|retail|customer|list)\s*price\b/,
+    /\b(?:sell(?:ing)?|sale|retail|customer|list)\s*price\b/,
     /\bunit\s*price\b/,
     /\b(?:msrp|rrp)\b/,
     /^price(?:\s*each)?$/,
@@ -231,6 +231,10 @@ const normalise = (text) =>
     .replace(/\s+/g, ' ')
     .trim();
 
+// These fields explain stock or its value; they are never additional physical
+// locations. The source values remain available as evidence and custom details.
+const isStockSummary = header => /\b(?:reserved|allocated|committed|uncommitted|available|incoming|inbound)\b|\b(?:inventory|stock)\s*(?:value|valuation)\b/.test(normalise(header));
+
 /** How much of the header one pattern explains, 0 when it does not match. */
 function score(header, pattern) {
   const match = pattern.exec(header);
@@ -274,19 +278,23 @@ const NUMBERISH = /^-?\s*[\d,]+(?:\.\d+)?$/;
 
 /** What the values in a column look like — used to break header ties. */
 function profileColumn(rows, index) {
-  const values = rows.map((row) => String(row.cells[index] ?? '').trim()).filter((v) => v !== '');
-  const numeric = values.filter((v) => NUMBERISH.test(v)).length;
-  const unique = new Set(values.map((v) => v.toLowerCase()));
+  const unique = new Set(), samples = []; let filled = 0, numeric = 0, boolean = 0;
+  for (const row of rows) {
+    const value = String(row.cells[index] ?? '').trim();
+    if (!value) continue;
+    filled++; if (NUMBERISH.test(value)) numeric++; if (/^(?:yes|no|true|false)$/i.test(value)) boolean++;
+    unique.add(value.toLowerCase()); if (samples.length < 4 && !samples.includes(value)) samples.push(value);
+  }
   return {
-    filled: values.length,
-    fillRate: rows.length ? values.length / rows.length : 0,
-    numericRate: values.length ? numeric / values.length : 0,
+    filled,
+    fillRate: rows.length ? filled / rows.length : 0,
+    numericRate: filled ? numeric / filled : 0,
     distinct: unique.size,
-    booleanRate: values.length ? values.filter(v=>/^(?:yes|no|true|false)$/i.test(v)).length/values.length : 0,
+    booleanRate: filled ? boolean / filled : 0,
     // A late category may change a column's meaning. Repeating the first four
     // identical values hid tracking flags and configuration axes in large
     // exports. Profile the complete column and show distinct source examples.
-    samples: [...new Set(values)].slice(0, 4),
+    samples,
   };
 }
 
@@ -374,6 +382,10 @@ function guessMappings(columns, rows) {
       if (candidate.field === 'quantity') {
         if (profile.filled && profile.numericRate < 0.5) weight -= 0.6;
         else weight += 0.15;
+        // Available/reserved quantities explain physical stock. When both are
+        // present, reordering columns must never let a derived count displace
+        // the explicit physical count.
+        if (isStockSummary(column.name)) weight -= 0.5;
       }
       if (candidate.field === 'unitLabel' && profile.numericRate > 0.5) weight -= 0.6;
       // A numeric price or amount can have a location-looking word in its
@@ -465,6 +477,7 @@ module.exports = {
   PATTERNS,
   IGNORED_PATTERNS,
   normalise,
+  isStockSummary,
   bestFieldScores,
   ignorableAs,
   profileColumn,

@@ -129,6 +129,9 @@ function readZip(buffer) {
       cache.set(name,value);
       return value;
     },
+    // Expanded worksheet XML is transient. Keeping every decompressed sheet
+    // after extracting its cells needlessly multiplies a workbook's memory.
+    release(name) { cache.delete(name); },
   };
 }
 
@@ -320,7 +323,7 @@ function sheetParts(files) {
 /**
  * @returns {{ sheets: Array<{ name: string, rows: string[][] }> }}
  */
-function readWorkbook(buffer) {
+function readWorkbook(buffer, { transformSheet = (sheet) => sheet } = {}) {
   if (!Buffer.isBuffer(buffer) || buffer.length < 22) {
     throw new SpreadsheetError('That file is empty or not a spreadsheet.');
   }
@@ -330,8 +333,12 @@ function readWorkbook(buffer) {
 
   const sheets = sheetParts(files)
     .map(({ name, path }) => {
-      const part = files.get(path) || files.get(path.replace('xl/', 'xl/worksheets/'));
-      return part ? { name, rows: readSheet(part, sharedStrings, dateStyles) } : null;
+      const fallback = path.replace('xl/', 'xl/worksheets/');
+      const part = files.get(path) || files.get(fallback);
+      if (!part) return null;
+      const sheet = transformSheet({ name, rows: readSheet(part, sharedStrings, dateStyles) });
+      files.release(path); files.release(fallback);
+      return sheet;
     })
     .filter(Boolean);
 
