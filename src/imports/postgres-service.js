@@ -603,9 +603,11 @@ async function duplicates(database, workspaceId, plan) {
   return result.rows;
 }
 
-async function revise(database,ctx,id,input={}){
+async function revise(database,ctx,id,input={},options={}){
   await assertOperator(database,ctx);
   await getForMutation(database,ctx.workspaceId,id);
+  if((await database.query(`SELECT 1 FROM stockchief_runtime.jobs WHERE workspace_id=$1 AND kind='import.revise-preview' AND payload->>'planId'=$2 AND status IN ('PENDING','RUNNING','RETRY') AND id<>$3 LIMIT 1`,[ctx.workspaceId,id,options.jobId||''])).rows.length)
+    throw new ValidationError('A saved preview update is still running. Wait for its result before changing this preview again.');
   return database.transaction(async(client)=>{
     const saved=(await client.query('SELECT * FROM import_plans WHERE workspace_id=$1 AND id=$2 FOR UPDATE',
       [ctx.workspaceId,id])).rows[0];
@@ -615,13 +617,16 @@ async function revise(database,ctx,id,input={}){
     if(plan.status!=='READY'||plan.approvalStatus!=='AWAITING_APPROVAL')
       throw new ValidationError('Only an unapproved preview can be corrected.');
     if(plan.integrityHash!==input.expectedHash)throw new ValidationError('The preview changed. Review it before correcting rows.');
+    if((await client.query(`SELECT 1 FROM stockchief_runtime.jobs WHERE workspace_id=$1 AND kind='import.revise-preview' AND payload->>'planId'=$2 AND status IN ('PENDING','RUNNING','RETRY') AND id<>$3 LIMIT 1`,[ctx.workspaceId,id,options.jobId||''])).rows.length)
+      throw new ValidationError('A saved preview update is still running. Wait for its result before changing this preview again.');
     if(plan.transformations.dataset==='suppliers'){
       if(input.confirmWorksheetScope!==true)throw new ValidationError('This is a supplier directory, not an inventory catalog. Review supplier rows on the preview.');
       const revised={...plan,transformations:{...plan.transformations,worksheetScope:confirmWorksheetScope(plan,ctx,input)},planVersion:plan.planVersion+1},hash=integrityStream(revised);
       let lastRow=0,lastId='';
-      for(;;){const rows=(await client.query('SELECT * FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND (row_number,id)>($3::bigint,$4::text) ORDER BY row_number,id LIMIT 500',[ctx.workspaceId,id,lastRow,lastId])).rows.map(hydrateRow);if(!rows.length)break;for(const row of rows)hash.append(row);lastRow=rows.at(-1).rowNumber;lastId=rows.at(-1).id;}
+      let processedRows=0;
+      for(;;){const rows=(await client.query('SELECT * FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND (row_number,id)>($3::bigint,$4::text) ORDER BY row_number,id LIMIT 500',[ctx.workspaceId,id,lastRow,lastId])).rows.map(hydrateRow);if(!rows.length)break;for(const row of rows)hash.append(row);lastRow=rows.at(-1).rowNumber;lastId=rows.at(-1).id;processedRows+=rows.length;await options.onProgress?.({processedRows,totalRows:plan.recordsDetected,stage:'checking'});}
       revised.integrityHash=hash.finish();
-      await client.query('UPDATE import_plans SET transformations=$3::jsonb,plan_version=$4,integrity_hash=$5 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id,JSON.stringify(revised.transformations),revised.planVersion,revised.integrityHash]);return revised;
+      await client.query('UPDATE import_plans SET transformations=$3::jsonb,plan_version=$4,integrity_hash=$5 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id,JSON.stringify(revised.transformations),revised.planVersion,revised.integrityHash]);await options.beforeCommit?.(client,revised);return revised;
     }
     let fieldMappings=plan.fieldMappings;
     if(input.fieldMappings!==undefined){
@@ -687,8 +692,10 @@ async function revise(database,ctx,id,input={}){
       }
       if(input.confirmTrackingChange!==true&&Object.values(choices).includes('quantity'))
         throw new ValidationError('Confirm that the selected tracking flags do not apply before preparing quantity-only stock.');
+      if(require('./preview-revision-input').unchangedTracking(plan,input))return {...plan,revisionUnchanged:true};
       trackingReview={serial:choices.serial||'source',lot:choices.lot||'source',confirmedBy:ctx.actorId,confirmedAt:nowIso()};
     }
+    await options.onProgress?.({processedRows:0,totalRows:plan.recordsDetected,stage:'checking'});
     const context=await workspaceContext(client,ctx.workspaceId,{sourceHash:plan.sourceHash});
     if(Object.values(locationMappings).some((value)=>!context.locations.some((row)=>row.id===value)))
       throw new ValidationError('Choose a location in this inventory for each correction.');
@@ -706,8 +713,10 @@ async function revise(database,ctx,id,input={}){
       proposedLocations:{...Object.fromEntries((plan.transformations.proposedLocations||[]).map(row=>[row.source,row])),...(input.proposedLocations||{})}});
     let unmappedNumeric=[];
     if(fieldMappings.quantity===undefined){
-      const numericSource=(await client.query('SELECT raw FROM import_rows WHERE workspace_id=$1 AND import_id=$2 ORDER BY row_number,id',[ctx.workspaceId,id])).rows;
-      unmappedNumeric=unmappedNumericColumns({columns:plan.sourceColumns,rows:numericSource.map(row=>({cells:json(row.raw,[])}))},fieldMappings);
+      const candidates=plan.sourceColumns.filter(column=>!Object.values(fieldMappings).includes(column.index)).map(column=>({...column,filled:0,numeric:0}));let lastRow=0,lastId='';
+      for(;;){const page=(await client.query('SELECT id,row_number,raw FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND (row_number,id)>($3::bigint,$4::text) ORDER BY row_number,id LIMIT 500',[ctx.workspaceId,id,lastRow,lastId])).rows;if(!page.length)break;
+        const rows=page.map(row=>({cells:json(row.raw,[])}));for(const column of candidates){const p=fields.profileColumn(rows,column.index);column.filled+=p.filled;column.numeric+=Math.round(p.filled*p.numericRate);}lastRow=Number(page.at(-1).row_number);lastId=page.at(-1).id;}
+      unmappedNumeric=candidates.filter(c=>c.filled>0&&c.numeric/c.filled>=0.8).map(c=>c.name);
     }
     const confirmCatalogOnly=fieldMappings.quantity===undefined&&(input.confirmCatalogOnly===true||input.confirmCatalogOnly===undefined&&!mappingChanged&&plan.transformations.confirmCatalogOnly===true);
     const worksheetScope=confirmWorksheetScope(plan,ctx,input);
@@ -721,10 +730,13 @@ async function revise(database,ctx,id,input={}){
       planVersion:plan.planVersion+1};
     if(input.importMode!==undefined)revised.transformations.importMode=input.importMode;
     if(!trackingReview)delete revised.transformations.trackingReview;
-    let variantBases=[];
-    if(plan.transformations.variantColumns?.length||fields.VARIANT_FIELDS.some(f=>fieldMappings[f]!==undefined)){
-      const identityRows=(await client.query('SELECT row_number,raw FROM import_rows WHERE workspace_id=$1 AND import_id=$2 ORDER BY row_number,id',[ctx.workspaceId,id])).rows;
-      variantBases=require('./source-identity').bases({rows:identityRows.map(r=>({sourceRow:Number(r.row_number),cells:json(r.raw,[])}))},fieldMappings,{axisNames,variantColumns:plan.transformations.variantColumns},{codeOverrides});
+    let variantBases=mappingChanged?[]:plan.transformations.variantBases||[];
+    if((mappingChanged||stable(codeOverrides)!==stable(plan.transformations.codeOverrides||{})||!Object.hasOwn(plan.transformations,'variantBases'))&&(plan.transformations.variantColumns?.length||fields.VARIANT_FIELDS.some(f=>fieldMappings[f]!==undefined))){
+      const identities=require('./source-identity').accumulator(fieldMappings,{axisNames,variantColumns:plan.transformations.variantColumns},{codeOverrides});
+      let lastRow=0,lastId='';
+      for(;;){const page=(await client.query('SELECT id,row_number,raw FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND (row_number,id)>($3::bigint,$4::text) ORDER BY row_number,id LIMIT 500',[ctx.workspaceId,id,lastRow,lastId])).rows;if(!page.length)break;
+        identities.add(page.map(r=>({sourceRow:Number(r.row_number),cells:json(r.raw,[])})));lastRow=Number(page.at(-1).row_number);lastId=page.at(-1).id;}
+      variantBases=identities.finish();
     }
     revised.transformations.variantBases=variantBases;
     const hash=integrityStream(revised),summary={total:0,valid:0,invalid:0,units:0,unvaluedUnits:0,valuedMinor:0,sourceCostWithoutStock:0,existingStockRows:0},conflicts=new Map(),trackingSummary=require('./tracking-review').tracker(fieldMappings);
@@ -741,6 +753,7 @@ async function revise(database,ctx,id,input={}){
       for(const conflict of validated.conflicts)conflicts.set(conflict.text,(conflicts.get(conflict.text)||0)+conflict.count);
       await rowStore.revise(client,ctx.workspaceId,id,current,validated.rows);
       lastRow=current.at(-1).rowNumber;lastId=current.at(-1).id;
+      await options.onProgress?.({processedRows:summary.total,totalRows:plan.recordsDetected,stage:'checking'});
     }
     revised.integrityHash=hash.finish();revised.recordsValid=summary.valid;revised.recordsInvalid=summary.invalid;
     revised.transformations.existingStockRows=summary.existingStockRows;
@@ -755,17 +768,26 @@ async function revise(database,ctx,id,input={}){
     [ctx.workspaceId,id,JSON.stringify(locationMappings),JSON.stringify(revised.transformations),
       revised.recordsValid,revised.recordsInvalid,JSON.stringify(revised.warnings),JSON.stringify(revised.conflicts),
       revised.planVersion,revised.integrityHash,JSON.stringify(fieldMappings),detectedType,defaultLocationId||null]);
+    await options.beforeCommit?.(client,revised);
     return revised;
-  },{isolation:'SERIALIZABLE',retrySafe:true});
+  // The plan lock freezes this preview until commit. A queued revision also
+  // fences its job receipt in that transaction; READ COMMITTED lets it check
+  // the current renewed lease rather than an obsolete transaction snapshot.
+  // Stock and financial effects still use their separate approved execution.
+  },{isolation:options.jobId?'READ COMMITTED':'SERIALIZABLE',retrySafe:true,...(options.jobId?{retries:0}:{})});
 }
 
 async function approve(database, ctx, id, expectedHash) {
   await assertOperator(database,ctx);
   await getForMutation(database,ctx.workspaceId,id);
+  if((await database.query(`SELECT 1 FROM stockchief_runtime.jobs WHERE workspace_id=$1 AND kind='import.revise-preview' AND payload->>'planId'=$2 AND status IN ('PENDING','RUNNING','RETRY') LIMIT 1`,[ctx.workspaceId,id])).rows.length)
+    throw new ValidationError('The preview is being updated. Review the finished result before approving it.');
   return database.transaction(async(client)=>{
     const result=await client.query('SELECT * FROM import_plans WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,id]);
     if(!result.rows.length)throw new NotFoundError('That import could not be found.');
     const plan=hydratePlan(result.rows[0]);
+    if((await client.query(`SELECT 1 FROM stockchief_runtime.jobs WHERE workspace_id=$1 AND kind='import.revise-preview' AND payload->>'planId'=$2 AND status IN ('PENDING','RUNNING','RETRY') LIMIT 1`,[ctx.workspaceId,id])).rows.length)
+      throw new ValidationError('The preview is being updated. Review the finished result before approving it.');
     if(!plan.transformations.dataset&&supplierDataset.classify(plan.sourceColumns))
       throw new ValidationError('This is a supplier directory. Reopen its preview so StockChief can safely classify it before approval.');
     if(plan.isExpired)throw new ValidationError('This preview is more than 24 hours old. Read the source again before importing.');

@@ -14,7 +14,9 @@ async function revise(database,workspaceId,importId,current,rows){
   const batch=rows.slice(start,start+CHUNK).map(row=>({id:identities.get(row.rowNumber),parsed:row.parsed,status:row.status,problems:row.problems,location_id:row.parsed.locationId||null,quantity:row.parsed.quantity??null}));
   await database.query(`UPDATE import_rows saved SET parsed=x.parsed,status=x.status,problems=x.problems,location_id=x.location_id,quantity=x.quantity
    FROM jsonb_to_recordset($3::jsonb) AS x(id text,parsed jsonb,status text,problems jsonb,location_id text,quantity bigint)
-   WHERE saved.workspace_id=$1 AND saved.import_id=$2 AND saved.id=ANY($4::text[]) AND saved.id=x.id`,[workspaceId,importId,JSON.stringify(batch),batch.map(r=>r.id)]);
+   WHERE saved.workspace_id=$1 AND saved.import_id=$2 AND saved.id=ANY($4::text[]) AND saved.id=x.id
+   AND (saved.parsed::jsonb,saved.status,saved.problems::jsonb,saved.location_id,saved.quantity) IS DISTINCT FROM
+       (x.parsed,x.status,x.problems,x.location_id,x.quantity)`,[workspaceId,importId,JSON.stringify(batch),batch.map(r=>r.id)]);
  }
 }
 async function markImported(database,workspaceId,importId,rows){

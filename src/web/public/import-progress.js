@@ -7,6 +7,23 @@
   form.querySelectorAll('button[type="submit"]').forEach(button=>{button.disabled=true;button.textContent='Recalculating preview…';});
   const status=form.querySelector('[data-import-preview-status]');if(status){status.hidden=false;status.textContent='StockChief is checking your saved rows again. No stock or value is being imported.';}
  }));
+ document.querySelectorAll('[data-preview-revision][data-revision-active="yes"]').forEach(panel=>{
+  const endpoint=new URL(panel.dataset.previewRevision,location.origin);if(endpoint.origin!==location.origin)return;
+  document.querySelectorAll('form').forEach(form=>{if(/\/imports\/[^/]+\/(?:revise|approve)$/.test(new URL(form.action,location.origin).pathname))form.querySelectorAll('button,input,select,textarea').forEach(field=>field.disabled=true);});
+  let pending=false;
+  const refresh=async()=>{if(pending||document.hidden)return;pending=true;
+   try{const response=await fetch(endpoint.pathname,{credentials:'same-origin',cache:'no-store',headers:{accept:'application/json'},signal:AbortSignal.timeout(10000)});if(!response.ok)throw new Error('unavailable');const state=await response.json();if(!state)throw new Error('missing');
+    panel.querySelector('[data-revision-label]').textContent=state.label;
+    panel.querySelector('[data-revision-count]').textContent=(state.attempt>1?'Attempt '+state.attempt+' · ':'')+state.processedRows.toLocaleString()+(state.totalRows===null?'':' / '+state.totalRows.toLocaleString())+' rows checked';
+    const meter=panel.querySelector('[data-revision-meter]');meter.max=state.totalRows||1;meter.value=state.processedRows;
+    panel.querySelector('[data-revision-live]').textContent='Last update '+format(state.lastUpdateAt)+' · You can leave and return to this saved update.';
+    panel.querySelector('[data-revision-reason]').textContent=state.reason||'';
+    if(!state.active){clearInterval(timer);location.reload();}
+   }catch{panel.querySelector('[data-revision-live]').textContent='Connection to progress interrupted. This update is saved; refresh this page to reconnect.';}
+   finally{pending=false;}
+  };
+  const timer=setInterval(refresh,2500);document.addEventListener('visibilitychange',refresh);refresh();
+ });
  const groups=new Map();
  document.querySelectorAll('[data-import-progress]').forEach(panel=>{const url=new URL(panel.dataset.importProgress,window.location.origin);if(url.origin!==window.location.origin)return;const entry=groups.get(url.pathname)||{panels:[],finished:false};entry.panels.push(panel);groups.set(url.pathname,entry);});
  if(!groups.size)return;
@@ -20,7 +37,7 @@
   bar.firstElementChild.style.width=(state.progressPercent===null?32:state.progressPercent)+'%';
   const stages=['preparing','processing','verifying','complete'],index=stages.indexOf(state.stage);
   meter.querySelectorAll('[data-import-step]').forEach(step=>{const n=stages.indexOf(step.dataset.importStep);step.classList.toggle('is-current',n===index);step.classList.toggle('is-done',index>n);});
-  meter.querySelector('[data-import-summary]').textContent=state.verified?'Products, stock and accounting checks passed.':state.processedRows===null?'Exact row progress is not available for this run. Inventory appears after verification.':'Processed rows are being prepared; inventory is saved together after verification.';
+  meter.querySelector('[data-import-summary]').textContent=state.state==='UPDATING_PREVIEW'?'Checking preview choices only. No stock or Money is being imported.':state.verified?'Products, stock and accounting checks passed.':state.processedRows===null?'Exact row progress is not available for this run. Inventory appears after verification.':'Processed rows are being prepared; inventory is saved together after verification.';
   const seconds=Math.max(0,Math.floor((Date.now()-Date.parse(state.lastUpdateAt))/1000));
   meter.querySelector('[data-import-live]').textContent=state.active?'Worker update '+(seconds<2?'just now':seconds+'s ago'):state.verified?'Verified '+format(state.completedAt):'Saved status';
  }

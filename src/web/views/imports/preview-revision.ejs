@@ -1,0 +1,9 @@
+<% const revisionState=locals.previewRevision; if(revisionState){ %>
+<section class="card card-body section" id="preview-update" aria-labelledby="preview-update-heading" data-preview-revision="/imports/<%= plan.id %>/revision-progress" data-revision-active="<%= revisionState.active?'yes':'no' %>">
+ <h2 id="preview-update-heading" data-revision-label><%= revisionState.label %></h2>
+ <p data-revision-count><%= revisionState.attempt>1?'Attempt '+revisionState.attempt+' · ':'' %><%= revisionState.processedRows.toLocaleString() %><%= revisionState.totalRows===null?'':' / '+revisionState.totalRows.toLocaleString() %> rows checked</p>
+ <progress data-revision-meter max="<%= revisionState.totalRows||1 %>" value="<%= revisionState.processedRows %>" aria-label="Preview rows checked" style="width:100%"></progress>
+ <p data-revision-live>Saved <time data-import-time datetime="<%= new Date(revisionState.lastUpdateAt).toISOString() %>"><%= new Date(revisionState.lastUpdateAt).toUTCString() %></time>.</p>
+ <p data-revision-reason><%= revisionState.reason||'' %></p>
+ <p><%= sourceTransforms.dataset==='suppliers'?'No supplier records are being created.':'No stock or Money is being imported.' %> <%= revisionState.active?'You can leave this page and return here; this update is saved. Review and approval become available when it finishes.':'Review the current preview before approving any changes.' %></p>
+</section><% } %>

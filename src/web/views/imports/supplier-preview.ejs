@@ -6,10 +6,11 @@
 </div><div class="page-actions" <% if(activity.active){ %>data-import-progress="<%= activity.href %>/progress"<% } %>><span data-import-status class="badge badge--<%= activity?.verified?'ok':'muted' %>"><%= activity?.label||helpers.columnLabel(plan.status.toLowerCase()) %></span></div></div>
 <div class="notice section"><strong>StockChief recognized a supplier directory.</strong>
   Names, contacts and payment terms will create supplier records, not products or stock. Nothing changes until you approve and run this preview.</div>
+<%- include('preview-revision',{sourceTransforms}) %>
 <%- include('worksheet-scope',{sourceTransforms,needsWorksheetScope}) %>
 <% if(duplicatePlans.length&&plan.status!=='SUCCEEDED'){ %><div class="notice notice--warn section">
   This exact file was already imported. <a href="/imports/<%= duplicatePlans[0].id %>">See the completed import</a>.</div><% } %>
-<% if(activity?.active){ %>
+<% if(activity?.active&&activity.state!=='UPDATING_PREVIEW'){ %>
   <section class="card section" data-import-progress="/imports/<%= plan.id %>/progress" data-import-detail aria-live="polite"><div class="card-head"><h2 data-import-status><%= activity.label %></h2></div><div class="card-body"><p>StockChief is processing <%= plan.recordsValid.toLocaleString('en-US') %> approved supplier rows. The records appear together after verification. You can leave this page and reopen it from <a href="/imports">File imports and results</a>.</p><p data-import-timing></p><%- include('../partials/import-meter',{activity}) %></div></section>
 <% }else if(activity&&['PAUSED','NEEDS_REVIEW'].includes(activity.state)&&!run?.verified){ %>
   <section class="card section"><div class="card-head"><h2>Import paused before verification</h2></div><div class="card-body">
@@ -30,7 +31,7 @@
       <input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Import and verify suppliers</button></form>
     <% }else{ %><form method="post" action="/imports/<%= plan.id %>/approve">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>">
-      <button class="btn btn--primary" type="submit" <%= needsWorksheetScope||!plan.recordsValid||duplicatePlans.length?'disabled':'' %>>Approve <%= plan.recordsValid %> suppliers</button></form><% } %>
+      <button class="btn btn--primary" type="submit" <%= locals.previewRevision?.active||needsWorksheetScope||!plan.recordsValid||duplicatePlans.length?'disabled':'' %>>Approve <%= plan.recordsValid %> suppliers</button></form><% } %>
     <form method="post" action="/imports/<%= plan.id %>/cancel"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <button class="btn btn--ghost" type="submit">Cancel</button></form>
   </div></div></div>

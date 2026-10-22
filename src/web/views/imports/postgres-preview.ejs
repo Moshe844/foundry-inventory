@@ -10,9 +10,9 @@
    const needsPartialAnswer=plan.recordsInvalid>0&&!sourceTransforms.allowPartialImport;
    const needsStockIntent=sourceTransforms.existingStockRows>0&&!sourceTransforms.importMode;
    const needsWorksheetScope=plan.approvalStatus==='AWAITING_APPROVAL'&&!sourceTransforms.workbook&&sourceTransforms.sheetCount>1&&sourceTransforms.worksheetScope?.confirmed!==true;
-   const needsAnswer=needsIdentity||needsNumberAnswer||needsLocation||needsTrackingAnswer||needsImageAnswer||needsAccounting||needsPartialAnswer||needsStockIntent||needsWorksheetScope||plan.conflicts.length>0;
+   const needsAnswer=Boolean(locals.previewRevision?.active)||needsIdentity||needsNumberAnswer||needsLocation||needsTrackingAnswer||needsImageAnswer||needsAccounting||needsPartialAnswer||needsStockIntent||needsWorksheetScope||plan.conflicts.length>0;
    const activity=locals.importProgress;
-   const importing=Boolean(activity?.active);
+   const importing=Boolean(activity?.active&&activity.state!=='UPDATING_PREVIEW');
    const interrupted=Boolean(activity&&['PAUSED','NEEDS_REVIEW'].includes(activity.state)&&!run?.verified); %>
 <% if(locals.reviewError){ %><div class="notice notice--warn" role="alert"><strong><%= reviewError %></strong><p>Your current preview and source rows are retained. Nothing was approved or imported by this request.</p></div><% } %>
 <div class="page-head">
@@ -21,6 +21,7 @@
   </div>
   <div class="page-actions" <% if(activity.active){ %>data-import-progress="<%= activity.href %>/progress"<% } %>><span data-import-status class="badge badge--<%= activity?.verified?'ok':'muted' %>"><%= activity?.label||helpers.columnLabel(plan.status.toLowerCase()) %></span></div>
 </div>
+<%- include('preview-revision',{sourceTransforms}) %>
 <% if(sourceTransforms.analysisNotice){ %><section class="card card-body" role="status"><h2>Your file was read; automatic interpretation is paused</h2><p><%= sourceTransforms.analysisNotice.message %></p><p>The original file and this unapproved preview are saved. No stock or inventory value changed. Review the column meanings<%= sourceTransforms.sheetCount>1?' and complete worksheet coverage':'' %> before approval. A usage limit does not mean your file is corrupt.</p>
 <% if(plan.status==='READY'&&plan.approvalStatus==='AWAITING_APPROVAL'){ %><form method="post" action="/imports/<%= plan.id %>/reanalyse"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><button class="btn" type="submit">Retry automatic interpretation from saved file</button></form><% } %></section><% } %>
 <% const roleRows=rows.filter(row=>row.parsed?.documentEvidence?.kind==='uncertain');if(roleRows.length&&plan.status==='READY'&&plan.approvalStatus==='AWAITING_APPROVAL'){ %><section class="card card-body"><h2>Products or document information?</h2><p>These rows have a different identity structure from the product table. Confirm their meaning so a total or note cannot increase stock.</p><form method="post" action="/imports/<%= plan.id %>/revise"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><% roleRows.forEach(row=>{ %><label class="field"><span>Source row <%= row.rowNumber %>: <%= row.parsed.documentEvidence.label %></span><select name="document_role_<%= row.rowNumber %>" required><option value="">Choose meaning</option><option value="document">Document total, charge or note — exclude from stock</option><option value="product">Product — review its quantity and other fields</option></select></label><% }); %><button class="btn" type="submit">Recheck row meanings</button></form></section><% } %>

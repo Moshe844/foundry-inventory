@@ -510,6 +510,7 @@ function create(providers=defaultProviders,options={}){return {'system.runtime-s
         provider:options.shippingProviderResolver?options.shippingProviderResolver(provider):shippingProviders.get(provider)});
     return {shipmentId,rateCount:quoted.rates?.length||0};
   }),
+  'import.revise-preview':external((job,database)=>require('../imports/postgres-preview-revisions').run(job,database),'bulk'),
   'import.execute-approved':external(async(job,database)=>{
       const {planId,actorId,integrityHash,retryExecutionId}=job.payload||{};
     if(!job.workspaceId||!planId||!actorId||!integrityHash)throw Object.assign(

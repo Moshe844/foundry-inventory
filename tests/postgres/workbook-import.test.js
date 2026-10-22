@@ -47,6 +47,8 @@ test('a saved tracking clarification is explicit, reversible, paged and cannot e
   assert.equal(await page.locator('[data-import-status]').innerText(),'Needs your answer');
   const form=page.locator('[data-import-preview-revise]');assert.match(await form.innerText(),/Nothing is imported/);assert.equal(await form.locator('[name=tracking_serial]').inputValue(),'source');
   await form.locator('[name=tracking_serial]').selectOption('quantity');await form.locator('[name=tracking_lot]').selectOption('quantity');await form.locator('[name=confirmTrackingChange]').check();await Promise.all([page.waitForURL(base+'/imports/'+plan.id,{waitUntil:'load'}),form.getByRole('button',{name:'Save choices and recalculate preview'}).click()]);
+  assert.match(await page.locator('#preview-update').innerText(),/Preview update queued/);
+  const completed=await require('../../src/operations/postgres-job-queue').processOne(db,{'import.revise-preview':require('../../src/operations/postgres-runtime-handlers').create({})['import.revise-preview']},{owner:'workbook-review-fixture'});assert.equal(completed.status,'COMPLETED');
   await page.waitForFunction(()=>document.querySelector('h2#import-tracking-question')?.textContent==='Tracking requirements reviewed');
   const after=await imports.get(db,ctx.workspaceId,plan.id);assert.equal(after.recordsValid,510);assert.equal(after.approvalStatus,'AWAITING_APPROVAL');assert.equal((await db.query('SELECT count(*)::int n FROM skus WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,0);
  }finally{await browser.close();await new Promise(resolve=>server.close(resolve));await app.locals.sessionStore.close();}

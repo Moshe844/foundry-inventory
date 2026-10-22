@@ -39,6 +39,10 @@ function createPostgresImportsRouter(database,{provider=null}={}){
     const state=await progress.get(database,req.ctx.workspaceId,req.params.id);
     res.set('Cache-Control','no-store');return res.json(state);
   }));
+  router.get('/imports/:id/revision-progress',asyncRoute(async(req,res)=>{
+    await imports.get(database,req.ctx.workspaceId,req.params.id);
+    res.set('Cache-Control','no-store');return res.json(await require('../../imports/postgres-preview-revisions').latest(database,req.ctx.workspaceId,req.params.id));
+  }));
   router.post('/imports',asyncRoute(async(req,res)=>{
     const wantsJson=String(req.get('accept') || '').includes('application/json');
     const files=(req.files || []).filter((entry)=>['file','files'].includes(entry.field));
@@ -76,14 +80,14 @@ function createPostgresImportsRouter(database,{provider=null}={}){
       field:Object.keys(plan.fieldMappings).find((key)=>plan.fieldMappings[key]===column.index) || null,
       samples:[...new Set(sampleRows.map((row)=>String(row.raw?.[column.index]??'').trim())
         .filter(Boolean))].slice(0,3).map((value)=>value.slice(0,80))}));
-    const [runJob,importProgress,trackingQuestion]=await Promise.all([importJob(database,req.ctx.workspaceId,plan.id),progress.get(database,req.ctx.workspaceId,plan.id),
-      require('../../imports/tracking-review').read(database,req.ctx.workspaceId,plan)]);
+    const [runJob,importProgress,trackingQuestion,previewRevision]=await Promise.all([importJob(database,req.ctx.workspaceId,plan.id),progress.get(database,req.ctx.workspaceId,plan.id),
+      require('../../imports/tracking-review').read(database,req.ctx.workspaceId,plan),require('../../imports/postgres-preview-revisions').latest(database,req.ctx.workspaceId,plan.id)]);
     return res.page(plan.transformations.dataset==='suppliers'?'imports/supplier-preview':'imports/postgres-preview',
       {title:`Import ${plan.sourceName}`,nav:'imports',plan,rows,counts,
       duplicatePlans,run,locations:locationRows,mappingRows,fieldOptions:fields.FIELDS,page,pageSize:PAGE_SIZE,filter,
       missingLocationRows:missingLocation.rows.length>0,
       missingAccountingSetup:missingAccounting.rows.length>0,
-      locationKinds:require('../../domain/constants').LOCATION_KINDS,runJob,importProgress,trackingQuestion,reviewError,
+      locationKinds:require('../../domain/constants').LOCATION_KINDS,runJob,importProgress,trackingQuestion,previewRevision,reviewError,
     });
   }
   router.get('/imports/:id',asyncRoute((req,res)=>renderPreview(req,res)));
@@ -123,7 +127,7 @@ function createPostgresImportsRouter(database,{provider=null}={}){
       if(new Set(choices.map(([field])=>field)).size!==choices.length)
         throw new ValidationError('Two source columns cannot have the same import meaning.');
       const fieldMappings=hasFieldMappings?Object.fromEntries(choices):undefined;
-      await imports.revise(database,req.ctx,plan.id,{expectedHash:trimOrNull(req.body.integrityHash),
+      const revision=await require('../../imports/postgres-preview-revisions').queue(database,req.ctx,plan.id,{expectedHash:trimOrNull(req.body.integrityHash),
         proposedLocations:Object.fromEntries((plan.transformations.proposedLocations||[]).map((row,index)=>[row.source,{
           name:trimOrNull(req.body[`new_location_${index}_name`])||row.name,
           kind:trimOrNull(req.body[`new_location_${index}_kind`])||row.kind,
@@ -138,7 +142,7 @@ function createPostgresImportsRouter(database,{provider=null}={}){
         confirmWorksheetScope:Object.hasOwn(req.body,'confirmWorksheetScope')?req.body.confirmWorksheetScope==='yes':undefined,
         importMode:Object.hasOwn(req.body,'importMode')?req.body.importMode:undefined,
         allowPartialImport:Object.hasOwn(req.body,'allowPartialImport')?req.body.allowPartialImport==='yes':undefined});
-      req.flash('success','Preview corrected and recalculated. Review all rows again before approving.');
+      req.flash('success',revision.queued?'Preview update saved. You can leave this page and return to its progress. No stock or value is being imported.':revision.plan.revisionUnchanged?'Those tracking choices are already in effect. No recalculation was needed. Missing serial or lot identifiers still need to be supplied before import.':'Preview corrected and recalculated. Review all rows again before approving.');
     }catch(error){if(!(error instanceof ValidationError))throw error;res.status(error.status||400);return renderPreview(req,res,{reviewError:error.message});}
     return res.redirect(303,`/imports/${req.params.id}`);
   }));
