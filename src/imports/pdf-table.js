@@ -39,6 +39,8 @@ async function ocrRows(page,worker){
     throw new ValidationError('That scan is too large to read safely. Try a smaller image or PDF page; no inventory changed.');
   const canvas=createCanvas(Math.ceil(viewport.width),Math.ceil(viewport.height));
   await page.render({canvasContext:canvas.getContext('2d'),viewport}).promise;
+  const structured=await require('./image-table').readStructuredTable(canvas,worker);
+  if(structured?.rows.length){const rows=[];rows.structured=structured;return rows;}
   return ocrCanvasRows(canvas,worker);
 }
 
@@ -117,9 +119,10 @@ async function parse(buffer){
       if(!worker){const {createWorker}=require('tesseract.js');
         const english=require('@tesseract.js-data/eng');
         worker=await createWorker(english.code,1,{langPath:english.langPath,gzip:english.gzip,cacheMethod:'readOnly'});}
-      rows=withoutSeparatedFooter(await ocrRows(page,worker));
+      const recognised=await ocrRows(page,worker);
+      rows=withoutSeparatedFooter(recognised);
       anchors=anchorColumns(rows);
-      sheet=anchors.length>=2?parser.tabulate(tabulatePage(rows,anchors)):null;
+      sheet=recognised.structured||(anchors.length>=2?parser.tabulate(tabulatePage(rows,anchors)):null);
     }
     if(!sheet?.rows.length)throw new ValidationError(`StockChief could not read a product table on PDF page ${pageNumber}. Nothing changed; try a clearer scan.`);
     const headings=sheet.columns.map((column)=>column.name.toLowerCase());
@@ -131,7 +134,7 @@ async function parse(buffer){
       combined.rows.push(...sheet.rows.map((row,index)=>({...row,sourceRow:offset+index+2})));
     }
   }}finally{if(worker)await worker.terminate();}
-  return {sheets:[combined],primarySheet:0,format:'pdf'};
+  return {sheets:[combined],primarySheet:0,format:'pdf',visualSource:ocrPages>0};
 }
 
 module.exports={parse,groupRows,anchorColumns,tabulatePage,withoutSeparatedFooter,ocrRows,ocrCanvasRows};

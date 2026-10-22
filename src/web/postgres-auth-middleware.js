@@ -25,7 +25,9 @@ function loadUser(database,{readonly=false}={}) {
       res.locals.workspace = null;
       res.locals.workspaces = [];
       res.locals.account = null;
-      res.locals.passwordUpgradeRequired=Boolean(req.session?.passwordUpgradeRequired&&!req.session.passwordUpgradeNoticeDismissed);
+      res.locals.passwordUpgradeRequired=Boolean(req.session?.passwordUpgradeRequired&&!req.session.passwordUpgradeNoticeDismissed
+        &&req.method==='GET'&&!req.path.startsWith('/api/')&&!req.path.endsWith('/progress')&&!String(req.get('accept')||'').includes('application/json'));
+      if(res.locals.passwordUpgradeRequired)req.session.passwordUpgradeNoticeDismissed=true;
       if (!req.session?.accountId) return next();
 
       const account = await auth.getAccount(database, req.session.accountId);

@@ -1,4 +1,5 @@
 'use strict';
+function visualSource(plan){return plan.sourceKind==='image'||plan.transformations?.visualSource===true;}
 
 const crypto = require('node:crypto');
 const parser = require('./parser');
@@ -118,8 +119,11 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
   const unknownLocations=new Map();
   const defaultLocation=context.locations.find((row)=>row.id===input.defaultLocationId) ||
     (context.locations.length===1 ? context.locations[0] : null);
-  const documentRows=require('./document-rows').classify(sheet,mappings,{precedingProducts:context.validationState.documentProducts||0});
+  const documentRows=require('./document-rows').classify(sheet,mappings,{precedingProducts:context.validationState.documentProducts||0,
+    precedingStrongProducts:context.validationState.strongDocumentProducts||0,inDocumentTail:context.validationState.inDocumentTail||false,rowRoles:input.documentRowRoles||{}});
   context.validationState.documentProducts=documentRows.productCount;
+  context.validationState.strongDocumentProducts=documentRows.strongProductCount;
+  context.validationState.inDocumentTail=documentRows.inDocumentTail;
   for (const [position,row] of sheet.rows.entries()) {
     const problems=proposal.problemsIndex===undefined?[...(row.problems||[])]:json(textCell(row,proposal.problemsIndex),[]);
     const sourceCode=trimOrNull(Object.hasOwn(input.codeOverrides||{},row.sourceRow)?input.codeOverrides[row.sourceRow]:textCell(row,mappings.code));
@@ -133,12 +137,15 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
       ?input.quantityOverrides[row.sourceRow]:textCell(row,mappings.quantity);
     const quantityRead=rowValues.readQuantity(quantitySource);
     let quantity=quantityRead.ok ? quantityRead.value : null;
-    if(input.imageSource&&mappings.quantity!==undefined&&quantity===null)
+    if(input.imageSource&&quantityRead.ok&&quantity===null&&!input.confirmCatalogOnly)
       problems.push(problem('image_quantity_uncertain','Read and confirm the physical quantity from the image; a blank cell is not zero.'));
     if(!quantityRead.ok)problems.push(problem(quantityRead.problem,quantityRead.message||({negative_quantity:'Quantity cannot be negative.',fractional_quantity:'This inventory records whole stock units. Convert fractional measures to an appropriate base unit before importing.'}[quantityRead.problem]||'Quantity must be a valid whole number of zero or more.')));
     // A labeled aggregate without a SKU is document evidence, not another
     // product, when its quantity reconciles to the preceding source rows.
-    const aggregate=documentRows.has(row.sourceRow);
+    const role=documentRows.get(row.sourceRow),aggregate=Boolean(role&&role.kind!=='uncertain');
+    if(role?.kind==='uncertain')problems.push(problem('document_role_uncertain','This row lacks the product identity used by the preceding table. Confirm whether it is a product or document information before importing.'));
+    if(input.imageSource&&!input.imageReadingConfirmed&&sourceCode&&!problems.some(p=>p.code==='image_identity_uncertain'))
+      problems.push(problem('image_identity_uncertain','Confirm this extracted product code against the original image or scan before approval.'));
     const moneyOverrides=input.moneyOverrides?.[row.sourceRow]||{};
     const costText=trimOrNull(Object.hasOwn(moneyOverrides,'unitCost')?moneyOverrides.unitCost:textCell(row,mappings.unitCost));
     const sellingText=trimOrNull(Object.hasOwn(moneyOverrides,'sellingPrice')?moneyOverrides.sellingPrice:textCell(row,mappings.sellingPrice));
@@ -159,12 +166,10 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     let unitCostMinor=null;
     if(costText){try{unitCostMinor=postgresPrices.toMinor(sourceMoney.clean(costText),'Unit cost',currency);}
       catch(error){problems.push(problem('bad_unit_cost',error.message));}}
-    if(unitCostMinor!==null&&quantity===null)
+    if(unitCostMinor!==null&&quantityRead.ok&&quantity===null)
       problems.push(problem('cost_without_stock','A source unit cost needs an explicit stock quantity, including zero. No cost will be silently discarded.'));
     if(unitCostMinor!==null&&quantity>0&&!context.accountingReady)
       problems.push(problem('accounting_not_ready','Configure accounting before importing valued opening stock.'));
-    if(unitCostMinor!==null&&quantity>0&&context.accountingCurrency&&currency!==context.accountingCurrency)
-      problems.push(problem('cost_currency_mismatch','The source cost currency differs from the inventory accounting currency.'));
     if(unitCostMinor!==null&&quantity>0&&!Number.isSafeInteger(unitCostMinor*quantity))
       problems.push(problem('cost_overflow','This row’s total inventory cost exceeds the supported range.'));
     const locationText=trimOrNull(textCell(row,mappings.location));
@@ -222,7 +227,7 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     const priceKey=code?.toLowerCase()||JSON.stringify([name,variants]);
     if(sellingPriceMinor!==null){const p=currency+':'+sellingPriceMinor;if(state.prices.has(priceKey)&&state.prices.get(priceKey)!==p)problems.push(problem('conflicting_price','The same SKU has conflicting source prices. Resolve the price before importing.'));state.prices.set(priceKey,p);}
     const blocking=new Set(['archived_existing_code','conflicting_product_name','bad_quantity','negative_quantity','fractional_quantity','invalid_stock_date','duplicate_position','set_tracking_unsupported','uncertain_count_cost','tracking_mismatch','duplicate_serial','serial_exists','conflicting_price','invalid_identity','image_quantity_uncertain','bad_unit_cost','cost_without_stock','bad_selling_price',
-      'accounting_not_ready','cost_currency_mismatch','cost_overflow','no_product','missing_product_name','stock_elsewhere','invalid_unit_label','unknown_location','no_location',
+      'accounting_not_ready','cost_currency_mismatch','cost_overflow','no_product','missing_product_name','stock_elsewhere','invalid_unit_label','unknown_location','no_location','document_role_uncertain','image_identity_uncertain','image_money_uncertain',
       'missing_serial','serial_quantity','missing_lot','missing_tracking_identifier','invalid_tracking_flag','ambiguous_existing_code','workbook_unmatched_key','workbook_stock_mismatch']);
     try{require('../domain/catalog-identity').unitLabel(textCell(row,mappings.unitLabel));}catch(error){problems.push(problem('invalid_unit_label',error.message));}
     const parsed={name,code,...(code!==sourceCode?{sourceCode,identityNote:'This code identifies a product with several option combinations. Each SKU includes its option values; review these derived codes before approval.'}:{}),description:trimOrNull(textCell(row,mappings.description)),
@@ -281,8 +286,9 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
     const blocked=problems.some((entry)=>blocking.has(entry.code));
     const alreadyImported=context.importedSourceRows.has(stable([Number(row.sourceRow),row.cells]));
     if(alreadyImported)problems.push(problem('already_imported','This source row was imported before and will not be added again.'));
-    if(aggregate)parsed.documentEvidence=documentRows.get(row.sourceRow);
+    if(role)parsed.documentEvidence=role;
     if(aggregate)problems.push(problem('document_trailer','This is a document total, charge or note without a separate product identity; it is retained as document evidence and excluded from stock.'));
+    for(let i=problems.length-1;i>=0;i--)if(problems.findIndex(p=>p.code===problems[i].code)<i)problems.splice(i,1);
     rows.push({id:newId('improw'),rowNumber:row.sourceRow,position,raw:row.cells,parsed,problems,
       status:alreadyImported?'SKIPPED':aggregate?'EXCLUDED':blocked?'INVALID':'VALID'});
   }
@@ -396,7 +402,7 @@ async function analyse(database, ctx, input) {
   const parsedWorkbook=isPdf?await require('./pdf-table').parse(buffer):
     isImage?await require('./image-table').parse(buffer):
       parser.parse(buffer?{buffer,filename:input.filename}:{text,filename:input.filename});
-  if(parsedWorkbook.format==='image')input={...input,imageSource:true};
+  if(parsedWorkbook.format==='image'||parsedWorkbook.visualSource)input={...input,imageSource:true};
   const sheetIndex=Number.isInteger(input.sheetIndex)?input.sheetIndex:parsedWorkbook.primarySheet;
   let sheet=parsedWorkbook.sheets[sheetIndex];
   if(!sheet?.rows.length)throw new ValidationError('That source has no inventory rows.');
@@ -422,7 +428,7 @@ async function analyse(database, ctx, input) {
     axisNames:workbook.axisNames,variantColumns:workbook.variantColumns,provenanceIndex:workbook.provenanceIndex,problemsIndex:workbook.problemsIndex,
     aiUsed:!input.workbookContract,ignoredColumns:[],assumptions:workbook.reconciliations||[]}:await mappingService.proposeMappings({...sheet,sourceName:input.filename || 'pasted data'},
     {provider:wrappedProvider,allowModel:input.allowModel,
-      mappings:input.mappings || json(prior?.field_mappings,null),detectedType:input.detectedType || prior?.detected_type,
+      mappings:input.mappings || json(prior?.field_mappings,null),allowAdditionalMappings:!input.mappings&&Boolean(prior),detectedType:input.detectedType || prior?.detected_type,
       onBeforeAi:input.onBeforeAi,onUsage:input.onUsage});
   // An uncertain interpretation is a review task, not an upload failure. Keep
   // the source columns and rows in an unapproved preview so the operator can
@@ -443,7 +449,7 @@ async function analyse(database, ctx, input) {
     sourceHash,sourceBytes:bytes.length,detectedType:proposal.detectedType,sheetName:sheet.name,
     sheetIndex,sourceColumns:sheet.columns.map((column)=>({index:column.index,name:column.name})),
     fieldMappings:proposal.mappings,transformations:{...(input.sourceContext?{sourceContext:String(input.sourceContext).slice(0,4000)}:{}),axisNames:proposal.axisNames,variantBases:proposal.variantBases,aiUsed:proposal.aiUsed,
-      ...(parsedWorkbook.format==='image'?{imageReadingConfirmed:false,codeOverrides:{}}:{}),
+      ...(input.imageSource?{visualSource:true,imageReadingConfirmed:false,codeOverrides:{}}:{}),
       ...(workbook?{workbook:{version:1,contract:workbook.contract,coverage:workbook.coverage,sourceRows:workbook.sourceRows,
         outputRows:workbook.outputRows,physicalUnits:workbook.physicalUnits,issues:workbook.issues,issueCount:workbook.issueCount},
         variantColumns:workbook.variantColumns,provenanceIndex:workbook.provenanceIndex,problemsIndex:workbook.problemsIndex}:{}),
@@ -604,18 +610,20 @@ async function revise(database,ctx,id,input={}){
     }
     const mappingChanged=stable(fieldMappings)!==stable(plan.fieldMappings);
     const codeOverrides=mappingChanged?{}:{...(plan.transformations.codeOverrides||{})};
-    if(input.codeOverrides!==undefined&&plan.sourceKind!=='image')throw new ValidationError('Image identifier corrections belong to an image preview.');
+    if(input.codeOverrides!==undefined&&!visualSource(plan))throw new ValidationError('Image identifier corrections belong to an image preview.');
     for(const [number,value] of Object.entries(input.codeOverrides||{})){
       if(!/^\d+$/.test(number)||typeof value!=='string'||value.length>240||!(await client.query('SELECT 1 FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND row_number=$3',[ctx.workspaceId,id,number])).rows.length)throw new ValidationError('Choose an actual image row and a valid SKU correction.');
       codeOverrides[number]=value.trim();
     }
     const moneyOverrides=mappingChanged?{}:{...(plan.transformations.moneyOverrides||{})};
-    if(input.moneyOverrides!==undefined&&plan.sourceKind!=='image')throw new ValidationError('Image money corrections belong to an image preview.');
+    if(input.moneyOverrides!==undefined&&!visualSource(plan))throw new ValidationError('Image money corrections belong to an image preview.');
     for(const [number,values] of Object.entries(input.moneyOverrides||{})){
       if(!/^\d+$/.test(number)||!values||typeof values!=='object'||Array.isArray(values)||Object.keys(values).some(k=>!['unitCost','sellingPrice'].includes(k)||fieldMappings[k]===undefined)||Object.values(values).some(v=>typeof v!=='string'||v.length>80)||!(await client.query('SELECT 1 FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND row_number=$3',[ctx.workspaceId,id,number])).rows.length)throw new ValidationError('Choose an actual image row and a valid money correction.');
       moneyOverrides[number]={...(moneyOverrides[number]||{}),...values};
     }
-    const imageReadingConfirmed=plan.sourceKind==='image'&&(input.confirmImageReading===true||!mappingChanged&&plan.transformations.imageReadingConfirmed===true);
+    const imageReadingConfirmed=visualSource(plan)&&(input.confirmImageReading===true||!mappingChanged&&plan.transformations.imageReadingConfirmed===true);
+    const documentRowRoles=mappingChanged?{}:{...(plan.transformations.documentRowRoles||{})};
+    for(const [number,value] of Object.entries(input.documentRowRoles||{})){if(!/^\d+$/.test(number)||!['product','document'].includes(value)||!(await client.query('SELECT 1 FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND row_number=$3',[ctx.workspaceId,id,number])).rows.length)throw new ValidationError('Choose a source row and whether it is a product or document information.');documentRowRoles[number]=value;}
     const quantityOverrides=mappingChanged?{}:{...(plan.transformations.quantityOverrides||{})};
     for(const [number,value] of Object.entries(input.quantityOverrides||{})){
       if(!/^\d+$/.test(number)||!(await client.query('SELECT 1 FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND row_number=$3',[ctx.workspaceId,id,number])).rows.length)
@@ -655,10 +663,10 @@ async function revise(database,ctx,id,input={}){
       const numericSource=(await client.query('SELECT raw FROM import_rows WHERE workspace_id=$1 AND import_id=$2 ORDER BY row_number,id',[ctx.workspaceId,id])).rows;
       unmappedNumeric=unmappedNumericColumns({columns:plan.sourceColumns,rows:numericSource.map(row=>({cells:json(row.raw,[])}))},fieldMappings);
     }
-    const confirmCatalogOnly=fieldMappings.quantity===undefined&&input.confirmCatalogOnly===true;
+    const confirmCatalogOnly=fieldMappings.quantity===undefined&&(input.confirmCatalogOnly===true||input.confirmCatalogOnly===undefined&&!mappingChanged&&plan.transformations.confirmCatalogOnly===true);
     const revised={...plan,fieldMappings,detectedType,locationMappings,defaultLocationId,
-      transformations:{...plan.transformations,axisNames,quantityOverrides,
-        ...(plan.sourceKind==='image'?{codeOverrides,moneyOverrides,imageReadingConfirmed,imageReadingConfirmedBy:imageReadingConfirmed?ctx.actorId:null}:{}),
+      transformations:{...plan.transformations,axisNames,quantityOverrides,documentRowRoles,
+        ...(visualSource(plan)?{codeOverrides,moneyOverrides,imageReadingConfirmed,imageReadingConfirmedBy:imageReadingConfirmed?ctx.actorId:null}:{}),
         ...(trackingReview?{trackingReview}:{}),
         unmappedNumericColumns:unmappedNumeric,confirmCatalogOnly,proposedLocations,
         allowPartialImport:input.allowPartialImport===undefined?Boolean(plan.transformations.allowPartialImport):input.allowPartialImport===true},
@@ -676,9 +684,9 @@ async function revise(database,ctx,id,input={}){
     for(;;){
       const current=(await client.query(`SELECT * FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND (row_number,id)>($3::bigint,$4::text) ORDER BY row_number,id LIMIT 500 FOR UPDATE`,[ctx.workspaceId,id,lastRow,lastId])).rows.map(hydrateRow);
       if(!current.length)break;
-        const validated=validateRows({columns:plan.sourceColumns,rows:current.map(row=>({cells:row.raw,sourceRow:row.rowNumber,problems:plan.sourceKind==='image'&&!imageReadingConfirmed?row.problems.filter(p=>['image_identity_uncertain','image_money_uncertain'].includes(p.code)):[]}))},fieldMappings,
+        const validated=validateRows({columns:plan.sourceColumns,rows:current.map(row=>({cells:row.raw,sourceRow:row.rowNumber,problems:visualSource(plan)&&!imageReadingConfirmed?row.problems.filter(p=>['image_identity_uncertain','image_money_uncertain'].includes(p.code)):[]}))},fieldMappings,
         {detectedType,axisNames,variantBases,variantColumns:plan.transformations.variantColumns,provenanceIndex:plan.transformations.provenanceIndex,problemsIndex:plan.transformations.problemsIndex,trackingReview},plannedLocations.withProposals(context,proposedLocations),
-          {defaultLocationId,locationMappings,quantityOverrides,codeOverrides,moneyOverrides,imageSource:plan.sourceKind==='image',importMode:revised.transformations.importMode});
+          {defaultLocationId,locationMappings,quantityOverrides,codeOverrides,moneyOverrides,documentRowRoles,imageSource:visualSource(plan),imageReadingConfirmed,confirmCatalogOnly,importMode:revised.transformations.importMode});
       for(const row of validated.rows)hash.append(row);
       trackingSummary?.add(validated.rows);
       for(const key of Object.keys(summary))summary[key]+=validated.summary[key];
@@ -714,7 +722,7 @@ async function approve(database, ctx, id, expectedHash) {
       throw new ValidationError('This is a supplier directory. Reopen its preview so StockChief can safely classify it before approval.');
     if(plan.isExpired)throw new ValidationError('This preview is more than 24 hours old. Read the source again before importing.');
     if(plan.integrityHash!==expectedHash)throw new ValidationError('The preview changed. Review the current rows before approving.');
-    if(plan.sourceKind==='image'&&plan.transformations.imageReadingConfirmed!==true)throw new ValidationError('Review the image’s product codes, quantities and prices against the original, save any SKU corrections and confirm the reading before approving.');
+    if(visualSource(plan)&&plan.transformations.imageReadingConfirmed!==true)throw new ValidationError('Review the image’s product codes, quantities and prices against the original, save any SKU corrections and confirm the reading before approving.');
     if(plan.fieldMappings.name===undefined&&plan.fieldMappings.code===undefined)
       throw new ValidationError('Map a product name or SKU and recalculate the preview before approving.');
     if(!plan.recordsValid)throw new ValidationError('There are no valid rows to import.');
@@ -842,6 +850,7 @@ async function execute(database, ctx, id, options={}) {
       const expectedCost=row=>isCount(row)?row.parsed.countCostDeltaMinor:(row.parsed.quantity||0)*(row.parsed.unitCostMinor||0);
       const expectsCostRecord=row=>isCount(row)?expectedDelta(row)>0&&row.parsed.unitCostMinor!==null||expectedDelta(row)<0&&row.parsed.inventoryBefore.costed>0:row.parsed.quantity>0&&row.parsed.unitCostMinor!==null;
       let itemsCreated=0;let skusCreated=0;let units=0;let rowsImported=0;
+      const itemsUpdated=new Set(sourceRows.map(row=>row.parsed.existingItemId).filter(Boolean)).size;
       const salePriceBySku=new Map();
       let savedRows=[];
       let pendingValues=[];
@@ -985,7 +994,7 @@ async function execute(database, ctx, id, options={}) {
       await client.query(`INSERT INTO import_verifications(id,workspace_id,import_id,execution_id,verified,checks,
         observed,problems,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
       [verificationId,ctx.workspaceId,id,executionId,verified?1:0,JSON.stringify(checks),
-        JSON.stringify({itemsCreated,skusCreated,rowsImported,units}),verified?'[]':JSON.stringify(['Import totals did not reconcile.']),finishedAt]);
+        JSON.stringify({itemsCreated,itemsUpdated,skusCreated,rowsImported,units}),verified?'[]':JSON.stringify(['Import totals did not reconcile.']),finishedAt]);
       await client.query(`UPDATE import_executions SET status=$2,stage='verified',items_created=$3,skus_created=$4,
         rows_imported=$5,units_established=$6,result=$7,finished_at=$8 WHERE id=$1`,
       [executionId,verified?'SUCCEEDED':'FAILED',itemsCreated,skusCreated,rowsImported,units,
@@ -993,7 +1002,7 @@ async function execute(database, ctx, id, options={}) {
       await client.query(`UPDATE import_plans SET status=$3,completed_at=$4 WHERE workspace_id=$1 AND id=$2`,
         [ctx.workspaceId,id,verified?'SUCCEEDED':'FAILED',finishedAt]);
       await options.beforeCommit?.();
-      return {executionId,verificationId,verified,checks,itemsCreated,skusCreated,rowsImported,units};
+      return {executionId,verificationId,verified,checks,itemsCreated,itemsUpdated,skusCreated,rowsImported,units};
     },{isolation:'SERIALIZABLE',retrySafe:true});
   } catch(error) {
     await database.query(`UPDATE import_executions SET status='FAILED',stage='rolled_back',error_message=$2,finished_at=$3,
@@ -1059,6 +1068,7 @@ async function report(database, workspaceId, id) {
   const row=result.rows[0];
   return {id:row.id,status:row.status,stage:row.stage,itemsCreated:Number(row.items_created),
     skusCreated:Number(row.skus_created),rowsImported:Number(row.rows_imported),unitsEstablished:Number(row.units_established),
+    itemsUpdated:json(row.observed,{}).itemsUpdated??null,
     verified:Number(row.verified)===1,checks:json(row.checks,[]),observed:json(row.observed,{}),
     problems:json(row.problems,[]),errorMessage:row.error_message};
 }

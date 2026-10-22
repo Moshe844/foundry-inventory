@@ -234,6 +234,7 @@
     <%- body %>
   </main>
 </div>
+<script src="/table-overflow.js?v=<%= assetVersion %>" defer></script>
 <script src="/local-time.js?v=<%= assetVersion %>" defer></script>
 <script src="/app.js?v=<%= assetVersion %>" defer></script>
 <% if(locals.globalImportActivity?.length||nav==='imports'){ %><script src="/import-progress.js?v=<%= assetVersion %>" defer></script><% } %>

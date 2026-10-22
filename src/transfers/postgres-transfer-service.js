@@ -174,7 +174,7 @@ async function requestInTransaction(client, rawContext, input) {
   if (prior) return { ...(await get(client, ctx.workspaceId, prior.transfer_id)), replayed: true };
   if (!Array.isArray(input.lines) || !input.lines.length) throw new ValidationError('Add at least one product to transfer.');
   const locations = (await client.query(`SELECT id,name,is_active FROM locations
-    WHERE workspace_id=$1 AND id=ANY($2::text[]) FOR UPDATE`,
+    WHERE workspace_id=$1 AND id=ANY($2::text[]) ORDER BY id FOR UPDATE`,
   [ctx.workspaceId, [input.fromLocationId, input.toLocationId]])).rows;
   const from = locations.find((row) => row.id === input.fromLocationId);
   const to = locations.find((row) => row.id === input.toLocationId);
@@ -208,6 +208,19 @@ async function requestInTransaction(client, rawContext, input) {
         AND location_id=$3 AND status='in_stock' AND id=ANY($4::text[])`,
       [ctx.workspaceId, sku.id, from.id, serialUnitIds]);
       if (serials.rows.length !== quantity) throw new ValidationError('One selected serial unit is not available at the source.');
+    }
+    const availability=await sourceAvailable(client,ctx.workspaceId,sku.id,from.id,{lotId});
+    const total=lotId?await sourceAvailable(client,ctx.workspaceId,sku.id,from.id):availability;
+    const already=prepared.filter(row=>row.sku.id===sku.id).reduce((sum,row)=>sum+row.quantity,0);
+    const available=Math.min(availability.available,Math.max(0,total.available-already));
+    if(quantity>available)throw new ValidationError(`${sku.name} only has ${available} available at ${from.name} after customer commitments and other transfer requests.`);
+    if(serialUnitIds.length){
+      const reserved=await client.query(`SELECT 1 FROM inventory_transfer_serials serial
+        JOIN inventory_transfer_lines line ON line.id=serial.transfer_line_id
+        JOIN inventory_transfers transfer ON transfer.id=line.transfer_id
+        WHERE serial.workspace_id=$1 AND serial.serial_unit_id=ANY($2::text[])
+          AND transfer.status IN ('REQUESTED','APPROVED','PICKED') LIMIT 1`,[ctx.workspaceId,serialUnitIds]);
+      if(reserved.rows.length)throw new ValidationError('One selected serial unit is already held for another transfer.');
     }
     prepared.push({ supplied, sku, quantity, lotId, serialUnitIds });
   }
@@ -253,11 +266,11 @@ async function sourceAvailable(client, workspaceId, skuId, locationId, { lotId =
     FROM sales_order_allocations a JOIN sales_order_lines l ON l.id=a.sales_order_line_id
     JOIN sales_orders o ON o.id=l.sales_order_id WHERE a.workspace_id=$1 AND a.location_id=$2 AND l.sku_id=$3
       AND o.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')`, [workspaceId, locationId, skuId]);
-  const reserved = await client.query(`SELECT COALESCE(SUM(tl.approved_quantity),0) AS quantity
+  const reserved = await client.query(`SELECT COALESCE(SUM(CASE WHEN t.status='REQUESTED' THEN tl.requested_quantity ELSE tl.approved_quantity END) FILTER(WHERE $4::text IS NULL OR tl.lot_id=$4),0) AS quantity,
+      COALESCE(SUM(CASE WHEN t.status='REQUESTED' THEN tl.requested_quantity ELSE tl.approved_quantity END),0) AS all_quantity
     FROM inventory_transfer_lines tl JOIN inventory_transfers t ON t.id=tl.transfer_id
     WHERE tl.workspace_id=$1 AND t.source_location_id=$2 AND tl.sku_id=$3
-      AND (($4::text IS NULL AND tl.lot_id IS NULL) OR tl.lot_id=$4)
-      AND t.status IN ('APPROVED','PICKED') AND ($5::text IS NULL OR t.id<>$5)`,
+      AND t.status IN ('REQUESTED','APPROVED','PICKED') AND ($5::text IS NULL OR t.id<>$5)`,
   [workspaceId, locationId, skuId, lotId, excludeTransferId]);
   let onHand = Number(balance?.on_hand || 0);
   if (lotId) {
@@ -268,7 +281,7 @@ async function sourceAvailable(client, workspaceId, skuId, locationId, { lotId =
   const committedUnits = lotId ? 0 : Number(committed.rows[0].quantity);
   const reservedUnits = Number(reserved.rows[0].quantity);
   return { onHand, committed: committedUnits, reserved: reservedUnits,
-    available: Math.max(0, onHand - committedUnits - reservedUnits) };
+    available: Math.max(0,Math.min(onHand-committedUnits-reservedUnits,Number(balance?.on_hand||0)-Number(committed.rows[0].quantity)-Number(reserved.rows[0].all_quantity))) };
 }
 
 async function approveInTransaction(client, rawContext, transferId, input = {}) {
@@ -291,6 +304,10 @@ async function approveInTransaction(client, rawContext, transferId, input = {}) 
       WHERE workspace_id=$1 AND lot_id=$2 AND location_id=$3 FOR UPDATE`,
     [ctx.workspaceId, line.lot_id, transfer.source_location_id]);
   }
+  const skuTotals=new Map();
+  for(const line of transfer.lines){const quantity=input.quantities?.[line.id]===undefined?Number(line.requested_quantity):positiveInteger(input.quantities[line.id],'Approved quantity');skuTotals.set(line.sku_id,(skuTotals.get(line.sku_id)||0)+quantity);}
+  for(const [skuId,quantity]of skuTotals){const available=await sourceAvailable(client,ctx.workspaceId,skuId,transfer.source_location_id,{excludeTransferId:transfer.id});
+    if(quantity>available.available)throw new ValidationError(`This transfer only has ${available.available} available at ${transfer.source_name} after customer commitments and other transfer requests.`);}
   for (const line of transfer.lines) {
     const quantity = input.quantities?.[line.id] === undefined ? Number(line.requested_quantity)
       : positiveInteger(input.quantities[line.id], 'Approved quantity');
@@ -298,7 +315,7 @@ async function approveInTransaction(client, rawContext, transferId, input = {}) 
     const availability = await sourceAvailable(client, ctx.workspaceId, line.sku_id, transfer.source_location_id,
       { lotId: line.lot_id, excludeTransferId: transfer.id });
     if (quantity > availability.available) {
-      throw new ValidationError(`${line.item_name} only has ${availability.available} available at ${transfer.source_name} after customer commitments and other approved transfers.`);
+      throw new ValidationError(`${line.item_name} only has ${availability.available} available at ${transfer.source_name} after customer commitments and other transfer requests.`);
     }
     if (line.tracking_mode === 'serial') {
       const ids = line.serials.map((serial) => serial.serial_unit_id);
@@ -308,7 +325,7 @@ async function approveInTransaction(client, rawContext, transferId, input = {}) 
       const reserved = await client.query(`SELECT DISTINCT ts.serial_unit_id FROM inventory_transfer_serials ts
         JOIN inventory_transfer_lines tl ON tl.id=ts.transfer_line_id JOIN inventory_transfers t ON t.id=tl.transfer_id
         WHERE ts.workspace_id=$1 AND ts.serial_unit_id=ANY($2::text[]) AND t.id<>$3
-          AND t.status IN ('APPROVED','PICKED')`, [ctx.workspaceId, ids, transfer.id]);
+          AND t.status IN ('REQUESTED','APPROVED','PICKED')`, [ctx.workspaceId, ids, transfer.id]);
       if (valid.rows.length !== ids.length || reserved.rows.length) {
         throw new ValidationError('One selected serial unit is no longer available for this transfer.');
       }

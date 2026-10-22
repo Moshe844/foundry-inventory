@@ -3592,3 +3592,5 @@ details.bill-pay > summary.btn::before, details.bill-pay[open] > summary.btn::be
   .rm-rooms { order: 8; flex: 1 1 100%; gap: 0; margin-left: 0; }
   .rm-room { padding: 4px 7px; font-size: 12px; }
 }
+
+.table-overflow-hint{font-size:.875rem;color:var(--text-muted,#526178);margin:.5rem 1rem}.table-overflow-hint[hidden]{display:none}

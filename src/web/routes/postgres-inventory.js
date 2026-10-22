@@ -142,11 +142,12 @@ function createPostgresInventoryRouter(database) {
     return res.page('inventory/item',{title:detail.item.name,nav:'inventory',room:true,...detail,attention:[],findingTotal:0,
       purchasingLines,commitments:[],outlook:[],canOperate:permissions.can(req.user,permissions.OPERATE),
       canEstablishCost:['owner','accountant'].includes(req.user.role)&&permissions.can(req.user,permissions.MANAGE_ACCOUNTING),
-      importedDetails,
+      importedDetails,detailsVersion:require('../../domain/catalog-identity').detailsVersion(detail.item),
       stockOpKeys:Object.fromEntries(['receive','issue','transfer','adjust'].map(kind=>[kind,newId('stockform')])),
       kitDefinitions:Object.fromEntries(detail.skus.map((sku)=>[sku.id,{isKit:false,components:[]}]))});
   }));
   router.post('/inventory/:id/details',requirePermission(permissions.OPERATE,'edit products'),asyncRoute(async(req,res)=>{
+    if(!req.body.expectedDetailsVersion)throw new (require('../../domain/errors').ValidationError)('Reload this product before saving its latest details. Nothing was overwritten.');
     await catalog.updateItem(database,req.ctx,req.params.id,req.body);
     req.flash('success','Product details saved.');
     return res.redirect(303,`/inventory/${req.params.id}`);

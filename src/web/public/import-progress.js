@@ -14,7 +14,7 @@
  function updateMeter(panel,state){
   const meter=panel.querySelector('[data-import-meter]');if(!meter)return;meter.dataset.state=state.state.toLowerCase();
   meter.querySelector('[data-import-stage]').textContent=state.stageLabel;
-  meter.querySelector('[data-import-count]').textContent=state.processedRows===null?'':state.processedRows.toLocaleString()+' / '+state.readyRows.toLocaleString()+' rows processed';
+  meter.querySelector('[data-import-count]').textContent=state.processedRows===null?'':(state.attempt>1?'Attempt '+state.attempt+': ':'')+state.processedRows.toLocaleString()+' / '+state.readyRows.toLocaleString()+' rows processed';
   const bar=meter.querySelector('[data-import-bar]');bar.classList.toggle('is-indeterminate',state.progressPercent===null);
   if(state.progressPercent===null)bar.removeAttribute('aria-valuenow');else bar.setAttribute('aria-valuenow',String(state.progressPercent));
   bar.firstElementChild.style.width=(state.progressPercent===null?32:state.progressPercent)+'%';

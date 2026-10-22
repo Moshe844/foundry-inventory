@@ -169,7 +169,7 @@ test('real Chromium proves PostgreSQL transfer custody, partial outcomes, accoun
     assert.deepEqual(errors, []);
   });
 
-test('concurrent PostgreSQL transfer approvals cannot reserve the same source stock twice',
+test('concurrent PostgreSQL transfer requests cannot reserve the same source stock twice, and approval replay is safe',
   { timeout: 120000 }, async (context) => {
     const cluster = await startCluster();
     const database = openPostgres(cluster.connectionString, { applicationName: 'stockchief-postgres-transfer-contention' });
@@ -189,21 +189,20 @@ test('concurrent PostgreSQL transfer approvals cannot reserve the same source st
       trackingMode: 'quantity', unitLabel: 'unit' });
     await inventory.receive(database, ctx, { skuId: item.skuIds[0], locationId: source.id, quantity: 10,
       reference: 'OPENING', idempotencyKey: 'contention-opening' });
-    const first = await transfers.request(database, ctx, { fromLocationId: source.id, toLocationId: destination.id,
-      idempotencyKey: 'contention-request-a', lines: [{ skuId: item.skuIds[0], quantity: 7 }] });
-    const second = await transfers.request(database, ctx, { fromLocationId: source.id, toLocationId: destination.id,
-      idempotencyKey: 'contention-request-b', lines: [{ skuId: item.skuIds[0], quantity: 7 }] });
-    const approvals = await Promise.allSettled([
-      transfers.approve(database, ctx, first.id, { idempotencyKey: 'contention-approve-a' }),
-      transfers.approve(database, ctx, second.id, { idempotencyKey: 'contention-approve-b' }),
-    ]);
-    assert.equal(approvals.filter((entry) => entry.status === 'fulfilled').length, 1);
-    assert.equal(approvals.filter((entry) => entry.status === 'rejected').length, 1);
-    assert.match(approvals.find((entry) => entry.status === 'rejected').reason.message, /only has 3 available/i);
+    const requests=await Promise.allSettled(['a','b'].map(key=>transfers.request(database,ctx,{
+      fromLocationId:source.id,toLocationId:destination.id,idempotencyKey:'contention-request-'+key,
+      lines:[{skuId:item.skuIds[0],quantity:7}]})));
+    assert.equal(requests.filter(entry=>entry.status==='fulfilled').length,1);
+    assert.equal(requests.filter(entry=>entry.status==='rejected').length,1);
+    assert.match(requests.find(entry=>entry.status==='rejected').reason.message,/only has 3 available/i);
+    const accepted=requests.find(entry=>entry.status==='fulfilled').value;
+    const approvals=await Promise.all([transfers.approve(database,ctx,accepted.id,{idempotencyKey:'approve-once'}),
+      transfers.approve(database,ctx,accepted.id,{idempotencyKey:'approve-once'})]);
+    assert.equal(approvals.filter(entry=>entry.replayed).length,1);
     const state = await database.query(`SELECT status,COUNT(*) AS count FROM inventory_transfers
       WHERE workspace_id=$1 GROUP BY status ORDER BY status`, [ctx.workspaceId]);
     assert.deepEqual(state.rows.map((row) => ({ status: row.status, count: Number(row.count) })), [
-      { status: 'APPROVED', count: 1 }, { status: 'REQUESTED', count: 1 },
+      { status: 'APPROVED', count: 1 },
     ]);
     assert.equal(Number((await database.query(`SELECT on_hand FROM balances
       WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3`,

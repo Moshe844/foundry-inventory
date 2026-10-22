@@ -388,10 +388,11 @@ function createPostgresAskRouter(database,options={}){
     rules.pendingRules=rules.pendingRules.filter(rule=>!nativeRuleIds.has(rule.id));
     transcript=require('../../assistant/goal-transcript').mergeGoalTranscript(transcript,recentGoals,{focusedGoalId:focusedGoal?.id});
     const continuationGoal=focusedGoal||transcript.at(-1)?.agentGoal;
+    const submission=req.session.askSubmission?.workspaceId===req.ctx.workspaceId?req.session.askSubmission:null;
     return res.page('attention/ask',{title:'Ask StockChief',nav:'ask',room:true,suppressBack:true,postgresAsk:true,...rules,
       codexPilot:pilotView,adaptiveGoal:activeGoal,agentInspection:Boolean(options.agentInspection),focusedGoalId:focusedGoal?.id||null,renderAgentAnswer:require('../public/agent-answer').render,
       about:String(req.query.about||'').slice(0,2000),stockActivity:req.query.task==='stock-activity'&&sourcePage?.path==='/inventory',
-      question:latest?.message||'',result:resultFor(latest,latestProposal),error:null,
+      question:submission?.draft||latest?.message||'',result:submission?null:resultFor(latest,latestProposal),error:submission?.message||null,submissionError:submission,
       prefill:String(req.query.q||'').slice(0,2000),
       conversation:null,transcript,currentGoalId:latest?.id||null,conversationId:`postgres:${req.ctx.workspaceId}`,
       aiConfigured:Boolean(options.provider||config.ai.configured),usageKey:newId('askusage'),
@@ -405,6 +406,7 @@ function createPostgresAskRouter(database,options={}){
     // boundary before redirecting so the next GET cannot resurrect old turns.
     const boundary=(await database.query('SELECT clock_timestamp()::text AS started_at')).rows[0].started_at;
     req.session.postgresAskStartedAt=boundary;
+    delete req.session.askSubmission;
     req.session.postgresAskPageContext=null;
     req.session.postgresAskNavigationGoal=null;
     req.flash('success','New conversation started. Earlier conversations remain in the audit history.');
@@ -454,8 +456,19 @@ function createPostgresAskRouter(database,options={}){
     req.session.postgresAskNavigationGoal=result.goalId||null;
     return result;
   }
+  async function submitAsk(req){
+    try{
+      const result=await runAsk(req);delete req.session.askSubmission;return result;
+    }catch(error){
+      if(!['validation_error','rate_limited','entitlement_required'].includes(error.code))throw error;
+      req.session.askSubmission={workspaceId:req.ctx.workspaceId,draft:String(req.body.message||'').slice(0,12000),
+        message:error.code==='rate_limited'?'Ask has reached its current usage limit. Your message has not run; it is kept below for later.':error.message};
+      return null;
+    }
+  }
   router.post('/ask',asyncRoute(async(req,res)=>{
-    const result=await runAsk(req);
+    const result=await submitAsk(req);
+    if(!result)return res.redirect(303,'/ask#submission-problem');
     return res.redirect(303,result.navigation?.href||(result.goalId?'/ask?goal='+encodeURIComponent(result.goalId)+'#focused-goal':'/ask#latest'));
   }));
   router.post('/ask/email/continue',asyncRoute(async(req,res)=>{
@@ -484,7 +497,8 @@ function createPostgresAskRouter(database,options={}){
     return res.redirect(303,'/ask#latest');
   }));
   router.post('/foundry/tell',requireAuth,asyncRoute(async(req,res)=>{
-    const result=await runAsk(req);
+    const result=await submitAsk(req);
+    if(!result)return res.redirect(303,'/ask#submission-problem');
     return res.redirect(303,result.navigation?.href||(result.goalId?'/ask?goal='+encodeURIComponent(result.goalId)+'#focused-goal':'/ask#latest'));
   }));
   router.post('/ask/leave-the-rest',asyncRoute(async(req,res)=>{

@@ -56,7 +56,7 @@ function createPostgresAuthRouter(database,options={}) {
       await sessionCall(req,'regenerate');
       req.session.accountId=account.id;
       try{require('../../domain/auth-service').checkPasswordStrength(req.body.password);}
-      catch{req.session.passwordUpgradeRequired=true;}
+      catch{req.session.passwordUpgradeRequired=true;req.session.passwordUpgradeNoticeDismissed=true;req.session.flash=[{type:'warning',message:'Please strengthen your password in Settings → Password to meet the current security requirements.'}];}
       req.session.cookie.maxAge=req.body.rememberMe==='1'?30*86400000:null;
       const workspaceId=await auth.defaultWorkspaceFor(database,account.id);
       if(workspaceId)req.session.workspaceId=workspaceId;

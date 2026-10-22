@@ -74,7 +74,7 @@ test('browser Ask retains contact details through a follow-up and does not route
       JSON.stringify(['mail:read','mail:send']),`connection_credentials:${connectorId}`,owner.actor_id,at]);
     await page.goto(`${base}/ask`);
     async function ask(message){await page.getByLabel('Ask StockChief').fill(message);
-      await Promise.all([page.waitForURL(/\/ask#latest$/),page.getByRole('button',{name:'Continue'}).click()]);}
+      await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Continue'}).click()]);}
     await ask('Add Ada Source as a supplier at ada@example.test and email her. I will say what to write next.');
     assert.match(await page.locator('main').innerText(),/What would you like the email to Ada Source to say/);
     assert.match(await page.locator('main').innerText(),/Your next message becomes an editable draft/);
@@ -95,26 +95,22 @@ test('browser Ask retains contact details through a follow-up and does not route
       WHERE workspace_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1`,[owner.workspace_id])).rows[0];
     assert.equal(latest.intent.controlPlane.capability,'read.inventory_summary');
     await page.goto(`${base}/actions/${prepared.id}`);
-    await page.getByRole('button',{name:/Approve (?:and execute|only this step)/}).click();
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve only this change',exact:true}).click()]);
     assert.equal((await database.query(`SELECT COUNT(*)::int AS total FROM suppliers
       WHERE workspace_id=$1 AND name='Ada Source' AND email='ada@example.test'`,[owner.workspace_id])).rows[0].total,1);
     assert.equal((await database.query(`SELECT COUNT(*)::int AS total FROM supplier_communications
       WHERE workspace_id=$1 AND recipient='ada@example.test' AND status='QUEUED'`,[owner.workspace_id])).rows[0].total,1);
     await page.goto(`${base}/ask`);
     await ask('Please put Delta Supply in my suppliers with delta@example.test as its email.');
-    console.log('CONTACT_PROPOSALS_DEBUG',JSON.stringify((await database.query(`SELECT id,payload,status,created_at
-      FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1 AND action_type='contact.create'
-      ORDER BY created_at DESC,id DESC`,[owner.workspace_id])).rows));
     const supplierProposal=(await database.query(`SELECT id,payload,status FROM stockchief_runtime.assistant_action_proposals
       WHERE workspace_id=$1 AND action_type='contact.create'`,[owner.workspace_id])).rows[0];
-    console.log('CONTACT_SELECTED_DEBUG',JSON.stringify(supplierProposal));
     assert.equal(supplierProposal.status,'PENDING');
     assert.deepEqual({kind:supplierProposal.payload.kind,name:supplierProposal.payload.name,
       email:supplierProposal.payload.email},{kind:'supplier',name:'Delta Supply',email:'delta@example.test'});
     assert.equal((await database.query(`SELECT COUNT(*)::int AS total FROM suppliers
       WHERE workspace_id=$1 AND name='Delta Supply'`,[owner.workspace_id])).rows[0].total,0);
     await page.goto(`${base}/actions/${supplierProposal.id}`);
-    await page.getByRole('button',{name:/Approve (?:and execute|only this step)/}).click();
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve only this change',exact:true}).click()]);
     assert.equal((await database.query(`SELECT COUNT(*)::int AS total FROM suppliers
       WHERE workspace_id=$1 AND name='Delta Supply' AND email='delta@example.test'`,[owner.workspace_id])).rows[0].total,1);
     await page.goto(`${base}/ask`);
@@ -126,7 +122,7 @@ test('browser Ask retains contact details through a follow-up and does not route
     assert.equal((await database.query(`SELECT COUNT(*)::int AS total FROM customers
       WHERE workspace_id=$1 AND name='Willow Client'`,[owner.workspace_id])).rows[0].total,0);
     await page.goto(`${base}/actions/${customerProposal.id}`);
-    await page.getByRole('button',{name:/Approve (?:and execute|only this step)/}).click();
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve only this change',exact:true}).click()]);
     assert.equal((await database.query(`SELECT COUNT(*)::int AS total FROM customers
       WHERE workspace_id=$1 AND name='Willow Client' AND email='willow@example.test'`,
     [owner.workspace_id])).rows[0].total,1);

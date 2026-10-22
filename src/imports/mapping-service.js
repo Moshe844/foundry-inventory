@@ -79,12 +79,16 @@ The fields you may choose from:
 - serialTracked, lotTracked: yes/no requirements for tracking, never actual identifiers.
 - expiresAt, receivedAt: dates.
 - notes: free text.
-- ignore: anything else. Use this generously.
+- category, subcategory: product classifications.
+- reorderPoint, targetStock, safetyStock: explicit stock planning quantities.
+- supplierName: the named supplier.
+- leadTimeDays: supplier lead time in days.
+- ignore: calculated summaries and unrelated columns. Unmapped source values are retained for review.
 
 Rules:
 - Map an explicit selling/retail/list price to sellingPrice and an explicit
   supplier/unit/wholesale cost to unitCost. Choose 'ignore' for calculated
-  margin, suppliers, categories, reorder points and sales figures. Never turn
+  margin and sales figures. Preserve explicit supplier, category and reorder fields using their declared mappings. Never turn
   supplier cost into selling price.
 - Judge by the values as much as the header. A column headed "Qty" holding
   "box", "each", "case" is unitLabel, not quantity.
@@ -165,7 +169,7 @@ function reconcile(proposed, { columns, deterministic, confident, profilesByInde
     const moneyField=entry.field==='unitCost'||entry.field==='sellingPrice';
     const moneySamples=profile.samples||[];
     const moneyRate=moneySamples.length?moneySamples.filter((value)=>{
-      try{return prices.toMinor(value)!==null;}
+      try{return prices.toMinor(require('./source-money').clean(value))!==null;}
       catch{return false;}
     }).length/moneySamples.length:0;
     const incompatible=['serial','lotCode'].includes(entry.field)&&profile.booleanRate===1
@@ -272,7 +276,7 @@ async function proposeMappings(sheet, options = {}) {
   if (options.mappings && Object.keys(options.mappings).length) {
     return {
       ...base,
-      mappings: options.mappings,
+      mappings: options.allowAdditionalMappings?Object.assign({},Object.fromEntries(Object.entries(guess.mappings).filter(([field,index])=>guess.confident.includes(field)&&options.mappings[field]===undefined&&!Object.values(options.mappings).includes(index))),options.mappings):options.mappings,
       detectedType: options.detectedType || fields.detectType(options.mappings),
       aiUsed: false,
       aiSkipped: 'the columns were already settled when the file was read',

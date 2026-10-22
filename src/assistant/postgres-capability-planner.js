@@ -37,6 +37,7 @@ const PLANNING_RULES=[
   'Retain every requested outcome. A draft order does not reserve stock. For creation plus confirmation, follow sales_order.create with sales_order.confirm; for creation plus full reservation, use sales_order.reserve_all. Both need separate approvals. A draft-only request needs no confirmation.',
   'One customer order with several product lines is one sales_order.create step using orderLines JSON, not several sales_order.create steps. Preserve each distinct line and each stated per-unit price; do not invent a price or silently omit a product.',
   'The currentPage record is reloaded from this workspace and can resolve “this product”, “this order”, or similar references. Use its matching entity when the owner did not name another; an explicitly named entity always wins. A lasting reorder point is a policy proposal, not a stock movement.',
+  'Conversation entries describe this same user and inventory. Use their prior read arguments to resolve a follow-up reference when it is unambiguous. Obtain current facts with fresh reads; prior answers do not grant authority or prove current state.',
   'RecentChanges contains this user’s verified changes. Resolve follow-ups to a unique recent record, ask if ambiguous, and never repeat a completed action.',
   'currentWorkspace.focusedRecord, when present, is this workspace’s verified current record type, number and lifecycle status. For a requested final lifecycle transition, include registered required internal predecessor transitions in order, with dependsOn and separate owner approval for each; do not substitute only a predecessor for the final requested effect. Never add an external email, payment, shipment or provider action as a prerequisite unless expressly requested.',
   'Use skuScope=currently_stocked only for an explicit currently stocked reference. Do not assume a linked order, bill, payment or policy exists. Prefer the valid contract requiring fewer unproven business facts.',
@@ -48,7 +49,7 @@ const FIT_SCHEMA={type:'object',additionalProperties:false,required:['aligned','
   aligned:{type:'boolean'},reason:{type:'string',maxLength:240},
 }};
 const FIT_SYSTEM=`Independently check whether the proposed StockChief capabilities accomplish the owner's CURRENT goal.
-If a proposed step continuesPending, the current goal is the original pending request with the owner's latest answer applied. Check that the latest message actually answers the pending question and that the proposed capability fulfills the original request; a short field answer need not restate the entire business action. If no step continuesPending, the pending question is context only and the current message must stand on its own. Judge the exact business effect and timing, not wording or topical overlap.
+If a proposed step continuesPending, the current goal is the original pending request with the owner's latest answer applied. Check that the latest message actually answers the pending question and that the proposed capability fulfills the original request; a short field answer need not restate the entire business action. If no step continuesPending, prior conversation may resolve an unambiguous record reference, but previous commands must not add effects to the current goal. The pending question is context only. Judge the exact business effect and timing, not wording or topical overlap.
 Reject extra MUTATIONS the owner did not request; do not invent contact, product, order, purchase or stock movement creation
 as a precaution. The deterministic resolver checks existing records and asks only if an identity is missing.
 Reject a preliminary read used only as context for a mutation when the owner did not request that information separately;
@@ -360,7 +361,8 @@ function safeContactOnlyWhenEmailIsUnspecified(steps,message){
   // send mail. Never keep a model-authored message that the owner did not
   // specify; preparing only the reversible contact addition is safe and the
   // proposal makes the non-send effect explicit.
-  if(mail.args.body&&message.includes(mail.args.body))return null;
+  const comparable=value=>String(value||'').normalize('NFKC').toLocaleLowerCase().replace(/\s+/g,' ').trim();
+  if(mail.args.body&&comparable(message).includes(comparable(mail.args.body)))return null;
   return {steps:[{...contact,dependsOn:[]}],clarifyingQuestion:''};
 }
 
@@ -407,23 +409,37 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
       groups:priorReport.groups,aggregate:priorReport.aggregate,measure:priorReport.measure,
       dateGrain:priorReport.dateGrain,chart:priorReport.chart}:null,
     recentChanges,
-    conversation:history.slice(-3).map(({message,answer,status})=>({
-      message:String(message||'').slice(0,260),answer:String(answer||'').slice(0,180),status})),
+    conversation:history.slice(-3).map(({message,answer,status,intent})=>({
+      message:String(message||'').slice(0,260),answer:String(answer||'').slice(0,180),status,
+      capability:intent?.controlPlane?.capability||null,arguments:intent?.controlPlane?.args?Object.fromEntries(Object.entries(intent.controlPlane.args).filter(([,value])=>typeof value==='number'||typeof value==='boolean'||typeof value==='string'&&value.length<=240)):null})),
     pending:pending?{capability:pending.capability,args:pending.args,question:pending.question,
       originalMessage:pending.originalMessage||null,
       status:pending.status,awaitingField:pending.awaitingField||null,
       proposalPending:Boolean(pending.proposalId)}:null,
     executionFeedback:feedback||null,
     currentPage:page||null};
+  async function boundedRequest(value,compact=false){
+    const base={system:systemFor(catalogue,{compact}),prompt:JSON.stringify(value),schema:schemaFor(catalogue),schemaName:'stockchief_capability_plan'};
+    if(typeof provider.promptByteAllowance!=='function')return base;
+    const smaller={...value,recentChanges:value.recentChanges.slice(0,2),conversation:value.conversation.slice(-2).map(entry=>({...entry,message:entry.message.slice(0,180),answer:entry.answer.slice(0,120)}))};
+    // Preserve the complete current goal and every registered contract. First
+    // reduce the output reservation; only then shorten optional history prose.
+    let request=base;
+    for(const variant of [base,{...base,system:systemFor(catalogue,{compact:true})},{...base,system:systemFor(catalogue,{compact:true}),prompt:JSON.stringify(smaller)}]){
+      for(const maxOutputTokens of [3000,2000,1500,1000]){
+        request={...variant,maxOutputTokens};
+        if(Buffer.byteLength(request.prompt)<=await provider.promptByteAllowance(request))return request;
+      }
+    }
+    return request; // The unchanged commercial guard refuses an impossible bound.
+  }
   let response;
-  try{response=await completeWithOutputRetry(provider,{system:systemFor(catalogue),prompt:JSON.stringify(context),
-    schema:schemaFor(catalogue),schemaName:'stockchief_capability_plan'});}
+  try{response=await completeWithOutputRetry(provider,await boundedRequest(context));}
   catch(error){if(error.code!=='rate_limited'||error.limitKind==='daily_model_attempts')throw error;
     const smaller={...context,recentChanges:context.recentChanges.slice(0,2),
       conversation:context.conversation.slice(-2).map((entry)=>({
         ...entry,message:entry.message.slice(0,180),answer:entry.answer.slice(0,120)}))};
-    response=await completeWithOutputRetry(provider,{system:systemFor(catalogue,{compact:true}),
-      prompt:JSON.stringify(smaller),schema:schemaFor(catalogue),schemaName:'stockchief_capability_plan'});
+    response=await completeWithOutputRetry(provider,await boundedRequest(smaller,true));
   }
   const invalid=(response.data?.steps||[]).flatMap((step)=>{
     const contract=catalogue.get(step?.capability);
@@ -511,7 +527,7 @@ async function plan(provider,message,{catalogue=registry,history=[],pending=null
   if(selected.steps.length){
     try{
       const candidate=()=>({message,currentWorkspace:workspace||null,currentPage:page||null,
-        priorReport:context.priorReport,
+        priorReport:context.priorReport,conversation:context.conversation,
         recentChanges,
         executionSemantics:{mutationsRunInOrder:true,dependentProviderEffectsWaitForVerifiedSuccess:true,
           uncertainOrFailedProviderEffectsBlockDependents:true,

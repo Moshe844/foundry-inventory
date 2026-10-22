@@ -41,7 +41,8 @@ async function createItemInTransaction(client, ctx, input) {
   const description = trimOrNull(input.description);
   const unitLabel = identity.unitLabel(input.unitLabel);
   const options = hasVariants ? parseOptions(input.options) : [];
-  await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`catalog:${ctx.workspaceId}`]);
+  if(!(await client.query('SELECT pg_try_advisory_xact_lock(hashtextextended($1,0)) AS acquired', [`catalog:${ctx.workspaceId}`])).rows[0].acquired)
+    throw new ValidationError('Another product update is running in this inventory. Wait for it to finish, then add this product. Nothing from this form was saved.',{reason:'catalog_busy'});
     if (baseCode) {
       const clash = await client.query('SELECT 1 FROM items WHERE workspace_id=$1 AND (lower(btrim(base_code))=lower(btrim($2)) OR id IN (SELECT item_id FROM skus WHERE workspace_id=$1 AND lower(btrim(code))=lower(btrim($2)))) LIMIT 1',
         [ctx.workspaceId, baseCode]);
@@ -332,7 +333,9 @@ async function updateItem(database,ctx,itemId,input){
     const current=(await client.query('SELECT * FROM items WHERE workspace_id=$1 AND id=$2 FOR UPDATE',
       [ctx.workspaceId,itemId])).rows[0];
     if(!current)throw new NotFoundError('That product could not be found.');
-    if(baseCode){const clash=await client.query('SELECT 1 FROM items WHERE workspace_id=$1 AND lower(btrim(base_code))=lower(btrim($2)) AND id<>$3',
+    if(input.expectedDetailsVersion!==undefined&&input.expectedDetailsVersion!==identity.detailsVersion(current))
+      throw new ValidationError('This product changed after you opened it. Reload its latest details before saving; your change has not overwritten them.',{reason:'stale_product_details'});
+    if(baseCode){const clash=await client.query('SELECT 1 FROM items WHERE workspace_id=$1 AND id<>$3 AND (lower(btrim(base_code))=lower(btrim($2)) OR id IN (SELECT item_id FROM skus WHERE workspace_id=$1 AND lower(btrim(code))=lower(btrim($2))))',
       [ctx.workspaceId,baseCode,itemId]);if(clash.rows.length)throw new ValidationError(`Another item already uses the code ${baseCode}.`);}
     const updated=(await client.query(`UPDATE items SET name=$3,base_code=$4,description=$5,unit_label=$6,
       allow_negative=$7,updated_at=$8 WHERE workspace_id=$1 AND id=$2 RETURNING *`,
@@ -343,7 +346,8 @@ async function updateItem(database,ctx,itemId,input){
 
 async function addVariant(database,ctx,itemId,input){
   return database.transaction(async(client)=>{
-    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`catalog:${ctx.workspaceId}`]);
+    if(!(await client.query('SELECT pg_try_advisory_xact_lock(hashtextextended($1,0)) AS acquired',[`catalog:${ctx.workspaceId}`])).rows[0].acquired)
+      throw new ValidationError('Another product update is running in this inventory. Wait for it to finish before adding a variant.',{reason:'catalog_busy'});
     const item=(await client.query('SELECT * FROM items WHERE workspace_id=$1 AND id=$2 FOR UPDATE',
       [ctx.workspaceId,itemId])).rows[0];
     if(!item)throw new NotFoundError('That product could not be found.');

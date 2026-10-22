@@ -5,7 +5,7 @@
    const needsLocation=!plan.defaultLocationId && Boolean(locals.missingLocationRows || rows.some(function(row){return row.problems.some(function(problem){return problem.code==='no_location';});}));
    const trackingQuestion=locals.trackingQuestion;
    const needsTrackingAnswer=trackingQuestion?.state==='needs_input';
-   const needsImageAnswer=plan.sourceKind==='image'&&sourceTransforms.imageReadingConfirmed!==true;
+   const needsImageAnswer=(plan.sourceKind==='image'||sourceTransforms.visualSource===true)&&sourceTransforms.imageReadingConfirmed!==true;
    const needsAccounting=Boolean(locals.missingAccountingSetup);
    const needsPartialAnswer=plan.recordsInvalid>0&&!sourceTransforms.allowPartialImport;
    const needsStockIntent=sourceTransforms.existingStockRows>0&&!sourceTransforms.importMode;
@@ -20,6 +20,7 @@
   </div>
   <div class="page-actions" <% if(activity.active){ %>data-import-progress="<%= activity.href %>/progress"<% } %>><span data-import-status class="badge badge--<%= activity?.verified?'ok':'muted' %>"><%= activity?.label||helpers.columnLabel(plan.status.toLowerCase()) %></span></div>
 </div>
+<% const roleRows=rows.filter(row=>row.parsed?.documentEvidence?.kind==='uncertain');if(roleRows.length&&plan.status==='READY'&&plan.approvalStatus==='AWAITING_APPROVAL'){ %><section class="card card-body"><h2>Products or document information?</h2><p>These rows have a different identity structure from the product table. Confirm their meaning so a total or note cannot increase stock.</p><form method="post" action="/imports/<%= plan.id %>/revise"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><% roleRows.forEach(row=>{ %><label class="field"><span>Source row <%= row.rowNumber %>: <%= row.parsed.documentEvidence.label %></span><select name="document_role_<%= row.rowNumber %>" required><option value="">Choose meaning</option><option value="document">Document total, charge or note — exclude from stock</option><option value="product">Product — review its quantity and other fields</option></select></label><% }); %><button class="btn" type="submit">Recheck row meanings</button></form></section><% } %>
 <% if(counts.EXCLUDED){ %><section class="card card-body"><h2>Document totals, charges and notes</h2><p><%= counts.EXCLUDED %> document-only <%= helpers.plural(counts.EXCLUDED,'row') %> retained with the source and excluded from products, stock and inventory value. Review them in the row list below. A document total is not another product or a supplier bill.</p></section><% } %>
 <% if(sourceTransforms.sourceContext){ %><section class="card card-body"><h2>Your request with this file</h2><p><%= sourceTransforms.sourceContext %></p><p>No delivery, receipt or other business action has been recorded. This preview preserves your instruction while you review the source quantities and evidence. A supplier bill, payment or actual receipt remains a separately authorized workflow.</p></section><% } %>
 <% if(needsAccounting&&plan.status==='READY'&&plan.approvalStatus==='AWAITING_APPROVAL'){ %>
@@ -35,7 +36,7 @@
 <section class="card card-body"><h2>Some rows need correction</h2><p><%= plan.recordsInvalid %> rows will not be imported. Correct them below, or choose a partial import deliberately. The source stays saved; a later corrected preview can import the remaining rows without adding successful rows twice.</p>
 <form method="post" action="/imports/<%= plan.id %>/revise"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><label><input type="checkbox" name="allowPartialImport" value="yes" required> Import only the <%= plan.recordsValid %> valid rows after my separate approval; leave invalid rows unexecuted.</label><button class="btn" type="submit">Review partial import</button></form></section>
 <% } %>
-<% if(plan.sourceKind==='image'&&plan.status==='READY'){ %>
+<% if((plan.sourceKind==='image'||sourceTransforms.visualSource===true)&&plan.status==='READY'){ %>
 <section class="card section" aria-label="Review image reading"><div class="card-head"><h2><%= needsImageAnswer?'Confirm what StockChief read from the image':'Image reading confirmed' %></h2></div><div class="card-body">
 <p>StockChief reads the visible product table. Dashboard summary totals are not extra inventory rows. Images can contain unclear characters: compare the product codes, quantities and money below with your original before approving.</p>
 <% if(plan.approvalStatus==='AWAITING_APPROVAL'){ %><form method="post" action="/imports/<%= plan.id %>/revise" data-import-preview-revise>
@@ -157,7 +158,7 @@
 <% } else if(run){ %>
   <div class="card section <%= run.verified?'':'card--warn' %>"><div class="card-head"><h2>Reconciliation</h2>
     <span class="spacer"></span><span class="badge badge--<%= run.verified?'ok':'danger' %>"><%= run.verified?'Verified':'Not verified' %></span></div>
-    <div class="card-body"><p class="lede"><%= helpers.qty(run.rowsImported) %> <%= helpers.plural(run.rowsImported, 'row') %> created <%= helpers.qty(run.itemsCreated) %> <%= helpers.plural(run.itemsCreated, 'product') %>, <%= helpers.qty(run.skusCreated) %> <%= helpers.plural(run.skusCreated, 'SKU') %> and <%= helpers.qty(run.unitsEstablished) %> opening <%= helpers.plural(run.unitsEstablished, 'unit') %>.</p>
+    <div class="card-body"><p class="lede"><%= helpers.qty(run.rowsImported) %> <%= helpers.plural(run.rowsImported, 'row') %> created <%= helpers.qty(run.itemsCreated) %> <%= helpers.plural(run.itemsCreated, 'product') %><% if(run.itemsUpdated>0){ %>, updated <%= helpers.qty(run.itemsUpdated) %> <%= helpers.plural(run.itemsUpdated, 'product') %><% } %>, <%= helpers.qty(run.skusCreated) %> <%= helpers.plural(run.skusCreated, 'SKU') %> and <%= helpers.qty(run.unitsEstablished) %> opening <%= helpers.plural(run.unitsEstablished, 'unit') %>.</p>
       <% if(run.verified){ %><p>Your approved inventory is saved. The stock and accounting checks passed.</p><% } %>
       <% if(activity?.startedAt){ %><p class="muted">Started <time data-import-time datetime="<%= activity.startedAt %>"><%= new Date(activity.startedAt).toUTCString() %></time><% if(activity.completedAt){ %><br>Finished <time data-import-time datetime="<%= activity.completedAt %>"><%= new Date(activity.completedAt).toUTCString() %></time><% } %></p><% } %>
       <details <% if(!run.verified){ %>open<% } %>><summary>Verification details · <%= run.checks.length %> <%= run.verified?'checks passed':'checks to review' %></summary>

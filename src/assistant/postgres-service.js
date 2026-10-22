@@ -1843,7 +1843,12 @@ function fundedAskProvider(database,ctx,rawProvider,prefix,
     if(!fundingKey)fundingKey=key;
     return response;
   };
-  return {...rawProvider,complete:(request)=>completeWith(rawProvider,request),
+  return {...rawProvider,
+    promptByteAllowance:async request=>{
+      const bounded=wrapModel(database,ctx,rawProvider,'ask',`${prefix}:${call}`,
+        fundingKey?{chargeCustomer:false,fundingKey}:{});
+      return typeof bounded.promptByteAllowance==='function'?bounded.promptByteAllowance(request):Infinity;
+    },complete:(request)=>completeWith(rawProvider,request),
     verifyComplete:verificationProvider?(request)=>completeWith(verificationProvider,request):null};
 }
 

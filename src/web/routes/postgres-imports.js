@@ -13,7 +13,6 @@ const { newId,trimOrNull }=require('../../lib/util');
 const { ValidationError }=require('../../domain/errors');
 
 const PAGE_SIZE=50;
-const BACKGROUND_IMPORT_ROWS=500;
 
 async function importJob(database,workspaceId,id){
   return (await database.query(`SELECT status,lease_expires_at FROM stockchief_runtime.jobs
@@ -111,12 +110,12 @@ function createPostgresImportsRouter(database,{provider=null}={}){
           name:trimOrNull(req.body[`new_location_${index}_name`])||row.name,
           kind:trimOrNull(req.body[`new_location_${index}_kind`])||row.kind,
         }])),
-        locationMappings,quantityOverrides,fieldMappings,...(Object.keys(codeOverrides).length?{codeOverrides}:{}),...(Object.keys(moneyOverrides).length?{moneyOverrides}:{}),confirmImageReading:req.body.confirmImageReading==='yes',
+        locationMappings,quantityOverrides,documentRowRoles:Object.fromEntries(Object.entries(req.body).filter(([key,value])=>/^document_role_\d+$/.test(key)&&value).map(([key,value])=>[key.slice(14),value])),fieldMappings,...(Object.keys(codeOverrides).length?{codeOverrides}:{}),...(Object.keys(moneyOverrides).length?{moneyOverrides}:{}),confirmImageReading:req.body.confirmImageReading==='yes',
         trackingReview:Object.hasOwn(req.body,'tracking_serial')||Object.hasOwn(req.body,'tracking_lot')
           ?Object.fromEntries(['serial','lot'].filter(mode=>Object.hasOwn(req.body,'tracking_'+mode)).map(mode=>[mode,req.body['tracking_'+mode]])):undefined,
         confirmTrackingChange:req.body.confirmTrackingChange==='yes',
         defaultLocationId:Object.hasOwn(req.body,'defaultLocationId')?trimOrNull(req.body.defaultLocationId):undefined,
-        confirmCatalogOnly:req.body.confirmCatalogOnly==='yes',
+        confirmCatalogOnly:Object.hasOwn(req.body,'confirmCatalogOnly')?req.body.confirmCatalogOnly==='yes':undefined,
         importMode:Object.hasOwn(req.body,'importMode')?req.body.importMode:undefined,
         allowPartialImport:Object.hasOwn(req.body,'allowPartialImport')?req.body.allowPartialImport==='yes':undefined});
       req.flash('success','Preview corrected and recalculated. Review all rows again before approving.');
@@ -132,17 +131,8 @@ function createPostgresImportsRouter(database,{provider=null}={}){
   router.post('/imports/:id/run',asyncRoute(async(req,res)=>{
     try {
       const plan=await imports.get(database,req.ctx.workspaceId,req.params.id);
-      if(plan.recordsDetected>=BACKGROUND_IMPORT_ROWS&&plan.transformations.dataset!=='suppliers'){
-        const queued=await imports.queueExecution(database,req.ctx,plan.id,trimOrNull(req.body.integrityHash)||plan.integrityHash);
-        req.flash('success',queued.created?'Import queued. You can leave this page; the verified result will be saved here.':'This import is already queued. StockChief will not create a second run.');
-        return res.redirect(303,`/imports/${plan.id}`);
-      }
-      const result=await imports.execute(database,req.ctx,req.params.id);
-      if(result.duplicate){req.flash('warning','This exact source was already imported. StockChief did not apply it again.');
-        return res.redirect(303,`/imports/${result.planId}`);}
-      req.flash('success',result.suppliersCreated!==undefined
-        ?`Imported and verified ${result.suppliersCreated} suppliers.`
-        :`Imported and verified ${result.rowsImported} rows and ${result.units} opening units.`);
+      const queued=await imports.queueExecution(database,req.ctx,plan.id,trimOrNull(req.body.integrityHash)||plan.integrityHash);
+      req.flash('success',queued.created?'Import queued. You can leave this page; progress and the verified result are saved here.':'This import is already queued. StockChief will not create a second run.');
     } catch(error){if(!(error instanceof ValidationError))throw error;req.flash('error',error.message);}
     return res.redirect(303,`/imports/${req.params.id}`);
   }));

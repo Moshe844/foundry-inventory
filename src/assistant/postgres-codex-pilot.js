@@ -64,7 +64,7 @@ async function start(db,ctx,message,options={}){
  ctx=await require('./codex-model-routing').context(db,ctx);
  await require('./postgres-codex-enrollment').ensure(db,ctx);
  const {pilot}=await access(db,ctx,{enabled:true});
- const locked=spendingLockMessage(pilot);if(locked)throw new ValidationError(locked);
+ const locked=spendingLockMessage(pilot);if(locked)throw new ValidationError('Ask is temporarily paused because its usage allowance is unavailable. Your message has not run. It is kept below so you can try again when access is restored.',{reason:'agent_allowance_unavailable'});
  const conversation=await require('./postgres-agent-context').capture(db,ctx,options.startedAt||null);
  const goal=await store.create(db,ctx,message,{...options,budgetMinor:Math.min(options.budgetMinor||100,100)});
  if(goal.checkpoint.runtime&&goal.checkpoint.runtime!=='codex-staging')throw new ValidationError('That request already belongs to another Ask runtime.');
@@ -185,7 +185,7 @@ async function continuation(db,ctx,id){return db.transaction(async client=>{
 },{isolation:'REPEATABLE READ',readOnly:true});}
 async function resume(db,ctx,id){
  await require('./postgres-codex-enrollment').ensure(db,ctx);
- const {pilot}=await access(db,ctx,{enabled:true});const locked=spendingLockMessage(pilot);if(locked)throw new ValidationError(locked);
+ const {pilot}=await access(db,ctx,{enabled:true});const locked=spendingLockMessage(pilot);if(locked)throw new ValidationError('Ask is temporarily paused because its usage allowance is unavailable. Your message has not run. It is kept below so you can try again when access is restored.',{reason:'agent_allowance_unavailable'});
  const goal=await db.transaction(async client=>{
   const row=(await client.query('SELECT * FROM stockchief_runtime.assistant_goals WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 FOR UPDATE',[ctx.workspaceId,ctx.actorId,id])).rows[0];
   const state=await continuationState(client,ctx,row),h=row.checkpoint.harness||{};

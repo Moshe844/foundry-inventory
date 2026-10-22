@@ -47,12 +47,12 @@ const words=result=>(result.data.blocks||[]).flatMap(b=>b.paragraphs||[]).flatMa
   .filter(w=>w.bbox&&String(w.text).trim()&&!/^[|#_=~]+$/.test(w.text));
 async function readDarkTable(canvas,worker){
   const {createCanvas}=require('@napi-rs/canvas'),{PSM}=require('tesseract.js');
-  const bands=darkHeader(canvas);
+  const bands=darkHeader(canvas);let wholePageWords=null;
   if(!bands.length){
     // Light tables need the same anchored column reads as dark tables.
     // Discover a real heading from recognized field labels and coordinates.
     await worker.setParameters({tessedit_pageseg_mode:PSM.SPARSE_TEXT});
-    const scan=words(await worker.recognize(canvas.toBuffer('image/png'),{}, {blocks:true})),lines=[];
+    const scan=words(await worker.recognize(canvas.toBuffer('image/png'),{}, {blocks:true})),lines=[];wholePageWords=scan;
     for(const word of scan){const mid=(word.bbox.y0+word.bbox.y1)/2,height=word.bbox.y1-word.bbox.y0;let line=lines.find(r=>Math.abs(r.y-mid)<height*.65);if(!line){line={y:mid,words:[]};lines.push(line);}line.words.push(word);}
     for(const line of lines.sort((a,b)=>a.y-b.y)){
       const cells=[];for(const word of line.words.sort((a,b)=>a.bbox.x0-b.bbox.x0)){const previous=cells.at(-1),height=word.bbox.y1-word.bbox.y0;if(previous&&word.bbox.x0-previous.right<height*.65){previous.text+=' '+word.text;previous.right=word.bbox.x1;}else cells.push({text:word.text,right:word.bbox.x1});}
@@ -70,11 +70,13 @@ async function readDarkTable(canvas,worker){
     const labels=words(await worker.recognize(header.toBuffer('image/png'),{}, {blocks:true})).filter(w=>w.confidence>=35).sort((a,b)=>a.bbox.x0-b.bbox.x0),cells=[];
     for(const word of labels){const last=cells.at(-1),height=word.bbox.y1-word.bbox.y0;
       if(last&&word.bbox.x0-last.right<Math.max(6,height*.65)){last.text+=' '+word.text;last.right=word.bbox.x1;}
-      else cells.push({x:word.bbox.x0,right:word.bbox.x1,text:word.text});}
+      else cells.push({x:word.bbox.x0,right:word.bbox.x1,height,text:word.text});}
+    cells.splice(0,cells.length,...require('./ocr-headings').merge(cells));
     const found=new Set(cells.flatMap(c=>require('./fields').bestFieldScores(c.text).slice(0,1).map(s=>s.field)));
     if(found.size<3||!found.has('code')&&!found.has('name'))continue;
     const body=createCanvas(canvas.width,canvas.height-band.bottom-1);body.getContext('2d').drawImage(canvas,0,band.bottom+1,canvas.width,body.height,0,0,body.width,body.height);
-    const bodyWords=words(await worker.recognize(body.toBuffer('image/png'),{}, {blocks:true}));
+    const bodyWords=wholePageWords?wholePageWords.filter(w=>w.bbox.y0>band.bottom).map(w=>({...w,bbox:{...w.bbox,y0:w.bbox.y0-band.bottom-1,y1:w.bbox.y1-band.bottom-1}}))
+      :words(await worker.recognize(body.toBuffer('image/png'),{}, {blocks:true}));
     const heights=bodyWords.map(w=>w.bbox.y1-w.bbox.y0).sort((a,b)=>a-b),typical=heights[Math.floor(heights.length/2)]||20,rows=[];
     for(const word of bodyWords.sort((a,b)=>(a.bbox.y0+a.bbox.y1)-(b.bbox.y0+b.bbox.y1)||a.bbox.x0-b.bbox.x0)){
       if(word.bbox.y1-word.bbox.y0>typical*2)continue;
@@ -93,7 +95,7 @@ async function readDarkTable(canvas,worker){
       {
         const left=Math.max(0,observed.length?Math.min(...observed.map(w=>w.bbox.x0))-5:Math.floor(index?(anchors[index-1]+anchors[index])/2:0)),right=Math.min(body.width,observed.length?Math.max(...observed.map(w=>w.bbox.x1))+5:Math.ceil(index+1<anchors.length?(anchors[index]+anchors[index+1])/2:body.width)),column=createCanvas(right-left,body.height);
         column.getContext('2d').drawImage(body,left,0,column.width,column.height,0,0,column.width,column.height);
-        await worker.setParameters({tessedit_pageseg_mode:PSM.SINGLE_BLOCK,tessedit_char_whitelist:field==='code'?'':field==='quantity'?'0123456789,.-+':'0123456789,.-+$£€¥'});
+        await worker.setParameters({tessedit_pageseg_mode:PSM.SINGLE_BLOCK,tessedit_char_whitelist:field==='quantity'?'0123456789,.-+':''});
         const reread=words(await worker.recognize(column.toBuffer('image/png'),{}, {blocks:true}));
         for(const row of rows){const aligned=reread.filter(w=>Math.abs((w.bbox.y0+w.bbox.y1)/2-row.y)<typical*.7);
           row.columnEvidence||={};row.columnEvidence[index]=aligned;}
@@ -104,7 +106,7 @@ async function readDarkTable(canvas,worker){
         const x=(word.bbox.x0+word.bbox.x1)/2,closest=nearest(x);
         values[closest]+=(values[closest]?' ':'')+word.text;
       }row.originalValues=[...values];for(const [index,evidence] of Object.entries(row.columnEvidence||{}))if(evidence.length)values[index]=evidence.map(w=>w.text).join(' ');return values;});
-    const numeric=v=>String(v||'').replace(/[$£€¥,\s]/g,''),valid=v=>/^\d+(?:\.\d+)?$/.test(numeric(v));
+    const numeric=v=>require('./source-money').clean(v).replace(/[$¥,\s]/g,''),valid=v=>/^\d+(?:\.\d+)?$/.test(numeric(v));
     for(const field of ['unitCost','sellingPrice']){
       const index=columnFields.indexOf(field);if(index<0)continue;
       const filled=grid.filter(v=>valid(v[index])),decimalColumn=filled.length>1&&filled.filter(v=>numeric(v[index]).includes('.')).length/filled.length>=.6;
@@ -193,4 +195,4 @@ async function parse(buffer){
 }
 
 function isImage(buffer){return Boolean(dimensions(buffer))||buffer.subarray(0,4).toString()==='RIFF'&&buffer.subarray(8,12).toString()==='WEBP'||/^GIF8[79]a$/.test(buffer.subarray(0,6).toString());}
-module.exports={parse,dimensions,isImage,removeTableRules};
+module.exports={parse,dimensions,isImage,removeTableRules,readStructuredTable:readDarkTable};

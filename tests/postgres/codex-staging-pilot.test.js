@@ -27,13 +27,17 @@ test('Staging website pilot is scoped, delivers durable approvals, executes cano
  const cookie=signed.headers['set-cookie'].find(c=>c.startsWith('foundry.sid='));
  await page.context().addCookies([{name:'foundry.sid',value:cookie.split(';')[0].slice('foundry.sid='.length),url:`http://127.0.0.1:${server.address().port}`}]);
  await page.goto(`http://127.0.0.1:${server.address().port}/ask`);
- assert.equal(await page.getByRole('button',{name:'Enable Staging agent',exact:true}).count(),1);
- await page.getByRole('button',{name:'Enable Staging agent',exact:true}).click();
- assert(await pilot.selected(db,ctx));assert.match(await page.locator('body').innerText(),/paid agent work is locked/);
- await assert.rejects(pilot.start(db,ctx,'Investigate current stock'),/budget is approved/);
+ assert.equal(await page.getByRole('button',{name:'Enable Staging agent',exact:true}).count(),0,'Customer chat does not expose internal runtime controls');
+ await pilot.toggle(db,ctx,true);await page.reload();
+ assert(await pilot.selected(db,ctx));assert.match(await page.locator('body').innerText(),/Ask is temporarily paused/);
+ await assert.rejects(pilot.start(db,ctx,'Investigate current stock'),/usage allowance is unavailable/);
+ await page.locator('[data-ask-input]').fill('Where is the current stock held?');await Promise.all([page.waitForNavigation(),page.locator('[data-ask-form]').evaluate(form=>form.requestSubmit())]);
+ assert.match(await page.locator('#submission-problem').innerText(),/message could not run|usage allowance is unavailable/);assert.equal(await page.locator('[data-ask-input]').inputValue(),'Where is the current stock held?');
+ assert.doesNotMatch(await page.locator('main').innerText(),/Pilot budget ledger|Disable pilot|Enable Staging agent/);
+ assert.equal((await db.query('SELECT count(*)::int n FROM stockchief_runtime.assistant_goals WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,0,'a blocked submission creates no work or paid model attempt');
  await db.query("UPDATE stockchief_runtime.codex_pilots SET ceiling_micro_usd=500000,approval_reference='OFFLINE ONLY',stopped=true WHERE workspace_id=$1",[ctx.workspaceId]);
- await page.reload();assert.match(await page.locator('body').innerText(),/spending is paused.*budget is already approved/);
- await assert.rejects(pilot.start(db,ctx,'Investigate current stock'),/spending is paused/);
+ await page.reload();assert.match(await page.locator('body').innerText(),/Ask is temporarily paused/);
+ await assert.rejects(pilot.start(db,ctx,'Investigate current stock'),/usage allowance is unavailable/);
  assert.equal((await pilot.view(db,ctx)).funded,false,'Correct wording does not unlock spending');
  const sku='STAGE-'+randomUUID().slice(0,8),location='Pilot shelf';
  const loc=await require('../../src/domain/postgres-location-service').createLocation(db,ctx,{name:location,kind:'warehouse'});
@@ -96,7 +100,7 @@ test('Staging website pilot is scoped, delivers durable approvals, executes cano
  // only a canonically cancelled proposal with persisted human rejection.
  await db.query("UPDATE stockchief_runtime.assistant_goals SET status='BLOCKED',answer='Approval required' WHERE id=$1",[held.id]);
  assert.equal((await require('../../scripts/environment-agent-demo/waits').refresh(db,ctx,held.id)).status,'CANCELLED');
- await page.getByRole('button',{name:'Disable pilot · use existing Ask'}).click();assert.equal(await pilot.selected(db,ctx),false);
- assert.match(await page.locator('body').innerText(),/Existing Ask/);
+ assert.equal(await page.getByRole('button',{name:'Disable pilot · use existing Ask'}).count(),0);await pilot.toggle(db,ctx,false);await page.reload();assert.equal(await pilot.selected(db,ctx),false);
+ assert.doesNotMatch(await page.locator('body').innerText(),/Existing Ask|Pilot budget ledger/);assert.equal(await page.locator('[data-ask-input]').count(),1);
  assert.equal((await db.query('SELECT count(*) AS n FROM stockchief_runtime.codex_pilot_calls')).rows[0].n,'0');
 });

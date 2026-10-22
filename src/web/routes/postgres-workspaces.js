@@ -16,7 +16,7 @@ function createPostgresWorkspacesRouter(database){
   router.get('/inventories',asyncRoute(async(req,res)=>res.page('workspaces/list',{
     title:'Your inventories',nav:'inventories',suppressBack:true,workspaces:res.locals.workspaces,
     currentWorkspaceId:req.workspace?.id||null,layoutOnboardingEntry:null,
-    allowance:{...allowance,used:res.locals.workspaces.length},postgresMode:true,
+    allowance:await capacity(req),postgresMode:true,
   })));
   const capacity=async req=>{const meter=await require('../../entitlements/postgres-service').meterState(database,{accountId:req.account.id,workspaceId:null},'workspaces');const limit=meter.hardLimit??meter.included;return {used:meter.capacityUsed??meter.used,limit,unlimited:limit===null,exceeded:limit!==null&&(meter.capacityUsed??meter.used)>=limit,planId:null};};
   router.get('/inventories/new',asyncRoute(async(req,res)=>res.page('workspaces/new',{

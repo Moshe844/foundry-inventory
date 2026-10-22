@@ -88,6 +88,7 @@ const PATTERNS = {
   leadTimeDays:[/^(?:supplier\s*)?lead\s*time(?:\s*(?:in\s*)?days)?$/],
   sellingPrice: [
     /\b(?:selling|sale|retail|customer|list)\s*price\b/,
+    /\bunit\s*price\b/,
     /\b(?:msrp|rrp)\b/,
     /^price(?:\s*each)?$/,
   ],
@@ -407,7 +408,7 @@ function guessMappings(columns, rows) {
     usedColumns.add(claim.index);
     // Matched by a specific wording, which is a real recognition. A catch-all
     // match is left out, so the model is asked about it and may overrule it.
-    if (!claim.weak) confident.add(claim.field);
+      if (!claim.weak || claim.field==='unitLabel' && profiles[columns.findIndex(c=>c.index===claim.index)]?.numericRate===0) confident.add(claim.field);
   }
 
   // Variant axes, in the order the file presents them.

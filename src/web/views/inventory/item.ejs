@@ -665,6 +665,7 @@
 
 <dialog class="modal" id="modal-edit">
   <form method="post" action="/inventory/<%= item.id %>/details">
+    <input type="hidden" name="expectedDetailsVersion" value="<%= locals.detailsVersion||'' %>">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <div class="modal-head">
       <h2>Edit item details</h2>
