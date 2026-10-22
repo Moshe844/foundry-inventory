@@ -7,6 +7,18 @@ const path=require('node:path');
 const ejs=require('ejs');
 const render=(template,data)=>ejs.render(template,{...data,approvalReview:require('../../src/imports/approval-review').review(data.plan,{...data,needsNumberAnswer:false})},{filename:path.join(__dirname,'../../src/web/views/imports/postgres-preview.ejs')});
 
+test('approved imports show execution guidance without stale preview-only instructions',()=>{
+ const template=fs.readFileSync(path.join(__dirname,'../../src/web/views/imports/postgres-preview.ejs'),'utf8');
+ for(const state of ['APPROVED','QUEUED','NEEDS_REVIEW','VERIFIED']){
+  const html=render(template,{plan:{id:'approved-source',sourceName:'Source.csv',status:state==='VERIFIED'?'SUCCEEDED':'READY',approvalStatus:'APPROVED',recordsDetected:1,recordsValid:1,recordsInvalid:0,integrityHash:'frozen',fieldMappings:{name:0,quantity:1},transformations:{},warnings:[],conflicts:[]},
+   previewRevision:{active:false,label:'Preview updated',processedRows:1,totalRows:1,lastUpdateAt:'2026-01-01T12:00:00Z',state:'COMPLETED'},
+   importProgress:{active:state==='QUEUED',state,label:state,stage:state.toLowerCase(),stageLabel:state,verified:state==='VERIFIED',processedRows:null,progressPercent:null,readyRows:1},
+   run:state==='NEEDS_REVIEW'?{id:'failed',status:'FAILED',stage:'rolled_back',verified:false}:state==='VERIFIED'?{id:'saved',status:'SUCCEEDED',verified:true,rowsImported:1,itemsCreated:1,skusCreated:1,unitsEstablished:2,checks:[]}:null,
+   duplicatePlans:[],csrfToken:'csrf',mappingRows:[],fieldOptions:[],locations:[],counts:{VALID:1},rows:[],page:1,pageSize:50,helpers:{plural:(n,s)=>n===1?s:s+'s',qty:n=>String(n)}});
+  assert.doesNotMatch(html,/Preview updated|No stock or Money is being imported/);assert.match(html,/data-import-current-step/);
+ }
+});
+
 test('a legacy staged import with absent money fields never presents NaN as a price',()=>{
   const template=fs.readFileSync(path.join(__dirname,'../../src/web/views/imports/postgres-preview.ejs'),'utf8');
   const html=render(template,{

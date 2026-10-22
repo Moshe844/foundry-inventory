@@ -1,5 +1,14 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),{present}=require('../../src/imports/postgres-progress');
+
+test('prepared row counts survive the durable progress boundary without claiming stock was saved',async()=>{
+ const job={workspaceId:'fixture',id:'job',leaseToken:'lease'},progress=require('../../src/imports/postgres-progress');let stored;
+ const database={query:async(sql,values)=>{stored=JSON.parse(values[3]);return {rowCount:1};}};
+ assert(await progress.record(database,job,{stage:'preparing',processedRows:0,totalRows:1200,preparedRows:500,attempt:1}));
+ const state=present({id:'fixture',records_detected:1200,records_valid:1200,plan_status:'READY',approval_status:'APPROVED',job_status:'RUNNING',lease_expires_at:2000,database_now:1000,job_result:{importProgress:stored}});
+ assert.equal(state.preparedRows,500);assert.equal(state.processedRows,0);assert.equal(state.verified,false);
+ await assert.rejects(progress.record(database,job,{stage:'preparing',processedRows:0,totalRows:1200,preparedRows:1201}),/Invalid prepared/);
+});
 test('preview recalculation is active work but never claims inventory or accounting execution',()=>{
  const state=present({id:'review',records_detected:1503,records_valid:0,records_invalid:1503,plan_status:'READY',approval_status:'AWAITING_APPROVAL',preview_status:'RUNNING',preview_updated_at:'2026-10-22T10:00:00Z',preview_result:{previewProgress:{stage:'checking',processedRows:500,totalRows:1503,attempt:2}}});
  assert.equal(state.state,'UPDATING_PREVIEW');assert(state.active);assert(!state.finished);assert(!state.verified);assert.equal(state.processedRows,500);assert.equal(state.readyRows,1503);assert.match(state.stageLabel,/Attempt 2/);assert.match(state.stageLabel,/no inventory changes/);assert.equal(state.completedAt,null);

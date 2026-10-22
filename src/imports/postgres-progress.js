@@ -78,11 +78,12 @@ async function get(database,workspaceId,id){
 
 async function record(database,job,value){
  if(!job.workspaceId||!job.leaseToken||!['preparing','processing','verifying'].includes(value.stage)||!Number.isSafeInteger(value.processedRows)||!Number.isSafeInteger(value.totalRows)||value.processedRows<0||value.processedRows>value.totalRows)throw new TypeError('Invalid import progress.');
+ if(value.preparedRows!==undefined&&(!Number.isSafeInteger(value.preparedRows)||value.preparedRows<0||value.preparedRows>value.totalRows))throw new TypeError('Invalid prepared import progress.');
  return (await database.query(`UPDATE stockchief_runtime.jobs SET result=CASE WHEN
    result->'importProgress' IS NULL OR COALESCE((result->'importProgress'->>'attempt')::int,1)<$5
    OR COALESCE((result->'importProgress'->>'attempt')::int,1)=$5 AND COALESCE((result->'importProgress'->>'processedRows')::int,0)<=$6
    THEN jsonb_build_object('importProgress',$4::jsonb) ELSE result END
   WHERE workspace_id=$1 AND id=$2 AND lease_token=$3 AND kind='import.execute-approved' AND status='RUNNING'
-   AND lease_expires_at>floor(extract(epoch FROM clock_timestamp())*1000)`,[job.workspaceId,job.id,job.leaseToken,JSON.stringify({stage:value.stage,processedRows:value.processedRows,totalRows:value.totalRows,attempt:value.attempt||1}),value.attempt||1,value.processedRows])).rowCount===1;
+   AND lease_expires_at>floor(extract(epoch FROM clock_timestamp())*1000)`,[job.workspaceId,job.id,job.leaseToken,JSON.stringify({stage:value.stage,processedRows:value.processedRows,totalRows:value.totalRows,attempt:value.attempt||1,...(value.preparedRows===undefined?{}:{preparedRows:value.preparedRows})}),value.attempt||1,value.processedRows])).rowCount===1;
 }
 module.exports={list,get,present,record};

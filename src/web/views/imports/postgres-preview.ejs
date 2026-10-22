@@ -23,7 +23,7 @@
  <ol><% review.blockers.forEach(function(step,index){ %><li><strong><%= step.title %></strong><p><%= step.detail %></p><a class="btn <%= index===0?'btn--primary':'btn--secondary' %>" href="<%= step.href %>"><%= step.action %></a></li><% }) %></ol>
  <% }else{ %><p id="import-approval-explanation">Required choices are complete. Review the rows and planned changes below, then approve this preview. Approval saves your authorization; “Import and verify” starts the import.</p><a class="btn btn--primary" href="#import-approval-actions">Review and approve</a><% } %>
 </section><% } %>
-<%- include('preview-revision',{sourceTransforms}) %>
+<% if(plan.approvalStatus!=='APPROVED'){ %><%- include('preview-revision',{sourceTransforms}) %><% } %>
 <section id="import-current-step" data-import-current-step tabindex="-1" aria-label="Current import step">
 <% if(importing){ %>
   <section class="card section" data-import-progress="/imports/<%= plan.id %>/progress" data-import-detail aria-live="polite"><div class="card-head"><h2 data-import-status><%= activity.label %></h2></div><div class="card-body"><p>StockChief is processing <%= plan.recordsValid.toLocaleString('en-US') %> approved rows. Products and stock appear together after the import passes verification.</p><p>You can leave this page. Reopen it from <a href="/imports">File imports and results</a> or the progress banner elsewhere in this inventory.</p><p data-import-timing></p><%- include('../partials/import-meter',{activity}) %></div></section>
