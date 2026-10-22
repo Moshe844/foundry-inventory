@@ -83,6 +83,16 @@ function createPostgresImportsRouter(database,{provider=null}={}){
   }));
   async function renderPreview(req,res,{reviewError=null}={}){
     const plan=await imports.get(database,req.ctx.workspaceId,req.params.id);
+    if(req.method==='GET'&&!reviewError&&req.query.review!=='draft'&&plan.status==='READY'&&plan.approvalStatus==='AWAITING_APPROVAL'&&plan.planVersion===1){
+      const approved=(await database.query(`SELECT id FROM import_plans WHERE workspace_id=$1 AND source_hash=$2 AND id<>$3
+        AND approval_status='APPROVED' AND records_invalid=0 AND records_valid>0 AND status IN ('READY','SUCCEEDED')
+        AND source_kind=$4 AND sheet_index=$5 AND records_detected=$6 AND default_location_id IS NOT DISTINCT FROM $7
+        AND COALESCE(transformations::jsonb->>'dataset','inventory')=$8
+        ORDER BY CASE WHEN status='SUCCEEDED' THEN 0 ELSE 1 END,approved_at DESC,created_at DESC,id DESC LIMIT 1`,[req.ctx.workspaceId,plan.sourceHash,plan.id,plan.sourceKind,plan.sheetIndex,plan.recordsDetected,plan.defaultLocationId,plan.transformations.dataset||'inventory'])).rows[0];
+      if(approved){req.flash('success','You already approved this file. Showing its saved import and current progress. The separate unapproved draft is still saved.');return res.redirect(303,'/imports/'+encodeURIComponent(approved.id)+'?fromDraft='+encodeURIComponent(plan.id)+'#main');}
+    }
+    const draftId=typeof req.query.fromDraft==='string'&&/^imp_[a-z0-9]{1,128}$/.test(req.query.fromDraft)?req.query.fromDraft:null;
+    const relatedDraft=draftId?(await database.query("SELECT id FROM import_plans WHERE workspace_id=$1 AND id=$2 AND source_hash=$3 AND approval_status='AWAITING_APPROVAL' AND status='READY'",[req.ctx.workspaceId,draftId,plan.sourceHash])).rows[0]||null:null;
     const page=Math.max(1,Number(req.query.page)||1);
     const allowed=['VALID','INVALID','IMPORTED','FAILED'];
     const filter=allowed.includes(req.query.rows)?req.query.rows:null;
@@ -111,7 +121,7 @@ function createPostgresImportsRouter(database,{provider=null}={}){
       needsNumberAnswer:plan.fieldMappings.quantity===undefined&&!plan.transformations.confirmCatalogOnly&&mappingRows.some(row=>(plan.transformations.unmappedNumericColumns||[]).includes(row.column))});
     return res.page(plan.transformations.dataset==='suppliers'?'imports/supplier-preview':'imports/postgres-preview',
       {title:`Import ${plan.sourceName}`,nav:'imports',plan,rows,counts,
-      duplicatePlans,run,locations:locationRows,mappingRows,fieldOptions:fields.FIELDS,page,pageSize:PAGE_SIZE,filter,
+      duplicatePlans,run,locations:locationRows,mappingRows,fieldOptions:fields.FIELDS,page,pageSize:PAGE_SIZE,filter,relatedDraft,
       missingLocationRows:missingLocation.rows.length>0,
       missingAccountingSetup:missingAccounting.rows.length>0,
       locationKinds:require('../../domain/constants').LOCATION_KINDS,runJob,importProgress,trackingQuestion,previewRevision,reviewError,approvalReview,
