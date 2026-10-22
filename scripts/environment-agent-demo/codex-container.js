@@ -115,12 +115,9 @@ async function main(start){
    ...(start.instructionsProfile==='stockchief-operator-v1'?{model_instructions_file:'/opt/stockchief/codex-operator-instructions.txt'}:{}),
    // Test-only trigger changes WHEN native Codex compacts; never its algorithm.
    model_auto_compact_token_limit:start.offlineCompact?1:start.nativeCompactionTokenLimit,
-   // Native compaction carries the original user/environment prefix. Counting
-   // that unchanged prefix again can compact on every subsequent tool result,
-   // discarding references that are then retrieved and compacted repeatedly.
-   // Let the SDK measure growth after its carried prefix. The host still
-   // counts the ENTIRE request and enforces the unchanged request/goal caps.
-   model_auto_compact_token_limit_scope:'body_after_prefix'}});
+   // The paid request includes its preserved prefix. Let native Codex count
+   // that full context against the same whole-request token budget as the host.
+   model_auto_compact_token_limit_scope:'total'}});
  const options={model:profile.model,modelReasoningEffort:profile.effort,workingDirectory:'/workspace',skipGitRepoCheck:true,
   sandboxMode:'read-only',approvalPolicy:'never',webSearchMode:'disabled',networkAccessEnabled:false};
  thread=start.threadId?codex.resumeThread(start.threadId,options):codex.startThread(options);
