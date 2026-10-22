@@ -17,3 +17,6 @@ test('configuration dimensions come from explicit source declarations, beyond th
  const book=XLSX.utils.book_new();for(const[name,grid]of [['Counts',[['SKU','On hand','Location','Product ID'],['BOLT-A',2,'Depot','P-A'],['BOLT-B',3,'Depot','P-A']]],['Definitions',[['SKU','Product ID','Product name','Color','Size','Material','Surface treatment','Thread direction'],['BOLT-A','P-A','Bolt','Silver','M8','Steel','Galvanised','Right'],['BOLT-B','P-A','Bolt','Silver','M8','Steel','Plain','Left']]],['Families',[['Product ID','Configuration dimensions'],['P-A','Surface treatment / Thread direction / Size / Color / Material']]]])XLSX.utils.book_append_sheet(book,XLSX.utils.aoa_to_sheet(grid),name);
  const result=infer(parse({buffer:XLSX.write(book,{type:'buffer',bookType:'xlsx'})}));assert(result);assert.equal(result.variantColumns.length,5);assert(result.variantColumns.some(v=>v.name==='Thread direction'));assert(result.variantColumns.some(v=>v.name==='Surface treatment'));assert.equal(result.physicalUnits,5);
 });
+test('zero-only unexplained numeric columns cannot become warehouses through a coincidental total',()=>{
+ const parsed=source(),stock=parsed.sheets.find(s=>s.name==='Current positions');stock.columns.push({index:stock.columns.length,name:'Unspecified amount'});for(const row of stock.rows)row.cells.push('0');assert.equal(infer(parsed),null);
+});

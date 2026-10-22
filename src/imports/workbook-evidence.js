@@ -57,6 +57,11 @@ function infer(workbook){
  // Accept the entire set of possible components only. Never search for a
  // convenient subset that happens to equal a total on the sampled rows.
  const components=(numericComponents.length>=2?numericComponents:namedComponents).map(c=>ref(baseSheet,c.index));
+ // A zero-only number contributes nothing to conservation and therefore
+ // supplies no evidence that it is a location. Keep such a column only when
+ // the workbook independently names that location; otherwise request review.
+ if(components.some(r=>!locationNames.has(fields.normalise(base.columns.find(c=>c.index===r.column).name))&&
+   !base.rows.some(row=>Number(row.cells[r.column])>0)))return null;
  if(components.length){
   const read=require('./row-validator').readQuantity;
   for(const row of base.rows){const total=read(row.cells[baseProfile.mappings.quantity]),parts=components.map(r=>read(row.cells[r.column]));
