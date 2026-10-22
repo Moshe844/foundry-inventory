@@ -1072,6 +1072,7 @@ const SPECS=Object.freeze([
   {name:'customer_return.request',description:'Request a return for one exact fulfilled product and quantity, recording the proposed resolution and quarantine location. This does not receive goods or issue a refund.',
     record:'sales_order',fields:['recordReference','sku','quantity','reason','location','returnResolution'],
     permission:permissions.AUTHORIZE_CUSTOMER_RETURN,capability:'returns.core',build:returnRequest,
+    resultReference:'customerReturnId',resultDisplayReference:'returnNumber',resultRecordKind:'customer_return',
     execute:(client,ctx,p)=>returns.requestCustomerReturn(sameClient(client),ctx,p),
     verify:async(client,ctx,r)=>Boolean(r.customerReturnId&&
       await state(client,ctx,'customer_returns',r.customerReturnId,['REQUESTED']))},

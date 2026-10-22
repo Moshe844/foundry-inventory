@@ -197,7 +197,7 @@ async function externalState(database,workspaceId,result={},options={}){
 }
 
 async function refreshApprovals(database,workspaceId,steps,provider=null){
-  const ids=steps.filter((step)=>['WAITING','WAITING_USER'].includes(step.state)&&step.proposalId)
+  const ids=steps.filter((step)=>(['WAITING','WAITING_USER'].includes(step.state)||step.state==='DONE'&&registry.get(step.capability)?.resultReference)&&step.proposalId)
     .map((step)=>step.proposalId);
   const eventIds=steps.filter((step)=>step.state==='WAITING_EVENT'&&step.proposalId).map((step)=>step.proposalId);
   const allIds=[...new Set([...ids,...eventIds])];if(!allIds.length)return;
@@ -206,6 +206,14 @@ async function refreshApprovals(database,workspaceId,steps,provider=null){
   const byId=new Map(rows.map((row)=>[row.id,row]));
   for(const [index,step] of steps.entries()){
     const completed=byId.get(step.proposalId);
+    const contract=registry.get(step.capability),produced=contract?.resultReference&&completed?.status==='EXECUTED'?completed.result?.[contract.resultReference]:null;
+    if(step.state==='DONE'&&typeof produced==='string'&&produced&&step.args?.recordReference!==produced){
+      // Recover typed identifiers from already verified canonical receipts.
+      // A schema/contract correction never repeats the creation or changes
+      // the approved plan; downstream preparation rechecks current authority.
+      step.args={...step.args,recordReference:produced};
+      for(const descendant of steps){if(descendant.state==='BLOCKED'&&descendant.reason===null&&!descendant.proposalId&&registry.get(descendant.capability)?.recordKind===contract.resultRecordKind&&ancestorIndexes(steps,steps.indexOf(descendant)).includes(index))descendant.reason='dependency_waiting';}
+    }
     if(['WAITING','WAITING_USER','WAITING_EVENT'].includes(step.state)&&completed?.status==='EXECUTED'){
       const external=await externalState(database,workspaceId,completed.result||{},
         {step,steps,index,provider});
@@ -255,7 +263,7 @@ function approvedStepSafe(plan,index,resolvedArgs,dependencyArgs){
 async function resume(database,ctx,proposalId,{service,provider,rawProvider,record=async()=>{},executeAuthorizedProposal=null,
   missionId=null}={}){
   const candidates=(await database.query(`SELECT id FROM stockchief_runtime.assistant_capability_plans
-    WHERE workspace_id=$1 AND actor_user_id=$2 AND status IN ('WAITING','ADVANCING','WAITING_EVENT','WAITING_USER')
+    WHERE workspace_id=$1 AND actor_user_id=$2 AND (status IN ('WAITING','ADVANCING','WAITING_EVENT','WAITING_USER') OR status='BLOCKED' AND authorization_mode='MISSION' AND approval_status='APPROVED')
       AND (($4::text IS NOT NULL AND id=$4) OR ($4::text IS NULL AND steps @> $3::jsonb)) ORDER BY created_at`,
   [ctx.workspaceId,ctx.actorId,JSON.stringify([{proposalId}]),missionId])).rows;
   const continued=[];
