@@ -5,7 +5,7 @@ test('JSON product objects and ODS tables retain columns without evaluating inst
  assert.throws(()=>parser.parse({text:'<products><product><sku>X</sku></product></products>',filename:'products.xml'}),/XML.*not supported/);
  assert.throws(()=>parser.parse({text:'{"products":[{"SKU":"A","nested":{"secret":"not silently ignored"}}]}',filename:'nested.json'}),/nested records/);
 });
-test('recognised unsupported photo formats receive actionable messages before raw text parsing',()=>{for(const ext of ['heic','tiff'])assert.throws(()=>parser.parse({buffer:Buffer.from('not a spreadsheet'),filename:'photo.'+ext}),/Export.*PNG or JPEG/);});
+test('invalid photo bytes receive actionable messages before raw text parsing',()=>{for(const ext of ['heic','tiff'])assert.throws(()=>parser.parse({buffer:Buffer.from('not a spreadsheet'),filename:'photo.'+ext}),/could not be opened as a readable image/);});
 
 test('Word table cells remain columns and escaped text is retained',()=>{
  const zip=XLSX.CFB.utils.cfb_new();XLSX.CFB.utils.cfb_add(zip,'word/document.xml',Buffer.from('<w:document><w:body><w:tbl><w:tr><w:tc><w:p><w:t>SKU</w:t></w:p></w:tc><w:tc><w:p><w:t>Name</w:t></w:p></w:tc><w:tc><w:p><w:t>Qty</w:t></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:t>WORD-9</w:t></w:p></w:tc><w:tc><w:p><w:t>Nut &amp; bolt</w:t></w:p></w:tc><w:tc><w:p><w:t>6</w:t></w:p></w:tc></w:tr></w:tbl></w:body></w:document>'));

@@ -172,6 +172,17 @@ function dimensions(buffer){
 async function parse(buffer){
   if(!Buffer.isBuffer(buffer)||buffer.length>MAX_IMAGE_BYTES)
     throw new ValidationError('That image is too large for a safe inventory preview. No inventory changed.');
+  if(require('./image-codecs').kind(buffer)){
+    const decoded=await require('./image-codecs').decode(buffer),{createCanvas,ImageData}=require('@napi-rs/canvas'),sheets=[];
+    for(const frame of decoded.frames){
+      const source=createCanvas(frame.width,frame.height);source.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(frame.pixels),frame.width,frame.height),0,0);
+      let image=source;
+      if(frame.orientation!==1){image=createCanvas(frame.orientation>=5?frame.height:frame.width,frame.orientation>=5?frame.width:frame.height);const transforms={2:[-1,0,0,1,frame.width,0],3:[-1,0,0,-1,frame.width,frame.height],4:[1,0,0,-1,0,frame.height],5:[0,1,1,0,0,0],6:[0,1,-1,0,frame.height,0],7:[0,-1,-1,0,frame.height,frame.width],8:[0,-1,1,0,0,frame.width]},context=image.getContext('2d');context.setTransform(...transforms[frame.orientation]);context.drawImage(source,0,0);}
+      try{const result=await readImage(image,{width:image.width,height:image.height});sheets.push({...result.sheets[0],name:decoded.kind.toUpperCase()+' image '+frame.page});}
+      catch(error){if(error instanceof ValidationError)throw new ValidationError('Image page '+frame.page+': '+error.message);throw error;}
+    }
+    return {sheets,primarySheet:0,format:'image',visualSource:true};
+  }
   let size=dimensions(buffer);
   const webp=buffer.subarray(0,4).toString()==='RIFF'&&buffer.subarray(8,12).toString()==='WEBP',gif=/^GIF8[79]a$/.test(buffer.subarray(0,6).toString());
   if(!size&&(webp||gif)){try{const decoded=await require('@napi-rs/canvas').loadImage(buffer);if(decoded.width*decoded.height>MAX_PIXELS)throw new Error('too large');if(gif&&buffer.includes(Buffer.from([0x21,0xff,0x0b])))throw new ValidationError('Animated GIFs may contain several different tables. Export each required frame as PNG before importing.');const converted=require('@napi-rs/canvas').createCanvas(decoded.width,decoded.height);converted.getContext('2d').drawImage(decoded,0,0);buffer=converted.toBuffer('image/png');size=dimensions(buffer);}catch(error){if(error instanceof ValidationError)throw error;throw new ValidationError('This image could not be decoded safely. Export it as PNG or JPEG. No inventory changed.');}}
@@ -186,6 +197,12 @@ async function parse(buffer){
   }
   if(image.width!==size.width||image.height!==size.height)
     throw new ValidationError('That image has inconsistent dimensions. No inventory changed.');
+  return readImage(image,size);
+}
+
+async function readImage(image,size){
+  if(Math.min(size.width,size.height)<80||Math.max(size.width,size.height)<200)throw new ValidationError('This image is too small to read reliably. Upload a larger, sharper original or type the rows. No inventory changed.');
+  const {createCanvas}=require('@napi-rs/canvas');
   // Small dashboard text needs more pixels for OCR. Bound the working image
   // independently of the original size, and invert uniformly dark heading
   // bands so white-on-colour labels remain readable.
@@ -208,5 +225,5 @@ async function parse(buffer){
   return {sheets:[{name:'Image table',...sheet}],primarySheet:0,format:'image'};
 }
 
-function isImage(buffer){return Boolean(dimensions(buffer))||buffer.subarray(0,4).toString()==='RIFF'&&buffer.subarray(8,12).toString()==='WEBP'||/^GIF8[79]a$/.test(buffer.subarray(0,6).toString());}
+function isImage(buffer){return Boolean(dimensions(buffer))||Boolean(require('./image-codecs').kind(buffer))||buffer.subarray(0,4).toString()==='RIFF'&&buffer.subarray(8,12).toString()==='WEBP'||/^GIF8[79]a$/.test(buffer.subarray(0,6).toString());}
 module.exports={parse,dimensions,isImage,removeTableRules,readStructuredTable:readDarkTable};

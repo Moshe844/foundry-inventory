@@ -256,7 +256,7 @@ function parse(input) {
     Boolean(input.buffer) && input.buffer.length > 4 && input.buffer.readUInt32LE(0) === 0x04034b50;
 
   const extension=String(input.filename||'').split('.').at(-1).toLowerCase();
-  if(['heic','heif','tif','tiff'].includes(extension))throw new SpreadsheetError(extension.toUpperCase()+' images are not readable by this installation yet. Export the pages as PNG or JPEG, or upload their original spreadsheet. No inventory changed.');
+  if(['heic','heif','tif','tiff'].includes(extension))throw new SpreadsheetError('This '+extension.toUpperCase()+' file could not be opened as a readable image. Upload a fresh copy. No inventory changed.');
   // Decode text only. Binary archives retain their bytes and do not allocate a
   // second, lossy UTF-8 copy before the bounded workbook reader opens them.
   const sourceText=input.text ?? (looksXlsx?'':decodeText(input.buffer||Buffer.alloc(0)));

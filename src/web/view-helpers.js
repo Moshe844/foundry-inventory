@@ -222,6 +222,7 @@ function columnLabel(key) {
 }
 
 module.exports = {
+  importSourceFormats: require('../imports/source-formats'),
   unitCount,
   unitLabel,
   icon,

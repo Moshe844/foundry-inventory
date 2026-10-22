@@ -10,9 +10,10 @@
     <form method="post" action="/imports" enctype="multipart/form-data" data-busy>
       <div class="card-body">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-        <label class="field"><span class="field-label">CSV, TSV or Excel export</span>
-          <input class="input" type="file" name="file" accept=".csv,.tsv,.txt,.xlsx" required>
+        <label class="field"><span class="field-label">Your business file</span>
+          <input class="input" type="file" name="file" accept="<%= helpers.importSourceFormats.accept %>" required>
           <span class="field-help">Use a source with a product name or SKU. Quantity and location are needed only for opening stock.</span>
+          <span class="field-help"><%= helpers.importSourceFormats.description %></span>
         </label>
         <label class="field"><span class="field-label">If rows do not name a location</span>
           <select class="input" name="defaultLocationId"><option value="">Create products only</option>

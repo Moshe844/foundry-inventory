@@ -23,8 +23,8 @@
         <input type="hidden" name="usageKey" value="<%= usageKey %>:file">
         <label class="field">
           <span class="field-label">Your business file</span>
-          <input class="input" type="file" name="file" accept=".csv,.tsv,.txt,.xlsx,.ods,.docx,.json,.pdf,.png,.jpg,.jpeg,.webp,.gif" required>
-          <span class="field-help">Product, stock and supplier tables: XLSX, ODS, Word tables, JSON, CSV, TSV, text, PDF and clear PNG/JPEG/WEBP or static GIF images. Maximum upload <%= Math.floor((locals.uploadLimitBytes||536870912)/1048576) %> MB; images up to 20 MB and 12 megapixels; PDFs up to 32 MB and 30 pages. HEIC/TIFF: export as PNG or JPEG. XML/ZIP: export as CSV, JSON or XLSX. No need to rename columns. Scanned pages and images use OCR; verify the preview before approval.</span>
+          <input class="input" type="file" name="file" accept="<%= helpers.importSourceFormats.accept %>" required>
+          <span class="field-help"><%= helpers.importSourceFormats.description %> Maximum upload <%= Math.floor((locals.uploadLimitBytes||536870912)/1048576) %> MB. No need to rename columns.</span>
         </label>
       </div>
       <div class="card-foot">

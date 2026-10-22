@@ -14,6 +14,14 @@ test('blank source column gaps retain their original indexes',async()=>{
  const source=sheet('A',[['SKU','','Name','Qty'],['GAP-A','','A',3]]),other=sheet('B',[['Name','Qty','','SKU'],['B',4,'','GAP-B']]);
  const result=await tables.combine({sheets:[source,other]});assert(result);assert.deepEqual(result.sheet.rows.map(row=>row.cells[result.mappings.code]),['GAP-A','GAP-B']);assert.equal(result.physicalUnits,7);
 });
+
+test('combined image pages retain uncertain readings and genuine source errors for review',async()=>{
+ const first=sheet('Page A',[['SKU','Name','Quantity'],['PAGE-A','Bracket',2]]),second=sheet('Page B',[['SKU','Name','Quantity'],['PAGE-B','Hook',3]]);
+ first.rows[0].problems=[{code:'image_identity_uncertain',message:'Confirm the original SKU.'},{code:'source_mismatch',message:'Source totals disagree.'}];
+ const result=await tables.combine({sheets:[first,second]});assert(result);
+ assert.deepEqual(JSON.parse(result.sheet.rows[0].cells[result.problemsIndex]),first.rows[0].problems);
+ assert.deepEqual(JSON.parse(result.sheet.rows[1].cells[result.problemsIndex]),[]);
+});
 test('overlapping identities, complementary tables and different monetary meanings require interpretation',async()=>{
  const base=sheet('Stock',[['SKU','Name','Quantity','Unit cost (USD)'],['SAME-1','Widget',4,1]]);
  for(const alternative of [

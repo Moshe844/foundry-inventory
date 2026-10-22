@@ -71,14 +71,14 @@
   <div class="notice notice--warn section"><strong>This exact source was already imported.</strong>
     StockChief will not apply the same bytes twice. <a href="/imports/<%= duplicatePlans[0].id %>">See the completed import</a>.</div>
 <% } %>
-<% if(sourceTransforms.workbook){ const book=sourceTransforms.workbook; %>
-<section class="card section" aria-labelledby="workbook-scope"><div class="card-head"><h2 id="workbook-scope">How this workbook will be imported</h2></div><div class="card-body">
-  <p><strong><%= Number(book.sourceRows).toLocaleString('en-US') %> source records</strong> across <%= book.coverage.length %> worksheets. Stock is prepared as <%= Number(book.outputRows).toLocaleString('en-US') %> product/location rows. <% if(book.contract?.kind==='independent_tables'){ %>Compatible product tables with distinct SKUs are included together. Every row retains its worksheet and source row. Document totals and notes are reviewed separately from products.<% } else { %>Location counts are checked against the physical totals; totals and historical movements are not added again.<% } %></p>
-  <p>Review the worksheets below. Data marked “Not imported” will not create orders, bills, reservations or other business records.</p>
-  <div class="table-scroll"><table class="table"><thead><tr><th>Worksheet</th><th>Source rows</th><th>Use in this import</th><th>Details</th></tr></thead><tbody>
+<% if(sourceTransforms.workbook){ const book=sourceTransforms.workbook,imagePages=plan.sourceKind==='image',parts=imagePages?'image pages':'worksheets'; %>
+<section class="card section" aria-labelledby="workbook-scope"><div class="card-head"><h2 id="workbook-scope">How this <%= imagePages?'image file':'workbook' %> will be imported</h2></div><div class="card-body">
+  <p><strong><%= Number(book.sourceRows).toLocaleString('en-US') %> source records</strong> across <%= book.coverage.length %> <%= parts %>. Stock is prepared as <%= Number(book.outputRows).toLocaleString('en-US') %> product/location rows. <% if(book.contract?.kind==='independent_tables'){ %>Compatible product tables with distinct SKUs are included together. Every row retains its <%= imagePages?'image page':'worksheet' %> and source row. Document totals and notes are reviewed separately from products.<% } else { %>Location counts are checked against the physical totals; totals and historical movements are not added again.<% } %></p>
+  <p>Review the <%= parts %> below. Data marked “Not imported” will not create orders, bills, reservations or other business records.</p>
+  <div class="table-scroll"><table class="table"><thead><tr><th><%= imagePages?'Image page':'Worksheet' %></th><th>Source rows</th><th>Use in this import</th><th>Details</th></tr></thead><tbody>
   <% book.coverage.forEach(function(part){ %><tr><th scope="row"><%= part.name %></th><td><%= Number(part.rows).toLocaleString('en-US') %></td><td><%= part.role==='not_imported'?'Not imported':part.role==='reference'?'Related reference':'Opening inventory' %></td><td><%= part.reason %></td></tr><% }) %>
   </tbody></table></div>
-  <% if(plan.recordsInvalid){ %><p class="text-danger"><strong><%= Number(plan.recordsInvalid).toLocaleString('en-US') %> rows still need attention.</strong> Answer the required questions and review the row explanations below before approving the complete workbook. StockChief will not invent missing values.</p><% } %>
+  <% if(plan.recordsInvalid){ %><p class="text-danger"><strong><%= Number(plan.recordsInvalid).toLocaleString('en-US') %> rows still need attention.</strong> Answer the required questions and review the row explanations below before approving the complete <%= imagePages?'image file':'workbook' %>. StockChief will not invent missing values.</p><% } %>
 </div></section>
 <% } %>
 <% if(sourceTransforms.proposedLocations?.length && plan.status==='READY'){ %>

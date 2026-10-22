@@ -32,7 +32,7 @@ async function combine(workbook){
  const problemsIndex=columns.length;columns.push({index:problemsIndex,name:'Workbook reconciliation checks'});
  const rows=[];let physicalUnits=0;
  for(const table of tables)for(const source of table.sheet.rows){const cells=new Array(columns.length).fill('');for(const column of table.sheet.columns)cells[indexes.get(table.keys.get(column.index))]=source.cells[column.index]??'';
-  cells[provenanceIndex]=JSON.stringify({[table.sheet.name]:source.sourceRow});cells[problemsIndex]='[]';rows.push({sourceRow:rows.length+1,cells});
+  cells[provenanceIndex]=JSON.stringify({[table.sheet.name]:source.sourceRow});cells[problemsIndex]=JSON.stringify(source.problems||[]);rows.push({sourceRow:rows.length+1,cells});
   if(rows.length>require('./parser').LIMITS.maxRows)throw new (require('../domain/errors').ValidationError)('The combined workbook exceeds the import row capacity. No rows were truncated.');
   const quantity=require('./row-validator').readQuantity(cells[mappings.quantity]);if(cells[mappings.code]&&cells[mappings.name]&&quantity.ok&&quantity.value!==null)physicalUnits+=quantity.value;
  }

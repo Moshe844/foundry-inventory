@@ -126,6 +126,7 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
   context.validationState.inDocumentTail=documentRows.inDocumentTail;
   for (const [position,row] of sheet.rows.entries()) {
     const problems=proposal.problemsIndex===undefined?[...(row.problems||[])]:json(textCell(row,proposal.problemsIndex),[]);
+    if(input.imageReadingConfirmed)for(let i=problems.length-1;i>=0;i--)if(['image_identity_uncertain','image_money_uncertain'].includes(problems[i].code))problems.splice(i,1);
     const sourceCode=trimOrNull(Object.hasOwn(input.codeOverrides||{},row.sourceRow)?input.codeOverrides[row.sourceRow]:textCell(row,mappings.code));
     const sourceIdentity=require('./source-identity'),variants=sourceIdentity.options(row,mappings,proposal);
     const code=sourceCode&&(proposal.variantBases||[]).includes(sourceCode.toLowerCase())&&!context.skuByCode.has(sourceCode.toLowerCase())?sourceIdentity.derived(sourceCode,variants):sourceCode;
@@ -427,7 +428,7 @@ async function analyse(database, ctx, input) {
   // Relational source interpretation requires reasoning about joins, coverage
   // and reconciliation. Use the existing standard tier for that task; fast
   // extraction remains appropriate for an ordinary single source table.
-  const relationalWorkbook=parsedWorkbook.format==='xlsx'&&parsedWorkbook.sheets.length>1;
+  const relationalWorkbook=['xlsx','image'].includes(parsedWorkbook.format)&&parsedWorkbook.sheets.length>1;
   const modelProvider=input.allowModel===false?null:input.provider||(require('../config').ai.configured?
     require('../ai/provider').createProviderUnobserved(require('../config').ai.provider,require('../config').ai.tier(relationalWorkbook?'standard':'fast')):null);
   const wrappedProvider=modelProvider?require('../commercial/model').wrap(database,ctx,modelProvider,'import_mapping',input.usageKey||require('./usage-key').analysisUsageKey(sourceHash)):null;
@@ -618,7 +619,8 @@ async function revise(database,ctx,id,input={}){
       if(fieldMappings.name===undefined&&fieldMappings.code===undefined)
         throw new ValidationError('Map a product name or SKU before recalculating this preview.');
     }
-    if(plan.transformations.workbook&&(fieldMappings.quantity!==plan.fieldMappings.quantity||fieldMappings.location!==plan.fieldMappings.location||Object.keys(input.quantityOverrides||{}).length))
+    const independentImagePages=visualSource(plan)&&plan.transformations.workbook?.contract?.kind==='independent_tables';
+    if(plan.transformations.workbook&&(fieldMappings.quantity!==plan.fieldMappings.quantity||fieldMappings.location!==plan.fieldMappings.location||!independentImagePages&&Object.keys(input.quantityOverrides||{}).length))
       throw new ValidationError('Correct quantities or location columns in the source workbook and prepare a new preview so the physical totals can be checked again.');
     const detectedType=fields.detectType(fieldMappings);
     if(detectedType==='unknown')throw new ValidationError('The selected columns do not identify products.');
