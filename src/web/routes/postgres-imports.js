@@ -116,6 +116,7 @@ function createPostgresImportsRouter(database,{provider=null}={}){
         confirmTrackingChange:req.body.confirmTrackingChange==='yes',
         defaultLocationId:Object.hasOwn(req.body,'defaultLocationId')?trimOrNull(req.body.defaultLocationId):undefined,
         confirmCatalogOnly:Object.hasOwn(req.body,'confirmCatalogOnly')?req.body.confirmCatalogOnly==='yes':undefined,
+        confirmWorksheetScope:Object.hasOwn(req.body,'confirmWorksheetScope')?req.body.confirmWorksheetScope==='yes':undefined,
         importMode:Object.hasOwn(req.body,'importMode')?req.body.importMode:undefined,
         allowPartialImport:Object.hasOwn(req.body,'allowPartialImport')?req.body.allowPartialImport==='yes':undefined});
       req.flash('success','Preview corrected and recalculated. Review all rows again before approving.');

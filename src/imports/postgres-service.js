@@ -329,6 +329,7 @@ function integrityStream(plan) {
     ...(plan.transformations?.allowPartialImport?{allowPartialImport:true}:{}),
     ...(plan.transformations?.importMode?{importMode:plan.transformations.importMode}:{}),
     ...(plan.transformations?.workbook?{workbook:plan.transformations.workbook}:{}),
+    ...(plan.transformations?.worksheetScope?{worksheetScope:plan.transformations.worksheetScope}:{}),
     ...(plan.transformations?.trackingReview?{trackingReview:plan.transformations.trackingReview}:{}),
     ...(plan.transformations?.proposedLocations?.length?{proposedLocations:plan.transformations.proposedLocations}:{}),
     defaultLocationId:plan.defaultLocationId};
@@ -358,7 +359,17 @@ async function supplierRows(database,ctx,sheet,mappings){
   return supplierDataset.validate(sheet,mappings,existing.map((row)=>row.name));
 }
 
-async function saveSupplierPreview(database,ctx,{bytes,sourceHash,filename,sheet,sheetIndex=0,format,mappings}){
+function worksheetCoverage(sheets,sheetIndex){
+  return sheets.length>1?{sheetCount:sheets.length,worksheetScope:{confirmed:false,coverage:sheets.map((source,index)=>({sheet:index,name:source.name,rows:source.rows.length,included:index===sheetIndex}))}}:{};
+}
+function confirmWorksheetScope(plan,ctx,input){
+  const scope=plan.transformations.worksheetScope;
+  if(input.confirmWorksheetScope===undefined)return scope;
+  if(input.confirmWorksheetScope!==true||!Array.isArray(scope?.coverage)||scope.coverage.length<2||scope.coverage.filter(part=>part.included).length!==1)
+    throw new ValidationError('Read the complete workbook again before choosing which worksheets to import.');
+  return {...scope,confirmed:true,confirmedBy:ctx.actorId,confirmedAt:nowIso()};
+}
+async function saveSupplierPreview(database,ctx,{bytes,sourceHash,filename,sheet,sheetIndex=0,format,mappings,sheets=[sheet]}){
   const rows=await supplierRows(database,ctx,sheet,mappings);
   const at=nowIso();const valid=rows.filter((row)=>row.status==='VALID').length;
   const plan={id:newId('imp'),workspaceId:ctx.workspaceId,createdByUserId:ctx.actorId,
@@ -366,7 +377,7 @@ async function saveSupplierPreview(database,ctx,{bytes,sourceHash,filename,sheet
       format==='image'?'image':filename?'csv':'paste',sourceHash,sourceBytes:bytes.length,
     detectedType:'unknown',sheetName:sheet.name,sheetIndex,
     sourceColumns:sheet.columns.map((column)=>({index:column.index,name:column.name})),
-    fieldMappings:mappings,transformations:{dataset:'suppliers'},trackingModel:{mode:'per-row'},
+    fieldMappings:mappings,transformations:{dataset:'suppliers',...worksheetCoverage(sheets,sheetIndex)},trackingModel:{mode:'per-row'},
     locationMappings:{},defaultLocationId:null,recordsDetected:rows.length,recordsValid:valid,
     recordsInvalid:rows.length-valid,warnings:valid<rows.length
       ?[`${rows.length-valid} supplier row(s) need correction or already exist and will not be created.`]:[],
@@ -408,7 +419,7 @@ async function analyse(database, ctx, input) {
   if(!sheet?.rows.length)throw new ValidationError('That source has no inventory rows.');
   const supplierMapping=supplierDataset.classify(sheet.columns);
   if(supplierMapping)return saveSupplierPreview(database,ctx,{bytes,sourceHash,filename:input.filename,
-    sheet,sheetIndex,format:parsedWorkbook.format,mappings:supplierMapping});
+    sheet,sheets:parsedWorkbook.sheets,sheetIndex,format:parsedWorkbook.format,mappings:supplierMapping});
   const prior=(await database.query(`SELECT field_mappings,detected_type FROM import_plans
     WHERE workspace_id=$1 AND source_hash=$2 AND approval_status='APPROVED' AND status<>'CANCELLED'
     ORDER BY created_at DESC,id DESC LIMIT 1`,
@@ -420,13 +431,15 @@ async function analyse(database, ctx, input) {
   const modelProvider=input.allowModel===false?null:input.provider||(require('../config').ai.configured?
     require('../ai/provider').createProviderUnobserved(require('../config').ai.provider,require('../config').ai.tier(relationalWorkbook?'standard':'fast')):null);
   const wrappedProvider=modelProvider?require('../commercial/model').wrap(database,ctx,modelProvider,'import_mapping',input.usageKey||require('./usage-key').analysisUsageKey(sourceHash)):null;
-  const workbook=relationalWorkbook
+  const combined=relationalWorkbook&&!input.workbookContract&&!Number.isInteger(input.sheetIndex)&&!input.mappings
+    ?await require('./workbook-tables').combine(parsedWorkbook):null;
+  const workbook=combined||(relationalWorkbook
     ?await require('./workbook-relations').interpret(parsedWorkbook,{provider:wrappedProvider,
-      contract:input.workbookContract,onBeforeAi:input.onBeforeAi,onUsage:input.onUsage}):null;
+      contract:input.workbookContract,onBeforeAi:input.onBeforeAi,onUsage:input.onUsage}):null);
   if(workbook)sheet=workbook.sheet;
   const proposal=workbook?{mappings:workbook.mappings,detectedType:workbook.variantColumns.length?'variant_inventory':fields.detectType(workbook.mappings),
     axisNames:workbook.axisNames,variantColumns:workbook.variantColumns,provenanceIndex:workbook.provenanceIndex,problemsIndex:workbook.problemsIndex,
-    aiUsed:!input.workbookContract,ignoredColumns:[],assumptions:workbook.reconciliations||[]}:await mappingService.proposeMappings({...sheet,sourceName:input.filename || 'pasted data'},
+    aiUsed:workbook.aiUsed??!input.workbookContract,ignoredColumns:[],assumptions:workbook.reconciliations||[]}:await mappingService.proposeMappings({...sheet,sourceName:input.filename || 'pasted data'},
     {provider:wrappedProvider,allowModel:input.allowModel,
       mappings:input.mappings || json(prior?.field_mappings,null),allowAdditionalMappings:!input.mappings&&Boolean(prior),detectedType:input.detectedType || prior?.detected_type,
       onBeforeAi:input.onBeforeAi,onUsage:input.onUsage});
@@ -453,6 +466,7 @@ async function analyse(database, ctx, input) {
       ...(workbook?{workbook:{version:1,contract:workbook.contract,coverage:workbook.coverage,sourceRows:workbook.sourceRows,
         outputRows:workbook.outputRows,physicalUnits:workbook.physicalUnits,issues:workbook.issues,issueCount:workbook.issueCount},
         variantColumns:workbook.variantColumns,provenanceIndex:workbook.provenanceIndex,problemsIndex:workbook.problemsIndex}:{}),
+      ...(!workbook?worksheetCoverage(parsedWorkbook.sheets,sheetIndex):{}),
       ignoredColumns:proposal.ignoredColumns,sheetCount:parsedWorkbook.sheets.length,existingStockRows:validated.summary.existingStockRows,
       unmappedNumericColumns:unmappedNumeric,confirmCatalogOnly:false,proposedLocations},trackingModel:{mode:'per-row'},
     locationMappings:{},defaultLocationId:validated.defaultLocationId,recordsDetected:streaming?sheet.rows.length:validated.summary.total,
@@ -584,9 +598,15 @@ async function revise(database,ctx,id,input={}){
     if(input.importMode!==undefined&&!['set','add'].includes(input.importMode))throw new ValidationError('Choose whether the file sets on-hand quantities or receives additional stock.');
     if(plan.status!=='READY'||plan.approvalStatus!=='AWAITING_APPROVAL')
       throw new ValidationError('Only an unapproved preview can be corrected.');
-    if(plan.transformations.dataset==='suppliers')
-      throw new ValidationError('This is a supplier directory, not an inventory catalog. Review supplier rows on the preview.');
     if(plan.integrityHash!==input.expectedHash)throw new ValidationError('The preview changed. Review it before correcting rows.');
+    if(plan.transformations.dataset==='suppliers'){
+      if(input.confirmWorksheetScope!==true)throw new ValidationError('This is a supplier directory, not an inventory catalog. Review supplier rows on the preview.');
+      const revised={...plan,transformations:{...plan.transformations,worksheetScope:confirmWorksheetScope(plan,ctx,input)},planVersion:plan.planVersion+1},hash=integrityStream(revised);
+      let lastRow=0,lastId='';
+      for(;;){const rows=(await client.query('SELECT * FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND (row_number,id)>($3::bigint,$4::text) ORDER BY row_number,id LIMIT 500',[ctx.workspaceId,id,lastRow,lastId])).rows.map(hydrateRow);if(!rows.length)break;for(const row of rows)hash.append(row);lastRow=rows.at(-1).rowNumber;lastId=rows.at(-1).id;}
+      revised.integrityHash=hash.finish();
+      await client.query('UPDATE import_plans SET transformations=$3::jsonb,plan_version=$4,integrity_hash=$5 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id,JSON.stringify(revised.transformations),revised.planVersion,revised.integrityHash]);return revised;
+    }
     let fieldMappings=plan.fieldMappings;
     if(input.fieldMappings!==undefined){
       const sourceIndexes=new Set(plan.sourceColumns.map((column)=>column.index));
@@ -664,8 +684,10 @@ async function revise(database,ctx,id,input={}){
       unmappedNumeric=unmappedNumericColumns({columns:plan.sourceColumns,rows:numericSource.map(row=>({cells:json(row.raw,[])}))},fieldMappings);
     }
     const confirmCatalogOnly=fieldMappings.quantity===undefined&&(input.confirmCatalogOnly===true||input.confirmCatalogOnly===undefined&&!mappingChanged&&plan.transformations.confirmCatalogOnly===true);
+    const worksheetScope=confirmWorksheetScope(plan,ctx,input);
     const revised={...plan,fieldMappings,detectedType,locationMappings,defaultLocationId,
       transformations:{...plan.transformations,axisNames,quantityOverrides,documentRowRoles,
+        ...(worksheetScope?{worksheetScope}:{}),
         ...(visualSource(plan)?{codeOverrides,moneyOverrides,imageReadingConfirmed,imageReadingConfirmedBy:imageReadingConfirmed?ctx.actorId:null}:{}),
         ...(trackingReview?{trackingReview}:{}),
         unmappedNumericColumns:unmappedNumeric,confirmCatalogOnly,proposedLocations,
@@ -722,6 +744,8 @@ async function approve(database, ctx, id, expectedHash) {
       throw new ValidationError('This is a supplier directory. Reopen its preview so StockChief can safely classify it before approval.');
     if(plan.isExpired)throw new ValidationError('This preview is more than 24 hours old. Read the source again before importing.');
     if(plan.integrityHash!==expectedHash)throw new ValidationError('The preview changed. Review the current rows before approving.');
+    if(!plan.transformations.workbook&&plan.transformations.sheetCount>1&&plan.transformations.worksheetScope?.confirmed!==true)
+      throw new ValidationError('Review every worksheet before approval. Read the complete workbook again, or explicitly confirm the displayed worksheet scope; other worksheets will not be imported.');
     if(visualSource(plan)&&plan.transformations.imageReadingConfirmed!==true)throw new ValidationError('Review the image’s product codes, quantities and prices against the original, save any SKU corrections and confirm the reading before approving.');
     if(plan.fieldMappings.name===undefined&&plan.fieldMappings.code===undefined)
       throw new ValidationError('Map a product name or SKU and recalculate the preview before approving.');

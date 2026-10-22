@@ -40,6 +40,7 @@ async function list(database,workspaceId,{id=null,limit=10,activeOnly=false}={})
      AND other.status='RUNNING' AND other.payload->>'planId'<>p.id) AS waiting_for_import,
    (p.status='READY' AND p.approval_status='AWAITING_APPROVAL' AND (
      p.records_valid=0 OR
+     NOT (p.transformations::jsonb ? 'workbook') AND (p.transformations::jsonb->>'sheetCount')::int>1 AND COALESCE(p.transformations::jsonb#>>'{worksheetScope,confirmed}','false')<>'true' OR
      EXISTS(SELECT 1 FROM import_rows r WHERE r.workspace_id=p.workspace_id AND r.import_id=p.id AND r.problems::jsonb @> '[{"code":"accounting_not_ready"}]'::jsonb) OR
      (p.transformations::jsonb->>'existingStockRows')::int>0 AND NULLIF(p.transformations::jsonb->>'importMode','') IS NULL OR
      p.records_invalid>0 AND COALESCE(p.transformations::jsonb->>'allowPartialImport','false')<>'true' OR
