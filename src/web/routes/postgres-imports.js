@@ -106,12 +106,15 @@ function createPostgresImportsRouter(database,{provider=null}={}){
         .filter(Boolean))].slice(0,3).map((value)=>value.slice(0,80))}));
     const [runJob,importProgress,trackingQuestion,previewRevision]=await Promise.all([importJob(database,req.ctx.workspaceId,plan.id),progress.get(database,req.ctx.workspaceId,plan.id),
       require('../../imports/tracking-review').read(database,req.ctx.workspaceId,plan),require('../../imports/postgres-preview-revisions').latest(database,req.ctx.workspaceId,plan.id)]);
+    const approvalReview=require('../../imports/approval-review').review(plan,{trackingQuestion,previewRevision,duplicatePlans,
+      missingLocationRows:missingLocation.rows.length>0,missingAccountingSetup:missingAccounting.rows.length>0,
+      needsNumberAnswer:plan.fieldMappings.quantity===undefined&&!plan.transformations.confirmCatalogOnly&&mappingRows.some(row=>(plan.transformations.unmappedNumericColumns||[]).includes(row.column))});
     return res.page(plan.transformations.dataset==='suppliers'?'imports/supplier-preview':'imports/postgres-preview',
       {title:`Import ${plan.sourceName}`,nav:'imports',plan,rows,counts,
       duplicatePlans,run,locations:locationRows,mappingRows,fieldOptions:fields.FIELDS,page,pageSize:PAGE_SIZE,filter,
       missingLocationRows:missingLocation.rows.length>0,
       missingAccountingSetup:missingAccounting.rows.length>0,
-      locationKinds:require('../../domain/constants').LOCATION_KINDS,runJob,importProgress,trackingQuestion,previewRevision,reviewError,
+      locationKinds:require('../../domain/constants').LOCATION_KINDS,runJob,importProgress,trackingQuestion,previewRevision,reviewError,approvalReview,
     });
   }
   router.get('/imports/:id',asyncRoute((req,res)=>renderPreview(req,res)));

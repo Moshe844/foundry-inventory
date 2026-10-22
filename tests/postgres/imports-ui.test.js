@@ -100,7 +100,7 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
     const duplicateMain=await page.locator('main').innerText();
     assert.match(duplicateMain,/This exact source was already imported/);
     assert.match(duplicateMain,/SKIPPED 2/);
-    assert.equal(await page.getByRole('button',{name:'Approve 0 rows'}).isDisabled(),true);
+    assert.equal(await page.locator('form[action$="/approve"] button').isDisabled(),true);
     assert.deepEqual((await database.query(`SELECT COUNT(*) AS items,COALESCE((SELECT SUM(on_hand) FROM balances
       WHERE workspace_id=$1),0) AS units FROM items WHERE workspace_id=$1`,[identity.workspace_id])).rows[0],
     {items:'1',units:'12'});
@@ -133,7 +133,7 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
     assert.equal(unknownPlan.detectedType,'unknown');
     assert.equal(unknownPlan.recordsValid,0);
     assert.match(await page.locator('main').innerText(),/which values identify your products/);
-    assert.equal(await page.getByRole('button',{name:'Approve 0 rows'}).isDisabled(),true);
+    assert.equal(await page.locator('form[action$="/approve"] button').isDisabled(),true);
     await assert.rejects(imports.approve(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},
       unknownId,unknownPlan.integrityHash),/Map a product name or SKU/);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'These are product names'}).first().click()]);
@@ -182,7 +182,7 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
     await page.goto(`${base}/imports/${ambiguousId}`);
     assert.equal(ambiguousPlan.fieldMappings.quantity,undefined);
     assert.deepEqual(ambiguousPlan.transformations.unmappedNumericColumns,['Metric X']);
-    assert.equal(await page.getByRole('button',{name:'Approve 1 row'}).isDisabled(),true);
+    assert.equal(await page.locator('form[action$="/approve"] button').isDisabled(),true);
     await assert.rejects(imports.approve(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},
       ambiguousId,ambiguousPlan.integrityHash),/numeric source column was not mapped/i);
     await database.query(`UPDATE import_plans SET transformations=(transformations::jsonb-'unmappedNumericColumns')::text
@@ -226,11 +226,11 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
     await page.locator('input[type="file"][name="file"]').setInputFiles({
       name:'scanned-opening-stock.pdf',mimeType:'application/pdf',buffer:await scannedTablePdf()});
     await Promise.all([page.waitForURL(/\/imports\/imp_/),page.getByRole('button',{name:'Continue'}).click()]);
-    assert.match(await page.locator('main').innerText(),/2 rows read · Answer the question below before import/);
+    assert.match(await page.locator('main').innerText(),/2 rows read · Review required before approval/);
     assert.match(await page.locator('main').innerText(),/Where is this stock kept\?/);
     await Promise.all([page.waitForNavigation(),page.locator('section[aria-labelledby="import-location-question"]')
       .getByRole('button',{name:'Main Warehouse',exact:true}).click()]);
-    assert.equal(await page.getByRole('button',{name:/Approve .*row/}).isDisabled(),true,'A PDF scan must use the same evidence review as a photograph');
+    assert.equal(await page.locator('form[action$="/approve"] button').isDisabled(),true,'A PDF scan must use the same evidence review as a photograph');
     await page.locator('input[name=confirmImageReading]').check();
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Save image review'}).click()]);
     assert.match(await page.locator('main').innerText(),/2 rows read · 2 ready · 0 need correction/);
@@ -249,10 +249,10 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
       name:'phone-inventory-photo.png',mimeType:'image/png',
       buffer:scannedTableImage({items:[['Desk Fan','FAN-10','5'],['Desk Clock','CLOCK-20','6']]})});
     await Promise.all([page.waitForURL(/\/imports\/imp_/),page.getByRole('button',{name:'Continue'}).click()]);
-    assert.match(await page.locator('main').innerText(),/2 rows read · Answer the question below before import/);
+    assert.match(await page.locator('main').innerText(),/2 rows read · Review required before approval/);
     await Promise.all([page.waitForNavigation(),page.locator('section[aria-labelledby="import-location-question"]')
       .getByRole('button',{name:'Main Warehouse',exact:true}).click()]);
-    assert.equal(await page.getByRole('button',{name:/Approve .*row/}).isDisabled(),true,'An image requires explicit review even after its location is known');
+    assert.equal(await page.locator('form[action$="/approve"] button').isDisabled(),true,'An image requires explicit review even after its location is known');
     await page.getByLabel('Image quantity for row 2',{exact:true}).fill('5');
     await page.getByLabel('Image quantity for row 3',{exact:true}).fill('6');
     await page.locator('input[name=confirmImageReading]').check();

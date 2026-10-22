@@ -1,26 +1,28 @@
 <% const sourceMappings=plan.fieldMappings||{}; const sourceTransforms=plan.transformations||{};
-   const needsIdentity=sourceMappings.name===undefined&&sourceMappings.code===undefined;
+   const review=approvalReview;
+   const needsIdentity=review.needsIdentity;
    const numberQuestions=sourceMappings.quantity===undefined?(mappingRows||[]).filter(function(row){return (sourceTransforms.unmappedNumericColumns||[]).includes(row.column);}):[];
-   const needsNumberAnswer=numberQuestions.length>0&&!sourceTransforms.confirmCatalogOnly;
-   const needsLocation=!plan.defaultLocationId && Boolean(locals.missingLocationRows || rows.some(function(row){return row.status==='INVALID'&&row.problems.some(function(problem){return problem.code==='no_location';});}));
+   const needsNumberAnswer=review.needsNumberAnswer;
+   const needsLocation=review.needsLocation;
    const trackingQuestion=locals.trackingQuestion;
-   const needsTrackingAnswer=trackingQuestion?.state==='needs_input';
-   const needsImageAnswer=(plan.sourceKind==='image'||sourceTransforms.visualSource===true)&&sourceTransforms.imageReadingConfirmed!==true;
-   const needsAccounting=Boolean(locals.missingAccountingSetup);
-   const needsPartialAnswer=plan.recordsInvalid>0&&!sourceTransforms.allowPartialImport;
-   const needsStockIntent=sourceTransforms.existingStockRows>0&&!sourceTransforms.importMode;
-   const needsWorksheetScope=plan.approvalStatus==='AWAITING_APPROVAL'&&!sourceTransforms.workbook&&sourceTransforms.sheetCount>1&&sourceTransforms.worksheetScope?.confirmed!==true;
-   const needsAnswer=Boolean(locals.previewRevision?.active)||needsIdentity||needsNumberAnswer||needsLocation||needsTrackingAnswer||needsImageAnswer||needsAccounting||needsPartialAnswer||needsStockIntent||needsWorksheetScope||plan.conflicts.length>0;
+   const {needsTrackingAnswer,needsImageAnswer,needsAccounting,needsPartialAnswer,needsStockIntent,needsWorksheetScope,needsAnswer}=review;
    const activity=locals.importProgress;
    const importing=Boolean(activity?.active&&activity.state!=='UPDATING_PREVIEW');
    const interrupted=Boolean(activity&&['PAUSED','NEEDS_REVIEW'].includes(activity.state)&&!run?.verified); %>
 <% if(locals.reviewError){ %><div class="notice notice--warn" role="alert"><strong><%= reviewError %></strong><p>Your current preview and source rows are retained. Nothing was approved or imported by this request.</p></div><% } %>
 <div class="page-head">
   <div class="titles"><a class="back-link" href="/imports">Bring data in</a><h1><%= plan.sourceName %></h1>
-    <div class="page-sub"><%= plan.recordsDetected %> <%= helpers.plural(plan.recordsDetected, 'row') %> read · <% if(needsAnswer){ %>Answer the question below before import<% } else { %><%= plan.recordsValid %> ready · <%= plan.recordsInvalid %> need correction<% } %></div>
+    <div class="page-sub"><%= Number(plan.recordsDetected).toLocaleString('en-US') %> <%= helpers.plural(plan.recordsDetected, 'row') %> read · <% if(needsAnswer){ %>Review required before approval<% } else { %><%= plan.recordsValid %> ready · <%= plan.recordsInvalid %> need correction<% } %></div>
   </div>
   <div class="page-actions" <% if(activity.active){ %>data-import-progress="<%= activity.href %>/progress"<% } %>><span data-import-status class="badge badge--<%= activity?.verified?'ok':'muted' %>"><%= activity?.label||helpers.columnLabel(plan.status.toLowerCase()) %></span></div>
 </div>
+<% if(plan.status==='READY'&&plan.approvalStatus==='AWAITING_APPROVAL'){ %>
+<section class="card card-body section" id="import-approval-review" aria-labelledby="import-review-title">
+ <h2 id="import-review-title"><%= review.canApprove?'Ready for your approval':'Before you can import' %></h2>
+ <% if(review.blockers.length){ %><p id="import-approval-explanation">Your file is saved. Approval is unavailable until the following <%= review.blockers.length===1?'step is':'steps are' %> complete. No stock or Money has changed.</p>
+ <ol><% review.blockers.forEach(function(step){ %><li><strong><%= step.title %></strong><p><%= step.detail %></p><a class="btn btn--secondary" href="<%= step.href %>"><%= step.action %></a></li><% }) %></ol>
+ <% }else{ %><p id="import-approval-explanation">Required choices are complete. Review the rows and planned changes below, then approve this preview. Approval saves your authorization; “Import and verify” starts the import.</p><a class="btn btn--primary" href="#import-approval-actions">Review and approve</a><% } %>
+</section><% } %>
 <%- include('preview-revision',{sourceTransforms}) %>
 <% if(sourceTransforms.analysisNotice){ %><section class="card card-body" role="status"><h2>Your file was read; automatic interpretation is paused</h2><p><%= sourceTransforms.analysisNotice.message %></p><p>The original file and this unapproved preview are saved. No stock or inventory value changed. Review the column meanings<%= sourceTransforms.sheetCount>1?' and complete worksheet coverage':'' %> before approval. A usage limit does not mean your file is corrupt.</p>
 <% if(plan.status==='READY'&&plan.approvalStatus==='AWAITING_APPROVAL'){ %><form method="post" action="/imports/<%= plan.id %>/reanalyse"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><button class="btn" type="submit">Retry automatic interpretation from saved file</button></form><% } %></section><% } %>
@@ -29,10 +31,10 @@
 <% if(sourceTransforms.sourceContext){ %><section class="card card-body"><h2>Your request with this file</h2><p><%= sourceTransforms.sourceContext %></p><p>No delivery, receipt or other business action has been recorded. This preview preserves your instruction while you review the source quantities and evidence. A supplier bill, payment or actual receipt remains a separately authorized workflow.</p></section><% } %>
 <%- include('worksheet-scope',{sourceTransforms,needsWorksheetScope}) %>
 <% if(needsAccounting&&plan.status==='READY'&&plan.approvalStatus==='AWAITING_APPROVAL'){ %>
-<section class="card card-body" role="status"><h2>Set up Money once before importing inventory value</h2><p>Your file contains unit costs. StockChief read those amounts, but this inventory does not yet have its accounting currency and opening date. This is one setup step for the whole file; you do not need to repair each row.</p><p>No products, stock or value have been imported.</p><a class="btn btn--primary" href="/accounting/setup?import=<%= encodeURIComponent(plan.id) %>">Set up Money and recheck this file</a></section>
+<section class="card card-body" role="status" id="import-money-setup"><h2>Set up Money once before importing inventory value</h2><p>Your file contains unit costs. StockChief read those amounts, but this inventory does not yet have its accounting currency and opening date. This is one setup step for the whole file; you do not need to repair each row.</p><p>No products, stock or value have been imported.</p><a class="btn btn--primary" href="/accounting/setup?import=<%= encodeURIComponent(plan.id) %>">Set up Money and recheck this file</a></section>
 <% } %>
 <% if(sourceTransforms.existingStockRows>0&&plan.status==='READY'&&plan.approvalStatus==='AWAITING_APPROVAL'){ %>
-<section class="card card-body"><h2>Does this file replace counts or add a delivery?</h2><p><%= sourceTransforms.existingStockRows %> rows match existing products. StockChief will not assume these quantities are additional stock.</p>
+<section class="card card-body" id="import-stock-intent"><h2>Does this file replace counts or add a delivery?</h2><p><%= sourceTransforms.existingStockRows %> rows match existing products. StockChief will not assume these quantities are additional stock.</p>
 <form method="post" action="/imports/<%= plan.id %>/revise"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>">
 <label class="field"><span>How to use the quantities</span><select class="select" name="importMode" required><option value="">Choose before approval</option><option value="set" <%= sourceTransforms.importMode==='set'?'selected':'' %>>Set on-hand to the file counts</option><option value="add" <%= sourceTransforms.importMode==='add'?'selected':'' %>>Receive these as additional stock</option></select></label>
 <p>Setting a count preserves existing unit costs. New units use the source cost when provided; reductions of valued stock record a count adjustment in Money. An unchanged count creates no movement or new value. Tracked stock still requires exact serial or lot movements.</p><button class="btn" type="submit">Recalculate stock changes</button></form></section>
@@ -52,17 +54,18 @@
 </tbody></table></div><label class="field"><span><input type="checkbox" name="confirmImageReading" value="yes" required> I checked the image’s product codes, quantities and prices against the original.</span></label><p>These corrections update the preview only. Importing stock and value requires the separate approval below.</p><button class="btn btn--primary" type="submit">Save image review</button><p role="status" data-import-preview-status hidden></p></form><% } %>
 </div></section><% } %>
 <% if(trackingQuestion && plan.status==='READY'){ %>
-<section class="card section" aria-labelledby="import-tracking-question"><div class="card-head"><h2 id="import-tracking-question"><%= needsTrackingAnswer?'StockChief needs one confirmation':trackingQuestion.state==='complete'?'Tracking details':'Tracking requirements reviewed' %></h2></div><div class="card-body">
+<section class="card section" aria-labelledby="import-tracking-question"><div class="card-head"><h2 id="import-tracking-question" tabindex="-1"><%= needsTrackingAnswer?'Do these products need serial numbers or batch tracking?':trackingQuestion.state==='complete'?'Tracking details':'Tracking requirements reviewed' %></h2></div><div class="card-body">
   <% if(needsTrackingAnswer){ %><p>Your file marks some products as serial- or lot-tracked, but does not identify all of their stock. StockChief found the quantities; it cannot safely invent serial numbers or batch allocations.</p><% } else if(trackingQuestion.state==='complete'){ %><p>No tracking information is missing. The source flags and identifiers are preserved with this preview.</p><% } else { %><p>The original tracking flags are preserved with this preview. Review your choices below before approving inventory changes.</p><% } %>
   <div class="table-scroll"><table class="table"><thead><tr><th>Source requirement</th><th>SKUs marked in file</th><th>SKUs needing identifiers</th></tr></thead><tbody><% trackingQuestion.groups.forEach(function(group){ %><tr><th scope="row"><%= group.label %></th><td><%= group.sourceSkus.toLocaleString('en-US') %></td><td><%= group.missingSkus.toLocaleString('en-US') %></td></tr><% }) %></tbody></table></div>
   <% if(plan.approvalStatus==='AWAITING_APPROVAL' && trackingQuestion.state!=='complete'){ %>
   <form method="post" action="/imports/<%= plan.id %>/revise" class="stack-form" data-import-preview-revise>
     <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>">
-    <% trackingQuestion.groups.forEach(function(group){ %><label class="field"><span class="field-label"><%= group.label %> requirements</span><select class="select" name="tracking_<%= group.mode %>">
-      <option value="source" <%= group.decision==='source'?'selected':'' %>>Keep the file's tracking requirements</option>
-      <% if(group.canUseQuantity){ %><option value="quantity" <%= group.decision==='quantity'?'selected':'' %>>These flags do not apply; track these products by quantity</option><% } %>
+    <% trackingQuestion.groups.forEach(function(group){ const unanswered=group.missingSkus>0&&!trackingQuestion.confirmedAt; %><label class="field"><span class="field-label"><%= group.label %> requirements</span><select class="select" name="tracking_<%= group.mode %>" required>
+      <% if(unanswered){ %><option value="" selected>Choose how these products are tracked</option><% } %>
+      <option value="source" <%= !unanswered&&group.decision==='source'?'selected':'' %>>Yes — keep this requirement; supply the missing identifiers before import</option>
+      <% if(group.canUseQuantity){ %><option value="quantity" <%= group.decision==='quantity'?'selected':'' %>>No — these flags do not apply; track by quantity</option><% } %>
     </select></label><% }) %>
-    <p>If the requirements are intentional, keep them and include one serial number per unit, or lot numbers with quantities that reconcile to each location, in the source file. <a href="/imports/start">Upload the completed source</a> to prepare a new preview.</p>
+    <p><strong>If you choose Yes:</strong> include one serial number per unit, or batch numbers with quantities for each location, in your file. <a href="/imports/start">Upload the completed source</a> to prepare a new preview. Saving “Yes” alone cannot make missing identifiers available.</p><p><strong>If you choose No:</strong> confirm below that the file's flags do not apply. StockChief will recalculate the complete preview using quantity tracking. You can then review and approve it; this choice does not import anything.</p>
     <% if(trackingQuestion.groups.some(function(group){return group.canUseQuantity;})){ %><label class="field"><span><input type="checkbox" name="confirmTrackingChange" value="yes"> If I selected quantity tracking, I confirm those flags do not apply to this inventory.</span></label><% } %>
     <p class="muted">This updates the preview only. Nothing is imported until you review and approve the recalculated result.</p>
     <button class="btn btn--primary" type="submit">Save choices and recalculate preview</button><p class="muted" data-import-preview-status role="status" hidden></p>
@@ -79,9 +82,9 @@
 <section class="card section" aria-labelledby="workbook-scope"><div class="card-head"><h2 id="workbook-scope">How this <%= imagePages?'image file':'workbook' %> will be imported</h2></div><div class="card-body">
   <p><strong><%= Number(book.sourceRows).toLocaleString('en-US') %> source records</strong> across <%= book.coverage.length %> <%= parts %>. Stock is prepared as <%= Number(book.outputRows).toLocaleString('en-US') %> product/location rows. <% if(book.contract?.kind==='independent_tables'){ %>Compatible product tables with distinct SKUs are included together. Every row retains its <%= imagePages?'image page':'worksheet' %> and source row. Document totals and notes are reviewed separately from products.<% } else { %>Location counts are checked against the physical totals; totals and historical movements are not added again.<% } %></p>
   <p>Review the <%= parts %> below. Data marked “Not imported” will not create orders, bills, reservations or other business records.</p>
-  <div class="table-scroll"><table class="table"><thead><tr><th><%= imagePages?'Image page':'Worksheet' %></th><th>Source rows</th><th>Use in this import</th><th>Details</th></tr></thead><tbody>
+  <details><summary>Review all <%= book.coverage.length %> <%= parts %> and how their data is used</summary><div class="table-scroll"><table class="table"><thead><tr><th><%= imagePages?'Image page':'Worksheet' %></th><th>Source rows</th><th>Use in this import</th><th>Details</th></tr></thead><tbody>
   <% book.coverage.forEach(function(part){ %><tr><th scope="row"><%= part.name %></th><td><%= Number(part.rows).toLocaleString('en-US') %></td><td><%= part.role==='not_imported'?'Not imported':part.role==='reference'?'Related reference':'Opening inventory' %></td><td><%= part.reason %></td></tr><% }) %>
-  </tbody></table></div>
+  </tbody></table></div></details>
   <% if(plan.recordsInvalid){ %><p class="text-danger"><strong><%= Number(plan.recordsInvalid).toLocaleString('en-US') %> rows still need attention.</strong> Answer the required questions and review the row explanations below before approving the complete <%= imagePages?'image file':'workbook' %>. StockChief will not invent missing values.</p><% } %>
 </div></section>
 <% } %>
@@ -99,8 +102,8 @@
     </div>
   </section>
 <% } %>
-<% if(plan.status==='READY' && plan.approvalStatus==='AWAITING_APPROVAL' && needsLocation && !needsIdentity && !needsNumberAnswer){ %>
-  <section class="card section" aria-labelledby="import-location-question"><div class="card-head"><h2 id="import-location-question">Where is this stock kept?</h2></div>
+<% if(plan.status==='READY' && plan.approvalStatus==='AWAITING_APPROVAL' && needsLocation){ %>
+  <section class="card section" id="import-location-review" aria-labelledby="import-location-question"><div class="card-head"><h2 id="import-location-question">Where is this stock kept?</h2></div>
     <div class="card-body"><p><%= sourceMappings.location!==undefined?'Some rows still need a location choice. Names already supplied in your file are preserved.':'The file has stock quantities but does not say which location holds them. Pick one location for these rows.' %> StockChief will recalculate the preview; nothing changes until you approve it.</p>
       <% if(locations.length){ %><div class="btn-row"><% locations.forEach(function(location){ %>
         <form method="post" action="/imports/<%= plan.id %>/revise"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>">
@@ -109,8 +112,8 @@
     </div>
   </section>
 <% } %>
-<% if(plan.status==='READY' && plan.approvalStatus==='AWAITING_APPROVAL' && plan.conflicts.length && !needsIdentity && !needsNumberAnswer && !needsLocation){ %>
-  <section class="card section" aria-labelledby="import-location-conflicts"><div class="card-head"><h2 id="import-location-conflicts">Help me match the location names in this file</h2></div>
+<% if(plan.status==='READY' && plan.approvalStatus==='AWAITING_APPROVAL' && plan.conflicts.length && !needsLocation){ %>
+  <section class="card section" id="import-location-review" aria-labelledby="import-location-conflicts"><div class="card-head"><h2 id="import-location-conflicts">Help me match the location names in this file</h2></div>
     <div class="card-body"><p>These names do not match your current locations. Choose where each belongs; StockChief will recalculate before approval.</p>
       <% plan.conflicts.forEach(function(conflict,index){ %><div class="section"><strong><%= conflict.text %></strong> · <%= conflict.count %> <%= helpers.plural(conflict.count,'row') %>
         <div class="btn-row"><% locations.forEach(function(location){ %><form method="post" action="/imports/<%= plan.id %>/revise"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>">
@@ -180,9 +183,9 @@
       <% if(plan.warnings.length){ %><details><summary>Review notes about this file</summary><ul class="plain-list"><% plan.warnings.forEach(function(warning){ %><li class="is-warn"><%= warning %></li><% }) %></ul></details><% } %>
       <% if(plan.conflicts.length){ %><p><strong>Missing setup:</strong> Add or correct these locations before importing: <%= plan.conflicts.map(function(c){return c.text;}).join(', ') %>.</p><% } %>
     </div>
-    <div class="card-foot"><div class="btn-row">
+    <div class="card-foot" id="import-approval-actions"><% if(plan.approvalStatus==='AWAITING_APPROVAL'&&!review.canApprove){ %><p><strong>Approval is unavailable:</strong> <%= review.blockers.map(step=>step.title).join('; ') %>. <a href="<%= review.blockers[0].href %>"><%= review.blockers[0].action %></a>.</p><% } %><div class="btn-row">
       <% if(plan.approvalStatus==='APPROVED'){ %><form method="post" action="/imports/<%= plan.id %>/run"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><button class="btn btn--primary" type="submit">Import and verify</button></form>
-      <% } else { %><form method="post" action="/imports/<%= plan.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><button class="btn btn--primary" type="submit" <%= needsAnswer || !plan.recordsValid || ((sourceTransforms.workbook || sourceMappings.serialTracked!==undefined || sourceMappings.lotTracked!==undefined) && plan.recordsInvalid>0) || duplicatePlans.length?'disabled':'' %>>Approve <%= plan.recordsValid %> <%= helpers.plural(plan.recordsValid, 'row') %></button></form><% } %>
+      <% } else { %><form method="post" action="/imports/<%= plan.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><button class="btn btn--primary" type="submit" aria-describedby="import-approval-explanation" <%= review.canApprove?'':'disabled' %>><% if(review.canApprove){ %>Approve <%= plan.recordsValid %> <%= helpers.plural(plan.recordsValid, 'row') %><% }else{ %>Review required before approval<% } %></button></form><% } %>
       <form method="post" action="/imports/<%= plan.id %>/cancel"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost" type="submit">Cancel</button></form>
     </div></div>
   </div>
@@ -219,7 +222,7 @@
     <% mappingRows.forEach(function(row){ %><tr><td><%= row.column %></td><td><%= row.field ? (fieldOptions.find(function(field){return field.id===row.field;}) || {}).label : 'Not imported' %></td></tr><% }) %>
   </tbody></table>
 </details>
-<div class="card section"><div class="card-head"><h2>Every row</h2><span class="spacer"></span>
+<div class="card section" id="import-rows"><div class="card-head"><h2>Every row</h2><span class="spacer"></span>
   <div class="btn-row"><a class="btn btn--sm" href="/imports/<%= plan.id %>">All <%= plan.recordsDetected %></a>
     <% Object.keys(counts).forEach(function(status){ %><a class="btn btn--sm" href="/imports/<%= plan.id %>?rows=<%= status %>"><%= status==='INVALID'?'Needs attention':status %> <%= counts[status] %></a><% }) %></div></div>
   <div class="table-scroll"><table class="table table--tight"><thead><tr><th>Row</th><th>Product</th><th>SKU / variant</th><th>Qty</th><th>Unit cost</th><th>Selling price</th><th>Location</th><th>Result</th></tr></thead><tbody>

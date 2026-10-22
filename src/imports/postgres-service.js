@@ -795,13 +795,10 @@ async function approve(database, ctx, id, expectedHash) {
       throw new ValidationError('This is a supplier directory. Reopen its preview so StockChief can safely classify it before approval.');
     if(plan.isExpired)throw new ValidationError('This preview is more than 24 hours old. Read the source again before importing.');
     if(plan.integrityHash!==expectedHash)throw new ValidationError('The preview changed. Review the current rows before approving.');
-    if(!plan.transformations.workbook&&plan.transformations.sheetCount>1&&plan.transformations.worksheetScope?.confirmed!==true)
-      throw new ValidationError('Review every worksheet before approval. Read the complete workbook again, or explicitly confirm the displayed worksheet scope; other worksheets will not be imported.');
-    if(visualSource(plan)&&plan.transformations.imageReadingConfirmed!==true)throw new ValidationError('Review the image’s product codes, quantities and prices against the original, save any SKU corrections and confirm the reading before approving.');
-    if(plan.fieldMappings.name===undefined&&plan.fieldMappings.code===undefined)
-      throw new ValidationError('Map a product name or SKU and recalculate the preview before approving.');
+    const requirements=require('./approval-review').planRequirements(plan);
+    const unanswered=requirements.find(step=>!['rows','empty'].includes(step.code));
+    if(unanswered)throw new ValidationError(unanswered.error);
     if(!plan.recordsValid)throw new ValidationError('There are no valid rows to import.');
-    if(plan.transformations.existingStockRows>0&&!plan.transformations.importMode)throw new ValidationError('This file matches existing stock. Choose set on-hand quantities or receive additional stock before approval.');
     if((await client.query(`SELECT 1 FROM import_rows WHERE workspace_id=$1 AND import_id=$2 AND status='INVALID' AND problems::jsonb @> '[{"code":"accounting_not_ready"}]'::jsonb LIMIT 1`,[ctx.workspaceId,id])).rows.length)
       throw new ValidationError('Finish Money setup and recheck this file before approving its inventory values. No stock or value was imported.');
     // A required location answer is a plan-level question, even when zero-stock
@@ -809,9 +806,8 @@ async function approve(database, ctx, id, expectedHash) {
     if((await client.query(`SELECT 1 FROM import_rows WHERE workspace_id=$1 AND import_id=$2
       AND status='INVALID' AND (problems::jsonb @> '[{"code":"no_location"}]'::jsonb OR problems::jsonb @> '[{"code":"unknown_location"}]'::jsonb) LIMIT 1`,[ctx.workspaceId,id])).rows.length)
       throw new ValidationError('Answer where this stock is held and recalculate the preview before approving.');
-    if(plan.transformations.workbook&&plan.recordsInvalid)throw new ValidationError('This workbook still has unresolved source rows. Resolve them before approving the complete inventory; StockChief will not silently import only part of it.');
-    if(plan.recordsInvalid&&(plan.fieldMappings.serialTracked!==undefined||plan.fieldMappings.lotTracked!==undefined))throw new ValidationError('Resolve the tracking requirements and invalid rows before approving this inventory. StockChief will not silently skip part of the source.');
-    if(plan.recordsInvalid&&!plan.transformations.allowPartialImport)throw new ValidationError('Correct the invalid rows, or explicitly review and choose a partial import first.');
+    const unresolved=requirements.find(step=>['rows','empty'].includes(step.code));
+    if(unresolved)throw new ValidationError(unresolved.error);
     await plannedLocations.assertOwner(client,ctx,plan.transformations.proposedLocations||[]);
     if(plan.transformations.proposedLocations?.length)await require('../entitlements/postgres-service').assertMeterCapacity(client,
       await require('../entitlements/postgres-service').ownerScopeForWorkspace(client,ctx.workspaceId),'locations',plan.transformations.proposedLocations.length);
