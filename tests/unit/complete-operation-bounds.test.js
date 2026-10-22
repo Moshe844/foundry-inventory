@@ -4,3 +4,6 @@ test('whole bounded workflows preserve every dependency and reject excess instea
  for(const count of [1,9,17,MAX_OPERATIONS]){const raw=make(count),steps=contracts.operationSteps(raw,registry),parsed=planner.parseSteps({steps});assert.equal(parsed.steps.length,count);assert.deepEqual(parsed.steps.at(-1).dependsOn,raw.at(-1).dependsOn);assert.equal(parsed.steps.at(-1).args.location,raw.at(-1).arguments[0].value);}
  const over=make(MAX_OPERATIONS+1);assert.throws(()=>contracts.operationSteps(over,registry),/operations/);const refused=planner.parseSteps({steps:over});assert.equal(refused.steps.length,0);assert.match(refused.clarifyingQuestion,/Nothing was truncated/);const invalid=make(MAX_OPERATIONS);invalid.at(-1).dependsOn=[MAX_OPERATIONS];assert.throws(()=>contracts.operationSteps(invalid,registry),/earlier steps/);assert.equal(planner.parseSteps({steps:invalid}).steps.length,0);
 });
+test('fresh native tool metadata publishes the actual current batch bound even on resumed threads',()=>{
+ const tools=require('../../scripts/environment-agent-demo/candidates').sharedTools({gateway:{}}),operation=tools.find(t=>t.name==='business_operations');assert(operation);assert(operation.description.includes('1 through '+MAX_OPERATIONS+' operations'));assert.match(operation.description,/historical tool errors do not define the current contract/);
+});
