@@ -16,13 +16,14 @@
   <p class="muted">Every job is separate. Authorising a customer email never authorises purchasing, payments, transfers, or postage.</p></div></div>
   <div class="card-body"><div class="job-list"><% capabilities.forEach(function(job){ %><div class="job">
     <div class="job-body"><strong><%= job.label %></strong><span class="t-xs t-muted"><%= job.blurb %></span>
-      <span class="t-xs t-muted"><em><%= job.consequence %></em></span></div>
+      <span class="t-xs t-muted"><em><%= job.consequence %></em></span>
+      <% if(job.minimumMode==='SUPERVISED'){ %><span class="t-xs t-muted">Can investigate and prepare approvals in Ask me first mode.</span><% } %></div>
     <form method="post" action="/autopilot/capability" class="job-action"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <input type="hidden" name="capability" value="<%= job.capability %>"><input type="hidden" name="granted" value="<%= job.granted?'0':'1' %>">
       <button class="btn btn--sm <%= job.granted?'':'btn--primary' %>" type="submit"><%= job.granted?'Take this back':'Let StockChief do this' %></button></form>
     <span class="job-state <%= job.granted?'is-on':'' %>"><%= job.granted?'Authorised':'Asks first' %></span>
   </div><% }) %></div>
-  <% if(state.mode!=='POLICY_AUTOMATED'){ %><p class="hint"><strong>These grants are stored but inactive while StockChief is set to watch or ask first.</strong> Changing the mode still grants nothing by itself.</p><% } %>
+  <% if(state.mode!=='POLICY_AUTOMATED'){ %><p class="hint"><strong>Watch only keeps every job inactive. Ask me first allows authorised investigation and preparation; business actions still wait for approval.</strong> Changing the mode grants nothing by itself.</p><% } %>
   </div></section>
 
 <section class="card"><div class="card-head"><div><h2>Routine transfer and purchasing limits</h2><p class="muted">One confirmation creates immutable, versioned authority. Everything else goes to Needs you.</p></div></div>

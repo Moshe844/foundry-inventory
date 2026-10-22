@@ -47,12 +47,21 @@ test('real Chromium proves native PostgreSQL transfer-versus-buy planning, appro
 
     await page.goto(`${base}/autopilot`);
     assert.match(await page.locator('main').innerText(),/Decide what StockChief may handle without you/);
-    assert.equal(await page.locator('.job').count(),8);
-    for(const job of ['Move stock between locations','Reorder and place purchase orders',
+    assert.equal(await page.locator('.job').count(),9);
+    for(const job of ['Review incoming supplier invoices','Move stock between locations','Reorder and place purchase orders',
       'Keep replenishment levels up to date','Email suppliers','Answer customers','Ask customers to pay',
       'Buy shipping labels','Tell customers their order has shipped']){
       assert.equal(await page.locator('.job').filter({hasText:job}).count(),1,job);
     }
+    const preparationAuthority=page.locator('.job').filter({hasText:'Review incoming supplier invoices'});
+    assert.match(await preparationAuthority.innerText(),/Can investigate and prepare approvals in Ask me first mode/);
+    await Promise.all([page.waitForNavigation(),preparationAuthority.getByRole('button',{name:'Let StockChief do this'}).click()]);
+    const autonomy=require('../../src/autopilot/postgres-service');
+    assert.equal((await autonomy.getState(database,ctx.workspaceId)).mode,'SUPERVISED');
+    assert.equal((await autonomy.capabilityMay(database,ctx.workspaceId,'supplier_document_review')).allowed,true);
+    assert.equal((await autonomy.capabilityMay(database,ctx.workspaceId,'supplier_emails')).allowed,false);
+    await Promise.all([page.waitForNavigation(),page.locator('.job').filter({hasText:'Review incoming supplier invoices'}).getByRole('button',{name:'Take this back'}).click()]);
+    assert.equal((await autonomy.capabilityMay(database,ctx.workspaceId,'supplier_document_review')).allowed,false);
     const paymentAuthority=page.locator('.job').filter({hasText:'Ask customers to pay'});
     await Promise.all([page.waitForNavigation(),paymentAuthority.getByRole('button',{name:'Let StockChief do this'}).click()]);
     assert.match(await page.locator('.job').filter({hasText:'Ask customers to pay'}).innerText(),/Authorised/);
@@ -60,7 +69,7 @@ test('real Chromium proves native PostgreSQL transfer-versus-buy planning, appro
     let grants=(await database.query(`SELECT capability,granted FROM autopilot_capabilities
       WHERE workspace_id=$1 ORDER BY capability`,[ctx.workspaceId])).rows;
     assert.deepEqual(grants.map((row)=>({capability:row.capability,granted:Number(row.granted)})),
-      [{capability:'payment_requests',granted:1}]);
+      [{capability:'payment_requests',granted:1},{capability:'supplier_document_review',granted:0}]);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Check the operation now'}).click()]);
     assert.match(await page.locator('main').innerText(),/Transfer Widget[\s\S]*waiting for approval/);
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM work_items WHERE workspace_id=$1

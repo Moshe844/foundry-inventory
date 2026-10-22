@@ -37,6 +37,7 @@ const permissions = require('../actions/permissions');
 const CAPABILITIES = {
   supplier_document_review: {
     domain:'purchasing',label:'Review incoming supplier invoices',
+    minimumMode:'SUPERVISED',
     blurb:'The enabled native agent investigates readable supplier attachments against business records and prepares the required reviews and follow-through. Existing model budgets apply.',
     consequence:'Paid investigation may run. This grant does not approve bills, payments, emails or physical receipts.',
   },
@@ -125,6 +126,14 @@ function requireName(capability) {
   return name;
 }
 
+// Preparation can run in ask-first mode, but executing a business action still
+// requires the normal automation ceiling and its own explicit grant.
+function modeAllows(capability, mode) {
+  const name = requireName(capability);
+  const minimum = CAPABILITIES[name].minimumMode || 'POLICY_AUTOMATED';
+  return mode === 'POLICY_AUTOMATED' || mode === 'SUPERVISED' && minimum === 'SUPERVISED';
+}
+
 function granted(db, workspaceId, capability) {
   const row = db.prepare(`SELECT granted FROM autopilot_capabilities
     WHERE workspace_id = ? AND capability = ?`).get(workspaceId, capability);
@@ -152,7 +161,7 @@ function may(db, workspaceId, capability) {
   if (state.mode === 'OBSERVE') {
     return { allowed: false, because: 'StockChief is set to watch only, so it acts on nothing by itself.' };
   }
-  if (!state.canAutomate) {
+  if (!modeAllows(name, state.mode)) {
     return { allowed: false,
       because: 'StockChief is set to ask before acting, so it prepares the work and stops.' };
   }
@@ -206,4 +215,4 @@ function apply(db, ctx, membership, changes = {}) {
   return list(db, ctx.workspaceId);
 }
 
-module.exports = { CAPABILITIES, NAMES, CAPABILITY_FOR_ACTION, may, list, set, apply, granted };
+module.exports = { CAPABILITIES, NAMES, CAPABILITY_FOR_ACTION, modeAllows, may, list, set, apply, granted };

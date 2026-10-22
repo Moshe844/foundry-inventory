@@ -68,8 +68,8 @@
         <p>
           Each is separate. Authorising StockChief to chase an invoice never authorises it to spend money.
           <% if (state.mode !== 'POLICY_AUTOMATED') { %>
-            <strong>While StockChief is set to “<%= state.modeLabel %>”, none of these run</strong> — it prepares
-            the work and waits for you. The grants are kept, so they take effect if you change the mode.
+            <strong>Watch only keeps every job inactive. Ask me first allows authorised investigation and preparation;</strong>
+            business actions still wait for approval. Changing the mode grants nothing by itself.
           <% } %>
         </p>
       </div>
@@ -80,6 +80,7 @@
               <strong><%= job.label %></strong>
               <span class="t-xs t-muted"><%= job.blurb %></span>
               <span class="t-xs t-muted"><em><%= job.consequence %></em></span>
+              <% if (job.minimumMode === 'SUPERVISED') { %><span class="t-xs t-muted">Can investigate and prepare approvals in Ask me first mode.</span><% } %>
             </div>
             <form method="post" action="/autopilot/capability" class="job-action" data-busy>
               <input type="hidden" name="_csrf" value="<%= csrfToken %>">

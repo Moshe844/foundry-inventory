@@ -99,7 +99,7 @@ async function capabilityMay(database,workspaceId,capability){if(!capabilityDefi
   if(state.paused)return {allowed:false,because:'StockChief is paused.'};
   if(state.suspended)return {allowed:false,because:'StockChief has stopped itself and is waiting to be looked at.'};
   if(state.mode==='OBSERVE')return {allowed:false,because:'StockChief is set to watch only.'};
-  if(!state.canAutomate)return {allowed:false,because:'StockChief is set to ask before acting.'};
+  if(!capabilityDefinitions.modeAllows(capability,state.mode))return {allowed:false,because:'StockChief is set to ask before acting.'};
   const row=(await database.query(`SELECT granted FROM autopilot_capabilities
     WHERE workspace_id=$1 AND capability=$2`,[workspaceId,capability])).rows[0];
   return Number(row?.granted)===1?{allowed:true,because:null}:{allowed:false,
