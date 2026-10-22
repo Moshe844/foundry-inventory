@@ -2,6 +2,26 @@
 (()=>{
  const format=iso=>new Intl.DateTimeFormat(undefined,{year:'numeric',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',second:'2-digit',timeZoneName:'short',...(document.documentElement.dataset.timeZone?{timeZone:document.documentElement.dataset.timeZone}:{})}).format(new Date(iso));
  document.querySelectorAll('[data-import-time]').forEach(time=>{if(Number.isFinite(Date.parse(time.dateTime))){time.textContent=format(time.dateTime);time.title=time.dateTime;}});
+ document.querySelectorAll('[data-import-file-upload]').forEach(form=>form.querySelector('[type=file]')?.addEventListener('change',()=>{const key=form.querySelector('[name=uploadKey]');if(key)key.value=crypto.randomUUID();}));
+ const sourceGroups=new Map();
+ document.querySelectorAll('[data-source-upload][data-source-active="yes"]').forEach(panel=>{const url=new URL(panel.dataset.sourceUpload,location.origin);if(url.origin!==location.origin)return;const entry=sourceGroups.get(url.pathname)||{panels:[],finished:false};entry.panels.push(panel);sourceGroups.set(url.pathname,entry);});
+ if(sourceGroups.size){let pending=false;
+  const refresh=async()=>{if(pending||document.hidden)return;pending=true;
+   try{await Promise.all([...sourceGroups].filter(([,entry])=>!entry.finished).map(async([endpoint,entry])=>{
+    try{const response=await fetch(endpoint,{credentials:'same-origin',cache:'no-store',headers:{accept:'application/json'},signal:AbortSignal.timeout(10000)});if(!response.ok)throw new Error('unavailable');const state=await response.json();
+     for(const panel of entry.panels){panel.querySelector('[data-source-label]').textContent=state.label;
+      panel.querySelector('[data-source-rows]').textContent=(state.worksheets?state.worksheets+' worksheets read · ':'')+(state.totalRows===null?'The file is saved. Row totals appear after its tables are read.':(state.processedRows??0).toLocaleString()+' / '+state.totalRows.toLocaleString()+' rows checked and prepared');
+      const meter=panel.querySelector('[data-source-meter]');meter.max=state.totalRows||1;if(state.processedRows===null)meter.removeAttribute('value');else meter.value=state.processedRows;
+      const seconds=Math.max(0,Math.floor((Date.now()-Date.parse(state.createdAt))/1000));panel.querySelector('[data-source-timing]').textContent='Uploaded '+format(state.createdAt)+(state.active?' · '+Math.floor(seconds/60)+'m '+seconds%60+'s elapsed':'');
+      panel.querySelector('[data-source-live]').textContent='Last worker update '+format(state.lastUpdateAt);panel.querySelector('[data-source-reason]').textContent=state.reason||'';
+      const link=panel.querySelector('[data-source-result]');link.href=state.previewHref||state.href;link.textContent=state.ready?'Review preview':'Open saved progress';const retry=panel.querySelector('[data-source-retry]');if(retry)retry.hidden=!state.canRetry;
+     }
+     if(!state.active){entry.finished=true;if(state.ready&&entry.panels.some(panel=>panel.hasAttribute('data-source-detail'))&&/^\/imports\/imp_[a-z0-9]+$/.test(state.previewHref))location.assign(state.previewHref);}
+    }catch{for(const panel of entry.panels)panel.querySelector('[data-source-live]').textContent='Progress connection interrupted. Your file is saved; refresh this page to reconnect.';}
+   }));if([...sourceGroups.values()].every(entry=>entry.finished))clearInterval(timer);}finally{pending=false;}
+  };
+  const timer=setInterval(refresh,2500);document.addEventListener('visibilitychange',refresh);refresh();
+ }
  document.querySelectorAll('[data-import-preview-revise]').forEach(form=>form.addEventListener('submit',event=>{
   if(form.dataset.submitting==='yes'){event.preventDefault();return;}form.dataset.submitting='yes';form.setAttribute('aria-busy','true');
   form.querySelectorAll('button[type="submit"]').forEach(button=>{button.disabled=true;button.textContent='Recalculating preview…';});

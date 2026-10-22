@@ -13,6 +13,7 @@ const { newId,trimOrNull }=require('../../lib/util');
 const { ValidationError }=require('../../domain/errors');
 
 const PAGE_SIZE=50;
+const sourceUploads=require('../../imports/postgres-source-uploads');
 
 async function importJob(database,workspaceId,id){
   return (await database.query(`SELECT status,lease_expires_at FROM stockchief_runtime.jobs
@@ -30,11 +31,25 @@ function createPostgresImportsRouter(database,{provider=null}={}){
   router.use('/imports',requireAuth);
   async function renderStart(req,res){return res.page('imports/start',{
     title:'File imports and results',nav:'imports',recent:await progress.list(database,req.ctx.workspaceId,{limit:20}),
+    sourceUploads:await sourceUploads.list(database,req.ctx.workspaceId),
     locations:await locations(database,req.ctx.workspaceId),aiConfigured:Boolean(provider||config.ai.configured),canOperate:true,
     usageKey:newId('importpreview'),uploadLimitBytes:config.uploads.maxBytes,
   });}
   router.get('/imports/start',asyncRoute(renderStart));
   router.get('/imports',asyncRoute(renderStart));
+  router.get('/imports/uploads/:id',asyncRoute(async(req,res)=>{
+    const upload=await sourceUploads.get(database,req.ctx.workspaceId,req.params.id);
+    if(upload.ready)return res.redirect(303,upload.previewHref);
+    return res.page('imports/source-upload',{title:'Reading '+upload.sourceName,nav:'imports',sourceUpload:upload});
+  }));
+  router.get('/imports/uploads/:id/progress',asyncRoute(async(req,res)=>{
+    res.set('Cache-Control','no-store');return res.json(await sourceUploads.get(database,req.ctx.workspaceId,req.params.id));
+  }));
+  router.post('/imports/uploads/:id/retry',asyncRoute(async(req,res)=>{
+    try{await sourceUploads.retry(database,req.ctx,req.params.id);req.flash('success','File check queued from the saved source. Nothing is being imported.');}
+    catch(error){if(!(error instanceof ValidationError))throw error;req.flash('error',error.message);}
+    return res.redirect(303,'/imports/uploads/'+req.params.id);
+  }));
   router.get('/imports/:id/progress',asyncRoute(async(req,res)=>{
     const state=await progress.get(database,req.ctx.workspaceId,req.params.id);
     res.set('Cache-Control','no-store');return res.json(state);
@@ -51,6 +66,15 @@ function createPostgresImportsRouter(database,{provider=null}={}){
     const file=files[0] || null;
     if(!file && !pasted)throw new ValidationError('Choose a file, or paste your data.');
     const source=file?.buffer||Buffer.from(pasted,'utf8');const sourceHash=crypto.createHash('sha256').update(source).digest('hex');
+    // File uploads are durable even when submitted by an older open browser
+    // tab. They must not depend on refreshed markup or a JavaScript header.
+    if(file||req.body.prepareAsync==='yes'||String(req.get('prefer')||'').includes('respond-async')){
+      const upload=await sourceUploads.enqueue(database,req.ctx,{buffer:file?.buffer,text:file?undefined:pasted,filename:file?.filename,
+        requestKey:trimOrNull(req.body.uploadKey),defaultLocationId:trimOrNull(req.body.defaultLocationId),
+        usageKey:require('../../imports/usage-key').analysisUsageKey(sourceHash,req.body.usageKey)});
+      if(wantsJson)return res.status(202).json({ok:true,location:upload.href});
+      return res.redirect(303,upload.href);
+    }
     const plan=await imports.analyse(database,req.ctx,{buffer:file?.buffer,text:file?undefined:pasted,
       filename:file?.filename,defaultLocationId:trimOrNull(req.body.defaultLocationId),provider,
       usageKey:require('../../imports/usage-key').analysisUsageKey(sourceHash,req.body.usageKey)});

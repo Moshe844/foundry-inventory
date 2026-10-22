@@ -156,12 +156,13 @@ function createPostgresApp({database,resourceDatabase=database,sessionStore,sess
     // enforcement above. They do not render navigation, onboarding or banners.
     if(!req.ctx||!req.accepts('html'))return next();
     try {
-      const [attentionCount,entry,importActivity]=await Promise.all([
+      const [attentionCount,entry,importActivity,sourceUploads]=await Promise.all([
         postgresProjections.needsCount(database,req.ctx.workspaceId,req.ctx.actorId),
         postgresExploration.state(database,req.ctx.workspaceId,req.account.id),
         req.method==='GET'&&req.accepts('html')?require('./imports/postgres-progress').list(database,req.ctx.workspaceId,{activeOnly:true,limit:3}):Promise.resolve([]),
+        req.method==='GET'&&req.accepts('html')?require('./imports/postgres-source-uploads').list(database,req.ctx.workspaceId,{activeOnly:true,limit:2}):Promise.resolve([]),
       ]);
-      res.locals.attentionCount=attentionCount;res.locals.globalOnboardingEntry=entry;res.locals.globalImportActivity=importActivity;return next();
+      res.locals.attentionCount=attentionCount;res.locals.globalOnboardingEntry=entry;res.locals.globalImportActivity=importActivity;res.locals.globalSourceUploads=sourceUploads;return next();
     }
     catch(error){return next(error);}
   });

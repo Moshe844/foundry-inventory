@@ -1,0 +1,10 @@
+<section class="card card-body section" data-source-upload="<%= upload.href %>/progress" data-source-active="<%= upload.active?'yes':'no' %>" <%= detail?'data-source-detail':'' %> aria-live="polite">
+ <h2 data-source-label><%= upload.label %></h2><p><strong><%= upload.sourceName %></strong></p>
+ <p data-source-rows><%= upload.totalRows===null?'The file is saved. The row count appears after its tables are read.':(upload.processedRows??0).toLocaleString()+' / '+upload.totalRows.toLocaleString()+' rows checked and prepared' %></p>
+ <progress data-source-meter max="<%= upload.totalRows||1 %>" <% if(upload.processedRows!==null){ %>value="<%= upload.processedRows %>"<% } %> aria-label="File reading progress" style="width:100%"></progress>
+ <p data-source-timing>Uploaded <time data-import-time datetime="<%= new Date(upload.createdAt).toISOString() %>"><%= new Date(upload.createdAt).toUTCString() %></time>.</p>
+ <p data-source-live>Last update <time data-import-time datetime="<%= new Date(upload.lastUpdateAt).toISOString() %>"><%= new Date(upload.lastUpdateAt).toUTCString() %></time>.</p>
+ <p data-source-reason role="alert"><%= upload.reason||'' %></p><p>No products, stock or Money are being imported. You can leave this page and reopen the file from <a href="/imports">File imports and results</a>. Review and approval follow once the preview is ready.</p>
+ <a class="btn btn--secondary" data-source-result href="<%= upload.previewHref||upload.href %>"><%= upload.ready?'Review preview':'Open saved progress' %></a>
+ <% if(detail){ %><form method="post" action="<%= upload.href %>/retry" data-source-retry <%= upload.canRetry?'':'hidden' %>><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Retry reading the saved file</button></form><% } %>
+</section>

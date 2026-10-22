@@ -69,6 +69,10 @@ async function recover(client, now) {
   const expired = await client.query(`SELECT * FROM stockchief_runtime.jobs
     WHERE status = 'RUNNING' AND lease_expires_at <= $1 FOR UPDATE SKIP LOCKED`, [now]);
   for (const row of expired.rows) {
+    if(row.kind==='import.analyse-source'){
+      const receipt=(await client.query(`SELECT u.id,u.plan_id FROM import_source_uploads u JOIN import_plans p ON p.id=u.plan_id AND p.workspace_id=u.workspace_id AND p.source_hash=u.source_hash WHERE u.job_id=$1 AND u.workspace_id=$2 AND u.id=$3 AND u.actor_id=$4`,[row.id,row.workspace_id,row.payload?.uploadId,row.payload?.actorId])).rows[0];
+      if(receipt){await client.query(`UPDATE stockchief_runtime.jobs SET status='COMPLETED',result=$2::jsonb,lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,last_error=NULL,completed_at=$3,updated_at=$3 WHERE id=$1`,[row.id,JSON.stringify({uploadId:receipt.id,planId:receipt.plan_id,recovered:true}),new Date(now).toISOString()]);await event(client,row.id,'COMPLETION_RECOVERED',{planId:receipt.plan_id},now);continue;}
+    }
     const dead = row.attempt_count >= row.max_attempts;
     await client.query(`UPDATE stockchief_runtime.jobs SET status = $2, available_at = $3,
       lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL,

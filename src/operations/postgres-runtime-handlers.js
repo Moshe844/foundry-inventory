@@ -175,6 +175,12 @@ async function runtimeSweep(job,client,options={}){
   const sessions=await client.query(`WITH expired_webhook_challenges AS
     (DELETE FROM stockchief_runtime.provider_webhook_challenges WHERE expires_at <= $1)
     DELETE FROM stockchief_runtime.sessions WHERE expires_at <= $1 RETURNING sid`,[now]);
+  // Preserve request metadata and hashes, but do not retain an unsuccessful
+  // upload's binary beyond its review window. Never clear a running source.
+  await client.query(`UPDATE import_source_uploads SET source_content=NULL WHERE id IN (
+    SELECT u.id FROM import_source_uploads u JOIN stockchief_runtime.jobs j ON j.id=u.job_id
+    WHERE u.plan_id IS NULL AND u.source_content IS NOT NULL AND u.expires_at<now() AND j.status<>'RUNNING'
+    ORDER BY u.expires_at,u.id LIMIT 50 FOR UPDATE OF u SKIP LOCKED)`);
   const suspendedSubscriptions=await client.query(`UPDATE account_subscriptions SET status='SUSPENDED',updated_at=now()
     WHERE (status='GRACE' AND grace_ends_at IS NOT NULL AND grace_ends_at<=now())
       OR (status='TRIALING' AND trial_ends_at IS NOT NULL AND trial_ends_at<=now())
@@ -511,6 +517,7 @@ function create(providers=defaultProviders,options={}){return {'system.runtime-s
     return {shipmentId,rateCount:quoted.rates?.length||0};
   }),
   'import.revise-preview':external((job,database)=>require('../imports/postgres-preview-revisions').run(job,database),'bulk'),
+  'import.analyse-source':external((job,database)=>require('../imports/postgres-source-uploads').run(job,database,{provider:options.aiProvider}),'bulk'),
   'import.execute-approved':external(async(job,database)=>{
       const {planId,actorId,integrityHash,retryExecutionId}=job.payload||{};
     if(!job.workspaceId||!planId||!actorId||!integrityHash)throw Object.assign(

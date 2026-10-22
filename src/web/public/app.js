@@ -859,7 +859,7 @@
       submit.textContent = `Read ${files.length} file${files.length === 1 ? '' : 's'} safely`;
       errorBox.hidden = true;
     };
-    input.addEventListener('change',paint);
+    input.addEventListener('change',()=>{const key=form.querySelector('[name=uploadKey]');if(key)key.value=crypto.randomUUID();paint();});
     if (form.hasAttribute('data-direct-upload')) {
       input.addEventListener('change', () => { if (input.files.length) form.requestSubmit(); });
     }
@@ -904,9 +904,9 @@
         bar.value = percent;
         detail.textContent = `${percent}% · ${bytes(upload.loaded)} of ${bytes(upload.total)}`;
         if (percent === 100) {
-          title.textContent = 'Reading and reconciling your records…';
-          detail.textContent = `Upload complete. StockChief is identifying the worksheets in ${input.files.length} file${input.files.length === 1 ? '' : 's'}.`;
-          submit.textContent = 'Reading worksheets…';
+          title.textContent = 'Saving your uploaded file…';
+          detail.textContent = 'The upload has arrived. Your saved reading progress will open next.';
+          submit.textContent = 'Saving file…';
         }
       });
       request.addEventListener('load',() => {

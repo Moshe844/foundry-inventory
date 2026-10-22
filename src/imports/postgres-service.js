@@ -371,7 +371,7 @@ function confirmWorksheetScope(plan,ctx,input){
     throw new ValidationError('Read the complete workbook again before choosing which worksheets to import.');
   return {...scope,confirmed:true,confirmedBy:ctx.actorId,confirmedAt:nowIso()};
 }
-async function saveSupplierPreview(database,ctx,{bytes,sourceHash,filename,sheet,sheetIndex=0,format,mappings,sheets=[sheet]}){
+async function saveSupplierPreview(database,ctx,{bytes,sourceHash,filename,sheet,sheetIndex=0,format,mappings,sheets=[sheet],lifecycle={}}){
   const rows=await supplierRows(database,ctx,sheet,mappings);
   const at=nowIso();const valid=rows.filter((row)=>row.status==='VALID').length;
   const plan={id:newId('imp'),workspaceId:ctx.workspaceId,createdByUserId:ctx.actorId,
@@ -397,11 +397,9 @@ async function saveSupplierPreview(database,ctx,{bytes,sourceHash,filename,sheet
       valid,plan.recordsInvalid,JSON.stringify(plan.warnings),'[]','[]',plan.approvalStatus,plan.status,1,plan.integrityHash,at]);
     await client.query(`INSERT INTO import_source_snapshots(import_id,workspace_id,source_hash,source_content)
       VALUES($1,$2,$3,$4)`,[plan.id,ctx.workspaceId,sourceHash,bytes]);
-    for(const row of rows)await client.query(`INSERT INTO import_rows(id,import_id,workspace_id,row_number,raw,parsed,
-      status,problems,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-    [row.id,plan.id,ctx.workspaceId,row.rowNumber,JSON.stringify(row.raw),JSON.stringify(row.parsed),row.status,
-      JSON.stringify(row.problems),at]);
-  },{isolation:'SERIALIZABLE'});
+    for(let start=0;start<rows.length;start+=500){await rowStore.insert(client,ctx.workspaceId,plan.id,rows.slice(start,start+500),at);await lifecycle.onProgress?.({stage:'saving',processedRows:Math.min(start+500,rows.length),totalRows:rows.length});}
+    await lifecycle.beforeCommit?.(client,plan);
+  },{isolation:lifecycle.sourceJobId?'READ COMMITTED':'SERIALIZABLE'});
   return get(database,ctx.workspaceId,plan.id);
 }
 
@@ -414,16 +412,18 @@ async function analyse(database, ctx, input) {
   const sourceHash=digest(bytes);
   const isPdf=Boolean(buffer)&&buffer.subarray(0,5).toString('ascii')==='%PDF-';
   const isImage=Boolean(buffer)&&require('./image-table').isImage(buffer);
+  await input.onProgress?.({stage:'reading'});
   const parsedWorkbook=isPdf?await require('./pdf-table').parse(buffer):
     isImage?await require('./image-table').parse(buffer):
       parser.parse(buffer?{buffer,filename:input.filename}:{text,filename:input.filename});
+  await input.onProgress?.({stage:'matching',worksheets:parsedWorkbook.sheets.length});
   if(parsedWorkbook.format==='image'||parsedWorkbook.visualSource)input={...input,imageSource:true};
   const sheetIndex=Number.isInteger(input.sheetIndex)?input.sheetIndex:parsedWorkbook.primarySheet;
   let sheet=parsedWorkbook.sheets[sheetIndex];
   if(!sheet?.rows.length)throw new ValidationError('That source has no inventory rows.');
   const supplierMapping=supplierDataset.classify(sheet.columns);
   if(supplierMapping)return saveSupplierPreview(database,ctx,{bytes,sourceHash,filename:input.filename,
-    sheet,sheets:parsedWorkbook.sheets,sheetIndex,format:parsedWorkbook.format,mappings:supplierMapping});
+    sheet,sheets:parsedWorkbook.sheets,sheetIndex,format:parsedWorkbook.format,mappings:supplierMapping,lifecycle:input});
   const prior=(await database.query(`SELECT field_mappings,detected_type FROM import_plans
     WHERE workspace_id=$1 AND source_hash=$2 AND approval_status='APPROVED' AND status<>'CANCELLED'
     ORDER BY created_at DESC,id DESC LIMIT 1`,
@@ -460,6 +460,7 @@ async function analyse(database, ctx, input) {
   // An uncertain interpretation is a review task, not an upload failure. Keep
   // the source columns and rows in an unapproved preview so the operator can
   // identify the product column without editing and re-uploading the file.
+  await input.onProgress?.({stage:'checking',totalRows:sheet.rows.length,worksheets:parsedWorkbook.sheets.length});
   const context=await workspaceContext(database,ctx.workspaceId,{sourceHash});
   if(input.defaultLocationId && !context.locations.some((row)=>row.id===input.defaultLocationId))
     throw new ValidationError('That destination location is not in this inventory.');
@@ -506,7 +507,7 @@ async function analyse(database, ctx, input) {
       JSON.stringify(plan.assumptions),plan.approvalStatus,plan.status,1,plan.integrityHash,at]);
     await client.query(`INSERT INTO import_source_snapshots(import_id,workspace_id,source_hash,source_content)
       VALUES($1,$2,$3,$4)`,[plan.id,ctx.workspaceId,sourceHash,bytes]);
-    if(!streaming){await rowStore.insert(client,ctx.workspaceId,plan.id,validated.rows,at);return;}
+    if(!streaming){await rowStore.insert(client,ctx.workspaceId,plan.id,validated.rows,at);await input.onProgress?.({stage:'saving',processedRows:validated.rows.length,totalRows:validated.rows.length});await input.beforeCommit?.(client,plan);return;}
     const hash=integrityStream(plan),summary={...validated.summary},conflicts=new Map();
     for(let start=0;start<sheet.rows.length;start+=500){
       const batch=validateRows({...sheet,rows:sheet.rows.slice(start,start+500)},proposal.mappings,proposal,validationContext,input);
@@ -515,6 +516,7 @@ async function analyse(database, ctx, input) {
       for(const key of Object.keys(summary))summary[key]+=batch.summary[key];
       for(const c of batch.conflicts)conflicts.set(c.text,{...c,count:(conflicts.get(c.text)?.count||0)+c.count});
       await rowStore.insert(client,ctx.workspaceId,plan.id,batch.rows,at);
+      await input.onProgress?.({stage:'saving',processedRows:Math.min(start+500,sheet.rows.length),totalRows:sheet.rows.length});
     }
     plan.integrityHash=hash.finish();plan.recordsValid=summary.valid;plan.recordsInvalid=summary.invalid;plan.conflicts=[...conflicts.values()];
     plan.transformations.existingStockRows=summary.existingStockRows;
@@ -523,7 +525,8 @@ async function analyse(database, ctx, input) {
       hasIdentity:proposal.mappings.name!==undefined||proposal.mappings.code!==undefined,unmappedNumeric});
     await client.query(`UPDATE import_plans SET records_valid=$3,records_invalid=$4,warnings=$5,conflicts=$6,integrity_hash=$7,transformations=$8::jsonb WHERE workspace_id=$1 AND id=$2`,
       [ctx.workspaceId,plan.id,plan.recordsValid,plan.recordsInvalid,JSON.stringify(plan.warnings),JSON.stringify(plan.conflicts),plan.integrityHash,JSON.stringify(plan.transformations)]);
-  },{isolation:'SERIALIZABLE'});
+    await input.beforeCommit?.(client,plan);
+  },{isolation:input.sourceJobId?'READ COMMITTED':'SERIALIZABLE'});
   return get(database,ctx.workspaceId,plan.id);
 }
 

@@ -17,10 +17,11 @@
 <div class="grid grid--2 section">
   <div class="card">
     <div class="card-head"><h2>From a file</h2></div>
-    <form method="post" action="/imports" enctype="multipart/form-data" data-busy>
+    <form method="post" action="/imports" enctype="multipart/form-data" data-busy data-import-file-upload>
       <div class="card-body">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <input type="hidden" name="usageKey" value="<%= usageKey %>:file">
+        <input type="hidden" name="prepareAsync" value="yes"><input type="hidden" name="uploadKey" value="<%= usageKey %>:file">
         <label class="field">
           <span class="field-label">Your business file</span>
           <input class="input" type="file" name="file" accept="<%= helpers.importSourceFormats.accept %>" required>
@@ -62,6 +63,7 @@ Copper Elbow 3/4in	CE-075	Main Warehouse	86"></textarea>
 
 <% } %>
 
+<% if(locals.sourceUploads?.length){ %><section class="card section"><div class="card-head"><h2>Saved files being checked</h2></div><div class="card-body"><% sourceUploads.forEach(upload=>{ %><%- include('source-upload-panel',{upload,detail:false}) %><% }); %></div></section><% } %>
 <% if (recent.length) { %>
   <div class="card section">
     <div class="card-head"><h2>File imports and results</h2></div>

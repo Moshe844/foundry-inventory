@@ -21,10 +21,11 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
     const database=openPostgres(cluster.connectionString,{applicationName:'stockchief-postgres-imports-ui'});
     await migratePostgres(database);
     const app=createPostgresApp({database,env:'test',sessionSecret:'postgres-imports-secret'});
+    const sourceWorker=require('../../src/operations/postgres-worker').start(database,{handlers:{'import.analyse-source':require('../../src/operations/postgres-runtime-handlers').create({})['import.analyse-source']},intervalMs:50});
     const server=await new Promise((resolve)=>{const started=app.listen(0,'127.0.0.1',()=>resolve(started));});
     const browser=await chromium.launch();
     context.after(async()=>{
-      await browser.close();await new Promise((resolve)=>server.close(resolve));
+      await browser.close();await sourceWorker.stop();await new Promise((resolve)=>server.close(resolve));
       await app.locals.sessionStore.close();await database.close();cluster.stop();
     });
     const page=await browser.newPage({viewport:{width:1440,height:900}});
