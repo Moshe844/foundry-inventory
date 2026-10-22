@@ -571,6 +571,7 @@ async function refundCustomerReturnInTransaction(client, rawContext, id, input) 
       WHERE id=$1 AND workspace_id=$2`, [id, ctx.workspaceId, refundIds[0] || null, nowIso()]);
     await addSalesEvent(client, ctx, row.sales_order_id, 'customer_return_refunded',
       { customerReturnId: id, returnNumber: row.return_number, destination, amountMinor, refundIds }, `${operation.key}:event`);
+    await require('../connections/postgres-return-review').reconcileInTransaction(client,ctx.workspaceId,{salesOrderId:row.sales_order_id});
     const result = { customerReturnId: id, status: 'COMPLETED', destination, amountMinor, refundIds };
     await completeOperation(client, operation, result);
     return { ...result, replayed: false };

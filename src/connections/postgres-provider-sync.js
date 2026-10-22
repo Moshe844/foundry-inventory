@@ -181,6 +181,7 @@ async function sync(job,client,providers=defaultProviders){
   };
   const result=await database.transaction(apply,{isolation:'SERIALIZABLE',retrySafe:true});
   if(!result.skipped)await require('./postgres-webhook-inbox').reconcileCancellationObservations(database,connection,adapter);
+  if(!result.skipped)result.returnReviews=await require('./postgres-return-review').reconcile(database,job.workspaceId,{connectorId});
   if(!result.skipped&&syncConfig.autoImportCatalog===true&&adapter.integrationClass!=='accounting'){
     try{
       result.imported=await require('./postgres-catalog-import').importAutomatic(database,
