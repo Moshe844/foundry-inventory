@@ -83,8 +83,9 @@ async function verify(database,ctx,goal,raw,catalogue,options={}){
   if(claim.historical!==true){
    let currentObservation;
    try{currentObservation=await currentEvidence(entry,claim.path);}
-   catch(error){return unavailable('I could not confirm that the collected information still matches the current records. Your request and recorded work are saved.',error.message,
-    {claimIndex,evidenceId:entry.id,path:claim.path,...error.verificationDetail});}
+   catch(error){return unavailable('I could not confirm that the collected information still matches the current records. Your request and recorded work are saved.',
+    /^[0-9A-Z]{5}$/.test(error.code||'')?'CURRENT_READ_UNAVAILABLE':error.message,
+    {claimIndex,evidenceId:entry.id,path:claim.path,...(/^[0-9A-Z]{5}$/.test(error.code||'')?{reason:'The current business record could not be read; this answer remains unverified.'}:{}),...error.verificationDetail});}
    const currentClaim=presentation.locate(toolView?presentation.project(entry.name,currentObservation,{legacyBrowserWindows}):currentObservation,claim.path);
    const current=currentClaim.value,missingCurrent=!currentClaim.found;
    // Only host-materialized table claims may select a column projection.

@@ -2,7 +2,7 @@
 (()=>{
  const root=document.querySelector('[data-connection-synchronization]');if(!root)return;
  const status=root.querySelector('[data-connection-sync-progress]'),updated=root.querySelector('[data-connection-sync-updated]');
- const format=value=>new Intl.DateTimeFormat(undefined,{year:'numeric',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',second:'2-digit',timeZoneName:'short'}).format(new Date(value));
+ const format=value=>new Intl.DateTimeFormat(undefined,{year:'numeric',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',second:'2-digit',timeZoneName:'short',...(document.documentElement.dataset.timeZone?{timeZone:document.documentElement.dataset.timeZone}:{})}).format(new Date(value));
  const last=root.querySelector('[data-sync-last]'),next=root.querySelector('[data-sync-next]');
  for(const time of root.querySelectorAll('time[datetime]')){time.textContent=format(time.dateTime);time.title=time.dateTime;}
  let pending=false;

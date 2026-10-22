@@ -103,6 +103,18 @@ async function current(...args){
  // Native tools and the durable journal cross a JSON transport boundary.
  // Compare current values in that same representation, including PostgreSQL
  // Dates. Preserve every field and exact timestamp; no stale-value tolerance.
- return JSON.parse(JSON.stringify(await currentValue(...args)));
+ const client=args[0],nested=typeof client.transaction!=='function';
+ // A rejected current read must not leave session.finish's enclosing goal
+ // transaction aborted. Roll back only this read, keep its original error,
+ // and let the host record an unverified result without inventing evidence.
+ if(nested)await client.query('SAVEPOINT stockchief_current_evidence');
+ try{
+  const result=JSON.parse(JSON.stringify(await currentValue(...args)));
+  if(nested)await client.query('RELEASE SAVEPOINT stockchief_current_evidence');
+  return result;
+ }catch(error){
+  if(nested){await client.query('ROLLBACK TO SAVEPOINT stockchief_current_evidence');await client.query('RELEASE SAVEPOINT stockchief_current_evidence');}
+  throw error;
+ }
 }
 module.exports={source,current};
