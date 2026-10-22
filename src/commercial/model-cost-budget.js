@@ -73,9 +73,9 @@ async function reserveNative(database,scope,provider,{inputTokens,outputTokens},
    throw new ValidationError('Invalid native model request bound.');
  const policy=require('./model').POLICIES[operation];if(!policy)throw new ValidationError('Unregistered model operation.');
  const bound=await pricedBound(database,provider,{},policy,operation,{inputTokens,outputTokens});
- return reserveBound(database,scope,bound,operation,idempotencyKey,fundingUsageKey,{...goalScope,nativeTransport:true});
+ return reserveBound(database,scope,bound,operation,idempotencyKey,fundingUsageKey,goalScope,true);
 }
-async function reserveBound(database,scope,bound,operation,idempotencyKey,fundingUsageKey,goalScope){
+async function reserveBound(database,scope,bound,operation,idempotencyKey,fundingUsageKey,goalScope,nativeTransport=false){
  const operationCap=operationLimit(operation)*100;
  if(bound.maximumMinor>operationCap)throw Object.assign(new RateLimitError(
   'This request exceeds the approved per-operation model-cost bound. Shorten its context or use a smaller batch; no model call was made.'),{limitKind:'operation_cost'});
@@ -104,7 +104,7 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
     throw new ValidationError('This goal is no longer authorized to use a model.');
    if(Number(goal.exposure)+bound.maximumMinor>Number(goal.budget_minor))
     throw Object.assign(new RateLimitError('This goal reached its cumulative model-cost ceiling. No model call was made.'),{limitKind:'goal_cost'});
-   if(goalScope.nativeTransport&&process.env.STOCKCHIEF_STAGING_NATIVE_COST_APPROVALS){
+   if(nativeTransport&&process.env.STOCKCHIEF_STAGING_NATIVE_COST_APPROVALS){
     const funding=(await client.query(`SELECT funding_workspace_id,pilot FROM stockchief_runtime.codex_pilot_workspace_access
      WHERE workspace_id=$1 AND owner_account_id=$2`,[scope.workspaceId,scope.accountId])).rows[0],pilot=funding?.pilot;
     temporaryCostApproval=require('./staging-native-cost-approval').approved({accountId:scope.accountId,
