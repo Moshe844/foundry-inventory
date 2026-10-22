@@ -159,9 +159,10 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
     WHERE h.account_id=$1 AND h.period_start=$2 AND a.source='INCLUDED'`,
    [scope.accountId,bounds.start.toISOString(),scope.workspaceId])).rows[0];
   const baseMaximum=sources.filter(row=>row.source==='INCLUDED').reduce((sum,row)=>sum+row.maximumMinor,0);
-  if(Number(current.account_exposure)+baseMaximum>accountCap||
-    Number(current.workspace_exposure)+baseMaximum>workspaceCap)
-   throw new RateLimitError('This inventory reached its billing-period model-cost safety ceiling. No model call was made.');
+  if(Number(current.account_exposure)+baseMaximum>accountCap)
+   throw Object.assign(new RateLimitError('This inventory reached its billing-period model-cost safety ceiling. No model call was made.'),{limitKind:'account_period_cost'});
+  if(Number(current.workspace_exposure)+baseMaximum>workspaceCap)
+   throw Object.assign(new RateLimitError('This inventory reached its billing-period model-cost safety ceiling. No model call was made.'),{limitKind:'workspace_period_cost'});
   for(const source of sources.filter(row=>row.source==='PURCHASED')){
    const exposure=(await client.query(`SELECT COALESCE(SUM(CASE WHEN h.status IN ('RESERVED','UNKNOWN') THEN a.maximum_minor
      WHEN h.status='SETTLED' THEN a.actual_minor ELSE 0 END),0) AS amount
@@ -170,7 +171,7 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
    const effective=paidBudget.effectiveLimit({budget_minor:source.budgetMinor},{units:source.grantUnits,
     revoked_units:source.revokedUnits,dispute_hold_units:source.disputeHoldUnits});
    if(Number(exposure.amount)+source.maximumMinor>effective+1e-6)
-    throw new RateLimitError('This purchased AI pack reached its provider-cost safety budget. No model call was made.');
+    throw Object.assign(new RateLimitError('This purchased AI pack reached its provider-cost safety budget. No model call was made.'),{limitKind:'purchased_pack_cost'});
   }
   // Calculations and rounding remain in the canonical engine above. Persist
   // the exact hold and all of its allocations atomically in one statement.

@@ -49,7 +49,7 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
     if(grant.wireProfile!=='codex'&&grant.lastResponse?.empty)throw Object.assign(new Error(require('./finalization').EMPTY_MESSAGE),{code:'EMPTY_MODEL_FINAL'});
     const input=JSON.parse(Buffer.concat(parts).toString('utf8'));
     const outputTokens=grant.provider==='openai'?input.max_output_tokens||wire.MAX_OUTPUT:input.max_tokens||wire.MAX_OUTPUT;
-    const nativeCodex=grant.wireProfile==='codex';let codex=grant.codexPolicy;
+    const nativeCodex=grant.wireProfile==='codex';let codex=grant.codexPolicy,processingFallback=null;
     const fitOptions=nativeCodex?null:{memory:await grant.contextSource?.(),
      maxInputTokens:Math.min(60000,await commercial.inputAllowance?.({provider:grant.provider,outputTokens})??60000)};
     const fit=value=>nativeCodex?codex.normalize(value):grant.accountingMode==='native'?require('./wire-context').fit(grant.provider,value,fitOptions):wire.normalize(grant.provider,value);
@@ -95,7 +95,11 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
       const goalRoom=await commercial.goalRemainingMicroUsd?.(grant)??Infinity;
       const processingRoom=Math.min(state.remaining,goalRoom);
       if(preferred){const faster=preferred.counted(preferredNormalized,count);
-       if(faster.upperBoundMicroUsd<=Math.min(preferred.REQUEST_CEILING_MICRO_USD,processingRoom)){codex=preferred;normalized=faster;requestHash=preferredHash;}
+       if(faster.upperBoundMicroUsd<=Math.min(preferred.REQUEST_CEILING_MICRO_USD,processingRoom)){
+        const base=codex.counted(normalized,count);
+        if(base.upperBoundMicroUsd<faster.upperBoundMicroUsd)processingFallback={policy:codex,normalized:base,requestHash};
+        codex=preferred;normalized=faster;requestHash=preferredHash;
+       }
        else normalized=codex.counted(normalized,count);
       }else normalized=codex.counted(normalized,count);
       audit({kind:'codex_input_count',inputTokens:normalized.inputTokens,
@@ -122,7 +126,20 @@ async function createRelay({budget,credentials,commercial,fetchImpl=fetch,timeou
     id=await budget.reserve({candidate:grant.candidate,task:grant.task,upperBoundMicroUsd:normalized.upperBoundMicroUsd,detail:callDetail});
     timings.budgetReservationMs=Date.now()-reservationStarted;
     const commercialStarted=Date.now();
-    held=await commercial.begin({...grant,id,...normalized,...(nativeCodex?{codexPolicy:codex}:{}),admissionAccess});
+    try{held=await commercial.begin({...grant,id,...normalized,...(nativeCodex?{codexPolicy:codex}:{}),admissionAccess});}
+    catch(error){
+     // A failed COST reservation made no provider request and holds no money.
+     // Retry only that reservation with the already authorized cheaper
+     // processing of the identical model, reasoning and semantic input. The
+     // full commercial engine rechecks every limit; authority, daily limits,
+     // unknown receipts and upstream failures never take this path.
+     if(!processingFallback||error.code!=='rate_limited'||!['account_period_cost','workspace_period_cost','purchased_pack_cost','operation_cost','goal_cost'].includes(error.limitKind))throw error;
+     codex=processingFallback.policy;normalized=processingFallback.normalized;requestHash=processingFallback.requestHash;
+     const freshAccess=await grant.authorize();
+     held=await commercial.begin({...grant,id,...normalized,codexPolicy:codex,admissionAccess:freshAccess});
+     callDetail={...callDetail,requestedServiceTier:normalized.body.service_tier||null,inputTokenBound:normalized.inputTokens,
+      outputTokenBound:normalized.outputTokens,requestHash,processingFallback:'lower_cost_same_quality'};
+    }
     timings.commercialReservationMs=Date.now()-commercialStarted;
     const secret=credentials[grant.provider];if(!secret)throw new Error('PROVIDER_CREDENTIAL_UNAVAILABLE');
     const headers={'content-type':'application/json',...(grant.provider==='openai'
