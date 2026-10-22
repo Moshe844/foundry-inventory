@@ -61,8 +61,13 @@ async function cacheRecord(client,connection,record){
   const existing=(await client.query(`SELECT foundry_record_id FROM connection_mappings
     WHERE workspace_id=$1 AND connector_id=$2 AND entity_type=$3 AND external_id=$4`,
   [connection.workspace_id,connection.id,entityType,externalId])).rows[0];
-  const target=existing?.foundry_record_id||(!exclusion(providerData(record))
+  const cached=(await client.query(`SELECT mapping_status FROM connection_external_records
+    WHERE workspace_id=$1 AND connector_id=$2 AND entity_type=$3 AND external_id=$4`,
+  [connection.workspace_id,connection.id,entityType,externalId])).rows[0];
+  const excluded=exclusion(providerData(record));
+  const target=existing?.foundry_record_id||(!excluded&&cached?.mapping_status!=='IGNORED'
     ?await exactTarget(client,connection.workspace_id,{...record,entityType}):null);
+  const mappingStatus=target?'MAPPED':cached?.mapping_status==='IGNORED'?'IGNORED':excluded?'EXCLUDED':'UNMAPPED';
   const at=nowIso();
   await client.query(`INSERT INTO connection_external_records
     (id,workspace_id,connector_id,entity_type,external_id,parent_external_id,code,display_name,
@@ -70,12 +75,11 @@ async function cacheRecord(client,connection,record){
     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,1,$11,$11,$11)
     ON CONFLICT(workspace_id,connector_id,entity_type,external_id) DO UPDATE SET
       parent_external_id=EXCLUDED.parent_external_id,code=EXCLUDED.code,display_name=EXCLUDED.display_name,
-      provider_data=EXCLUDED.provider_data,mapping_status=CASE
-        WHEN connection_external_records.mapping_status='IGNORED' AND EXCLUDED.mapping_status='UNMAPPED' THEN 'IGNORED'
-        ELSE EXCLUDED.mapping_status END,selected=1,last_seen_at=EXCLUDED.last_seen_at,updated_at=EXCLUDED.updated_at`,
+      provider_data=EXCLUDED.provider_data,mapping_status=EXCLUDED.mapping_status,
+      selected=1,last_seen_at=EXCLUDED.last_seen_at,updated_at=EXCLUDED.updated_at`,
   [newId('cext'),connection.workspace_id,connection.id,entityType,externalId,
     record.parentExternalId?String(record.parentExternalId):null,record.code?String(record.code):null,displayName,
-    JSON.stringify(providerData(record)),target?'MAPPED':'UNMAPPED',at]);
+    JSON.stringify(providerData(record)),mappingStatus,at]);
   if(target){
     if(!existing)await client.query(`INSERT INTO connection_mappings
       (id,workspace_id,connector_id,entity_type,external_id,foundry_record_id,confidence,approved_by_user_id,created_at,updated_at)
@@ -86,10 +90,7 @@ async function cacheRecord(client,connection,record){
     await resolveMappingIssues(client,connection,entityType,externalId,at);
     return 'mapped';
   }
-  const cached=(await client.query(`SELECT mapping_status FROM connection_external_records
-    WHERE workspace_id=$1 AND connector_id=$2 AND entity_type=$3 AND external_id=$4`,
-  [connection.workspace_id,connection.id,entityType,externalId])).rows[0];
-  if(cached?.mapping_status==='IGNORED'){
+  if(['IGNORED','EXCLUDED'].includes(mappingStatus)){
     await resolveMappingIssues(client,connection,entityType,externalId,at);
     return 'ignored';
   }

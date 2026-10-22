@@ -1,0 +1,29 @@
+'use strict';process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto'),{newId,nowIso}=require('../../src/lib/util');
+test('catalog eligibility clears only false matching issues, reactivates safely and preserves owner exclusions',{timeout:180000},async t=>{
+ const cluster=await require('../helpers/postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString);t.after(async()=>{await db.close();await cluster.stop();});await require('../../src/db/migrate-postgres').migratePostgres(db);
+ const email=randomUUID()+'@example.test',password='Browser!'+randomUUID(),owner=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'Owner',businessName:'Eligibility review',email,password}),ctx={workspaceId:owner.workspaceId,actorId:owner.userId},at=nowIso(),id=newId('con');
+ await db.query(`INSERT INTO workspace_connectors(id,workspace_id,connector_key,display_name,provider_type,provides,config,status,created_at,updated_at) VALUES($1,$2,$1,'Commerce','shopify','[]','{}','connected',$3,$3)`,[id,ctx.workspaceId,at]);
+ const connection=(await db.query('SELECT * FROM workspace_connectors WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id])).rows[0],sync=require('../../src/connections/postgres-provider-sync'),read=async()=>require('../../src/connections/postgres-service').get(db,ctx.workspaceId,id),record=(key,data)=>({entityType:'sku',externalId:key,code:key,displayName:'Product '+key,providerData:data}),cache=r=>db.transaction(client=>sync.cacheRecord(client,connection,r));
+ // Begin with a real missing match, then let provider metadata establish that
+ // this record should never have blocked physical inventory setup.
+ assert.equal(await cache(record('STATE-17',{})),'unmapped');assert.equal((await read()).itemsNeedingMapping,1);
+ const reasons=[{isGiftCard:true},{tracked:false},{virtual:true},{productStatus:'ARCHIVED'},{productStatus:'DRAFT'},{inventoryCountUnavailable:'Physical stock was not supplied.'}];
+ for(const [index,data]of reasons.entries())assert.equal(await cache(record(index?'STATE-'+index:'STATE-17',data)),'ignored');
+ let state=await read();assert.equal(state.itemsNeedingMapping,0);assert.equal(state.openIssues,0);assert.equal(state.publicStatus,'Connected');assert.equal((await db.query("SELECT count(*)::int n FROM connection_external_records WHERE workspace_id=$1 AND connector_id=$2 AND mapping_status='EXCLUDED'",[ctx.workspaceId,id])).rows[0].n,reasons.length);
+ const review=await require('../../src/connections/postgres-catalog-import').describe(db,ctx,id);assert.equal(review.rows.length,reasons.length);assert(review.rows.every(r=>r.exclusion));
+ // Provider changes can restore eligibility; a deliberately ignored record
+ // must remain excluded even if a later exact SKU match becomes possible.
+ assert.equal(await cache(record('STATE-17',{tracked:true,productStatus:'ACTIVE'})),'unmapped');assert.equal((await read()).itemsNeedingMapping,1);
+ await require('../../src/connections/postgres-catalog-import').ignore(db,ctx,id,{entityType:'sku',externalId:'STATE-1'});
+ const item=await require('../../src/domain/postgres-catalog-service').createItem(db,ctx,{name:'Actual physical product',baseCode:'STATE-1',trackingMode:'quantity',unitLabel:'unit'});assert(item);
+ assert.equal(await cache(record('STATE-1',{tracked:true,productStatus:'ACTIVE'})),'ignored');assert.equal((await db.query('SELECT count(*)::int n FROM connection_mappings WHERE workspace_id=$1 AND connector_id=$2 AND external_id=$3',[ctx.workspaceId,id,'STATE-1'])).rows[0].n,0);
+ // Existing matches and their historical references survive archival.
+ assert.equal(await cache(record('STATE-1-HISTORY',{})),'unmapped');
+ await db.query('UPDATE connection_external_records SET code=$4 WHERE workspace_id=$1 AND connector_id=$2 AND external_id=$3',[ctx.workspaceId,id,'STATE-1-HISTORY','STATE-1']);
+ assert.equal(await cache({...record('STATE-1-HISTORY',{}),code:'STATE-1'}),'mapped');const saved=(await db.query('SELECT foundry_record_id FROM connection_mappings WHERE workspace_id=$1 AND connector_id=$2 AND external_id=$3',[ctx.workspaceId,id,'STATE-1-HISTORY'])).rows[0];
+ assert.equal(await cache({...record('STATE-1-HISTORY',{productStatus:'ARCHIVED'}),code:'STATE-1'}),'mapped');assert.deepEqual((await db.query('SELECT foundry_record_id FROM connection_mappings WHERE workspace_id=$1 AND connector_id=$2 AND external_id=$3',[ctx.workspaceId,id,'STATE-1-HISTORY'])).rows[0],saved);
+ assert.equal((await db.query('SELECT count(*)::int n FROM movements WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,0);assert.equal((await db.query('SELECT count(*)::int n FROM accounting_journal_entries WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,0);
+ const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:randomUUID()}),server=await new Promise(resolve=>{const listener=app.listen(0,'127.0.0.1',()=>resolve(listener));}),browser=await require('playwright').chromium.launch();
+ try{const page=await browser.newPage({viewport:{width:390,height:844}}),base='http://127.0.0.1:'+server.address().port;await page.goto(base+'/login');await page.getByLabel('Work email').fill(email);await page.locator('[name=password]').fill(password);await Promise.all([page.waitForURL(base+'/'),page.getByRole('button',{name:'Sign in',exact:true}).click()]);await page.goto(base+'/settings/connections/'+id);await page.getByText(/Excluded or non-physical records/).click();assert.match(await page.locator('main').innerText(),/virtual product/);assert.equal(await page.getByRole('button',{name:'Confirm exclusion',exact:true}).count(),0);assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));}finally{await browser.close();await new Promise(resolve=>server.close(resolve));await app.locals.sessionStore.close();}
+});

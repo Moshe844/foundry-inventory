@@ -37,7 +37,7 @@ test('owner browser imports grouped provider variants and exact opening stock on
  const repeated=await service.importProducts(db,ctx,id,{externalIds:['variant-Red'],includeOpening:true});assert.equal(repeated.replayed,true);assert.equal(await units(),10);
  await assert.rejects(service.mapExternal(db,ctx,id,{entityType:'location',externalId:'store-a',foundryRecordId:'foreign-location'}),/not in this inventory/);
  await assert.rejects(service.importProducts(db,{...ctx,actorId:'not-an-owner'},id,{externalIds:['variant-Red']}),/Only an owner/);
- await page.locator('summary').filter({hasText:'Excluded or non-physical'}).click();await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Confirm exclusion',exact:true}).click()]);
- await db.transaction(c=>sync.cacheRecord(c,connection,records.at(-1)));assert.equal((await db.query("SELECT mapping_status FROM connection_external_records WHERE workspace_id=$1 AND connector_id=$2 AND external_id='gift'",[ctx.workspaceId,id])).rows[0].mapping_status,'IGNORED');
+ await page.locator('summary').filter({hasText:'Excluded or non-physical'}).click();assert.equal(await page.getByRole('button',{name:'Confirm exclusion',exact:true}).count(),0);assert.match(await page.locator('main').innerText(),/Gift cards are financial products/);
+ await db.transaction(c=>sync.cacheRecord(c,connection,records.at(-1)));assert.equal((await db.query("SELECT mapping_status FROM connection_external_records WHERE workspace_id=$1 AND connector_id=$2 AND external_id='gift'",[ctx.workspaceId,id])).rows[0].mapping_status,'EXCLUDED');
  assert.equal((await db.query('SELECT count(*) AS n FROM movements WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,'2');assert.equal((await db.query('SELECT count(*) AS n FROM accounting_supplier_bills WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,'0');assert.deepEqual(errors,[]);
 });
