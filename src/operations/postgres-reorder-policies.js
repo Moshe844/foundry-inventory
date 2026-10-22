@@ -9,11 +9,12 @@ async function setManyInTransaction(client,ctx,inputs){
     if(input[key]===undefined||input[key]===null){row[column]=null;continue;}
     const n=Number(input[key]);if(!Number.isSafeInteger(n)||n<0||n>max)throw new ValidationError('Reorder settings must use nonnegative whole quantities and lead times within the supported range.');row[column]=n;
   }return row;});
- const current=(await client.query(`SELECT p.* FROM reorder_policies p JOIN jsonb_to_recordset($2::jsonb) AS x(sku_id text,location_id text) ON x.sku_id=p.sku_id AND x.location_id IS NOT DISTINCT FROM p.location_id WHERE p.workspace_id=$1 FOR UPDATE OF p`,[ctx.workspaceId,JSON.stringify(normalized)])).rows;
+ const skuIds=[...new Set(normalized.map(row=>row.sku_id))];
+ const current=(await client.query(`SELECT p.* FROM reorder_policies p JOIN jsonb_to_recordset($2::jsonb) AS x(sku_id text,location_id text) ON x.sku_id=p.sku_id AND x.location_id IS NOT DISTINCT FROM p.location_id WHERE p.workspace_id=$1 AND p.sku_id=ANY($3::text[]) FOR UPDATE OF p`,[ctx.workspaceId,JSON.stringify(normalized),skuIds])).rows;
  for(const row of normalized){const prior=current.find(p=>p.sku_id===row.sku_id&&p.location_id===row.location_id);for(const k of ['reorder_point','target_stock','safety_stock','lead_time_days'])if(row[k]===null&&prior)row[k]=prior[k];if(row.reorder_point!==null&&row.target_stock!==null&&Number(row.target_stock)<Number(row.reorder_point))throw new ValidationError('Target stock must be at least the reorder point.');}
  const found=(await client.query(`SELECT x.sku_id FROM jsonb_to_recordset($2::jsonb) AS x(sku_id text,location_id text)
    JOIN skus s ON s.workspace_id=$1 AND s.id=x.sku_id JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
-   WHERE s.is_active=1 AND i.is_active=1 AND (x.location_id IS NULL OR EXISTS(SELECT 1 FROM locations l WHERE l.workspace_id=$1 AND l.id=x.location_id AND l.is_active=1))`,[ctx.workspaceId,JSON.stringify(normalized)])).rows;
+   WHERE s.id=ANY($3::text[]) AND s.is_active=1 AND i.is_active=1 AND (x.location_id IS NULL OR EXISTS(SELECT 1 FROM locations l WHERE l.workspace_id=$1 AND l.id=x.location_id AND l.is_active=1))`,[ctx.workspaceId,JSON.stringify(normalized),skuIds])).rows;
  if(found.length!==normalized.length)throw new ValidationError('Every reorder product and location must belong to this inventory.');
  const saved=await client.query(`INSERT INTO reorder_policies(id,workspace_id,sku_id,location_id,reorder_point,target_stock,safety_stock,lead_time_days,source,notes,created_at,updated_at)
    SELECT x.id,$1,x.sku_id,x.location_id,x.reorder_point,x.target_stock,x.safety_stock,x.lead_time_days,x.source,x.notes,$3,$3

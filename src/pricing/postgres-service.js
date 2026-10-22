@@ -66,14 +66,23 @@ async function listForSkus(queryable,workspaceId,skuIds){
   return result;
 }
 
-async function setPricesInTransaction(client,ctx,inputs){
+async function setPricesInTransaction(client,ctx,inputs,{initialize=false}={}){
   if(!Array.isArray(inputs))throw new ValidationError('Selling prices must be a list.');if(!inputs.length)return [];
   const skuIds=inputs.map(input=>input.skuId);
-  if(new Set(skuIds).size!==skuIds.length){const results=[];for(const input of inputs)results.push(await setPriceInTransaction(client,ctx,input));return results;}
-  const active=(await client.query('SELECT s.id FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id WHERE s.workspace_id=$1 AND s.id=ANY($2::text[]) AND s.is_active=1 AND i.is_active=1',[ctx.workspaceId,skuIds])).rows;
+  if(new Set(skuIds).size!==skuIds.length){if(initialize)throw new ValidationError('Initial prices require one price per new variant.');const results=[];for(const input of inputs)results.push(await setPriceInTransaction(client,ctx,input));return results;}
+  const active=(await client.query('SELECT s.id,s.xmin=pg_current_xact_id()::text::xid AS created_here FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id WHERE s.workspace_id=$1 AND s.id=ANY($2::text[]) AND s.is_active=1 AND i.is_active=1',[ctx.workspaceId,skuIds])).rows;
   if(active.length!==inputs.length)throw new NotFoundError('That product or variant is not in this inventory.');
-  async function readPrices(){return new Map((await client.query(`SELECT DISTINCT ON(sp.sku_id) sp.*,u.name AS actor_name FROM sku_prices sp LEFT JOIN users u ON u.id=sp.created_by_user_id WHERE sp.workspace_id=$1 AND sp.sku_id=ANY($2::text[]) ORDER BY sp.sku_id,sp.created_at DESC,sp.id DESC`,[ctx.workspaceId,skuIds])).rows.map(row=>[row.sku_id,row]));}
-  const current=await readPrices(),rows=[],unchanged=new Set(),at=nowIso();
+  if(initialize&&(active.some(row=>!row.created_here)||inputs.some(input=>Object.hasOwn(input,'expectedCurrentId'))))throw new ValidationError('Initial prices require unpublished variants created by this transaction. Existing prices must use the normal change and conflict checks.');
+  async function readPrices(){return new Map((await client.query(`SELECT sp.*,u.name AS actor_name FROM unnest($2::text[]) AS target(sku_id)
+    JOIN LATERAL(SELECT price.* FROM sku_prices price WHERE price.workspace_id=$1 AND price.sku_id=target.sku_id
+      ORDER BY price.created_at DESC,price.id DESC LIMIT 1) sp ON true
+    LEFT JOIN users u ON u.id=sp.created_by_user_id AND u.workspace_id=$1`,[ctx.workspaceId,skuIds])).rows.map(row=>[row.sku_id,row]));}
+  // A newly created, still-unpublished variant cannot have prices in another
+  // transaction. Constructors use this before creating orders or provider
+  // matches. Keep the same validator and history writer, without predicate-
+  // reading unrelated price history or draft orders. Public change callers
+  // never choose this mode; existing variants must use the conflict checks.
+  const current=initialize?new Map():await readPrices(),rows=[],unchanged=new Set(),at=nowIso();let inserted=[],actorName=null;
   for(const input of inputs){const amountMinor=input.amountMinor===undefined?toMinor(input.amount,'Price',input.currency||'USD'):input.amountMinor;
     if(amountMinor!==null&&(!Number.isSafeInteger(Number(amountMinor))||Number(amountMinor)<0))throw new ValidationError('Selling price must be a valid non-negative amount.');
     const currency=normaliseCurrency(input.currency),before=current.get(input.skuId);
@@ -82,13 +91,13 @@ async function setPricesInTransaction(client,ctx,inputs){
     rows.push({id:newId('prc'),sku_id:input.skuId,amount_minor:amountMinor,currency,source:trimOrNull(input.source)||'owner',source_detail:input.sourceDetail||{}});
   }
   if(rows.length){
-    if(ctx.actorId&&!(await client.query('SELECT id FROM users WHERE id=$1 AND workspace_id=$2',[ctx.actorId,ctx.workspaceId])).rows.length)throw new NotFoundError('The acting user does not belong to this inventory.');
-    await client.query(`INSERT INTO sku_prices(id,workspace_id,sku_id,amount_minor,currency,source,source_detail,created_by_user_id,created_at)
-      SELECT x.id,$1,x.sku_id,x.amount_minor,x.currency,x.source,x.source_detail,$2,$3 FROM jsonb_to_recordset($4::jsonb) AS x(id text,sku_id text,amount_minor bigint,currency text,source text,source_detail jsonb)`,[ctx.workspaceId,ctx.actorId||null,at,JSON.stringify(rows)]);
-    await client.query(`UPDATE sales_order_lines line SET unit_price_minor=x.amount_minor,price_source_id=x.id,updated_at=$3 FROM jsonb_to_recordset($2::jsonb) AS x(id text,sku_id text,amount_minor bigint) WHERE line.workspace_id=$1 AND line.sku_id=x.sku_id AND line.unit_price_minor IS NULL AND x.amount_minor IS NOT NULL AND line.sales_order_id IN(SELECT id FROM sales_orders WHERE workspace_id=$1 AND status='DRAFT')`,[ctx.workspaceId,JSON.stringify(rows),at]);
+    if(ctx.actorId){const actor=(await client.query('SELECT id,name FROM users WHERE id=$1 AND workspace_id=$2',[ctx.actorId,ctx.workspaceId])).rows[0];if(!actor)throw new NotFoundError('The acting user does not belong to this inventory.');actorName=actor.name;}
+    inserted=(await client.query(`INSERT INTO sku_prices(id,workspace_id,sku_id,amount_minor,currency,source,source_detail,created_by_user_id,created_at)
+      SELECT x.id,$1,x.sku_id,x.amount_minor,x.currency,x.source,x.source_detail,$2,$3 FROM jsonb_to_recordset($4::jsonb) AS x(id text,sku_id text,amount_minor bigint,currency text,source text,source_detail jsonb) RETURNING *`,[ctx.workspaceId,ctx.actorId||null,at,JSON.stringify(rows)])).rows;
+    if(!initialize)await client.query(`UPDATE sales_order_lines line SET unit_price_minor=x.amount_minor,price_source_id=x.id,updated_at=$3 FROM jsonb_to_recordset($2::jsonb) AS x(id text,sku_id text,amount_minor bigint) WHERE line.workspace_id=$1 AND line.sku_id=x.sku_id AND line.unit_price_minor IS NULL AND x.amount_minor IS NOT NULL AND line.sales_order_id IN(SELECT id FROM sales_orders WHERE workspace_id=$1 AND status='DRAFT')`,[ctx.workspaceId,JSON.stringify(rows),at]);
   }
-  const saved=rows.length?await readPrices():current;
-  const deliveries=rows.length?await require('../connections/postgres-commerce-sync').publishPriceChangesInTransaction(client,ctx,
+  const saved=initialize?new Map(inserted.map(row=>[row.sku_id,{...row,actor_name:actorName}])):rows.length?await readPrices():current;
+  const deliveries=rows.length&&!initialize?await require('../connections/postgres-commerce-sync').publishPriceChangesInTransaction(client,ctx,
     rows.map(row=>({skuId:row.sku_id,sourceConnectorId:row.source==='provider_catalog_sync'?row.source_detail.connectorId:null}))):new Map();
   return inputs.map(input=>{const row=saved.get(input.skuId),value={...row,isSet:row.amount_minor!==null,amount_minor:row.amount_minor===null?null:Number(row.amount_minor),formatted:formatMinor(row.amount_minor,row.currency),...deliveries.get(input.skuId)};return unchanged.has(input.skuId)?{...value,replayed:true}:value;});
 }

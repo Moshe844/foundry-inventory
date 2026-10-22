@@ -953,13 +953,14 @@ async function execute(database, ctx, id, options={}) {
       // catalogue into thousands of single-row stock/accounting round trips.
       for(let chunkStart=0;chunkStart<sourceRows.length;chunkStart+=500){
         const chunk=sourceRows.slice(chunkStart,chunkStart+500),receiving=chunk.filter(row=>row.parsed.quantity>0&&!isCount(row));
-        const newPrices=[];
+        const newPrices=[],initialPrices=[];
         for(const row of chunk){if(row.parsed.sellingPriceMinor===null)continue;
           const skuId=row.parsed.existingSkuId||row.parsed.createdSkuId,saleKey=`${row.parsed.currency}:${row.parsed.sellingPriceMinor}`;
           if(salePriceBySku.has(skuId)&&salePriceBySku.get(skuId)!==saleKey)throw new ValidationError(`Conflicting selling prices for ${row.parsed.name} in this import.`);
-          if(!salePriceBySku.has(skuId)){newPrices.push({skuId,amountMinor:row.parsed.sellingPriceMinor,currency:row.parsed.currency,source:'opening_import',...(Object.hasOwn(row.parsed,'currentPriceId')?{expectedCurrentId:row.parsed.currentPriceId}:{}),sourceDetail:{importId:id,importRowId:row.id}});salePriceBySku.set(skuId,saleKey);}
+          if(!salePriceBySku.has(skuId)){(row.parsed.existingSkuId?newPrices:initialPrices).push({skuId,amountMinor:row.parsed.sellingPriceMinor,currency:row.parsed.currency,source:'opening_import',...(Object.hasOwn(row.parsed,'currentPriceId')?{expectedCurrentId:row.parsed.currentPriceId}:{}),sourceDetail:{importId:id,importRowId:row.id}});salePriceBySku.set(skuId,saleKey);}
         }
         await postgresPrices.setPricesInTransaction(client,ctx,newPrices);
+        await postgresPrices.setPricesInTransaction(client,ctx,initialPrices,{initialize:true});
         const receivedRows=await inventory.receiveManyInTransaction(client,ctx,receiving.map(row=>({
           skuId:row.parsed.existingSkuId||row.parsed.createdSkuId,locationId:row.parsed.locationId,quantity:row.parsed.quantity,
           serials:row.parsed.serial?[row.parsed.serial]:undefined,lotCode:row.parsed.lotCode,expiresAt:row.parsed.expiresAt,lotReceivedAt:row.parsed.receivedAt,
