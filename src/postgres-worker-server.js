@@ -27,9 +27,7 @@ async function shutdown(signal, exitCode = 0) {
   shuttingDown = true;
   console.log(`[stockchief] ${signal}; stopping PostgreSQL worker.`);
   try {
-    if (scheduleRuntime) await scheduleRuntime.stop();
-    if (capacityRuntime) await capacityRuntime.stop();
-    if (runtime) await runtime.stop();
+    await require('./operations/runtime-shutdown').stopRuntimes([runtime,scheduleRuntime,capacityRuntime]);
     await database.close();
   } finally {
     process.exit(exitCode);

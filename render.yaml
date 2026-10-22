@@ -57,7 +57,7 @@ projects:
             autoDeployTrigger: off
             buildCommand: npm ci --omit=dev
             preDeployCommand: npm run db:apply:postgres
-            startCommand: npm run start:postgres-web
+            startCommand: exec node src/postgres-web-server.js
             # Queue lag remains visible at /readyz. It must not restart a
             # responsive website while an approved background import runs.
             healthCheckPath: /healthz
@@ -80,7 +80,7 @@ projects:
             autoDeployTrigger: off
             buildCommand: npm ci --omit=dev
             preDeployCommand: npm run db:apply:postgres
-            startCommand: npm run start:postgres-worker
+            startCommand: exec node src/postgres-worker-server.js
             maxShutdownDelaySeconds: 120
             envVars:
               - fromGroup: stockchief-staging-runtime
