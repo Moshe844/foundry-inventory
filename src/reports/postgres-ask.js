@@ -236,7 +236,7 @@ async function prepare(database,ctx,message,{provider,priorReport=null}){
         continue;}
       console.warn('[stockchief] governed Ask report failed',error.code||error.name||'unknown',
         String(error.details?.technical||error.message||'').slice(0,180));
-      return {status:'CLARIFY',answer:'I cannot build that exact report from the governed data currently available. Nothing was invented or changed.',
+      return {status:'CLARIFY',answer:error.code==='validation_error'?String(error.message).slice(0,500):'StockChief could not finish that report. Your records are unchanged. Open Reports to choose different fields.',
         rows:[],columns:[],handoff:{href:'/reports',label:'Browse available datasets'}};
     }
   }
