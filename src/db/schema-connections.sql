@@ -169,7 +169,7 @@ CREATE TABLE IF NOT EXISTS connection_external_records (
   display_name        TEXT NOT NULL,
   provider_data        TEXT NOT NULL DEFAULT '{}',
   mapping_status      TEXT NOT NULL DEFAULT 'UNMAPPED'
-                        CHECK (mapping_status IN ('UNMAPPED','MAPPED','IGNORED','EXCLUDED')),
+                        CHECK (mapping_status IN ('UNMAPPED','MAPPED','IGNORED')),
   selected             INTEGER NOT NULL DEFAULT 1 CHECK (selected IN (0,1)),
   last_seen_at         TEXT NOT NULL,
   created_at           TEXT NOT NULL,
