@@ -266,7 +266,7 @@ async function normalizeWebhook({ body, credentials }) {
     return [{ eventId: `square-refund:${refund.id}`, type: 'return.reported',
       version: refund.updated_at || occurredAt, occurredAt: refund.created_at || occurredAt,
       aggregateId: refund.payment_id || refund.order_id || refund.id,
-      data: { reference: `Square refund ${refund.id}`, externalRefundId:refund.id, externalPaymentId: refund.payment_id,
+      data: { reference: `Square refund ${refund.id}`, externalPaymentId: refund.payment_id,
         externalOrderId: refund.order_id, amountMinor: refund.amount_money?.amount,
         currency: refund.amount_money?.currency, reason: refund.reason } }];
   }
