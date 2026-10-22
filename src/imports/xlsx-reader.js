@@ -339,4 +339,4 @@ function readWorkbook(buffer) {
   return { sheets };
 }
 
-module.exports = { readWorkbook, SpreadsheetError, LIMITS, columnIndex, serialToDate, decodeXml };
+module.exports = { readZip,readWorkbook, SpreadsheetError, LIMITS, columnIndex, serialToDate, decodeXml };

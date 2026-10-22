@@ -180,7 +180,7 @@ function reconcile(proposed, { columns, deterministic, confident, profilesByInde
             ?'does not contain valid per-unit money amounts':null;
     if(incompatible){rejected.push({column:column.name,field:entry.field,
       because:`“${column.name}” ${incompatible}. The existing column meaning was preserved.`});continue;}
-    if (held && confident.includes(held)) {
+    if (held && (confident.includes(held) || /^price(?:\s*each)?$/i.test(column.name.trim()))) {
       /*
        * Settled by its own heading, so the model does not get to move it.
        *

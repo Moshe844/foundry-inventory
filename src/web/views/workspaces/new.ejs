@@ -10,7 +10,7 @@
 <div class="card section measure">
   <div class="card-body">
     <% if (error) { %>
-      <p class="is-warn" style="margin-bottom:12px;"><%= error %></p>
+      <p class="is-warn" role="alert" tabindex="-1" autofocus style="margin-bottom:12px;"><%= error %></p>
     <% } %>
 
     <form method="post" action="/inventories">
@@ -36,7 +36,7 @@
 
     <% if (allowance.exceeded) { %>
       <p class="muted" style="font-size:12.5px; margin-top:10px;">
-        You are using all <%= allowance.limit %> inventories included in the <%= allowance.planId %> plan.
+        You are using all <%= allowance.limit %> inventories available on this account. Review your inventories or plan before adding another.
       </p>
     <% } %>
   </div>

@@ -18,10 +18,11 @@ function createPostgresWorkspacesRouter(database){
     currentWorkspaceId:req.workspace?.id||null,layoutOnboardingEntry:null,
     allowance:{...allowance,used:res.locals.workspaces.length},postgresMode:true,
   })));
-  router.get('/inventories/new',(req,res)=>res.page('workspaces/new',{
+  const capacity=async req=>{const meter=await require('../../entitlements/postgres-service').meterState(database,{accountId:req.account.id,workspaceId:null},'workspaces');const limit=meter.hardLimit??meter.included;return {used:meter.capacityUsed??meter.used,limit,unlimited:limit===null,exceeded:limit!==null&&(meter.capacityUsed??meter.used)>=limit,planId:null};};
+  router.get('/inventories/new',asyncRoute(async(req,res)=>res.page('workspaces/new',{
     title:'New inventory',nav:'inventories',backTo:{href:'/inventories',label:'Your inventories'},form:{},
-    layoutOnboardingEntry:null,allowance,error:null,
-  }));
+    layoutOnboardingEntry:null,allowance:await capacity(req),error:null,
+  })));
   router.post('/inventories',asyncRoute(async(req,res)=>{
     try{
       const created=await auth.createWorkspace(database,req.account.id,{name:req.body.name});
@@ -31,7 +32,7 @@ function createPostgresWorkspacesRouter(database){
     }catch(error){
       if(error.status&&error.status<500)return res.status(error.status).page('workspaces/new',{
         title:'New inventory',nav:'inventories',backTo:{href:'/inventories',label:'Your inventories'},form:req.body,
-        error:error.message,layoutOnboardingEntry:null,allowance,
+        error:error.message,layoutOnboardingEntry:null,allowance:await capacity(req),
       });
       throw error;
     }

@@ -28,7 +28,7 @@ test('PostgreSQL password recovery stays account-neutral, expires old links and 
     const requested=await recovery.request(database,business.email,{origin:'https://stockchief.example',now:2000});
     assert.deepEqual(requested,{accepted:true,queued:true});
     const job=(await database.query(`SELECT * FROM stockchief_runtime.jobs WHERE kind='system.email-send'`)).rows[0];
-    assert.ok(job);const message=email.unseal(job.payload);const token=new URL(message.text.match(/https:\/\/\S+/)[0]).searchParams.get('token');
+    assert.ok(job);const message=email.unseal(job.payload);const token=new URL(message.text.match(/https?:\/\/\S+/)[0]).searchParams.get('token');
     assert.ok(await recovery.inspect(database,token,{now:2500}));
     await recovery.consume(database,token,'new-password-456',{now:3000,nowIso:'2026-09-24T12:00:00.000Z'});
     assert.equal(await auth.authenticate(database,business.email,'old-password-123'),null);
@@ -80,7 +80,7 @@ test('real Chromium completes PostgreSQL password recovery without revealing whe
     await page.getByRole('button',{name:'Send reset link'}).click();
     assert.match(await page.locator('body').innerText(),/If an account uses that email, a reset link is on its way/i);
     const job=(await database.query(`SELECT payload FROM stockchief_runtime.jobs WHERE kind='system.email-send'`)).rows[0];
-    const message=email.unseal(job.payload);const token=new URL(message.text.match(/https:\/\/\S+/)[0]).searchParams.get('token');
+    const message=email.unseal(job.payload);const token=new URL(message.text.match(/https?:\/\/\S+/)[0]).searchParams.get('token');
     await page.goto(`${base}/reset-password?token=${encodeURIComponent(token)}`);
     await page.locator('input[name="password"]').evaluate((element)=>element.removeAttribute('minlength'));
     await page.locator('input[name="password"]').fill('12345677');

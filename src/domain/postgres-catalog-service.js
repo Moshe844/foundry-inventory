@@ -4,6 +4,7 @@ const { ValidationError, NotFoundError } = require('./errors');
 const { TRACKING_MODE_IDS } = require('./constants');
 const { newId, nowIso, trimOrNull, requireText, requireOneOf } = require('../lib/util');
 const { parseOptions, codeSlug } = require('./item-service');
+const identity=require('./catalog-identity');
 
 function normaliseBoolean(value) {
   return value === true || value === '1' || value === 'on';
@@ -21,7 +22,7 @@ async function uniqueCode(client, workspaceId, candidate, taken) {
   let code = base;
   let suffix = 1;
   while (taken.has(code.toLowerCase()) || (await client.query(
-    'SELECT 1 FROM skus WHERE workspace_id=$1 AND code=$2 LIMIT 1',
+    'SELECT 1 FROM skus WHERE workspace_id=$1 AND lower(btrim(code))=lower(btrim($2)) LIMIT 1',
     [workspaceId, code]
   )).rows.length) {
     suffix += 1;
@@ -38,11 +39,11 @@ async function createItemInTransaction(client, ctx, input) {
   const hasVariants = normaliseBoolean(input.hasVariants);
   const baseCode = trimOrNull(input.baseCode);
   const description = trimOrNull(input.description);
-  const unitLabel = trimOrNull(input.unitLabel) || 'unit';
+  const unitLabel = identity.unitLabel(input.unitLabel);
   const options = hasVariants ? parseOptions(input.options) : [];
   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`catalog:${ctx.workspaceId}`]);
     if (baseCode) {
-      const clash = await client.query('SELECT 1 FROM items WHERE workspace_id=$1 AND base_code=$2 LIMIT 1',
+      const clash = await client.query('SELECT 1 FROM items WHERE workspace_id=$1 AND (lower(btrim(base_code))=lower(btrim($2)) OR id IN (SELECT item_id FROM skus WHERE workspace_id=$1 AND lower(btrim(code))=lower(btrim($2)))) LIMIT 1',
         [ctx.workspaceId, baseCode]);
       if (clash.rows.length) throw new ValidationError(`Another item already uses the code ${baseCode}.`, { field: 'baseCode' });
     }
@@ -95,7 +96,7 @@ async function createImportedItemsInTransaction(client,ctx,inputs){
   if(!Array.isArray(inputs))throw new ValidationError('Imported products must be a list.');
   if(!inputs.length)return [];
   const normalized=inputs.map(input=>({...input,name:requireText(input.name,'Item name',{max:240}),
-    trackingMode:requireOneOf(input.trackingMode,TRACKING_MODE_IDS,'Tracking type'),
+    unitLabel:identity.unitLabel(input.unitLabel),trackingMode:requireOneOf(input.trackingMode,TRACKING_MODE_IDS,'Tracking type'),
     variants:Array.isArray(input.variants)&&input.variants.length?input.variants:[{}]}));
   if(normalized.some(i=>['lot','serial'].includes(i.trackingMode)))
     await require('../commercial/enforcement').workspace(client,ctx.workspaceId,'inventory.lot_serial');
@@ -110,6 +111,7 @@ async function createImportedItemsInTransaction(client,ctx,inputs){
     for(const [position,v]of input.variants.entries()){
       const parts=(v.options||[]).map(p=>({name:p.name,value:requireText(p.value,'Option value',{max:120})}));
       let candidate=requireText(candidates[ci++],'SKU code',{max:240});
+      if(trimOrNull(v.code)&&(taken.has(identity.codeKey(candidate))||existing.has(identity.codeKey(candidate))))throw new ValidationError('The SKU code '+candidate+' already exists or repeats in this source. Recheck the preview; an explicit code will not be silently renamed.');
       const code=taken.has(candidate.toLowerCase())||existing.has(candidate.toLowerCase())?await uniqueCode(client,ctx.workspaceId,candidate,taken):candidate;
       taken.add(code.toLowerCase());const skuId=newId('sku'),label=parts.length?parts.map(p=>p.value).join(' / '):trimOrNull(v.label);
       skuRows.push({id:skuId,item_id:itemId,code,barcode:trimOrNull(v.barcode),variant_label:label,is_default:parts.length?0:1,position});
@@ -138,6 +140,14 @@ function listOrder(sort) {
   if (sort === 'stock_asc') return 'on_hand ASC,i.name,i.id';
   if (sort === 'newest') return 'i.created_at DESC,i.id';
   return 'i.name,i.id';
+}
+
+async function updateImportedNamesInTransaction(client,ctx,changes){
+  if(!changes.length)return;
+  const ids=changes.map(c=>c.itemId),rows=(await client.query('SELECT id,name FROM items WHERE workspace_id=$1 AND id=ANY($2::text[]) ORDER BY id FOR UPDATE',[ctx.workspaceId,ids])).rows;
+  const existing=new Map(rows.map(r=>[r.id,r]));
+  for(const change of changes){requireText(change.name,'Item name',{max:240});if(!existing.has(change.itemId)||existing.get(change.itemId).name!==change.expectedName)throw new ValidationError('A product name changed after the import preview. Recheck the file before approval.');}
+  await client.query('UPDATE items i SET name=x.name,updated_at=$3 FROM jsonb_to_recordset($2::jsonb) AS x("itemId" text,name text) WHERE i.workspace_id=$1 AND i.id=x."itemId" AND i.name IS DISTINCT FROM x.name',[ctx.workspaceId,JSON.stringify(changes),nowIso()]);
 }
 
 async function listItems(database, workspaceId, input = {}) {
@@ -317,12 +327,12 @@ async function getItem(database, workspaceId, itemId, input = {}) {
 
 async function updateItem(database,ctx,itemId,input){
   const name=requireText(input.name,'Item name',{max:240});
-  const baseCode=trimOrNull(input.baseCode);const unitLabel=trimOrNull(input.unitLabel)||'unit';
+  const baseCode=trimOrNull(input.baseCode);const unitLabel=identity.unitLabel(input.unitLabel);
   return database.transaction(async(client)=>{
     const current=(await client.query('SELECT * FROM items WHERE workspace_id=$1 AND id=$2 FOR UPDATE',
       [ctx.workspaceId,itemId])).rows[0];
     if(!current)throw new NotFoundError('That product could not be found.');
-    if(baseCode){const clash=await client.query('SELECT 1 FROM items WHERE workspace_id=$1 AND base_code=$2 AND id<>$3',
+    if(baseCode){const clash=await client.query('SELECT 1 FROM items WHERE workspace_id=$1 AND lower(btrim(base_code))=lower(btrim($2)) AND id<>$3',
       [ctx.workspaceId,baseCode,itemId]);if(clash.rows.length)throw new ValidationError(`Another item already uses the code ${baseCode}.`);}
     const updated=(await client.query(`UPDATE items SET name=$3,base_code=$4,description=$5,unit_label=$6,
       allow_negative=$7,updated_at=$8 WHERE workspace_id=$1 AND id=$2 RETURNING *`,
@@ -381,6 +391,6 @@ async function setItemActive(database, ctx, itemId, active) {
 }
 
 module.exports = { createItem, createItemInTransaction, createImportedItemInTransaction, createImportedItemsInTransaction,
-  listItems, getItem, updateItem, addVariant, setItemActive };
+  updateImportedNamesInTransaction,listItems, getItem, updateItem, addVariant, setItemActive };
 require('../commercial/enforcement').guardExports(module.exports,0,1,{createItem:'inventory.core',createItemInTransaction:'inventory.core',
  createImportedItemInTransaction:'inventory.core',createImportedItemsInTransaction:'inventory.core',updateItem:'inventory.core',addVariant:'inventory.core',setItemActive:'inventory.core'});

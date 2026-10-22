@@ -15,6 +15,8 @@ function normaliseCurrency(value,fallback='USD'){
 function toMinor(value,label='Price',currency='USD'){
   if(value===null||value===undefined||String(value).trim()==='')return null;
   const clean=require('../domain/human-number').decimal(value,{label,fractionDigits:money.exponent(currency)});
+  if(clean.startsWith('-'))throw new ValidationError(label+' cannot be negative.');
+  const decimals=clean.split('.')[1]||'';if(decimals.length>money.exponent(currency)&&decimals.slice(money.exponent(currency)).replace(/0/g,''))throw new ValidationError(label+' has more than '+money.exponent(currency)+' decimals for '+currency+'.');
   const minor=money.toMinor(clean,currency,{label});
   if(!Number.isSafeInteger(minor)||minor<0||minor>99999999999)throw new ValidationError(`${label} is outside the supported range.`);
   return minor;

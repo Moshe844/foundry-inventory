@@ -32,7 +32,7 @@ function createPostgresImportsRouter(database,{provider=null}={}){
   async function renderStart(req,res){return res.page('imports/start',{
     title:'File imports and results',nav:'imports',recent:await progress.list(database,req.ctx.workspaceId,{limit:20}),
     locations:await locations(database,req.ctx.workspaceId),aiConfigured:Boolean(provider||config.ai.configured),canOperate:true,
-    usageKey:newId('importpreview'),
+    usageKey:newId('importpreview'),uploadLimitBytes:config.uploads.maxBytes,
   });}
   router.get('/imports/start',asyncRoute(renderStart));
   router.get('/imports',asyncRoute(renderStart));
@@ -54,7 +54,7 @@ function createPostgresImportsRouter(database,{provider=null}={}){
     if(wantsJson)return res.status(201).json({ok:true,location:`/imports/${plan.id}`});
     return res.redirect(303,`/imports/${plan.id}`);
   }));
-  router.get('/imports/:id',asyncRoute(async(req,res)=>{
+  async function renderPreview(req,res,{reviewError=null}={}){
     const plan=await imports.get(database,req.ctx.workspaceId,req.params.id);
     const page=Math.max(1,Number(req.query.page)||1);
     const allowed=['VALID','INVALID','IMPORTED','FAILED'];
@@ -84,9 +84,10 @@ function createPostgresImportsRouter(database,{provider=null}={}){
       duplicatePlans,run,locations:locationRows,mappingRows,fieldOptions:fields.FIELDS,page,pageSize:PAGE_SIZE,filter,
       missingLocationRows:missingLocation.rows.length>0,
       missingAccountingSetup:missingAccounting.rows.length>0,
-      locationKinds:require('../../domain/constants').LOCATION_KINDS,runJob,importProgress,trackingQuestion,
+      locationKinds:require('../../domain/constants').LOCATION_KINDS,runJob,importProgress,trackingQuestion,reviewError,
     });
-  }));
+  }
+  router.get('/imports/:id',asyncRoute((req,res)=>renderPreview(req,res)));
   router.post('/imports/:id/revise',asyncRoute(async(req,res)=>{
     try{
       const plan=await imports.get(database,req.ctx.workspaceId,req.params.id);
@@ -119,13 +120,13 @@ function createPostgresImportsRouter(database,{provider=null}={}){
         importMode:Object.hasOwn(req.body,'importMode')?req.body.importMode:undefined,
         allowPartialImport:Object.hasOwn(req.body,'allowPartialImport')?req.body.allowPartialImport==='yes':undefined});
       req.flash('success','Preview corrected and recalculated. Review all rows again before approving.');
-    }catch(error){if(!(error instanceof ValidationError))throw error;req.flash('error',error.message);}
+    }catch(error){if(!(error instanceof ValidationError))throw error;res.status(error.status||400);return renderPreview(req,res,{reviewError:error.message});}
     return res.redirect(303,`/imports/${req.params.id}`);
   }));
   router.post('/imports/:id/approve',asyncRoute(async(req,res)=>{
     try {await imports.approve(database,req.ctx,req.params.id,trimOrNull(req.body.integrityHash));
       req.flash('success','Preview approved. Nothing has been created yet.');}
-    catch(error){if(!(error instanceof ValidationError))throw error;req.flash('error',error.message);}
+    catch(error){if(!(error instanceof ValidationError))throw error;res.status(error.status||400);return renderPreview(req,res,{reviewError:error.message});}
     return res.redirect(303,`/imports/${req.params.id}`);
   }));
   router.post('/imports/:id/run',asyncRoute(async(req,res)=>{

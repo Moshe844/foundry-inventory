@@ -25,7 +25,7 @@ function loadUser(database,{readonly=false}={}) {
       res.locals.workspace = null;
       res.locals.workspaces = [];
       res.locals.account = null;
-      res.locals.passwordUpgradeRequired=Boolean(req.session?.passwordUpgradeRequired);
+      res.locals.passwordUpgradeRequired=Boolean(req.session?.passwordUpgradeRequired&&!req.session.passwordUpgradeNoticeDismissed);
       if (!req.session?.accountId) return next();
 
       const account = await auth.getAccount(database, req.session.accountId);
@@ -33,7 +33,8 @@ function loadUser(database,{readonly=false}={}) {
         return req.session.destroy((error) => error ? next(error) : next());
       }
       req.account = account;
-      res.locals.account = { id:account.id,name:account.name,email:account.email,plan:account.plan };
+      res.locals.account = { id:account.id,name:account.name,email:account.email,plan:account.plan,timeZone:account.time_zone||null };
+      res.locals.helpers={...res.locals.helpers,dateTime:iso=>require('./view-helpers').dateTime(iso,account.time_zone||'UTC')};
       const memberships = await auth.listWorkspacesForAccount(database, account.id);
       res.locals.workspaces = memberships.map((row) => workspaceSummary(row, account.id));
       if (!memberships.length) return next();

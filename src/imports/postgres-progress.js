@@ -19,9 +19,10 @@ function present(row){
  const detail=typeof row.job_result==='string'?JSON.parse(row.job_result):row.job_result;
  const p=detail?.importProgress,known=Boolean(p&&['preparing','processing','verifying'].includes(p.stage)&&Number.isSafeInteger(p.processedRows)&&Number.isSafeInteger(p.totalRows)&&p.processedRows>=0&&p.processedRows<=p.totalRows&&p.totalRows===Number(row.records_valid));
  const stage=verified?'complete':known&&state==='RUNNING'?p.stage:state==='RUNNING'?'processing':state.toLowerCase();
+ const failure=row.job_error,reason=failure?.code==='57014'?'This attempt exceeded the database time limit and was rolled back. No stock or inventory value from this attempt was saved.':failure?.code==='import_lease_lost'?'The worker connection was interrupted before saving. The attempt was rolled back.':failure?'The import could not finish safely. Review its saved result before retrying.':null;
  const stageLabel=(known&&state==='RUNNING'&&p.attempt>1?'Retrying safely after a rolled-back attempt · ':'')+({preparing:'Preparing approved records',processing:'Applying products, stock and costs',verifying:'Checking stock and accounting totals',complete:'Inventory saved and verified',queued:'Waiting for an available worker',paused:'Waiting for review',needs_review:'Review required',needs_input:'Resolve the preview questions',approved:'Approved and ready to start',awaiting_approval:'Review and approve the preview',cancelled:'Stopped'}[stage]||'Checking saved progress');
  return {id:row.id,sourceName:row.source_name,rows:Number(row.records_detected),readyRows:Number(row.records_valid),
-  invalidRows:Number(row.records_invalid),state,label,active:['QUEUED','RUNNING'].includes(state),working:state==='RUNNING',
+  invalidRows:Number(row.records_invalid),state,label,reason,active:['QUEUED','RUNNING'].includes(state),working:state==='RUNNING',
   verified,finished:!['QUEUED','RUNNING'].includes(state),status:row.plan_status,
   createdAt:iso(row.created_at),queuedAt:iso(row.queued_at),startedAt:state==='QUEUED'?null:iso(row.started_at),
   completedAt:['QUEUED','RUNNING'].includes(state)?null:iso(row.committed_at||row.job_finished_at||row.finished_at),
@@ -44,11 +45,11 @@ async function list(database,workspaceId,{id=null,limit=10,activeOnly=false}={})
      NOT (p.field_mappings::jsonb ? 'name' OR p.field_mappings::jsonb ? 'code') OR
      p.source_kind='image' AND COALESCE(p.transformations::jsonb->>'imageReadingConfirmed','false')<>'true' OR
      p.records_invalid>0 AND (p.transformations::jsonb ? 'workbook' OR p.field_mappings::jsonb ? 'serialTracked' OR p.field_mappings::jsonb ? 'lotTracked'))) AS needs_source_review,
-   j.status AS job_status,j.lease_expires_at,
+   j.status AS job_status,j.last_error AS job_error,j.lease_expires_at,
    j.created_at AS queued_at,j.updated_at AS job_updated_at,j.completed_at AS job_finished_at,j.result AS job_result,COALESCE(j.started_at,e.started_at::timestamptz) AS started_at,e.status AS execution_status,
    e.finished_at,e.committed_at,v.verified,floor(extract(epoch FROM clock_timestamp())*1000)::bigint AS database_now
   FROM import_plans p
-  LEFT JOIN LATERAL(SELECT job.status,job.lease_expires_at,job.created_at,job.started_at,job.completed_at,job.updated_at,job.result FROM stockchief_runtime.jobs job
+  LEFT JOIN LATERAL(SELECT job.status,job.last_error,job.lease_expires_at,job.created_at,job.started_at,job.completed_at,job.updated_at,job.result FROM stockchief_runtime.jobs job
    WHERE job.workspace_id=p.workspace_id AND job.kind='import.execute-approved' AND job.payload->>'planId'=p.id
    ORDER BY job.created_at DESC,job.id DESC LIMIT 1)j ON true
   LEFT JOIN LATERAL(SELECT run.id,run.status,run.started_at,run.finished_at,run.committed_at FROM import_executions run

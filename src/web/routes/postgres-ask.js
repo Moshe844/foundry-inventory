@@ -417,12 +417,12 @@ function createPostgresAskRouter(database,options={}){
     if(files.length){
       if(files.length!==1)throw new ValidationError('Attach one inventory file at a time so its preview can be checked.');
       const file=files[0];
-      if(!/\.(csv|tsv|txt|xlsx|pdf|png|jpe?g)$/i.test(file.filename||''))
+      if(!/\.(csv|tsv|txt|xlsx|ods|docx|json|xml|pdf|png|jpe?g|webp|gif|heic|heif|tiff?)$/i.test(file.filename||''))
         throw new ValidationError('Ask can preview inventory tables in CSV, TSV, XLSX, PDF, PNG or JPEG. This file type was not imported.');
       await entitlements.assertCapability(database,scope,'imports.spreadsheet');
       const hash=crypto.createHash('sha256').update(file.buffer).digest('hex');
       const plan=await imports.analyse(database,req.ctx,{buffer:file.buffer,filename:file.filename,
-        provider:options.provider,allowModel:!await pilot.selected(database,req.ctx),
+        provider:options.provider,sourceContext:req.body.message,allowModel:!await pilot.selected(database,req.ctx),
         usageKey:require('../../imports/usage-key').analysisUsageKey(hash,req.body.usageKey)});
       return {navigation:{href:`/imports/${plan.id}`}};
     }

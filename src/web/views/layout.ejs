@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-time-zone="<%= locals.account?.timeZone||'' %>">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -230,7 +230,7 @@
     <% if (typeof backTo !== 'undefined' && backTo && backTo.href) { %>
       <a class="page-back" href="<%= backTo.href %>"><span aria-hidden="true">←</span> Back to <%= backTo.label %></a>
     <% } %>
-    <% if(locals.passwordUpgradeRequired){ %><div class="notice notice--warn" role="status"><div><strong>Please strengthen your password.</strong><p>Your account uses an older password policy. <a href="/settings/password">Update your password</a> to meet the current security requirements.</p></div></div><% } %>
+    <% if(locals.passwordUpgradeRequired){ %><div class="notice notice--warn" role="status"><div><strong>Please strengthen your password.</strong><p>Your account uses an older password policy. <a href="/settings/password">Update your password</a> to meet the current security requirements.</p><form method="post" action="/settings/password/remind-later"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="returnTo" value="<%= locals.currentPath||'/' %>"><button class="btn btn--sm" type="submit">Remind me next sign-in</button></form></div></div><% } %>
     <%- body %>
   </main>
 </div>

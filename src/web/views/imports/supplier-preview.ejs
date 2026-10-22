@@ -1,4 +1,5 @@
 <% const activity=locals.importProgress; %>
+<% if(locals.reviewError){ %><div class="notice notice--warn" role="alert"><strong><%= reviewError %></strong><p>Your current preview and source rows are retained. Nothing was approved or imported by this request.</p></div><% } %>
 <div class="page-head"><div class="titles"><a class="back-link" href="/imports">Bring data in</a>
   <h1>Review suppliers from <%= plan.sourceName %></h1>
   <div class="page-sub"><%= plan.recordsDetected %> rows read · <%= plan.recordsValid %> ready · <%= plan.recordsInvalid %> need attention</div>

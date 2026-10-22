@@ -13,12 +13,15 @@
    const activity=locals.importProgress;
    const importing=Boolean(activity?.active);
    const interrupted=Boolean(activity&&['PAUSED','NEEDS_REVIEW'].includes(activity.state)&&!run?.verified); %>
+<% if(locals.reviewError){ %><div class="notice notice--warn" role="alert"><strong><%= reviewError %></strong><p>Your current preview and source rows are retained. Nothing was approved or imported by this request.</p></div><% } %>
 <div class="page-head">
   <div class="titles"><a class="back-link" href="/imports">Bring data in</a><h1><%= plan.sourceName %></h1>
     <div class="page-sub"><%= plan.recordsDetected %> <%= helpers.plural(plan.recordsDetected, 'row') %> read · <% if(needsAnswer){ %>Answer the question below before import<% } else { %><%= plan.recordsValid %> ready · <%= plan.recordsInvalid %> need correction<% } %></div>
   </div>
   <div class="page-actions" <% if(activity.active){ %>data-import-progress="<%= activity.href %>/progress"<% } %>><span data-import-status class="badge badge--<%= activity?.verified?'ok':'muted' %>"><%= activity?.label||helpers.columnLabel(plan.status.toLowerCase()) %></span></div>
 </div>
+<% if(counts.EXCLUDED){ %><section class="card card-body"><h2>Document totals, charges and notes</h2><p><%= counts.EXCLUDED %> document-only <%= helpers.plural(counts.EXCLUDED,'row') %> retained with the source and excluded from products, stock and inventory value. Review them in the row list below. A document total is not another product or a supplier bill.</p></section><% } %>
+<% if(sourceTransforms.sourceContext){ %><section class="card card-body"><h2>Your request with this file</h2><p><%= sourceTransforms.sourceContext %></p><p>No delivery, receipt or other business action has been recorded. This preview preserves your instruction while you review the source quantities and evidence. A supplier bill, payment or actual receipt remains a separately authorized workflow.</p></section><% } %>
 <% if(needsAccounting&&plan.status==='READY'&&plan.approvalStatus==='AWAITING_APPROVAL'){ %>
 <section class="card card-body" role="status"><h2>Set up Money once before importing inventory value</h2><p>Your file contains unit costs. StockChief read those amounts, but this inventory does not yet have its accounting currency and opening date. This is one setup step for the whole file; you do not need to repair each row.</p><p>No products, stock or value have been imported.</p><a class="btn btn--primary" href="/accounting/setup?import=<%= encodeURIComponent(plan.id) %>">Set up Money and recheck this file</a></section>
 <% } %>
@@ -144,7 +147,7 @@
 <% if(importing){ %>
   <section class="card section" data-import-progress="/imports/<%= plan.id %>/progress" data-import-detail aria-live="polite"><div class="card-head"><h2 data-import-status><%= activity.label %></h2></div><div class="card-body"><p>StockChief is processing <%= plan.recordsValid.toLocaleString('en-US') %> approved rows. Products and stock appear together after the import passes verification.</p><p>You can leave this page. Reopen it from <a href="/imports">File imports and results</a> or the progress banner elsewhere in this inventory.</p><p data-import-timing></p><%- include('../partials/import-meter',{activity}) %></div></section>
 <% } else if(interrupted){ %>
-  <section class="card section"><div class="card-head"><h2>Import paused before verification</h2></div><div class="card-body">
+  <section class="card section"><div class="card-head"><h2>Import paused before verification</h2></div><div class="card-body"><% if(activity.reason){ %><p role="alert"><strong><%= activity.reason %></strong></p><% } %>
     <% if(run?.status==='FAILED' && run.stage==='rolled_back' && plan.status==='READY' && plan.approvalStatus==='APPROVED'){ %>
       <p>This attempt stopped safely before saving. No inventory from this attempt was added. Your file and approval are saved.</p>
       <p>You can retry the same approved rows. StockChief will check the saved result and prevent a second copy.</p>
@@ -166,7 +169,7 @@
   <div class="card section"><div class="card-head"><h2>What will happen</h2><span class="spacer"></span>
     <span class="badge badge--muted">No inventory changed yet</span></div>
     <div class="card-body"><p class="lede"><% if(needsIdentity){ %>I read <%= plan.recordsDetected %> <%= helpers.plural(plan.recordsDetected,'row') %>. Answer the product question above before anything can be imported.<% } else if(needsNumberAnswer){ %>I found the products. Answer the number question above before StockChief changes stock.<% } else if(needsTrackingAnswer){ %>Resolve the tracking requirements above. The complete source stays saved and no stock or value has been imported.<% } else if(needsLocation||plan.conflicts.length){ %>Answer the location question above so StockChief knows where to put this stock.<% } else { %>StockChief will create or match <%= plan.recordsValid %> valid <%= helpers.plural(plan.recordsValid, 'row') %> and establish only the quantities shown below through the inventory ledger.<% } %></p>
-      <p>Category and custom columns are retained as imported product details. Mapped reorder levels, supplier names and lead times update their business settings only when you approve this preview. Importing them authorizes no purchase, supplier bill, payment or email.</p>
+      <p>Matched SKU names and mapped selling prices will be updated from this file. Product names that conflict across variants need correction before execution. Stock quantities follow the selected set/add choice; absent columns do not erase saved details.</p><p>Category and custom columns are retained as imported product details. Mapped reorder levels, supplier names and lead times update their business settings only when you approve this preview. Importing them authorizes no purchase, supplier bill, payment or email.</p>
       <% if(plan.warnings.length){ %><details><summary>Review notes about this file</summary><ul class="plain-list"><% plan.warnings.forEach(function(warning){ %><li class="is-warn"><%= warning %></li><% }) %></ul></details><% } %>
       <% if(plan.conflicts.length){ %><p><strong>Missing setup:</strong> Add or correct these locations before importing: <%= plan.conflicts.map(function(c){return c.text;}).join(', ') %>.</p><% } %>
     </div>
@@ -216,8 +219,8 @@
     <% rows.forEach(function(row){ %><tr class="<%= row.status==='INVALID'?'is-warn-row':'' %>"><td><%= row.rowNumber %></td><td><%= row.parsed.name || '—' %><% if(Object.keys(row.parsed.sourceFacts||{}).length){ %><details><summary>Source details</summary><dl><% Object.entries(row.parsed.sourceFacts).forEach(function(pair){ %><dt><%= pair[0] %></dt><dd><%= pair[1] %></dd><% }); %></dl></details><% } %><% if(Object.keys(row.parsed.reorder||{}).length){ %><p>Reorder settings: <%= Object.entries(row.parsed.reorder).map(pair=>pair[0]+': '+pair[1]).join(' · ') %></p><% } %></td>
       <td><%= [row.parsed.code,(row.parsed.variants || []).map(function(part){return part.name+': '+part.value;}).join(' / ')].filter(Boolean).join(' · ') || '—' %></td>
       <td><%= row.parsed.quantity==null?'—':row.parsed.quantity %><% if(sourceTransforms.importMode==='set'&&row.parsed.existingSkuId){ %><small class="muted">Was <%= row.parsed.inventoryBefore?.physical %> · change <%= row.parsed.countQuantityDelta %> · value change <%= helpers.money?helpers.money(row.parsed.countCostDeltaMinor||0,row.parsed.currency):row.parsed.countCostDeltaMinor %></small><% } %></td>
-      <td><%= Number.isFinite(row.parsed.unitCostMinor)?helpers.money(row.parsed.unitCostMinor,row.parsed.currency||'USD'):'Not provided' %></td>
-      <td><%= Number.isFinite(row.parsed.sellingPriceMinor)?helpers.money(row.parsed.sellingPriceMinor,row.parsed.currency||'USD'):'—' %></td>
+      <td><%= Number.isFinite(row.parsed.unitCostMinor)?helpers.money(row.parsed.unitCostMinor,row.parsed.currency||'USD'):(plan.fieldMappings.unitCost!==undefined&&row.raw[plan.fieldMappings.unitCost]?'Needs correction: '+row.raw[plan.fieldMappings.unitCost]+' '+row.parsed.currency:'Not provided') %></td>
+      <td><%= Number.isFinite(row.parsed.sellingPriceMinor)?helpers.money(row.parsed.sellingPriceMinor,row.parsed.currency||'USD'):(plan.fieldMappings.sellingPrice!==undefined&&row.raw[plan.fieldMappings.sellingPrice]?'Needs correction: '+row.raw[plan.fieldMappings.sellingPrice]+' '+row.parsed.currency:'—') %></td>
       <td><%= row.parsed.locationName || row.parsed.locationText || '—' %></td>
       <td><span class="badge badge--<%= row.status==='IMPORTED'?'ok':row.status==='INVALID'?'danger':'muted' %>"><%= row.status %></span>
         <% row.problems.forEach(function(item){ %><div class="muted"><%= item.message %></div><% }) %></td></tr><% }) %>

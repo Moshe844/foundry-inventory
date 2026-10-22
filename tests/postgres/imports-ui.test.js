@@ -94,8 +94,8 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
     await page.waitForURL(/\/imports\/imp_/);
     const duplicateMain=await page.locator('main').innerText();
     assert.match(duplicateMain,/This exact source was already imported/);
-    assert.match(duplicateMain,/Approve 2 rows/);
-    assert.equal(await page.getByRole('button',{name:'Approve 2 rows'}).isDisabled(),true);
+    assert.match(duplicateMain,/SKIPPED 2/);
+    assert.equal(await page.getByRole('button',{name:'Approve 0 rows'}).isDisabled(),true);
     assert.deepEqual((await database.query(`SELECT COUNT(*) AS items,COALESCE((SELECT SUM(on_hand) FROM balances
       WHERE workspace_id=$1),0) AS units FROM items WHERE workspace_id=$1`,[identity.workspace_id])).rows[0],
     {items:'1',units:'12'});
@@ -232,6 +232,11 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
     assert.match(await page.locator('main').innerText(),/2 rows read · Answer the question below before import/);
     await Promise.all([page.waitForNavigation(),page.locator('section[aria-labelledby="import-location-question"]')
       .getByRole('button',{name:'Main Warehouse',exact:true}).click()]);
+    assert.equal(await page.getByRole('button',{name:/Approve .*row/}).isDisabled(),true,'An image requires explicit review even after its location is known');
+    await page.getByLabel('Image quantity for row 2',{exact:true}).fill('5');
+    await page.getByLabel('Image quantity for row 3',{exact:true}).fill('6');
+    await page.locator('input[name=confirmImageReading]').check();
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Save image review'}).click()]);
     assert.match(await page.locator('main').innerText(),/2 rows read · 2 ready · 0 need correction/);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Approve 2 rows'}).click()]);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Import and verify'}).click()]);
@@ -356,9 +361,11 @@ test('real Chromium previews, approves, imports and reconciles PostgreSQL invent
       text:'Product,SKU,Location,Quantity\nRollback One,RB-1,Main Warehouse,3\nRollback Two,RB-2,Main Warehouse,4\n',
       filename:'rollback.csv'});
     await imports.approve(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},failing.id,failing.integrityHash);
-    await assert.rejects(imports.execute(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},failing.id,{
-      beforeGroup:({itemsCreated})=>{if(itemsCreated===1)throw new Error('simulated process failure');},
-    }),/simulated process failure/);
+    const stockEngine=require('../../src/domain/postgres-inventory-engine'),originalReceiveMany=stockEngine.receiveManyInTransaction;
+    let wroteBeforeFailure=false;
+    stockEngine.receiveManyInTransaction=async(...args)=>{await originalReceiveMany(...args);wroteBeforeFailure=true;throw new Error('simulated process failure');};
+    try{await assert.rejects(imports.execute(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},failing.id),/simulated process failure/);}finally{stockEngine.receiveManyInTransaction=originalReceiveMany;}
+    assert.equal(wroteBeforeFailure,true,'Fail after real transactional writes, then verify their rollback');
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM items WHERE workspace_id=$1
       AND name IN ('Rollback One','Rollback Two')`,[identity.workspace_id])).rows[0].count,'0');
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM movements WHERE workspace_id=$1

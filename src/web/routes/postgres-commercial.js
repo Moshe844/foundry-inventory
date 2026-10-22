@@ -18,7 +18,7 @@ const {AuthorizationError,ValidationError}=require('../../domain/errors');
 
 function renderPublic(req,res,view,data={}){return res.render(view,{...data,csrfToken:res.locals.csrfToken,flash:res.locals.flash,
   account:res.locals.account,origin:res.locals.origin,assetVersion:res.locals.assetVersion},(error,body)=>{
-    if(error)throw error;return res.render('public/layout',{...data,body,account:res.locals.account,origin:res.locals.origin,
+    if(error)throw error;return res.render('public/layout',{nav:'',...data,body,account:res.locals.account,origin:res.locals.origin,
       assetVersion:res.locals.assetVersion,title:data.title||'StockChief',description:data.description||
       'StockChief runs inventory operations and brings owners only the exceptions that require judgement.'});});}
 

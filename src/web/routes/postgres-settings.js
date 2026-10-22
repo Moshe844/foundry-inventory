@@ -130,6 +130,7 @@ function createPostgresSettingsRouter(database,options={}){const router=express.
     title:'Everything else',nav:'settings',room:true,sections,
   })));
   router.get('/settings',requireAuth,asyncRoute(async(req,res)=>settingsPage(database,req,res)));
+  router.post('/settings/time-zone',requireAuth,asyncRoute(async(req,res)=>{const zone=require('../../lib/business-time').zone(req.body.timeZone);await database.query('UPDATE accounts SET time_zone=$2 WHERE id=$1',[req.account.id,zone]);req.flash('success','Your time zone was saved. Dates and activity times now use this preference across your inventories.');return res.redirect(303,'/settings');}));
   router.post('/settings/test-inventory',requireOwner,asyncRoute(async(req,res)=>{
     const created=await require('../../domain/postgres-auth-service').createWorkspace(database,req.account.id,
       {name:req.body.name,dataMode:'synthetic'});

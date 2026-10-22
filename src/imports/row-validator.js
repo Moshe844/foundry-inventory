@@ -90,7 +90,7 @@ function readQuantity(raw) {
   if (!/^-?\d+(\.\d+)?$/.test(cleaned)) return { ok: false, problem: PROBLEM.BAD_QUANTITY };
 
   const value = Number(cleaned);
-  if ((!Number.isSafeInteger(value) && Number.isInteger(value)) || value > require('../domain/physical-stock-input').MAX_QUANTITY || !Number.isFinite(value)) return { ok: false, problem: PROBLEM.BAD_QUANTITY };
+  if ((!Number.isSafeInteger(value) && Number.isInteger(value)) || value > require('../domain/physical-stock-input').MAX_QUANTITY || !Number.isFinite(value)) return { ok: false, problem: PROBLEM.BAD_QUANTITY, message: 'Quantity exceeds '+require('../domain/physical-stock-input').MAX_QUANTITY.toLocaleString('en-US')+'.' };
   if (value < 0) return { ok: false, problem: PROBLEM.NEGATIVE_QUANTITY };
   if (!Number.isInteger(value)) return { ok: false, problem: PROBLEM.FRACTIONAL_QUANTITY };
   return { ok: true, value };

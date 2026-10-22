@@ -173,7 +173,7 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
   return {
     authorize:access,
     async collections(){return collections((await access()).catalogue);},
-    async initialContracts(){const {catalogue,actor}=await access();return initialContractsSnapshot(catalogue,actor);},
+    async initialContracts(){const {catalogue,actor}=await access();const zone=(await database.query('SELECT a.time_zone FROM users u JOIN accounts a ON a.id=u.account_id WHERE u.workspace_id=$1 AND u.id=$2',[ctx.workspaceId,ctx.actorId])).rows[0]?.time_zone;return {...initialContractsSnapshot(catalogue,actor),clock:require('../../src/lib/business-time').context(zone)};},
     async interfaces(input={}){const {actor,catalogue}=await access();return interfaceSnapshot(catalogue,actor,input);},
     async operate({steps,callId=randomUUID()}){
       let effectsStarted=false;

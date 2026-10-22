@@ -10,7 +10,9 @@ const MAX_PDF_BYTES=32*1024*1024;
 const MAX_OCR_PIXELS=12*1000*1000;
 
 async function ocrCanvasRows(canvas,worker){
+  require('./image-table').removeTableRules(canvas);
   const recognised=await worker.recognize(canvas.toBuffer('image/png'),{}, {blocks:true});
+  if(Number(recognised.data.confidence)<45)throw new ValidationError('This scan is too blurry or skewed to read reliably. Try a flatter, sharper photo or type the rows. No inventory changed.');
   const lines=(recognised.data.blocks||[]).flatMap((block)=>block.paragraphs||[])
     .flatMap((paragraph)=>paragraph.lines||[]);
   return lines.map((line)=>{
@@ -94,7 +96,7 @@ async function parse(buffer){
   const pdfjs=await import('pdfjs-dist/legacy/build/pdf.mjs');
   let document;
   try{document=await pdfjs.getDocument({data:new Uint8Array(buffer),useSystemFonts:true}).promise;}
-  catch{throw new ValidationError('StockChief could not open that PDF. No inventory changed.');}
+  catch(error){if(error.name==='PasswordException')throw new ValidationError('This PDF is password-protected. Remove its password and upload an unlocked copy. No inventory changed.');throw new ValidationError('This PDF is damaged or could not be opened. Upload a fresh copy; no inventory changed.');}
   if(document.numPages>MAX_PAGES)throw new ValidationError(`Import PDFs are limited to ${MAX_PAGES} pages. Split this source into smaller files.`);
   let combined=null;let totalItems=0;let worker=null;let ocrPages=0;
   try{for(let pageNumber=1;pageNumber<=document.numPages;pageNumber++){

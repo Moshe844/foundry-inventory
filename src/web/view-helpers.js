@@ -67,7 +67,7 @@ function timeAgo(iso) {
   return shortDate(iso);
 }
 
-function dateTime(iso) {
+function dateTime(iso,timeZone='UTC') {
   if (!iso) return '';
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return '';
@@ -77,7 +77,7 @@ function dateTime(iso) {
     year: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
-    timeZone:'UTC',timeZoneName:'short',
+    timeZone,timeZoneName:'short',
   });
 }
 

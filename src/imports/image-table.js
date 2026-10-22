@@ -47,11 +47,25 @@ const words=result=>(result.data.blocks||[]).flatMap(b=>b.paragraphs||[]).flatMa
   .filter(w=>w.bbox&&String(w.text).trim()&&!/^[|#_=~]+$/.test(w.text));
 async function readDarkTable(canvas,worker){
   const {createCanvas}=require('@napi-rs/canvas'),{PSM}=require('tesseract.js');
-  for(const band of darkHeader(canvas)){
+  const bands=darkHeader(canvas);
+  if(!bands.length){
+    // Light tables need the same anchored column reads as dark tables.
+    // Discover a real heading from recognized field labels and coordinates.
+    await worker.setParameters({tessedit_pageseg_mode:PSM.SPARSE_TEXT});
+    const scan=words(await worker.recognize(canvas.toBuffer('image/png'),{}, {blocks:true})),lines=[];
+    for(const word of scan){const mid=(word.bbox.y0+word.bbox.y1)/2,height=word.bbox.y1-word.bbox.y0;let line=lines.find(r=>Math.abs(r.y-mid)<height*.65);if(!line){line={y:mid,words:[]};lines.push(line);}line.words.push(word);}
+    for(const line of lines.sort((a,b)=>a.y-b.y)){
+      const cells=[];for(const word of line.words.sort((a,b)=>a.bbox.x0-b.bbox.x0)){const previous=cells.at(-1),height=word.bbox.y1-word.bbox.y0;if(previous&&word.bbox.x0-previous.right<height*.65){previous.text+=' '+word.text;previous.right=word.bbox.x1;}else cells.push({text:word.text,right:word.bbox.x1});}
+      const found=new Set(cells.flatMap(c=>require('./fields').bestFieldScores(c.text).slice(0,1).map(s=>s.field)));
+      if(found.size<3||!found.has('quantity')||!found.has('name')&&!found.has('code'))continue;
+      const height=Math.max(...line.words.map(w=>w.bbox.y1-w.bbox.y0));bands.push({top:Math.max(0,Math.min(...line.words.map(w=>w.bbox.y0))-Math.ceil(height*.5)),bottom:Math.min(canvas.height-2,Math.max(...line.words.map(w=>w.bbox.y1))+Math.ceil(height*.5)),light:true});break;
+    }
+  }
+  for(const band of bands){
     const header=createCanvas(canvas.width,band.bottom-band.top+1),ctx=header.getContext('2d');
     ctx.drawImage(canvas,0,band.top,canvas.width,header.height,0,0,header.width,header.height);
     const pixels=ctx.getImageData(0,0,header.width,header.height),data=pixels.data;
-    for(let i=0;i<data.length;i+=4){const v=(data[i]+data[i+1]+data[i+2])/3>160?0:255;data[i]=data[i+1]=data[i+2]=v;}
+    if(!band.light)for(let i=0;i<data.length;i+=4){const v=(data[i]+data[i+1]+data[i+2])/3>160?0:255;data[i]=data[i+1]=data[i+2]=v;}
     ctx.putImageData(pixels,0,0);await worker.setParameters({tessedit_pageseg_mode:PSM.SPARSE_TEXT});
     const labels=words(await worker.recognize(header.toBuffer('image/png'),{}, {blocks:true})).filter(w=>w.confidence>=35).sort((a,b)=>a.bbox.x0-b.bbox.x0),cells=[];
     for(const word of labels){const last=cells.at(-1),height=word.bbox.y1-word.bbox.y0;
@@ -142,8 +156,11 @@ function dimensions(buffer){
 async function parse(buffer){
   if(!Buffer.isBuffer(buffer)||buffer.length>MAX_IMAGE_BYTES)
     throw new ValidationError('That image is too large for a safe inventory preview. No inventory changed.');
-  const size=dimensions(buffer);
+  let size=dimensions(buffer);
+  const webp=buffer.subarray(0,4).toString()==='RIFF'&&buffer.subarray(8,12).toString()==='WEBP',gif=/^GIF8[79]a$/.test(buffer.subarray(0,6).toString());
+  if(!size&&(webp||gif)){try{const decoded=await require('@napi-rs/canvas').loadImage(buffer);if(decoded.width*decoded.height>MAX_PIXELS)throw new Error('too large');if(gif&&buffer.includes(Buffer.from([0x21,0xff,0x0b])))throw new ValidationError('Animated GIFs may contain several different tables. Export each required frame as PNG before importing.');const converted=require('@napi-rs/canvas').createCanvas(decoded.width,decoded.height);converted.getContext('2d').drawImage(decoded,0,0);buffer=converted.toBuffer('image/png');size=dimensions(buffer);}catch(error){if(error instanceof ValidationError)throw error;throw new ValidationError('This image could not be decoded safely. Export it as PNG or JPEG. No inventory changed.');}}
   if(!size)throw new ValidationError('Choose a readable PNG or JPEG image of an inventory table. No inventory changed.');
+  if(Math.min(size.width,size.height)<80||Math.max(size.width,size.height)<200)throw new ValidationError('This image is too small to read reliably. Upload a larger, sharper original or type the rows. No inventory changed.');
   if(!size.width||!size.height||size.width*size.height>MAX_PIXELS)
     throw new ValidationError('That image is too large to read safely. No inventory changed.');
   const {createCanvas,loadImage}=require('@napi-rs/canvas');
@@ -175,4 +192,5 @@ async function parse(buffer){
   return {sheets:[{name:'Image table',...sheet}],primarySheet:0,format:'image'};
 }
 
-module.exports={parse,dimensions,removeTableRules};
+function isImage(buffer){return Boolean(dimensions(buffer))||buffer.subarray(0,4).toString()==='RIFF'&&buffer.subarray(8,12).toString()==='WEBP'||/^GIF8[79]a$/.test(buffer.subarray(0,6).toString());}
+module.exports={parse,dimensions,isImage,removeTableRules};

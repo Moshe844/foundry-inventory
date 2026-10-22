@@ -17,6 +17,7 @@
   var isOwner = currentUser.role === 'owner';
 %>
 
+<section class="card card-body"><h2>Your time zone</h2><form method="post" action="/settings/time-zone"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label class="field"><span>Show activity dates and times in</span><select class="select" name="timeZone"><option value="">My device's time zone</option><% Intl.supportedValuesOf('timeZone').forEach(function(zone){ %><option value="<%= zone %>" <%= locals.account?.timeZone===zone?'selected':'' %>><%= zone.replaceAll('_',' ') %></option><% }); %></select></label><button class="btn" type="submit">Save time zone</button></form></section>
 <div class="rm-head">
   <p class="rm-head__eyebrow"><%- helpers.icon('settings', { size: 14 }) %> Settings</p>
   <h1>The technical side of this inventory.</h1>

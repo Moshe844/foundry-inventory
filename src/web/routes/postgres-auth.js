@@ -175,6 +175,7 @@ function createPostgresAuthRouter(database,options={}) {
   router.get('/forgot-password',(req,res)=>res.render('auth/forgot-password',{
     title:'Reset your password',csrfToken:res.locals.csrfToken,flash:res.locals.flash,appName:res.locals.appName,
   }));
+  router.post('/settings/password/remind-later',require('../middleware').requireAccount,async(req,res,next)=>{try{req.session.passwordUpgradeNoticeDismissed=true;await sessionCall(req,'save');return res.redirect(303,safeNext(req.body.returnTo));}catch(error){next(error);}});
   router.get('/settings/password',require('../middleware').requireAccount,(req,res)=>res.page('auth/change-password',{
     title:'Update your password',nav:null,error:null}));
   router.post('/settings/password',require('../middleware').requireAccount,async(req,res,next)=>{
