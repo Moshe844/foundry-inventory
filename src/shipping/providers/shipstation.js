@@ -116,12 +116,20 @@ async function voidLabel(ctx, input = {}) {
   const ids = (input.providerReferences || input.providerLabelIds || []).filter(Boolean);
   if (!ids.length) throw new ValidationError('StockChief has no ShipStation label reference to void.');
   const answers = [];
-  for (const id of ids) answers.push(await call(ctx, `/labels/${encodeURIComponent(id)}/void`, { method: 'PUT' }));
-  const failed = answers.some((row) => row.approved === false || row.status === 'error');
+  for (const id of ids) answers.push(await call(ctx, `/labels/${encodeURIComponent(id)}/void`, { method: 'PUT', retries: 0 }));
+  const failed = answers.length>0&&answers.every((row) => row.approved === false || row.status === 'error');
+  const complete=answers.every(row=>row.approved===true);
   return {
-    status: failed ? 'FAILED' : 'SUCCEEDED', references: ids,
-    detail: answers.map((row) => row.message).filter(Boolean).join(' ') || 'ShipStation voided the label.',
+    status: failed ? 'FAILED' : complete ? 'SUCCEEDED' : 'PENDING', references: ids,refundStatus:failed?'REJECTED':'PENDING',
+    detail: answers.map((row) => row.message).filter(Boolean).join(' ') || 'ShipStation has not yet confirmed the void.',
   };
+}
+
+async function verifyVoid(ctx,input={}){
+ const ids=(input.providerReferences||[]).filter(Boolean);if(!ids.length)throw new ValidationError('The original ShipStation label references are required.');
+ const rows=[];for(const id of ids)rows.push(await call(ctx,'/labels/'+encodeURIComponent(id)));
+ const complete=rows.every(row=>row.voided===true||String(row.status).toLowerCase()==='voided');
+ return {status:complete?'SUCCEEDED':'PENDING',refundStatus:'PENDING',references:ids,detail:complete?'The label is void. Any postage refund remains subject to the carrier’s settlement.':'The carrier has not yet confirmed this void.'};
 }
 
 const STATUS = {
@@ -163,7 +171,8 @@ async function track(ctx, input = {}) {
 }
 
 module.exports = {
-  isConfigured, quote, buy, voidLabel, track,
+  isConfigured, quote, buy, voidLabel, verifyVoid, track,
+  ensureWebhook:(ctx,input)=>require('./webhook-registration').shipstation(call,ctx,input),
   verifyEvent: shipengine.verifyEvent,
   readEvent: shipengine.readEvent,
   address: shipengine.address,

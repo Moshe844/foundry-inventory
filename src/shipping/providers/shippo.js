@@ -203,14 +203,21 @@ async function voidLabel(ctx, input = {}) {
   if (!ids.length) throw new ValidationError('StockChief has no Shippo transaction reference to refund.');
   const answers = [];
   for (const id of ids) {
-    answers.push(await call(ctx, '/refunds/', { method: 'POST', body: { transaction: id },
+    answers.push(await call(ctx, '/refunds/', { method: 'POST', retries: 0, body: { transaction: id },
       headers: input.idempotencyKey ? { 'Idempotency-Key': `${input.idempotencyKey}:${id}` } : {} }));
   }
   const states = answers.map((row) => String(row.status || '').toUpperCase());
-  const failed = states.some((state) => ['ERROR','FAILED','REJECTED'].includes(state));
+  const failed = states.length>0&&states.every((state) => ['ERROR','FAILED','REJECTED'].includes(state));
   const complete = states.length > 0 && states.every((state) => ['SUCCESS','REFUNDED'].includes(state));
-  return { status: failed ? 'FAILED' : complete ? 'SUCCEEDED' : 'PENDING', references: ids,
+  return { status: failed ? 'FAILED' : complete ? 'SUCCEEDED' : 'PENDING', references: ids,refundStatus:failed?'REJECTED':complete?'CONFIRMED':'PENDING',
     detail: states.filter(Boolean).join(', ') || 'Refund submitted to Shippo.' };
+}
+
+async function verifyVoid(ctx,input={}){
+ const ids=(input.providerReferences||[]).filter(Boolean);if(!ids.length)throw new ValidationError('The original Shippo transactions are required.');
+ const rows=[];for(const id of ids)rows.push(await call(ctx,'/transactions/'+encodeURIComponent(id)+'/'));
+ const states=rows.map(row=>String(row.status||'').toUpperCase()),failed=states.every(state=>state==='REFUNDREJECTED'),complete=states.every(state=>state==='REFUNDED');
+ return {status:failed?'FAILED':complete?'SUCCEEDED':'PENDING',refundStatus:failed?'REJECTED':complete?'CONFIRMED':'PENDING',references:ids,detail:states.join(', ')};
 }
 
 /* -------------------------------------------------------------- tracking */
@@ -255,19 +262,20 @@ async function track(ctx, input = {}) {
 
 /* -------------------------------------------------------------- webhooks */
 
-/**
- * Shippo does not sign its webhooks.
- *
- * So the shared secret is carried in the path or a header the owner sets, and
- * this refuses anything that does not present it. When no secret is configured
- * the message is accepted and read — which is Shippo's own default posture,
- * and worth being explicit about rather than implying a signature check that
- * is not happening.
- */
+// Shippo supports customer URL tokens; HMAC requires separate provider setup.
+// Never accept unverified events, including accounts without a configured secret.
 function verifyEvent(raw, headers = {}, options = {}) {
   const secret = options.webhookSecret || process.env.SHIPPO_WEBHOOK_SECRET;
-  if (secret) {
-    const presented = headers['x-shippo-secret'] || headers['X-Shippo-Secret'] || '';
+  if (!secret) throw new AuthenticationError('A customer webhook secret must be configured before receiving carrier events.');
+  const bytes=Buffer.isBuffer(raw)?raw:Buffer.from(String(raw),'utf8');
+  const signed=headers['shippo-auth-signature'];
+  if(signed){
+    const parts=Object.fromEntries(String(signed).split(',').map(part=>part.trim().split('='))),timestamp=Number(parts.t);
+    if(!Number.isFinite(timestamp)||Math.abs(Date.now()/1000-timestamp)>300)throw new AuthenticationError('This shipping webhook signature is expired.');
+    const expected=require('node:crypto').createHmac('sha256',secret).update(parts.t+'.').update(bytes).digest('hex');
+    if(!safeEqual(String(parts.v1||''),expected))throw new AuthenticationError('This shipping webhook signature is invalid.');
+  }else{
+    const presented = options.presentedToken || headers['x-shippo-secret'] || headers['X-Shippo-Secret'] || '';
     if (!safeEqual(String(presented), String(secret))) {
       throw new AuthenticationError('This shipping webhook did not carry the expected secret.');
     }
@@ -282,7 +290,9 @@ function verifyEvent(raw, headers = {}, options = {}) {
 function readEvent(event = {}) {
   const tracker = event.data || event;
   return {
-    externalEventId: event.object_id || tracker.object_id || null,
+    // object_id identifies the tracker/transaction, not an individual update.
+    // The receiver uses the digest of the authenticated event bytes instead.
+    externalEventId: null,
     type: event.event || null,
     providerTrackerId: tracker.object_id || null,
     providerShipmentId: tracker.transaction || null,
@@ -295,5 +305,6 @@ function readEvent(event = {}) {
   };
 }
 
-module.exports = { isConfigured, quote, buy, verifyPurchase, voidLabel, track, verifyEvent, readEvent,
+module.exports = { isConfigured, quote, buy, verifyPurchase, voidLabel, verifyVoid, track, verifyEvent, readEvent,
+  ensureWebhook:(ctx,input)=>require('./webhook-registration').shippo(call,ctx,input),
   address, parcel, statusOf, readRate, call };

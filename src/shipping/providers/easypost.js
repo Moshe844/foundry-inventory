@@ -215,18 +215,26 @@ async function voidLabel(ctx, input = {}) {
   const answers = [];
   for (let index = 0; index < ids.length; index += 1) {
     answers.push(await call(ctx, `/shipments/${encodeURIComponent(ids[index])}/refund`, {
-      method: 'POST',
+      method: 'POST', retries: 0,
       headers: input.idempotencyKey ? { 'x-idempotency-key': `${input.idempotencyKey}:${index}` } : {},
     }));
   }
   const states = answers.map((row) => String(row.refund_status || '').toLowerCase());
-  const failed = states.some((state) => ['rejected','failed'].includes(state));
+  const failed = states.length>0&&states.every((state) => ['rejected','failed'].includes(state));
   const complete = states.length > 0 && states.every((state) => ['refunded','success'].includes(state));
   return {
     status: failed ? 'FAILED' : complete ? 'SUCCEEDED' : 'PENDING',
+    refundStatus: failed ? 'REJECTED' : complete ? 'CONFIRMED' : 'PENDING',
     references: ids,
     detail: states.filter(Boolean).join(', ') || 'Refund submitted to EasyPost.',
   };
+}
+
+async function verifyVoid(ctx,input={}){
+ const ids=(input.providerReferences||[]).filter(Boolean);if(!ids.length)throw new ValidationError('The original EasyPost shipment references are required.');
+ const rows=[];for(const id of ids)rows.push(await call(ctx,'/shipments/'+encodeURIComponent(id)));
+ const states=rows.map(row=>String(row.refund_status||'').toLowerCase()),failed=states.every(state=>state==='rejected'),complete=states.every(state=>state==='refunded');
+ return {status:failed?'FAILED':complete?'SUCCEEDED':'PENDING',refundStatus:failed?'REJECTED':complete?'CONFIRMED':'PENDING',references:ids,detail:states.filter(Boolean).join(', ')};
 }
 
 /* -------------------------------------------------------------- tracking */
@@ -303,6 +311,7 @@ async function track(ctx, input = {}) {
 function verifyEvent(raw, headers = {}, options = {}) {
   const secret = options.webhookSecret || process.env.EASYPOST_WEBHOOK_SECRET;
   const signature = headers['x-hmac-signature'] || headers['X-Hmac-Signature'];
+  if (!secret) throw new AuthenticationError('A customer webhook secret must be configured before receiving carrier events.');
   if (secret) {
     if (!signature) throw new AuthenticationError('This shipping webhook carried no signature.');
     const crypto = require('node:crypto');
@@ -337,5 +346,6 @@ function readEvent(event = {}) {
   };
 }
 
-module.exports = { isConfigured, quote, buy, voidLabel, track, verifyEvent, readEvent,
+module.exports = { isConfigured, quote, buy, voidLabel, verifyVoid, track, verifyEvent, readEvent,
+  ensureWebhook:(ctx,input)=>require('./webhook-registration').easypost(call,ctx,input),
   address, parcel, statusOf, readRate, call };

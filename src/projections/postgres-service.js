@@ -33,9 +33,9 @@ async function needsCount(database,workspaceId,actorId=null){
     (SELECT COUNT(*) FROM repair_cases WHERE workspace_id=$1
       AND status IN ('NEEDS_AUTHORITY','AUTHORIZED','FAILED','INCONCLUSIVE'))+
     (SELECT COUNT(*) FROM stockchief_runtime.provider_effects effect WHERE effect.workspace_id=$1 AND effect.status='AMBIGUOUS'
-      AND NOT (effect.kind='shipping.label.purchase' AND effect.provider_reference->>'externalId' IS NOT NULL
+      AND NOT (effect.kind IN ('shipping.label.purchase','shipping.label.void') AND effect.provider_reference->>'externalId' IS NOT NULL
         AND EXISTS (SELECT 1 FROM stockchief_runtime.jobs verification WHERE verification.workspace_id=effect.workspace_id
-          AND verification.kind='shipping.label.verify' AND verification.payload->>'effectId'=effect.id
+            AND verification.kind=CASE WHEN effect.kind='shipping.label.void' THEN 'shipping.void.verify' ELSE 'shipping.label.verify' END AND verification.payload->>'effectId'=effect.id
           AND verification.status IN ('PENDING','RUNNING','RETRY')))
       AND NOT (effect.aggregate_type IN ('email_message','supplier_communication','customer_communication')
         AND EXISTS (SELECT 1 FROM connection_issues issue
@@ -119,9 +119,9 @@ async function needs(database,workspaceId,actorId=null){
       FROM stockchief_runtime.provider_effects effect
       LEFT JOIN payment_requests request ON effect.aggregate_type='payment_request' AND request.id=effect.aggregate_id
       WHERE effect.workspace_id=$1 AND effect.status='AMBIGUOUS'
-      AND NOT (effect.kind='shipping.label.purchase' AND effect.provider_reference->>'externalId' IS NOT NULL
+      AND NOT (effect.kind IN ('shipping.label.purchase','shipping.label.void') AND effect.provider_reference->>'externalId' IS NOT NULL
         AND EXISTS (SELECT 1 FROM stockchief_runtime.jobs verification WHERE verification.workspace_id=effect.workspace_id
-          AND verification.kind='shipping.label.verify' AND verification.payload->>'effectId'=effect.id
+            AND verification.kind=CASE WHEN effect.kind='shipping.label.void' THEN 'shipping.void.verify' ELSE 'shipping.label.verify' END AND verification.payload->>'effectId'=effect.id
           AND verification.status IN ('PENDING','RUNNING','RETRY')))
       AND NOT (effect.aggregate_type IN ('email_message','supplier_communication','customer_communication')
         AND EXISTS (SELECT 1 FROM connection_issues issue

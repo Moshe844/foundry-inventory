@@ -13,10 +13,11 @@
   <article class="card-body stack" aria-label="<%= connected.providerName %> account">
     <h3><%= connected.providerName %> <span class="badge <%= connected.testMode?'badge--warn':'badge--ok' %>"><%= connected.testMode?'Test labels only':'Live account' %></span></h3>
     <p><%= connected.testMode?'Test labels cannot be used for real parcels and do not charge real postage.':'Approved labels are billed to your connected provider account.' %></p>
+    <p role="status"><%= connected.webhookSetup?.status==='CONNECTED'?'Automatic carrier updates are registered. StockChief also checks tracking periodically.':connected.webhookSetup?.status==='POLLING'?'This provider’s test environment uses automatic tracking checks.':connected.webhookSetup?.status==='REVIEW'?'Carrier update registration needs attention. Automatic tracking checks continue.':'StockChief is setting up automatic carrier updates.' %></p>
     <details class="disclose"><summary><span>Advanced connection details</span><span class="disclose__cue">Show</span></summary>
       <div class="disclose__body t-sm">Platform: <%= connected.providerName %> · key ending <%= connected.keyEnding %>
         <p>Tracking webhook: <code style="overflow-wrap:anywhere"><%= connected.webhookUrl %></code></p>
-        <p><%= connected.hasWebhookSecret?'A webhook secret is saved. Delivery still needs to be verified with the provider.':'Configure the provider’s webhook verification settings to enable instant tracking updates.' %></p>
+        <p><%= connected.hasWebhookSecret?'Carrier event verification is configured for this business.':'StockChief will configure carrier event verification automatically.' %></p>
       </div>
     </details>
     <form method="post" action="/settings/shipping/account/disconnect" data-busy data-confirm="Disconnect this account? Existing labels and shipment history remain.">

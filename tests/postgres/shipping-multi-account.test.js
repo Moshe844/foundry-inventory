@@ -71,7 +71,7 @@ test('multi-provider quotes retain account ownership, purchase once and isolate 
   const balance=async()=>Number((await db.query('SELECT on_hand FROM balances WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3',[ctx.workspaceId,item.skuIds[0],location.id])).rows[0].on_hand);
   assert.equal(await balance(),10,'buying a label cannot remove physical stock');
   const interrupted={query:(...args)=>db.query(...args),transaction:async operation=>db.transaction(client=>operation({query:async(sql,values)=>{
-    if(sql.includes("UPDATE sales_shipments SET status='SHIPPED'"))throw Error('Disposable failure before shipment confirmation');
+    if(/UPDATE sales_shipments SET status=/.test(sql)&&sql.includes('handover='))throw Error('Disposable failure before shipment confirmation');
     return client.query(sql,values);
   }}),{isolation:'SERIALIZABLE',retrySafe:false})};
   await assert.rejects(shipping.handoff(interrupted,ctx,parcel.shipmentId,{idempotencyKey:'interrupted-handoff'}),/Disposable failure/);

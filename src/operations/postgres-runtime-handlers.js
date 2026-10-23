@@ -214,10 +214,11 @@ async function runtimeSweep(job,client,options={}){
   }
   const staleProviderEffects=await providerEffects.markStaleAmbiguous(client,{olderThanMinutes:5});
   for(const effect of staleProviderEffects.rows){
-    if(effect.kind==='shipping.label.purchase'&&effect.payload?.transactionId){
+    if(['shipping.label.purchase','shipping.label.void'].includes(effect.kind)&&effect.payload?.transactionId){
       await client.query(`UPDATE shipping_label_transactions SET status='REVIEW',
-        error_message='The worker stopped before the carrier outcome was verified. StockChief did not buy the label again.',
+        error_message='The worker stopped before the carrier outcome was verified. StockChief did not submit the request again.',
         completed_at=$2,updated_at=$2 WHERE id=$1 AND status='PENDING'`,[effect.payload.transactionId,at]);
+      await client.query("UPDATE sales_shipments SET label_status='REVIEW',updated_at=$3 WHERE workspace_id=$1 AND id=$2 AND label_status IN ('PENDING','VOID_PENDING')",[effect.workspace_id,effect.aggregate_id,at]);
     }
     if(effect.kind==='mail.reply.send'&&effect.payload?.outboxId){const recovered=(await client.query(`UPDATE stockchief_runtime.email_reply_outbox
         SET status='AMBIGUOUS',error_message='The worker stopped before the mailbox provider outcome was verified.',finished_at=$2
@@ -252,6 +253,9 @@ async function runtimeSweep(job,client,options={}){
     }
   }
   await shipping.recoverKnownLabelVerifications(client,{providerResolver:options.shippingProviderResolver});
+  await require('../shipping/postgres-label-voids').recover(client,{providerResolver:options.shippingProviderResolver});
+  await require('../shipping/postgres-tracking').schedule(client);
+  await require('../shipping/postgres-webhook-setup').schedule(client,{publicOrigin:options.publicOrigin});
   const connectors=(await client.query(`SELECT id,workspace_id,display_name,provider_type,expected_interval_minutes,
       GREATEST(COALESCE(last_activity_at,''),COALESCE(last_synced_at,''),created_at) AS evidence_at,
       last_synced_at,created_at,status,paused_at,config
@@ -408,6 +412,9 @@ async function providerEffect(job,database,options={},providers=defaultProviders
   if(effect.kind==='shipping.label.purchase')return shipping.executeLabelPurchaseEffect(database,job.workspaceId,effectId,{
     provider:options.shippingProviderResolver?options.shippingProviderResolver(effect.provider):shippingProviders.get(effect.provider),
   });
+  if(effect.kind==='shipping.label.void')return require('../shipping/postgres-label-voids').execute(database,job.workspaceId,effectId,{
+    provider:options.shippingProviderResolver?options.shippingProviderResolver(effect.provider):shippingProviders.get(effect.provider),
+  });
   if(effect.kind==='mail.reply.send')return mail.executeSendEffect(database,job.workspaceId,effectId,{provider:providers.get(effect.provider)});
   if(effect.kind==='mail.outbound.send'){
     try{return await outboundMail.executeSendEffect(database,job.workspaceId,effectId,{
@@ -524,6 +531,14 @@ function create(providers=defaultProviders,options={}){return {'system.runtime-s
       provider:options.shippingProviderResolver?options.shippingProviderResolver(effect.provider):shippingProviders.get(effect.provider),
       finalAttempt:Number(job.attemptCount)>=Number(job.maxAttempts)});
   }),
+  'shipping.void.verify':external(async(job,database)=>{
+    const effect=await providerEffects.get(database,job.workspaceId,job.payload?.effectId);
+    return require('../shipping/postgres-label-voids').verify(database,job.workspaceId,effect.id,{
+      provider:options.shippingProviderResolver?options.shippingProviderResolver(effect.provider):shippingProviders.get(effect.provider),
+      finalAttempt:Number(job.attemptCount)>=Number(job.maxAttempts)});
+  }),
+  'shipping.tracking.check':external((job,database)=>require('../shipping/postgres-tracking').check(database,job,{providerResolver:options.shippingProviderResolver})),
+  'shipping.webhook.setup':external((job,database)=>require('../shipping/postgres-webhook-setup').run(database,job,{providerResolver:options.shippingProviderResolver})),
   'import.revise-preview':external((job,database)=>require('../imports/postgres-preview-revisions').run(job,database),'bulk'),
   'import.analyse-source':external((job,database)=>require('../imports/postgres-source-uploads').run(job,database,{provider:options.aiProvider}),'bulk'),
   'import.execute-approved':external(async(job,database)=>{

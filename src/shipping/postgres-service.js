@@ -228,6 +228,8 @@ async function queueLabelPurchase(database,ctx,shipmentId,rateId,input={}){
   const key=String(input.idempotencyKey||'').trim();
   if(!key)throw new ValidationError('A durable idempotency key is required.');
   return database.transaction(async(client)=>{
+    const actor=(await client.query('SELECT * FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];
+    require('../actions/permissions').assertCan(actor,require('../actions/permissions').ADMIN,'buy postage from the business shipping account');
     const shipment=await requireShipment(client,ctx.workspaceId,shipmentId,true);
     const prior=await client.query(`SELECT * FROM shipping_label_transactions
       WHERE workspace_id=$1 AND idempotency_key=$2 FOR UPDATE`,[ctx.workspaceId,key]);
@@ -244,7 +246,7 @@ async function queueLabelPurchase(database,ctx,shipmentId,rateId,input={}){
       throw new ValidationError(prior.rows[0].error_message||'The carrier refused that label purchase. Refresh rates before trying again.');
     }
     if(shipment.label_status==='PURCHASED'&&shipment.label_url)return {queued:false,replayed:true,shipment};
-    if(['PENDING','REVIEW'].includes(shipment.label_status))throw new ValidationError('A label purchase is pending or needs review for this shipment.');
+    if(['PENDING','REVIEW','VOID_PENDING'].includes(shipment.label_status))throw new ValidationError('A label purchase or void is pending or needs review for this shipment.');
     if((await client.query(`SELECT 1 FROM shipping_label_transactions WHERE workspace_id=$1 AND shipment_id=$2
       AND status IN ('PENDING','REVIEW')`,[ctx.workspaceId,shipmentId])).rows.length)
       throw new ValidationError('A label purchase is pending or needs review for this shipment.');
@@ -256,8 +258,6 @@ async function queueLabelPurchase(database,ctx,shipmentId,rateId,input={}){
     if(!account||accountFingerprint(account)!==rate.account_fingerprint||
       quoteFingerprint(await state(client,ctx.workspaceId,shipmentId))!==rate.parcel_fingerprint)
       throw new ValidationError('The parcel or shipping account changed. Request fresh rates before purchasing.');
-    const actor=(await client.query('SELECT id FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];
-    if(!actor)throw new ValidationError('The acting user does not belong to this inventory.');
     const id=newId('shiptxn');const now=nowIso();
     await client.query(`INSERT INTO shipping_label_transactions
       (id,workspace_id,shipment_id,provider,operation,status,idempotency_key,currency,
@@ -444,7 +444,7 @@ async function handoff(database,ctx,shipmentId,input={}){
   const result=await workflows.fulfillSalesOrderInTransaction(client,ctx,shipment.sales_order_id,{lines,
     idempotencyKey:`shipment-handoff:${shipmentId}`});
   const at=nowIso();
-  await client.query(`UPDATE sales_shipments SET status='SHIPPED',handover=$3,carrier=COALESCE($4,carrier),
+  await client.query(`UPDATE sales_shipments SET status=CASE WHEN tracking_status='DELIVERED' THEN 'DELIVERED' ELSE 'SHIPPED' END,handover=$3,carrier=COALESCE($4,carrier),
     service=COALESCE($5,service),tracking_number=COALESCE($6,tracking_number),
     expected_delivery_date=COALESCE($7,expected_delivery_date),shipping_cost_minor=COALESCE($8,shipping_cost_minor),
     shipped_at=COALESCE(shipped_at,$9),updated_at=$9 WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,shipmentId,
@@ -538,7 +538,7 @@ async function applyTrackingInTransaction(client,ctx,shipment,input={}){
   const current=String(shipment.tracking_status||'UNKNOWN');
   const next=RANK[status]>=RANK[current]?status:current;
   await client.query(`UPDATE sales_shipments SET tracking_status=$3,tracking_status_detail=$4,tracked_at=$5,
-    status=CASE WHEN $3='DELIVERED' THEN 'DELIVERED' ELSE status END,
+    status=CASE WHEN $3='DELIVERED' AND status='SHIPPED' THEN 'DELIVERED' ELSE status END,
     delivered_at=CASE WHEN $3='DELIVERED' THEN COALESCE(delivered_at,$5) ELSE delivered_at END,
     exception_reason=CASE WHEN $3 IN ('FAILURE','RETURNED') THEN $4
       WHEN $3 IN ('DELIVERED','CANCELLED') THEN NULL ELSE exception_reason END,updated_at=$5
@@ -566,6 +566,7 @@ async function receiveProviderEvent(database,ctx,providerName,event,options={}){
       shipment=(await client.query(`SELECT * FROM sales_shipments WHERE workspace_id=$1 AND tracking_number=$2 AND provider=$3
         ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,[ctx.workspaceId,String(read.trackingNumber),providerName])).rows[0]||null;
     }
+    if(shipment&&options.connectorId&&shipment.shipping_connector_id!==options.connectorId)shipment=null;
     const outcome=shipment
       ?`Recorded ${String(read.status||'unknown').toLowerCase().replaceAll('_',' ')} for ${shipment.shipment_number}.`
       :'No shipment in this inventory matches that carrier event.';
@@ -612,11 +613,13 @@ async function refreshTracking(database,ctx,shipmentId,options={}){
   const held=await accounts.contextFor(database,ctx,{connectorId:shipment.shipping_connector_id||null,provider:shipment.provider});
   if(!held)throw new ValidationError('Reconnect the postage account before checking the carrier.');
   const provider=options.provider||defaultProviders.get(held.account.provider);
-  const read=await require('../commercial/operations').run(database,ctx.workspaceId,{capability:'shipping.tracking',
-    key:options.idempotencyKey||newId('track'),provider:held.account.provider,operation:'carrier_tracking'},
-    ()=>provider.track(held.ctx,{trackingNumber:shipment.tracking_number,carrier:shipment.carrier,providerShipmentId:shipment.provider_shipment_id}));
+  const operation=()=>provider.track(held.ctx,{trackingNumber:shipment.tracking_number,carrier:shipment.carrier,providerShipmentId:shipment.provider_shipment_id});
+  const read=options.essential?await require('../commercial/context').run({database,
+    scope:await require('../commercial/entitlements').ownerScopeForWorkspace(database,ctx.workspaceId),system:true,requestId:'tracking:'+options.idempotencyKey},operation):
+    await require('../commercial/operations').run(database,ctx.workspaceId,{capability:'shipping.tracking',
+    key:options.idempotencyKey||newId('track'),provider:held.account.provider,operation:'carrier_tracking'},operation);
   if(!read)return {applied:false,status:shipment.tracking_status,because:'The carrier has no scan for this parcel yet.'};
-  const events=read.events?.length?read.events:[{externalEventId:`summary:${shipment.tracking_number}:${read.status}:${read.occurredAt||nowIso()}`,
+  const events=read.events?.length?read.events:[{externalEventId:`summary:${shipment.tracking_number}:${read.status}:${read.occurredAt||'undated'}`,
     status:read.status,detail:read.detail,location:read.location,occurredAt:read.occurredAt||nowIso()}];
   let latest={applied:false,status:shipment.tracking_status};
   for(const event of events){

@@ -87,12 +87,14 @@ async function connect(database,ctx,input={}){
           $6,'CONNECTED',$7,$8,$8)`,[id,ctx.workspaceId,`shipping-${provider}`,DISPLAY[provider],provider,
         `connection_credentials:${id}`,ctx.actorId,now]);
     }
-    await credentials.put(client,ctx.workspaceId,id,'provider',{apiKey,webhookSecret});
+    const previous=await credentials.get(client,ctx.workspaceId,id,'provider')||{};
+    await credentials.put(client,ctx.workspaceId,id,'provider',{apiKey,webhookSecret:webhookSecret||previous.webhookSecret||require('node:crypto').randomBytes(32).toString('hex')});
     const commercialScope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId);
     await commercial.trackOnce(client,{eventName:'first_integration_connected',accountId:commercialScope.accountId,
       sourcePath:'shipping_connection',detail:{providerType:provider}});
     return id;
   },{isolation:'SERIALIZABLE',retrySafe:true});
+  await require('./postgres-webhook-setup').enqueue(database,ctx,connectorId,{generation:now});
   return describe(database,ctx.workspaceId,{connectorId});
 }
 

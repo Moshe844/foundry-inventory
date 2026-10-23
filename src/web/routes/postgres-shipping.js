@@ -66,7 +66,8 @@ async function shipmentPage(database,workspaceId,shipmentId){
   const recommended=rates.length&&mode!=='MANUAL'&&!rules.length
     ?{rate:rates[0],because:'This is the lowest current carrier price. Confirm its service and delivery date before buying.'}:null;
   let providerCapabilities={};
-  if(state.account?.provider&&providerRegistry.has(state.account.provider))providerCapabilities=providerRegistry.capabilities(state.account.provider);
+  const shipmentProvider=s.provider||state.account?.provider;
+  if(shipmentProvider&&providerRegistry.has(shipmentProvider))providerCapabilities=providerRegistry.capabilities(shipmentProvider);
   return {shipment:s,paymentPosition,pickList:{shipment:s,stops},shipping:{ready:state.ready,blocked,
     provider:s.provider||state.account?.provider||null,to:state.to,from:state.from,boxes:state.boxes,rates,promised:s.needed_by||null,promise:null,
     handling:{mode},ruled,recommended,rules:ruleRows.rows,events:state.events,quoteProblems:state.quoteProblems,
@@ -79,18 +80,19 @@ function createPostgresShippingRouter(database,options={}){
   const router=express.Router();
   router.use(['/settings/shipping','/fulfilment'],requireAuth);
   router.get('/settings/shipping',asyncRoute(async(req,res)=>{
-    const [shippingAccounts,ruleRows,policyRows,locationRows]=await Promise.all([accounts.describeAll(database,req.ctx.workspaceId),
+    const [shippingAccounts,ruleRows,policyRows,locationRows,setupRows]=await Promise.all([accounts.describeAll(database,req.ctx.workspaceId),
       database.query(`SELECT * FROM shipping_rules WHERE workspace_id=$1 ORDER BY created_at,id`,[req.ctx.workspaceId]),
       database.query('SELECT * FROM shipping_operation_policy WHERE workspace_id=$1',[req.ctx.workspaceId]),
       database.query(`SELECT name,address FROM locations WHERE workspace_id=$1 AND is_active=1
-        ORDER BY CASE WHEN TRIM(COALESCE(address,''))<>'' THEN 0 ELSE 1 END,created_at,id LIMIT 1`,[req.ctx.workspaceId])]);
+        ORDER BY CASE WHEN TRIM(COALESCE(address,''))<>'' THEN 0 ELSE 1 END,created_at,id LIMIT 1`,[req.ctx.workspaceId]),
+      database.query('SELECT connector_id,status,last_error FROM shipping_webhook_setups WHERE workspace_id=$1',[req.ctx.workspaceId])]);
     const account=shippingAccounts[0]||await accounts.describe(database,req.ctx.workspaceId);
     const origin=locationRows.rows[0]||{};const parsed=address.parse(origin.address);const rules=ruleRows.rows.map((row)=>({
       id:row.id,name:row.name,carrier:row.carrier,service:row.service,maxCostMinor:row.max_cost_minor===null?null:Number(row.max_cost_minor),
       requireByPromised:Boolean(Number(row.require_by_promised)),maxDeliveryDays:row.max_delivery_days===null?null:Number(row.max_delivery_days),
       active:Boolean(Number(row.is_active)),statedText:row.stated_text}));
     return res.page('shipping/postgres-settings',{title:'Shipping settings',nav:'settings',room:true,backTo:{href:'/settings',label:'Settings'},
-      account,shippingAccounts:shippingAccounts.map(a=>({...a,webhookUrl:`${res.locals.origin}/webhooks/shipping/${a.provider}/${req.ctx.workspaceId}`})),rules,
+      account,shippingAccounts:shippingAccounts.map(a=>({...a,webhookSetup:setupRows.rows.find(row=>row.connector_id===a.connectorId)||null,webhookUrl:`${res.locals.origin}/webhooks/shipping/${a.provider}/${req.ctx.workspaceId}`})),rules,
       automaticShippingAvailable:false,operationPolicy:{mode:policyRows.rows[0]?.mode||'RECOMMEND'},
       referral:{available:false,opened:false,billingReady:false},shipengine:{available:false,opened:false,billingReady:false},
       openShipEngineSetup:false,workspaceName:req.workspace?.name||'',providers:accounts.PROVIDERS,carriers:carriers.list(),
@@ -207,6 +209,13 @@ function createPostgresShippingRouter(database,options={}){
       {idempotencyKey:req.body.idempotencyKey||`label:${req.params.id}:${req.body.rateId}`});
     req.flash('success',queued.replayed?'That label request is already being verified. StockChief did not submit it twice.':
       'Label purchase queued. StockChief will record it only after the carrier confirms the charge and tracking number.');
+    return res.redirect(303,`/fulfilment/${req.params.id}#label`);
+  }));
+  router.post('/fulfilment/:id/label/void',requireOwner,asyncRoute(async(req,res)=>{
+    const result=await require('../../shipping/postgres-label-voids').queue(database,req.ctx,req.params.id,
+      {idempotencyKey:req.body.idempotencyKey});
+    req.flash('success',result.replayed?'The saved void request is already being checked. It was not submitted twice.':
+      'Void requested. StockChief will verify the carrier response. Stock and bank balances have not changed.');
     return res.redirect(303,`/fulfilment/${req.params.id}#label`);
   }));
   router.post('/fulfilment/:id/handoff',asyncRoute(async(req,res)=>{
