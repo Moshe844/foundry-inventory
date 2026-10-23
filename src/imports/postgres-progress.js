@@ -22,13 +22,14 @@ function present(row){
  const p=revising?row.preview_result?.previewProgress:detail?.importProgress,known=Boolean(p&&(revising?p.stage==='checking':['preparing','processing','verifying'].includes(p.stage))&&Number.isSafeInteger(p.processedRows)&&Number.isSafeInteger(p.totalRows)&&p.processedRows>=0&&p.processedRows<=p.totalRows&&p.totalRows===Number(revising?row.records_detected:row.records_valid));
  const stage=verified?'complete':revising?'preview':known&&state==='RUNNING'?p.stage:state==='RUNNING'?'processing':state.toLowerCase();
  const failure=row.job_error,reason=failure?.code==='57014'?'This attempt exceeded the database time limit and was rolled back. No stock or inventory value from this attempt was saved.':failure?.code==='import_lease_lost'?'The worker connection was interrupted before saving. The attempt was rolled back.':failure?'The import could not finish safely. Review its saved result before retrying.':null;
- const stageLabel=(known&&p.attempt>1?'Attempt '+p.attempt+' · restarting safely after rollback · ':'')+({preview:'Checking your saved preview; no inventory changes',preparing:'Preparing approved records',processing:'Applying products, stock and costs',verifying:'Checking stock and accounting totals',complete:'Inventory saved and verified',queued:row.waiting_for_import?'Waiting for the running import in this inventory':'Waiting for an available worker',paused:'Waiting for review',needs_review:'Review required',needs_input:'Resolve the preview questions',approved:'Approved and ready to start',awaiting_approval:'Review and approve the preview',cancelled:'Stopped'}[stage]||'Checking saved progress');
+ const detailsPending=state==='RUNNING'&&stage==='processing'&&known&&p.totalRows>0&&p.processedRows===p.totalRows&&row.dataset!=='suppliers';
+ const stageLabel=(known&&p.attempt>1?'Attempt '+p.attempt+' · restarting safely after rollback · ':'')+(detailsPending?'Applying imported details and reorder settings':{preview:'Checking your saved preview; no inventory changes',preparing:'Preparing approved records',processing:'Applying products, stock and costs',verifying:'Checking stock and accounting totals',complete:'Inventory saved and verified',queued:row.waiting_for_import?'Waiting for the running import in this inventory':'Waiting for an available worker',paused:'Waiting for review',needs_review:'Review required',needs_input:'Resolve the preview questions',approved:'Approved and ready to start',awaiting_approval:'Review and approve the preview',cancelled:'Stopped'}[stage]||'Checking saved progress');
  return {id:row.id,sourceName:row.source_name,rows:Number(row.records_detected),readyRows:Number(revising?row.records_detected:row.records_valid),
   invalidRows:Number(row.records_invalid),state,label,reason,active:['QUEUED','RUNNING','UPDATING_PREVIEW'].includes(state),working:state==='RUNNING',
   verified,finished:!['QUEUED','RUNNING','UPDATING_PREVIEW'].includes(state),status:row.plan_status,
   createdAt:iso(row.created_at),queuedAt:iso(row.queued_at),startedAt:state==='QUEUED'?null:iso(row.started_at),
   completedAt:['QUEUED','RUNNING','UPDATING_PREVIEW'].includes(state)?null:iso(row.committed_at||row.job_finished_at||row.finished_at),
-  stage,stageLabel,attempt:known?Number(p.attempt||1):null,preparedRows:known&&Number.isSafeInteger(p.preparedRows)?p.preparedRows:null,processedRows:verified?Number(row.records_valid):known?p.processedRows:null,
+  stage,stageLabel,detailsPending,attempt:known?Number(p.attempt||1):null,preparedRows:known&&Number.isSafeInteger(p.preparedRows)?p.preparedRows:null,processedRows:verified?Number(row.records_valid):known?p.processedRows:null,
   progressPercent:verified?100:known&&p.totalRows?Math.min(99,Math.floor(p.processedRows/p.totalRows*100)):null,
   lastUpdateAt:iso(revising?row.preview_updated_at:row.job_updated_at||row.finished_at||row.started_at||row.created_at),
   href:'/imports/'+encodeURIComponent(row.id)};
@@ -37,7 +38,7 @@ function present(row){
 async function list(database,workspaceId,{id=null,limit=10,activeOnly=false}={}){
  if(!workspaceId)throw new TypeError('Import progress requires a workspace.');
  const rows=(await database.query(`SELECT p.id,p.source_name,p.records_detected,p.records_valid,p.records_invalid,
-   p.status AS plan_status,p.approval_status,p.created_at,
+   p.status AS plan_status,p.approval_status,p.created_at,COALESCE(p.transformations::jsonb->>'dataset','inventory') AS dataset,
    EXISTS(SELECT 1 FROM stockchief_runtime.jobs other WHERE other.workspace_id=p.workspace_id AND other.kind='import.execute-approved'
      AND other.status='RUNNING' AND other.payload->>'planId'<>p.id) AS waiting_for_import,
    (p.status='READY' AND p.approval_status='AWAITING_APPROVAL' AND (

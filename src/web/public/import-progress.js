@@ -83,7 +83,7 @@
   bar.firstElementChild.style.width=(state.progressPercent===null?32:state.progressPercent)+'%';
   const stages=['preparing','processing','verifying','complete'],index=stages.indexOf(state.stage);
   meter.querySelectorAll('[data-import-step]').forEach(step=>{const n=stages.indexOf(step.dataset.importStep);step.classList.toggle('is-current',n===index);step.classList.toggle('is-done',index>n);});
-  meter.querySelector('[data-import-summary]').textContent=state.state==='UPDATING_PREVIEW'?'Checking preview choices only. No stock or Money is being imported.':state.verified?'Products, stock and accounting checks passed.':state.processedRows===null?'Exact row progress is not available for this run. Inventory appears after verification.':'Processed rows are being prepared; inventory is saved together after verification.';
+  meter.querySelector('[data-import-summary]').textContent=state.state==='UPDATING_PREVIEW'?'Checking preview choices only. No stock or Money is being imported.':state.verified?'Products, stock and accounting checks passed.':state.detailsPending?'Stock rows are prepared. Extra fields and reorder settings are still being applied before final verification. Inventory is not saved yet.':state.processedRows===null?'Exact row progress is not available for this run. Inventory appears after verification.':'Processed rows are being prepared; inventory is saved together after verification.';
   const seconds=Math.max(0,Math.floor((Date.now()-Date.parse(state.lastUpdateAt))/1000));
   meter.querySelector('[data-import-live]').textContent=state.active?'Worker update '+(seconds<2?'just now':seconds+'s ago'):state.verified?'Verified '+format(state.completedAt):'Saved status';
  }
