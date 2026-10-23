@@ -189,8 +189,8 @@ async function runtimeSweep(job,client,options={}){
     await commercialNotifications.queueSubscriptionSuspended(scopedDatabase(client),{accountId:subscription.account_id,
       expiredAt:new Date(subscription.expired_at).toISOString()});
   }
-  const staleImports=await client.query(`UPDATE import_executions SET status='FAILED',stage='recovered_after_interruption',
-    error_message='The process stopped before this import completed. Its inventory transaction did not commit.',finished_at=$2
+  const staleImports=await client.query(`UPDATE import_executions SET status='FAILED',stage=CASE WHEN EXISTS(SELECT 1 FROM import_plans p WHERE p.workspace_id=import_executions.workspace_id AND p.id=import_executions.import_id AND p.apply_checkpoint->>'cataloguePrepared'='true') THEN 'paused' ELSE 'recovered_after_interruption' END,
+    error_message='The worker stopped before this import completed. Previously verified batches remain saved; continue the remaining approved rows.',finished_at=$2
     WHERE status='EXECUTING' AND started_at<$1 AND NOT EXISTS(
       SELECT 1 FROM stockchief_runtime.jobs job WHERE job.workspace_id=import_executions.workspace_id
        AND job.kind='import.execute-approved' AND job.payload->>'planId'=import_executions.import_id
@@ -544,12 +544,13 @@ function create(providers=defaultProviders,options={}){return {'system.runtime-s
       };
     try{
       const result=await require('../imports/postgres-service').execute(database,
-          {workspaceId:job.workspaceId,actorId},planId,{retryExecutionId,onProgress:value=>{progress=value;},beforeRow:assertImportLease,beforeCommit:verifyImportLease});
+          {workspaceId:job.workspaceId,actorId},planId,{retryExecutionId,onProgress:value=>{progress=value;},beforeRow:assertImportLease,beforeBatchCommit:verifyImportLease,beforeCommit:verifyImportLease});
       if(!result.verified&&result.execution?.status!=='SUCCEEDED')throw Object.assign(
         new Error('This import has no verified successful execution. Review the saved outcome before trying again.'),
         {code:'import_not_verified',retryable:false});
       return result;
-    }finally{if(timer)clearInterval(timer);await pending;}
+    }catch(error){if(Number(error.status)>=400&&Number(error.status)<500)error.retryable=false;throw error;}
+    finally{if(timer)clearInterval(timer);await pending;}
   },'bulk'),
   'system.alert-delivery':external((job,database)=>alertDelivery(job,database,options)),
   'system.email-send':external((job,database)=>systemEmail(job,database,options)),
