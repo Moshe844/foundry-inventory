@@ -10,7 +10,9 @@ const INVENTORY_TABLES=[
  ['sku_prices','workspace_id,sku_id,source'],['sku_option_values','sku_id,option_id'],
  ['item_options','id,workspace_id,item_id'],['movements','id,workspace_id,sku_id,location_id'],
  ['accounting_inventory_cost_balances','workspace_id,sku_id,location_id'],
- ['accounting_inventory_cost_movements','workspace_id,inventory_movement_id,cost_source_type,cost_source_record_id']
+ ['accounting_inventory_cost_movements','workspace_id,inventory_movement_id,cost_source_type,cost_source_record_id'],
+ ['catalog_source_facts','workspace_id,sku_id,location_id,source_import_id,source_row'],
+ ['reorder_policies','workspace_id,sku_id,location_id']
 ];
 
 async function refreshAfterImport(database,result){

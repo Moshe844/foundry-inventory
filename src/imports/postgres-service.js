@@ -22,6 +22,11 @@ const { newId, nowIso, trimOrNull } = require('../lib/util');
 
 const PLAN_TTL_MS = 24 * 60 * 60 * 1000;
 
+// Fresh import data is not represented in committed per-workspace statistics.
+// Keep repeated key batches on parameterized plans, without caching results or
+// changing transaction isolation, authority checks or the rollback boundary.
+async function bulkPlanning(client){await client.query("SET LOCAL plan_cache_mode = 'force_generic_plan'");}
+
 function json(value, fallback) {
   if (value === null || value === undefined) return fallback;
   if (typeof value === 'object') return value;
@@ -245,7 +250,7 @@ function validateRows(sheet, mappings, proposal, context, input = {}) {
       existingSkuId:existingMatches.length===1?existingMatches[0].id:null,
       existingItemId:existingMatches.length===1?existingMatches[0].item_id:null,
       ...(existingMatches.length===1?{currentPriceId:context.currentPrices.get(JSON.stringify([existingMatches[0].id,currency]))||null}:{})};
-    const sourceFacts={};
+    const sourceFacts=Object.create(null);
     for(const field of ['category','subcategory','supplierName']){const value=trimOrNull(textCell(row,mappings[field]));if(value)sourceFacts[fields.FIELD_LABEL[field]]=value;}
     const claimed=new Set([...Object.values(mappings),proposal.provenanceIndex,proposal.problemsIndex]);
     for(const column of sheet.columns||[]){if(claimed.has(column.index))continue;const value=trimOrNull(textCell(row,column.index));if(value)sourceFacts[column.name]=value;}
@@ -612,6 +617,7 @@ async function revise(database,ctx,id,input={},options={}){
   if((await database.query(`SELECT 1 FROM stockchief_runtime.jobs WHERE workspace_id=$1 AND kind='import.revise-preview' AND payload->>'planId'=$2 AND status IN ('PENDING','RUNNING','RETRY') AND id<>$3 LIMIT 1`,[ctx.workspaceId,id,options.jobId||''])).rows.length)
     throw new ValidationError('A saved preview update is still running. Wait for its result before changing this preview again.');
   return database.transaction(async(client)=>{
+    await bulkPlanning(client);
     const saved=(await client.query('SELECT * FROM import_plans WHERE workspace_id=$1 AND id=$2 FOR UPDATE',
       [ctx.workspaceId,id])).rows[0];
     if(!saved)throw new NotFoundError('That import could not be found.');
@@ -872,6 +878,7 @@ async function execute(database, ctx, id, options={}) {
         throw new ValidationError('The approved import is no longer executable.');
       const publishProgress=(stage,processedRows,preparedRows)=>options.onProgress?.({stage,processedRows,totalRows:plan.recordsValid,attempt:executionAttempt,...(preparedRows===undefined?{}:{preparedRows})});
       publishProgress('preparing',0);
+      await bulkPlanning(client);
       const sourceRows=await rowStore.executionRows(client,ctx.workspaceId,id,prepared=>publishProgress('preparing',0,prepared));
       if(sourceRows.length!==plan.recordsValid)throw new ValidationError('The approved row count changed before execution. Recheck the saved preview before importing.');
       if(plan.transformations.dataset==='suppliers'){
@@ -1025,27 +1032,7 @@ async function execute(database, ctx, id, options={}) {
           ok:sourceRows.reduce((sum,row)=>sum+expectedDelta(row),0)===units}];
       const valuedRows=sourceRows.filter(expectsCostRecord);
       const expectedValue=sourceRows.reduce((sum,row)=>sum+expectedCost(row),0);
-      // Fresh bulk writes are invisible to the statistics collector. An estimate
-      // of one new entry can otherwise rescan every journal line for each entry.
-      // Use linear joins for this bulk read only; restore the connection setting
-      // after success. A failed transaction automatically restores LOCAL settings.
-      const verificationJoinSetting=valuedRows.length>=500
-        ?(await client.query("SELECT current_setting('enable_nestloop') AS enabled")).rows[0].enabled:null;
-      if(verificationJoinSetting!==null)await client.query("SELECT set_config('enable_nestloop','off',true)");
-      const value=(await client.query(`SELECT COALESCE(SUM(c.cost_delta_minor),0)::bigint AS value,
-        COUNT(*)::int AS movements FROM accounting_inventory_cost_movements c
-        JOIN import_rows r ON r.id=c.cost_source_record_id AND r.workspace_id=c.workspace_id
-        WHERE c.workspace_id=$1 AND c.cost_source_type IN ('opening_inventory','import_stock_count') AND r.import_id=$2`,
-      [ctx.workspaceId,id])).rows[0];
-      const posted=(await client.query(`SELECT COALESCE(SUM(l.debit_minor-l.credit_minor),0)::bigint AS value
-        FROM accounting_journal_entries e JOIN accounting_journal_lines l
-          ON l.entry_id=e.id AND l.workspace_id=e.workspace_id
-        JOIN accounting_accounts a ON a.id=l.account_id AND a.workspace_id=l.workspace_id
-        JOIN import_rows r ON r.id=e.source_record_id AND r.workspace_id=e.workspace_id
-        WHERE e.workspace_id=$1 AND e.source_type IN ('opening_inventory','import_stock_count')
-          AND e.source_record_type='import_row' AND r.import_id=$2 AND a.system_key='INVENTORY_ASSET'`,
-      [ctx.workspaceId,id])).rows[0];
-      if(verificationJoinSetting!==null)await client.query("SELECT set_config('enable_nestloop',$1,true)",[verificationJoinSetting]);
+      const {value,posted}=await require('./postgres-verification').totals(client,ctx.workspaceId,sourceRows.map(row=>row.id));
       checks.push({name:'Valued receipt records',expected:valuedRows.length,observed:Number(value.movements),
         ok:valuedRows.length===Number(value.movements)},
       {name:'Inventory cost change in minor units',expected:expectedValue,observed:Number(value.value),

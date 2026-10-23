@@ -15,7 +15,7 @@ test('wide variant imports bound reads and catalogue writes, preserve added fiel
  for(const table of ['items','skus','balances','accounting_journal_entries','catalog_source_facts'])assert.equal(Number((await db.query(`SELECT count(*) n FROM ${table} WHERE workspace_id=$1`,[ctx.workspaceId])).rows[0].n),0);
  const failed=await service.report(db,ctx.workspaceId,plan.id),progress=[];
  const result=await service.execute(bounded,ctx,plan.id,{retryExecutionId:failed.id,onProgress:p=>progress.push(p)});assert(result.verified);assert.equal(result.skusCreated,1201);assert.equal(result.rowsImported,3603);assert.equal(result.units,7206);assert(pages>=16);assert(progress.some(p=>p.preparedRows===3603));
- const facts=(await db.query("SELECT count(*)::int n FROM catalog_source_facts WHERE workspace_id=$1 AND name='Inspection grade'",[ctx.workspaceId])).rows[0];assert.equal(facts.n,3603);
+ const facts=await require('../../src/domain/postgres-catalog-facts').exportRows(db,ctx.workspaceId);assert.equal(facts.filter(f=>f.name==='Inspection grade').length,3603);
  assert.equal(Number((await db.query('SELECT sum(total_cost_minor) n FROM accounting_inventory_cost_balances WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n),900750);
  assert.equal(Number((await db.query('SELECT count(*) n FROM reorder_policies WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n),3603);assert((await service.execute(db,ctx,plan.id)).duplicate);
 });

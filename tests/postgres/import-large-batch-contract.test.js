@@ -14,7 +14,7 @@ test('five thousand unfamiliar products use bounded canonical batches and reconc
    (SELECT sum(on_hand) FROM balances WHERE workspace_id=$1)::bigint AS units,
    (SELECT sum(total_cost_minor) FROM accounting_inventory_cost_balances WHERE workspace_id=$1)::bigint AS value`,[ctx.workspaceId])).rows[0];
  assert.equal(state.codes,5000);assert.equal(Number(state.units),result.units);assert.equal(Number(state.value),result.units*125);
- assert.equal((await db.query('SELECT count(*)::int AS n FROM supplier_items WHERE workspace_id=$1 AND lead_time_days=14',[ctx.workspaceId])).rows[0].n,5000);assert.equal((await db.query('SELECT count(*)::int AS n FROM reorder_policies WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,5000);assert.equal((await db.query("SELECT count(*)::int AS n FROM catalog_source_facts WHERE workspace_id=$1 AND name='Source tag'",[ctx.workspaceId])).rows[0].n,5000);
+ assert.equal((await db.query('SELECT count(*)::int AS n FROM supplier_items WHERE workspace_id=$1 AND lead_time_days=14',[ctx.workspaceId])).rows[0].n,5000);assert.equal((await db.query('SELECT count(*)::int AS n FROM reorder_policies WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,5000);assert.equal((await require('../../src/domain/postgres-catalog-facts').exportRows(db,ctx.workspaceId)).filter(f=>f.name==='Source tag').length,5000);
  assert((await service.execute(db,ctx,plan.id)).duplicate);
  t.diagnostic(JSON.stringify({products:5000,executionMilliseconds:Math.round(elapsed),databaseRoundTrips:queries,units:result.units,valueMinor:Number(state.value),verified:true,provider:'none',paidCalls:0}));
 });

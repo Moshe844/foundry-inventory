@@ -1,0 +1,4 @@
+CREATE INDEX IF NOT EXISTS idx_accounting_cost_movements_source_record
+ ON accounting_inventory_cost_movements(workspace_id,cost_source_type,cost_source_record_id);
+CREATE INDEX IF NOT EXISTS idx_accounting_lines_entry_scope
+ ON accounting_journal_lines(workspace_id,entry_id,account_id);

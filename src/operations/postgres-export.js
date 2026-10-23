@@ -1,5 +1,5 @@
 'use strict';
-const XLSX=require('xlsx');
+const XLSX=require('xlsx'),sourceDetails=require('../domain/postgres-catalog-facts');
 const tables=[['Imported source details','catalog_source_facts'],['Products','items'],['SKUs and variants','skus'],['Stock by location','balances'],['Locations','locations'],['Stock movements','movements'],['Suppliers','suppliers'],['Supplier products','supplier_items'],['Purchase orders','purchase_orders'],['Purchase lines','purchase_order_lines'],['Customers','customers'],['Sales orders','sales_orders'],['Sales lines','sales_order_lines'],['Reservations','sales_order_allocations'],['Shipments','sales_shipments'],['Accounts','accounting_accounts'],['Journal entries','accounting_journal_entries'],['Journal lines','accounting_journal_lines'],['Supplier bills','accounting_supplier_bills'],['Customer invoices','accounting_customer_invoices'],['Payments','accounting_payments']];
 async function workbook(database,workspaceId,{itemIds=null}={}){
  const source=await database.transaction(async client=>{
@@ -18,8 +18,8 @@ async function workbook(database,workspaceId,{itemIds=null}={}){
   const sheets=[{name:'Inventory',rows:inventory}];
   if(itemIds){
     const selections=[['Products','SELECT i.* FROM items i WHERE i.workspace_id=$1 AND i.id=ANY($2::text[])'],['SKUs and variants','SELECT s.* FROM skus s WHERE s.workspace_id=$1 AND s.item_id=ANY($2::text[])'],['Stock by location','SELECT b.* FROM balances b JOIN skus s ON s.workspace_id=b.workspace_id AND s.id=b.sku_id WHERE b.workspace_id=$1 AND s.item_id=ANY($2::text[])'],['Stock movements','SELECT m.* FROM movements m WHERE m.workspace_id=$1 AND m.item_id=ANY($2::text[])'],['Imported source details','SELECT f.* FROM catalog_source_facts f JOIN skus s ON s.workspace_id=f.workspace_id AND s.id=f.sku_id WHERE f.workspace_id=$1 AND s.item_id=ANY($2::text[])']];
-    for(const [name,sql]of selections)sheets.push({name,rows:(await client.query(sql,[workspaceId,itemIds])).rows});
-  }else for(const [name,table]of tables){const rows=(await client.query(`SELECT * FROM ${table} WHERE workspace_id=$1`,[workspaceId])).rows;sheets.push({name,rows});}
+    for(const [name,sql]of selections)sheets.push({name,rows:name==='Imported source details'?await sourceDetails.exportRows(client,workspaceId,{itemIds}):(await client.query(sql,[workspaceId,itemIds])).rows});
+  }else for(const [name,table]of tables){const rows=table==='catalog_source_facts'?await sourceDetails.exportRows(client,workspaceId):(await client.query(`SELECT * FROM ${table} WHERE workspace_id=$1`,[workspaceId])).rows;sheets.push({name,rows});}
   return {name:workspace?.name||'StockChief inventory',sheets};
  },{isolation:'REPEATABLE READ',readOnly:true});
  const book=XLSX.utils.book_new(),summary=[['StockChief inventory export'],['Inventory',source.name],['Exported at (UTC)',new Date().toISOString()],['Money','Amounts ending in minor are exact minor currency units. Keep each record’s currency.'],['Dates','Timestamps are UTC instants; calendar dates retain their original dates.'],['Data','All rows from one consistent snapshot; no 100/200-row display limits.'],[],['Sheet','Records']];
