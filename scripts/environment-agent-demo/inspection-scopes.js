@@ -17,7 +17,13 @@ async function ensure(database,tables,foreignKeys){
  // once. Lock each target and all relations its policy directly references
  // atomically with NOWAIT, then save that policy set. Partial installation
  // grants no login: createRole is called only after every required set exists.
- for(const d of missing)await require('./inspection-schema').mutate(database,d.lockTables,async client=>{const current=(await client.query("SELECT polname FROM pg_policy WHERE polrelid=$1::regclass AND polname LIKE 'stockchief_inspection_v1_%'",[d.name])).rows,names=new Set(current.map(r=>r.polname)),sql=['ALTER TABLE '+d.name+' ENABLE ROW LEVEL SECURITY'];for(const p of d.policies){if(names.has(p.name))continue;sql.push(`CREATE POLICY ${q(p.name)} ON ${d.name} AS ${p.permissive?'PERMISSIVE':'RESTRICTIVE'} FOR ${p.command} TO PUBLIC ${p.using?'USING ('+p.using+')':'WITH CHECK ('+p.check+')'}`);sql.push(`COMMENT ON POLICY ${q(p.name)} ON ${d.name} IS ${l(p.fingerprint)}`);}if(sql.length>1)await client.query(sql.join(';\n'));});
+ let deferred=null;
+ for(const d of missing)try{await require('./inspection-schema').mutate(database,d.lockTables,async client=>{const current=(await client.query("SELECT polname FROM pg_policy WHERE polrelid=$1::regclass AND polname LIKE 'stockchief_inspection_v1_%'",[d.name])).rows,names=new Set(current.map(r=>r.polname)),sql=['ALTER TABLE '+d.name+' ENABLE ROW LEVEL SECURITY'];for(const p of d.policies){if(names.has(p.name))continue;sql.push(`CREATE POLICY ${q(p.name)} ON ${d.name} AS ${p.permissive?'PERMISSIVE':'RESTRICTIVE'} FOR ${p.command} TO PUBLIC ${p.using?'USING ('+p.using+')':'WITH CHECK ('+p.check+')'}`);sql.push(`COMMENT ON POLICY ${q(p.name)} ON ${d.name} IS ${l(p.fingerprint)}`);}if(sql.length>1)await client.query(sql.join(';\n'));});}
+ catch(error){if(error.code!=='55P03')throw error;deferred=error;}
+ // Keep progress on independent sets, but never issue credentials while any
+ // required policy remains unavailable. A subsequent deployment check resumes
+ // only missing sets; normal sessions perform no relation-policy mutation.
+ if(deferred)throw deferred;
 }
 async function createRole(database,{role,password,ctx,accountId,kind,scopeView,tables}){
  if(!/^demo_(read|metrics)_[a-f0-9]{16}$/.test(role)||!['read','metrics'].includes(kind))throw Error('INVALID_INSPECTION_ROLE');const expires=require('./inspection-role-lifecycle').expires();
