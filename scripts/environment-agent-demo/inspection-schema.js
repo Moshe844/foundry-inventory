@@ -7,7 +7,7 @@ async function mutate(database,tables,operation){
  const names=[...new Set(tables.map(t=>escapeIdentifier(t.table_schema)+'.'+escapeIdentifier(t.table_name)))].sort();
  if(!names.length||typeof operation!=='function')throw new TypeError('Inspection schema scope required.');
  for(let attempt=0;;attempt++){
-  try{return await database.transaction(async client=>{
+  try{return await require('./inspection-metadata').transaction(database,async client=>{
    await client.query('LOCK TABLE '+names.join(',')+' IN ACCESS EXCLUSIVE MODE NOWAIT');
    return operation(client);
   },{isolation:'SERIALIZABLE',retrySafe:true});}
