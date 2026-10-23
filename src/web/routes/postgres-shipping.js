@@ -163,6 +163,15 @@ function createPostgresShippingRouter(database,options={}){
     return res.page('sales/shipment',{title:page.shipment.shipment_number,nav:'fulfilment',room:true,
       backTo:{href:'/orders',label:'Orders'},...page,carriers:carriers.list(),postgresPlacement:true});
   }));
+  router.get('/fulfilment/:id/label/status',asyncRoute(async(req,res)=>{
+    await shipping.requireShipment(database,req.ctx.workspaceId,req.params.id);
+    const operation=String(req.query.operation||'');if(!operation||operation.length>500)throw new ValidationError('Choose the saved label request.');
+    const transaction=(await database.query(`SELECT status,requested_at FROM shipping_label_transactions
+      WHERE workspace_id=$1 AND shipment_id=$2 AND id=$3`,[req.ctx.workspaceId,req.params.id,operation])).rows[0];
+    if(!transaction)throw new ValidationError('That label request is not in this inventory.');
+    res.set('Cache-Control','no-store');return res.json({state:transaction.status==='SUCCEEDED'?'COMPLETED':transaction.status,
+      startedAt:transaction.requested_at});
+  }));
   router.post('/fulfilment/:id/packages',asyncRoute(async(req,res)=>{
     await shipping.setPackages(database,req.ctx,req.params.id,[{weightGrams:req.body.weightGrams,
       lengthMm:req.body.lengthMm,widthMm:req.body.widthMm,heightMm:req.body.heightMm}]);
@@ -216,8 +225,9 @@ function createPostgresShippingRouter(database,options={}){
     const method=String(req.body.deliveryMethod||'');const destination=trimOrNull(req.body.shippingAddress);
     if(!['SHIP','PICKUP'].includes(method))throw new ValidationError('Choose delivery or customer pickup.');
     if(method==='SHIP'&&!address.parse(destination).complete)throw new ValidationError(address.why(address.parse(destination)));
-    const current=await shipping.requireShipment(database,req.ctx.workspaceId,req.params.id);
     await database.transaction(async(client)=>{
+      const current=await shipping.requireShipment(client,req.ctx.workspaceId,req.params.id,true);
+      shipping.assertParcelEditable(current);
       await client.query(`UPDATE sales_shipments SET ship_to_address=$3,handover=$4,updated_at=$5 WHERE workspace_id=$1 AND id=$2`,
       [req.ctx.workspaceId,req.params.id,method==='SHIP'?destination:null,method==='PICKUP'?'COLLECTED':'CARRIER',nowIso()]);
       await client.query(`UPDATE sales_orders SET delivery_method=$3,ship_to_address=$4,ship_to_source='order',updated_at=$5
@@ -233,10 +243,13 @@ function createPostgresShippingRouter(database,options={}){
     return res.redirect(303,`/fulfilment/${req.params.id}#tracking`);
   }));
   router.post('/fulfilment/:id/cancel',asyncRoute(async(req,res)=>{
-    const changed=await database.query(`UPDATE sales_shipments SET status='CANCELLED',notes=COALESCE($3,notes),updated_at=$4
+    await database.transaction(async client=>{
+    shipping.assertParcelEditable(await shipping.requireShipment(client,req.ctx.workspaceId,req.params.id,true));
+    const changed=await client.query(`UPDATE sales_shipments SET status='CANCELLED',notes=COALESCE($3,notes),updated_at=$4
       WHERE workspace_id=$1 AND id=$2 AND status IN ('PICKING','PACKED')`,[req.ctx.workspaceId,req.params.id,
       trimOrNull(req.body.reason),nowIso()]);
     if(!changed.rowCount)throw new ValidationError('A shipment that already left cannot be cancelled.');
+    });
     req.flash('success','Shipment cancelled. Its committed stock is still on the customer order and can be picked again.');
     return res.redirect(303,`/fulfilment/${req.params.id}`);
   }));

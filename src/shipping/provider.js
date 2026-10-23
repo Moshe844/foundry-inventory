@@ -119,3 +119,10 @@ function configured() {
 
 module.exports = { STATUSES, SETTLED, TROUBLE, REQUIRED, register, get, has, names,
   capabilities, supports, configured };
+
+// Every runtime uses this registry, including PostgreSQL workers that never
+// load the legacy application's shipping assembly.
+register('shipengine', require('./providers/shipengine'));
+register('shipstation', require('./providers/shipstation'));
+register('easypost', require('./providers/easypost'));
+register('shippo', require('./providers/shippo'));

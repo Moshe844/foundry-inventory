@@ -6,7 +6,7 @@ const { requireAuth, requireOwner, asyncRoute } = require('../middleware');
 const { trimOrNull } = require('../../lib/util');
 
 function input(body) {
-  return {name:body.name,kind:body.kind,note:body.note,address:body.address,phone:body.phone,
+  return {name:body.name,kind:body.kind,note:body.note,address:body.address,phone:body.phone,shippingEmail:body.shippingEmail,
     parentLocationId:body.parentLocationId,barcode:body.barcode,pickSequence:body.pickSequence};
 }
 

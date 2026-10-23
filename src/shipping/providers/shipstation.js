@@ -33,7 +33,7 @@ async function call(ctx, path, options = {}) {
       ...(options.headers || {}),
     },
     body: options.body ? JSON.stringify(options.body) : undefined,
-  }, { provider: 'ShipStation' });
+  }, { provider: 'ShipStation', retries: options.retries });
   const text = await response.text();
   let body = null;
   try { body = text ? JSON.parse(text) : null; } catch { body = null; }
@@ -83,7 +83,7 @@ async function buy(ctx, input = {}) {
   const labels = [];
   for (const rateId of ids.filter(Boolean)) {
     labels.push(await call(ctx, `/labels/rates/${encodeURIComponent(rateId)}`, {
-      method: 'POST',
+      method: 'POST', retries: 0,
       body: { label_format: 'pdf', label_layout: '4x6', label_download_type: 'url' },
       // StockChief also records a durable PENDING transaction before this call;
       // an ambiguous response is reviewed rather than retried and duplicated.

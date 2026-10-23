@@ -3,23 +3,12 @@
 /*
  * Shipping, assembled.
  *
- * The registration lives here rather than in the provider file so that the
- * seam has no opinion about who is behind it — the same arrangement the
- * payment providers use.
- *
- * Two are registered. Which one is used comes from SHIPPING_PROVIDER, and
- * otherwise from whichever has a key configured — a shop has one shipping
- * account, not a choice to make on every parcel. Adding Shippo changed no file
- * but this one and its own, which is the only real test of whether the seam
- * was an abstraction or a wish.
+ * The shared registry loads provider adapters for every runtime. PostgreSQL
+ * selects the business's encrypted accounts per shipment; this assembly also
+ * exposes the services used by the legacy application.
  */
 
 const provider = require('./provider');
-
-provider.register('shipengine', require('./providers/shipengine'));
-provider.register('shipstation', require('./providers/shipstation'));
-provider.register('easypost', require('./providers/easypost'));
-provider.register('shippo', require('./providers/shippo'));
 
 module.exports = {
   provider,

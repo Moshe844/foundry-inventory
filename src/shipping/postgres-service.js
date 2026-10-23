@@ -15,7 +15,7 @@ const RANK={UNKNOWN:0,PRE_TRANSIT:1,IN_TRANSIT:2,OUT_FOR_DELIVERY:3,FAILURE:3,DE
 async function requireShipment(queryable,workspaceId,shipmentId,lock=false){
   const result=await queryable.query(`SELECT shipment.*,orders.order_number,orders.needed_by,orders.customer_id,orders.delivery_method,
       customer.name AS customer_name,customer.email AS customer_email,customer.phone AS customer_phone,
-      location.name AS location_name,location.address AS location_address,location.phone AS location_phone
+      location.name AS location_name,location.address AS location_address,location.phone AS location_phone,location.shipping_email AS location_shipping_email
     FROM sales_shipments shipment JOIN sales_orders orders ON orders.id=shipment.sales_order_id
     LEFT JOIN customers customer ON customer.id=orders.customer_id
     LEFT JOIN locations location ON location.id=shipment.ship_from_location_id
@@ -88,13 +88,18 @@ async function packagesFor(database,workspaceId,shipmentId){
     lengthMm:null,widthMm:null,heightMm:null,estimated:false}];
 }
 
+function assertParcelEditable(shipment){
+  if(!['PICKING','PACKED'].includes(shipment.status))
+    throw new ValidationError('Only an unshipped parcel can be changed or cancelled.');
+  if(['PURCHASED','PENDING','REVIEW','VOID_PENDING'].includes(shipment.label_status))
+    throw new ValidationError('Resolve or void the saved label before changing or cancelling this parcel.');
+}
+
 async function setPackages(database,ctx,shipmentId,boxes){
   if(!Array.isArray(boxes)||!boxes.length)throw new ValidationError('A shipment needs at least one package.');
   return database.transaction(async(client)=>{
     const shipment=await requireShipment(client,ctx.workspaceId,shipmentId,true);
-    if(['SHIPPED','DELIVERED','CANCELLED'].includes(shipment.status)||
-      ['PURCHASED','PENDING'].includes(shipment.label_status))throw new ValidationError(
-      'Package measurements cannot change after shipment or while a label is being purchased.');
+    assertParcelEditable(shipment);
     await client.query('DELETE FROM shipment_packages WHERE workspace_id=$1 AND shipment_id=$2',[ctx.workspaceId,shipmentId]);
     await client.query('DELETE FROM shipment_rates WHERE workspace_id=$1 AND shipment_id=$2',[ctx.workspaceId,shipmentId]);
     const now=nowIso();let total=0;
@@ -119,7 +124,7 @@ async function state(database,workspaceId,shipmentId){
   const to=addresses.parse(shipment.ship_to_address);
   to.name=shipment.customer_name||to.name;to.email=shipment.customer_email;to.phone=shipment.customer_phone;
   const from=addresses.parse(shipment.location_address);
-  from.name=shipment.location_name||from.name;from.phone=shipment.location_phone;
+  from.name=shipment.location_name||from.name;from.phone=shipment.location_phone;from.email=shipment.location_shipping_email;
   const boxes=await packagesFor(database,workspaceId,shipmentId);
   const shippingAccounts=await accounts.allForWorkspace(database,workspaceId);
   const account=shippingAccounts[0]||null;
@@ -170,7 +175,7 @@ async function ratesFor(database,workspaceId,shipmentId){
 async function quote(database,ctx,shipmentId,options={}){
   const current=await state(database,ctx.workspaceId,shipmentId);
   if(!current.ready)return {...current,rates:[]};
-  if(!['PACKED','PICKING'].includes(current.shipment.status)||['PURCHASED','PENDING','REVIEW'].includes(current.shipment.label_status)||current.labelOperation?.status==='REVIEW')
+  if(!['PACKED','PICKING'].includes(current.shipment.status)||['PURCHASED','PENDING','REVIEW','VOID_PENDING'].includes(current.shipment.label_status)||current.labelOperation?.status==='REVIEW')
     throw new ValidationError('Rates cannot change while a label is pending, purchased or already shipped.');
   const fingerprint=quoteFingerprint(current),key=options.idempotencyKey||newId('quote');
   const results=await Promise.allSettled(current.shippingAccounts.map(async account=>{
@@ -191,7 +196,10 @@ async function quote(database,ctx,shipmentId,options={}){
   }));
   const successful=results.filter(r=>r.status==='fulfilled').map(r=>r.value);
   const quoteProblems=results.flatMap((result,i)=>result.status==='rejected'?
-    [{provider:current.shippingAccounts[i].provider,message:'This shipping account could not return rates. Its offers are not included.'}]:
+    [{provider:current.shippingAccounts[i].provider,message:result.reason instanceof ValidationError?
+      String(result.reason.message).replaceAll(current.shippingAccounts[i].apiKey,'[redacted]')
+        .replaceAll(Buffer.from(current.shippingAccounts[i].apiKey+':').toString('base64'),'[redacted]').slice(0,500):
+      'This shipping account could not return rates. Its offers are not included.'}]:
     result.value.problem?[result.value.problem]:[]);
   await database.transaction(async(client)=>{
     await requireShipment(client,ctx.workspaceId,shipmentId,true);
@@ -269,18 +277,74 @@ async function queueLabelPurchase(database,ctx,shipmentId,rateId,input={}){
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 
+async function queueLabelVerificationWithin(client,effect){
+  return require('../operations/postgres-job-queue').enqueue({query:(...args)=>client.query(...args),transaction:operation=>operation(client)},
+    {workspaceId:effect.workspaceId,kind:'shipping.label.verify',payload:{effectId:effect.id},
+      idempotencyKey:'shipping-label-verification:'+effect.id,priority:10,maxAttempts:12});
+}
+
+async function recoverKnownLabelVerifications(client,options={}){
+  const rows=(await client.query(`SELECT * FROM stockchief_runtime.provider_effects WHERE kind='shipping.label.purchase'
+    AND status='AMBIGUOUS' AND provider_reference->>'externalId' IS NOT NULL
+    ORDER BY updated_at,id LIMIT 100 FOR UPDATE SKIP LOCKED`)).rows;let resumed=0;
+  for(const row of rows){
+    const provider=options.providerResolver?options.providerResolver(row.provider):defaultProviders.has(row.provider)?defaultProviders.get(row.provider):null;
+    if(typeof provider?.verifyPurchase!=='function')continue;
+    const effect=providerEffects.hydrate(row),queued=await queueLabelVerificationWithin(client,effect);
+    if(!['PENDING','RUNNING','RETRY'].includes(queued.job.status))continue;
+    await client.query(`UPDATE shipping_label_transactions SET status='PENDING',updated_at=$3
+      WHERE workspace_id=$1 AND id=$2 AND status='REVIEW'`,[effect.workspaceId,effect.payload.transactionId,nowIso()]);
+    await client.query(`UPDATE sales_shipments SET label_status='PENDING',updated_at=$3
+      WHERE workspace_id=$1 AND id=$2 AND label_status='REVIEW'`,[effect.workspaceId,effect.aggregateId,nowIso()]);
+    resumed++;
+  }
+  return {resumed};
+}
+
+async function confirmLabelPurchase(database,workspaceId,effect,token,rate,bought){
+  const input=effect.payload;
+  if(!bought.labelUrl||!Number.isSafeInteger(bought.amountMinor)||bought.amountMinor<0||bought.currency!==rate.currency)
+    throw new InvariantError('The carrier label or its price needs verification. The purchase must not be repeated.','shipping_receipt_incomplete');
+  return providerEffects.succeed(database,workspaceId,effect.id,token,{providerReference:
+    bought.providerLabelIds||bought.providerShipmentIds||[],result:{trackingNumber:bought.trackingNumber,
+      labelUrl:bought.labelUrl,amountMinor:bought.amountMinor,currency:bought.currency},
+    apply:async(client)=>{const now=nowIso();
+    await client.query(`UPDATE sales_shipments SET provider_rate_id=$3,provider_shipment_id=$4,label_url=$5,
+      label_format=$6,label_status='PURCHASED',tracking_status='PRE_TRANSIT',tracked_at=$7,carrier=$8,
+      service=$9,tracking_number=$10,tracking_url=$11,shipping_cost_minor=$12,currency=$13,
+      expected_delivery_date=$14,updated_at=$7 WHERE workspace_id=$1 AND id=$2`,[workspaceId,input.shipmentId,
+      rate.provider_rate_id,(bought.providerShipmentIds||[bought.providerShipmentId]).filter(Boolean).join(','),
+      bought.labelUrl,bought.labelFormat||'PDF',now,bought.carrier,bought.service,bought.trackingNumber,bought.trackingUrl||null,
+      bought.amountMinor,bought.currency,bought.deliveryDate||null]);
+    await client.query(`UPDATE shipping_label_transactions SET status='SUCCEEDED',provider_reference=$2,
+      amount_minor=$3,currency=$4,detail='Carrier confirmed the label purchase.',error_message=NULL,completed_at=$5,updated_at=$5 WHERE id=$1`,
+    [input.transactionId,JSON.stringify(bought.providerLabelIds||bought.providerShipmentIds||[]),bought.amountMinor,bought.currency,now]);
+    const entitlements=require('../commercial/entitlements'),scope=await entitlements.ownerScopeForWorkspace(client,workspaceId);
+    await entitlements.commitUsage(client,scope,{meter:'connected_operations',idempotencyKey:workspaceId+':'+effect.idempotencyKey,
+      detail:{verifiedProviderReceipt:true,providerEffectId:effect.id}});
+    await client.query(`UPDATE commercial_critical_warnings SET status='RESOLVED' WHERE account_id=$1
+      AND fingerprint=$2 AND code='AMBIGUOUS_PROVIDER_USAGE'`,[scope.accountId,'ambiguous-usage:'+workspaceId+':'+effect.idempotencyKey]);
+  }});
+}
+
+function knownPurchaseReference(value){
+  if(!value||typeof value.externalId!=='string'||!value.externalId.trim()||value.externalId.length>500)return null;
+  return {externalId:value.externalId,...(typeof value.rateId==='string'&&value.rateId.length<=500?{rateId:value.rateId}:{})};
+}
+
 async function executeLabelPurchaseEffect(database,workspaceId,effectId,options={}){
   const claimed=await providerEffects.claim(database,workspaceId,effectId);
   if(claimed.replayed)return {shipment:await requireShipment(database,workspaceId,claimed.effect.aggregateId),replayed:true};
   const effect=claimed.effect;const input=effect.payload;const ctx={workspaceId,actorId:input.actorId};
   const shipment=await requireShipment(database,workspaceId,input.shipmentId);
-  const fail=async(error,ambiguous=false)=>providerEffects.finishError(database,workspaceId,effectId,effect.claimToken,error,{ambiguous,
+  const fail=async(error,ambiguous=false,verificationPending=false)=>providerEffects.finishError(database,workspaceId,effectId,effect.claimToken,error,{ambiguous,
     apply:async client=>{
       await client.query(`UPDATE shipping_label_transactions SET status=$3,error_message=$4,completed_at=$5,updated_at=$5
-        WHERE workspace_id=$1 AND id=$2`,[workspaceId,input.transactionId,ambiguous?'REVIEW':'FAILED',
+        WHERE workspace_id=$1 AND id=$2`,[workspaceId,input.transactionId,verificationPending?'PENDING':ambiguous?'REVIEW':'FAILED',
         String(error.message||'The carrier operation failed.').slice(0,500),nowIso()]);
       await client.query(`UPDATE sales_shipments SET label_status=$3,updated_at=$4 WHERE workspace_id=$1 AND id=$2
-        AND label_status='PENDING'`,[workspaceId,input.shipmentId,ambiguous?'REVIEW':'FAILED',nowIso()]);
+        AND label_status='PENDING'`,[workspaceId,input.shipmentId,verificationPending?'PENDING':ambiguous?'REVIEW':'FAILED',nowIso()]);
+      if(verificationPending)await queueLabelVerificationWithin(client,effect);
     }});
   const rate=(await database.query(`SELECT * FROM shipment_rates WHERE workspace_id=$1 AND shipment_id=$2 AND id=$3`,
     [workspaceId,input.shipmentId,input.rateId])).rows[0];
@@ -301,24 +365,19 @@ async function executeLabelPurchaseEffect(database,workspaceId,effectId,options=
        rateIds:String(rate.provider_rate_id).split(',').filter(Boolean),idempotencyKey:effect.idempotencyKey}));
   }catch(error){
     const ambiguous=!providerEffects.definiteFailure(error);
+    const reference=knownPurchaseReference(error.providerReference);
+    if(reference)await providerEffects.checkpoint(database,workspaceId,effectId,effect.claimToken,reference);
+    if(ambiguous&&reference&&typeof provider.verifyPurchase==='function'){
+      error.code='provider_confirmation_pending';await fail(error,true,true);
+      return {pending:true,verificationQueued:true,shipment:await requireShipment(database,workspaceId,input.shipmentId),replayed:false};
+    }
     await fail(error,ambiguous);
     throw Object.assign(error,{code:ambiguous?'shipping_purchase_ambiguous':(error.code||'shipping_purchase_failed'),retryable:false});
   }
-  try{await providerEffects.succeed(database,workspaceId,effectId,effect.claimToken,{providerReference:
-    bought.providerLabelIds||bought.providerShipmentIds||[],result:{trackingNumber:bought.trackingNumber,
-      labelUrl:bought.labelUrl,amountMinor:bought.amountMinor,currency:bought.currency||rate.currency},
-    apply:async(client)=>{const now=nowIso();
-    await client.query(`UPDATE sales_shipments SET provider_rate_id=$3,provider_shipment_id=$4,label_url=$5,
-      label_format=$6,label_status='PURCHASED',tracking_status='PRE_TRANSIT',tracked_at=$7,carrier=$8,
-      service=$9,tracking_number=$10,tracking_url=$11,shipping_cost_minor=$12,currency=$13,
-      expected_delivery_date=$14,updated_at=$7 WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,input.shipmentId,
-      rate.provider_rate_id,(bought.providerShipmentIds||[bought.providerShipmentId]).filter(Boolean).join(','),
-      bought.labelUrl,bought.labelFormat||'PDF',now,bought.carrier,bought.service,bought.trackingNumber,bought.trackingUrl||null,
-      bought.amountMinor,bought.currency||rate.currency,bought.deliveryDate||null]);
-    await client.query(`UPDATE shipping_label_transactions SET status='SUCCEEDED',provider_reference=$2,
-      amount_minor=$3,currency=$4,detail='Carrier confirmed the label purchase.',completed_at=$5,updated_at=$5 WHERE id=$1`,
-    [input.transactionId,JSON.stringify(bought.providerLabelIds||bought.providerShipmentIds||[]),bought.amountMinor,
-      bought.currency||rate.currency,now]);}});
+  try{
+    const externalId=bought.providerLabelIds?.[0]||bought.providerShipmentIds?.[0]||bought.providerShipmentId;
+    if(externalId)await providerEffects.checkpoint(database,workspaceId,effectId,effect.claimToken,{externalId});
+    await confirmLabelPurchase(database,workspaceId,effect,effect.claimToken,rate,bought);
   }catch(error){await providerEffects.finishError(database,workspaceId,effectId,effect.claimToken,error,{ambiguous:true,
     apply:(client)=>client.query(`UPDATE shipping_label_transactions SET status='REVIEW',error_message=$2,
       completed_at=$3,updated_at=$3 WHERE id=$1 AND status='PENDING'`,[input.transactionId,
@@ -332,11 +391,46 @@ async function buyLabel(database,ctx,shipmentId,rateId,input={},options={}){cons
   if(!queued.queued)return {shipment:queued.shipment,replayed:true};
   return executeLabelPurchaseEffect(database,ctx.workspaceId,queued.effectId,options);}
 
+async function verifyLabelPurchaseEffect(database,workspaceId,effectId,options={}){
+  const claimed=await providerEffects.claimVerification(database,workspaceId,effectId,'shipping.label.purchase');
+  if(claimed.replayed)return {verified:true,replayed:true};
+  const effect=claimed.effect,input=effect.payload,ctx={workspaceId,actorId:input.actorId};
+  try{
+    const held=await accounts.contextFor(database,ctx,{connectorId:input.connectorId,provider:effect.provider});
+    if(!held)throw Object.assign(new ValidationError('Reconnect this shipment’s shipping account to verify its existing label.'),{retryable:false});
+    const provider=options.provider||defaultProviders.get(effect.provider);
+    if(typeof provider.verifyPurchase!=='function')throw Object.assign(new ValidationError('This provider requires a manual check of the saved label transaction. The purchase was not repeated.'),{retryable:false});
+    const rate=(await database.query(`SELECT * FROM shipment_rates WHERE workspace_id=$1 AND shipment_id=$2 AND id=$3`,[workspaceId,input.shipmentId,input.rateId])).rows[0];
+    if(!rate)throw Object.assign(new ValidationError('The saved label rate is missing. Review the existing provider transaction before any new purchase.'),{retryable:false});
+    const scope=await require('../commercial/entitlements').ownerScopeForWorkspace(database,workspaceId);
+    const bought=await require('../commercial/context').run({database,scope,system:true,requestId:'shipping-label-verification:'+effect.id},
+      ()=>provider.verifyPurchase(held.ctx,effect.providerReference));
+    await confirmLabelPurchase(database,workspaceId,effect,effect.claimToken,rate,bought);
+    return {verified:true,replayed:false,shipmentId:input.shipmentId};
+  }catch(error){
+    const retryable=error.retryable!==false&&!options.finalAttempt&&
+      (error.providerOutcomeUncertain||!providerEffects.definiteFailure(error));
+    error.code=retryable?'provider_confirmation_pending':'shipping_label_verification_required';
+    await providerEffects.finishError(database,workspaceId,effectId,effect.claimToken,error,{ambiguous:true,apply:async client=>{
+      await client.query(`UPDATE shipping_label_transactions SET status=$3,error_message=$4,updated_at=$5
+        WHERE workspace_id=$1 AND id=$2`,[workspaceId,input.transactionId,retryable?'PENDING':'REVIEW',
+        retryable?'The carrier is still preparing the accepted label. StockChief is checking it without buying again.':
+          'The existing carrier transaction needs review. StockChief did not repeat the purchase.',nowIso()]);
+      await client.query(`UPDATE sales_shipments SET label_status=$3,updated_at=$4 WHERE workspace_id=$1 AND id=$2
+        AND label_status IN ('PENDING','REVIEW')`,[workspaceId,input.shipmentId,retryable?'PENDING':'REVIEW',nowIso()]);
+    }});
+    throw Object.assign(new ValidationError(retryable?'The accepted label is still being prepared. Verification will retry without another purchase.':
+      'The saved label transaction needs attention. The purchase was not repeated.'),{code:error.code,retryable});
+  }
+}
+
 async function handoff(database,ctx,shipmentId,input={}){
   return database.transaction(async client=>{
   const shipment=await requireShipment(client,ctx.workspaceId,shipmentId,true);
   if(shipment.status==='SHIPPED'||shipment.status==='DELIVERED')return {shipment,replayed:true};
   if(shipment.status!=='PACKED')throw new ValidationError('Pack this shipment before recording the handoff.');
+  if(['PENDING','REVIEW','VOID_PENDING','VOIDED'].includes(shipment.label_status))
+    throw new ValidationError('This label is pending, voided or needs verification. Resolve its saved request before confirming handoff.');
   const handover=String(input.handover||shipment.handover||'CARRIER').trim().toUpperCase().replace(/[\s-]+/g,'_');
   if(!['CARRIER','COLLECTED','DELIVERED_BY_US'].includes(handover))throw new ValidationError('Choose how the goods actually left.');
   const trackingNumber=String(input.trackingNumber||shipment.tracking_number||'').trim()||null;
@@ -533,7 +627,7 @@ async function refreshTracking(database,ctx,shipmentId,options={}){
   return latest;
 }
 
-module.exports={prepare,requireShipment,packagesFor,setPackages,state,quoteFingerprint,ratesFor,quote,queueLabelPurchase,
-  executeLabelPurchaseEffect,buyLabel,handoff,recordProviderFulfillment,applyTracking,receiveProviderEvent,refreshTracking};
+module.exports={prepare,requireShipment,assertParcelEditable,packagesFor,setPackages,state,quoteFingerprint,ratesFor,quote,queueLabelPurchase,
+  executeLabelPurchaseEffect,verifyLabelPurchaseEffect,recoverKnownLabelVerifications,buyLabel,handoff,recordProviderFulfillment,applyTracking,receiveProviderEvent,refreshTracking};
 require('../commercial/enforcement').guardExports(module.exports,0,1,{queueLabelPurchase:'shipping.labels',
   prepare:'shipping.workflow',setPackages:'shipping.workflow',handoff:'shipping.workflow',applyTracking:'shipping.workflow',recordProviderFulfillment:'connections.commerce'});

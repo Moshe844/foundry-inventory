@@ -268,14 +268,21 @@
     ? ship.transactions[ship.transactions.length - 1] : null;
 %>
 <% if (latestLabelTransaction && latestLabelTransaction.status === 'PENDING') { %>
-  <div class="notice notice--info section"><div><strong>Carrier confirmation pending.</strong><br>The durable worker is verifying the label purchase. StockChief will not submit the same postage charge twice, and inventory remains unchanged.</div></div>
+  <div class="notice notice--info section" role="status" aria-live="polite"
+    <% if(locals.postgresPlacement){ %>data-async-operation data-status-url="/fulfilment/<%= s.id %>/label/status?operation=<%= encodeURIComponent(latestLabelTransaction.id) %>" data-resume-url="/fulfilment/<%= s.id %>#label"<% } %>>
+    <div><strong>Carrier confirmation pending.</strong><br>The carrier is preparing your label. StockChief is checking the saved request; your stock has not changed.
+      <p><small>Requested <%= helpers.dateTime(latestLabelTransaction.requested_at) %></small></p>
+      <p data-operation-update></p>
+    </div>
+  </div>
+  <% if(locals.postgresPlacement){ %><script src="/async-operation.js" defer></script><% } %>
 <% } else if (latestLabelTransaction && latestLabelTransaction.status === 'REVIEW') { %>
   <div class="notice notice--warn section"><div><strong>Carrier outcome needs review.</strong><br><%= latestLabelTransaction.error_message || 'The carrier may have accepted the charge before confirmation was saved.' %> StockChief stopped and will not buy another label automatically.</div></div>
 <% } else if (latestLabelTransaction && latestLabelTransaction.status === 'FAILED') { %>
   <div class="notice notice--warn section"><div><strong>The carrier refused the purchase.</strong><br><%= latestLabelTransaction.error_message || 'Correct the shipping account and request fresh rates.' %></div></div>
 <% } %>
 <% if(ship){ (ship.quoteProblems||[]).forEach(function(problem){ %><p class="notice notice--warn"><%= problem.provider %>: <%= problem.message %></p><% }); } %>
-<% if (ship && s.status === 'PACKED' && (!s.tracking_number || s.label_status === 'VOIDED')) { %>
+<% if (ship && s.status === 'PACKED' && !['PENDING','REVIEW','VOID_PENDING'].includes(s.label_status) && (!s.tracking_number || s.label_status === 'VOIDED')) { %>
   <section class="section" id="carrier">
     <div class="panel">
       <div class="panel-head">
@@ -528,7 +535,7 @@
   </section>
 <% } %>
 
-<% if (s.status === 'PACKED') { %>
+<% if (s.status === 'PACKED' && !['PENDING','REVIEW','VOID_PENDING','VOIDED'].includes(s.label_status)) { %>
   <section class="section">
     <div class="panel">
       <div class="panel-head">

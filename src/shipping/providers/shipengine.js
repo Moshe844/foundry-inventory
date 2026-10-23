@@ -37,7 +37,7 @@ async function call(ctx, path, options = {}) {
       ...(options.headers || {}),
     },
     body: options.body ? JSON.stringify(options.body) : undefined,
-  }, { provider: 'ShipEngine' });
+  }, { provider: 'ShipEngine', retries: options.retries });
   const text = await response.text();
   let body = null;
   try { body = text ? JSON.parse(text) : null; } catch { body = null; }
@@ -76,8 +76,8 @@ function parcel(box = {}) {
   };
   if (box.lengthMm && box.widthMm && box.heightMm) {
     out.dimensions = {
-      length: Number(box.lengthMm), width: Number(box.widthMm), height: Number(box.heightMm),
-      unit: 'millimeter',
+      length: Number(box.lengthMm)/10, width: Number(box.widthMm)/10, height: Number(box.heightMm)/10,
+      unit: 'centimeter',
     };
   }
   return out;
@@ -134,7 +134,7 @@ async function buy(ctx, input = {}) {
   const labels = [];
   for (const id of ids.filter(Boolean)) {
     labels.push(await call(ctx, `/labels/rates/${encodeURIComponent(id)}`, {
-      method: 'POST', body: { label_format: 'pdf', label_layout: '4x6' },
+      method: 'POST', retries: 0, body: { label_format: 'pdf', label_layout: '4x6' },
       headers: input.idempotencyKey ? { 'x-shipengine-idempotency-key': `${input.idempotencyKey}:${labels.length}` } : {},
     }));
   }

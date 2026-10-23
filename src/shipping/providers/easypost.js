@@ -44,7 +44,7 @@ async function call(ctx, path, options = {}) {
       ...(options.headers || {}),
     },
     body: options.body ? JSON.stringify(options.body) : undefined,
-  }, { provider: 'EasyPost' });
+  }, { provider: 'EasyPost', retries: options.retries });
   const text = await response.text();
   let body = null;
   try { body = text ? JSON.parse(text) : null; } catch { body = null; }
@@ -183,7 +183,7 @@ async function buy(ctx, input = {}) {
   const bought = [];
   for (let index = 0; index < ids.length; index += 1) {
     bought.push(await call(ctx, `/shipments/${encodeURIComponent(ids[index])}/buy`, {
-      method: 'POST', body: { rate: { id: rateIds[index] || rateIds[0] } },
+      method: 'POST', retries: 0, body: { rate: { id: rateIds[index] || rateIds[0] } },
       headers: input.idempotencyKey ? { 'x-idempotency-key': `${input.idempotencyKey}:${index}` } : {},
     }));
   }

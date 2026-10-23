@@ -12,6 +12,13 @@ function pickSequence(value){
   return number;
 }
 
+function shippingEmail(value){
+  const email=trimOrNull(value);
+  if(email&&(email.length>254||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)))
+    throw new ValidationError('Enter a valid shipping contact email address, up to 254 characters.');
+  return email;
+}
+
 async function requireLocation(client,workspaceId,id,label='location'){
   const result=await client.query('SELECT * FROM locations WHERE workspace_id=$1 AND id=$2',[workspaceId,id]);
   if(!result.rows.length)throw new NotFoundError(`That ${label} could not be found.`);
@@ -46,9 +53,9 @@ async function createLocationInTransaction(client,ctx,input){
     if(clash.rows.length)throw new ValidationError(`A location called "${name}" or using that scan code already exists.`);
     const id=newId('loc');
     await client.query(`INSERT INTO locations(id,workspace_id,name,kind,parent_location_id,barcode,pick_sequence,
-      note,address,phone,is_active,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,1,$11)`,
+      note,address,phone,is_active,created_at,shipping_email) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,1,$11,$12)`,
     [id,ctx.workspaceId,name,kind,parent?.id || null,barcode,pickSequence(input.pickSequence),trimOrNull(input.note),
-      trimOrNull(input.address),trimOrNull(input.phone),nowIso()]);
+      trimOrNull(input.address),trimOrNull(input.phone),nowIso(),shippingEmail(input.shippingEmail)]);
     return requireLocation(client,ctx.workspaceId,id);
 }
 
@@ -76,10 +83,10 @@ async function updateLocation(database,ctx,id,input){
       AND (name=$3 OR ($4::text IS NOT NULL AND barcode=$4)) LIMIT 1`,[ctx.workspaceId,id,name,barcode]);
     if(clash.rows.length)throw new ValidationError('Another location already uses that name or scan code.');
     await client.query(`UPDATE locations SET name=$3,kind=$4,parent_location_id=$5,barcode=$6,pick_sequence=$7,
-      note=$8,address=$9,phone=$10 WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,id,name,kind,parentId,barcode,
+      note=$8,address=$9,phone=$10,shipping_email=$11 WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,id,name,kind,parentId,barcode,
       input.pickSequence===undefined?Number(current.pick_sequence||0):pickSequence(input.pickSequence),
       input.note===undefined?current.note:trimOrNull(input.note),input.address===undefined?current.address:trimOrNull(input.address),
-      input.phone===undefined?current.phone:trimOrNull(input.phone)]);
+      input.phone===undefined?current.phone:trimOrNull(input.phone),input.shippingEmail===undefined?current.shipping_email:shippingEmail(input.shippingEmail)]);
     return requireLocation(client,ctx.workspaceId,id);
   },{isolation:'SERIALIZABLE'});
 }

@@ -251,6 +251,7 @@ async function runtimeSweep(job,client,options={}){
       [effect.workspace_id,effect.payload.refundRequestId,at]);
     }
   }
+  await shipping.recoverKnownLabelVerifications(client,{providerResolver:options.shippingProviderResolver});
   const connectors=(await client.query(`SELECT id,workspace_id,display_name,provider_type,expected_interval_minutes,
       GREATEST(COALESCE(last_activity_at,''),COALESCE(last_synced_at,''),created_at) AS evidence_at,
       last_synced_at,created_at,status,paused_at,config
@@ -515,6 +516,13 @@ function create(providers=defaultProviders,options={}){return {'system.runtime-s
       {idempotencyKey:job.idempotencyKey,
         providerResolver:options.shippingProviderResolver});
     return {shipmentId,rateCount:quoted.rates?.length||0};
+  }),
+  'shipping.label.verify':external(async(job,database)=>{
+    const effect=await providerEffects.get(database,job.workspaceId,job.payload?.effectId);
+    if(effect.kind!=='shipping.label.purchase')throw Object.assign(new Error('This job is not a label verification.'),{retryable:false});
+    return shipping.verifyLabelPurchaseEffect(database,job.workspaceId,effect.id,{
+      provider:options.shippingProviderResolver?options.shippingProviderResolver(effect.provider):shippingProviders.get(effect.provider),
+      finalAttempt:Number(job.attemptCount)>=Number(job.maxAttempts)});
   }),
   'import.revise-preview':external((job,database)=>require('../imports/postgres-preview-revisions').run(job,database),'bulk'),
   'import.analyse-source':external((job,database)=>require('../imports/postgres-source-uploads').run(job,database,{provider:options.aiProvider}),'bulk'),

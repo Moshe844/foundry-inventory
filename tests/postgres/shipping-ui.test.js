@@ -74,6 +74,12 @@ test('real Chromium qualifies PostgreSQL rates, label, handoff and idempotent de
     const ctx={workspaceId:identity.workspace_id,actorId:identity.actor_id};
     const location=await locations.createLocation(database,ctx,{name:'Dispatch Warehouse',kind:'warehouse',
       address:'1 Main St, Monroe, NY 10950',phone:'845-555-0100'});
+    await page.goto(base+'/locations');
+    await page.locator('[data-modal-open="modal-location-'+location.id+'"]').click();
+    const locationForm=page.locator('form[action="/locations/'+location.id+'"]');
+    await locationForm.getByLabel('Shipping contact email',{exact:true}).fill('dispatch@example.test');
+    await Promise.all([page.waitForNavigation(),locationForm.getByRole('button',{name:'Save',exact:true}).click()]);
+    assert.equal((await locations.requireLocation(database,ctx.workspaceId,location.id)).shipping_email,'dispatch@example.test');
     const item=await catalog.createItem(database,ctx,{name:'Shipping Widget',baseCode:'SHIP-WIDGET',
       trackingMode:'quantity',unitLabel:'unit'});
     const at='2026-09-23T00:00:00.000Z';

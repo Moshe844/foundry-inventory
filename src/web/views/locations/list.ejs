@@ -127,6 +127,11 @@
           <input class="input" id="location-phone" name="phone" type="tel" autocomplete="tel" placeholder="512-555-0147">
           <p class="field-hint">Required only when this location buys carrier labels.</p>
         </div>
+          <div class="field">
+            <label class="label" for="location-shipping-email">Shipping contact email <span class="optional">optional</span></label>
+            <input class="input" id="location-shipping-email" name="shippingEmail" type="email" maxlength="254" autocomplete="email">
+            <p class="field-hint">The sender contact required by some carriers. StockChief does not send a message when you save it.</p>
+          </div>
         <div class="field">
           <label class="label" for="location-note">Note <span class="optional">optional</span></label>
           <input class="input" id="location-note" name="note" placeholder="Floor, aisle, or who runs it">
@@ -175,6 +180,10 @@
               value="<%= location.phone || '' %>" placeholder="512-555-0147">
             <p class="field-hint">The carrier contact for parcels leaving this location.</p>
           </div>
+            <div class="field">
+              <label class="label" for="edit-shipping-email-<%= location.id %>">Shipping contact email</label>
+              <input class="input" id="edit-shipping-email-<%= location.id %>" name="shippingEmail" type="email" maxlength="254" autocomplete="email" value="<%= location.shipping_email || '' %>">
+            </div>
           <div class="field">
             <label class="label" for="edit-note-<%= location.id %>">Note</label>
             <input class="input" id="edit-note-<%= location.id %>" name="note" value="<%= location.note || '' %>">

@@ -43,7 +43,7 @@ async function call(ctx, path, options = {}) {
       ...(options.headers || {}),
     },
     body: options.body ? JSON.stringify(options.body) : undefined,
-  }, { provider: 'Shippo' });
+  }, { provider: 'Shippo', retries: options.retries });
   const text = await response.text();
   let body = null;
   try { body = text ? JSON.parse(text) : null; } catch { body = null; }
@@ -123,6 +123,7 @@ function readRate(row) {
 /* ----------------------------------------------------------------- rates */
 
 async function quote(ctx, input = {}) {
+  if(!input.from?.email)throw new ValidationError('Add a shipping contact email to the ship-from location before requesting Shippo rates.');
   const packages = input.packages && input.packages.length ? input.packages : [{}];
   const created = await call(ctx, '/shipments/', { method: 'POST', body: {
     address_from: address(input.from),
@@ -138,31 +139,63 @@ async function quote(ctx, input = {}) {
 
 /* ----------------------------------------------------------------- label */
 
-async function buy(ctx, input = {}) {
-  const rateId = (input.rateIds && input.rateIds[0]) || input.rateId;
-  const transaction = await call(ctx, '/transactions/', { method: 'POST', body: {
-    rate: rateId, label_file_type: 'PDF', async: false,
-  }, headers: input.idempotencyKey ? { 'Idempotency-Key': input.idempotencyKey } : {} });
-  if (transaction.status && String(transaction.status).toUpperCase() !== 'SUCCESS') {
-    const messages = (transaction.messages || []).map((row) => row.text).filter(Boolean);
-    throw new ValidationError(messages.join(' ') || 'Shippo could not buy that label.');
+function purchaseResult(transaction,rate,ctx){
+  const status=String(transaction.status||'').toUpperCase();
+  if(status==='ERROR'){
+    let detail=(transaction.messages||[]).filter(row=>typeof row.text==='string').slice(0,3).map(row=>row.text).join(' ');
+    const key=apiKey(ctx);detail=detail.replaceAll(key,'[redacted]').replaceAll(Buffer.from(key+':').toString('base64'),'[redacted]').slice(0,500);
+    const error=new ValidationError('Shippo refused this label. '+(detail||'Check the parcel and carrier settings before requesting fresh rates.'));
+    if(transaction.object_id)error.providerReference={externalId:transaction.object_id};
+    throw error;
   }
-  const rate = transaction.rate && typeof transaction.rate === 'object' ? transaction.rate : null;
+  if(status!=='SUCCESS'||!transaction.label_url){
+    const error=new ValidationError('Shippo accepted the request but has not confirmed the label. Verify the existing transaction before purchasing again.');
+    error.providerOutcomeUncertain=true;
+    if(transaction.object_id)error.providerReference={externalId:transaction.object_id,rateId:typeof transaction.rate==='string'?transaction.rate:transaction.rate?.object_id||rate?.object_id};
+    throw error;
+  }
+  const actual=transaction.rate&&typeof transaction.rate==='object'?transaction.rate:rate;
+  if(!actual||actual.amount===undefined||!actual.currency||!Number.isFinite(Number(actual.amount))||Number(actual.amount)<0){
+    const error=new ValidationError('Shippo confirmed a label, but its price could not be verified. The purchase must not be repeated.');
+    error.providerOutcomeUncertain=true;error.providerReference={externalId:transaction.object_id};throw error;
+  }
   return {
     providerShipmentId: transaction.object_id,
     providerShipmentIds: [transaction.object_id],
     providerLabelIds: [transaction.object_id],
-    carrier: String(rate?.provider || input.carrier || '').toLowerCase(),
-    service: rate?.servicelevel?.name || null,
+    carrier: String(actual.provider || '').toLowerCase(),
+    service: actual.servicelevel?.name || actual.servicelevel_name || actual.servicelevel_token || null,
     trackingNumber: transaction.tracking_number || null,
     trackingUrl: transaction.tracking_url_provider || null,
     labelUrl: transaction.label_url || null,
     labelFormat: 'PDF',
     labelUrls: [transaction.label_url].filter(Boolean),
-    amountMinor: minorFrom(rate?.amount ?? input.amount ?? 0),
-    currency: rate?.currency || 'USD',
+    amountMinor: minorFrom(actual.amount),
+    currency: String(actual.currency).toUpperCase(),
     deliveryDate: null,
   };
+}
+
+async function buy(ctx, input = {}) {
+  const rateId = (input.rateIds && input.rateIds[0]) || input.rateId;
+  if(!rateId)throw new ValidationError('Choose a current Shippo rate before purchasing.');
+  let rate;
+  try{rate=await call(ctx,'/rates/'+encodeURIComponent(rateId)+'/');}
+  catch{throw new ValidationError('Shippo could not verify the selected rate. No label purchase was submitted.');}
+  if(!rate||rate.amount===undefined||!rate.currency||!Number.isFinite(Number(rate.amount))||Number(rate.amount)<0)
+    throw new ValidationError('The selected Shippo rate has no verified price. No label purchase was submitted.');
+  const transaction = await call(ctx, '/transactions/', { method: 'POST', retries: 0, body: {
+    rate: rateId, label_file_type: 'PDF', async: false,
+  }, headers: input.idempotencyKey ? { 'Idempotency-Key': input.idempotencyKey } : {} });
+  return purchaseResult(transaction,rate,ctx);
+}
+
+async function verifyPurchase(ctx,reference={}){
+  if(!reference.externalId)throw new ValidationError('An existing Shippo transaction is required for verification.');
+  const transaction=await call(ctx,'/transactions/'+encodeURIComponent(reference.externalId)+'/');
+  const rate=transaction.rate&&typeof transaction.rate==='object'?transaction.rate:
+    await call(ctx,'/rates/'+encodeURIComponent(transaction.rate||reference.rateId)+'/');
+  return purchaseResult(transaction,rate,ctx);
 }
 
 async function voidLabel(ctx, input = {}) {
@@ -262,5 +295,5 @@ function readEvent(event = {}) {
   };
 }
 
-module.exports = { isConfigured, quote, buy, voidLabel, track, verifyEvent, readEvent,
+module.exports = { isConfigured, quote, buy, verifyPurchase, voidLabel, track, verifyEvent, readEvent,
   address, parcel, statusOf, readRate, call };
