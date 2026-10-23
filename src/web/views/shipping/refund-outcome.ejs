@@ -1,8 +1,10 @@
 <% if(transaction&&transaction.operation==='VOID'){ const status=transaction.refund_status||'UNKNOWN',labels={NOT_REQUESTED:'Refund not requested',PENDING:'Provider is reviewing the refund',CONFIRMED:'Provider approved the refund',REJECTED:'Provider rejected the refund',UNKNOWN:'Provider refund outcome is unverified'}; %>
 <div class="notice notice--info stack" data-provider-refund-status="<%= status %>">
+ <div>
  <strong><%= labels[status]||labels.UNKNOWN %></strong>
  <% if(transaction.amount_minor!==null&&transaction.amount_minor!==undefined){ %><p>Provider-reported refund amount: <strong><%= helpers.money(transaction.amount_minor,transaction.currency) %></strong>.</p>
  <% } else { %><p>The provider did not provide a refund amount.</p><% } %>
  <p>This records the provider’s response. Use bank reconciliation to confirm any credit to your account.</p>
+ </div>
 </div>
 <% } %>
