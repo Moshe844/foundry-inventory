@@ -4,7 +4,7 @@ const express=require('express');
 const session=require('express-session');
 const {randomBytes}=require('node:crypto');
 const signature=require('cookie-signature');
-const {Pool,escapeIdentifier,escapeLiteral}=require('pg');
+const {Pool}=require('pg');
 
 // This function accepts only the private, ephemeral cluster returned by the
 // test helper, never DATABASE_URL. RLS is added only inside that disposable DB.
@@ -15,7 +15,7 @@ async function inspectionDatabase(cluster,admin,ctx,stagingAuthorization=null){
   const connection=new URL(cluster.connectionString);
   if(!stagingAuthorization&&connection.hostname!=='127.0.0.1')throw new Error('Inspection must use the isolated local fixture.');
   const role=`demo_read_${randomBytes(8).toString('hex')}`;
-  const password=randomBytes(32).toString('hex');const identifier=escapeIdentifier(role);
+  const password=randomBytes(32).toString('hex');
   // Discover only physical, non-dropped columns. information_schema.columns
   // expands type/privilege metadata we do not consume and is expensive on the
   // full application schema. This host-owned catalogue query changes no grant
@@ -36,53 +36,11 @@ async function inspectionDatabase(cluster,admin,ctx,stagingAuthorization=null){
    JOIN pg_attribute pa ON pa.attrelid=p.oid AND pa.attnum=k.parent_key
    WHERE f.contype='f' AND n.nspname IN ('public','stockchief_runtime')
    GROUP BY f.oid,n.nspname,c.relname,pn.nspname,p.relname`)).rows;
-  const direct=table=>table.columns.includes('workspace_id')?`workspace_id=${escapeLiteral(ctx.workspaceId)}`:
-   table.table_name==='workspaces'?`id=${escapeLiteral(ctx.workspaceId)}`:
-   table.table_name==='accounts'?`id=${escapeLiteral(accountId)}`:
-   table.columns.includes('account_id')?`account_id=${escapeLiteral(accountId)}`:null;
-  const statements=[`CREATE ROLE ${identifier} LOGIN PASSWORD ${escapeLiteral(password)} VALID UNTIL ${escapeLiteral(require('./inspection-role-lifecycle').expires())} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS`,
-    `ALTER ROLE ${identifier} SET default_transaction_read_only=on`,
-    `GRANT USAGE ON SCHEMA public,stockchief_runtime TO ${identifier}`];
-  const guardedTables=[];
-  // This reviewed rollout projection is an invoker view: it cannot bypass the
-  // base-table tenant policies below. Never grant an owner-executed view.
-  const scopeView='stockchief_runtime.codex_pilot_workspace_access';
-  const view=(await admin.query(`SELECT c.reloptions FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-   WHERE n.nspname='stockchief_runtime' AND c.relname='codex_pilot_workspace_access' AND c.relkind='v'`)).rows[0];
+  const scopes=require('./inspection-scopes'),scopeView='stockchief_runtime.codex_pilot_workspace_access';
+  const view=(await admin.query("SELECT c.reloptions FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='stockchief_runtime' AND c.relname='codex_pilot_workspace_access' AND c.relkind='v'")).rows[0];
   if(!view?.reloptions?.includes('security_invoker=true'))throw Error('UNSAFE_INSPECTION_ACCESS_VIEW');
-  statements.push(`GRANT SELECT ON ${scopeView} TO ${identifier}`);
-  for(const table of tables){
-    const name=`${escapeIdentifier(table.table_schema)}.${escapeIdentifier(table.table_name)}`;
-    // Owner-executed views can bypass underlying RLS. Never grant them merely
-    // because metadata discovery found them; they need a reviewed safe boundary.
-    // Base-table kinds were resolved in the metadata query above.
-    guardedTables.push(table);
-    // No ownership, sequence, INSERT, UPDATE, DELETE, CREATE or arbitrary SQL
-    // interface is given to the renderer. Canonical gateway has its own handle.
-    statements.push(`GRANT SELECT ON ${name} TO ${identifier}`);
-    let predicate=direct(table);
-    if(!predicate){
-     // Junction tables such as SKU option values inherit their parent's scope.
-     const parents=foreignKeys.filter(f=>f.schema===table.table_schema&&f.child===table.table_name)
-      .filter(f=>tables.some(p=>p.table_schema===f.parent_schema&&p.table_name===f.parent&&direct(p)));
-     if(parents.length)predicate=parents.map(f=>`EXISTS (SELECT 1 FROM ${escapeIdentifier(f.parent_schema)}.${escapeIdentifier(f.parent)} parent
-      WHERE ${f.child_columns.map((column,i)=>`parent.${escapeIdentifier(f.parent_columns[i])}=${name}.${escapeIdentifier(column)}`).join(' AND ')})`).join(' AND ');
-     // Unscoped runtime/authentication storage is never part of UI evidence.
-     else if(!new Set(['commercial_plans','commercial_plan_entitlements','commercial_plan_meters','commercial_capabilities',
-      'commercial_meter_definitions','commercial_cost_rates','commercial_plan_versions','commercial_release_control',
-      'commercial_usage_packs','commercial_operation_policies']).has(table.table_name))predicate='false';
-    }
-    if(predicate){
-      statements.push(`ALTER TABLE ${name} ENABLE ROW LEVEL SECURITY`);
-      // Restrictive policy remains effective even if another permissive policy
-      // exists. A separate permissive policy grants only this tenant's rows.
-      statements.push(`CREATE POLICY ${escapeIdentifier(role+'_allow')} ON ${name} FOR SELECT TO ${identifier} USING (${predicate})`);
-      statements.push(`CREATE POLICY ${escapeIdentifier(role+'_restrict')} ON ${name} AS RESTRICTIVE FOR SELECT TO ${identifier} USING (${predicate})`);
-    }
-  }
-  // Same escaped host-generated grants and restrictive tenant policies, one
-  // atomic installation. Avoid hundreds of remote PostgreSQL round trips.
-  await require('./inspection-schema').mutate(admin,guardedTables,client=>client.query(statements.join(';\n')));
+  await scopes.ensure(admin,tables,foreignKeys);
+  await scopes.createRole(admin,{role,password,ctx,accountId,kind:'read',scopeView,tables});
   connection.username=role;connection.password=password;
   const pool=new Pool({...require('../../src/db/postgres').connectionOptions(connection.toString(),{max:4,
     privateNetwork:process.env.FOUNDRY_DATABASE_PRIVATE_NETWORK==='true'}),min:4,idleTimeoutMillis:4*60000});
@@ -93,18 +51,7 @@ async function inspectionDatabase(cluster,admin,ctx,stagingAuthorization=null){
     }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
   }
   let poolClosed=false,roleCleaned=false;
-  return {query,transaction,renewLease:()=>admin.query(`ALTER ROLE ${identifier} VALID UNTIL ${escapeLiteral(require('./inspection-role-lifecycle').expires())}`),close:async()=>{if(!poolClosed){await pool.end();poolClosed=true;}if(stagingAuthorization&&!roleCleaned){
-    const cleanupStatements=[];
-    cleanupStatements.push(`REVOKE ALL PRIVILEGES ON ${scopeView} FROM ${identifier}`);
-    for(const table of guardedTables){const name=`${escapeIdentifier(table.table_schema)}.${escapeIdentifier(table.table_name)}`;
-      cleanupStatements.push(`DROP POLICY IF EXISTS ${escapeIdentifier(role+'_allow')} ON ${name}`);
-      cleanupStatements.push(`DROP POLICY IF EXISTS ${escapeIdentifier(role+'_restrict')} ON ${name}`);
-      cleanupStatements.push(`REVOKE ALL PRIVILEGES ON ${name} FROM ${identifier}`);}
-    cleanupStatements.push(`REVOKE USAGE ON SCHEMA public,stockchief_runtime FROM ${identifier}`,`DROP ROLE ${identifier}`);
-    await require('./inspection-schema').mutate(admin,guardedTables,async client=>{
-      if((await client.query('SELECT 1 FROM pg_roles WHERE rolname=$1',[role])).rows.length)await client.query(cleanupStatements.join(';\n'));
-    });roleCleaned=true;
-  }},accountId,topology:{engine:'postgresql',shared:true,multiWriter:false}};
+  return {query,transaction,renewLease:()=>scopes.renew(admin,role),close:async()=>{if(!poolClosed){await pool.end();poolClosed=true;}if(stagingAuthorization&&!roleCleaned){await scopes.drop(admin,[role]);roleCleaned=true;}},accountId,topology:{engine:'postgresql',shared:true,multiWriter:false}};
 }
 
 async function createInspectionServer({cluster,database,ctx,beforeRead=()=>{},stagingAuthorization=null}){
@@ -115,20 +62,8 @@ async function createInspectionServer({cluster,database,ctx,beforeRead=()=>{},st
   // Telemetry is a separate INSERT-only sink, never the application's business
   // handle. The renderer keeps SELECT-only rights and all GET writes still fail.
   const role=`demo_metrics_${randomBytes(8).toString('hex')}`;
-  const password=randomBytes(32).toString('hex');const identifier=escapeIdentifier(role);
-  // Install the identical restricted telemetry role/policies atomically,
-  // instead of seven serial trips to the remote Staging database.
-  const telemetryTables=[{table_schema:'public',table_name:'commercial_resource_measurements'}];
-  try{await require('./inspection-schema').mutate(database,telemetryTables,client=>client.query(`CREATE ROLE ${identifier} LOGIN PASSWORD ${escapeLiteral(password)} VALID UNTIL ${escapeLiteral(require('./inspection-role-lifecycle').expires())} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
-    GRANT USAGE ON SCHEMA public TO ${identifier};
-    GRANT INSERT ON commercial_resource_measurements TO ${identifier};
-    GRANT SELECT(id) ON commercial_resource_measurements TO ${identifier};
-    CREATE POLICY ${identifier} ON commercial_resource_measurements FOR INSERT TO ${identifier}
-    WITH CHECK ((workspace_id=${escapeLiteral(ctx.workspaceId)} AND account_id=${escapeLiteral(readonly.accountId)})
-      OR (workspace_id IS NULL AND (account_id IS NULL OR account_id=${escapeLiteral(readonly.accountId)})));
-    CREATE POLICY ${escapeIdentifier(role+'_conflict')} ON commercial_resource_measurements FOR SELECT TO ${identifier}
-    USING ((workspace_id=${escapeLiteral(ctx.workspaceId)} AND account_id=${escapeLiteral(readonly.accountId)})
-      OR (workspace_id IS NULL AND (account_id IS NULL OR account_id=${escapeLiteral(readonly.accountId)})));`));}
+  const password=randomBytes(32).toString('hex');
+  try{await require('./inspection-scopes').createRole(database,{role,password,ctx,accountId:readonly.accountId,kind:'metrics'});}
   catch(error){await readonly.close().catch(()=>{});throw error;}
   const connection=new URL(cluster.connectionString);connection.username=role;connection.password=password;
   const telemetry=new Pool({...require('../../src/db/postgres').connectionOptions(connection.toString(),{max:2,
@@ -137,14 +72,7 @@ async function createInspectionServer({cluster,database,ctx,beforeRead=()=>{},st
   // Open their existing bounded capacity before publishing the ready server.
   // No record, permission result or page content is cached by this warm-up.
   let telemetryClosed=false,telemetryRoleCleaned=false;
-  const closeTelemetry=async()=>{
-    if(!telemetryClosed){await telemetry.end();telemetryClosed=true;}
-    if(stagingAuthorization&&!telemetryRoleCleaned){await require('./inspection-schema').mutate(database,telemetryTables,async client=>{if((await client.query('SELECT 1 FROM pg_roles WHERE rolname=$1',[role])).rows.length)await client.query(`DROP POLICY IF EXISTS ${identifier} ON commercial_resource_measurements;
-      DROP POLICY IF EXISTS ${escapeIdentifier(role+'_conflict')} ON commercial_resource_measurements;
-      REVOKE SELECT(id) ON commercial_resource_measurements FROM ${identifier};
-      REVOKE ALL PRIVILEGES ON commercial_resource_measurements FROM ${identifier};
-      REVOKE USAGE ON SCHEMA public FROM ${identifier};DROP ROLE ${identifier};`);});telemetryRoleCleaned=true;}
-  };
+  const closeTelemetry=async()=>{if(!telemetryClosed){await telemetry.end();telemetryClosed=true;}if(stagingAuthorization&&!telemetryRoleCleaned){await require('./inspection-scopes').drop(database,[role]);telemetryRoleCleaned=true;}};
   try{await Promise.all([...Array.from({length:4},()=>readonly.query('SELECT 1')),
     ...Array.from({length:2},()=>telemetry.query('SELECT 1'))]);}
   catch(error){await Promise.allSettled([readonly.close(),closeTelemetry()]);throw error;}
@@ -172,7 +100,7 @@ async function createInspectionServer({cluster,database,ctx,beforeRead=()=>{},st
   gate.use((req,res,next)=>require('./network-guard').restricted({databaseUrl:cluster.connectionString,stagingAuthorization,ctx},()=>app(req,res,next)));
   const server=await new Promise(resolve=>{const server=gate.listen(0,'127.0.0.1',()=>resolve(server));});
   return {origin:`http://127.0.0.1:${server.address().port}`,readonly,telemetryErrors,
-    renewLease:async()=>{await readonly.renewLease();await database.query(`ALTER ROLE ${identifier} VALID UNTIL ${escapeLiteral(require('./inspection-role-lifecycle').expires())}`);},
+    renewLease:async()=>{await readonly.renewLease();await require('./inspection-scopes').renew(database,role);},
     flushTelemetry:()=>Promise.allSettled([...pendingTelemetry]),
     async close(){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));
       const results=await Promise.allSettled([readonly.close(),closeTelemetry()]);

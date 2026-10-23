@@ -18,6 +18,8 @@ async function cleanupExpired(database,{limit=8,legacyRoleNames=[]}={}){
  if(!candidates.length)return {cleaned:0,remainingCandidates:false};
  const busy=async client=>Boolean((await client.query("SELECT 1 FROM stockchief_runtime.assistant_goals WHERE checkpoint->>'runtime'='codex-staging' AND status='RUNNING' LIMIT 1")).rows.length);
  if(await busy(database))return {cleaned:0,deferred:'ACTIVE_AGENT'};
+ const managed=(await database.query('SELECT role_name FROM stockchief_runtime.inspection_role_scopes WHERE role_name=ANY($1::text[])',[candidates.map(r=>r.rolname)])).rows;
+ if(managed.length)return database.transaction(async client=>{if(await busy(client))return {cleaned:0,deferred:'ACTIVE_AGENT'};await client.query('SELECT role_name FROM stockchief_runtime.inspection_role_scopes WHERE role_name=ANY($1::text[]) FOR UPDATE',[managed.map(r=>r.role_name)]);const fresh=(await client.query('SELECT r.oid,r.rolname FROM pg_roles r WHERE '+eligible+' AND r.rolname=ANY($2::text[]) ORDER BY r.rolname',[legacyRoleNames,managed.map(r=>r.role_name)])).rows;await require('./inspection-scopes').dropInTransaction(client,fresh.map(r=>r.rolname));return {cleaned:fresh.length,roles:fresh.map(r=>r.rolname),remainingCandidates:true};},{isolation:'SERIALIZABLE',retrySafe:true});
  const tables=(await database.query("SELECT n.nspname::text AS table_schema,c.relname::text AS table_name FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname IN ('public','stockchief_runtime') AND c.relkind IN ('r','p')")).rows;
  return require('./inspection-schema').mutate(database,tables,async client=>{
   if(await busy(client))return {cleaned:0,deferred:'ACTIVE_AGENT'};

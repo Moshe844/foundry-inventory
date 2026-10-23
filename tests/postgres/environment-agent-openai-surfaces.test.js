@@ -23,6 +23,7 @@ test('certification browser surfaces render with real tenant-scoped SELECT-only 
   // never supply this route or interaction sequence to a paid agent.
   if(url==='/purchasing/orders/new')await ui.page.getByRole('link').filter({hasText:f.task.supplierName}).first().click();
   if(url==='/locations')await ui.page.locator('[data-modal-open="modal-location"]').click();
+  if(url==='/pricing/new')await ui.page.getByRole('link',{name:'Set price',exact:true}).first().click();
   const screen=await ui.inspect();
   if(response.status()!==200)failures.push(`${url}: HTTP ${response.status()}`);
   if(form&&!screen.controls.some(c=>['input','textarea','select'].includes(c.tag)&&c.type!=='hidden'&&c.name&&!['q','search','_csrf'].includes(c.name)))failures.push(`${url}: missing business form`);

@@ -90,7 +90,7 @@ test('real UI exploration uses discovered controls; browser cannot write or cros
   assert.equal((await database.query('SELECT count(*)::int AS n FROM items WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,1);
   assert.equal((await database.query('SELECT status FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].status,'PENDING');
   await assert.rejects(()=>gateway.operate({steps:[{capability:'sql.execute',arguments:[],dependsOn:[]}]}),/registered/);
-  await assert.rejects(()=>resumed.execute('business_operations',{invalid:true},()=>gateway.operate({steps:[]})),/one to eight/);
+  await assert.rejects(()=>resumed.execute('business_operations',{invalid:true},()=>gateway.operate({steps:[]})),/one to 32/);
   assert.equal((await store.get(database,ctx,held.id)).status,'RUNNING');
   await assert.rejects(()=>resumed.execute('environment_browser',{},()=>{throw new Error('Stale control');}),/Stale/);
   assert.equal((await resumed.load()).inflight,null);
