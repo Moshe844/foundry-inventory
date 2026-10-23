@@ -57,13 +57,19 @@ async function shipmentPage(database,workspaceId,shipmentId){
     return {key,what,href:key==='account'?'/settings/shipping':key==='origin'?'/locations':'/orders/'+s.sales_order_id};});
   const rates=state.rates.map((rate)=>({...rate,carrierName:carriers.displayName(rate.carrier),
     deliveryDate:rate.delivery_date,quotedAt:rate.quoted_at,guaranteed:rate.guaranteed}));
-  const mode=policyRows.rows[0]?.mode||'RECOMMEND';const recommended=rates.length&&mode!=='MANUAL'
+  const mode=policyRows.rows[0]?.mode||'RECOMMEND';
+  const rules=ruleRows.rows.map(row=>({id:row.id,name:row.name,carrier:row.carrier,service:row.service,
+    maxCostMinor:row.max_cost_minor===null?null:Number(row.max_cost_minor),
+    maxDeliveryDays:row.max_delivery_days===null?null:Number(row.max_delivery_days),
+    requireByPromised:Boolean(Number(row.require_by_promised)),active:Boolean(Number(row.is_active))})).filter(rule=>rule.active);
+  const ruled=rules.length?require('../../shipping/rules').decide(null,workspaceId,rates,{rules,promisedDate:s.needed_by||null}):null;
+  const recommended=rates.length&&mode!=='MANUAL'&&!rules.length
     ?{rate:rates[0],because:'This is the lowest current carrier price. Confirm its service and delivery date before buying.'}:null;
   let providerCapabilities={};
   if(state.account?.provider&&providerRegistry.has(state.account.provider))providerCapabilities=providerRegistry.capabilities(state.account.provider);
   return {shipment:s,paymentPosition,pickList:{shipment:s,stops},shipping:{ready:state.ready,blocked,
-    provider:state.account?.provider||null,to:state.to,from:state.from,boxes:state.boxes,rates,promised:null,promise:null,
-    handling:{mode},ruled:null,recommended,rules:ruleRows.rows,events:state.events,
+    provider:s.provider||state.account?.provider||null,to:state.to,from:state.from,boxes:state.boxes,rates,promised:s.needed_by||null,promise:null,
+    handling:{mode},ruled,recommended,rules:ruleRows.rows,events:state.events,quoteProblems:state.quoteProblems,
     transactions:transactionRows.rows,providerCapabilities},
     notices:noticeRows.rows.map((notice)=>({...notice,connectorId:notice.connector_id,errorMessage:notice.error_message,
       sentAt:notice.sent_at})),noticePolicy:{},mailboxes:mailboxRows.rows};
@@ -73,17 +79,19 @@ function createPostgresShippingRouter(database,options={}){
   const router=express.Router();
   router.use(['/settings/shipping','/fulfilment'],requireAuth);
   router.get('/settings/shipping',asyncRoute(async(req,res)=>{
-    const [account,ruleRows,policyRows,locationRows]=await Promise.all([accounts.describe(database,req.ctx.workspaceId),
+    const [shippingAccounts,ruleRows,policyRows,locationRows]=await Promise.all([accounts.describeAll(database,req.ctx.workspaceId),
       database.query(`SELECT * FROM shipping_rules WHERE workspace_id=$1 ORDER BY created_at,id`,[req.ctx.workspaceId]),
       database.query('SELECT * FROM shipping_operation_policy WHERE workspace_id=$1',[req.ctx.workspaceId]),
       database.query(`SELECT name,address FROM locations WHERE workspace_id=$1 AND is_active=1
         ORDER BY CASE WHEN TRIM(COALESCE(address,''))<>'' THEN 0 ELSE 1 END,created_at,id LIMIT 1`,[req.ctx.workspaceId])]);
+    const account=shippingAccounts[0]||await accounts.describe(database,req.ctx.workspaceId);
     const origin=locationRows.rows[0]||{};const parsed=address.parse(origin.address);const rules=ruleRows.rows.map((row)=>({
       id:row.id,name:row.name,carrier:row.carrier,service:row.service,maxCostMinor:row.max_cost_minor===null?null:Number(row.max_cost_minor),
       requireByPromised:Boolean(Number(row.require_by_promised)),maxDeliveryDays:row.max_delivery_days===null?null:Number(row.max_delivery_days),
       active:Boolean(Number(row.is_active)),statedText:row.stated_text}));
-    return res.page('shipping/rules',{title:'Shipping rules',nav:'settings',room:true,backTo:{href:'/settings',label:'Settings'},
-      account,rules,automaticShippingAvailable:false,operationPolicy:{mode:policyRows.rows[0]?.mode||'RECOMMEND'},
+    return res.page('shipping/postgres-settings',{title:'Shipping settings',nav:'settings',room:true,backTo:{href:'/settings',label:'Settings'},
+      account,shippingAccounts:shippingAccounts.map(a=>({...a,webhookUrl:`${res.locals.origin}/webhooks/shipping/${a.provider}/${req.ctx.workspaceId}`})),rules,
+      automaticShippingAvailable:false,operationPolicy:{mode:policyRows.rows[0]?.mode||'RECOMMEND'},
       referral:{available:false,opened:false,billingReady:false},shipengine:{available:false,opened:false,billingReady:false},
       openShipEngineSetup:false,workspaceName:req.workspace?.name||'',providers:accounts.PROVIDERS,carriers:carriers.list(),
       shipFromAddress:{name:origin.name||req.workspace?.name||'',company_name:req.workspace?.name||'',address_line1:parsed.line1||'',
@@ -126,12 +134,12 @@ function createPostgresShippingRouter(database,options={}){
     return res.redirect(303,'/settings/shipping');
   }));
   router.post('/settings/shipping/account/disconnect',requireOwner,asyncRoute(async(req,res)=>{
-    await accounts.disconnect(database,req.ctx);
+    await accounts.disconnect(database,req.ctx,{connectorId:req.body.connectorId});
     req.flash('success','Postage account disconnected and its encrypted credentials removed.');
     return res.redirect(303,'/settings/shipping');
   }));
   router.post('/settings/shipping/account/remove',requireOwner,asyncRoute(async(req,res)=>{
-    await accounts.disconnect(database,req.ctx);req.flash('success','Disconnected. Existing shipment, label and tracking history remains with this business.');
+    await accounts.disconnect(database,req.ctx,{connectorId:req.body.connectorId});req.flash('success','Disconnected. Existing shipment, label and tracking history remains with this business.');
     return res.redirect(303,'/settings/shipping');
   }));
   router.post('/settings/shipping/:id/remove',requirePermission(permissions.OPERATE,'set shipping rules'),asyncRoute(async(req,res)=>{
@@ -151,17 +159,20 @@ function createPostgresShippingRouter(database,options={}){
     return res.redirect(303,`/fulfilment/${req.params.id}`);
   }));
   async function quoteShipment(req){
-    return shipping.quote(database,req.ctx,req.params.id,{idempotencyKey:req.body.usageKey||newId('quote'),provider:options.providerResolver?
-      options.providerResolver((await accounts.forWorkspace(database,req.ctx.workspaceId))?.provider):undefined});
+    return shipping.quote(database,req.ctx,req.params.id,{idempotencyKey:req.body.usageKey||newId('quote'),providerResolver:options.providerResolver});
   }
   router.post('/fulfilment/:id/quote',requireCapability(database,'shipping.rates'),asyncRoute(async(req,res)=>{
-    await quoteShipment(req);
-    req.flash('success','Live rates refreshed. No postage was purchased.');
+    const quoted=await quoteShipment(req);
+    req.flash(quoted.quoteProblems?.length?'warning':'success',quoted.quoteProblems?.length?
+      'Rates refreshed. Some connected accounts could not return rates; their offers are excluded. No postage was purchased.':
+      'Rates refreshed across connected shipping accounts. No postage was purchased.');
     return res.redirect(303,`/fulfilment/${req.params.id}#rates`);
   }));
   router.post('/fulfilment/:id/rates',requireCapability(database,'shipping.rates'),asyncRoute(async(req,res)=>{
-    await quoteShipment(req);
-    req.flash('success','Live rates refreshed. No postage was purchased.');
+    const quoted=await quoteShipment(req);
+    req.flash(quoted.quoteProblems?.length?'warning':'success',quoted.quoteProblems?.length?
+      'Rates refreshed. Some connected accounts could not return rates; their offers are excluded. No postage was purchased.':
+      'Rates refreshed across connected shipping accounts. No postage was purchased.');
     return res.redirect(303,`/fulfilment/${req.params.id}#carrier`);
   }));
   router.post('/fulfilment/:id/buy',requireOwner,requireCapability(database,'shipping.labels'),asyncRoute(async(req,res)=>{
@@ -219,7 +230,9 @@ function createPostgresShippingRouter(database,options={}){
     return res.redirect(303,`/fulfilment/${req.params.id}`);
   }));
   router.post('/fulfilment/:id/tracking/refresh',asyncRoute(async(req,res)=>{
-    const account=await accounts.forWorkspace(database,req.ctx.workspaceId);
+    const shipment=await shipping.requireShipment(database,req.ctx.workspaceId,req.params.id);
+    const account=await accounts.forWorkspace(database,req.ctx.workspaceId,{connectorId:shipment.shipping_connector_id||null,provider:shipment.provider});
+    if(!account)throw new ValidationError('Reconnect this shipment’s shipping account before checking tracking.');
     await shipping.refreshTracking(database,req.ctx,req.params.id,{provider:options.providerResolver?
       options.providerResolver(account.provider):providerRegistry.get(account.provider)});
     req.flash('success','Carrier tracking checked. Duplicate scans were ignored.');

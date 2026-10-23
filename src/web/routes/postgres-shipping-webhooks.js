@@ -11,7 +11,7 @@ function createPostgresShippingWebhooks(database,options={}){
   router.post('/webhooks/shipping/:provider/:workspaceId',express.raw({type:'*/*',limit:'1mb'}),async(req,res)=>{
     const providerName=String(req.params.provider||'').toLowerCase();
     try{
-      const account=await accounts.forWorkspace(database,req.params.workspaceId);
+      const account=await accounts.forWorkspace(database,req.params.workspaceId,{provider:providerName});
       if(!account||account.provider!==providerName)return res.status(404).json({error:'No matching postage account.'});
       const provider=options.providerResolver?options.providerResolver(providerName):providers.get(providerName);
       const raw=Buffer.isBuffer(req.body)?req.body:Buffer.from(String(req.body||''),'utf8');

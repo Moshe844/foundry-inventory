@@ -55,6 +55,9 @@ test('real Chromium plans shortages, transfers, excess and governed policy chang
     await catalog.createItem(database,{workspaceId:other.workspace_id,actorId:other.actor_id},
       {name:'Tenant Secret Product',baseCode:'TENANT-SECRET',trackingMode:'quantity'});
 
+    // Derived suggestions are written by the authorized evaluator; browsing
+    // planning is read-only and must not generate new records on a GET.
+    await require('../../src/forecasting/postgres-planning-service').refreshRecommendations(database,ctx.workspaceId);
     await owner.goto(`${base}/inventory`);
     await owner.getByRole('link',{name:'What happens next'}).click();
     await owner.waitForURL(`${base}/planning`);

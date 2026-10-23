@@ -1,42 +1,92 @@
+<% const providerNames={easypost:'EasyPost',shipstation:'ShipStation',shippo:'Shippo',shipengine:'ShipEngine'}; %>
 <header class="rm-head">
-  <p class="rm-head__eyebrow"><%- helpers.icon('ship',{size:15}) %> Shipping</p>
-  <h1>Use this business’s own postage account</h1>
-  <p>StockChief compares rates, buys an approved label, records carrier handoff, follows tracking and brings delivery exceptions back to Needs You. Postage and carrier billing always stay with this inventory’s business account.</p>
+  <p class="rm-head__eyebrow">Shipping</p>
+  <h1>Your shipping accounts, managed in StockChief</h1>
+  <p>Connect this business’s own accounts. StockChief compares their available rates; the provider bills your business directly for approved postage.</p>
 </header>
 
-<section class="rm-panel">
-  <div class="rm-panel__head"><h2>The account StockChief will use</h2><span class="right"><%= account.connected?(account.testMode?'Sandbox':'Live'):'Not connected' %></span></div>
-  <div class="rm-panel__body">
-  <% if(account.connected){ %>
-    <p class="sr-only"><%= account.providerName %><%= account.because %></p>
-    <div class="rm-told"><div class="rm-told__row"><span class="rm-told__t"><%= account.providerName %><small><%= account.because %></small></span><span class="rm-told__m is-ok"><%= account.testMode?'Test labels only':'Ready for live postage' %></span></div></div>
-    <p>Credential ending <code>…<%= account.keyEnding %></code>. The usable credential is encrypted and is never rendered back into the browser.</p>
-    <p><strong>Tracking callback for this inventory</strong><br><code><%= webhookUrl %></code></p>
-    <form method="post" action="/settings/shipping/account/disconnect" data-confirm="Disconnect this postage account? Existing shipment history remains."><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost" type="submit">Disconnect and remove credential</button></form>
-  <% } else { %>
-    <p><%= account.because %></p>
-    <div class="rm-note"><%- helpers.icon('info',{size:16}) %><div><strong>If the business already uses ShipEngine, Shippo, ShipStation, or EasyPost</strong><br>Choose that platform below and connect the business account. StockChief does not replace its carrier contracts; it operates through them.</div></div>
-    <form method="post" action="/settings/shipping/account" class="grid" id="existing-carrier-connection">
-      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-      <label class="field"><span class="field-label">Shipping platform</span><select class="select" name="provider" required><% providers.forEach(function(provider){ %><option value="<%= provider %>"><%= provider %></option><% }) %></select><span class="field-help">This is the platform account, not an individual carrier.</span></label>
-      <label class="field"><span class="field-label">API key</span><input class="input" type="password" name="apiKey" required autocomplete="off" placeholder="Paste the business account key"><span class="field-help">Stored encrypted and scoped to this inventory.</span></label>
-      <label class="field"><span class="field-label">Webhook secret <small>when the platform gives one</small></span><input class="input" type="password" name="webhookSecret" autocomplete="off"></label>
-      <button class="rm-btn rm-btn--wash" type="submit">Verify and connect</button>
+<section class="card section" aria-label="Connected shipping accounts">
+  <div class="card-head"><div><h2><%= shippingAccounts.length ? (shippingAccounts.every(a=>a.testMode)?'Sandbox connected':'Connected shipping accounts') : 'Connect a shipping account' %></h2>
+    <p class="hint">Each account is encrypted and belongs only to this inventory. Connecting another provider keeps your existing connections.</p></div></div>
+  <% if(!shippingAccounts.length){ %><div class="card-body"><p>No shipping accounts are connected yet. Add EasyPost, ShipStation or Shippo below.</p></div><% } %>
+  <% shippingAccounts.forEach(function(connected){ %>
+  <article class="card-body stack" aria-label="<%= connected.providerName %> account">
+    <h3><%= connected.providerName %> <span class="badge <%= connected.testMode?'badge--warn':'badge--ok' %>"><%= connected.testMode?'Test labels only':'Live account' %></span></h3>
+    <p><%= connected.testMode?'Test labels cannot be used for real parcels and do not charge real postage.':'Approved labels are billed to your connected provider account.' %></p>
+    <details class="disclose"><summary><span>Advanced connection details</span><span class="disclose__cue">Show</span></summary>
+      <div class="disclose__body t-sm">Platform: <%= connected.providerName %> · key ending <%= connected.keyEnding %>
+        <p>Tracking webhook: <code style="overflow-wrap:anywhere"><%= connected.webhookUrl %></code></p>
+        <p><%= connected.hasWebhookSecret?'A webhook secret is saved. Delivery still needs to be verified with the provider.':'Configure the provider’s webhook verification settings to enable instant tracking updates.' %></p>
+      </div>
+    </details>
+    <form method="post" action="/settings/shipping/account/disconnect" data-busy data-confirm="Disconnect this account? Existing labels and shipment history remain.">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="connectorId" value="<%= connected.connectorId %>">
+      <button class="btn btn--ghost" type="submit">Disconnect <%= connected.providerName %></button>
     </form>
-  <% } %>
+  </article>
+  <% }); %>
+</section>
+
+<section class="card section" id="account">
+  <div class="card-head"><div><h2><%= shippingAccounts.length?'Add or update a shipping account':'Use your existing shipping account' %></h2>
+    <p class="hint">Choose the shipping platform your business uses. Your carrier contracts and billing stay with you.</p></div></div>
+  <div class="card-body">
+  <details class="disclose" id="existing-carrier-connection"><summary><span>Connect with a shipping-platform key</span><span class="disclose__cue">Show</span></summary>
+    <div class="disclose__body">
+      <form method="post" action="/settings/shipping/account" class="stack" data-busy>
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <label class="field"><span class="field-label" id="shipping-provider-label">Shipping platform</span><select class="select" name="provider" required aria-labelledby="shipping-provider-label">
+          <% ['easypost','shipstation','shippo','shipengine'].filter(p=>providers.includes(p)).forEach(function(provider){ %>
+          <option value="<%= provider %>"><%= providerNames[provider] %></option><% }); %>
+        </select></label>
+        <label class="field"><span class="field-label" id="shipping-key-label">API key</span><input class="input" type="password" name="apiKey" required autocomplete="off" aria-labelledby="shipping-key-label">
+          <span class="field-help">Use a test key to try shipping without real postage. ShipStation requires a V2 API key; sandbox keys start with TEST_.</span></label>
+        <label class="field"><span class="field-label">Webhook secret <small>(optional)</small></span><input class="input" type="password" name="webhookSecret" autocomplete="off"></label>
+        <p class="hint">Updating an existing provider replaces only its saved key. Rates quoted on the old key must be refreshed before buying a label.</p>
+        <button class="btn btn--primary" type="submit">Verify and connect</button>
+      </form>
+      <p class="hint">Key setup: <a href="https://docs.easypost.com/docs/authentication" target="_blank" rel="noopener noreferrer">EasyPost</a> ·
+        <a href="https://docs.shipstation.com/authentication" target="_blank" rel="noopener noreferrer">ShipStation V2</a> ·
+        <a href="https://docs.goshippo.com/guides/authentication" target="_blank" rel="noopener noreferrer">Shippo</a>.</p>
+    </div>
+  </details>
   </div>
 </section>
 
-<div class="rm-sect"><h2>What the carrier choices mean</h2><p>UPS, FedEx, USPS and DHL are not setup buttons here. They appear as live rate choices only when the connected platform account exposes them for a real parcel.</p></div>
-<div class="rm-choices-grid"><% ['UPS','FedEx','USPS','DHL'].forEach(function(carrier){ %><article class="rm-provider"><div class="rm-provider__h"><span class="rm-provider__mark" aria-hidden="true"><%- helpers.icon('ship',{size:16}) %></span><span class="rm-provider__n"><%= carrier %></span></div><p>Rates, labels and tracking when enabled in the connected business account.</p></article><% }) %></div>
+<% if(account.connected){ %>
+<section class="card section" id="handling">
+  <div class="card-head"><div><h2>How StockChief handles shipping</h2><p class="hint">Comparing rates buys no postage. Every label purchase needs the appropriate permission and approval.</p></div></div>
+  <form method="post" action="/settings/shipping/operation-mode" data-busy>
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <div class="card-body choice-grid">
+      <% [['MANUAL','Manual','Choose from the available rates yourself.'],['RECOMMEND','Recommend','StockChief highlights the lowest current price; you approve the label.']].forEach(function(choice){ %>
+      <label class="choice"><input type="radio" name="mode" value="<%= choice[0] %>" <%= operationPolicy.mode===choice[0]?'checked':'' %>>
+        <span class="choice-body"><strong><%= choice[1] %></strong><span><%= choice[2] %></span></span></label><% }); %>
+    </div><div class="card-foot"><button class="btn btn--primary" type="submit">Save handling</button></div>
+  </form>
+</section>
+<% } %>
 
-<section class="rm-panel">
-  <div class="rm-panel__head"><h2>What StockChief takes over after setup</h2></div>
-  <div class="rm-feed">
-    <div class="rm-feed__row"><span class="rm-feed__ic">1</span><span class="rm-feed__t">Validate the order, destination, origin and measured parcel<small>No destination means no carrier shipment.</small></span></div>
-    <div class="rm-feed__row"><span class="rm-feed__ic">2</span><span class="rm-feed__t">Compare live rates and show each service once<small>Looking at rates never buys postage.</small></span></div>
-    <div class="rm-feed__row"><span class="rm-feed__ic">3</span><span class="rm-feed__t">Buy only the approved label<small>The shipping platform charges the business’s own billing method.</small></span></div>
-    <div class="rm-feed__row"><span class="rm-feed__ic">4</span><span class="rm-feed__t">Change inventory only at physical handoff<small>Printing a label does not pretend the goods left.</small></span></div>
-    <div class="rm-feed__row"><span class="rm-feed__ic">5</span><span class="rm-feed__t">Track delivery, exceptions and returns<small>Signed duplicate scans apply once; customer messages require a connected mailbox and approved communication policy.</small></span></div>
+<section class="card section" id="rules">
+  <div class="card-head"><div><h2>Shipping preferences</h2><p class="hint">Save the carrier, price and delivery limits you want StockChief to consider.</p></div></div>
+  <div class="card-body stack">
+    <% rules.forEach(function(rule){ %><div class="planning-item"><strong><%= rule.name %></strong> <%= rule.active?'':'· Off' %>
+      <% if(rule.active){ %><form method="post" action="/settings/shipping/<%= rule.id %>/remove"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost" type="submit">Turn off</button></form><% } %>
+    </div><% }); %>
+    <form method="post" action="/settings/shipping" class="stack" data-busy>
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <label class="field"><span class="field-label">Carrier (optional)</span><select class="select" name="carrier"><option value="">Any carrier</option>
+        <% carriers.forEach(function(carrier){ %><option value="<%= carrier.code %>"><%= carrier.name %></option><% }); %>
+      </select></label>
+      <label class="field"><span class="field-label">Service (optional)</span><input class="input" name="service" maxlength="160"></label>
+      <label class="field"><span class="field-label">Only when it costs less than</span><input class="input" name="maxCost" inputmode="decimal" placeholder="25.00"></label>
+      <label class="field"><span class="field-label">Maximum delivery days (optional)</span><input class="input" type="number" name="maxDeliveryDays" min="1" max="30"></label>
+      <label class="choice"><input type="checkbox" name="requireByPromised"><span>Must arrive by the promised date</span></label>
+      <button class="btn btn--primary" type="submit">Save this rule</button>
+    </form>
   </div>
 </section>
+
+<section class="card section"><div class="card-body"><h2>When inventory changes</h2>
+  <p>A label does not mean the goods have left. StockChief deducts stock once when you confirm physical handoff. Voiding an unused label leaves stock unchanged. Goods already shipped come back through a confirmed physical return.</p>
+</div></section>

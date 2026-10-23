@@ -274,6 +274,7 @@
 <% } else if (latestLabelTransaction && latestLabelTransaction.status === 'FAILED') { %>
   <div class="notice notice--warn section"><div><strong>The carrier refused the purchase.</strong><br><%= latestLabelTransaction.error_message || 'Correct the shipping account and request fresh rates.' %></div></div>
 <% } %>
+<% if(ship){ (ship.quoteProblems||[]).forEach(function(problem){ %><p class="notice notice--warn"><%= problem.provider %>: <%= problem.message %></p><% }); } %>
 <% if (ship && s.status === 'PACKED' && (!s.tracking_number || s.label_status === 'VOIDED')) { %>
   <section class="section" id="carrier">
     <div class="panel">
@@ -402,6 +403,7 @@
                     <input type="radio" name="rateId" value="<%= rate.id %>" checked required>
                     <span>
                       <strong><%= rate.carrierName %> <%= rate.service %></strong>
+                      <% if(locals.postgresPlacement){ %><small> · via <%= rate.provider %></small><% } %>
                       — <%= helpers.money(rate.amountMinor, rate.currency) %>
                       <% if (rate.deliveryDate) { %>
                         · expected <%= rate.deliveryDate %><% if (rate.guaranteed) { %> (guaranteed)<% } %>
@@ -428,6 +430,7 @@
                         <input type="radio" name="rateId" value="<%= rate.id %>" <%= preferredRate ? '' : 'required' %>>
                         <span>
                           <strong><%= rate.carrierName %> <%= rate.service %></strong>
+                          <% if(locals.postgresPlacement){ %><small> · via <%= rate.provider %></small><% } %>
                           — <%= helpers.money(rate.amountMinor, rate.currency) %>
                           <% if (rate.deliveryDate) { %>
                             · expected <%= rate.deliveryDate %><% if (rate.guaranteed) { %> (guaranteed)<% } %>

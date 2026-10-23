@@ -120,15 +120,16 @@ test('real Chromium qualifies PostgreSQL rates, label, handoff and idempotent de
     await page.getByLabel('Carrier (optional)').selectOption('ups');await page.getByLabel('Service (optional)').fill('Ground');
     await page.getByLabel('Only when it costs less than').fill('25.00');
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Save this rule'}).click()]);
-    assert.match(await page.locator('main').innerText(),/UPS Ground · under \$25\.00/);
+    assert.match(await page.locator('main').innerText(),/UPS(?: ·)? Ground · under \$25\.00/);
 
     await page.goto(`${base}/fulfilment/${parcel.shipmentId}`);
     assert.match(await page.locator('main').innerText(),/Enter a measured package weight/);
     await page.getByLabel('Weight of this parcel (grams)').fill('850');
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Save weight'}).click()]);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Get carrier rates'}).click()]);
-    assert.equal(await page.getByText(/UPS Ground/i).count(),1);
-    assert.equal(await page.getByText(/FedEx Two Day/i).count(),1);
+    assert.equal(await page.locator('.rate-row strong').filter({hasText:/UPS Ground/i}).count(),1);
+    assert.equal(await page.locator('.rate-row strong').filter({hasText:/FedEx Two Day/i}).count(),1);
+    assert.match(await page.locator('main').innerText(),/A rule of yours covers this/,'saved shipping preferences affect the recommendation');
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Buy label'}).click()]);
     assert.match(await page.locator('main').innerText(),/Carrier confirmation pending/);
     assert.equal(buyCalls,0);
@@ -260,5 +261,24 @@ test('real Chromium qualifies PostgreSQL rates, label, handoff and idempotent de
       {owner:'ask-shipping-quote-worker'});
     assert.equal(staleJob.status,'DEAD');
     assert.equal(quoteCalls,beforeStale,'a stale approved quote never reaches the carrier');
+    for(const [provider,apiKey]of [['easypost','EZTK_fixture_easy_5678'],['shipstation','TEST_fixture_station_4567'],['shippo','shippo_test_fixture_3456']]){
+      await page.goto(`${base}/settings/shipping`);
+      await page.locator('details#existing-carrier-connection > summary').click();
+      await page.getByLabel('Shipping platform',{exact:true}).selectOption(provider);
+      await page.getByLabel('API key',{exact:true}).fill(apiKey);
+      await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Verify and connect',exact:true}).click()]);
+    }
+    assert.equal(await page.getByRole('button',{name:/^Disconnect (ShipEngine|EasyPost|ShipStation|Shippo)$/}).count(),4);
+    assert.doesNotMatch(await page.locator('main').innerText(),/EZTK_fixture|TEST_fixture|shippo_test_fixture/);
+    await page.setViewportSize({width:390,height:844});
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),true,'shipping settings fit a phone viewport');
+    await page.locator('details#existing-carrier-connection > summary').click();
+    assert.equal(await page.getByLabel('Shipping platform',{exact:true}).isVisible(),true);
+    await page.goto(`${base}/fulfilment/${askParcel.shipmentId}`);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Get carrier rates'}).click()]);
+    assert.equal((await shipping.ratesFor(database,ctx.workspaceId,askParcel.shipmentId)).length,8);
+    await page.getByText(/Compare 7 other rates/).click();
+    const multiRateText=await page.locator('main').innerText();
+    for(const provider of ['easypost','shipstation','shippo','shipengine'])assert.match(multiRateText,new RegExp('via '+provider));
     assert.deepEqual(errors,[]);
   });

@@ -108,7 +108,7 @@ async function position(database, workspaceId) {
     LEFT JOIN LATERAL (SELECT policy.* FROM reorder_policies policy
       WHERE policy.workspace_id=s.workspace_id AND policy.sku_id=s.id
         AND (policy.location_id=l.id OR policy.location_id IS NULL)
-      ORDER BY (policy.location_id=l.id) DESC LIMIT 1) rp ON TRUE
+      ORDER BY (policy.location_id IS NOT NULL) DESC,policy.updated_at DESC,policy.id LIMIT 1) rp ON TRUE
     LEFT JOIN latest_cost lc ON lc.sku_id=s.id
     WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 AND l.workspace_id=$1 AND l.is_active=1
     ORDER BY i.name,s.position,l.name`, [workspaceId]);

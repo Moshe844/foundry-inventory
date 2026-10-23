@@ -121,7 +121,8 @@ async function state(database,workspaceId,shipmentId){
   const from=addresses.parse(shipment.location_address);
   from.name=shipment.location_name||from.name;from.phone=shipment.location_phone;
   const boxes=await packagesFor(database,workspaceId,shipmentId);
-  const account=await accounts.forWorkspace(database,workspaceId);
+  const shippingAccounts=await accounts.allForWorkspace(database,workspaceId);
+  const account=shippingAccounts[0]||null;
   const blocked=[];
   if(!to.complete)blocked.push(addresses.why(to));
   if(!from.complete)blocked.push(`The ship-from location is incomplete: ${addresses.why(from)}`);
@@ -130,6 +131,7 @@ async function state(database,workspaceId,shipmentId){
   if(boxes.some((box)=>!(box.weightGrams>0)))blocked.push('Enter a measured package weight before requesting rates.');
   if(!account)blocked.push('Connect this inventory’s own postage account before requesting live rates.');
   const rates=await ratesFor(database,workspaceId,shipmentId);
+  const quoteProblems=Array.isArray(shipment.shipping_quote_problems)?shipment.shipping_quote_problems:[];
   const events=(await database.query(`SELECT * FROM shipment_tracking_events
     WHERE workspace_id=$1 AND shipment_id=$2 ORDER BY occurred_at DESC,id DESC`,[workspaceId,shipmentId])).rows;
   const labelOperation=(await database.query(`SELECT transaction.*,effect.status AS effect_status,
@@ -140,17 +142,18 @@ async function state(database,workspaceId,shipmentId){
       AND effect.payload->>'transactionId'=transaction.id
     WHERE transaction.workspace_id=$1 AND transaction.shipment_id=$2
     ORDER BY transaction.requested_at DESC,transaction.id DESC LIMIT 1`,[workspaceId,shipmentId])).rows[0]||null;
-  return {shipment,to,from,boxes,account,blocked,ready:blocked.length===0,rates,events,labelOperation};
+  return {shipment,to,from,boxes,account,shippingAccounts,blocked,ready:blocked.length===0,rates,events,labelOperation,quoteProblems};
 }
+
+function accountFingerprint(account){return crypto.createHash('sha256').update(JSON.stringify([
+  account.connectorId,account.provider,account.apiKey])).digest('hex');}
 
 function quoteFingerprint(view){
   const shipment=view.shipment||{};
   const payload={status:shipment.status,labelStatus:shipment.label_status,
     address:shipment.ship_to_address,locationId:shipment.ship_from_location_id,
     to:view.to,from:view.from,boxes:view.boxes,
-    accountId:view.account?.connectorId,provider:view.account?.provider,
-    accountCredentialDigest:view.account?.apiKey?
-      crypto.createHash('sha256').update(view.account.apiKey).digest('hex'):null};
+    accounts:(view.shippingAccounts||(view.account?[view.account]:[])).map(accountFingerprint).sort()};
   return crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex');
 }
 
@@ -158,7 +161,7 @@ async function ratesFor(database,workspaceId,shipmentId){
   const result=await database.query(`SELECT * FROM shipment_rates WHERE workspace_id=$1 AND shipment_id=$2
     ORDER BY amount_minor,delivery_days NULLS LAST,id`,[workspaceId,shipmentId]);
   const seen=new Set();
-  return result.rows.filter((row)=>{const key=[row.carrier,row.service,row.currency,row.delivery_date||row.delivery_days,
+  return result.rows.filter((row)=>{const key=[row.connector_id,row.provider,row.carrier,row.service,row.currency,row.delivery_date||row.delivery_days,
     row.delivery_guaranteed].join('|');if(seen.has(key))return false;seen.add(key);return true;})
     .map((row)=>({...row,amountMinor:Number(row.amount_minor),deliveryDays:row.delivery_days===null?null:Number(row.delivery_days),
       guaranteed:Boolean(Number(row.delivery_guaranteed))}));
@@ -167,26 +170,48 @@ async function ratesFor(database,workspaceId,shipmentId){
 async function quote(database,ctx,shipmentId,options={}){
   const current=await state(database,ctx.workspaceId,shipmentId);
   if(!current.ready)return {...current,rates:[]};
-  const held=await accounts.contextFor(database,ctx);
-  const provider=options.provider||defaultProviders.get(held.account.provider);
-  const answer=await require('../commercial/operations').run(database,ctx.workspaceId,{capability:'shipping.rates',
-    key:options.idempotencyKey||newId('quote'),provider:held.account.provider,operation:'carrier_quote'},
-    ()=>provider.quote(held.ctx,{to:current.to,from:current.from,packages:current.boxes}));
+  if(!['PACKED','PICKING'].includes(current.shipment.status)||['PURCHASED','PENDING','REVIEW'].includes(current.shipment.label_status)||current.labelOperation?.status==='REVIEW')
+    throw new ValidationError('Rates cannot change while a label is pending, purchased or already shipped.');
+  const fingerprint=quoteFingerprint(current),key=options.idempotencyKey||newId('quote');
+  const results=await Promise.allSettled(current.shippingAccounts.map(async account=>{
+    const provider=options.providerResolver?options.providerResolver(account.provider):options.provider||defaultProviders.get(account.provider);
+    const answer=await require('../commercial/operations').run(database,ctx.workspaceId,{capability:'shipping.rates',
+      key:`${key}:${account.connectorId}`,provider:account.provider,operation:'carrier_quote'},
+      ()=>provider.quote({...ctx,[accounts.KEY_FIELD[account.provider]]:account.apiKey},
+        {to:current.to,from:current.from,packages:current.boxes,currency:current.shipment.currency}));
+    const sourceRates=Array.isArray(answer?.rates)?answer.rates:[],supported=sourceRates.filter(rate=>
+      typeof rate.amountMinor==='number'&&Number.isSafeInteger(rate.amountMinor)&&rate.amountMinor>=0&&
+      (rate.rateId||rate.rateIds?.length)&&rate.carrier&&rate.service&&
+      String(rate.currency||'').toUpperCase()===current.shipment.currency);
+    const differentCurrency=sourceRates.some(rate=>String(rate.currency||'').toUpperCase()!==current.shipment.currency);
+    const message=differentCurrency?'Offers in a different currency were excluded. No currency conversion was assumed.':
+      supported.length!==sourceRates.length?'Unsupported provider rate details were excluded.':
+      !supported.length?'This account has no available services for this parcel.':null;
+    return {account,answer:{...answer,rates:supported},problem:message?{provider:account.provider,message}:null};
+  }));
+  const successful=results.filter(r=>r.status==='fulfilled').map(r=>r.value);
+  const quoteProblems=results.flatMap((result,i)=>result.status==='rejected'?
+    [{provider:current.shippingAccounts[i].provider,message:'This shipping account could not return rates. Its offers are not included.'}]:
+    result.value.problem?[result.value.problem]:[]);
   await database.transaction(async(client)=>{
+    await requireShipment(client,ctx.workspaceId,shipmentId,true);
+    const fresh=await state(client,ctx.workspaceId,shipmentId);
+    if(quoteFingerprint(fresh)!==fingerprint)throw new ValidationError('The parcel or shipping accounts changed while rates were loading. Request fresh rates.');
     await client.query('DELETE FROM shipment_rates WHERE workspace_id=$1 AND shipment_id=$2',[ctx.workspaceId,shipmentId]);
     const now=nowIso();
-    for(const rate of answer.rates||[]){
+    await client.query(`UPDATE sales_shipments SET shipping_quote_problems=$3::jsonb,updated_at=$4
+      WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,shipmentId,JSON.stringify(quoteProblems),now]);
+    for(const {account,answer} of successful)for(const rate of answer.rates||[]){
       await client.query(`INSERT INTO shipment_rates
         (id,workspace_id,shipment_id,provider,provider_rate_id,carrier,service,amount_minor,currency,
-         delivery_days,delivery_date,delivery_guaranteed,quoted_at,created_at)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13)
-        ON CONFLICT(shipment_id,provider_rate_id) DO NOTHING`,[newId('rate'),ctx.workspaceId,shipmentId,
-        held.account.provider,(rate.rateIds||[rate.rateId]).join(','),rate.carrier,rate.service,rate.amountMinor,
-        rate.currency||'USD',rate.deliveryDays??null,rate.deliveryDate||null,rate.guaranteed?1:0,now]);
+         delivery_days,delivery_date,delivery_guaranteed,quoted_at,created_at,connector_id,account_fingerprint,
+         parcel_fingerprint,provider_shipment_ids)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13,$14,$15,$16,$17::jsonb)
+        ON CONFLICT(shipment_id,connector_id,provider_rate_id) DO NOTHING`,[newId('rate'),ctx.workspaceId,shipmentId,
+        account.provider,(rate.rateIds||[rate.rateId]).join(','),rate.carrier,rate.service,rate.amountMinor,
+        rate.currency||'USD',rate.deliveryDays??null,rate.deliveryDate||null,rate.guaranteed?1:0,now,
+        account.connectorId,accountFingerprint(account),fingerprint,JSON.stringify(answer.providerShipmentIds||[])]);
     }
-    await client.query(`UPDATE sales_shipments SET provider=$3,provider_shipment_id=$4,updated_at=$5
-      WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,shipmentId,held.account.provider,
-      (answer.providerShipmentIds||[]).join(','),now]);
   },{isolation:'SERIALIZABLE',retrySafe:true});
   return state(database,ctx.workspaceId,shipmentId);
 }
@@ -196,22 +221,33 @@ async function queueLabelPurchase(database,ctx,shipmentId,rateId,input={}){
   if(!key)throw new ValidationError('A durable idempotency key is required.');
   return database.transaction(async(client)=>{
     const shipment=await requireShipment(client,ctx.workspaceId,shipmentId,true);
-    if(shipment.label_status==='PURCHASED'&&shipment.label_url)return {queued:false,replayed:true,shipment};
     const prior=await client.query(`SELECT * FROM shipping_label_transactions
       WHERE workspace_id=$1 AND idempotency_key=$2 FOR UPDATE`,[ctx.workspaceId,key]);
     if(prior.rows.length){
-      if(prior.rows[0].status==='SUCCEEDED')return {queued:false,replayed:true,shipment};
+      if(prior.rows[0].shipment_id!==shipmentId)throw new ValidationError('This purchase key belongs to another shipment.');
       const effect=(await client.query(`SELECT * FROM stockchief_runtime.provider_effects WHERE workspace_id=$1
         AND kind='shipping.label.purchase' AND payload->>'transactionId'=$2 ORDER BY created_at DESC LIMIT 1`,
       [ctx.workspaceId,prior.rows[0].id])).rows[0];
+      if(effect&&effect.payload.rateId!==rateId)throw new ValidationError('This purchase key belongs to a different rate.');
+      if(prior.rows[0].status==='SUCCEEDED')return {queued:false,replayed:true,shipment};
       if(prior.rows[0].status==='PENDING'&&effect)return {queued:true,replayed:true,effectId:effect.id,transactionId:prior.rows[0].id};
       if(prior.rows[0].status==='REVIEW')throw new InvariantError(
         'The carrier outcome is uncertain. StockChief will not buy this label again automatically.','shipping_purchase_ambiguous');
       throw new ValidationError(prior.rows[0].error_message||'The carrier refused that label purchase. Refresh rates before trying again.');
     }
+    if(shipment.label_status==='PURCHASED'&&shipment.label_url)return {queued:false,replayed:true,shipment};
+    if(['PENDING','REVIEW'].includes(shipment.label_status))throw new ValidationError('A label purchase is pending or needs review for this shipment.');
+    if((await client.query(`SELECT 1 FROM shipping_label_transactions WHERE workspace_id=$1 AND shipment_id=$2
+      AND status IN ('PENDING','REVIEW')`,[ctx.workspaceId,shipmentId])).rows.length)
+      throw new ValidationError('A label purchase is pending or needs review for this shipment.');
+    if(!['PACKED','PICKING'].includes(shipment.status))throw new ValidationError('This shipment has already left or cannot purchase a label.');
     const rate=(await client.query(`SELECT * FROM shipment_rates
       WHERE workspace_id=$1 AND shipment_id=$2 AND id=$3`,[ctx.workspaceId,shipmentId,rateId])).rows[0];
     if(!rate)throw new ValidationError('Choose a current rate quoted for this parcel.');
+    const account=rate.connector_id?await accounts.forWorkspace(client,ctx.workspaceId,{connectorId:rate.connector_id,provider:rate.provider}):null;
+    if(!account||accountFingerprint(account)!==rate.account_fingerprint||
+      quoteFingerprint(await state(client,ctx.workspaceId,shipmentId))!==rate.parcel_fingerprint)
+      throw new ValidationError('The parcel or shipping account changed. Request fresh rates before purchasing.');
     const actor=(await client.query('SELECT id FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];
     if(!actor)throw new ValidationError('The acting user does not belong to this inventory.');
     const id=newId('shiptxn');const now=nowIso();
@@ -223,8 +259,12 @@ async function queueLabelPurchase(database,ctx,shipmentId,rateId,input={}){
     const queued=await providerEffects.enqueueInTransaction(client,{workspaceId:ctx.workspaceId,kind:'shipping.label.purchase',
       provider:rate.provider,aggregateType:'shipment',aggregateId:shipmentId,idempotencyKey:key,
       requestedByUserId:ctx.actorId,payload:{transactionId:id,shipmentId,rateId:rate.id,actorId:ctx.actorId,
-        providerRateId:rate.provider_rate_id,currency:rate.currency,providerShipmentId:shipment.provider_shipment_id},
+        providerRateId:rate.provider_rate_id,currency:rate.currency,connectorId:rate.connector_id,
+        accountFingerprint:rate.account_fingerprint,providerShipmentIds:rate.provider_shipment_ids},
       priority:10,maxAttempts:12});
+    await client.query(`UPDATE sales_shipments SET provider=$3,shipping_connector_id=$4,
+      provider_shipment_id=$5,label_status='PENDING',updated_at=$6 WHERE workspace_id=$1 AND id=$2`,
+      [ctx.workspaceId,shipmentId,rate.provider,rate.connector_id,(rate.provider_shipment_ids||[]).join(','),now]);
     return {queued:true,replayed:false,effectId:queued.effect.id,transactionId:id};
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
@@ -234,33 +274,34 @@ async function executeLabelPurchaseEffect(database,workspaceId,effectId,options=
   if(claimed.replayed)return {shipment:await requireShipment(database,workspaceId,claimed.effect.aggregateId),replayed:true};
   const effect=claimed.effect;const input=effect.payload;const ctx={workspaceId,actorId:input.actorId};
   const shipment=await requireShipment(database,workspaceId,input.shipmentId);
+  const fail=async(error,ambiguous=false)=>providerEffects.finishError(database,workspaceId,effectId,effect.claimToken,error,{ambiguous,
+    apply:async client=>{
+      await client.query(`UPDATE shipping_label_transactions SET status=$3,error_message=$4,completed_at=$5,updated_at=$5
+        WHERE workspace_id=$1 AND id=$2`,[workspaceId,input.transactionId,ambiguous?'REVIEW':'FAILED',
+        String(error.message||'The carrier operation failed.').slice(0,500),nowIso()]);
+      await client.query(`UPDATE sales_shipments SET label_status=$3,updated_at=$4 WHERE workspace_id=$1 AND id=$2
+        AND label_status='PENDING'`,[workspaceId,input.shipmentId,ambiguous?'REVIEW':'FAILED',nowIso()]);
+    }});
   const rate=(await database.query(`SELECT * FROM shipment_rates WHERE workspace_id=$1 AND shipment_id=$2 AND id=$3`,
     [workspaceId,input.shipmentId,input.rateId])).rows[0];
   if(!rate){const error=Object.assign(new ValidationError('The selected carrier rate no longer exists.'),{code:'shipping_rate_missing'});
-    await providerEffects.finishError(database,workspaceId,effectId,effect.claimToken,error,{ambiguous:false,
-      apply:(client)=>client.query(`UPDATE shipping_label_transactions SET status='FAILED',error_message=$2,
-        completed_at=$3,updated_at=$3 WHERE id=$1`,[input.transactionId,error.message,nowIso()])});
+    await fail(error);
     throw Object.assign(error,{retryable:false});}
-  const held=await accounts.contextFor(database,ctx);
-  if(!held){const error=Object.assign(new ValidationError('Reconnect the postage account before buying this label.'),
+  const held=input.connectorId?await accounts.contextFor(database,ctx,{connectorId:input.connectorId,provider:effect.provider}):null;
+  if(!held||accountFingerprint(held.account)!==input.accountFingerprint){const error=Object.assign(new ValidationError('The quoted shipping account changed. Request fresh rates before buying this label.'),
     {code:'shipping_account_missing'});
-    await providerEffects.finishError(database,workspaceId,effectId,effect.claimToken,error,{ambiguous:false,
-      apply:(client)=>client.query(`UPDATE shipping_label_transactions SET status='FAILED',error_message=$2,
-        completed_at=$3,updated_at=$3 WHERE id=$1`,[input.transactionId,error.message,nowIso()])});
+    await fail(error);
     throw Object.assign(error,{retryable:false});}
   const provider=options.provider||defaultProviders.get(rate.provider);
   let bought;
   try{
     bought=await require('../commercial/operations').run(database,workspaceId,{capability:'shipping.labels',key:effect.idempotencyKey,
       provider:rate.provider,operation:'label_purchase',unit:'label'},()=>provider.buy(held.ctx,
-      {providerShipmentIds:String(shipment.provider_shipment_id||'').split(',').filter(Boolean),
+      {providerShipmentIds:input.providerShipmentIds||[],
        rateIds:String(rate.provider_rate_id).split(',').filter(Boolean),idempotencyKey:effect.idempotencyKey}));
   }catch(error){
     const ambiguous=!providerEffects.definiteFailure(error);
-    await providerEffects.finishError(database,workspaceId,effectId,effect.claimToken,error,{ambiguous,
-      apply:(client)=>client.query(`UPDATE shipping_label_transactions SET status=$2,error_message=$3,
-        completed_at=$4,updated_at=$4 WHERE id=$1`,[input.transactionId,ambiguous?'REVIEW':'FAILED',
-        String(error.message||'Carrier operation failed.').slice(0,500),nowIso()])});
+    await fail(error,ambiguous);
     throw Object.assign(error,{code:ambiguous?'shipping_purchase_ambiguous':(error.code||'shipping_purchase_failed'),retryable:false});
   }
   try{await providerEffects.succeed(database,workspaceId,effectId,effect.claimToken,{providerReference:
@@ -292,7 +333,8 @@ async function buyLabel(database,ctx,shipmentId,rateId,input={},options={}){cons
   return executeLabelPurchaseEffect(database,ctx.workspaceId,queued.effectId,options);}
 
 async function handoff(database,ctx,shipmentId,input={}){
-  const shipment=await requireShipment(database,ctx.workspaceId,shipmentId);
+  return database.transaction(async client=>{
+  const shipment=await requireShipment(client,ctx.workspaceId,shipmentId,true);
   if(shipment.status==='SHIPPED'||shipment.status==='DELIVERED')return {shipment,replayed:true};
   if(shipment.status!=='PACKED')throw new ValidationError('Pack this shipment before recording the handoff.');
   const handover=String(input.handover||shipment.handover||'CARRIER').trim().toUpperCase().replace(/[\s-]+/g,'_');
@@ -303,18 +345,19 @@ async function handoff(database,ctx,shipmentId,input={}){
     throw new ValidationError('A complete destination is required before these goods can leave for delivery.');
   if(handover==='CARRIER'&&shipment.label_status!=='PURCHASED'&&!trackingNumber)
     throw new ValidationError('Enter the carrier tracking number, or buy and verify a label, before recording carrier handoff.');
-  const lines=(await database.query(`SELECT sales_order_line_id AS "lineId",location_id AS "locationId",quantity
+  const lines=(await client.query(`SELECT sales_order_line_id AS "lineId",location_id AS "locationId",quantity
     FROM sales_shipment_lines WHERE workspace_id=$1 AND shipment_id=$2 ORDER BY id`,[ctx.workspaceId,shipmentId])).rows;
-  const result=await workflows.fulfillSalesOrder(database,ctx,shipment.sales_order_id,{lines,
-    idempotencyKey:input.idempotencyKey||`shipment-handoff:${shipmentId}`});
+  const result=await workflows.fulfillSalesOrderInTransaction(client,ctx,shipment.sales_order_id,{lines,
+    idempotencyKey:`shipment-handoff:${shipmentId}`});
   const at=nowIso();
-  await database.query(`UPDATE sales_shipments SET status='SHIPPED',handover=$3,carrier=COALESCE($4,carrier),
+  await client.query(`UPDATE sales_shipments SET status='SHIPPED',handover=$3,carrier=COALESCE($4,carrier),
     service=COALESCE($5,service),tracking_number=COALESCE($6,tracking_number),
     expected_delivery_date=COALESCE($7,expected_delivery_date),shipping_cost_minor=COALESCE($8,shipping_cost_minor),
     shipped_at=COALESCE(shipped_at,$9),updated_at=$9 WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,shipmentId,
     handover,carrier,String(input.service||'').trim()||null,trackingNumber,input.expectedDeliveryDate||null,
     input.shippingCostMinor??null,at]);
-  return {shipment:await requireShipment(database,ctx.workspaceId,shipmentId),fulfillment:result,replayed:result.replayed};
+  return {shipment:await requireShipment(client,ctx.workspaceId,shipmentId),fulfillment:result,replayed:result.replayed};
+  },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 
 // Reconcile a connected system's already-completed fulfillment. This records
@@ -421,13 +464,13 @@ async function receiveProviderEvent(database,ctx,providerName,event,options={}){
     if(prior.rows.length)return {applied:false,replayed:true,outcome:prior.rows[0].outcome};
     let shipment=null;
     if(read.providerShipmentId){
-      shipment=(await client.query(`SELECT * FROM sales_shipments WHERE workspace_id=$1
-        AND POSITION($2 IN COALESCE(provider_shipment_id,''))>0 ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
-      [ctx.workspaceId,String(read.providerShipmentId)])).rows[0]||null;
+      shipment=(await client.query(`SELECT * FROM sales_shipments WHERE workspace_id=$1 AND provider=$3
+        AND $2=ANY(string_to_array(COALESCE(provider_shipment_id,''),',')) ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
+      [ctx.workspaceId,String(read.providerShipmentId),providerName])).rows[0]||null;
     }
     if(!shipment&&read.trackingNumber){
-      shipment=(await client.query(`SELECT * FROM sales_shipments WHERE workspace_id=$1 AND tracking_number=$2
-        ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,[ctx.workspaceId,String(read.trackingNumber)])).rows[0]||null;
+      shipment=(await client.query(`SELECT * FROM sales_shipments WHERE workspace_id=$1 AND tracking_number=$2 AND provider=$3
+        ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,[ctx.workspaceId,String(read.trackingNumber),providerName])).rows[0]||null;
     }
     const outcome=shipment
       ?`Recorded ${String(read.status||'unknown').toLowerCase().replaceAll('_',' ')} for ${shipment.shipment_number}.`
@@ -472,7 +515,7 @@ async function receiveProviderEvent(database,ctx,providerName,event,options={}){
 async function refreshTracking(database,ctx,shipmentId,options={}){
   const shipment=await requireShipment(database,ctx.workspaceId,shipmentId);
   if(!shipment.tracking_number)throw new ValidationError('This shipment has no carrier tracking number yet.');
-  const held=await accounts.contextFor(database,ctx);
+  const held=await accounts.contextFor(database,ctx,{connectorId:shipment.shipping_connector_id||null,provider:shipment.provider});
   if(!held)throw new ValidationError('Reconnect the postage account before checking the carrier.');
   const provider=options.provider||defaultProviders.get(held.account.provider);
   const read=await require('../commercial/operations').run(database,ctx.workspaceId,{capability:'shipping.tracking',

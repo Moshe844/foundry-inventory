@@ -22,15 +22,19 @@ function isTestKey(provider,key){
   return /^TEST_/i.test(String(key||''));
 }
 
-async function connectorFor(queryable,workspaceId){
+async function connectorsFor(queryable,workspaceId,selector={}){
   const result=await queryable.query(`SELECT * FROM workspace_connectors
     WHERE workspace_id=$1 AND provider_type=ANY($2::text[]) AND status='connected' AND paused_at IS NULL
-    ORDER BY updated_at DESC LIMIT 1`,[workspaceId,PROVIDERS]);
-  return result.rows[0]||null;
+      AND ($3::text IS NULL OR id=$3) AND ($4::text IS NULL OR provider_type=$4)
+    ORDER BY updated_at DESC,id`,[workspaceId,PROVIDERS,selector.connectorId||null,selector.provider||null]);
+  return result.rows;
 }
 
-async function forWorkspace(database,workspaceId){
-  const connector=await connectorFor(database,workspaceId);
+async function connectorFor(queryable,workspaceId,selector={}){
+  return (await connectorsFor(queryable,workspaceId,selector))[0]||null;
+}
+
+async function readAccount(database,workspaceId,connector){
   if(!connector)return null;
   const held=await credentials.get(database,workspaceId,connector.id,'provider')||{};
   if(!held.apiKey)return null;
@@ -38,8 +42,20 @@ async function forWorkspace(database,workspaceId){
     webhookSecret:held.webhookSecret||null,displayName:connector.display_name,testMode:isTestKey(connector.provider_type,held.apiKey)};
 }
 
-async function contextFor(database,ctx){
-  const account=await forWorkspace(database,ctx.workspaceId);
+async function forWorkspace(database,workspaceId,selector={}){
+  return readAccount(database,workspaceId,await connectorFor(database,workspaceId,selector));
+}
+
+async function allForWorkspace(database,workspaceId){
+  const result=[];
+  for(const connector of await connectorsFor(database,workspaceId)){
+    const account=await readAccount(database,workspaceId,connector);if(account)result.push(account);
+  }
+  return result;
+}
+
+async function contextFor(database,ctx,selector={}){
+  const account=await forWorkspace(database,ctx.workspaceId,selector);
   return account?{account,ctx:{...ctx,[KEY_FIELD[account.provider]]:account.apiKey}}:null;
 }
 
@@ -72,19 +88,18 @@ async function connect(database,ctx,input={}){
         `connection_credentials:${id}`,ctx.actorId,now]);
     }
     await credentials.put(client,ctx.workspaceId,id,'provider',{apiKey,webhookSecret});
-    await client.query(`UPDATE workspace_connectors SET status='disconnected',paused_at=$3,updated_at=$3
-      WHERE workspace_id=$1 AND provider_type=ANY($2::text[]) AND id<>$4 AND status='connected'`,
-    [ctx.workspaceId,PROVIDERS,now,id]);
     const commercialScope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId);
     await commercial.trackOnce(client,{eventName:'first_integration_connected',accountId:commercialScope.accountId,
       sourcePath:'shipping_connection',detail:{providerType:provider}});
     return id;
   },{isolation:'SERIALIZABLE',retrySafe:true});
-  return describe(database,ctx.workspaceId,connectorId);
+  return describe(database,ctx.workspaceId,{connectorId});
 }
 
-async function disconnect(database,ctx){
-  const connector=await connectorFor(database,ctx.workspaceId);
+async function disconnect(database,ctx,selector={}){
+  const choices=await connectorsFor(database,ctx.workspaceId,selector);
+  if(choices.length>1)throw new ValidationError('Choose the shipping account to disconnect.');
+  const connector=choices[0];
   if(!connector)throw new NotFoundError('No shipping account is connected to this inventory.');
   await database.transaction(async(client)=>{
     const actor=await client.query('SELECT role FROM users WHERE id=$1 AND workspace_id=$2',[ctx.actorId,ctx.workspaceId]);
@@ -97,8 +112,7 @@ async function disconnect(database,ctx){
   return describe(database,ctx.workspaceId);
 }
 
-async function describe(database,workspaceId){
-  const account=await forWorkspace(database,workspaceId);
+function describeAccount(account){
   if(!account)return {connected:false,provider:null,because:'No postage account is connected. Live rates and labels are unavailable.'};
   return {connected:true,provider:account.provider,providerName:DISPLAY[account.provider],source:account.source,
     testMode:account.testMode,keyEnding:String(account.apiKey).slice(-4),keyEndsWith:String(account.apiKey).slice(-4),
@@ -106,5 +120,12 @@ async function describe(database,workspaceId){
     because:account.testMode?'Sandbox account: rates and labels are test-only.':'This inventory uses its own postage account.'};
 }
 
-module.exports={PROVIDERS,KEY_FIELD,requireProvider,isTestKey,connectorFor,forWorkspace,contextFor,connect,disconnect,describe};
+async function describe(database,workspaceId,selector={}){
+  return describeAccount(await forWorkspace(database,workspaceId,selector));
+}
+async function describeAll(database,workspaceId){
+  return (await allForWorkspace(database,workspaceId)).map(describeAccount);
+}
+
+module.exports={PROVIDERS,KEY_FIELD,requireProvider,isTestKey,connectorsFor,connectorFor,forWorkspace,allForWorkspace,contextFor,connect,disconnect,describe,describeAll};
 require('../commercial/enforcement').guardExports(module.exports,0,1,{connect:'shipping.rates'});

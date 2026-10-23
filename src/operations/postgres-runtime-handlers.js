@@ -513,7 +513,7 @@ function create(providers=defaultProviders,options={}){return {'system.runtime-s
       {code:'shipping_quote_changed',retryable:false});
     const quoted=await shipping.quote(database,{workspaceId:job.workspaceId,actorId},shipmentId,
       {idempotencyKey:job.idempotencyKey,
-        provider:options.shippingProviderResolver?options.shippingProviderResolver(provider):shippingProviders.get(provider)});
+        providerResolver:options.shippingProviderResolver});
     return {shipmentId,rateCount:quoted.rates?.length||0};
   }),
   'import.revise-preview':external((job,database)=>require('../imports/postgres-preview-revisions').run(job,database),'bulk'),
