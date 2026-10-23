@@ -79,6 +79,11 @@ async function createItemInTransaction(client, ctx, input) {
       }
       skuIds.push(skuId);
     }
+  const pricing=require('../pricing/postgres-service'),money=require('./currency'),currency=money.code(input.currency||'USD');
+  if(input.sellingPrice!=null&&String(input.sellingPrice).trim()!=='')await pricing.setPricesInTransaction(client,ctx,skuIds.map(skuId=>({skuId,amount:input.sellingPrice,currency})),{initialize:true});
+  if(input.purchaseCost!=null&&String(input.purchaseCost).trim()!=='')for(const skuId of skuIds)await pricing.setPurchaseCostInTransaction(client,ctx,{skuId,amount:input.purchaseCost,currency});
+  const physical={};for(const[key,column]of Object.entries({weightGrams:'weight_grams',lengthMm:'length_mm',widthMm:'width_mm',heightMm:'height_mm'})){if(input[key]==null||String(input[key]).trim()==='')continue;const n=Number(input[key]);if(!Number.isSafeInteger(n)||n<=0||n>1000000000)throw new ValidationError(key+' must be a whole number from 1 to 1,000,000,000.');physical[column]=n;}
+  if(Object.keys(physical).length)await client.query('UPDATE skus SET '+Object.keys(physical).map((k,i)=>k+'=$'+(i+3)).join(',')+' WHERE workspace_id=$1 AND id=ANY($2::text[])',[ctx.workspaceId,skuIds,...Object.values(physical)]);
   return { itemId, skuIds };
 }
 

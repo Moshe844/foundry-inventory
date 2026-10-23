@@ -36,7 +36,7 @@ function loadUser(database,{readonly=false}={}) {
       }
       req.account = account;
       res.locals.account = { id:account.id,name:account.name,email:account.email,plan:account.plan,timeZone:account.time_zone||null };
-      res.locals.helpers={...res.locals.helpers,dateTime:iso=>require('./view-helpers').dateTime(iso,account.time_zone||'UTC')};
+      res.locals.helpers={...res.locals.helpers,dateTime:iso=>require('./view-helpers').dateTime(iso,account.time_zone||'UTC'),dateInputValue:value=>value instanceof Date?require('../lib/business-time').context(account.time_zone||'UTC',value).calendarDate:require('./view-helpers').dateInputValue(value)};
       const memberships = await auth.listWorkspacesForAccount(database, account.id);
       res.locals.workspaces = memberships.map((row) => workspaceSummary(row, account.id));
       if (!memberships.length) return next();

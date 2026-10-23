@@ -86,9 +86,9 @@ function createPostgresInventoryRouter(database) {
   router.post('/inventory/bulk/reviews/:reviewId/cancel',requireOwner,asyncRoute(async(req,res)=>{
     await require('../../domain/postgres-catalog-bulk').cancel(database,req.ctx,req.params.reviewId);req.flash('success','The bulk changes were cancelled.');return res.redirect(303,'/inventory/table');
   }));
-  router.get('/inventory/new',(req,res)=>res.page('inventory/new',{title:'Add an item',nav:'inventory',
+  router.get('/inventory/new',asyncRoute(async(req,res)=>res.page('inventory/new',{title:'Add an item',nav:'inventory',
     form:req.query.name?{name:String(req.query.name).slice(0,240)}:{},resumeInstructionId:null,
-    fromConfiguration:false}));
+    fromConfiguration:false,currency:(await database.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId])).rows[0]?.base_currency||'USD'})));
   router.get('/inventory/:id/duplicate',requireOwner,asyncRoute(async(req,res)=>res.page('inventory/duplicate',{title:'Duplicate product',nav:'inventory',idempotencyKey:newId('copy'),source:await require('../../domain/postgres-catalog-copy').describe(database,req.ctx,req.params.id)})));
   router.post('/inventory/:id/duplicate',requireOwner,asyncRoute(async(req,res)=>{
     const created=await require('../../domain/postgres-catalog-copy').copy(database,req.ctx,req.params.id,req.body);req.flash('success','Product duplicated with zero stock. No inventory value or history was copied.');return res.redirect(303,'/inventory/'+created.itemId);
@@ -98,13 +98,13 @@ function createPostgresInventoryRouter(database) {
     try {
       const created=await catalog.createItem(database,req.ctx,{name:req.body.name,baseCode:req.body.baseCode,
         description:req.body.description,unitLabel:req.body.unitLabel,trackingMode:req.body.trackingMode,
-        hasVariants,options:hasVariants?normaliseOptionInput(req.body.options):[]});
+        hasVariants,options:hasVariants?normaliseOptionInput(req.body.options):[],sellingPrice:req.body.sellingPrice,purchaseCost:req.body.purchaseCost,weightGrams:req.body.weightGrams,lengthMm:req.body.lengthMm,widthMm:req.body.widthMm,heightMm:req.body.heightMm,currency:(await database.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId])).rows[0]?.base_currency||'USD'});
       req.flash('success','Item created. Receive some stock to get started.');
       return res.redirect(303,`/inventory/${created.itemId}`);
     } catch(error) {
       if(!(error instanceof ValidationError))throw error;
       return res.status(400).page('inventory/new',{title:'Add an item',nav:'inventory',form:req.body,
-        resumeInstructionId:null,fromConfiguration:false,error:error.message});
+        resumeInstructionId:null,fromConfiguration:false,error:error.message,currency:(await database.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId])).rows[0]?.base_currency||'USD'});
     }
   }));
   router.get('/inventory/:id',asyncRoute(async(req,res)=>{

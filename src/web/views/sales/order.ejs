@@ -168,6 +168,7 @@
   </details>
 <% } %>
 
+<% if(locals.postgresPlacement){ %><section class="card section"><div class="card-body"><h2>Order contact and destination</h2><p><%= order.customer.name %> · <%= order.customer.email||'No email' %> · <%= order.customer.phone||'No phone' %></p><p><%= order.delivery_method==='PICKUP'?'Customer pickup':order.ship_to_address||'Delivery address missing' %></p><div class="form-actions"><% if(order.status==='DRAFT'){ %><a class="btn" href="/orders/<%= order.id %>/edit">Edit draft order</a><% } %><a class="btn btn--ghost" href="/orders/new?duplicate=<%= order.id %>">Duplicate order</a></div></div></section><% } %>
 <% if (order.customer_decision_required) { %>
   <div class="card sales-action-card sales-primary-action" id="customer-decision">
     <p class="eyebrow">Do this next — 1 of <%= order.delivery_decision_required ? '2' : '1' %></p>
@@ -1096,3 +1097,5 @@
     </div>
   <% } %>
 <% } %>
+
+<script>document.querySelectorAll('form#delivery-decision').forEach(function(form){function display(){var pickup=form.querySelector('[name="deliveryMethod"]:checked')?.value==='PICKUP';var address=form.querySelector('[name="shippingAddress"]');if(address){address.closest('label').hidden=pickup;address.required=!pickup;}}form.addEventListener('change',display);display();});</script>

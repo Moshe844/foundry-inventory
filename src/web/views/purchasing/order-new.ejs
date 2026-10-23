@@ -70,7 +70,7 @@
                          placeholder="Required if unknown">
                 </td>
                 <td class="num">
-                  <input class="input input--sm" type="number" min="0" name="quantity[<%= item.skuId %>]" style="max-width:110px;"
+                  <input class="input input--sm" type="number" min="0" aria-label="Packs of <%= item.displayName %>" name="quantity[<%= item.skuId %>]" style="max-width:110px;"
                          value="<%= submitted && submitted.quantity && submitted.quantity[item.skuId] !== undefined ? submitted.quantity[item.skuId] : '' %>">
                 </td>
               </tr>
@@ -83,19 +83,20 @@
             <span class="field-label">Deliver to</span>
             <select class="input" name="destinationLocationId">
               <% locations.forEach(function (location) { %>
-                <option value="<%= location.id %>"><%= location.name %></option>
+                <option value="<%= location.id %>" <%= submitted?.destinationLocationId===location.id?'selected':'' %>><%= location.name %></option>
               <% }) %>
             </select>
           </label>
           <label class="field">
             <span class="field-label">Expected date</span>
-            <input class="input" type="date" name="expectedDate">
+            <input class="input" type="date" name="expectedDate" value="<%= submitted?.expectedDate ?? locals.expectedDate ?? '' %>">
             <span class="field-help">Leave blank and StockChief works it out from the lead time.</span>
           </label>
         </div>
+        <label class="checkbox"><input type="checkbox" name="confirmZeroCost" value="1" <%= submitted?.confirmZeroCost==='1'?'checked':'' %>> I confirm selected $0 lines are free of charge.</label>
         <label class="field">
           <span class="field-label">Notes for this order</span>
-          <input class="input" type="text" name="notes" maxlength="300">
+          <input class="input" type="text" name="notes" maxlength="300" value="<%= submitted?.notes||'' %>">
         </label>
       <% } %>
     </div>

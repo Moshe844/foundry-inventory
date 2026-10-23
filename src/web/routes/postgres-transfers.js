@@ -29,6 +29,14 @@ function createPostgresTransfersRouter(database) {
     return res.page('transfers/index', { title: 'Transfers', nav: 'transfers', room: true,
       transfers: await transfers.list(database, req.ctx.workspaceId), ...access(req.user) });
   }));
+  router.get('/transfers/availability',asyncRoute(async(req,res)=>{
+    permissions.assertCan(req.user,permissions.REQUEST_TRANSFER,'check transfer availability');
+    const valid=(await database.query(`SELECT 1 FROM skus s JOIN locations l ON l.workspace_id=s.workspace_id
+      WHERE s.workspace_id=$1 AND s.id=$2 AND l.id=$3 AND s.is_active=1 AND l.is_active=1`,
+    [req.ctx.workspaceId,req.query.skuId,req.query.locationId])).rows.length;
+    if(!valid)return res.status(404).json({error:'Choose a product and source from this inventory.'});
+    return res.json(await transfers.sourceAvailable(database,req.ctx.workspaceId,req.query.skuId,req.query.locationId));
+  }));
   router.get('/transfers/new', asyncRoute(async (req, res) => {
     permissions.assertCan(req.user, permissions.REQUEST_TRANSFER, 'request an inventory transfer');
     const [locations, skus] = await Promise.all([

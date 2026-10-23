@@ -47,6 +47,11 @@
     </div>
   </div>
 
+  <div class="card section measure"><div class="card-head"><h2>Pricing and shipping specifications</h2></div><div class="card-body form-grid">
+    <label class="field"><span>Selling price (<%= locals.currency||'USD' %>)</span><input name="sellingPrice" inputmode="decimal" value="<%= form.sellingPrice||'' %>"></label>
+    <label class="field"><span>Purchase cost (<%= locals.currency||'USD' %>)</span><input name="purchaseCost" inputmode="decimal" value="<%= form.purchaseCost||'' %>"><small>A future purchase default; this does not create inventory value.</small></label>
+    <% [['weightGrams','Weight (g)'],['lengthMm','Length (mm)'],['widthMm','Width (mm)'],['heightMm','Height (mm)']].forEach(([name,label])=>{ %><label class="field"><span><%= label %></span><input type="number" min="1" max="1000000000" step="1" name="<%= name %>" value="<%= form[name]||'' %>"></label><% }) %>
+  </div></div>
   <div class="card section reveal-host measure">
     <div class="card-head"><h2>How should StockChief track it?</h2></div>
     <div class="card-body">

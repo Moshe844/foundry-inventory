@@ -135,7 +135,7 @@ async function inventoryPosition(database,workspaceId){
 
 async function purchasing(database,workspaceId){
   const [orders,suppliers,catalogue,locations]=await Promise.all([commerce.purchaseOrders(database,workspaceId),
-    commerce.suppliers(database,workspaceId),commerce.catalogue(database,workspaceId),commerce.locations(database,workspaceId)]);
+    commerce.suppliers(database,workspaceId),Promise.resolve([]),commerce.locations(database,workspaceId)]);
   const open=orders.filter((order)=>['APPROVED','ORDERED','PARTIALLY_RECEIVED'].includes(order.status))
     .map((order)=>({...order,outstanding_units:order.units_outstanding}));
   const now=today();
@@ -160,7 +160,7 @@ function nextForOrder(order){
 
 async function sales(database,workspaceId){
   const [rows,customers,catalogue,locations,connections]=await Promise.all([commerce.salesOrders(database,workspaceId),
-    commerce.customers(database,workspaceId),commerce.catalogue(database,workspaceId),commerce.locations(database,workspaceId),
+    commerce.customers(database,workspaceId),Promise.resolve([]),commerce.locations(database,workspaceId),
     database.query(`SELECT COUNT(*)::bigint AS count FROM workspace_connectors
       WHERE workspace_id=$1 AND status='connected' AND paused_at IS NULL
         AND provider_type IN ('shopify','square','clover','woocommerce','reference_webhook')`,[workspaceId])]);

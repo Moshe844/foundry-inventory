@@ -46,7 +46,7 @@ test('real Chromium runs PostgreSQL purchasing, receiving, supplier money, custo
     await destination.fill('');
     await page.getByLabel('Product or variant').selectOption(item.skuIds[0]);
     await page.getByLabel('Quantity').fill('1');
-    await page.getByLabel('Price if not set').fill('15.00');
+    await page.getByLabel('Price editable selling price').fill('15.00');
     await page.locator('#order-confirm-button').click();
     assert.equal(page.url(),`${base}/orders/new?customer=${addressCustomer.id}`);
     assert.equal(await destination.evaluate((element)=>element.validity.valueMissing),true);
@@ -67,7 +67,7 @@ test('real Chromium runs PostgreSQL purchasing, receiving, supplier money, custo
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Link product'}).click()]);
     assert.match(await page.locator('main').innerText(),/SUP-BOOT-1/);
     await page.goto(`${base}/purchasing`);
-    assert.equal(await page.locator('.owner-manual').first().evaluate((element)=>element.open),false);
+
     assert.equal(await page.getByRole('heading',{name:'Ask or tell StockChief.'}).count(),1);
     await page.locator('#suppliers > summary').click();
     await page.getByText('Add a supplier',{exact:true}).click();
@@ -82,12 +82,10 @@ test('real Chromium runs PostgreSQL purchasing, receiving, supplier money, custo
       (inputs)=>inputs.map((input)=>Math.round(input.getBoundingClientRect().width)));
     assert.ok(compactSupplierWidths.every((width)=>width>600),`Compact supplier controls were ${compactSupplierWidths.join(', ')}px wide.`);
     await page.setViewportSize({width:1440,height:1000});
-    await page.locator('.owner-manual').first().locator('summary').click();
-    await page.getByLabel('Supplier').selectOption({label:'Boot Supply'});
-    await page.getByLabel('Product / SKU').selectOption(item.skuIds[0]);
-    await page.locator('select[name="destinationLocationId"]').selectOption(location.id);await page.getByLabel('Units').fill('10');
-    await page.getByLabel('Cost per inventory unit').fill('8.00');
-    await Promise.all([page.waitForURL(/\/purchasing\/orders\/po_/),page.getByRole('button',{name:'Prepare purchase order'}).click()]);
+    await page.goto(base+'/purchasing/orders/new');await page.getByRole('link').filter({hasText:'Boot Supply'}).click();
+    await page.locator('select[name="destinationLocationId"]').selectOption(location.id);await page.locator('input[name="quantity['+item.skuIds[0]+']"]').fill('5');
+    await page.locator('input[name="unitCost['+item.skuIds[0]+']"]').fill('8.00');
+    await Promise.all([page.waitForURL(/\/purchasing\/orders\/po_/),page.getByRole('button',{name:'Create draft order'}).click()]);
     const purchaseOrderId=page.url().split('/').pop();
     assert.match(await page.locator('main').innerText(),/Nothing has been sent to Boot Supply/);
     assert.equal((await database.query('SELECT status FROM purchase_orders WHERE workspace_id=$1 AND id=$2',
@@ -138,12 +136,11 @@ test('real Chromium runs PostgreSQL purchasing, receiving, supplier money, custo
     await customerForm.getByLabel('Name').fill('Pickup Customer');await customerForm.getByLabel('Email').fill('pickup@example.test');
     await Promise.all([page.waitForNavigation(),customerForm.getByRole('button',{name:'Add customer'}).click()]);
     await page.goto(`${base}/orders`);
-    await page.locator('.owner-manual').first().locator('summary').click();
-    await page.getByLabel('Customer',{exact:true}).selectOption({label:'Pickup Customer'});
-    await page.getByLabel('Product / SKU').selectOption(item.skuIds[0]);await page.getByLabel('Quantity').fill('4');
-    await page.getByLabel('Selling price').fill('15.00');await page.getByLabel('Delivery method').selectOption('PICKUP');
-    await page.getByLabel('Fulfillment location').selectOption(location.id);
-    await Promise.all([page.waitForURL(/\/orders\/so_/),page.getByRole('button',{name:'Draft customer order'}).click()]);
+    await page.goto(base+'/orders/new');await page.getByLabel('Customer',{exact:true}).selectOption({label:'Pickup Customer'});
+    await page.getByLabel('Product or variant').selectOption(item.skuIds[0]);await page.getByLabel('Quantity',{exact:true}).fill('4');
+    await page.locator('input[name="unitPrice"]').fill('15.00');await page.locator('[name="deliveryMethod"][value="PICKUP"]').check();
+    await page.locator('[name="fulfillmentLocationId"]').selectOption(location.id);
+    await Promise.all([page.waitForURL(/\/orders\/so_/),page.getByRole('button',{name:'Save draft',exact:true}).click()]);
     const salesOrderId=page.url().split('/').pop();
     assert.match(await page.locator('main').innerText(),/Stock is not committed until confirmation/);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Confirm order and reserve stock'}).click()]);

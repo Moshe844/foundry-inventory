@@ -152,30 +152,33 @@ async function customers(database, workspaceId) {
   return result.rows.map((row)=>({...row,order_count:Number(row.order_count),balance_minor:Number(row.balance_minor)}));
 }
 
-async function catalogue(database, workspaceId) {
-  const result=await database.query(`SELECT s.id,s.code,s.variant_label,i.name AS item_name,
-      CASE WHEN COALESCE(s.variant_label,'')='' THEN i.name ELSE i.name||' / '||s.variant_label END AS display_name,
-      p.amount_minor,p.currency,COALESCE(b.on_hand,0)::bigint AS on_hand,
-      COALESCE(a.committed,0)::bigint AS committed
-    FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
-    LEFT JOIN LATERAL (SELECT amount_minor,currency FROM sku_prices sp WHERE sp.workspace_id=s.workspace_id
-      AND sp.sku_id=s.id ORDER BY created_at DESC,id DESC LIMIT 1) p ON true
-    LEFT JOIN (SELECT workspace_id,sku_id,SUM(on_hand) AS on_hand FROM balances GROUP BY workspace_id,sku_id) b
-      ON b.workspace_id=s.workspace_id AND b.sku_id=s.id
-    LEFT JOIN (SELECT sol.workspace_id,sol.sku_id,SUM(soa.quantity) AS committed
-      FROM sales_order_allocations soa JOIN sales_order_lines sol ON sol.id=soa.sales_order_line_id
-      GROUP BY sol.workspace_id,sol.sku_id) a ON a.workspace_id=s.workspace_id AND a.sku_id=s.id
-    WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1
-    ORDER BY lower(i.name),s.position,s.id`,[workspaceId]);
-  const positions=(await database.query(`SELECT b.sku_id,b.location_id,b.on_hand,COALESCE(a.committed,0) AS committed
-    FROM balances b LEFT JOIN (SELECT l.workspace_id,l.sku_id,a.location_id,SUM(a.quantity) AS committed
-      FROM sales_order_allocations a JOIN sales_order_lines l ON l.id=a.sales_order_line_id AND l.workspace_id=a.workspace_id
-      WHERE a.workspace_id=$1 GROUP BY l.workspace_id,l.sku_id,a.location_id) a
-      ON a.workspace_id=b.workspace_id AND a.sku_id=b.sku_id AND a.location_id=b.location_id
-    WHERE b.workspace_id=$1`,[workspaceId])).rows,bySku=new Map();
-  for(const row of positions){if(!bySku.has(row.sku_id))bySku.set(row.sku_id,[]);bySku.get(row.sku_id).push({location_id:row.location_id,onHand:Number(row.on_hand),committed:Number(row.committed),available:Number(row.on_hand)-Number(row.committed)});}
-  return result.rows.map((row)=>({...row,amount_minor:row.amount_minor===null?null:Number(row.amount_minor),
-    on_hand:Number(row.on_hand),committed:Number(row.committed),available:Number(row.on_hand)-Number(row.committed),positions:bySku.get(row.id)||[]}));
+async function catalogue(database, workspaceId, {limit=null,search='',ids=null}={}) {
+  // Immediately after a bulk import the planner can still estimate one item
+  // per tenant and repeatedly scan that tenant's entire item index. Keep the
+  // unique-ID lookup as a boundary, then enforce tenant/activity outside it.
+  const result=await database.query(`WITH selected AS (SELECT s.*,i.name AS item_name FROM skus s
+    JOIN LATERAL (SELECT name,workspace_id,is_active FROM items WHERE id=s.item_id OFFSET 0) i
+      ON i.workspace_id=s.workspace_id AND i.is_active=1
+    WHERE s.workspace_id=$1 AND s.is_active=1
+      AND ($2::text[] IS NULL OR s.id=ANY($2::text[]))
+      AND ($3='' OR position(lower($3) in lower(s.code||' '||i.name||' '||coalesce(s.variant_label,'')))>0)
+    ORDER BY lower(i.name),s.position,s.id LIMIT $4)
+    SELECT s.id,s.code,s.variant_label,s.item_name,s.weight_grams,
+      CASE WHEN coalesce(s.variant_label,'')='' THEN s.item_name ELSE s.item_name||' / '||s.variant_label END AS display_name,
+      p.amount_minor,p.currency,coalesce(b.on_hand,0)::bigint AS on_hand,coalesce(a.committed,0)::bigint AS committed
+    FROM selected s LEFT JOIN LATERAL(SELECT amount_minor,currency FROM sku_prices p
+      WHERE p.workspace_id=$1 AND p.sku_id=s.id ORDER BY created_at DESC,id DESC LIMIT 1)p ON true
+    LEFT JOIN LATERAL(SELECT sum(on_hand) AS on_hand FROM balances WHERE workspace_id=$1 AND sku_id=s.id)b ON true
+    LEFT JOIN LATERAL(SELECT sum(a.quantity) AS committed FROM sales_order_allocations a JOIN sales_order_lines l
+      ON l.workspace_id=a.workspace_id AND l.id=a.sales_order_line_id WHERE l.workspace_id=$1 AND l.sku_id=s.id)a ON true`,
+    [workspaceId,ids,String(search).slice(0,120),limit]);
+  const positions=(await database.query(`SELECT b.sku_id,b.location_id,b.on_hand,coalesce(a.committed,0) AS committed
+    FROM balances b LEFT JOIN LATERAL(SELECT sum(a.quantity) AS committed FROM sales_order_allocations a
+      JOIN sales_order_lines l ON l.workspace_id=a.workspace_id AND l.id=a.sales_order_line_id
+      WHERE a.workspace_id=$1 AND l.sku_id=b.sku_id AND a.location_id=b.location_id)a ON true
+    WHERE b.workspace_id=$1 AND b.sku_id=ANY($2::text[])`,[workspaceId,result.rows.map(r=>r.id)])).rows,bySku=new Map();
+  for(const r of positions){if(!bySku.has(r.sku_id))bySku.set(r.sku_id,[]);bySku.get(r.sku_id).push({location_id:r.location_id,onHand:Number(r.on_hand),committed:Number(r.committed),available:Number(r.on_hand)-Number(r.committed)});}
+  return result.rows.map(r=>({...r,amount_minor:r.amount_minor==null?null:Number(r.amount_minor),on_hand:Number(r.on_hand),committed:Number(r.committed),available:Number(r.on_hand)-Number(r.committed),positions:bySku.get(r.id)||[]}));
 }
 
 async function locations(database, workspaceId) {

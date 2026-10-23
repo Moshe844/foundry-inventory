@@ -150,13 +150,14 @@ async function createPurchaseOrderInTransaction(client, rawContext, input) {
       const unitCost = line.unitCost === undefined || line.unitCost === null
         ? (supplierItem?.last_unit_cost === null || supplierItem?.last_unit_cost === undefined
           ? null : Number(supplierItem.last_unit_cost)) : Number(line.unitCost);
+      let resolvedCost=unitCost;if(resolvedCost===null){const fallback=await require('../pricing/postgres-service').purchaseCost(client,ctx.workspaceId,sku.id);if(fallback?.currency===(input.currency||supplier.currency||'USD'))resolvedCost=Number(require('../domain/currency').fromMinor(fallback.amount_minor,fallback.currency));}
       if (unitCost !== null && (!Number.isFinite(unitCost) || unitCost < 0)) {
         throw new ValidationError(`Line ${index + 1} unit cost is invalid.`);
       }
       const locationId = line.destinationLocationId || input.destinationLocationId;
       await requireRow(client, 'SELECT id FROM locations WHERE id=$1 AND workspace_id=$2 AND is_active=1',
         [locationId, ctx.workspaceId], `Purchase-order line ${index + 1} needs an active destination location.`);
-      resolved.push({ sku, supplierItem, unitsPer, purchaseUnits, quantityUnits, unitCost,
+      resolved.push({ sku, supplierItem, unitsPer, purchaseUnits, quantityUnits, unitCost:resolvedCost,
         locationId, description: trimOrNull(line.description) || supplierItem?.supplier_description || sku.name,
         purchaseUnit: trimOrNull(line.purchaseUnit) || supplierItem?.purchase_unit || 'unit',
         supplierSku: trimOrNull(line.supplierSku) || supplierItem?.supplier_sku || null,
@@ -165,12 +166,13 @@ async function createPurchaseOrderInTransaction(client, rawContext, input) {
     const id = newId('po');
     const poNumber = trimOrNull(input.poNumber) || await numbered(client, ctx.workspaceId, 'purchase_orders', 'PO');
     const orderDate = dateOnly(input.orderDate || at.slice(0, 10), 'Order date');
+    const leads=resolved.map(l=>l.supplierItem?.lead_time_days??supplier.default_lead_time_days).filter(v=>v!=null).map(Number);let expectedDate=input.expectedDate?dateOnly(input.expectedDate,'Expected date'):null;if(!expectedDate&&leads.length){const date=new Date(orderDate+'T12:00:00Z');date.setUTCDate(date.getUTCDate()+Math.max(...leads));expectedDate=date.toISOString().slice(0,10);}
     await client.query(`INSERT INTO purchase_orders
       (id,workspace_id,po_number,supplier_id,status,order_date,expected_date,expected_date_source,
        destination_location_id,currency,notes,source,source_detail,created_by_user_id,integrity_hash,reference,created_at,updated_at)
       VALUES($1,$2,$3,$4,'DRAFT',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$16)`,
-    [id, ctx.workspaceId, poNumber, supplier.id, orderDate, input.expectedDate || null,
-      input.expectedDate ? 'manual' : 'unknown', input.destinationLocationId || null,
+    [id, ctx.workspaceId, poNumber, supplier.id, orderDate, expectedDate,
+      input.expectedDate ? 'manual' : expectedDate?'lead_time':'unknown', input.destinationLocationId || null,
       input.currency || supplier.currency || 'USD', trimOrNull(input.notes), input.source || 'manual',
       JSON.stringify(input.sourceDetail || {}), ctx.actorId, crypto.createHash('sha256').update(JSON.stringify(resolved)).digest('hex'), trimOrNull(input.reference), at]);
     const lineIds = [];
@@ -559,16 +561,7 @@ async function recordSupplierInvoice(database, rawContext, input, {preview=false
   });
 }
 
-async function createSalesOrderInTransaction(client, rawContext, input) {
-  const ctx = requireContext(rawContext);
-  if (!Array.isArray(input.lines) || !input.lines.length) throw new ValidationError('A sales order needs at least one line.');
-    await requirePermission(client, ctx, access.OPERATE, 'create sales orders');
-    const operation = await beginOperation(client, ctx, 'sales_order.create', input.idempotencyKey);
-    if (operation.replayed) return { ...operation.result, replayed: true };
-    const promotions=require('../pricing/postgres-promotions'),quote=await promotions.prepareQuote(client,ctx,input,{lock:true});
-    if(input.pricingQuoteHash&&promotions.quoteHash(quote)!==input.pricingQuoteHash)
-      throw new ValidationError('The exact order pricing changed after review. Review the current totals before continuing.');
-    if(quote.violations.length)throw new ValidationError('This order violates its pricing safeguards. Review its prices and recorded cost before continuing.');
+async function salesOrderDefaults(client,ctx,input){
     const customer = await requireRow(client, 'SELECT * FROM customers WHERE id=$1 AND workspace_id=$2 AND record_state=$3',
       [input.customerId, ctx.workspaceId, 'ACTIVE'], 'Choose an active customer from this inventory.');
     const requestedDeliveryMethod = String(input.deliveryMethod || 'SHIP').trim().toUpperCase();
@@ -582,6 +575,24 @@ async function createSalesOrderInTransaction(client, rawContext, input) {
     if (deliveryMethod !== 'PICKUP' && !shipToAddress) {
       throw new ValidationError('A delivery destination is required before creating a shipped or business-delivered order.');
     }
+    const contactEmail=input.customerEmail===undefined?customer.email:trimOrNull(input.customerEmail),contactPhone=input.customerPhone===undefined?customer.phone:trimOrNull(input.customerPhone);
+    if(contactEmail&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail))throw new ValidationError('Enter a valid order contact email.');
+    if(input.fulfillmentLocationId)await requireRow(client,'SELECT id FROM locations WHERE workspace_id=$1 AND id=$2 AND is_active=1',[ctx.workspaceId,input.fulfillmentLocationId],'Choose a ship-from location in this inventory.');
+
+    return {customer,deliveryMethod,shipToAddress,addressWasSubmitted,contactEmail,contactPhone};
+}
+
+async function createSalesOrderInTransaction(client, rawContext, input) {
+  const ctx = requireContext(rawContext);
+  if (!Array.isArray(input.lines) || !input.lines.length) throw new ValidationError('A sales order needs at least one line.');
+    await requirePermission(client, ctx, access.OPERATE, 'create sales orders');
+    const operation = await beginOperation(client, ctx, 'sales_order.create', input.idempotencyKey);
+    if (operation.replayed) return { ...operation.result, replayed: true };
+    const promotions=require('../pricing/postgres-promotions'),quote=await promotions.prepareQuote(client,ctx,input,{lock:true});
+    if(input.pricingQuoteHash&&promotions.quoteHash(quote)!==input.pricingQuoteHash)
+      throw new ValidationError('The exact order pricing changed after review. Review the current totals before continuing.');
+    if(quote.violations.length)throw new ValidationError('This order violates its pricing safeguards. Review its prices and recorded cost before continuing.');
+    const {customer,deliveryMethod,shipToAddress,addressWasSubmitted,contactEmail,contactPhone}=await salesOrderDefaults(client,ctx,input);
     const at = nowIso();
     const id = newId('so');
     const orderNumber = trimOrNull(input.orderNumber) || await numbered(client, ctx.workspaceId, 'sales_orders', 'SO');
@@ -595,6 +606,7 @@ async function createSalesOrderInTransaction(client, rawContext, input) {
       shipToAddress, addressWasSubmitted ? 'order' : 'customer',
       trimOrNull(input.notes), trimOrNull(input.reference), input.currency || 'USD',
       quote.discountMinor, quote.taxMinor, ctx.actorId, at]);
+    await client.query('UPDATE sales_orders SET contact_email=$3,contact_phone=$4 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id,contactEmail,contactPhone]);
     const lineIds = [];
     for (const [index, line] of input.lines.entries()) {
       await requireRow(client, `SELECT id FROM skus WHERE id=$1 AND workspace_id=$2 AND is_active=1`,
@@ -618,6 +630,27 @@ async function createSalesOrderInTransaction(client, rawContext, input) {
 
 async function createSalesOrder(database, rawContext, input) {
   return transaction(database, (client) => createSalesOrderInTransaction(client, rawContext, input));
+}
+
+async function editDraftSalesOrder(database,ctx,id,input){
+ return transaction(database,async client=>{
+  await requirePermission(client,ctx,access.OPERATE,'edit draft sales orders');
+  const order=await requireRow(client,'SELECT * FROM sales_orders WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,id],'That order is not in this inventory.');
+  if(order.status!=='DRAFT')throw new ValidationError('Only a draft order can be edited.');
+  if(Number(input.expectedVersion)!==Number(order.version))throw new ValidationError('This order changed in another tab. Reload it before editing.');
+  if((await client.query('SELECT 1 FROM sales_order_allocations a JOIN sales_order_lines l ON l.workspace_id=a.workspace_id AND l.id=a.sales_order_line_id WHERE l.workspace_id=$1 AND l.sales_order_id=$2',[ctx.workspaceId,id])).rows.length)throw new ValidationError('This draft has stock commitments and cannot be replaced.');
+  const {customer,deliveryMethod,shipToAddress,addressWasSubmitted,contactEmail,contactPhone}=await salesOrderDefaults(client,ctx,input),at=nowIso(),promotions=require('../pricing/postgres-promotions');
+  const quote=await promotions.prepareQuote(client,ctx,input,{lock:true,orderId:id});
+  if(quote.violations.length)throw new ValidationError('This order violates its pricing safeguards. Review its prices and recorded cost.');
+  await client.query('DELETE FROM sales_order_lines WHERE workspace_id=$1 AND sales_order_id=$2',[ctx.workspaceId,id]);
+  const lineIds=[];for(const [index,line]of input.lines.entries()){const lineId=newId('sol');lineIds.push(lineId);await client.query(`INSERT INTO sales_order_lines(id,workspace_id,sales_order_id,sku_id,quantity_ordered,quantity_fulfilled,unit_price_minor,created_at,updated_at) VALUES($1,$2,$3,$4,$5,0,$6,$7,$7)`,[lineId,ctx.workspaceId,id,line.skuId,positiveInteger(line.quantity,'Line '+(index+1)+' quantity'),quote.lines[index].unitPriceMinor,at]);}
+  await client.query(`UPDATE sales_orders SET customer_id=$3,contact_email=$4,contact_phone=$5,order_date=$6,needed_by=$7,fulfillment_location_id=$8,
+    delivery_method=$9,ship_to_address=$10,ship_to_source=$11,notes=$12,reference=$13,currency=$14,version=version+1,updated_at=$15
+    WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,id,customer.id,contactEmail,contactPhone,dateOnly(input.orderDate||at.slice(0,10),'Order date'),input.neededBy||null,input.fulfillmentLocationId||null,deliveryMethod,shipToAddress,addressWasSubmitted?'order':'customer',trimOrNull(input.notes),trimOrNull(input.reference),input.currency||'USD',at]);
+  await promotions.saveQuote(client,ctx,id,quote,lineIds);
+  await event(client,'sales_order_events',null,{workspaceId:ctx.workspaceId,recordId:id,type:'draft_edited',detail:{previousVersion:order.version},actorId:ctx.actorId,key:'draft-edit:'+id+':'+order.version,at:nowIso()});
+  return {salesOrderId:id,orderNumber:order.order_number};
+ });
 }
 
 async function confirmSalesOrderInTransaction(client, rawContext, salesOrderId, input) {
@@ -1149,6 +1182,7 @@ module.exports = {
   receivePurchaseOrderInTransaction,
   recordSupplierInvoice,
   previewSupplierInvoice:(database,ctx,input)=>recordSupplierInvoice(database,ctx,input,{preview:true}),
+  editDraftSalesOrder,
   createSalesOrder,
   createSalesOrderInTransaction,
   confirmSalesOrder,

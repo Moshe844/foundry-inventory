@@ -38,7 +38,7 @@ function minor(value,label){
   return amount;
 }
 
-function dateToday(){return new Date().toISOString().slice(0,10);}
+function dateToday(req){return require('../../lib/business-time').context(req?.account?.time_zone||'UTC').calendarDate;}
 
 function purchasingPermissions(req){return {
   suppliers:permissions.can(req.user,permissions.MANAGE_SUPPLIERS),
@@ -144,7 +144,7 @@ async function salesOrderPage(database,workspaceId,id){
       JOIN accounting_accounts a ON a.id=l.account_id
       WHERE e.workspace_id=$1 AND e.source_record_type='sales_order' AND e.source_record_id=$2
         AND e.source_type='sale_fulfillment' GROUP BY e.id,e.status ORDER BY e.created_at DESC`,[workspaceId,id]),
-    commerce.catalogue(database,workspaceId),commerce.customers(database,workspaceId),paymentConnect.describe(database,workspaceId),
+    commerce.catalogue(database,workspaceId,{limit:50}),commerce.customers(database,workspaceId),paymentConnect.describe(database,workspaceId),
   ]);
   const lines=detail.lines.map((line)=>{
     const ordered=Number(line.quantity_ordered);const fulfilled=Number(line.quantity_fulfilled);const allocated=Number(line.allocated);
@@ -160,7 +160,7 @@ async function salesOrderPage(database,workspaceId,id){
     backordered:lines.reduce((sum,line)=>sum+Number(line.backordered),0)};
   const subtotalMinor=lines.reduce((sum,line)=>sum+Number(line.lineTotalMinor||0),0);
   const order={...detail.order,customer:{id:detail.order.customer_id,name:detail.order.customer_name,
-    email:detail.order.customer_email},lines,totals,
+    email:detail.order.contact_email,phone:detail.order.contact_phone},lines,totals,
     customer_decision_required:Number(detail.order.customer_decision_required)===1,
     delivery_decision_required:Number(detail.order.delivery_decision_required)===1,
     pricing:{missingPriceLines:lines.filter((line)=>line.unit_price_minor===null).length,subtotalMinor,
@@ -548,17 +548,23 @@ function createPostgresCommerceRouter(database,options={}){
       warnings:[],overReceipt:null,submitted:null,receiptIdempotencyKey:newId('uireceipt'),sourceEvent:null,
       permissions:purchasingPermissions(req),screenGuide:null});
   }));
-  router.get('/purchasing/orders/new',requirePermission(permissions.CREATE_PO,'prepare purchase orders'),asyncRoute(async(req,res)=>{
-    const [supplierRows,catalogue,locationRows]=await Promise.all([commerce.suppliers(database,req.ctx.workspaceId),
-      commerce.catalogue(database,req.ctx.workspaceId),commerce.locations(database,req.ctx.workspaceId)]);
-    const supplierId=trimOrNull(req.query.supplier);
-    const suppliers=supplierRows.map((supplier)=>({...supplier,contactName:supplier.contact_name,
-      defaultLeadTimeDays:supplier.default_lead_time_days,paymentTerms:supplier.payment_terms}));
-    const supplierItems=supplierId?catalogue.map((item)=>({skuId:item.id,displayName:item.display_name,
-      supplierSku:null,unitsPerPurchaseUnit:1,purchaseUnit:'unit',lastUnitCost:null})):[];
-    return res.page('purchasing/order-new',{title:'New purchase order',nav:'purchasing',suppliers,supplierId,
-      supplierItems,locations:locationRows,orderErrors:[],submitted:null});
-  }));
+  async function purchaseEntry(req,res,{submitted=null,errors=[],status=200}={}){
+    const supplierId=trimOrNull(submitted?.supplierId||req.query.supplier),supplierRows=await commerce.suppliers(database,req.ctx.workspaceId);
+    if(supplierId&&!supplierRows.some(s=>s.id===supplierId))throw new ValidationError('Choose a supplier from this inventory.');
+    const supplierItems=supplierId?(await database.query(`SELECT si.sku_id AS "skuId",i.name||coalesce(' / '||s.variant_label,'') AS "displayName",
+      si.supplier_sku AS "supplierSku",si.units_per_purchase_unit AS "unitsPerPurchaseUnit",si.purchase_unit AS "purchaseUnit",
+      CASE WHEN si.last_unit_cost IS NOT NULL THEN si.last_unit_cost ELSE pc.amount_minor / power(10, $3) END AS "lastUnitCost",
+      coalesce(si.lead_time_days,sup.default_lead_time_days) AS "leadTimeDays"
+      FROM supplier_items si JOIN suppliers sup ON sup.workspace_id=si.workspace_id AND sup.id=si.supplier_id
+      JOIN skus s ON s.workspace_id=si.workspace_id AND s.id=si.sku_id JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
+      LEFT JOIN LATERAL(SELECT amount_minor FROM sku_purchase_costs pc WHERE pc.workspace_id=si.workspace_id AND pc.sku_id=si.sku_id AND pc.currency=sup.currency ORDER BY created_at DESC,id DESC LIMIT 1)pc ON true
+      WHERE si.workspace_id=$1 AND si.supplier_id=$2 AND si.is_active=1 AND s.is_active=1 AND i.is_active=1 ORDER BY lower(i.name),s.code`,
+      [req.ctx.workspaceId,supplierId,require('../../domain/currency').exponent(supplierRows.find(s=>s.id===supplierId).currency||'USD')])).rows:[];
+    const leadTimes=supplierItems.map(i=>i.leadTimeDays).filter(v=>v!=null).map(Number),leadDays=leadTimes.length?Math.max(...leadTimes):supplierRows.find(s=>s.id===supplierId)?.default_lead_time_days;
+    const today=require('../../lib/business-time').context(req.account?.time_zone||'UTC').calendarDate,date=new Date(today+'T12:00:00Z');if(leadDays!=null)date.setUTCDate(date.getUTCDate()+Number(leadDays));
+    return res.status(status).page('purchasing/order-new',{title:'New purchase order',nav:'purchasing',suppliers:supplierRows.map(s=>({...s,contactName:s.contact_name,defaultLeadTimeDays:s.default_lead_time_days,paymentTerms:s.payment_terms})),supplierId,supplierItems,locations:await commerce.locations(database,req.ctx.workspaceId),orderErrors:errors,submitted,expectedDate:leadDays==null?'':date.toISOString().slice(0,10),today});
+  }
+  router.get('/purchasing/orders/new',requirePermission(permissions.CREATE_PO,'prepare purchase orders'),asyncRoute((req,res)=>purchaseEntry(req,res)));
 
   router.post('/purchasing/suppliers',requirePermission(permissions.MANAGE_SUPPLIERS,'add suppliers'),asyncRoute(async(req,res)=>{
     const supplier=await commerce.createSupplier(database,req.ctx,req.body);
@@ -567,18 +573,15 @@ function createPostgresCommerceRouter(database,options={}){
   }));
 
   router.post('/purchasing/orders',requirePermission(permissions.CREATE_PO,'prepare purchase orders'),asyncRoute(async(req,res)=>{
-    const quantities=req.body.quantity&&typeof req.body.quantity==='object'?req.body.quantity:null;
-    const costs=req.body.unitCost&&typeof req.body.unitCost==='object'?req.body.unitCost:{};
-    const lines=quantities?Object.entries(quantities).filter(([,quantity])=>Number(quantity)>0).map(([skuId,quantity])=>({
-      skuId,quantityUnits:quantity,unitCost:costs[skuId],destinationLocationId:req.body.destinationLocationId})):
-      [{skuId:req.body.skuId,quantityUnits:req.body.quantity,unitCost:req.body.unitCost,
-        destinationLocationId:req.body.destinationLocationId}];
-    const result=await workflows.createPurchaseOrder(database,req.ctx,{supplierId:req.body.supplierId,
-      orderDate:req.body.orderDate||dateToday(),expectedDate:trimOrNull(req.body.expectedDate),
-      destinationLocationId:req.body.destinationLocationId,currency:trimOrNull(req.body.currency)||'USD',
-      notes:trimOrNull(req.body.notes),idempotencyKey:key(req,'purchase-order'),lines});
-    req.flash('success',`${result.poNumber} was prepared. Nothing was sent to the supplier.`);
-    return res.redirect(303,`/purchasing/orders/${result.purchaseOrderId}`);
+    try{
+      const quantities=req.body.quantity&&typeof req.body.quantity==='object'?req.body.quantity:null,costs=req.body.unitCost&&typeof req.body.unitCost==='object'?req.body.unitCost:{};
+      const lines=quantities?Object.entries(quantities).filter(([,q])=>String(q).trim()!==''&&Number(q)!==0).map(([skuId,quantity])=>({skuId,quantityPurchaseUnits:quantity,unitCost:costs[skuId]===''?undefined:costs[skuId],destinationLocationId:req.body.destinationLocationId})):[{skuId:req.body.skuId,quantityUnits:req.body.quantity,unitCost:req.body.unitCost,destinationLocationId:req.body.destinationLocationId}];
+      if(quantities){const linked=(await database.query('SELECT sku_id FROM supplier_items WHERE workspace_id=$1 AND supplier_id=$2 AND is_active=1',[req.ctx.workspaceId,req.body.supplierId])).rows;if(lines.some(l=>!linked.some(s=>s.sku_id===l.skuId)))throw new ValidationError('Choose products linked to this supplier.');}
+      for(const line of lines){if(line.unitCost==null||String(line.unitCost).trim()===''){const supplier=(await database.query('SELECT currency FROM suppliers WHERE workspace_id=$1 AND id=$2',[req.ctx.workspaceId,req.body.supplierId])).rows[0],linked=(await database.query('SELECT last_unit_cost FROM supplier_items WHERE workspace_id=$1 AND supplier_id=$2 AND sku_id=$3 AND is_active=1',[req.ctx.workspaceId,req.body.supplierId,line.skuId])).rows[0];if(linked?.last_unit_cost!=null)line.unitCost=linked.last_unit_cost;else{const fallback=await require('../../pricing/postgres-service').purchaseCost(database,req.ctx.workspaceId,line.skuId);if(fallback?.currency===supplier?.currency)line.unitCost=require('../../domain/currency').fromMinor(fallback.amount_minor,fallback.currency);}}}
+      if(lines.some(l=>l.unitCost!==undefined&&Number(l.unitCost)===0)&&req.body.confirmZeroCost!=='1')return purchaseEntry(req,res,{submitted:req.body,errors:['One or more selected lines have a $0 unit cost. Confirm that these are free before saving.'],status:400});
+      const result=await workflows.createPurchaseOrder(database,req.ctx,{supplierId:req.body.supplierId,orderDate:req.body.orderDate||require('../../lib/business-time').context(req.account?.time_zone||'UTC').calendarDate,expectedDate:trimOrNull(req.body.expectedDate),destinationLocationId:req.body.destinationLocationId,currency:trimOrNull(req.body.currency)||undefined,notes:trimOrNull(req.body.notes),idempotencyKey:key(req,'purchase-order'),lines});
+      req.flash('success',result.poNumber+' was prepared. Nothing was sent to the supplier.');return res.redirect(303,'/purchasing/orders/'+result.purchaseOrderId);
+    }catch(e){if(!(e instanceof ValidationError)||!req.body.quantity||typeof req.body.quantity!=='object')throw e;return purchaseEntry(req,res,{submitted:req.body,errors:[e.message],status:400});}
   }));
 
   router.get('/purchasing/orders/:id',requirePermission(permissions.VIEW_PURCHASING,'see purchase orders'),asyncRoute(async(req,res)=>{
@@ -589,10 +592,10 @@ function createPostgresCommerceRouter(database,options={}){
     return res.page('purchasing/order',{title:`${page.order.poNumber} · ${page.order.supplierName}`,nav:'purchasing',room:false,
       screenGuide:null,story:null,evidenceTrace:null,order:page.order,receipts:page.receipts,events:page.events,
       charges:page.charges,documentTotalMinor:null,locations:await commerce.locations(database,req.ctx.workspaceId),
-      permissions:purchasingPermissions(req),expectedInFuture:Boolean(page.order.expectedDate&&page.order.expectedDate>dateToday()),
+      permissions:purchasingPermissions(req),expectedInFuture:Boolean(page.order.expectedDate&&page.order.expectedDate>dateToday(req)),
       communications:page.communications,supplierDocuments:page.supplierDocuments,supplierResponsePlans:[],
       supplierBills:page.supplierBills,billSummary:page.billSummary,landedCostDocuments:[],supplierReturns,
-      postgresPlacement:true,today:dateToday(),returnFormKey:newId('supplier-return-form')});
+      postgresPlacement:true,today:dateToday(req),returnFormKey:newId('supplier-return-form')});
   }));
 
   router.get('/purchasing/orders/:id/document',requirePermission(permissions.VIEW_PURCHASING,'see purchase orders'),asyncRoute(async(req,res)=>{
@@ -660,7 +663,7 @@ function createPostgresCommerceRouter(database,options={}){
     asyncRoute(async(req,res)=>{
       const supplierReturn=await returns.getSupplierReturn(database,req.ctx.workspaceId,req.params.id);
       return res.page('purchasing/postgres-supplier-return',{title:supplierReturn.return_number,nav:'purchasing',
-        supplierReturn,today:dateToday(),formKey:newId('supplier-return-step')});
+        supplierReturn,today:dateToday(req),formKey:newId('supplier-return-step')});
     }));
 
   router.post('/supplier-returns/:id/authorize',
@@ -682,7 +685,7 @@ function createPostgresCommerceRouter(database,options={}){
     requirePermission(permissions.RECONCILE_SUPPLIER_RETURN,'reconcile supplier credits'),asyncRoute(async(req,res)=>{
       const result=await returns.reconcileSupplierReturn(database,req.ctx,req.params.id,{
         amountMinor:minor(req.body.amount,'Supplier credit'),creditNumber:trimOrNull(req.body.creditNumber),
-        creditDate:req.body.creditDate||dateToday(),idempotencyKey:key(req,'supplier-return-reconcile')});
+        creditDate:req.body.creditDate||dateToday(req),idempotencyKey:key(req,'supplier-return-reconcile')});
       req.flash(result.status==='CREDIT_MISMATCH'?'warn':'success',result.status==='CREDIT_MISMATCH'
         ?'Supplier credit was recorded, but it differs from the expected amount and remains an exception.'
         :'Supplier credit reconciled to the open bill. Inventory did not move again.');
@@ -723,7 +726,7 @@ function createPostgresCommerceRouter(database,options={}){
     if(!line)throw new ValidationError('Choose a line from this purchase order.');
     const result=await workflows.recordSupplierInvoice(database,req.ctx,{supplierId:detail.order.supplier_id,
       purchaseOrderId:detail.order.id,purchaseReceiptId:trimOrNull(req.body.purchaseReceiptId),
-      supplierInvoiceNumber:trimOrNull(req.body.supplierInvoiceNumber),issueDate:req.body.issueDate||dateToday(),
+      supplierInvoiceNumber:trimOrNull(req.body.supplierInvoiceNumber),issueDate:req.body.issueDate||dateToday(req),
       dueDate:trimOrNull(req.body.dueDate),currency:detail.order.currency,taxMinor:minor(req.body.tax||'0','Tax'),
       idempotencyKey:key(req,'supplier-invoice'),lines:[{purchaseOrderLineId:line.id,skuId:line.sku_id,
         description:line.description,quantity:req.body.quantity,unitCostMinor:minor(req.body.unitCost,'Unit cost')}]});
@@ -737,7 +740,7 @@ function createPostgresCommerceRouter(database,options={}){
     const bill=detail.bills.find((candidate)=>candidate.id===req.body.billId);
     if(!bill)throw new ValidationError('Choose an open bill from this purchase order.');
     await workflows.recordSupplierPayment(database,req.ctx,{supplierId:detail.order.supplier_id,supplierBillId:bill.id,
-      amountMinor:minor(req.body.amount,'Payment amount'),paymentDate:req.body.paymentDate||dateToday(),
+      amountMinor:minor(req.body.amount,'Payment amount'),paymentDate:req.body.paymentDate||dateToday(req),
       currency:bill.currency,method:trimOrNull(req.body.method),reference:trimOrNull(req.body.reference),
       idempotencyKey:key(req,'supplier-payment')});
     req.flash('success','Supplier payment recorded. Physical inventory did not change.');
@@ -757,15 +760,37 @@ function createPostgresCommerceRouter(database,options={}){
       canAddCustomer:permissions.can(req.user,permissions.OPERATE)});
   }));
 
+  const entry=require('../../operations/order-entry'),entryPricing=require('../../pricing/postgres-promotions');
+  const entryToday=req=>require('../../lib/business-time').context(req.account?.time_zone||'UTC').calendarDate;
+  async function entryCurrency(req){return (await database.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId])).rows[0]?.base_currency||'USD';}
+  async function renderEntry(req,res,{form={},formError=null,editOrder=null,status=200}={}){
+    const selected=Array.isArray(form.skuId)?form.skuId:form.skuId?[form.skuId]:[];
+    const [customers,first,chosen,locations,taxRates,currency]=await Promise.all([commerce.customers(database,req.ctx.workspaceId),
+      commerce.catalogue(database,req.ctx.workspaceId,{limit:50}),selected.length?commerce.catalogue(database,req.ctx.workspaceId,{ids:selected,limit:500}):[],
+      database.query("SELECT id,name,kind FROM locations WHERE workspace_id=$1 AND is_active=1 ORDER BY CASE WHEN kind='warehouse' THEN 0 ELSE 1 END,created_at,id",[req.ctx.workspaceId]),
+      database.query("SELECT * FROM accounting_tax_rates WHERE workspace_id=$1 AND active=1 AND applies_to IN ('SALES','BOTH') ORDER BY name",[req.ctx.workspaceId]),entryCurrency(req)]);
+    const catalogue=[...new Map([...first,...chosen].map(s=>[s.id,s])).values()];
+    return res.status(status).page('sales/entry',{title:editOrder?'Edit draft order':'New sales order',nav:'sales',customers,catalogue,locations:locations.rows,taxRates:taxRates.rows,currency,today:entryToday(req),form,formError,editOrder,operationKey:newId('order-form')});
+  }
   router.get(['/orders/new','/sales/new'],requirePermission(permissions.OPERATE,'create sales orders'),asyncRoute(async(req,res)=>{
-    const [customers,catalogue,locations]=await Promise.all([commerce.customers(database,req.ctx.workspaceId),
-      commerce.catalogue(database,req.ctx.workspaceId),commerce.locations(database,req.ctx.workspaceId)]);
-    const skus=catalogue.map((sku)=>({...sku,price:{isSet:sku.amount_minor!==null,
-      formatted:sku.amount_minor===null?'':`${sku.currency||'USD'} ${(Number(sku.amount_minor)/100).toFixed(2)}`},
-      stock:{onHand:sku.on_hand,committed:sku.committed,available:sku.available,positions:sku.positions}}));
-    return res.page('sales/order-new',{title:'New sales order',nav:'sales',customers,skus,locations,
-      form:{customerId:trimOrNull(req.query.customer)||'',deliveryMethod:'SHIP'},formError:null,
-      unpricedCount:skus.filter((sku)=>!sku.price.isSet).length,allowNewCustomer:false,screenGuide:null,suppressBack:true});
+    let form={customerId:trimOrNull(req.query.customer)||'',deliveryMethod:'SHIP'};
+    if(req.query.duplicate){const d=await commerce.salesOrder(database,req.ctx.workspaceId,req.query.duplicate),q=(await database.query('SELECT quote FROM stockchief_runtime.pricing_order_snapshots WHERE workspace_id=$1 AND id=$2',[req.ctx.workspaceId,d.order.pricing_quote_id])).rows[0]?.quote;
+      form={...entry.formFromOrder(d.order,d.lines,q),orderDate:entryToday(req),neededBy:'',reference:'',orderNumber:''};}
+    return renderEntry(req,res,{form});
+  }));
+  router.get('/orders/:id/edit',requirePermission(permissions.OPERATE,'edit draft orders'),asyncRoute(async(req,res)=>{
+    const d=await commerce.salesOrder(database,req.ctx.workspaceId,req.params.id);if(d.order.status!=='DRAFT')throw new ValidationError('Only draft orders can be edited.');
+    const q=(await database.query('SELECT quote FROM stockchief_runtime.pricing_order_snapshots WHERE workspace_id=$1 AND id=$2',[req.ctx.workspaceId,d.order.pricing_quote_id])).rows[0]?.quote;
+    return renderEntry(req,res,{form:entry.formFromOrder(d.order,d.lines,q),editOrder:d.order});
+  }));
+  router.get('/sales/catalogue/search',requirePermission(permissions.VIEW_SALES,'search products'),asyncRoute(async(req,res)=>res.json({products:await commerce.catalogue(database,req.ctx.workspaceId,{search:req.query.q||'',limit:50})})));
+  router.post('/sales/orders/quote',requirePermission(permissions.OPERATE,'preview order pricing'),asyncRoute(async(req,res)=>{
+    try{const input=entry.input(req.body,{today:entryToday(req),currency:await entryCurrency(req)});const quote=await database.transaction(client=>entryPricing.prepareQuote(client,req.ctx,input,{orderId:req.body.editOrderId||null}),{isolation:'REPEATABLE READ',readOnly:true,retrySafe:true});return res.json({quote});}
+    catch(error){if(!(error instanceof ValidationError))throw error;return res.status(400).json({error:error.message});}
+  }));
+  router.post('/orders/:id/edit',requirePermission(permissions.OPERATE,'edit draft orders'),asyncRoute(async(req,res)=>{
+    try{const input=entry.input(req.body,{today:entryToday(req),currency:await entryCurrency(req)});await workflows.editDraftSalesOrder(database,req.ctx,req.params.id,{...input,expectedVersion:req.body.expectedVersion});req.flash('success','Draft updated. No stock moved.');return res.redirect(303,'/orders/'+req.params.id);}
+    catch(error){if(!(error instanceof ValidationError))throw error;return renderEntry(req,res,{form:req.body,formError:error.message,editOrder:{id:req.params.id,version:req.body.expectedVersion},status:400});}
   }));
 
   router.get('/sales/customers/new',requirePermission(permissions.OPERATE,'add customers'),(req,res)=>res.page('sales/customer-new',{
@@ -815,28 +840,18 @@ function createPostgresCommerceRouter(database,options={}){
   }));
 
   router.post(['/orders','/sales/orders'],requirePermission(permissions.OPERATE,'create sales orders'),asyncRoute(async(req,res)=>{
-    const skuIds=Array.isArray(req.body.skuId)?req.body.skuId:[req.body.skuId];
-    const quantities=Array.isArray(req.body.quantity)?req.body.quantity:[req.body.quantity];
-    const submittedPrices=Array.isArray(req.body.unitPrice)?req.body.unitPrice:[req.body.unitPrice];
-    const catalogue=await commerce.catalogue(database,req.ctx.workspaceId);
-    const prices=new Map(catalogue.map((sku)=>[sku.id,sku.amount_minor]));
-    const lines=skuIds.map((skuId,index)=>({skuId,quantity:quantities[index],priceOverride:Boolean(String(submittedPrices[index]||'').trim()),unitPriceMinor:
-      String(submittedPrices[index]||'').trim()?minor(submittedPrices[index],'Selling price'):prices.get(skuId)}));
-    const input={customerId:req.body.customerId,
-      orderDate:req.body.orderDate||dateToday(),neededBy:trimOrNull(req.body.neededBy),
-      fulfillmentLocationId:trimOrNull(req.body.fulfillmentLocationId),deliveryMethod:req.body.deliveryMethod||'SHIP',
-      shipToAddress:trimOrNull(req.body.shipToAddress||req.body.customerShippingAddress),currency:trimOrNull(req.body.currency)||'USD',
-      notes:trimOrNull(req.body.notes),reference:trimOrNull(req.body.reference),discountMinor:req.body.discount?minor(req.body.discount,'Discount'):0,taxMinor:req.body.tax?minor(req.body.tax,'Tax'):0,codes:String(req.body.couponCodes||'').split(',').map(s=>s.trim()).filter(Boolean),priceListId:trimOrNull(req.body.priceListId),idempotencyKey:key(req,'sales-order'),lines};
-    const promotions=require('../../pricing/postgres-promotions'),quote=await promotions.prepareQuote(database,req.ctx,input);
-    if(quote.policyVersions.length||quote.codes.length||quote.discountMinor||quote.taxMinor){
-      const nextStep=req.body.nextStep||'draft';if(!['draft','confirm','fulfill'].includes(nextStep))throw new ValidationError('Choose a valid order action.');
-      const reviewId=newId('orderreview');req.session.orderPriceReviews={...(req.session.orderPriceReviews||{}),[reviewId]:{workspaceId:req.ctx.workspaceId,actorId:req.ctx.actorId,input,nextStep,quoteHash:promotions.quoteHash(quote),expiresAt:Date.now()+15*60*1000}};
-      for(const id of Object.keys(req.session.orderPriceReviews).slice(0,-5))delete req.session.orderPriceReviews[id];
-      return res.page('sales/pricing-review',{title:'Review order pricing',nav:'sales',reviewId,nextStep,quote,products:catalogue,customer:(await commerce.customers(database,req.ctx.workspaceId)).find(c=>c.id===input.customerId)});
-    }
-    const result=await submitOrder(database,req.ctx,input,req.body.nextStep||'draft');
-    req.flash('success',`${result.orderNumber}: ${result.status==='DRAFT'?'draft saved; no stock reserved':result.status==='FULFILLED'?'pickup fulfilled and invoice posted; no payment recorded':result.status==='BACKORDERED'?'available stock reserved; remaining units are backordered':'stock reserved; nothing physically released'}.`);
-    return res.redirect(303,`/orders/${result.salesOrderId}`);
+    try{
+      const input={...entry.input(req.body,{today:entryToday(req),currency:await entryCurrency(req)}),idempotencyKey:key(req,'sales-order')};
+      const quote=await entryPricing.prepareQuote(database,req.ctx,input);
+      if(quote.policyVersions.length||quote.codes.length||quote.discountMinor||quote.taxMinor){
+        const nextStep=req.body.nextStep||'draft';if(!['draft','confirm','fulfill'].includes(nextStep))throw new ValidationError('Choose a valid order action.');
+        const reviewId=newId('orderreview');req.session.orderPriceReviews={...(req.session.orderPriceReviews||{}),[reviewId]:{workspaceId:req.ctx.workspaceId,actorId:req.ctx.actorId,input,nextStep,quoteHash:entryPricing.quoteHash(quote),expiresAt:Date.now()+15*60*1000}};
+        for(const id of Object.keys(req.session.orderPriceReviews).slice(0,-5))delete req.session.orderPriceReviews[id];
+        return res.page('sales/pricing-review',{title:'Review order pricing',nav:'sales',reviewId,nextStep,quote,products:await commerce.catalogue(database,req.ctx.workspaceId,{ids:input.lines.map(l=>l.skuId),limit:500}),customer:(await commerce.customers(database,req.ctx.workspaceId)).find(c=>c.id===input.customerId)});
+      }
+      const result=await submitOrder(database,req.ctx,input,req.body.nextStep||'draft');
+      req.flash('success',result.orderNumber+': '+(result.status==='DRAFT'?'draft saved; no stock reserved':result.status==='FULFILLED'?'pickup fulfilled and invoice posted; no payment recorded':'available stock reserved; nothing physically released')+'.');return res.redirect(303,'/orders/'+result.salesOrderId);
+    }catch(error){if(!(error instanceof ValidationError))throw error;return renderEntry(req,res,{form:req.body,formError:error.message,status:400});}
   }));
   router.post('/sales/pricing/order-reviews/:id/approve',requirePermission(permissions.OPERATE,'approve draft order pricing'),asyncRoute(async(req,res)=>{
     const review=req.session.orderPriceReviews?.[req.params.id];if(!review||review.workspaceId!==req.ctx.workspaceId||review.actorId!==req.ctx.actorId||review.expiresAt<Date.now())throw new ValidationError('This pricing review expired. Review the order again.');
@@ -888,7 +903,7 @@ function createPostgresCommerceRouter(database,options={}){
       customerReceipts:page.customerReceipts,paymentRequests:page.paymentRequests,paymentCompleted:req.query.payment==='paid',
       openPaymentUrl:null,paymentProviders:['stripe'],paymentAccount:page.paymentAccount,
       canManagePaymentAccount:req.user?.role==='owner',canSetAllocation:permissions.can(req.user,permissions.OPERATE),
-      customers:page.customers,skus:page.skus,carriers:[],returns:returnRows,locations:locationRows,today:dateToday(),
+      customers:page.customers,skus:page.skus,carriers:[],returns:returnRows,locations:locationRows,today:dateToday(req),
       returnFormKey:newId('return-form'),paymentRequestFormKey:newId('payment-request-form')});
   }));
 
@@ -921,7 +936,7 @@ function createPostgresCommerceRouter(database,options={}){
     return res.page('sales/postgres-return',{title:customerReturn.return_number,nav:'sales',customerReturn,
       returnParcel:await require('../../shipping/postgres-return-parcels').current(database,req.ctx.workspaceId,customerReturn.id),
       locations:locationRows,refundableMinor,refundRequest:refundRequestResult.rows[0]||null,
-      today:dateToday(),formKey:newId('return-step')});
+      today:dateToday(req),formKey:newId('return-step')});
   }));
 
   router.post('/returns/:id/authorize',requirePermission(permissions.AUTHORIZE_CUSTOMER_RETURN,'authorize customer returns'),
@@ -966,13 +981,13 @@ function createPostgresCommerceRouter(database,options={}){
       if(req.body.destination==='CASH'){
         const queued=await payments.queueCustomerReturnRefund(database,req.ctx,req.params.id,{provider:'stripe'});
         if(queued.noProviderPayment)result=await returns.refundCustomerReturn(database,req.ctx,req.params.id,
-          {destination:'CASH',refundDate:req.body.refundDate||dateToday(),idempotencyKey:key(req,'customer-return-refund')});
+          {destination:'CASH',refundDate:req.body.refundDate||dateToday(req),idempotencyKey:key(req,'customer-return-refund')});
         else {req.flash('success',queued.replayed
           ?'That provider refund is already pending or under review. It was not sent twice.'
           :'Refund queued with the original payment provider. Cash and accounting remain unchanged until confirmation.');
           return res.redirect(303,`/returns/${req.params.id}`);}
       }else result=await returns.refundCustomerReturn(database,req.ctx,req.params.id,{destination:'AR',
-        refundDate:req.body.refundDate||dateToday(),idempotencyKey:key(req,'customer-return-refund')});
+        refundDate:req.body.refundDate||dateToday(req),idempotencyKey:key(req,'customer-return-refund')});
       req.flash('success',`Refund recorded for ${(result.amountMinor/100).toFixed(2)} ${result.destination}. Inventory did not move again.`);
       return res.redirect(303,`/returns/${req.params.id}`);
     }));
@@ -983,7 +998,7 @@ function createPostgresCommerceRouter(database,options={}){
       const lines=customerReturn.lines.map((line)=>({skuId:line.sku_id,quantity:req.body[`quantity_${line.id}`],
         unitPriceMinor:0})).filter((line)=>Number(line.quantity)>0);
       const result=await returns.exchangeCustomerReturn(database,req.ctx,req.params.id,{lines,
-        orderDate:req.body.orderDate||dateToday(),fulfillmentLocationId:trimOrNull(req.body.fulfillmentLocationId),
+        orderDate:req.body.orderDate||dateToday(req),fulfillmentLocationId:trimOrNull(req.body.fulfillmentLocationId),
         notes:trimOrNull(req.body.notes),idempotencyKey:key(req,'customer-return-exchange')});
       req.flash('success',`${result.exchangeOrderNumber} was prepared as a zero-price replacement order for review.`);
       return res.redirect(303,`/orders/${result.exchangeOrderId}`);
@@ -1035,7 +1050,7 @@ function createPostgresCommerceRouter(database,options={}){
 
   router.post('/sales/orders/:id/lines',requirePermission(permissions.OPERATE,'change sales orders'),asyncRoute(async(req,res)=>{
     const detail=await commerce.salesOrder(database,req.ctx.workspaceId,req.params.id);
-    const catalogue=await commerce.catalogue(database,req.ctx.workspaceId);const sku=catalogue.find((row)=>row.id===req.body.skuId);
+    const catalogue=await commerce.catalogue(database,req.ctx.workspaceId,{ids:[req.body.skuId],limit:1});const sku=catalogue[0];
     if(!sku)throw new ValidationError('Choose an active product from this inventory.');
     const submitted=String(req.body.unitPrice||'').trim();const unitPriceMinor=submitted?minor(submitted,'Selling price'):sku.amount_minor;
     if(unitPriceMinor===null||unitPriceMinor===undefined)throw new ValidationError('Enter the selling price for that product.');
@@ -1071,7 +1086,7 @@ function createPostgresCommerceRouter(database,options={}){
     if(!invoice)throw new ValidationError('Choose an open invoice from this order.');
     await workflows.recordCustomerPayment(database,req.ctx,{customerId:detail.order.customer_id,
       customerInvoiceId:invoice.id,salesOrderId:detail.order.id,amountMinor:minor(req.body.amount,'Payment amount'),
-      paymentDate:req.body.paymentDate||dateToday(),currency:invoice.currency,method:trimOrNull(req.body.method),
+      paymentDate:req.body.paymentDate||dateToday(req),currency:invoice.currency,method:trimOrNull(req.body.method),
       reference:trimOrNull(req.body.reference),idempotencyKey:key(req,'customer-payment')});
     req.flash('success','Customer payment recorded through the same receivables and journal engine.');
     return res.redirect(303,`/orders/${req.params.id}`);
@@ -1083,7 +1098,7 @@ function createPostgresCommerceRouter(database,options={}){
     if(!invoice)throw new ValidationError('This order has no open customer invoice to pay.');
     await workflows.recordCustomerPayment(database,req.ctx,{customerId:detail.order.customer_id,
       customerInvoiceId:invoice.id,salesOrderId:detail.order.id,amountMinor:minor(req.body.amount,'Payment amount'),
-      paymentDate:req.body.paymentDate||dateToday(),currency:invoice.currency,method:trimOrNull(req.body.method),
+      paymentDate:req.body.paymentDate||dateToday(req),currency:invoice.currency,method:trimOrNull(req.body.method),
       reference:trimOrNull(req.body.reference),idempotencyKey:key(req,'customer-payment')});
     req.flash('success','Customer payment recorded through the same receivables and journal engine.');
     return res.redirect(303,`/orders/${req.params.id}?payment=paid&open=money`);

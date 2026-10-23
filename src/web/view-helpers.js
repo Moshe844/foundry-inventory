@@ -49,7 +49,7 @@ function shortDate(iso) {
 }
 
 function dateInputValue(iso) {
-  return iso ? String(iso).slice(0, 10) : '';
+  if(!iso)return '';if(iso instanceof Date)return Number.isNaN(iso.getTime())?'':iso.toISOString().slice(0,10);return /^\d{4}-\d{2}-\d{2}/.test(String(iso))?String(iso).slice(0,10):'';
 }
 
 function timeAgo(iso) {

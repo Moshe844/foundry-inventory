@@ -14,7 +14,7 @@ const RANK={UNKNOWN:0,PRE_TRANSIT:1,IN_TRANSIT:2,OUT_FOR_DELIVERY:3,FAILURE:3,DE
 
 async function requireShipment(queryable,workspaceId,shipmentId,lock=false){
   const result=await queryable.query(`SELECT shipment.*,orders.order_number,orders.needed_by,orders.customer_id,orders.delivery_method,
-      customer.name AS customer_name,customer.email AS customer_email,customer.phone AS customer_phone,
+      customer.name AS customer_name,orders.contact_email AS customer_email,orders.contact_phone AS customer_phone,
       location.name AS location_name,location.address AS location_address,location.phone AS location_phone,location.shipping_email AS location_shipping_email,
       original.carrier AS original_carrier
     FROM sales_shipments shipment JOIN sales_orders orders ON orders.id=shipment.sales_order_id
@@ -72,6 +72,8 @@ async function prepare(database,ctx,salesOrderId,input={}){
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$8)`,[newId('shpl'),ctx.workspaceId,shipmentId,line.lineId,
         allocation.sku_id,line.locationId,quantity,at]);
     }
+    if(!input.weightGrams){const weights=(await client.query(`SELECT sum(l.quantity*s.weight_grams)::bigint AS grams,count(*) FILTER(WHERE s.weight_grams IS NULL)::int AS missing FROM sales_shipment_lines l JOIN skus s ON s.workspace_id=l.workspace_id AND s.id=l.sku_id WHERE l.workspace_id=$1 AND l.shipment_id=$2`,[ctx.workspaceId,shipmentId])).rows[0];
+      if(!weights.missing&&Number(weights.grams)>0){await client.query('UPDATE sales_shipments SET weight_grams=$3 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,shipmentId,weights.grams]);await client.query(`INSERT INTO shipment_packages(id,workspace_id,shipment_id,position,weight_grams,weight_source,created_at,updated_at) VALUES($1,$2,$3,1,$4,'ESTIMATED',$5,$5)`,[newId('pkg'),ctx.workspaceId,shipmentId,weights.grams,at]);}}
     const result={shipmentId,shipmentNumber,status:'PACKED'};
     await client.query(`UPDATE stockchief_runtime.business_operations SET status='COMPLETED',result=$2::jsonb,
       completed_at=now() WHERE id=$1`,[operation.rows[0].id,JSON.stringify(result)]);

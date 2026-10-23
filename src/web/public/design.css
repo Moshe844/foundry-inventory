@@ -2165,6 +2165,11 @@ a.rm-stat:hover, a.stat:hover, .card--link.stat:hover { background: var(--surfac
 }
 .sales-order-line .rm-field { margin: 0; }
 .sales-order-line [data-remove-order-line] { margin-bottom: 1px; }
+#sales-entry .sales-order-line { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(70px, .5fr) minmax(100px, .7fr); margin-bottom: 12px; }
+#sales-entry .sales-order-line > * { min-width: 0; }
+#sales-entry .sales-order-line select { width: 100%; max-width: 100%; }
+#sales-entry .sales-order-line output { display: block; font-weight: 600; }
+@media (max-width: 760px) { #sales-entry .sales-order-line { grid-template-columns: minmax(0, 1fr); } }
 
 @media (max-width: 640px) {
   #money .sales-money-summary { grid-template-columns: 1fr; }
