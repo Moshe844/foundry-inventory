@@ -25,6 +25,10 @@ async function createBrowserTools(browser,{origin,audit=()=>{},startPath=null,ob
   });
   if(context.routeWebSocket)await context.routeWebSocket('**/*',socket=>socket.close());
   const page=await context.newPage();page.setDefaultTimeout(5000);
+  // Control lookup and a server-rendered page load have different bounds.
+  // Reusing the short interaction timeout aborted valid database-backed GETs
+  // before their response arrived. Navigation remains bounded and read-only.
+  page.setDefaultNavigationTimeout(30000);
   context.on('page',popup=>{if(popup!==page)void popup.close();});
   page.on('download',download=>void download.cancel());
   page.on('dialog',dialog=>void dialog.dismiss());
