@@ -1,5 +1,8 @@
 'use strict';
 (()=>{
+ document.querySelectorAll('[data-order-add-product]').forEach(container=>{const search=container.querySelector('[data-add-product-search]'),select=container.querySelector('[name=skuId]'),status=container.querySelector('[data-add-product-status]');let timer,controller,version=0;
+  search.addEventListener('input',()=>{clearTimeout(timer);controller?.abort();const turn=++version;timer=setTimeout(async()=>{controller=new AbortController();status.textContent='Searching…';try{const response=await fetch('/sales/catalogue/search?q='+encodeURIComponent(search.value),{signal:controller.signal,headers:{Accept:'application/json'}}),body=await response.json();if(!response.ok)throw Error();if(turn!==version)return;const old=select.selectedOptions[0]?.cloneNode(true);select.replaceChildren(new Option('Choose a product',''));for(const product of body.products)select.add(new Option(product.display_name+' · '+product.code,product.id));if(old?.value&&!body.products.some(p=>p.id===old.value))select.add(old);if(old?.value)select.value=old.value;status.textContent=body.products.length>=50?'Showing 50 matches. Refine your search.':body.products.length+' matches';}catch(error){if(error.name!=='AbortError')status.textContent='Search failed. Please try again.';}},200);});
+ });
  const form=document.querySelector('#sales-entry');if(!form)return;
  const lines=form.querySelector('#order-lines'),customer=form.elements.customerId,location=form.elements.fulfillmentLocationId,
  catalogue=new Map(JSON.parse(document.querySelector('#order-catalogue').textContent).map(s=>[s.id,s])),currency=form.elements.currency.value,

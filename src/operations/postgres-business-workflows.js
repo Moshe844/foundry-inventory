@@ -172,7 +172,7 @@ async function createPurchaseOrderInTransaction(client, rawContext, input) {
        destination_location_id,currency,notes,source,source_detail,created_by_user_id,integrity_hash,reference,created_at,updated_at)
       VALUES($1,$2,$3,$4,'DRAFT',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$16)`,
     [id, ctx.workspaceId, poNumber, supplier.id, orderDate, expectedDate,
-      input.expectedDate ? 'manual' : expectedDate?'lead_time':'unknown', input.destinationLocationId || null,
+      input.expectedDate ? 'manual' : expectedDate?(resolved.some(l=>l.supplierItem?.lead_time_days!=null)?'supplier_item':'supplier_default'):'unknown', input.destinationLocationId || null,
       input.currency || supplier.currency || 'USD', trimOrNull(input.notes), input.source || 'manual',
       JSON.stringify(input.sourceDetail || {}), ctx.actorId, crypto.createHash('sha256').update(JSON.stringify(resolved)).digest('hex'), trimOrNull(input.reference), at]);
     const lineIds = [];
@@ -638,6 +638,13 @@ async function editDraftSalesOrder(database,ctx,id,input){
   const order=await requireRow(client,'SELECT * FROM sales_orders WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,id],'That order is not in this inventory.');
   if(order.status!=='DRAFT')throw new ValidationError('Only a draft order can be edited.');
   if(Number(input.expectedVersion)!==Number(order.version))throw new ValidationError('This order changed in another tab. Reload it before editing.');
+  const history=(await client.query(`SELECT
+    EXISTS(SELECT 1 FROM accounting_customer_invoices WHERE workspace_id=$1 AND sales_order_id=$2 AND status<>'VOID')
+    OR EXISTS(SELECT 1 FROM accounting_payments WHERE workspace_id=$1 AND sales_order_id=$2 AND status='POSTED')
+    OR EXISTS(SELECT 1 FROM sales_shipments WHERE workspace_id=$1 AND sales_order_id=$2)
+    OR EXISTS(SELECT 1 FROM stockchief_runtime.pricing_order_snapshots WHERE workspace_id=$1 AND id=$3 AND quote->>'recordedAmounts'='true') AS protected`,
+  [ctx.workspaceId,id,order.pricing_quote_id])).rows[0];
+  if(history.protected)throw new ValidationError('This order has recorded financial or shipment history. Use a governed amendment or duplicate the order instead of replacing its draft lines.');
   if((await client.query('SELECT 1 FROM sales_order_allocations a JOIN sales_order_lines l ON l.workspace_id=a.workspace_id AND l.id=a.sales_order_line_id WHERE l.workspace_id=$1 AND l.sales_order_id=$2',[ctx.workspaceId,id])).rows.length)throw new ValidationError('This draft has stock commitments and cannot be replaced.');
   const {customer,deliveryMethod,shipToAddress,addressWasSubmitted,contactEmail,contactPhone}=await salesOrderDefaults(client,ctx,input),at=nowIso(),promotions=require('../pricing/postgres-promotions');
   const quote=await promotions.prepareQuote(client,ctx,input,{lock:true,orderId:id});

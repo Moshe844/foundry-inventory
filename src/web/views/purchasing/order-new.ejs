@@ -38,11 +38,11 @@
     </div>
   </div>
 <% } else { %>
-  <form method="post" action="/purchasing/orders" class="card section" data-busy>
+  <form method="post" action="/purchasing/orders" class="card section" data-purchase-entry data-today="<%= locals.today||helpers.dateInputValue(new Date()) %>" data-busy>
     <div class="card-head"><div><h2>What to order</h2><p class="muted">Only lines with a quantity go on the order.</p></div></div>
     <div class="card-body">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-      <input type="hidden" name="supplierId" value="<%= supplierId %>">
+      <input type="hidden" name="supplierId" value="<%= supplierId %>"><input type="hidden" name="expectedDateAuto" value="<%= submitted?.expectedDateAuto ?? '1' %>">
 
       <% if (orderErrors && orderErrors.length) { %>
         <div class="notice notice--warn" role="alert"><div><strong>This order is missing information</strong><% orderErrors.forEach(function(error) { %><p><%= error %></p><% }) %></div></div>
@@ -59,7 +59,7 @@
           <thead><tr><th>Product</th><th>Pack</th><th class="num">Unit cost</th><th class="num">How many packs</th></tr></thead>
           <tbody>
             <% supplierItems.forEach(function (item) { %>
-              <tr>
+              <tr data-purchase-line data-lead-days="<%= item.leadTimeDays??'' %>">
                 <td><%= item.displayName %><% if (item.supplierSku) { %> <span class="muted"><%= item.supplierSku %></span><% } %></td>
                 <td><%= item.unitsPerPurchaseUnit > 1 ? item.purchaseUnit + ' of ' + item.unitsPerPurchaseUnit : item.purchaseUnit %></td>
                 <td class="num">
@@ -105,3 +105,5 @@
     <% } %>
   </form>
 <% } %>
+
+<script src="/purchase-entry.js?v=<%= assetVersion %>" defer></script>
