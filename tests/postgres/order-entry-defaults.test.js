@@ -9,6 +9,7 @@ test('order, purchasing, transfer and product defaults use real Chromium and Pos
  const check=(name,fn)=>t.test(name,async()=>{try{return await fn();}catch(error){console.error(name+': '+error.stack);throw error;}});
  await page.goto(base+'/login');await page.locator('[name=email]').fill(f.email);await page.locator('[name=password]').fill(f.password);await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Sign in',exact:true}).click()]);
  const second=await commerce.createCustomer(db,ctx,{name:'Second buyer',email:'second@example.test',phone:'5552220000',shippingAddress:'2 New Road, Albany, NY 12207'}),loc=await require('../../src/domain/postgres-location-service').createLocation(db,ctx,{name:'Annex',kind:'store'});
+ const emptyWarehouse=await require('../../src/domain/postgres-location-service').createLocation(db,ctx,{name:'Empty warehouse',kind:'warehouse'});await db.query('UPDATE locations SET created_at=$3 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,emptyWarehouse.id,'2000-01-01T00:00:00.000Z']);
  await require('../../src/pricing/postgres-service').setPrice(db,ctx,{skuId:f.item.skuIds[0],amount:'12.50',currency:'USD'});
  await db.query('UPDATE skus SET weight_grams=150 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,f.item.skuIds[0]]);
  await db.query("UPDATE accounts SET time_zone='America/New_York' WHERE id=$1",[f.owner.accountId]);

@@ -767,7 +767,9 @@ function createPostgresCommerceRouter(database,options={}){
     const selected=Array.isArray(form.skuId)?form.skuId:form.skuId?[form.skuId]:[];
     const [customers,first,chosen,locations,taxRates,currency]=await Promise.all([commerce.customers(database,req.ctx.workspaceId),
       commerce.catalogue(database,req.ctx.workspaceId,{limit:50}),selected.length?commerce.catalogue(database,req.ctx.workspaceId,{ids:selected,limit:500}):[],
-      database.query("SELECT id,name,kind FROM locations WHERE workspace_id=$1 AND is_active=1 ORDER BY CASE WHEN kind='warehouse' THEN 0 ELSE 1 END,created_at,id",[req.ctx.workspaceId]),
+      database.query(`SELECT l.id,l.name,l.kind FROM locations l WHERE l.workspace_id=$1 AND l.is_active=1
+        ORDER BY CASE WHEN EXISTS(SELECT 1 FROM balances b WHERE b.workspace_id=l.workspace_id AND b.location_id=l.id AND b.on_hand>0) THEN 0 ELSE 1 END,
+        CASE WHEN l.kind='warehouse' THEN 0 ELSE 1 END,l.created_at,l.id`,[req.ctx.workspaceId]),
       database.query("SELECT * FROM accounting_tax_rates WHERE workspace_id=$1 AND active=1 AND applies_to IN ('SALES','BOTH') ORDER BY name",[req.ctx.workspaceId]),entryCurrency(req)]);
     const catalogue=[...new Map([...first,...chosen].map(s=>[s.id,s])).values()];
     return res.status(status).page('sales/entry',{title:editOrder?'Edit draft order':'New sales order',nav:'sales',customers,catalogue,locations:locations.rows,taxRates:taxRates.rows,currency,today:entryToday(req),form,formError,editOrder,operationKey:newId('order-form')});
