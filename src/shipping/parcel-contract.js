@@ -25,7 +25,8 @@ function options(input={},previous={}){
  if(!['PDF','ZPL'].includes(labelFormat))throw new ValidationError('Choose PDF or ZPL label format.');
  if(!['4x6','letter'].includes(labelLayout)||labelFormat==='ZPL'&&labelLayout!=='4x6')throw new ValidationError('Choose a supported label layout: PDF 4x6, PDF letter or ZPL 4x6.');
  if(!['NONE','SIGNATURE','ADULT'].includes(signature))throw new ValidationError('Choose no additional signature, signature required or adult signature.');
- return {labelFormat,labelLayout,signature};
+ const serviceEligibility=String(input.serviceEligibility||'GENERAL').toUpperCase();if(!['GENERAL','MEDIA_MAIL','LIBRARY_MAIL','BOUND_PRINTED_MATTER'].includes(serviceEligibility))throw new ValidationError('Choose the parcel’s confirmed postal-content eligibility.');
+ return {labelFormat,labelLayout,signature,...(serviceEligibility==='GENERAL'?{}:{serviceEligibility})};
 }
 function documents(receipt){
  const documents=[],seen=new Set();

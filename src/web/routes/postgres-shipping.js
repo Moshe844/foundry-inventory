@@ -61,8 +61,9 @@ async function shipmentPage(database,workspaceId,shipmentId){
   const rules=ruleRows.rows.map(row=>({id:row.id,name:row.name,carrier:row.carrier,service:row.service,
     maxCostMinor:row.max_cost_minor===null?null:Number(row.max_cost_minor),
     maxDeliveryDays:row.max_delivery_days===null?null:Number(row.max_delivery_days),
-    requireByPromised:Boolean(Number(row.require_by_promised)),active:Boolean(Number(row.is_active))})).filter(rule=>rule.active);
-  const ruled=rules.length?require('../../shipping/rules').decide(null,workspaceId,rates,{rules,promisedDate:s.needed_by||null}):null;
+    requireByPromised:Boolean(Number(row.require_by_promised)),active:Boolean(Number(row.is_active)),currency:row.currency,
+    minWeightGrams:row.min_weight_grams==null?null:Number(row.min_weight_grams),maxWeightGrams:row.max_weight_grams==null?null:Number(row.max_weight_grams)})).filter(rule=>rule.active);
+  const ruled=rules.length?require('../../shipping/rules').decide(null,workspaceId,rates,{rules,promisedDate:s.needed_by||null,weightGrams:Number(s.weight_grams)}):null;
   const recommended=rates.length&&mode!=='MANUAL'&&!rules.length
     ?{rate:rates[0],because:'This is the lowest current carrier price. Confirm its service and delivery date before buying.'}:null;
   let providerCapabilities={};
@@ -80,6 +81,29 @@ async function shipmentPage(database,workspaceId,shipmentId){
 function createPostgresShippingRouter(database,options={}){
   const router=express.Router();
   router.use(['/settings/shipping','/fulfilment','/returns'],requireAuth);
+  router.get('/fulfilment/batches/new',requireOwner,asyncRoute(async(req,res)=>{
+    const currency=(await database.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId])).rows[0]?.base_currency||'USD';
+    return res.page('shipping/batch-new',{title:'Buy labels together',nav:'fulfilment',room:true,candidates:await require('../../shipping/postgres-batches').candidates(database,req.ctx.workspaceId),currency,requestKey:newId('batch-request')});
+  }));
+  router.post('/fulfilment/batches',requireOwner,requireCapability(database,'shipping.labels'),asyncRoute(async(req,res)=>{
+    if(req.body.confirmed!=='yes')throw new ValidationError('Confirm the postage purchases before starting this batch.');
+    const entries=Object.entries(req.body.choices||{}).filter(([,rateId])=>rateId).map(([shipmentId,rateId])=>({shipmentId,rateId}));
+    const batch=await require('../../shipping/postgres-batches').queue(database,req.ctx,{entries,currency:req.body.currency,maxAmountMinor:require('../../domain/currency').toMinor(req.body.maxCost,req.body.currency),idempotencyKey:req.body.idempotencyKey});
+    return res.redirect(303,'/fulfilment/batches/'+batch.id);
+  }));
+  router.get('/fulfilment/batches/:batchId/print',asyncRoute(async(req,res)=>{
+    const batch=await require('../../shipping/postgres-batches').detail(database,req.ctx.workspaceId,req.params.batchId),print=require('../../shipping/bulk-print'),format=String(req.query.format||'PDF'),offset=Number(req.query.offset||0);
+    if(!Number.isSafeInteger(offset)||offset<0||!['PDF','ZPL'].includes(format))throw new ValidationError('Choose a saved label group to print.');
+    const documents=batch.entries.flatMap(e=>e.documents).filter(d=>d.format===format).slice(offset,offset+print.CHUNK),content=await print.build(documents,format);
+    // Check again after downloading: another tab may have voided the label.
+    const fresh=await require('../../shipping/postgres-batches').detail(database,req.ctx.workspaceId,req.params.batchId),current=new Set(fresh.entries.flatMap(e=>e.documents).map(d=>d.url));
+    if(documents.some(d=>!current.has(d.url)))throw new ValidationError('A label changed or was voided while printing. Reload this batch before printing.');
+    res.set('Cache-Control','no-store');res.set('Content-Disposition',(format==='PDF'?'inline':'attachment')+'; filename="stockchief-labels.'+format.toLowerCase()+'"');return res.type(format==='PDF'?'application/pdf':'application/x-zpl').send(content);
+  }));
+  router.get('/fulfilment/batches/:batchId',asyncRoute(async(req,res)=>res.page('shipping/batch',{title:'Label batch',nav:'fulfilment',room:true,batch:await require('../../shipping/postgres-batches').detail(database,req.ctx.workspaceId,req.params.batchId),printChunk:require('../../shipping/bulk-print').CHUNK})));
+  router.get('/fulfilment/batches/:batchId/status',asyncRoute(async(req,res)=>{
+    const batch=await require('../../shipping/postgres-batches').detail(database,req.ctx.workspaceId,req.params.batchId);res.set('Cache-Control','no-store');return res.json({complete:batch.complete,needsAttention:batch.needsAttention,total:batch.entries.length});
+  }));
   router.post('/returns/:id/postage',requirePermission(permissions.OPERATE,'prepare return postage'),asyncRoute(async(req,res)=>{
     const result=await require('../../shipping/postgres-return-parcels').prepare(database,req.ctx,req.params.id,{locationId:req.body.locationId,outboundShipmentId:req.body.outboundShipmentId});
     req.flash('success','Return parcel prepared. Confirm its actual measurements before comparing postage. Stock and refunds have not changed.');return res.redirect(303,'/fulfilment/'+result.shipmentId+'#carrier');
@@ -98,6 +122,7 @@ function createPostgresShippingRouter(database,options={}){
       active:Boolean(Number(row.is_active)),statedText:row.stated_text}));
     return res.page('shipping/postgres-settings',{title:'Shipping settings',nav:'settings',room:true,backTo:{href:'/settings',label:'Settings'},
       account,shippingAccounts:shippingAccounts.map(a=>({...a,webhookSetup:setupRows.rows.find(row=>row.connector_id===a.connectorId)||null,webhookUrl:`${res.locals.origin}/webhooks/shipping/${a.provider}/${req.ctx.workspaceId}`})),rules,
+      purchaseLimits:await require('../../shipping/postgres-purchase-policy').get(database,req.ctx.workspaceId),fromMinor:require('../../domain/currency').fromMinor,currency:(await database.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId])).rows[0]?.base_currency||'USD',
       automaticShippingAvailable:false,operationPolicy:{mode:policyRows.rows[0]?.mode||'RECOMMEND'},
       referral:{available:false,opened:false,billingReady:false},shipengine:{available:false,opened:false,billingReady:false},
       openShipEngineSetup:false,workspaceName:req.workspace?.name||'',providers:accounts.PROVIDERS,carriers:carriers.list(),
@@ -107,19 +132,14 @@ function createPostgresShippingRouter(database,options={}){
       webhookUrl:`${res.locals.origin}/webhooks/shipping/${account.provider||'<provider>'}/${req.ctx.workspaceId}`,
     });
   }));
-  router.post('/settings/shipping',requirePermission(permissions.OPERATE,'set shipping rules'),asyncRoute(async(req,res)=>{
-    const maxCost=trimOrNull(req.body.maxCost);const days=trimOrNull(req.body.maxDeliveryDays);
-    const maxCostMinor=maxCost===null?null:Math.round(Number(maxCost)*100);const maxDeliveryDays=days===null?null:Number(days);
-    if(maxCostMinor!==null&&(!Number.isSafeInteger(maxCostMinor)||maxCostMinor<0))throw new ValidationError('Enter a valid maximum postage cost.');
-    if(maxDeliveryDays!==null&&(!Number.isSafeInteger(maxDeliveryDays)||maxDeliveryDays<1||maxDeliveryDays>30))
-      throw new ValidationError('Delivery days must be between 1 and 30.');const at=nowIso();const carrier=trimOrNull(req.body.carrier);
-    const service=trimOrNull(req.body.service);const name=[carrier?carrier.toUpperCase():'Any carrier',service,
-      maxCostMinor!==null?`under $${(maxCostMinor/100).toFixed(2)}`:null].filter(Boolean).join(' · ');
-    await database.query(`INSERT INTO shipping_rules(id,workspace_id,name,carrier,service,max_cost_minor,require_by_promised,
-      max_delivery_days,is_active,stated_text,created_by_user_id,created_at,updated_at)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,1,$9,$10,$11,$11)`,[newId('shiprule'),req.ctx.workspaceId,name,carrier,service,maxCostMinor,
-      req.body.requireByPromised!==undefined?1:0,maxDeliveryDays,trimOrNull(req.body.statedText),req.ctx.actorId,at]);
-    req.flash('success','Saved. StockChief will use this when a parcel is ready and it fits.');return res.redirect(303,'/settings/shipping');
+  router.post('/settings/shipping/limits',requireOwner,asyncRoute(async(req,res)=>{
+    const currency=req.body.currency,convert=value=>String(value??'').trim()===''?null:require('../../domain/currency').toMinor(value,currency);
+    await require('../../shipping/postgres-purchase-policy').save(database,req.ctx,{currency,perLabelMinor:convert(req.body.perLabel),rollingDayMinor:convert(req.body.rollingDay)});
+    req.flash('success','Postage limits saved. Pending purchases count toward the rolling 24-hour limit.');return res.redirect(303,'/settings/shipping#limits');
+  }));
+  router.post('/settings/shipping',requirePermission(permissions.OPERATE,'set shipping preferences'),asyncRoute(async(req,res)=>{
+    await require('../../shipping/postgres-rules').save(database,req.ctx,{...req.body,requireByPromised:req.body.requireByPromised!==undefined});
+    req.flash('success','Shipping preference saved. Matching rates are recommended for review; no postage was purchased.');return res.redirect(303,'/settings/shipping');
   }));
   router.post('/settings/shipping/operation-mode',requirePermission(permissions.ADMIN,'change shipping handling'),requireCapability(database,'shipping.rates'),asyncRoute(async(req,res)=>{
     const mode=String(req.body.mode||'');if(!['MANUAL','RECOMMEND','AUTOMATIC'].includes(mode))throw new ValidationError('Choose Manual, Recommend, or Automatic.');

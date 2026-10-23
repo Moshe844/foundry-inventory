@@ -468,27 +468,7 @@ async function shippingMode(database,ctx,_row,args){
   return prepareResult({mode,previous},`Change shipping handling from ${previous} to ${mode}. `+
     'Automatic postage still requires an approved matching rule and bounded authority.');
 }
-async function shippingRule(database,ctx,_row,args){
-  const maxCostMinor=args.maxCost==null?null:Math.round(Number(args.maxCost)*100);
-  const maxDeliveryDays=args.maxDeliveryDays==null?null:Number(args.maxDeliveryDays);
-  if(maxCostMinor!==null&&(!Number.isSafeInteger(maxCostMinor)||maxCostMinor<0))throw new ValidationError(
-    'Enter a valid maximum postage cost.');
-  if(maxDeliveryDays!==null&&(!Number.isSafeInteger(maxDeliveryDays)||maxDeliveryDays<1||maxDeliveryDays>30))
-    throw new ValidationError('Delivery days must be between 1 and 30.');
-  const promised=args.requireByPromised==null?false:String(args.requireByPromised).toLowerCase()==='true';
-  if(args.requireByPromised!=null&&!['true','false'].includes(String(args.requireByPromised).toLowerCase()))
-    throw new ValidationError('Say whether delivery by the promised date is required.');
-  const carrier=String(args.carrier||'').trim()||null;
-  const service=String(args.service||'').trim()||null;
-  if(!carrier&&!service&&maxCostMinor===null&&maxDeliveryDays===null&&!promised)throw new ValidationError(
-    'Give at least one shipping limit, carrier, service, or promised-date requirement.');
-  const name=[carrier?carrier.toUpperCase():'Any carrier',service,
-    maxCostMinor!==null?`under $${(maxCostMinor/100).toFixed(2)}`:null].filter(Boolean).join(' · ');
-  return prepareResult({ruleId:newId('shiprule'),name,carrier,service,maxCostMinor,maxDeliveryDays,
-    requireByPromised:promised,statedText:String(args.statedText||'').trim()||null},
-  `Create a shipping rule for ${name}${maxDeliveryDays?`, no more than ${maxDeliveryDays} days`:''}`+
-    `${promised?', arriving by the promised date':''}. This does not purchase postage.`);
-}
+async function shippingRule(database,ctx,_row,args){const p=await require('../shipping/postgres-rules').build(database,ctx.workspaceId,args);return prepareResult(p,'Create shipping preference '+p.name+(p.maxDeliveryDays?', within '+p.maxDeliveryDays+' days':'')+(p.requireByPromised?', arriving by the promised date':'')+'. This does not purchase postage or grant automatic authority.');}
 async function shippingPackage(database,ctx,row,args){
  shipping.assertParcelEditable(row);
  const previous=await shipping.packagesFor(database,ctx.workspaceId,row.id);let requested;
@@ -1032,6 +1012,12 @@ const SPECS=Object.freeze([
         AND id=$2 AND purchase_order_id=$3 AND supplier_invoice_number=$4 AND total_minor=$5
         AND status=$6`,[ctx.workspaceId,r.billId,p.purchaseOrderId,p.supplierInvoiceNumber,
         p.expectedTotalMinor,p.expectedStatus])).rows.length)},
+  {name:'shipping.label_void',description:'Void every unused label from one exact verified original parcel purchase and request its provider refund. No new label purchase, bank entry, physical receipt or stock movement. Provider confirmation may be asynchronous.',
+    record:'shipment',fields:['recordReference'],permission:permissions.ADMIN,capability:'shipping.workflow',
+    build:async(database,ctx,row)=>{if(row.label_status!=='PURCHASED'||!['PACKED','PICKING'].includes(row.status)||['IN_TRANSIT','OUT_FOR_DELIVERY','DELIVERED','RETURNED'].includes(row.tracking_status))throw new ValidationError('Only verified, unused labels can be voided. Already-shipped goods use the physical return workflow.');
+      const purchase=(await database.query("SELECT id FROM shipping_label_transactions WHERE workspace_id=$1 AND shipment_id=$2 AND operation='PURCHASE' AND status='SUCCEEDED' ORDER BY requested_at DESC,id DESC LIMIT 1",[ctx.workspaceId,row.id])).rows[0];if(!purchase)throw new ValidationError('Verify the original label purchase before requesting a void.');return prepareResult({recordId:row.id,purchaseId:purchase.id},'Void the unused labels for '+row.shipment_number+' and request the provider’s postage refund. Refund approval and timing are decided by the provider. Stock and bank balances do not change.');},
+    execute:async(client,ctx,p)=>{const purchase=(await client.query("SELECT id FROM shipping_label_transactions WHERE workspace_id=$1 AND shipment_id=$2 AND operation='PURCHASE' AND status='SUCCEEDED' ORDER BY requested_at DESC,id DESC LIMIT 1",[ctx.workspaceId,p.recordId])).rows[0];if(purchase?.id!==p.purchaseId)throw new ValidationError('The original label purchase changed after review. Review its current labels before voiding.');return require('../shipping/postgres-label-voids').queue(sameClient(client),ctx,p.recordId,{idempotencyKey:p.idempotencyKey});},
+    verify:async(client,ctx,r,p)=>Boolean(r.transactionId&&r.effectId&&(await client.query("SELECT 1 FROM shipping_label_transactions WHERE workspace_id=$1 AND id=$2 AND shipment_id=$3 AND purchase_transaction_id=$4 AND operation='VOID'",[ctx.workspaceId,r.transactionId,p.recordId,p.purchaseId])).rows.length)},
   {name:'shipping.label',description:'Buy a carrier label at one exact recent quoted rate for an existing prepared shipment. Explicit owner approval is required; a queued purchase is not a confirmed label.',
     record:'shipment',fields:['recordReference','rate'],permission:permissions.ADMIN,
     capability:'shipping.labels',build:label,
@@ -1374,15 +1360,18 @@ const SPECS=Object.freeze([
     verify:async(client,ctx,r,p)=>Boolean(r.mode===p.mode&&
       (await client.query('SELECT mode FROM shipping_operation_policy WHERE workspace_id=$1',
       [ctx.workspaceId])).rows[0]?.mode===p.mode)},
+  {name:'shipping.batch_purchase',description:'Buy one explicitly selected current carrier rate per packed parcel as a single reviewed batch with a total postage ceiling. Uses the same durable purchase queue; each parcel verifies separately. Never hands off stock.',record:null,fields:['shipmentRates','maxCost','currency'],permission:permissions.ADMIN,capability:'shipping.labels',
+    build:async(database,ctx,_row,args)=>{let entries;try{entries=JSON.parse(args.shipmentRates);}catch{throw new ValidationError('Provide the discovered shipment and current rate IDs as structured entries.');}const money=require('../domain/currency'),request=require('../shipping/postgres-batches').request({entries,currency:args.currency,maxAmountMinor:money.toMinor(args.maxCost,args.currency),idempotencyKey:newId('ask-label-batch')}),summaries=[];let total=0;
+      for(const entry of request.entries){const shipment=await shipping.requireShipment(database,ctx.workspaceId,entry.shipmentId),rate=(await shipping.ratesFor(database,ctx.workspaceId,entry.shipmentId)).find(r=>r.id===entry.rateId);if(!rate||rate.currency!==request.currency)throw new ValidationError('Choose current rates in one currency from this business.');total=money.sum([total,rate.amountMinor]);summaries.push(shipment.shipment_number+': '+rate.carrier+' '+rate.service+' '+money.format(rate.amountMinor,rate.currency));}
+      if(total>request.maxAmountMinor)throw new ValidationError('The selected quotes exceed the proposed batch ceiling.');return prepareResult({entries:request.entries,currency:request.currency,maxAmountMinor:request.maxAmountMinor,idempotencyKey:request.key},'Buy these '+request.entries.length+' postage labels from this business’s own accounts: '+summaries.join('; ')+'. Total quoted '+money.format(total,request.currency)+', approved maximum '+money.format(request.maxAmountMinor,request.currency)+'. Buying labels does not move stock.');},
+    execute:(client,ctx,p)=>require('../shipping/postgres-batches').queue(sameClient(client),ctx,p),verify:async(client,ctx,r,p)=>Boolean(r.id&&(await require('../shipping/postgres-batches').detail(client,ctx.workspaceId,r.id)).entries.length===p.entries.length)},
+  {name:'shipping.purchase_limits',description:'Set owner-controlled per-parcel and rolling 24-hour postage limits. Pending and uncertain purchases remain reserved. Does not buy postage or grant automatic authority.',record:null,fields:['maxCost','rollingDayCost','currency'],permission:permissions.ADMIN,capability:'shipping.workflow',
+    build:async(database,ctx,_row,args)=>{const current=await require('../shipping/postgres-purchase-policy').get(database,ctx.workspaceId),money=require('../domain/currency'),currency=money.code(args.currency||current?.currency||(await database.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[ctx.workspaceId])).rows[0]?.base_currency||'USD');if(args.maxCost==null&&args.rollingDayCost==null)throw new ValidationError('State at least one postage limit.');const value={currency,perLabelMinor:args.maxCost==null?(current?.per_label_minor==null?null:Number(current.per_label_minor)):money.toMinor(args.maxCost,currency),rollingDayMinor:args.rollingDayCost==null?(current?.rolling_day_minor==null?null:Number(current.rolling_day_minor)):money.toMinor(args.rollingDayCost,currency)};return prepareResult(value,'Set postage limits: '+(value.perLabelMinor==null?'no additional per-parcel cap':money.format(value.perLabelMinor,currency)+' per parcel')+'; '+(value.rollingDayMinor==null?'no additional 24-hour cap':money.format(value.rollingDayMinor,currency)+' over any 24 hours')+'. Existing approvals and permissions remain required.');},
+    execute:(client,ctx,p)=>require('../shipping/postgres-purchase-policy').save(sameClient(client),ctx,p),verify:async(client,ctx,_r,p)=>{const current=await require('../shipping/postgres-purchase-policy').get(client,ctx.workspaceId);return Boolean(current&&current.currency===p.currency&&(current.per_label_minor==null?null:Number(current.per_label_minor))===p.perLabelMinor&&(current.rolling_day_minor==null?null:Number(current.rolling_day_minor))===p.rollingDayMinor);}},
   {name:'shipping.rule.create',description:'Create a conditional shipping rule with a specified carrier, service, postage ceiling, delivery-time ceiling, or promised-date requirement. Does not purchase postage or grant automatic authority.',
-    record:null,fields:['carrier','service','maxCost','maxDeliveryDays','requireByPromised','statedText'],
+    record:null,fields:['carrier','service','maxCost','maxDeliveryDays','requireByPromised','statedText','minWeightGrams','maxWeightGrams','currency'],
     permission:permissions.OPERATE,build:shippingRule,
-    execute:async(client,ctx,p)=>{const at=nowIso();const inserted=await client.query(`INSERT INTO shipping_rules
-      (id,workspace_id,name,carrier,service,max_cost_minor,require_by_promised,max_delivery_days,
-       is_active,stated_text,created_by_user_id,created_at,updated_at)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,1,$9,$10,$11,$11) RETURNING id`,
-      [p.ruleId,ctx.workspaceId,p.name,p.carrier,p.service,p.maxCostMinor,p.requireByPromised?1:0,
-        p.maxDeliveryDays,p.statedText,ctx.actorId,at]);return inserted.rows[0];},
+    execute:(client,ctx,p)=>require('../shipping/postgres-rules').insert(client,ctx,p),
     verify:async(client,ctx,r,p)=>Boolean(r.id===p.ruleId&&
       (await client.query(`SELECT 1 FROM shipping_rules WHERE workspace_id=$1 AND id=$2
         AND name=$3 AND is_active=1`,[ctx.workspaceId,p.ruleId,p.name])).rows.length)},

@@ -173,7 +173,7 @@ async function externalState(database,workspaceId,result={},options={}){
     }
     return pending.length?{state:'WAITING_EVENT',condition:{kind:'provider_effects',effects:pending}}:{state:'DONE'};
   }
-  if(result.effectId){const row=(await database.query(`SELECT status,error_code,error_message
+  if(result.effectId){const row=(await database.query(`SELECT status,error_code,error_message,provider_reference
       FROM stockchief_runtime.provider_effects WHERE workspace_id=$1 AND id=$2`,
     [workspaceId,result.effectId])).rows[0];
     if(!row)return {state:'BLOCKED',reason:'external_effect_missing'};
@@ -183,6 +183,13 @@ async function externalState(database,workspaceId,result={},options={}){
         return require('./postgres-supplier-acceptance').evaluate(database,workspaceId,result,
           options.steps,options.index,options.provider);
       return {state:'DONE'};
+    }
+    if(row.status==='AMBIGUOUS'&&row.provider_reference?.externalId){
+      const verification=(await database.query(`SELECT id,status FROM stockchief_runtime.jobs WHERE workspace_id=$1
+        AND payload->>'effectId'=$2 AND (payload->>'readOnlyVerification'='true' OR kind=ANY($3::text[]))
+        AND status IN ('PENDING','RUNNING','RETRY') ORDER BY created_at DESC,id DESC LIMIT 1`,
+        [workspaceId,result.effectId,['shipping.label.verify','shipping.void.verify']])).rows[0];
+      if(verification)return {state:'WAITING_EVENT',condition:{kind:'provider_effect',id:result.effectId,status:'VERIFYING',verificationJobId:verification.id}};
     }
     if(['FAILED','AMBIGUOUS','CANCELLED'].includes(row.status))return {state:'BLOCKED',
       reason:row.status==='AMBIGUOUS'?'external_outcome_ambiguous':'external_effect_failed',detail:row};

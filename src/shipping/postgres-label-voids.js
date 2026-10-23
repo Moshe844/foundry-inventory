@@ -34,7 +34,7 @@ async function queue(database,ctx,shipmentId,input={}){return database.transacti
  return {effectId:queued.effect.id,transactionId:id,purchaseTransactionId:purchase.id,status:'PENDING',replayed:false};
 },{isolation:'SERIALIZABLE',retrySafe:true});}
 async function enqueueVerification(client,effect){return jobs.enqueue({query:(...args)=>client.query(...args),transaction:operation=>operation(client)},
- {workspaceId:effect.workspaceId,kind:'shipping.void.verify',idempotencyKey:'shipping-void-verification:'+effect.id,payload:{effectId:effect.id},priority:12,maxAttempts:80});}
+ {workspaceId:effect.workspaceId,kind:'shipping.void.verify',idempotencyKey:'shipping-void-verification:'+effect.id,payload:{effectId:effect.id,readOnlyVerification:true},priority:12,maxAttempts:80});}
 async function pending(database,effect,error,{final=false}={}){
  return effects.finishError(database,effect.workspaceId,effect.id,effect.claimToken,error,{ambiguous:true,apply:async client=>{
   const at=nowIso();await client.query(`UPDATE shipping_label_transactions SET status=$3,refund_status='PENDING',error_message=$4,updated_at=$5 WHERE workspace_id=$1 AND id=$2`,

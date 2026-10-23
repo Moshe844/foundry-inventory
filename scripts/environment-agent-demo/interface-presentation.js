@@ -5,14 +5,14 @@
 const KEY='_stockchiefDefinitions',PREFIX='#/'+KEY+'/',DEFAULTS='_stockchiefOperationDefaults',DATASETS='_stockchiefDatasetDefaults',INDEX='_stockchiefOperationIndexEncoding';
 function compact(value){
  if(!value||!Array.isArray(value.operations)||value.datasets!==undefined&&!Array.isArray(value.datasets)||[KEY,DEFAULTS,DATASETS,INDEX].some(key=>Object.hasOwn(value,key)))return value;
- const occurrences=new Map();let existingReference=false;
+ const occurrences=new Map(),referenceBytes=Buffer.byteLength(JSON.stringify({$ref:PREFIX+'d99999'}));let existingReference=false;
  function count(v){if(!v||typeof v!=='object')return;const encoded=JSON.stringify(v);
   if(typeof v.$ref==='string'&&v.$ref.startsWith(PREFIX))existingReference=true;
-  if(Buffer.byteLength(encoded)>=120){const entry=occurrences.get(encoded)||{value:v,count:0};entry.count++;occurrences.set(encoded,entry);}
+  if(Buffer.byteLength(encoded)>=referenceBytes+12){const entry=occurrences.get(encoded)||{value:v,count:0};entry.count++;occurrences.set(encoded,entry);}
   for(const child of Object.values(v))count(child);
  }
  count(value);if(existingReference)return value;const candidates=new Map(),definitions={};
- for(const [encoded,entry]of occurrences)if(entry.count>1&&Buffer.byteLength(encoded)*(entry.count-1)>entry.count*70+40)candidates.set(encoded,entry.value);
+ for(const [encoded,entry]of occurrences)if(entry.count>1&&Buffer.byteLength(encoded)*(entry.count-1)>entry.count*referenceBytes+12)candidates.set(encoded,entry.value);
  function visit(v,root=false){
   if(!v||typeof v!=='object')return v;const encoded=JSON.stringify(v);
   if(!root&&candidates.has(encoded)){let key=Object.keys(definitions).find(key=>JSON.stringify(definitions[key])===encoded);

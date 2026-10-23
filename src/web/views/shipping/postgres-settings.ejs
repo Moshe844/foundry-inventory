@@ -68,6 +68,9 @@
 </section>
 <% } %>
 
+<section class="card section" id="limits"><div class="card-head"><div><h2>Postage spending limits</h2><p class="hint">These limits apply to every purchase, including batches. Pending and uncertain charges stay reserved. Only an owner can change the limits.</p></div></div><form method="post" action="/settings/shipping/limits" class="card-body stack" data-busy><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="currency" value="<%= purchaseLimits?.currency||currency %>">
+<label class="field"><span class="field-label">Maximum per parcel (<%= purchaseLimits?.currency||currency %>)</span><input class="input" name="perLabel" inputmode="decimal" value="<%= purchaseLimits?.per_label_minor!=null?fromMinor(purchaseLimits.per_label_minor,purchaseLimits.currency):'' %>"><span class="field-help">Blank means no additional business limit. Each purchase still needs approval.</span></label>
+<label class="field"><span class="field-label">Maximum over any 24 hours (<%= purchaseLimits?.currency||currency %>)</span><input class="input" name="rollingDay" inputmode="decimal" value="<%= purchaseLimits?.rolling_day_minor!=null?fromMinor(purchaseLimits.rolling_day_minor,purchaseLimits.currency):'' %>"></label><button class="btn btn--primary" type="submit">Save postage limits</button></form></section>
 <section class="card section" id="rules">
   <div class="card-head"><div><h2>Shipping preferences</h2><p class="hint">Save the carrier, price and delivery limits you want StockChief to consider.</p></div></div>
   <div class="card-body stack">
@@ -82,6 +85,7 @@
       <label class="field"><span class="field-label">Service (optional)</span><input class="input" name="service" maxlength="160"></label>
       <label class="field"><span class="field-label">Only when it costs less than</span><input class="input" name="maxCost" inputmode="decimal" placeholder="25.00"></label>
       <label class="field"><span class="field-label">Maximum delivery days (optional)</span><input class="input" type="number" name="maxDeliveryDays" min="1" max="30"></label>
+      <div class="grid grid--2"><label class="field"><span class="field-label">Minimum parcel weight, grams (optional)</span><input class="input" type="number" name="minWeightGrams" min="1" max="2147483647" step="1"></label><label class="field"><span class="field-label">Maximum parcel weight, grams (optional)</span><input class="input" type="number" name="maxWeightGrams" min="1" max="2147483647" step="1"></label></div>
       <label class="choice"><input type="checkbox" name="requireByPromised"><span>Must arrive by the promised date</span></label>
       <button class="btn btn--primary" type="submit">Save this rule</button>
     </form>

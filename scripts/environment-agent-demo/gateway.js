@@ -62,7 +62,7 @@ function interfaceSnapshot(catalogue,actor,{search='',offset=0,names=[]}={}){
 
 // Pure interface metadata for one already authorized context boundary. This
 // snapshot is neither an execution grant nor permission to reuse authority.
-function initialContractsSnapshot(catalogue,actor){
+function initialContractsSnapshot(catalogue,actor,{clock=null}={}){
  const operations=[];
       // Ordinary questions must be able to choose a governed read immediately,
       // not pay for a separate discovery turn or a browser tour first. This is
@@ -92,8 +92,8 @@ function initialContractsSnapshot(catalogue,actor){
       const datasetIndex=datasets.map(({key:name,label,filterValues})=>({name,label,detailsByName:true,
         ...(filterValues?{filterValues}:{})}));
       const packet=()=>({operations,operationIndex,navigationSignatures,recordCollections,readSignatures,readArgumentsComplete:true,readDescriptionsComplete:true,
-        readAccess:'Every authorized read name has its complete input fields, required arguments and authority in readSignatures. Every read description is supplied in operations. Use a known complete read directly when it fits the goal; interface discovery remains available for missing execution details. No execution grant or business fact is implied.',
-        navigationAccess:'Exact signatures apply to each grouped name. recordCollections are owning list paths for browser inspection, not individual record references. Navigation gives no record facts; authority and user arrival are rechecked.',datasetIndex,datasetFieldsComplete:datasetIndex.every(d=>d.fields),indexComplete:true,total:contracts.length,complete:operations.length===contracts.length,
+        readAccess:'readSignatures gives complete inputs, required arguments and authority for every authorized read; operations gives every read purpose. Use matching known reads directly. Discover omitted execution details when needed. Metadata grants no authority and proves no business facts.',
+        navigationAccess:'Grouped signatures apply to every listed name. recordCollections are list paths for inspection, never record IDs or facts. Arrival and authority are rechecked.',datasetIndex,datasetFieldsComplete:datasetIndex.every(d=>d.fields),indexComplete:true,total:contracts.length,complete:operations.length===contracts.length,...(clock?{clock}:{}),
         datasetAccess:'Scoped projections, not SQL/pages. Use known typed fields/filters; inspect missing metadata. Extent distinguishes rows/groups and complete first-page source totals. Reads recheck scope/permissions.',
         coverage:'All authorized names, bounded details. Browser discovers screens; environment_interfaces supplies omissions. Fresh canonical checks remain.'});
       const size=()=>Buffer.byteLength(JSON.stringify(require('./interface-presentation').compact(packet())));
@@ -121,6 +121,15 @@ function initialContractsSnapshot(catalogue,actor){
         datasetIndex[detail.index].fields=detail.fields;
         // Bound the actual lossless delivered initial packet.
         if(Buffer.byteLength(JSON.stringify(require('./interface-presentation').compact(packet())))>28000)delete datasetIndex[detail.index].fields;
+      }
+      // New operation names must not turn ordinary Ask requests into startup
+      // failures. Dataset details selected before the complete read surface
+      // are optional too: evict them if the final packet outgrows its budget.
+      // Keep every operation, read description/signature and dataset name.
+      // Full omitted dataset fields remain available through typed discovery.
+      for(const detail of [...details].sort((a,b)=>b.bytes-a.bytes)){
+        if(size()<=28000)break;
+        delete datasetIndex[detail.index].fields;
       }
       if(Buffer.byteLength(JSON.stringify(require('./interface-presentation').compact(packet())))>28000)
         throw Error('INITIAL_INTERFACE_INDEX_LIMIT');
@@ -173,7 +182,7 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
   return {
     authorize:access,
     async collections(){return collections((await access()).catalogue);},
-    async initialContracts(){const {catalogue,actor}=await access();const zone=(await database.query('SELECT a.time_zone FROM users u JOIN accounts a ON a.id=u.account_id WHERE u.workspace_id=$1 AND u.id=$2',[ctx.workspaceId,ctx.actorId])).rows[0]?.time_zone;return {...initialContractsSnapshot(catalogue,actor),clock:require('../../src/lib/business-time').context(zone)};},
+    async initialContracts(){const {catalogue,actor}=await access();const zone=(await database.query('SELECT a.time_zone FROM users u JOIN accounts a ON a.id=u.account_id WHERE u.workspace_id=$1 AND u.id=$2',[ctx.workspaceId,ctx.actorId])).rows[0]?.time_zone;return initialContractsSnapshot(catalogue,actor,{clock:require('../../src/lib/business-time').context(zone)});},
     async interfaces(input={}){const {actor,catalogue}=await access();return interfaceSnapshot(catalogue,actor,input);},
     async operate({steps,callId=randomUUID()}){
       let effectsStarted=false;

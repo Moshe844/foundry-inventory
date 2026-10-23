@@ -1,0 +1,5 @@
+'use strict';const test=require('node:test'),assert=require('node:assert/strict'),planner=require('../../src/assistant/postgres-capability-planner'),registry=require('../../src/assistant/postgres-capability-registry').registry;
+test('new operations cannot expand the planner past its cost bound or disappear from the complete operation index',()=>{
+ const entries=registry.list(),extra=Array.from({length:30},(_,i)=>({name:'fixture.operation_'+i,description:'A distinct future business operation with its complete registered authority contract.',kind:'mutation',fields:['recordReference','quantity'],permission:'ADMIN'})),catalogue={list:()=>[...entries,...extra]};
+ const prompt=planner.systemFor(catalogue),encoded=JSON.parse(prompt.split('Registered capability contracts: ')[1]);assert(prompt.length<24000);const indexed=new Map(encoded.mutations.map(row=>[row.n,row.a]));for(const row of [...entries,...extra].filter(e=>e.kind==='mutation'))assert.equal(indexed.get(row.name),row.fields.join(','));assert.match(prompt,/All changes need approval/);
+});

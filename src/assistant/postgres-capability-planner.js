@@ -176,10 +176,17 @@ function planningCatalogue(catalogue=registry,{compact=false}={}){
 }
 
 function systemFor(catalogue=registry,{compact=false}={}){
-  const prompt=`${PLANNING_RULES}\nRegistered capability contracts: ${JSON.stringify(planningCatalogue(catalogue,{compact}))}`;
-  // Use the existing compact descriptions before an expanded catalogue can
-  // exceed the legacy planner's prompt budget. Keep every contract and input.
-  return !compact&&prompt.length>=24000?systemFor(catalogue,{compact:true}):prompt;
+  const contracts=planningCatalogue(catalogue,{compact}),encode=()=>`${PLANNING_RULES}\nRegistered capability contracts: ${JSON.stringify(contracts)}`;
+  let prompt=encode();if(!compact&&prompt.length>=24000)return systemFor(catalogue,{compact:true});
+  // Feature growth must not raise a spending guard or silently omit an action.
+  // Keep exact names, input lists and authority boundaries; progressively
+  // compress only supplementary descriptions if the compact index outgrows it.
+  while(prompt.length>=24000){let changed=false;
+    for(const kind of ['mutations','reads','policies'])for(const entry of contracts[kind]){if(entry.d.length>0){entry.d=entry.d.slice(0,Math.max(0,entry.d.length-4));changed=true;}if(entry.domains)for(const domain of Object.keys(entry.domains)){const value=entry.domains[domain];if(value.length){entry.domains[domain]=value.slice(0,Math.max(0,value.length-4));changed=true;}}}
+    if(!changed)throw new Error('The complete operation index exceeds the planner context allowance. Use governed contract discovery; no model call was made.');
+    prompt=encode();
+  }
+  return prompt;
 }
 
 async function completeWithOutputRetry(provider,request){

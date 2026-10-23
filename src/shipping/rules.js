@@ -138,15 +138,18 @@ function decide(db, workspaceId, rates, options = {}) {
 
   const failures = [];
   for (const rule of rules) {
+    if(rule.minWeightGrams!=null&&!(options.weightGrams>=rule.minWeightGrams)||rule.maxWeightGrams!=null&&!(options.weightGrams<=rule.maxWeightGrams)){
+      failures.push(`${rule.name} — the measured package weight is outside this rule.`);continue;
+    }
     const named = rates.filter((rate) => matchesService(rule, rate));
     if (!named.length) {
       failures.push(`${rule.name} — no carrier quoted that service for this parcel.`);
       continue;
     }
     const allowed = named.filter((rate) => {
+      if(rule.currency&&rate.currency!==rule.currency)return false;
       if (rule.maxCostMinor !== null && rate.amountMinor > rule.maxCostMinor) return false;
-      if (rule.maxDeliveryDays !== null && rate.deliveryDays !== null
-        && rate.deliveryDays > rule.maxDeliveryDays) return false;
+      if (rule.maxDeliveryDays != null && (rate.deliveryDays == null || rate.deliveryDays > rule.maxDeliveryDays)) return false;
       /*
        * The promised date is a promise. A rate with no date at all cannot be
        * shown to keep it, so it does not qualify — StockChief does not get to

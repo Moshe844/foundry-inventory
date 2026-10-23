@@ -1,5 +1,9 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),{compact,expand}=require('../../scripts/environment-agent-demo/interface-presentation');
+test('small repeated metadata remains lossless and uses its actual reference size rather than starving useful schemas',()=>{
+ const schema={type:'string',description:'A current typed field with a repeated explanation that belongs in both complete metadata contracts.'},original={operations:[{name:'read.one',fields:{name:schema}},{name:'read.two',fields:{name:schema}}]},wire=compact(original);
+ assert(wire._stockchiefDefinitions);assert(Buffer.byteLength(JSON.stringify(wire))<Buffer.byteLength(JSON.stringify(original)));assert.deepEqual(expand(wire),original);
+});
 test('interface metadata sharing is lossless and preserves complete contracts, offsets and authority',()=>{
  const fields={search:{type:'string',description:'Search is an optional literal record name or code, not the whole question. Empty filtered results do not establish that a record is absent.'},timeframe:{type:'string',description:'Choose a supported date range.'}};
  const value={operations:Array.from({length:12},(_,i)=>({name:'read.fixture_'+i,kind:'read',fields,required:[],authority:{mode:'none'}})),datasets:[{name:'fixture',fields,queryContract:{fields,limits:{columns:12}}}],total:19,nextOffset:12,datasetNextOffset:null,policy:'No execution authority'};

@@ -126,7 +126,7 @@ test('real Chromium qualifies PostgreSQL rates, label, handoff and idempotent de
     await page.getByLabel('Carrier (optional)').selectOption('ups');await page.getByLabel('Service (optional)').fill('Ground');
     await page.getByLabel('Only when it costs less than').fill('25.00');
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Save this rule'}).click()]);
-    assert.match(await page.locator('main').innerText(),/UPS(?: ·)? Ground · under \$25\.00/);
+    assert.match(await page.locator('main').innerText(),/UPS(?: ·)? Ground · up to \$25\.00/);
 
     await page.goto(`${base}/fulfilment/${parcel.shipmentId}`);
     assert.match(await page.locator('main').innerText(),/Enter a measured package weight/);
