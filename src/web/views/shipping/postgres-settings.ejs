@@ -10,7 +10,7 @@
     <p class="hint">Each account is encrypted and belongs only to this inventory. Connecting another provider keeps your existing connections.</p></div></div>
   <% if(!shippingAccounts.length){ %><div class="card-body"><p>No shipping accounts are connected yet. Add EasyPost, ShipStation or Shippo below.</p></div><% } %>
   <% shippingAccounts.forEach(function(connected){ %>
-  <article class="card-body stack" aria-label="<%= connected.providerName %> account">
+  <article class="card-body stack" id="account-<%= connected.connectorId %>" aria-label="<%= connected.providerName %> account">
     <h3><%= connected.providerName %> <span class="badge <%= connected.testMode?'badge--warn':'badge--ok' %>"><%= connected.testMode?'Test labels only':'Live account' %></span></h3>
     <p><%= connected.testMode?'Test labels cannot be used for real parcels and do not charge real postage.':'Approved labels are billed to your connected provider account.' %></p>
     <p role="status"><%= connected.webhookSetup?.status==='CONNECTED'?'Automatic carrier updates are registered. StockChief also checks tracking periodically.':connected.webhookSetup?.status==='POLLING'?'This provider’s test environment uses automatic tracking checks.':connected.webhookSetup?.status==='REVIEW'?'Carrier update registration needs attention. Automatic tracking checks continue.':'StockChief is setting up automatic carrier updates.' %></p>

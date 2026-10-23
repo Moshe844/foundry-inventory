@@ -24,6 +24,15 @@ async function inspect(database,ctx,{search=null}={}){
    savedGrantedCapabilities:c.capabilities,productsMapped:c.productsMapped,locationsMapped:c.locationsMapped,
    recordsAwaitingMapping:c.itemsNeedingMapping,openIssues:c.openIssues,
    recordedHealth:connections.publicHealth(c,checkedAt)});
+   if(c.provides.includes('shipping')){
+    const saved=(await database.query(`SELECT s.status,(SELECT max(received_at) FROM shipping_provider_events
+      WHERE workspace_id=$1 AND provider=$3) AS last_event_at FROM (SELECT 1) anchor LEFT JOIN shipping_webhook_setups s
+      ON s.workspace_id=$1 AND s.connector_id=$2`,[ctx.workspaceId,c.id,c.provider_type])).rows[0];
+    row.href='/settings/shipping#account-'+c.id;
+    row.shipping={accountMode:['TEST','LIVE'].includes(c.config.shippingAccountMode)?c.config.shippingAccountMode:'UNKNOWN',
+     automaticUpdates:saved?.status||'NOT_REGISTERED',trackingFallbackMinutes:15,lastCarrierEventAt:saved?.last_event_at||null,
+     billedTo:'The connected business shipping account',verification:'Saved registration and incoming delivery evidence are separate. Neither proves a particular parcel was shipped or that current provider access still works.'};
+   }
    const states=recorded.filter(r=>r.connector_id===c.id).map(({source,kind,status,n})=>{
     const count=Number(n);if(!Number.isSafeInteger(count)||count<0)throw Error('CONNECTION_STATE_COUNT_PRECISION');
     return {source,kind,status,count};});

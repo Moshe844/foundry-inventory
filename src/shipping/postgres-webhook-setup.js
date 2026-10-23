@@ -14,16 +14,18 @@ async function enqueue(database,ctx,connectorId,options={}){
 }
 async function schedule(client,options={}){
  const publicOrigin=origin(options.publicOrigin||require('../config').connections.publicOrigin);if(!publicOrigin)return {queued:0};
- const rows=(await client.query(`SELECT c.id,c.workspace_id,c.authorized_by_user_id FROM workspace_connectors c
+ const rows=(await client.query(`SELECT c.id,c.workspace_id,c.provider_type,c.authorized_by_user_id,s.connector_id AS setup_connector_id FROM workspace_connectors c
    JOIN workspaces w ON w.id=c.workspace_id LEFT JOIN shipping_webhook_setups s ON s.workspace_id=c.workspace_id AND s.connector_id=c.id
    WHERE c.provider_type IN ('easypost','shipstation','shippo') AND c.status='connected' AND c.paused_at IS NULL
-    AND w.deletion_requested_at IS NULL AND s.connector_id IS NULL ORDER BY c.id LIMIT 100 FOR UPDATE OF c SKIP LOCKED`)).rows;
+    AND w.deletion_requested_at IS NULL AND (s.connector_id IS NULL OR c.config::jsonb->>'shippingAccountMode' IS NULL) ORDER BY c.id LIMIT 100 FOR UPDATE OF c SKIP LOCKED`)).rows;
  const database={query:(...args)=>client.query(...args),transaction:operation=>operation(client)};
- for(const row of rows){
+ let queued=0;for(const row of rows){
   const store=require('../connections/postgres-credential-store'),held=await store.get(client,row.workspace_id,row.id,'provider');if(!held?.apiKey)continue;
+  const mode=accounts.isTestKey(row.provider_type,held.apiKey)?'TEST':'LIVE';
+  await client.query("UPDATE workspace_connectors SET config=(config::jsonb||jsonb_build_object('shippingAccountMode',$3::text))::text WHERE workspace_id=$1 AND id=$2",[row.workspace_id,row.id,mode]);
   if(!held.webhookSecret)await store.put(client,row.workspace_id,row.id,'provider',{...held,webhookSecret:require('node:crypto').randomBytes(32).toString('hex')});
-  await enqueue(database,{workspaceId:row.workspace_id,actorId:row.authorized_by_user_id},row.id,{publicOrigin,generation:'automatic-initial'});
- }return {queued:rows.length};
+  if(!row.setup_connector_id){await enqueue(database,{workspaceId:row.workspace_id,actorId:row.authorized_by_user_id},row.id,{publicOrigin,generation:'automatic-initial'});queued++;}
+ }return {queued};
 }
 async function run(database,job,options={}){
  const held=await accounts.contextFor(database,{workspaceId:job.workspaceId,actorId:job.payload.actorId},{connectorId:job.payload.connectorId});if(!held)return {skipped:'disconnected'};
@@ -35,6 +37,9 @@ async function run(database,job,options={}){
   const result=await require('../commercial/context').run({database,scope,system:true,requestId:'shipping-webhook-setup:'+job.id},()=>provider.ensureWebhook(held.ctx,
    {url:publicOrigin+'/webhooks/shipping/'+held.account.provider+'/'+job.workspaceId,webhookSecret:held.account.webhookSecret,testMode:held.account.testMode}));
   if(!['CONNECTED','POLLING'].includes(result.status))throw new ValidationError('Carrier updates have not been confirmed.');
+  const current=await database.query(`UPDATE workspace_connectors SET config=(config::jsonb||jsonb_build_object('shippingAccountMode',$3::text))::text
+    WHERE workspace_id=$1 AND id=$2 AND updated_at=$4 RETURNING id`,[job.workspaceId,job.payload.connectorId,held.account.testMode?'TEST':'LIVE',held.account.updatedAt]);
+  if(!current.rows.length)throw new ValidationError('This shipping account changed during setup. The newer connection must finish its own verification.');
   await database.query('UPDATE shipping_webhook_setups SET status=$3,provider_reference=$4,last_error=$5,updated_at=$6 WHERE workspace_id=$1 AND connector_id=$2',
    [job.workspaceId,job.payload.connectorId,result.status,result.id||null,result.reason||null,nowIso()]);return {status:result.status,provider:held.account.provider};
  }catch(error){

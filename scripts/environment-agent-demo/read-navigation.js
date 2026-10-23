@@ -13,4 +13,18 @@ function restoreReadLinks(browser,evidence){
   else browser.observeDatasetLinks?.(result);
  }
 }
-module.exports={restoreReadLinks};
+function paths(evidence){
+ const known=new Set(),add=value=>{const path=require('../../src/assistant/agent-navigation-path').localPath(value);
+  if(path&&require('./browser-link-evidence').transferable(value))known.add(path);};
+ const sink={observeDatasetLinks(result){add(result?.handoff?.href);for(const row of Array.isArray(result?.rows)?result.rows:[])add(row?.href);},
+  observeReadLinks(outcomes){for(const outcome of outcomes){if(outcome.result?.status!=='ANSWERED')continue;
+   const kind=require('../../src/assistant/postgres-capability-registry').registry.get(outcome.capability)?.kind;
+   if(kind==='read')sink.observeDatasetLinks(outcome.result);if(kind==='navigation')add(outcome.result.navigation?.href);
+  }}};
+ restoreReadLinks(sink,evidence);return [...known];
+}
+function initialPath(action,{evidence,observedPaths=[],interfacePaths=[],resumedPath=null,fallback=null}={}){
+ const opened=action?.action==='open'?require('../../src/assistant/agent-navigation-path').localPath(action.value):null;
+ return opened&&[...observedPaths,...interfacePaths,...paths(evidence)].includes(opened)?opened:resumedPath||fallback||observedPaths[0]||'/';
+}
+module.exports={restoreReadLinks,paths,initialPath};

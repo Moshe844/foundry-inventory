@@ -102,7 +102,7 @@ async function run(database,ctx,id,options={}){
    // Owning lists are supplied by the same freshly authorized metadata as the
    // native agent's interface packet. Do not force a homepage tour to use one.
    const interfacePaths=Object.values(await gateway.collections()).map(c=>c.href);
-   const openedPath=firstAction?.action==='open'?require('./agent-navigation-path').localPath(firstAction.value):null;
+   const navigation=require(base+'read-navigation'),recordPaths=navigation.paths(goal.checkpoint.harness?.evidence);
    let resumedPath=null;
    if(goal.checkpoint.harness?.native?.codex?.threadId&&goal.checkpoint.harness.native.browserUrl){
     const previous=new URL(goal.checkpoint.harness.native.browserUrl);
@@ -110,7 +110,8 @@ async function run(database,ctx,id,options={}){
     resumedPath=require('./agent-navigation-path').localPath(previous.pathname+previous.search);
    }
    const tools=await require(base+'browser').createBrowserTools(browser,{origin:server.origin,audit,
-    startPath:openedPath&&[...observedPaths,...interfacePaths].includes(openedPath)?openedPath:resumedPath||goal.checkpoint.page?.path||observedPaths[0],observedPaths,interfacePaths});cleanup.push(()=>tools.close());
+    startPath:navigation.initialPath(firstAction,{evidence:goal.checkpoint.harness?.evidence,observedPaths,interfacePaths,resumedPath,fallback:goal.checkpoint.page?.path}),
+    observedPaths:[...observedPaths,...recordPaths],interfacePaths});cleanup.push(()=>tools.close());
    // Durable canonical record links are navigation knowledge across restarts,
    // never current facts or execution grants. The restricted app rechecks
    // tenant membership and permissions on each destination GET.

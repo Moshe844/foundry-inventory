@@ -39,7 +39,7 @@ async function readAccount(database,workspaceId,connector){
   const held=await credentials.get(database,workspaceId,connector.id,'provider')||{};
   if(!held.apiKey)return null;
   return {provider:connector.provider_type,source:'workspace',connectorId:connector.id,apiKey:held.apiKey,
-    webhookSecret:held.webhookSecret||null,displayName:connector.display_name,testMode:isTestKey(connector.provider_type,held.apiKey)};
+    webhookSecret:held.webhookSecret||null,displayName:connector.display_name,updatedAt:connector.updated_at,testMode:isTestKey(connector.provider_type,held.apiKey)};
 }
 
 async function forWorkspace(database,workspaceId,selector={}){
@@ -76,16 +76,17 @@ async function connect(database,ctx,input={}){
     if(existing.rows.length){
       await client.query(`UPDATE workspace_connectors SET status='connected',paused_at=NULL,
         setup_status='CONNECTED',last_error=NULL,credential_ref=$3,authorized_by_user_id=$4,updated_at=$5
-        WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,id,`connection_credentials:${id}`,ctx.actorId,now]);
+        ,config=(config::jsonb||jsonb_build_object('shippingAccountMode',$6::text))::text
+        WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,id,`connection_credentials:${id}`,ctx.actorId,now,isTestKey(provider,apiKey)?'TEST':'LIVE']);
     }else{
       const commercialScope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId);
       await entitlements.assertMeterCapacity(client,commercialScope,'connections',1);
       await client.query(`INSERT INTO workspace_connectors
         (id,workspace_id,connector_key,display_name,provider_type,provides,config,status,capabilities,
          credential_ref,setup_status,authorized_by_user_id,created_at,updated_at)
-        VALUES($1,$2,$3,$4,$5,'["shipping"]','{}','connected','["rates","labels","tracking"]',
+        VALUES($1,$2,$3,$4,$5,'["shipping"]',$9,'connected','["rates","labels","tracking"]',
           $6,'CONNECTED',$7,$8,$8)`,[id,ctx.workspaceId,`shipping-${provider}`,DISPLAY[provider],provider,
-        `connection_credentials:${id}`,ctx.actorId,now]);
+        `connection_credentials:${id}`,ctx.actorId,now,JSON.stringify({shippingAccountMode:isTestKey(provider,apiKey)?'TEST':'LIVE'})]);
     }
     const previous=await credentials.get(client,ctx.workspaceId,id,'provider')||{};
     await credentials.put(client,ctx.workspaceId,id,'provider',{apiKey,webhookSecret:webhookSecret||previous.webhookSecret||require('node:crypto').randomBytes(32).toString('hex')});
