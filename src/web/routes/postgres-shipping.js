@@ -12,7 +12,7 @@ const {requireCapability,commercialScope}=require('../commercial-middleware');
 const entitlements=require('../../entitlements/postgres-service');
 const permissions=require('../../actions/permissions');
 const carriers=require('../../sales/carriers');
-const {newId,nowIso,trimOrNull}=require('../../lib/util');
+const {newId,nowIso,trimOrNull,requireText}=require('../../lib/util');
 const {ValidationError}=require('../../domain/errors');
 
 async function shipmentPage(database,workspaceId,shipmentId){
@@ -127,8 +127,19 @@ function createPostgresShippingRouter(database,options={}){
   }));
   router.post('/settings/shipping/account',requireOwner,asyncRoute(async(req,res)=>{
     const verify=options.verifyAccount||legacyAccounts.verifyInput;
-    await verify({provider:req.body.provider,apiKey:req.body.apiKey});
-    const account=await accounts.connect(database,req.ctx,req.body);
+    const provider=accounts.requireProvider(req.body.provider),apiKey=requireText(req.body.apiKey,'API key',{max:400});
+    await require('../../commercial/operations').run(database,req.ctx.workspaceId,{capability:'shipping.rates',
+      key:newId('shipping-account-verification'),provider,operation:'shipping_account_verify'},async()=>{
+      try{return await verify({provider,apiKey});}
+      catch(error){
+        // Provider responses can echo credentials. Never copy their body or
+        // exception into the page, commercial ledger, job history or logs.
+        throw new ValidationError('The '+provider+' account could not be verified'+
+          (Number.isInteger(Number(error.status))?' (HTTP '+Number(error.status)+')':'')+
+          '. Check that the key is active and belongs to the selected platform.');
+      }
+    });
+    const account=await accounts.connect(database,req.ctx,{...req.body,provider,apiKey});
     req.flash('success',account.testMode?'Sandbox postage account connected. No real postage can be charged.':
       'This inventory’s own postage account is connected.');
     return res.redirect(303,'/settings/shipping');

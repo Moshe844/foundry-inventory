@@ -206,7 +206,9 @@ async function verifyInput(input = {}) {
   } else if (provider === 'shipstation') {
     await require('./providers/shipstation').call({ shipstationApiKey: apiKey }, '/carriers');
   } else if (provider === 'easypost') {
-    await require('./providers/easypost').call({ easypostApiKey: apiKey }, '/users');
+    // Account-management endpoints require a production key. Listing the
+    // account's shipments verifies shipping access in either key mode.
+    await require('./providers/easypost').call({ easypostApiKey: apiKey }, '/shipments?page_size=1');
   } else {
     await require('./providers/shippo').call({ shippoApiKey: apiKey }, '/carrier_accounts/?results=1');
   }
