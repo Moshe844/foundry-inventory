@@ -277,7 +277,7 @@
   </div>
   <% if(locals.postgresPlacement){ %><script src="/async-operation.js" defer></script><% } %>
 <% } else if (latestLabelTransaction && latestLabelTransaction.status === 'REVIEW') { %>
-  <div class="notice notice--warn section"><div><strong>Carrier outcome needs review.</strong><br><%= latestLabelTransaction.error_message || 'The carrier may have accepted the request before confirmation was saved.' %> StockChief will not submit that request again automatically.</div></div>
+  <div class="notice notice--warn section"><div><strong>Carrier outcome needs review.</strong><br><%= latestLabelTransaction.error_message || 'The carrier may have accepted the request before confirmation was saved.' %> StockChief will not submit that request again automatically.<% if(locals.postgresPlacement&&latestLabelTransaction.operation==='PURCHASE'){ %><p><a class="btn btn--sm" href="/fulfilment/<%= s.id %>/label/review">Review the saved carrier charge</a></p><% } %></div></div>
 <% } else if (latestLabelTransaction && latestLabelTransaction.status === 'FAILED') { %>
   <div class="notice notice--warn section"><div><strong><%= latestLabelTransaction.operation==='VOID'?'The carrier refused the void.':'The carrier refused the purchase.' %></strong><br><%= latestLabelTransaction.error_message || 'Review the shipping account and carrier response.' %></div></div>
 <% } %>

@@ -220,15 +220,20 @@ const datasets=Object.freeze({
       estimated_delivery_on:'date',quoted_on:'date'}},
   shipping_label_activity:{label:'Shipping label purchases and adjustments',permission:permissions.VIEW_SALES,
     source:`SELECT t.shipment_id AS record_id,s.shipment_number,t.provider,t.operation,t.status,
-      t.amount_minor::bigint AS recorded_charge_minor,t.currency,
+      t.amount_minor::bigint AS recorded_charge_minor,CASE WHEN rate.currency=t.currency THEN t.approved_amount_minor::bigint END AS original_approved_quote_minor,t.currency,
       CASE WHEN t.amount_minor IS NULL THEN 'no' ELSE 'yes' END AS charge_recorded,
+      CASE WHEN t.approved_amount_minor IS NOT NULL AND rate.currency=t.currency THEN 'yes' ELSE 'no' END AS quote_recorded,
+      COALESCE(t.error_message,'') AS review_reason,
+      CASE WHEN EXISTS(SELECT 1 FROM shipping_receipt_reviews review WHERE review.workspace_id=t.workspace_id AND review.transaction_id=t.id) THEN 'yes' ELSE 'no' END AS owner_charge_review_saved,
       LEFT(t.requested_at,10) AS requested_on,LEFT(t.completed_at,10) AS completed_on
       FROM shipping_label_transactions t
       JOIN sales_shipments s ON s.id=t.shipment_id AND s.workspace_id=t.workspace_id
+      LEFT JOIN stockchief_runtime.provider_effects effect ON effect.workspace_id=t.workspace_id AND effect.kind='shipping.label.purchase' AND effect.payload->>'transactionId'=t.id
+      LEFT JOIN shipment_rates rate ON rate.workspace_id=t.workspace_id AND rate.id=effect.payload->>'rateId'
       WHERE t.workspace_id=$1`,recordHref:(row)=>`/fulfilment/${row.record_id}`,
-    moneyCompleteness:{recorded_charge_minor:{field:'charge_recorded',value:'yes'}},
+    moneyCompleteness:{recorded_charge_minor:{field:'charge_recorded',value:'yes'},original_approved_quote_minor:{field:'quote_recorded',value:'yes'}},
     fields:{shipment_number:'text',provider:'text',operation:'text',status:'text',
-      recorded_charge_minor:'money_minor',currency:'text',charge_recorded:'text',
+      recorded_charge_minor:'money_minor',original_approved_quote_minor:'money_minor',currency:'text',charge_recorded:'text',quote_recorded:'text',review_reason:'text',owner_charge_review_saved:'text',
       requested_on:'date',completed_on:'date'}},
   shipment_tracking:{label:'Carrier tracking events',permission:permissions.VIEW_SALES,
     source:`SELECT t.shipment_id AS record_id,s.shipment_number,o.order_number,

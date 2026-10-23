@@ -1012,6 +1012,14 @@ const SPECS=Object.freeze([
         AND id=$2 AND purchase_order_id=$3 AND supplier_invoice_number=$4 AND total_minor=$5
         AND status=$6`,[ctx.workspaceId,r.billId,p.purchaseOrderId,p.supplierInvoiceNumber,
         p.expectedTotalMinor,p.expectedStatus])).rows.length)},
+  {name:'shipping.receipt_accept',description:'Acknowledge one already-reported carrier charge that exceeds its original quote, then verify that exact retained purchase through read-only provider calls. Preserves the original approval, never buys again, and grants no future spending authority. A changed currency or unidentified purchase cannot be accepted.',
+    record:'shipment',fields:['recordReference','amount','currency'],permission:permissions.ADMIN,capability:'shipping.workflow',
+    build:async(database,ctx,row,args)=>{const review=await require('../shipping/postgres-receipt-review').view(database,ctx.workspaceId,row.id),money=require('../domain/currency');
+      if(!review?.acceptable)throw new ValidationError('This parcel has no identified, same-currency carrier charge available for owner review.');
+      if(money.toMinor(args.amount,args.currency)!==review.amountMinor||args.currency!==review.currency)throw new ValidationError('State the exact reported carrier charge and currency for this review.');
+      return prepareResult({recordId:row.id,fingerprint:review.fingerprint,amountMinor:review.amountMinor,currency:review.currency},'Acknowledge the already-reported '+money.format(review.amountMinor,review.currency)+' carrier charge for '+row.shipment_number+' and verify its original label. The original quote remains '+money.format(review.quotedMinor,review.quotedCurrency)+'. No second purchase, stock, bank or invoice change.');},
+    execute:(client,ctx,p)=>require('../shipping/postgres-receipt-review').accept(sameClient(client),ctx,p.recordId,p),
+    verify:async(client,ctx,r,p)=>Boolean(r.reviewId&&r.effectId&&(await client.query('SELECT 1 FROM shipping_receipt_reviews WHERE workspace_id=$1 AND id=$2 AND shipment_id=$3 AND amount_minor=$4 AND currency=$5',[ctx.workspaceId,r.reviewId,p.recordId,p.amountMinor,p.currency])).rows.length)},
   {name:'shipping.label_void',description:'Void every unused label from one exact verified original parcel purchase and request its provider refund. No new label purchase, bank entry, physical receipt or stock movement. Provider confirmation may be asynchronous.',
     record:'shipment',fields:['recordReference'],permission:permissions.ADMIN,capability:'shipping.workflow',
     build:async(database,ctx,row)=>{if(row.label_status!=='PURCHASED'||!['PACKED','PICKING'].includes(row.status)||['IN_TRANSIT','OUT_FOR_DELIVERY','DELIVERED','RETURNED'].includes(row.tracking_status))throw new ValidationError('Only verified, unused labels can be voided. Already-shipped goods use the physical return workflow.');

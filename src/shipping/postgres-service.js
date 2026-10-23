@@ -315,14 +315,16 @@ async function recoverKnownLabelVerifications(client,options={}){
 
 async function confirmLabelPurchase(database,workspaceId,effect,token,rate,bought){
   const input=effect.payload;
-  if(Number.isSafeInteger(bought.amountMinor)&&bought.amountMinor>=0&&(bought.currency!==rate.currency||bought.amountMinor>Number(rate.amount_minor))){
+  const exactReview=bought.currency===rate.currency&&Number.isSafeInteger(bought.amountMinor)&&bought.amountMinor>=0&&bought.amountMinor>Number(rate.amount_minor)
+    &&await require('./postgres-receipt-review').covers(database,workspaceId,effect,bought);
+  if(Number.isSafeInteger(bought.amountMinor)&&bought.amountMinor>=0&&(bought.currency!==rate.currency||bought.amountMinor>Number(rate.amount_minor)&&!exactReview)){
     const error=new InvariantError('The carrier reported a charge above the approved quote or in another currency. The actual charge is held for owner review; the purchase was not repeated.','shipping_charge_exceeds_approval');error.retryable=false;throw error;
   }
   const documents=require('./parcel-contract').documents(bought);
   const packages=require('./package-tracking').receipts(bought,input.packageCount||1);
   if(input.options&&documents.some(doc=>doc.kind==='LABEL'&&doc.format!==input.options.labelFormat))
     throw new InvariantError('The carrier returned a different print format. Verify its saved purchase before printing or repeating it.','shipping_label_format_unverified');
-  if(!bought.labelUrl||!Number.isSafeInteger(bought.amountMinor)||bought.amountMinor<0||bought.currency!==rate.currency||bought.amountMinor>Number(rate.amount_minor))
+  if(!bought.labelUrl||!Number.isSafeInteger(bought.amountMinor)||bought.amountMinor<0||bought.currency!==rate.currency||bought.amountMinor>Number(rate.amount_minor)&&!exactReview)
     throw new InvariantError('The carrier label or its price needs verification. The purchase must not be repeated.','shipping_receipt_incomplete');
   return providerEffects.succeed(database,workspaceId,effect.id,token,{providerReference:
     bought.providerLabelIds||bought.providerShipmentIds||[],result:{trackingNumber:bought.trackingNumber,

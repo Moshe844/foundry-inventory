@@ -1,0 +1,19 @@
+<h1 class="rm-verdict">Review the carrier’s charge</h1>
+<p class="rm-prose">The carrier has already reported this purchase. Reviewing it here never buys another label or changes stock, invoices or bank balances.</p>
+<% if(review){ %>
+<section class="panel card-body stack">
+ <h2><%= shipment.shipment_number %></h2>
+ <dl class="detail-list"><div><dt>Original approved quote</dt><dd><%= review.quotedMinor==null?'Not available':helpers.money(review.quotedMinor,review.quotedCurrency) %></dd></div>
+ <div><dt>Carrier’s reported charge</dt><dd><%= review.amountMinor==null?'Not verified':helpers.money(review.amountMinor,review.currency) %></dd></div>
+ <div><dt>Saved request status</dt><dd><%= review.status.toLowerCase() %></dd></div></dl>
+ <% if(review.acceptable){ %>
+ <p>The charge exceeds the quote. If you accept this amount, StockChief will check the same carrier transaction again. It will unlock the label only if the original identity, amount, currency and printable documents are confirmed.</p>
+ <form method="post" action="/fulfilment/<%= shipment.id %>/label/review" class="stack" data-busy>
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="fingerprint" value="<%= review.fingerprint %>">
+  <input type="hidden" name="amount" value="<%= fromMinor(review.amountMinor,review.currency) %>"><input type="hidden" name="currency" value="<%= review.currency %>">
+  <label class="choice"><input type="checkbox" name="confirmed" value="yes" required><span>I acknowledge this exact <strong><%= helpers.money(review.amountMinor,review.currency) %></strong> reported charge. This grants no permission for another purchase.</span></label>
+  <button type="submit" class="btn btn--primary">Accept this charge and verify the original label</button>
+ </form>
+ <% } else { %><p class="notice notice--info">This request is not available for charge acceptance. A pending request is checked automatically. A different currency, missing carrier identity or shipped parcel needs the original carrier record resolved before another purchase.</p><% } %>
+</section>
+<% } else { %><p class="notice notice--info">There is no saved carrier purchase for this parcel.</p><% } %>

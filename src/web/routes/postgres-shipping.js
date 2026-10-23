@@ -202,6 +202,15 @@ function createPostgresShippingRouter(database,options={}){
     res.set('Cache-Control','no-store');return res.json({state:transaction.status==='SUCCEEDED'?'COMPLETED':transaction.status,
       startedAt:transaction.requested_at});
   }));
+  router.get('/fulfilment/:id/label/review',requireOwner,asyncRoute(async(req,res)=>{
+    const shipment=await shipping.requireShipment(database,req.ctx.workspaceId,req.params.id),review=await require('../../shipping/postgres-receipt-review').view(database,req.ctx.workspaceId,shipment.id);
+    return res.page('shipping/receipt-review',{title:'Review carrier charge',nav:'fulfilment',room:true,shipment,review,fromMinor:require('../../domain/currency').fromMinor});
+  }));
+  router.post('/fulfilment/:id/label/review',requireOwner,asyncRoute(async(req,res)=>{
+    if(req.body.confirmed!=='yes')throw new ValidationError('Confirm the exact already-reported charge before continuing.');
+    await require('../../shipping/postgres-receipt-review').accept(database,req.ctx,req.params.id,{fingerprint:req.body.fingerprint,amountMinor:require('../../domain/currency').toMinor(req.body.amount,req.body.currency),currency:req.body.currency});
+    req.flash('success','The exact charge review is saved. StockChief is verifying the original carrier label without buying again.');return res.redirect(303,'/fulfilment/'+req.params.id+'#label');
+  }));
   router.post('/fulfilment/:id/packages',asyncRoute(async(req,res)=>{
     await shipping.setPackages(database,req.ctx,req.params.id,req.body.packages||[{weightGrams:req.body.weightGrams,
       lengthMm:req.body.lengthMm,widthMm:req.body.widthMm,heightMm:req.body.heightMm}],{expectedUpdatedAt:req.body.expectedUpdatedAt});
