@@ -348,6 +348,7 @@
 
       <% if (ship.boxes && ship.boxes.length && s.status === 'PACKED') { %>
         <div class="card-body">
+          <% if(locals.postgresPlacement){ %><%- include('../shipping/parcel-setup',{shipment:s,shipping:ship}) %><% } else { %>
           <form method="post" action="/fulfilment/<%= s.id %>/packages" class="inline-form" data-busy>
             <input type="hidden" name="_csrf" value="<%= csrfToken %>">
             <% ship.boxes.forEach(function (box, index) { %>
@@ -364,7 +365,7 @@
             </label>
             <% }) %>
             <button class="btn btn--sm" type="submit"><%= ship.boxes.length > 1 ? 'Save package weights' : 'Save weight' %></button>
-          </form>
+          </form><% } %>
         </div>
       <% } %>
 
@@ -471,7 +472,7 @@
   </section>
 <% } %>
 
-<% if (ship && s.tracking_number && s.label_url) { %>
+<% if (ship && s.label_url && (!locals.postgresPlacement||['PURCHASED','VOIDED','VOID_PENDING'].includes(s.label_status))) { %>
   <section class="section" id="label">
     <div class="panel">
       <div class="panel-head"><div><h2><%= s.label_status === 'VOIDED' ? 'Label voided' : s.label_status === 'VOID_PENDING' ? 'Label void pending' : s.status === 'PACKED' ? 'Label ready — not handed over yet' : 'Shipment' %></h2></div></div>
@@ -480,10 +481,10 @@
           <p><span>Carrier</span><strong><%= helpers.carrierName ? helpers.carrierName(s.carrier) : s.carrier %> <%= s.service || '' %></strong></p>
           <p><span>Tracking</span><strong>
             <% if (s.tracking_url) { %><a href="<%= s.tracking_url %>" rel="noreferrer noopener" target="_blank"><%= s.tracking_number %></a>
-            <% } else { %><%= s.tracking_number %><% } %>
+            <% } else { %><%= s.tracking_number||'Not provided by the carrier' %><% } %>
           </strong></p>
           <% if (s.expected_delivery_date) { %><p><span>Expected</span><strong><%= s.expected_delivery_date %></strong></p><% } %>
-          <% if (s.shipping_cost_minor) { %><p><span>Postage</span><strong><%= helpers.money(s.shipping_cost_minor, s.currency || 'USD') %></strong></p><% } %>
+          <% if (s.shipping_cost_minor!==null&&s.shipping_cost_minor!==undefined) { %><p><span>Postage</span><strong><%= helpers.money(s.shipping_cost_minor, s.currency || 'USD') %></strong></p><% } %>
           <% if (s.postage_refund_minor) { %><p><span>Refunded</span><strong><%= helpers.money(s.postage_refund_minor, s.currency || 'USD') %></strong></p><% } %>
           <% if (s.postage_adjustment_minor) { %><p><span>Carrier adjustments</span><strong><%= helpers.money(s.postage_adjustment_minor, s.currency || 'USD') %></strong></p><% } %>
           <% if (s.tracking_status) { %><p><span>Where it is</span><strong><%= s.tracking_status.toLowerCase().replace(/_/g, ' ') %></strong></p><% } %>
@@ -491,6 +492,9 @@
         <div class="button-row" style="margin-top:12px;">
           <% if (s.label_status !== 'VOIDED' && s.label_status !== 'VOID_PENDING') { %>
             <a class="btn btn--primary" href="<%= s.label_url %>" rel="noreferrer noopener" target="_blank">Print label</a>
+            <% if(locals.postgresPlacement){ (s.shipping_documents||[]).filter(doc=>doc.url!==s.label_url).forEach(function(doc){ %>
+              <a class="btn" href="<%= doc.url %>" rel="noreferrer noopener" target="_blank"><%= doc.kind==='CUSTOMS'?'Print customs document':'Print package label '+doc.position %> · <%= doc.format %></a>
+            <% }); } %>
           <% } %>
           <% if (s.status === 'PACKED' && s.label_status === 'PURCHASED' && ship.providerCapabilities.voidLabel) { %>
             <form method="post" action="/fulfilment/<%= s.id %>/label/void" data-busy>
@@ -507,7 +511,7 @@
           <ul class="money-feed">
             <% ship.events.forEach(function (entry) { %>
               <li class="money-feed-item">
-                <span class="money-feed-when"><%= String(entry.occurred_at).slice(0, 16).replace('T', ' ') %></span>
+                <span class="money-feed-when"><time data-local-time datetime="<%= entry.occurred_at %>"><%= helpers.dateTime(entry.occurred_at) %></time></span>
                 <span class="money-feed-what">
                   <strong><%= entry.status.toLowerCase().replace(/_/g, ' ') %></strong>
                   <small><%= [entry.detail, entry.location].filter(Boolean).join(' · ') %></small>

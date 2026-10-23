@@ -91,7 +91,7 @@ function capabilities(name) {
     buy: true,
     track: true,
     voidLabel: typeof implementation.voidLabel === 'function',
-    returnLabel: typeof implementation.returnLabel === 'function',
+    returnLabel: implementation.supportsReturnLabels===true||typeof implementation.returnLabel === 'function',
   });
 }
 

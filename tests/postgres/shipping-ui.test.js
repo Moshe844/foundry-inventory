@@ -130,8 +130,8 @@ test('real Chromium qualifies PostgreSQL rates, label, handoff and idempotent de
 
     await page.goto(`${base}/fulfilment/${parcel.shipmentId}`);
     assert.match(await page.locator('main').innerText(),/Enter a measured package weight/);
-    await page.getByLabel('Weight of this parcel (grams)').fill('850');
-    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Save weight'}).click()]);
+    await page.getByLabel('Weight (grams)',{exact:true}).fill('850');
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Save measurements',exact:true}).click()]);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Get carrier rates'}).click()]);
     assert.equal(await page.locator('.rate-row strong').filter({hasText:/UPS Ground/i}).count(),1);
     assert.equal(await page.locator('.rate-row strong').filter({hasText:/FedEx Two Day/i}).count(),1);

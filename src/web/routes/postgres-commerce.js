@@ -919,6 +919,7 @@ function createPostgresCommerceRouter(database,options={}){
       (line.trackingEvidence.costAllocations||[]).reduce((lineSum,allocation)=>
         lineSum+Number(allocation.quantity)*Number(line.unit_price_minor),0),0);
     return res.page('sales/postgres-return',{title:customerReturn.return_number,nav:'sales',customerReturn,
+      returnParcel:await require('../../shipping/postgres-return-parcels').current(database,req.ctx.workspaceId,customerReturn.id),
       locations:locationRows,refundableMinor,refundRequest:refundRequestResult.rows[0]||null,
       today:dateToday(),formKey:newId('return-step')});
   }));

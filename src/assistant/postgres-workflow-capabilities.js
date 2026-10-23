@@ -252,6 +252,8 @@ async function shippingHandoff(database,ctx,shipment,args){
   const trackingNumber=args.trackingNumber||shipment.tracking_number||null;
   if(handover==='CARRIER'&&shipment.label_status!=='PURCHASED'&&!trackingNumber)throw new ValidationError(
     'Name the carrier tracking number or buy a verified label before recording physical handoff.');
+  if(shipment.customer_return_id)return prepareResult({recordId:shipment.id,handover,trackingNumber,isReturn:true},
+    `Record the customer’s confirmed carrier handoff for ${shipment.shipment_number}. No sale, stock, inventory cost or customer refund changes. Its authorized return still requires physical receipt and inspection.`);
   return prepareResult({recordId:shipment.id,handover,trackingNumber},
     `Record ${shipment.shipment_number} physically handed off as ${handover.toLowerCase().replace(/_/g,' ')}${trackingNumber?` with tracking ${trackingNumber}`:''}. This fulfills its order lines and posts stock, revenue, cost, and invoice.`);
 }
@@ -337,8 +339,10 @@ async function transferReceipt(database,ctx,transfer){
 async function shipmentPrepare(database,ctx,order,args){
   if(order.delivery_method!=='SHIP')throw new ValidationError('This customer order is not set for carrier shipping.');
   const ready=await fulfillment(database,ctx,order,args);
-  return prepareResult({salesOrderId:order.id,lines:ready.payload.lines},
-    `Pack ${ready.payload.lines.reduce((sum,line)=>sum+line.quantity,0)} allocated units from ${order.order_number} as one shipment. This does not buy a label or record carrier handoff.`);
+  let origin=null;if(args.location){const places=(await database.query('SELECT id,name FROM locations WHERE workspace_id=$1 AND is_active=1 AND (id=$2 OR lower(name)=lower($2))',[ctx.workspaceId,args.location])).rows;
+    if(places.length!==1)throw new ValidationError('Choose one active ship-from location.');origin=places[0];}
+  return prepareResult({salesOrderId:order.id,lines:ready.payload.lines,...(origin?{shipFromLocationId:origin.id}:{})},
+    `Pack ${ready.payload.lines.reduce((sum,line)=>sum+line.quantity,0)} allocated units from ${order.order_number} as one shipment${origin?' dispatched from '+origin.name:''}. The original allocations still identify where goods are picked. This does not buy a label or record carrier handoff.`);
 }
 
 async function returnReceive(database,ctx,customerReturn){
@@ -485,35 +489,25 @@ async function shippingRule(database,ctx,_row,args){
   `Create a shipping rule for ${name}${maxDeliveryDays?`, no more than ${maxDeliveryDays} days`:''}`+
     `${promised?', arriving by the promised date':''}. This does not purchase postage.`);
 }
-function shippingPackage(_database,_ctx,row,args){
-  if(['SHIPPED','DELIVERED','CANCELLED'].includes(row.status)||
-    ['PURCHASED','PENDING'].includes(row.label_status))throw new ValidationError(
-    'Package measurements cannot change after the parcel leaves or is cancelled.');
-  if(Number(row.package_count)>1)throw new ValidationError(
-    'This shipment has multiple parcels. Open it and review each measured package individually.');
-  const weight=positive(args.weightGrams,'Package weight in grams');
-  const dimensions={};
-  for(const field of ['lengthMm','widthMm','heightMm']){
-    const value=args[field]==null?null:positive(args[field],field);
-    dimensions[field]=value;
-  }
-  if(Object.values(dimensions).filter((value)=>value!==null).length%3!==0)throw new ValidationError(
-    'Give all three parcel dimensions, or only the measured weight.');
-  return prepareResult({recordId:row.id,expectedStatus:row.status,expectedPackageCount:Number(row.package_count),
-    box:{weightGrams:weight,...dimensions}},
-  `Save measured parcel weight ${weight} grams${dimensions.lengthMm?
-    ` and dimensions ${dimensions.lengthMm} × ${dimensions.widthMm} × ${dimensions.heightMm} mm`:''} `+
-    `for ${row.shipment_number}. Carrier rates must be refreshed after a measurement change.`);
+async function shippingPackage(database,ctx,row,args){
+ shipping.assertParcelEditable(row);
+ const previous=await shipping.packagesFor(database,ctx.workspaceId,row.id);let requested;
+ if(args.packages!=null){try{requested=JSON.parse(args.packages);}catch{throw new ValidationError('Provide a structured list of measured packages.');}}
+ else{if(previous.length!==1)throw new ValidationError('Give measurements of every package in this shipment.');
+  const box={...previous[0]};for(const field of ['weightGrams','lengthMm','widthMm','heightMm'])if(args[field]!=null)box[field]=args[field];requested=[box];}
+ const boxes=require('../shipping/parcel-contract').boxes(requested);
+ return prepareResult({recordId:row.id,expectedStatus:row.status,expectedPackageCount:Number(row.package_count),expectedUpdatedAt:new Date(row.updated_at).toISOString(),boxes},
+  'Save '+boxes.length+' measured packages for '+row.shipment_number+': '+boxes.map((box,i)=>(i+1)+': '+box.weightGrams+' g'+(box.lengthMm?', '+box.lengthMm+' × '+box.widthMm+' × '+box.heightMm+' mm':'')).join('; ')+'. Current rates will be cleared; stock does not move.');
 }
 async function shippingQuote(database,ctx,row){
-  if(!['PICKING','PACKED'].includes(row.status)||['PURCHASED','PENDING'].includes(row.label_status))
+  if(!['PICKING','PACKED'].includes(row.status)||['PURCHASED','PENDING','REVIEW','VOID_PENDING'].includes(row.label_status))
     throw new ValidationError('Only a prepared, not-yet-shipped parcel without a purchased label can request new rates.');
   const view=await shipping.state(database,ctx.workspaceId,row.id);
   if(!view.ready)throw new ValidationError(`Carrier rates are not ready: ${view.blocked.join(' ')}`);
   return prepareResult({recordId:row.id,fingerprint:shipping.quoteFingerprint(view),
-    provider:view.account.provider},
+    providers:view.shippingAccounts.map(account=>account.provider)},
   `Request fresh carrier rates for ${row.shipment_number} using its measured parcel, addresses, and `+
-    `${view.account.provider} account. No postage will be purchased.`);
+    `connected ${view.shippingAccounts.map(account=>account.provider).join(', ')} accounts. No postage will be purchased.`);
 }
 function productDetails(_database,_ctx,row,args){
   const fields=['itemName','baseCode','itemDescription','unitLabel','allowNegative'];
@@ -815,31 +809,36 @@ const SPECS=Object.freeze([
         WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,p.recordId])).rows.some((row)=>
         Number(row.allocation_priority)===p.priority&&String(row.needed_by||'')===String(p.neededBy||'')))},
   {name:'shipping.prepare',description:'Pack existing allocated lines of a confirmed shipping order into one shipment, without buying postage or recording handoff.',
-    record:'sales_order',fields:['recordReference','sku','quantity'],permission:permissions.FULFILL_SALES,
+    record:'sales_order',fields:['recordReference','sku','quantity','location'],permission:permissions.FULFILL_SALES,
     resultReference:'shipmentId',resultDisplayReference:'shipmentNumber',resultRecordKind:'shipment',
     capability:'shipping.workflow',build:shipmentPrepare,
     execute:(client,ctx,p)=>shipping.prepare(sameClient(client),ctx,p.salesOrderId,p),
     verify:async(client,ctx,r,p)=>Boolean(r.shipmentId&&await state(client,ctx,'sales_shipments',r.shipmentId,['PACKED'])&&
       (await client.query(`SELECT COUNT(*)::int AS count FROM sales_shipment_lines WHERE workspace_id=$1 AND shipment_id=$2`,
       [ctx.workspaceId,r.shipmentId])).rows[0].count===p.lines.length)},
-  {name:'shipping.package_measurement',description:'Set the measured weight and optional dimensions of one not-yet-shipped parcel, invalidating stale carrier quotes. Multi-parcel shipments require individual review.',
-    record:'shipment',fields:['recordReference','weightGrams','lengthMm','widthMm','heightMm'],
-    permission:permissions.FULFILL_SALES,capability:'shipping.workflow',build:shippingPackage,
-    execute:async(client,ctx,p)=>{const row=(await client.query(`SELECT status,package_count,label_status
-      FROM sales_shipments WHERE workspace_id=$1 AND id=$2 FOR UPDATE`,
-      [ctx.workspaceId,p.recordId])).rows[0];
-      if(!row||row.status!==p.expectedStatus||Number(row.package_count)!==p.expectedPackageCount||
-        ['PURCHASED','PENDING'].includes(row.label_status))throw new ValidationError(
-        'This parcel changed after review. Measure it again before saving.');
-      return shipping.setPackages(sameClient(client),ctx,p.recordId,[p.box]);},
-    verify:async(client,ctx,_r,p)=>Boolean((await client.query(`SELECT weight_grams,length_mm,width_mm,
-      height_mm FROM shipment_packages WHERE workspace_id=$1 AND shipment_id=$2`,
-      [ctx.workspaceId,p.recordId])).rows.some((box)=>Number(box.weight_grams)===p.box.weightGrams&&
-        Number(box.length_mm||0)===Number(p.box.lengthMm||0)&&
-        Number(box.width_mm||0)===Number(p.box.widthMm||0)&&
-        Number(box.height_mm||0)===Number(p.box.heightMm||0))&&
-      (await client.query(`SELECT COUNT(*)::int AS count FROM shipment_rates
-        WHERE workspace_id=$1 AND shipment_id=$2`,[ctx.workspaceId,p.recordId])).rows[0].count===0)},
+  {name:'shipping.return_parcel',description:'Prepare return postage for an authorized customer return, reversing the original fulfilled shipment’s customer route to an active return location. Uses the same parcel, rates, label and tracking engine. No stock, valuation or refund changes.',
+   record:'customer_return',fields:['recordReference','location'],permission:permissions.FULFILL_SALES,capability:'shipping.workflow',resultReference:'shipmentId',resultRecordKind:'shipment',
+   build:async(database,ctx,row,args)=>{
+    const {quantities}=await require('../shipping/postgres-return-parcels').outstanding(database,ctx.workspaceId,row.id);
+    const places=(await database.query('SELECT id,name FROM locations WHERE workspace_id=$1 AND is_active=1 AND (lower(name)=lower($2) OR id=$2)',[ctx.workspaceId,args.location||''])).rows;
+    if(places.length!==1)throw new ValidationError('Name one active return-delivery location.');
+    return prepareResult({recordId:row.id,locationId:places[0].id,quantities},`Prepare postage for ${row.return_number} to ${places[0].name}, covering ${quantities.reduce((sum,line)=>sum+line.quantity,0)} authorized units still expected. Actual package weights, carrier rates and label purchase are separate reviewed steps; no stock or money moves.`);
+   },execute:async(client,ctx,p)=>{
+    const {quantities}=await require('../shipping/postgres-return-parcels').outstanding(client,ctx.workspaceId,p.recordId);
+    if(!require('node:util').isDeepStrictEqual(quantities,p.quantities))throw new ValidationError('The return changed after review. Prepare its current quantities again.');
+    return require('../shipping/postgres-return-parcels').prepare(sameClient(client),ctx,p.recordId,p);
+   },verify:async(client,ctx,r,p)=>Boolean(r.shipmentId&&(await client.query('SELECT 1 FROM sales_shipments WHERE workspace_id=$1 AND id=$2 AND customer_return_id=$3 AND return_quantities=$4::jsonb',[ctx.workspaceId,r.shipmentId,p.recordId,JSON.stringify(p.quantities)])).rows.length)},
+  {name:'shipping.package_measurement',description:'Set measured packages for an unshipped shipment and invalidate old quotes. A single-package weight edit preserves existing dimensions. Multi-package changes require the full structured list.',
+   record:'shipment',fields:['recordReference','packages','weightGrams','lengthMm','widthMm','heightMm'],permission:permissions.FULFILL_SALES,capability:'shipping.workflow',build:shippingPackage,
+   execute:async(client,ctx,p)=>{const row=(await client.query('SELECT * FROM sales_shipments WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,p.recordId])).rows[0];
+    if(!row||row.status!==p.expectedStatus||Number(row.package_count)!==p.expectedPackageCount||new Date(row.updated_at).toISOString()!==p.expectedUpdatedAt)throw new ValidationError('This parcel changed after review. Measure it again before saving.');
+    shipping.assertParcelEditable(row);return shipping.setPackages(sameClient(client),ctx,p.recordId,p.boxes,{expectedUpdatedAt:p.expectedUpdatedAt});},
+   verify:async(client,ctx,_r,p)=>Boolean(require('node:util').isDeepStrictEqual((await shipping.packagesFor(sameClient(client),ctx.workspaceId,p.recordId)).map(box=>({weightGrams:box.weightGrams,lengthMm:box.lengthMm,widthMm:box.widthMm,heightMm:box.heightMm})),p.boxes)&&Number((await client.query('SELECT count(*) n FROM shipment_rates WHERE workspace_id=$1 AND shipment_id=$2',[ctx.workspaceId,p.recordId])).rows[0].n)===0)},
+  {name:'shipping.label_preferences',description:'Choose PDF or thermal label format and delivery signature requirements for an unshipped parcel. Clears quotes; fresh carrier rates include supported requirements and charges. Buys no postage.',
+   record:'shipment',fields:['recordReference','printChoice','signature'],permission:permissions.FULFILL_SALES,capability:'shipping.workflow',
+   build:(_db,_ctx,row,args)=>{shipping.assertParcelEditable(row);const value=require('../shipping/parcel-contract').options(args,row.shipping_options||{});return prepareResult({recordId:row.id,expectedUpdatedAt:new Date(row.updated_at).toISOString(),...value},'Set '+row.shipment_number+' labels to '+value.labelFormat+' '+value.labelLayout+', confirmation '+value.signature+'. Refresh carrier rates before any purchase.');},
+   execute:(client,ctx,p)=>require('../shipping/postgres-parcel-options').saveOptions(sameClient(client),ctx,p.recordId,p),
+   verify:async(client,ctx,_r,p)=>{const current=(await client.query('SELECT shipping_options FROM sales_shipments WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,p.recordId])).rows[0]?.shipping_options;return Boolean(current&&current.labelFormat===p.labelFormat&&current.labelLayout===p.labelLayout&&current.signature===p.signature&&Number((await client.query('SELECT count(*) n FROM shipment_rates WHERE workspace_id=$1 AND shipment_id=$2',[ctx.workspaceId,p.recordId])).rows[0].n)===0);}},
   {name:'shipping.quote',description:'Request fresh live carrier rates for a measured, addressed, not-yet-shipped parcel using the inventory’s own postage account. Approval queues a bounded provider call; it does not buy a label.',
     record:'shipment',fields:['recordReference'],permission:permissions.FULFILL_SALES,
     capability:'shipping.rates',build:shippingQuote,
@@ -849,7 +848,7 @@ const SPECS=Object.freeze([
       return jobQueue.enqueue(sameClient(client),{workspaceId:ctx.workspaceId,
         kind:'shipping.quote',idempotencyKey:`ask-quote:${p.idempotencyKey}`,
         payload:{shipmentId:p.recordId,actorId:ctx.actorId,fingerprint:p.fingerprint,
-          provider:p.provider},priority:25,maxAttempts:1});},
+          providers:p.providers,provider:p.provider},priority:25,maxAttempts:1});},
     verify:async(client,ctx,r,p)=>Boolean(r.job?.id&&
       (await client.query(`SELECT 1 FROM stockchief_runtime.jobs WHERE workspace_id=$1 AND id=$2
         AND kind='shipping.quote' AND payload->>'shipmentId'=$3`,
@@ -1050,13 +1049,13 @@ const SPECS=Object.freeze([
     record:'shipment',fields:['recordReference','handover','trackingNumber'],permission:permissions.FULFILL_SALES,
     capability:'shipping.workflow',build:shippingHandoff,
     execute:(client,ctx,p)=>shipping.handoff(sameClient(client),ctx,p.recordId,p),
-    verify:async(client,ctx,r,p)=>Boolean(r.fulfillment?.invoiceId&&
-      await state(client,ctx,'sales_shipments',p.recordId,['SHIPPED']))},
+    verify:async(client,ctx,r,p)=>Boolean((p.isReturn?r.physicalReturnReceiptRequired:r.fulfillment?.invoiceId)&&
+      await state(client,ctx,'sales_shipments',p.recordId,['SHIPPED','DELIVERED']))},
   {name:'shipping.delivered',description:'Record a manual confirmation that an already-shipped parcel was physically delivered. Does not buy postage or move stock again.',
     record:'shipment',fields:['recordReference'],permission:permissions.FULFILL_SALES,
     capability:'shipping.workflow',states:['SHIPPED'],verb:'Confirm delivery of',
     execute:(client,ctx,p)=>shipping.applyTracking(sameClient(client),ctx,p.recordId,{provider:'manual',status:'DELIVERED',
-        externalEventId:`ask-delivered:${p.idempotencyKey}`,detail:'Owner confirmed delivery through Ask StockChief.',
+        externalEventId:`ask-delivered:${p.idempotencyKey}`,allPackagesConfirmed:true,detail:'Owner confirmed delivery through Ask StockChief.',
         occurredAt:nowIso()}),
     verify:async(client,ctx,r,p)=>Boolean(r.applied&&await state(client,ctx,'sales_shipments',p.recordId,['DELIVERED']))},
   {name:'shipping.cancel',description:'Cancel a shipment only before goods leave. Its order allocation remains intact; no customer order is cancelled.',

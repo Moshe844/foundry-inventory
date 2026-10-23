@@ -510,12 +510,14 @@ function create(providers=defaultProviders,options={}){return {'system.runtime-s
   'report.generate-delivery':external((job,database)=>
     require('../reports/postgres-scheduling').generateDelivery(database,job)),
   'shipping.quote':external(async(job,database)=>{
-    const {shipmentId,actorId,fingerprint,provider}=job.payload||{};
-    if(!job.workspaceId||!shipmentId||!actorId||!fingerprint||!provider)throw Object.assign(
+    const {shipmentId,actorId,fingerprint,provider,providers:approvedProviders}=job.payload||{};
+    const selected=Array.isArray(approvedProviders)?approvedProviders:provider?[provider]:[];
+    if(!job.workspaceId||!shipmentId||!actorId||!fingerprint||!selected.length)throw Object.assign(
       new Error('Carrier-rate job is missing its frozen parcel identity.'),
       {code:'shipping_quote_job_invalid',retryable:false});
     const view=await shipping.state(database,job.workspaceId,shipmentId);
-    if(!view.ready||view.account?.provider!==provider||shipping.quoteFingerprint(view)!==fingerprint||
+    const providerMatches=approvedProviders?JSON.stringify(view.shippingAccounts.map(a=>a.provider).sort())===JSON.stringify([...selected].sort()):view.account?.provider===provider;
+    if(!view.ready||!providerMatches||shipping.quoteFingerprint(view)!==fingerprint||
       !['PICKING','PACKED'].includes(view.shipment.status))throw Object.assign(
       new Error('Parcel details changed after carrier rates were approved. Request fresh rates.'),
       {code:'shipping_quote_changed',retryable:false});

@@ -36,6 +36,7 @@ const STATE_NAMES = new Map([
 const ZIP = /\b(\d{5})(?:-(\d{4}))?\b/;
 /* A line that is only a street when it starts with a number or a PO box. */
 const STREET = /^(\d+\s+\S|p\.?\s?o\.?\s+box\b|box\s+\d|unit\s+\d|apt\b|suite\b|ste\b)/i;
+const SECONDARY=/^(?:(?:apt|apartment|suite|ste|unit|room|rm|building|bldg|department|dept|floor|fl)\b|#\s*\S|\d+(?:st|nd|rd|th)?\s+floor\b)/i;
 
 const clean = (value) => String(value || '').replace(/\r/g, '').trim();
 const stateCode = (value) => {
@@ -93,10 +94,12 @@ function parse(text) {
     }
   }
 
-  const streets = parts.filter((line) => STREET.test(line));
+  const streets = parts.filter((line) => STREET.test(line)&&!SECONDARY.test(line));
   if (streets.length) {
     found.line1 = streets[0];
-    if (streets.length > 1) found.line2 = streets[1];
+    const secondary=parts.filter((line,index)=>index>parts.indexOf(found.line1)&&SECONDARY.test(line));
+    if(secondary.length)found.line2=secondary.join(', ');
+    else if (streets.length > 1) found.line2 = streets[1];
   }
 
   if (!found.city) {
@@ -107,7 +110,7 @@ function parse(text) {
      * the town never does.
      */
     const candidates = parts.filter((line, index) =>
-      line !== found.line1 && line !== found.line2 && !ZIP.test(line) && index !== stateAt);
+      line !== found.line1 && line !== found.line2 && !SECONDARY.test(line) && !ZIP.test(line) && index !== stateAt);
     const streetAt = parts.indexOf(found.line1);
     const after = streetAt >= 0 ? candidates.filter((line) => parts.indexOf(line) > streetAt) : candidates;
     if (after.length) found.city = after[0];

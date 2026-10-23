@@ -68,7 +68,7 @@ test('Shippo requests a missing sender contact before making a rate request',asy
 test('Shippo forwards the explicit location contact to its address contract',async()=>{
  const previous=global.fetch;let request;
  global.fetch=async(_url,init)=>{request=JSON.parse(init.body);return {ok:true,status:200,text:async()=>JSON.stringify({object_id:'parcel-contact',rates:[]})};};
- try{await shippo.quote({shippoApiKey:'shippo_test_contact_fixture'},{from:{email:'dispatch@example.test'},to:{},packages:[{weightGrams:300}]});
+ try{await shippo.quote({shippoApiKey:'shippo_test_contact_fixture'},{from:{email:'dispatch@example.test'},to:{},packages:[{weightGrams:300,lengthMm:200,widthMm:150,heightMm:100}]});
   assert.equal(request.address_from.email,'dispatch@example.test');
  }finally{global.fetch=previous;}
 });

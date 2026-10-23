@@ -1,0 +1,31 @@
+<% const settings=shipment.shipping_options||{},printChoice=(settings.labelFormat||'PDF')+':'+(settings.labelLayout||'4x6'); %>
+<form method="post" action="/fulfilment/<%= shipment.id %>/packages" class="stack" data-busy data-package-editor>
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="expectedUpdatedAt" value="<%= shipment.updated_at %>">
+  <h3>Measured packages</h3><p class="hint">Measure every parcel. Each label covers the packages quoted here; stock stays on hand until physical handoff.</p>
+  <div data-package-rows>
+  <% shipping.boxes.forEach(function(box,index){ %>
+    <fieldset class="card-body" data-package-row><legend>Package <span data-package-number><%= index+1 %></span></legend><div class="grid grid--2">
+      <% [['weightGrams','Weight (grams)'],['lengthMm','Length (mm)'],['widthMm','Width (mm)'],['heightMm','Height (mm)']].forEach(function(field){ %>
+      <label class="field"><span class="field-label"><%= field[1] %></span><input class="input" data-package-field="<%= field[0] %>" type="number" min="1" max="2147483647" step="1" name="packages[<%= index %>][<%= field[0] %>]" value="<%= box[field[0]]||'' %>" <%= field[0]==='weightGrams'?'required':'' %>></label><% }); %>
+    </div><button class="btn btn--ghost btn--sm" type="button" data-remove-package>Remove package</button></fieldset>
+  <% }); %>
+  </div>
+  <p class="hint" data-package-count role="status" aria-live="polite"><%= shipping.boxes.length %> packages</p>
+  <div class="button-row"><button class="btn btn--ghost" type="button" data-add-package>Add a package</button><button class="btn btn--primary" type="submit">Save measurements</button></div>
+</form>
+<% if(shipping.packagePresets?.length){ %>
+<form method="post" action="/fulfilment/<%= shipment.id %>/preset/apply" class="stack" data-busy>
+ <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="expectedUpdatedAt" value="<%= shipment.updated_at %>">
+ <label class="field"><span class="field-label">Saved package defaults</span><select name="presetId" class="select"><% shipping.packagePresets.forEach(function(preset){ %><option value="<%= preset.id %>"><%= preset.name %> · <%= preset.packages.length %> packages</option><% }); %></select></label>
+ <button class="btn" type="submit">Apply package defaults</button><p class="hint">You will still confirm the actual package weights.</p>
+</form><% } %>
+<details class="disclose"><summary>Save these packages for next time</summary><form method="post" action="/fulfilment/<%= shipment.id %>/preset" class="stack" data-busy>
+ <input type="hidden" name="_csrf" value="<%= csrfToken %>"><label class="field"><span class="field-label">Package preset name</span><input class="input" name="name" maxlength="120" required></label><button class="btn" type="submit">Save package defaults</button>
+</form></details>
+<form method="post" action="/fulfilment/<%= shipment.id %>/options" class="stack" data-busy>
+ <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="expectedUpdatedAt" value="<%= shipment.updated_at %>">
+ <label class="field"><span class="field-label">Printer and label size</span><select class="select" name="printChoice"><% [['PDF:4x6','PDF · 4 × 6 inch label'],['PDF:letter','PDF · letter paper'],['ZPL:4x6','ZPL · 4 × 6 inch Zebra label']].forEach(function(choice){ %><option value="<%= choice[0] %>" <%= printChoice===choice[0]?'selected':'' %>><%= choice[1] %></option><% }); %></select></label>
+ <label class="field"><span class="field-label">Delivery confirmation</span><select class="select" name="signature"><% [['NONE','Use the carrier’s standard confirmation'],['SIGNATURE','Signature required'],['ADULT','Adult signature required']].forEach(function(choice){ %><option value="<%= choice[0] %>" <%= (settings.signature||'NONE')===choice[0]?'selected':'' %>><%= choice[1] %></option><% }); %></select></label>
+ <p class="hint">Services and additional charges depend on the carrier. StockChief requests fresh rates with these requirements before purchase.</p><button class="btn" type="submit">Save label preferences</button>
+</form>
+<script src="/shipping-package-editor.js" defer></script>

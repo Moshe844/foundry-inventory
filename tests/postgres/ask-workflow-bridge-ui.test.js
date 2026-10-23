@@ -47,7 +47,7 @@ async function prepareAndApprove(page,base,database,workspaceId,message,capabili
   assert.equal(proposal.status,'PENDING');
   await page.goto(`${base}/actions/${proposal.id}`);
   await Promise.all([page.waitForNavigation(),page.getByRole('button',
-    {name:/Approve (?:and execute|only this step)/}).click()]);
+    {name:/Approve (?:and execute|only this (?:step|change))/}).click()]);
   const saved=(await database.query(`SELECT * FROM stockchief_runtime.assistant_action_proposals
     WHERE workspace_id=$1 AND id=$2`,[workspaceId,proposal.id])).rows[0];
   assert.equal(saved.status,'EXECUTED',`Approval failed: ${(await page.locator('body').innerText()).slice(0,1200)}`);
@@ -56,6 +56,8 @@ async function prepareAndApprove(page,base,database,workspaceId,message,capabili
 
 test('Ask browser controls a real customer order, payment, and return through the canonical PostgreSQL engines',
   {timeout:240000},async(context)=>{
+    const previousPublicUrl=process.env.FOUNDRY_PUBLIC_URL;process.env.FOUNDRY_PUBLIC_URL='https://stockchief.example.test';
+    context.after(()=>{if(previousPublicUrl===undefined)delete process.env.FOUNDRY_PUBLIC_URL;else process.env.FOUNDRY_PUBLIC_URL=previousPublicUrl;});
     const cluster=await startCluster();
     const database=openPostgres(cluster.connectionString,{applicationName:'ask-workflow-bridge-browser'});
     await migratePostgres(database);
@@ -258,7 +260,7 @@ test('Ask browser controls a real customer order, payment, and return through th
     assert.match(await page.locator('main').innerText(),/1 of 2 parts settled/);
     await page.goto(`${base}/actions/${combinedConfirm.id}`);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',
-      {name:/Approve (?:and execute|only this step)/}).click()]);
+      {name:/Approve (?:and execute|only this (?:step|change))/}).click()]);
     const combinedOrder=(await database.query('SELECT status,order_date FROM sales_orders WHERE workspace_id=$1 AND id=$2',
       [ctx.workspaceId,combinedCreate.result.salesOrderId])).rows[0];
     assert.equal(combinedOrder.status,'CONFIRMED');

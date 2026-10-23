@@ -1,21 +1,6 @@
 'use strict';
 
-/*
- * EasyPost: UPS, FedEx and USPS through one integration.
- *
- * Chosen over writing three carrier clients because the three carriers do not
- * disagree about anything a shop cares about. They disagree about
- * authentication, address validation, rate envelopes and tracking vocabularies
- * — none of which is a business problem, and all of which would be three times
- * as much code to maintain and three times as much to get wrong.
- *
- * When volume justifies a direct contract with one carrier, that carrier
- * becomes a second adapter behind the same seam and nothing above changes.
- *
- * The key is read from the environment and never from the database. StockChief
- * does not ask anybody to paste a secret into a form it stores, and a key in a
- * table is a key in a backup.
- */
+/* Provider adapter. PostgreSQL supplies this business’s encrypted customer account through ctx. */
 
 const { ValidationError, AuthenticationError } = require('../../domain/errors');
 const { providerFetch } = require('../../lib/provider-http');
@@ -44,7 +29,7 @@ async function call(ctx, path, options = {}) {
       ...(options.headers || {}),
     },
     body: options.body ? JSON.stringify(options.body) : undefined,
-  }, { provider: 'EasyPost', retries: options.retries });
+  }, { provider: 'EasyPost', retries: options.retries,timeoutMs:options.timeoutMs });
   const text = await response.text();
   let body = null;
   try { body = text ? JSON.parse(text) : null; } catch { body = null; }
@@ -95,15 +80,15 @@ function parcel(box = {}) {
   return out;
 }
 
-const minorFrom = (rate) => Math.round(Number(rate) * 100);
+const money=require('../provider-money');
 
 function readRate(row) {
   return {
     rateId: row.id,
-    carrier: String(row.carrier || '').toLowerCase(),
+    carrier: String(row.carrier || '').toLowerCase(),carrierAccount:row.carrier_account_id||null,
     service: row.service,
-    amountMinor: minorFrom(row.rate),
-    currency: row.currency || 'USD',
+    amountMinor: money.amount(row.rate,row.currency),
+    currency: require('../../domain/currency').code(row.currency),
     deliveryDays: row.delivery_days === null || row.delivery_days === undefined
       ? null : Number(row.delivery_days),
     deliveryDate: row.delivery_date ? String(row.delivery_date).slice(0, 10) : null,
@@ -124,47 +109,19 @@ async function quote(ctx, input = {}) {
   const quotes = [];
   for (const box of packages) {
     const created = await call(ctx, '/shipments', { method: 'POST', body: { shipment: {
-      to_address: address(input.to),
-      from_address: address(input.from),
+      // EasyPost reverses these on its return label. The shared contract is
+      // always the physical route, so give its API the original direction.
+      to_address: address(input.isReturn?input.from:input.to),
+      from_address: address(input.isReturn?input.to:input.from),
       parcel: parcel(box),
-      options: { label_format: 'PDF' },
+      ...(input.isReturn?{is_return:true}:{}),
+      options: {label_format:input.options?.labelFormat||'PDF',label_size:input.options?.labelLayout==='letter'?'8.5x11':'4x6',
+        ...(input.options?.signature==='SIGNATURE'?{delivery_confirmation:'SIGNATURE'}:input.options?.signature==='ADULT'?{delivery_confirmation:'ADULT_SIGNATURE'}:{})},
     } } });
     quotes.push({ providerShipmentId: created.id, rates: (created.rates || []).map(readRate) });
   }
 
-  if (quotes.length === 1) {
-    return { providerShipmentIds: [quotes[0].providerShipmentId], rates: quotes[0].rates };
-  }
-
-  /*
-   * Several boxes: only services every box can go by, priced as the sum.
-   *
-   * Offering a service one parcel of three can use would be offering something
-   * that cannot happen. The rate id kept is the first box's; buying walks all
-   * of them, which is why the ids travel together.
-   */
-  const byService = new Map();
-  for (const rate of quotes[0].rates) byService.set(`${rate.carrier}|${rate.service}`, { ...rate });
-  for (const rest of quotes.slice(1)) {
-    const seen = new Map(rest.rates.map((rate) => [`${rate.carrier}|${rate.service}`, rate]));
-    for (const [key, combined] of [...byService]) {
-      const match = seen.get(key);
-      if (!match) { byService.delete(key); continue; }
-      combined.amountMinor += match.amountMinor;
-      combined.rateIds = [...(combined.rateIds || [combined.rateId]), match.rateId];
-      if (match.deliveryDays && (!combined.deliveryDays || match.deliveryDays > combined.deliveryDays)) {
-        combined.deliveryDays = match.deliveryDays;
-      }
-      if (match.deliveryDate && (!combined.deliveryDate || match.deliveryDate > combined.deliveryDate)) {
-        combined.deliveryDate = match.deliveryDate;
-      }
-      combined.guaranteed = combined.guaranteed && match.guaranteed;
-    }
-  }
-  return {
-    providerShipmentIds: quotes.map((entry) => entry.providerShipmentId),
-    rates: [...byService.values()],
-  };
+  return require('../parcel-rates').combine(quotes.map(row=>({providerShipmentIds:[row.providerShipmentId],rates:row.rates})));
 }
 
 /* ----------------------------------------------------------------- label */
@@ -181,30 +138,48 @@ async function buy(ctx, input = {}) {
     ? input.providerShipmentIds : [input.providerShipmentId];
   const rateIds = input.rateIds && input.rateIds.length ? input.rateIds : [input.rateId];
   const bought = [];
+  if(input.approvedAmountMinor!=null){const rates=[];for(const [index,id]of ids.entries()){
+    const shipment=await call(ctx,'/shipments/'+encodeURIComponent(id)),rate=(shipment.rates||[]).find(row=>row.id===(rateIds[index]||rateIds[0]));
+    if(!rate)throw new ValidationError('The saved carrier rate is no longer available. Refresh rates before purchasing.');rates.push({amount:rate.rate,currency:rate.currency});
+  }money.approved(money.total(rates),input);}
+  const reference={externalId:ids[0],externalIds:ids,expectedCount:ids.length};
+  await input.onCheckpoint?.(reference);
   for (let index = 0; index < ids.length; index += 1) {
-    bought.push(await call(ctx, `/shipments/${encodeURIComponent(ids[index])}/buy`, {
-      method: 'POST', retries: 0, body: { rate: { id: rateIds[index] || rateIds[0] } },
+    try{bought.push(await call(ctx, `/shipments/${encodeURIComponent(ids[index])}/buy`, {
+      method: 'POST', retries: 0,timeoutMs:60000, body: { rate: { id: rateIds[index] || rateIds[0] } },
       headers: input.idempotencyKey ? { 'x-idempotency-key': `${input.idempotencyKey}:${index}` } : {},
-    }));
+    }));}catch(error){if(bought.length)error.providerOutcomeUncertain=true;error.providerReference=reference;throw error;}
   }
+  return purchaseResult(bought);
+}
+function purchaseResult(bought){return money.receipt({externalId:bought[0]?.id,externalIds:bought.map(row=>row.id),expectedCount:bought.length},()=>{
+  if(!bought.length||bought.some(row=>!row.postage_label?.label_url))throw new ValidationError('EasyPost has not confirmed every parcel label. The saved purchases must be checked without buying again.');
   const lead = bought[0];
-  const totalMinor = bought.reduce((sum, row) => sum + minorFrom(row.selected_rate?.rate || 0), 0);
+  if(bought.some(row=>require('../parcel-contract').format(row.postage_label?.label_file_type)!==require('../parcel-contract').format(lead.postage_label?.label_file_type)))throw new ValidationError('The carrier returned different print formats for this parcel group. Verify each saved label before printing.');
+  const total=money.total(bought.map(row=>({amount:row.selected_rate?.rate,currency:row.selected_rate?.currency})));
   return {
     providerShipmentId: lead.id,
     providerShipmentIds: bought.map((row) => row.id),
     providerLabelIds: bought.map((row) => row.id),
     carrier: String(lead.selected_rate?.carrier || '').toLowerCase(),
     service: lead.selected_rate?.service || null,
+    packages:bought.map(row=>({externalId:row.id,trackingNumber:row.tracking_code,trackingUrl:row.tracker?.public_url||null})),
     trackingNumber: lead.tracking_code || null,
     trackingUrl: lead.tracker?.public_url || null,
     labelUrl: lead.postage_label?.label_url || null,
-    labelFormat: lead.postage_label?.label_file_type || null,
+    labelFormat: require('../parcel-contract').format(lead.postage_label?.label_file_type),
     labelUrls: bought.map((row) => row.postage_label?.label_url).filter(Boolean),
-    amountMinor: totalMinor,
-    currency: lead.selected_rate?.currency || 'USD',
+    customsUrls:bought.flatMap(row=>(row.forms||[]).map(form=>form.form_url).filter(Boolean)),
+    amountMinor: total.amountMinor,
+    currency: total.currency,
     deliveryDate: lead.selected_rate?.delivery_date
       ? String(lead.selected_rate.delivery_date).slice(0, 10) : null,
   };
+});}
+async function verifyPurchase(ctx,reference={}){
+ const ids=reference.externalIds||[reference.externalId];if(!ids.length||ids.some(id=>!id))throw new ValidationError('The saved EasyPost shipment identities are required.');
+ if(reference.expectedCount&&reference.expectedCount!==ids.length)throw Object.assign(new ValidationError('Every parcel purchase must be identified before confirmation. No purchase was repeated.'),{retryable:false});
+ const rows=[];for(const id of ids)rows.push(await call(ctx,'/shipments/'+encodeURIComponent(id)));return purchaseResult(rows);
 }
 
 /** Ask EasyPost to refund unused postage. Its submitted state is deliberately
@@ -346,6 +321,6 @@ function readEvent(event = {}) {
   };
 }
 
-module.exports = { isConfigured, quote, buy, voidLabel, verifyVoid, track, verifyEvent, readEvent,
+module.exports = { supportsReturnLabels:true,isConfigured, quote, buy, verifyPurchase, voidLabel, verifyVoid, track, verifyEvent, readEvent,
   ensureWebhook:(ctx,input)=>require('./webhook-registration').easypost(call,ctx,input),
   address, parcel, statusOf, readRate, call };

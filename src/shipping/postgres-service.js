@@ -15,10 +15,12 @@ const RANK={UNKNOWN:0,PRE_TRANSIT:1,IN_TRANSIT:2,OUT_FOR_DELIVERY:3,FAILURE:3,DE
 async function requireShipment(queryable,workspaceId,shipmentId,lock=false){
   const result=await queryable.query(`SELECT shipment.*,orders.order_number,orders.needed_by,orders.customer_id,orders.delivery_method,
       customer.name AS customer_name,customer.email AS customer_email,customer.phone AS customer_phone,
-      location.name AS location_name,location.address AS location_address,location.phone AS location_phone,location.shipping_email AS location_shipping_email
+      location.name AS location_name,location.address AS location_address,location.phone AS location_phone,location.shipping_email AS location_shipping_email,
+      original.carrier AS original_carrier
     FROM sales_shipments shipment JOIN sales_orders orders ON orders.id=shipment.sales_order_id
     LEFT JOIN customers customer ON customer.id=orders.customer_id
     LEFT JOIN locations location ON location.id=shipment.ship_from_location_id
+    LEFT JOIN sales_shipments original ON original.id=shipment.return_outbound_shipment_id AND original.workspace_id=shipment.workspace_id
     WHERE shipment.workspace_id=$1 AND shipment.id=$2${lock?' FOR UPDATE OF shipment':''}`,[workspaceId,shipmentId]);
   if(!result.rows.length)throw new NotFoundError('That shipment could not be found.');
   return result.rows[0];
@@ -95,11 +97,13 @@ function assertParcelEditable(shipment){
     throw new ValidationError('Resolve or void the saved label before changing or cancelling this parcel.');
 }
 
-async function setPackages(database,ctx,shipmentId,boxes){
-  if(!Array.isArray(boxes)||!boxes.length)throw new ValidationError('A shipment needs at least one package.');
+async function setPackages(database,ctx,shipmentId,boxes,options={}){
+  boxes=require('./parcel-contract').boxes(boxes);
   return database.transaction(async(client)=>{
+    await require('./postgres-parcel-options').actor(client,ctx);
     const shipment=await requireShipment(client,ctx.workspaceId,shipmentId,true);
     assertParcelEditable(shipment);
+    require('./postgres-parcel-options').unchanged(shipment,options.expectedUpdatedAt);
     await client.query('DELETE FROM shipment_packages WHERE workspace_id=$1 AND shipment_id=$2',[ctx.workspaceId,shipmentId]);
     await client.query('DELETE FROM shipment_rates WHERE workspace_id=$1 AND shipment_id=$2',[ctx.workspaceId,shipmentId]);
     const now=nowIso();let total=0;
@@ -109,9 +113,9 @@ async function setPackages(database,ctx,shipmentId,boxes){
       total+=weight;
       await client.query(`INSERT INTO shipment_packages
         (id,workspace_id,shipment_id,position,weight_grams,length_mm,width_mm,height_mm,weight_source,created_at,updated_at)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,'MEASURED',$9,$9)`,[newId('pkg'),ctx.workspaceId,shipmentId,index+1,weight,
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$10,$9,$9)`,[newId('pkg'),ctx.workspaceId,shipmentId,index+1,weight,
         box.lengthMm?Math.round(Number(box.lengthMm)):null,box.widthMm?Math.round(Number(box.widthMm)):null,
-        box.heightMm?Math.round(Number(box.heightMm)):null,now]);
+        box.heightMm?Math.round(Number(box.heightMm)):null,now,options.weightSource==='ESTIMATED'?'ESTIMATED':'MEASURED']);
     }
     await client.query(`UPDATE sales_shipments SET package_count=$3,weight_grams=$4,updated_at=$5
       WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,shipmentId,boxes.length,total,now]);
@@ -121,19 +125,22 @@ async function setPackages(database,ctx,shipmentId,boxes){
 
 async function state(database,workspaceId,shipmentId){
   const shipment=await requireShipment(database,workspaceId,shipmentId);
-  const to=addresses.parse(shipment.ship_to_address);
+  let to=addresses.parse(shipment.ship_to_address);
   to.name=shipment.customer_name||to.name;to.email=shipment.customer_email;to.phone=shipment.customer_phone;
-  const from=addresses.parse(shipment.location_address);
+  let from=addresses.parse(shipment.location_address);
   from.name=shipment.location_name||from.name;from.phone=shipment.location_phone;from.email=shipment.location_shipping_email;
+  if(shipment.customer_return_id){to={...to,name:shipment.location_name,phone:shipment.location_phone,email:shipment.location_shipping_email};from=shipment.return_origin||{};}
   const boxes=await packagesFor(database,workspaceId,shipmentId);
   const shippingAccounts=await accounts.allForWorkspace(database,workspaceId);
   const account=shippingAccounts[0]||null;
   const blocked=[];
+  if(shipment.customer_return_id)try{await require('./postgres-return-parcels').assertCurrent(database,workspaceId,shipment);}catch(error){blocked.push(error.message);}
   if(!to.complete)blocked.push(addresses.why(to));
   if(!from.complete)blocked.push(`The ship-from location is incomplete: ${addresses.why(from)}`);
   if(!to.phone)blocked.push('The customer needs a shipping phone number. StockChief will not invent one.');
   if(!from.phone)blocked.push('The ship-from location needs a shipping contact phone.');
   if(boxes.some((box)=>!(box.weightGrams>0)))blocked.push('Enter a measured package weight before requesting rates.');
+  if(boxes.some(box=>box.estimated))blocked.push('Confirm the actual weight of every package. Saved package defaults are not a fresh measurement.');
   if(!account)blocked.push('Connect this inventory’s own postage account before requesting live rates.');
   const rates=await ratesFor(database,workspaceId,shipmentId);
   const quoteProblems=Array.isArray(shipment.shipping_quote_problems)?shipment.shipping_quote_problems:[];
@@ -157,7 +164,7 @@ function quoteFingerprint(view){
   const shipment=view.shipment||{};
   const payload={status:shipment.status,labelStatus:shipment.label_status,
     address:shipment.ship_to_address,locationId:shipment.ship_from_location_id,
-    to:view.to,from:view.from,boxes:view.boxes,
+    to:view.to,from:view.from,boxes:view.boxes,options:shipment.shipping_options||{},
     accounts:(view.shippingAccounts||(view.account?[view.account]:[])).map(accountFingerprint).sort()};
   return crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex');
 }
@@ -183,7 +190,7 @@ async function quote(database,ctx,shipmentId,options={}){
     const answer=await require('../commercial/operations').run(database,ctx.workspaceId,{capability:'shipping.rates',
       key:`${key}:${account.connectorId}`,provider:account.provider,operation:'carrier_quote'},
       ()=>provider.quote({...ctx,[accounts.KEY_FIELD[account.provider]]:account.apiKey},
-        {to:current.to,from:current.from,packages:current.boxes,currency:current.shipment.currency}));
+        {to:current.to,from:current.from,packages:current.boxes,currency:current.shipment.currency,isReturn:Boolean(current.shipment.customer_return_id),originalCarrier:current.shipment.original_carrier,options:require('./parcel-contract').options(current.shipment.shipping_options||{})}));
     const sourceRates=Array.isArray(answer?.rates)?answer.rates:[],supported=sourceRates.filter(rate=>
       typeof rate.amountMinor==='number'&&Number.isSafeInteger(rate.amountMinor)&&rate.amountMinor>=0&&
       (rate.rateId||rate.rateIds?.length)&&rate.carrier&&rate.service&&
@@ -251,9 +258,11 @@ async function queueLabelPurchase(database,ctx,shipmentId,rateId,input={}){
       AND status IN ('PENDING','REVIEW')`,[ctx.workspaceId,shipmentId])).rows.length)
       throw new ValidationError('A label purchase is pending or needs review for this shipment.');
     if(!['PACKED','PICKING'].includes(shipment.status))throw new ValidationError('This shipment has already left or cannot purchase a label.');
+    await require('./postgres-return-parcels').assertCurrent(client,ctx.workspaceId,shipment);
     const rate=(await client.query(`SELECT * FROM shipment_rates
       WHERE workspace_id=$1 AND shipment_id=$2 AND id=$3`,[ctx.workspaceId,shipmentId,rateId])).rows[0];
     if(!rate)throw new ValidationError('Choose a current rate quoted for this parcel.');
+    if(Date.now()-new Date(rate.quoted_at).getTime()>30*60_000)throw new ValidationError('This carrier quote expired. Refresh rates before purchasing a label.');
     const account=rate.connector_id?await accounts.forWorkspace(client,ctx.workspaceId,{connectorId:rate.connector_id,provider:rate.provider}):null;
     if(!account||accountFingerprint(account)!==rate.account_fingerprint||
       quoteFingerprint(await state(client,ctx.workspaceId,shipmentId))!==rate.parcel_fingerprint)
@@ -267,8 +276,8 @@ async function queueLabelPurchase(database,ctx,shipmentId,rateId,input={}){
     const queued=await providerEffects.enqueueInTransaction(client,{workspaceId:ctx.workspaceId,kind:'shipping.label.purchase',
       provider:rate.provider,aggregateType:'shipment',aggregateId:shipmentId,idempotencyKey:key,
       requestedByUserId:ctx.actorId,payload:{transactionId:id,shipmentId,rateId:rate.id,actorId:ctx.actorId,
-        providerRateId:rate.provider_rate_id,currency:rate.currency,connectorId:rate.connector_id,
-        accountFingerprint:rate.account_fingerprint,providerShipmentIds:rate.provider_shipment_ids},
+        providerRateId:rate.provider_rate_id,currency:rate.currency,connectorId:rate.connector_id,isReturn:Boolean(shipment.customer_return_id),
+        accountFingerprint:rate.account_fingerprint,providerShipmentIds:rate.provider_shipment_ids,packageCount:(await packagesFor(client,ctx.workspaceId,shipmentId)).length,options:require('./parcel-contract').options(shipment.shipping_options||{})},
       priority:10,maxAttempts:12});
     await client.query(`UPDATE sales_shipments SET provider=$3,shipping_connector_id=$4,
       provider_shipment_id=$5,label_status='PENDING',updated_at=$6 WHERE workspace_id=$1 AND id=$2`,
@@ -303,6 +312,10 @@ async function recoverKnownLabelVerifications(client,options={}){
 
 async function confirmLabelPurchase(database,workspaceId,effect,token,rate,bought){
   const input=effect.payload;
+  const documents=require('./parcel-contract').documents(bought);
+  const packages=require('./package-tracking').receipts(bought,input.packageCount||1);
+  if(input.options&&documents.some(doc=>doc.kind==='LABEL'&&doc.format!==input.options.labelFormat))
+    throw new InvariantError('The carrier returned a different print format. Verify its saved purchase before printing or repeating it.','shipping_label_format_unverified');
   if(!bought.labelUrl||!Number.isSafeInteger(bought.amountMinor)||bought.amountMinor<0||bought.currency!==rate.currency)
     throw new InvariantError('The carrier label or its price needs verification. The purchase must not be repeated.','shipping_receipt_incomplete');
   return providerEffects.succeed(database,workspaceId,effect.id,token,{providerReference:
@@ -312,10 +325,10 @@ async function confirmLabelPurchase(database,workspaceId,effect,token,rate,bough
     await client.query(`UPDATE sales_shipments SET provider_rate_id=$3,provider_shipment_id=$4,label_url=$5,
       label_format=$6,label_status='PURCHASED',tracking_status='PRE_TRANSIT',tracked_at=$7,carrier=$8,
       service=$9,tracking_number=$10,tracking_url=$11,shipping_cost_minor=$12,currency=$13,
-      expected_delivery_date=$14,updated_at=$7 WHERE workspace_id=$1 AND id=$2`,[workspaceId,input.shipmentId,
+      expected_delivery_date=$14,shipping_documents=$15::jsonb,provider_packages=$16::jsonb,updated_at=$7 WHERE workspace_id=$1 AND id=$2`,[workspaceId,input.shipmentId,
       rate.provider_rate_id,(bought.providerShipmentIds||[bought.providerShipmentId]).filter(Boolean).join(','),
       bought.labelUrl,bought.labelFormat||'PDF',now,bought.carrier,bought.service,bought.trackingNumber,bought.trackingUrl||null,
-      bought.amountMinor,bought.currency,bought.deliveryDate||null]);
+      bought.amountMinor,bought.currency,bought.deliveryDate||null,JSON.stringify(documents),JSON.stringify(packages)]);
     await client.query(`UPDATE shipping_label_transactions SET status='SUCCEEDED',provider_reference=$2,
       amount_minor=$3,currency=$4,detail='Carrier confirmed the label purchase.',error_message=NULL,completed_at=$5,updated_at=$5 WHERE id=$1`,
     [input.transactionId,JSON.stringify(bought.providerLabelIds||bought.providerShipmentIds||[]),bought.amountMinor,bought.currency,now]);
@@ -329,7 +342,9 @@ async function confirmLabelPurchase(database,workspaceId,effect,token,rate,bough
 
 function knownPurchaseReference(value){
   if(!value||typeof value.externalId!=='string'||!value.externalId.trim()||value.externalId.length>500)return null;
-  return {externalId:value.externalId,...(typeof value.rateId==='string'&&value.rateId.length<=500?{rateId:value.rateId}:{})};
+  const ids=Array.isArray(value.externalIds)&&value.externalIds.length<=100&&value.externalIds.every(id=>typeof id==='string'&&id.length>0&&id.length<=500)?value.externalIds:null;
+  return {externalId:value.externalId,...(ids?{externalIds:ids}:{}),...(Number.isSafeInteger(value.expectedCount)&&value.expectedCount>0&&value.expectedCount<=100?{expectedCount:value.expectedCount}:{}),
+    ...(typeof value.rateId==='string'&&value.rateId.length<=500?{rateId:value.rateId}:{})};
 }
 
 async function executeLabelPurchaseEffect(database,workspaceId,effectId,options={}){
@@ -357,16 +372,22 @@ async function executeLabelPurchaseEffect(database,workspaceId,effectId,options=
     await fail(error);
     throw Object.assign(error,{retryable:false});}
   const provider=options.provider||defaultProviders.get(rate.provider);
-  let bought;
+  let bought,checkpointedReference=null;
   try{
+    await require('./postgres-return-parcels').assertCurrent(database,workspaceId,shipment);
     bought=await require('../commercial/operations').run(database,workspaceId,{capability:'shipping.labels',key:effect.idempotencyKey,
       provider:rate.provider,operation:'label_purchase',unit:'label'},()=>provider.buy(held.ctx,
-      {providerShipmentIds:input.providerShipmentIds||[],
-       rateIds:String(rate.provider_rate_id).split(',').filter(Boolean),idempotencyKey:effect.idempotencyKey}));
+      {providerShipmentIds:input.providerShipmentIds||[],isReturn:input.isReturn===true,
+       rateIds:String(rate.provider_rate_id).split(',').filter(Boolean),options:input.options||require('./parcel-contract').options(shipment.shipping_options||{}),idempotencyKey:effect.idempotencyKey,
+       approvedAmountMinor:Number(rate.amount_minor),currency:rate.currency,onCheckpoint:async reference=>{
+        const safe=knownPurchaseReference(reference);if(!safe)throw new InvariantError('The carrier operation identity could not be retained.','shipping_reference_invalid');
+        await providerEffects.checkpoint(database,workspaceId,effectId,effect.claimToken,safe,{allowReferenceExtension:true});checkpointedReference=safe;
+       }}));
   }catch(error){
+    error.message=String(error.message||'The carrier operation failed.').replaceAll(held.account.apiKey,'[redacted]').replaceAll(Buffer.from(held.account.apiKey+':').toString('base64'),'[redacted]').slice(0,500);
     const ambiguous=!providerEffects.definiteFailure(error);
-    const reference=knownPurchaseReference(error.providerReference);
-    if(reference)await providerEffects.checkpoint(database,workspaceId,effectId,effect.claimToken,reference);
+    const reference=checkpointedReference||knownPurchaseReference(error.providerReference);
+    if(reference)await providerEffects.checkpoint(database,workspaceId,effectId,effect.claimToken,reference,{allowReferenceExtension:true});
     if(ambiguous&&reference&&typeof provider.verifyPurchase==='function'){
       error.code='provider_confirmation_pending';await fail(error,true,true);
       return {pending:true,verificationQueued:true,shipment:await requireShipment(database,workspaceId,input.shipmentId),replayed:false};
@@ -376,7 +397,7 @@ async function executeLabelPurchaseEffect(database,workspaceId,effectId,options=
   }
   try{
     const externalId=bought.providerLabelIds?.[0]||bought.providerShipmentIds?.[0]||bought.providerShipmentId;
-    if(externalId)await providerEffects.checkpoint(database,workspaceId,effectId,effect.claimToken,{externalId});
+    if(externalId)await providerEffects.checkpoint(database,workspaceId,effectId,effect.claimToken,{externalId,externalIds:bought.providerLabelIds||bought.providerShipmentIds||[externalId],expectedCount:(bought.providerLabelIds||bought.providerShipmentIds||[externalId]).length},{allowReferenceExtension:true});
     await confirmLabelPurchase(database,workspaceId,effect,effect.claimToken,rate,bought);
   }catch(error){await providerEffects.finishError(database,workspaceId,effectId,effect.claimToken,error,{ambiguous:true,
     apply:(client)=>client.query(`UPDATE shipping_label_transactions SET status='REVIEW',error_message=$2,
@@ -427,6 +448,13 @@ async function verifyLabelPurchaseEffect(database,workspaceId,effectId,options={
 async function handoff(database,ctx,shipmentId,input={}){
   return database.transaction(async client=>{
   const shipment=await requireShipment(client,ctx.workspaceId,shipmentId,true);
+  if(shipment.customer_return_id){
+    await require('./postgres-parcel-options').actor(client,ctx);
+    if(['SHIPPED','DELIVERED'].includes(shipment.status))return {shipment,replayed:true};
+    if(shipment.status!=='PACKED'||shipment.label_status!=='PURCHASED')throw new ValidationError('Verify the return label before recording the customer’s carrier handoff.');
+    await client.query("UPDATE sales_shipments SET status=CASE WHEN tracking_status='DELIVERED' THEN 'DELIVERED' ELSE 'SHIPPED' END,handover='CARRIER',shipped_at=COALESCE(shipped_at,$3),updated_at=$3 WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,shipmentId,nowIso()]);
+    return {shipment:await requireShipment(client,ctx.workspaceId,shipmentId),replayed:false,physicalReturnReceiptRequired:true};
+  }
   if(shipment.status==='SHIPPED'||shipment.status==='DELIVERED')return {shipment,replayed:true};
   if(shipment.status!=='PACKED')throw new ValidationError('Pack this shipment before recording the handoff.');
   if(['PENDING','REVIEW','VOID_PENDING','VOIDED'].includes(shipment.label_status))
@@ -529,21 +557,22 @@ async function applyTrackingInTransaction(client,ctx,shipment,input={}){
   const externalId=String(input.externalEventId||'').trim();
   if(!externalId)throw new ValidationError('A carrier event id is required.');
   const now=nowIso();
+  const tracked=require('./package-tracking').apply(shipment,{...input,status});
   const inserted=await client.query(`INSERT INTO shipment_tracking_events
-    (id,workspace_id,shipment_id,provider,external_event_id,status,detail,location,occurred_at,created_at)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(workspace_id,shipment_id,external_event_id) DO NOTHING RETURNING id`,
+    (id,workspace_id,shipment_id,provider,external_event_id,status,detail,location,occurred_at,created_at,tracking_number)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(workspace_id,shipment_id,external_event_id) DO NOTHING RETURNING id`,
   [newId('trackevt'),ctx.workspaceId,shipment.id,input.provider||shipment.provider||'manual',externalId,status,
-    input.detail||null,input.location||null,input.occurredAt||now,now]);
+    input.detail||null,input.location||null,input.occurredAt||now,now,input.trackingNumber||shipment.tracking_number]);
   if(!inserted.rows.length)return {applied:false,replayed:true,status:shipment.tracking_status};
-  const current=String(shipment.tracking_status||'UNKNOWN');
-  const next=RANK[status]>=RANK[current]?status:current;
+  const next=tracked.status;
   await client.query(`UPDATE sales_shipments SET tracking_status=$3,tracking_status_detail=$4,tracked_at=$5,
     status=CASE WHEN $3='DELIVERED' AND status='SHIPPED' THEN 'DELIVERED' ELSE status END,
     delivered_at=CASE WHEN $3='DELIVERED' THEN COALESCE(delivered_at,$5) ELSE delivered_at END,
     exception_reason=CASE WHEN $3 IN ('FAILURE','RETURNED') THEN $4
-      WHEN $3 IN ('DELIVERED','CANCELLED') THEN NULL ELSE exception_reason END,updated_at=$5
-    WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,shipment.id,next,input.detail||null,input.occurredAt||now]);
+      WHEN $3 IN ('DELIVERED','CANCELLED') THEN NULL ELSE exception_reason END,provider_packages=$6::jsonb,updated_at=$5
+    WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,shipment.id,next,input.detail||null,input.occurredAt||now,JSON.stringify(tracked.packages)]);
   shipment.tracking_status=next;
+  shipment.provider_packages=tracked.packages;
   return {applied:true,replayed:false,status:next};
 }
 
@@ -559,12 +588,14 @@ async function receiveProviderEvent(database,ctx,providerName,event,options={}){
     let shipment=null;
     if(read.providerShipmentId){
       shipment=(await client.query(`SELECT * FROM sales_shipments WHERE workspace_id=$1 AND provider=$3
-        AND $2=ANY(string_to_array(COALESCE(provider_shipment_id,''),',')) ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
-      [ctx.workspaceId,String(read.providerShipmentId),providerName])).rows[0]||null;
+        AND ($2=ANY(string_to_array(COALESCE(provider_shipment_id,''),',')) OR EXISTS(SELECT 1 FROM jsonb_array_elements(provider_packages) p WHERE p->>'externalId'=$2))
+        AND ($4::text IS NULL OR shipping_connector_id=$4) ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
+      [ctx.workspaceId,String(read.providerShipmentId),providerName,options.connectorId||null])).rows[0]||null;
     }
     if(!shipment&&read.trackingNumber){
-      shipment=(await client.query(`SELECT * FROM sales_shipments WHERE workspace_id=$1 AND tracking_number=$2 AND provider=$3
-        ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,[ctx.workspaceId,String(read.trackingNumber),providerName])).rows[0]||null;
+      shipment=(await client.query(`SELECT * FROM sales_shipments WHERE workspace_id=$1 AND provider=$3
+        AND (tracking_number=$2 OR EXISTS(SELECT 1 FROM jsonb_array_elements(provider_packages) p WHERE p->>'trackingNumber'=$2))
+        AND ($4::text IS NULL OR shipping_connector_id=$4) ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,[ctx.workspaceId,String(read.trackingNumber),providerName,options.connectorId||null])).rows[0]||null;
     }
     if(shipment&&options.connectorId&&shipment.shipping_connector_id!==options.connectorId)shipment=null;
     const outcome=shipment
@@ -594,6 +625,7 @@ async function receiveProviderEvent(database,ctx,providerName,event,options={}){
     let applied=0;let latest=shipment.tracking_status;
     for(const entry of events){
       const result=await applyTrackingInTransaction(client,ctx,shipment,{provider:providerName,
+        trackingNumber:read.trackingNumber,providerShipmentId:read.providerShipmentId,
         externalEventId:entry.externalEventId,status:entry.status||read.status||'UNKNOWN',
         detail:entry.detail||read.detail,location:entry.location,occurredAt:entry.occurredAt||now});
       if(result.applied)applied+=1;latest=result.status;
@@ -613,19 +645,23 @@ async function refreshTracking(database,ctx,shipmentId,options={}){
   const held=await accounts.contextFor(database,ctx,{connectorId:shipment.shipping_connector_id||null,provider:shipment.provider});
   if(!held)throw new ValidationError('Reconnect the postage account before checking the carrier.');
   const provider=options.provider||defaultProviders.get(held.account.provider);
-  const operation=()=>provider.track(held.ctx,{trackingNumber:shipment.tracking_number,carrier:shipment.carrier,providerShipmentId:shipment.provider_shipment_id});
+  const packages=shipment.provider_packages?.length?shipment.provider_packages:[{trackingNumber:shipment.tracking_number,externalId:shipment.provider_shipment_id}];
+  let latest={applied:false,status:shipment.tracking_status};
+  for(const parcel of packages){
+  const operation=()=>provider.track(held.ctx,{trackingNumber:parcel.trackingNumber,carrier:shipment.carrier,providerShipmentId:parcel.externalId});
   const read=options.essential?await require('../commercial/context').run({database,
     scope:await require('../commercial/entitlements').ownerScopeForWorkspace(database,ctx.workspaceId),system:true,requestId:'tracking:'+options.idempotencyKey},operation):
     await require('../commercial/operations').run(database,ctx.workspaceId,{capability:'shipping.tracking',
-    key:options.idempotencyKey||newId('track'),provider:held.account.provider,operation:'carrier_tracking'},operation);
-  if(!read)return {applied:false,status:shipment.tracking_status,because:'The carrier has no scan for this parcel yet.'};
-  const events=read.events?.length?read.events:[{externalEventId:`summary:${shipment.tracking_number}:${read.status}:${read.occurredAt||'undated'}`,
+    key:(options.idempotencyKey||newId('track'))+':'+parcel.position+':'+parcel.trackingNumber,provider:held.account.provider,operation:'carrier_tracking'},operation);
+  if(!read)continue;
+  const events=read.events?.length?read.events:[{externalEventId:`summary:${parcel.trackingNumber}:${read.status}:${read.occurredAt||'undated'}`,
     status:read.status,detail:read.detail,location:read.location,occurredAt:read.occurredAt||nowIso()}];
-  let latest={applied:false,status:shipment.tracking_status};
   for(const event of events){
     latest=await applyTracking(database,ctx,shipmentId,{provider:held.account.provider,
-      externalEventId:event.externalEventId,status:event.status||read.status,detail:event.detail||read.detail,
+      trackingNumber:parcel.trackingNumber,providerShipmentId:parcel.externalId,
+      externalEventId:parcel.trackingNumber+':'+event.externalEventId,status:event.status||read.status,detail:event.detail||read.detail,
       location:event.location,occurredAt:event.occurredAt||nowIso()});
+  }
   }
   return latest;
 }

@@ -1,0 +1,30 @@
+<p class="rm-stamp"><a href="/returns/<%= shipment.customer_return_id %>">Back to the authorized return</a></p>
+<h1 class="rm-verdict">Return postage · <%= shipment.shipment_number %></h1>
+<p class="rm-prose">The customer sends the authorized goods back using your connected postage account. A label or delivery scan never receives stock, decides condition or refunds the customer.</p>
+<section class="section"><h2>Return route</h2><div class="grid grid--2"><div class="panel card-body"><h3>From the customer</h3><p><%= state.from.name %><br><%= state.from.raw %></p></div><div class="panel card-body"><h3>To your return location</h3><p><%= state.to.name %><br><%= state.to.raw %></p></div></div></section>
+<% if(state.labelOperation?.status==='PENDING'){ %><section class="notice notice--info" role="status" data-async-operation data-status-url="/fulfilment/<%= shipment.id %>/label/status?operation=<%= encodeURIComponent(state.labelOperation.id) %>" data-resume-url="/fulfilment/<%= shipment.id %>#label"><strong>Carrier confirmation pending</strong><p>The saved request is being checked without another purchase. Stock and customer refunds have not changed.</p><p data-operation-update></p></section><script src="/async-operation.js" defer></script>
+<% } else if(['REVIEW','FAILED'].includes(state.labelOperation?.status)){ %><section class="notice notice--warn"><strong><%= state.labelOperation.status==='REVIEW'?'Carrier outcome needs review':'Carrier refused the request' %></strong><p><%= state.labelOperation.error_message %></p></section><% } %>
+<section class="section" id="carrier"><h2>Packages and label preferences</h2>
+<% if(['PACKED','PICKING'].includes(shipment.status)&&!['PENDING','REVIEW','PURCHASED','VOID_PENDING'].includes(shipment.label_status)){ %>
+ <%- include('parcel-setup',{shipment,shipping:{boxes:state.boxes,packagePresets}}) %>
+ <% state.blocked.forEach(function(message){ %><p class="notice notice--warn"><%= message %></p><% }); %>
+ <% if(state.ready){ %><form method="post" action="/fulfilment/<%= shipment.id %>/quote" data-busy><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button type="submit" class="btn">Compare return postage</button></form><% } %>
+<% } else { %><p class="hint">Package measurements stay frozen while a label is pending or valid. Void an unused label before changing them.</p><% } %>
+</section>
+<% (state.quoteProblems||[]).forEach(function(problem){ %><p class="notice notice--warn"><%= problem.provider %>: <%= problem.message %></p><% }); %>
+<section class="section" id="rates"><h2>Quoted return rates</h2>
+<% if(state.rates.length&&!['PURCHASED','PENDING','REVIEW','VOID_PENDING'].includes(shipment.label_status)&&shipment.status==='PACKED'){ %><form method="post" action="/fulfilment/<%= shipment.id %>/label" class="stack" data-busy>
+ <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="<%= purchaseKey %>">
+ <% state.rates.forEach(function(rate,index){ %><label class="choice"><input type="radio" name="rateId" value="<%= rate.id %>" <%= index===0?'checked':'' %> required><span><%= rate.provider %> · <%= rate.carrier %> · <%= rate.service %> · <strong><%= helpers.money(rate.amount_minor,rate.currency) %></strong><%= rate.delivery_days!=null?' · '+rate.delivery_days+' days':'' %></span></label><% }); %>
+ <p class="hint">Your selected provider bills your account. Buying postage does not change the customer’s balance or inventory.</p><button type="submit" class="btn btn--primary">Buy the selected return label</button>
+</form><% } else { %><p class="hint">Compare current rates after confirming the actual package measurements.</p><% } %>
+</section>
+<section class="section" id="label"><h2>Return label</h2><p>Label status: <strong><%= shipment.label_status||'Not purchased' %></strong></p>
+<% if(shipment.label_status==='PURCHASED'){ (shipment.shipping_documents||[]).forEach(function(doc){ %><a class="btn" href="<%= doc.url %>" target="_blank" rel="noreferrer noopener">Print <%= doc.kind==='LABEL'?'package '+doc.position+' label':'customs form' %> · <%= doc.format %></a><% }); %>
+ <% if(shipment.status==='PACKED'){ %><form method="post" action="/fulfilment/<%= shipment.id %>/label/void" data-busy><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit">Void unused return postage</button></form><% } %>
+<% } %></section>
+<section class="section" id="tracking"><h2>Carrier progress</h2>
+ <% (shipment.provider_packages||[]).forEach(function(parcel){ %><p>Package <%= parcel.position %> · <%= parcel.trackingNumber||'Carrier has not provided tracking' %> · <strong><%= parcel.status.replaceAll('_',' ').toLowerCase() %></strong></p><% }); %>
+ <% if(shipment.label_status==='PURCHASED'){ %><form method="post" action="/fulfilment/<%= shipment.id %>/tracking/refresh" data-busy><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit">Check carrier tracking</button></form><% } %>
+ <p class="notice notice--info">When the goods physically arrive, use <a href="/returns/<%= shipment.customer_return_id %>">the return’s receipt and inspection steps</a>. Tracking alone never restores sellable stock or issues a refund.</p>
+</section>

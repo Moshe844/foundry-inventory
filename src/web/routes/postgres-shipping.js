@@ -68,7 +68,8 @@ async function shipmentPage(database,workspaceId,shipmentId){
   let providerCapabilities={};
   const shipmentProvider=s.provider||state.account?.provider;
   if(shipmentProvider&&providerRegistry.has(shipmentProvider))providerCapabilities=providerRegistry.capabilities(shipmentProvider);
-  return {shipment:s,paymentPosition,pickList:{shipment:s,stops},shipping:{ready:state.ready,blocked,
+  const packagePresets=await require('../../shipping/postgres-parcel-options').presets(database,workspaceId);
+  return {shipment:s,paymentPosition,pickList:{shipment:s,stops},shipping:{ready:state.ready,blocked,packagePresets,
     provider:s.provider||state.account?.provider||null,to:state.to,from:state.from,boxes:state.boxes,rates,promised:s.needed_by||null,promise:null,
     handling:{mode},ruled,recommended,rules:ruleRows.rows,events:state.events,quoteProblems:state.quoteProblems,
     transactions:transactionRows.rows,providerCapabilities},
@@ -78,7 +79,11 @@ async function shipmentPage(database,workspaceId,shipmentId){
 
 function createPostgresShippingRouter(database,options={}){
   const router=express.Router();
-  router.use(['/settings/shipping','/fulfilment'],requireAuth);
+  router.use(['/settings/shipping','/fulfilment','/returns'],requireAuth);
+  router.post('/returns/:id/postage',requirePermission(permissions.OPERATE,'prepare return postage'),asyncRoute(async(req,res)=>{
+    const result=await require('../../shipping/postgres-return-parcels').prepare(database,req.ctx,req.params.id,{locationId:req.body.locationId,outboundShipmentId:req.body.outboundShipmentId});
+    req.flash('success','Return parcel prepared. Confirm its actual measurements before comparing postage. Stock and refunds have not changed.');return res.redirect(303,'/fulfilment/'+result.shipmentId+'#carrier');
+  }));
   router.get('/settings/shipping',asyncRoute(async(req,res)=>{
     const [shippingAccounts,ruleRows,policyRows,locationRows,setupRows]=await Promise.all([accounts.describeAll(database,req.ctx.workspaceId),
       database.query(`SELECT * FROM shipping_rules WHERE workspace_id=$1 ORDER BY created_at,id`,[req.ctx.workspaceId]),
@@ -161,6 +166,9 @@ function createPostgresShippingRouter(database,options={}){
     return res.redirect(303,'/settings/shipping');
   }));
   router.get('/fulfilment/:id',asyncRoute(async(req,res)=>{
+    const saved=await shipping.requireShipment(database,req.ctx.workspaceId,req.params.id);
+    if(saved.customer_return_id){const state=await shipping.state(database,req.ctx.workspaceId,saved.id),packagePresets=await require('../../shipping/postgres-parcel-options').presets(database,req.ctx.workspaceId);
+      return res.page('shipping/return-parcel',{title:saved.shipment_number,nav:'fulfilment',room:true,shipment:saved,state,packagePresets,purchaseKey:newId('return-postage')});}
     const page=await shipmentPage(database,req.ctx.workspaceId,req.params.id);
     return res.page('sales/shipment',{title:page.shipment.shipment_number,nav:'fulfilment',room:true,
       backTo:{href:'/orders',label:'Orders'},...page,carriers:carriers.list(),postgresPlacement:true});
@@ -175,10 +183,23 @@ function createPostgresShippingRouter(database,options={}){
       startedAt:transaction.requested_at});
   }));
   router.post('/fulfilment/:id/packages',asyncRoute(async(req,res)=>{
-    await shipping.setPackages(database,req.ctx,req.params.id,[{weightGrams:req.body.weightGrams,
-      lengthMm:req.body.lengthMm,widthMm:req.body.widthMm,heightMm:req.body.heightMm}]);
+    await shipping.setPackages(database,req.ctx,req.params.id,req.body.packages||[{weightGrams:req.body.weightGrams,
+      lengthMm:req.body.lengthMm,widthMm:req.body.widthMm,heightMm:req.body.heightMm}],{expectedUpdatedAt:req.body.expectedUpdatedAt});
     req.flash('success','Measured package details saved.');
     return res.redirect(303,`/fulfilment/${req.params.id}`);
+  }));
+  router.post('/fulfilment/:id/options',asyncRoute(async(req,res)=>{
+    await require('../../shipping/postgres-parcel-options').saveOptions(database,req.ctx,req.params.id,req.body);
+    req.flash('success','Label format and delivery confirmation saved. Refresh carrier rates before buying.');return res.redirect(303,'/fulfilment/'+req.params.id+'#carrier');
+  }));
+  router.post('/fulfilment/:id/preset',requireOwner,asyncRoute(async(req,res)=>{
+    const boxes=await shipping.packagesFor(database,req.ctx.workspaceId,req.params.id);
+    await require('../../shipping/postgres-parcel-options').savePreset(database,req.ctx,{name:req.body.name,packages:boxes});
+    req.flash('success','Package defaults saved for this business. Confirm actual weights each time you use them.');return res.redirect(303,'/fulfilment/'+req.params.id+'#carrier');
+  }));
+  router.post('/fulfilment/:id/preset/apply',asyncRoute(async(req,res)=>{
+    await require('../../shipping/postgres-parcel-options').applyPreset(database,req.ctx,req.params.id,req.body.presetId,{expectedUpdatedAt:req.body.expectedUpdatedAt});
+    req.flash('success','Saved packages applied. Weigh these actual parcels and confirm their measurements before comparing rates.');return res.redirect(303,'/fulfilment/'+req.params.id+'#carrier');
   }));
   async function quoteShipment(req){
     return shipping.quote(database,req.ctx,req.params.id,{idempotencyKey:req.body.usageKey||newId('quote'),providerResolver:options.providerResolver});
@@ -231,6 +252,8 @@ function createPostgresShippingRouter(database,options={}){
     return res.redirect(303,`/fulfilment/${req.params.id}#tracking`);
   }));
   router.post('/fulfilment/:id/destination',asyncRoute(async(req,res)=>{
+    const parcel=await shipping.requireShipment(database,req.ctx.workspaceId,req.params.id);
+    if(parcel.customer_return_id)throw new ValidationError('Return postage keeps its reviewed customer and return-location addresses. Void unused postage before preparing a different return route.');
     const method=String(req.body.deliveryMethod||'');const destination=trimOrNull(req.body.shippingAddress);
     if(!['SHIP','PICKUP'].includes(method))throw new ValidationError('Choose delivery or customer pickup.');
     if(method==='SHIP'&&!address.parse(destination).complete)throw new ValidationError(address.why(address.parse(destination)));
@@ -245,9 +268,9 @@ function createPostgresShippingRouter(database,options={}){
     req.flash('success','Delivery choice saved for the order and this parcel. No stock moved.');
     return res.redirect(303,`/fulfilment/${req.params.id}`);
   }));
-  router.post('/fulfilment/:id/delivered',asyncRoute(async(req,res)=>{
+  router.post('/fulfilment/:id/delivered',requirePermission(permissions.FULFILL_SALES,'confirm delivery'),asyncRoute(async(req,res)=>{
     await shipping.applyTracking(database,req.ctx,req.params.id,{provider:'manual',status:'DELIVERED',
-      externalEventId:`manual-delivered:${req.params.id}`,detail:'Marked delivered by a StockChief user.',occurredAt:nowIso()});
+      externalEventId:`manual-delivered:${req.params.id}`,allPackagesConfirmed:true,detail:'Marked delivered by a StockChief user.',occurredAt:nowIso()});
     req.flash('success','Delivery recorded. Duplicate confirmation will not create a second event.');
     return res.redirect(303,`/fulfilment/${req.params.id}#tracking`);
   }));

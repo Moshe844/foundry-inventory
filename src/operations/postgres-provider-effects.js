@@ -73,7 +73,20 @@ async function succeed(database,workspaceId,id,token,input={}){return database.t
   if(input.after)await input.after(client,hydrate(row));
   return hydrate(row);
 },{isolation:'SERIALIZABLE',retrySafe:true});}
-async function checkpoint(database,workspaceId,id,token,providerReference){
+async function checkpoint(database,workspaceId,id,token,providerReference,options={}){
+ if(options.allowReferenceExtension)return database.transaction(async client=>{
+  const row=(await client.query('SELECT * FROM stockchief_runtime.provider_effects WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[workspaceId,id])).rows[0];
+  if(!row||row.kind!=='shipping.label.purchase'||row.status!=='RUNNING'||row.claim_token!==token)
+   throw new InvariantError('The provider result no longer belongs to the active operation.','provider_effect_claim_lost');
+  const old=row.provider_reference;
+  if(old){
+   const stable=value=>JSON.stringify(Object.fromEntries(Object.entries(value).filter(([key])=>key!=='externalIds').sort(([a],[b])=>a.localeCompare(b))));
+   const a=old.externalIds||[old.externalId],b=providerReference.externalIds||[providerReference.externalId];
+   if(stable(old)!==stable(providerReference)||!Array.isArray(b)||b.length<a.length||b.length>providerReference.expectedCount||a.some((value,index)=>b[index]!==value))
+    throw new InvariantError('A saved carrier identity cannot be replaced. Review the original operation.','provider_reference_changed');
+  }
+  const saved=(await client.query('UPDATE stockchief_runtime.provider_effects SET provider_reference=$4::jsonb,updated_at=now() WHERE workspace_id=$1 AND id=$2 AND claim_token=$3 RETURNING *',[workspaceId,id,token,JSON.stringify(providerReference)])).rows[0];return hydrate(saved);
+ },{isolation:'SERIALIZABLE',retrySafe:true});
  const row=(await database.query("UPDATE stockchief_runtime.provider_effects SET provider_reference=$4::jsonb,updated_at=now() WHERE workspace_id=$1 AND id=$2 AND status='RUNNING' AND claim_token=$3 AND (provider_reference IS NULL OR provider_reference=$4::jsonb) RETURNING *",[workspaceId,id,token,JSON.stringify(providerReference)])).rows[0];
  if(!row)throw new InvariantError('The provider result no longer belongs to the active operation.','provider_effect_claim_lost');
  return hydrate(row);

@@ -1,0 +1,20 @@
+'use strict';process.env.NODE_ENV='test';const test=require('node:test'),assert=require('node:assert/strict');
+test('return postage uses the shared parcel engine, while only physical RMA receipt can restore stock',{timeout:120000},async t=>{
+ const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx,shipping}=f,returns=require('../../src/operations/postgres-returns'),postage=require('../../src/shipping/postgres-return-parcels');
+ const outbound=await f.parcel();await shipping.handoff(db,ctx,outbound.shipmentId,{trackingNumber:'OUTBOUND',idempotencyKey:'handoff'});assert.equal(await f.balance(),3);
+ const quarantine=await require('../../src/domain/postgres-location-service').createLocation(db,ctx,{name:'Return inspection',kind:'warehouse'});
+ const requested=await returns.requestCustomerReturn(db,ctx,{salesOrderId:outbound.order.salesOrderId,quarantineLocationId:quarantine.id,resolution:'NO_REFUND',idempotencyKey:'return-request',lines:[{salesOrderLineId:outbound.order.lineIds[0],quantity:1}]});
+ await assert.rejects(postage.prepare(db,ctx,requested.customerReturnId,{locationId:f.location.id}),/authorize/i);
+ await returns.authorizeCustomerReturn(db,ctx,requested.customerReturnId,{idempotencyKey:'authorize'});
+ const parcel=await postage.prepare(db,ctx,requested.customerReturnId,{locationId:f.location.id});assert.equal((await postage.prepare(db,ctx,requested.customerReturnId,{locationId:f.location.id})).shipmentId,parcel.shipmentId);
+ const review=await shipping.state(db,ctx.workspaceId,parcel.shipmentId);assert.equal(review.from.city,'Albany');assert.equal(review.to.city,'Monroe');assert.equal(review.shipment.customer_return_id,requested.customerReturnId);assert.match(review.blocked.join(' '),/actual weight/i);
+ await shipping.setPackages(db,ctx,parcel.shipmentId,[{weightGrams:300,lengthMm:200,widthMm:150,heightMm:100}]);
+ const provider={quote:async(_ctx,input)=>{assert.equal(input.isReturn,true);assert.equal(input.from.city,'Albany');return {rates:[{rateId:'return-rate',carrier:'usps',service:'Ground',amountMinor:100,currency:'USD'}]};},buy:async(_ctx,input)=>{assert.equal(input.isReturn,true);return {providerShipmentId:'return-label',trackingNumber:'RETURNED-PARCEL',labelUrl:'https://example.test/return.pdf',amountMinor:100,currency:'USD'};}};
+ const quotes=await shipping.quote(db,ctx,parcel.shipmentId,{provider});assert(quotes.rates.length,JSON.stringify({blocked:quotes.blocked,problems:quotes.quoteProblems}));await shipping.buyLabel(db,ctx,parcel.shipmentId,quotes.rates[0].id,{idempotencyKey:'return-label'},{provider});
+ await shipping.handoff(db,ctx,parcel.shipmentId,{idempotencyKey:'customer-handoff'});assert.equal(await f.balance(),3);
+ await shipping.applyTracking(db,ctx,parcel.shipmentId,{trackingNumber:'RETURNED-PARCEL',externalEventId:'returned-delivery',status:'DELIVERED'});assert.equal(await f.balance(),3);
+ const rma=await returns.getCustomerReturn(db,ctx.workspaceId,requested.customerReturnId);assert.equal(rma.status,'AUTHORIZED');assert.equal(Number(rma.lines[0].quantity_received),0);
+ await returns.receiveCustomerReturn(db,ctx,rma.id,{idempotencyKey:'physical-receipt',lines:[{lineId:rma.lines[0].id,quantity:1}]});assert.equal(await f.balance(),4);
+ assert.equal(Number((await db.query('SELECT quantity_fulfilled FROM sales_order_lines WHERE id=$1',[outbound.order.lineIds[0]])).rows[0].quantity_fulfilled),1);
+ await assert.rejects(postage.prepare(db,{workspaceId:'another-business',actorId:ctx.actorId},rma.id,{locationId:f.location.id}));
+});

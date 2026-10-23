@@ -4,6 +4,12 @@
 
 <div class="rm-ledger"><% customerReturn.lines.forEach(function(line){ %><div class="rm-ledger__row"><span class="rm-ledger__k"><%= line.item_name %><%= line.variant_label?' / '+line.variant_label:'' %><small><%= line.code %> · <%= line.tracking_mode %> tracked</small></span><span class="rm-ledger__v"><%= line.quantity_received %> / <%= line.quantity_authorized %> received</span><span class="rm-ledger__n"><%= line.quantity_restocked %> restocked · <%= line.quantity_repair %> repair · <%= line.quantity_scrapped %> scrapped</span></div><% }) %></div>
 
+<section class="section"><h2>Return shipping</h2>
+ <% if(returnParcel){ %><p><a class="rm-btn" href="/fulfilment/<%= returnParcel.id %>">Manage return postage and tracking</a></p>
+ <% } else if(['AUTHORIZED','PARTIALLY_RECEIVED'].includes(customerReturn.status)){ %><p class="rm-sub">Prepare a carrier label using this business’s own postage accounts. Carrier delivery never replaces physical receipt and inspection.</p>
+ <form method="post" action="/returns/<%= customerReturn.id %>/postage" class="stack-form"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label>Return delivery location<select name="locationId" required><% locations.forEach(function(location){ %><option value="<%= location.id %>"><%= location.name %></option><% }); %></select></label><button class="rm-btn" type="submit">Prepare return postage</button></form>
+ <% } else { %><p class="rm-sub">Authorize the goods expected back before preparing a return label.</p><% } %>
+</section>
 <section class="section"><div class="section-head"><h2>Next controlled step</h2></div>
   <% if(customerReturn.status==='REQUESTED'){ %>
     <p class="rm-sub">No stock or money moved. Authorization only confirms what may come back.</p>

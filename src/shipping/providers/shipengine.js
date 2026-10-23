@@ -86,12 +86,14 @@ function parcel(box = {}) {
 const minorFrom = (amount) => Math.round(Number(amount || 0) * 100);
 
 function readRate(row = {}) {
+  const components=['shipping_amount','insurance_amount','confirmation_amount','other_amount'].map(key=>row[key]).filter(Boolean);
+  const total=require('../provider-money').total(components.length?components:(row.rate_details||[]).map(detail=>detail.amount));
   return {
-    rateId: row.rate_id,
+    rateId: row.rate_id,carrierAccount:row.carrier_id||null,
     carrier: String(row.carrier_code || row.carrier_friendly_name || '').toLowerCase(),
     service: row.service_type || row.service_code || 'Carrier service',
-    amountMinor: minorFrom(row.shipping_amount?.amount ?? row.rate_details?.[0]?.amount?.amount),
-    currency: String(row.shipping_amount?.currency || 'USD').toUpperCase(),
+    amountMinor: total.amountMinor,
+    currency: total.currency,
     deliveryDays: row.delivery_days === null || row.delivery_days === undefined
       ? null : Number(row.delivery_days),
     deliveryDate: row.estimated_delivery_date

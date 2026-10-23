@@ -1,20 +1,6 @@
 'use strict';
 
-/*
- * Shippo, behind the same five functions as EasyPost.
- *
- * This file is the argument for the seam. Shippo names almost nothing the way
- * EasyPost does — rates are "amount" in dollars as a string rather than
- * "rate", a bought label is a "transaction" rather than a shipment, tracking
- * statuses are SHOUTED, and a shipment is created with a list of parcels
- * rather than one at a time. None of that reaches anything above here.
- *
- * Adding it changed no other file. That is the whole test of whether the
- * abstraction was real.
- *
- * The key is read from the environment and never from the database, exactly as
- * with EasyPost.
- */
+/* Provider adapter. PostgreSQL supplies this business’s encrypted customer account through ctx. */
 
 const { ValidationError, AuthenticationError } = require('../../domain/errors');
 const { providerFetch } = require('../../lib/provider-http');
@@ -43,7 +29,7 @@ async function call(ctx, path, options = {}) {
       ...(options.headers || {}),
     },
     body: options.body ? JSON.stringify(options.body) : undefined,
-  }, { provider: 'Shippo', retries: options.retries });
+  }, { provider: 'Shippo', retries: options.retries,timeoutMs:options.timeoutMs });
   const text = await response.text();
   let body = null;
   try { body = text ? JSON.parse(text) : null; } catch { body = null; }
@@ -75,37 +61,31 @@ function address(input = {}) {
 const GRAMS_PER_OUNCE = 28.349523125;
 const MM_PER_INCH = 25.4;
 
-/*
- * Shippo wants every parcel to carry dimensions, and refuses without them.
- * A shop that has not measured its boxes is not a shop that cannot ship, so a
- * conservative default stands in — and it is a default, stated here, rather
- * than a measurement StockChief pretends to have.
- */
-const DEFAULT_BOX_MM = { length: 300, width: 200, height: 150 };
 
 function parcel(box = {}) {
+  if(![box.lengthMm,box.widthMm,box.heightMm].every(value=>Number(value)>0))throw new ValidationError('Shippo needs all three measured package dimensions. StockChief will not invent a box size.');
   return {
     weight: Math.max(0.1, Number(box.weightGrams || 0) / GRAMS_PER_OUNCE).toFixed(2),
     mass_unit: 'oz',
-    length: ((Number(box.lengthMm) || DEFAULT_BOX_MM.length) / MM_PER_INCH).toFixed(2),
-    width: ((Number(box.widthMm) || DEFAULT_BOX_MM.width) / MM_PER_INCH).toFixed(2),
-    height: ((Number(box.heightMm) || DEFAULT_BOX_MM.height) / MM_PER_INCH).toFixed(2),
+    length: (Number(box.lengthMm) / MM_PER_INCH).toFixed(2),
+    width: (Number(box.widthMm) / MM_PER_INCH).toFixed(2),
+    height: (Number(box.heightMm) / MM_PER_INCH).toFixed(2),
     distance_unit: 'in',
   };
 }
 
-const minorFrom = (amount) => Math.round(Number(amount || 0) * 100);
+const money=require('../provider-money');
 
 /** A Shippo rate, in StockChief's shape. */
 function readRate(row) {
   const days = row.estimated_days === null || row.estimated_days === undefined
     ? null : Number(row.estimated_days);
   return {
-    rateId: row.object_id,
+    rateId: row.object_id,carrierAccount:row.carrier_account||null,
     carrier: String(row.provider || '').toLowerCase(),
     service: row.servicelevel?.name || row.servicelevel_name || 'Service',
-    amountMinor: minorFrom(row.amount),
-    currency: row.currency || 'USD',
+    amountMinor: money.amount(row.amount,row.currency),
+    currency: require('../../domain/currency').code(row.currency),
     deliveryDays: days,
     /*
      * Shippo gives a number of days rather than a date. Turned into a date
@@ -123,18 +103,25 @@ function readRate(row) {
 /* ----------------------------------------------------------------- rates */
 
 async function quote(ctx, input = {}) {
-  if(!input.from?.email)throw new ValidationError('Add a shipping contact email to the ship-from location before requesting Shippo rates.');
+  const original=String(input.originalCarrier||'').toLowerCase(),scanBasedReturn=input.isReturn&&['usps','ups','fedex'].includes(original);
+  if(!(input.isReturn?input.to:input.from)?.email)throw new ValidationError('Add a shipping contact email to the business’s shipping location before requesting Shippo rates.');
   const packages = input.packages && input.packages.length ? input.packages : [{}];
+  const groups=[];
+  for(const box of packages){
   const created = await call(ctx, '/shipments/', { method: 'POST', body: {
-    address_from: address(input.from),
-    address_to: address(input.to),
-    parcels: packages.map(parcel),
+    // Shippo swaps addresses itself for scan-based returns. The rest of
+    // StockChief consistently describes the actual customer-to-warehouse route.
+    address_from: address(scanBasedReturn?input.to:input.from),
+    address_to: address(scanBasedReturn?input.from:input.to),
+    parcels: [parcel(box)],
+    extra:{...(scanBasedReturn?{is_return:true}:{}),...(input.options?.signature==='SIGNATURE'?{signature_confirmation:'STANDARD'}:input.options?.signature==='ADULT'?{signature_confirmation:'ADULT'}:{})},
     async: false,
   } });
-  return {
-    providerShipmentIds: [created.object_id],
-    rates: (created.rates || []).map(readRate),
-  };
+  // Scan-based returns are restricted by Shippo to the original carrier.
+  // Otherwise this is ordinary postage in the actual reverse direction.
+  groups.push({providerShipmentIds:[created.object_id],rates:(created.rates||[]).map(readRate).filter(rate=>!scanBasedReturn||rate.carrier===original)});
+  }
+  return require('../parcel-rates').combine(groups);
 }
 
 /* ----------------------------------------------------------------- label */
@@ -159,7 +146,7 @@ function purchaseResult(transaction,rate,ctx){
     const error=new ValidationError('Shippo confirmed a label, but its price could not be verified. The purchase must not be repeated.');
     error.providerOutcomeUncertain=true;error.providerReference={externalId:transaction.object_id};throw error;
   }
-  return {
+  return money.receipt({externalId:transaction.object_id},()=>({
     providerShipmentId: transaction.object_id,
     providerShipmentIds: [transaction.object_id],
     providerLabelIds: [transaction.object_id],
@@ -168,34 +155,53 @@ function purchaseResult(transaction,rate,ctx){
     trackingNumber: transaction.tracking_number || null,
     trackingUrl: transaction.tracking_url_provider || null,
     labelUrl: transaction.label_url || null,
-    labelFormat: 'PDF',
+    labelFormat: require('../parcel-contract').format(transaction.label_file_type,transaction.label_url),
     labelUrls: [transaction.label_url].filter(Boolean),
-    amountMinor: minorFrom(actual.amount),
-    currency: String(actual.currency).toUpperCase(),
+    customsUrls:[transaction.commercial_invoice_url].filter(Boolean),
+    amountMinor: money.amount(actual.amount,actual.currency),
+    currency: require('../../domain/currency').code(actual.currency),
     deliveryDate: null,
-  };
+  }));
 }
 
-async function buy(ctx, input = {}) {
-  const rateId = (input.rateIds && input.rateIds[0]) || input.rateId;
-  if(!rateId)throw new ValidationError('Choose a current Shippo rate before purchasing.');
-  let rate;
-  try{rate=await call(ctx,'/rates/'+encodeURIComponent(rateId)+'/');}
-  catch{throw new ValidationError('Shippo could not verify the selected rate. No label purchase was submitted.');}
-  if(!rate||rate.amount===undefined||!rate.currency||!Number.isFinite(Number(rate.amount))||Number(rate.amount)<0)
-    throw new ValidationError('The selected Shippo rate has no verified price. No label purchase was submitted.');
-  const transaction = await call(ctx, '/transactions/', { method: 'POST', retries: 0, body: {
-    rate: rateId, label_file_type: 'PDF', async: false,
-  }, headers: input.idempotencyKey ? { 'Idempotency-Key': input.idempotencyKey } : {} });
-  return purchaseResult(transaction,rate,ctx);
+function combinePurchases(receipts){
+ const formats=new Set(receipts.map(row=>row.labelFormat));if(formats.size!==1)throw Object.assign(new ValidationError('The carrier returned different print formats for this parcel group. Verify its saved labels before printing.'),{providerOutcomeUncertain:true});
+ const currencies=new Set(receipts.map(row=>row.currency));if(currencies.size!==1)throw new ValidationError('The parcel receipts have different currencies.');
+ const amountMinor=receipts.reduce((sum,row)=>sum+row.amountMinor,0);if(!Number.isSafeInteger(amountMinor))throw new ValidationError('The parcel total exceeds the supported amount.');
+ return {...receipts[0],providerShipmentIds:receipts.flatMap(row=>row.providerShipmentIds),providerLabelIds:receipts.flatMap(row=>row.providerLabelIds),
+  labelUrls:receipts.flatMap(row=>row.labelUrls),customsUrls:receipts.flatMap(row=>row.customsUrls),amountMinor,
+  packages:receipts.map(row=>({externalId:row.providerShipmentId,trackingNumber:row.trackingNumber,trackingUrl:row.trackingUrl}))};
 }
-
+async function buy(ctx,input={}){
+ const ids=input.rateIds?.length?input.rateIds:[input.rateId];if(!ids.length||ids.some(id=>!id))throw new ValidationError('Choose a current Shippo rate before purchasing.');
+ const rates=[];
+ for(const id of ids)rates.push(await call(ctx,'/rates/'+encodeURIComponent(id)+'/'));
+ const total=money.total(rates.map(rate=>({amount:rate.amount,currency:rate.currency})));
+ if(input.currency&&total.currency!==input.currency||input.approvedAmountMinor!=null&&total.amountMinor>input.approvedAmountMinor)
+  throw new ValidationError('The carrier price increased or changed currency. Request fresh rates before purchasing.');
+ const receipts=[],accepted=[];
+ for(let i=0;i<ids.length;i++){
+  let transaction;
+  try{
+   transaction=await call(ctx,'/transactions/',{method:'POST',retries:0,timeoutMs:60000,body:{rate:ids[i],label_file_type:input.options?.labelFormat==='ZPL'?'ZPLII':input.options?.labelLayout==='letter'?'PDF':'PDF_4x6',async:false},
+    headers:input.idempotencyKey?{'Idempotency-Key':input.idempotencyKey+':'+i}:{}});
+   if(transaction.object_id){accepted.push(transaction.object_id);await input.onCheckpoint?.({externalId:accepted[0],externalIds:[...accepted],expectedCount:ids.length});}
+   receipts.push(purchaseResult(transaction,rates[i],ctx));
+  }catch(error){
+   if(receipts.length||error.providerOutcomeUncertain){error.providerOutcomeUncertain=true;if(accepted.length)error.providerReference={externalId:accepted[0],externalIds:[...accepted],expectedCount:ids.length};}
+   throw error;
+  }
+ }
+ return combinePurchases(receipts);
+}
 async function verifyPurchase(ctx,reference={}){
-  if(!reference.externalId)throw new ValidationError('An existing Shippo transaction is required for verification.');
-  const transaction=await call(ctx,'/transactions/'+encodeURIComponent(reference.externalId)+'/');
-  const rate=transaction.rate&&typeof transaction.rate==='object'?transaction.rate:
-    await call(ctx,'/rates/'+encodeURIComponent(transaction.rate||reference.rateId)+'/');
-  return purchaseResult(transaction,rate,ctx);
+ const ids=reference.externalIds||[reference.externalId];if(!ids.length||ids.some(id=>!id))throw new ValidationError('Existing Shippo transactions are required for verification.');
+ if(reference.expectedCount&&reference.expectedCount!==ids.length)throw Object.assign(new ValidationError('Every parcel purchase must be identified before confirmation. No purchase was repeated.'),{retryable:false});
+ const receipts=[];
+ for(const id of ids){const transaction=await call(ctx,'/transactions/'+encodeURIComponent(id)+'/');
+  const rate=transaction.rate&&typeof transaction.rate==='object'?transaction.rate:await call(ctx,'/rates/'+encodeURIComponent(transaction.rate||reference.rateId)+'/');
+  receipts.push(purchaseResult(transaction,rate,ctx));}
+ return combinePurchases(receipts);
 }
 
 async function voidLabel(ctx, input = {}) {
@@ -305,6 +311,6 @@ function readEvent(event = {}) {
   };
 }
 
-module.exports = { isConfigured, quote, buy, verifyPurchase, voidLabel, verifyVoid, track, verifyEvent, readEvent,
+module.exports = { supportsReturnLabels:true,isConfigured, quote, buy, verifyPurchase, voidLabel, verifyVoid, track, verifyEvent, readEvent,
   ensureWebhook:(ctx,input)=>require('./webhook-registration').shippo(call,ctx,input),
   address, parcel, statusOf, readRate, call };

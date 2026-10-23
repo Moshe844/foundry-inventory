@@ -3,7 +3,7 @@ const {ValidationError}=require('../../domain/errors');
 async function easypost(call,ctx,input){
  const page=await call(ctx,'/webhooks'),found=(page?.webhooks||[]).find(row=>row.url===input.url);
  const body={webhook:{url:input.url,webhook_secret:input.webhookSecret}};
- const row=found?await call(ctx,'/webhooks/'+encodeURIComponent(found.id),{method:'PATCH',retries:0,body}):
+ const row=found?await call(ctx,'/webhooks/'+encodeURIComponent(found.id),{method:'PATCH',retries:0,body:{webhook_secret:input.webhookSecret}}):
   await call(ctx,'/webhooks',{method:'POST',retries:0,body});
  if(!row?.id)throw new ValidationError('EasyPost did not confirm the webhook registration.');
  return {status:'CONNECTED',id:row.id};

@@ -237,16 +237,16 @@ function parseSteps(raw,catalogue=registry){
 
 function groundedMoneyArguments(steps,message,pending){
   const moneyFields=new Set(['amount','tax','unitAmount','maxCost']);
-  const source=`${pending?.originalMessage||''} ${message}`;
   // These contracts define `amount` as a per-unit price. An explicit quoted
   // unit price wins over a stale catalogue/supplier default or a model typo.
   const unitPriceContracts=new Set(['catalog.set_price','catalog.set_purchase_cost',
     'sales_order.create','purchase_order.create']);
+  for(const step of steps){
+  const source=step.continuesPending?`${pending?.originalMessage||''} ${message}`:String(message);
   const quotedUnitPrices=[...source.matchAll(/[$€£]\s*(\d[\d,]*(?:\.\d{1,2})?)\s*(?:each|per\s+(?:unit|item|piece)|\/\s*(?:unit|item|piece))\b/gi)]
     .map((match)=>Number(match[1].replaceAll(',',''))).filter(Number.isFinite);
   const statedNumbers=[...source.matchAll(/(?:^|[^\w])(?:[$€£]\s*)?(\d[\d,]*(?:\.\d+)?)(?=$|[^\w])/g)]
     .map((match)=>Number(match[1].replaceAll(',',''))).filter(Number.isFinite);
-  for(const step of steps){
     if(step.contract.name==='sales_order.create'&&!step.args.deliveryMethod){
       const mentioned=[
         /\b(?:pick[\s-]?up|customer\s+collect(?:ion|s)?)\b/i.test(source)?'pickup':null,
