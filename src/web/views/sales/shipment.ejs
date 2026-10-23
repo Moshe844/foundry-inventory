@@ -485,10 +485,11 @@
           </strong></p>
           <% if (s.expected_delivery_date) { %><p><span>Expected</span><strong><%= s.expected_delivery_date %></strong></p><% } %>
           <% if (s.shipping_cost_minor!==null&&s.shipping_cost_minor!==undefined) { %><p><span>Postage</span><strong><%= helpers.money(s.shipping_cost_minor, s.currency || 'USD') %></strong></p><% } %>
-          <% if (s.postage_refund_minor) { %><p><span>Refunded</span><strong><%= helpers.money(s.postage_refund_minor, s.currency || 'USD') %></strong></p><% } %>
+          <% if (!locals.postgresPlacement&&s.postage_refund_minor!==null&&s.postage_refund_minor!==undefined) { %><p><span>Provider-reported refund amount</span><strong><%= helpers.money(s.postage_refund_minor, s.currency || 'USD') %></strong></p><% } %>
           <% if (s.postage_adjustment_minor) { %><p><span>Carrier adjustments</span><strong><%= helpers.money(s.postage_adjustment_minor, s.currency || 'USD') %></strong></p><% } %>
           <% if (s.tracking_status) { %><p><span>Where it is</span><strong><%= s.tracking_status.toLowerCase().replace(/_/g, ' ') %></strong></p><% } %>
         </div>
+        <% if(locals.postgresPlacement){ %><%- include('../shipping/refund-outcome',{transaction:latestLabelTransaction}) %><% } %>
         <div class="button-row" style="margin-top:12px;">
           <% if (s.label_status !== 'VOIDED' && s.label_status !== 'VOID_PENDING') { %>
             <a class="btn btn--primary" href="<%= s.label_url %>" rel="noreferrer noopener" target="_blank">Print label</a>

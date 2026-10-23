@@ -20,6 +20,7 @@
 </form><% } else { %><p class="hint">Compare current rates after confirming the actual package measurements.</p><% } %>
 </section>
 <section class="section" id="label"><h2>Return label</h2><p>Label status: <strong><%= shipment.label_status||'Not purchased' %></strong></p>
+<%- include('refund-outcome',{transaction:state.labelOperation}) %>
 <% if(shipment.label_status==='PURCHASED'){ (shipment.shipping_documents||[]).forEach(function(doc){ %><a class="btn" href="<%= doc.url %>" target="_blank" rel="noreferrer noopener">Print <%= doc.kind==='LABEL'?'package '+doc.position+' label':'customs form' %> · <%= doc.format %></a><% }); %>
  <% if(shipment.status==='PACKED'){ %><form method="post" action="/fulfilment/<%= shipment.id %>/label/void" data-busy><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit">Void unused return postage</button></form><% } %>
 <% } %></section>

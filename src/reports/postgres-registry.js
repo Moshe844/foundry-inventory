@@ -219,7 +219,7 @@ const datasets=Object.freeze({
       quoted_charge_minor:'money_minor',currency:'text',delivery_days:'number',
       estimated_delivery_on:'date',quoted_on:'date'}},
   shipping_label_activity:{label:'Shipping label purchases and adjustments',permission:permissions.VIEW_SALES,
-    source:`SELECT t.shipment_id AS record_id,s.shipment_number,t.provider,t.operation,t.status,
+    source:`SELECT t.shipment_id AS record_id,s.shipment_number,t.provider,t.operation,t.status,t.refund_status AS provider_refund_status,
       t.amount_minor::bigint AS recorded_charge_minor,CASE WHEN rate.currency=t.currency THEN t.approved_amount_minor::bigint END AS original_approved_quote_minor,t.currency,
       CASE WHEN t.amount_minor IS NULL THEN 'no' ELSE 'yes' END AS charge_recorded,
       CASE WHEN t.approved_amount_minor IS NOT NULL AND rate.currency=t.currency THEN 'yes' ELSE 'no' END AS quote_recorded,
@@ -232,7 +232,8 @@ const datasets=Object.freeze({
       LEFT JOIN shipment_rates rate ON rate.workspace_id=t.workspace_id AND rate.id=effect.payload->>'rateId'
       WHERE t.workspace_id=$1`,recordHref:(row)=>`/fulfilment/${row.record_id}`,
     moneyCompleteness:{recorded_charge_minor:{field:'charge_recorded',value:'yes'},original_approved_quote_minor:{field:'quote_recorded',value:'yes'}},
-    fields:{shipment_number:'text',provider:'text',operation:'text',status:'text',
+    filterValues:{provider_refund_status:['NOT_REQUESTED','PENDING','CONFIRMED','REJECTED','UNKNOWN']},
+    fields:{shipment_number:'text',provider:'text',operation:'text',status:'text',provider_refund_status:'text',
       recorded_charge_minor:'money_minor',original_approved_quote_minor:'money_minor',currency:'text',charge_recorded:'text',quote_recorded:'text',review_reason:'text',owner_charge_review_saved:'text',
       requested_on:'date',completed_on:'date'}},
   shipment_tracking:{label:'Carrier tracking events',permission:permissions.VIEW_SALES,
