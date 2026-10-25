@@ -29,7 +29,10 @@ async function preview(db,ctx,{kinds=['calendar','pending_return_cost'],entryIds
  const plan={workspaceId:ctx.workspaceId,timeZone:calendar.timeZone,changes,held,hasMore};return {...plan,integrity:hash(plan)};
 }
 async function applyInTransaction(db,ctx,plan){
- await authorize(db,ctx);const {integrity,...body}=plan;if(plan.workspaceId!==ctx.workspaceId||hash(body)!==integrity)throw new ValidationError('This accounting correction review changed.');
+ await authorize(db,ctx);// The proposal executor adds its trusted replay key after approval. It is
+ // execution metadata, outside the frozen accounting review. All review fields
+ // still participate in the integrity check.
+ const {integrity,idempotencyKey:executionKey,...body}=plan;if(plan.workspaceId!==ctx.workspaceId||hash(body)!==integrity)throw new ValidationError('This accounting correction review changed.');
  await db.query('SELECT pg_advisory_xact_lock(hashtext($1))',['journal:'+ctx.workspaceId]);
  const allIds=[...new Set(plan.changes.map(c=>c.entryId))],returnIds=[...new Set(plan.changes.filter(c=>c.sourceRecordType==='customer_return').map(c=>c.sourceRecordId))];
  if(returnIds.length)await db.query('SELECT id FROM customer_returns WHERE workspace_id=$1 AND id=ANY($2::text[]) ORDER BY id FOR UPDATE',[ctx.workspaceId,returnIds]);
