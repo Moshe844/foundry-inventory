@@ -1,0 +1,24 @@
+'use strict';process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict');
+test('recurring rental invoices obey approved bounds, actual custody, taxes, pause and duplicate protection',{timeout:180000},async t=>{
+ const f=await require('../helpers/postgres-shipping-fixture').fixture(t,{units:5}),{db,ctx}=f,s=require('../../src/custody/postgres-service'),billing=require('../../src/custody/postgres-billing'),day=new Date().toISOString().slice(0,10);
+ const a=await s.create(db,ctx,{kind:'RENTAL',customerId:'fixture-customer',requestKey:'recurring-rental',startDate:day,dueDate:day,lines:[{skuId:f.item.skuIds[0],quantity:2}]});
+ await db.query("INSERT INTO accounting_tax_rates(id,workspace_id,name,jurisdiction,rate_millionths,applies_to,effective_from,active,created_by_user_id,created_at,updated_at) VALUES('rental-tax',$1,'Sales tax','Test jurisdiction',80000,'SALES','2020-01-01',1,$2,now(),now())",[ctx.workspaceId,ctx.actorId]);
+ const terms={requestKey:'approve-periods',expectedRevision:0,amountMinor:1000,taxRateId:'rental-tax',description:'Equipment rental',intervalUnit:'DAY',timeZone:'America/New_York',dueDays:14,maxPeriods:3,maxTotalMinor:3240,prorateFinal:true};
+ await s.operate(db,ctx,a.id,'set_recurring',terms);
+ assert.equal((await s.get(db,ctx,a.id)).billing.anchor_at,null);assert.deepEqual(await billing.run(db,ctx.workspaceId,a.id),{waiting:'physical_dispatch'});
+ await s.operate(db,ctx,a.id,'dispatch',{requestKey:'out-one',lineId:a.lines[0].id,locationId:f.location.id,quantity:1,confirmed:'yes'});assert.equal((await s.get(db,ctx,a.id)).billing.anchor_at,null);
+ await s.operate(db,ctx,a.id,'dispatch',{requestKey:'out-two',lineId:a.lines[0].id,locationId:f.location.id,quantity:1,confirmed:'yes'});assert((await s.get(db,ctx,a.id)).billing.anchor_at);
+ const anchor=new Date(Date.now()-2*86400000-3600000).toISOString();await db.query("UPDATE accounting_settings SET accounting_start_date='2020-01-01' WHERE workspace_id=$1",[ctx.workspaceId]);await db.query('UPDATE custody_billing_policies SET anchor_at=$3 WHERE workspace_id=$1 AND agreement_id=$2',[ctx.workspaceId,a.id,anchor]);
+ await s.operate(db,ctx,a.id,'pause_recurring',{requestKey:'pause',expectedRevision:1});assert.deepEqual(await billing.run(db,ctx.workspaceId,a.id),{waiting:'paused'});
+ await s.operate(db,ctx,a.id,'resume_recurring',{requestKey:'resume',expectedRevision:2});
+ const results=await Promise.all([billing.run(db,ctx.workspaceId,a.id),billing.run(db,ctx.workspaceId,a.id)]);assert.equal(results.reduce((n,r)=>n+(r.invoices?.length||0),0),2,JSON.stringify(results));
+ assert.equal((await db.query('SELECT count(*) n,sum(total_minor)::text total FROM accounting_customer_invoices WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].total,'2160');
+ assert.equal(await f.balance(),5);assert.equal((await db.query('SELECT count(*) n FROM accounting_payments WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,'0');
+ await s.operate(db,ctx,a.id,'return',{requestKey:'physical-back',lineId:a.lines[0].id,quantity:2,confirmed:'yes'});
+ const stopped=(await s.get(db,ctx,a.id)).billing;assert(stopped.stopped_at);const spec=require('../../src/custody/ask-contracts').specs.find(s=>s.name==='custody.bill_earned'),prepared=await spec.build(db,ctx,await s.get(db,ctx,a.id),{custodyInput:'{}'});assert.equal(prepared.payload.effects.journals.length,3,'The exact fee and tax journal is shown before approval');const final=await db.transaction(c=>spec.execute(c,ctx,JSON.parse(JSON.stringify(prepared.payload))),{isolation:'SERIALIZABLE',retrySafe:true});assert.equal(final.invoiceIds.length,1);assert.equal(await spec.verify(db,ctx,final,prepared.payload),true);assert.equal((await billing.run(db,ctx.workspaceId,a.id)).waiting,'complete');
+ const policy=(await s.get(db,ctx,a.id)).billing;assert(Number(policy.billed_total_minor)<=3240);assert.equal(policy.billed_periods,3);assert.equal(policy.status,'COMPLETE');
+ await assert.rejects(s.operate(db,ctx,a.id,'set_recurring',{...terms,requestKey:'rewrite'}),/already|revision|immutable/i);
+ await assert.rejects(billing.run(db,'foreign',a.id),/inventory|policy/i);
+ const sum=await db.query('SELECT sum(debit_minor-credit_minor)::text n FROM accounting_journal_lines WHERE workspace_id=$1',[ctx.workspaceId]);assert.equal(sum.rows[0].n,'0');
+});

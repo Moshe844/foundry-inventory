@@ -15,6 +15,7 @@ async function needsCount(database,workspaceId,actorId=null){
       AND execution_status NOT IN ('COMPLETED','CANCELLED','FAILED'))+
     (SELECT COUNT(*) FROM import_executions WHERE workspace_id=$1 AND status='FAILED')+
     (SELECT COUNT(*) FROM accounting_supplier_bills WHERE workspace_id=$1 AND status='DISPUTED')+
+    (SELECT COUNT(*) FROM custody_billing_policies WHERE workspace_id=$1 AND status='NEEDS_REVIEW')+
     (SELECT COUNT(*) FROM supplier_returns WHERE workspace_id=$1 AND status='CREDIT_MISMATCH')+
     (SELECT COUNT(*) FROM sales_shipments WHERE workspace_id=$1 AND tracking_status IN ('FAILURE','RETURNED'))+
     (SELECT COUNT(*) FROM connection_email_messages message WHERE message.workspace_id=$1 AND message.reply_state='NEEDS_REPLY'
@@ -57,7 +58,7 @@ async function runtimeFailures(database,workspaceId){
 async function needs(database,workspaceId,actorId=null){
   const actor=await membership(database,workspaceId,actorId);if(actorId&&!actor)return [];
   const [attention,connections,work,imports,bills,supplierReturns,shippingExceptions,mail,orders,purchases,
-    repairs,ambiguousEffects,nativeApprovals,bulkReviews]=await Promise.all([
+    repairs,ambiguousEffects,nativeApprovals,bulkReviews,rentalBilling]=await Promise.all([
     database.query(`SELECT id,title,concise_summary,explanation,recommendation,severity,priority_score,item_id,first_detected_at
       FROM attention_items WHERE workspace_id=$1 AND status='OPEN' ORDER BY priority_score DESC,first_detected_at`,[workspaceId]),
     database.query(`SELECT i.id,i.title,i.detail,i.resolution_hint,i.created_at,i.updated_at,i.connector_id,
@@ -130,8 +131,10 @@ async function needs(database,workspaceId,actorId=null){
       ORDER BY effect.completed_at DESC,effect.id`,[workspaceId]),
     require('../assistant/postgres-approval-projection').pending(database,workspaceId,actorId),
     database.query("SELECT id,kind,payload,created_at FROM catalog_bulk_reviews WHERE workspace_id=$1 AND status='PENDING' ORDER BY created_at,id",[workspaceId]),
+    database.query("SELECT p.id,p.agreement_id,p.last_error,p.created_at,p.updated_at,a.agreement_number FROM custody_billing_policies p JOIN custody_agreements a ON a.workspace_id=p.workspace_id AND a.id=p.agreement_id WHERE p.workspace_id=$1 AND p.status='NEEDS_REVIEW' ORDER BY p.updated_at",[workspaceId]),
   ]);
   const items=[...nativeApprovals];
+  for(const row of rentalBilling.rows)items.push({kind:'accounting',importance:'Important',priority:89,title:'Review rental billing for '+row.agreement_number,happened:'An earned rental invoice is paused before posting.',why:row.last_error,recommendation:'Review the unchanged billing authority, tax settings and accounting period before authorizing another attempt.',href:'/custody/'+row.agreement_id+'#rental-billing',actionLabel:'Review rental billing',sourceId:row.id,createdAt:row.created_at,updatedAt:row.updated_at,timeLabel:'Billing paused',at:row.updated_at});
   for(const row of bulkReviews.rows)items.push({kind:'approval',requiredPermissions:[require('../actions/permissions').ADMIN],importance:'Important',priority:70,title:row.kind==='price'?'Review selected selling prices':row.kind==='restore'?'Restore selected products':'Archive selected products',happened:(row.payload.items||[]).length+' selected products are prepared; nothing has changed.',why:'Your approval is required before these product changes are applied.',recommendation:'Review the exact products and changes, then approve or cancel.',href:'/inventory/bulk/reviews/'+row.id,actionLabel:'Review changes',sourceId:row.id,createdAt:row.created_at,timeLabel:'Prepared',at:row.created_at});
   for(const row of attention.rows)items.push({kind:'inventory',importance:row.severity==='critical'?'Urgent':row.severity==='important'?'Important':'Watch',
     priority:number(row.priority_score),title:row.title,happened:row.concise_summary,why:row.explanation,
@@ -203,7 +206,7 @@ async function needs(database,workspaceId,actorId=null){
 }
 
 async function brief(database,workspaceId,actorId=null){
-  const [stats,locations,activity,openOrders,openPurchases,needItems]=await Promise.all([
+  const [stats,locations,activity,openOrders,openPurchases,needItems,totalAvailable]=await Promise.all([
     database.query(`SELECT
       (SELECT COUNT(*) FROM items WHERE workspace_id=$1 AND is_active=1) AS item_count,
       (SELECT COUNT(*) FROM skus WHERE workspace_id=$1 AND is_active=1) AS sku_count,
@@ -228,11 +231,12 @@ async function brief(database,workspaceId,actorId=null){
     database.query(`SELECT COUNT(*) AS count FROM purchase_orders WHERE workspace_id=$1
       AND status IN ('DRAFT','AWAITING_APPROVAL','APPROVED','ORDERED','PARTIALLY_RECEIVED')`,[workspaceId]),
     needs(database,workspaceId,actorId),
+    require('../domain/postgres-stock-availability').total(database,workspaceId),
   ]);
   const row=stats.rows[0];
   return {stats:{itemCount:number(row.item_count),skuCount:number(row.sku_count),locationCount:number(row.location_count),
     unitsOnHand:number(row.units_on_hand),zeroCount:number(row.zero_count),committed:number(row.committed),incoming:number(row.incoming),
-    available:Math.max(0,number(row.units_on_hand)-number(row.committed)),openOrders:number(openOrders.rows[0].count),
+    available:totalAvailable,openOrders:number(openOrders.rows[0].count),
     openPurchases:number(openPurchases.rows[0].count)},locations:locations.rows.map((entry)=>({...entry,onHand:number(entry.on_hand)})),
     activity:activity.rows.map((entry)=>({...entry,quantityDelta:number(entry.quantity_delta)})),needs:needItems};
 }

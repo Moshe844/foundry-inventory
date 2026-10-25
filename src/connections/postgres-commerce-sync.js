@@ -35,7 +35,8 @@ async function local(db,p){
  if(p.field==='price'){const v=await prices.currentPrice(db,p.workspace_id,p.sku_id);return {value:v.amount_minor===null?null:{amount:v.amount_minor,currency:v.currency},version:v.id};}
  const physical=Number(row.on_hand||0),costed=Number(row.costed),committed=Number(row.committed);
  if(![physical,costed,committed].every(Number.isSafeInteger))throw new ValidationError('This stock position needs an exact quantity review.');
- return {value:row.custody_agreement_id?0:Math.max(0,Math.min(physical,costed)-committed),physical,costed,committed,tracking:row.tracking_mode,version:row.updated_at||null};
+ const availability=await require('../transfers/postgres-transfer-service').sourceAvailable(db,p.workspace_id,p.sku_id,p.location_id);
+ return {value:row.custody_agreement_id?0:Math.max(0,Math.min(physical,costed)-committed-Number(availability.reserved||0)),physical,costed,committed,reserved:Number(availability.reserved||0),tracking:row.tracking_mode,version:row.updated_at||null};
 }
 async function mapped(db,p){
  return Boolean((await db.query(`SELECT 1 FROM connection_mappings sku JOIN connection_mappings loc ON loc.workspace_id=sku.workspace_id AND loc.connector_id=sku.connector_id AND loc.entity_type='location'
@@ -247,7 +248,7 @@ async function prepareCount(db,ctx,c,args,options={}){
  const p=rows[0];if(p.provider_account_id!==c.provider_account_id)throw new ValidationError('The connected provider account changed. Reapprove its synchronization before reading this count.');
  const l=await local(db,p),counted=Number(args.countedQuantity);
  if(!Number.isSafeInteger(counted)||counted<0||!String(args.reason||'').trim())throw new ValidationError('Provide the confirmed physical count and its evidence or reason. The channel number alone is not receipt or return evidence.');
- if(l.tracking!=='quantity'||l.committed>counted)throw new ValidationError('Tracked units or existing commitments require their exact stock workflow before this count can be corrected.');
+ if(l.tracking!=='quantity'||l.committed+Number(l.reserved||0)>counted)throw new ValidationError('Tracked units or existing commitments require their exact stock workflow before this count can be corrected.');
  if(counted<l.physical&&l.costed>0&&l.costed!==l.physical)throw new ValidationError('This position mixes costed and uncosted units. Identify the affected units and review their accounting before reducing stock.');
  const adapter=(options.providers||providers).get(c.provider_type),r=await providerRead(db,c,p,adapter,'commerce-count-preview:'+newId('read'));
  if(r.value===null)throw new ValidationError('The provider has no tracked count to reconcile.');

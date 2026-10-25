@@ -154,6 +154,7 @@ async function runtimeSweep(job,client,options={}){
   await require('../assistant/postgres-credit-maintenance').reconcile(client,{olderThan:new Date(now-30*60_000).toISOString()});
   await require('../commercial/ai-spending-notifications').sweep(client);
   await require('../reports/postgres-scheduling').enqueueDue(client,at);
+  await require('../custody/postgres-billing').enqueueDue(client);
   const staleImportAt=new Date(now-15*60_000).toISOString();
   const staleEmailAt=new Date(now-5*60_000).toISOString();
   const paused=(await client.query(`SELECT * FROM stockchief_runtime.jobs WHERE status='PAUSED'
@@ -581,6 +582,7 @@ function create(providers=defaultProviders,options={}){return {'system.runtime-s
   },'bulk'),
   'system.alert-delivery':external((job,database)=>alertDelivery(job,database,options)),
   'system.email-send':external((job,database)=>systemEmail(job,database,options)),
+  'custody.recurring-invoice':external((job,database)=>require('../custody/postgres-billing').run(database,job.workspaceId,job.payload.agreementId)),
   'mailbox.poll':external((job,database)=>mailboxPoll(job,database,providers)),
   'mail.reply-draft':external((job,database)=>mailReplyDraft(job,database,options)),
   'mail.attachment-extract':external((job,database)=>require('../connections/postgres-attachments').extractMessage(database,job.workspaceId,job.payload.messageId)),

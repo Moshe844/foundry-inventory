@@ -692,7 +692,7 @@ async function confirmSalesOrderInTransaction(client, rawContext, salesOrderId, 
       [ctx.workspaceId, line.sku_id, order.fulfillment_location_id]);
       for (const balance of balances.rows) {
         if (needed <= 0) break;
-        const available = Math.max(0, Number(balance.on_hand) - Number(balance.committed));
+        const available = (await require('../transfers/postgres-transfer-service').sourceAvailable(client,ctx.workspaceId,line.sku_id,balance.location_id)).available;
         const quantity = Math.min(needed, available);
         if (!quantity) continue;
         await client.query(`INSERT INTO sales_order_allocations

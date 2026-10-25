@@ -184,8 +184,9 @@ async function catalogue(database, workspaceId, {limit=null,search='',ids=null,t
       JOIN sales_order_lines l ON l.workspace_id=a.workspace_id AND l.id=a.sales_order_line_id
       WHERE a.workspace_id=$1 AND l.sku_id=b.sku_id AND a.location_id=b.location_id)a ON true
     WHERE b.workspace_id=$1 AND b.sku_id=ANY($2::text[])`,[workspaceId,result.rows.map(r=>r.id)])).rows,bySku=new Map();
-  for(const r of positions){if(!bySku.has(r.sku_id))bySku.set(r.sku_id,[]);bySku.get(r.sku_id).push({location_id:r.location_id,onHand:Number(r.on_hand),committed:Number(r.committed),available:Number(r.on_hand)-Number(r.committed)});}
-  return result.rows.map(r=>({...r,amount_minor:r.amount_minor==null?null:Number(r.amount_minor),on_hand:Number(r.on_hand),committed:Number(r.committed),available:Math.max(0,Number(r.available_on_hand)-Number(r.committed)),positions:bySku.get(r.id)||[]}));
+  const availability=await require('../domain/postgres-stock-availability').readMany(database,workspaceId,positions.map(p=>({skuId:p.sku_id,locationId:p.location_id})));
+  for(const r of positions){const a=availability.get(JSON.stringify([r.sku_id,r.location_id]));if(!bySku.has(r.sku_id))bySku.set(r.sku_id,[]);bySku.get(r.sku_id).push({location_id:r.location_id,onHand:Number(r.on_hand),committed:a?.committed||0,reserved:a?.reserved||0,available:a?.available||0});}
+  return result.rows.map(r=>({...r,amount_minor:r.amount_minor==null?null:Number(r.amount_minor),on_hand:Number(r.on_hand),committed:Number(r.committed),available:(bySku.get(r.id)||[]).reduce((sum,p)=>sum+p.available,0),positions:bySku.get(r.id)||[]}));
 }
 
 async function locations(database, workspaceId) {

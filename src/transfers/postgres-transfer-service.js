@@ -259,30 +259,8 @@ function request(database, ctx, input) {
     { isolation: 'SERIALIZABLE', retrySafe: true });
 }
 
-async function sourceAvailable(client, workspaceId, skuId, locationId, { lotId = null, excludeTransferId = null } = {}) {
-  const custody=(await client.query('SELECT custody_agreement_id FROM locations WHERE workspace_id=$1 AND id=$2',[workspaceId,locationId])).rows[0];if(custody?.custody_agreement_id)return {onHand:0,committed:0,reserved:0,available:0,protectedCustody:true};
-  const balance = (await client.query(`SELECT COALESCE(on_hand,0) AS on_hand FROM balances
-    WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3`, [workspaceId, skuId, locationId])).rows[0];
-  const committed = await client.query(`SELECT COALESCE(SUM(a.quantity),0) AS quantity
-    FROM sales_order_allocations a JOIN sales_order_lines l ON l.id=a.sales_order_line_id
-    JOIN sales_orders o ON o.id=l.sales_order_id WHERE a.workspace_id=$1 AND a.location_id=$2 AND l.sku_id=$3
-      AND o.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')`, [workspaceId, locationId, skuId]);
-  const reserved = await client.query(`SELECT COALESCE(SUM(CASE WHEN t.status='REQUESTED' THEN tl.requested_quantity ELSE tl.approved_quantity END) FILTER(WHERE $4::text IS NULL OR tl.lot_id=$4),0) AS quantity,
-      COALESCE(SUM(CASE WHEN t.status='REQUESTED' THEN tl.requested_quantity ELSE tl.approved_quantity END),0) AS all_quantity
-    FROM inventory_transfer_lines tl JOIN inventory_transfers t ON t.id=tl.transfer_id
-    WHERE tl.workspace_id=$1 AND t.source_location_id=$2 AND tl.sku_id=$3
-      AND t.status IN ('REQUESTED','APPROVED','PICKED') AND ($5::text IS NULL OR t.id<>$5)`,
-  [workspaceId, locationId, skuId, lotId, excludeTransferId]);
-  let onHand = Number(balance?.on_hand || 0);
-  if (lotId) {
-    const lot = await client.query(`SELECT COALESCE(quantity,0) AS quantity FROM lot_balances
-      WHERE workspace_id=$1 AND lot_id=$2 AND location_id=$3`, [workspaceId, lotId, locationId]);
-    onHand = Number(lot.rows[0]?.quantity || 0);
-  }
-  const committedUnits = lotId ? 0 : Number(committed.rows[0].quantity);
-  const reservedUnits = Number(reserved.rows[0].quantity);
-  return { onHand, committed: committedUnits, reserved: reservedUnits,
-    available: Math.max(0,Math.min(onHand-committedUnits-reservedUnits,Number(balance?.on_hand||0)-Number(committed.rows[0].quantity)-Number(reserved.rows[0].all_quantity))) };
+async function sourceAvailable(client,workspaceId,skuId,locationId,options={}) {
+  return require('../domain/postgres-stock-availability').read(client,workspaceId,skuId,locationId,options);
 }
 
 async function approveInTransaction(client, rawContext, transferId, input = {}) {
