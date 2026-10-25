@@ -101,7 +101,7 @@ function listTerms(db, workspaceId) {
       customerName: row.customer_name }));
 }
 
-function setTerms(db, ctx, input = {}) {
+function normaliseInput(input={}) {
   const kind = trimOrNull(input.kind);
   if (!KINDS.includes(kind)) {
     throw new ValidationError('Choose whether they pay on account, before fulfilment, or with a deposit.');
@@ -131,6 +131,18 @@ function setTerms(db, ctx, input = {}) {
   }
 
   const customerId = trimOrNull(input.customerId);
+  const values = [kind, kind === 'DEPOSIT' ? percent : null, kind === 'DEPOSIT' ? flat : null,
+    kind === 'ON_ACCOUNT' ? netDays : null,
+    input.holdShipping ? 1 : 0, input.creditApproved ? 1 : 0,
+    input.creditLimitMinor ? Math.round(Number(input.creditLimitMinor)) : null,
+    trimOrNull(input.note),
+    input.autoRequestEnabled ? 1 : 0,
+    input.autoRequestLimitMinor ? Math.round(Number(input.autoRequestLimitMinor)) : null];
+  return {kind,percent,flat,netDays,customerId,values};
+}
+
+function setTerms(db, ctx, input = {}) {
+  const {kind,percent,flat,netDays,customerId,values}=normaliseInput(input);
   if (customerId) {
     const known = db.prepare('SELECT id FROM customers WHERE id = ? AND workspace_id = ?')
       .get(customerId, ctx.workspaceId);
@@ -140,13 +152,7 @@ function setTerms(db, ctx, input = {}) {
   const now = nowIso();
   const existing = db.prepare(`SELECT id FROM customer_payment_terms
     WHERE workspace_id = ? AND IFNULL(customer_id, '') = ?`).get(ctx.workspaceId, customerId || '');
-  const values = [kind, kind === 'DEPOSIT' ? percent : null, kind === 'DEPOSIT' ? flat : null,
-    kind === 'ON_ACCOUNT' ? netDays : null,
-    input.holdShipping ? 1 : 0, input.creditApproved ? 1 : 0,
-    input.creditLimitMinor ? Math.round(Number(input.creditLimitMinor)) : null,
-    trimOrNull(input.note),
-    input.autoRequestEnabled ? 1 : 0,
-    input.autoRequestLimitMinor ? Math.round(Number(input.autoRequestLimitMinor)) : null];
+
 
   if (existing) {
     db.prepare(`UPDATE customer_payment_terms SET kind = ?, deposit_percent = ?, deposit_minor = ?,
@@ -339,7 +345,7 @@ function clearOverride(db, ctx, orderId) {
 }
 
 module.exports = {
-  KINDS, HOUSE_DEFAULT,
+  KINDS, HOUSE_DEFAULT,normaliseInput,
   forCustomer, listTerms, setTerms, clearTerms, describe,
   positionForOrder, overrideHold, clearOverride, money,
 };

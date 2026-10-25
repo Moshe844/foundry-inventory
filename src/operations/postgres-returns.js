@@ -25,6 +25,14 @@ function parseJson(value, fallback) {
   try { return JSON.parse(value || JSON.stringify(fallback)); } catch { return fallback; }
 }
 
+function refundSummary(record){
+ const money=require('../domain/currency');let revenueMinor=0,taxMinor=0;
+ for(const line of record.lines||[])for(const a of (line.trackingEvidence||parseJson(line.tracking_evidence,{})).costAllocations||[]){
+  revenueMinor=money.sum([revenueMinor,a.revenueMinor??Number(a.quantity)*Number(line.unit_price_minor)],'Refund');taxMinor=money.sum([taxMinor,a.taxMinor||0],'Refund tax');
+ }
+ return {revenueMinor,taxMinor,totalMinor:money.sum([revenueMinor,taxMinor],'Refund total')};
+}
+
 function requireContext(ctx) {
   if (!ctx?.workspaceId || !ctx?.actorId) throw new ValidationError('A workspace and acting user are required.');
   return ctx;
@@ -847,7 +855,7 @@ async function reconcileSupplierReturn(database, rawContext, id, input) {
   });
 }
 
-module.exports = { getCustomerReturn, listCustomerReturns, requestCustomerReturn, authorizeCustomerReturn,
+module.exports = { refundSummary,getCustomerReturn, listCustomerReturns, requestCustomerReturn, authorizeCustomerReturn,
   receiveCustomerReturn, inspectCustomerReturn, refundCustomerReturn, refundCustomerReturnInTransaction,
   exchangeCustomerReturn,
   getSupplierReturn, listSupplierReturns, requestSupplierReturn, authorizeSupplierReturn,

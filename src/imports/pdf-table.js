@@ -103,7 +103,7 @@ function withoutSeparatedFooter(rows){
     ?[rows[index].y-row.y]:[]).sort((a,b)=>a-b);
   const typical=gaps[Math.floor(gaps.length/2)]||24;
   const firstTable=rows.findIndex((row)=>row.cells.length>=2);
-  return rows.filter((row,index)=>index===0||index<=firstTable||row.cells.length>1
+    return rows.filter((row,index)=>index===0||index<=firstTable||row.cells.length>1||row.cells.some(c=>require('./document-rows').labelKind(c.text))
     ||rows[index-1].y-row.y<=Math.max(40,typical*1.6));
 }
 
@@ -121,8 +121,9 @@ async function parse(buffer){
   try{for(let pageNumber=1;pageNumber<=document.numPages;pageNumber++){
     const page=await document.getPage(pageNumber);
     const content=await page.getTextContent();
-    const items=content.items.map((item)=>({text:String(item.str||'').trim(),dir:item.dir,width:item.width,height:item.height,
+    let items=content.items.map((item)=>({text:String(item.str||'').trim(),dir:item.dir,width:item.width,height:item.height,
       x:Number(item.transform?.[4]||0),y:Number(item.transform?.[5]||0)})).filter((item)=>item.text);
+    items=(await require('./pdf-text-order').reconcile(page,pdfjs.OPS,items)).items;
     totalItems+=items.length;
     if(totalItems>MAX_TEXT_ITEMS)throw new ValidationError('That PDF contains too much text for a safe inventory preview. Split it into smaller files.');
     let rows=withoutSeparatedFooter(groupRows(items));

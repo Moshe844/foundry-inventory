@@ -1,9 +1,10 @@
 <% const list=v=>Array.isArray(v)?v:[v??''];const ids=list(form.skuId),qty=list(form.quantity),prices=list(form.unitPrice),overrides=list(form.priceOverride);const count=Math.max(1,ids.length); %>
-<div class="rm-head"><a href="/orders">← Orders</a><h1><%= editOrder?'Edit draft order':'What did the customer order?' %></h1><p>Choose the customer and products. Prices and totals use your saved pricing rules.</p></div>
-<% if(formError){ %><div class="notice notice--warn" role="alert"><div><strong>Order not saved.</strong> <%= formError %></div></div><% } %>
-<form method="post" action="<%= editOrder?'/orders/'+editOrder.id+'/edit':'/sales/orders' %>" class="card form-card" id="sales-entry">
+<div class="rm-head"><a href="<%= locals.quotation?'/quotes':'/orders' %>">← <%= locals.quotation?'Quotes':'Orders' %></a><h1><%= locals.quotation?'Prepare a customer quotation':editOrder?'Edit draft order':'What did the customer order?' %></h1><p>Choose the customer and products. Prices and totals use your saved pricing rules.<% if(locals.quotation){ %> Saving a quote reserves no stock and sends no message.<% } %></p></div>
+<% if(formError){ %><div class="notice notice--warn" role="alert"><div><strong><%= locals.quotation?'Quotation':'Order' %> not saved.</strong> <%= formError %></div></div><% } %>
+<form method="post" action="<%= locals.quotation?'/quotes':editOrder?'/orders/'+editOrder.id+'/edit':'/sales/orders' %>" class="card form-card" id="sales-entry">
  <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="currency" value="<%= currency %>">
  <input type="hidden" name="idempotencyKey" value="<%= form.idempotencyKey||operationKey %>">
+ <% if(locals.quotation){ %><label class="rm-field"><span>Quotation valid through</span><input type="date" name="validUntil" min="<%= today %>" value="<%= form.validUntil||today %>" required></label><input type="hidden" name="supersedesId" value="<%= form.supersedesId||'' %>"><% } %>
  <% ['email','phone','address'].forEach(key=>{ %><input type="hidden" data-contact-manual="<%= key %>" name="<%= key %>Manual" value="<%= form[key+'Manual']||'' %>"><% }) %>
  <% if(editOrder){ %><input type="hidden" name="expectedVersion" value="<%= editOrder.version %>"><input type="hidden" name="editOrderId" value="<%= editOrder.id %>"><% } %>
  <section class="rm-step-panel"><div class="rm-step-panel__h"><h2>Customer and delivery</h2></div><div class="rm-step-panel__b form-grid">
@@ -32,7 +33,7 @@
  <label class="rm-field"><span>Reference</span><input name="reference" value="<%= form.reference||'' %>"></label><label class="rm-field"><span>Notes</span><textarea name="notes"><%= form.notes||'' %></textarea></label>
  </div></details>
  <section class="section" aria-live="polite" aria-label="Order totals"><p id="order-quote-status">Choose a customer and product to calculate totals.</p><dl class="kv"><dt>Subtotal</dt><dd data-total="subtotalMinor">—</dd><dt>Discount</dt><dd data-total="discountMinor">—</dd><dt>Tax</dt><dd data-total="taxMinor">—</dd><dt>Total</dt><dd data-total="totalMinor">—</dd></dl></section>
- <div class="form-actions"><% if(editOrder){ %><button class="rm-btn" type="submit">Save draft changes</button><% }else{ %><button class="rm-btn" id="order-confirm-button" name="nextStep" value="confirm">Create order and reserve stock</button><button class="rm-btn" id="order-complete-button" name="nextStep" value="fulfill" hidden>Customer has it now — complete pickup</button><button class="rm-btn rm-btn--ghost" name="nextStep" value="draft">Save draft</button><% } %><a href="/orders">Cancel</a></div>
+ <div class="form-actions"><% if(locals.quotation){ %><button class="rm-btn" type="submit">Save quotation</button><% }else if(editOrder){ %><button class="rm-btn" type="submit">Save draft changes</button><% }else{ %><button class="rm-btn" id="order-confirm-button" name="nextStep" value="confirm">Create order and reserve stock</button><button class="rm-btn" id="order-complete-button" name="nextStep" value="fulfill" hidden>Customer has it now — complete pickup</button><button class="rm-btn rm-btn--ghost" name="nextStep" value="draft">Save draft</button><% } %><a href="<%= locals.quotation?'/quotes':'/orders' %>">Cancel</a></div>
 </form>
 <template id="order-line-template"><%- include('entry-line',{n:0,selected:'',quantity:'1',price:'',override:'0',catalogue}) %></template>
 <script type="application/json" id="order-catalogue"><%- JSON.stringify(catalogue).replace(/</g,'\\u003c') %></script>

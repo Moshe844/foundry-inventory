@@ -129,13 +129,13 @@ function parse(text) {
 }
 
 /** What to tell somebody when a parcel cannot be addressed yet. */
-function why(parsed) {
+function why(parsed,label='The delivery address') {
   if (!parsed || parsed.complete) return null;
-  if (!parsed.raw) return 'There is no delivery address on this order.';
+  if (!parsed.raw) return label==='The delivery address'?'There is no delivery address on this order.':label+' is missing.';
   const list = parsed.missing.length === 1
     ? parsed.missing[0]
     : `${parsed.missing.slice(0, -1).join(', ')} and ${parsed.missing[parsed.missing.length - 1]}`;
-  return `The delivery address is missing the ${list}. A carrier will not quote without it, and `
+  return `${label} is missing the ${list}. A carrier will not quote without it, and `
     + 'StockChief will not fill it in on the customer\'s behalf.';
 }
 

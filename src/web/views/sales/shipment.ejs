@@ -129,7 +129,7 @@
 <% if (isOpen) { %>
   <p class="lede">
     Nothing in this box has left stock yet. StockChief still counts every one of these
-    <%= s.units %> as on the shelf, and will until you confirm the customer collected it.
+    <%= s.units %> as on the shelf, until you confirm <%= plannedHandover==='COLLECTED'?'the customer collected it':plannedHandover==='DELIVERED_BY_US'?'it left with your delivery team':'it was handed to the carrier' %>.
   </p>
 <% } %>
 

@@ -30,12 +30,8 @@ async function submitOrder(database,ctx,input,nextStep){
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 
-function minor(value,label){
-  const text=String(value??'').trim();
-  if(!/^\d+(?:\.\d{1,2})?$/.test(text))throw new ValidationError(`${label} must be a positive money amount.`);
-  const amount=Math.round(Number(text)*100);
-  if(!Number.isSafeInteger(amount)||amount<0)throw new ValidationError(`${label} is invalid.`);
-  return amount;
+function minor(value,label,currency='USD'){
+  return require('../../domain/currency').userToMinor(value,currency,{label});
 }
 
 function dateToday(req){return require('../../lib/business-time').context(req?.account?.time_zone||'UTC').calendarDate;}
@@ -236,7 +232,7 @@ function purchaseOrderForView(row){return {...row,poNumber:row.po_number,supplie
 
 function createPostgresCommerceRouter(database,options={}){
   const router=express.Router();
-  router.use(['/purchasing','/orders','/sales'],requireAuth);
+  router.use(['/purchasing','/orders','/sales','/quotes'],requireAuth);
 
   for(const collection of [
     {path:'/returns',title:'Customer returns',nav:'sales',permission:permissions.VIEW_SALES,
@@ -330,7 +326,7 @@ function createPostgresCommerceRouter(database,options={}){
     if(!fields.name)throw new ValidationError('Supplier name is required.');
     const optionalNumber=(name,column)=>has(name)?(req.body[name]===''?null:Number(req.body[name])):current[column];
     const lead=optionalNumber('defaultLeadTimeDays','default_lead_time_days');const minimum=optionalNumber('minimumOrderAmount','minimum_order_amount');
-    const limit=has('autoSendLimit')?(req.body.autoSendLimit===''?null:minor(req.body.autoSendLimit,'Automatic order limit')):current.auto_send_limit_minor;
+    const limit=has('autoSendLimit')?(req.body.autoSendLimit===''?null:minor(req.body.autoSendLimit,'Automatic order limit',fields.currency||current.currency||'USD')):current.auto_send_limit_minor;
     await database.query(`UPDATE suppliers SET name=$3,contact_name=$4,email=$5,
       phone=$6,notes=$7,default_lead_time_days=$8,minimum_order_amount=$9,currency=$10,
       payment_terms=$11,preferred_ordering_method=$12,prepare_communications=$13,auto_send_enabled=$14,
@@ -654,7 +650,7 @@ function createPostgresCommerceRouter(database,options={}){
         .filter((line)=>Number(line.quantity)>0);
       const result=await returns.requestSupplierReturn(database,req.ctx,{supplierId:detail.order.supplier_id,
         supplierBillId:trimOrNull(req.body.supplierBillId),
-        expectedCreditMinor:minor(req.body.expectedCredit,'Expected supplier credit'),reason:trimOrNull(req.body.reason),
+        expectedCreditMinor:minor(req.body.expectedCredit,'Expected supplier credit',detail.order.currency),reason:trimOrNull(req.body.reason),
         lines,idempotencyKey:key(req,'supplier-return-request')});
       req.flash('success',`${result.returnNumber} was requested. Stock and supplier money have not changed.`);
       return res.redirect(303,`/supplier-returns/${result.supplierReturnId}`);
@@ -684,8 +680,9 @@ function createPostgresCommerceRouter(database,options={}){
 
   router.post('/supplier-returns/:id/reconcile',
     requirePermission(permissions.RECONCILE_SUPPLIER_RETURN,'reconcile supplier credits'),asyncRoute(async(req,res)=>{
+      const record=await returns.getSupplierReturn(database,req.ctx.workspaceId,req.params.id);
       const result=await returns.reconcileSupplierReturn(database,req.ctx,req.params.id,{
-        amountMinor:minor(req.body.amount,'Supplier credit'),creditNumber:trimOrNull(req.body.creditNumber),
+        amountMinor:minor(req.body.amount,'Supplier credit',record.currency||await entryCurrency(req)),creditNumber:trimOrNull(req.body.creditNumber),
         creditDate:req.body.creditDate||dateToday(req),idempotencyKey:key(req,'supplier-return-reconcile')});
       req.flash(result.status==='CREDIT_MISMATCH'?'warn':'success',result.status==='CREDIT_MISMATCH'
         ?'Supplier credit was recorded, but it differs from the expected amount and remains an exception.'
@@ -728,9 +725,9 @@ function createPostgresCommerceRouter(database,options={}){
     const result=await workflows.recordSupplierInvoice(database,req.ctx,{supplierId:detail.order.supplier_id,
       purchaseOrderId:detail.order.id,purchaseReceiptId:trimOrNull(req.body.purchaseReceiptId),
       supplierInvoiceNumber:trimOrNull(req.body.supplierInvoiceNumber),issueDate:req.body.issueDate||dateToday(req),
-      dueDate:trimOrNull(req.body.dueDate),currency:detail.order.currency,taxMinor:minor(req.body.tax||'0','Tax'),
+      dueDate:trimOrNull(req.body.dueDate),currency:detail.order.currency,taxMinor:minor(req.body.tax||'0','Tax',detail.order.currency),
       idempotencyKey:key(req,'supplier-invoice'),lines:[{purchaseOrderLineId:line.id,skuId:line.sku_id,
-        description:line.description,quantity:req.body.quantity,unitCostMinor:minor(req.body.unitCost,'Unit cost')}]});
+        description:line.description,quantity:req.body.quantity,unitCostMinor:minor(req.body.unitCost,'Unit cost',detail.order.currency)}]});
     req.flash(result.status==='DISPUTED'?'warn':'success',result.status==='DISPUTED'
       ?'Invoice recorded as disputed. No accounting journal was invented.':'Supplier invoice recorded without receiving stock again.');
     return res.redirect(303,`/purchasing/orders/${req.params.id}`);
@@ -741,7 +738,7 @@ function createPostgresCommerceRouter(database,options={}){
     const bill=detail.bills.find((candidate)=>candidate.id===req.body.billId);
     if(!bill)throw new ValidationError('Choose an open bill from this purchase order.');
     await workflows.recordSupplierPayment(database,req.ctx,{supplierId:detail.order.supplier_id,supplierBillId:bill.id,
-      amountMinor:minor(req.body.amount,'Payment amount'),paymentDate:req.body.paymentDate||dateToday(req),
+      amountMinor:minor(req.body.amount,'Payment amount',bill.currency),paymentDate:req.body.paymentDate||dateToday(req),
       currency:bill.currency,method:trimOrNull(req.body.method),reference:trimOrNull(req.body.reference),
       idempotencyKey:key(req,'supplier-payment')});
     req.flash('success','Supplier payment recorded. Physical inventory did not change.');
@@ -764,17 +761,25 @@ function createPostgresCommerceRouter(database,options={}){
   const entry=require('../../operations/order-entry'),entryPricing=require('../../pricing/postgres-promotions');
   const entryToday=req=>require('../../lib/business-time').context(req.account?.time_zone||'UTC').calendarDate;
   async function entryCurrency(req){return (await database.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId])).rows[0]?.base_currency||'USD';}
-  async function renderEntry(req,res,{form={},formError=null,editOrder=null,status=200}={}){
+  async function renderEntry(req,res,{form={},formError=null,editOrder=null,status=200,quotation=false}={}){
     const selected=Array.isArray(form.skuId)?form.skuId:form.skuId?[form.skuId]:[];
     const [customers,first,chosen,locations,taxRates,currency]=await Promise.all([commerce.customers(database,req.ctx.workspaceId),
       commerce.catalogue(database,req.ctx.workspaceId,{limit:50}),selected.length?commerce.catalogue(database,req.ctx.workspaceId,{ids:selected,limit:500}):[],
       database.query(`SELECT l.id,l.name,l.kind FROM locations l WHERE l.workspace_id=$1 AND l.is_active=1
         ORDER BY CASE WHEN EXISTS(SELECT 1 FROM balances b WHERE b.workspace_id=l.workspace_id AND b.location_id=l.id AND b.on_hand>0) THEN 0 ELSE 1 END,
         CASE WHEN l.kind='warehouse' THEN 0 ELSE 1 END,l.created_at,l.id`,[req.ctx.workspaceId]),
-      database.query("SELECT * FROM accounting_tax_rates WHERE workspace_id=$1 AND active=1 AND applies_to IN ('SALES','BOTH') ORDER BY name",[req.ctx.workspaceId]),entryCurrency(req)]);
+      database.query("SELECT * FROM accounting_tax_rates WHERE workspace_id=$1 AND active=1 AND applies_to IN ('SALES','BOTH') AND effective_from<=$2 AND (effective_to IS NULL OR effective_to>=$2) ORDER BY name",[req.ctx.workspaceId,form.orderDate||entryToday(req)]),entryCurrency(req)]);
     const catalogue=[...new Map([...first,...chosen].map(s=>[s.id,s])).values()];
-    return res.status(status).page('sales/entry',{title:editOrder?'Edit draft order':'New sales order',nav:'sales',customers,catalogue,locations:locations.rows,taxRates:taxRates.rows,currency,today:entryToday(req),form,formError,editOrder,operationKey:newId('order-form')});
+    return res.status(status).page('sales/entry',{title:quotation?'New quotation':editOrder?'Edit draft order':'New sales order',nav:'sales',customers,catalogue,locations:locations.rows,taxRates:taxRates.rows,currency,today:entryToday(req),form,formError,editOrder,quotation,operationKey:newId('order-form')});
   }
+  const quotations=require('../../sales/postgres-quotes');
+  router.get('/quotes',requirePermission(permissions.VIEW_SALES,'view quotations'),asyncRoute(async(req,res)=>res.page('sales/quotes',{title:'Quotes',nav:'sales',quotes:await quotations.list(database,req.ctx)})));
+  router.get('/quotes/new',requirePermission(permissions.OPERATE,'prepare quotations'),asyncRoute(async(req,res)=>{
+    let form={};if(req.query.revise){const q=await quotations.get(database,req.ctx.workspaceId,req.query.revise),p=q.input;form={...p,skuId:p.lines.map(l=>l.skuId),quantity:p.lines.map(l=>l.quantity),unitPrice:p.lines.map(l=>l.unitPriceMinor==null?'':require('../../domain/currency').fromMinor(l.unitPriceMinor,p.currency)),priceOverride:p.lines.map(l=>l.priceOverride?'1':'0'),customerShippingAddress:p.shipToAddress,tax:require('../../domain/currency').fromMinor(p.taxMinor,p.currency),discount:require('../../domain/currency').fromMinor(p.discountMinor,p.currency),couponCodes:(p.codes||[]).join(', '),orderDate:entryToday(req),supersedesId:q.id};}return renderEntry(req,res,{quotation:true,form});
+  }));
+  router.post('/quotes',requirePermission(permissions.OPERATE,'prepare quotations'),asyncRoute(async(req,res)=>{try{const input=entry.input(req.body,{today:entryToday(req),currency:await entryCurrency(req)}),q=await quotations.create(database,req.ctx,{...input,validUntil:req.body.validUntil,requestKey:req.body.idempotencyKey,supersedesId:req.body.supersedesId||null});return res.redirect(303,'/quotes/'+q.id);}catch(error){if(!(error instanceof ValidationError))throw error;return renderEntry(req,res,{quotation:true,form:req.body,formError:error.message,status:400});}}));
+  router.get('/quotes/:id',requirePermission(permissions.VIEW_SALES,'view quotations'),asyncRoute(async(req,res)=>res.page('sales/quote',{title:'Quotation',nav:'sales',quotation:await quotations.get(database,req.ctx.workspaceId,req.params.id),today:entryToday(req)})));
+  router.post('/quotes/:id/decision',requirePermission(permissions.OPERATE,'decide quotations'),asyncRoute(async(req,res)=>{if(!['accept','decline'].includes(req.body.decision))throw new ValidationError('Choose accept or decline.');const result=await quotations.decide(database,req.ctx,req.params.id,{accept:req.body.decision==='accept',expectedHash:req.body.expectedHash,today:entryToday(req)});req.flash('success',result.salesOrderId?'Quotation accepted as a draft order. Review and reserve its stock when ready.':'Quotation declined.');return res.redirect(303,result.salesOrderId?'/orders/'+result.salesOrderId:'/quotes/'+req.params.id);}));
   router.get(['/orders/new','/sales/new'],requirePermission(permissions.OPERATE,'create sales orders'),asyncRoute(async(req,res)=>{
     let form={customerId:trimOrNull(req.query.customer)||'',deliveryMethod:'SHIP'};
     if(req.query.duplicate){const d=await commerce.salesOrder(database,req.ctx.workspaceId,req.query.duplicate),q=(await database.query('SELECT quote FROM stockchief_runtime.pricing_order_snapshots WHERE workspace_id=$1 AND id=$2',[req.ctx.workspaceId,d.order.pricing_quote_id])).rows[0]?.quote;
@@ -796,12 +801,11 @@ function createPostgresCommerceRouter(database,options={}){
     catch(error){if(!(error instanceof ValidationError))throw error;return renderEntry(req,res,{form:req.body,formError:error.message,editOrder:{id:req.params.id,version:req.body.expectedVersion},status:400});}
   }));
 
-  router.get('/sales/customers/new',requirePermission(permissions.OPERATE,'add customers'),(req,res)=>res.page('sales/customer-new',{
-    title:'New customer',nav:'sales',form:{name:trimOrNull(req.query.name)||'',email:trimOrNull(req.query.email)||'',
-      phone:trimOrNull(req.query.phone)||'',shippingAddress:trimOrNull(req.query.shippingAddress)||''},formError:null,screenGuide:null}));
+  function customerEntry(req,res,form={},formError=null,status=200){return res.status(status).page('sales/customer-new',{title:'New customer',nav:'sales',form,formError,screenGuide:null,postgresCustomer:true,canSetTaxExemption:permissions.can(req.user,permissions.MANAGE_ACCOUNTING)});}
+  router.get('/sales/customers/new',requirePermission(permissions.OPERATE,'add customers'),(req,res)=>customerEntry(req,res,{name:trimOrNull(req.query.name)||'',email:trimOrNull(req.query.email)||'',phone:trimOrNull(req.query.phone)||'',shippingAddress:trimOrNull(req.query.shippingAddress)||''}));
 
   router.post('/sales/customers',requirePermission(permissions.OPERATE,'add customers'),asyncRoute(async(req,res)=>{
-    const customer=await commerce.createCustomer(database,req.ctx,req.body);
+    let customer;try{customer=await commerce.createCustomer(database,req.ctx,req.body);}catch(error){if(error instanceof ValidationError)return customerEntry(req,res,req.body,error.message,400);throw error;}
     req.flash('success',`${customer.name} was added.`);
     return res.redirect(303,'/customers');
   }));
@@ -933,9 +937,7 @@ function createPostgresCommerceRouter(database,options={}){
         WHERE refund.workspace_id=$1 AND refund.customer_return_id=$2 ORDER BY refund.created_at DESC LIMIT 1`,
       [req.ctx.workspaceId,req.params.id]),
     ]);
-    const refundableMinor=customerReturn.lines.reduce((sum,line)=>sum+
-      (line.trackingEvidence.costAllocations||[]).reduce((lineSum,allocation)=>
-        lineSum+Number(allocation.quantity)*Number(line.unit_price_minor),0),0);
+    const refundableMinor=returns.refundSummary(customerReturn).totalMinor;
     return res.page('sales/postgres-return',{title:customerReturn.return_number,nav:'sales',customerReturn,
       returnParcel:await require('../../shipping/postgres-return-parcels').current(database,req.ctx.workspaceId,customerReturn.id),
       locations:locationRows,refundableMinor,refundRequest:refundRequestResult.rows[0]||null,
@@ -1019,8 +1021,9 @@ function createPostgresCommerceRouter(database,options={}){
     const quantities=Array.isArray(req.body.quantity)?req.body.quantity:[req.body.quantity];
     const lines=lineIds.map((lineId,index)=>({lineId,locationId:locationIds[index]||locationIds[0],quantity:quantities[index]}))
       .filter((line)=>Number(line.quantity)>0);
-    await workflows.fulfillSalesOrder(database,req.ctx,req.params.id,{idempotencyKey:key(req,'sales-fulfill'),lines});
-    req.flash('success','Fulfillment recorded. Inventory, revenue, COGS and the customer invoice changed together.');
+    const result=await workflows.fulfillSalesOrder(database,req.ctx,req.params.id,{idempotencyKey:key(req,'sales-fulfill'),lines,
+      shipment:{handover:req.body.handover,carrier:req.body.carrier,trackingNumber:req.body.trackingNumber}});
+    req.flash('success',result.replayed?'These goods were already shipped. The original shipment and accounting were kept.':'Shipment and tracking saved. Inventory, revenue, COGS and the customer invoice changed together.');
     return res.redirect(303,`/orders/${req.params.id}`);
   }));
 
@@ -1035,7 +1038,7 @@ function createPostgresCommerceRouter(database,options={}){
     if(lines.some((line)=>line.locationId!==locationId))throw new ValidationError(
       'This order is held at more than one location. Prepare one shipment from each location.');
     const result=await shipping.prepare(database,req.ctx,req.params.id,{idempotencyKey:key(req,'shipment-pick'),
-      shipFromLocationId:locationId,shipToAddress:detail.order.ship_to_address,lines});
+      shipFromLocationId:locationId,shipToAddress:detail.order.ship_to_address,startPicking:true,lines});
     req.flash('success','Pick list opened. Stock remains committed until the parcel is handed over.');
     return res.redirect(303,`/fulfilment/${result.shipmentId}`);
   }));
@@ -1055,7 +1058,7 @@ function createPostgresCommerceRouter(database,options={}){
     const detail=await commerce.salesOrder(database,req.ctx.workspaceId,req.params.id);
     const catalogue=await commerce.catalogue(database,req.ctx.workspaceId,{ids:[req.body.skuId],limit:1});const sku=catalogue[0];
     if(!sku)throw new ValidationError('Choose an active product from this inventory.');
-    const submitted=String(req.body.unitPrice||'').trim();const unitPriceMinor=submitted?minor(submitted,'Selling price'):sku.amount_minor;
+    const submitted=String(req.body.unitPrice||'').trim();const unitPriceMinor=submitted?minor(submitted,'Selling price',detail.order.currency):sku.amount_minor;
     if(unitPriceMinor===null||unitPriceMinor===undefined)throw new ValidationError('Enter the selling price for that product.');
     const desired=detail.lines.map((line)=>({skuId:line.sku_id,quantity:Number(line.quantity_ordered),
       unitPriceMinor:Number(line.unit_price_minor),notes:line.notes}));
@@ -1088,7 +1091,7 @@ function createPostgresCommerceRouter(database,options={}){
     const invoice=detail.invoices.find((candidate)=>candidate.id===req.body.invoiceId);
     if(!invoice)throw new ValidationError('Choose an open invoice from this order.');
     await workflows.recordCustomerPayment(database,req.ctx,{customerId:detail.order.customer_id,
-      customerInvoiceId:invoice.id,salesOrderId:detail.order.id,amountMinor:minor(req.body.amount,'Payment amount'),
+      customerInvoiceId:invoice.id,salesOrderId:detail.order.id,amountMinor:minor(req.body.amount,'Payment amount',invoice.currency),
       paymentDate:req.body.paymentDate||dateToday(req),currency:invoice.currency,method:trimOrNull(req.body.method),
       reference:trimOrNull(req.body.reference),idempotencyKey:key(req,'customer-payment')});
     req.flash('success','Customer payment recorded through the same receivables and journal engine.');
@@ -1100,7 +1103,7 @@ function createPostgresCommerceRouter(database,options={}){
     const invoice=detail.invoices.find((candidate)=>['OPEN','PARTIALLY_PAID'].includes(candidate.status));
     if(!invoice)throw new ValidationError('This order has no open customer invoice to pay.');
     await workflows.recordCustomerPayment(database,req.ctx,{customerId:detail.order.customer_id,
-      customerInvoiceId:invoice.id,salesOrderId:detail.order.id,amountMinor:minor(req.body.amount,'Payment amount'),
+      customerInvoiceId:invoice.id,salesOrderId:detail.order.id,amountMinor:minor(req.body.amount,'Payment amount',invoice.currency),
       paymentDate:req.body.paymentDate||dateToday(req),currency:invoice.currency,method:trimOrNull(req.body.method),
       reference:trimOrNull(req.body.reference),idempotencyKey:key(req,'customer-payment')});
     req.flash('success','Customer payment recorded through the same receivables and journal engine.');

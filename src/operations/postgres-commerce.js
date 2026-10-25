@@ -105,6 +105,10 @@ async function createCustomerInTransaction(client,ctx,input){
   await requirePermission(client, ctx, access.OPERATE, 'add customers');
   const name=trimOrNull(input.name);
   if(!name)throw new ValidationError('Customer name is required.');
+  if(name.length>200)throw new ValidationError('Customer names must be at most 200 characters.');
+  const email=trimOrNull(input.email);if(email&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))throw new ValidationError('Enter a valid customer email.');
+  const address=require('../sales/customer-address').fromInput(input),taxExempt=input.taxExempt===true||input.taxExempt==='1';
+  if(taxExempt)await requirePermission(client,ctx,access.MANAGE_ACCOUNTING,'set customer tax exemption');
   await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',[`customer:${ctx.workspaceId}:${name.toLowerCase()}`]);
   const duplicate=await client.query('SELECT id FROM customers WHERE workspace_id=$1 AND lower(name)=lower($2)',
     [ctx.workspaceId,name]);
@@ -115,6 +119,8 @@ async function createCustomerInTransaction(client,ctx,input){
     VALUES($1,$2,$3,$4,$5,$6,$7,'ACTIVE',$8,$9,$10,$10)`,
   [id,ctx.workspaceId,name,trimOrNull(input.company),trimOrNull(input.email),trimOrNull(input.phone),
     trimOrNull(input.shippingAddress),trimOrNull(input.notes),ctx.actorId,at]);
+  await client.query('UPDATE customers SET shipping_address=$3,shipping_address_fields=$4::jsonb,tax_exempt=$5,tax_exempt_reference=$6 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,id,address.text,address.fields?JSON.stringify(address.fields):null,taxExempt?1:0,trimOrNull(input.taxExemptReference)]);
+  if(input.termsKind)await require('../sales/postgres-payment-terms').saveInTransaction(client,ctx,{customerId:id,kind:input.termsKind,netDays:input.netDays,depositPercent:input.depositPercent,holdShipping:input.holdShipping==='1'||input.termsKind==='BEFORE_FULFILMENT',creditApproved:input.termsKind==='ON_ACCOUNT'});
   return {id,name};
 }
 

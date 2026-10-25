@@ -31,9 +31,19 @@ function fromMinor(value,currency){
  const n=integer(value,'Amount',{signed:true}),digits=exponent(currency),negative=n<0,raw=String(Math.abs(n)).padStart(digits+1,'0');
  return (negative?'-':'')+(digits?raw.slice(0,-digits)+'.'+raw.slice(-digits):raw);
 }
+function userToMinor(value,currency,options={}){
+ const c=code(currency);let text=String(value??'').trim();if(!text&&options.optional)return null;
+ const symbols=new Set([c,new Intl.NumberFormat('en-US',{style:'currency',currency:c}).formatToParts(1).find(p=>p.type==='currency')?.value,...(c==='USD'?['US$']:[])]);
+ for(const token of [...symbols].filter(Boolean).sort((a,b)=>b.length-a.length)){
+  if(text.toUpperCase().startsWith(token.toUpperCase())){text=text.slice(token.length).trim();break;}
+  if(text.toUpperCase().endsWith(token.toUpperCase())){text=text.slice(0,-token.length).trim();break;}
+ }
+ if(/[A-Za-z\p{Sc}]/u.test(text))throw new ValidationError((options.label||'Amount')+' currency does not match '+c+'.');
+ return toMinor(require('./human-number').decimal(text,{label:options.label||'Amount',fractionDigits:exponent(c)}),c,options);
+}
 function format(value,currency='USD',locale='en-US'){
  const n=integer(value,'Amount',{signed:true}),c=code(currency);
  return new Intl.NumberFormat(locale,{style:'currency',currency:c}).format(n/10**exponent(c));
 }
 function sum(values,label='Amount'){const total=values.reduce((n,v)=>n+BigInt(integer(v,label,{signed:true})),0n),number=Number(total);if(!Number.isSafeInteger(number))throw new ValidationError(label+' exceeds the exact supported range.');return number;}
-module.exports={code,exponent,integer,toMinor,fromMinor,format,sum};
+module.exports={code,exponent,integer,toMinor,userToMinor,fromMinor,format,sum};

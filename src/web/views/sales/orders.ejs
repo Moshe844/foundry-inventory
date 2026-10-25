@@ -48,6 +48,7 @@
     return target ? '/orders/' + order.id + '?open=' + target + '#' + target : '/orders/' + order.id;
   };
 %>
+<p><a class="rm-btn rm-btn--ghost" href="/quotes">Customer quotes</a></p>
 
 
 <p class="rm-stamp"><%= counts.stuck %> fulfilment exceptions · <%= waiting.length %> waiting for stock · <%= counts.ready + counts.moving %> ready or moving · <%= counts.unpaid %> unpaid · <%= counts.done %> done</p>

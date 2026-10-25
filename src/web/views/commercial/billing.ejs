@@ -1,3 +1,4 @@
+<%- include('../partials/ai-spending-status') %>
 <div class="rm-head"><div><span class="rm-eyebrow">ACCOUNT</span><h1>Plan &amp; Usage</h1><p>Your plan, included usage and purchased usage in one place. Included usage is pooled across your account; purchased packs belong to the selected inventory.</p></div></div>
 <form method="post" action="/logout-all" data-confirm="Sign out all devices?"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost" type="submit">Sign out all devices</button></form>
 <% if(!checkoutOpen){ %><div class="notice notice--warn">Checkout is closed pending commercial readiness approval. Allowances and usage pack prices below are provisional.</div><% } %>

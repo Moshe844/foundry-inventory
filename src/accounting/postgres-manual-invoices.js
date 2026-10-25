@@ -12,28 +12,23 @@ function date(value,label){
   return text;
 }
 
-function minor(value,label,allowZero=false){
-  const text=String(value??'').trim();
-  if(!/^\d+(?:\.\d{1,2})?$/.test(text))throw new ValidationError(`${label} must be a money amount.`);
-  const amount=Math.round(Number(text)*100);
-  if(!Number.isSafeInteger(amount)||(allowZero?amount<0:amount<=0))throw new ValidationError(`${label} is invalid.`);
-  return amount;
-}
-
 async function createCustomerInvoice(database,ctx,input){
   return database.transaction((client)=>createCustomerInvoiceInTransaction(client,ctx,input),
     {isolation:'SERIALIZABLE',retrySafe:true});
 }
 
 async function createCustomerInvoiceInTransaction(client,ctx,input){
+  const accountingCurrency=(await client.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1 AND enabled=1',[ctx.workspaceId])).rows[0]?.base_currency;
+  if(!accountingCurrency)throw new ValidationError('Configure accounting before recording invoices.');
   const customerId=String(input.customerId||'');
   const description=requireText(input.description,'Description',{max:250});
   const quantity=Number(input.quantity);
   if(!Number.isFinite(quantity)||quantity<=0||quantity>1000000)throw new ValidationError('Quantity must be positive.');
-  let unitPriceMinor=minor(input.unitAmount,'Unit price');
+  let unitPriceMinor=require('../domain/currency').userToMinor(input.unitAmount,accountingCurrency,{label:'Unit price'});
+  if(unitPriceMinor<=0)throw new ValidationError('Unit price must be positive.');
   let subtotalMinor=Math.round(quantity*unitPriceMinor);
   if(!Number.isSafeInteger(subtotalMinor)||subtotalMinor<=0)throw new ValidationError('Invoice total is invalid.');
-  const taxMinor=minor(input.tax||'0','Tax',true);
+  let taxMinor=require('../domain/currency').userToMinor(input.tax||'0',accountingCurrency,{label:'Tax'});
   let totalMinor=subtotalMinor+taxMinor,discountMinor=0,pricingQuote=null;
   if(!Number.isSafeInteger(totalMinor))throw new ValidationError('Invoice total is invalid.');
   const issueDate=date(input.issueDate,'Issue date');
@@ -50,7 +45,7 @@ async function createCustomerInvoiceInTransaction(client,ctx,input){
       pricingQuote=await require('../pricing/postgres-invoice-pricing').quote(client,ctx,input,{lock:true});
       if(pricingQuote.violations.length)throw new ValidationError('The invoice exceeds an approved pricing safeguard.');
       if(input.pricingQuoteHash&&input.pricingQuoteHash!==require('../pricing/postgres-promotions').quoteHash(pricingQuote))throw new ValidationError('The invoice pricing changed after approval. Review it again.');
-      unitPriceMinor=pricingQuote.lines[0].unitPriceMinor;subtotalMinor=pricingQuote.subtotalMinor;discountMinor=pricingQuote.discountMinor;totalMinor=pricingQuote.totalMinor;
+      unitPriceMinor=pricingQuote.lines[0].unitPriceMinor;subtotalMinor=pricingQuote.subtotalMinor;discountMinor=pricingQuote.discountMinor;taxMinor=pricingQuote.taxMinor;totalMinor=pricingQuote.totalMinor;
       if(totalMinor<=0)throw new ValidationError('A zero-total document creates no amount owed. Use a priced customer order for a free product fulfillment.');
     }
     const customer=(await client.query(`SELECT id FROM customers WHERE workspace_id=$1 AND id=$2 AND record_state='ACTIVE'`,

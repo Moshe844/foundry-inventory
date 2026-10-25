@@ -111,7 +111,7 @@ async function settingsPage(database,req,res){const [counts,users,instructions,e
     integrity:{...integrity,ok:integrity.result?.ok,problems},eventFeed:{configured:Boolean(feed),connected:feed?.status==='connected',
       recentEvents:events.rows.map((event)=>({eventId:event.external_event_id,type:event.event_type,status:event.status,
         error:event.error_message,processedAt:event.processed_at}))},newFeedToken,learnedInstructions:instructions.rows.map(instructionFrom),
-    stockGuards:[],emailAlerts,aiUsage:null,aiCost:await require('../../commercial/model-cost-budget').status(database,req.ctx.workspaceId),commercialLimitsPooled:true,entitlements:{plan:{label:res.locals.commercial?.subscription?.plan_name||
+    stockGuards:[],emailAlerts,aiUsage:null,aiCost:await require('../../commercial/ai-spending-limits').availability(database,req.ctx.workspaceId),commercialLimitsPooled:true,entitlements:{plan:{label:res.locals.commercial?.subscription?.plan_name||
       (res.locals.commercial?.access?.mode==='DEVELOPMENT'?'Pre-subscription · unlimited':'No paid plan')},
       limits:(res.locals.commercial?.meters||[]).filter((meter)=>['workspaces','members','locations','connections'].includes(meter.meter))
         .map((meter)=>({key:meter.meter,used:meter.used,limit:meter.hardLimit??meter.included,
@@ -130,6 +130,7 @@ function createPostgresSettingsRouter(database,options={}){const router=express.
     title:'Everything else',nav:'settings',room:true,sections,
   })));
   router.get('/settings',requireAuth,asyncRoute(async(req,res)=>settingsPage(database,req,res)));
+  router.post('/settings/ai-spending',requireOwner,asyncRoute(async(req,res)=>{await require('../../commercial/ai-spending-limits').save(database,req.ctx,req.body);req.flash('success','Your AI spending limits were saved for this billing period. Credits, provider prices and separate request, goal and test-authority guards were not changed.');return res.redirect(303,'/settings#ai-spending');}));
   router.post('/settings/integrity/check',requireAuth,asyncRoute(async(req,res)=>{
     res.set('Cache-Control','no-store');return res.json(await require('../../operations/postgres-integrity-check').run(database,req.ctx.workspaceId));
   }));

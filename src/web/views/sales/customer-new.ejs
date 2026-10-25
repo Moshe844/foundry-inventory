@@ -46,11 +46,12 @@
           <input name="phone" value="<%= form.phone || '' %>">
         </label>
       </div>
-      <label class="rm-field">
+      <% if(locals.postgresCustomer){ %><fieldset class="rm-work"><legend>Default delivery address · optional</legend><div class="rm-grid2"><label class="rm-field"><span>Street address</span><input name="addressLine1" maxlength="200" autocomplete="address-line1" value="<%= form.addressLine1||'' %>"></label><label class="rm-field"><span>Apartment, suite or unit</span><input name="addressLine2" maxlength="200" autocomplete="address-line2" value="<%= form.addressLine2||'' %>"></label><label class="rm-field"><span>City</span><input name="city" maxlength="200" autocomplete="address-level2" value="<%= form.city||'' %>"></label><label class="rm-field"><span>State or province</span><input name="state" maxlength="200" autocomplete="address-level1" value="<%= form.state||'' %>"></label><label class="rm-field"><span>Postal code</span><input name="postalCode" maxlength="200" autocomplete="postal-code" value="<%= form.postalCode||'' %>"></label><label class="rm-field"><span>Country code</span><input name="country" maxlength="2" autocomplete="country" value="<%= form.country||'US' %>" placeholder="US"></label></div></fieldset><% } %>
+      <% if(!locals.postgresCustomer||form.shippingAddress){ %><label class="rm-field">
         <span>Default shipping address <small>optional</small></span>
         <textarea name="shippingAddress" rows="3" placeholder="Street, town, state, postcode"><%= form.shippingAddress || '' %></textarea>
         <small>Each Sales Order keeps its own confirmed destination; this is only the starting default.</small>
-      </label>
+      </label><% } %>
     </div>
     <p class="rm-panel__foot">
       StockChief will say what is missing when an order needs delivery or an email.
@@ -66,6 +67,7 @@
       </div>
     </div>
   </details>
+  <% if(locals.postgresCustomer){ %><details class="rm-work" <%= form.termsKind||form.taxExempt?'open':'' %>><summary>Payment terms and tax</summary><div class="rm-work__body"><label class="rm-field"><span>Payment terms</span><select name="termsKind"><% [['','No separate terms agreed'],['ON_ACCOUNT','On account / net terms'],['BEFORE_FULFILMENT','Paid before fulfillment'],['DEPOSIT','Deposit before fulfillment']].forEach(([key,name])=>{ %><option value="<%= key %>" <%= form.termsKind===key?'selected':'' %>><%= name %></option><% }); %></select></label><label class="rm-field"><span>Net days · on-account terms</span><input type="number" name="netDays" min="0" step="1" value="<%= form.netDays||'' %>"></label><label class="rm-field"><span>Deposit percentage · deposit terms</span><input type="number" name="depositPercent" min="0.01" max="100" step="0.01" value="<%= form.depositPercent||'' %>"></label><label><input type="checkbox" name="holdShipping" value="1" <%= form.holdShipping==='1'?'checked':'' %>> Hold shipping while an agreed balance is unpaid</label><% if(locals.canSetTaxExemption){ %><label><input type="checkbox" name="taxExempt" value="1" <%= form.taxExempt==='1'?'checked':'' %>> Customer is tax exempt</label><label class="rm-field"><span>Exemption reference · optional</span><input name="taxExemptReference" value="<%= form.taxExemptReference||'' %>" maxlength="200"></label><% } %><p>New orders use these defaults. Existing invoices and their tax history remain unchanged.</p></div></details><% } %>
 
   <div class="rm-choices" style="margin-top:18px">
     <button class="rm-btn" type="submit">Create customer</button>

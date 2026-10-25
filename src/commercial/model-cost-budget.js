@@ -89,6 +89,7 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
   let accountCap=normalAccountCap,workspaceCap=normalWorkspaceCap,temporaryCostApproval=null;
   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
    [`commercial-model-cost:${scope.accountId}:${bounds.start.toISOString()}`]);
+  const ownerLimits=await require('./ai-spending-limits').effective(client,scope.accountId,bounds,{accountCapMinor:accountCap,workspaceCapMinor:workspaceCap},scope.workspaceId);accountCap=ownerLimits.accountCapMinor;workspaceCap=ownerLimits.workspaceCapMinor;
   if(goalScope.goalId){
    // The account-period lock is already held. Read the goal and its exposure
    // in the same serializable snapshot, preserving the goal row lock without
@@ -168,9 +169,9 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
     WHERE h.account_id=$1 AND h.period_start=$2 AND a.source='INCLUDED'`,
    [scope.accountId,bounds.start.toISOString(),scope.workspaceId])).rows[0];
   const baseMaximum=sources.filter(row=>row.source==='INCLUDED').reduce((sum,row)=>sum+row.maximumMinor,0);
-  if(Number(current.account_exposure)+baseMaximum>accountCap)
+  if(baseMaximum>0&&Number(current.account_exposure)+baseMaximum>accountCap)
    throw Object.assign(new RateLimitError('AI spending protection has paused included file reading and Ask work for this billing period. Review AI spending in Settings. Your saved file and records remain available; no model call was made.'),{limitKind:'account_period_cost'});
-  if(Number(current.workspace_exposure)+baseMaximum>workspaceCap)
+  if(baseMaximum>0&&Number(current.workspace_exposure)+baseMaximum>workspaceCap)
    throw Object.assign(new RateLimitError('AI spending protection has paused included file reading and Ask work for this billing period. Review AI spending in Settings. Your saved file and records remain available; no model call was made.'),{limitKind:'workspace_period_cost'});
   for(const source of sources.filter(row=>row.source==='PURCHASED')){
    const exposure=(await client.query(`SELECT COALESCE(SUM(CASE WHEN h.status IN ('RESERVED','UNKNOWN') THEN a.maximum_minor
@@ -263,9 +264,10 @@ async function status(database,workspaceId){
  coalesce(sum(CASE WHEN h.workspace_id=$3 THEN CASE WHEN h.status IN ('RESERVED','UNKNOWN') THEN a.maximum_minor WHEN h.status='SETTLED' THEN a.actual_minor ELSE 0 END ELSE 0 END),0) AS workspace
  FROM commercial_model_cost_hold_allocations a JOIN commercial_model_cost_holds h ON h.id=a.hold_id
  WHERE h.account_id=$1 AND h.period_start=$2 AND a.source='INCLUDED'`,[owner.owner_account_id,bounds.start.toISOString(),workspaceId])).rows[0];
- const usage={accountMinor:Number(row.account),workspaceMinor:Number(row.workspace),accountCapMinor:cap,workspaceCapMinor:workspaceCap,
+ const limits=await require('./ai-spending-limits').effective(database,owner.owner_account_id,bounds,{accountCapMinor:cap,workspaceCapMinor:workspaceCap},workspaceId);
+ const usage={accountMinor:Number(row.account),workspaceMinor:Number(row.workspace),...limits,
   importRequestCapMinor:operationLimit('import_mapping')*100,periodEndsAt:bounds.end.toISOString()};
- return {...usage,warning:usage.accountMinor>=cap*.8||usage.workspaceMinor>=workspaceCap*.8,
-  blocked:usage.accountMinor>=cap||usage.workspaceMinor>=workspaceCap};
+ return {...usage,warning:usage.accountMinor>=usage.accountCapMinor*.8||usage.workspaceMinor>=usage.workspaceCapMinor*.8,
+  blocked:usage.accountMinor>=usage.accountCapMinor||usage.workspaceMinor>=usage.workspaceCapMinor};
 }
 module.exports={reserve,reserveNative,release,settle,estimateMaximumMinor,promptByteAllowance,nativeInputTokenAllowance,operationLimit,periodLimit,DEFAULTS,status};

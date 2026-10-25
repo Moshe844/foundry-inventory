@@ -56,9 +56,9 @@ async function prepare(database,ctx,salesOrderId,input={}){
     await client.query(`INSERT INTO sales_shipments
       (id,workspace_id,sales_order_id,shipment_number,status,ship_from_location_id,ship_to_address,
        handover,package_count,weight_grams,currency,created_by_user_id,created_at,updated_at)
-      VALUES($1,$2,$3,$4,'PACKED',$5,$6,'CARRIER',1,$7,$8,$9,$10,$10)`,[shipmentId,ctx.workspaceId,
+      VALUES($1,$2,$3,$4,$11,$5,$6,'CARRIER',1,$7,$8,$9,$10,$10)`,[shipmentId,ctx.workspaceId,
       salesOrderId,shipmentNumber,input.shipFromLocationId||order.fulfillment_location_id,destination,
-      input.weightGrams?Math.round(Number(input.weightGrams)):null,order.currency||'USD',ctx.actorId,at]);
+      input.weightGrams?Math.round(Number(input.weightGrams)):null,order.currency||'USD',ctx.actorId,at,input.startPicking?'PICKING':'PACKED']);
     for(const [index,line] of input.lines.entries()){
       const quantity=Number(line.quantity);
       if(!Number.isSafeInteger(quantity)||quantity<=0)throw new ValidationError(`Parcel line ${index+1} quantity must be a whole number above zero.`);
@@ -74,7 +74,7 @@ async function prepare(database,ctx,salesOrderId,input={}){
     }
     if(!input.weightGrams){const weights=(await client.query(`SELECT sum(l.quantity*s.weight_grams)::bigint AS grams,count(*) FILTER(WHERE s.weight_grams IS NULL)::int AS missing FROM sales_shipment_lines l JOIN skus s ON s.workspace_id=l.workspace_id AND s.id=l.sku_id WHERE l.workspace_id=$1 AND l.shipment_id=$2`,[ctx.workspaceId,shipmentId])).rows[0];
       if(!weights.missing&&Number(weights.grams)>0){await client.query('UPDATE sales_shipments SET weight_grams=$3 WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,shipmentId,weights.grams]);await client.query(`INSERT INTO shipment_packages(id,workspace_id,shipment_id,position,weight_grams,weight_source,created_at,updated_at) VALUES($1,$2,$3,1,$4,'ESTIMATED',$5,$5)`,[newId('pkg'),ctx.workspaceId,shipmentId,weights.grams,at]);}}
-    const result={shipmentId,shipmentNumber,status:'PACKED'};
+    const result={shipmentId,shipmentNumber,status:input.startPicking?'PICKING':'PACKED'};
     await client.query(`UPDATE stockchief_runtime.business_operations SET status='COMPLETED',result=$2::jsonb,
       completed_at=now() WHERE id=$1`,[operation.rows[0].id,JSON.stringify(result)]);
     return {...result,replayed:false};
@@ -101,8 +101,10 @@ function assertParcelEditable(shipment){
 }
 
 async function setPackages(database,ctx,shipmentId,boxes,options={}){
+  return database.transaction(client=>setPackagesInTransaction(client,ctx,shipmentId,boxes,options),{isolation:'SERIALIZABLE',retrySafe:true});
+}
+async function setPackagesInTransaction(client,ctx,shipmentId,boxes,options={}){
   boxes=require('./parcel-contract').boxes(boxes);
-  return database.transaction(async(client)=>{
     await require('./postgres-parcel-options').actor(client,ctx);
     const shipment=await requireShipment(client,ctx.workspaceId,shipmentId,true);
     assertParcelEditable(shipment);
@@ -123,7 +125,6 @@ async function setPackages(database,ctx,shipmentId,boxes,options={}){
     await client.query(`UPDATE sales_shipments SET package_count=$3,weight_grams=$4,updated_at=$5
       WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,shipmentId,boxes.length,total,now]);
     return boxes;
-  },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 
 async function state(database,workspaceId,shipmentId){
@@ -139,7 +140,7 @@ async function state(database,workspaceId,shipmentId){
   const blocked=[];
   if(shipment.customer_return_id)try{await require('./postgres-return-parcels').assertCurrent(database,workspaceId,shipment);}catch(error){blocked.push(error.message);}
   if(!to.complete)blocked.push(addresses.why(to));
-  if(!from.complete)blocked.push(`Add an address to ${shipment.location_name||'the dispatch warehouse'} (ship-from). ${addresses.why(from)}`);
+  if(!from.complete)blocked.push(`Add an address to ${shipment.location_name||'the dispatch warehouse'} (ship-from). ${addresses.why(from,'The dispatch address')}`);
   if(!to.phone)blocked.push('The customer needs a shipping phone number. StockChief will not invent one.');
   if(!from.phone)blocked.push('The ship-from location needs a shipping contact phone.');
   if(boxes.some((box)=>!(box.weightGrams>0)))blocked.push('Enter a measured package weight before requesting rates.');
@@ -461,6 +462,18 @@ async function verifyLabelPurchaseEffect(database,workspaceId,effectId,options={
   }
 }
 
+async function markPacked(database,ctx,shipmentId,input={}){
+ return database.transaction(async client=>{await require('./postgres-parcel-options').actor(client,ctx);const s=await requireShipment(client,ctx.workspaceId,shipmentId,true);
+  if(s.status==='PACKED')return {replayed:true};if(s.status!=='PICKING')throw new ValidationError('Only a shipment being picked can be marked packed.');
+  let boxes=await packagesFor(client,ctx.workspaceId,shipmentId),count=Number(input.packageCount||boxes.length||1);if(!Number.isSafeInteger(count)||count<1||count!==boxes.length)throw new ValidationError('Enter each box in parcel setup before confirming a different package count.');
+  if(String(input.weightGrams||'').trim()){
+   if(count!==1)throw new ValidationError('Confirm each package’s measured weight in parcel setup.');const weight=require('./parcel-contract').boxes([{weightGrams:input.weightGrams}])[0].weightGrams;
+   boxes=await setPackagesInTransaction(client,ctx,shipmentId,[{...boxes[0],weightGrams:weight}]);
+  }
+  const total=boxes.every(b=>b.weightGrams>0)?boxes.reduce((n,b)=>n+b.weightGrams,0):null;await client.query("UPDATE sales_shipments SET status='PACKED',packed_at=$3,package_count=$4,weight_grams=$5,updated_at=$3 WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,shipmentId,nowIso(),count,total]);return {replayed:false};
+ },{isolation:'SERIALIZABLE',retrySafe:true});
+}
+
 async function handoff(database,ctx,shipmentId,input={}){
   return database.transaction(async client=>{
   const shipment=await requireShipment(client,ctx.workspaceId,shipmentId,true);
@@ -478,7 +491,7 @@ async function handoff(database,ctx,shipmentId,input={}){
   const handover=String(input.handover||shipment.handover||'CARRIER').trim().toUpperCase().replace(/[\s-]+/g,'_');
   if(!['CARRIER','COLLECTED','DELIVERED_BY_US'].includes(handover))throw new ValidationError('Choose how the goods actually left.');
   const trackingNumber=String(input.trackingNumber||shipment.tracking_number||'').trim()||null;
-  const carrier=String(input.carrier||shipment.carrier||'').trim()||null;
+  const selectedCarrier=String(input.carrier||shipment.carrier||'').trim();const carrier=require('../sales/carriers').lookup(selectedCarrier)?.code||selectedCarrier||require('../sales/carriers').detect(trackingNumber)?.code||null;
   if(handover!=='COLLECTED'&&!addresses.parse(shipment.ship_to_address).complete)
     throw new ValidationError('A complete destination is required before these goods can leave for delivery.');
   if(handover==='CARRIER'&&shipment.label_status!=='PURCHASED'&&!trackingNumber)
@@ -491,9 +504,9 @@ async function handoff(database,ctx,shipmentId,input={}){
   await client.query(`UPDATE sales_shipments SET status=CASE WHEN tracking_status='DELIVERED' THEN 'DELIVERED' ELSE 'SHIPPED' END,handover=$3,carrier=COALESCE($4,carrier),
     service=COALESCE($5,service),tracking_number=COALESCE($6,tracking_number),
     expected_delivery_date=COALESCE($7,expected_delivery_date),shipping_cost_minor=COALESCE($8,shipping_cost_minor),
-    shipped_at=COALESCE(shipped_at,$9),updated_at=$9 WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,shipmentId,
+    shipped_at=COALESCE(shipped_at,$9),tracking_url=COALESCE($10,tracking_url),updated_at=$9 WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,shipmentId,
     handover,carrier,String(input.service||'').trim()||null,trackingNumber,input.expectedDeliveryDate||null,
-    input.shippingCostMinor??null,at]);
+    input.shippingCostMinor??null,at,require('../sales/carriers').trackingUrlFor(carrier,trackingNumber)]);
   return {shipment:await requireShipment(client,ctx.workspaceId,shipmentId),fulfillment:result,replayed:result.replayed};
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
@@ -702,7 +715,7 @@ async function observeExternalLabel(database,ctx,shipmentId,input){
    status:'PRE_TRANSIT',detail:'ShipStation supplied a label and tracking. Physical handoff has not been inferred.'});
  },{isolation:'SERIALIZABLE',retrySafe:true});
 }
-module.exports={prepare,requireShipment,assertParcelEditable,packagesFor,setPackages,state,quoteFingerprint,ratesFor,quote,queueLabelPurchase,observeExternalLabel,
+module.exports={prepare,markPacked,requireShipment,assertParcelEditable,packagesFor,setPackages,state,quoteFingerprint,ratesFor,quote,queueLabelPurchase,observeExternalLabel,
   executeLabelPurchaseEffect,verifyLabelPurchaseEffect,recoverKnownLabelVerifications,buyLabel,handoff,recordProviderFulfillment,applyTracking,receiveProviderEvent,refreshTracking};
 require('../commercial/enforcement').guardExports(module.exports,0,1,{queueLabelPurchase:'shipping.labels',
-  prepare:'shipping.workflow',setPackages:'shipping.workflow',handoff:'shipping.workflow',applyTracking:'shipping.workflow',observeExternalLabel:'shipping.workflow',recordProviderFulfillment:'connections.commerce'});
+  prepare:'shipping.workflow',markPacked:'shipping.workflow',setPackages:'shipping.workflow',handoff:'shipping.workflow',applyTracking:'shipping.workflow',observeExternalLabel:'shipping.workflow',recordProviderFulfillment:'connections.commerce'});

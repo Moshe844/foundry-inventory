@@ -111,7 +111,7 @@ async function prepareQuote(c,ctx,input,{lock=false,frozenRules=null,orderId=nul
     configured=configured.filter(r=>r.kind==='guard');
   }
   if(input.recordedAmounts===true&&!recorded)throw new ValidationError('Recorded channel amounts require their authenticated provider receipt.');
-  const customer=(await c.query("SELECT id FROM customers WHERE workspace_id=$1 AND id=$2 AND record_state='ACTIVE'",[ctx.workspaceId,input.customerId])).rows[0];if(!customer)throw new ValidationError('Choose an active customer in this business.');
+  const customer=(await c.query("SELECT id,tax_exempt,tax_exempt_reference FROM customers WHERE workspace_id=$1 AND id=$2 AND record_state='ACTIVE'",[ctx.workspaceId,input.customerId])).rows[0];if(!customer)throw new ValidationError('Choose an active customer in this business.');
   const source=input.pricingInputLines||input.lines;if(!Array.isArray(source)||!source.length||source.length>500||source.some(l=>!l||typeof l!=='object'))throw new ValidationError('Choose between one and 500 valid lines.');
   const skuIds=[...new Set(source.map(l=>l.skuId).filter(Boolean))];
   const catalogue=(await c.query(`WITH costs AS (SELECT sku_id,sum(quantity_units) AS quantity,sum(total_cost_minor) AS amount FROM accounting_inventory_cost_balances WHERE workspace_id=$1 AND sku_id=ANY($2::text[]) GROUP BY sku_id), physical AS (SELECT sku_id,sum(on_hand) AS quantity FROM balances WHERE workspace_id=$1 AND sku_id=ANY($2::text[]) GROUP BY sku_id)
@@ -131,12 +131,15 @@ async function prepareQuote(c,ctx,input,{lock=false,frozenRules=null,orderId=nul
   const usage=(await c.query(`SELECT rule_id,count(*)::integer AS total,count(*) FILTER(WHERE customer_id=$2)::integer AS customer FROM (SELECT rule_id,customer_id FROM stockchief_runtime.pricing_redemptions WHERE workspace_id=$1 AND released_at IS NULL AND ($3::text IS NULL OR sales_order_id<>$3) UNION ALL SELECT rule_id,customer_id FROM stockchief_runtime.pricing_invoice_redemptions WHERE workspace_id=$1) uses GROUP BY rule_id`,[ctx.workspaceId,input.customerId,orderId])).rows;
   for(const rule of configured){const count=usage.find(u=>u.rule_id===rule.id);rule.redemptions=count?.total||0;rule.customerRedemptions=count?.customer||0;}
   let taxRate=null;
-  if(input.taxRateId){if(recorded)throw new ValidationError('Recorded channel tax cannot be replaced.');
+  const taxExempt=Boolean(Number(customer.tax_exempt))&&!recorded;
+  if(input.taxRateId&&recorded)throw new ValidationError('Recorded channel tax cannot be replaced.');
+  if(input.taxRateId&&!taxExempt){
     const rate=(await c.query("SELECT * FROM accounting_tax_rates WHERE workspace_id=$1 AND id=$2 AND active=1 AND applies_to IN ('SALES','BOTH')",[ctx.workspaceId,input.taxRateId])).rows[0],date=input.orderDate||new Date().toISOString().slice(0,10);
     if(!rate||date<rate.effective_from||(rate.effective_to&&date>rate.effective_to))throw new ValidationError('Choose a sales tax rate effective on the order date.');
     taxRate={id:rate.id,name:rate.name,rateMillionths:Number(rate.rate_millionths)};
   }
-  const result=calculator.quote({...input,taxRate:taxRate||undefined,recordedAmounts:recorded,allowFractionalQuantities:invoice,discountMinor:input.pricingInputDiscountMinor??input.discountMinor,currency,lines,rules:configured,at:input.at||new Date().toISOString()});
+  const result=calculator.quote({...input,taxMinor:taxExempt?0:input.taxMinor,taxRate:taxRate||undefined,recordedAmounts:recorded,allowFractionalQuantities:invoice,discountMinor:input.pricingInputDiscountMinor??input.discountMinor,currency,lines,rules:configured,at:input.at||new Date().toISOString()});
+  if(taxExempt)result.customerTaxExemption={customerId:customer.id,reference:customer.tax_exempt_reference||null};
   if(recorded&&result.totalMinor!==input.sourceFinancials.totalMinor)throw new ValidationError('Canonical pricing does not reconcile with the recorded provider total.');
   return result;
 }

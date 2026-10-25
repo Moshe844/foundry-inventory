@@ -233,7 +233,7 @@ const routeFamilies = [
   { id: 'manager', capability: 'manager.answer', patterns: [/^\/foundry(?:\/|$)/, /^\/ask(?:\/|$)/, /^\/guide(?:\/|$)/] },
   { id: 'repairs', capability: 'operations.repair', patterns: [/^\/repairs(?:\/|$)/] },
   { id: 'needs-you', capability: 'exceptions.resolve', patterns: [/^\/needs-you(?:\/|$)/, /^\/attention(?:\/|$)/, /^\/investigations(?:\/|$)/, /^\/document-removals(?:\/|$)/, /^\/import-removals(?:\/|$)/, /^\/catalog-code-changes(?:\/|$)/] },
-  { id: 'sales', capability: 'sales.manage-orders', patterns: [/^\/sales(?:\/|$)/, /^\/orders(?:\/|$)/, /^\/customers(?:\/|$)/, /^\/fulfilment(?:\/|$)/] },
+  { id: 'sales', capability: 'sales.manage-orders', patterns: [/^\/sales(?:\/|$)/, /^\/orders(?:\/|$)/, /^\/quotes(?:\/|$)/, /^\/customers(?:\/|$)/, /^\/fulfilment(?:\/|$)/] },
   { id: 'pricing', capability: 'pricing.manage', patterns: [/^\/pricing(?:\/|$)/] },
   { id: 'communications', capability: 'communications.manage', patterns: [/^\/messages(?:\/|$)/, /^\/mail(?:\/|$)/, /^\/settings\/mail(?:\/|$)/] },
   { id: 'payments', capability: 'payments.manage', patterns: [/^\/payments(?:\/|$)/, /^\/settings\/connections\/payments(?:\/|$)/] },

@@ -30,7 +30,8 @@
 
 <section class="card section" id="account">
   <div class="card-body"><h2>ShipStation Custom Store</h2><p>Send prepared StockChief parcels to ShipStation and receive tracking back. ShipStation V2 above remains the rate and label API connection.</p>
-  <% if(currentUser.role==='owner'){ %><form method="post" action="/settings/shipping/shipstation-custom"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit">Set up Custom Store</button></form><% } %></div>
+  <% if(locals.customStore){ %><p><strong>Connected</strong> · StockChief connection details are ready. Enter them in your ShipStation Custom Store settings to start exchanging parcels.</p><% } %>
+  <% if(currentUser.role==='owner'){ %><form method="post" action="/settings/shipping/shipstation-custom"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit"><%= locals.customStore?'View and copy connection details':'Set up Custom Store' %></button></form><% } %></div>
   <div class="card-head"><div><h2><%= shippingAccounts.length?'Add or update a shipping account':'Use your existing shipping account' %></h2>
     <p class="hint">Choose the shipping platform your business uses. Your carrier contracts and billing stay with you.</p></div></div>
   <div class="card-body">
@@ -50,7 +51,8 @@
       </form>
       <p class="hint">Key setup: <a href="https://docs.easypost.com/docs/authentication" target="_blank" rel="noopener noreferrer">EasyPost</a> ·
         <a href="https://docs.shipstation.com/authentication" target="_blank" rel="noopener noreferrer">ShipStation V2</a> ·
-        <a href="https://docs.goshippo.com/guides/authentication" target="_blank" rel="noopener noreferrer">Shippo</a>.</p>
+        <a href="https://docs.goshippo.com/guides/authentication" target="_blank" rel="noopener noreferrer">Shippo</a> ·
+        <a href="https://www.shipengine.com/docs/auth/" target="_blank" rel="noopener noreferrer">ShipEngine API key setup</a> (now ShipStation API).</p>
     </div>
   </details>
   </div>

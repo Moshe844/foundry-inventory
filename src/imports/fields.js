@@ -212,6 +212,7 @@ const CHARGE_PATTERNS = [
 function chargeKindFor(text) {
   const clean = normalise(text);
   if (!clean) return null;
+  if(/^(?:מע\s*מ|מס\s+ערך\s+מוסף)(?:\s|$)/u.test(clean))return 'tax';
   const hit = CHARGE_PATTERNS.find((entry) => entry.pattern.test(clean));
   return hit ? hit.kind : null;
 }

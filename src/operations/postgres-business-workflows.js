@@ -729,6 +729,7 @@ async function confirmSalesOrder(database, rawContext, salesOrderId, input) {
 async function fulfillSalesOrderInTransaction(client, rawContext, salesOrderId, input) {
   const ctx = requireContext(rawContext);
   if (!Array.isArray(input.lines) || !input.lines.length) throw new ValidationError('Choose at least one allocated line to fulfill.');
+  if(new Set(input.lines.map(l=>JSON.stringify([l.lineId,l.locationId]))).size!==input.lines.length)throw new ValidationError('Combine each order line and location into one fulfillment entry. Nothing changed.');
     await requirePermission(client, ctx, access.OPERATE, 'fulfill sales orders');
     const operation = await beginOperation(client, ctx, 'sales_order.fulfill', input.idempotencyKey);
     if (operation.replayed) return { ...operation.result, replayed: true };
@@ -878,11 +879,12 @@ async function fulfillSalesOrderInTransaction(client, rawContext, salesOrderId, 
         deposit_journal_entry_id: depositPosted.entry.id };
       appliedDepositMinor += applied;
     }
+    const shipments=input.shipment?await require('../shipping/postgres-physical-record').recordWithin(client,ctx,order,fulfilled,input.shipment):[];
     await event(client, 'sales_order_events', null, { workspaceId: ctx.workspaceId, recordId: salesOrderId,
-      type: 'fulfilled', detail: { status, lines: fulfilled, invoiceId: invoice.id }, actorId: ctx.actorId,
+      type: 'fulfilled', detail: { status, lines: fulfilled, invoiceId: invoice.id,shipments }, actorId: ctx.actorId,
       key: `${input.idempotencyKey}:event`, at: nowIso() });
     const result = { salesOrderId, status, invoiceId: invoice.id, invoiceNumber: invoice.invoice_number,
-      fulfillmentTotalMinor: fulfillmentTotal, appliedDepositMinor, lines: fulfilled };
+      fulfillmentTotalMinor: fulfillmentTotal, appliedDepositMinor, lines: fulfilled,shipments };
     await completeOperation(client, operation, result);
     return { ...result, replayed: false };
 }

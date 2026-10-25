@@ -103,7 +103,7 @@ test('real Chromium qualifies PostgreSQL rates, label, handoff and idempotent de
       fulfillmentLocationId:location.id,idempotencyKey:'shipping-order-create',
       lines:[{skuId:item.skuIds[0],quantity:2,unitPriceMinor:1200}]});
     const confirmed=await workflows.confirmSalesOrder(database,ctx,order.salesOrderId,{idempotencyKey:'shipping-order-confirm'});
-    const parcel=await shipping.prepare(database,ctx,order.salesOrderId,{idempotencyKey:'shipping-parcel-prepare',
+    const parcel=await shipping.prepare(database,ctx,order.salesOrderId,{idempotencyKey:'shipping-parcel-prepare',startPicking:true,
       lines:[{lineId:order.lineIds[0],locationId:location.id,quantity:2}]});
 
     await page.goto(`${base}/settings/shipping`);
@@ -129,8 +129,10 @@ test('real Chromium qualifies PostgreSQL rates, label, handoff and idempotent de
     assert.match(await page.locator('main').innerText(),/UPS(?: ·)? Ground · up to \$25\.00/);
 
     await page.goto(`${base}/fulfilment/${parcel.shipmentId}`);
+    assert.match(await page.locator('main').innerText(),/Being picked/);
+    await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Mark packed',exact:true}).click()]);
     assert.match(await page.locator('main').innerText(),/Enter a measured package weight/);
-    await page.getByLabel('Weight (grams)',{exact:true}).fill('850');
+    await page.getByLabel('Measured weight',{exact:true}).fill('850');
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Save measurements',exact:true}).click()]);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Get carrier rates'}).click()]);
     assert.equal(await page.locator('.rate-row strong').filter({hasText:/UPS Ground/i}).count(),1);

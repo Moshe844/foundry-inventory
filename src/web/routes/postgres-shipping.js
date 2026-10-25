@@ -54,7 +54,7 @@ async function shipmentPage(database,workspaceId,shipmentId){
     terms:terms||{source:'nothing agreed'},blocksShipping,heldReason:{ship:blocksShipping?'The agreed balance is still outstanding.':null}};
   const blocked=state.blocked.map((what)=>{const lower=what.toLowerCase();const key=lower.includes('weight')?'weight':
     lower.includes('postage account')?'account':lower.includes('ship-from')?'origin':lower.includes('phone')?'phone':'destination';
-    return {key,what,href:key==='account'?'/settings/shipping':key==='origin'?'/locations?edit='+encodeURIComponent(state.shipment.location_id):'/orders/'+s.sales_order_id};});
+    return {key,what,href:key==='account'?'/settings/shipping':key==='origin'?'/locations?edit='+encodeURIComponent(state.shipment.ship_from_location_id):'/orders/'+s.sales_order_id};});
   const rates=state.rates.map((rate)=>({...rate,carrierName:carriers.displayName(rate.carrier),
     deliveryDate:rate.delivery_date,quotedAt:rate.quoted_at,guaranteed:rate.guaranteed}));
   const mode=policyRows.rows[0]?.mode||'RECOMMEND';
@@ -117,19 +117,20 @@ function createPostgresShippingRouter(database,options={}){
     req.flash('success','Return parcel prepared. Confirm its actual measurements before comparing postage. Stock and refunds have not changed.');return res.redirect(303,'/fulfilment/'+result.shipmentId+'#carrier');
   }));
   router.get('/settings/shipping',asyncRoute(async(req,res)=>{
-    const [shippingAccounts,ruleRows,policyRows,locationRows,setupRows]=await Promise.all([accounts.describeAll(database,req.ctx.workspaceId),
+    const [shippingAccounts,ruleRows,policyRows,locationRows,setupRows,customRows]=await Promise.all([accounts.describeAll(database,req.ctx.workspaceId),
       database.query(`SELECT * FROM shipping_rules WHERE workspace_id=$1 ORDER BY created_at,id`,[req.ctx.workspaceId]),
       database.query('SELECT * FROM shipping_operation_policy WHERE workspace_id=$1',[req.ctx.workspaceId]),
       database.query(`SELECT name,address FROM locations WHERE workspace_id=$1 AND is_active=1
         ORDER BY CASE WHEN TRIM(COALESCE(address,''))<>'' THEN 0 ELSE 1 END,created_at,id LIMIT 1`,[req.ctx.workspaceId]),
-      database.query('SELECT connector_id,status,last_error FROM shipping_webhook_setups WHERE workspace_id=$1',[req.ctx.workspaceId])]);
+      database.query('SELECT connector_id,status,last_error FROM shipping_webhook_setups WHERE workspace_id=$1',[req.ctx.workspaceId]),
+      database.query("SELECT id,display_name,status FROM workspace_connectors WHERE workspace_id=$1 AND provider_type='shipstation_custom_store' AND status='connected' ORDER BY created_at LIMIT 1",[req.ctx.workspaceId])]);
     const account=shippingAccounts[0]||await accounts.describe(database,req.ctx.workspaceId);
     const origin=locationRows.rows[0]||{};const parsed=address.parse(origin.address);const rules=ruleRows.rows.map((row)=>({
       id:row.id,name:row.name,carrier:row.carrier,service:row.service,maxCostMinor:row.max_cost_minor===null?null:Number(row.max_cost_minor),
       requireByPromised:Boolean(Number(row.require_by_promised)),maxDeliveryDays:row.max_delivery_days===null?null:Number(row.max_delivery_days),
       active:Boolean(Number(row.is_active)),statedText:row.stated_text}));
     return res.page('shipping/postgres-settings',{title:'Shipping settings',nav:'settings',room:true,backTo:{href:'/settings',label:'Settings'},
-      account,selectedProvider:accounts.PROVIDERS.includes(req.query.provider)?req.query.provider:'easypost',shippingAccounts:shippingAccounts.map(a=>({...a,webhookSetup:setupRows.rows.find(row=>row.connector_id===a.connectorId)||null,webhookUrl:`${res.locals.origin}/webhooks/shipping/${a.provider}/${req.ctx.workspaceId}`})),rules,
+      account,customStore:customRows.rows[0]||null,selectedProvider:accounts.PROVIDERS.includes(req.query.provider)?req.query.provider:'easypost',shippingAccounts:shippingAccounts.map(a=>({...a,webhookSetup:setupRows.rows.find(row=>row.connector_id===a.connectorId)||null,webhookUrl:`${res.locals.origin}/webhooks/shipping/${a.provider}/${req.ctx.workspaceId}`})),rules,
       purchaseLimits:await require('../../shipping/postgres-purchase-policy').get(database,req.ctx.workspaceId),fromMinor:require('../../domain/currency').fromMinor,currency:(await database.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId])).rows[0]?.base_currency||'USD',
       automaticShippingAvailable:false,operationPolicy:{mode:policyRows.rows[0]?.mode||'RECOMMEND'},
       referral:{available:false,opened:false,billingReady:false},shipengine:{available:false,opened:false,billingReady:false},
@@ -220,6 +221,9 @@ function createPostgresShippingRouter(database,options={}){
     if(req.body.confirmed!=='yes')throw new ValidationError('Confirm the exact already-reported charge before continuing.');
     await require('../../shipping/postgres-receipt-review').accept(database,req.ctx,req.params.id,{fingerprint:req.body.fingerprint,amountMinor:require('../../domain/currency').toMinor(req.body.amount,req.body.currency),currency:req.body.currency});
     req.flash('success','The exact charge review is saved. StockChief is verifying the original carrier label without buying again.');return res.redirect(303,'/fulfilment/'+req.params.id+'#label');
+  }));
+  router.post('/fulfilment/:id/packed',asyncRoute(async(req,res)=>{
+    const result=await shipping.markPacked(database,req.ctx,req.params.id,req.body);req.flash('success',result.replayed?'This shipment was already packed.':'Packing confirmed. No stock has left.');return res.redirect(303,'/fulfilment/'+req.params.id);
   }));
   router.post('/fulfilment/:id/packages',asyncRoute(async(req,res)=>{
     await shipping.setPackages(database,req.ctx,req.params.id,req.body.packages||[{weightGrams:req.body.weightGrams,
