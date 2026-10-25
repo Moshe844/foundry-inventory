@@ -653,7 +653,7 @@ async function editDraftSalesOrder(database,ctx,id,input){
   const lineIds=[];for(const [index,line]of input.lines.entries()){const lineId=newId('sol');lineIds.push(lineId);await client.query(`INSERT INTO sales_order_lines(id,workspace_id,sales_order_id,sku_id,quantity_ordered,quantity_fulfilled,unit_price_minor,created_at,updated_at) VALUES($1,$2,$3,$4,$5,0,$6,$7,$7)`,[lineId,ctx.workspaceId,id,line.skuId,positiveInteger(line.quantity,'Line '+(index+1)+' quantity'),quote.lines[index].unitPriceMinor,at]);}
   await client.query(`UPDATE sales_orders SET customer_id=$3,contact_email=$4,contact_phone=$5,order_date=$6,needed_by=$7,fulfillment_location_id=$8,
     delivery_method=$9,ship_to_address=$10,ship_to_source=$11,notes=$12,reference=$13,currency=$14,version=version+1,updated_at=$15
-    WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,id,customer.id,contactEmail,contactPhone,dateOnly(input.orderDate||at.slice(0,10),'Order date'),input.neededBy||null,input.fulfillmentLocationId||null,deliveryMethod,shipToAddress,addressWasSubmitted?'order':'customer',trimOrNull(input.notes),trimOrNull(input.reference),input.currency||'USD',at]);
+    WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,id,customer.id,contactEmail,contactPhone,dateOnly(input.orderDate||await require('../lib/business-time').today(client,ctx.workspaceId,new Date(at)),'Order date'),input.neededBy||null,input.fulfillmentLocationId||null,deliveryMethod,shipToAddress,addressWasSubmitted?'order':'customer',trimOrNull(input.notes),trimOrNull(input.reference),input.currency||'USD',at]);
   await promotions.saveQuote(client,ctx,id,quote,lineIds);
   await event(client,'sales_order_events',null,{workspaceId:ctx.workspaceId,recordId:id,type:'draft_edited',detail:{previousVersion:order.version},actorId:ctx.actorId,key:'draft-edit:'+id+':'+order.version,at:nowIso()});
   return {salesOrderId:id,orderNumber:order.order_number};
@@ -821,7 +821,7 @@ async function fulfillSalesOrderInTransaction(client, rawContext, salesOrderId, 
         (id,workspace_id,invoice_number,customer_id,sales_order_id,issue_date,status,currency,subtotal_minor,
          discount_minor,tax_minor,total_minor,balance_minor,source_key,created_by_user_id,created_at,updated_at,opened_at)
         VALUES($1,$2,$3,$4,$5,$6,'OPEN',$7,0,0,0,0,0,$8,$9,$10,$10,$10)`,
-      [invoiceId, ctx.workspaceId, invoiceNumber, order.customer_id, salesOrderId, at.slice(0, 10), order.currency,
+      [invoiceId, ctx.workspaceId, invoiceNumber, order.customer_id, salesOrderId, await require('../lib/business-time').today(client,ctx.workspaceId,new Date(at)), order.currency,
         `sales-order:${salesOrderId}`, ctx.actorId, nowIso()]);
       invoice = { id: invoiceId, invoice_number: invoiceNumber };
     }

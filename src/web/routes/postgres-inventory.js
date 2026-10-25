@@ -220,7 +220,7 @@ function createPostgresInventoryRouter(database) {
       WHERE s.workspace_id=$1 AND s.item_id=$2 AND s.is_active=1 AND b.on_hand>0 ORDER BY s.position,s.code,l.name`,[req.ctx.workspaceId,req.params.id])).rows;
     const settings=(await database.query('SELECT enabled,base_currency FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId])).rows[0];
     return res.page('inventory/postgres-stock-cost',{title:'Record cost of existing stock',nav:'inventory',item:detail.item,positions,
-      settings:settings||null,today:require('../../lib/util').nowIso().slice(0,10)});
+      settings:settings||null,today:await require('../../lib/business-time').today(database,req.ctx.workspaceId)});
   }));
   router.post('/inventory/:id/costs/proposals',requirePermission(permissions.MANAGE_ACCOUNTING,'establish inventory cost'),asyncRoute(async(req,res)=>{
     const detail=await catalog.getItem(database,req.ctx.workspaceId,req.params.id);

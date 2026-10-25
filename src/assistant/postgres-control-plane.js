@@ -169,7 +169,13 @@ async function executeStep(service,database,ctx,step,{actor,provider,rawProvider
       {answerProvider:provider,priorReport:contract.name==='read.custom_report'?priorReport:null});
     if(!await contract.verify(service,database,ctx,result))return {result:{status:'CLARIFY',
       answer:'StockChief could not verify an answer from those records. Nothing changed.',rows:[],columns:[],reason:'unverified'},args,provenance:{}};
-    return {result:{status:result.status||'ANSWERED',...result},args,provenance:{}};
+    // Canonical readers may return structured facts without composing prose.
+    // Normalize that shared read envelope before interaction persistence. The
+    // native agent still reasons over the original rows and source references;
+    // this audit text does not claim that it has answered the user's question.
+    return {result:{...result,status:result.status||'ANSWERED',
+      answer:typeof result.answer==='string'?result.answer:'Recorded results are available below.',
+      rows:result.rows||[],columns:result.columns||[]},args,provenance:{}};
   }
   await entitlements.assertCapability(database,await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId),
     'ask.prepare_actions');

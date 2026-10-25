@@ -22,7 +22,7 @@ async function applyInTransaction(client,ctx,input){
  if(delta>0&&input.unitCostMinor!==undefined&&input.unitCostMinor!==null){if(!Number.isSafeInteger(input.unitCostMinor)||input.unitCostMinor<0||!Number.isSafeInteger(delta*input.unitCostMinor))throw new ValidationError('The count cost exceeds the exact supported range.');costDeltaMinor=delta*input.unitCostMinor;}
  if(input.expectedCostDeltaMinor!==undefined&&costDeltaMinor!==input.expectedCostDeltaMinor)throw new ValidationError('The count value changed after the preview. Review its current cost.');
  if(costDeltaMinor&&(!settings||input.currency&&input.currency!==settings.base_currency))throw new ValidationError('Configure the matching accounting currency before changing valued inventory.');
- const postingDate=input.postingDate||nowIso().slice(0,10);let journal=null;
+ const postingDate=input.postingDate||await require('../lib/business-time').today(client,ctx.workspaceId);let journal=null;
  if(costDeltaMinor)journal=await ledger.postInTransaction(client,ctx,{sourceKey:input.idempotencyKey,sourceType,sourceRecordType:input.sourceRecordType||'adjustment',sourceRecordId:sourceId,postingDate,currency:settings.base_currency,description:input.description||'Confirmed physical inventory count',
    lines:costDeltaMinor>0?[{accountKey:'INVENTORY_ASSET',debitMinor:costDeltaMinor},{accountKey:'INVENTORY_ADJUSTMENTS',creditMinor:costDeltaMinor}]:[{accountKey:'INVENTORY_ADJUSTMENTS',debitMinor:-costDeltaMinor},{accountKey:'INVENTORY_ASSET',creditMinor:-costDeltaMinor}]});
  const costInput={journalEntryId:journal?.entry.id||null,sourceType,sourceRecordId:sourceId};

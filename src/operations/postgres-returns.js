@@ -744,7 +744,7 @@ async function shipSupplierReturn(database, rawContext, id, input) {
       let journalEntryId = null;
       if (prepared.totalCostMinor) {
         const posted = await ledger.postInTransaction(client, ctx, {
-          postingDate: String(input.shippedAt || nowIso()).slice(0, 10),
+          postingInstant: input.shippedAt || nowIso(),
           sourceKey: `supplier-return-shipment:${operation.key}:${index}`,
           description: `Ship ${row.return_number} to ${row.supplier_name}`,
           sourceType: 'supplier_return_shipment', sourceRecordType: 'supplier_return', sourceRecordId: id,
@@ -806,9 +806,9 @@ async function reconcileSupplierReturn(database, rawContext, id, input) {
       creditMinor: baseCreditMinor - returnCostMinor, supplierId: row.supplier_id });
     if (baseCreditMinor < returnCostMinor) lines.push({ accountKey: 'PURCHASE_PRICE_VARIANCE',
       debitMinor: returnCostMinor - baseCreditMinor, supplierId: row.supplier_id });
-    const creditId = newId('apcredit'); const at = nowIso();
+    const creditId = newId('apcredit'); const at = nowIso(),creditDate=input.creditDate||await require('../lib/business-time').today(client,ctx.workspaceId,new Date(at));
     const posted = await ledger.postInTransaction(client, ctx, {
-      postingDate: input.creditDate || at.slice(0, 10), sourceKey: `supplier-return-credit:${id}`,
+      postingDate: creditDate, sourceKey: `supplier-return-credit:${id}`,
       description: `Supplier credit ${input.creditNumber || row.return_number}`,
       sourceType: 'supplier_credit', sourceRecordType: 'supplier_return', sourceRecordId: id,
       currency: bill.currency, metadata: { supplierReturnId: id, supplierBillId: bill.id,
@@ -823,7 +823,7 @@ async function reconcileSupplierReturn(database, rawContext, id, input) {
        journal_entry_id,source_key,created_by_user_id,created_at)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
     [creditId, ctx.workspaceId, bill.id, row.supplier_id, trimOrNull(input.creditNumber),
-      input.creditDate || at.slice(0, 10), amountMinor, `Supplier return ${row.return_number}`,
+      creditDate, amountMinor, `Supplier return ${row.return_number}`,
       posted.entry.id, `supplier-return:${id}`, ctx.actorId, at]);
     const matches = row.expected_credit_minor == null || Number(row.expected_credit_minor) === amountMinor;
     await client.query(`UPDATE supplier_returns SET actual_credit_minor=$3,supplier_credit_id=$4,status=$5,

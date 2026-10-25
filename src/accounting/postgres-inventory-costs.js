@@ -47,9 +47,9 @@ async function previewInTransaction(client,ctx,input){
  if(!Number.isSafeInteger(quantity)||quantity<1||quantity>current.missingUnits)throw new ValidationError(`Only ${current.missingUnits} existing units at this location are missing cost. Already-costed units cannot be costed again.`);
  if(!Number.isSafeInteger(amount)||amount<0)throw new ValidationError('Actual unit cost must be an exact non-negative amount.');
  const total=quantity*amount;if(!Number.isSafeInteger(total))throw new ValidationError('The total stock cost is outside the supported range.');
- const date=String(input.postingDate||nowIso().slice(0,10));
+ const today=await require('../lib/business-time').today(client,ctx.workspaceId),date=String(input.postingDate||today);
  if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||Number.isNaN(Date.parse(date+'T00:00:00Z'))||new Date(date+'T00:00:00Z').toISOString().slice(0,10)!==date)throw new ValidationError('Use a valid posting date.');
- if(date<settings.accounting_start_date||date>nowIso().slice(0,10))throw new ValidationError('Use an open posting date from the accounting start date through today.');
+ if(date<settings.accounting_start_date||date>today)throw new ValidationError('Use an open posting date from the accounting start date through today.');
  const closed=(await client.query("SELECT id FROM accounting_periods WHERE workspace_id=$1 AND starts_on<=$2 AND ends_on>=$2 AND status<>'OPEN'",[ctx.workspaceId,date])).rows.length;
  if(closed)throw new ValidationError('The accounting period for this date is closed.');
  return {current,payload:{skuId:input.skuId,locationId:input.locationId,quantity,unitCostMinor:amount,totalCostMinor:total,currency,basis:input.basis,evidenceReference:reference,
