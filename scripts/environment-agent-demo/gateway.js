@@ -93,7 +93,7 @@ function initialContractsSnapshot(catalogue,actor,{clock=null}={}){
         ...(filterValues?{filterValues}:{})}));
       const packet=()=>({operations,operationIndex,navigationSignatures,recordCollections,readSignatures,readArgumentsComplete:true,readDescriptionsComplete:true,
         readAccess:'readSignatures gives complete inputs, required arguments and authority for every authorized read; operations gives every read purpose. Use matching known reads directly. Discover omitted execution details when needed. Metadata grants no authority and proves no business facts.',
-        navigationAccess:'Grouped signatures apply to every listed name. recordCollections are list paths for inspection, never record IDs or facts. Arrival and authority are rechecked.',datasetIndex,datasetFieldsComplete:datasetIndex.every(d=>d.fields),indexComplete:true,total:contracts.length,complete:operations.length===contracts.length,...(clock?{clock}:{}),
+        navigationAccess:'Grouped signatures apply to every listed name. recordCollections are list paths for inspection, never record IDs or facts. Arrival and authority are rechecked.',datasetIndex,datasetFieldsComplete:datasetIndex.every(d=>d.fields),datasetFilterValuesComplete:datasetIndex.every((d,i)=>!datasets[i].filterValues||Object.hasOwn(d,'filterValues')),indexComplete:true,total:contracts.length,complete:operations.length===contracts.length,...(clock?{clock}:{}),
         datasetAccess:'Scoped projections, not SQL/pages. Use known typed fields/filters; inspect missing metadata. Extent distinguishes rows/groups and complete first-page source totals. Reads recheck scope/permissions.',
         coverage:'All authorized names, bounded details. Browser discovers screens; environment_interfaces supplies omissions. Fresh canonical checks remain.'});
       const size=()=>Buffer.byteLength(JSON.stringify(require('./interface-presentation').compact(packet())));
@@ -130,6 +130,14 @@ function initialContractsSnapshot(catalogue,actor,{clock=null}={}){
       for(const detail of [...details].sort((a,b)=>b.bytes-a.bytes)){
         if(size()<=28000)break;
         delete datasetIndex[detail.index].fields;
+      }
+      // Enumerated filter values are optional dataset detail as well. Their
+      // growth must not block startup after field schemas have been evicted.
+      // Keep every dataset name and every authorized read description/input;
+      // omitted filter values remain available through exact-name discovery.
+      for(const detail of datasets.map((d,index)=>({index,bytes:Buffer.byteLength(JSON.stringify(d.filterValues||{}))})).sort((a,b)=>b.bytes-a.bytes)){
+        if(size()<=28000)break;
+        delete datasetIndex[detail.index].filterValues;
       }
       if(Buffer.byteLength(JSON.stringify(require('./interface-presentation').compact(packet())))>28000)
         throw Error('INITIAL_INTERFACE_INDEX_LIMIT');
@@ -182,7 +190,7 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
   return {
     authorize:access,
     async collections(){return collections((await access()).catalogue);},
-    async initialContracts(){const {catalogue,actor}=await access();const zone=(await database.query('SELECT a.time_zone FROM users u JOIN accounts a ON a.id=u.account_id WHERE u.workspace_id=$1 AND u.id=$2',[ctx.workspaceId,ctx.actorId])).rows[0]?.time_zone;return initialContractsSnapshot(catalogue,actor,{clock:require('../../src/lib/business-time').context(zone)});},
+    async initialContracts(){const {catalogue,actor}=await access();return initialContractsSnapshot(catalogue,actor,{clock:await require('../../src/lib/business-time').forWorkspace(database,ctx.workspaceId)});},
     async interfaces(input={}){const {actor,catalogue}=await access();return interfaceSnapshot(catalogue,actor,input);},
     async operate({steps,callId=randomUUID()}){
       let effectsStarted=false;

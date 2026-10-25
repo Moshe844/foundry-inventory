@@ -3,6 +3,13 @@
 // remains in the durable evidence journal. Never applied to business rows,
 // browser observations or authority checks.
 const KEY='_stockchiefDefinitions',PREFIX='#/'+KEY+'/',DEFAULTS='_stockchiefOperationDefaults',DATASETS='_stockchiefDatasetDefaults',INDEX='_stockchiefOperationIndexEncoding';
+function prefixGroups(names){
+ const out=[];for(let i=0;i<names.length;){const first=names[i],family=typeof first==='string'&&first.includes('.')?first.slice(0,first.indexOf('.')+1):null;
+  if(!family){out.push(first);i++;continue;}let end=i+1;while(end<names.length&&typeof names[end]==='string'&&names[end].startsWith(family))end++;
+  const group=names.slice(i,end);let prefix=first;for(const name of group){let n=0;while(n<prefix.length&&n<name.length&&prefix[n]===name[n])n++;prefix=prefix.slice(0,n);}const packed={prefix,suffixes:group.map(name=>name.slice(prefix.length))};
+  if(group.length>1&&Buffer.byteLength(JSON.stringify(packed))<Buffer.byteLength(JSON.stringify(group)))out.push(packed);else out.push(...group);i=end;
+ }return out;
+}
 function compact(value){
  if(!value||!Array.isArray(value.operations)||value.datasets!==undefined&&!Array.isArray(value.datasets)||[KEY,DEFAULTS,DATASETS,INDEX].some(key=>Object.hasOwn(value,key)))return value;
  const occurrences=new Map(),referenceBytes=Buffer.byteLength(JSON.stringify({$ref:PREFIX+'d99999'}));let existingReference=false;
@@ -48,6 +55,10 @@ function compact(value){
   if(Buffer.byteLength(JSON.stringify(packed))+100<Buffer.byteLength(JSON.stringify(result.operationIndex))){
    result.operationIndex=packed;result[INDEX]='operation_numbers';
   }
+  const grouped=Object.fromEntries(Object.entries(result.operationIndex).map(([kind,names])=>[kind,prefixGroups(names)]));
+  if(Buffer.byteLength(JSON.stringify(grouped))+100<Buffer.byteLength(JSON.stringify(result.operationIndex))){
+   result.operationIndex=grouped;result[INDEX]='operation_numbers_and_prefix_groups';
+  }
  }
  return Buffer.byteLength(JSON.stringify(result))<Buffer.byteLength(JSON.stringify(value))?result:value;
 }
@@ -65,11 +76,15 @@ function expand(value){
  if(defaults)rest.operations=rest.operations.map(op=>({...defaults,...op}));
  if(datasetDefaults)rest.datasetIndex=rest.datasetIndex.map(dataset=>({...datasetDefaults,...dataset}));
  if(indexEncoding){
-  if(indexEncoding!=='operation_numbers')throw Error('INVALID_INTERFACE_INDEX_ENCODING');
-  rest.operationIndex=Object.fromEntries(Object.entries(rest.operationIndex).map(([kind,names])=>[kind,names.map(name=>{
-   if(typeof name==='string')return name;
+  if(!['operation_numbers','operation_numbers_and_prefix_groups'].includes(indexEncoding))throw Error('INVALID_INTERFACE_INDEX_ENCODING');
+  rest.operationIndex=Object.fromEntries(Object.entries(rest.operationIndex).map(([kind,names])=>[kind,names.flatMap(name=>{
+   if(typeof name==='string')return [name];
+   if(indexEncoding==='operation_numbers_and_prefix_groups'&&name&&typeof name==='object'){
+    if(Object.keys(name).length!==2||typeof name.prefix!=='string'||!Array.isArray(name.suffixes)||name.suffixes.some(s=>typeof s!=='string'))throw Error('INVALID_INTERFACE_INDEX_PREFIX');
+    return name.suffixes.map(suffix=>name.prefix+suffix);
+   }
    if(!Number.isSafeInteger(name)||name<0||typeof rest.operations[name]?.name!=='string')throw Error('INTERFACE_INDEX_REFERENCE_UNAVAILABLE');
-   return rest.operations[name].name;
+   return [rest.operations[name].name];
   })]));
  }
  return visit(rest);

@@ -1,5 +1,8 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),{compact,expand}=require('../../scripts/environment-agent-demo/interface-presentation');
+test('operation index prefix groups preserve complete names and order without changing any operation authority',()=>{
+ const names=Array.from({length:180},(_,i)=>'unfamiliar_extension.workflow_operation_'+i),value={operations:[{name:'read.existing',kind:'read',fields:{},authority:{mode:'none'}}],operationIndex:{read:['read.existing'],mutation:names},indexComplete:true};const wire=compact(value);assert.equal(wire._stockchiefOperationIndexEncoding,'operation_numbers_and_prefix_groups');assert.deepEqual(expand(wire),value);assert(Buffer.byteLength(JSON.stringify(wire))<Buffer.byteLength(JSON.stringify(value))/2);const corrupt=structuredClone(wire);corrupt.operationIndex.mutation[0].suffixes[0]=4;assert.throws(()=>expand(corrupt),/INVALID_INTERFACE_INDEX_PREFIX/);
+});
 test('small repeated metadata remains lossless and uses its actual reference size rather than starving useful schemas',()=>{
  const schema={type:'string',description:'A current typed field with a repeated explanation that belongs in both complete metadata contracts.'},original={operations:[{name:'read.one',fields:{name:schema}},{name:'read.two',fields:{name:schema}}]},wire=compact(original);
  assert(wire._stockchiefDefinitions);assert(Buffer.byteLength(JSON.stringify(wire))<Buffer.byteLength(JSON.stringify(original)));assert.deepEqual(expand(wire),original);
