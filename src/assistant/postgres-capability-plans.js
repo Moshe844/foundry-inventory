@@ -268,7 +268,7 @@ function approvedStepSafe(plan,index,resolvedArgs,dependencyArgs){
 
 /** Resume only the stored plan, never reinterpret the original wording after approval. */
 async function resume(database,ctx,proposalId,{service,provider,rawProvider,record=async()=>{},executeAuthorizedProposal=null,
-  missionId=null}={}){
+  missionId=null,nativeAnswerOwner=false}={}){
   const candidates=(await database.query(`SELECT id FROM stockchief_runtime.assistant_capability_plans
     WHERE workspace_id=$1 AND actor_user_id=$2 AND (status IN ('WAITING','ADVANCING','WAITING_EVENT','WAITING_USER') OR status='BLOCKED' AND authorization_mode='MISSION' AND approval_status='APPROVED')
       AND (($4::text IS NOT NULL AND id=$4) OR ($4::text IS NULL AND steps @> $3::jsonb)) ORDER BY created_at`,
@@ -356,7 +356,9 @@ async function resume(database,ctx,proposalId,{service,provider,rawProvider,reco
         // A read resumed after approval must answer the owner's original
         // question from its rows, just like a standalone Ask read. The raw
         // query's generic count is not an answer to requested measurements.
-        if(contract.kind==='read'&&outcome.result.status==='ANSWERED'
+        // Native goals consume and independently verify these canonical rows in
+        // their own continuation. A second legacy model cannot own their answer.
+        if(!nativeAnswerOwner&&contract.kind==='read'&&outcome.result.status==='ANSWERED'
           &&contract.answerMode!=='executor'){
           const completedActions=steps.slice(0,next).filter((step)=>step.state==='DONE'
             &&registry.get(step.capability)?.kind==='mutation').map((step)=>({

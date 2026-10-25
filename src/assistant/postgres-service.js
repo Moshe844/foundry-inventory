@@ -2050,13 +2050,14 @@ async function continuationProvider(database,ctx,provider){
   }
   return provider||(config.ai.configured?createProviderUnobserved(config.ai.provider,config.ai.tier('fast')):null);
 }
+async function nativeOwnsMissionAnswer(database,ctx){return Boolean(ctx.goalId&&(await database.query("SELECT 1 FROM stockchief_runtime.assistant_goals WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3 AND checkpoint->>'runtime'='codex-staging'",[ctx.workspaceId,ctx.actorId,ctx.goalId])).rows.length);}
 async function continueApprovedPlans(database,ctx,proposalId,options={}){
   const linked=(await require('./postgres-capability-plans').missionForProposal(database,ctx.workspaceId,ctx.actorId,proposalId));
   if(linked?.goal_id)ctx={...ctx,goalId:linked.goal_id};
   const rawProvider=await continuationProvider(database,ctx,options.provider);
-  const provider=fundedAskProvider(database,ctx,rawProvider,`plan:${proposalId}`);
+  const provider=fundedAskProvider(database,ctx,rawProvider,`plan:${proposalId}`),nativeAnswerOwner=await nativeOwnsMissionAnswer(database,ctx);
   return require('./postgres-capability-plans').resume(database,ctx,proposalId,{
-    service:capabilityService(),provider,rawProvider,
+    service:capabilityService({nativeFacts:nativeAnswerOwner}),nativeAnswerOwner,provider,rawProvider,
     executeAuthorizedProposal:(id,missionId)=>executeProposalCore(database,ctx,id,{missionPlanId:missionId}),
     record:(plan,index,outcome)=>recordCapabilityOutcome(database,ctx,plan.source_message,outcome,
       {batchId:plan.batch_id,planId:plan.id,index,count:plan.steps.length}),
@@ -2135,9 +2136,9 @@ async function resumeMission(database,ctx,missionId,options={}){
   // A mission can be woken by several distinct external events. Each model
   // assessment is a new bounded operation; reusing the mission ID as its
   // commercial idempotency key would reject the second supplier reply.
-  const provider=fundedAskProvider(database,ctx,rawProvider,`mission:${missionId}:${newId('wake')}`);
+  const provider=fundedAskProvider(database,ctx,rawProvider,`mission:${missionId}:${newId('wake')}`),nativeAnswerOwner=await nativeOwnsMissionAnswer(database,ctx);
   return require('./postgres-capability-plans').resume(database,ctx,null,{missionId,
-    service:capabilityService(),provider,rawProvider,
+    service:capabilityService({nativeFacts:nativeAnswerOwner}),nativeAnswerOwner,provider,rawProvider,
     executeAuthorizedProposal:(id,planId)=>executeProposalCore(database,ctx,id,{missionPlanId:planId}),
     record:(plan,index,outcome)=>recordCapabilityOutcome(database,ctx,plan.source_message,outcome,
       {batchId:plan.batch_id,planId:plan.id,index,count:plan.steps.length}),
