@@ -63,9 +63,9 @@ async function summary(db,ctx,description,input,result,record,row){
 }
 const specs=contracts.map(([name,method,description,record,permission,fields])=>({
  name:'manufacturing.'+name,description:description+'. Discover actual products, BOMs, locations and job state first. Physical confirmation must be established by the user. Previews use the canonical service and save nothing; execution requires exact approval and stops if reviewed state or economic effects changed.',
- fields:[...(record?['recordReference']:[]),'manufacturingInput'],record:record||undefined,permission,capability:'inventory.core',resultingRecords:['manufacturing_work_orders','manufacturing_boms','movements','accounting_journal_entries'],
+ ...(name==='create_bom'?{resultReference:'id',resultRecordKind:'manufacturing_bom'}:name==='create_work_order'?{resultReference:'id',resultDisplayReference:'order_number',resultRecordKind:'manufacturing_work_order'}:{}),fields:[...(record?['recordReference']:[]),'manufacturingInput'],record:record||undefined,permission,capability:'inventory.core',resultingRecords:['manufacturing_work_orders','manufacturing_boms','movements','accounting_journal_entries'],
  build:async(db,ctx,row,args)=>{const input=parse(args.manufacturingInput,fields);if(method==='activateBom')input.expectedHash=row.integrity_hash;
-  if(method==='createWorkOrder')input.requestKey='manufacturing-ask:'+newId('request');
+  if(method==='recoverMaterial'){const uses=(await db.query('SELECT u.id,u.sku_id,s.code FROM manufacturing_material_uses u JOIN skus s ON s.workspace_id=u.workspace_id AND s.id=u.sku_id WHERE u.workspace_id=$1 AND u.work_order_id=$2',[ctx.workspaceId,row.id])).rows;input.materialUseId=require('../assistant/child-record-reference').resolve(uses,input.materialUseId,{label:'component consumption'});}if(method==='createWorkOrder')input.requestKey='manufacturing-ask:'+newId('request');
   if(record==='manufacturing_work_order')input.idempotencyKey='manufacturing-ask:'+newId('request');
   const simulated=await preview(db,ctx,method,record,row?.id,input);return {payload:{recordId:row?.id||null,input,expectedState:simulated.expectedState,effects:simulated.effects},summary:await summary(db,ctx,description,input,simulated.result,record,row)};
  },
