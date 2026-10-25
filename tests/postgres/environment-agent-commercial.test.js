@@ -24,9 +24,10 @@ test('native SDK cost holds require funded credit and obey durable goal, price a
  await usage.reserveUsage(db,scope,{meter:'ai_work_credits',units:1,idempotencyKey:funding});
  const inspected={...db,transaction:async(operation,settings)=>db.transaction(async client=>{
   let queries=0;const hold=await operation({query:(...args)=>{queries++;return client.query(...args);}});
-  // Included funding and one goal use one lock, one goal/exposure snapshot,
-  // two funding reads, one account-exposure read and one atomic insert.
-  assert.equal(queries,6,'Native funding avoids a round trip per scalar balance or allocation');return hold;
+  // Included funding and one goal use one lock, one spending-policy lookup,
+  // one goal/exposure snapshot, two funding reads, one account-exposure read
+  // and one atomic insert. The published baseline also uses seven queries.
+  assert.equal(queries,7,'Native funding avoids a round trip per scalar balance or allocation');return hold;
  },settings)};
  const measured=await costs.reserveNative(inspected,scope,provider,bound,'ask','measured-call',funding,goalScope);
  const allocations=(await db.query('SELECT source,grant_id,maximum_minor FROM commercial_model_cost_hold_allocations WHERE hold_id=$1',[measured.id])).rows;

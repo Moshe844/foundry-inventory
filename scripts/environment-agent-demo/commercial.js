@@ -11,12 +11,18 @@ const {MODELS}=require('./wire-policy');
 // wire transport, so each provider request (including each retry) gets a hold.
 function createCommercialAccounting(database){return {
  async goalRemainingMicroUsd({goalId,ctx}){
-  const row=(await database.query(`SELECT g.budget_minor-COALESCE((SELECT SUM(CASE
+    const row=(await database.query(`SELECT g.budget_minor,g.checkpoint->>'runtime' AS runtime,COALESCE((SELECT SUM(CASE
     WHEN h.status IN ('RESERVED','UNKNOWN') THEN h.maximum_minor WHEN h.status='SETTLED' THEN h.actual_minor ELSE 0 END)
-    FROM commercial_model_cost_holds h WHERE h.goal_id=g.id),0) AS remaining
+      FROM commercial_model_cost_holds h WHERE h.goal_id=g.id),0) AS exposure
     FROM stockchief_runtime.assistant_goals g WHERE g.id=$1 AND g.workspace_id=$2 AND g.actor_user_id=$3`,
    [goalId,ctx.workspaceId,ctx.actorId])).rows[0];
-  if(!row)throw new Error('GOAL_NOT_FOUND');return Math.max(0,Math.floor(Number(row.remaining)*10000));
+    if(!row)throw new Error('GOAL_NOT_FOUND');
+    let maximumMinor=Number(row.budget_minor);
+    if(process.env.STOCKCHIEF_STAGING_NATIVE_GOAL_COST_APPROVALS&&row.runtime==='codex-staging'){
+     const scope=await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId),limit=await require('../../src/commercial/staging-native-goal-cost-approval').effective(database,scope,
+      {id:goalId,actorId:ctx.actorId,runtime:row.runtime,budgetMinor:row.budget_minor},{nativeTransport:true});maximumMinor=limit.maximumMinor;
+    }
+    return Math.max(0,Math.floor((maximumMinor-Number(row.exposure))*10000));
  },
  inputAllowance:({provider,outputTokens})=>cost.nativeInputTokenAllowance(database,{name:provider,model:MODELS[provider]},outputTokens),
  async begin(call){

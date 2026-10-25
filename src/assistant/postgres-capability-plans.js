@@ -141,11 +141,13 @@ function ancestorIndexes(steps,index){
 
 function scopeReadToCompletedRecord(steps,index,contract,args){
   if(contract.kind!=='read'||!contract.recordKind||!steps[index].dependsOn.length)return args;
-  const references=[...new Set(steps.slice(0,index).filter((step)=>step.state==='DONE'
+  const references=[...new Set(ancestorIndexes(steps,index).map(i=>steps[i]).filter((step)=>step.state==='DONE'
     &&registry.get(step.capability)?.kind==='mutation'
     &&(registry.get(step.capability)?.resultRecordKind||registry.get(step.capability)?.recordKind)===contract.recordKind
     &&step.args?.recordReference).map((step)=>step.args.recordReference))];
-  return references.length===1?{...args,search:references[0]}:args;
+  const field=contract.fields.includes('recordReference')?'recordReference':
+    contract.fields.includes('search')?'search':null;
+  return references.length===1&&field?{...args,[field]:references[0]}:args;
 }
 
 async function scopeReadToRelatedParty(database,ctx,steps,index,contract,args){

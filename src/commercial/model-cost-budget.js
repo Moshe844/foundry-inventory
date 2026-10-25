@@ -86,7 +86,7 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
  const normalWorkspaceCap=configuredUsd('STOCKCHIEF_AI_WORKSPACE_PERIOD_COST_CAP_USD',normalAccountCap/100)*100;
  const bounds=entitlements.periodBounds(subscription);
  const transaction=async client=>{
-  let accountCap=normalAccountCap,workspaceCap=normalWorkspaceCap,temporaryCostApproval=null;
+  let accountCap=normalAccountCap,workspaceCap=normalWorkspaceCap,temporaryCostApproval=null,temporaryGoalApproval=null;
   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
    [`commercial-model-cost:${scope.accountId}:${bounds.start.toISOString()}`]);
   const ownerLimits=await require('./ai-spending-limits').effective(client,scope.accountId,bounds,{accountCapMinor:accountCap,workspaceCapMinor:workspaceCap},scope.workspaceId);accountCap=ownerLimits.accountCapMinor;workspaceCap=ownerLimits.workspaceCapMinor;
@@ -103,7 +103,10 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
     [goalScope.goalId,scope.workspaceId,goalScope.actorId])).rows[0];
    if(!goal||['CANCELLED','COMPLETED','BLOCKED'].includes(goal.status)||new Date(goal.expires_at)<=new Date())
     throw new ValidationError('This goal is no longer authorized to use a model.');
-   if(Number(goal.exposure)+bound.maximumMinor>Number(goal.budget_minor))
+   const goalLimit=await require('./staging-native-goal-cost-approval').effective(client,scope,
+    {id:goalScope.goalId,actorId:goalScope.actorId,runtime:goal.runtime,budgetMinor:goal.budget_minor},{nativeTransport});
+   temporaryGoalApproval=goalLimit.approval;
+   if(Number(goal.exposure)+bound.maximumMinor>goalLimit.maximumMinor)
     throw Object.assign(new RateLimitError('This goal reached its cumulative model-cost ceiling. No model call was made.'),{limitKind:'goal_cost'});
    if(nativeTransport&&process.env.STOCKCHIEF_STAGING_NATIVE_COST_APPROVALS){
     const funding=(await client.query(`SELECT funding_workspace_id,pilot FROM stockchief_runtime.codex_pilot_workspace_access
@@ -199,6 +202,8 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
     JSON.stringify({inputTokenUpperBound:bound.inputTokens,outputTokenLimit:bound.outputTokens,
       providerExecutions:bound.providerExecutions,providerVersion:bound.providerVersion,rateSources:bound.rateSources,
       operationCapMinor:operationCap,accountPeriodCapMinor:accountCap,workspacePeriodCapMinor:workspaceCap,
+      ...(temporaryGoalApproval?{temporaryGoalApproval:{approvalReference:temporaryGoalApproval.approvalReference,
+       goalId:temporaryGoalApproval.goalId,maximumMinor:temporaryGoalApproval.maximumMinor,expiresAt:temporaryGoalApproval.expiresAt}}:{}),
       ...(temporaryCostApproval?{temporaryCostApproval:{approvalReference:temporaryCostApproval.approvalReference,
        fundingWorkspaceId:temporaryCostApproval.fundingWorkspaceId,maximumMinor:temporaryCostApproval.maximumMinor,expiresAt:temporaryCostApproval.expiresAt}}:{}),
       funding:sources.map(row=>({source:row.source,grantId:row.grantId,maximumMinor:row.maximumMinor}))}),goalScope.goalId||null,
