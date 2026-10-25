@@ -91,7 +91,8 @@ async function readReturn(queryable, workspaceId, id, lock = false) {
     FROM customer_return_lines rl JOIN sales_order_lines sol ON sol.id=rl.sales_order_line_id
     JOIN skus s ON s.id=rl.sku_id JOIN items i ON i.id=s.item_id
     WHERE rl.workspace_id=$1 AND rl.customer_return_id=$2 ORDER BY rl.created_at,rl.id`, [workspaceId, id]);
-  const postedRefunds=(await queryable.query("SELECT r.* FROM accounting_sale_refunds r JOIN accounting_journal_entries e ON e.workspace_id=r.workspace_id AND e.id=r.journal_entry_id WHERE r.workspace_id=$1 AND e.source_record_type='customer_return' AND e.source_record_id=$2 AND e.status='POSTED' ORDER BY r.id",[workspaceId,id])).rows;return { ...header.rows[0],postedRefunds, lines: lines.rows.map((line) => ({ ...line,
+  const deferredReceiptIds=(await queryable.query("SELECT h.source_entry_id FROM accounting_history_corrections h JOIN accounting_journal_entries e ON e.workspace_id=h.workspace_id AND e.id=h.source_entry_id WHERE h.workspace_id=$1 AND h.kind='pending_return_cost' AND e.source_record_type='customer_return' AND e.source_record_id=$2",[workspaceId,id])).rows.map(r=>r.source_entry_id);
+  const postedRefunds=(await queryable.query("SELECT r.* FROM accounting_sale_refunds r JOIN accounting_journal_entries e ON e.workspace_id=r.workspace_id AND e.id=r.journal_entry_id WHERE r.workspace_id=$1 AND e.source_record_type='customer_return' AND e.source_record_id=$2 AND e.status='POSTED' ORDER BY r.id",[workspaceId,id])).rows;return { ...header.rows[0],postedRefunds,deferredReceiptIds, lines: lines.rows.map((line) => ({ ...line,
     receiveMovementIds: parseJson(line.receive_movement_ids, []),
     dispositionMovementIds: parseJson(line.disposition_movement_ids, []),
     trackingEvidence: parseJson(line.tracking_evidence, {}),

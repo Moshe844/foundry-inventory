@@ -23,4 +23,5 @@ async function availability(db,workspaceId,actorId=null){if(!workspaceId)return 
  }
  return {...cost,nativeTestAllowance,credits:{remaining:credits.remaining,included:credits.included,used:credits.used,reserved:credits.reserved},creditsBlocked,creditWarning,paused:cost.blocked||creditsBlocked,reason:cost.blocked?'SPENDING_LIMIT':creditsBlocked?'CREDITS':null};
 }
-module.exports={effective,save,availability};
+function forAsk(status){if(!status||!status.nativeTestAllowance?.available)return status;const accountCapMinor=Math.max(status.accountCapMinor,status.nativeTestAllowance.maximumMinor),workspaceCapMinor=Math.max(status.workspaceCapMinor,status.nativeTestAllowance.maximumMinor),blocked=status.accountMinor>=accountCapMinor||status.workspaceMinor>=workspaceCapMinor;return {...status,standardAccountCapMinor:status.accountCapMinor,standardWorkspaceCapMinor:status.workspaceCapMinor,accountCapMinor,workspaceCapMinor,scope:'nativeAsk',paused:blocked||status.creditsBlocked,reason:blocked?'SPENDING_LIMIT':status.creditsBlocked?'CREDITS':null,warning:status.accountMinor>=accountCapMinor*.8||status.workspaceMinor>=workspaceCapMinor*.8};}
+module.exports={effective,save,availability,forAsk};

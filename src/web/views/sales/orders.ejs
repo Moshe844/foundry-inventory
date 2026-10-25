@@ -133,7 +133,7 @@
           <small><%= order.totals.fulfilled || order.totals.ordered %> units<% if (order.pricing && order.pricing.totalMinor) { %> · <%= money(order.pricing.totalMinor, order.currency) %><% } %></small>
         </span>
         <span class="rm-told__m <%= order.status === 'CANCELLED' ? 'is-paused' : owed ? 'is-warn' : 'is-ok' %>">
-          <% if (order.status === 'CANCELLED') { %>Cancelled<% } else if (order.next) { %><%= String(order.next.text).replace(/^Gone/, 'Delivered') %><% } else { %><%= order.fulfilmentLabel || 'Delivered' %><% } %>
+          <% if (order.status === 'CANCELLED') { %><%= Number(order.fulfilled||order.fulfilledUnits||order.totals?.fulfilled||0)>0?'Partly shipped · remainder cancelled':'Cancelled' %><% } else if (order.next) { %><%= String(order.next.text).replace(/^Gone/, 'Delivered') %><% } else { %><%= order.fulfilmentLabel || 'Delivered' %><% } %>
           <% if (owed && order.next.action) { %><a href="<%= stepHref(order) %>"><%= order.next.action %></a><% } %>
         </span>
       </div>

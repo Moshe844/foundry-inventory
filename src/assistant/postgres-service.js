@@ -1391,7 +1391,7 @@ async function prepareAction(database,ctx,message,request,options={}) {
   if(!request.action)return {status:'CLARIFY',answer:'What would you like StockChief to change?'};
   if(request.action==='save_report'){
     let composed;
-    try{composed=await require('../reports/postgres-ask').composeForSave(database,ctx,message,
+    try{if(request.reportDefinition!==undefined){const actor=await require('../reports/ask-schedules').actor(database,ctx);let definition,schedule;try{definition=JSON.parse(request.reportDefinition);schedule=request.reportSchedule===undefined?{frequency:'none'}:JSON.parse(request.reportSchedule);}catch{throw new ValidationError('The report or delivery schedule is not valid JSON.');}definition=require('../reports/postgres-service').normalize(definition,actor);const timeZone=(await require('../lib/business-time').forWorkspace(database,ctx.workspaceId)).timeZone;schedule={...require('../reports/local-schedule').normalize(schedule,timeZone),recipient:actor.email};composed={definition,schedule};}else composed=await require('../reports/postgres-ask').composeForSave(database,ctx,message,
       {provider:options.reportProvider,priorReport:options.reportContext});}
     catch(error){if(error.code==='rate_limited'||error.code==='entitlement_required')throw error;
       return {status:'CLARIFY',answer:'I could not safely build that report from the available data. Open Reports to choose the exact fields.'};}

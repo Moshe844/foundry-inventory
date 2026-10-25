@@ -467,6 +467,7 @@ async function systemEmail(job,database,options={}){
   const recordAttempt=attempt=>require('../commercial/control-service').recordCost(database,{accountId:accountId||null},{provider:'resend',operation:'system_email',
     unit:'message',quantity:1,idempotencyKey:`${job.id}:attempt:${attempt}`,detail:{messageType:job.payload?.messageType}});
   const accepted=async result=>{
+    if(job.payload?.messageType==='scheduled_report')await require('../reports/postgres-scheduling').recordEmailAcceptance(database,job.workspaceId,job.id);
     if(job.payload?.messageType==='password_reset')await checkpoints.record(database,'password_recovery.delivery','PASS',{
       provider:result.provider||'configured',externalId:result.externalId||null,releaseRef:config.operations.releaseRef});
     return result;

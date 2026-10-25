@@ -121,12 +121,12 @@ function normalize(spec,actor){
       if(operator==='contains'&&type!=='text')invalid('Contains requires a text field.');
       if(['at_least','at_most'].includes(operator)&&!['number','money_minor','date'].includes(type))
         invalid('This field cannot be compared numerically.');
-      if(operator==='relative'&&(type!=='date'||!Object.hasOwn(require('./relative-dates').periods,value)))invalid('Choose a supported relative period for a date field.');
+      if(operator==='relative'&&(type!=='date'||!require('./relative-dates').normalize(value)))invalid('Choose a supported relative period for a date field.');
       if(type==='date'&&operator!=='is_null'&&operator!=='relative'&&!/^\d{4}-\d{2}-\d{2}$/u.test(value))
         invalid('Use dates in YYYY-MM-DD format.');
       if(['number','money_minor'].includes(type)&&operator!=='is_null'&&!Number.isFinite(Number(value)))
         invalid('Use a valid numeric filter.');
-      return {field,operator,value};
+      return {field,operator,value:operator==='relative'?require('./relative-dates').normalize(value):value};
     });
     const type=aggregate==='ratio'?'number':aggregate==='count'?'number':
       source.fields[measure]==='money_minor'?'money':'number';

@@ -34,7 +34,7 @@ function minor(value,label,currency='USD'){
   return require('../../domain/currency').userToMinor(value,currency,{label});
 }
 
-function dateToday(req){return require('../../lib/business-time').context(req?.account?.time_zone||'UTC').calendarDate;}
+function dateToday(req){return require('../../lib/business-time').context(req?.businessTimeZone||req?.account?.time_zone||'UTC').calendarDate;}
 
 function purchasingPermissions(req){return {
   suppliers:permissions.can(req.user,permissions.MANAGE_SUPPLIERS),
@@ -288,9 +288,13 @@ function createPostgresCommerceRouter(database,options={}){
       database.query(`SELECT h.*,s.code AS sku_code,i.name AS item_name FROM supplier_price_history h
         JOIN skus s ON s.id=h.sku_id JOIN items i ON i.id=s.item_id
         WHERE h.workspace_id=$1 AND h.supplier_id=$2 ORDER BY h.observed_at DESC LIMIT 20`,[req.ctx.workspaceId,req.params.id]),
-      database.query(`SELECT s.id,s.code,s.variant_label,i.name AS item_name,i.unit_label FROM skus s
+      database.query(`SELECT s.id,s.code,s.variant_label,i.name AS item_name,i.unit_label,
+        (SELECT si.last_unit_cost FROM supplier_items si WHERE si.workspace_id=s.workspace_id AND si.sku_id=s.id AND si.supplier_id=$2 AND si.is_active=1) AS supplier_unit_cost,
+        (SELECT si.lead_time_days FROM supplier_items si WHERE si.workspace_id=s.workspace_id AND si.sku_id=s.id AND si.supplier_id=$2 AND si.is_active=1) AS supplier_lead_days,
+        (SELECT pc.amount_minor FROM sku_purchase_costs pc WHERE pc.workspace_id=s.workspace_id AND pc.sku_id=s.id AND pc.currency=(SELECT currency FROM suppliers WHERE workspace_id=s.workspace_id AND id=$2) ORDER BY pc.created_at DESC,pc.id DESC LIMIT 1) AS purchase_cost_minor
+        FROM skus s
         JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
-        WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 ORDER BY lower(i.name),s.position LIMIT 500`,[req.ctx.workspaceId]),
+        WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 ORDER BY lower(i.name),s.position LIMIT 500`,[req.ctx.workspaceId,req.params.id]),
       database.query(`SELECT
         (SELECT COUNT(*) FROM purchase_orders WHERE workspace_id=$1 AND supplier_id=$2)::integer AS orders,
         (SELECT COUNT(*) FROM accounting_supplier_bills WHERE workspace_id=$1 AND supplier_id=$2)::integer AS bills,
@@ -310,7 +314,7 @@ function createPostgresCommerceRouter(database,options={}){
     return res.page('purchasing/supplier',{title:supplier.name,nav:'purchasing',supplier,items,
       orders:orderRows.filter((row)=>row.supplier_id===supplier.id).slice(0,10).map(purchaseOrderForView),
       mailboxConnections:mailboxRows.rows,senderRules:senderRows.rows,reliability:null,priceHistory:priceRows.rows,
-      codeMappings:[],catalogue:catalogueRows.rows,usage:{deletable:used.length===0,used,total:used.reduce((sum,row)=>sum+row.count,0)},
+      codeMappings:[],catalogue:catalogueRows.rows.map(s=>({...s,purchaseCost:s.supplier_unit_cost!=null?String(s.supplier_unit_cost):s.purchase_cost_minor==null?'':require('../../domain/currency').fromMinor(Number(s.purchase_cost_minor),supplier.currency||'USD'),leadDays:s.supplier_lead_days??supplier.defaultLeadTimeDays??''})),usage:{deletable:used.length===0,used,total:used.reduce((sum,row)=>sum+row.count,0)},
       permissions:purchasingPermissions(req)});
   }));
 

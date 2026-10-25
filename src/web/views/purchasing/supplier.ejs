@@ -301,9 +301,9 @@
       <div class="grid grid--2">
         <label class="field">
           <span class="field-label">Product</span>
-          <select class="input" name="skuId" required>
+          <select class="input" name="skuId" data-supplier-product required>
             <% catalogue.forEach(function (sku) { %>
-              <option value="<%= sku.id %>"><%= sku.variant_label ? sku.item_name + ' / ' + sku.variant_label : sku.item_name %></option>
+              <option value="<%= sku.id %>" data-cost="<%= sku.purchaseCost %>" data-lead="<%= sku.leadDays %>"><%= sku.variant_label ? sku.item_name + ' / ' + sku.variant_label : sku.item_name %></option>
             <% }) %>
           </select>
         </label>
@@ -322,12 +322,12 @@
         </label>
         <label class="field">
           <span class="field-label">Cost per <%= 'unit' %></span>
-          <input class="input" type="text" name="lastUnitCost" placeholder="8.20">
+          <input class="input" type="text" name="lastUnitCost" data-supplier-cost placeholder="Recorded purchase cost">
           <span class="field-help">Per item, not per pack, so suppliers who pack differently can be compared.</span>
         </label>
         <label class="field">
           <span class="field-label">Lead time (days)</span>
-          <input class="input" type="number" min="0" max="365" name="leadTimeDays"
+          <input class="input" type="number" min="0" max="365" name="leadTimeDays" data-supplier-lead value="<%= supplier.defaultLeadTimeDays??'' %>"
                  placeholder="<%= supplier.defaultLeadTimeDays === null ? '' : supplier.defaultLeadTimeDays %>">
         </label>
         <label class="field">
@@ -442,3 +442,5 @@
     </form>
   </details>
 <% } %>
+
+<script src="/supplier-entry.js?v=<%= assetVersion %>" defer></script>

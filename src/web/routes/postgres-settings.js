@@ -130,7 +130,7 @@ function createPostgresSettingsRouter(database,options={}){const router=express.
     title:'Everything else',nav:'settings',room:true,sections,
   })));
   router.get('/settings',requireAuth,asyncRoute(async(req,res)=>settingsPage(database,req,res)));
-  router.post('/settings/ask-preferences',requireOwner,asyncRoute(async(req,res)=>{await require('../../assistant/postgres-answer-preferences').save(database,req.ctx,req.body);req.flash('success','Business time zone and Ask answer preference saved. Existing accounting dates are preserved.');return res.redirect(303,'/settings#ask-preferences');}));
+  router.post('/settings/ask-preferences',requireOwner,asyncRoute(async(req,res)=>{await require('../../assistant/postgres-answer-preferences').save(database,req.ctx,req.body);req.flash('success','Ask language, style and business time zone saved. Historical accounting corrections are reviewed separately.');return res.redirect(303,'/settings#ask-preferences');}));
   router.post('/settings/ai-spending',requireOwner,asyncRoute(async(req,res)=>{await require('../../commercial/ai-spending-limits').save(database,req.ctx,req.body);req.flash('success','Your AI spending limits were saved for this billing period. Credits, provider prices and separate request, goal and test-authority guards were not changed.');return res.redirect(303,'/settings#ai-spending');}));
   router.post('/settings/integrity/check',requireAuth,asyncRoute(async(req,res)=>{
     res.set('Cache-Control','no-store');return res.json(await require('../../operations/postgres-integrity-check').run(database,req.ctx.workspaceId));

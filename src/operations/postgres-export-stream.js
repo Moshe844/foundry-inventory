@@ -16,8 +16,10 @@ function cell(value,{numeric=false}={}){
 }
 function line(values,numericColumns=[]){return values.map((value,index)=>cell(value,{numeric:Boolean(numericColumns[index])})).join(',')+'\r\n';}
 function queries(itemIds){
+ const currency=require('../domain/currency'),groups=new Map();for(const code of [...Intl.supportedValuesOf('currency'),'CLF','UYW']){const n=currency.exponent(code);if(n!==2){if(!groups.has(n))groups.set(n,[]);groups.get(n).push(code);}}
+ const divisor='CASE '+[...groups].map(([n,codes])=>"WHEN p.currency IN ("+codes.map(c=>"'"+c+"'").join(',')+") THEN "+10**n).join(' ')+' ELSE 100 END';
  const inventory=`SELECT i.name AS "Product",i.base_code AS "Item code",s.code AS "SKU",s.variant_label AS "Variant",
- i.unit_label AS "Unit",l.name AS "Location",coalesce(b.on_hand,0) AS "On hand",p.amount_minor AS "Selling price (minor)",
+ i.unit_label AS "Unit",l.name AS "Location",coalesce(b.on_hand,0) AS "On hand",p.amount_minor AS "Selling price (minor)",p.amount_minor::numeric/(${divisor}) AS "Selling price",
  p.currency AS "Price currency",c.quantity_units AS "Units with recorded cost",c.total_cost_minor AS "Inventory value (minor)",a.base_currency AS "Book currency"
  FROM items i JOIN skus s ON s.workspace_id=i.workspace_id AND s.item_id=i.id
  LEFT JOIN balances b ON b.workspace_id=s.workspace_id AND b.sku_id=s.id
@@ -71,7 +73,7 @@ async function download(database,workspaceId,res,{itemIds=null}={}){
   }
   const info=[['StockChief — current inventory export'],['Inventory',workspace.name],['Exported at (UTC)',new Date().toISOString()],
    ['Scope',itemIds?'Selected products in this inventory':'This inventory only; not other businesses'],
-   ['Money','Minor amounts are exact currency units (USD cents, JPY yen). Keep the currency column.'],
+   ['Money','Minor amounts are exact currency units (USD cents, JPY yen). Keep the currency column. Selling price is also supplied in major currency units in its own numeric column.'],
    ['Data','CSV files open in spreadsheet programs. All rows share one database snapshot.'],
    ['Imported source details','Additional source fields are retained in the attributes JSON column.'],[],['File','Records'],...Object.entries(counts)];
   info.push(['Custody','Rental, consignment and inspection locations are protected from ordinary sales availability. Agreement records distinguish our assets from supplier-owned goods.']);

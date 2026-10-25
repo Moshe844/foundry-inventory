@@ -80,19 +80,21 @@ function state(goal){
  // message is the clarification, without matching any words or domain.
  for(const entry of history){if(entry.role==='assistant')precedingAssistant=entry.id;
   else if(entry.questionId&&precedingAssistant)questions.add(precedingAssistant);}
- const fundingMessage=h.interruption?.code==='PAID_TESTING_LOCKED'
+ const fundingMessage=h.interruption?.code==='SHARED_SPENDING_CEILING'?'Your request is saved. An account or inventory AI spending limit stopped this attempt. Review the current limit in Settings; remaining credits and a temporary test allowance are shown separately. Completed work must not be repeated.':h.interruption?.code==='PAID_TESTING_LOCKED'
   ?'Your request and recorded work are saved. Paid work is paused because its spending authorization is unavailable or its approved period has ended. Restore the authorization before continuing; nothing will be retried automatically.'
   :'Your request is saved. The approved spending allowance cannot cover another model request, so paid work has stopped. A separately approved budget increase is required to continue.';
  const capacityMessage='Your business has used today’s AI work allowance. Your request and any completed work are saved. You can continue after the daily allowance resets.';
  const serviceMessage='StockChief’s AI service was temporarily unavailable. Your request and recorded work are saved. No further paid AI request was sent.';
  const usageMessage='An AI request lost its confirmation. Your goal and recorded work are saved. Paid work is paused while its usage is checked; no automatic retry will run.';
  const goalLimitMessage='This request reached its work or spending allowance before all remaining work was verified. Recorded operations are saved. No automatic retry will run, and completed operations must not be repeated.';
+ const interruptedMessage='This work stopped before its outcome could be confirmed. Your request and recorded work are saved. Review the recorded steps before continuing so completed work is not repeated.';
+ const failedMessage='I could not confirm that the requested result was saved. Your request and any completed work are retained. Review the recorded steps before continuing.';
  const partial=['partial_verified_receipt','partial_observation_report'].includes(h.completionSource)?publicText(goal.answer,''):'';
  return ConversationState.parse({version:1,goalId:goal.id,phase,label:phase==='funding'&&h.interruption?.code==='SHARED_SPENDING_CEILING'?'Spending limit reached':labels[phase],active:!['completed','refused','failed','cancelled','interrupted','goal_limit','funding','capacity','service_wait','usage_review'].includes(phase),
   // A durable external wait is canonical lifecycle state, not an approval
   // request or a model answer. Older rows may still carry the prior approval
   // text; render the current phase safely without editing native evidence.
-  terminal:['completed','refused','failed','cancelled'].includes(phase),message:phase==='queued'?'Your request is saved and waiting for an available agent.':phase==='external_wait'?lifecycleMessages.external_wait:['goal_limit','funding','capacity','service_wait','usage_review'].includes(phase)?[partial,phase==='goal_limit'?goalLimitMessage:phase==='funding'?fundingMessage:phase==='capacity'?capacityMessage:phase==='usage_review'?usageMessage:serviceMessage].filter(Boolean).join('\n\n'):input?.question||publicText(goal.answer,['queued','working','verification'].includes(phase)?'':FAILED),input,
+  terminal:['completed','refused','failed','cancelled'].includes(phase),message:phase==='queued'?'Your request is saved and waiting for an available agent.':phase==='external_wait'?lifecycleMessages.external_wait:['goal_limit','funding','capacity','service_wait','usage_review'].includes(phase)?[partial,phase==='goal_limit'?goalLimitMessage:phase==='funding'?fundingMessage:phase==='capacity'?capacityMessage:phase==='usage_review'?usageMessage:serviceMessage].filter(Boolean).join('\n\n'):input?.question||(phase==='interrupted'?interruptedMessage:phase==='failed'?failedMessage:null)||publicText(goal.answer,['queued','working','verification'].includes(phase)?'':FAILED),input,
   canReply:phase==='clarification'&&Boolean(input),revision:saved?.revision||0,
   history:history.filter(m=>m.role==='user'||m.phase==='clarification'||!m.phase&&questions.has(m.id))
    .map(m=>({id:m.id,role:m.role,text:publicText(m.text,''),at:m.at,phase:m.phase})),

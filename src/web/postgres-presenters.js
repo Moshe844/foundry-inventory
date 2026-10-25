@@ -155,7 +155,7 @@ function nextForOrder(order){
   if(order.status==='CONFIRMED')return {text:'Ready to fulfil',detail:'Inventory is committed to this customer.',rank:40,action:'Fulfil order',href:`/orders/${order.id}`};
   if(order.status==='FULFILLED'&&number(order.balance_minor)>0)return {text:'Delivered — payment is still due',detail:'The customer invoice remains open.',rank:30,action:'Review payment',href:`/orders/${order.id}`};
   if(order.status==='FULFILLED')return {text:'Delivered and settled',detail:'Nothing remains open.',rank:0,action:null,href:`/orders/${order.id}`};
-  return {text:'Cancelled',detail:'No further work is planned.',rank:0,action:null,href:`/orders/${order.id}`};
+  return {text:require('../sales/order-status').label(order.status,number(order.units_fulfilled)),detail:Number(order.units_fulfilled)>0?'Shipped goods and their invoice remain recorded; only the unshipped remainder was cancelled.':'No further work is planned.',rank:0,action:null,href:`/orders/${order.id}`};
 }
 
 async function sales(database,workspaceId){

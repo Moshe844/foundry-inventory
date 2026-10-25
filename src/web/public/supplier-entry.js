@@ -1,0 +1,2 @@
+'use strict';
+document.querySelectorAll('[data-supplier-product]').forEach(select=>{const form=select.closest('form'),fields=[['cost',form.querySelector('[data-supplier-cost]')],['lead',form.querySelector('[data-supplier-lead]')]].filter(([,field])=>field),automatic=new Map(fields.map(([key,field])=>[key,field.value]));const fill=()=>{for(const [key,field]of fields)if(field.value===automatic.get(key)||field.value===''){const value=select.selectedOptions[0]?.dataset[key]??'';automatic.set(key,value);field.value=value;}};select.addEventListener('change',fill);fill();});

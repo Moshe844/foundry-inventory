@@ -113,7 +113,7 @@ async function postManyInTransaction(client,ctx,inputs){
   if(!inputs.length)return [];
   if(!(ctx.verifiedProviderReceipt&&inputs.every(input=>['customer_payment','customer_deposit'].includes(input.sourceType))))
     await require('../commercial/enforcement').workspace(client,ctx.workspaceId,'accounting.core');
-  const clock=require('../lib/business-time'),calendar=inputs.some(i=>!i.postingDate)?(ctx.businessTimeZone?clock.context(ctx.businessTimeZone):await clock.forWorkspace(client,ctx.workspaceId)):null;const prepared=inputs.map(input=>{const postingDate=dateOnly(input.postingDate||(input.postingInstant?clock.context(calendar.timeZone,new Date(input.postingInstant)).calendarDate:calendar.calendarDate)),sourceKey=String(input.sourceKey||'').trim();
+  const clock=require('../lib/business-time'),calendar=inputs.some(i=>!i.postingDate)?(await clock.forWorkspace(client,ctx.workspaceId)):null;const prepared=inputs.map(input=>{const postingDate=dateOnly(input.postingDate||(input.postingInstant?clock.context(calendar.timeZone,new Date(input.postingInstant)).calendarDate:calendar.calendarDate)),sourceKey=String(input.sourceKey||'').trim();
     if(!sourceKey)throw new ValidationError('A durable accounting source key is required.');
     return {input,postingDate,sourceKey,...normalizeLines(input.lines)};});
   const reversedSources=inputs.map(i=>i.reversalOfEntryId).filter(Boolean);
@@ -146,7 +146,7 @@ async function postManyInTransaction(client,ctx,inputs){
     const firstNumber=Number((await client.query('SELECT COALESCE(MAX(entry_number),0)+1 AS next FROM accounting_journal_entries WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].next),at=nowIso(),journalRows=[],journalLines=[];
     for(const [index,row]of rows.entries()){
       const input=row.input,id=newId('je'),entry={id,entry_number:firstNumber+index,posting_date:row.postingDate,source_key:row.sourceKey,status:'POSTED'};entries.set(row.sourceKey,entry);
-      journalRows.push({...entry,period_id:periods.get(row.postingDate).id,description:String(input.description||'Business event'),source_type:input.sourceType||'business_event',source_record_type:input.sourceRecordType||null,source_record_id:input.sourceRecordId||null,source_event_id:input.sourceEventId||null,created_by_type:input.createdByType||'SYSTEM',metadata:JSON.stringify(input.metadata||{}),reversal_of_entry_id:input.reversalOfEntryId||null});
+      journalRows.push({...entry,period_id:periods.get(row.postingDate).id,description:String(input.description||'Business event'),source_type:input.sourceType||'business_event',source_record_type:input.sourceRecordType||null,source_record_id:input.sourceRecordId||null,source_event_id:input.sourceEventId||null,created_by_type:input.createdByType||'SYSTEM',metadata:JSON.stringify({...input.metadata,postingCalendar:{basis:input.postingDate?'EXPLICIT_DATE':input.postingInstant?'BUSINESS_EVENT_INSTANT':'BUSINESS_CURRENT_DATE',timeZone:calendar?.timeZone||ctx.businessTimeZone||null,instant:input.postingInstant||(!input.postingDate?at:null)}}),reversal_of_entry_id:input.reversalOfEntryId||null});
       for(const [position,line]of row.normalized.entries())journalLines.push({id:newId('jel'),entry_id:id,line_number:position+1,account_id:line.accountId||byKey.get(line.accountKey),debit_minor:line.debit,credit_minor:line.credit,currency:row.currency,customer_id:line.customerId||null,supplier_id:line.supplierId||null,item_id:line.itemId||null,sku_id:line.skuId||null,location_id:line.locationId||null,memo:line.memo||null,metadata:JSON.stringify(line.metadata||{})});
     }
     await client.query(`INSERT INTO accounting_journal_entries(id,workspace_id,entry_number,posting_date,period_id,description,status,source_type,source_record_type,source_record_id,source_event_id,source_key,created_by_type,created_by_user_id,engine_version,metadata,reversal_of_entry_id,created_at,posted_at)
@@ -169,7 +169,7 @@ async function post(database,ctx,input){
 // period. They do not create fictitious zero-amount journal lines.
 async function validatePostingDateInTransaction(client,ctx,value){
  await require('../commercial/enforcement').workspace(client,ctx.workspaceId,'accounting.core');
- const clock=require('../lib/business-time'),calendar=ctx.businessTimeZone?clock.context(ctx.businessTimeZone):await clock.forWorkspace(client,ctx.workspaceId),date=dateOnly(!value?calendar.calendarDate:/^\d{4}-\d{2}-\d{2}$/.test(value)?value:clock.context(calendar.timeZone,new Date(value)).calendarDate),settings=(await client.query('SELECT accounting_start_date FROM accounting_settings WHERE workspace_id=$1 AND enabled=1',[ctx.workspaceId])).rows[0];
+ const clock=require('../lib/business-time'),calendar=await clock.forWorkspace(client,ctx.workspaceId),date=dateOnly(!value?calendar.calendarDate:/^\d{4}-\d{2}-\d{2}$/.test(value)?value:clock.context(calendar.timeZone,new Date(value)).calendarDate),settings=(await client.query('SELECT accounting_start_date FROM accounting_settings WHERE workspace_id=$1 AND enabled=1',[ctx.workspaceId])).rows[0];
  if(!settings)throw new ValidationError('Configure accounting before posting inventory value.');
  if(date<settings.accounting_start_date)throw new ValidationError('Posting date is before the accounting start date.');
  return ensurePeriod(client,ctx.workspaceId,date);

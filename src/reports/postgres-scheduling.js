@@ -53,6 +53,12 @@ async function enqueueDueInTransaction(client,at){const when=new Date(at),local=
   return {queued};
 }
 
+async function recordEmailAcceptance(client,workspaceId,emailJobId){
+ const accepted=await client.query(`UPDATE stockchief_runtime.report_deliveries d SET status='SENT',provider_message_id=e.provider_id,completed_at=e.accepted_at,error_message=NULL
+ FROM commercial_email_deliveries e WHERE d.workspace_id=$1 AND d.email_job_id=$2 AND e.job_id=d.email_job_id AND d.status='PENDING' AND e.provider_id IS NOT NULL AND e.accepted_at IS NOT NULL RETURNING d.template_id,d.completed_at`,[workspaceId,emailJobId]);
+ for(const d of accepted.rows)await client.query(`UPDATE stockchief_runtime.report_templates SET last_delivered_at=$3,last_error=NULL WHERE workspace_id=$1 AND id=$2 AND (last_delivered_at IS NULL OR last_delivered_at<=$3)`,[workspaceId,d.template_id,d.completed_at]);
+ return {sent:accepted.rowCount};
+}
 async function generateDelivery(database,job){
   const {templateId,deliveryId}=job.payload||{};
   if(!job.workspaceId||!templateId||!deliveryId)throw new Error('A report delivery needs exact workspace and template identity.');
@@ -75,4 +81,4 @@ async function generateDelivery(database,job){
    const mail=await jobs.enqueue(scoped(client),{workspaceId:job.workspaceId,kind:'system.email-send',idempotencyKey:'scheduled-report-email:'+deliveryId,payload:{...message,accountId:template.account_id,messageType:'scheduled_report'},maxAttempts:3});await client.query("UPDATE stockchief_runtime.report_deliveries SET email_job_id=$4,row_count=$5 WHERE workspace_id=$1 AND template_id=$2 AND id=$3 AND status='PENDING'",[job.workspaceId,templateId,deliveryId,mail.job.id,visibleCount]);return {queued:true,rows:visibleCount,limited,emailJobId:mail.job.id};
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
-module.exports={enqueueDue,generateDelivery,deliveryMessage};
+module.exports={enqueueDue,generateDelivery,deliveryMessage,recordEmailAcceptance};
