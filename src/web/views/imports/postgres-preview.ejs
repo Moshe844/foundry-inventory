@@ -1,4 +1,4 @@
-<% const sourceMappings=plan.fieldMappings||{}; const sourceTransforms=plan.transformations||{};
+<% const sourceMappings=plan.fieldMappings||{}; const sourceTransforms=plan.transformations||{}; const filteredRowCount=filter?Number(counts[filter]||0):plan.recordsDetected;
    const review=approvalReview;
    const needsIdentity=review.needsIdentity;
    const numberQuestions=sourceMappings.quantity===undefined?(mappingRows||[]).filter(function(row){return (sourceTransforms.unmappedNumericColumns||[]).includes(row.column);}):[];
@@ -229,7 +229,7 @@
 </details>
 <div class="card section" id="import-rows"><div class="card-head"><h2>Every row</h2><span class="spacer"></span>
   <div class="btn-row"><a class="btn btn--sm" href="/imports/<%= plan.id %>">All <%= plan.recordsDetected %></a>
-    <% Object.keys(counts).forEach(function(status){ %><a class="btn btn--sm" href="/imports/<%= plan.id %>?rows=<%= status %>"><%= status==='INVALID'?'Needs attention':status %> <%= counts[status] %></a><% }) %></div></div>
+    <% Object.keys(counts).forEach(function(status){ %><a class="btn btn--sm" href="/imports/<%= plan.id %>?rows=<%= status %>"><%= {VALID:'Ready',INVALID:'Needs attention',EXCLUDED:'Document information',SKIPPED:'Already imported',IMPORTED:'Imported',FAILED:'Needs attention'}[status]||status %> <%= counts[status] %></a><% }) %></div></div>
   <div class="table-scroll"><table class="table table--tight"><thead><tr><th>Row</th><th>Product</th><th>SKU / variant</th><th>Qty</th><th>Unit cost</th><th>Selling price</th><th>Location</th><th>Result</th></tr></thead><tbody>
     <% rows.forEach(function(row){ %><tr class="<%= row.status==='INVALID'?'is-warn-row':'' %>"><td><%= row.rowNumber %></td><td><%= row.parsed.documentEvidence?.label||row.parsed.name||row.parsed.code||'—' %><% if(row.parsed.documentEvidence){ %><p class="hint" dir="auto">Source: <%= (row.raw||[]).filter(v=>v!==null&&v!=='').join(' · ') %></p><% } %><% if(Object.keys(row.parsed.sourceFacts||{}).length){ %><details><summary>Source details</summary><dl><% Object.entries(row.parsed.sourceFacts).forEach(function(pair){ %><dt><%= pair[0] %></dt><dd><%= pair[1] %></dd><% }); %></dl></details><% } %><% if(Object.keys(row.parsed.reorder||{}).length){ %><p>Reorder settings: <%= Object.entries(row.parsed.reorder).map(pair=>pair[0]+': '+pair[1]).join(' · ') %></p><% } %></td>
       <td><%= [row.parsed.code,(row.parsed.variants || []).map(function(part){return part.name+': '+part.value;}).join(' / ')].filter(Boolean).join(' · ') || '—' %></td>
@@ -240,5 +240,5 @@
       <td><% const reviewOnly=row.status==='INVALID'&&row.problems.length>0&&row.problems.every(p=>['image_identity_uncertain','image_money_uncertain','document_role_uncertain','no_location','accounting_not_ready'].includes(p.code)); %><span class="badge badge--<%= row.status==='IMPORTED'?'ok':row.status==='INVALID'&&!reviewOnly?'danger':'muted' %>"><%= reviewOnly?'Needs review':row.status==='INVALID'?'Needs correction':row.status %></span><% if(reviewOnly&&needsImageAnswer){ %> <a href="#image-reading">Review image reading</a><% } %>
         <% row.problems.forEach(function(item){ %><div class="muted"><%= item.message %></div><% }) %></td></tr><% }) %>
   </tbody></table></div>
-  <% if(plan.recordsDetected>pageSize){ %><div class="card-foot"><div class="btn-row"><% if(page>1){ %><a class="btn btn--sm" href="?page=<%= page-1 %>">Previous</a><% } %><span>Page <%= page %></span><% if(rows.length===pageSize){ %><a class="btn btn--sm" href="?page=<%= page+1 %>">Next</a><% } %></div></div><% } %>
+  <% if(filteredRowCount>pageSize){ %><div class="card-foot"><div class="btn-row"><% if(page>1){ %><a class="btn btn--sm" href="?page=<%= page-1 %><%= filter?'&rows='+encodeURIComponent(filter):'' %>#import-rows">Previous</a><% } %><span>Page <%= page %></span><% if(page*pageSize<filteredRowCount){ %><a class="btn btn--sm" href="?page=<%= page+1 %><%= filter?'&rows='+encodeURIComponent(filter):'' %>#import-rows">Next</a><% } %></div></div><% } %>
 </div>

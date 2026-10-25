@@ -94,7 +94,7 @@ function createPostgresImportsRouter(database,{provider=null}={}){
     const draftId=typeof req.query.fromDraft==='string'&&/^imp_[a-z0-9]{1,128}$/.test(req.query.fromDraft)?req.query.fromDraft:null;
     const relatedDraft=draftId?(await database.query("SELECT id FROM import_plans WHERE workspace_id=$1 AND id=$2 AND source_hash=$3 AND approval_status='AWAITING_APPROVAL' AND status='READY'",[req.ctx.workspaceId,draftId,plan.sourceHash])).rows[0]||null:null;
     const page=Math.max(1,Number(req.query.page)||1);
-    const allowed=['VALID','INVALID','IMPORTED','FAILED'];
+    const allowed=['VALID','INVALID','EXCLUDED','SKIPPED','IMPORTED','FAILED'];
     const filter=allowed.includes(req.query.rows)?req.query.rows:null;
     const savedSummary=require('../../imports/tracking-review').savedSummary(plan);
     const frozenPreview=plan.status==='READY'&&['AWAITING_APPROVAL','APPROVED'].includes(plan.approvalStatus)&&plan.recordsValid+plan.recordsInvalid===plan.recordsDetected;
