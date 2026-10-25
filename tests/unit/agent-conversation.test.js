@@ -2,6 +2,14 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const contract=require('../../src/assistant/agent-conversation'),trace=require('../fixtures/recorded-sales-clarification.json');
 
+test('ordinary business exception and error explanations remain readable while technical diagnostics stay blocked',()=>{
+ for(const heading of ['Review exception:','Delivery exception:','Pricing error:','Payment exception:']){
+  const answer='The reviewed work is complete.\n\n**'+heading+'** A separately recorded transaction requires attention.';
+  assert.equal(contract.publicText(answer),answer);assert.equal(contract.classify({report:{version:1,status:'completed',outcome:'answer',answer,claims:[]},verified:true}).answer,answer);
+ }
+ for(const diagnostic of ['Error: adapter failed','Exception: query failed','A system failure: TypeError: object is null','Provider error code: INTERNAL_QUERY_FAILED','at runtime (worker.js:12:4)','{"status":"completed"}'])assert.equal(contract.publicText(diagnostic),contract.FAILED);
+});
+
 test('evidenced business identifiers remain readable in answers and questions without exposing diagnostics',()=>{
  for(const prefix of ['SKU','ORDER','INVOICE','LOCATION']){
   const id=prefix+'_'+require('node:crypto').randomBytes(4).toString('hex').toUpperCase()+'_12';

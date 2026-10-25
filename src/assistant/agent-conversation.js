@@ -34,7 +34,7 @@ function publicText(value,fallback=FAILED){
  // internal codes, explicit diagnostic labels, protocol envelopes and stacks.
  if(/^\s*(?:[\[{]|```(?:json)?\s*[\[{])/i.test(value)||
   /^\s*[A-Z][A-Z0-9]+(?:_[A-Z0-9]+){2,}\s*$/.test(value)||
-  /Outcome not fully verified\. Agent report:|\b(?:Error|Exception|TypeError):|\b(?:error(?: code)?|exception|failure code)\s*[:=]\s*[A-Z][A-Z0-9]+(?:_[A-Z0-9]+){2,}\b|\bat \S+\s*\([^\n]+:\d+:\d+\)/i.test(value))return fallback;
+  /Outcome not fully verified\. Agent report:|^\s*(?:Error|Exception):|\b[A-Z][A-Za-z]*(?:Error|Exception):|\b(?:error(?: code)?|exception|failure code)\s*[:=]\s*[A-Z][A-Z0-9]+(?:_[A-Z0-9]+){2,}\b|\bat \S+\s*\([^\n]+:\d+:\d+\)/i.test(value))return fallback;
  return value.trim().slice(0,20000);
 }
 function classify({report,answer,verified,current='READY',canonicalVerified=true,progress={}}){
