@@ -414,6 +414,14 @@
    */
 %>
 <% if (pay) { %>
+  <% if(postgresMode&&locals.cardknoxAccount){ %>
+  <section class="rm-sect" id="cardknox"><h2>Sola / Cardknox</h2><p>Connect this business’s own merchant account. Its private transaction key stays encrypted on the server; only its public iFields key is used by the secure card fields.</p>
+  <% if(cardknoxAccount.connected){ %><p role="status"><%= cardknoxAccount.chargesEnabled?'Connected and available for customer payment links.':'Account verified. Payment activation is not enabled on this installation yet.' %></p><% } %>
+  <% if(currentUser.role==='owner'){ %><form method="post" action="/settings/connections/cardknox" class="stack-form" data-busy><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+   <label>Private transaction API key<input name="apiKey" type="password" maxlength="250" autocomplete="off" required></label><label>Public iFields key<input name="ifieldsKey" maxlength="250" autocomplete="off" required></label>
+   <label>Merchant environment<select name="testMode"><option value="true">Sola sandbox / test merchant</option><option value="false">Live merchant</option></select></label><p>This setting does not convert a live key into a test key. Use keys issued for the chosen merchant environment.</p><button class="rm-btn" type="submit">Verify and connect Sola</button></form>
+   <% if(cardknoxAccount.connected){ %><form method="post" action="/settings/connections/cardknox/disconnect"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost">Disconnect Sola</button></form><% } %>
+  <% } %></section><% } %>
   <div class="rm-sect" id="payments">
     <h2>Taking payment</h2>
     <p>Each inventory uses the business’s own Stripe account. Payment links are made on this account, and the money arrives in its bank.</p>

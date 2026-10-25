@@ -122,8 +122,8 @@ async function providerFetch(url, init = {}, options = {}) {
       const providerDelay=retryAfterMs(response);
       if (attempt <= retries&&(providerDelay===null||providerDelay<=30_000)) { await wait(providerDelay ?? backoff(attempt)); continue; }
       const writing=!['GET','HEAD','OPTIONS'].includes(String(init.method||'GET').toUpperCase());
-      const message=writing?provider+' did not confirm the operation (HTTP '+response.status+'). Its outcome must be checked before it is repeated.':response.status===429
-        ?provider+' is rate-limiting reads. StockChief will retry safely shortly.':provider+' is not working right now (HTTP '+response.status+'). StockChief will retry this read safely.';
+      const message=writing?provider+' did not confirm the operation. Its outcome must be checked before it is repeated.':response.status===429
+        ?provider+' is rate-limiting reads. StockChief will retry safely shortly.':provider+' is not working right now. StockChief will retry this read safely.';
       const error = new ProviderUnavailableError(provider,message,{attempts:attempt,httpStatus:response.status});
       if(providerDelay!==null)error.retryAfterMs=providerDelay;
       error.providerOutcomeUncertain=writing;

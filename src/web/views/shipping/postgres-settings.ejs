@@ -29,6 +29,8 @@
 </section>
 
 <section class="card section" id="account">
+  <div class="card-body"><h2>ShipStation Custom Store</h2><p>Send prepared StockChief parcels to ShipStation and receive tracking back. ShipStation V2 above remains the rate and label API connection.</p>
+  <% if(currentUser.role==='owner'){ %><form method="post" action="/settings/shipping/shipstation-custom"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit">Set up Custom Store</button></form><% } %></div>
   <div class="card-head"><div><h2><%= shippingAccounts.length?'Add or update a shipping account':'Use your existing shipping account' %></h2>
     <p class="hint">Choose the shipping platform your business uses. Your carrier contracts and billing stay with you.</p></div></div>
   <div class="card-body">
@@ -38,7 +40,7 @@
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <label class="field"><span class="field-label" id="shipping-provider-label">Shipping platform</span><select class="select" name="provider" required aria-labelledby="shipping-provider-label">
           <% ['easypost','shipstation','shippo','shipengine'].filter(p=>providers.includes(p)).forEach(function(provider){ %>
-          <option value="<%= provider %>"><%= providerNames[provider] %></option><% }); %>
+          <option value="<%= provider %>" <%= locals.selectedProvider===provider?'selected':'' %>><%= providerNames[provider] %></option><% }); %>
         </select></label>
         <label class="field"><span class="field-label" id="shipping-key-label">API key</span><input class="input" type="password" name="apiKey" required autocomplete="off" aria-labelledby="shipping-key-label">
           <span class="field-help">Use a test key to try shipping without real postage. ShipStation requires a V2 API key; sandbox keys start with TEST_.</span></label>
@@ -74,7 +76,7 @@
 <section class="card section" id="rules">
   <div class="card-head"><div><h2>Shipping preferences</h2><p class="hint">Save the carrier, price and delivery limits you want StockChief to consider.</p></div></div>
   <div class="card-body stack">
-    <% rules.forEach(function(rule){ %><div class="planning-item"><strong><%= rule.name %></strong> <%= rule.active?'':'· Off' %>
+    <% rules.forEach(function(rule){ %><div class="planning-item"><strong><%= rule.name %></strong> <%= rule.active?'':'· Off' %><% if(rule.maxDeliveryDays!=null){ %> · Within <%= rule.maxDeliveryDays %> delivery days<% } %>
       <% if(rule.active){ %><form method="post" action="/settings/shipping/<%= rule.id %>/remove"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost" type="submit">Turn off</button></form><% } %>
     </div><% }); %>
     <form method="post" action="/settings/shipping" class="stack" data-busy>

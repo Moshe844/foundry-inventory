@@ -76,6 +76,7 @@ function createPostgresConnectionsRouter(database,options={}){
           :payment.because},
       paymentConnect:{...payment,flow:'oauth',testMode:!payment.liveMode,
         available:payment.available&&(payment.connected||qualifiedTestConnect)},
+      cardknoxAccount:inventorySetup?null:await require('../../payments/postgres-cardknox').describe(database,req.ctx.workspaceId),
       shippingAccount:inventorySetup?null:{...shipping,billingReady:shipping.connected},shippingPlatform:{available:false},
       connectionPublicOrigin:requestPublicOrigin,xeroRedirectOrigin:requestPublicOrigin,
       paymentReturnOrigin:requestOrigin,currentWorkspaceId:req.ctx.workspaceId,
@@ -152,6 +153,15 @@ function createPostgresConnectionsRouter(database,options={}){
       {...req.body,providerType:'woocommerce'},requestOrigin,{providers:registry,publicOrigin:options.publicOrigin==='request'?requestOrigin:options.publicOrigin});
     req.flash('success','WooCommerce credentials verified and saved securely. Catalogue discovery and event setup are queued. Review matches before importing stock.');
     return res.redirect(303,`/settings/connections/${encodeURIComponent(connection.id)}`);
+  }));
+  router.post('/settings/connections/cardknox',requireOwner,asyncRoute(async(req,res)=>{
+    await entitlements.assertCapability(database,commercialScope(req),'merchant_payments');
+    await require('../../payments/postgres-cardknox').connect(database,req.ctx,req.body,options.cardknoxOptions||{});
+    req.flash('success','This business’s Sola/Cardknox account was verified and saved encrypted. Customer payments remain subject to this installation’s payment activation.');
+    return res.redirect(303,'/settings/connections#cardknox');
+  }));
+  router.post('/settings/connections/cardknox/disconnect',requireOwner,asyncRoute(async(req,res)=>{
+    await require('../../payments/postgres-cardknox').disconnect(database,req.ctx);req.flash('success','Sola disconnected. Existing payment history is preserved.');return res.redirect(303,'/settings/connections#cardknox');
   }));
   router.get('/settings/connections/payments/launch',requireOwner,asyncRoute(async(req,res)=>{
     await entitlements.assertCapability(database,commercialScope(req),'merchant_payments');

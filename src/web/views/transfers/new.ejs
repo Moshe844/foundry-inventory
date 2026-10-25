@@ -29,6 +29,7 @@
   <section class="rm-step-panel">
     <div class="rm-step-panel__h"><span class="rm-step-panel__n">2</span><h2>What is moving?</h2></div>
     <div class="rm-step-panel__b form-grid">
+      <label class="rm-field"><span>Find a product or SKU</span><input type="search" id="transfer-product-search" autocomplete="off" placeholder="Type a name or code"><small id="transfer-search-status" role="status">Showing the first 50 matches. Type to find any product.</small></label>
       <label class="rm-field"><span>Product or variant</span><select name="skuId" required><% skus.filter(s => s.tracking_mode === 'quantity').forEach(function(s) { %><option value="<%= s.id %>"><%= s.item_name %><%= s.variant_label ? ' / ' + s.variant_label : '' %> · <%= s.code %></option><% }) %></select></label>
       <label class="rm-field"><span>How many units?</span><input type="number" min="1" step="1" name="quantity" value="1" required><small>StockChief checks availability and customer commitments before it reserves anything.</small></label>
       <p id="transfer-available" role="status">Checking available stock…</p>

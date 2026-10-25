@@ -35,7 +35,7 @@ async function call(ctx, path, options = {}) {
   try { body = text ? JSON.parse(text) : null; } catch { body = null; }
   if (!response.ok) {
     const detail = body?.detail || body?.error || `Shippo returned ${response.status}.`;
-    const error = new ValidationError(typeof detail === 'string' ? detail : JSON.stringify(detail));
+    const error = new ValidationError(require('../public-error').message(response.status, typeof detail === 'string' ? detail : JSON.stringify(detail), 'Shippo'));
     error.status = response.status;
     throw error;
   }

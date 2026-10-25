@@ -42,15 +42,22 @@ function createPostgresTransfersRouter(database) {
     const [locations, skus] = await Promise.all([
       database.query(`SELECT * FROM locations WHERE workspace_id=$1 AND is_active=1 ORDER BY lower(name),id`,
         [req.ctx.workspaceId]),
-      database.query(`SELECT s.*,i.name AS item_name,i.tracking_mode FROM skus s JOIN items i ON i.id=s.item_id
+      req.query.itemIds?database.query(`SELECT s.*,i.name AS item_name,i.tracking_mode FROM skus s JOIN items i ON i.id=s.item_id
         WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1
           AND ($2::text[] IS NULL OR s.item_id=ANY($2::text[])) ORDER BY lower(i.name),s.position,s.code`,
-      [req.ctx.workspaceId,req.query.itemIds?values(req.query.itemIds):null]),
+      [req.ctx.workspaceId,values(req.query.itemIds)]):require('../../operations/postgres-commerce').catalogue(database,req.ctx.workspaceId,
+        {limit:50,trackingMode:'quantity'}).then(rows=>({rows})),
     ]);
     if(req.query.itemIds){await require('../../domain/postgres-catalog-bulk').selected(database,req.ctx,values(req.query.itemIds));
       return res.page('transfers/bulk-new',{title:'Request selected stock to move',nav:'transfers',locations:locations.rows,skus:skus.rows,operationKey:newId('transfer-request')});}
     return res.page('transfers/new', { title: 'Request transfer', nav: 'transfers', room: true,
       locations: locations.rows, skus: skus.rows });
+  }));
+  router.get('/transfers/products',asyncRoute(async(req,res)=>{
+    permissions.assertCan(req.user,permissions.REQUEST_TRANSFER,'find products to transfer');
+    const rows=await require('../../operations/postgres-commerce').catalogue(database,req.ctx.workspaceId,
+      {limit:50,search:String(req.query.q||''),trackingMode:'quantity'});
+    res.json({products:rows.map(row=>({id:row.id,label:row.display_name+' · '+row.code})),limit:50});
   }));
   router.post('/transfers', asyncRoute(async (req, res) => {
     let lines=null;if(req.body.lines){const entries=Array.isArray(req.body.lines)?req.body.lines:Object.values(req.body.lines);lines=[];

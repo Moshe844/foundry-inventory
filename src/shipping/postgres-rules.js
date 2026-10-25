@@ -11,7 +11,7 @@ async function build(database,workspaceId,input){
  const requireByPromised=input.requireByPromised===true||String(input.requireByPromised).toLowerCase()==='true';
  if(input.requireByPromised!=null&&!['true','false'].includes(String(input.requireByPromised).toLowerCase()))throw new ValidationError('Say whether delivery by the promised date is required.');
  if(!carrier&&!service&&maxCostMinor===null&&maxDeliveryDays===null&&minWeightGrams===null&&maxWeightGrams===null&&!requireByPromised)throw new ValidationError('Give at least one shipping condition.');
- const name=[carrier?carrier.toUpperCase():'Any carrier',service,maxCostMinor!=null?'up to '+money.format(maxCostMinor,currency):null,minWeightGrams!=null?'from '+minWeightGrams+' g':null,maxWeightGrams!=null?'up to '+maxWeightGrams+' g':null].filter(Boolean).join(' · ');
+ const name=[carrier?carrier.toUpperCase():'Any carrier',service,maxCostMinor!=null?'up to '+money.format(maxCostMinor,currency):null,maxDeliveryDays!=null?'within '+maxDeliveryDays+' days':null,minWeightGrams!=null?'from '+minWeightGrams+' g':null,maxWeightGrams!=null?'up to '+maxWeightGrams+' g':null].filter(Boolean).join(' · ');
  return {ruleId:newId('shiprule'),name,carrier,service,maxCostMinor,maxDeliveryDays,minWeightGrams,maxWeightGrams,currency,requireByPromised,statedText:String(input.statedText||'').trim().slice(0,2000)||null};
 }
 async function insert(client,ctx,p){const at=nowIso();const row=(await client.query(`INSERT INTO shipping_rules(id,workspace_id,name,carrier,service,max_cost_minor,require_by_promised,max_delivery_days,is_active,stated_text,created_by_user_id,created_at,updated_at,min_weight_grams,max_weight_grams,currency)

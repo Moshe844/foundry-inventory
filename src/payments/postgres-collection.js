@@ -24,8 +24,9 @@ async function accountFor(database,workspaceId,provider='stripe'){
   return row;
 }
 
-function providerContext(account,options={}){
+async function providerContext(account,options={},database=null){
   if(typeof options.accountContext==='function')return options.accountContext(account);
+  if(account.provider==='cardknox')return require('./postgres-cardknox').context(database,account);
   if(account.provider!=='stripe')return {workspaceId:account.workspace_id,providerAccountId:account.provider_account_id};
   const secretKey=process.env.STRIPE_SECRET_KEY;
   if(!secretKey)throw new ValidationError('Stripe collection is not configured on this StockChief installation.');
@@ -67,6 +68,11 @@ async function queueRequest(database,ctx,orderId,input={}){
       WHERE workspace_id=$1 AND provider=$2 FOR UPDATE`,[ctx.workspaceId,providerName])).rows[0];
     if(!account)throw new ValidationError('Connect this inventory’s own payment account before asking a customer to pay online.');
     if(Number(account.charges_enabled)!==1)throw new ValidationError('The connected payment account is not approved to take customer payments yet.');
+    if(providerName==='cardknox'&&!require('./postgres-cardknox').enabled())throw new ValidationError('Sola customer payments have not been activated on this installation.');
+    const other=(await client.query(`SELECT provider FROM payment_requests WHERE workspace_id=$1 AND sales_order_id=$2
+      AND invoice_id IS NOT DISTINCT FROM $3 AND purpose=$4 AND provider<>$5 AND status IN ('PENDING','OPEN','REVIEW') LIMIT 1`,
+      [ctx.workspaceId,orderId,invoice?.id||null,purpose,providerName])).rows[0];
+    if(other)throw new ValidationError('An active payment request already exists with '+other.provider+'. Resolve that request before switching gateways.');
     const prior=(await client.query(`SELECT * FROM payment_requests WHERE workspace_id=$1 AND provider=$2
       AND invoice_id IS NOT DISTINCT FROM $3 AND sales_order_id=$4 AND purpose=$5
       AND status IN ('PENDING','OPEN','REVIEW') ORDER BY created_at DESC,id DESC LIMIT 1 FOR UPDATE`,
@@ -125,7 +131,7 @@ async function executeRequestEffect(database,workspaceId,effectId,options={}){
       {code:'payment_request_not_pending',status:409});
     const account=await accountFor(database,workspaceId,effect.provider);
     const provider=options.provider||providerRegistry.get(effect.provider);
-    const ctx=providerContext(account,options);
+    const ctx=await providerContext(account,options,database);
     const previous=(await database.query(`SELECT external_customer_id FROM payment_requests
       WHERE workspace_id=$1 AND customer_id=$2 AND provider=$3 AND external_customer_id IS NOT NULL
       ORDER BY created_at DESC,id DESC LIMIT 1`,[workspaceId,request.customer_id,effect.provider])).rows[0];
@@ -219,7 +225,7 @@ function parseJson(value,fallback={}){if(value&&typeof value==='object')return v
   try{return JSON.parse(value||JSON.stringify(fallback));}catch{return fallback;}}
 
 async function queueCustomerReturnRefund(database,ctx,customerReturnId,input={}){
-  const providerName=String(input.provider||'stripe').toLowerCase();
+  const requestedProvider=input.provider?String(input.provider).toLowerCase():null;
   return database.transaction(async(client)=>{
     const actor=(await client.query('SELECT id FROM users WHERE workspace_id=$1 AND id=$2',
       [ctx.workspaceId,ctx.actorId])).rows[0];
@@ -243,7 +249,7 @@ async function queueCustomerReturnRefund(database,ctx,customerReturnId,input={})
     const amountMinor=lines.reduce((sum,line)=>sum+(parseJson(line.tracking_evidence).costAllocations||[])
       .reduce((lineSum,allocation)=>lineSum+(allocation.revenueMinor??Number(allocation.quantity)*Number(line.unit_price_minor))+(allocation.taxMinor||0),0),0);
     if(!Number.isSafeInteger(amountMinor)||amountMinor<=0)throw new ValidationError('This return has no verified amount to refund.');
-    const paid=(await client.query(`SELECT request.id AS payment_request_id,request.paid_minor,request.currency,
+    const paid=(await client.query(`SELECT request.id AS payment_request_id,request.paid_minor,request.currency,request.provider,
         event.external_payment_id,
         COALESCE((SELECT SUM(refund.amount_minor) FROM payment_refund_requests refund
           WHERE refund.workspace_id=request.workspace_id AND refund.payment_request_id=request.id
@@ -253,11 +259,14 @@ async function queueCustomerReturnRefund(database,ctx,customerReturnId,input={})
         WHERE event.workspace_id=request.workspace_id AND event.request_id=request.id
           AND event.payment_id IS NOT NULL AND event.external_payment_id IS NOT NULL
         ORDER BY event.processed_at DESC,event.received_at DESC LIMIT 1) event ON true
-      WHERE request.workspace_id=$1 AND request.sales_order_id=$2 AND request.provider=$3
+      WHERE request.workspace_id=$1 AND request.sales_order_id=$2 AND ($3::text IS NULL OR request.provider=$3)
         AND request.paid_minor>0 ORDER BY request.paid_at DESC,request.created_at DESC FOR UPDATE OF request`,
-    [ctx.workspaceId,row.sales_order_id,providerName])).rows.find((candidate)=>
+    [ctx.workspaceId,row.sales_order_id,requestedProvider])).rows.find((candidate)=>
       Number(candidate.paid_minor)-Number(candidate.refunded_minor)>=amountMinor);
-    if(!paid)return {queued:false,replayed:false,noProviderPayment:true,amountMinor};
+    if(!paid){const original=(await client.query('SELECT 1 FROM payment_requests WHERE workspace_id=$1 AND sales_order_id=$2 AND paid_minor>0 LIMIT 1',[ctx.workspaceId,row.sales_order_id])).rows[0];
+      if(original)throw new ValidationError('The original provider payments need review before this refund. A cash refund will not be substituted.');
+      return {queued:false,replayed:false,noProviderPayment:true,amountMinor};}
+    const providerName=paid.provider;
     await accountFor(scopedDatabase(client),ctx.workspaceId,providerName);
     const id=newId('payrefund');const at=nowIso();
     await client.query(`INSERT INTO payment_refund_requests
@@ -287,8 +296,9 @@ async function executeRefundEffect(database,workspaceId,effectId,options={}){
     const account=await accountFor(database,workspaceId,effect.provider);
     const provider=options.provider||providerRegistry.get(effect.provider);
     providerCalled=true;
+    const paymentContext=await providerContext(account,options,database);
     const created=await require('../commercial/operations').run(database,workspaceId,{capability:'payments.customer',key:effect.idempotencyKey,
-      provider:effect.provider,operation:'refund_create'},()=>provider.refundPayment(providerContext(account,options),{
+      provider:effect.provider,operation:'refund_create'},()=>provider.refundPayment(paymentContext,{
       externalPaymentId:refund.external_payment_id,amountMinor:Number(refund.amount_minor),
       idempotencyKey:effect.idempotencyKey}));
     if(!created?.externalRefundId)throw Object.assign(new ValidationError(
@@ -316,7 +326,11 @@ async function executeRefundEffect(database,workspaceId,effectId,options={}){
   }
 }
 
-module.exports={hydrate,get,listForOrder,accountFor,queueRequest,executeRequestEffect,receiveVerifiedEvent,
+async function availableProviders(database,workspaceId){return (await database.query(`SELECT a.provider FROM payment_connect_accounts a
+ LEFT JOIN workspace_connectors c ON c.workspace_id=a.workspace_id AND c.id=a.connector_id
+ WHERE a.workspace_id=$1 AND a.charges_enabled=1 AND (c.status='connected' OR (a.provider='stripe' AND a.connector_id IS NULL)) ORDER BY a.provider`,[workspaceId])).rows
+ .filter(r=>providerRegistry.has(r.provider)&&(r.provider!=='cardknox'||require('./postgres-cardknox').enabled())).map(r=>r.provider);}
+module.exports={hydrate,get,listForOrder,accountFor,queueRequest,executeRequestEffect,receiveVerifiedEvent,availableProviders,
   queueCustomerReturnRefund,executeRefundEffect};
 require('../commercial/enforcement').guardExports(module.exports,0,1,{queueRequest:'payments.customer',
   executeRequestEffect:'payments.customer',queueCustomerReturnRefund:'payments.customer',executeRefundEffect:'payments.customer'});

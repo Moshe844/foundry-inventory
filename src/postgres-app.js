@@ -78,7 +78,9 @@ function createPostgresApp({database,resourceDatabase=database,sessionStore,sess
   app.use(createPostgresCommercialWebhooks(database,commercialOptions?.billingProvider?{
     provider:commercialOptions.billingProvider,providerOptions:commercialOptions.providerOptions||{}}:{}));
   app.use(createPostgresShippingWebhooks(database,shippingOptions || {}));
+  app.use(require('./web/routes/postgres-shipstation-custom').createShipStationCustomRouter(database));
   app.use(createPostgresPaymentWebhooks(database,paymentOptions || {}));
+  app.use(require('./web/routes/postgres-cardknox').createCardknoxPublicRouter(database));
   app.use(createPostgresProviderWebhooks(database,{providers:connectionProviders || undefined,
     publicOrigin:connectionPublicOrigin || (env==='test'?'request':undefined)}));
   app.use(multipart({limit:config.uploads.maxBytes,maxFiles:config.uploads.maxFiles}));

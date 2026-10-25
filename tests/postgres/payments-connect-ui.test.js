@@ -1,4 +1,5 @@
 'use strict';
+process.env.NODE_ENV='test';
 
 const test=require('node:test');
 const assert=require('node:assert/strict');
@@ -25,14 +26,15 @@ test('real Chromium connects each inventory to its own Stripe account without re
     await migratePostgres(database);
     const app=createPostgresApp({database,env:'test',sessionSecret:'postgres-payment-connect-secret',
       paymentOptions:{connect}});
-    app.get('/fixture-stripe-consent',(req,res)=>res.set('Cross-Origin-Opener-Policy','same-origin').send(`<!doctype html><html><body><main>
+    const consentApp=require('express')();consentApp.get('/fixture-stripe-consent',(req,res)=>res.set('Cross-Origin-Opener-Policy','same-origin').send(`<!doctype html><html><body><main>
       <h1>Stripe test authorization</h1><p>Choose Owner Stripe Sandbox.</p>
       <a href="${req.query.redirect_uri}?code=fixture-stripe-code&amp;state=${encodeURIComponent(req.query.state)}">Authorize Stripe account</a>
       </main></body></html>`));
     const server=await new Promise((resolve)=>{const started=app.listen(0,'127.0.0.1',()=>resolve(started));});
-    connect.authorizeEndpoint=`http://localhost:${server.address().port}/fixture-stripe-consent`;
+    const consentServer=await new Promise(resolve=>{const started=consentApp.listen(0,'127.0.0.1',()=>resolve(started));});
+    connect.authorizeEndpoint=`http://localhost:${consentServer.address().port}/fixture-stripe-consent`;
     const browser=await chromium.launch({args:['--disable-popup-blocking']});
-    context.after(async()=>{await browser.close();await new Promise((resolve)=>server.close(resolve));
+    context.after(async()=>{await browser.close();await new Promise(resolve=>consentServer.close(resolve));await new Promise((resolve)=>server.close(resolve));
       await app.locals.sessionStore.close();await database.close();await cluster.stop();
       if(priorClient===undefined)delete process.env.STRIPE_CONNECT_CLIENT_ID;else process.env.STRIPE_CONNECT_CLIENT_ID=priorClient;
       if(priorSecret===undefined)delete process.env.STRIPE_SECRET_KEY;else process.env.STRIPE_SECRET_KEY=priorSecret;});

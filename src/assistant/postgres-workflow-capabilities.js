@@ -126,13 +126,13 @@ async function paymentLink(database,ctx,order,args){
   if(invoice.length!==1)throw new ValidationError(invoice.length?
     'This order has more than one open invoice. Open the order and choose the exact invoice.':
     'This order has no open invoice to collect. Fulfill it first, or review deposit terms on the order.');
-  const account=(await database.query(`SELECT charges_enabled FROM payment_connect_accounts
-    WHERE workspace_id=$1 AND provider='stripe'`,[ctx.workspaceId])).rows[0];
-  if(!account||Number(account.charges_enabled)!==1)throw new ValidationError(
-    'Connect and activate this inventory’s own Stripe payment account before preparing a customer payment link.');
+  const available=await payments.availableProviders(database,ctx.workspaceId),provider=args.paymentProvider|| (available.length===1?available[0]:null);
+  if(!provider||!available.includes(provider))throw new ValidationError(available.length>1?
+    'Choose which connected payment gateway should collect this invoice: '+available.join(', ')+'.':
+    'Connect and activate this inventory’s own payment account before preparing a customer payment link.');
   return prepareResult({salesOrderId:order.id,invoiceId:invoice[0].id,
-    expectedAmountMinor:Number(invoice[0].balance_minor),purpose,provider:'stripe'},
-  `Queue one Stripe payment-link request for ${order.order_number}, invoice ${invoice[0].invoice_number}, `+
+    expectedAmountMinor:Number(invoice[0].balance_minor),purpose,provider},
+  `Queue one ${provider} payment-link request for ${order.order_number}, invoice ${invoice[0].invoice_number}, `+
     `${pricing.formatMinor(Number(invoice[0].balance_minor),invoice[0].currency)}. No customer message or payment is created by approval.`);
 }
 
@@ -928,8 +928,8 @@ const SPECS=Object.freeze([
     capability:'inventory.transfers',build:transferReceipt,
     execute:(client,ctx,p)=>transfers.receiveInTransaction(client,ctx,p.recordId,p),
     verify:(client,ctx,_r,p)=>state(client,ctx,'inventory_transfers',p.recordId,['RECEIVED'])},
-  {name:'customer_payment.link',description:'Prepare a Stripe payment link for the exact open customer invoice balance on an existing order. This queues creation; it does not collect money or email the customer.',
-    record:'sales_order',fields:['recordReference','paymentPurpose'],permission:permissions.RECORD_PAYMENTS,
+  {name:'customer_payment.link',description:'Prepare a payment link using this inventory’s chosen connected gateway for the exact open customer invoice balance. This queues creation; it does not collect money or email the customer.',
+    record:'sales_order',fields:['recordReference','paymentPurpose','paymentProvider'],permission:permissions.RECORD_PAYMENTS,
     capability:'payments.customer',build:paymentLink,
     execute:async(client,ctx,p)=>{const current=(await client.query(`SELECT balance_minor FROM accounting_customer_invoices
       WHERE workspace_id=$1 AND id=$2 FOR UPDATE`,[ctx.workspaceId,p.invoiceId])).rows[0];
@@ -1090,7 +1090,7 @@ const SPECS=Object.freeze([
     execute:async(client,ctx,p)=>{
       if(p.destination==='AR')return returns.refundCustomerReturn(sameClient(client),ctx,p.recordId,
         {destination:'AR',idempotencyKey:p.idempotencyKey});
-      const queued=await payments.queueCustomerReturnRefund(sameClient(client),ctx,p.recordId,{provider:'stripe'});
+      const queued=await payments.queueCustomerReturnRefund(sameClient(client),ctx,p.recordId,{});
       if(queued.noProviderPayment)return returns.refundCustomerReturn(sameClient(client),ctx,p.recordId,
         {destination:'CASH',idempotencyKey:p.idempotencyKey});
       return queued;

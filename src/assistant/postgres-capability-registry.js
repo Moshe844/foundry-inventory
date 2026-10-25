@@ -94,6 +94,7 @@ const FIELDS=Object.freeze({
   rollingDayCost:{type:'number',description:'Maximum postage over any rolling 24 hours, in major units of the explicitly selected currency.'},
   rate:{type:'string',description:'One exact quoted carrier rate ID or carrier and service name.'},
   paymentPurpose:{type:'string',description:'The requested payment-link purpose, such as balance or full.'},
+  paymentProvider:{type:'string',description:'The connected payment gateway chosen by the user. Ask when multiple gateways are available.'},
   returnResolution:{type:'string',description:'One exact customer-return resolution: REFUND (also invoice credit), EXCHANGE, or NO_REFUND.'},
   refundDestination:{type:'string',description:'Exact refund destination: AR to reduce an unpaid invoice, or CASH to return money already paid.'},
   disposition:{type:'string',description:'Physical return disposition: restock, scrap, or repair.'},

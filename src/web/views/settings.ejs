@@ -293,6 +293,12 @@
       <div style="padding:0 16px 16px"><a class="rm-btn rm-btn--ghost rm-btn--sm" href="/billing">Manage plan and billing</a></div>
     </section>
 
+    <% if(locals.aiCost){ var cost=aiCost,usd=function(n){return '$'+(n/100).toFixed(2);}; %>
+    <section class="card section" id="ai-spending"><div class="card-body"><h2>AI spending protection</h2>
+      <p>This inventory: <strong><%= usd(cost.workspaceMinor) %> / <%= usd(cost.workspaceCapMinor) %></strong>. Account total across inventories: <strong><%= usd(cost.accountMinor) %> / <%= usd(cost.accountCapMinor) %></strong>.</p>
+      <p>File interpretation is limited to <%= usd(cost.importRequestCapMinor) %> per AI request. Pending and unverified calls count toward protection. Included-usage limits renew <%= helpers.dateTime(cost.periodEndsAt) %>. Purchased AI packs have their own funding limits.</p>
+      <% if(cost.warning){ %><p role="alert" class="notice notice--warn"><%= cost.blocked?'AI spending protection has paused additional included AI work.':'At least 80% of an AI spending limit has been used.' %> Your saved files and records remain available. Contact support to review the limit; retrying does not raise it.</p><% } %>
+    </div></section><% } %>
     <% if (locals.aiUsage) { var ai = aiUsage; var k = function (n) { return n >= 1000000 ? (n / 1000000).toFixed(1) + 'M' : n >= 1000 ? Math.round(n / 1000) + 'k' : String(n); }; %>
     <%#
       What StockChief's model reads have cost this inventory, from the call

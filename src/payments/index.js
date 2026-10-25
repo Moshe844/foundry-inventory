@@ -10,5 +10,6 @@
 const registry = require('./provider');
 
 registry.register('stripe', require('./providers/stripe'));
+registry.register('cardknox', require('./providers/cardknox'));
 
 module.exports = registry;

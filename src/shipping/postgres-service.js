@@ -97,6 +97,7 @@ function assertParcelEditable(shipment){
     throw new ValidationError('Only an unshipped parcel can be changed or cancelled.');
   if(['PURCHASED','PENDING','REVIEW','VOID_PENDING'].includes(shipment.label_status))
     throw new ValidationError('Resolve or void the saved label before changing or cancelling this parcel.');
+  if(shipment.provider_packages?.some(p=>p.externalLabel===true))throw new ValidationError('This parcel has a label managed in an external shipping account. Resolve that label before changing the parcel.');
 }
 
 async function setPackages(database,ctx,shipmentId,boxes,options={}){
@@ -138,7 +139,7 @@ async function state(database,workspaceId,shipmentId){
   const blocked=[];
   if(shipment.customer_return_id)try{await require('./postgres-return-parcels').assertCurrent(database,workspaceId,shipment);}catch(error){blocked.push(error.message);}
   if(!to.complete)blocked.push(addresses.why(to));
-  if(!from.complete)blocked.push(`The ship-from location is incomplete: ${addresses.why(from)}`);
+  if(!from.complete)blocked.push(`Add an address to ${shipment.location_name||'the dispatch warehouse'} (ship-from). ${addresses.why(from)}`);
   if(!to.phone)blocked.push('The customer needs a shipping phone number. StockChief will not invent one.');
   if(!from.phone)blocked.push('The ship-from location needs a shipping contact phone.');
   if(boxes.some((box)=>!(box.weightGrams>0)))blocked.push('Enter a measured package weight before requesting rates.');
@@ -255,6 +256,7 @@ async function queueLabelPurchase(database,ctx,shipmentId,rateId,input={}){
       throw new ValidationError(prior.rows[0].error_message||'The carrier refused that label purchase. Refresh rates before trying again.');
     }
     if(shipment.label_status==='PURCHASED'&&shipment.label_url)return {queued:false,replayed:true,shipment};
+    if(shipment.provider_packages?.some(p=>p.externalLabel===true))throw new ValidationError('This parcel already has an external label. StockChief will not buy a second label. Manage the existing label in its shipping account.');
     if(['PENDING','REVIEW','VOID_PENDING'].includes(shipment.label_status))throw new ValidationError('A label purchase or void is pending or needs review for this shipment.');
     if((await client.query(`SELECT 1 FROM shipping_label_transactions WHERE workspace_id=$1 AND shipment_id=$2
       AND status IN ('PENDING','REVIEW')`,[ctx.workspaceId,shipmentId])).rows.length)
@@ -680,7 +682,27 @@ async function refreshTracking(database,ctx,shipmentId,options={}){
   return latest;
 }
 
-module.exports={prepare,requireShipment,assertParcelEditable,packagesFor,setPackages,state,quoteFingerprint,ratesFor,quote,queueLabelPurchase,
+async function observeExternalLabel(database,ctx,shipmentId,input){
+ const carrier=String(input.carrier||'').trim(),tracking=String(input.trackingNumber||'').trim(),event=String(input.externalEventId||'').trim();
+ if(!carrier||!tracking||!event||carrier.length>200||tracking.length>240||event.length>240)throw new ValidationError('A carrier, tracking number and stable notification identity are required.');
+ return database.transaction(async client=>{
+  const connection=(await client.query(`SELECT id FROM workspace_connectors WHERE workspace_id=$1 AND id=$2 AND provider_type='shipstation_custom_store' AND status='connected' AND paused_at IS NULL AND authorized_by_user_id=$3`,[ctx.workspaceId,input.connectorId,ctx.actorId])).rows[0];
+  if(!connection)throw new ValidationError('This shipping notification is not authorized for this inventory.');
+  const shipment=await requireShipment(client,ctx.workspaceId,shipmentId,true);
+  if(Number(shipment.package_count)>1)throw new ValidationError('Custom Store tracking needs individual package identities for this multi-package parcel. Use its connected shipping API instead.');
+  if(!['PACKED','SHIPPED','DELIVERED'].includes(shipment.status))throw new ValidationError('The parcel must be packed before accepting an external label.');
+  if(['PENDING','REVIEW','VOID_PENDING'].includes(shipment.label_status))throw new ValidationError('Resolve the pending label purchase before accepting another label.');
+  if(shipment.tracking_number&&shipment.label_status!=='VOIDED'&&shipment.tracking_number!==tracking)throw new ValidationError('This parcel already has different tracking. Review the conflict before changing it.');
+  const prior=(await client.query('SELECT id FROM shipment_tracking_events WHERE workspace_id=$1 AND shipment_id=$2 AND external_event_id=$3',[ctx.workspaceId,shipmentId,event])).rows[0];if(prior)return {replayed:true};
+  const trackingUrl=require('../sales/carriers').trackingUrlFor(carrier,tracking),packages=[{externalId:event,trackingNumber:tracking,status:'PRE_TRANSIT',externalLabel:true,sourceConnectorId:input.connectorId}];
+  await client.query(`UPDATE sales_shipments SET carrier=$3,service=$4,tracking_number=$5,tracking_url=$6,provider='shipstation_custom_store',provider_shipment_id=$7,
+   label_status=CASE WHEN label_status='VOIDED' THEN NULL ELSE label_status END,provider_packages=$8::jsonb,updated_at=$9 WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,shipmentId,carrier,input.service||null,tracking,trackingUrl,event,JSON.stringify(packages),nowIso()]);
+  shipment.provider_packages=packages;shipment.tracking_number=tracking;
+  return applyTrackingInTransaction(client,ctx,shipment,{provider:'shipstation_custom_store',externalEventId:event,trackingNumber:tracking,
+   status:'PRE_TRANSIT',detail:'ShipStation supplied a label and tracking. Physical handoff has not been inferred.'});
+ },{isolation:'SERIALIZABLE',retrySafe:true});
+}
+module.exports={prepare,requireShipment,assertParcelEditable,packagesFor,setPackages,state,quoteFingerprint,ratesFor,quote,queueLabelPurchase,observeExternalLabel,
   executeLabelPurchaseEffect,verifyLabelPurchaseEffect,recoverKnownLabelVerifications,buyLabel,handoff,recordProviderFulfillment,applyTracking,receiveProviderEvent,refreshTracking};
 require('../commercial/enforcement').guardExports(module.exports,0,1,{queueLabelPurchase:'shipping.labels',
-  prepare:'shipping.workflow',setPackages:'shipping.workflow',handoff:'shipping.workflow',applyTracking:'shipping.workflow',recordProviderFulfillment:'connections.commerce'});
+  prepare:'shipping.workflow',setPackages:'shipping.workflow',handoff:'shipping.workflow',applyTracking:'shipping.workflow',observeExternalLabel:'shipping.workflow',recordProviderFulfillment:'connections.commerce'});

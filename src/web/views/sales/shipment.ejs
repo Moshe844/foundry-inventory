@@ -459,7 +459,7 @@
               get fresh ones if this has been sitting.
             </p>
             <div class="button-row" style="margin-top:12px;">
-              <button class="btn btn--primary" type="submit">Buy label</button>
+              <button class="btn btn--primary" type="submit" <%= s.provider_packages?.some(p=>p.externalLabel===true)?'disabled':'' %>>Buy label</button><% if(s.provider_packages?.some(p=>p.externalLabel===true)){ %><p role="status">This parcel already has an externally managed label. Use its tracking and confirm physical handoff here; manage that label in the shipping account.</p><% } %>
             </div>
             <p class="t-xs t-muted" style="margin-top:8px;">
               This buys postage only. The parcel remains packed and every unit stays in inventory

@@ -5,7 +5,9 @@
   <div data-package-rows>
   <% shipping.boxes.forEach(function(box,index){ %>
     <fieldset class="card-body" data-package-row><legend>Package <span data-package-number><%= index+1 %></span></legend><div class="grid grid--2">
-      <% [['weightGrams','Weight (grams)'],['lengthMm','Length (mm)'],['widthMm','Width (mm)'],['heightMm','Height (mm)']].forEach(function(field){ %>
+      <label class="field"><span class="field-label">Measured weight</span><input class="input" data-package-field="weightGrams" aria-label="Measured weight" type="number" min="0.000001" step="any" name="packages[<%= index %>][weightGrams]" value="<%= box.weightGrams||'' %>" required><small>Maximum 1,000 kg per package. Carrier limits also apply.</small></label>
+      <label class="field"><span class="field-label">Weight unit</span><select class="select" data-package-field="weightUnit" aria-label="Weight unit" name="packages[<%= index %>][weightUnit]"><option value="g">grams (g)</option><option value="kg">kilograms (kg)</option><option value="oz">ounces (oz)</option><option value="lb">pounds (lb)</option></select></label>
+      <% [['lengthMm','Length (mm)'],['widthMm','Width (mm)'],['heightMm','Height (mm)']].forEach(function(field){ %>
       <label class="field"><span class="field-label"><%= field[1] %></span><input class="input" data-package-field="<%= field[0] %>" type="number" min="1" max="2147483647" step="1" name="packages[<%= index %>][<%= field[0] %>]" value="<%= box[field[0]]||'' %>" <%= field[0]==='weightGrams'?'required':'' %>></label><% }); %>
     </div><button class="btn btn--ghost btn--sm" type="button" data-remove-package>Remove package</button></fieldset>
   <% }); %>

@@ -1,0 +1,15 @@
+'use strict';
+process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict'),{chromium}=require('playwright');
+test('Sola public payment page protects private credentials, closed links and activation',{timeout:90000},async t=>{
+ const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx}=f,gateway=require('../../src/payments/postgres-cardknox'),payments=require('../../src/payments/postgres-collection');
+ const old=process.env.STOCKCHIEF_CARDKNOX_PAYMENTS_ENABLED;process.env.STOCKCHIEF_CARDKNOX_PAYMENTS_ENABLED='true';t.after(()=>{if(old===undefined)delete process.env.STOCKCHIEF_CARDKNOX_PAYMENTS_ENABLED;else process.env.STOCKCHIEF_CARDKNOX_PAYMENTS_ENABLED=old;});
+ await gateway.connect(db,ctx,{apiKey:'private-browser-fixture-key',ifieldsKey:'public-browser-fixture-key',testMode:'true'},{verify:async()=>{}});
+ const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:'sola-public-page'}),server=await new Promise(r=>{const s=app.listen(0,'127.0.0.1',()=>r(s));}),browser=await chromium.launch();f.cleanup(async()=>{await browser.close();server.closeAllConnections();await new Promise(r=>server.close(r));await app.locals.sessionStore.close();});const origin='http://127.0.0.1:'+server.address().port;
+ const order=await f.workflows.createSalesOrder(db,ctx,{customerId:'fixture-customer',deliveryMethod:'PICKUP',fulfillmentLocationId:f.location.id,idempotencyKey:'public-sola',lines:[{skuId:f.item.skuIds[0],quantity:1,unitPriceMinor:1250}]});await f.workflows.confirmSalesOrder(db,ctx,order.salesOrderId,{idempotencyKey:'public-confirm'});await f.workflows.fulfillSalesOrder(db,ctx,order.salesOrderId,{idempotencyKey:'public-fulfill',lines:[{lineId:order.lineIds[0],locationId:f.location.id,quantity:1}]});
+ const queued=await payments.queueRequest(db,ctx,order.salesOrderId,{provider:'cardknox'});await payments.executeRequestEffect(db,ctx.workspaceId,queued.effectId,{accountContext:async account=>({...await gateway.context(db,account),publicOrigin:origin})});const row=await payments.get(db,ctx.workspaceId,queued.request.id);
+ const page=await browser.newPage();process.env.STOCKCHIEF_CARDKNOX_PAYMENTS_ENABLED='false';const response=await page.goto(row.hostedUrl);assert.equal(response.status(),200);assert.match(await page.locator('main').innerText(),/not enabled yet/);assert.match(await page.locator('main').innerText(),/12.50/);assert.doesNotMatch(await response.text(),/private-browser-fixture-key/);assert.equal(await page.locator('iframe').count(),0);
+ await db.query("UPDATE payment_requests SET status='VOID' WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,row.id]);await page.reload();assert.match(await page.locator('main').innerText(),/payment link is closed/);
+ const rejected=await page.request.post(row.hostedUrl,{headers:{Origin:'https://unrelated.example.test'},form:{formToken:new URL(row.hostedUrl).pathname.split('/').at(-1)}});assert.equal(rejected.status(),401);
+ assert.equal(Number((await db.query('SELECT count(*) n FROM cardknox_payment_attempts WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n),0);
+});

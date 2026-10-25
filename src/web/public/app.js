@@ -1864,3 +1864,6 @@
     initVariantPreview();
   });
 })();
+
+// Brand security-service navigation failures without caching or repeating requests.
+if ('serviceWorker' in navigator && window.isSecureContext) navigator.serviceWorker.register('/edge-error-worker.js', {scope:'/', updateViaCache:'none'}).catch(function() {});

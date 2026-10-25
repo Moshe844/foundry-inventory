@@ -1,0 +1,15 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Secure payment · StockChief</title><link rel="stylesheet" href="/design.css"></head>
+<body><main class="container" style="max-width:560px;margin:40px auto;padding:24px"><a href="/">StockChief</a><h1>Payment to <%= business %></h1><p class="lede"><%= amount %></p>
+<% if(status==='PAID'){ %><div class="notice notice--success" role="status">Payment confirmed. Your receipt has been recorded.</div>
+<% }else if(status==='CLOSED'){ %><div class="notice" role="status">This payment link is closed. Contact the business if a balance is still due.</div>
+<% }else if(status==='APPROVED'){ %><div class="notice" role="status">Sola accepted the payment. StockChief is finishing the receipt. Do not pay again.</div><form method="post"><input type="hidden" name="formToken" value="<%= token %>"><button type="submit">Check receipt</button></form>
+<% }else if(!enabled){ %><div class="notice" role="status">This merchant’s Sola payment page is not enabled yet. Contact the business for another payment method.</div>
+<% }else if(status!=='READY'){ %><div class="notice" role="status"><%= status==='DECLINED'?'The payment was declined. Contact the business to arrange another payment.':'The previous payment is being verified. Do not submit another payment; contact the business if this does not resolve.' %></div>
+<% }else{ %><p>Card details go directly to Sola’s secure fields. StockChief receives single-use payment tokens.</p>
+<form method="post" id="cardknox-payment" data-ifields-key="<%= ifieldsKey %>"><input type="hidden" name="formToken" value="<%= token %>">
+<label>Card number<iframe title="Secure card number" data-ifields-id="card-number" src="https://cdn.cardknox.com/ifields/3.5.2607.1401/ifield.htm" style="display:block;width:100%;height:45px;border:1px solid #aaa"></iframe></label><input data-ifields-id="card-number-token" name="cardToken" type="hidden">
+<label>Security code<iframe title="Secure card security code" data-ifields-id="cvv" src="https://cdn.cardknox.com/ifields/3.5.2607.1401/ifield.htm" style="display:block;width:100%;height:45px;border:1px solid #aaa"></iframe></label><input data-ifields-id="cvv-token" name="cvvToken" type="hidden">
+<label>Expiry (MMYY)<input name="expiry" inputmode="numeric" autocomplete="cc-exp" pattern="[0-9]{4}" maxlength="4" required></label>
+<p data-ifields-id="card-data-error" role="alert"></p><p id="payment-status" role="status"></p><button type="submit">Pay <%= amount %></button></form>
+<script src="https://cdn.cardknox.com/ifields/3.5.2607.1401/ifields.min.js"></script><script src="/cardknox-payment.js" defer></script><% } %>
+<p><small>Powered by StockChief · Sola / Cardknox</small></p></main></body></html>

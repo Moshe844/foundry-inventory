@@ -420,10 +420,10 @@
         <a class="btn btn--primary" href="<%= providerRequest.hostedUrl %>" target="_blank" rel="noopener noreferrer">Open secure page</a>
       <% } else if (providerRequest && providerRequest.status === 'PAID') { %>
         <div class="notice notice--success"><strong>Payment confirmed.</strong> StockChief recorded the signed provider result once.</div>
-      <% } else if ((money.dueNowMinor > 0 || money.outstandingMinor > 0) && !['CANCELLED'].includes(order.status)) { %>
+      <% } else if ((money.dueNowMinor > 0 || money.outstandingMinor > 0) && !['CANCELLED'].includes(order.status) && (locals.paymentProviders||[]).length) { %>
         <form method="post" action="/orders/<%= order.id %>/payment-requests" class="inline-form" data-busy>
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-          <input type="hidden" name="provider" value="stripe">
+          <label>Payment gateway<select name="provider" required><% (locals.paymentProviders||[]).forEach(function(provider){ %><option value="<%= provider %>"><%= provider==='cardknox'?'Sola / Cardknox':provider==='stripe'?'Stripe':provider %></option><% }); %></select></label>
           <input type="hidden" name="purpose" value="<%= providerPurpose %>">
           <input type="hidden" name="idempotencyKey" value="<%= paymentRequestFormKey %>-<%= providerPurpose.toLowerCase() %>">
           <button class="btn btn--primary" type="submit"><%= providerPurpose === 'DEPOSIT' ? 'Prepare secure deposit link' : 'Prepare secure payment link' %></button>
@@ -960,7 +960,7 @@
      * A column earns its place by having something in it.
      */
     var showCommitted = order.lines.some(function (line) { return Number(line.allocated) > 0; });
-    var showShort = order.lines.some(function (line) { return Number(line.backordered) > 0; });
+    var showShort = order.status !== 'DRAFT' && order.lines.some(function (line) { return Number(line.backordered) > 0; });
     var showShipped = order.lines.some(function (line) { return Number(line.quantity_fulfilled) > 0; });
     var showHeldAt = order.lines.some(function (line) { return line.allocations.length > 0; });
   %>

@@ -1,6 +1,17 @@
 'use strict';
 const {ValidationError}=require('../domain/errors');
 const MAX_PACKAGES=100;
+const MAX_WEIGHT_GRAMS=1000000;
+function weight(box,label){
+ const measured=box.weight??(box.weightUnit?box.weightGrams:undefined);
+ if(measured==null||measured===''){
+  const grams=positive(box.weightGrams,label);if(grams>MAX_WEIGHT_GRAMS)throw new ValidationError(label+' exceeds 1,000 kg per package.');return grams;
+ }
+ const unit=String(box.weightUnit||'g').toLowerCase(),factor={g:1,kg:1000,oz:28.349523125,lb:453.59237}[unit];
+ if(!factor)throw new ValidationError('Choose g, kg, oz or lb for package weight.');
+ const raw=String(measured).trim();if(!/^\d+(?:\.\d{1,6})?$/.test(raw)||Number(raw)<=0)throw new ValidationError(label+' must be a positive weight, with at most six decimal places.');
+ const grams=Math.ceil(Number(raw)*factor-1e-9);if(grams>MAX_WEIGHT_GRAMS)throw new ValidationError(label+' exceeds 1,000 kg per package.');return grams;
+}
 function format(value,downloadUrl){let inferred;try{inferred=new URL(downloadUrl).pathname.split('.').at(-1);}catch{}
  const name=String(value||inferred||'PDF').toUpperCase();
  if(['PDF','PDF_4X6','PDF_4X8','PDF_A4','PDF_A6','APPLICATION/PDF'].includes(name))return 'PDF';
@@ -11,7 +22,7 @@ function positive(value,label){const n=Number(value);if(!Number.isSafeInteger(n)
 function boxes(input){
  if(!Array.isArray(input)||input.length<1||input.length>MAX_PACKAGES)throw new ValidationError('A shipment needs 1 to '+MAX_PACKAGES+' packages.');
  const rows=input.map((box,i)=>{if(!box||typeof box!=='object')throw new ValidationError('Package '+(i+1)+' is not readable.');
-  const result={weightGrams:positive(box.weightGrams,'Package '+(i+1)+' weight')};
+  const result={weightGrams:weight(box,'Package '+(i+1)+' weight')};
   for(const key of ['lengthMm','widthMm','heightMm'])result[key]=box[key]==null||box[key]===''?null:positive(box[key],'Package '+(i+1)+' dimension');
   if(Object.values(result).slice(1).filter(v=>v!==null).length%3!==0)throw new ValidationError('Package '+(i+1)+' needs all three measured dimensions, or none.');
   return result;});
@@ -38,4 +49,4 @@ function documents(receipt){
  for(const url of receipt.customsUrls||[])add(url,'CUSTOMS','PDF');
  return documents;
 }
-module.exports={boxes,options,documents,format,MAX_PACKAGES};
+module.exports={boxes,options,documents,format,MAX_PACKAGES,MAX_WEIGHT_GRAMS,weight};

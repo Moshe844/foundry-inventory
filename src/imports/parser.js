@@ -19,8 +19,8 @@ const config = require('../config');
 const LIMITS = {
   // This is a safety ceiling, not a product tier. A 250k-SKU source must not
   // be silently truncated. Request bytes remain bounded independently.
-  maxRows: 1000000,
-  maxColumns: 512,
+  maxRows: require('./xlsx-reader').LIMITS.maxRows,
+  maxColumns: require('./xlsx-reader').LIMITS.maxColumns,
   maxBytes: config.uploads.maxBytes,
 };
 

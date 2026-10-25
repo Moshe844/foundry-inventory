@@ -42,7 +42,7 @@ async function shipmentPage(database,workspaceId,shipmentId){
   const units=lineRows.rows.reduce((sum,line)=>sum+Number(line.quantity),0);
   const s={...state.shipment,units,ship_from_location_name:state.shipment.location_name,
     carrierName:state.shipment.carrier?carriers.displayName(state.shipment.carrier):null,
-    trackingUrl:state.shipment.tracking_url,label_status:state.shipment.label_status||null};
+    tracking_url:state.shipment.tracking_url||carriers.trackingUrlFor(state.shipment.carrier,state.shipment.tracking_number),trackingUrl:state.shipment.tracking_url||carriers.trackingUrlFor(state.shipment.carrier,state.shipment.tracking_number),label_status:state.shipment.label_status||null};
   const paid=orderDetail.invoices.reduce((sum,invoice)=>sum+Number(invoice.paid_minor),0);
   const remaining=orderDetail.invoices.length
     ?orderDetail.invoices.reduce((sum,invoice)=>sum+Number(invoice.balance_minor),0)
@@ -54,7 +54,7 @@ async function shipmentPage(database,workspaceId,shipmentId){
     terms:terms||{source:'nothing agreed'},blocksShipping,heldReason:{ship:blocksShipping?'The agreed balance is still outstanding.':null}};
   const blocked=state.blocked.map((what)=>{const lower=what.toLowerCase();const key=lower.includes('weight')?'weight':
     lower.includes('postage account')?'account':lower.includes('ship-from')?'origin':lower.includes('phone')?'phone':'destination';
-    return {key,what,href:key==='account'?'/settings/shipping':key==='origin'?'/locations':'/orders/'+s.sales_order_id};});
+    return {key,what,href:key==='account'?'/settings/shipping':key==='origin'?'/locations?edit='+encodeURIComponent(state.shipment.location_id):'/orders/'+s.sales_order_id};});
   const rates=state.rates.map((rate)=>({...rate,carrierName:carriers.displayName(rate.carrier),
     deliveryDate:rate.delivery_date,quotedAt:rate.quoted_at,guaranteed:rate.guaranteed}));
   const mode=policyRows.rows[0]?.mode||'RECOMMEND';
@@ -81,6 +81,14 @@ async function shipmentPage(database,workspaceId,shipmentId){
 function createPostgresShippingRouter(database,options={}){
   const router=express.Router();
   router.use(['/settings/shipping','/fulfilment','/returns'],requireAuth);
+  router.post('/settings/shipping/shipstation-custom',requireOwner,asyncRoute(async(req,res)=>{
+    const setup=await require('../../shipping/shipstation-custom-store').setup(database,req.ctx);
+    res.set('Cache-Control','no-store');return res.page('shipping/custom-store',{title:'Connect ShipStation Custom Store',nav:'settings',room:true,
+      setup,endpoint:`${res.locals.origin}/api/v1/shipping/shipstation-custom/${setup.connectorId}`});
+  }));
+  router.post('/settings/shipping/shipstation-custom/disconnect',requireOwner,asyncRoute(async(req,res)=>{
+    await require('../../shipping/shipstation-custom-store').disconnect(database,req.ctx,req.body.connectorId);req.flash('success','ShipStation Custom Store disconnected. Tracking history remains.');return res.redirect(303,'/settings/shipping');
+  }));
   router.get('/fulfilment/batches/new',requireOwner,asyncRoute(async(req,res)=>{
     const currency=(await database.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId])).rows[0]?.base_currency||'USD';
     return res.page('shipping/batch-new',{title:'Buy labels together',nav:'fulfilment',room:true,candidates:await require('../../shipping/postgres-batches').candidates(database,req.ctx.workspaceId),currency,requestKey:newId('batch-request')});
@@ -121,7 +129,7 @@ function createPostgresShippingRouter(database,options={}){
       requireByPromised:Boolean(Number(row.require_by_promised)),maxDeliveryDays:row.max_delivery_days===null?null:Number(row.max_delivery_days),
       active:Boolean(Number(row.is_active)),statedText:row.stated_text}));
     return res.page('shipping/postgres-settings',{title:'Shipping settings',nav:'settings',room:true,backTo:{href:'/settings',label:'Settings'},
-      account,shippingAccounts:shippingAccounts.map(a=>({...a,webhookSetup:setupRows.rows.find(row=>row.connector_id===a.connectorId)||null,webhookUrl:`${res.locals.origin}/webhooks/shipping/${a.provider}/${req.ctx.workspaceId}`})),rules,
+      account,selectedProvider:accounts.PROVIDERS.includes(req.query.provider)?req.query.provider:'easypost',shippingAccounts:shippingAccounts.map(a=>({...a,webhookSetup:setupRows.rows.find(row=>row.connector_id===a.connectorId)||null,webhookUrl:`${res.locals.origin}/webhooks/shipping/${a.provider}/${req.ctx.workspaceId}`})),rules,
       purchaseLimits:await require('../../shipping/postgres-purchase-policy').get(database,req.ctx.workspaceId),fromMinor:require('../../domain/currency').fromMinor,currency:(await database.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId])).rows[0]?.base_currency||'USD',
       automaticShippingAvailable:false,operationPolicy:{mode:policyRows.rows[0]?.mode||'RECOMMEND'},
       referral:{available:false,opened:false,billingReady:false},shipengine:{available:false,opened:false,billingReady:false},
@@ -153,6 +161,8 @@ function createPostgresShippingRouter(database,options={}){
     return res.redirect(303,'/settings/shipping#handling');
   }));
   router.post('/settings/shipping/account',requireOwner,asyncRoute(async(req,res)=>{
+    const chosen=accounts.PROVIDERS.includes(req.body.provider)?req.body.provider:'easypost';
+    try{
     const verify=options.verifyAccount||legacyAccounts.verifyInput;
     const provider=accounts.requireProvider(req.body.provider),apiKey=requireText(req.body.apiKey,'API key',{max:400});
     await require('../../commercial/operations').run(database,req.ctx.workspaceId,{capability:'shipping.rates',
@@ -161,15 +171,15 @@ function createPostgresShippingRouter(database,options={}){
       catch(error){
         // Provider responses can echo credentials. Never copy their body or
         // exception into the page, commercial ledger, job history or logs.
-        throw new ValidationError('The '+provider+' account could not be verified'+
-          (Number.isInteger(Number(error.status))?' (HTTP '+Number(error.status)+')':'')+
-          '. Check that the key is active and belongs to the selected platform.');
+        throw new ValidationError('This shipping account could not be verified. Check that the key is active and belongs to the selected platform and test/live environment.');
       }
     });
     const account=await accounts.connect(database,req.ctx,{...req.body,provider,apiKey});
     req.flash('success',account.testMode?'Sandbox postage account connected. No real postage can be charged.':
       'This inventory’s own postage account is connected.');
     return res.redirect(303,'/settings/shipping');
+    }catch(error){req.flash('error',error.limitKind?'Shipping verification is paused by your usage limit. Review usage in Settings.':
+      'This shipping account could not be verified. Check the API key, selected provider and test/live environment, then try again.');return res.redirect(303,'/settings/shipping?provider='+encodeURIComponent(chosen)+'#account');}
   }));
   router.post('/settings/shipping/account/disconnect',requireOwner,asyncRoute(async(req,res)=>{
     await accounts.disconnect(database,req.ctx,{connectorId:req.body.connectorId});

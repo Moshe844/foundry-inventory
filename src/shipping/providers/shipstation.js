@@ -44,7 +44,7 @@ async function call(ctx, path, options = {}) {
       || `ShipStation returned ${response.status}.`;
     const ErrorType = response.status === 401 || response.status === 403
       ? AuthenticationError : ValidationError;
-    const error = new ErrorType(typeof message === 'string' ? message : JSON.stringify(message));
+    const error = new ErrorType(require('../public-error').message(response.status, typeof message === 'string' ? message : JSON.stringify(message), 'ShipStation'));
     error.status = response.status;
     throw error;
   }

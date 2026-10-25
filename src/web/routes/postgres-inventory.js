@@ -69,8 +69,7 @@ function createPostgresInventoryRouter(database) {
   router.post('/inventory/bulk',requireOwner,asyncRoute(async(req,res)=>{
     const bulk=require('../../domain/postgres-catalog-bulk'),items=await bulk.selected(database,req.ctx,values(req.body.itemIds));
     if(req.body.kind==='export'){
-      const result=await require('../../operations/postgres-export').workbook(database,req.ctx.workspaceId,{itemIds:items.map(i=>i.id)});
-      res.set('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');res.set('Content-Disposition','attachment; filename="stockchief-selected-products.xlsx"');return res.send(result.buffer);
+      return require('../../operations/postgres-export-stream').download(database,req.ctx.workspaceId,res,{itemIds:items.map(i=>i.id)});
     }
     if(req.body.kind==='price')return res.page('inventory/bulk-price',{title:'Change selected selling prices',nav:'inventory',items});
     if(req.body.kind==='move')return res.redirect(303,'/transfers/new?'+new URLSearchParams(items.map(i=>['itemIds',i.id])));

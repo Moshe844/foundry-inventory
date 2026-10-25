@@ -1,6 +1,6 @@
 'use strict';
 const XLSX=require('xlsx'),sourceDetails=require('../domain/postgres-catalog-facts');
-const tables=[['Imported source details','catalog_source_facts'],['Products','items'],['SKUs and variants','skus'],['Stock by location','balances'],['Locations','locations'],['Stock movements','movements'],['Suppliers','suppliers'],['Supplier products','supplier_items'],['Purchase orders','purchase_orders'],['Purchase lines','purchase_order_lines'],['Customers','customers'],['Sales orders','sales_orders'],['Sales lines','sales_order_lines'],['Reservations','sales_order_allocations'],['Shipments','sales_shipments'],['Accounts','accounting_accounts'],['Journal entries','accounting_journal_entries'],['Journal lines','accounting_journal_lines'],['Supplier bills','accounting_supplier_bills'],['Customer invoices','accounting_customer_invoices'],['Payments','accounting_payments']];
+const tables=require('./postgres-export-tables');
 async function workbook(database,workspaceId,{itemIds=null}={}){
  const source=await database.transaction(async client=>{
   const workspace=(await client.query('SELECT name FROM workspaces WHERE id=$1',[workspaceId])).rows[0];
@@ -31,4 +31,4 @@ async function workbook(database,workspaceId,{itemIds=null}={}){
  book.SheetNames=['Read me',...book.SheetNames.filter(n=>n!=='Read me')];
  return {name:source.name,buffer:XLSX.write(book,{type:'buffer',bookType:'xlsx',compression:true}),counts:Object.fromEntries(source.sheets.map(s=>[s.name,s.rows.length]))};
 }
-module.exports={workbook};
+module.exports={workbook,tables};

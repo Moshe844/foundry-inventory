@@ -38,7 +38,7 @@ test('Connections browser shows the full provider directory without enabling exc
       reference:'OPENING',idempotencyKey:'visible-connections-opening'});
     await page.goto(base);
     assert.match(await page.locator('.sc-home__inventory-line').innerText(),
-      /1 product · 8 units on hand · 8 available for orders/);
+      /1 product · 8 units on hand · 8 not reserved/);
     await page.getByRole('button',{name:'More'}).click();
     const directory=page.getByRole('navigation',{name:'More destinations'});
     await directory.getByRole('heading',{name:'Connections'}).waitFor();

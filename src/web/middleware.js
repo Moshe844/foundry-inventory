@@ -44,7 +44,7 @@ function flash(req, res, next) {
   req.flash = (type, message) => {
     if (!req.session) return;
     req.session.flash = req.session.flash || [];
-    req.session.flash.push({ type, message });
+    req.session.flash.push({ type, message, id:crypto.randomBytes(12).toString('hex') });
   };
   const messages = (req.session && req.session.flash) || [];
   res.locals.flash = messages;
@@ -527,6 +527,7 @@ const asyncRoute = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next
 function errorHandler(isProduction) {
   // eslint-disable-next-line no-unused-vars
   return (err, req, res, next) => {
+    if(res.headersSent)return next(err);
     // Body parsers and reverse-proxy guards fail before a domain service can
     // construct a DomainError. Their explicit 4xx status still means the
     // request was refused safely; reporting it as our 500 and raising an
@@ -564,6 +565,11 @@ function errorHandler(isProduction) {
       if (req.method === 'POST' && req.session) {
         req.flash('error', message);
         const back = req.get('referer') || '/';
+        if(typeof req.session.save==='function')return req.session.save((saveError)=>{
+          if(saveError){res.status(503);return res.page?res.page('error',{title:'Please try again',status:503,
+            message:'Your session could not be saved. Keep your original form open and try again shortly.',detail:null}):res.send('Your session could not be saved. Please try again shortly.');}
+          return res.redirect(303,back);
+        });
         return res.redirect(303, back);
       }
       res.status(status);

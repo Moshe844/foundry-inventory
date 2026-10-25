@@ -169,9 +169,9 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
    [scope.accountId,bounds.start.toISOString(),scope.workspaceId])).rows[0];
   const baseMaximum=sources.filter(row=>row.source==='INCLUDED').reduce((sum,row)=>sum+row.maximumMinor,0);
   if(Number(current.account_exposure)+baseMaximum>accountCap)
-   throw Object.assign(new RateLimitError('This inventory reached its billing-period model-cost safety ceiling. No model call was made.'),{limitKind:'account_period_cost'});
+   throw Object.assign(new RateLimitError('AI spending protection has paused included file reading and Ask work for this billing period. Review AI spending in Settings. Your saved file and records remain available; no model call was made.'),{limitKind:'account_period_cost'});
   if(Number(current.workspace_exposure)+baseMaximum>workspaceCap)
-   throw Object.assign(new RateLimitError('This inventory reached its billing-period model-cost safety ceiling. No model call was made.'),{limitKind:'workspace_period_cost'});
+   throw Object.assign(new RateLimitError('AI spending protection has paused included file reading and Ask work for this billing period. Review AI spending in Settings. Your saved file and records remain available; no model call was made.'),{limitKind:'workspace_period_cost'});
   for(const source of sources.filter(row=>row.source==='PURCHASED')){
    const exposure=(await client.query(`SELECT COALESCE(SUM(CASE WHEN h.status IN ('RESERVED','UNKNOWN') THEN a.maximum_minor
      WHEN h.status='SETTLED' THEN a.actual_minor ELSE 0 END),0) AS amount
@@ -254,4 +254,18 @@ async function settle(database,scope,idempotencyKey,{failed=false}={}){
  }
  return {known,actualMinor:actual,maximumMinor:Number(row.maximum_minor)};
 }
-module.exports={reserve,reserveNative,release,settle,estimateMaximumMinor,promptByteAllowance,nativeInputTokenAllowance,operationLimit,periodLimit,DEFAULTS};
+async function status(database,workspaceId){
+ const owner=(await database.query('SELECT owner_account_id FROM workspaces WHERE id=$1',[workspaceId])).rows[0];
+ if(!owner)return null;
+ const subscription=await entitlements.subscriptionFor(database,owner.owner_account_id),bounds=entitlements.periodBounds(subscription);
+ const cap=periodLimit(subscription?.plan_id||'starter')*100,workspaceCap=configuredUsd('STOCKCHIEF_AI_WORKSPACE_PERIOD_COST_CAP_USD',cap/100)*100;
+ const row=(await database.query(`SELECT coalesce(sum(CASE WHEN h.status IN ('RESERVED','UNKNOWN') THEN a.maximum_minor WHEN h.status='SETTLED' THEN a.actual_minor ELSE 0 END),0) AS account,
+ coalesce(sum(CASE WHEN h.workspace_id=$3 THEN CASE WHEN h.status IN ('RESERVED','UNKNOWN') THEN a.maximum_minor WHEN h.status='SETTLED' THEN a.actual_minor ELSE 0 END ELSE 0 END),0) AS workspace
+ FROM commercial_model_cost_hold_allocations a JOIN commercial_model_cost_holds h ON h.id=a.hold_id
+ WHERE h.account_id=$1 AND h.period_start=$2 AND a.source='INCLUDED'`,[owner.owner_account_id,bounds.start.toISOString(),workspaceId])).rows[0];
+ const usage={accountMinor:Number(row.account),workspaceMinor:Number(row.workspace),accountCapMinor:cap,workspaceCapMinor:workspaceCap,
+  importRequestCapMinor:operationLimit('import_mapping')*100,periodEndsAt:bounds.end.toISOString()};
+ return {...usage,warning:usage.accountMinor>=cap*.8||usage.workspaceMinor>=workspaceCap*.8,
+  blocked:usage.accountMinor>=cap||usage.workspaceMinor>=workspaceCap};
+}
+module.exports={reserve,reserveNative,release,settle,estimateMaximumMinor,promptByteAllowance,nativeInputTokenAllowance,operationLimit,periodLimit,DEFAULTS,status};

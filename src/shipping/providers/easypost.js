@@ -35,7 +35,7 @@ async function call(ctx, path, options = {}) {
   try { body = text ? JSON.parse(text) : null; } catch { body = null; }
   if (!response.ok) {
     const message = body?.error?.message || body?.error || `EasyPost returned ${response.status}.`;
-    const error = new ValidationError(typeof message === 'string' ? message : JSON.stringify(message));
+    const error = new ValidationError(require('../public-error').message(response.status, typeof message === 'string' ? message : JSON.stringify(message), 'EasyPost'));
     error.status = response.status;
     throw error;
   }

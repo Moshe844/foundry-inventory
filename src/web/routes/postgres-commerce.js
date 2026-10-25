@@ -197,7 +197,8 @@ async function salesOrderPage(database,workspaceId,id){
     journal_entry_id:latestAccounting.id,status:latestAccounting.status,outcome:accountingTotals}:{status:'DISABLED',outcome:{}};
   const fulfilmentState=totals.fulfilled===totals.ordered?'Shipped':shipments.some((shipment)=>['PICKING','PACKED'].includes(shipment.status))
     ?'Being prepared':totals.allocated?'Ready to pick':totals.backordered?'Waiting for stock':'Not started';
-  return {detail,order,shipments,pickable,money,accounting,paymentAccount,
+  const paymentProviders=await payments.availableProviders(database,workspaceId);
+  return {detail,order,shipments,pickable,money,accounting,paymentAccount:{...paymentAccount,connected:paymentAccount.connected||paymentProviders.length>0},paymentProviders,
     fulfilment:{state:fulfilmentState,label:fulfilmentState,detail:shipments.length?`${shipments.length} shipment${shipments.length===1?'':'s'}`:null},
     customerNotices:communications.rows.map((notice)=>({...notice,shipmentId:notice.shipment_id,
       messageKind:notice.message_kind,status:notice.status,sentAt:notice.sent_at})),
@@ -903,7 +904,7 @@ function createPostgresCommerceRouter(database,options={}){
       accounting:page.accounting,money:page.money,orderNext:null,openSection:['fulfilment','money'].includes(req.query.open)?req.query.open:null,
       shipments:page.shipments,pickable:page.order.delivery_method==='PICKUP'?[]:page.pickable,fulfilment:page.fulfilment,customerNotices:page.customerNotices,
       customerReceipts:page.customerReceipts,paymentRequests:page.paymentRequests,paymentCompleted:req.query.payment==='paid',
-      openPaymentUrl:null,paymentProviders:['stripe'],paymentAccount:page.paymentAccount,
+      openPaymentUrl:null,paymentProviders:page.paymentProviders,paymentAccount:page.paymentAccount,
       canManagePaymentAccount:req.user?.role==='owner',canSetAllocation:permissions.can(req.user,permissions.OPERATE),
       customers:page.customers,skus:page.skus,carriers:[],returns:returnRows,locations:locationRows,today:dateToday(req),
       returnFormKey:newId('return-form'),paymentRequestFormKey:newId('payment-request-form')});
@@ -981,7 +982,7 @@ function createPostgresCommerceRouter(database,options={}){
     asyncRoute(async(req,res)=>{
       let result;
       if(req.body.destination==='CASH'){
-        const queued=await payments.queueCustomerReturnRefund(database,req.ctx,req.params.id,{provider:'stripe'});
+        const queued=await payments.queueCustomerReturnRefund(database,req.ctx,req.params.id,{});
         if(queued.noProviderPayment)result=await returns.refundCustomerReturn(database,req.ctx,req.params.id,
           {destination:'CASH',refundDate:req.body.refundDate||dateToday(req),idempotencyKey:key(req,'customer-return-refund')});
         else {req.flash('success',queued.replayed

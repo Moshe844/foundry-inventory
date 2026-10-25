@@ -22,6 +22,7 @@
       <span>Drop your file here, or <strong>browse files</strong></span>
       <input type="file" name="<%= locals.importFieldName || 'files' %>" aria-label="Inventory spreadsheets, documents and images" accept="<%= locals.importAction==='/imports'?helpers.importSourceFormats.accept:'.csv,.tsv,.txt,.xlsx' %>" <%= locals.importMultiple === false ? '' : 'multiple' %> data-migration-files>
     </label>
+    <% if(locals.importAction==='/imports'){ %><p class="rm-note"><%= helpers.importSourceFormats.description %> Maximum upload <%= Math.floor(helpers.importSourceFormats.maxBytes/1048576) %> MB.</p><% } %>
     <div data-migration-selection hidden aria-live="polite"></div>
     <div data-migration-progress hidden aria-live="polite">
       <strong data-migration-progress-title>Uploading…</strong><span data-migration-progress-detail></span>

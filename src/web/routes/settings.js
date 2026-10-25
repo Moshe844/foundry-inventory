@@ -180,7 +180,7 @@ router.get('/everything', requireAuth, asyncRoute(async (req, res) => res.page('
         { href: '/settings', label: 'Settings, people and plan' },
         { href: '/foundry', label: 'How this inventory is configured' },
         { href: '/inventories', label: 'Your other inventories' },
-        { href: '/settings/export', label: 'Export everything' },
+        { href: '/settings/export', label: 'Export this inventory' },
         { href: '/guide', label: 'How to use StockChief' },
         { href: '/support', label: 'Support' },
       ],

@@ -98,8 +98,6 @@ function createPostgresAuthRouter(database,options={}) {
     try {
       matchingPasswords(req.body);
       const paidRequired=config.commercial.requirePaidWorkspace;
-      if(paidRequired&&!await checkoutAvailable())
-        throw new ValidationError('New paid signups are not open yet. No payment or inventory has been activated.');
       if(paidRequired)require('../../commercial/launch-interval').assertMonthly(req.body.interval);
       const requestedPlanId=String(req.body.planId||'').trim();
       if(paidRequired&&requestedPlanId)await commercial.getSelfServicePlan(database,requestedPlanId);

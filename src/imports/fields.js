@@ -172,6 +172,13 @@ const PATTERNS = {
 PATTERNS.variant2 = PATTERNS.variant1;
 PATTERNS.variant3 = PATTERNS.variant1;
 
+// Language aliases describe fields, never a particular document or customer.
+const LANGUAGE_HEADERS={code:['מק ט','מקט','קוד מוצר','קוד פריט','reference article','code article'],
+ name:['שם מוצר','שם המוצר','שם פריט','nom du produit','designation','article'],
+ quantity:['כמות','כמות במלאי','מלאי','qte','quantite'],sellingPrice:['מחיר','מחיר מכירה','prix','prix de vente'],
+ unitCost:['עלות','עלות ליחידה','prix d achat','cout unitaire'],location:['מחסן','מיקום','entrepot','emplacement'],
+ unitLabel:['יחידת מידה','unite'],reorderPoint:['נקודת הזמנה','מלאי מינימום','seuil de reapprovisionnement']};
+
 /**
  * Columns StockChief understands but does not import.
  *
@@ -226,8 +233,9 @@ const IGNORED_PATTERNS = [
 const normalise = (text) =>
   String(text || '')
     .toLowerCase()
+    .normalize('NFKD').replace(/\p{M}/gu,'')
     .replace(/[_\-.]+/g, ' ')
-    .replace(/[^a-z0-9/#\s]/g, ' ')
+    .replace(/[^\p{L}\p{N}/#\s]/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 
@@ -245,6 +253,8 @@ function score(header, pattern) {
 function bestFieldScores(header) {
   const clean = normalise(header);
   if (!clean) return [];
+  const alias=Object.entries(LANGUAGE_HEADERS).find(([,names])=>names.includes(clean));
+  if(alias)return [{field:alias[0],score:1,rank:0,weak:false}];
   const scores = [];
   for (const field of FIELD_IDS) {
     const patterns = PATTERNS[field];

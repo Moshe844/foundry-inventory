@@ -423,6 +423,12 @@ async function inspectCustomerReturn(database, rawContext, id, input) {
           await costing.commitIssueInTransaction(client, ctx, prepared, { journalEntryId,
             sourceType: 'customer_return_scrap', sourceRecordId: id });
           movementIds.push(physical.movementId);
+        } else if(chunk.destinationLocationId===row.quarantine_location_id) {
+          // Physical receipt already restored these exact units and their cost.
+          // Inspection can release them in place; moving them again would duplicate stock.
+          const active=(await client.query('SELECT id FROM locations WHERE workspace_id=$1 AND id=$2 AND is_active=1',
+            [ctx.workspaceId,chunk.destinationLocationId])).rows[0];
+          if(!active)throw new ValidationError('Choose an active disposition location.');
         } else {
           const physical = await inventory.transferInTransaction(client, ctx, { skuId: line.sku_id,
             sourceLocationId: row.quarantine_location_id, destinationLocationId: chunk.destinationLocationId,

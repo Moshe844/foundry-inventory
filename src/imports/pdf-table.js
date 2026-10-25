@@ -47,12 +47,24 @@ async function ocrRows(page,worker){
 function groupRows(items){
   const rows=[];
   for(const item of items.sort((left,right)=>right.y-left.y||left.x-right.x)){
-    let row=rows.find((entry)=>Math.abs(entry.y-item.y)<=3);
-    if(!row){row={y:item.y,cells:[]};rows.push(row);}
+    let row=rows.at(-1);
+    const tolerance=Math.max(3,Math.min(Number(item.height)||0,Number(row?.height)||0)*.55);
+    if(!row||Math.abs(row.y-item.y)>tolerance){row={y:item.y,height:item.height,cells:[]};rows.push(row);}
     row.cells.push(item);
   }
-  return rows.sort((left,right)=>right.y-left.y).map((row)=>({y:row.y,
-    cells:row.cells.sort((a,b)=>a.x-b.x)}));
+  return rows.sort((left,right)=>right.y-left.y).map(row=>{
+    const cells=[];
+    for(const item of row.cells.sort((a,b)=>a.x-b.x)){
+      const prior=cells.at(-1),rtl=item.dir==='rtl',gap=prior?item.x-(prior.x+(prior.width||0)):Infinity;
+      // Join adjacent RTL word runs, using their measured gutter rather than
+      // reversing characters or guessing words from their spelling.
+      if(rtl&&prior?.dir==='rtl'&&Number.isFinite(item.width)&&Number.isFinite(prior.width)
+        &&gap>=-1&&gap<=Math.max(2,Math.min(item.height||0,prior.height||0)*.9)){
+        prior.text=item.text+' '+prior.text;prior.width=item.x+item.width-prior.x;
+      }else cells.push({...item});
+    }
+    return {y:row.y,cells:cells.map(item=>({...item,x:item.dir==='rtl'&&Number.isFinite(item.width)?item.x+item.width:item.x}))};
+  });
 }
 
 function anchorColumns(rows){
@@ -69,14 +81,19 @@ function anchorColumns(rows){
 
 function tabulatePage(rows,anchors){
   return rows.map((row)=>{
-    const cells=Array(anchors.length).fill('');
+    const cells=Array.from({length:anchors.length},()=>[]);
     for(const item of row.cells){
       let nearest=0;let distance=Infinity;
       anchors.forEach((x,index)=>{const offset=Math.abs(item.x-x);
         if(offset<distance){nearest=index;distance=offset;}});
-      cells[nearest]=cells[nearest]?`${cells[nearest]} ${item.text}`:item.text;
+      cells[nearest].push(item);
     }
-    return cells;
+    return cells.map(items=>{
+      // pdf.js gives logical text inside each run. Order separate RTL runs
+      // right-to-left within their own cell, preserving numeric/LTR columns.
+      const rtl=items.filter(i=>i.dir==='rtl'||/[\u0590-\u05ff\u0600-\u06ff]/.test(i.text)).length>items.length/2;
+      return items.sort((a,b)=>rtl?b.x-a.x:a.x-b.x).map(i=>i.text).join(' ');
+    });
   });
 }
 
@@ -104,7 +121,7 @@ async function parse(buffer){
   try{for(let pageNumber=1;pageNumber<=document.numPages;pageNumber++){
     const page=await document.getPage(pageNumber);
     const content=await page.getTextContent();
-    const items=content.items.map((item)=>({text:String(item.str||'').trim(),
+    const items=content.items.map((item)=>({text:String(item.str||'').trim(),dir:item.dir,width:item.width,height:item.height,
       x:Number(item.transform?.[4]||0),y:Number(item.transform?.[5]||0)})).filter((item)=>item.text);
     totalItems+=items.length;
     if(totalItems>MAX_TEXT_ITEMS)throw new ValidationError('That PDF contains too much text for a safe inventory preview. Split it into smaller files.');

@@ -60,7 +60,7 @@ const sections=[
   {title:'This inventory',why:'Set once, changed rarely.',links:[
     {href:'/search',label:'Search every record'},{href:'/settings',label:'Settings, people and plan'},
     {href:'/what-you-told-me',label:'How this inventory is configured'},{href:'/inventories',label:'Your other inventories'},
-    {href:'/settings/export',label:'Export everything'},{href:'/guide',label:'How to use StockChief'},
+    {href:'/settings/export',label:'Export this inventory'},{href:'/guide',label:'How to use StockChief'},
     {href:'/support',label:'Support'}]},
 ];
 
@@ -111,7 +111,7 @@ async function settingsPage(database,req,res){const [counts,users,integrity,inst
     integrity:{ok:integrity.ok,problems},eventFeed:{configured:Boolean(feed),connected:feed?.status==='connected',
       recentEvents:events.rows.map((event)=>({eventId:event.external_event_id,type:event.event_type,status:event.status,
         error:event.error_message,processedAt:event.processed_at}))},newFeedToken,learnedInstructions:instructions.rows.map(instructionFrom),
-    stockGuards:[],emailAlerts,aiUsage:null,commercialLimitsPooled:true,entitlements:{plan:{label:res.locals.commercial?.subscription?.plan_name||
+    stockGuards:[],emailAlerts,aiUsage:null,aiCost:await require('../../commercial/model-cost-budget').status(database,req.ctx.workspaceId),commercialLimitsPooled:true,entitlements:{plan:{label:res.locals.commercial?.subscription?.plan_name||
       (res.locals.commercial?.access?.mode==='DEVELOPMENT'?'Pre-subscription · unlimited':'No paid plan')},
       limits:(res.locals.commercial?.meters||[]).filter((meter)=>['workspaces','members','locations','connections'].includes(meter.meter))
         .map((meter)=>({key:meter.meter,used:meter.used,limit:meter.hardLimit??meter.included,
@@ -229,11 +229,7 @@ function createPostgresSettingsRouter(database,options={}){const router=express.
   })));
   router.get('/foundry',requireAuth,(req,res)=>res.redirect(302,'/what-you-told-me'));
   router.get('/settings/export',requireOwner,asyncRoute(async(req,res)=>{
-    const result=await require('../../operations/postgres-export').workbook(database,req.ctx.workspaceId);
-    const safeName=String(result.name).replace(/[^a-z0-9_-]+/gi,'-').replace(/^-+|-+$/g,'').toLowerCase()||'stockchief-inventory';
-    res.set('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.set('Content-Disposition',`attachment; filename="${safeName}-${new Date().toISOString().slice(0,10)}.xlsx"`);
-    return res.send(result.buffer);
+    return require('../../operations/postgres-export-stream').download(database,req.ctx.workspaceId,res);
   }));
   return router;
 }
