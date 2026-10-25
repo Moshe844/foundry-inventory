@@ -4,7 +4,6 @@ const express=require('express');
 const autopilot=require('../../autopilot/postgres-service');
 const connections=require('../../connections/postgres-service');
 const operatingInstructions=require('../../manager/postgres-operating-instructions');
-const readiness=require('../../operations/postgres-readiness');
 const entitlements=require('../../entitlements/postgres-service');
 const commercialControl=require('../../commercial/control-service');
 const passwordAuth=require('../../domain/auth-service');
@@ -94,21 +93,22 @@ async function emailAlertState(database,workspaceId){const [row,owners]=await Pr
   return {enabled:Boolean(Number(stored?.enabled||0)),minimumSeverity:stored?.minimum_severity||'important',recipients,
     deliveryConfigured:config.email.configured,updatedAt:stored?.updated_at||null};}
 
-async function settingsPage(database,req,res){const [counts,users,integrity,instructions,emailAlerts,feedRows,events]=await Promise.all([
+async function settingsPage(database,req,res){const [counts,users,instructions,emailAlerts,feedRows,events]=await Promise.all([
   summary(database,req.ctx.workspaceId),database.query(`SELECT member.id,member.name,member.role,account.email
     FROM users member JOIN accounts account ON account.id=member.account_id WHERE member.workspace_id=$1
     ORDER BY CASE member.role WHEN 'owner' THEN 0 ELSE 1 END,lower(member.name)`,[req.ctx.workspaceId]),
-  readiness.reconciliation(database,req.ctx.workspaceId),database.query(`SELECT id,stated_as,status FROM operating_instruction_proposals
+  database.query(`SELECT id,stated_as,status FROM operating_instruction_proposals
     WHERE workspace_id=$1 AND status IN ('APPROVED','REMOVED','SUPERSEDED') ORDER BY created_at DESC`,[req.ctx.workspaceId]),
   emailAlertState(database,req.ctx.workspaceId),database.query(`SELECT connector.* FROM workspace_connectors connector
     WHERE workspace_id=$1 AND provider_type='reference_webhook' ORDER BY updated_at DESC LIMIT 1`,[req.ctx.workspaceId]),
   database.query(`SELECT external_event_id,event_type,status,error_message,processed_at FROM connector_feed_events
     WHERE workspace_id=$1 ORDER BY received_at DESC LIMIT 6`,[req.ctx.workspaceId])]);
-  const feed=feedRows.rows[0]||null;const problems=Object.entries(integrity).filter(([key,value])=>key!=='ok'&&Number(value)>0)
+  const integrity=require('../../operations/postgres-integrity-check').current(database,req.ctx.workspaceId);
+  const feed=feedRows.rows[0]||null;const problems=Object.entries(integrity.result||{}).filter(([key,value])=>key!=='ok'&&Number(value)>0)
     .map(([kind,value])=>({kind:kind.replaceAll('_',' '),detail:`${value} record${Number(value)===1?'':'s'} do not reconcile.`}));
   const newFeedToken=req.session.newFeedToken||null;delete req.session.newFeedToken;
   return res.page('settings',{title:'Settings',nav:'settings',room:true,postgresMode:true,users:users.rows,workspace:req.workspace,
-    integrity:{ok:integrity.ok,problems},eventFeed:{configured:Boolean(feed),connected:feed?.status==='connected',
+    integrity:{...integrity,ok:integrity.result?.ok,problems},eventFeed:{configured:Boolean(feed),connected:feed?.status==='connected',
       recentEvents:events.rows.map((event)=>({eventId:event.external_event_id,type:event.event_type,status:event.status,
         error:event.error_message,processedAt:event.processed_at}))},newFeedToken,learnedInstructions:instructions.rows.map(instructionFrom),
     stockGuards:[],emailAlerts,aiUsage:null,aiCost:await require('../../commercial/model-cost-budget').status(database,req.ctx.workspaceId),commercialLimitsPooled:true,entitlements:{plan:{label:res.locals.commercial?.subscription?.plan_name||
@@ -130,6 +130,9 @@ function createPostgresSettingsRouter(database,options={}){const router=express.
     title:'Everything else',nav:'settings',room:true,sections,
   })));
   router.get('/settings',requireAuth,asyncRoute(async(req,res)=>settingsPage(database,req,res)));
+  router.post('/settings/integrity/check',requireAuth,asyncRoute(async(req,res)=>{
+    res.set('Cache-Control','no-store');return res.json(await require('../../operations/postgres-integrity-check').run(database,req.ctx.workspaceId));
+  }));
   router.post('/settings/time-zone',requireAuth,asyncRoute(async(req,res)=>{const zone=require('../../lib/business-time').zone(req.body.timeZone);await database.query('UPDATE accounts SET time_zone=$2 WHERE id=$1',[req.account.id,zone]);req.flash('success','Your time zone was saved. Dates and activity times now use this preference across your inventories.');return res.redirect(303,'/settings');}));
   router.post('/settings/test-inventory',requireOwner,asyncRoute(async(req,res)=>{
     const created=await require('../../domain/postgres-auth-service').createWorkspace(database,req.account.id,

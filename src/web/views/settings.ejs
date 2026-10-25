@@ -352,13 +352,15 @@
         <%- helpers.icon(integrity.ok ? 'shield' : 'alert', { size: 15, className: 'rm-quiet' }) %>
         <h2>Inventory integrity</h2>
         <span class="right">
-          <span class="rm-pillbadge <%= integrity.ok ? 'is-ok' : 'is-warn' %>">
-            <%= integrity.ok ? 'all balanced' : integrity.problems.length + ' to check' %>
+          <span id="integrity-check-badge" class="rm-pillbadge <%= integrity.ok ? 'is-ok' : 'is-warn' %>">
+            <%= integrity.status==='NOT_CHECKED'?'not checked here':integrity.status==='CHECKING'?'checking':integrity.status==='ERROR'?'check interrupted':integrity.ok?'balanced at last check':integrity.problems.length+' to check' %>
           </span>
         </span>
       </div>
       <div style="padding:14px 16px">
-        <% if (integrity.ok) { %>
+        <div id="integrity-check-result" role="status" aria-live="polite">
+        <% if(integrity.status==='NOT_CHECKED'){ %><p>Run a full check to compare stock with its movement history, tracked units and journal totals. Large inventories can take a minute; the rest of Settings stays available.</p>
+        <% } else if (integrity.ok) { %>
           <p style="font-size:13.5px;color:var(--ink-2);margin:0">
             Every balance matches its movement history, lot quantities and tracked units.
           </p>
@@ -369,11 +371,12 @@
             <% }) %>
           </ul>
         <% } %>
-        <p class="rm-quiet" style="font-size:12.5px;margin:10px 0 0">
-          Recomputed from the ledger every time you open this page.
-        </p>
+        <% if(integrity.checkedAt){ %><p class="rm-quiet">Last checked <%= helpers.dateTime(integrity.checkedAt) %>. Later changes are not included.</p><% } %>
+        </div>
+        <% if(locals.postgresMode){ %><form id="integrity-check-form" method="post" action="/settings/integrity/check"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost" type="submit">Check inventory integrity</button></form><% } %>
       </div>
     </section>
+    <% if(locals.postgresMode){ %><script src="/integrity-check.js?v=<%= assetVersion %>" defer></script><% } %>
 
     <section class="rm-panel">
       <div class="rm-panel__head">
