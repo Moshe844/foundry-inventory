@@ -7,17 +7,17 @@ function cell(value){return value==null?'':String(value);}
 // same verified rows. Exporting the raw minor-unit integers as unlabeled
 // spreadsheet numbers would make $17.40 look like 1740.
 function exportValue(result,rowIndex,column){
-  return result.displayRows?.[rowIndex]?.[column]??result.rows[rowIndex][column];
+  const raw=result.rows[rowIndex][column];if(result.columnTypes?.[column]==='money_minor'&&raw!=null){const currency=result.rows[rowIndex].currency||result.provenance?.currency;if(currency)return require('../domain/currency').fromMinor(raw,currency);}return result.columnTypes?.[column]==='number'?raw:result.displayRows?.[rowIndex]?.[column]??raw;
 }
 // Spreadsheet apps can execute formulas even inside quoted CSV fields.
 // Preserve the recorded text while forcing dangerous leading characters to
 // remain text when a customer opens the export in Excel or Sheets.
-function csvCell(value){let text=cell(value);
+function csvCell(value,{numeric=false}={}){let text=cell(value);if(numeric&&/^-?\d+(?:\.\d+)?$/.test(text))return text;
   if(/^[\s\u0000-\u001f]*[=+\-@]/u.test(text))text=`'${text}`;
   return `"${text.replaceAll('"','""')}"`;}
 function csvHeader(result){return `${result.columns.map((column)=>csvCell(result.columnLabels?.[column]||column)).join(',')}\r\n`;}
 function csvRows(result){return result.rows.map((_row,index)=>
-  `${result.columns.map((column)=>csvCell(exportValue(result,index,column))).join(',')}\r\n`).join('');}
+  `${result.columns.map((column)=>csvCell(exportValue(result,index,column),{numeric:['number','money_minor'].includes(result.columnTypes?.[column])})).join(',')}\r\n`).join('');}
 function csv(result){return Buffer.from(csvHeader(result)+csvRows(result),'utf8');}
 function xml(value){return cell(value).replace(/[&<>"']/g,(character)=>({
   '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[character]));}
@@ -51,7 +51,7 @@ function xlsx(result){
   const worksheet=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
     <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${rows.map((row,index)=>
       `<row r="${index+1}">${row.map((value,column)=>{
-        const numeric=index>0&&value!==null&&value!==''&&typeof value==='number'&&Number.isFinite(value);
+        const numeric=index>0&&value!==null&&value!==''&&(typeof value==='number'&&Number.isFinite(value)||['number','money_minor'].includes(result.columnTypes?.[result.columns[column]])&&/^-?\d+(?:\.\d+)?$/.test(String(value)));
         const address=`${String.fromCharCode(65+column)}${index+1}`;
         return numeric?`<c r="${address}"><v>${value}</v></c>`:
           `<c r="${address}" t="inlineStr"><is><t>${xml(value)}</t></is></c>`;

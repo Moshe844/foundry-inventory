@@ -1,0 +1,9 @@
+'use strict';
+const entitlements=require('../commercial/entitlements');
+const scoped=c=>({query:(sql,args)=>c.query(sql,args),transaction:work=>work(c)});
+async function reconcile(client,{workspaceId=null,goalId=null,olderThan=new Date(Date.now()-30*60000).toISOString()}={}){
+ const rows=(await client.query(`SELECT e.id,e.account_id,e.workspace_id,e.idempotency_key,e.units,g.id goal_id,g.status goal_status FROM commercial_usage_events e JOIN stockchief_runtime.assistant_goals g ON g.workspace_id=e.workspace_id AND e.idempotency_key=e.workspace_id||':codex-staging:'||g.id WHERE e.meter='ai_work_credits' AND e.status='RESERVED' AND g.checkpoint->>'runtime'='codex-staging' AND g.status IN ('BLOCKED','CANCELLED') AND (g.lease_until IS NULL OR g.lease_until<now()) AND ($1::text IS NULL OR e.workspace_id=$1) AND ($2::text IS NULL OR g.id=$2) AND e.occurred_at<$3::timestamptz ORDER BY e.occurred_at,e.id LIMIT 100 FOR UPDATE OF e,g SKIP LOCKED`,[workspaceId,goalId,olderThan])).rows;
+ let released=0;for(const row of rows){const result=await entitlements.reverseUsage(scoped(client),{accountId:row.account_id,workspaceId:row.workspace_id},{meter:'ai_work_credits',idempotencyKey:row.idempotency_key,reason:'Request '+row.goal_id+' ended '+row.goal_status.toLowerCase()+' before its AI work credit was committed. Provider-cost evidence and holds were retained separately.'});if(result.reversed)released+=Number(row.units);}return {releasedCredits:released,requests:rows.length,providerCostRecordsChanged:false};
+}
+async function recover(db,options={}){return typeof db.transaction==='function'?db.transaction(c=>reconcile(c,options),{isolation:'SERIALIZABLE',retrySafe:true}):reconcile(db,options);}
+module.exports={recover,reconcile};

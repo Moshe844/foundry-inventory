@@ -40,7 +40,7 @@ function createPostgresTransfersRouter(database) {
   router.get('/transfers/new', asyncRoute(async (req, res) => {
     permissions.assertCan(req.user, permissions.REQUEST_TRANSFER, 'request an inventory transfer');
     const [locations, skus] = await Promise.all([
-      database.query(`SELECT * FROM locations WHERE workspace_id=$1 AND is_active=1 ORDER BY lower(name),id`,
+      database.query(`SELECT * FROM locations WHERE workspace_id=$1 AND is_active=1 AND custody_agreement_id IS NULL ORDER BY lower(name),id`,
         [req.ctx.workspaceId]),
       req.query.itemIds?database.query(`SELECT s.*,i.name AS item_name,i.tracking_mode FROM skus s JOIN items i ON i.id=s.item_id
         WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1

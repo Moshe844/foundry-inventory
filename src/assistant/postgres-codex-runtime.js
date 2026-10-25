@@ -182,7 +182,7 @@ async function run(database,ctx,id,options={}){
    entitlements.ownerScopeForWorkspace(database,ctx.workspaceId),
    database.query("SELECT units FROM commercial_operation_policies WHERE operation='ask'")]);
   const units=Number(policy.rows[0].units);
-  await entitlements.reserveUsage(database,scope,{meter:'ai_work_credits',units,idempotencyKey:`${ctx.workspaceId}:${fundingKey}`,detail:{operation:'ask',runtime:'codex-sdk-staging'}});
+  await entitlements.reserveUsage(database,scope,{meter:'ai_work_credits',units,idempotencyKey:`${ctx.workspaceId}:${fundingKey}`,retryReversed:true,detail:{operation:'ask',runtime:'codex-sdk-staging'}});
   const relay=await require(base+'relay').createRelay({budget,credentials:{openai:key},commercial:require(base+'commercial').createCommercialAccounting(database),
    allowedProviders:['openai'],countCodexInput:counter,audit,...(options.fetchImpl?{fetchImpl:options.fetchImpl}:{})});cleanup.push(()=>relay.close());
   let result;
@@ -227,7 +227,7 @@ async function run(database,ctx,id,options={}){
    codexPolicy:modelPolicy,modelRoutingInstructions:routing.instructions(ctx,modelProfile),
    preparedCodexSandbox:preparedSandbox,preparedCodexContext:preparedContext,
    credentials:{openai:key},codexLivePermit:permit,codexImage:image,privateHarnessDirectory:directory,audit,
-   finalReportInstructions:require('./postgres-codex-verification').instructions});
+   finalReportInstructions:require('./postgres-codex-verification').instructions+require('./postgres-answer-preferences').instructions(await require('./postgres-answer-preferences').read(database,ctx))});
   const report=require('./agent-conversation').parse(result.answer);
   if(report?.status==='needs_reasoning'){
    const ready=await session.handoffApprovals();if(ready)return ready;
@@ -279,6 +279,7 @@ async function run(database,ctx,id,options={}){
    audit({kind:'runtime_cleanup_failed',code:require(base+'tool-error').code(error)});
   }
   await flushActivity().catch(()=>{});
+  await require('./postgres-credit-maintenance').recover(database,{workspaceId:ctx.workspaceId,goalId:id,olderThan:new Date(Date.now()+1).toISOString()}).catch(()=>{});
  }
 }
 module.exports={run,activityDetail};

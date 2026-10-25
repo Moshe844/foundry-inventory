@@ -22,7 +22,7 @@
   <%= totals.locations || 0 %> location<%= totals.locations === 1 ? '' : 's' %>
   · <%= totals.skus || 0 %> SKU<%= totals.skus === 1 ? '' : 's' %> tracked
 </p>
-<% if(typeof postgresNative!=='undefined'&&postgresNative){ %><p class="rm-choices"><a class="rm-btn rm-btn--ghost" href="/imports">File imports and results</a><a class="rm-btn rm-btn--ghost" href="/manufacturing">Manufacturing and material planning</a></p><% } %>
+<% if(typeof postgresNative!=='undefined'&&postgresNative){ %><p class="rm-choices"><a class="rm-btn rm-btn--ghost" href="/imports">File imports and results</a><a class="rm-btn rm-btn--ghost" href="/manufacturing">Manufacturing and material planning</a><a class="rm-btn rm-btn--ghost" href="/custody">Rentals and consignment</a></p><% } %>
 <% if (position.productNames && position.productNames.length) { %><p class="sr-only">Products in this inventory: <%= position.productNames.join(', ') %>.</p><% } %>
 
 <% if (position.tooLarge) { %>

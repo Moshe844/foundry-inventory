@@ -1,0 +1,12 @@
+ALTER TABLE stockchief_runtime.report_templates ADD COLUMN schedule_time_zone text NOT NULL DEFAULT 'UTC';
+ALTER TABLE stockchief_runtime.report_templates ADD COLUMN schedule_hour_local integer CHECK(schedule_hour_local BETWEEN 0 AND 23);
+ALTER TABLE stockchief_runtime.report_templates ADD COLUMN schedule_minute integer NOT NULL DEFAULT 0 CHECK(schedule_minute BETWEEN 0 AND 59);
+ALTER TABLE stockchief_runtime.report_templates ADD COLUMN schedule_weekday integer NOT NULL DEFAULT 1 CHECK(schedule_weekday BETWEEN 0 AND 6);
+ALTER TABLE stockchief_runtime.report_templates ADD COLUMN schedule_paused boolean NOT NULL DEFAULT false;
+ALTER TABLE stockchief_runtime.report_templates ADD COLUMN next_send_at timestamptz;
+ALTER TABLE stockchief_runtime.report_templates ADD COLUMN deleted_at timestamptz;
+ALTER TABLE stockchief_runtime.report_templates ADD COLUMN revision integer NOT NULL DEFAULT 1;
+UPDATE stockchief_runtime.report_templates SET schedule_hour_local=schedule_hour_utc;
+CREATE INDEX report_schedule_due ON stockchief_runtime.report_templates(next_send_at,id) WHERE schedule_frequency<>'none' AND NOT schedule_paused AND deleted_at IS NULL;
+ALTER TABLE stockchief_runtime.report_deliveries DROP CONSTRAINT report_deliveries_status_check;
+ALTER TABLE stockchief_runtime.report_deliveries ADD CONSTRAINT report_deliveries_status_check CHECK(status IN ('PENDING','SENT','FAILED','CANCELLED'));

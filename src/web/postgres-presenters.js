@@ -138,7 +138,7 @@ async function purchasing(database,workspaceId){
     commerce.suppliers(database,workspaceId),Promise.resolve([]),commerce.locations(database,workspaceId)]);
   const open=orders.filter((order)=>['APPROVED','ORDERED','PARTIALLY_RECEIVED'].includes(order.status))
     .map((order)=>({...order,outstanding_units:order.units_outstanding}));
-  const now=today();
+  const now=await require('../lib/business-time').today(database,workspaceId);
   const late=open.filter((order)=>order.expected_date&&order.expected_date<now)
     .map((order)=>({...order,daysLate:daysBetween(order.expected_date,now)}));
   const drafts=orders.filter((order)=>['DRAFT','AWAITING_APPROVAL'].includes(order.status))
@@ -177,7 +177,7 @@ async function sales(database,workspaceId){
 }
 
 async function money(database,workspaceId,input={},actorId=null){
-  const to=String(input.to||today());const from=String(input.from||monthStart(to));
+  const to=String(input.to||await require('../lib/business-time').today(database,workspaceId));const from=String(input.from||monthStart(to));
   const [pnl,balance,receivables,payables,inventory,confirmed,changed,needItems]=await Promise.all([
     reports.profitAndLoss(database,workspaceId,{from,to}),reports.balanceSheet(database,workspaceId,{asOf:to}),
     database.query(`SELECT id,invoice_number,due_date,balance_minor,currency FROM accounting_customer_invoices
@@ -195,7 +195,7 @@ async function money(database,workspaceId,input={},actorId=null){
       ORDER BY posting_date DESC,entry_number DESC LIMIT 6`,[workspaceId,from,to]),projections.needs(database,workspaceId,actorId),
   ]);
   const receivableMinor=receivables.rows.reduce((sum,row)=>sum+number(row.balance_minor),0);
-  const payableMinor=payables.rows.reduce((sum,row)=>sum+number(row.balance_minor),0);
+  const billPayableMinor=payables.rows.reduce((sum,row)=>sum+number(row.balance_minor),0),receivedNotBilledMinor=Math.max(0,balance.liabilities.filter(a=>a.subtype==='RECEIVED_NOT_INVOICED').reduce((n,a)=>n+number(a.net_minor),0)),payableMinor=billPayableMinor+receivedNotBilledMinor;
   const cashMinor=balance.assets.filter((account)=>account.subtype==='CASH').reduce((sum,account)=>sum+number(account.net_minor),0);
   const comingUp=[...payables.rows.map((row)=>({direction:'out',date:row.due_date,href:'/accounting/payables',
     what:row.bill_number||'supplier bill',amountMinor:number(row.balance_minor)})),
@@ -210,7 +210,7 @@ async function money(database,workspaceId,input={},actorId=null){
       revenueMinor:pnl.revenueMinor,cogsMinor:pnl.cogsMinor,expensesMinor:pnl.operatingExpenseMinor,
       marginPct:pnl.revenueMinor?Math.round((gross/pnl.revenueMinor)*1000)/10:null,
       why:[`${amount(pnl.revenueMinor)} revenue, ${amount(pnl.cogsMinor)} stock sold, ${amount(pnl.operatingExpenseMinor)} other costs, and ${amount(pnl.netIncomeMinor)} net income this period.`]},
-    position:{suppliersCommittedMinor:payableMinor,customersOweMinor:receivableMinor,cashMinor,
+    position:{suppliersCommittedMinor:payableMinor,billPayableMinor,receivedNotBilledMinor,receivableCount:receivables.rows.length,payableCount:payables.rows.length,customersOweMinor:receivableMinor,cashMinor,
       inventoryMinor:number(inventory.rows[0].cost_minor),inventoryUnits:number(inventory.rows[0].units),
       confirmedCustomerOrders:confirmed.rows},inventory:{missingCostUnits:Math.max(0,
         number(inventory.rows[0].units)-number(inventory.rows[0].cost_units))},comingUp,

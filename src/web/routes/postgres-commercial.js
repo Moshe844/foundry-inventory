@@ -97,7 +97,7 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
       WHERE change.account_id=$1 AND change.status='PENDING' ORDER BY change.created_at DESC`,[scope.accountId])).rows;
     let invoices=[];if(summary.subscription?.stripe_customer_id&&options.loadInvoices!==false){try{
       invoices=(await provider.listInvoices(summary.subscription.stripe_customer_id,options.providerOptions||{})).data||[];}catch{invoices=[];}}
-    return res.page('commercial/billing',{title:'Plan & Usage',nav:'settings',room:true,summary,usageWarnings,invoices,aiCost:req.ctx?.workspaceId?await require('../../commercial/ai-spending-limits').availability(database,req.ctx.workspaceId):null,
+    return res.page('commercial/billing',{title:'Plan & Usage',nav:'settings',room:true,summary,usageWarnings,invoices,aiCost:req.ctx?.workspaceId?await require('../../commercial/ai-spending-limits').availability(database,req.ctx.workspaceId,req.ctx.actorId):null,
       pendingChanges,billingConfigured:config.commercial.configured,plans:await commercial.listPlans(database),
       packs:await addons.packs(database),topups:await addons.topups(database,scope),purchaseKey:newId('purchasekey'),
       purchases:(await database.query('SELECT * FROM commercial_usage_purchases WHERE account_id=$1 ORDER BY created_at DESC LIMIT 50',[scope.accountId])).rows,

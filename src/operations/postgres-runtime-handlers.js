@@ -151,6 +151,8 @@ async function mailboxPushRenewal(job,client,providers=defaultProviders,options=
 
 async function runtimeSweep(job,client,options={}){
   const now=milliseconds(job.payload?.now);const at=new Date(now).toISOString();
+  await require('../assistant/postgres-credit-maintenance').reconcile(client,{olderThan:new Date(now-30*60_000).toISOString()});
+  await require('../commercial/ai-spending-notifications').sweep(client);
   await require('../reports/postgres-scheduling').enqueueDue(client,at);
   const staleImportAt=new Date(now-15*60_000).toISOString();
   const staleEmailAt=new Date(now-5*60_000).toISOString();

@@ -196,6 +196,7 @@ function createPostgresApp({database,resourceDatabase=database,sessionStore,sess
   app.use(createPostgresWarehouseRouter(database));
   app.use(createPostgresTransfersRouter(database));
   app.use(require('./web/routes/postgres-manufacturing').createPostgresManufacturingRouter(database));
+  app.use(require('./web/routes/postgres-custody').createPostgresCustodyRouter(database));
   app.use(createPostgresOperationsRouter(database));
   app.use(createPostgresProjectionsRouter(database));
   app.use('/api/v1/business',createPostgresBusinessRouter(database));

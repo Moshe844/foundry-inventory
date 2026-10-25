@@ -11,7 +11,7 @@ const DIMENSIONS=Object.freeze({
   shipment_number:'Shipment number',
 });
 const AGGREGATES=new Set(['count','sum','average','minimum','maximum','ratio']);
-const OPERATORS=new Set(['equals','contains','at_least','at_most','after','before','is_null']);
+const OPERATORS=new Set(['equals','contains','at_least','at_most','after','before','is_null','relative']);
 const RESULT_OPERATORS=new Set(['equals','greater_than','at_least','less_than','at_most','is_null','not_null']);
 const IDENTIFIER=/^[a-z][a-z0-9_]{0,23}$/u;
 const FORMULA_LIMIT=160;
@@ -121,7 +121,8 @@ function normalize(spec,actor){
       if(operator==='contains'&&type!=='text')invalid('Contains requires a text field.');
       if(['at_least','at_most'].includes(operator)&&!['number','money_minor','date'].includes(type))
         invalid('This field cannot be compared numerically.');
-      if(type==='date'&&operator!=='is_null'&&!/^\d{4}-\d{2}-\d{2}$/u.test(value))
+      if(operator==='relative'&&(type!=='date'||!Object.hasOwn(require('./relative-dates').periods,value)))invalid('Choose a supported relative period for a date field.');
+      if(type==='date'&&operator!=='is_null'&&operator!=='relative'&&!/^\d{4}-\d{2}-\d{2}$/u.test(value))
         invalid('Use dates in YYYY-MM-DD format.');
       if(['number','money_minor'].includes(type)&&operator!=='is_null'&&!Number.isFinite(Number(value)))
         invalid('Use a valid numeric filter.');
@@ -182,7 +183,8 @@ function filterSql(filter,index){const field=quote(filter.field),param=`$${index
 }
 function filterValue(filter){return filter.operator==='contains'
   ?`%${filter.value.replaceAll('!','!!').replaceAll('%','!%').replaceAll('_','!_')}%`:filter.value;}
-function queryFor(config,workspaceId,{limit=201,offset=0,count=false}={}){
+function queryFor(config,workspaceId,{limit=201,offset=0,count=false,dateContext=null}={}){
+  config=require('./relative-dates').resolve(config,dateContext);
   const values=[workspaceId],ctes=[],joins=[],keySources=[];
   config.metrics.forEach((metric,index)=>{
     const dataset=registry.get(metric.dataset),source=`source_${index}`,name=`measure_${index}`;
@@ -249,7 +251,7 @@ async function run(database,ctx,actor,spec,{limit=201,offset=0}={}){
     invalid('That report page is unavailable. Narrow the filters.');
   await checkEntitlements(database,ctx,config);
   const pageLimit=Math.min(20001,Math.max(2,Number(limit)||201));
-  const {sql,values}=queryFor(config,ctx.workspaceId,{limit:pageLimit,offset:Number(offset)});
+  const {sql,values}=queryFor(config,ctx.workspaceId,{limit:pageLimit,offset:Number(offset),dateContext:await require('../lib/business-time').forWorkspace(database,ctx.workspaceId)});
   const fetched=(await database.transaction((client)=>client.query(sql,values),
     {isolation:'READ COMMITTED',readOnly:true,statementTimeoutMs:10000,lockTimeoutMs:2000})).rows;
   const hasMore=fetched.length===pageLimit,rows=hasMore?fetched.slice(0,-1):fetched;
@@ -275,7 +277,7 @@ async function run(database,ctx,actor,spec,{limit=201,offset=0}={}){
   const displayRows=rows.map((row)=>Object.fromEntries(columns.map((column)=>[
     column,column===config.dimension?row[column]:format(row[column],column==='calculated'
       ?config.formulaUnit:metricTypes[column])])));
-  const result={config,columns,columnLabels,rows:rows.map((row)=>({...row,href:null})),displayRows,
+  const columnTypes=Object.fromEntries(columns.map(column=>[column,column===config.dimension?'text':(column==='calculated'?config.formulaUnit:metricTypes[column])==='money'?'money_minor':'number']));const result={config,columns,columnLabels,columnTypes,rows:rows.map((row)=>({...row,href:null})),displayRows,
     hasMore,offset:Number(offset),pageSize:pageLimit-1,extent:{rowKind:'groups',returnedRows:rows.length,
       totalRows:Number(offset)===0&&!hasMore?rows.length:null,complete:Number(offset)===0&&!hasMore},asOf:new Date().toISOString(),
     provenance:{dataset:'composed',datasets:config.metrics.map((metric)=>metric.dataset),
@@ -291,7 +293,7 @@ async function countAtMost(database,ctx,actor,spec,maximum){
   if(!Number.isSafeInteger(maximum)||maximum<1||maximum>100000)
     invalid('That export size is unavailable.');
   await checkEntitlements(database,ctx,config);
-  const {sql,values}=queryFor(config,ctx.workspaceId,{limit:maximum+1,count:true});
+  const {sql,values}=queryFor(config,ctx.workspaceId,{limit:maximum+1,count:true,dateContext:await require('../lib/business-time').forWorkspace(database,ctx.workspaceId)});
   const row=(await database.transaction((client)=>client.query(sql,values),
     {isolation:'READ COMMITTED',readOnly:true,statementTimeoutMs:20000,lockTimeoutMs:2000})).rows[0];
   return Number(row.count);

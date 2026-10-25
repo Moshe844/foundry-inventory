@@ -8,6 +8,7 @@ const DEFAULT_ACCOUNTS = Object.freeze([
   { code: '1100', name: 'Accounts receivable', type: 'ASSET', subtype: 'RECEIVABLE', normal: 'DEBIT', systemKey: 'ACCOUNTS_RECEIVABLE', control: true },
   { code: '1200', name: 'Inventory asset', type: 'ASSET', subtype: 'INVENTORY', normal: 'DEBIT', systemKey: 'INVENTORY_ASSET', control: true },
   { code: '1210', name: 'Inventory in transit', type: 'ASSET', subtype: 'INVENTORY_IN_TRANSIT', normal: 'DEBIT', systemKey: 'INVENTORY_IN_TRANSIT', control: true },
+  { code: '1215', name: 'Returned inventory pending refund', type: 'ASSET', subtype: 'RETURN_COST_PENDING', normal: 'CREDIT', systemKey: 'CUSTOMER_RETURN_COST_PENDING', control: true },
   { code: '1300', name: 'Sales tax recoverable', type: 'ASSET', subtype: 'TAX', normal: 'DEBIT', systemKey: 'SALES_TAX_RECOVERABLE', control: true },
   { code: '2000', name: 'Accounts payable', type: 'LIABILITY', subtype: 'PAYABLE', normal: 'CREDIT', systemKey: 'ACCOUNTS_PAYABLE', control: true },
   { code: '2050', name: 'Received, not yet invoiced', type: 'LIABILITY', subtype: 'RECEIVED_NOT_INVOICED', normal: 'CREDIT', systemKey: 'RECEIVED_NOT_INVOICED', control: true },

@@ -17,7 +17,6 @@
   var isOwner = currentUser.role === 'owner';
 %>
 
-<section class="card card-body"><h2>Your time zone</h2><form method="post" action="/settings/time-zone"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label class="field"><span>Show activity dates and times in</span><select class="select" name="timeZone"><option value="">My device's time zone</option><% Intl.supportedValuesOf('timeZone').forEach(function(zone){ %><option value="<%= zone %>" <%= locals.account?.timeZone===zone?'selected':'' %>><%= zone.replaceAll('_',' ') %></option><% }); %></select></label><button class="btn" type="submit">Save time zone</button></form></section>
 <div class="rm-head">
   <p class="rm-head__eyebrow"><%- helpers.icon('settings', { size: 14 }) %> Settings</p>
   <h1>The technical side of this inventory.</h1>
@@ -26,6 +25,7 @@
     What you have <em>told</em> StockChief — the standing rules in your own words — lives on its own page.
   </p>
 </div>
+<section class="card section" id="ask-preferences" aria-label="Ask StockChief preferences"><div class="card-body"><h2>Ask StockChief preferences</h2><p>The business time zone controls accounting days, reports and scheduled delivery. Ask uses your preferred answer language unless you request another.</p><form method="post" action="/settings/ask-preferences"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label class="field"><span>Answer language</span><select class="select" name="answerLanguage"><% [['auto','Match my request'],['en','English'],['he','Hebrew · עברית'],['fr','French'],['es','Spanish'],['de','German'],['ar','Arabic'],['yi','Yiddish']].concat(answerPreferences.answerLanguage&&!['en','he','fr','es','de','ar','yi'].includes(answerPreferences.answerLanguage)?[[answerPreferences.answerLanguage,new Intl.DisplayNames(['en'],{type:'language'}).of(answerPreferences.answerLanguage)]]:[]).forEach(function(pair){ %><option value="<%= pair[0] %>" <%= (answerPreferences.answerLanguage||'auto')===pair[0]?'selected':'' %>><%= pair[1] %></option><% }); %></select></label><label class="field"><span>Business time zone</span><select class="select" name="timeZone"><% Array.from(new Set(['UTC',...Intl.supportedValuesOf('timeZone'),answerPreferences.timeZone])).forEach(function(zone){ %><option value="<%= zone %>" <%= answerPreferences.timeZone===zone?'selected':'' %>><%= zone.replaceAll('_',' ') %></option><% }); %></select></label><% if(isOwner){ %><button class="btn" type="submit">Save Ask preferences</button><% }else{ %><p>Your account owner can change these preferences.</p><% } %></form></div></section>
 
 <section class="rm-panel" aria-label="Sample and test data">
   <div class="rm-panel__body">

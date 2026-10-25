@@ -13,6 +13,7 @@ const contracts=[
  ['complete','complete','Receive physically confirmed finished production and record scrap','manufacturing_work_order',P.MANAGE_ACCOUNTING,['confirmed','good','scrap','locationId','lotId','lotCode','serials','expiresAt']],
  ['add_cost','addCost','Capitalize an evidenced posted production expense before output','manufacturing_work_order',P.MANAGE_ACCOUNTING,['confirmed','amountMinor','sourceJournalLineId']],
  ['reverse_cost','reverseCost','Reverse an exact production expense allocation before output','manufacturing_work_order',P.MANAGE_ACCOUNTING,['confirmed','costAdditionId']],
+ ['recover_material','recoverMaterial','Receive confirmed unused components from an aborted work order at their original allocated cost; remaining production must then be cancelled','manufacturing_work_order',P.MANAGE_ACCOUNTING,['confirmed','materialUseId','quantity','locationId','serialUnitIds']],
  ['cancel','cancel','Cancel remaining production and write off remaining work-in-progress value','manufacturing_work_order',P.MANAGE_ACCOUNTING,['confirmed','reason']],
 ];
 function parse(raw,fields){let input;try{input=JSON.parse(raw||'{}');}catch{throw new ValidationError('Production details must match the discovered structured contract.');}if(!input||Array.isArray(input)||typeof input!=='object'||Object.keys(input).some(k=>!fields.includes(k)))throw new ValidationError('Use only the fields supported by this production operation.');return input;}
@@ -53,9 +54,10 @@ async function summary(db,ctx,description,input,result,record,row){
  if(result.materialCostMinor!=null)text+=' Component value into work in progress: '+money(result.materialCostMinor)+'.';
  if(result.good!=null)text+=' Receive '+result.good+' good units at '+money(result.outputCostMinor)+' and record '+result.scrap+' scrapped units at '+money(result.scrapCostMinor)+'.';
  if(result.amountMinor!=null)text+=' Exact expense reclassification: '+money(result.amountMinor)+'.';
- if(result.writtenOffMinor!=null)text+=' Write off '+money(result.writtenOffMinor)+'; no consumed components are returned.';
+ if(result.writtenOffMinor!=null)text+=' Write off '+money(result.writtenOffMinor)+'; this cancellation creates no additional component return.';
  if(input.neededBy)text+=' Plan '+input.quantity+' units by '+input.neededBy+'.';
  if(input.operation!=null)text+=' Record '+input.quantity+' units at operation '+(Number(input.operation)+1)+', '+(input.actualMinutes||0)+' actual minutes.';
+ if(result.recoveredCostMinor!=null)text+=' Recover '+result.quantity+' original component units at '+money(result.recoveredCostMinor)+'. Further output is blocked; recover other unused components, then cancel the remaining work and record its remaining loss.';
  if(input.reason)text+=' Reason: '+input.reason+'.';
  return text+' The exact simulated stock and journal effects are frozen for approval.';
 }

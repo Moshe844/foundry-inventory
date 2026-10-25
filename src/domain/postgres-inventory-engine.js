@@ -39,7 +39,7 @@ function assertActiveTarget(row){
 async function target(client, ctx, skuId, locationId) {
   const result = await client.query(`SELECT s.id, s.item_id, s.is_active AS sku_active,
       i.name, i.tracking_mode, i.allow_negative AS allow_negative_stock, i.is_active AS item_active,
-      l.id AS location_id, l.name AS location_name, l.is_active AS location_active
+      l.id AS location_id, l.name AS location_name, l.is_active AS location_active,l.custody_agreement_id
     FROM skus s JOIN items i ON i.id = s.item_id AND i.workspace_id = s.workspace_id
     JOIN locations l ON l.id = $3 AND l.workspace_id = s.workspace_id
     WHERE s.id = $1 AND s.workspace_id = $2`, [skuId, ctx.workspaceId, locationId]);
@@ -47,6 +47,7 @@ async function target(client, ctx, skuId, locationId) {
   if (!row) throw new ValidationError('That item variant or location is not in this inventory.');
   if(['lot','serial'].includes(row.tracking_mode))await require('../commercial/enforcement').workspace(client,ctx.workspaceId,'inventory.lot_serial');
   assertActiveTarget(row);
+  if(!require('../custody/authority').allows(ctx,row.custody_agreement_id))throw new ValidationError('Use the rental or consignment agreement to move stock in this protected custody location.');
   return row;
 }
 
@@ -208,10 +209,10 @@ async function receiveManyInTransaction(client,rawContext,inputs){
   async function sequential(){const out=[];for(const value of values)out.push(await receiveInTransaction(client,ctx,{...value.input,idempotencyKey:value.key}));return out;}
   if(existing.length||new Set(keys).size!==keys.length)return sequential();
   const pairs=values.map(value=>({position:value.index,sku_id:value.input.skuId,location_id:value.input.locationId}));
-  const targets=(await client.query(`SELECT x.position,s.id,s.item_id,s.is_active AS sku_active,i.tracking_mode,i.allow_negative AS allow_negative_stock,i.is_active AS item_active,l.id AS location_id,l.name AS location_name,l.is_active AS location_active
+  const targets=(await client.query(`SELECT x.position,s.id,s.item_id,s.is_active AS sku_active,i.tracking_mode,i.allow_negative AS allow_negative_stock,i.is_active AS item_active,l.id AS location_id,l.name AS location_name,l.is_active AS location_active,l.custody_agreement_id
    FROM jsonb_to_recordset($2::jsonb) AS x(position integer,sku_id text,location_id text) JOIN skus s ON s.id=x.sku_id AND s.workspace_id=$1 JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id JOIN locations l ON l.id=x.location_id AND l.workspace_id=s.workspace_id ORDER BY x.position`,[ctx.workspaceId,JSON.stringify(pairs)])).rows;
   if(targets.length!==values.length)throw new ValidationError('That item variant or location is not in this inventory.');
-  for(const row of targets)assertActiveTarget(row);
+  for(const row of targets){assertActiveTarget(row);if(!require('../custody/authority').allows(ctx,row.custody_agreement_id))throw new ValidationError('Use the agreement to receive stock into a protected custody location.');}
   if(targets.some(row=>row.tracking_mode!=='quantity'))return sequential();
   const positions=[...new Map(pairs.map(row=>[JSON.stringify([row.sku_id,row.location_id]),{sku_id:row.sku_id,location_id:row.location_id}])).values()].sort((a,b)=>a.sku_id.localeCompare(b.sku_id)||a.location_id.localeCompare(b.location_id)),positionJSON=JSON.stringify(positions),at=nowIso();
   await client.query(`INSERT INTO balances(workspace_id,sku_id,location_id,on_hand,updated_at) SELECT $1,x.sku_id,x.location_id,0,$3 FROM jsonb_to_recordset($2::jsonb) AS x(sku_id text,location_id text) ON CONFLICT(sku_id,location_id) DO NOTHING`,[ctx.workspaceId,positionJSON,at]);

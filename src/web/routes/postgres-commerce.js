@@ -134,19 +134,18 @@ async function salesOrderPage(database,workspaceId,id){
       FROM accounting_payments p WHERE p.workspace_id=$1 AND p.sales_order_id=$2
         AND p.direction='CUSTOMER_RECEIPT' AND p.status='POSTED' ORDER BY p.payment_date,p.created_at,p.id`,[workspaceId,id]),
     database.query(`SELECT e.id,e.status,
-        COALESCE(SUM(CASE WHEN a.system_key='SALES_REVENUE' THEN l.credit_minor ELSE 0 END),0)::bigint AS revenue_minor,
-        COALESCE(SUM(CASE WHEN a.system_key='COST_OF_GOODS_SOLD' THEN l.debit_minor ELSE 0 END),0)::bigint AS cogs_minor
+        COALESCE(SUM(CASE WHEN a.system_key IN ('SALES_REVENUE','SALES_RETURNS') THEN l.credit_minor-l.debit_minor ELSE 0 END),0)::bigint AS revenue_minor,
+        COALESCE(SUM(CASE WHEN a.system_key='COST_OF_GOODS_SOLD' THEN l.debit_minor-l.credit_minor ELSE 0 END),0)::bigint AS cogs_minor
       FROM accounting_journal_entries e JOIN accounting_journal_lines l ON l.entry_id=e.id
       JOIN accounting_accounts a ON a.id=l.account_id
-      WHERE e.workspace_id=$1 AND e.source_record_type='sales_order' AND e.source_record_id=$2
-        AND e.source_type='sale_fulfillment' GROUP BY e.id,e.status ORDER BY e.created_at DESC`,[workspaceId,id]),
+      WHERE e.workspace_id=$1 AND e.status='POSTED' AND ((e.source_record_type='sales_order' AND e.source_record_id=$2) OR (e.source_record_type='customer_return' AND EXISTS(SELECT 1 FROM customer_returns r WHERE r.workspace_id=e.workspace_id AND r.id=e.source_record_id AND r.sales_order_id=$2))) GROUP BY e.id,e.status ORDER BY e.created_at DESC`,[workspaceId,id]),
     commerce.catalogue(database,workspaceId,{limit:50}),commerce.customers(database,workspaceId),paymentConnect.describe(database,workspaceId),
   ]);
   const lines=detail.lines.map((line)=>{
     const ordered=Number(line.quantity_ordered);const fulfilled=Number(line.quantity_fulfilled);const allocated=Number(line.allocated);
     return {...line,displayName:line.item_name+(line.variant_label?` / ${line.variant_label}`:''),
       lineTotalMinor:line.pricing_snapshot?.grossMinor??(line.unit_price_minor===null?null:ordered*Number(line.unit_price_minor)),allocated,
-      backordered:Math.max(0,ordered-fulfilled-allocated),quantity_fulfilled:fulfilled,isKit:false,
+      backordered:detail.order.status==='CANCELLED'?0:Math.max(0,ordered-fulfilled-allocated),quantity_fulfilled:fulfilled,isKit:false,
       allocations:line.allocations.map((allocation)=>({...allocation,quantity:Number(allocation.quantity),
         location_name:allocation.location_name,kit_component_id:null}))};
   });
@@ -175,11 +174,11 @@ async function salesOrderPage(database,workspaceId,id){
     available:Number(allocation.quantity),displayName:line.displayName,locationName:allocation.location_name})));
   const invoiceTotal=detail.invoices.reduce((sum,invoice)=>sum+Number(invoice.total_minor),0);
   const invoiceOutstanding=detail.invoices.reduce((sum,invoice)=>sum+Number(invoice.balance_minor),0);
-  const paidMinor=receipts.rows.reduce((sum,payment)=>sum+Number(payment.order_amount_minor||payment.amount_minor),0);
+  const refunds=(await database.query("SELECT coalesce(sum(r.revenue_minor+r.tax_minor),0)::bigint refunded_minor,coalesce(sum(r.revenue_minor+r.tax_minor) FILTER(WHERE r.destination='CASH'),0)::bigint cash_minor FROM accounting_sale_refunds r JOIN accounting_journal_entries e ON e.workspace_id=r.workspace_id AND e.id=r.journal_entry_id JOIN customer_returns c ON c.workspace_id=e.workspace_id AND c.id=e.source_record_id WHERE r.workspace_id=$1 AND e.source_record_type='customer_return' AND c.sales_order_id=$2 AND e.status='POSTED'",[workspaceId,id])).rows[0];const refundedMinor=Number(refunds.refunded_minor),paidMinor=receipts.rows.reduce((sum,payment)=>sum+Number(payment.order_amount_minor||payment.amount_minor),0)-Number(refunds.cash_minor);if(order.status==='CANCELLED'){order.pricing.originalTotalMinor=order.pricing.totalMinor;order.pricing.totalMinor=invoiceTotal;order.pricing.cancelledRemainder=true;order.pricing.cancelledUnbilledMinor=Math.max(0,order.pricing.originalTotalMinor-invoiceTotal-refundedMinor);order.pricing.creditedMinor=refundedMinor;}
   const terms=detail.paymentTerms;const termsText=!terms?'Payment due when invoiced':terms.kind==='BEFORE_FULFILMENT'
     ?'Payment before fulfilment':terms.kind==='DEPOSIT'?'Deposit before fulfilment':`Net ${Number(terms.net_days||0)}`;
   const held=detail.depositDueMinor>0||terms?.kind==='BEFORE_FULFILMENT'&&paidMinor<detail.orderTotalMinor;
-  const money={invoiced:detail.invoices.length>0,hasInvoice:detail.invoices.length>0,invoices:detail.invoices,
+  const money={refundedMinor,invoiced:detail.invoices.length>0,hasInvoice:detail.invoices.length>0,invoices:detail.invoices,
     totalMinor:detail.invoices.length?invoiceTotal:detail.orderTotalMinor,paidMinor,
     outstandingMinor:detail.invoices.length?invoiceOutstanding:Math.max(0,detail.orderTotalMinor-paidMinor),
     dueNowMinor:detail.depositDueMinor||0,currency:detail.order.currency,state:invoiceOutstanding===0&&detail.invoices.length?'Paid':
@@ -558,7 +557,7 @@ function createPostgresCommerceRouter(database,options={}){
       WHERE si.workspace_id=$1 AND si.supplier_id=$2 AND si.is_active=1 AND s.is_active=1 AND i.is_active=1 ORDER BY lower(i.name),s.code`,
       [req.ctx.workspaceId,supplierId,require('../../domain/currency').exponent(supplierRows.find(s=>s.id===supplierId).currency||'USD')])).rows:[];
     const leadTimes=supplierItems.map(i=>i.leadTimeDays).filter(v=>v!=null).map(Number),leadDays=leadTimes.length?Math.max(...leadTimes):supplierRows.find(s=>s.id===supplierId)?.default_lead_time_days;
-    const today=require('../../lib/business-time').context(req.account?.time_zone||'UTC').calendarDate,date=new Date(today+'T12:00:00Z');if(leadDays!=null)date.setUTCDate(date.getUTCDate()+Number(leadDays));
+    const today=require('../../lib/business-time').context(req.businessTimeZone||req.account?.time_zone||'UTC').calendarDate,date=new Date(today+'T12:00:00Z');if(leadDays!=null)date.setUTCDate(date.getUTCDate()+Number(leadDays));
     return res.status(status).page('purchasing/order-new',{title:'New purchase order',nav:'purchasing',suppliers:supplierRows.map(s=>({...s,contactName:s.contact_name,defaultLeadTimeDays:s.default_lead_time_days,paymentTerms:s.payment_terms})),supplierId,supplierItems,locations:await commerce.locations(database,req.ctx.workspaceId),orderErrors:errors,submitted,expectedDate:leadDays==null?'':date.toISOString().slice(0,10),today});
   }
   router.get('/purchasing/orders/new',requirePermission(permissions.CREATE_PO,'prepare purchase orders'),asyncRoute((req,res)=>purchaseEntry(req,res)));
@@ -576,7 +575,7 @@ function createPostgresCommerceRouter(database,options={}){
       if(quantities){const linked=(await database.query('SELECT sku_id FROM supplier_items WHERE workspace_id=$1 AND supplier_id=$2 AND is_active=1',[req.ctx.workspaceId,req.body.supplierId])).rows;if(lines.some(l=>!linked.some(s=>s.sku_id===l.skuId)))throw new ValidationError('Choose products linked to this supplier.');}
       for(const line of lines){if(line.unitCost==null||String(line.unitCost).trim()===''){const supplier=(await database.query('SELECT currency FROM suppliers WHERE workspace_id=$1 AND id=$2',[req.ctx.workspaceId,req.body.supplierId])).rows[0],linked=(await database.query('SELECT last_unit_cost FROM supplier_items WHERE workspace_id=$1 AND supplier_id=$2 AND sku_id=$3 AND is_active=1',[req.ctx.workspaceId,req.body.supplierId,line.skuId])).rows[0];if(linked?.last_unit_cost!=null)line.unitCost=linked.last_unit_cost;else{const fallback=await require('../../pricing/postgres-service').purchaseCost(database,req.ctx.workspaceId,line.skuId);if(fallback?.currency===supplier?.currency)line.unitCost=require('../../domain/currency').fromMinor(fallback.amount_minor,fallback.currency);}}}
       if(lines.some(l=>l.unitCost!==undefined&&Number(l.unitCost)===0)&&req.body.confirmZeroCost!=='1')return purchaseEntry(req,res,{submitted:req.body,errors:['One or more selected lines have a $0 unit cost. Confirm that these are free before saving.'],status:400});
-      const result=await workflows.createPurchaseOrder(database,req.ctx,{supplierId:req.body.supplierId,orderDate:req.body.orderDate||require('../../lib/business-time').context(req.account?.time_zone||'UTC').calendarDate,expectedDate:req.body.expectedDateAuto==='1'?null:trimOrNull(req.body.expectedDate),destinationLocationId:req.body.destinationLocationId,currency:trimOrNull(req.body.currency)||undefined,notes:trimOrNull(req.body.notes),idempotencyKey:key(req,'purchase-order'),lines});
+      const result=await workflows.createPurchaseOrder(database,req.ctx,{supplierId:req.body.supplierId,orderDate:req.body.orderDate||require('../../lib/business-time').context(req.businessTimeZone||req.account?.time_zone||'UTC').calendarDate,expectedDate:req.body.expectedDateAuto==='1'?null:trimOrNull(req.body.expectedDate),destinationLocationId:req.body.destinationLocationId,currency:trimOrNull(req.body.currency)||undefined,notes:trimOrNull(req.body.notes),idempotencyKey:key(req,'purchase-order'),lines});
       req.flash('success',result.poNumber+' was prepared. Nothing was sent to the supplier.');return res.redirect(303,'/purchasing/orders/'+result.purchaseOrderId);
     }catch(e){if(!(e instanceof ValidationError)||!req.body.quantity||typeof req.body.quantity!=='object')throw e;return purchaseEntry(req,res,{submitted:req.body,errors:[e.message],status:400});}
   }));
@@ -759,7 +758,7 @@ function createPostgresCommerceRouter(database,options={}){
   }));
 
   const entry=require('../../operations/order-entry'),entryPricing=require('../../pricing/postgres-promotions');
-  const entryToday=req=>require('../../lib/business-time').context(req.account?.time_zone||'UTC').calendarDate;
+  const entryToday=req=>require('../../lib/business-time').context(req.businessTimeZone||req.account?.time_zone||'UTC').calendarDate;
   async function entryCurrency(req){return (await database.query('SELECT base_currency FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId])).rows[0]?.base_currency||'USD';}
   async function renderEntry(req,res,{form={},formError=null,editOrder=null,status=200,quotation=false}={}){
     const selected=Array.isArray(form.skuId)?form.skuId:form.skuId?[form.skuId]:[];
@@ -937,10 +936,10 @@ function createPostgresCommerceRouter(database,options={}){
         WHERE refund.workspace_id=$1 AND refund.customer_return_id=$2 ORDER BY refund.created_at DESC LIMIT 1`,
       [req.ctx.workspaceId,req.params.id]),
     ]);
-    const refundableMinor=returns.refundSummary(customerReturn).totalMinor;
+    const refundFinancials=returns.refundSummary(customerReturn),refundableMinor=refundFinancials.totalMinor;
     return res.page('sales/postgres-return',{title:customerReturn.return_number,nav:'sales',customerReturn,
       returnParcel:await require('../../shipping/postgres-return-parcels').current(database,req.ctx.workspaceId,customerReturn.id),
-      locations:locationRows,refundableMinor,refundRequest:refundRequestResult.rows[0]||null,
+      locations:locationRows,refundableMinor,refundFinancials,refundRequest:refundRequestResult.rows[0]||null,
       today:dateToday(req),formKey:newId('return-step')});
   }));
 

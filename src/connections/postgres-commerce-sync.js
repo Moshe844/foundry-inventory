@@ -21,7 +21,7 @@ async function connection(db,ctx,id,{allowInactive=false}={}){
  return c;
 }
 async function local(db,p){
- const row=(await db.query(`SELECT s.id,i.tracking_mode,b.on_hand,b.updated_at,
+ const row=(await db.query(`SELECT s.id,i.tracking_mode,b.on_hand,b.updated_at,loc.custody_agreement_id,
    COALESCE(cost.quantity_units,0) AS costed,
    COALESCE((SELECT SUM(a.quantity) FROM sales_order_allocations a JOIN sales_order_lines l ON l.id=a.sales_order_line_id AND l.workspace_id=a.workspace_id
      JOIN sales_orders o ON o.id=l.sales_order_id AND o.workspace_id=l.workspace_id
@@ -35,7 +35,7 @@ async function local(db,p){
  if(p.field==='price'){const v=await prices.currentPrice(db,p.workspace_id,p.sku_id);return {value:v.amount_minor===null?null:{amount:v.amount_minor,currency:v.currency},version:v.id};}
  const physical=Number(row.on_hand||0),costed=Number(row.costed),committed=Number(row.committed);
  if(![physical,costed,committed].every(Number.isSafeInteger))throw new ValidationError('This stock position needs an exact quantity review.');
- return {value:Math.max(0,Math.min(physical,costed)-committed),physical,costed,committed,tracking:row.tracking_mode,version:row.updated_at||null};
+ return {value:row.custody_agreement_id?0:Math.max(0,Math.min(physical,costed)-committed),physical,costed,committed,tracking:row.tracking_mode,version:row.updated_at||null};
 }
 async function mapped(db,p){
  return Boolean((await db.query(`SELECT 1 FROM connection_mappings sku JOIN connection_mappings loc ON loc.workspace_id=sku.workspace_id AND loc.connector_id=sku.connector_id AND loc.entity_type='location'

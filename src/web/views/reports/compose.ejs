@@ -56,7 +56,7 @@
                 <option data-source="<%= option.key %>" value="<%= field %>" <%= option.key===selectedSource&&filter.field===field?'selected':'' %>><%= option.label %> · <%= field.replaceAll('_',' ') %></option>
               <% }} %></select>
               <select name="metrics[<%= index %>][filters][<%= position %>][operator]" aria-label="Filter comparison">
-                <% for(const operation of ['equals','contains','at_least','at_most','after','before','is_null']){ %>
+                <% for(const operation of ['equals','contains','at_least','at_most','after','before','is_null','relative']){ %>
                   <option value="<%= operation %>" <%= filter.operator===operation?'selected':'' %>><%= operation.replaceAll('_',' ') %></option>
                 <% } %></select>
               <input name="metrics[<%= index %>][filters][<%= position %>][value]" value="<%= filter.value||'' %>" placeholder="Value or YYYY-MM-DD" aria-label="Filter value">
@@ -101,14 +101,7 @@
       </div>
     <% } %>
   </section>
-  <section class="report-card"><h2>Automatic delivery</h2>
-    <p>Only your verified account email can receive scheduled reports. Weekly reports run on Monday.</p>
-    <div class="report-controls"><label>Frequency<select name="frequency">
-      <% for(const option of ['none','daily','weekly']){ %><option value="<%= option %>"
-        <%= (saved?.schedule_frequency||draftSchedule?.frequency||'none')===option?'selected':'' %>><%= option %></option><% } %>
-    </select></label><label>Hour (UTC)<input type="number" name="hour" min="0" max="23"
-      value="<%= saved?.schedule_hour_utc??draftSchedule?.hour??9 %>"></label></div>
-  </section>
+  <section class="report-card"><h2>Automatic delivery</h2><%- include('schedule-controls',{saved:locals.saved||null,draftSchedule:locals.draftSchedule||null}) %></section>
   <div class="report-actions"><button class="button" type="submit">Run combined report</button>
     <button class="button button--secondary" type="submit" formaction="/reports/save">Save template</button></div>
 </form>

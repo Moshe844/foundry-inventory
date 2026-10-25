@@ -6,13 +6,15 @@ const {ZipFile}=require('yazl');
 const {ValidationError,RateLimitError}=require('../domain/errors');
 const tables=require('./postgres-export-tables');
 let active=0;
-function cell(value){
+const numericTypes=new Set([20,21,23,700,701,1700]);
+function cell(value,{numeric=false}={}){
   let text=value==null?'':value instanceof Date?value.toISOString():typeof value==='object'?JSON.stringify(value):String(value);
+  if((numeric||typeof value==='number')&&/^-?\d+(?:\.\d+)?$/.test(text))return text;
   // Spreadsheet programs must not execute imported names, notes or codes.
   if(typeof value==='string'&&/^[\s]*[=+@-]/.test(text))text="'"+text;
   return '"'+text.replaceAll('"','""')+'"';
 }
-function line(values){return values.map(cell).join(',')+'\r\n';}
+function line(values,numericColumns=[]){return values.map((value,index)=>cell(value,{numeric:Boolean(numericColumns[index])})).join(',')+'\r\n';}
 function queries(itemIds){
  const inventory=`SELECT i.name AS "Product",i.base_code AS "Item code",s.code AS "SKU",s.variant_label AS "Variant",
  i.unit_label AS "Unit",l.name AS "Location",coalesce(b.on_hand,0) AS "On hand",p.amount_minor AS "Selling price (minor)",
@@ -57,7 +59,7 @@ async function download(database,workspaceId,res,{itemIds=null}={}){
     try{yield '\ufeff';for(;;){if(controller.signal.aborted)throw new Error('Export download cancelled.');
      const batch=await client.query(`FETCH FORWARD 500 FROM ${cursor}`);
      if(first){yield line(batch.fields.map(f=>f.name));first=false;}
-     for(const row of batch.rows){yield line(batch.fields.map(f=>row[f.name]));count++;}
+     for(const row of batch.rows){yield line(batch.fields.map(f=>row[f.name]),batch.fields.map(f=>numericTypes.has(f.dataTypeID)));count++;}
      if(batch.rows.length<500)break;
     }counts[name]=count;resolveDone();}
     catch(error){rejectDone(error);throw error;}
@@ -72,7 +74,8 @@ async function download(database,workspaceId,res,{itemIds=null}={}){
    ['Money','Minor amounts are exact currency units (USD cents, JPY yen). Keep the currency column.'],
    ['Data','CSV files open in spreadsheet programs. All rows share one database snapshot.'],
    ['Imported source details','Additional source fields are retained in the attributes JSON column.'],[],['File','Records'],...Object.entries(counts)];
-  zip.addBuffer(Buffer.from('\ufeff'+info.map(line).join('')),'Read me.csv');zip.end({forceZip64Format:true});
+  info.push(['Custody','Rental, consignment and inspection locations are protected from ordinary sales availability. Agreement records distinguish our assets from supplier-owned goods.']);
+  zip.addBuffer(Buffer.from('\ufeff'+info.map(row=>line(row)).join('')),'Read me.csv');zip.end({forceZip64Format:true});
   await transfer;return {counts};
  },{isolation:'REPEATABLE READ',readOnly:true,statementTimeoutMs:120000});}
  catch(error){controller.abort();source?.destroy();if(transfer)await transfer.catch(()=>{});if(cancelledByClient)return {cancelled:true};throw error;}

@@ -63,7 +63,7 @@
   <% } %>
 </section>
 <section class="report-card report-save"><h2>Save and export</h2>
-  <% if(saved){ %><p>Saved report · <%= saved.schedule_frequency==='none'?'on demand':saved.schedule_frequency+' delivery' %></p>
+  <% if(saved){ %><%- include('delivery-actions',{report:saved}) %>
     <% if(saved.last_error){ %><p class="report-error">Delivery needs attention: <%= saved.last_error %></p><% } %>
     <div class="report-actions"><a href="/reports/saved/<%= saved.id %>/export.csv">CSV</a>
       <a href="/reports/saved/<%= saved.id %>/export.xlsx">Excel</a>
@@ -71,9 +71,9 @@
   <% }else{ %><form action="/reports/save" method="post"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <input type="hidden" name="definition" value="<%= JSON.stringify(result.config) %>">
     <input type="hidden" name="frequency" value="<%= draftSchedule?.frequency||'none' %>">
-    <input type="hidden" name="hour" value="<%= draftSchedule?.hour??9 %>">
+    <input type="hidden" name="hour" value="<%= draftSchedule?.hour??9 %>"><input type="hidden" name="minute" value="<%= draftSchedule?.minute??0 %>"><input type="hidden" name="weekday" value="<%= draftSchedule?.weekday??1 %>"><input type="hidden" name="timeZone" value="<%= draftSchedule?.timeZone||reportBusinessTimeZone %>">
     <% if(draftSchedule?.frequency&&draftSchedule.frequency!=='none'){ %>
-      <p>Automatic delivery: <%= draftSchedule.frequency %> at <%= String(draftSchedule.hour).padStart(2,'0') %>:00 UTC to your verified account email.</p>
+      <p>Automatic delivery: <%= draftSchedule.frequency %> at <%= String(draftSchedule.hour).padStart(2,'0') %>:<%= String(draftSchedule.minute||0).padStart(2,'0') %> <%= draftSchedule.timeZone||reportBusinessTimeZone %> to your account email.</p>
     <% } %>
     <button class="button" type="submit">Save this report</button></form><% } %>
 </section>

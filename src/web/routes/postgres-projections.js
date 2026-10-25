@@ -13,8 +13,8 @@ const { requireAuth,requirePermission,asyncRoute }=require('../middleware');
 const { newId,nowIso,trimOrNull,requireText }=require('../../lib/util');
 const { ValidationError }=require('../../domain/errors');
 
-function period(query){
-  const to=String(query.to || new Date().toISOString().slice(0,10));
+function period(query,calendarDate){
+  const to=String(query.to || calendarDate);
   return {from:String(query.from || `${to.slice(0,7)}-01`),to};
 }
 
@@ -89,8 +89,9 @@ async function activityPage(database,workspaceId,query){const page=positivePage(
   const values=[workspaceId];const clauses=['m.workspace_id=$1'];const add=(sql,value)=>{values.push(value);clauses.push(sql.replace('?',`$${values.length}`));};
   if(filters.operation)add('m.operation=?',filters.operation);if(filters.itemId)add('m.item_id=?',filters.itemId);
   if(filters.locationId)add('m.location_id=?',filters.locationId);if(filters.actorId)add('m.actor_user_id=?',filters.actorId);
-  if(filters.dateFrom)add('m.occurred_at>=?',`${filters.dateFrom}T00:00:00.000Z`);
-  if(filters.dateTo)add('m.occurred_at<?',`${filters.dateTo}T23:59:59.999Z`);
+  const clock=require('../../lib/business-time'),timeZone=(await clock.forWorkspace(database,workspaceId)).timeZone;
+  if(filters.dateFrom)add('m.occurred_at::timestamptz>=?::timestamptz',clock.dayBoundary(filters.dateFrom,timeZone));
+  if(filters.dateTo)add('m.occurred_at::timestamptz<?::timestamptz',clock.dayBoundary(filters.dateTo,timeZone,{nextDay:true}));
   if(search){values.push(`%${search}%`);const index=values.length;clauses.push(`(i.name ILIKE $${index} OR s.code ILIKE $${index}
     OR COALESCE(m.reference,'') ILIKE $${index} OR COALESCE(m.notes,'') ILIKE $${index} OR l.name ILIKE $${index})`);}
   const where=clauses.join(' AND ');const count=(await database.query(`SELECT COUNT(*) AS count FROM movements m
@@ -170,14 +171,14 @@ function createPostgresProjectionsRouter(database){
   router.get(['/money','/accounting'],requireAuth,asyncRoute(async(req,res)=>{
     const settings=(await database.query('SELECT * FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId])).rows[0];
     if(!Number(settings?.enabled))return res.redirect(302,'/accounting/setup');
-    const result=await presenters.money(database,req.ctx.workspaceId,period(req.query),req.ctx.actorId);
+    const result=await presenters.money(database,req.ctx.workspaceId,period(req.query,await require('../../lib/business-time').today(database,req.ctx.workspaceId)),req.ctx.actorId);
     return res.page('accounting/money',{title:'Money',nav:'accounting',room:true,...result,
       configured:{enabled:true,currency:result.story.currency},period:{key:'custom',from:result.from,to:result.to,label:'Current period'}});
   }));
   router.get('/accounting/setup',requireAuth,requirePermission(permissions.MANAGE_ACCOUNTING,'set up Money'),asyncRoute(async(req,res)=>{
     const settings=(await database.query('SELECT * FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId])).rows[0];
     const importId=String(req.query.import||'').slice(0,160),plan=importId?await require('../../imports/postgres-service').get(database,req.ctx.workspaceId,importId):null;
-    return res.page('accounting/setup',{title:'Set up Money',nav:'accounting',settings,plan,today:new Date().toISOString().slice(0,10),currencies:Intl.supportedValuesOf('currency')});
+    return res.page('accounting/setup',{title:'Set up Money',nav:'accounting',settings,plan,today:await require('../../lib/business-time').today(database,req.ctx.workspaceId),currencies:Intl.supportedValuesOf('currency')});
   }));
   router.post('/accounting/setup',requireAuth,requirePermission(permissions.MANAGE_ACCOUNTING,'set up Money'),asyncRoute(async(req,res)=>{
     const settings=(await database.query('SELECT * FROM accounting_settings WHERE workspace_id=$1',[req.ctx.workspaceId])).rows[0];
@@ -187,7 +188,7 @@ function createPostgresProjectionsRouter(database){
     req.flash('success','Money is ready. Review the recalculated file before approving any stock or value.');return res.redirect(303,plan?'/imports/'+plan.id:'/money');
   }));
   router.get(['/accounting/books','/money/books'],requireAuth,(req,res)=>res.redirect(302,'/money'));
-  router.get('/accounting/transactions',requireAuth,requirePermission(permissions.VIEW_ACCOUNTING,'view accounting transactions'),asyncRoute(async(req,res)=>{const dates=period(req.query);
+  router.get('/accounting/transactions',requireAuth,requirePermission(permissions.VIEW_ACCOUNTING,'view accounting transactions'),asyncRoute(async(req,res)=>{const dates=period(req.query,await require('../../lib/business-time').today(database,req.ctx.workspaceId));
     const entries=(await database.query(`SELECT * FROM accounting_journal_entries WHERE workspace_id=$1 AND status='POSTED'
       AND posting_date BETWEEN $2 AND $3 ORDER BY posting_date DESC,entry_number DESC`,[req.ctx.workspaceId,dates.from,dates.to])).rows;
     return res.page('accounting/transactions',{title:'Accounting transactions',nav:'accounting',from:dates.from,to:dates.to,
@@ -207,7 +208,7 @@ function createPostgresProjectionsRouter(database){
   }));
   router.get('/accounting/periods',requireAuth,requirePermission(permissions.VIEW_ACCOUNTING,'view accounting periods'),asyncRoute(async(req,res)=>res.page('accounting/periods',{
     title:'Accounting periods',nav:'accounting',periods:(await database.query(`SELECT * FROM accounting_periods
-      WHERE workspace_id=$1 ORDER BY starts_on DESC,id DESC`,[req.ctx.workspaceId])).rows,today:new Date().toISOString().slice(0,10),
+      WHERE workspace_id=$1 ORDER BY starts_on DESC,id DESC`,[req.ctx.workspaceId])).rows,today:await require('../../lib/business-time').today(database,req.ctx.workspaceId),
   })));
   router.post('/accounting/periods/:id/close',requireAuth,requirePermission(permissions.CLOSE_ACCOUNTING_PERIOD,'close accounting periods'),asyncRoute(async(req,res)=>{const changed=await database.query(`UPDATE accounting_periods
       SET status='CLOSED',closed_by_user_id=$3,closed_at=$4,close_note=$5 WHERE workspace_id=$1 AND id=$2 AND status='OPEN' RETURNING id`,
@@ -245,7 +246,7 @@ function createPostgresProjectionsRouter(database){
     const counterparties=(await database.query(`SELECT id,name FROM ${table} WHERE workspace_id=$1 AND ${filter}
       ORDER BY lower(name)`,[req.ctx.workspaceId])).rows;
     return res.page('accounting/postgres-manual-document',{title:kind==='invoice'?'Record a customer invoice':'Record a supplier bill',
-      nav:'accounting',kind,counterparties,products:kind==='invoice'?await require('../../operations/postgres-commerce').catalogue(database,req.ctx.workspaceId):[],today:new Date().toISOString().slice(0,10),idempotencyKey:newId('manual-doc')});
+      nav:'accounting',kind,counterparties,products:kind==='invoice'?await require('../../operations/postgres-commerce').catalogue(database,req.ctx.workspaceId):[],today:await require('../../lib/business-time').today(database,req.ctx.workspaceId),idempotencyKey:newId('manual-doc')});
   }
   router.get('/accounting/receivables/new',requireAuth,requirePermission(permissions.MANAGE_ACCOUNTING,'create customer invoices'),
     asyncRoute((req,res)=>manualDocument(req,res,'invoice')));
@@ -299,7 +300,7 @@ function createPostgresProjectionsRouter(database){
   router.get('/accounting/adjustments/new',requireAuth,requirePermission(permissions.MANAGE_ACCOUNTING,'create accounting adjustments'),asyncRoute(async(req,res)=>{
     const accounts=(await database.query(`SELECT * FROM accounting_accounts WHERE workspace_id=$1 AND active=1 ORDER BY code,id`,
       [req.ctx.workspaceId])).rows;
-    return res.page('accounting/adjustment-new',{title:'New accounting adjustment',nav:'accounting',today:new Date().toISOString().slice(0,10),accounts});
+    return res.page('accounting/adjustment-new',{title:'New accounting adjustment',nav:'accounting',today:await require('../../lib/business-time').today(database,req.ctx.workspaceId),accounts});
   }));
   router.post('/accounting/adjustments',requireAuth,requirePermission(permissions.MANAGE_ACCOUNTING,'create accounting adjustments'),asyncRoute(async(req,res)=>{
     if(req.body.debitAccountId===req.body.creditAccountId)throw new ValidationError('Choose two different accounts for an adjustment.');
@@ -321,7 +322,7 @@ function createPostgresProjectionsRouter(database){
     const byKey=Object.fromEntries(balances.rows.map((row)=>[row.system_key,Number(row.balance)]));
     return res.page('accounting/tax',{title:'Sales-tax records',nav:'accounting',rates:rates.rows,
       payableMinor:Math.max(0,-Number(byKey.SALES_TAX_PAYABLE||0)),recoverableMinor:Math.max(0,Number(byKey.SALES_TAX_RECOVERABLE||0)),
-      currency:settings.rows[0]?.base_currency||'USD',today:new Date().toISOString().slice(0,10)});
+      currency:settings.rows[0]?.base_currency||'USD',today:await require('../../lib/business-time').today(database,req.ctx.workspaceId)});
   }));
   router.post('/accounting/tax/rates',requireAuth,requirePermission(permissions.MANAGE_ACCOUNTING,'configure tax rates'),asyncRoute(async(req,res)=>{const percent=Number(req.body.ratePercent);
     if(!Number.isFinite(percent)||percent<0||percent>100)throw new ValidationError('Tax rate must be between 0 and 100 percent.');
@@ -345,7 +346,7 @@ function createPostgresProjectionsRouter(database){
       ORDER BY posting_date DESC,entry_number DESC LIMIT 100`,[req.ctx.workspaceId])]);
     return res.page('accounting/banking',{title:'Banking and reconciliation',nav:'accounting',banks:banks.rows,accounts:accounts.rows,
       transactions:transactions.rows,reconciliations:reconciliations.rows,paymentMatches:payments.rows,journalMatches:journals.rows,
-      today:new Date().toISOString().slice(0,10)});
+      today:await require('../../lib/business-time').today(database,req.ctx.workspaceId)});
   }));
   router.post('/accounting/banking/accounts',requireAuth,requirePermission(permissions.MANAGE_ACCOUNTING,'add financial accounts'),asyncRoute(async(req,res)=>{
     const name=requireText(req.body.name,'Account name',{max:120});
@@ -388,7 +389,7 @@ function createPostgresProjectionsRouter(database){
     }));
   router.get('/foundry/briefing',requireAuth,(req,res)=>res.redirect(302,'/'));
   router.get('/accounting/reports/:kind',requireAuth,requirePermission(permissions.VIEW_ACCOUNTING,'view financial reports'),asyncRoute(async(req,res)=>{
-    const dates=period(req.query);let report;let title;
+    const dates=period(req.query,await require('../../lib/business-time').today(database,req.ctx.workspaceId));let report;let title;
     if(req.params.kind==='profit-and-loss'){report=await reports.profitAndLoss(database,req.ctx.workspaceId,dates);title='Profit and loss';}
     else if(req.params.kind==='balance-sheet'){report=await reports.balanceSheet(database,req.ctx.workspaceId,{asOf:req.query.asOf || dates.to});title='Balance sheet';}
     else if(req.params.kind==='trial-balance'){report=await reports.trialBalance(database,req.ctx.workspaceId,dates);title='Trial balance';}

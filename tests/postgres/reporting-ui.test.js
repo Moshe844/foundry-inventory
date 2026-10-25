@@ -83,9 +83,9 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
       if(input.schemaName==='stockchief_governed_report_save')return {data:{report:{dataset:'stock',
         title:'Morning units by location',columns:[],groups:['location'],aggregate:'sum',
         measure:'on_hand',filters:[],sort:'total',direction:'desc',chart:'bar'},
-      frequency:'weekly',hourUtc:9},usage:pricedUsage()};
+      frequency:'weekly',hour:9,minute:0,weekday:1,timeZone:'UTC'},usage:pricedUsage()};
       if(input.schemaName==='stockchief_governed_report_followup_save')return {data:{
-        title:'Weekly stock by location',frequency:'weekly',hourUtc:9},usage:pricedUsage()};
+        title:'Weekly stock by location',frequency:'weekly',hour:9,minute:0,weekday:1,timeZone:'UTC'},usage:pricedUsage()};
       throw new Error(`Unexpected report model request ${input.schemaName}`);
     }};
     const app=createPostgresApp({database,env:'test',sessionSecret:'report-test-secret',aiProvider:provider});
@@ -318,7 +318,7 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     const combinedCsv=await owner.get(`/reports/saved/${combinedId}/export.csv`);
     assert.equal(combinedCsv.status,200);
     assert.match(combinedCsv.text,/Gross profit per ordered unit/);
-    assert.match(combinedCsv.text,/\$2\.10/);
+    assert.match(combinedCsv.text,/,2\.10(?:\r?\n|$)/);assert.doesNotMatch(combinedCsv.text,/\$/);
     const combinedXlsx=await owner.get(`/reports/saved/${combinedId}/export.xlsx`).buffer(true).parse(binary);
     assert.equal(combinedXlsx.status,200);
     assert.equal(combinedXlsx.body.subarray(0,2).toString(),'PK');
@@ -412,10 +412,10 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     assert.equal(Number(quoted.rows[0].total),750);
     assert.equal(quoted.displayRows[0].total,'$7.50');
     const quotedCsv=reportExports.csv(quoted).toString();
-    assert.match(quotedCsv,/"\$7\.50"/);
+    assert.match(quotedCsv,/,7\.50(?:\r?\n|$)/);
     assert.doesNotMatch(quotedCsv,/"750"/);
     const quotedWorkbook=readWorkbook(reportExports.xlsx(quoted));
-    assert.equal(quotedWorkbook.sheets[0].rows[1][1],'$7.50');
+    assert.equal(Number(quotedWorkbook.sheets[0].rows[1][1]),7.5);
     const moneyChart=await reportAsk.prepare(database,ctx,
       'Make a bar chart of fully priced quoted order value by customer in USD',{provider:{
         async complete(input){if(input.schemaName==='stockchief_governed_report_fit')
@@ -433,7 +433,7 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
       'Save that exact value-by-customer bar chart and schedule it Mondays at 09:00 UTC',{
         priorReport:moneyChart.reportConfig,provider:{async complete(input){
           assert.equal(input.schemaName,'stockchief_governed_report_followup_save');
-          return {data:{title:'Weekly quoted value',frequency:'weekly',hourUtc:9}};
+          return {data:{title:'Weekly quoted value',frequency:'weekly',hour:9,minute:0,weekday:1,timeZone:'UTC'}};
         }}});
     assert.deepEqual(savedChart.definition,{...moneyChart.reportConfig,title:'Weekly quoted value'});
     assert.equal(savedChart.schedule.frequency,'weekly');
@@ -660,7 +660,7 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     assert.equal(marginSaved.status,303);
     const marginCsv=await owner.get(`${marginSaved.headers.location}/export.csv`);
     assert.equal(marginCsv.status,200);
-    assert.match(marginCsv.text,/48\.46%/);
+    assert.match(marginCsv.text,/,48\.46(?:\r?\n|$)/);
     const builder=await owner.get('/reports/builder?dataset=stock');assert.equal(builder.status,200);
     const token=csrf(builder.text);assert.ok(token);
     const preview=await owner.post('/reports/run').type('form').send({_csrf:token,dataset:'stock',
@@ -691,7 +691,7 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     assert.notEqual(invalidHour.status,200);
     await assert.rejects(()=>reports.save(database,ctx,actor,{dataset:'stock',
       columns:['sku'],sort:'sku'},{schedule:{frequency:'weekly',hour:'',recipient:actor.email}}),
-    /UTC delivery hour/);
+    /delivery hour/);
     const groupedPreview=await owner.post('/reports/run').type('form').send({_csrf:token,dataset:'stock',
       title:'Stock by location',groups:['location'],aggregate:'sum',measure:'on_hand',sort:'total',chart:'bar'});
     assert.match(groupedPreview.text,/See source records/);
@@ -723,6 +723,7 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
     assert.equal(pdf.status,200);assert.match(pdf.body.toString('ascii'),/^%PDF-1\.[3-7]/);
     const report=await reports.load(database,ctx,actor,reportId);
     assert.equal(report.schedule_frequency,'daily');
+    await database.query("UPDATE stockchief_runtime.report_templates SET next_send_at='2026-10-09T09:00:00Z' WHERE id=$1",[reportId]);
     const due=await database.transaction(client=>scheduling.enqueueDue(client,'2026-10-09T09:05:00.000Z'),
       {isolation:'READ COMMITTED'});
     assert.equal(due.queued,1);
@@ -809,12 +810,13 @@ test('governed reports query real PostgreSQL, save, export, schedule and isolate
       SELECT 'report-page-'||number::text,$1,$2,'Scheduled page '||number::text,$3::jsonb,
         'daily',11,$4 FROM generate_series(1,501) AS number`,
     [ctx.workspaceId,ctx.actorId,JSON.stringify(stock.config),'report-owner@example.test']);
+    await database.query("UPDATE stockchief_runtime.report_templates SET next_send_at='2026-10-09T11:00:00Z' WHERE id LIKE 'report-page-%'");
     const pagedDue=await database.transaction(client=>
       scheduling.enqueueDue(client,'2026-10-09T11:05:00.000Z'),{isolation:'READ COMMITTED'});
-    assert.equal(pagedDue.queued,501,'scheduled templates after the first 500 must not starve');
+    assert.equal(pagedDue.queued,500,'each sweep is bounded');
     const pagedReplay=await database.transaction(client=>
       scheduling.enqueueDue(client,'2026-10-09T11:10:00.000Z'),{isolation:'READ COMMITTED'});
-    assert.equal(pagedReplay.queued,0);
+    assert.equal(pagedReplay.queued,1,'remaining due templates are processed on the next sweep rather than starving');assert.equal((await database.transaction(client=>scheduling.enqueueDue(client,'2026-10-09T11:15:00Z'),{isolation:'READ COMMITTED'})).queued,0);
     await database.query('UPDATE users SET role=$2,permissions=$3 WHERE id=$1',
       [ctx.actorId,'staff',JSON.stringify(['VIEW'])]);
     const restricted=await owner.get('/reports/builder?dataset=payments');assert.equal(restricted.status,404);

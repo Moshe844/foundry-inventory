@@ -452,12 +452,13 @@
   <% } %>
 </div>
 
-<% if (order.status === 'FULFILLED' || order.status === 'PARTIALLY_FULFILLED') { %>
+<% if(Number(money.refundedMinor)>0){ %><p class="quiet-note" data-order-refunded>Refunded <%= helpers.money(money.refundedMinor,order.currency) %></p><% } %>
+<% if (order.status === 'FULFILLED' || order.status === 'PARTIALLY_FULFILLED' || (order.status==='CANCELLED'&&shipped>0)) { %>
   <% if (accounting.status === 'POSTED') { %>
     <details class="card fold" open>
       <summary class="card-head">
-        <h2>
-          Sale <%= helpers.money(accounting.outcome.revenueMinor || 0, order.currency) %>
+        <h2 data-order-profit>
+          Net sale <%= helpers.money(accounting.outcome.revenueMinor || 0, order.currency) %>
           − product cost <%= helpers.money(accounting.outcome.cogsMinor || 0, order.currency) %>
           = gross profit <%= helpers.money((accounting.outcome.revenueMinor || 0) - (accounting.outcome.cogsMinor || 0), order.currency) %>.
         </h2>
@@ -973,7 +974,7 @@
     <% if (order.pricing.discountMinor) { %><div><span>Discount</span><strong>−<%= helpers.money(order.pricing.discountMinor, order.currency) %></strong></div><% } %>
     <% if (order.pricing.chargesMinor) { %><div><span>Shipping and other charges</span><strong><%= helpers.money(order.pricing.chargesMinor, order.currency) %></strong></div><% } %>
     <% if (order.pricing.taxMinor) { %><div><span>Tax</span><strong><%= helpers.money(order.pricing.taxMinor, order.currency) %></strong></div><% } %>
-    <div class="sales-total"><span>Order total</span><strong><%= helpers.money(order.pricing.totalMinor, order.currency) %></strong></div>
+    <% if(order.pricing.cancelledUnbilledMinor){ %><div><span>Cancelled, never invoiced</span><strong>−<%= helpers.money(order.pricing.cancelledUnbilledMinor,order.currency) %></strong></div><% } %><% if(order.pricing.cancelledRemainder&&order.pricing.creditedMinor){ %><div><span>Refunds and credits</span><strong>−<%= helpers.money(order.pricing.creditedMinor,order.currency) %></strong></div><% } %><div class="sales-total"><span><%= order.pricing.cancelledRemainder?'Net invoiced after cancellation':'Order total' %></span><strong><%= helpers.money(order.pricing.totalMinor, order.currency) %></strong></div>
   </div>
   <% if (order.pricing.missingPriceLines) { %><div class="notice notice--warn"><strong>Enter the selling price in the confirm box above, or on the product.</strong> <%= order.pricing.missingPriceLines %> line<%= order.pricing.missingPriceLines === 1 ? '' : 's' %> has no selling price. <% order.lines.filter(function(line){ return line.unit_price_minor === null; }).forEach(function(line){ %><a href="/inventory/<%= line.item_id %>#selling-price">Set the price for <%= line.displayName %></a>. <% }) %></div><% } %>
 </details>

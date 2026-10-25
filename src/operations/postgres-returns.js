@@ -25,13 +25,7 @@ function parseJson(value, fallback) {
   try { return JSON.parse(value || JSON.stringify(fallback)); } catch { return fallback; }
 }
 
-function refundSummary(record){
- const money=require('../domain/currency');let revenueMinor=0,taxMinor=0;
- for(const line of record.lines||[])for(const a of (line.trackingEvidence||parseJson(line.tracking_evidence,{})).costAllocations||[]){
-  revenueMinor=money.sum([revenueMinor,a.revenueMinor??Number(a.quantity)*Number(line.unit_price_minor)],'Refund');taxMinor=money.sum([taxMinor,a.taxMinor||0],'Refund tax');
- }
- return {revenueMinor,taxMinor,totalMinor:money.sum([revenueMinor,taxMinor],'Refund total')};
-}
+const refundSummary=require('./return-money').summary;
 
 function requireContext(ctx) {
   if (!ctx?.workspaceId || !ctx?.actorId) throw new ValidationError('A workspace and acting user are required.');
@@ -97,7 +91,7 @@ async function readReturn(queryable, workspaceId, id, lock = false) {
     FROM customer_return_lines rl JOIN sales_order_lines sol ON sol.id=rl.sales_order_line_id
     JOIN skus s ON s.id=rl.sku_id JOIN items i ON i.id=s.item_id
     WHERE rl.workspace_id=$1 AND rl.customer_return_id=$2 ORDER BY rl.created_at,rl.id`, [workspaceId, id]);
-  return { ...header.rows[0], lines: lines.rows.map((line) => ({ ...line,
+  const postedRefunds=(await queryable.query("SELECT r.* FROM accounting_sale_refunds r JOIN accounting_journal_entries e ON e.workspace_id=r.workspace_id AND e.id=r.journal_entry_id WHERE r.workspace_id=$1 AND e.source_record_type='customer_return' AND e.source_record_id=$2 AND e.status='POSTED' ORDER BY r.id",[workspaceId,id])).rows;return { ...header.rows[0],postedRefunds, lines: lines.rows.map((line) => ({ ...line,
     receiveMovementIds: parseJson(line.receive_movement_ids, []),
     dispositionMovementIds: parseJson(line.disposition_movement_ids, []),
     trackingEvidence: parseJson(line.tracking_evidence, {}),
@@ -311,10 +305,10 @@ async function receiveCustomerReturn(database, rawContext, id, input) {
         notes: 'Received into quarantine; condition not yet decided.',
         idempotencyKey: `${operation.key}:inventory:${line.id}`,
       });
-      let inventoryJournalEntryId = null;
+      const deferred=row.resolution==='REFUND';if(deferred&&costMinor)await ledger.ensureSystemAccountInTransaction(client,ctx,'CUSTOMER_RETURN_COST_PENDING');let inventoryJournalEntryId = null;
       if (costMinor) {
         const posted = await ledger.postInTransaction(client, ctx, {
-          postingDate: nowIso().slice(0, 10), sourceKey: `customer-return-receipt:${operation.key}:${line.id}`,
+          postingDate:null, sourceKey: `customer-return-receipt:${operation.key}:${line.id}`,
           description: `Receive ${quantity} returned units on ${row.return_number}`,
           sourceType: 'customer_return_receipt', sourceRecordType: 'customer_return', sourceRecordId: id,
           currency: row.currency, metadata: { customerReturnId: id, customerReturnLineId: line.id,
@@ -322,7 +316,7 @@ async function receiveCustomerReturn(database, rawContext, id, input) {
           lines: [
             { accountKey: 'INVENTORY_ASSET', debitMinor: costMinor, customerId: row.customer_id,
               itemId: line.item_id, skuId: line.sku_id, locationId: row.quarantine_location_id },
-            { accountKey: 'COST_OF_GOODS_SOLD', creditMinor: costMinor, customerId: row.customer_id,
+            { accountKey: deferred?'CUSTOMER_RETURN_COST_PENDING':'COST_OF_GOODS_SOLD', creditMinor: costMinor, customerId: row.customer_id,
               itemId: line.item_id, skuId: line.sku_id, locationId: row.quarantine_location_id },
           ],
         });
@@ -334,7 +328,7 @@ async function receiveCustomerReturn(database, rawContext, id, input) {
       const batch = { quantity, costMinor, returnMovementId: physical.movementId, inventoryJournalEntryId,
         lotId: identity.tracking.lotId || null, serialUnitIds: identity.tracking.serialUnitIds || [],
         serials: identity.tracking.serials || [], allocations: allocations.map((allocation) => ({ ...allocation,
-          inventoryJournalEntryId, returnMovementId: physical.movementId })) };
+          inventoryJournalEntryId,costRecognition:deferred?'ON_REFUND':'ON_RECEIPT', returnMovementId: physical.movementId })) };
       trackingEvidence.receivedBatches = [...(trackingEvidence.receivedBatches || []), batch];
       trackingEvidence.costAllocations = [...(trackingEvidence.costAllocations || []), ...batch.allocations];
       const movementIds = [...line.receiveMovementIds, physical.movementId];
@@ -415,7 +409,7 @@ async function inspectCustomerReturn(database, rawContext, id, input) {
           let journalEntryId = null;
           if (prepared.totalCostMinor) {
             const posted = await ledger.postInTransaction(client, ctx, {
-              postingDate: nowIso().slice(0, 10), sourceKey: `customer-return-scrap:${operation.key}:${line.id}:${chunkIndex}`,
+              postingDate:null, sourceKey: `customer-return-scrap:${operation.key}:${line.id}:${chunkIndex}`,
               description: `Scrap returned stock on ${row.return_number}`,
               sourceType: 'customer_return_scrap', sourceRecordType: 'customer_return', sourceRecordId: id,
               currency: row.currency, metadata: { customerReturnId: id, movementId: physical.movementId },
@@ -485,22 +479,7 @@ async function refundCustomerReturnInTransaction(client, rawContext, id, input) 
     if (row.resolution !== 'REFUND' || row.status !== 'AWAITING_REFUND') {
       throw new ValidationError('This return is not waiting for a refund.');
     }
-    const groups = new Map();
-    for (const line of row.lines) {
-      for (const allocation of line.trackingEvidence.costAllocations || []) {
-        const key = `${allocation.originalJournalEntryId}:${allocation.inventoryJournalEntryId || 'none'}`;
-        const current = groups.get(key) || { originalJournalEntryId: allocation.originalJournalEntryId,
-          inventoryJournalEntryId: allocation.inventoryJournalEntryId || null, revenueMinor: 0,taxMinor:0,grossMinor:0,discountMinor:0,chargesMinor:0,costMinor: 0,
-          itemId: line.item_id, skuId: line.sku_id, allocations: [] };
-        const revenue=allocation.revenueMinor??Number(allocation.quantity)*Number(line.unit_price_minor);
-        current.revenueMinor += revenue;current.taxMinor+=allocation.taxMinor||0;current.grossMinor+=allocation.grossMinor??revenue;current.discountMinor+=allocation.discountMinor||0;current.chargesMinor+=allocation.chargesMinor||0;
-        current.costMinor += Number(allocation.costMinor);
-        current.allocations.push(allocation);
-        groups.set(key, current);
-      }
-    }
-    const refundGroups = [...groups.values()];
-    const amountMinor = refundGroups.reduce((sum, group) => sum + group.revenueMinor+group.taxMinor, 0);
+    const refundGroups=require('./return-money').groups(row),amountMinor=refundSummary(row).totalMinor,refundDate=String(input.refundDate||await require('../lib/business-time').today(client,ctx.workspaceId));
     const invoiceResult = await client.query(`SELECT * FROM accounting_customer_invoices
       WHERE workspace_id=$1 AND sales_order_id=$2 FOR UPDATE`, [ctx.workspaceId, row.sales_order_id]);
     const invoice = invoiceResult.rows[0];
@@ -523,7 +502,7 @@ async function refundCustomerReturnInTransaction(client, rawContext, id, input) 
     }
     const refundIds = [];
     for (const [index, group] of refundGroups.entries()) {
-      if (!group.revenueMinor&&!group.taxMinor) continue;
+      if (!group.revenueMinor&&!group.taxMinor&&!group.pendingCostMinor) continue;
       const original = await client.query(`SELECT je.id,
           COALESCE(SUM(CASE WHEN a.system_key='SALES_REVENUE' THEN jl.credit_minor ELSE 0 END),0)::bigint AS revenue_minor,
           COALESCE(SUM(CASE WHEN a.system_key='COST_OF_GOODS_SOLD' THEN jl.debit_minor ELSE 0 END),0)::bigint AS cogs_minor,
@@ -542,9 +521,9 @@ async function refundCustomerReturnInTransaction(client, rawContext, id, input) 
         throw new ValidationError('This refund exceeds the unrefunded amount on the original fulfilled sale.');
       }
       let journalEntryId = null;
-      if (group.revenueMinor||group.taxMinor) {
+      if (group.revenueMinor||group.taxMinor||group.pendingCostMinor) {
         const posted = await ledger.postInTransaction(client, ctx, {
-          postingDate: String(input.refundDate || nowIso().slice(0, 10)),
+          postingDate: refundDate,
           sourceKey: `customer-return-refund:${id}:${index}`,
           description: `Refund ${row.return_number}`, sourceType: 'sales_refund',
           sourceRecordType: 'customer_return', sourceRecordId: id, currency: row.currency,
@@ -554,6 +533,8 @@ async function refundCustomerReturnInTransaction(client, rawContext, id, input) 
             { accountKey: 'SALES_RETURNS', debitMinor: group.revenueMinor, customerId: row.customer_id,
               itemId: group.itemId, skuId: group.skuId },
             {accountKey:'SALES_TAX_PAYABLE',debitMinor:group.taxMinor,customerId:row.customer_id},
+            {accountKey:'CUSTOMER_RETURN_COST_PENDING',debitMinor:group.pendingCostMinor},
+            {accountKey:'COST_OF_GOODS_SOLD',creditMinor:group.pendingCostMinor},
             { accountKey: destination === 'CASH' ? 'CASH' : 'ACCOUNTS_RECEIVABLE',
               creditMinor: group.revenueMinor+group.taxMinor, customerId: row.customer_id,
               itemId: group.itemId, skuId: group.skuId },
@@ -568,7 +549,7 @@ async function refundCustomerReturnInTransaction(client, rawContext, id, input) 
          created_by_user_id,created_at)
         VALUES($1,$2,$3,$4,$5,$6,$14,$7,1,$8,$9,$10,$11,$12,$13)`,
       [refundId, ctx.workspaceId, group.originalJournalEntryId, row.return_number,
-        String(input.refundDate || nowIso().slice(0, 10)), group.revenueMinor, group.costMinor, destination,
+        refundDate, group.revenueMinor, group.costMinor, destination,
         journalEntryId, group.inventoryJournalEntryId, `customer-return:${id}:${index}`, ctx.actorId, nowIso(),group.taxMinor]);
       refundIds.push(refundId);
     }
@@ -609,7 +590,7 @@ async function exchangeCustomerReturn(database, rawContext, id, input) {
     const original = (await client.query(`SELECT * FROM sales_orders WHERE id=$1 AND workspace_id=$2`,
       [row.sales_order_id, ctx.workspaceId])).rows[0];
     const exchange = await workflows.createSalesOrderInTransaction(client, ctx, {
-      customerId: row.customer_id, orderDate: input.orderDate || nowIso().slice(0, 10),
+      customerId: row.customer_id, orderDate: input.orderDate || await require('../lib/business-time').today(client,ctx.workspaceId),
       neededBy: input.neededBy || null, fulfillmentLocationId: input.fulfillmentLocationId || original.fulfillment_location_id,
       deliveryMethod: original.delivery_method, shipToAddress: original.ship_to_address, currency: original.currency,
       reference: `Exchange for ${row.return_number}`, notes: trimOrNull(input.notes),
@@ -644,7 +625,7 @@ async function readSupplierReturn(queryable, workspaceId, id, lock = false) {
       i.tracking_mode,loc.name AS location_name FROM supplier_return_lines l
     JOIN skus s ON s.id=l.sku_id JOIN items i ON i.id=s.item_id JOIN locations loc ON loc.id=l.location_id
     WHERE l.workspace_id=$1 AND l.supplier_return_id=$2 ORDER BY l.created_at,l.id`, [workspaceId, id]);
-  return { ...header.rows[0], lines: lines.rows.map((line) => ({ ...line,
+  const postedRefunds=(await queryable.query("SELECT r.* FROM accounting_sale_refunds r JOIN accounting_journal_entries e ON e.workspace_id=r.workspace_id AND e.id=r.journal_entry_id WHERE r.workspace_id=$1 AND e.source_record_type='customer_return' AND e.source_record_id=$2 AND e.status='POSTED' ORDER BY r.id",[workspaceId,id])).rows;return { ...header.rows[0],postedRefunds, lines: lines.rows.map((line) => ({ ...line,
     serialUnitIds: parseJson(line.serial_unit_ids, []), movementIds: parseJson(line.movement_ids, []) })) };
 }
 

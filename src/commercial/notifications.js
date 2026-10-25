@@ -76,4 +76,4 @@ async function queueUsageWarning(database,input){
   });
 }
 
-module.exports = { queueAccountEmail, queuePaymentFailed, queueSubscriptionSuspended, queueUsageWarning };
+module.exports = { queueAccountEmail, queuePaymentFailed, queueSubscriptionSuspended, queueUsageWarning, escapeHtml };

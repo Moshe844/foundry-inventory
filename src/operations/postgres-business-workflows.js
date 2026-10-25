@@ -165,7 +165,7 @@ async function createPurchaseOrderInTransaction(client, rawContext, input) {
     }
     const id = newId('po');
     const poNumber = trimOrNull(input.poNumber) || await numbered(client, ctx.workspaceId, 'purchase_orders', 'PO');
-    const orderDate = dateOnly(input.orderDate || at.slice(0, 10), 'Order date');
+    const orderDate = dateOnly(input.orderDate || await require('../lib/business-time').today(client,ctx.workspaceId), 'Order date');
     const leads=resolved.map(l=>l.supplierItem?.lead_time_days??supplier.default_lead_time_days).filter(v=>v!=null).map(Number);let expectedDate=input.expectedDate?dateOnly(input.expectedDate,'Expected date'):null;if(!expectedDate&&leads.length){const date=new Date(orderDate+'T12:00:00Z');date.setUTCDate(date.getUTCDate()+Math.max(...leads));expectedDate=date.toISOString().slice(0,10);}
     await client.query(`INSERT INTO purchase_orders
       (id,workspace_id,po_number,supplier_id,status,order_date,expected_date,expected_date_source,
@@ -375,11 +375,11 @@ async function receivePurchaseOrderInTransaction(client, rawContext, purchaseOrd
         reference: input.reference || order.po_number, notes: input.note,
         occurredAt: at, idempotencyKey: `${input.idempotencyKey}:line:${line.id}`,
       });
-      const unitCostMinor = Math.round(Number(line.unit_cost) * 100);
+      const unitCostMinor = require('../domain/currency').userToMinor(String(line.unit_cost),order.currency,{label:'Supplier unit cost'});
       const totalCostMinor = unitCostMinor * quantity;
-      if(totalCostMinor===0)await ledger.validatePostingDateInTransaction(client,ctx,at.slice(0,10));
+      if(totalCostMinor===0)await ledger.validatePostingDateInTransaction(client,ctx,at);
       const posted = totalCostMinor===0?null:await ledger.postInTransaction(client, ctx, {
-        postingDate: at.slice(0, 10), sourceKey: `purchase-receipt:${receiptId}:${line.id}`,
+        postingInstant:at, sourceKey: `purchase-receipt:${receiptId}:${line.id}`,
         description: `Receive ${quantity} units on ${order.po_number}`, sourceType: 'purchase_receipt',
         sourceRecordType: 'purchase_order_receipt', sourceRecordId: receiptId,
         currency: order.currency,
@@ -434,7 +434,7 @@ async function recordSupplierInvoice(database, rawContext, input, {preview=false
     if (operation?.replayed) return { ...operation.result, replayed: true };
     const supplier = await requireRow(client, 'SELECT * FROM suppliers WHERE id=$1 AND workspace_id=$2'+(preview?'':' FOR UPDATE'),
       [input.supplierId, ctx.workspaceId], 'That supplier was not found.');
-    const issueDate = dateOnly(input.issueDate || nowIso().slice(0, 10), 'Supplier invoice date');
+    const issueDate = dateOnly(input.issueDate || await require('../lib/business-time').today(client,ctx.workspaceId), 'Supplier invoice date');
     const purchaseOrder = input.purchaseOrderId ? await requireRow(client, `SELECT * FROM purchase_orders
       WHERE id=$1 AND workspace_id=$2 ${preview?'':'FOR UPDATE'}`, [input.purchaseOrderId, ctx.workspaceId], 'That purchase order was not found.') : null;
     if (purchaseOrder && purchaseOrder.supplier_id !== supplier.id) throw new ValidationError('The supplier invoice does not match the purchase order supplier.');
@@ -577,7 +577,7 @@ async function salesOrderDefaults(client,ctx,input){
     }
     const contactEmail=input.customerEmail===undefined?customer.email:trimOrNull(input.customerEmail),contactPhone=input.customerPhone===undefined?customer.phone:trimOrNull(input.customerPhone);
     if(contactEmail&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail))throw new ValidationError('Enter a valid order contact email.');
-    if(input.fulfillmentLocationId)await requireRow(client,'SELECT id FROM locations WHERE workspace_id=$1 AND id=$2 AND is_active=1',[ctx.workspaceId,input.fulfillmentLocationId],'Choose a ship-from location in this inventory.');
+    if(input.fulfillmentLocationId)await requireRow(client,'SELECT id FROM locations WHERE workspace_id=$1 AND id=$2 AND is_active=1 AND custody_agreement_id IS NULL',[ctx.workspaceId,input.fulfillmentLocationId],'Choose a ship-from location in this inventory.');
 
     return {customer,deliveryMethod,shipToAddress,addressWasSubmitted,contactEmail,contactPhone};
 }
@@ -601,7 +601,7 @@ async function createSalesOrderInTransaction(client, rawContext, input) {
        ship_to_address,ship_to_source,notes,reference,currency,discount_minor,tax_minor,status,version,
        created_by_user_id,created_at,updated_at)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'DRAFT',1,$16,$17,$17)`,
-    [id, ctx.workspaceId, customer.id, orderNumber, dateOnly(input.orderDate || at.slice(0, 10), 'Order date'),
+    [id, ctx.workspaceId, customer.id, orderNumber, dateOnly(input.orderDate || await require('../lib/business-time').today(client,ctx.workspaceId), 'Order date'),
       input.neededBy || null, input.fulfillmentLocationId || null, deliveryMethod,
       shipToAddress, addressWasSubmitted ? 'order' : 'customer',
       trimOrNull(input.notes), trimOrNull(input.reference), input.currency || 'USD',
@@ -672,7 +672,7 @@ async function confirmSalesOrderInTransaction(client, rawContext, salesOrderId, 
       WHERE sales_order_id=$1 AND workspace_id=$2 ORDER BY created_at,id FOR UPDATE`, [salesOrderId, ctx.workspaceId]);
     const skuIds = [...new Set(lines.rows.map((line) => line.sku_id))];
     await client.query(`SELECT b.sku_id,b.location_id FROM balances b JOIN locations l ON l.id=b.location_id
-      WHERE b.workspace_id=$1 AND b.sku_id=ANY($2::text[]) AND l.is_active=1
+      WHERE b.workspace_id=$1 AND b.sku_id=ANY($2::text[]) AND l.is_active=1 AND l.custody_agreement_id IS NULL
         AND ($3::text IS NULL OR b.location_id=$3)
       ORDER BY b.sku_id,b.location_id FOR UPDATE OF b`,
     [ctx.workspaceId, skuIds, order.fulfillment_location_id]);
@@ -687,7 +687,7 @@ async function confirmSalesOrderInTransaction(client, rawContext, salesOrderId, 
           COALESCE((SELECT SUM(a.quantity) FROM sales_order_allocations a JOIN sales_order_lines ol ON ol.id=a.sales_order_line_id
             WHERE a.workspace_id=b.workspace_id AND a.location_id=b.location_id AND ol.sku_id=b.sku_id),0) AS committed
         FROM balances b JOIN locations l ON l.id=b.location_id
-        WHERE b.workspace_id=$1 AND b.sku_id=$2 AND l.is_active=1
+        WHERE b.workspace_id=$1 AND b.sku_id=$2 AND l.is_active=1 AND l.custody_agreement_id IS NULL
           AND ($3::text IS NULL OR b.location_id=$3) ORDER BY b.on_hand DESC,b.location_id`,
       [ctx.workspaceId, line.sku_id, order.fulfillment_location_id]);
       for (const balance of balances.rows) {
@@ -774,7 +774,7 @@ async function fulfillSalesOrderInTransaction(client, rawContext, salesOrderId, 
       }
       const {grossMinor,discountMinor,taxMinor,chargesMinor,chargeTaxMinor,revenueMinor,totalMinor}=priceCalculator.monetaryPortion(snapshot,snapshot.quantity,before,quantity);
       const posted = await ledger.postInTransaction(client, ctx, {
-        postingDate: at.slice(0, 10), sourceKey: `sales-fulfillment:${input.idempotencyKey}:${line.id}:${requested.locationId}`,
+        postingInstant:at, sourceKey: `sales-fulfillment:${input.idempotencyKey}:${line.id}:${requested.locationId}`,
         description: `Fulfill ${quantity} units on ${order.order_number}`, sourceType: 'sale_fulfillment',
         sourceRecordType: 'sales_order', sourceRecordId: salesOrderId, currency: order.currency,
         metadata: { movementId: physical.movementId, salesOrderId, salesOrderLineId: line.id,
@@ -856,7 +856,7 @@ async function fulfillSalesOrderInTransaction(client, rawContext, salesOrderId, 
       const applied = Math.min(available, Number(invoiceState.balance_minor));
       if (applied <= 0) continue;
       const depositPosted = await ledger.postInTransaction(client, ctx, {
-        postingDate: at.slice(0, 10),
+        postingInstant:at,
         sourceKey: `deposit-applied:${invoice.id}:${payment.id}:${payment.allocated_minor}:${applied}`,
         description: `Apply customer deposit to ${invoice.invoice_number}`,
         sourceType: 'customer_deposit_applied', sourceRecordType: 'customer_invoice',
@@ -1054,7 +1054,7 @@ async function recordPaymentInTransaction(client, rawContext, input) {
     const operation = await beginOperation(client, ctx, `payment.${direction.toLowerCase()}`, input.idempotencyKey);
     if (operation.replayed) return { ...operation.result, replayed: true };
     const amountMinor = positiveInteger(input.amountMinor, 'Payment amount');
-    const paymentDate = dateOnly(input.paymentDate || nowIso().slice(0, 10), 'Payment date');
+    const paymentDate = dateOnly(input.paymentDate || await require('../lib/business-time').today(client,ctx.workspaceId), 'Payment date');
     const customer = direction === 'CUSTOMER_RECEIPT'
       ? await requireRow(client, 'SELECT id FROM customers WHERE id=$1 AND workspace_id=$2',
         [input.customerId, ctx.workspaceId], 'That customer was not found.') : null;
@@ -1134,7 +1134,7 @@ async function recordCustomerDeposit(database, rawContext, input) {
     const operation = await beginOperation(client, ctx, 'payment.customer_deposit', input.idempotencyKey);
     if (operation.replayed) return { ...operation.result, replayed: true };
     const amountMinor = positiveInteger(input.amountMinor, 'Deposit amount');
-    const paymentDate = dateOnly(input.paymentDate || nowIso().slice(0, 10), 'Payment date');
+    const paymentDate = dateOnly(input.paymentDate || await require('../lib/business-time').today(client,ctx.workspaceId), 'Payment date');
     const order = await requireRow(client, `SELECT * FROM sales_orders
       WHERE id=$1 AND workspace_id=$2 AND customer_id=$3 FOR UPDATE`,
     [input.salesOrderId, ctx.workspaceId, input.customerId], 'That sales order was not found for this customer.');

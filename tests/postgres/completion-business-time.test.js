@@ -1,0 +1,7 @@
+'use strict';process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict');
+test('automatic posting and P&L defaults use the business calendar while explicit posting dates remain unchanged',{timeout:180000},async t=>{
+ const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx}=f,clock=require('../../src/lib/business-time'),ledger=require('../../src/accounting/postgres-ledger');await db.query("UPDATE workspaces SET time_zone='America/New_York' WHERE id=$1",[ctx.workspaceId]);await db.query("UPDATE accounting_settings SET accounting_start_date='2020-01-01' WHERE workspace_id=$1",[ctx.workspaceId]);
+ t.mock.timers.enable({apis:['Date'],now:new Date('2027-03-15T02:22:00.000Z')});assert.equal((await clock.forWorkspace(db,ctx.workspaceId)).calendarDate,'2027-03-14');
+ const entry=(await ledger.post(db,ctx,{sourceKey:'automatic-local-day',lines:[{accountKey:'CASH',debitMinor:93},{accountKey:'SALES_REVENUE',creditMinor:93}]})).entry;assert.equal(entry.posting_date,'2027-03-14');const explicit=(await ledger.post(db,ctx,{postingDate:'2027-03-13',sourceKey:'explicit-calendar-day',lines:[{accountKey:'CASH',debitMinor:17},{accountKey:'SALES_REVENUE',creditMinor:17}]})).entry;assert.equal(explicit.posting_date,'2027-03-13');const pnl=await require('../../src/accounting/postgres-reports').profitAndLoss(db,ctx.workspaceId);assert.equal(pnl.to,'2027-03-14');assert.equal(pnl.from,'2027-03-01');
+});

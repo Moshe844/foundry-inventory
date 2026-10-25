@@ -6,7 +6,7 @@ const permissions=require('../actions/permissions');
 const {ValidationError}=require('../domain/errors');
 const {newId}=require('../lib/util');
 
-const OPERATORS=new Set(['equals','contains','at_least','at_most','after','before','is_null']);
+const OPERATORS=new Set(['equals','contains','at_least','at_most','after','before','is_null','relative']);
 const AGGREGATES=new Set(['count','sum','average','minimum','maximum','ratio']);
 const DATE_GRAINS=new Set(['exact','day','week','month','quarter','year']);
 const AGGREGATE_COLUMN=Object.freeze({count:'count',sum:'total',average:'average',minimum:'minimum',maximum:'maximum',ratio:'ratio'});
@@ -29,7 +29,7 @@ function queryContract(key,actor){
   chart:{enum:['table','bar','line']},layout:{enum:['chart_first','table_first','dashboard']},title:{type:'string',maxLength:100}
  }},filterValues:dataset.filterValues||{},rules:['Choose columns, groups, or summary:true. Grouped and whole-dataset summaries require a valid aggregate and numeric measure except count.',
   'Text equality is case-sensitive. Use the exact registered filterValues codes where supplied; other values are rejected rather than reported as an empty population.',
-  'Date filters use YYYY-MM-DD. contains requires text; after/before require dates; numeric comparisons require numeric or date fields.',
+  'Absolute date filters use YYYY-MM-DD; operator relative accepts today, yesterday, last_7_days, this_week in the business time zone and resolves on each run. contains requires text; after/before require dates; numeric comparisons require numeric or date fields.',
   'Money is in minor currency units. Monetary aggregation requires an exact currency filter or currency grouping, and any registered completeness filter.'],
   fields:dataset.fields,metrics:dataset.metrics||{},moneyCompleteness:dataset.moneyCompleteness||{}};
 }
@@ -88,7 +88,8 @@ function normalize(spec,actor){
       invalid('This field cannot be compared numerically.');
     if(['after','before'].includes(operator)&&type!=='date')invalid('This field is not a date.');
     if(operator==='contains'&&type!=='text')invalid('Only text fields support contains.');
-    if(operator!=='is_null'&&type==='date'&&!/^\d{4}-\d{2}-\d{2}$/.test(value))
+    if(operator==='relative'&&(type!=='date'||!Object.hasOwn(require('./relative-dates').periods,value)))invalid('Choose a supported relative period for a date field.');
+    if(operator!=='is_null'&&operator!=='relative'&&type==='date'&&!/^\d{4}-\d{2}-\d{2}$/.test(value))
       invalid('Use dates in YYYY-MM-DD format.');
     if(operator!=='is_null'&&['number','money_minor'].includes(type)&&!Number.isFinite(Number(value)))
       invalid('Use a valid numeric filter.');
@@ -145,7 +146,8 @@ function filterParameter(filter){
     ?`%${filter.value.replaceAll('!','!!').replaceAll('%','!%').replaceAll('_','!_')}%`
     :filter.value;
 }
-function queryFor(config,workspaceId,{limit=201,offset=0}={}){
+function queryFor(config,workspaceId,{limit=201,offset=0,dateContext=null}={}){
+  config=require('./relative-dates').resolve(config,dateContext);
   const dataset=registry.get(config.dataset);const values=[workspaceId];
   const clauses=config.filters.map((filter)=>{if(filter.operator!=='is_null')values.push(filterParameter(filter));
     return condition(filter,values.length);});
@@ -192,7 +194,7 @@ async function run(database,ctx,actor,spec,options={}){
   if(!Number.isSafeInteger(suppliedOffset)||suppliedOffset<0||suppliedOffset>1000000)
     invalid('That report page is unavailable. Narrow the filters before browsing further.');
   const offset=suppliedOffset;
-  const {sql,values}=queryFor(config,ctx.workspaceId,{limit,offset});
+  const {sql,values}=queryFor(config,ctx.workspaceId,{limit,offset,dateContext:await require('../lib/business-time').forWorkspace(database,ctx.workspaceId)});
   const fetched=(await database.transaction((client)=>client.query(sql,values),
     {isolation:'READ COMMITTED',readOnly:true,statementTimeoutMs:10000,lockTimeoutMs:2000})).rows;
   const hasMore=fetched.length===limit;
@@ -223,7 +225,7 @@ async function run(database,ctx,actor,spec,options={}){
     return [column,currency?require('../pricing/postgres-service').formatMinor(value,currency):
       `${value} minor units (currency not recorded)`];
   })));
-  const output={config,columns,columnLabels,rows:rows.map((row)=>({...row,
+  const columnTypes=Object.fromEntries(columns.map(column=>[column,monetaryColumn(column)?'money_minor':grouped&&column===columns.at(-1)?'number':dataset.fields[column]||'text']));const output={config,columns,columnLabels,columnTypes,rows:rows.map((row)=>({...row,
     href:grouped?null:dataset.recordHref(row)})),displayRows,
   hasMore,offset,pageSize:limit-1,extent:{rowKind:grouped?'groups':'records',returnedRows:rows.length,
     totalRows:offset===0&&!hasMore?rows.length:null,complete:offset===0&&!hasMore},asOf:new Date().toISOString(),
@@ -237,7 +239,7 @@ async function run(database,ctx,actor,spec,options={}){
 }
 async function countAtMost(database,ctx,actor,spec,maximum){
   if(spec?.dataset==='composed')return composed.countAtMost(database,ctx,actor,spec,maximum);
-  const config=normalize(spec,actor),dataset=registry.get(config.dataset);
+  const config=require('./relative-dates').resolve(normalize(spec,actor),await require('../lib/business-time').forWorkspace(database,ctx.workspaceId)),dataset=registry.get(config.dataset);
   if(!Number.isSafeInteger(maximum)||maximum<1||maximum>100000)
     invalid('That export size is unavailable.');
   if(dataset.commercialCapability){const entitlements=require('../commercial/entitlements');
@@ -289,41 +291,23 @@ function drilldownSpec(spec,values,actor,sourceAlias=null){
     aggregate:'count',measure:'',dateGrain:'exact',columns,
     filters:[...config.filters,...groupFilters],sort:config.groups[0]||columns[0],chart:'table'},actor);
 }
-async function save(database,ctx,actor,spec,{id=null,schedule=null}={}){
-  const config=normalize(spec,actor);const delivery=schedule||{};
-  const frequency=['none','daily','weekly'].includes(delivery.frequency)?delivery.frequency:'none';
-  if(frequency!=='none'&&(delivery.hour==null||delivery.hour===''||!Number.isInteger(Number(delivery.hour))
-    ||Number(delivery.hour)<0||Number(delivery.hour)>23))invalid('Choose a UTC delivery hour from 0 to 23.');
-  const hour=Number.isInteger(Number(delivery.hour))&&Number(delivery.hour)>=0&&Number(delivery.hour)<24
-    ?Number(delivery.hour):9;
-  const recipient=safeText(delivery.recipient,200);
-  if(frequency!=='none'&&(!recipient||!actor.email||recipient.toLowerCase()!==actor.email.toLowerCase()))
-    invalid('Scheduled reports can only be delivered to your verified account email.');
-  const reportId=id||newId('report');
-  const result=await database.query(`INSERT INTO stockchief_runtime.report_templates
-      (id,workspace_id,owner_user_id,title,definition,schedule_frequency,schedule_hour_utc,
-       delivery_email,created_at,updated_at)
-      VALUES($1,$2,$3,$4,$5::jsonb,$6,$7,$8,now(),now())
-      ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,definition=EXCLUDED.definition,
-        schedule_frequency=EXCLUDED.schedule_frequency,schedule_hour_utc=EXCLUDED.schedule_hour_utc,
-        delivery_email=EXCLUDED.delivery_email,updated_at=now()
-      WHERE stockchief_runtime.report_templates.workspace_id=EXCLUDED.workspace_id
-        AND stockchief_runtime.report_templates.owner_user_id=EXCLUDED.owner_user_id
-      RETURNING *`,[reportId,ctx.workspaceId,ctx.actorId,config.title,JSON.stringify(config),
-      frequency,hour,frequency==='none'?null:recipient||null]);
-  if(!result.rows[0])invalid('That report template is not yours to edit.');
-  return result.rows[0];
+async function save(database,ctx,actor,spec,{id=null,schedule=null,expectedRevision=null}={}){
+ const work=async client=>{const config=normalize(spec,actor),prior=id?(await client.query('SELECT * FROM stockchief_runtime.report_templates WHERE workspace_id=$1 AND owner_user_id=$2 AND id=$3 AND deleted_at IS NULL FOR UPDATE',[ctx.workspaceId,ctx.actorId,id])).rows[0]:null;if(id&&!prior)invalid('That report template is not yours to edit.');if(prior&&expectedRevision!==null&&Number(prior.revision)!==Number(expectedRevision))invalid('This saved report changed. Review its current settings first.');
+ const local=require('./local-schedule'),defaultZone=(await require('../lib/business-time').forWorkspace(client,ctx.workspaceId)).timeZone,delivery=schedule|| (prior?local.fromTemplate(prior):{}),normalized=local.normalize(delivery,defaultZone),recipient=safeText(delivery.recipient||prior?.delivery_email||actor.email,200);if(!recipient||!actor.email||recipient.toLowerCase()!==actor.email.toLowerCase())invalid('Reports can only be delivered to your account email.');
+ const paused=delivery.paused??prior?.schedule_paused??false,next=paused?null:local.next(normalized),reportId=id||newId('report');
+ const row=(await client.query(`INSERT INTO stockchief_runtime.report_templates(id,workspace_id,owner_user_id,title,definition,schedule_frequency,schedule_hour_utc,delivery_email,schedule_time_zone,schedule_hour_local,schedule_minute,schedule_weekday,schedule_paused,next_send_at) VALUES($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,definition=EXCLUDED.definition,schedule_frequency=EXCLUDED.schedule_frequency,schedule_hour_utc=EXCLUDED.schedule_hour_utc,delivery_email=EXCLUDED.delivery_email,schedule_time_zone=EXCLUDED.schedule_time_zone,schedule_hour_local=EXCLUDED.schedule_hour_local,schedule_minute=EXCLUDED.schedule_minute,schedule_weekday=EXCLUDED.schedule_weekday,schedule_paused=EXCLUDED.schedule_paused,next_send_at=EXCLUDED.next_send_at,revision=stockchief_runtime.report_templates.revision+1,updated_at=now() WHERE stockchief_runtime.report_templates.workspace_id=EXCLUDED.workspace_id AND stockchief_runtime.report_templates.owner_user_id=EXCLUDED.owner_user_id AND stockchief_runtime.report_templates.deleted_at IS NULL RETURNING *`,[reportId,ctx.workspaceId,ctx.actorId,config.title,JSON.stringify(config),normalized.frequency,next?next.getUTCHours():normalized.hour,recipient,normalized.timeZone,normalized.hour,normalized.minute,normalized.weekday,paused,next?.toISOString()||null])).rows[0];if(!row)invalid('That saved report is unavailable.');return row;
+ };return typeof database.transaction==='function'?database.transaction(work,{isolation:'SERIALIZABLE',retrySafe:true}):work(database);
 }
 async function list(database,ctx,actor){
-  const rows=(await database.query(`SELECT id,title,definition,schedule_frequency,schedule_hour_utc,
+  const rows=(await database.query(`SELECT id,title,definition,schedule_frequency,schedule_hour_utc,schedule_hour_local,schedule_minute,schedule_weekday,schedule_time_zone,schedule_paused,next_send_at,revision,
       delivery_email,last_delivered_at,last_error,updated_at
-      FROM stockchief_runtime.report_templates WHERE workspace_id=$1 AND owner_user_id=$2
+      FROM stockchief_runtime.report_templates WHERE workspace_id=$1 AND owner_user_id=$2 AND deleted_at IS NULL
       ORDER BY updated_at DESC LIMIT 100`,[ctx.workspaceId,ctx.actorId])).rows;
   return rows.filter((row)=>{try{normalize(row.definition,actor);return true;}catch{return false;}});
 }
 async function load(database,ctx,actor,id){
   const row=(await database.query(`SELECT * FROM stockchief_runtime.report_templates
-    WHERE workspace_id=$1 AND owner_user_id=$2 AND id=$3`,[ctx.workspaceId,ctx.actorId,id])).rows[0];
+    WHERE workspace_id=$1 AND owner_user_id=$2 AND id=$3 AND deleted_at IS NULL`,[ctx.workspaceId,ctx.actorId,id])).rows[0];
   if(!row)invalid('That saved report is unavailable.');
   return {...row,definition:normalize(row.definition,actor)};
 }

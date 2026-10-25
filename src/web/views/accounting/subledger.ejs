@@ -78,7 +78,7 @@
       var who = isAP ? row.supplier_name : row.customer_name;
       var open = isOpen(row);
 %>
-      <div class="list-row bill-row <%= state.tone === 'warn' ? 'is-late' : '' %>">
+      <div id="<%= row.id %>" class="list-row bill-row <%= state.tone === 'warn' ? 'is-late' : '' %>">
         <div class="cell-main">
           <span class="cell-title">
             <%= who %> <span class="rm-quiet">· <%= number %></span>

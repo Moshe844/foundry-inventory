@@ -16,18 +16,8 @@
    * should never land on a journal during ordinary work.
    */
   var currency = story.currency;
-  var money = function (minor) {
-    var amount = Number(minor || 0) / 100;
-    var sign = amount < 0 ? '-' : '';
-    return sign + (currency === 'USD' ? '$' : currency + ' ')
-      + Math.abs(amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  };
-  var round = function (minor) {
-    var amount = Number(minor || 0) / 100;
-    var sign = amount < 0 ? '-' : '';
-    return sign + (currency === 'USD' ? '$' : currency + ' ')
-      + Math.abs(amount).toLocaleString('en-US', { maximumFractionDigits: 0 });
-  };
+  var money = function(minor){ return helpers.money(Number(minor||0),currency); };
+  var round = money;
   var day = function (value) {
     if (!value) return '';
     var d = new Date(value + 'T00:00:00Z');
@@ -69,7 +59,7 @@
     <span class="rm-ledger__v"><a href="/accounting/payables"><%= money(story.position.suppliersCommittedMinor) %></a></span>
     <span class="rm-ledger__n">
       <% if (out.length) { %><a href="<%= out[0].href %>"><%= out.length %> to pay · next <%= day(out[0].date) %></a>
-      <% } else { %>nothing dated<% } %>
+      <% } else if(story.position.suppliersCommittedMinor>0){ %><%= money(story.position.billPayableMinor||0) %> billed · <%= money(story.position.receivedNotBilledMinor||0) %> received, not billed<% } else { %>nothing outstanding<% } %>
     </span>
   </div>
   <div class="rm-ledger__row">
@@ -79,7 +69,7 @@
       <% if (inbound.length) { %><a href="<%= inbound[0].href %>"><%= inbound.length %> completed-sale invoice<%= inbound.length === 1 ? '' : 's' %> · next <%= day(inbound[0].date) %></a>
       <% } else if (story.position.confirmedCustomerOrders.length) { var waitingOrder = story.position.confirmedCustomerOrders[0]; %>
         <a href="/sales/orders/<%= waitingOrder.id %>"><%= story.position.confirmedCustomerOrders.length %> confirmed order<%= story.position.confirmedCustomerOrders.length === 1 ? '' : 's' %> awaiting payment</a>
-      <% } else { %>nothing outstanding<% } %>
+      <% } else if(story.position.customersOweMinor>0){ %><%= story.position.receivableCount||0 %> open invoice<%= story.position.receivableCount===1?'':'s' %> · due date not recorded<% } else { %>nothing outstanding<% } %>
     </span>
   </div>
   <div class="rm-ledger__row">

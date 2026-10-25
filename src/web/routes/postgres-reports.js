@@ -31,13 +31,7 @@ function source(body){
     summary:body.summary==='on'||body.summary===true,
     filters,sort:body.sort,direction:body.direction,chart:body.chart,layout:body.layout};
 }
-function previewSchedule(body){
-  const frequency=['none','daily','weekly'].includes(body.frequency)?body.frequency:'none';
-  const hour=Number(body.hour);
-  if(frequency!=='none'&&(body.hour==null||body.hour===''||!Number.isInteger(hour)
-    ||hour<0||hour>23))throw new ValidationError('Choose a UTC delivery hour from 0 to 23.');
-  return {frequency,hour:Number.isInteger(hour)&&hour>=0&&hour<24?hour:9};
-}
+function previewSchedule(body,defaultZone){return require('../../reports/local-schedule').normalize(body,defaultZone);}
 async function actorFor(database,ctx){
   const row=(await database.query(`SELECT u.id,u.role,u.permissions,a.email FROM users u
     JOIN accounts a ON a.id=u.account_id WHERE u.workspace_id=$1 AND u.id=$2`,
@@ -46,7 +40,7 @@ async function actorFor(database,ctx){
   return row;
 }
 function createPostgresReportsRouter(database){
-  const router=express.Router();router.use('/reports',requireAuth);
+  const router=express.Router();router.use('/reports',requireAuth,asyncRoute(async(req,res,next)=>{res.locals.reportBusinessTimeZone=(await require('../../lib/business-time').forWorkspace(database,req.ctx.workspaceId)).timeZone;res.locals.reportActionKey=require('../../lib/util').newId('report-action');res.locals.reportRelativePeriods=require('../../reports/relative-dates').periods;next();}));
   router.get('/reports',asyncRoute(async(req,res)=>{
     const actor=await actorFor(database,req.ctx);
     const datasets=registry.list(actor),saved=await reports.list(database,req.ctx,actor);
@@ -130,7 +124,7 @@ function createPostgresReportsRouter(database){
   router.post('/reports/run',asyncRoute(async(req,res)=>{
     const actor=await actorFor(database,req.ctx);const spec=source(req.body);
     const result=await reports.run(database,req.ctx,actor,spec,{limit:201});
-    const draftSchedule=previewSchedule(req.body);
+    const draftSchedule=previewSchedule(req.body,res.locals.reportBusinessTimeZone);
     req.session.reportDraft={workspaceId:req.ctx.workspaceId,definition:result.config,schedule:draftSchedule};
     req.session.reportParentDraft=null;
     return res.page('reports/result',{title:result.config.title,nav:'accounting',result,saved:null,
@@ -152,10 +146,10 @@ function createPostgresReportsRouter(database){
   router.post('/reports/save',asyncRoute(async(req,res)=>{
     const actor=await actorFor(database,req.ctx);permissions.assertCan(actor,permissions.VIEW,'save a report');
     const saved=await reports.save(database,req.ctx,actor,source(req.body),{
-      id:req.body.id||null,schedule:{frequency:req.body.frequency,hour:req.body.hour,
-        recipient:req.body.recipient||actor.email}});
+      id:req.body.id||null,expectedRevision:req.body.expectedRevision??null,schedule:{frequency:req.body.frequency,hour:req.body.hour,minute:req.body.minute,weekday:req.body.weekday,timeZone:req.body.timeZone||res.locals.reportBusinessTimeZone,recipient:req.body.recipient||actor.email}});
     req.flash('success','Report template saved.');return res.redirect(303,`/reports/saved/${saved.id}`);
   }));
+  for(const [path,action]of [['send-now','send_now'],['pause','pause'],['resume','resume'],['delete','delete']])router.post('/reports/saved/:id/'+path,asyncRoute(async(req,res)=>{const actor=await actorFor(database,req.ctx);if(action==='delete'&&req.body.confirmed!=='yes')throw new ValidationError('Confirm deletion of this saved report.');const result=await require('../../reports/postgres-delivery-controls').change(database,req.ctx,actor,req.params.id,{...req.body,action});req.flash('success',action==='send_now'?(result.replayed?'That exact delivery is already queued or recorded.':'Report delivery queued to your account email.'):action==='delete'?'Saved report deleted; delivery history retained.':action==='pause'?'Future report delivery paused.':'Report delivery resumed.');if(result.alreadySending)req.flash('info',result.alreadySending+' email delivery is already in progress and may finish.');res.redirect(303,action==='delete'?'/reports':'/reports/saved/'+req.params.id);}));
   router.get('/reports/saved/:id',asyncRoute(async(req,res)=>{
     const actor=await actorFor(database,req.ctx);
     const saved=await reports.load(database,req.ctx,actor,req.params.id);

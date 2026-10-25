@@ -131,7 +131,7 @@ function quote(input){
     if(discounts.length||lists.length)invalid('Recorded channel amounts cannot be repriced with current promotions.');
     if(manual!==sum(lines.map(l=>l.discountMinor)))invalid('Recorded discounts do not match their line allocations.');
   }else{
-    if(manual>sum(lines.map(l=>l.netMinor)))invalid('Order discount exceeds the remaining order value.');
+    if(manual>sum(lines.map(l=>l.netMinor)))invalid('Order discount exceeds the remaining subtotal.');
     if(manual)apply({id:'manual',version:null},lines.map(l=>l.index),manual);
   }
   const charges=recorded?(input.orderCharges||[]):[];

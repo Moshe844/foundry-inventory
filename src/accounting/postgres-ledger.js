@@ -113,12 +113,13 @@ async function postManyInTransaction(client,ctx,inputs){
   if(!inputs.length)return [];
   if(!(ctx.verifiedProviderReceipt&&inputs.every(input=>['customer_payment','customer_deposit'].includes(input.sourceType))))
     await require('../commercial/enforcement').workspace(client,ctx.workspaceId,'accounting.core');
-  const prepared=inputs.map(input=>{const postingDate=dateOnly(input.postingDate),sourceKey=String(input.sourceKey||'').trim();
+  const clock=require('../lib/business-time'),calendar=inputs.some(i=>!i.postingDate)?(ctx.businessTimeZone?clock.context(ctx.businessTimeZone):await clock.forWorkspace(client,ctx.workspaceId)):null;const prepared=inputs.map(input=>{const postingDate=dateOnly(input.postingDate||(input.postingInstant?clock.context(calendar.timeZone,new Date(input.postingInstant)).calendarDate:calendar.calendarDate)),sourceKey=String(input.sourceKey||'').trim();
     if(!sourceKey)throw new ValidationError('A durable accounting source key is required.');
     return {input,postingDate,sourceKey,...normalizeLines(input.lines)};});
   const reversedSources=inputs.map(i=>i.reversalOfEntryId).filter(Boolean);
   if(reversedSources.length)await client.query('SELECT id FROM accounting_journal_lines WHERE workspace_id=$1 AND entry_id=ANY($2::text[]) ORDER BY id FOR UPDATE',[ctx.workspaceId,reversedSources]);
   if(reversedSources.length){
+    if((await client.query("SELECT 1 FROM accounting_journal_entries WHERE workspace_id=$1 AND id=ANY($2::text[]) AND source_record_type='custody_agreement'",[ctx.workspaceId,reversedSources])).rows.length)throw new ValidationError('Correct agreement-owned stock and cost through its rental or consignment records, not an isolated journal reversal.');
     const owned=(await client.query("SELECT id,source_type FROM accounting_journal_entries WHERE workspace_id=$1 AND id=ANY($2::text[]) AND source_record_type='manufacturing_work_order'",[ctx.workspaceId,reversedSources])).rows;
     for(const input of inputs.filter(i=>i.reversalOfEntryId)){const entry=owned.find(e=>e.id===input.reversalOfEntryId);if(entry&&(entry.source_type!=='manufacturing_cost_capitalization'||!require('../manufacturing/ledger-ownership').allowsCostReversal(input)))throw new ValidationError('Reverse production-owned value through the work order so its stock and work-in-progress records stay reconciled.');}
   }
@@ -168,9 +169,15 @@ async function post(database,ctx,input){
 // period. They do not create fictitious zero-amount journal lines.
 async function validatePostingDateInTransaction(client,ctx,value){
  await require('../commercial/enforcement').workspace(client,ctx.workspaceId,'accounting.core');
- const date=dateOnly(value),settings=(await client.query('SELECT accounting_start_date FROM accounting_settings WHERE workspace_id=$1 AND enabled=1',[ctx.workspaceId])).rows[0];
+ const clock=require('../lib/business-time'),calendar=ctx.businessTimeZone?clock.context(ctx.businessTimeZone):await clock.forWorkspace(client,ctx.workspaceId),date=dateOnly(!value?calendar.calendarDate:/^\d{4}-\d{2}-\d{2}$/.test(value)?value:clock.context(calendar.timeZone,new Date(value)).calendarDate),settings=(await client.query('SELECT accounting_start_date FROM accounting_settings WHERE workspace_id=$1 AND enabled=1',[ctx.workspaceId])).rows[0];
  if(!settings)throw new ValidationError('Configure accounting before posting inventory value.');
  if(date<settings.accounting_start_date)throw new ValidationError('Posting date is before the accounting start date.');
  return ensurePeriod(client,ctx.workspaceId,date);
 }
-module.exports={ configure,configureInTransaction,createAccount,createAccountInTransaction,post,postInTransaction,postManyInTransaction,validatePostingDateInTransaction };
+async function ensureSystemAccountInTransaction(client,ctx,key){
+ const descriptor=DEFAULT_ACCOUNTS.find(a=>a.systemKey===key&&a.control);if(!descriptor)throw new ValidationError('This system account is not defined.');
+ await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',['system-account:'+ctx.workspaceId]);const existing=(await client.query('SELECT id,active FROM accounting_accounts WHERE workspace_id=$1 AND system_key=$2',[ctx.workspaceId,key])).rows[0];if(existing){if(!Number(existing.active))throw new ValidationError('The required '+descriptor.name+' account is inactive.');return existing.id;}
+ let code=descriptor.code;for(let attempt=0;attempt<100;attempt++){if(!(await client.query('SELECT 1 FROM accounting_accounts WHERE workspace_id=$1 AND code=$2',[ctx.workspaceId,code])).rows.length)break;code='SC-'+key+(attempt?'-'+attempt:'');if(attempt===99)throw new ValidationError('Choose an available system account code.');}
+ const id=newId('acct'),at=nowIso();await client.query('INSERT INTO accounting_accounts(id,workspace_id,code,name,account_type,subtype,normal_balance,system_key,is_control,active,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,1,1,$9,$9)',[id,ctx.workspaceId,code,descriptor.name,descriptor.type,descriptor.subtype,descriptor.normal,key,at]);return id;
+}
+module.exports={ensureSystemAccountInTransaction, configure,configureInTransaction,createAccount,createAccountInTransaction,post,postInTransaction,postManyInTransaction,validatePostingDateInTransaction };

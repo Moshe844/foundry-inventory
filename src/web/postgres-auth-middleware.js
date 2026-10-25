@@ -56,7 +56,7 @@ function loadUser(database,{readonly=false}={}) {
       const { workspace,membership } = resolved;
       req.user = { ...membership,email:account.email,plan:account.plan };
       req.workspace = workspace;
-      req.ctx = { workspaceId:workspace.id,actorId:membership.id,accountId:account.id };
+      const businessClock=await require('../lib/business-time').forWorkspace(database,workspace.id);req.businessTimeZone=businessClock.timeZone;req.ctx = { workspaceId:workspace.id,actorId:membership.id,accountId:account.id,businessTimeZone:businessClock.timeZone };res.locals.account.timeZone=businessClock.timeZone;res.locals.helpers={...res.locals.helpers,dateTime:iso=>require('./view-helpers').dateTime(iso,businessClock.timeZone),dateInputValue:value=>value instanceof Date?require('../lib/business-time').context(businessClock.timeZone,value).calendarDate:require('./view-helpers').dateInputValue(value)};
       res.locals.currentUser = { id:membership.id,name:membership.name,email:account.email,role:membership.role };
       res.locals.workspace = workspace;
       return next();

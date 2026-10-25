@@ -20,7 +20,7 @@ function integer(value,label='Amount',{signed=false}={}){
 function toMinor(value,currency,{label='Amount',optional=false,signed=false}={}){
  if(value===null||value===undefined||String(value).trim()===''){if(optional)return null;throw new ValidationError(label+' is missing.');}
  const text=String(value).trim(),match=text.match(/^(-?)(\d+)(?:\.(\d+))?$/),digits=exponent(currency);
- if(!match||match[1]&&!signed)throw new ValidationError(label+' must be a valid decimal amount.');
+ if(match?.[1]&&!signed)throw new ValidationError(label+' cannot be negative.');if(!match)throw new ValidationError(label+' must be a valid decimal amount.');
  const fraction=match[3]||'';
  if(fraction.slice(digits).replace(/0/g,''))throw new ValidationError(label+' has a fraction smaller than the currency supports.');
  const scale=10n**BigInt(digits),amount=(BigInt(match[2])*scale+BigInt(fraction.slice(0,digits).padEnd(digits,'0')||'0'))*(match[1]?-1n:1n);

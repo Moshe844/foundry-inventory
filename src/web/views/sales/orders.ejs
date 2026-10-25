@@ -38,11 +38,7 @@
   else if (view === 'unpaid') { open = []; done = unpaid; }
   else if (view === 'done') { open = []; }
 
-  var money = function (minor, currency) {
-    var amount = Number(minor || 0) / 100;
-    return (currency === 'USD' || !currency ? '$' : currency + ' ')
-      + Math.abs(amount).toLocaleString('en-US', { maximumFractionDigits: 0 });
-  };
+  var money = function (minor,currency) { return helpers.money(minor,currency||'USD'); };
   var stepHref = function (order) {
     var target = order.next && order.next.href && order.next.href.charAt(0) === '#' ? order.next.href.slice(1) : null;
     return target ? '/orders/' + order.id + '?open=' + target + '#' + target : '/orders/' + order.id;

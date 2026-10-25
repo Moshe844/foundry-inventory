@@ -174,7 +174,7 @@ async function requestInTransaction(client, rawContext, input) {
   if (prior) return { ...(await get(client, ctx.workspaceId, prior.transfer_id)), replayed: true };
   if (!Array.isArray(input.lines) || !input.lines.length) throw new ValidationError('Add at least one product to transfer.');
   const locations = (await client.query(`SELECT id,name,is_active FROM locations
-    WHERE workspace_id=$1 AND id=ANY($2::text[]) ORDER BY id FOR UPDATE`,
+    WHERE workspace_id=$1 AND id=ANY($2::text[]) AND custody_agreement_id IS NULL ORDER BY id FOR UPDATE`,
   [ctx.workspaceId, [input.fromLocationId, input.toLocationId]])).rows;
   const from = locations.find((row) => row.id === input.fromLocationId);
   const to = locations.find((row) => row.id === input.toLocationId);
@@ -260,6 +260,7 @@ function request(database, ctx, input) {
 }
 
 async function sourceAvailable(client, workspaceId, skuId, locationId, { lotId = null, excludeTransferId = null } = {}) {
+  const custody=(await client.query('SELECT custody_agreement_id FROM locations WHERE workspace_id=$1 AND id=$2',[workspaceId,locationId])).rows[0];if(custody?.custody_agreement_id)return {onHand:0,committed:0,reserved:0,available:0,protectedCustody:true};
   const balance = (await client.query(`SELECT COALESCE(on_hand,0) AS on_hand FROM balances
     WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3`, [workspaceId, skuId, locationId])).rows[0];
   const committed = await client.query(`SELECT COALESCE(SUM(a.quantity),0) AS quantity
@@ -380,7 +381,7 @@ async function postTransitJournal(client, ctx, transfer, line, eventId, amount, 
   const dispatch = kind === 'dispatch';
   const receipt = kind === 'receipt';
   return ledger.postInTransaction(client, ctx, {
-    postingDate: nowIso().slice(0, 10),
+    postingDate:null,
     description: `${transfer.transfer_number}: ${kind === 'writeoff' ? 'transfer loss or damage' : kind}`,
     sourceType: `inventory_transfer_${kind}`, sourceRecordType: 'inventory_transfer',
     sourceRecordId: transfer.id, sourceEventId: eventId,

@@ -607,7 +607,7 @@ async function lookupRecords(database,ctx,request,options={}) {
   }
   if(request.view==='general_knowledge'){
     let explained;
-    try{explained=await evidenceAnswers.answer(options.provider,options.question||'',{},'general');}
+    try{explained=await evidenceAnswers.answer(options.provider,options.question||'',{},'general',await require('./postgres-answer-preferences').read(database,ctx));}
     catch(error){if(error.code==='entitlement_required')throw error;
       return {status:'CLARIFY',answer:'I could not verify that answer just now. Nothing was changed. Please try again.',
         rows:[],columns:[],general:true,reason:'unavailable'};}
@@ -626,7 +626,7 @@ async function lookupRecords(database,ctx,request,options={}) {
       rows:Object.entries(evidence).map(([id,fact])=>({id,...fact})),columns:['id'],
       reason:null};
     let explained;
-    try{explained=await evidenceAnswers.answer(options.provider,options.question||'',evidence,'business');}
+    try{explained=await evidenceAnswers.answer(options.provider,options.question||'',evidence,'business',await require('./postgres-answer-preferences').read(database,ctx));}
     catch(error){if(error.code==='entitlement_required')throw error;
       return {status:'CLARIFY',answer:'I could not verify an answer from the business records just now. Nothing was changed. Please try again.',
         rows:[],columns:[],reason:'unavailable'};}
@@ -1399,8 +1399,7 @@ async function prepareAction(database,ctx,message,request,options={}) {
       handoff:{href:'/reports',label:'Open report builder'}};
     const {definition,schedule}=composed;
     const timing=schedule.frequency==='none'?'on demand':
-      schedule.frequency==='daily'?`daily at ${String(schedule.hour).padStart(2,'0')}:00 UTC`:
-        `Mondays at ${String(schedule.hour).padStart(2,'0')}:00 UTC`;
+      `${schedule.frequency}${schedule.frequency==='weekly'?' on '+['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][schedule.weekday]:''} at ${String(schedule.hour).padStart(2,'0')}:${String(schedule.minute).padStart(2,'0')} ${schedule.timeZone}`;
     return createProposal(database,ctx,message,'report.template.create',{definition,schedule},
       `Save “${definition.title}” as a private ${timing} report from ${definition.dataset} records.`);
   }

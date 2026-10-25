@@ -93,7 +93,8 @@ test('real Chromium completes a PostgreSQL customer return without splitting inv
       WHERE workspace_id=$1 AND sku_id=$2 ORDER BY location_id`, [ctx.workspaceId, item.skuIds[0]]);
     assert.equal(Number(receivedBalances.rows.find((row) => row.location_id === main.id).on_hand), 6);
     assert.equal(Number(receivedBalances.rows.find((row) => row.location_id === quarantine.id).on_hand), 2);
-    assert.equal(await controlBalance(database, ctx.workspaceId, 'COST_OF_GOODS_SOLD'), 1600);
+    assert.equal(await controlBalance(database, ctx.workspaceId, 'COST_OF_GOODS_SOLD'), 3200,'received return cost stays deferred until the approved refund');
+    assert.equal(await controlBalance(database,ctx.workspaceId,'CUSTOMER_RETURN_COST_PENDING'),-1600);
     assert.equal(await controlBalance(database, ctx.workspaceId, 'INVENTORY_ASSET'), 6400);
     assert.equal(Number((await database.query('SELECT balance_minor FROM accounting_customer_invoices WHERE id=$1',
       [fulfilled.invoiceId])).rows[0].balance_minor), 0);

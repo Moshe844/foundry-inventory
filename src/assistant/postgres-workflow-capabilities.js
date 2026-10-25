@@ -29,6 +29,7 @@ const {nowIso,newId}=require('../lib/util');
 // freezes the exact requested effect for approval. The canonical service
 // validates and executes it again inside the approval transaction.
 const RECORDS=Object.freeze({
+  custody_agreement:{table:'custody_agreements',number:'agreement_number',label:'rental or consignment agreement'},
   manufacturing_work_order:{table:'manufacturing_work_orders',number:'order_number',label:'production work order'},
   manufacturing_bom:{table:'manufacturing_boms',number:'id',label:'BOM revision'},
   sales_order:{table:'sales_orders',number:'order_number',label:'customer order'},
@@ -694,6 +695,8 @@ async function accountMapping(database,ctx,row,args){
 }
 
 const SPECS=Object.freeze([
+  ...require('../custody/ask-contracts').specs,
+  ...require('../reports/ask-schedules').specs,
   ...require('../manufacturing/ask-contracts').specs,
   {name:'sales_order.revise_draft_line',description:'Change the exact quantity and optionally per-unit price of one product already on an existing DRAFT customer order. Preserve customer, date, pickup or shipping method and every other line. Do not confirm, reserve, invoice, fulfill, send or charge anything.',
     singleEffectPerTarget:true,record:'sales_order',fields:['recordReference','sku','quantity','amount'],

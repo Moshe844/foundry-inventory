@@ -22,7 +22,7 @@ async function accountTotals(database,workspaceId,{from=null,to}){
 }
 
 async function profitAndLoss(database,workspaceId,input={}){
-  const to=day(input.to || new Date().toISOString().slice(0,10),'To date');
+  const to=day(input.to || await require('../lib/business-time').today(database,workspaceId),'To date');
   const from=day(input.from || `${to.slice(0,7)}-01`,'From date');
   if(from>to)throw new ValidationError('From date must not be after to date.');
   const rows=await accountTotals(database,workspaceId,{from,to});
@@ -34,7 +34,7 @@ async function profitAndLoss(database,workspaceId,input={}){
 }
 
 async function balanceSheet(database,workspaceId,input={}){
-  const asOf=day(input.asOf || new Date().toISOString().slice(0,10),'As-of date');
+  const asOf=day(input.asOf || await require('../lib/business-time').today(database,workspaceId),'As-of date');
   const rows=await accountTotals(database,workspaceId,{to:asOf});
   const assets=rows.filter((row)=>row.account_type==='ASSET').map((row)=>({...row,net_minor:Number(row.debit_minor)-Number(row.credit_minor)}));
   const liabilities=rows.filter((row)=>row.account_type==='LIABILITY').map((row)=>({...row,net_minor:Number(row.credit_minor)-Number(row.debit_minor)}));
@@ -49,7 +49,7 @@ async function balanceSheet(database,workspaceId,input={}){
 }
 
 async function trialBalance(database,workspaceId,input={}){
-  const to=day(input.to || new Date().toISOString().slice(0,10),'To date');
+  const to=day(input.to || await require('../lib/business-time').today(database,workspaceId),'To date');
   const from=day(input.from || '1900-01-01','From date');
   const rows=await accountTotals(database,workspaceId,{to});
   const accounts=rows.map((row)=>{const net=Number(row.debit_minor)-Number(row.credit_minor);return {...row,
@@ -61,7 +61,7 @@ async function trialBalance(database,workspaceId,input={}){
 }
 
 async function generalLedger(database,workspaceId,input={}){
-  const to=day(input.to || new Date().toISOString().slice(0,10),'To date');
+  const to=day(input.to || await require('../lib/business-time').today(database,workspaceId),'To date');
   const from=day(input.from || `${to.slice(0,7)}-01`,'From date');
   const rows=(await database.query(`SELECT e.id AS entry_id,e.entry_number,e.posting_date,e.description,
       a.code AS account_code,a.name AS account_name,l.debit_minor,l.credit_minor,l.currency

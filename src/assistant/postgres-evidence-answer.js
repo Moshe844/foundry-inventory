@@ -28,7 +28,7 @@ function comparisonPeriods(now=new Date()){
 }
 
 async function businessEvidence(database,workspaceId,{includeFinancials=false}={}){
-  const periods=comparisonPeriods();
+  const calendar=await require('../lib/business-time').today(database,workspaceId),periods=comparisonPeriods(new Date(calendar+'T12:00:00Z'));
   const [current,previous,orders,check]=await Promise.all([
     includeFinancials?reports.profitAndLoss(database,workspaceId,periods.current):null,
     includeFinancials?reports.profitAndLoss(database,workspaceId,periods.previous):null,
@@ -55,10 +55,10 @@ async function businessEvidence(database,workspaceId,{includeFinancials=false}={
   };
 }
 
-async function answer(provider,question,evidence,kind){
+async function answer(provider,question,evidence,kind,preferences={}){
   if(!provider)throw new ValidationError('StockChief needs a model connection for this question. Nothing was changed.');
   const general=kind==='general';
-  const response=await provider.complete({system:general?GENERAL_SYSTEM:BUSINESS_SYSTEM,
+  const response=await provider.complete({system:(general?GENERAL_SYSTEM:BUSINESS_SYSTEM)+require('./postgres-answer-preferences').instructions(preferences),
     prompt:JSON.stringify(general?{question}:{question,evidence}),schema:ANSWER_SCHEMA,
     schemaName:general?'stockchief_postgres_general_answer':'stockchief_postgres_evidence_answer',maxOutputTokens:700});
   const result=response.data||{};

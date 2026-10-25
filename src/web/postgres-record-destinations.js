@@ -4,6 +4,7 @@ const permissions=require('../actions/permissions');
 
 /** Canonical, workspace-scoped record destinations. No model-provided URL. */
 const RECORDS=Object.freeze({
+  custody_agreement:{description:'A rental or consignment agreement with custody, inspection, ownership and billing history.',permission:permissions.VIEW,collection:{href:'/custody',label:'Rentals and consignment'},sql:'SELECT id,agreement_number AS title FROM custody_agreements WHERE workspace_id=$1',href:row=>'/custody/'+encodeURIComponent(row.id)},
   manufacturing_work_order:{description:'A production work order with its material consumption, output, scrap and work-in-progress value.',permission:permissions.VIEW,collection:{href:'/manufacturing',label:'Manufacturing'},
     sql:'SELECT id,order_number AS title FROM manufacturing_work_orders WHERE workspace_id=$1',href:row=>'/manufacturing/work-orders/'+encodeURIComponent(row.id)},
   manufacturing_bom:{description:'An immutable production bill-of-materials revision.',permission:permissions.VIEW,collection:{href:'/manufacturing',label:'Manufacturing'},
