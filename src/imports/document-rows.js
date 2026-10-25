@@ -15,15 +15,17 @@ function classify(sheet,mappings,{precedingProducts=0,precedingStrongProducts=0,
  const result=new Map(),cell=(row,key)=>mappings[key]===undefined?'':String(row.cells[mappings[key]]??'').trim();
  let products=precedingProducts,tail=inDocumentTail,strongProducts=precedingStrongProducts;
  for(const row of sheet.rows||[]){
-  const name=cell(row,'name'),code=cell(row,'code'),identity=name||code;
+  const name=cell(row,'name'),code=cell(row,'code'),identity=name||code,cells=(row.cells||[]).map(v=>String(v??'').trim()),documentLabel=cells.find(v=>labelKind(v));
   if(rowRoles[row.sourceRow]==='product'){if(identity)products++;tail=false;continue;}
-  if(rowRoles[row.sourceRow]==='document'){tail=true;result.set(row.sourceRow,{kind:'note',label:identity});continue;}
+  if(rowRoles[row.sourceRow]==='document'){tail=true;result.set(row.sourceRow,{kind:'note',label:identity||documentLabel||cells.filter(Boolean).join(' · ')});continue;}
   const separateCode=Boolean(code&&name&&code!==name),tracking=cell(row,'serial')||cell(row,'lotCode');
   if(!products||separateCode||tracking){if(identity)products++;if(separateCode||tracking){strongProducts++;tail=false;}continue;}
-  const label=identity.replace(/[\s:=]+$/u,'').trim();
-  const kind=labelKind(identity),total=kind==='total',note=kind==='note';
-  const charge=!cell(row,'quantity')&&!code&&kind==='charge';
-  if(total||note||charge){tail=true;result.set(row.sourceRow,{kind:total?'total':charge?'charge':'note',label:identity,
+  // A PDF or merged spreadsheet cell can put a total outside identity columns.
+  // A distinct product code/name or tracking evidence above takes precedence.
+  const label=labelKind(identity)?identity:documentLabel||identity;
+  const kind=labelKind(label),total=kind==='total',note=kind==='note';
+  const charge=(!cell(row,'quantity')||Boolean(labelKind(cell(row,'quantity'))))&&(!code||code===label)&&kind==='charge';
+  if(total||note||charge){tail=true;result.set(row.sourceRow,{kind:total?'total':charge?'charge':'note',label,
    quantity:cell(row,'quantity')||null,amount:cell(row,'unitCost')||cell(row,'sellingPrice')||null});
   }else if(identity&&(strongProducts>=2||tail))result.set(row.sourceRow,{kind:'uncertain',label:identity,
     quantity:cell(row,'quantity')||null,amount:cell(row,'unitCost')||cell(row,'sellingPrice')||null});
