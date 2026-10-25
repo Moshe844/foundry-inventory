@@ -1,0 +1,5 @@
+<div class="production-page">
+<section class="page-head"><div><h1>New work order</h1><p>Creating a draft plans the output. Stock and value change only when actual production is recorded.</p></div></section>
+<form method="post" action="/manufacturing/work-orders" class="section form-stack"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="requestKey" value="<%= formKey %>"><label class="rm-field"><span>Approved BOM</span><select name="bomId" required><option value="">Choose a BOM</option><% boms.filter(b=>b.status==='ACTIVE').forEach(b=>{ %><option value="<%= b.id %>" <%= selectedBom===b.id?'selected':'' %>><%= b.name %> · <%= b.code %> · revision <%= b.revision %></option><% }) %></select></label><label class="rm-field"><span>Planned finished quantity</span><input name="quantity" type="number" min="1" max="1000000000" required></label><label class="rm-field"><span>Needed by</span><input name="neededBy" type="date" value="<%= today %>" required></label><button class="btn btn--primary">Create draft work order</button></form>
+
+</div>

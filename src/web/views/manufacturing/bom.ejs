@@ -1,0 +1,7 @@
+<div class="production-page">
+<section class="page-head"><div><p class="eyebrow">BOM revision <%= bom.revision %> · <%= bom.status.toLowerCase() %></p><h1><%= bom.name %></h1><p><%= bom.code %> · <%= bom.definition.outputQuantity %> finished units per batch · <%= bom.definition.leadTimeDays %> calendar days</p></div></section>
+<section class="section"><h2>Components per batch</h2><ul><% bom.components.forEach(p=>{ %><li><%= p.quantity %> × <%= p.name %> · <%= p.code %> · <%= p.tracking_mode %> tracking</li><% }) %></ul><h2>Routing</h2><ol><% bom.definition.routing.forEach(s=>{ %><li><%= s.name %> · <%= s.setupMinutes %> setup minutes + <%= s.minutesPerBatch %> minutes per batch</li><% }) %></ol></section>
+<% if(canApprove&&bom.status==='DRAFT'){ %><section class="section"><h2>Approve this exact revision</h2><p>This replaces the active revision for future work orders. Existing work orders keep their approved definition.</p><form method="post" action="/manufacturing/boms/<%= bom.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="expectedHash" value="<%= bom.integrity_hash %>"><button class="btn btn--primary">Approve this BOM revision</button></form></section><% } %>
+<% if(canOperate&&bom.status==='ACTIVE'){ %><a class="btn btn--primary" href="/manufacturing/work-orders/new?bomId=<%= bom.id %>">Create work order</a><% } %><a class="btn" href="/manufacturing">Back to manufacturing</a>
+
+</div>

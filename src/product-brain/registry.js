@@ -29,7 +29,8 @@ function routeLayers(router) {
 
 class ProductBrain {
   constructor(source = catalog) {
-    this.capabilities = new Map(source.capabilities.map((entry) => [entry.id, Object.freeze({ ...entry })]));
+    this.capabilities = new Map(source.capabilities.map((entry) => [entry.id, Object.freeze({ ...entry,
+      ...(entry.runtimes&&!entry.runtimes.includes(source.runtime||'sqlite')?{status:'unavailable'}:{}) })]));
     this.destinations = new Map(source.destinations.map((entry) => [entry.id, Object.freeze({ ...entry })]));
     this.entities = new Map((source.entities || []).map((entry) => [entry.id, Object.freeze({ ...entry })]));
     this.routeFamilies = source.routeFamilies;

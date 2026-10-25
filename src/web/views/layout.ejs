@@ -26,6 +26,7 @@
   <link rel="stylesheet" href="/room.css?v=<%= assetVersion %>">
   <link rel="stylesheet" href="/design.css?v=<%= assetVersion %>">
   <link rel="stylesheet" href="/owner-workspaces.css?v=<%= assetVersion %>">
+  <% if(locals.productionPage){ %><link rel="stylesheet" href="/manufacturing.css?v=<%= assetVersion %>"><% } %>
   <% if(locals.globalImportActivity?.length||nav==='imports'){ %><link rel="stylesheet" href="/import-progress.css?v=<%= assetVersion %>"><% } %>
   <% if (nav === 'home') { %><link rel="stylesheet" href="/home.css?v=<%= assetVersion %>"><% } %>
   <% if (nav === 'ask') { %><link rel="stylesheet" href="/ask.css?v=<%= assetVersion %>"><% } %>

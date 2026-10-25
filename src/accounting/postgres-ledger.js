@@ -116,6 +116,14 @@ async function postManyInTransaction(client,ctx,inputs){
   const prepared=inputs.map(input=>{const postingDate=dateOnly(input.postingDate),sourceKey=String(input.sourceKey||'').trim();
     if(!sourceKey)throw new ValidationError('A durable accounting source key is required.');
     return {input,postingDate,sourceKey,...normalizeLines(input.lines)};});
+  const reversedSources=inputs.map(i=>i.reversalOfEntryId).filter(Boolean);
+  if(reversedSources.length)await client.query('SELECT id FROM accounting_journal_lines WHERE workspace_id=$1 AND entry_id=ANY($2::text[]) ORDER BY id FOR UPDATE',[ctx.workspaceId,reversedSources]);
+  if(reversedSources.length){
+    const owned=(await client.query("SELECT id,source_type FROM accounting_journal_entries WHERE workspace_id=$1 AND id=ANY($2::text[]) AND source_record_type='manufacturing_work_order'",[ctx.workspaceId,reversedSources])).rows;
+    for(const input of inputs.filter(i=>i.reversalOfEntryId)){const entry=owned.find(e=>e.id===input.reversalOfEntryId);if(entry&&(entry.source_type!=='manufacturing_cost_capitalization'||!require('../manufacturing/ledger-ownership').allowsCostReversal(input)))throw new ValidationError('Reverse production-owned value through the work order so its stock and work-in-progress records stay reconciled.');}
+  }
+  if(reversedSources.length&&(await client.query(`SELECT 1 FROM manufacturing_added_costs a JOIN accounting_journal_lines l ON l.workspace_id=a.workspace_id AND l.id=a.source_journal_line_id WHERE a.workspace_id=$1 AND l.entry_id=ANY($2::text[]) AND a.reversed_by_event_id IS NULL LIMIT 1`,[ctx.workspaceId,reversedSources])).rows.length)
+    throw new ValidationError('This expense supports production inventory value. Reverse its manufacturing capitalization before reversing the source expense.');
   await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',[`journal:${ctx.workspaceId}`]);
   const sourceKeys=[...new Set(prepared.map(row=>row.sourceKey))],prior=(await client.query('SELECT * FROM accounting_journal_entries WHERE workspace_id=$1 AND source_key=ANY($2::text[])',[ctx.workspaceId,sourceKeys])).rows;
   const entries=new Map(prior.map(entry=>[entry.source_key,entry])),fresh=new Map();

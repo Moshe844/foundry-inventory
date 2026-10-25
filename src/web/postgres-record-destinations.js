@@ -4,6 +4,10 @@ const permissions=require('../actions/permissions');
 
 /** Canonical, workspace-scoped record destinations. No model-provided URL. */
 const RECORDS=Object.freeze({
+  manufacturing_work_order:{description:'A production work order with its material consumption, output, scrap and work-in-progress value.',permission:permissions.VIEW,collection:{href:'/manufacturing',label:'Manufacturing'},
+    sql:'SELECT id,order_number AS title FROM manufacturing_work_orders WHERE workspace_id=$1',href:row=>'/manufacturing/work-orders/'+encodeURIComponent(row.id)},
+  manufacturing_bom:{description:'An immutable production bill-of-materials revision.',permission:permissions.VIEW,collection:{href:'/manufacturing',label:'Manufacturing'},
+    sql:"SELECT b.id,s.code||' · revision '||b.revision AS title FROM manufacturing_boms b JOIN skus s ON s.workspace_id=b.workspace_id AND s.id=b.output_sku_id WHERE b.workspace_id=$1",href:row=>'/manufacturing/boms/'+encodeURIComponent(row.id)},
   product:{description:'A product and its variants.',permission:permissions.VIEW,collection:{href:'/inventory',label:'Inventory'},
     sql:`SELECT id,name AS title FROM items WHERE workspace_id=$1 AND is_active=1`,
     href:(row)=>`/inventory/${encodeURIComponent(row.id)}`},

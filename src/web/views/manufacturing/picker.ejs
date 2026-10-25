@@ -1,0 +1,4 @@
+<div data-production-picker>
+ <label class="rm-field"><span>Search products</span><input type="search" data-production-search autocomplete="off" placeholder="Name or SKU"></label>
+ <label class="rm-field"><span><%= label %></span><select name="<%= field %>" required data-production-select><option value="">Choose a product</option><% catalogue.forEach(s=>{ %><option value="<%= s.id %>"><%= s.display_name %> · <%= s.code %></option><% }) %></select><small data-search-status>Showing up to 50 products. Search to find any SKU.</small></label>
+</div>
