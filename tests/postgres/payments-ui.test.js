@@ -25,13 +25,11 @@ test('real Chromium queues hosted payments, posts signed results once, and fence
       async createInvoice(){providerCalls+=1;if(mode==='ambiguous')throw Object.assign(new Error('Provider timed out after submission.'),
         {code:'provider_timeout'});invoiceSequence+=1;return {externalInvoiceId:`in_fixture_${invoiceSequence}`,
         hostedUrl:`https://payments.example.test/in_fixture_${invoiceSequence}`,status:'open'};},
-      async getHostedPaymentUrl(){return null;},async refundPayment(){providerCalls+=1;refundSequence+=1;
+      async getHostedPaymentUrl(){return null;},async refundPayment(_ctx,input){assert.equal(input.externalPaymentId,'pi_modern_fixture');assert.equal(input.amountMinor,1200);providerCalls+=1;refundSequence+=1;
         return {externalRefundId:`refund_fixture_${refundSequence}`};},
       verifyEvent(raw,headers,options){if(headers['x-fixture-signature']!==options.webhookSecret)
         throw new AuthenticationError('That event did not come from the payment provider.');return JSON.parse(raw);},
-      readEvent(event){return {kind:'PAID',externalInvoiceId:event.data.object.id,
-        externalPaymentId:event.data.object.payment_intent,amountMinor:event.data.object.amount_paid,
-        currency:'USD',method:'card',paidAt:eventAt};},
+      readEvent(event){return require('../../src/payments/providers/stripe').readEvent(event);},
     };
     const cluster=await startCluster();
     const database=openPostgres(cluster.connectionString,{applicationName:'stockchief-postgres-payments-ui'});
@@ -95,7 +93,7 @@ test('real Chromium queues hosted payments, posts signed results once, and fence
     assert.equal(await page.getByRole('link',{name:'Open secure page'}).getAttribute('href'),
       'https://payments.example.test/in_fixture_1');
     const depositEvent={id:'evt_deposit_confirmed',account:'acct_fixture_business',type:'invoice.payment_succeeded',
-      data:{object:{id:'in_fixture_1',payment_intent:'pi_deposit_fixture',amount_paid:1200}}};
+      data:{object:{id:'in_fixture_1',payment_intent:'pi_deposit_fixture',amount_paid:1200,currency:'usd',status_transitions:{paid_at:Date.parse(eventAt)/1000}}}};
     const depositResponse=await page.request.post(`${base}/webhooks/payments/stripe`,{data:JSON.stringify(depositEvent),
       headers:{'content-type':'application/json','x-fixture-signature':'payment-webhook-fixture-secret'}});
     assert.equal(depositResponse.status(),200,await depositResponse.text());
@@ -140,7 +138,8 @@ test('real Chromium queues hosted payments, posts signed results once, and fence
       'https://payments.example.test/in_fixture_2');
 
     const event={id:'evt_payment_confirmed',account:'acct_fixture_business',type:'invoice.payment_succeeded',
-      data:{object:{id:'in_fixture_2',payment_intent:'pi_fixture_2',amount_paid:2400}}};
+      data:{object:{id:'in_fixture_2',amount_paid:2400,currency:'usd',status_transitions:{paid_at:Date.parse(eventAt)/1000},payments:{data:[{status:'paid',amount_paid:2400,currency:'usd',payment:{type:'payment_intent',payment_intent:{id:'pi_modern_fixture'}}}],has_more:false}}}};
+    const foreignWebhook=await page.request.post(`${base}/webhooks/payments/stripe`,{data:JSON.stringify({...event,account:'acct_unrelated'}),headers:{'content-type':'application/json','x-fixture-signature':'payment-webhook-fixture-secret'}});assert.equal(foreignWebhook.status(),400,'a validly signed event for an unrelated merchant cannot enter this workspace');
     const webhook=await page.request.post(`${base}/webhooks/payments/stripe`,{data:JSON.stringify(event),
       headers:{'content-type':'application/json','x-fixture-signature':'payment-webhook-fixture-secret'}});
     assert.equal(webhook.status(),200);assert.equal((await webhook.json()).applied,true);
@@ -176,7 +175,10 @@ test('real Chromium queues hosted payments, posts signed results once, and fence
       FROM customer_returns r JOIN accounting_customer_invoices i ON i.sales_order_id=r.sales_order_id
       WHERE r.workspace_id=$1 AND r.id=$2`,[ctx.workspaceId,requested.customerReturnId])).rows[0];
     assert.deepEqual({status:beforeRefund.status,total:Number(beforeRefund.total_minor),refunds:Number(beforeRefund.refunds)},
-      {status:'AWAITING_REFUND',total:2400,refunds:0});
+      {status:'AWAITING_REFUND',total:1200,refunds:0},'the receipt credit reduces invoice revenue before cash settlement');
+    const receiptCredits=await require('../../src/operations/postgres-return-credits').read(database,ctx.workspaceId,requested.customerReturnId);
+    assert.equal(receiptCredits.reduce((sum,credit)=>sum+Number(credit.cash_due_minor),0),1200);
+    assert.equal(receiptCredits.reduce((sum,credit)=>sum+Number(credit.cash_refunded_minor),0),0,'the receipt credit cannot pretend the provider refund already happened');
     const refunded=await jobs.processOne(database,runtimeHandlers.create(undefined,handlerOptions),
       {owner:'refund-worker',leaseMs:30000});
     assert.equal(refunded.status,'COMPLETED');assert.equal(providerCalls,4);await page.reload();

@@ -15,11 +15,10 @@
  * balance is a second invoice later. Two invoices for one order is how a
  * deposit works everywhere else too.
  *
- * Honesty about what is proven: this is written against Stripe's documented
- * API and is exercised in tests through a stub. It has not been run against a
- * live Stripe account, because there is no key on this machine. The seam it
- * implements is proven; the wire format is not. Treat the first real call as
- * the test it is.
+ * Adapter and canonical payment/refund regressions use simulated providers.
+ * Actual merchant authorization, event delivery and financial transactions
+ * require separate provider certification; configured credentials alone do
+ * not establish that evidence.
  *
  * No card number ever reaches this process. StockChief holds identifiers and a
  * URL, nothing else.
@@ -168,6 +167,29 @@ async function getHostedPaymentUrl(ctx, { externalInvoiceId }) {
   return invoice.hosted_invoice_url || null;
 }
 
+function paymentIdentity(value) {
+  const id=typeof value==='string'?value:value?.id;
+  return typeof id==='string'&&/^(pi|ch)_[A-Za-z0-9_]+$/.test(id)?id:null;
+}
+
+function invoicePaymentIdentity(invoice) {
+  const payments=invoice.payments;
+  if(payments?.has_more===true)return null;
+  const paid=Array.isArray(payments?.data)?payments.data.filter(entry=>entry.status==='paid'&&Number(entry.amount_paid)>0):[];
+  if(paid.length){
+    const amounts=paid.map(entry=>Number(entry.amount_paid));
+    if(amounts.some(value=>!Number.isSafeInteger(value))||paid.some(entry=>entry.currency&&String(entry.currency).toLowerCase()!==String(invoice.currency).toLowerCase()))return null;
+    const total=amounts.reduce((sum,value)=>sum+value,0);
+    if(!Number.isSafeInteger(total)||total!==Number(invoice.amount_paid))return null;
+    const ids=paid.map(entry=>paymentIdentity(entry.payment?.type==='payment_intent'?entry.payment.payment_intent:entry.payment?.type==='charge'?entry.payment.charge:null));
+    // A cumulative invoice total cannot authorize a refund against an arbitrary
+    // one of several payments, a partial page, or an out-of-band payment record.
+    if(ids.some(id=>!id)||new Set(ids).size!==1)return null;
+    return ids[0];
+  }
+  return paymentIdentity(invoice.payment_intent)||paymentIdentity(invoice.charge);
+}
+
 /**
  * What Stripe currently says about an invoice.
  *
@@ -195,8 +217,8 @@ async function readInvoice(ctx, { externalInvoiceId }) {
    * charge does not carry the invoice id in this API version, so the intent is
    * what joins them.
    */
-  const intentIds = (invoice.payments?.data || [])
-    .map((entry) => entry.payment?.payment_intent).filter(Boolean);
+  const intentIds = [...new Set([paymentIdentity(invoice.payment_intent),...(invoice.payments?.data || [])
+    .map((entry) => paymentIdentity(entry.payment?.payment_intent))].filter(id=>id?.startsWith('pi_')))];
   const reasons = [];
   try {
     if (intentIds.length) {
@@ -227,8 +249,10 @@ async function readInvoice(ctx, { externalInvoiceId }) {
 }
 
 async function refundPayment(ctx, { externalPaymentId, amountMinor }) {
+  const identity=paymentIdentity(externalPaymentId);
+  if(!identity)throw new ValidationError('The original payment identity needs review before a provider refund.');
   const refund = await call(ctx, '/refunds', {
-    values: { payment_intent: externalPaymentId, amount: amountMinor ? Math.round(Number(amountMinor)) : undefined },
+    values: { [identity.startsWith('pi_')?'payment_intent':'charge']: identity, amount: amountMinor ? Math.round(Number(amountMinor)) : undefined },
     idempotencyKey: `foundry-refund:${externalPaymentId}:${amountMinor || 'all'}`,
   });
   return { externalRefundId: refund.id };
@@ -321,7 +345,7 @@ function readEvent(event) {
     return {
       kind: 'PAID',
       externalInvoiceId: object.id || null,
-      externalPaymentId: object.payment_intent || object.charge || null,
+      externalPaymentId: invoicePaymentIdentity(object),
       // amount_paid is what actually arrived, which is not always the total.
       amountMinor: object.amount_paid !== undefined ? object.amount_paid : object.amount_due,
       currency: (object.currency || '').toUpperCase() || null,
