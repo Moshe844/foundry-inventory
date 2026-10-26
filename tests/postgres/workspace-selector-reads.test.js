@@ -1,0 +1,7 @@
+'use strict';process.env.NODE_ENV='test';const test=require('node:test'),assert=require('node:assert/strict');
+test('routine authenticated pages load current memberships without recounting every inventory; inventory management keeps exact metrics',{timeout:120000},async t=>{
+ const f=await require('../helpers/postgres-shipping-fixture').fixture(t,{units:7}),{db,ctx}=f,auth=require('../../src/domain/postgres-auth-service');let statements=[];const watched={...db,query:async(sql,args)=>{statements.push(sql);return db.query(sql,args);}};
+ const lightweight=await auth.listWorkspacesForAccount(watched,f.owner.accountId,{includeMetrics:false});assert.equal(lightweight.length,1);assert.equal(lightweight[0].id,ctx.workspaceId);assert.equal(Object.hasOwn(lightweight[0],'item_count'),false);assert(!statements.some(s=>/COUNT\(|SUM\(/i.test(s)),'Selector reads must not run full catalog/stock aggregations');statements=[];
+ const full=await auth.listWorkspacesForAccount(watched,f.owner.accountId);assert.equal(Number(full[0].item_count),1);assert.equal(Number(full[0].location_count),1);assert.equal(Number(full[0].units_on_hand),7);assert.equal(Number(full[0].member_count),1);assert.equal((await auth.listWorkspacesForAccount(db,'another-account',{includeMetrics:false})).length,0);
+ const summary=require('../../src/web/postgres-auth-middleware').workspaceSummary(lightweight[0],f.owner.accountId);assert.equal(Object.hasOwn(summary,'itemCount'),false,'Unavailable metrics must not become a false zero or NaN');assert.equal(summary.isOwner,true);
+});

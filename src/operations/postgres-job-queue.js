@@ -1,6 +1,7 @@
 'use strict';
 
 const { newId } = require('../lib/util');
+const MAINTENANCE_KINDS = Object.freeze(['autopilot.evaluate', 'system.reconcile-business']);
 
 function hydrate(row) {
   if (!row) return null;
@@ -8,7 +9,7 @@ function hydrate(row) {
     status: row.status, priority: row.priority, attemptCount: row.attempt_count, maxAttempts: row.max_attempts,
     availableAt: Number(row.available_at), leaseOwner: row.lease_owner, leaseToken: row.lease_token,
     leaseExpiresAt: row.lease_expires_at === null ? null : Number(row.lease_expires_at),
-    idempotencyKey: row.idempotency_key, result: row.result, lastError: row.last_error };
+    createdAt: row.created_at, idempotencyKey: row.idempotency_key, result: row.result, lastError: row.last_error };
 }
 
 function time(options) {
@@ -80,6 +81,7 @@ async function recover(client, now) {
     [row.id, dead ? 'DEAD' : 'RETRY', now, JSON.stringify({ code: 'lease_expired', message: 'Worker stopped before completion.' }),
       dead ? new Date(now).toISOString() : null, new Date(now).toISOString()]);
     await event(client, row.id, dead ? 'DEAD_LETTERED' : 'LEASE_RECOVERED', { previousOwner: row.lease_owner }, now);
+    if(dead)await require('./postgres-reconciliation').failedJob(client,hydrate(row),{code:'lease_expired'});
   }
   return expired.rows.length;
 }
@@ -105,18 +107,22 @@ async function claim(database, options = {}) {
       AND ($2::text[] IS NULL OR kind = ANY($2::text[]))
       AND (kind<>'import.execute-approved' OR NOT EXISTS(SELECT 1 FROM stockchief_runtime.jobs active
         WHERE active.workspace_id=jobs.workspace_id AND active.kind=jobs.kind AND active.status='RUNNING'))
+      AND (NOT(kind=ANY($3::text[])) OR NOT EXISTS(SELECT 1 FROM stockchief_runtime.jobs active
+        WHERE active.workspace_id=jobs.workspace_id AND active.kind=ANY($3::text[]) AND active.status='RUNNING'))
       ORDER BY priority, created_at, id
-      LIMIT 1 FOR UPDATE SKIP LOCKED`, [now, kinds]);
+      LIMIT 1 FOR UPDATE SKIP LOCKED`, [now, kinds, MAINTENANCE_KINDS]);
     if (!candidate.rows.length) return null;
     const selected=candidate.rows[0];
-    if(selected.kind==='import.execute-approved'){
+    const maintenance=MAINTENANCE_KINDS.includes(selected.kind);
+    if(selected.kind==='import.execute-approved'||maintenance){
       // The transaction lock closes the race between independent workers
       // that both observed an inventory with no running import.
       const locked=(await client.query('SELECT pg_try_advisory_xact_lock(hashtextextended($1,0)) AS acquired',
-        ['jobs:import:'+selected.workspace_id])).rows[0].acquired;
+        ['jobs:'+(maintenance?'maintenance:':'import:')+selected.workspace_id])).rows[0].acquired;
       if(!locked)return null;
       const active=await client.query(`SELECT 1 FROM stockchief_runtime.jobs
-        WHERE workspace_id=$1 AND kind=$2 AND status='RUNNING' LIMIT 1`,[selected.workspace_id,selected.kind]);
+        WHERE workspace_id=$1 AND kind=ANY($2::text[]) AND status='RUNNING' LIMIT 1`,
+        [selected.workspace_id,maintenance?MAINTENANCE_KINDS:[selected.kind]]);
       if(active.rows.length)return null;
     }
     const token = newId('lease');
@@ -172,6 +178,7 @@ async function fail(database, id, token, error, options = {}) {
       dead ? new Date(now).toISOString() : null, new Date(now).toISOString()]);
     if(commercialPause)await client.query('UPDATE stockchief_runtime.jobs SET attempt_count=GREATEST(attempt_count-1,0) WHERE id=$1',[id]);
     await event(client, id, commercialPause?'COMMERCIAL_PAUSED':dead ? 'DEAD_LETTERED' : 'RETRY_SCHEDULED', detail, now);
+    if(dead)await require('./postgres-reconciliation').failedJob(client,hydrate(row),error);
     return hydrate(result.rows[0]);
   }, { isolation: 'READ COMMITTED' });
 }
@@ -248,4 +255,4 @@ async function reconcileVerifiedEffectWithin(client,workspaceId,effectId){
  for(const row of result.rows)await event(client,row.id,'VERIFICATION_RECOVERED',{effectId,readOnlyRecovery:true},now);
  return result.rows.length;
 }
-module.exports = { enqueue, get, claim, heartbeat, complete, fail, recoverExpired, retryDead, listDead, processOne,reconcileVerifiedEffectWithin };
+module.exports = { MAINTENANCE_KINDS, enqueue, get, claim, heartbeat, complete, fail, recoverExpired, retryDead, listDead, processOne,reconcileVerifiedEffectWithin };

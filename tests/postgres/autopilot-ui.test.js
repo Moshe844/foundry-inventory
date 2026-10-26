@@ -71,6 +71,16 @@ test('real Chromium proves native PostgreSQL transfer-versus-buy planning, appro
     assert.deepEqual(grants.map((row)=>({capability:row.capability,granted:Number(row.granted)})),
       [{capability:'payment_requests',granted:1},{capability:'supplier_document_review',granted:0}]);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Check the operation now'}).click()]);
+    assert.match(await page.locator('main').innerText(),/Business review queued/);
+    assert.match(await page.locator('[data-maintenance-progress]').innerText(),/waiting for its next batch/);
+    await page.goto(base+'/');
+    assert.match(await page.locator('main').innerText(),/Review in progress/);
+    assert.equal(await page.getByRole('button',{name:'Check now',exact:true}).count(),0);
+    await page.goto(base+'/autopilot');
+    var handlers=require('../../src/operations/postgres-runtime-handlers').create();
+    var checked=await require('../../src/operations/postgres-job-queue').processOne(database,{'autopilot.evaluate':handlers['autopilot.evaluate']},{owner:'browser-review'});
+    assert.equal(checked.status,'COMPLETED');
+    await page.reload();
     assert.match(await page.locator('main').innerText(),/Transfer Widget[\s\S]*waiting for approval/);
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM work_items WHERE workspace_id=$1
       AND source='postgres_autopilot' AND execution_status='WAITING_FOR_APPROVAL'`,[ctx.workspaceId])).rows[0].count,'1');
@@ -115,6 +125,16 @@ test('real Chromium proves native PostgreSQL transfer-versus-buy planning, appro
       WHERE workspace_id=$1 AND granted=1 ORDER BY capability`,[ctx.workspaceId])).rows;
     assert.deepEqual(grants.map((row)=>row.capability),['inventory_transfers','payment_requests','replenishment']);
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Check the operation now'}).click()]);
+    assert.match(await page.locator('main').innerText(),/Business review queued/);
+    assert.match(await page.locator('[data-maintenance-progress]').innerText(),/waiting for its next batch/);
+    await page.goto(base+'/');
+    assert.match(await page.locator('main').innerText(),/Review in progress/);
+    assert.equal(await page.getByRole('button',{name:'Check now',exact:true}).count(),0);
+    await page.goto(base+'/autopilot');
+    var handlers=require('../../src/operations/postgres-runtime-handlers').create();
+    var checked=await require('../../src/operations/postgres-job-queue').processOne(database,{'autopilot.evaluate':handlers['autopilot.evaluate']},{owner:'browser-review'});
+    assert.equal(checked.status,'COMPLETED');
+    await page.reload();
     assert.match(await page.locator('main').innerText(),/Purchase Widget[\s\S]*waiting for approval/);
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM purchase_orders
       WHERE workspace_id=$1 AND source='foundry_recommendation'`,[ctx.workspaceId])).rows[0].count,'0',

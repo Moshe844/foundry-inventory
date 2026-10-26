@@ -166,40 +166,45 @@ async function configureRoutine(database,ctx,membership,input){assertAdmin(membe
     if(transferEnabled||purchaseEnabled)await client.query(`UPDATE workspace_autopilot SET mode='POLICY_AUTOMATED',updated_at=$2
       WHERE workspace_id=$1`,[ctx.workspaceId,nowIso()]);return {transferId,purchaseId};},{isolation:'SERIALIZABLE'});}
 
-async function planningRows(database,workspaceId){return (await database.query(`WITH committed AS (
+async function planningRows(database,workspaceId,{afterSkuId=null,limitSkus=null}={}){return (await database.query(`WITH demand_eligible AS (
+ SELECT sku_id FROM movements WHERE workspace_id=$1 AND operation='issue' AND quantity_delta<0
+ AND occurred_at >= (CURRENT_TIMESTAMP-INTERVAL '30 days')::text GROUP BY sku_id,location_id HAVING count(*)>=2),
+ eligible_skus AS MATERIALIZED (SELECT sku_id FROM reorder_policies WHERE workspace_id=$1
+  UNION SELECT sku_id FROM demand_eligible),
+ selected_skus AS MATERIALIZED (SELECT s.id FROM eligible_skus e JOIN skus s ON s.id=e.sku_id AND s.workspace_id=$1
+  JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id WHERE s.is_active=1 AND i.is_active=1
+  AND ($2::text IS NULL OR s.id>$2) ORDER BY s.id LIMIT $3), committed AS (
     SELECT sol.sku_id,a.location_id,SUM(a.quantity) AS quantity FROM sales_order_allocations a JOIN sales_order_lines sol
-      ON sol.id=a.sales_order_line_id AND sol.workspace_id=a.workspace_id WHERE a.workspace_id=$1 GROUP BY sol.sku_id,a.location_id
+      ON sol.id=a.sales_order_line_id AND sol.workspace_id=a.workspace_id WHERE a.workspace_id=$1 AND sol.sku_id IN (SELECT id FROM selected_skus) GROUP BY sol.sku_id,a.location_id
   ), purchase_incoming AS (SELECT pol.sku_id,COALESCE(pol.destination_location_id,po.destination_location_id) AS location_id,
       SUM(pol.quantity_units-pol.quantity_received_units) AS quantity FROM purchase_order_lines pol JOIN purchase_orders po
-      ON po.id=pol.purchase_order_id WHERE pol.workspace_id=$1 AND po.status IN ('APPROVED','ORDERED','PARTIALLY_RECEIVED')
+      ON po.id=pol.purchase_order_id WHERE pol.workspace_id=$1 AND pol.sku_id IN (SELECT id FROM selected_skus) AND po.status IN ('APPROVED','ORDERED','PARTIALLY_RECEIVED')
       GROUP BY pol.sku_id,COALESCE(pol.destination_location_id,po.destination_location_id)),
   transfer_incoming AS (SELECT tl.sku_id,t.destination_location_id AS location_id,
       SUM(CASE t.status WHEN 'REQUESTED' THEN tl.requested_quantity WHEN 'APPROVED' THEN tl.approved_quantity
         WHEN 'PICKED' THEN tl.picked_quantity
         ELSE tl.shipped_quantity-tl.received_quantity-tl.lost_quantity-tl.damaged_quantity END) AS quantity
       FROM inventory_transfer_lines tl JOIN inventory_transfers t ON t.id=tl.transfer_id
-      WHERE tl.workspace_id=$1 AND t.status IN ('REQUESTED','APPROVED','PICKED','SHIPPED','IN_TRANSIT','PARTIALLY_RECEIVED')
+      WHERE tl.workspace_id=$1 AND tl.sku_id IN (SELECT id FROM selected_skus) AND t.status IN ('REQUESTED','APPROVED','PICKED','SHIPPED','IN_TRANSIT','PARTIALLY_RECEIVED')
       GROUP BY tl.sku_id,t.destination_location_id),
   incoming AS (SELECT sku_id,location_id,SUM(quantity) AS quantity FROM (
       SELECT * FROM purchase_incoming UNION ALL SELECT * FROM transfer_incoming
     ) sources GROUP BY sku_id,location_id),
   demand AS (SELECT sku_id,location_id,COUNT(*) AS issue_events,SUM(-quantity_delta) AS issued FROM movements
-      WHERE workspace_id=$1 AND operation='issue' AND quantity_delta<0 AND occurred_at >= (CURRENT_TIMESTAMP-INTERVAL '30 days')::text
-      GROUP BY sku_id,location_id),
-  eligible_skus AS MATERIALIZED (SELECT sku_id FROM reorder_policies WHERE workspace_id=$1
-    UNION SELECT sku_id FROM demand WHERE issue_events>=2)
+      WHERE workspace_id=$1 AND sku_id IN (SELECT id FROM selected_skus) AND operation='issue' AND quantity_delta<0 AND occurred_at >= (CURRENT_TIMESTAMP-INTERVAL '30 days')::text
+      GROUP BY sku_id,location_id)
   SELECT s.id AS sku_id,s.code,s.variant_label,i.name AS item_name,i.tracking_mode,l.id AS location_id,l.name AS location_name,
     COALESCE(b.on_hand,0)::bigint AS on_hand,COALESCE(c.quantity,0)::bigint AS committed,COALESCE(inc.quantity,0)::bigint AS incoming,
     COALESCE(d.issue_events,0)::bigint AS issue_events,COALESCE(d.issued,0)::bigint AS issued,rp.reorder_point,rp.target_stock,
     rp.safety_stock,rp.default_order_quantity,rp.preferred_supplier_id,rp.lead_time_days
-  FROM eligible_skus eligible JOIN skus s ON s.id=eligible.sku_id AND s.workspace_id=$1
+  FROM selected_skus selected JOIN skus s ON s.id=selected.id AND s.workspace_id=$1
   JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id CROSS JOIN locations l
   LEFT JOIN balances b ON b.workspace_id=s.workspace_id AND b.sku_id=s.id AND b.location_id=l.id
   LEFT JOIN committed c ON c.sku_id=s.id AND c.location_id=l.id LEFT JOIN incoming inc ON inc.sku_id=s.id AND inc.location_id=l.id
   LEFT JOIN demand d ON d.sku_id=s.id AND d.location_id=l.id LEFT JOIN LATERAL (SELECT * FROM reorder_policies p
     WHERE p.workspace_id=s.workspace_id AND p.sku_id=s.id AND (p.location_id=l.id OR p.location_id IS NULL)
     ORDER BY (p.location_id IS NOT NULL) DESC LIMIT 1) rp ON true
-  WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 AND l.workspace_id=$1 AND l.is_active=1 ORDER BY s.id,l.id`,[workspaceId])).rows;}
+  WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 AND l.workspace_id=$1 AND l.is_active=1 ORDER BY s.id,l.id`,[workspaceId,afterSkuId,limitSkus===null?null:limitSkus+1])).rows;}
 
 function position(row){const available=Number(row.on_hand)-Number(row.committed);const rate=Number(row.issued)/30;
   const lead=Number(row.lead_time_days||14);const safety=row.safety_stock===null?Math.ceil(rate*7):Number(row.safety_stock);
@@ -208,12 +213,13 @@ function position(row){const available=Number(row.on_hand)-Number(row.committed)
   return {...row,onHand:Number(row.on_hand),committed:Number(row.committed),available,incoming:Number(row.incoming),
     issueEvents:Number(row.issue_events),issued:Number(row.issued),rate,safety,reorder,target,projected:available+Number(row.incoming)};}
 
-async function planningSuppliers(database,workspaceId){
+async function planningSuppliers(database,workspaceId,skuIds){
+ if(!skuIds.length)return new Map();
  const rows=(await database.query(`SELECT si.*,s.name AS supplier_name,s.currency,s.minimum_order_amount,
   COALESCE(si.lead_time_days,s.default_lead_time_days,30) AS effective_lead
   FROM supplier_items si JOIN suppliers s ON s.id=si.supplier_id AND s.workspace_id=si.workspace_id
-  WHERE si.workspace_id=$1 AND si.is_active=1 AND s.status='active'
-  ORDER BY si.sku_id,si.is_preferred DESC,COALESCE(si.last_unit_cost,1e100),effective_lead,si.id`,[workspaceId])).rows;
+  WHERE si.workspace_id=$1 AND si.sku_id=ANY($2::text[]) AND si.is_active=1 AND s.status='active'
+  ORDER BY si.sku_id,si.is_preferred DESC,COALESCE(si.last_unit_cost,1e100),effective_lead,si.id`,[workspaceId,skuIds])).rows;
  const bySku=new Map();for(const row of rows){if(!bySku.has(row.sku_id))bySku.set(row.sku_id,[]);bySku.get(row.sku_id).push(row);}return bySku;
 }
 async function supplierChoice(database,workspaceId,shortage,cached=null){const result=cached?{rows:(cached.get(shortage.sku_id)||[]).filter(row=>!shortage.preferred_supplier_id||row.supplier_id===shortage.preferred_supplier_id)}:await database.query(`SELECT si.*,s.name AS supplier_name,
@@ -286,10 +292,11 @@ async function persistPlannedWork(database,workspaceId,entries){
  }return created;
 }
 
-async function plan(database,workspaceId){const state=await ensure(database,workspaceId);const rows=(await planningRows(database,workspaceId)).map(position);
+async function plan(database,workspaceId,{afterSkuId=null,limitSkus=null,processedSkus=0}={}){if(limitSkus!==null&&(!Number.isSafeInteger(limitSkus)||limitSkus<1||limitSkus>1000))throw new ValidationError('Invalid planning batch bound.');const state=await ensure(database,workspaceId);const rows=(await planningRows(database,workspaceId,{afterSkuId,limitSkus})).map(position);
   const bySku=new Map();for(const row of rows){if(!bySku.has(row.sku_id))bySku.set(row.sku_id,[]);bySku.get(row.sku_id).push(row);}
-  const prepared=[];const considered=[];const suppliers=await planningSuppliers(database,workspaceId);
-  for(const locations of bySku.values()){for(const shortage of locations.filter((row)=>row.reorder!==null&&row.projected<=row.reorder)){
+  const selected=Array.from(bySku.entries()).slice(0,limitSkus??bySku.size),partial=limitSkus!==null&&bySku.size>limitSkus;
+  const prepared=[];const considered=[];const suppliers=await planningSuppliers(database,workspaceId,selected.map(([id])=>id));
+  for(const [,locations] of selected){for(const shortage of locations.filter((row)=>row.reorder!==null&&row.projected<=row.reorder)){
     const needed=Math.max(1,(shortage.target??shortage.reorder)-shortage.projected);
     const source=locations.filter((row)=>row.location_id!==shortage.location_id&&row.available>row.safety)
       .map((row)=>({...row,spare:row.available-row.safety})).filter((row)=>row.spare>0).sort((a,b)=>b.spare-a.spare)[0];let candidate;
@@ -312,8 +319,8 @@ async function plan(database,workspaceId){const state=await ensure(database,work
           {fact:'supplier_pack',value:supplier.unitsPer},{fact:'supplier_minimum_purchase_units',value:Number(supplier.minimum_order_quantity||1)}]};}
     considered.push(candidate);const evaluation=await evaluate(database,workspaceId,candidate,state);if(evaluation.decision==='refused')continue;
     prepared.push({candidate,evaluation});
-  }}const created=await persistPlannedWork(database,workspaceId,prepared);await database.query(`UPDATE workspace_autopilot SET last_evaluated_at=$2,next_evaluation_at=$3,updated_at=$2 WHERE workspace_id=$1`,
-    [workspaceId,nowIso(),new Date(Date.now()+15*60000).toISOString()]);return {state,created,considered};}
+  }}const created=await persistPlannedWork(database,workspaceId,prepared);if(!partial)await database.query(`UPDATE workspace_autopilot SET last_evaluated_at=$2,next_evaluation_at=$3,updated_at=$2 WHERE workspace_id=$1`,
+    [workspaceId,nowIso(),new Date(Date.now()+15*60000).toISOString()]);return {state,created,considered,partial,nextAfterSkuId:selected.at(-1)?.[0]||afterSkuId,processedSkus:processedSkus+selected.length};}
 
 async function revalidate(database,workspaceId,action){
   if(action.type==='transfer'){
@@ -467,13 +474,13 @@ async function reconcileSupplierFollowThrough(database,workspaceId,{actorId=null
   return {completed,failed,pending:waiting};
 }
 
-async function run(database,ctx){const followThrough=await reconcileSupplierFollowThrough(database,ctx.workspaceId,{actorId:ctx.actorId});
-  const planned=await plan(database,ctx.workspaceId);let executed=0;
+async function run(database,ctx,options={}){const followThrough=await reconcileSupplierFollowThrough(database,ctx.workspaceId,{actorId:ctx.actorId});
+  const planned=await plan(database,ctx.workspaceId,options);let executed=0;
   for(const item of planned.created.filter((entry)=>entry.approval_requirement==='NONE')){
     const completed=await execute(database,ctx,item.id);if(completed.execution_status===STATUSES.COMPLETED)executed+=1;
   }
   return {planned:planned.created.length,executed,waiting:planned.created.length-executed,
-    considered:planned.considered.length,followThrough};}
+    considered:planned.considered.length,followThrough,partial:planned.partial,nextAfterSkuId:planned.nextAfterSkuId,processedSkus:planned.processedSkus};}
 async function approve(database,ctx,membership,id){assertOperate(membership);return execute(database,ctx,id,{approvedBy:ctx.actorId});}
 async function cancel(database,ctx,membership,id){assertOperate(membership);const item=await getWork(database,ctx.workspaceId,id);
   if([STATUSES.COMPLETED,STATUSES.FAILED].includes(item.execution_status))throw new ValidationError('Completed work cannot be discarded.');
@@ -487,6 +494,7 @@ async function dashboard(database,workspaceId){const [state,policies,capabilitie
   database.query(`SELECT id,name FROM suppliers WHERE workspace_id=$1 AND status='active' ORDER BY name`,[workspaceId]),
   database.query(`SELECT * FROM work_items WHERE workspace_id=$1 AND source='postgres_autopilot' ORDER BY created_at DESC,id DESC LIMIT 30`,[workspaceId])]);
   return {state,policies,capabilities,locations:locations.rows,suppliers:suppliers.rows,recent:recent.rows.map(workFrom),
+    maintenanceProgress:await require('../operations/postgres-maintenance-progress').read(database,workspaceId),
     transferPolicy:policies.find((policy)=>policy.active&&policy.actions.includes(ACTIONS.TRANSFER))||null,
     purchasePolicy:policies.find((policy)=>policy.active&&policy.actions.includes(ACTIONS.PURCHASE))||null};}
 

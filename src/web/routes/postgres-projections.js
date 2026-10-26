@@ -151,6 +151,7 @@ function createPostgresProjectionsRouter(database){
     }
     res.locals.attentionCount=result.brief.needs.length;
     return res.page('foundry/brief',{title:'Home',nav:'home',room:true,suppressBack:true,postgresAsk:true,...result,
+      maintenanceProgress:await require('../../operations/postgres-maintenance-progress').read(database,req.ctx.workspaceId),
       askSuggestions,homeSuggestions:result.brief.needs.filter(item=>item.approval),homeDecisions:result.brief.needs.filter(item=>!item.approval).slice(0,4),
       stats:result.brief.stats,brief:{body:'',source:'deterministic',createdAt:null},activeMigration:null,
       routineProposal:null,financialPulse:null,observedBrief:'',canOperate:permissions.can(req.user,permissions.OPERATE)});

@@ -37,7 +37,8 @@
     <fieldset><legend>Usual suppliers StockChief may use</legend><div class="grid grid--2"><% suppliers.forEach(function(supplier){ %><label class="choice"><input type="checkbox" name="supplierIds" value="<%= supplier.id %>" <%= purchasePolicy?.supplierScope.includes(supplier.id)?'checked':'' %>><span><strong><%= supplier.name %></strong></span></label><% }) %></div></fieldset>
     <div class="form-actions"><button class="btn btn--primary" type="submit">Confirm these limits</button></div></form></div></section>
 
-<section class="card"><div class="card-head"><div><h2>Run and audit</h2><p class="muted">The same planner runs from the worker. This button performs a check now.</p></div></div><div class="card-body">
+<section class="card"><div class="card-head"><div><h2>Run and audit</h2><p class="muted">Request a business review. Large inventories are checked in saved batches.</p></div></div><div class="card-body">
+  <%- include('../components/maintenance-progress',{maintenanceProgress}) %>
   <div class="form-actions"><form method="post" action="/autopilot/run"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary">Check the operation now</button></form>
     <% if(!state.paused){ %><form method="post" action="/autopilot/pause"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn">Pause automatic work</button></form><% } %></div>
   <% if(!recent.length){ %><p class="muted">No transfer or replenishment decisions have been prepared yet.</p><% } else { %><div class="list-rows"><% recent.forEach(function(item){ %><div class="list-row"><div><strong><%= item.recommendedAction.displayName %></strong><p><%= item.recommendedAction.type==='transfer'?'Transfer':'Purchase' %> <%= item.recommendedAction.quantity %> units · <%= String(item.execution_status).replaceAll('_',' ').toLowerCase() %></p></div><a class="btn btn--sm" href="/autopilot/work/<%= item.id %>">Open</a></div><% }) %></div><% } %>

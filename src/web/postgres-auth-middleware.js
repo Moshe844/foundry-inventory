@@ -11,10 +11,10 @@ function workspaceSummary(row, accountId) {
     isOwner:row.owner_account_id === accountId,
     createdAt:row.created_at,
     dataMode:row.data_mode || 'production',
-    itemCount:Number(row.item_count),
+    ...(row.item_count===undefined?{}:{itemCount:Number(row.item_count),
     locationCount:Number(row.location_count),
     unitsOnHand:Number(row.units_on_hand),
-    memberCount:Number(row.member_count),
+    memberCount:Number(row.member_count)}),
   };
 }
 
@@ -37,7 +37,7 @@ function loadUser(database,{readonly=false}={}) {
       req.account = account;
       res.locals.account = { id:account.id,name:account.name,email:account.email,plan:account.plan,timeZone:account.time_zone||null };
       const accountFormatting=require('./presentation/formatting').forTimeZone(account.time_zone||'UTC');res.locals.helpers={...res.locals.helpers,shortDate:accountFormatting.date,timeAgo:iso=>require('./view-helpers').timeAgo(iso,accountFormatting.timeZone),dateTime:accountFormatting.dateTime,dateInputValue:value=>value instanceof Date?require('../lib/business-time').context(account.time_zone||'UTC',value).calendarDate:require('./view-helpers').dateInputValue(value)};
-      const memberships = await auth.listWorkspacesForAccount(database, account.id);
+      const memberships = await auth.listWorkspacesForAccount(database, account.id,{includeMetrics:req.method==='GET'&&req.path==='/inventories'});
       res.locals.workspaces = memberships.map((row) => workspaceSummary(row, account.id));
       if (!memberships.length) return next();
 

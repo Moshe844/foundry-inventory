@@ -34,10 +34,13 @@ async function factsFor(database,workspaceId,message){
   }
  }
  if(suppliers.length===1){const supplier=suppliers[0];facts.push('The sender is supplier '+supplier.name+'.');
-  const orders=(await database.query('SELECT id,po_number,status,expected_date FROM purchase_orders WHERE workspace_id=$1 AND supplier_id=$2 ORDER BY created_at DESC,id DESC LIMIT 5',[workspaceId,supplier.id])).rows;
-  for(const order of orders){facts.push('Our purchase order '+order.po_number+' has status '+order.status+(order.expected_date?' and recorded expected date '+order.expected_date:'')+'.');const lines=(await database.query(`SELECT s.code,i.name,l.quantity_ordered,l.quantity_received,l.unit_cost_minor FROM purchase_order_lines l
+  const orders=(await database.query('SELECT id,po_number,status,expected_date,currency FROM purchase_orders WHERE workspace_id=$1 AND supplier_id=$2 ORDER BY created_at DESC,id DESC LIMIT 5',[workspaceId,supplier.id])).rows;
+  for(const order of orders){facts.push('Our purchase order '+order.po_number+' has status '+order.status+(order.expected_date?' and recorded expected date '+order.expected_date:'')+'.');const lines=(await database.query(`SELECT s.code,i.name,l.quantity_units,l.quantity_received_units,l.unit_cost FROM purchase_order_lines l
    JOIN skus s ON s.workspace_id=l.workspace_id AND s.id=l.sku_id JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
-   WHERE l.workspace_id=$1 AND l.purchase_order_id=$2 ORDER BY l.id LIMIT 50`,[workspaceId,order.id])).rows;for(const line of lines)facts.push('Purchase order '+order.po_number+' line: '+JSON.stringify(line)+'.');}
+   WHERE l.workspace_id=$1 AND l.purchase_order_id=$2 ORDER BY l.id LIMIT 50`,[workspaceId,order.id])).rows;
+   for(const line of lines)facts.push('Purchase order '+order.po_number+', '+line.name+' ('+line.code+'): '+
+    line.quantity_units+' ordered, '+line.quantity_received_units+' received; '+
+    (line.unit_cost===null?'unit cost not recorded':'recorded unit cost '+order.currency+' '+Number(line.unit_cost).toFixed(2))+'.');}
  }
  return facts;
 }

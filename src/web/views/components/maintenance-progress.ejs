@@ -1,0 +1,6 @@
+<div data-maintenance-progress data-active="<%= maintenanceProgress.active?'true':'false' %>" role="status" aria-live="polite">
+  <% for(const check of maintenanceProgress.checks){ %><p><span class="badge badge--warn">In progress</span> <%= check.text %></p><% } %>
+  <% if(maintenanceProgress.active){ %><p class="hint">You can keep working. Progress shows saved batches and continues after you leave.</p><% } %>
+  <% if(!maintenanceProgress.active&&maintenanceProgress.attention){ %><p><%= maintenanceProgress.message %> <a href="/needs-you">Review Needs you</a></p><% } %>
+</div>
+<script src="/maintenance-progress.js?v=<%= assetVersion %>" defer></script>

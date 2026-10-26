@@ -346,6 +346,8 @@ async function runtimeSweep(job,client,options={}){
     LEFT JOIN workspace_autopilot a ON a.workspace_id=w.id
     WHERE w.deletion_requested_at IS NULL AND COALESCE(a.paused,0)=0 AND COALESCE(a.suspended,0)=0
       ${billingFilter}
+      AND NOT EXISTS(SELECT 1 FROM stockchief_runtime.jobs active WHERE active.workspace_id=w.id
+        AND active.kind='autopilot.evaluate' AND active.status IN ('PENDING','RETRY','RUNNING'))
       AND (a.next_evaluation_at IS NULL OR a.next_evaluation_at<=$1)`,[at])).rows;
   let scheduledAutopilotChecks=0;
   for(const due of autonomyDue){
@@ -385,15 +387,28 @@ async function runtimeSweep(job,client,options={}){
 async function autopilotEvaluate(job,client){
   if(!job.workspaceId||!job.payload?.actorId)throw Object.assign(new Error('An autopilot evaluation needs workspace and owner identity.'),
     {code:'invalid_autopilot_evaluation',retryable:false});
+  if(!job.payload.cycleId&&job.createdAt){
+    const covering=(await client.query(`SELECT id FROM stockchief_runtime.jobs WHERE workspace_id=$1
+      AND kind='autopilot.evaluate' AND status='COMPLETED' AND result->>'partial'='false'
+      AND (result->>'cycleStartedAt')::timestamptz>=$2::timestamptz
+      ORDER BY completed_at DESC LIMIT 1`,[job.workspaceId,job.createdAt])).rows[0];
+    if(covering)return {skipped:'covered_by_completed_check',coveringJobId:covering.id};
+  }
   const scope=await entitlements.ownerScopeForWorkspace(client,job.workspaceId);
   const subscription=await entitlements.subscriptionFor(client,scope.accountId);
   if((subscription||config.commercial.requirePaidWorkspace)&&!entitlements.operationalAccess(subscription).canOperate)
     return {skipped:'subscription_read_only'};
   const basic=await entitlements.capabilityState(client,scope,'planning.basic');
   const transfers=await entitlements.capabilityState(client,scope,'planning.transfer_before_buy');
-  if(basic.enabled&&transfers.enabled)await require('../forecasting/postgres-planning-service')
+  if(!job.payload.afterSkuId&&basic.enabled&&transfers.enabled)await require('../forecasting/postgres-planning-service')
     .refreshRecommendations(scopedDatabase(client),job.workspaceId);
-  return autonomy.run(scopedDatabase(client),{workspaceId:job.workspaceId,actorId:job.payload.actorId});
+  const cycleId=job.payload.cycleId||job.id,cycleStartedAt=job.payload.cycleStartedAt||new Date().toISOString();
+  const result=await autonomy.run(scopedDatabase(client),{workspaceId:job.workspaceId,actorId:job.payload.actorId},
+   {afterSkuId:job.payload.afterSkuId||null,limitSkus:250,processedSkus:Number(job.payload.processedSkus||0)});
+  if(result.partial)await jobs.enqueue(scopedDatabase(client),{workspaceId:job.workspaceId,kind:'autopilot.evaluate',
+   idempotencyKey:'autopilot-cycle:'+cycleId+':'+result.nextAfterSkuId,payload:{actorId:job.payload.actorId,cycleId,cycleStartedAt,
+    afterSkuId:result.nextAfterSkuId,processedSkus:result.processedSkus},priority:39,maxAttempts:3});
+  return {...result,cycleId,cycleStartedAt};
 }
 
 function external(handler,workerLane){handler.externalEffect=true;if(workerLane)handler.workerLane=workerLane;return handler;}
@@ -508,7 +523,7 @@ function create(providers=defaultProviders,options={}){return {'system.runtime-s
       ?require('../assistant/postgres-codex-pilot').run(database,ctx,job.payload.goalId,options.codexPilot||{})
       :require('../assistant/postgres-goal-controller').run(database,ctx,job.payload.goalId,{provider:options.aiProvider});
   }),
-  'system.reconcile-business':(job,client)=>reconciliation.run(scopedDatabase(client),job.workspaceId),
+  'system.reconcile-business':(job,client)=>reconciliation.job(job,scopedDatabase(client)),
   'assistant.resume-mission':external((job,database)=>require('../assistant/postgres-service').resumeMission(database,
     {workspaceId:job.workspaceId,actorId:job.payload.actorId},job.payload.missionId,
     {provider:options.aiProvider})),
