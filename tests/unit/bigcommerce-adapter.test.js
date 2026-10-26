@@ -3,6 +3,16 @@ const test=require('node:test'),assert=require('node:assert/strict'),crypto=requ
 const credentials={storeHash:'ab12cd',accessToken:'private-provider-token',currency:'USD',scopes:['store_v2_products','store_inventory']};
 function response(data){return new Response(JSON.stringify(data),{status:200,headers:{'content-type':'application/json'}});}
 function adapter(){return require('../../src/connections/providers/bigcommerce');}
+test('BigCommerce discovers untracked physical variants with their real options and prices, without copying shared stock',async t=>{
+ t.mock.method(global,'fetch',async url=>{
+  if(String(url).endsWith('/v2/store'))return response({currency:'USD'});
+  const data=String(url).includes('/catalog/products')?[{id:5,name:'Woven storage box',type:'physical',inventory_tracking:'none',price:17.5,variants:[{id:17,sku:'WOVEN-OCHRE',price:17.5,option_values:[{option_display_name:'Color',label:'Ochre'}]},{id:18,sku:'WOVEN-TEAL',price:0,option_values:[{option_display_name:'Color',label:'Teal'}]}]}]:String(url).includes('/inventory/locations')?[{id:3,label:'Warehouse'}]:[{identity:{product_id:5},locations:[{location_id:3,total_inventory_onhand:91,available_to_sell:91}]}];
+  return response({data,meta:{pagination:{current_page:1,total_pages:1}}});
+ });
+ const catalogue=await adapter().discover({credentials});assert.equal(catalogue.products.length,2);
+ assert.deepEqual(catalogue.products[0].providerData.selectedOptions,[{name:'Color',value:'Ochre'}]);assert.equal(catalogue.products[0].displayName,'Woven storage box / Ochre');
+ assert.equal(catalogue.products[1].providerData.priceMoney.amount,0);assert(catalogue.products.every(p=>p.providerData.inventoryCounts.length===0&&p.providerData.virtual===false));
+});
 test('BigCommerce store input is canonical and cannot redirect credentials to another host',()=>{
  const a=adapter();assert.equal(a.normalizeStore('https://store-ab12cd.mybigcommerce.com/manage'),'ab12cd');
  for(const value of ['https://example.com','https://store-ab12cd.mybigcommerce.com.evil.test','../secret','https://user@store-ab12cd.mybigcommerce.com'])assert.throws(()=>a.normalizeStore(value));

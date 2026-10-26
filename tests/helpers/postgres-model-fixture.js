@@ -66,4 +66,13 @@ function fixture(provider){return {...provider,name:'anthropic',model:PRICED_MOD
   const message=JSON.parse(request.prompt).message;
   result.data={parts:(result.data.parts||[result.data]).map(value=>part(value,message))};}
  return {...result,usage:pricedUsage(result.usage||{})};}};}
-module.exports={fixture,part,pricedUsage,PRICED_MODEL};
+// Browser fixtures that invoke metered AI need an included-credit allocation,
+// just as paid accounts do. This seeds only an isolated fixture subscription;
+// it does not bypass the credit reservation or provider-cost ledger.
+async function fundWorkspace(database,workspaceId){
+ const {newId}=require('../../src/lib/util');
+ await database.query(`INSERT INTO account_subscriptions(id,account_id,plan_id,plan_version_id,status,billing_interval,source)
+  SELECT $1,owner_account_id,'growth','wallet-foundation:growth','COMP','CUSTOM','OFFLINE_MODEL_FIXTURE' FROM workspaces WHERE id=$2
+  ON CONFLICT(account_id) DO NOTHING`,[newId('sub'),workspaceId]);
+}
+module.exports={fixture,part,pricedUsage,PRICED_MODEL,fundWorkspace};

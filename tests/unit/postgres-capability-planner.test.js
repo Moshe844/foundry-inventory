@@ -121,7 +121,7 @@ test('a created record keeps its output identity separate from its input record 
   assert.equal(contract.resultRecordKind,'shipment');
   assert.equal(contract.resultReference,'shipmentId');
   const steps=[{capability:'sales_order.create',state:'DONE',args:{recordReference:'SO-00009'}},
-    {capability:'shipping.prepare',state:'DONE',args:{recordReference:'SHP-00002'}},
+    {capability:'shipping.prepare',state:'DONE',dependsOn:[0],args:{recordReference:'SHP-00002'}},
     {capability:'read.sales_orders',state:'BLOCKED',dependsOn:[1],args:{search:null}}];
   assert.deepEqual(capabilityPlans.scopeReadToCompletedRecord(steps,2,
     registry.get('read.sales_orders'),steps[2].args),{search:'SO-00009'});

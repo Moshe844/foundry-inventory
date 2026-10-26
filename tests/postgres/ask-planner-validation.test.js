@@ -444,6 +444,10 @@ test('planner bounds stale conversation text while preserving the full current r
   assert.equal(result.steps.length,2);
 });
 
+function orderPlanningCatalogue(){
+ const entries=['sales_order.create','sales_order.confirm','read.sales_orders','read.inventory_summary'].map(name=>registry.get(name));
+ return {get:name=>entries.find(entry=>entry.name===name)||null,list:kind=>entries.filter(entry=>!kind||entry.kind===kind)};
+}
 test('a cost-bounded planner retries with a smaller catalogue and intact current goal',async()=>{
   let attempts=0;let firstLength=0;
   const provider={async complete({schemaName,system,prompt}){
@@ -455,7 +459,7 @@ test('a cost-bounded planner retries with a smaller catalogue and intact current
     return {data:{steps:[{capability:'sales_order.create',arguments:[],dependsOn:[],
       continuesPending:false}],clarifyingQuestion:''}};
   }};
-  const result=await planner.plan(provider,'Create an order and reserve stock.');
+  const result=await planner.plan(provider,'Create an order and reserve stock.',{catalogue:orderPlanningCatalogue()});
   assert.equal(attempts,2);
   assert.deepEqual(result.steps.map(({contract})=>contract.name),
     ['sales_order.create','sales_order.confirm']);
@@ -476,7 +480,7 @@ test('a cost-bounded semantic repair uses the compact catalogue and still verifi
     return {data:{steps:[{capability:'sales_order.create',arguments:[],dependsOn:[],continuesPending:false}],
       clarifyingQuestion:''}};
   }};
-  const result=await planner.plan(provider,'Create an order and reserve stock.');
+  const result=await planner.plan(provider,'Create an order and reserve stock.',{catalogue:orderPlanningCatalogue()});
   assert.equal(plans,3);
   assert.equal(fitChecks,2);
   assert.deepEqual(result.steps.map((step)=>step.contract.name),['sales_order.create','sales_order.confirm']);

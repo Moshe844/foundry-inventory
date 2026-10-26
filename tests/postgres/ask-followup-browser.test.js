@@ -63,6 +63,7 @@ test('browser Ask retains contact details through a follow-up and does not route
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
     const owner=(await database.query(`SELECT w.id AS workspace_id,u.id AS actor_id FROM workspaces w
       JOIN users u ON u.workspace_id=w.id WHERE w.name='Followup Business'`)).rows[0];
+    await require('../helpers/postgres-model-fixture').fundWorkspace(database,owner.workspace_id);
     const connectorId=newId('con');const at=nowIso();
     await database.query(`INSERT INTO workspace_connectors
       (id,workspace_id,connector_key,display_name,provider_type,provides,config,status,capabilities,

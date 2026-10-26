@@ -8,7 +8,7 @@ test('catalog eligibility clears only false matching issues, reactivates safely 
  // Begin with a real missing match, then let provider metadata establish that
  // this record should never have blocked physical inventory setup.
  assert.equal(await cache(record('STATE-17',{})),'unmapped');assert.equal((await read()).itemsNeedingMapping,1);
- const reasons=[{isGiftCard:true},{tracked:false},{virtual:true},{productStatus:'ARCHIVED'},{productStatus:'DRAFT'},{inventoryCountUnavailable:'Physical stock was not supplied.'}];
+ const reasons=[{isGiftCard:true},{productStatus:'ARCHIVED'},{virtual:true},{productStatus:'DRAFT'}];
  for(const [index,data]of reasons.entries())assert.equal(await cache(record(index?'STATE-'+index:'STATE-17',data)),'ignored');
  let state=await read();assert.equal(state.itemsNeedingMapping,0);assert.equal(state.openIssues,0);assert.equal(state.publicStatus,'Connected');assert.equal((await db.query("SELECT count(*)::int n FROM connection_external_records WHERE workspace_id=$1 AND connector_id=$2 AND mapping_status='EXCLUDED'",[ctx.workspaceId,id])).rows[0].n,reasons.length);
  const review=await require('../../src/connections/postgres-catalog-import').describe(db,ctx,id);assert.equal(review.rows.length,reasons.length);assert(review.rows.every(r=>r.exclusion));

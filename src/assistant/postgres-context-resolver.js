@@ -5,23 +5,23 @@ const {FIELDS}=require('./postgres-capability-registry');
 // These are entity types, not language patterns. Every query is workspace
 // scoped; the model never receives database access or gets to choose SQL.
 const ENTITIES={
-  sku:{query:`SELECT s.code AS value,CONCAT_WS(' ',i.name,s.variant_label,s.code) AS label,
+  sku:{query:`SELECT s.id AS record_id,s.code AS value,CONCAT_WS(' ',i.name,s.variant_label,s.code) AS label,
       CONCAT_WS(' ',i.name,s.variant_label) AS alias
     FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
     WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1`,order:'label'},
-  location:{query:`SELECT name AS value,name AS label FROM locations
+  location:{query:`SELECT id AS record_id,name AS value,name AS label FROM locations
     WHERE workspace_id=$1 AND is_active=1`,order:'label'},
-  supplier:{query:`SELECT name AS value,name AS label FROM suppliers
+  supplier:{query:`SELECT id AS record_id,name AS value,name AS label FROM suppliers
     WHERE workspace_id=$1 AND status='active'`,order:'label'},
-  customer:{query:`SELECT name AS value,name AS label FROM customers
+  customer:{query:`SELECT id AS record_id,name AS value,name AS label FROM customers
     WHERE workspace_id=$1 AND record_state='ACTIVE'`,order:'label'},
-  purchase_order:{query:`SELECT po_number AS value,po_number AS label FROM purchase_orders
+  purchase_order:{query:`SELECT id AS record_id,po_number AS value,po_number AS label FROM purchase_orders
     WHERE workspace_id=$1`,order:'label'},
-  supplier_bill:{query:`SELECT bill_number AS value,
+  supplier_bill:{query:`SELECT id AS record_id,bill_number AS value,
       CONCAT_WS(' ',bill_number,supplier_invoice_number) AS label,
       supplier_invoice_number AS alias FROM accounting_supplier_bills
     WHERE workspace_id=$1`,order:'label'},
-  mailbox:{query:`SELECT display_name AS value,display_name AS label FROM workspace_connectors
+  mailbox:{query:`SELECT id AS record_id,display_name AS value,display_name AS label FROM workspace_connectors
     WHERE workspace_id=$1 AND provider_type IN ('gmail','microsoft365')
       AND status='connected' AND paused_at IS NULL`,order:'label'},
 };
@@ -51,7 +51,7 @@ async function choices(database,workspaceId,entity,{scope=null,wanted=null}={}){
   const source=`(${statement}) AS candidate`;
   if(wanted){
     const exact=(await database.query(`SELECT * FROM ${source}
-      WHERE lower(value)=lower($2) OR lower(label)=lower($2) ORDER BY label LIMIT 9`,
+      WHERE lower(record_id)=lower($2) OR lower(value)=lower($2) OR lower(label)=lower($2) ORDER BY label LIMIT 9`,
     [workspaceId,wanted])).rows;
     if(exact.length)return exact.map(r=>matchedAlias?{...r,matchedAlias}:r);
     const partial=(await database.query(`SELECT * FROM ${source}
@@ -77,7 +77,7 @@ async function choices(database,workspaceId,entity,{scope=null,wanted=null}={}){
 function choose(rows,wanted){
   if(!wanted)return rows.length===1?{value:rows[0].value,source:'single_valid_candidate'}:
     rows.length?{ambiguous:rows.slice(0,8)}:{missing:true};
-  const exact=rows.filter((row)=>normalize(row.value)===normalize(wanted)||normalize(row.label)===normalize(wanted)||normalize(row.matchedAlias)===normalize(wanted));
+  const exact=rows.filter((row)=>normalize(row.record_id)===normalize(wanted)||normalize(row.value)===normalize(wanted)||normalize(row.label)===normalize(wanted)||normalize(row.matchedAlias)===normalize(wanted));
   if(exact.length===1)return {value:exact[0].value,source:'exact_record'};
   if(exact.length>1)return {ambiguous:exact.slice(0,8)};
   const embedded=rows.filter((row)=>normalize(row.value).length>=5&&normalize(wanted).includes(normalize(row.value)));

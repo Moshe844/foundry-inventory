@@ -7,8 +7,8 @@
  <div class="card-head"><div><h2><%= unlinked.length?'Finish importing products and locations':'Imported products and locations' %></h2><p class="muted"><%= unlinked.length?'Authorization worked. These provider records have not been added to this business yet. Match existing records or import new ones below.':'Current provider records are matched. Their saved history and mappings are preserved.' %></p></div></div>
  <div class="card-body grid">
   <% const quantityNotes=catalogueReview.rows.filter(r=>r.entity_type==='sku'&&r.data.inventoryCountNote); if(quantityNotes.length){ %>
-   <div class="notice notice--warn"><div><strong>Stock quantities still need confirmation</strong><p>Product details and selling prices can be imported. The provider has not supplied physical counts for <%= quantityNotes.length %> product<%= quantityNotes.length===1?'':'s' %>; StockChief has not recorded an opening receipt or inventory cost for them.</p>
-    <ul><% quantityNotes.forEach(function(row){ %><li><%= row.display_name %>: <%= row.data.inventoryCountNote %></li><% }); %></ul></div></div>
+   <div class="notice notice--warn"><div><strong>Stock quantities still need confirmation</strong><p>Product details and selling prices can be imported. Physical counts are not established for <%= quantityNotes.length %> variant<%= quantityNotes.length===1?'':'s' %>; no opening receipt or inventory cost is inferred from these records.</p>
+    <details><summary>Show the <%= quantityNotes.length %> variant<%= quantityNotes.length===1?'':'s' %> needing stock evidence</summary><ul><% quantityNotes.forEach(function(row){ %><li><%= row.display_name %>: <%= row.data.inventoryCountNote %></li><% }); %></ul></details></div></div>
   <% } %>
   <% if(!unlinked.length){ %><p class="notice notice--success">All current physical products and locations are matched or explicitly excluded.</p><% } %>
   <% const matched=catalogueReview.rows.filter(r=>r.entity_type==='sku'&&r.foundry_record_id); if(matched.length){ %>

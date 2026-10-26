@@ -83,6 +83,7 @@ test('Ask browser controls a real customer order, payment, and return through th
       WHERE w.name IN ('Workflow One','Workflow Two')`)).rows;
     const one=owners.find((row)=>row.name==='Workflow One');
     const two=owners.find((row)=>row.name==='Workflow Two');
+    for(const owner of owners)await require('../helpers/postgres-model-fixture').fundWorkspace(database,owner.workspace_id);
     const ctx={workspaceId:one.workspace_id,actorId:one.actor_id};
     const actor=(await database.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',
       [ctx.workspaceId,ctx.actorId])).rows[0];
@@ -751,6 +752,10 @@ test('Ask browser controls a real customer order, payment, and return through th
     const autopilot=(await database.query('SELECT mode,paused FROM workspace_autopilot WHERE workspace_id=$1',
       [ctx.workspaceId])).rows[0];
     assert.equal(autopilot.mode,'OBSERVE');assert.equal(Number(autopilot.paused),0);
+    // This section exercises lifecycle control of a contracted custom feed;
+    // Growth's ordinary entitlement must not silently grant custom API access.
+    await database.query(`INSERT INTO commercial_entitlement_overrides(id,workspace_id,capability,enabled,reason,source)
+      VALUES($1,$2,'connections.custom_api',1,'Isolated custom-feed lifecycle contract fixture','OFFLINE_FIXTURE')`,['ent_'+require('crypto').randomUUID(),ctx.workspaceId]);
     const feed=await connections.createFeed(database,ctx,{displayName:'Warehouse Event Feed'});
     for(const [instruction,capability] of [
       ['Pause Warehouse Event Feed','connection.pause'],

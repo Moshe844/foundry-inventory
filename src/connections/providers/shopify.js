@@ -180,7 +180,7 @@ async function bootstrapSnapshot({ credentials }) {
       productVariants(first:100,after:$after){nodes{
         id title sku price selectedOptions{name value}
         product{id title status isGiftCard}
-        inventoryItem{id tracked inventoryLevels(first:250){nodes{
+        inventoryItem{id tracked requiresShipping inventoryLevels(first:250){nodes{
           location{id name isActive}
           quantities(names:["on_hand","available"]){name quantity}
         } pageInfo{hasNextPage endCursor}}}
@@ -210,6 +210,7 @@ async function bootstrapSnapshot({ credentials }) {
         price: variant.price,
         selectedOptions: variant.selectedOptions || [],
         tracked: !!variant.inventoryItem?.tracked,
+        virtual: variant.inventoryItem?.requiresShipping===false,
         inventoryItemId:variant.inventoryItem?.id||null,
         inventoryLevels: (variant.inventoryItem?.inventoryLevels?.nodes || []).map((level) => ({
           externalLocationId: level.location.id,
@@ -243,7 +244,7 @@ async function discover({ credentials }) {
       productId: product.externalId, productStatus: product.status, isGiftCard: product.isGiftCard,
       itemName: product.title,
       variationName: variant.title && variant.title !== 'Default Title' ? variant.title : null,
-      tracked: variant.tracked, price: variant.price, currency: snapshot.currency,
+      tracked: variant.tracked, virtual:variant.virtual, price: variant.price, currency: snapshot.currency,
       inventoryItemId:variant.inventoryItemId,
       priceMoney: Number.isFinite(Number(variant.price))
         ? { amount: money.toMinor(variant.price, snapshot.currency), currency: snapshot.currency }

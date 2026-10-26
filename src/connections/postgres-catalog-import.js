@@ -7,7 +7,7 @@ const inventory=require('../domain/postgres-inventory-engine');
 const prices=require('../pricing/postgres-service');
 const mapping=require('./postgres-provider-sync');
 const parse=require('./postgres-service').parseJson;
-const {exclusion}=require('./catalog-record-policy');
+const {exclusion,openingCounts}=require('./catalog-record-policy');
 function revision(connection,rows){return require('./commerce-facts').hash({id:connection.id,
  rows:rows.map(r=>[r.id,r.external_id,r.parent_external_id,r.display_name,r.mapping_status,
   r.foundry_record_id||null,r.selected,r.code,parse(r.provider_data,{})])});}
@@ -28,7 +28,9 @@ async function describe(database,ctx,connectorId){
  const [skus,places]=await Promise.all([
   database.query(`SELECT s.id,s.code,i.name,s.variant_label FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 ORDER BY lower(i.name),s.position`,[ctx.workspaceId]),
   database.query('SELECT id,name FROM locations WHERE workspace_id=$1 AND is_active=1 ORDER BY lower(name)',[ctx.workspaceId])]);
- return {...state,rows:state.rows.map(row=>({...row,data:parse(row.provider_data,{}),exclusion:exclusion(parse(row.provider_data,{}))})),skus:skus.rows,locations:places.rows};
+ return {...state,rows:state.rows.map(row=>{const data=parse(row.provider_data,{});return {...row,
+  data:{...data,inventoryCounts:openingCounts(data),inventoryCountNote:data.inventoryCountNote||data.inventoryCountUnavailable||(data.tracked===false?'The provider does not track physical stock for this product. Confirm quantities before recording any stock.':null)},
+  exclusion:exclusion(data)};}),skus:skus.rows,locations:places.rows};
 }
 async function mutate(database,ctx,connectorId,input,operation){
  return database.transaction(async client=>{
@@ -97,7 +99,7 @@ async function importProducts(database,ctx,connectorId,input){
    const records=siblings.filter(r=>!r.foundry_record_id&&r.mapping_status!=='IGNORED'&&!exclusion(parse(r.provider_data,{})));
    if(!records.length)throw new ValidationError('The selected product is excluded from physical inventory. Review its explanation.');
    const details=records.map(row=>({row,data:parse(row.provider_data,{})}));
-   if(includeOpening){for(const {row,data}of details)for(const count of data.inventoryCounts||[]){
+   if(includeOpening){for(const {row,data}of details)for(const count of openingCounts(data)){
     const amount=Number(count.quantity);if(!Number.isSafeInteger(amount)||amount<0)throw new ValidationError('The provider supplied unsupported opening stock for '+row.display_name+'.');
     if(amount>0&&!(await client.query("SELECT 1 FROM connection_mappings WHERE workspace_id=$1 AND connector_id=$2 AND entity_type='location' AND external_id=$3",[ctx.workspaceId,connectorId,String(count.externalLocationId)])).rows.length)throw new ValidationError('Match every location holding this product before importing its opening stock.');
    }}
@@ -121,7 +123,7 @@ async function importProducts(database,ctx,connectorId,input){
     if(data.priceMoney){const amount=data.priceMoney.amount;if(!Number.isSafeInteger(amount)||amount<0)throw new ValidationError('The provider price is invalid.');
      await prices.setPriceInTransaction(client,ctx,{skuId:sku.skuId,amountMinor:amount,currency:data.priceMoney.currency,source:'provider_opening_catalog',sourceDetail:{connectorId,externalId:row.external_id}});result.prices++;}
     await require('./postgres-catalog-reconciliation').register(client,ctx,connectorId,row.external_id,sku.skuId);
-    if(includeOpening)for(const count of data.inventoryCounts||[]){
+    if(includeOpening)for(const count of openingCounts(data)){
      const amount=Number(count.quantity);if(!amount)continue;
      const place=(await client.query("SELECT foundry_record_id FROM connection_mappings WHERE workspace_id=$1 AND connector_id=$2 AND entity_type='location' AND external_id=$3",[ctx.workspaceId,connectorId,String(count.externalLocationId)])).rows[0];
      const receipt=await inventory.receiveInTransaction(client,ctx,{skuId:sku.skuId,locationId:place.foundry_record_id,quantity:amount,reference:'Provider opening stock',notes:'Captured from '+state.connection.display_name+'; no supplier liability or inventory cost inferred.',idempotencyKey:'provider-opening:'+connectorId+':'+row.external_id+':'+count.externalLocationId});

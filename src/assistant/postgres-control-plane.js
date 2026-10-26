@@ -184,7 +184,9 @@ async function executeStep(service,database,ctx,step,{actor,provider,rawProvider
   const resolved=await resolver.resolveArguments(database,ctx,contract,step.args,{page,message:resolutionMessage,
     continuesPending:step.continuesPending&&pending?.capability===contract.name,
     previousArgs:pending?.args||null,dependencyArgs});
-  const blocking=resolved.unresolved.filter(({field})=>contract.required?.includes(field));
+  // A supplied identity cannot disappear merely because the contract makes
+  // that field optional. Clarify it before preparing a different scope.
+  const blocking=resolved.unresolved.filter(({field,supplied})=>contract.required?.includes(field)||supplied!=null);
   if(blocking.length)return {result:{status:'CLARIFY',answer:questionFor(blocking),
     awaitingField:blocking[0].field,choices:blocking[0].choices.map((row)=>({label:row.label,value:row.value})),
     rows:[],columns:[]},args:resolved.args,provenance:resolved.provenance};

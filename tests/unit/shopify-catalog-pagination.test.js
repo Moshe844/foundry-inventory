@@ -1,6 +1,14 @@
 'use strict';
 process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict');
+test('Shopify physical eligibility uses its shipping classification independently of stock tracking',async t=>{
+ t.mock.method(global,'fetch',async(_url,options)=>{const {query}=JSON.parse(options.body);
+  if(query.includes('CatalogBootstrap'))return Response.json({data:{shop:{currencyCode:'USD'},productVariants:{nodes:[true,false].map((requiresShipping,index)=>({id:'variant-'+index,title:'Default Title',sku:'CLASS-'+index,price:'4.25',selectedOptions:[],product:{id:'product-'+index,title:'Catalogue '+index,status:'ACTIVE',isGiftCard:false},inventoryItem:{id:'inventory-'+index,tracked:false,requiresShipping,inventoryLevels:{nodes:[],pageInfo:{hasNextPage:false}}}})),pageInfo:{hasNextPage:false}}}});
+  return Response.json({data:{locations:{nodes:[],pageInfo:{hasNextPage:false}}}});
+ });
+ const rows=(await require('../../src/connections/providers/shopify').discover({credentials:{shop:'classification-fixture.myshopify.com',accessToken:'fixture'}})).products,policy=require('../../src/connections/catalog-record-policy');
+ assert.equal(rows[0].providerData.virtual,false);assert.equal(rows[1].providerData.virtual,true);assert.equal(policy.exclusion(rows[0].providerData),null);assert.match(policy.exclusion(rows[1].providerData),/virtual/);assert.deepEqual(policy.openingCounts(rows[0].providerData),[]);
+});
 test('Shopify discovers legacy fulfillment locations and every inventory page without merging quantities',async()=>{
  const original=global.fetch,calls=[];global.fetch=async(url,options)=>{
   const {query,variables}=JSON.parse(options.body);calls.push(query);
