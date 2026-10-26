@@ -90,6 +90,9 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
    [`commercial-model-cost:${scope.accountId}:${bounds.start.toISOString()}`]);
   const ownerLimits=await require('./ai-spending-limits').effective(client,scope.accountId,bounds,{accountCapMinor:accountCap,workspaceCapMinor:workspaceCap},scope.workspaceId);accountCap=ownerLimits.accountCapMinor;workspaceCap=ownerLimits.workspaceCapMinor;
+  const sharedTestApproval=await require('./staging-shared-cost-approval').resolve(client,{...scope,actorId:goalScope.actorId||scope.actorId},{requireActor:true});
+  if(sharedTestApproval&&!ownerLimits.ownerConfigured){accountCap=Math.max(accountCap,sharedTestApproval.maximumMinor);workspaceCap=Math.max(workspaceCap,sharedTestApproval.maximumMinor);}
+  if(sharedTestApproval&&bound.maximumMinor>30)throw Object.assign(new RateLimitError('This test request exceeds its $0.30 request limit. No model call was made.'),{limitKind:'operation_cost'});
   if(goalScope.goalId){
    // The account-period lock is already held. Read the goal and its exposure
    // in the same serializable snapshot, preserving the goal row lock without
@@ -206,6 +209,7 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
        goalId:temporaryGoalApproval.goalId,maximumMinor:temporaryGoalApproval.maximumMinor,expiresAt:temporaryGoalApproval.expiresAt}}:{}),
       ...(temporaryCostApproval?{temporaryCostApproval:{approvalReference:temporaryCostApproval.approvalReference,
        fundingWorkspaceId:temporaryCostApproval.fundingWorkspaceId,maximumMinor:temporaryCostApproval.maximumMinor,expiresAt:temporaryCostApproval.expiresAt}}:{}),
+      ...(sharedTestApproval?{sharedTestApproval:{approvalReference:sharedTestApproval.approvalReference,maximumMinor:sharedTestApproval.maximumMinor,expiresAt:sharedTestApproval.expiresAt}}:{}),
       funding:sources.map(row=>({source:row.source,grantId:row.grantId,maximumMinor:row.maximumMinor}))}),goalScope.goalId||null,
     JSON.stringify(sources.map(source=>({id:newId('modelallocation'),source:source.source,
       grant_id:source.grantId,maximum_minor:source.maximumMinor})))])).rows[0];
@@ -270,7 +274,9 @@ async function status(database,workspaceId){
  FROM commercial_model_cost_hold_allocations a JOIN commercial_model_cost_holds h ON h.id=a.hold_id
  WHERE h.account_id=$1 AND h.period_start=$2 AND a.source='INCLUDED'`,[owner.owner_account_id,bounds.start.toISOString(),workspaceId])).rows[0];
  const limits=await require('./ai-spending-limits').effective(database,owner.owner_account_id,bounds,{accountCapMinor:cap,workspaceCapMinor:workspaceCap},workspaceId);
- const usage={accountMinor:Number(row.account),workspaceMinor:Number(row.workspace),...limits,
+ const sharedTestAllowance=await require('./staging-shared-cost-approval').resolve(database,{accountId:owner.owner_account_id,workspaceId});
+ const effectiveLimits=sharedTestAllowance&&!limits.ownerConfigured?{...limits,accountCapMinor:Math.max(limits.accountCapMinor,sharedTestAllowance.maximumMinor),workspaceCapMinor:Math.max(limits.workspaceCapMinor,sharedTestAllowance.maximumMinor)}:limits;
+ const usage={accountMinor:Number(row.account),workspaceMinor:Number(row.workspace),...effectiveLimits,sharedTestAllowance,
   importRequestCapMinor:operationLimit('import_mapping')*100,periodEndsAt:bounds.end.toISOString()};
  return {...usage,warning:usage.accountMinor>=usage.accountCapMinor*.8||usage.workspaceMinor>=usage.workspaceCapMinor*.8,
   blocked:usage.accountMinor>=usage.accountCapMinor||usage.workspaceMinor>=usage.workspaceCapMinor};

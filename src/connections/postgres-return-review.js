@@ -74,16 +74,17 @@ async function reconcileInTransaction(client, workspaceId, options = {}) {
       || Number(l.quantity_authorized) !== Number(l.quantity_fulfilled)
       || Number(l.quantity_received) !== Number(l.quantity_fulfilled)
       || Number(l.quantity_restocked) + Number(l.quantity_scrapped) + Number(l.quantity_repair) !== Number(l.quantity_fulfilled))) continue;
-    const refunds = (await client.query(`SELECT r.id,r.revenue_minor,r.tax_minor,r.destination,je.status,
+    const refunds = (await client.query(`SELECT r.id,r.revenue_minor,r.tax_minor,r.settled_amount_minor,r.payment_journal_entry_id,r.destination,je.status,payout.status AS payout_status,
         ARRAY(SELECT DISTINCT jl.currency FROM accounting_journal_lines jl
           WHERE jl.workspace_id=je.workspace_id AND jl.entry_id=je.id) AS currencies
       FROM accounting_sale_refunds r JOIN accounting_journal_entries je
         ON je.workspace_id=r.workspace_id AND je.id=r.journal_entry_id
+      LEFT JOIN accounting_journal_entries payout ON payout.workspace_id=r.workspace_id AND payout.id=r.payment_journal_entry_id
       WHERE r.workspace_id=$1 AND je.source_record_type='customer_return' AND je.source_record_id=$2`,
     [workspaceId, returned.id])).rows;
     if (!refunds.some(r => r.id === returned.refund_id) || refunds.some(r => r.status !== 'POSTED'
-      || r.currencies.length !== 1 || r.currencies[0] !== data.currency || r.destination !== 'CASH')
-      || refunds.reduce((n,r) => n + Number(r.revenue_minor) + Number(r.tax_minor), 0) !== data.amountMinor) continue;
+      || r.currencies.length !== 1 || r.currencies[0] !== data.currency || r.destination !== 'CASH'||(r.settled_amount_minor!==null&&Number(r.settled_amount_minor)>0&&r.payout_status!=='POSTED'))
+      || refunds.reduce((n,r) => n + (r.settled_amount_minor===null?Number(r.revenue_minor)+Number(r.tax_minor):Number(r.settled_amount_minor)), 0) !== data.amountMinor) continue;
     const at = new Date().toISOString();
     await client.query(`UPDATE connection_issues SET status='RESOLVED',resolved_at=$3,updated_at=$3,
       detail=detail||$4 WHERE workspace_id=$1 AND id=$2 AND status='OPEN'`,

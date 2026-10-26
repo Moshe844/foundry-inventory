@@ -183,6 +183,12 @@ function createPostgresImportsRouter(database,{provider=null}={}){
     }catch(error){if(!(error instanceof ValidationError))throw error;res.status(error.status||400);return renderPreview(req,res,{reviewError:error.message});}
     return res.redirect(303,`/imports/${req.params.id}`);
   }));
+  router.post('/imports/:id/approve-and-run',asyncRoute(async(req,res)=>{
+    try{const result=await imports.approveAndQueue(database,req.ctx,req.params.id,trimOrNull(req.body.integrityHash));
+      req.flash('success',result.created?'Approved and queued. You can leave this page and return to the saved progress.':'This approved import is already queued or completed.');
+    }catch(error){if(!(error instanceof ValidationError))throw error;res.status(error.status||400);return renderPreview(req,res,{reviewError:error.message});}
+    return res.redirect(303,'/imports/'+req.params.id);
+  }));
   router.post('/imports/:id/approve',asyncRoute(async(req,res)=>{
     try {await imports.approve(database,req.ctx,req.params.id,trimOrNull(req.body.integrityHash));
       req.flash('success','Preview approved. Nothing has been created yet.');}

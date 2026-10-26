@@ -50,11 +50,11 @@
     <% } else { %>
       <form method="post" action="/suppliers/<%= supplier.id %>/archive" style="margin:0"
             data-confirm="<%= use.deletable
-              ? 'Delete ' + supplier.name + '? Nothing refers to them, so the record goes for good.'
+              ? 'Archive ' + supplier.name + '? You can restore this supplier later.'
               : 'Archive ' + supplier.name + '? ' + trail + ' still refer to them, so the record is kept and hidden instead of deleted. You can restore it.' %>">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <button class="btn btn--ghost" type="submit">
-          <%= use.deletable ? 'Delete supplier' : 'Archive supplier' %>
+          Archive supplier
         </button>
       </form>
     <% } %>

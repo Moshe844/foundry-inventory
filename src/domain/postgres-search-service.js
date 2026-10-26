@@ -46,7 +46,10 @@ async function search(database,workspaceId,rawTerm,{limit=25}={}){
       '/sales/customers/'||customer.id,CASE WHEN lower(customer.name)=lower($2) THEN 115 ELSE 55 END
     FROM customers customer WHERE customer.workspace_id=$1 AND customer.name ILIKE '%'||$2||'%'
     UNION ALL
-    SELECT 'sales_order',sales.id,sales.order_number,'Sales order · '||customer.name,replace(sales.status,'_',' '),
+    SELECT 'sales_order',sales.id,sales.order_number,'Sales order · '||customer.name,
+      CASE WHEN sales.status='CANCELLED' AND EXISTS(SELECT 1 FROM sales_order_lines l WHERE l.workspace_id=sales.workspace_id AND l.sales_order_id=sales.id AND l.quantity_fulfilled>0) THEN 'Partly '||(CASE WHEN sales.delivery_method='PICKUP' THEN 'collected' ELSE 'shipped' END)||' · remainder cancelled'
+      WHEN sales.status='FULFILLED' AND sales.delivery_method='PICKUP' THEN 'Collected'
+      ELSE initcap(replace(sales.status,'_',' ')) END,
       '/sales/orders/'||sales.id,CASE WHEN lower(sales.order_number)=lower($2) THEN 125 ELSE 65 END
     FROM sales_orders sales JOIN customers customer ON customer.id=sales.customer_id
     WHERE sales.workspace_id=$1 AND (sales.order_number ILIKE '%'||$2||'%' OR customer.name ILIKE '%'||$2||'%')

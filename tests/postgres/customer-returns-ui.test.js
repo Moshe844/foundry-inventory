@@ -86,15 +86,17 @@ test('real Chromium completes a PostgreSQL customer return without splitting inv
     await Promise.all([page.waitForNavigation(), page.getByRole('button', { name: 'Authorize this return' }).click()]);
     assert.match(await page.locator('main').innerText(), /Inventory still has not changed/);
     await page.getByLabel('Returnable Boot received quantity').fill('2');
-    await Promise.all([page.waitForNavigation(), page.getByRole('button', { name: 'Record physical receipt into quarantine' }).click()]);
+    await Promise.all([page.waitForNavigation(), page.getByRole('button', { name: 'Receive goods and post credit note' }).click()]);
     assert.match(await page.locator('main').innerText(), /RMA-\d+ is received/);
     assert.match(await page.locator('main').innerText(), /Every received unit must be assigned once/);
     const receivedBalances = await database.query(`SELECT location_id,on_hand FROM balances
       WHERE workspace_id=$1 AND sku_id=$2 ORDER BY location_id`, [ctx.workspaceId, item.skuIds[0]]);
     assert.equal(Number(receivedBalances.rows.find((row) => row.location_id === main.id).on_hand), 6);
     assert.equal(Number(receivedBalances.rows.find((row) => row.location_id === quarantine.id).on_hand), 2);
-    assert.equal(await controlBalance(database, ctx.workspaceId, 'COST_OF_GOODS_SOLD'), 3200,'received return cost stays deferred until the approved refund');
-    assert.equal(await controlBalance(database,ctx.workspaceId,'CUSTOMER_RETURN_COST_PENDING'),-1600);
+    assert.equal(await controlBalance(database, ctx.workspaceId, 'COST_OF_GOODS_SOLD'), 1600,'received goods and their credit note reverse cost and revenue together');
+    assert.equal(await controlBalance(database, ctx.workspaceId, 'SALES_RETURNS'), 3000);
+    assert.equal(await controlBalance(database, ctx.workspaceId, 'CASH'), 6000,'receipt credit does not pay the cash refund');
+    assert.equal(await controlBalance(database,ctx.workspaceId,'CUSTOMER_RETURN_COST_PENDING'),0);
     assert.equal(await controlBalance(database, ctx.workspaceId, 'INVENTORY_ASSET'), 6400);
     assert.equal(Number((await database.query('SELECT balance_minor FROM accounting_customer_invoices WHERE id=$1',
       [fulfilled.invoiceId])).rows[0].balance_minor), 0);

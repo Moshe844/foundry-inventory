@@ -275,7 +275,7 @@
           <div class="att-card-main">
             <div class="att-card-head">
               <span class="badge badge--<%= item.safetyLevel === 'HIGH' ? 'danger' : 'muted' %>">
-                <%= item.safetyLevel === 'HIGH' ? 'Needs care' : 'Changes stock' %>
+                <%= item.impactLabel || (item.safetyLevel === 'HIGH' ? 'Needs care' : 'Changes a business record') %>
               </span>
               <% if (item.sourceType === 'ATTENTION_ITEM') { %>
                 <span class="badge badge--muted">From a StockChief finding</span>

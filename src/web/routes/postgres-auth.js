@@ -36,6 +36,7 @@ function matchingPasswords(body){
 
 function createPostgresAuthRouter(database,options={}) {
   const router = express.Router();
+  router.use((req,res,next)=>{res.locals.trialPolicy=require('../../commercial/self-service-trial').policy();if(req.account?.email_verified_at){const relevant=m=>m.code!=='verify_email_pending'&&!String(m.message||'').includes('Check your email to verify');res.locals.flash=(res.locals.flash||[]).filter(relevant);if(req.session?.flash)req.session.flash=req.session.flash.filter(relevant);}next();});
   const checkoutAvailable=()=>options.testMode===true&&process.env.NODE_ENV==='test'
     ?Promise.resolve(true):commercialRelease.isOpen(database);
   router.get('/login', (req,res) => {
@@ -134,7 +135,7 @@ function createPostgresAuthRouter(database,options={}) {
     return res.render('auth/verify-pending',{title:'Verify your email',csrfToken:res.locals.csrfToken,
       flash:res.locals.flash,account:req.account,origin:res.locals.origin});
   });
-  router.get('/complete-signup',async(req,res)=>{if(!req.account)return res.redirect('/login');if(req.user)return res.redirect('/');
+  router.get('/complete-signup',async(req,res)=>{if(!req.account)return res.redirect('/login');if(req.user&&req.account.plan!=='commercial_pending')return res.redirect('/');
     if(!req.account.email_verified_at)return res.redirect('/verify-email/pending');const plans=await commercial.listPlans(database);
     const selection=pendingSelection(req.account,req.session.commercialSelection);
     const requested=selfServiceSelection(plans,String(req.query.plan||''));
@@ -142,6 +143,13 @@ function createPostgresAuthRouter(database,options={}) {
     return res.render('auth/verified',{
       title:'Activate your StockChief plan',csrfToken:res.locals.csrfToken,flash:res.locals.flash,origin:res.locals.origin,
       selection,lastSelection:req.session.checkoutSelection||null,plans,checkoutOpen:await checkoutAvailable()});});
+  router.post('/complete-signup/trial',async(req,res,next)=>{try{
+    if(!req.account)return res.redirect('/login');
+    const result=await require('../../commercial/context').run({database,scope:{accountId:req.account.id,workspaceId:null}},()=>require('../../commercial/self-service-trial').activate(database,req.account.id));
+    req.session.workspaceId=result.workspaceId;
+    req.session.flash=[{type:'success',message:'Your trial inventory is ready. Choose where your records come from.'}];
+    await sessionCall(req,'save');return res.redirect(303,'/onboarding');
+  }catch(error){return next(error);}});
   router.post('/verify-email/resend',async(req,res,next)=>{try{if(req.account)await accountLifecycle.requestVerification(database,req.account.id,
       {origin:config.connections.publicOrigin||res.locals.origin});req.flash('success','A new verification link is on its way.');return res.redirect(303,'/verify-email/pending');}
     catch(error){return next(error);}});
@@ -154,6 +162,8 @@ function createPostgresAuthRouter(database,options={}) {
       origin:res.locals.origin});return next(error);}});
   router.post('/verify-email',async(req,res,next)=>{try{const verified=await accountLifecycle.consumeVerification(database,req.body.token||'');
     if(!req.account||req.account.id!==verified.accountId){await sessionCall(req,'regenerate');req.session.accountId=verified.accountId;}
+    req.session.flash=(req.session.flash||[]).filter(message=>!message.message.includes('Check your email to verify'));
+    res.locals.flash=(res.locals.flash||[]).filter(message=>!message.message.includes('Check your email to verify'));
     const account=await auth.getAccount(database,verified.accountId);
     const selection=pendingSelection(account,req.session.commercialSelection);const plans=await commercial.listPlans(database);await sessionCall(req,'save');
     return res.render('auth/verified',{title:'Email verified',csrfToken:res.locals.csrfToken,flash:res.locals.flash,

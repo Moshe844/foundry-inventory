@@ -21,12 +21,12 @@
  <p id="order-stock-check" role="status">Choose products to see available stock.</p>
  <p id="order-weight" class="hint"></p>
  </div></section>
- <details class="rm-work"><summary>Optional order details — dates, tax, discount, reference, and notes</summary><div class="rm-work__body form-grid">
+ <% if(!taxRates.length){ %><aside class="notice notice--warn" role="status"><strong>Set up your sales tax before invoicing.</strong> <a href="/accounting/tax?next=/orders/new">Add a tax rate</a>, if your business charges sales tax. You can save a tax-free draft while you finish setup.</aside><% } %><details class="rm-work"><summary>Optional order details — dates, tax, discount, reference, and notes</summary><div class="rm-work__body form-grid">
  <label class="rm-field"><span>Order number <small>optional</small></span><input name="orderNumber" value="<%= form.orderNumber||'' %>" <%= editOrder?'disabled':'' %>></label>
  <label class="rm-field"><span>Order date</span><input type="date" name="orderDate" value="<%= form.orderDate||today %>" required></label>
  <label class="rm-field"><span>Needed by</span><input type="date" name="neededBy" value="<%= form.neededBy||'' %>"></label>
  <label class="rm-field"><span>Discount amount</span><input name="discount" inputmode="decimal" value="<%= form.discount||'' %>"></label>
- <label class="rm-field"><span>Tax rate</span><select name="taxRateId"><option value="">No configured rate</option><% taxRates.forEach(t=>{ %><option value="<%= t.id %>" <%= form.taxRateId===t.id?'selected':'' %>><%= t.name %> · <%= Number(t.rate_millionths)/10000 %>%</option><% }) %></select><small><a href="/accounting/tax">Manage tax rates</a></small></label>
+ <label class="rm-field"><span>Tax rate</span><select name="taxRateId"><option value=""><%= taxRates.length?'Select a tax rate':'No tax rate set up' %></option><% taxRates.forEach(t=>{ %><option value="<%= t.id %>" <%= form.taxRateId===t.id?'selected':'' %>><%= t.name %> · <%= Number(t.rate_millionths)/10000 %>%</option><% }) %></select><small><a href="/accounting/tax">Manage tax rates</a></small></label>
  <label class="rm-field"><span>Tax amount <small>only without a configured rate</small></span><input name="tax" inputmode="decimal" value="<%= form.tax||'' %>"></label>
  <label class="rm-field"><span>Promotion codes</span><input name="couponCodes" value="<%= form.couponCodes||'' %>"></label>
  <input type="hidden" name="priceListId" value="<%= form.priceListId||'' %>">

@@ -174,11 +174,11 @@ async function salesOrderPage(database,workspaceId,id){
     available:Number(allocation.quantity),displayName:line.displayName,locationName:allocation.location_name})));
   const invoiceTotal=detail.invoices.reduce((sum,invoice)=>sum+Number(invoice.total_minor),0);
   const invoiceOutstanding=detail.invoices.reduce((sum,invoice)=>sum+Number(invoice.balance_minor),0);
-  const refunds=(await database.query("SELECT coalesce(sum(r.revenue_minor+r.tax_minor),0)::bigint refunded_minor,coalesce(sum(r.revenue_minor+r.tax_minor) FILTER(WHERE r.destination='CASH'),0)::bigint cash_minor FROM accounting_sale_refunds r JOIN accounting_journal_entries e ON e.workspace_id=r.workspace_id AND e.id=r.journal_entry_id JOIN customer_returns c ON c.workspace_id=e.workspace_id AND c.id=e.source_record_id WHERE r.workspace_id=$1 AND e.source_record_type='customer_return' AND c.sales_order_id=$2 AND e.status='POSTED'",[workspaceId,id])).rows[0];const refundedMinor=Number(refunds.refunded_minor),paidMinor=receipts.rows.reduce((sum,payment)=>sum+Number(payment.order_amount_minor||payment.amount_minor),0)-Number(refunds.cash_minor);if(order.status==='CANCELLED'){order.pricing.originalTotalMinor=order.pricing.totalMinor;order.pricing.totalMinor=invoiceTotal;order.pricing.cancelledRemainder=true;order.pricing.cancelledUnbilledMinor=Math.max(0,order.pricing.originalTotalMinor-invoiceTotal-refundedMinor);order.pricing.creditedMinor=refundedMinor;}
+  const refunds=(await database.query("SELECT coalesce(sum(r.revenue_minor+r.tax_minor),0)::bigint refunded_minor,coalesce(sum(r.revenue_minor+r.tax_minor) FILTER(WHERE r.destination='CASH'),0)::bigint cash_minor FROM accounting_sale_refunds r JOIN accounting_journal_entries e ON e.workspace_id=r.workspace_id AND e.id=r.journal_entry_id JOIN customer_returns c ON c.workspace_id=e.workspace_id AND c.id=e.source_record_id WHERE r.workspace_id=$1 AND e.source_record_type='customer_return' AND c.sales_order_id=$2 AND e.status='POSTED' AND r.recognition_stage='ON_REFUND'",[workspaceId,id])).rows[0];const credits=(await database.query('SELECT coalesce(sum(c.revenue_minor+c.tax_minor),0)::bigint credited,coalesce(sum(c.cash_refunded_minor),0)::bigint repaid FROM accounting_return_receipt_credits c JOIN customer_returns r ON r.workspace_id=c.workspace_id AND r.id=c.customer_return_id WHERE c.workspace_id=$1 AND r.sales_order_id=$2',[workspaceId,id])).rows[0];const creditedMinor=Number(refunds.refunded_minor)+Number(credits.credited),refundedMinor=Number(refunds.cash_minor)+Number(credits.repaid),paidMinor=receipts.rows.reduce((sum,payment)=>sum+Number(payment.order_amount_minor||payment.amount_minor),0)-Number(refunds.cash_minor)-Number(credits.repaid);if(order.status==='CANCELLED'){order.pricing.originalTotalMinor=order.pricing.totalMinor;order.pricing.totalMinor=invoiceTotal;order.pricing.cancelledRemainder=true;order.pricing.cancelledUnbilledMinor=Math.max(0,order.pricing.originalTotalMinor-invoiceTotal-creditedMinor);order.pricing.creditedMinor=creditedMinor;}
   const terms=detail.paymentTerms;const termsText=!terms?'Payment due when invoiced':terms.kind==='BEFORE_FULFILMENT'
     ?'Payment before fulfilment':terms.kind==='DEPOSIT'?'Deposit before fulfilment':`Net ${Number(terms.net_days||0)}`;
   const held=detail.depositDueMinor>0||terms?.kind==='BEFORE_FULFILMENT'&&paidMinor<detail.orderTotalMinor;
-  const money={refundedMinor,invoiced:detail.invoices.length>0,hasInvoice:detail.invoices.length>0,invoices:detail.invoices,
+  const money={refundedMinor,creditedMinor,invoiced:detail.invoices.length>0,hasInvoice:detail.invoices.length>0,invoices:detail.invoices,
     totalMinor:detail.invoices.length?invoiceTotal:detail.orderTotalMinor,paidMinor,
     outstandingMinor:detail.invoices.length?invoiceOutstanding:Math.max(0,detail.orderTotalMinor-paidMinor),
     dueNowMinor:detail.depositDueMinor||0,currency:detail.order.currency,state:invoiceOutstanding===0&&detail.invoices.length?'Paid':
@@ -190,7 +190,7 @@ async function salesOrderPage(database,workspaceId,id){
     cogsMinor:total.cogsMinor+Number(row.cogs_minor)}),{revenueMinor:0,cogsMinor:0});
   const latestAccounting=accountingRows.rows[0];const accounting=latestAccounting?{id:latestAccounting.id,
     journal_entry_id:latestAccounting.id,status:latestAccounting.status,outcome:accountingTotals}:{status:'DISABLED',outcome:{}};
-  const fulfilmentState=totals.fulfilled===totals.ordered?'Shipped':shipments.some((shipment)=>['PICKING','PACKED'].includes(shipment.status))
+  const fulfilmentState=totals.fulfilled===totals.ordered?(order.delivery_method==='PICKUP'?'Collected':order.delivery_method==='DELIVER'?'Delivered':'Shipped'):shipments.some((shipment)=>['PICKING','PACKED'].includes(shipment.status))
     ?'Being prepared':totals.allocated?'Ready to pick':totals.backordered?'Waiting for stock':'Not started';
   const paymentProviders=await payments.availableProviders(database,workspaceId);
   return {detail,order,shipments,pickable,money,accounting,paymentAccount:{...paymentAccount,connected:paymentAccount.connected||paymentProviders.length>0},paymentProviders,
@@ -347,11 +347,10 @@ function createPostgresCommerceRouter(database,options={}){
 
   router.post('/suppliers/:id/archive',requireAuth,requirePermission(permissions.MANAGE_SUPPLIERS,'manage suppliers'),asyncRoute(async(req,res)=>{
     const restore=req.body.restore==='1';
-    if(!restore){const open=(await database.query(`SELECT COUNT(*)::integer AS count FROM purchase_orders WHERE workspace_id=$1
-      AND supplier_id=$2 AND status IN ('DRAFT','AWAITING_APPROVAL','APPROVED','ORDERED','PARTIALLY_RECEIVED')`,[req.ctx.workspaceId,req.params.id])).rows[0];
-      if(Number(open.count)>0)throw new ValidationError('Finish or cancel this supplier’s open purchase orders before archiving them.');}
-    await database.query('UPDATE suppliers SET status=$3,updated_at=$4 WHERE workspace_id=$1 AND id=$2',
+
+    const saved=await database.query('UPDATE suppliers SET status=$3,updated_at=$4 WHERE workspace_id=$1 AND id=$2 RETURNING id',
       [req.ctx.workspaceId,req.params.id,restore?'active':'inactive',nowIso()]);
+    if(!saved.rows.length)throw new NotFoundError('That supplier is not available in this inventory.');
     req.flash('success',restore?'Supplier restored.':'Supplier archived without removing purchase history.');
     return res.redirect(303,`/suppliers/${req.params.id}`);
   }));
@@ -940,7 +939,7 @@ function createPostgresCommerceRouter(database,options={}){
         WHERE refund.workspace_id=$1 AND refund.customer_return_id=$2 ORDER BY refund.created_at DESC LIMIT 1`,
       [req.ctx.workspaceId,req.params.id]),
     ]);
-    const refundFinancials=returns.refundSummary(customerReturn),refundableMinor=refundFinancials.totalMinor;
+    const receiptPreview=customerReturn.receipt_credit_policy==='RECEIPT_CREDIT_V1'&&['REQUESTED','AUTHORIZED','PARTIALLY_RECEIVED'].includes(customerReturn.status)?await returns.previewReceiptCredit(database,req.ctx,customerReturn.id):null,refundFinancials=receiptPreview?{...receiptPreview,posted:false}:returns.refundSummary(customerReturn),refundableMinor=refundFinancials.totalMinor;
     return res.page('sales/postgres-return',{title:customerReturn.return_number,nav:'sales',customerReturn,
       returnParcel:await require('../../shipping/postgres-return-parcels').current(database,req.ctx.workspaceId,customerReturn.id),
       locations:locationRows,refundableMinor,refundFinancials,refundRequest:refundRequestResult.rows[0]||null,

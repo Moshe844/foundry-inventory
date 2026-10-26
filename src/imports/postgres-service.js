@@ -936,6 +936,17 @@ async function executeUnlocked(database, ctx, id, options={}) {
   return {...result,committedAt,commitReceiptPersisted,statistics};
 }
 
+async function approveAndQueue(database,ctx,id,expectedHash){
+ return database.transaction(async client=>{
+  const scoped={query:(sql,args)=>client.query(sql,args),transaction:fn=>fn(client)};
+  const plan=hydratePlan((await client.query('SELECT * FROM import_plans WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,id])).rows[0]);
+  if(!plan)throw new NotFoundError('That import could not be found.');
+  if(plan.integrityHash!==expectedHash)throw new ValidationError('The preview changed. Review it before importing.');
+  const prior=(await client.query("SELECT id,status FROM stockchief_runtime.jobs WHERE workspace_id=$1 AND kind='import.execute-approved' AND idempotency_key=$2",[ctx.workspaceId,'ask-import:'+id+':'+expectedHash])).rows[0];
+  if(prior&&plan.approvalStatus==='APPROVED')return {created:false,job:prior};
+  await approve(scoped,ctx,id,expectedHash);return queueExecution(scoped,ctx,id,expectedHash);
+ },{isolation:'SERIALIZABLE',retrySafe:true});
+}
 async function queueExecution(database,ctx,id,expectedHash){
   await assertOperator(database,ctx);
   return database.transaction(async client=>{
@@ -996,6 +1007,6 @@ async function cancel(database, ctx, id) {
   if(!result.rows.length)throw new ValidationError('Only an import waiting to run can be cancelled.');
 }
 
-module.exports={analyse,get,list,rowsFor,counts,duplicates,revise,approve,execute,queueExecution,retryExecution,report,cancel,hydratePlan,hydrateRow};
+module.exports={analyse,get,list,rowsFor,counts,duplicates,revise,approve,approveAndQueue,execute,queueExecution,retryExecution,report,cancel,hydratePlan,hydrateRow};
 require('../commercial/enforcement').guardExports(module.exports,0,1,{analyse:'imports.spreadsheet',approve:'imports.spreadsheet',
-  revise:'imports.spreadsheet',execute:'imports.spreadsheet',queueExecution:'imports.spreadsheet',retryExecution:'imports.spreadsheet',cancel:'imports.spreadsheet'});
+  revise:'imports.spreadsheet',approveAndQueue:'imports.spreadsheet',execute:'imports.spreadsheet',queueExecution:'imports.spreadsheet',retryExecution:'imports.spreadsheet',cancel:'imports.spreadsheet'});

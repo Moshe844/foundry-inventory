@@ -1,5 +1,6 @@
 (function(){
   'use strict';
+  document.querySelectorAll('[data-business-time-zone]').forEach(function(input){if(!input.value)input.value=Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC';});
 
   var nav=document.querySelector('[data-public-nav]');
   var navToggle=document.querySelector('[data-nav-toggle]');

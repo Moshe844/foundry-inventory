@@ -12,6 +12,7 @@ function requireCapability(database,capability){return async function entitlemen
 }catch(error){return next(error);}};}
 
 const OPERATIONAL_BYPASSES=[
+  /^\/complete-signup\/trial$/,
   /^\/billing(?:\/|$)/,
   /^\/commercial-admin(?:\/|$)/,
   /^\/commercial\/events$/,

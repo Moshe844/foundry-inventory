@@ -223,6 +223,9 @@ function columnLabel(key) {
 
 module.exports = {
   importSourceFormats: require('../imports/source-formats'),
+  orderStatus:require('../sales/order-status').label,
+  aiCustomerMeter:require('../commercial/ai-spending-limits').customerMeter,
+  currencyExponent:require('../domain/currency').exponent,
   unitCount,
   unitLabel,
   icon,

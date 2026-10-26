@@ -86,15 +86,16 @@ async function createBusiness(database, input) {
   const businessName = requireText(input.businessName, 'Business name', { max: 120 });
   const email = auth.normaliseEmail(input.email);
   const password = auth.checkPasswordStrength(input.password);
+  const timeZone=require('../lib/business-time').zone(input.timeZone)||'UTC';
   const accountId = newId('acc');
   const workspaceId = newId('wsp');
   const userId = newId('usr');
   const at = input.now || nowIso();
   try {
     return await database.transaction(async (client) => {
-      await client.query(`INSERT INTO accounts(id,email,name,password_hash,plan,last_workspace_id,email_verified_at,created_at)
-        VALUES($1,$2,$3,$4,'free',$5,$6::timestamptz,$6::text)`,
-      [accountId,email,name,auth.hashPassword(password),workspaceId,at]);
+      await client.query(`INSERT INTO accounts(id,email,name,password_hash,plan,last_workspace_id,email_verified_at,created_at,time_zone)
+        VALUES($1,$2,$3,$4,'free',$5,$6::timestamptz,$6::text,$7)`,
+      [accountId,email,name,auth.hashPassword(password),workspaceId,at,timeZone]);
       await client.query(`INSERT INTO workspaces(id,name,owner_account_id,data_mode,created_at)
         VALUES($1,$2,$3,'production',$4)`, [workspaceId,businessName,accountId,at]);
       await client.query(`INSERT INTO account_inventory_onboarding(account_id,first_inventory_created_at)
@@ -102,7 +103,7 @@ async function createBusiness(database, input) {
       await client.query(`INSERT INTO users(id,workspace_id,account_id,name,role,created_at)
         VALUES($1,$2,$3,$4,'owner',$5)`, [userId,workspaceId,accountId,name,at]);
       await ledger.configureInTransaction(client, { workspaceId, actorId:userId }, {
-        startDate:at.slice(0,10), currency:'USD',
+        startDate:require('../lib/business-time').context(timeZone,new Date(at)).calendarDate, currency:'USD',
       });
       return { accountId,workspaceId,userId,email,name,businessName };
     }, { isolation:'SERIALIZABLE' });
@@ -117,13 +118,13 @@ async function createBusiness(database, input) {
 async function createPendingAccount(database,input){
   const name=requireText(input.name,'Your name',{max:120});
   const businessName=requireText(input.businessName,'Business name',{max:120});
-  const email=auth.normaliseEmail(input.email);const password=auth.checkPasswordStrength(input.password);
+  const email=auth.normaliseEmail(input.email);const password=auth.checkPasswordStrength(input.password);const timeZone=require('../lib/business-time').zone(input.timeZone)||'UTC';
   const accountId=newId('acc');const at=input.now||nowIso();
   try{const result=await database.query(`INSERT INTO accounts
-    (id,email,name,password_hash,plan,pending_business_name,pending_commercial_plan_id,pending_billing_interval,pending_promo_code,created_at)
-    VALUES($1,$2,$3,$4,'commercial_pending',$5,$6,$7,NULLIF($8,''),$9) RETURNING *`,[accountId,email,name,auth.hashPassword(password),
+    (id,email,name,password_hash,plan,pending_business_name,pending_commercial_plan_id,pending_billing_interval,pending_promo_code,created_at,time_zone)
+    VALUES($1,$2,$3,$4,'commercial_pending',$5,$6,$7,NULLIF($8,''),$9,$10) RETURNING *`,[accountId,email,name,auth.hashPassword(password),
     businessName,input.planId||null,input.planId?(input.interval==='annual'?'ANNUAL':'MONTHLY'):null,
-    input.planId?String(input.promoCode||'').trim().toUpperCase():'',at]);
+    input.planId?String(input.promoCode||'').trim().toUpperCase():'',at,timeZone]);
     return result.rows[0];}
   catch(error){if(error.code==='23505'&&(error.constraint||'').includes('accounts_email'))
     throw new ValidationError('An account already uses that email address.',{field:'email'});throw error;}
@@ -151,7 +152,7 @@ async function createWorkspace(database,accountId,input={}){
       VALUES($1,$2,$3,$4,$5)`,[workspaceId,businessName,accountId,dataMode,at]);
     await client.query(`INSERT INTO users(id,workspace_id,account_id,name,role,created_at)
       VALUES($1,$2,$3,$4,'owner',$5)`,[userId,workspaceId,accountId,account.name,at]);
-    await ledger.configureInTransaction(client,{workspaceId,actorId:userId},{startDate:at.slice(0,10),currency:'USD'});
+    await ledger.configureInTransaction(client,{workspaceId,actorId:userId},{startDate:require('../lib/business-time').context(account.time_zone||'UTC',new Date(at)).calendarDate,currency:'USD'});
     await client.query('UPDATE accounts SET last_workspace_id=$2 WHERE id=$1',[accountId,workspaceId]);
     return {workspaceId,userId,businessName};
   },{isolation:'SERIALIZABLE',retrySafe:true});

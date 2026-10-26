@@ -92,7 +92,7 @@ async function readReturn(queryable, workspaceId, id, lock = false) {
     JOIN skus s ON s.id=rl.sku_id JOIN items i ON i.id=s.item_id
     WHERE rl.workspace_id=$1 AND rl.customer_return_id=$2 ORDER BY rl.created_at,rl.id`, [workspaceId, id]);
   const deferredReceiptIds=(await queryable.query("SELECT h.source_entry_id FROM accounting_history_corrections h JOIN accounting_journal_entries e ON e.workspace_id=h.workspace_id AND e.id=h.source_entry_id WHERE h.workspace_id=$1 AND h.kind='pending_return_cost' AND e.source_record_type='customer_return' AND e.source_record_id=$2",[workspaceId,id])).rows.map(r=>r.source_entry_id);
-  const postedRefunds=(await queryable.query("SELECT r.* FROM accounting_sale_refunds r JOIN accounting_journal_entries e ON e.workspace_id=r.workspace_id AND e.id=r.journal_entry_id WHERE r.workspace_id=$1 AND e.source_record_type='customer_return' AND e.source_record_id=$2 AND e.status='POSTED' ORDER BY r.id",[workspaceId,id])).rows;return { ...header.rows[0],postedRefunds,deferredReceiptIds, lines: lines.rows.map((line) => ({ ...line,
+  const postedRefunds=(await queryable.query("SELECT r.* FROM accounting_sale_refunds r JOIN accounting_journal_entries e ON e.workspace_id=r.workspace_id AND e.id=r.journal_entry_id WHERE r.workspace_id=$1 AND e.source_record_type='customer_return' AND e.source_record_id=$2 AND e.status='POSTED' ORDER BY r.id",[workspaceId,id])).rows;const receiptCredits=await require('./postgres-return-credits').read(queryable,workspaceId,id);return { ...header.rows[0],postedRefunds,receiptCredits,deferredReceiptIds, lines: lines.rows.map((line) => ({ ...line,
     receiveMovementIds: parseJson(line.receive_movement_ids, []),
     dispositionMovementIds: parseJson(line.disposition_movement_ids, []),
     trackingEvidence: parseJson(line.tracking_evidence, {}),
@@ -142,8 +142,8 @@ async function requestCustomerReturn(database, rawContext, input) {
     if (!['REFUND', 'EXCHANGE', 'NO_REFUND'].includes(resolution)) throw new ValidationError('Choose refund, exchange, or no refund.');
     const id = newId('rma'); const at = nowIso(); const returnNumber = await nextReturnNumber(client, ctx.workspaceId);
     await client.query(`INSERT INTO customer_returns
-      (id,workspace_id,return_number,sales_order_id,status,resolution,reason,quarantine_location_id,created_by_user_id,created_at)
-      VALUES($1,$2,$3,$4,'REQUESTED',$5,$6,$7,$8,$9)`,
+      (id,workspace_id,return_number,sales_order_id,status,resolution,reason,quarantine_location_id,created_by_user_id,created_at,receipt_credit_policy)
+      VALUES($1,$2,$3,$4,'REQUESTED',$5,$6,$7,$8,$9,CASE WHEN $5='REFUND' THEN 'RECEIPT_CREDIT_V1' ELSE NULL END)`,
     [id, ctx.workspaceId, returnNumber, order.id, resolution, trimOrNull(input.reason), input.quarantineLocationId, ctx.actorId, at]);
     for (const [index, requested] of input.lines.entries()) {
       const lineResult = await client.query(`SELECT sol.*,s.item_id FROM sales_order_lines sol JOIN skus s ON s.id=sol.sku_id
@@ -274,6 +274,12 @@ async function resolveReturnIdentity(client, ctx, line, raw, evidence, quantity)
     tracking: { serialUnitIds: units.rows.map((unit) => unit.id), serials: units.rows.map((unit) => unit.serial) } };
 }
 
+async function previewReceiptCredit(database,ctx,id,inputLines=null){
+ const row=await readReturn(database,ctx.workspaceId,id),lines=inputLines||row.lines.map(l=>({lineId:l.id,quantity:Number(l.quantity_authorized)-Number(l.quantity_received)})).filter(l=>l.quantity>0);
+ if(row.receipt_credit_policy!=='RECEIPT_CREDIT_V1')return null;
+ const allocations=[];for(const raw of lines){const line=row.lines.find(l=>l.id===raw.lineId);if(!line)throw new ValidationError('The receipt line is not on this return.');const quantity=positiveInteger(raw.quantity,'Received quantity');const evidence=await fulfillmentEvidence(database,ctx,line.sales_order_line_id),used=await existingAllocations(database,ctx,line.sales_order_line_id);allocations.push({...line,trackingEvidence:{costAllocations:allocateCost(evidence,used,quantity)}});}
+ const groups=require('./return-money').groups({lines:allocations}),sum=key=>groups.reduce((n,g)=>n+Number(g[key]||0),0),review={policy:row.receipt_credit_policy,returnId:row.id,lines,revenueMinor:sum('revenueMinor'),taxMinor:sum('taxMinor'),priceMinor:sum('grossMinor'),chargesMinor:sum('chargesMinor'),discountMinor:sum('discountMinor'),costMinor:sum('costMinor'),currency:row.currency};review.totalMinor=review.revenueMinor+review.taxMinor;review.hash=require('../pricing/postgres-promotions').hash(review);return review;
+}
 async function receiveCustomerReturn(database, rawContext, id, input) {
   const ctx = requireContext(rawContext);
   if (!Array.isArray(input.lines) || !input.lines.length) throw new ValidationError('Record what physically arrived.');
@@ -285,6 +291,7 @@ async function receiveCustomerReturn(database, rawContext, id, input) {
     if (!['AUTHORIZED', 'PARTIALLY_RECEIVED'].includes(row.status)) {
       throw new ValidationError('Authorize this return before receiving it.');
     }
+    if(row.receipt_credit_policy==='RECEIPT_CREDIT_V1'){await requirePermission(client,ctx,permissions.REFUND_CUSTOMER_RETURN,'credit returned goods on receipt');if(input.receiptCreditReview){const current=await previewReceiptCredit(client,ctx,id,input.lines);if(current.hash!==input.receiptCreditReview.hash)throw new ValidationError('The receipt credit changed. Review the current quantities and exact credit before proceeding.');}}
     const received = [];
     for (const [index, raw] of input.lines.entries()) {
       const line = row.lines.find((candidate) => candidate.id === raw.lineId);
@@ -306,7 +313,7 @@ async function receiveCustomerReturn(database, rawContext, id, input) {
         notes: 'Received into quarantine; condition not yet decided.',
         idempotencyKey: `${operation.key}:inventory:${line.id}`,
       });
-      const deferred=row.resolution==='REFUND';if(deferred&&costMinor)await ledger.ensureSystemAccountInTransaction(client,ctx,'CUSTOMER_RETURN_COST_PENDING');let inventoryJournalEntryId = null;
+      const deferred=row.resolution==='REFUND'&&row.receipt_credit_policy!=='RECEIPT_CREDIT_V1';if(deferred&&costMinor)await ledger.ensureSystemAccountInTransaction(client,ctx,'CUSTOMER_RETURN_COST_PENDING');let inventoryJournalEntryId = null;
       if (costMinor) {
         const posted = await ledger.postInTransaction(client, ctx, {
           postingDate:null, sourceKey: `customer-return-receipt:${operation.key}:${line.id}`,
@@ -336,7 +343,8 @@ async function receiveCustomerReturn(database, rawContext, id, input) {
       await client.query(`UPDATE customer_return_lines SET quantity_received=quantity_received+$2,
         receive_movement_ids=$3,tracking_evidence=$4,updated_at=$5 WHERE id=$1`,
       [line.id, quantity, JSON.stringify(movementIds), JSON.stringify(trackingEvidence), nowIso()]);
-      received.push({ lineId: line.id, quantity, movementId: physical.movementId, costMinor, inventoryJournalEntryId });
+      const credit=row.receipt_credit_policy==='RECEIPT_CREDIT_V1'?await require('./postgres-return-credits').receive(client,ctx,row,line,batch,operation.key+':'+line.id):null;
+      received.push({ lineId: line.id, quantity, movementId: physical.movementId, costMinor, inventoryJournalEntryId,credit });
     }
     const incomplete = await client.query(`SELECT COUNT(*) AS count FROM customer_return_lines
       WHERE customer_return_id=$1 AND quantity_received<quantity_authorized`, [id]);
@@ -480,6 +488,7 @@ async function refundCustomerReturnInTransaction(client, rawContext, id, input) 
     if (row.resolution !== 'REFUND' || row.status !== 'AWAITING_REFUND') {
       throw new ValidationError('This return is not waiting for a refund.');
     }
+    if(row.receipt_credit_policy==='RECEIPT_CREDIT_V1'){const result=await require('./postgres-return-credits').settle(client,ctx,row,{...input,destination},operation);await addSalesEvent(client,ctx,row.sales_order_id,'customer_return_refunded',{customerReturnId:id,returnNumber:row.return_number,...result},operation.key+':event');await require('../connections/postgres-return-review').reconcileInTransaction(client,ctx.workspaceId,{salesOrderId:row.sales_order_id});await completeOperation(client,operation,result);return {...result,replayed:false};}
     const refundGroups=require('./return-money').groups(row),amountMinor=refundSummary(row).totalMinor,refundDate=String(input.refundDate||await require('../lib/business-time').today(client,ctx.workspaceId));
     const invoiceResult = await client.query(`SELECT * FROM accounting_customer_invoices
       WHERE workspace_id=$1 AND sales_order_id=$2 FOR UPDATE`, [ctx.workspaceId, row.sales_order_id]);
@@ -493,7 +502,7 @@ async function refundCustomerReturnInTransaction(client, rawContext, id, input) 
       const paid = await client.query(`SELECT COALESCE(SUM(a.amount_minor),0)::bigint AS amount
         FROM accounting_payment_allocations a WHERE a.workspace_id=$1 AND a.customer_invoice_id=$2`,
       [ctx.workspaceId, invoice.id]);
-      const priorCash = await client.query(`SELECT COALESCE(SUM(r.revenue_minor+r.tax_minor),0)::bigint AS amount
+      const priorCash = await client.query(`SELECT COALESCE(SUM(coalesce(r.settled_amount_minor,r.revenue_minor+r.tax_minor)),0)::bigint AS amount
         FROM accounting_sale_refunds r JOIN accounting_journal_entries je ON je.id=r.original_journal_entry_id
         JOIN sales_order_lines sol ON sol.id=je.metadata::jsonb->>'salesOrderLineId'
         WHERE r.workspace_id=$1 AND sol.sales_order_id=$2 AND r.destination='CASH'`, [ctx.workspaceId, row.sales_order_id]);
@@ -837,7 +846,7 @@ async function reconcileSupplierReturn(database, rawContext, id, input) {
   });
 }
 
-module.exports = { refundSummary,getCustomerReturn, listCustomerReturns, requestCustomerReturn, authorizeCustomerReturn,
+module.exports = { previewReceiptCredit,refundSummary,getCustomerReturn, listCustomerReturns, requestCustomerReturn, authorizeCustomerReturn,
   receiveCustomerReturn, inspectCustomerReturn, refundCustomerReturn, refundCustomerReturnInTransaction,
   exchangeCustomerReturn,
   getSupplierReturn, listSupplierReturns, requestSupplierReturn, authorizeSupplierReturn,

@@ -11,11 +11,12 @@
     <a class="pub-brand" href="/"><span class="pub-brand__mark">◇</span><span>StockChief</span></a>
     <div class="auth-centered__card">
       <span class="auth-mail auth-mail--ok">✓</span>
-      <h1><%= selection.planId?'Review your plan.':'Choose your plan.' %></h1>
-      <p>Your email is verified, but your business workspace is not active yet. Initial launch is monthly only.</p>
+      <h1><%= locals.trialPolicy?.enabled?'Start your trial.':selection.planId?'Review your plan.':'Choose your plan.' %></h1>
+      <p><%= locals.trialPolicy?.enabled?'Your email is verified. Start a '+trialPolicy.days+'-day trial with your first inventory. No card or payment is required.':'Your email is verified. Choose a monthly plan to activate your business workspace.' %></p>
       <% if(flash&&flash.length){flash.forEach(function(message){ %>
         <div class="auth-message auth-message--<%= message.type %>" role="alert"><%= message.message %></div>
       <% });} %>
+      <% if(locals.trialPolicy?.enabled){ %><form method="post" action="/complete-signup/trial"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="pub-btn pub-btn--block" type="submit">Start <%= trialPolicy.days %>-day trial</button></form><p class="auth-help">Includes the <%= trialPolicy.planId %> plan's standard limits. The trial ends automatically. No automatic charge.</p><% } %>
       <% if(checkoutOpen){ %><form method="post" action="/billing/checkout">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <input type="hidden" name="promoCode" value="<%= selection.promoCode||'' %>">
@@ -37,7 +38,7 @@
         </label>
         <button class="pub-btn pub-btn--block" type="submit">Continue to secure checkout</button>
       </form>
-      <p class="auth-help">Stripe handles payment details. StockChief never receives your card number.</p><% }else{ %>
+      <p class="auth-help">Stripe handles payment details. StockChief never receives your card number.</p><% }else if(!locals.trialPolicy?.enabled){ %>
         <% const chosen=plans.find(function(plan){return plan.id===(lastSelection?.planId||selection.planId);}); %>
         <p><%= chosen?'You selected '+chosen.public_name+' with monthly billing.':'No plan has been selected yet.' %></p>
         <div class="auth-message auth-message--warning" role="status">Checkout is not open yet. Your email is verified, but no payment has been taken and no inventory has been activated. We will not send you to a checkout that cannot complete.</div>

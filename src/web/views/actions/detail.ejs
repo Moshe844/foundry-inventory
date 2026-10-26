@@ -300,7 +300,7 @@
             <tbody>
               <tr><td class="muted">Operation</td><td class="right"><%= action.operationName || helpers.operationLabel(action.actionType) || action.actionType %></td></tr>
               <tr><td class="muted">Needs permission</td><td class="right"><%= permissionLabel %></td></tr>
-              <tr><td class="muted">Risk</td><td class="right"><%= action.safetyLevel === 'HIGH' ? 'Higher — read the warning' : action.isMutation ? 'Changes stock' : 'Changes a record, not a count' %></td></tr>
+              <tr><td class="muted">Risk</td><td class="right"><%= action.safetyLevel === 'HIGH' ? 'Higher — read the warning' : action.impactLabel || 'Changes a business record' %></td></tr>
               <tr><td class="muted">Approval</td><td class="right"><%= action.approvalRequirement === 'CONFIRM_WITH_WARNING' ? 'Explicit, with warning' : 'Explicit' %></td></tr>
               <tr><td class="muted">Proposed</td><td class="right"><%= helpers.timeAgo(action.createdAt) %></td></tr>
               <tr><td class="muted">Valid until</td><td class="right"><time data-local-time datetime="<%= action.expiresAt %>"><%= helpers.dateTime(action.expiresAt) %></time></td></tr>

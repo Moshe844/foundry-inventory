@@ -356,8 +356,9 @@ async function returnReceive(database,ctx,customerReturn){
   const lines=detail.lines.map((line)=>({lineId:line.id,
     quantity:Number(line.quantity_authorized)-Number(line.quantity_received)})).filter((line)=>line.quantity>0);
   if(!lines.length)throw new ValidationError('No authorized return quantity remains to receive.');
-  return prepareResult({recordId:customerReturn.id,lines},
-    `Receive all ${lines.reduce((sum,line)=>sum+line.quantity,0)} remaining returned units on ${customerReturn.return_number} into quarantine. This records physical receipt and restores documented inventory cost; it does not refund the customer.`);
+  const receiptCreditReview=await returns.previewReceiptCredit(database,ctx,customerReturn.id,lines);
+  return prepareResult({recordId:customerReturn.id,lines,...(receiptCreditReview?{receiptCreditReview}:{})},
+    `Receive all ${lines.reduce((sum,line)=>sum+line.quantity,0)} remaining returned units on ${customerReturn.return_number} into quarantine. This records physical receipt and restores documented inventory cost; it does not pay cash.`+(receiptCreditReview?' Post a '+pricing.formatMinor(receiptCreditReview.totalMinor,receiptCreditReview.currency)+' credit note including '+pricing.formatMinor(receiptCreditReview.taxMinor,receiptCreditReview.currency)+' tax and the original discount share. Reduce unpaid receivables now; any paid amount remains owed until separately refunded.':''));
 }
 
 async function returnInspect(database,ctx,customerReturn,args){
@@ -389,8 +390,9 @@ async function returnRefund(database,ctx,customerReturn,args){
   const destination=normalizeRefundDestination(args.refundDestination);
   const detail=await returns.getCustomerReturn(database,ctx.workspaceId,customerReturn.id);
   if(detail.resolution!=='REFUND')throw new ValidationError('This return does not have an approved refund resolution.');
-  const amountMinor=detail.lines.reduce((sum,line)=>sum+(line.trackingEvidence.costAllocations||[])
+  let amountMinor=detail.lines.reduce((sum,line)=>sum+(line.trackingEvidence.costAllocations||[])
     .reduce((part,allocation)=>part+(allocation.revenueMinor??Number(allocation.quantity)*Number(line.unit_price_minor))+(allocation.taxMinor||0),0),0);
+  if(detail.receipt_credit_policy==='RECEIPT_CREDIT_V1'){const credit=returns.refundSummary(detail);amountMinor=destination==='CASH'?credit.cashDueMinor:0;if(destination==='AR'&&credit.cashDueMinor)throw new ValidationError('The paid portion is owed back to the customer; the unpaid invoice was already credited.');if(!amountMinor)return prepareResult({recordId:customerReturn.id,destination,amountMinor:0},'Close '+customerReturn.return_number+' after its posted receipt credit. No additional credit or cash payment is created.');}
   if(!Number.isSafeInteger(amountMinor)||amountMinor<=0)throw new ValidationError(
     'StockChief cannot verify a positive refund against the original sale.');
   return prepareResult({recordId:customerReturn.id,destination,amountMinor},
@@ -695,6 +697,9 @@ async function accountMapping(database,ctx,row,args){
 }
 
 const SPECS=Object.freeze([
+  {name:'customer_return.credit_receipt',description:'Prepare an owner-approved credit note for goods already received on a legacy refund return. Preserve physical receipts, original journals and cash. Review exact original receipt dates, discount, tax, invoice balance and any deferred-cost release. Never duplicates an existing credit or refund.',record:'customer_return',fields:['recordReference'],permission:permissions.MANAGE_ACCOUNTING,ownerOnly:true,capability:'returns.core',resultingRecords:['accounting_return_receipt_credits','accounting_customer_invoices','accounting_journal_entries'],
+   build:async(db,ctx,row)=>{const review=await require('../operations/postgres-legacy-return-credits').preview(db,ctx,row.id);return prepareResult({recordId:row.id,review},'Credit '+pricing.formatMinor(review.totalMinor,review.currency)+' for received '+review.returnNumber+' including '+pricing.formatMinor(review.taxMinor,review.currency)+' tax, on its recorded receipt dates: '+[...new Set(review.batches.map(b=>b.postingDate))].join(', ')+'. Recognize '+pricing.formatMinor(review.pendingCostMinor,review.currency)+' of returned cost. Reduce unpaid invoice amounts and record paid portions as owed refunds. No cash or stock moves.');},
+   execute:(db,ctx,p)=>require('../operations/postgres-legacy-return-credits').apply(db,ctx,p.review),verify:async(db,ctx,r,p)=>Boolean((await db.query('SELECT 1 FROM accounting_return_credit_conversions WHERE workspace_id=$1 AND customer_return_id=$2 AND review_hash=$3',[ctx.workspaceId,r.customerReturnId,p.review.integrity])).rows.length)},
   {name:'accounting.correct_history',description:'Prepare proven automatic-date and unresolved legacy return-cost corrections for owner review. This appends linked adjusting journals, never rewrites posted history, changes physical stock or pays/refunds cash. Excludes closed periods and preserves user-selected transaction dates. Discover read.accounting_corrections first.',fields:['correctionKinds'],permission:permissions.MANAGE_ACCOUNTING,ownerOnly:true,resultingRecords:['accounting_history_corrections','accounting_journal_entries'],
     build:async(db,ctx,_row,args)=>{let kinds;try{kinds=JSON.parse(args.correctionKinds);}catch{throw new ValidationError('Choose the historical correction kinds as a JSON array.');}const payload=await require('../accounting/postgres-history-corrections').preview(db,ctx,{kinds});if(!payload.changes.length)throw new ValidationError(payload.held.length?'The affected dates are closed or precede accounting setup. Review accounting periods before correcting them.':'No proven historical corrections remain for these kinds.');return {payload,summary:'Correct '+payload.changes.length+' historical accounting records in '+payload.timeZone+'. Append linked adjustments while preserving original journals, physical stock, invoices and payments. '+payload.held.length+' records remain held.'+(payload.hasMore?' More source journals remain; this approval covers only this frozen batch.':'')};},
     execute:(db,ctx,p)=>require('../accounting/postgres-history-corrections').applyInTransaction(db,ctx,p),verify:async(db,ctx,r,p)=>{const rows=(await db.query('SELECT source_entry_id,kind FROM accounting_history_corrections WHERE workspace_id=$1 AND id=ANY($2::text[])',[ctx.workspaceId,r.correctionIds])).rows;return rows.length===p.changes.length&&p.changes.every(c=>rows.some(r=>r.source_entry_id===c.entryId&&r.kind===c.kind));}},
@@ -1086,7 +1091,7 @@ const SPECS=Object.freeze([
     capability:'returns.core',states:['REQUESTED'],verb:'Authorize',
     execute:(client,ctx,p)=>returns.authorizeCustomerReturn(sameClient(client),ctx,p.recordId,p),
     verify:(client,ctx,_r,p)=>state(client,ctx,'customer_returns',p.recordId,['AUTHORIZED'])},
-  {name:'customer_return.receive',description:'Record all authorized quantity-tracked return units actually received into quarantine, restoring original inventory-cost evidence. Lot and serial units require exact scans.',
+  {name:'customer_return.receive',description:'Record all authorized quantity-tracked return units actually received into quarantine, restoring original inventory-cost evidence. New refund returns also post their reviewed price, discount and tax credit note at receipt; unpaid receivables fall immediately and paid amounts remain customer refunds payable. This requires refund authority and never pays cash. Existing returns retain their frozen recognition policy. Lot and serial units require exact scans.',
     record:'customer_return',fields:['recordReference'],permission:permissions.INSPECT_CUSTOMER_RETURN,
     capability:'returns.core',build:returnReceive,
     execute:(client,ctx,p)=>returns.receiveCustomerReturn(sameClient(client),ctx,p.recordId,p),

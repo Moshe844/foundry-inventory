@@ -48,7 +48,7 @@ const money = (minor, currency) => paymentTerms.money(minor, currency);
  */
 function nextStep(db, workspaceId, order, options = {}) {
   if (order.status === 'CANCELLED') {
-    return { text: label(order.status,order.totals?.fulfilled||order.fulfilled||order.fulfilledUnits||0), detail: null, tone: 'muted', rank: RANK.CANCELLED };
+    return { text: label(order.status,order.totals?.fulfilled||order.fulfilled||order.fulfilledUnits||0,order.delivery_method), detail: null, tone: 'muted', rank: RANK.CANCELLED };
   }
   if (order.customer_decision_required || order.delivery_decision_required) return {
     text: order.customer_decision_required ? 'Customer needs a decision' : 'Delivery details needed',
@@ -208,5 +208,5 @@ function summarise(decorated) {
   return `${parts.join(', ')}.`;
 }
 
-function label(status,fulfilled=0){if(status==='CANCELLED')return Number(fulfilled)>0?'Partly shipped · remainder cancelled':'Cancelled';return {DRAFT:'Being prepared',CONFIRMED:'Confirmed — stock held',PARTIALLY_FULFILLED:'Partly shipped',FULFILLED:'Delivered',BACKORDERED:'Waiting for stock'}[status]||status;}
+function label(status,fulfilled=0,deliveryMethod=null){const gone=deliveryMethod==='PICKUP'?'collected':deliveryMethod==='DELIVER'?'delivered':'shipped';if(status==='CANCELLED')return Number(fulfilled)>0?'Partly '+gone+' · remainder cancelled':'Cancelled';return {DRAFT:'Being prepared',CONFIRMED:'Confirmed — stock held',PARTIALLY_FULFILLED:'Partly '+gone,FULFILLED:gone[0].toUpperCase()+gone.slice(1),BACKORDERED:'Waiting for stock'}[status]||status;}
 module.exports = { nextStep, decorate, summarise, RANK,label };

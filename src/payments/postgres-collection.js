@@ -246,8 +246,9 @@ async function queueCustomerReturnRefund(database,ctx,customerReturnId,input={})
     const lines=(await client.query(`SELECT rl.tracking_evidence,sol.unit_price_minor
       FROM customer_return_lines rl JOIN sales_order_lines sol ON sol.id=rl.sales_order_line_id
       WHERE rl.workspace_id=$1 AND rl.customer_return_id=$2`,[ctx.workspaceId,customerReturnId])).rows;
-    const amountMinor=lines.reduce((sum,line)=>sum+(parseJson(line.tracking_evidence).costAllocations||[])
+    let amountMinor=lines.reduce((sum,line)=>sum+(parseJson(line.tracking_evidence).costAllocations||[])
       .reduce((lineSum,allocation)=>lineSum+(allocation.revenueMinor??Number(allocation.quantity)*Number(line.unit_price_minor))+(allocation.taxMinor||0),0),0);
+    if(row.receipt_credit_policy==='RECEIPT_CREDIT_V1'){const credits=await require('../operations/postgres-return-credits').read(client,ctx.workspaceId,customerReturnId);amountMinor=credits.reduce((sum,c)=>sum+Number(c.cash_due_minor)-Number(c.cash_refunded_minor),0);if(amountMinor===0)return {queued:false,replayed:false,noProviderPayment:true,amountMinor:0};}
     if(!Number.isSafeInteger(amountMinor)||amountMinor<=0)throw new ValidationError('This return has no verified amount to refund.');
     const paid=(await client.query(`SELECT request.id AS payment_request_id,request.paid_minor,request.currency,request.provider,
         event.external_payment_id,
@@ -310,7 +311,7 @@ async function executeRefundEffect(database,workspaceId,effectId,options={}){
     result:{refundId:created.externalRefundId,amountMinor:Number(refund.amount_minor)},apply:async(client)=>{
       accountingResult=await customerReturns.refundCustomerReturnInTransaction(client,{
         workspaceId,actorId:null,systemSource:'payment_provider_refund',providerEffectId:effectId,
-      },refund.customer_return_id,{destination:'CASH',refundDate:nowIso().slice(0,10),
+      },refund.customer_return_id,{destination:'CASH',refundDate:await require('../lib/business-time').today(client,workspaceId),
         idempotencyKey:`provider-refund:${refund.id}`});
       await client.query(`UPDATE payment_refund_requests SET status='SUCCEEDED',external_refund_id=$3,
         accounting_refund_id=$4,last_error=NULL,completed_at=$5,updated_at=$5 WHERE workspace_id=$1 AND id=$2`,

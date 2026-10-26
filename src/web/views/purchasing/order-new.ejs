@@ -38,7 +38,7 @@
     </div>
   </div>
 <% } else { %>
-  <form method="post" action="/purchasing/orders" class="card section" data-purchase-entry data-today="<%= locals.today||helpers.dateInputValue(new Date()) %>" data-busy>
+  <form method="post" action="/purchasing/orders" class="card section" data-purchase-entry data-currency="<%= chosen.currency||'USD' %>" data-currency-exponent="<%= helpers.currencyExponent?helpers.currencyExponent(chosen.currency||'USD'):2 %>" data-today="<%= locals.today||helpers.dateInputValue(new Date()) %>" data-busy>
     <div class="card-head"><div><h2>What to order</h2><p class="muted">Only lines with a quantity go on the order.</p></div></div>
     <div class="card-body">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -56,10 +56,10 @@
       <% } else { %>
         <p class="muted" style="margin-bottom:12px;">These are the products linked to this supplier. Enter a pack quantity for each product you want to order. <a href="/suppliers/<%= supplierId %>#link-product">Link another product</a>.</p>
         <table class="table table--tight">
-          <thead><tr><th>Product</th><th>Pack</th><th class="num">Unit cost</th><th class="num">How many packs</th></tr></thead>
+          <thead><tr><th>Product</th><th>Pack</th><th class="num">Unit cost</th><th class="num">How many packs</th><th class="num">Line total</th></tr></thead>
           <tbody>
             <% supplierItems.forEach(function (item) { %>
-              <tr data-purchase-line data-lead-days="<%= item.leadTimeDays??'' %>">
+              <tr data-purchase-line data-pack-units="<%= item.unitsPerPurchaseUnit||1 %>" data-lead-days="<%= item.leadTimeDays??'' %>">
                 <td><%= item.displayName %><% if (item.supplierSku) { %> <span class="muted"><%= item.supplierSku %></span><% } %></td>
                 <td><%= item.unitsPerPurchaseUnit > 1 ? item.purchaseUnit + ' of ' + item.unitsPerPurchaseUnit : item.purchaseUnit %></td>
                 <td class="num">
@@ -73,10 +73,11 @@
                   <input class="input input--sm" type="number" min="0" aria-label="Packs of <%= item.displayName %>" name="quantity[<%= item.skuId %>]" style="max-width:110px;"
                          value="<%= submitted && submitted.quantity && submitted.quantity[item.skuId] !== undefined ? submitted.quantity[item.skuId] : '' %>">
                 </td>
+                <td class="num" data-line-total>—</td>
               </tr>
             <% }) %>
           </tbody>
-        </table>
+        </table><p class="right" role="status">Subtotal: <strong data-purchase-total>—</strong></p>
 
         <div class="grid grid--2">
           <label class="field">
