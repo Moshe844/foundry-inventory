@@ -12,7 +12,7 @@ test('BigCommerce subscribes to documented variant, order-driven stock and locat
  assert.equal(new Set(saved.map(h=>h.scope)).size,saved.length);
 });
 test('BigCommerce variant and location notifications trigger refresh without inventing stock',async()=>{
- for(const scope of [...catalogEvents,...locationEvents]){const body={producer:'stores/ab12cd',scope,hash:'hash-'+scope,created_at:Math.floor(Date.now()/1000),data:{id:81,sku:{product_id:5,variant_id:17},inventory:{product_id:5,variant_id:17},product_id:5,variant_id:17,location_id:3}};
+ for(const scope of [...catalogEvents,...locationEvents,...[7,43,902].flatMap(channel=>['stock_changed','settings_changed'].map(event=>'store/channel/'+channel+'/inventory/product/'+event))]){const body={producer:'stores/ab12cd',scope,hash:'hash-'+scope,created_at:Math.floor(Date.now()/1000),data:{id:81,sku:{product_id:5,variant_id:17},inventory:{product_id:5,variant_id:17},product_id:5,variant_id:17,location_id:3}};
   const [event]=await adapter().normalizeWebhook({body,credentials});assert.equal(event.type,locationEvents.includes(scope)?'location.changed':'product.changed');assert.deepEqual(Object.keys(event.data),locationEvents.includes(scope)?['externalLocationId']:['externalProductId']);assert.equal(Object.values(event.data)[0],locationEvents.includes(scope)?'3':'5');
  }
 });
