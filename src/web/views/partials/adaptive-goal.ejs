@@ -37,11 +37,11 @@
   </form>
   <% if(goal.checkpoint.runtime==='codex-staging'){ %>
     <details class="rm-agent__details"><summary>Activity details</summary><ol data-goal-timeline aria-label="Agent activity"></ol></details>
-    <% for(const card of locals.codexApprovals||[]){ %>
+    <% for(const card of locals.codexApprovals||[]){ const presentation=locals.agentApprovalPresentation?locals.agentApprovalPresentation(card):{summary:card.summary,fields:[]}; %>
       <article class="rm-agent__approval" data-approval-id="<%= card.id %>">
-        <p class="rm-agent__approval-label">Review this change</p><h3><%= card.summary %></h3>
-        <dl class="summary-list"><% for(const [key,value] of locals.agentApprovalFields?locals.agentApprovalFields(card):[]){ %>
-          <div><dt><%= helpers.columnLabel(key) %></dt><dd style="white-space:pre-wrap;overflow-wrap:anywhere"><%= value %></dd></div>
+        <p class="rm-agent__approval-label">Review this change</p><h3><%= presentation.summary %></h3>
+        <dl class="summary-list"><% for(const field of presentation.fields){ %>
+          <div><dt><%= field.label %></dt><dd style="white-space:pre-wrap;overflow-wrap:anywhere"><%= field.value %></dd></div>
         <% } %></dl>
         <% if(card.mission){ %><div class="rm-agent__approval-choice"><p>This request contains <strong><%= card.mission.count %> changes</strong>. You can approve them individually or review the full request for one approval.</p><a class="rm-btn rm-btn--ghost rm-btn--sm" href="/actions/<%= encodeURIComponent(card.proposalId) %>">Review all <%= card.mission.count %> changes together</a></div><% }else{ %>
         <p><a href="<%= card.kind==='business'?'/actions/'+encodeURIComponent(card.proposalId):'/operating-instructions/'+encodeURIComponent(card.proposalId)+'?from=ask' %>">Review details</a></p><% } %>

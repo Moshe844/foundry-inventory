@@ -96,8 +96,8 @@ async function pending(database,workspaceId,actorId){
   // step. Conversely it does not prove a changed/underspecified step fits.
   // Expose recovery for review, never infer a new grant or auto-execute here.
   const recovery=Boolean(recordedMission&&!incompleteScope);
-  items.set(key,{kind:recovery?'recovery':'approval',requiredPermissions,importance:'Important',priority:85,title:p.summary,
-   happened:p.summary,why:recovery?'This workflow has a recorded approval, but its execution is unfinished. Review its current scope and recovery status.':
+  items.set(key,{kind:recovery?'recovery':'approval',requiredPermissions,importance:'Important',priority:85,title:require('../web/proposal-presentation').summary(p),
+   happened:require('../web/proposal-presentation').summary(p),why:recovery?'This workflow has a recorded approval, but its execution is unfinished. Review its current scope and recovery status.':
      incompleteScope?'The frozen workflow was approved, but this step needs additional scope before it can continue.':'This proposed change still needs your decision.',
    recommendation:recovery?'Open the saved workflow to review its recorded authority and unfinished work.':
      missionOption?`Review this change or its frozen ${missionOption.count}-step plan in Ask StockChief.`:

@@ -159,8 +159,7 @@ function createPostgresAskRouter(database,options={}){
   const delivery=require('../../assistant/agent-delivery');
   router.use('/ask',(req,res,next)=>{res.locals.agentDelivery=delivery.visible;next();});
   router.use('/ask',(req,res,next)=>{
-    const fields=require('../../assistant/postgres-capability-registry').FIELDS;
-    res.locals.agentApprovalFields=card=>Object.entries(card.payload||{}).filter(([key,value])=>fields[key]&&value!==null&&['string','number','boolean'].includes(typeof value));
+    res.locals.agentApprovalPresentation=require('../proposal-presentation').cardPresentation;
     next();
   });
   async function deliveredGoal(req,id=req.params.id){
@@ -262,7 +261,7 @@ function createPostgresAskRouter(database,options={}){
     const events=isPilot?(await database.query(`SELECT sequence,kind,detail,created_at FROM stockchief_runtime.assistant_goal_events
       WHERE goal_id=$1 AND kind IN ('agent_activity','approval_ready') ORDER BY sequence DESC LIMIT 20`,[goal.id])).rows:[];
     const navigation=agentNavigation.visible(goal);
-    const state=conversation.state(goal);
+    const state=require('../proposal-presentation').conversation(goal,approvalInbox?.approvals);
     const continuation=isPilot&&goal.status==='BLOCKED'?await pilot.continuation(database,req.ctx,goal.id):null;
     const safeEvents=events.map(e=>({sequence:e.sequence,kind:e.kind,created_at:e.created_at,
       detail:{kind:e.detail.kind,tool:typeof e.detail.tool==='string'?e.detail.tool:null,status:e.detail.kind==='runtime_starting'?e.detail.status:null}}));
@@ -374,7 +373,7 @@ function createPostgresAskRouter(database,options={}){
       if(nativeInboxAvailable&&goal.checkpoint.runtime==='codex-staging'&&!['COMPLETED','CANCELLED','BLOCKED'].includes(goal.status)){
         const inbox=await pilot.inbox(database,req.ctx,goal.id);Object.assign(goal,inbox.goal);goal.approvalCards=inbox.approvals;
       }else goal.approvalCards=[];
-      goal.conversation=conversation.state(goal);
+      goal.conversation=require('../proposal-presentation').conversation(goal,goal.approvalCards);
       goal.continuation=!options.agentInspection&&goal.checkpoint.runtime==='codex-staging'&&goal.status==='BLOCKED'
         ?await pilot.continuation(database,req.ctx,goal.id):null;
     }
@@ -533,7 +532,7 @@ function createPostgresAskRouter(database,options={}){
       AND checkpoint->>'runtime'='codex-staging' AND EXISTS(SELECT 1 FROM jsonb_each(COALESCE(checkpoint#>'{harness,approvalDeliveries}','{}'::jsonb)) d WHERE d.value->>'proposalId'=$3) LIMIT 1`,[req.ctx.workspaceId,req.ctx.actorId,proposal.id])).rows[0];
     const nativeCard=native&&!['COMPLETED','CANCELLED','BLOCKED'].includes(native.status)?(await pilot.inbox(database,req.ctx,native.id)).approvals.find(card=>card.proposalId===proposal.id):null;
     return res.page('attention/postgres-proposal',{title:mission?'Review operating mission':'Review prepared change',nav:'ask',proposal,presentation:require('../proposal-presentation').present(proposal),mission,nativeApproval:nativeCard?{goalId:native.id,...nativeCard}:null,
-      missionSteps:(mission?.approved_steps||[]).map((step,index)=>{const contract=capabilities.get(step.capability);return {label:(contract?.legacyAction||step.capability).replace(/[._]/g,' ').replace(/^./,s=>s.toUpperCase()),args:step.args,index:index+1,state:mission.steps[index]?.state||'BLOCKED'};}),
+      missionSteps:(mission?.approved_steps||[]).map((step,index)=>{const contract=capabilities.get(step.capability);return {label:(contract?.legacyAction||step.capability).replace(/[._]/g,' ').replace(/^./,s=>s.toUpperCase()),args:step.args,fields:require('../proposal-presentation').fields(step.args),index:index+1,state:mission.steps[index]?.state||'BLOCKED'};}),
       resumeAvailable:proposal.status==='EXECUTED'&&resuming});
   }));
   router.post('/actions/:id/approve-mission',asyncRoute(async(req,res)=>{

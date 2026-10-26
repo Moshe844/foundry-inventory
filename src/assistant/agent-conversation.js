@@ -88,7 +88,7 @@ function state(goal){
  const usageMessage='An AI request lost its confirmation. Your goal and recorded work are saved. Paid work is paused while its usage is checked; no automatic retry will run.';
  const goalLimitMessage='This request reached its work or spending allowance before all remaining work was verified. Recorded operations are saved. No automatic retry will run, and completed operations must not be repeated.';
  const interruptedMessage='This work stopped before its outcome could be confirmed. Your request and recorded work are saved. Review the recorded steps before continuing so completed work is not repeated.';
- const failedMessage='I could not confirm that the requested result was saved. Your request and any completed work are retained. Review the recorded steps before continuing.';
+ const failedMessage=h.goalExpired===true||h.failure?.code==='GOAL_EXPIRED'?'This saved request has expired. Its recorded work is preserved. Start a new request to review what remains.':'I could not confirm that the requested result was saved. Your request and any completed work are retained. Review the recorded steps before continuing.';
  const partial=['partial_verified_receipt','partial_observation_report'].includes(h.completionSource)?publicText(goal.answer,''):'';
  return ConversationState.parse({version:1,goalId:goal.id,phase,label:phase==='funding'&&h.interruption?.code==='SHARED_SPENDING_CEILING'?'Spending limit reached':labels[phase],active:!['completed','refused','failed','cancelled','interrupted','goal_limit','funding','capacity','service_wait','usage_review'].includes(phase),
   // A durable external wait is canonical lifecycle state, not an approval

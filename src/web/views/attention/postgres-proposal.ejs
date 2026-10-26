@@ -11,7 +11,7 @@
         <% if(proposal.status==='PENDING'){ %><p>You can approve the full request once, or approve just the current change. StockChief checks permissions and business conditions again before each operation, and stops if the approved scope changes.</p><% } %>
         <ol class="rm-mission-steps"><% (typeof missionSteps!=='undefined'?missionSteps:(mission.approved_steps||[]).map(function(step,index){return {label:step.capability.replace(/[._]/g,' '),args:step.args,index:index+1,state:mission.steps[index]?.state};})).forEach(function(step){ %>
           <li><div class="rm-mission-step-head"><strong><%= step.label %></strong><span class="rm-mission-step-status"><%= step.state==='DONE'?'Completed':step.state==='WAITING'?'Ready for approval':'After earlier changes' %></span></div>
-          <dl class="rm-mission-fields"><% Object.entries(step.args||{}).filter(function(entry){return entry[1]!==null&&entry[1]!==undefined&&String(entry[1]).trim()!=='';}).forEach(function(entry){ %><div><dt><%= helpers.columnLabel(entry[0]) %></dt><dd><%= typeof entry[1]==='object'?(entry[1].$step!==undefined?'Result of change '+(Number(entry[1].$step)+1):Object.entries(entry[1]).map(function(part){return helpers.columnLabel(part[0])+': '+String(part[1]);}).join(' · ')):entry[1] %></dd></div><% }) %></dl></li>
+          <dl class="rm-mission-fields"><% (step.fields||[]).forEach(function(field){ %><div><dt><%= field.label %></dt><dd><%= field.value %></dd></div><% }) %></dl></li>
         <% }) %></ol>
       </section>
     <% } %>
