@@ -155,6 +155,7 @@ async function runtimeSweep(job,client,options={}){
   await require('../commercial/ai-spending-notifications').sweep(client);
   await require('../reports/postgres-scheduling').enqueueDue(client,at);
   await require('../custody/postgres-billing').enqueueDue(client);
+  await require('../payments/postgres-provenance').queueMissing(scopedDatabase(client));
   const staleImportAt=new Date(now-15*60_000).toISOString();
   const staleEmailAt=new Date(now-5*60_000).toISOString();
   const paused=(await client.query(`SELECT * FROM stockchief_runtime.jobs WHERE status='PAUSED'
@@ -597,6 +598,8 @@ function create(providers=defaultProviders,options={}){return {'system.runtime-s
   'commercial.refund-retention-delete':external((job,database)=>require('../commercial/subscription-refund-retention').remove(database,job)),
   'commercial.stripe-financial-sync':external((job,database)=>require('../commercial/stripe-financials').sync(database,job,options.commercialOptions||{})),
     'commercial.stripe-invoice-sync':external((job,database)=>require('../commercial/stripe-financials').syncInvoice(database,job,options.commercialOptions||{})),
+  'payment.provenance':external((job,database)=>require('../payments/postgres-provenance').reconcile(database,job.workspaceId,job.payload.requestId,{
+    providerResolver:options.paymentProviderResolver,accountContext:options.paymentAccountContext})),
   'provider.effect':external((job,database)=>providerEffect(job,database,options,providers)),
   'provider.commerce-verify':external((job,database)=>require('../connections/postgres-commerce-sync').verifyDelivery(database,job.workspaceId,job.payload.effectId,{providers})),
   // Whole-inventory planning can outlast several provider polling intervals.

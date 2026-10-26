@@ -217,6 +217,7 @@ async function receiveVerifiedEvent(database,workspaceId,providerName,event,opti
     const paidMinor=Number(request.paid_minor||0)+delta;const status=paidMinor>=Number(request.amount_minor)?'PAID':'OPEN';
     await client.query(`UPDATE payment_requests SET paid_minor=$2,status=$3,paid_at=CASE WHEN $3='PAID' THEN $4 ELSE paid_at END,
       last_error=NULL,updated_at=$4 WHERE id=$1`,[request.id,paidMinor,status,at]);
+    if(!read.externalPaymentId)await require('./postgres-provenance').queue(scopedDatabase(client),{...request,paid_minor:paidMinor});
     return finish(`Recorded ${delta} minor units through the canonical customer-payment journal.`,receipt.paymentId);
   },{isolation:'SERIALIZABLE',retrySafe:true});
 }
@@ -331,7 +332,7 @@ async function availableProviders(database,workspaceId){return (await database.q
  LEFT JOIN workspace_connectors c ON c.workspace_id=a.workspace_id AND c.id=a.connector_id
  WHERE a.workspace_id=$1 AND a.charges_enabled=1 AND (c.status='connected' OR (a.provider='stripe' AND a.connector_id IS NULL)) ORDER BY a.provider`,[workspaceId])).rows
  .filter(r=>providerRegistry.has(r.provider)&&(r.provider!=='cardknox'||require('./postgres-cardknox').enabled())).map(r=>r.provider);}
-module.exports={hydrate,get,listForOrder,accountFor,queueRequest,executeRequestEffect,receiveVerifiedEvent,availableProviders,
+module.exports={hydrate,get,listForOrder,accountFor,providerContext,queueRequest,executeRequestEffect,receiveVerifiedEvent,availableProviders,
   queueCustomerReturnRefund,executeRefundEffect};
 require('../commercial/enforcement').guardExports(module.exports,0,1,{queueRequest:'payments.customer',
   executeRequestEffect:'payments.customer',queueCustomerReturnRefund:'payments.customer',executeRefundEffect:'payments.customer'});
