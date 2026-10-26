@@ -134,7 +134,8 @@ async function capture(database,connection,message){
       idempotencyKey:`email:${connection.id}:${externalId}`,occurredAt:at,
       detail:{kind:'business_email',connectorId:connection.id}});
     const nativeDocumentReview=match.kind==='supplier'&&attachments.length>0&&await require('./postgres-document-review').granted(client,connection.workspace_id);
-    if(triage.state==='NEEDS_REPLY'&&owner?.owner_account_id&&!nativeDocumentReview){
+    if(triage.state==='NEEDS_REPLY'&&owner?.owner_account_id&&!nativeDocumentReview&&
+      (typeof connection.config==='string'?JSON.parse(connection.config||'{}'):connection.config||{}).replyPreparationEnabled===true){
       const scope={accountId:owner.owner_account_id,workspaceId:connection.workspace_id};
       if((await commercialUsage.capabilityState(client,scope,'communications.ai_drafts')).enabled){
         const actor=(await client.query(`SELECT id FROM users WHERE workspace_id=$1 AND account_id=$2
@@ -248,9 +249,13 @@ async function get(database,workspaceId,id){
       (SELECT result->>'skipped' FROM stockchief_runtime.jobs job WHERE job.workspace_id=message.workspace_id
         AND job.kind='mail.reply-draft' AND job.payload->>'messageId'=message.id
         ORDER BY job.created_at DESC,job.id DESC LIMIT 1) AS draft_job_skip,
+      preparation.id AS preparation_goal_id,preparation.status AS preparation_goal_status,preparation.actor_user_id AS preparation_goal_actor_id,
       (SELECT status FROM stockchief_runtime.email_reply_outbox outbox WHERE outbox.workspace_id=message.workspace_id
         AND outbox.message_id=message.id ORDER BY started_at DESC LIMIT 1) AS outbox_status
     FROM connection_email_messages message JOIN workspace_connectors connector ON connector.id=message.connector_id
+    LEFT JOIN LATERAL (SELECT id,status,actor_user_id FROM stockchief_runtime.assistant_goals
+      WHERE workspace_id=message.workspace_id AND checkpoint->'sourceAutomation'->>'capability'='communications.ai_drafts'
+        AND checkpoint->'sourceAutomation'->>'messageId'=message.id ORDER BY created_at DESC,id DESC LIMIT 1) preparation ON true
     LEFT JOIN suppliers supplier ON supplier.id=message.supplier_id
     WHERE message.workspace_id=$1 AND message.id=$2`,[workspaceId,id]);
   if(!result.rows.length)throw new NotFoundError('That business message was not found.');
@@ -327,6 +332,12 @@ async function queueSend(database,ctx,id,input={},options={}){
     'email_send_ambiguous');
   const idempotencyKey=crypto.createHash('sha256').update(`${id}\n${message.draft_subject}\n${message.draft_body}`).digest('hex');
   return database.transaction(async(client)=>{const outboxId=newId('mailout');
+    const locked=(await client.query('SELECT * FROM connection_email_messages WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[ctx.workspaceId,id])).rows[0];
+    if(!locked||locked.reply_state!=='NEEDS_REPLY'||locked.reply_sent_at||locked.draft_subject!==message.draft_subject||locked.draft_body!==message.draft_body)
+      throw new ValidationError('This email or draft changed before sending. Review its current saved reply.');
+    const competing=(await client.query(`SELECT idempotency_key FROM stockchief_runtime.email_reply_outbox WHERE workspace_id=$1
+      AND message_id=$2 AND status IN ('PENDING','SENDING','AMBIGUOUS') LIMIT 1`,[ctx.workspaceId,id])).rows[0];
+    if(competing&&competing.idempotency_key!==idempotencyKey)throw new ValidationError('A reply is already queued or awaiting confirmation.');
     const started=await client.query(`INSERT INTO stockchief_runtime.email_reply_outbox
       (id,workspace_id,message_id,connector_id,idempotency_key,recipient,subject,body,status)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,'PENDING')

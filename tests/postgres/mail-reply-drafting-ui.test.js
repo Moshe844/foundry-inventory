@@ -55,7 +55,7 @@ test('business mail gets a safe editable draft, with metered record-grounded imp
     await database.query(`INSERT INTO workspace_connectors
       (id,workspace_id,connector_key,display_name,provider_type,provides,config,status,capabilities,
        expected_interval_minutes,setup_status,authorized_by_user_id,created_at,updated_at)
-      VALUES($1,$2,$3,'Test Mailbox','gmail','[]','{}','connected','[]',5,'CONNECTED',$4,$5,$5)`,
+      VALUES($1,$2,$3,'Test Mailbox','gmail','[]','{"replyPreparationEnabled":true}','connected','[]',5,'CONNECTED',$4,$5,$5)`,
     [connectorId,ctx.workspaceId,`gmail:${connectorId}`,ctx.actorId,at]);
     const connection=(await database.query('SELECT * FROM workspace_connectors WHERE id=$1',[connectorId])).rows[0];
     const captured=await mail.capture(database,connection,{externalMessageId:'draft-1',sender:'parts@example.test',

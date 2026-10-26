@@ -183,6 +183,10 @@ function createGateway({database,ctx,goal,goalId,runToken,provider,rawProvider=p
     let interfaces;
     if(catalogue){
       interfaces=await control.planningCatalogue(database,{...ctx,goalId},actor);
+      if(guard?.readOnly){
+        const entries=interfaces.list().filter(c=>['read','navigation'].includes(c.kind)),byName=new Map(entries.map(c=>[c.name,c]));
+        interfaces={list:(kind=null)=>entries.filter(c=>!kind||c.kind===kind),get:name=>byName.get(name)||null};
+      }
       if(require('../../src/commercial/relay-provider').ownsAccounting(provider)){
         const entries=interfaces.list().map(c=>c.agentFields?Object.freeze({...c,fields:[...c.fields,...c.agentFields]}):c);
         const byName=new Map(entries.map(c=>[c.name,c]));

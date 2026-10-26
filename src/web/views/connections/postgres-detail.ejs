@@ -22,6 +22,7 @@
 </header>
 
 <% if(connection.last_error){ %><div class="notice notice--warn section"><div><strong>This connection needs attention.</strong><p><%= connection.last_error %></p></div></div><% } %>
+<% if(isMailbox&&connected){ %><%- include('mail-preparation',{mailPreparation,connection}) %><% } %>
 <% if(locals.connectionIssues&&(connectionIssues.total||connectionIssues.focused)){ %>
 <section class="card section" id="connection-issues" aria-label="Connection issues">
   <div class="card-head"><h2>What needs attention</h2><span class="badge badge--warn"><%= connectionIssues.total %> open</span></div>
@@ -103,7 +104,7 @@
   <div class="stat"><strong><%= connection.itemsNeedingMapping %></strong><span>need matching</span></div>
   <div class="stat"><strong><%= eventAt?helpers.timeAgo(eventAt):'None yet' %></strong><span><%= isMailbox?'last mailbox check':'last event processed' %></span></div>
 </div>
-<p class="rm-sub">Products mapped <strong><%= connection.productsMapped %></strong> · Locations mapped <strong><%= connection.locationsMapped %></strong> · Need your match <strong><%= connection.itemsNeedingMapping %></strong>.</p>
+<% if(!isMailbox){ %><p class="rm-sub">Products mapped <strong><%= connection.productsMapped %></strong> · Locations mapped <strong><%= connection.locationsMapped %></strong> · Need your match <strong><%= connection.itemsNeedingMapping %></strong>.</p><% } %>
 
 <section class="setup-journey section">
   <div class="setup-journey__head"><div class="setup-journey__head-copy"><span class="setup-journey__eyebrow">Is it working?</span>
@@ -152,6 +153,7 @@
     </div></section>
   <% } else { %>
     <% if(isMailbox){ %>
+
       <section class="card" aria-label="Mailbox settings">
         <div class="card-head"><div><h2>Business email</h2><p class="muted">Only mail from a known customer or supplier, or a reply to a conversation StockChief sent, enters the business inbox. Other senders are set aside without saving their message body or attachments.</p></div></div>
         <div class="card-body grid">

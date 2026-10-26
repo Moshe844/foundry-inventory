@@ -172,6 +172,7 @@ function createSession({database,ctx,goalId,runToken,candidate,authorize,verifyO
    if(h.receipt?.requestHash!==require('./receipts').requestHash(goal))throw new Error('COMPLETION_REQUEST_MISMATCH');
    return {answer:goal.answer,completionSource:h.completionSource,checkedAt:h.receipt.checkedAt};
   },
+  async initialize(){return authorizedUpdate(()=>null);},
   async load(){return authorizedUpdate(loadSnapshot);},
   async prepareContext(){return authorizedUpdate(async(h,goal,client,access)=>{
    // One initialization boundary owns the current catalogue, environment and

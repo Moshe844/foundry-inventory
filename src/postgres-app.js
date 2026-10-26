@@ -187,6 +187,7 @@ function createPostgresApp({database,resourceDatabase=database,sessionStore,sess
   app.use(createPostgresAskRouter(database,{provider:aiProvider,agentInspection}));
   app.use(createPostgresReportsRouter(database));
   app.use(createPostgresConnectionsRouter(database,{providers:connectionProviders || undefined,
+    draftProviderConfigured:Boolean(aiProvider),
     publicOrigin:connectionPublicOrigin || (env==='test'?'request':undefined),
     paymentConnectOptions:paymentOptions?.connect||{},testMode:env==='test'}));
   app.use(createPostgresMailRouter(database,{providers:connectionProviders || undefined,aiProvider}));

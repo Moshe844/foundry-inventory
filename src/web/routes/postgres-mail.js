@@ -61,7 +61,8 @@ function createPostgresMailRouter(database,options={}){
       source:message.draft_source==='owner'?'person':message.draft_source,rejected:message.draft_rejected_because,
       sentAt:message.reply_sent_at}:null;
     const canImproveDraft=(await entitlements.capabilityState(database,commercialScope(req),
-      'communications.ai_drafts')).enabled&&Boolean(options.aiProvider||require('../../config').ai.configured);
+      'communications.ai_drafts')).enabled&&Boolean(options.aiProvider||require('../../config').ai.configured||require('../../assistant/postgres-codex-pilot').configured(req.ctx))
+      &&!['READY','RUNNING'].includes(message.preparation_goal_status)&&!['PENDING','RETRY','RUNNING'].includes(message.draft_job_status);
     return res.page('mail/message',{title:message.subject||'Message',nav:'mail',message,draft,productionMail:true,
       canImproveDraft,canWriteReply:permissions.can(req.user,permissions.OPERATE),
       prepared:{order:orderRows.rows[0]||null,because:message.order_draft_reason||null},
@@ -92,6 +93,11 @@ function createPostgresMailRouter(database,options={}){
       await mail.queueSend(database,req.ctx,req.params.id,{subject:req.body.subject,body:req.body.body},{providers:options.providers});
       req.flash('success','Reply queued securely. StockChief will show it as sent only after the mailbox provider confirms it.');
     }else if(req.body.action==='improve'){
+      if(!options.aiProvider&&require('../../assistant/postgres-codex-pilot').configured(req.ctx)){
+        await require('../../connections/postgres-mail-preparation').request(database,req.ctx,req.params.id);
+        req.flash('success','StockChief is preparing this reply. Your existing email and draft are saved.');
+        return res.redirect(303,`/mail/${req.params.id}`);
+      }
       await require('../../connections/postgres-reply-drafting').prepare(database,req.ctx,req.params.id,
         {provider:options.aiProvider});
       req.flash('success','StockChief prepared a reply from verified records. Check and edit it before sending.');
@@ -99,6 +105,11 @@ function createPostgresMailRouter(database,options={}){
       await mail.saveDraft(database,req.ctx,req.params.id,{subject:req.body.subject,body:req.body.body});
       req.flash('success','Draft saved exactly as written. Nothing was sent.');
     }
+    return res.redirect(303,`/mail/${req.params.id}`);
+  }));
+  router.post('/mail/:id/discard',requirePermission(permissions.OPERATE,'discard an unsent reply'),asyncRoute(async(req,res)=>{
+    await require('../../connections/postgres-mail-preparation').discard(database,req.ctx,req.params.id);
+    req.flash('success','Reply discarded. The original email and saved draft remain in history.');
     return res.redirect(303,`/mail/${req.params.id}`);
   }));
   return router;

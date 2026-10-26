@@ -1,0 +1,18 @@
+<section class="card" id="reply-preparation" data-mail-preparation data-status-url="/settings/connections/<%= encodeURIComponent(connection.id) %>/reply-preparation">
+  <div class="card-head"><h2>Let StockChief prepare your replies</h2></div>
+  <div class="card-body grid">
+    <p><strong data-mail-preparation-state><%= mailPreparation.label %></strong></p>
+    <p>For new emails from known customers and suppliers, StockChief reads the message and relevant records, then prepares a reply. Review, edit, send or discard it in Mail. Preparation uses your plan’s AI credits.</p>
+    <% if(currentUser.role==='owner'&&mailPreparation.available&&mailPreparation.connected){ %>
+    <form method="post" action="/settings/connections/<%= encodeURIComponent(connection.id) %>/reply-preparation">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="enabled" value="<%= mailPreparation.enabled?'0':'1' %>">
+      <button class="btn <%= mailPreparation.enabled?'':'btn--primary' %>" type="submit"><%= mailPreparation.enabled?'Stop automatic preparation':'Let StockChief handle reply preparation' %></button>
+    </form><% } %>
+    <p class="hint">Existing emails stay as they are. Open one and choose Prepare from verified records when needed. Sending always needs separate approval. Separate supplier-document instructions keep their own approval rules.</p>
+    <div aria-live="polite" data-mail-preparation-log>
+    <% if(!mailPreparation.entries.length){ %><p>No reply preparation recorded yet.</p><% } %>
+    <% for(const entry of mailPreparation.entries){ %><p><strong><%= entry.label %></strong> · <a href="/mail/<%= encodeURIComponent(entry.id) %>"><%= entry.subject %></a> · <time data-local-time datetime="<%= new Date(entry.at).toISOString() %>"><%= helpers.dateTime(entry.at) %></time></p><% } %>
+    </div>
+  </div>
+</section>
+<script src="/mail-preparation.js?v=<%= assetVersion %>" defer></script>

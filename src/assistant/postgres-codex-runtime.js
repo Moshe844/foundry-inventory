@@ -78,7 +78,7 @@ async function run(database,ctx,id,options={}){
    require(base+'codex-models').getProfile(modelProfile.verificationProfile).model:modelProfile.model;},
    complete:request=>{if(!helper)throw Error('GOVERNED_HELPER_NOT_READY');return helper.complete(request);}});
   const gateway=require(base+'gateway').createGateway({database,ctx:{...ctx,goalRunToken:goal.run_token},goal:goal.original_request,goalId:id,
-   runToken:goal.run_token,provider,rawProvider:provider,audit,accessGuard:async()=>{await require('../connections/postgres-document-review').authorize(database,ctx,goal.checkpoint.sourceAutomation);return pilot.access(database,ctx,{enabled:true});}});
+   runToken:goal.run_token,provider,rawProvider:provider,audit,accessGuard:async()=>{const automation=await require('../connections/postgres-source-automation').authorize(database,ctx,goal.checkpoint.sourceAutomation);return {...await pilot.access(database,ctx,{enabled:true}),...automation};}});
   const authorize=settings=>gateway.authorize(settings);
   session=require(base+'session').createSession({database,ctx,goalId:id,runToken:goal.run_token,candidate:'codex',authorize,serializeGoalWrite});
   // Publish is durable in the shared goal outbox. There is no file-review loop
@@ -160,6 +160,8 @@ async function run(database,ctx,id,options={}){
   // still receives exact native preflight and every unchanged spending hold.
   if(!pendingFinal&&!options.countInput){const warm=counter({model:modelProfile.model,reasoning:{effort:modelProfile.effort},
    input:[{role:'user',content:'Connection readiness check only; no model generation.'}]}).catch(()=>null);preparations.push(warm);}
+  const processing=require('../connections/postgres-source-automation').processing(goal);
+  if(processing)await session.initialize();
   let preparedSandbox=null,preparedContext=null;
   const prepareNative=()=>{
    preparedSandbox=options.sandboxPool?options.sandboxPool.take(image):require(base+'codex-runtime').prepareSandbox(image);
@@ -171,7 +173,7 @@ async function run(database,ctx,id,options={}){
   // Page context remains in the native prompt. The existing lazy browser
   // initializes on the agent's first browser tool or mandatory verification,
   // avoiding an unconditional renderer/DOM read for governed-record questions.
-  if(!pendingFinal)prepareNative();
+  if(!pendingFinal&&!processing)prepareNative();
   const fundingKey=`codex-staging:${id}`;
   const entitlements=require('../commercial/entitlements');
   // These fresh admission reads are independent. Join all of them before
@@ -222,7 +224,16 @@ async function run(database,ctx,id,options={}){
    wireProfile:'codex',livePermit:permit,requestGate:access=>session.codexRequest(access)});
   helperTransport.setNativeSession(session.helperDelivery());
   helper=require(base+'codex-helper-provider').create({transport:helperTransport,policy:helperPolicy});
-  audit({kind:'runtime_starting',status:'Starting the Codex SDK session'});
+  audit({kind:'runtime_starting',status:processing?'Preparing a record-grounded reply':'Starting the Codex SDK session'});
+  if(processing){
+   // The existing relay owns the key, exact token admission, durable response
+   // replay and account/goal/installation ledgers. This bounded task exposes
+   // no MCP tools or browser and never starts an autonomous business workflow.
+   const response=await helper.complete(processing);
+   await session.finish(async(client,{goal})=>({...await require('../connections/postgres-source-automation').completeProcessing(client,ctx,goal,response.data),
+     verificationSourceHash:require('./codex-staging-permit').assertBinding(permit,{budget,task:id,image}).sourceHash}));
+   transport.revoke();helperTransport.revoke();return store.get(database,ctx,id);
+  }
   result=pendingFinal?{answer:pendingFinal}:await require(base+'worker').run({candidate:'codex',session,gateway:{...gateway,authorize},browser:ui,budget,transport,
    codexPolicy:modelPolicy,modelRoutingInstructions:routing.instructions(ctx,modelProfile),
    preparedCodexSandbox:preparedSandbox,preparedCodexContext:preparedContext,

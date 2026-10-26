@@ -301,7 +301,18 @@ function createPostgresConnectionsRouter(database,options={}){
       connection,newConnectionToken,provider:adapter?.metadata?.()||{name:connection.display_name},
       commercePositions:await require('../../connections/postgres-commerce-sync').list(database,req.ctx.workspaceId,connection.id),
       canDiscover:Boolean(adapter?.discover)&&!isMailbox,isMailbox,mailboxLastPollAt,pendingWebhooks,catalogueReview,connectionProof,connectionIssues,
+      mailPreparation:isMailbox?await require('../../connections/postgres-mail-preparation').state(database,req.ctx,connection.id,
+        {providerConfigured:Boolean(options.draftProviderConfigured)}):null,
     });
+  }));
+  router.get('/settings/connections/:id/reply-preparation',asyncRoute(async(req,res)=>{
+    res.set('Cache-Control','no-store');return res.json(await require('../../connections/postgres-mail-preparation').state(database,req.ctx,req.params.id,
+      {providerConfigured:Boolean(options.draftProviderConfigured)}));
+  }));
+  router.post('/settings/connections/:id/reply-preparation',requireOwner,asyncRoute(async(req,res)=>{
+    await require('../../connections/postgres-mail-preparation').configure(database,req.ctx,req.params.id,req.body.enabled==='1');
+    req.flash('success',req.body.enabled==='1'?'StockChief will prepare replies to new business emails for your review. Nothing is sent automatically.':'Automatic reply preparation is off. Saved emails and drafts are kept.');
+    return res.redirect(303,'/settings/connections/'+encodeURIComponent(req.params.id)+'#reply-preparation');
   }));
   router.post('/settings/connections/:id/retry-events',requireOwner,asyncRoute(async(req,res)=>{
     const connection=await providerService.setupWebhookDelivery(database,req.ctx,req.params.id,

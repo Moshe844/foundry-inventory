@@ -65,7 +65,7 @@ test('real Chromium qualifies PostgreSQL business-mail filtering, exact replies 
     await database.query(`INSERT INTO workspace_connectors
       (id,workspace_id,connector_key,display_name,provider_type,provides,config,status,capabilities,credential_ref,
        expected_interval_minutes,setup_status,authorized_by_user_id,provider_account_id,provider_account_name,created_at,updated_at)
-      VALUES($1,$2,$3,'Business Gmail','gmail',$4,'{}','connected',$5,$6,5,'CONNECTED',$7,'mailbox-fixture',
+      VALUES($1,$2,$3,'Business Gmail','gmail',$4,'{"replyPreparationEnabled":true}','connected',$5,$6,5,'CONNECTED',$7,'mailbox-fixture',
         'business@example.test',$8,$8)`,[connectorId,ctx.workspaceId,`gmail:${connectorId}`,JSON.stringify(['business mail']),
       JSON.stringify(['mail:read','mail:send']),`connection_credentials:${connectorId}`,ctx.actorId,at]);
     await database.transaction((client)=>credentials.put(client,ctx.workspaceId,connectorId,'provider',

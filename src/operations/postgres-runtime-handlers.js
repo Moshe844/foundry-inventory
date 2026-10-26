@@ -69,12 +69,20 @@ async function mailReplyDraft(job,database,options={}){
   const actorId=job.payload?.actorId;
   if(!job.workspaceId||!messageId||!actorId)throw Object.assign(new Error('A mail draft needs workspace, message and owner identity.'),
     {code:'invalid_mail_reply_draft',retryable:false});
+  const enabled=(await database.query(`SELECT connector.config FROM connection_email_messages message
+    JOIN workspace_connectors connector ON connector.workspace_id=message.workspace_id AND connector.id=message.connector_id
+    WHERE message.workspace_id=$1 AND message.id=$2`,[job.workspaceId,messageId])).rows[0];
+  const settings=typeof enabled?.config==='string'?JSON.parse(enabled.config||'{}'):enabled?.config||{};
+  if(settings.replyPreparationEnabled!==true)return {skipped:'automatic_preparation_off',draftUnchanged:true};
   const row=(await database.query(`SELECT reply_state,reply_sent_at,draft_source FROM connection_email_messages
     WHERE workspace_id=$1 AND id=$2`,[job.workspaceId,messageId])).rows[0];
   if(!row)return {skipped:'message_missing'};
   if(row.reply_state!=='NEEDS_REPLY'||row.reply_sent_at)return {skipped:'reply_no_longer_needed'};
   if(row.draft_source==='owner'||row.draft_source==='model')return {skipped:'draft_already_prepared_or_edited'};
   if(await require('../connections/postgres-document-review').ownsAutomaticReply(database,job.workspaceId,messageId))return {skipped:'native_document_review',draftUnchanged:true};
+  const ctx={workspaceId:job.workspaceId,actorId};
+  if(!options.aiProvider&&require('../assistant/postgres-codex-pilot').configured(ctx))
+    return require('../connections/postgres-mail-preparation').request(database,ctx,messageId,{automatic:true});
   if(!options.aiProvider&&!config.ai.configured)return {skipped:'model_not_configured',draftUnchanged:true};
   const scope=await entitlements.ownerScopeForWorkspace(database,job.workspaceId);
   if(!(await entitlements.capabilityState(database,scope,'communications.ai_drafts')).enabled)

@@ -19,6 +19,9 @@
   <span><%= m.subject || 'No subject' %></span>
 </div>
 <% if(productionMail&&typeof attachmentReading!=='undefined'){ var review=attachmentReading.review; %><section class="card" data-document-review <%= review?'':'hidden' %>><div class="card-body"><h2>StockChief’s document review</h2><p role="status" aria-live="polite" data-document-review-status><%= review?.label || '' %></p><p data-document-review-detail><%= review?.reason || 'Open this review for required decisions and verified outcomes.' %></p><a class="btn" data-document-review-link <%= review?.href?'':'hidden' %> href="<%= review?.href || '#' %>">Open this review</a></div></section><% } %>
+<% if(productionMail&&allowReplyChanges&&draft&&!draft.sentAt&&!sending&&m.outbox_status!=='AMBIGUOUS'&&m.reply_state==='NEEDS_REPLY'){ %>
+<form method="post" action="/mail/<%= m.id %>/discard"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost" type="submit">Discard reply</button></form>
+<% } %>
 <div class="page-head">
   <div>
     <h1><%= m.subject || 'No subject' %> <span class="badge badge--<%= badge %>"><%= visibleReplyState %></span></h1>
@@ -32,6 +35,12 @@
     <a class="btn btn--primary" href="#reply">Reply now</a>
   <% } %>
 </div>
+<% if(productionMail&&m.preparation_goal_id&&m.reply_state==='NEEDS_REPLY'&&!m.reply_sent_at){ const activePreparation=['READY','RUNNING'].includes(m.preparation_goal_status); %>
+<div class="notice <%= activePreparation?'notice--info':'notice--warn' %>" role="status" data-native-reply-status>
+  <div><strong><%= activePreparation?'Reply preparation is in progress.':m.preparation_goal_status==='COMPLETED'?'Reply preparation completed.':'Reply preparation needs review.' %></strong>
+  <p><%= activePreparation?'Your existing email and draft are saved. StockChief is checking a new reply; nothing has been sent.':m.preparation_goal_status==='COMPLETED'?'Review the saved reply below before sending.':'The original email and any saved draft are kept. Open the preparation for its recorded result.' %></p>
+  <% if(m.preparation_goal_actor_id===currentUser.id){ %><a href="/ask?goal=<%= encodeURIComponent(m.preparation_goal_id) %>#focused-goal">Open this preparation</a><% } %></div>
+</div><% } %>
 
 <div class="notice notice--<%= m.reply_state === 'NEEDS_REPLY' && !sending ? 'warn' : 'info' %>">
   <div>
