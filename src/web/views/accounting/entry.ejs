@@ -11,7 +11,7 @@
 
 <% if (owner && owner.kind === 'sale') { %>
   <section class="card">
-    <div class="card-head"><h2>What this means</h2><span class="hint"><%= entry.posting_date %></span></div>
+    <div class="card-head"><h2>What this means</h2><span class="hint"><%= helpers.shortDate(entry.posting_date) %></span></div>
     <div class="card-body">
       <div class="accounting-explanation">
         <strong><%= owner.customerName %> bought <%= helpers.money(owner.revenueMinor, currency) %> of products.</strong><br>

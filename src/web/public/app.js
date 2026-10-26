@@ -32,7 +32,7 @@
     let generation = 0;
 
     const close = () => {
-      panel.hidden = true;
+      panel.hidden = true; input.setAttribute('aria-expanded','false');
       panel.innerHTML = '';
       activeIndex = -1;
     };
@@ -43,7 +43,7 @@
       if(term){const ask={title:'Ask StockChief: '+term,subtitle:'Open this question in Ask',href:'/ask?'+new URLSearchParams({q:term,from:location.pathname+location.search})};if(/[?？]$/.test(term)||term.split(/\s+/).length>=3)results.unshift(ask);else results.push(ask);}
       if (!results.length) {
         panel.innerHTML = '<div class="search-empty">No matches yet.</div>';
-        panel.hidden = false;
+        panel.hidden = false; input.setAttribute('aria-expanded','true');
         return;
       }
       panel.innerHTML = results
@@ -54,7 +54,7 @@
             `<span class="meta">${escapeHtml(r.meta || '')}</span></a>`
         )
         .join('');
-      panel.hidden = false;
+      panel.hidden = false; input.setAttribute('aria-expanded','true');
       activeIndex = -1;
     };
 
@@ -81,7 +81,7 @@
       }
       if (event.key === 'Enter' && activeIndex >= 0) {
         event.preventDefault();
-        window.location.href = hits[activeIndex].getAttribute('href');
+        hits[activeIndex].click();
       }
       return undefined;
     });
@@ -1793,7 +1793,7 @@
    */
   function initRailHeight() {
     const rail = document.querySelector('.rm-rail');
-    if (!rail) return;
+    if (!rail || rail.classList.contains('sc-sidebar')) return;
     // Only where the rail is allowed to wrap. On wider screens its height is
     // set *from* the variable, so feeding the measurement back would grow it
     // by a border's width every frame.
@@ -1819,6 +1819,7 @@
   function initAskScroll() {
     if(window.StockChiefNavigation?.wasRestored())return;
     const chat = document.querySelector('.rm-chat');
+    if (chat?.querySelector('[data-chat-scroll]'))return;
     if (!chat || !chat.querySelector('.rm-history, .rm-turn--past')) return;
     // Back from a page with something to say ("Remembered…", "Dana Brook is
     // ready"): the message sits above the chat, and scrolling past it is how

@@ -1,16 +1,10 @@
 <div class="page-head">
   <div class="titles">
     <% if (returnTo) { %><a class="back-link" href="<%= returnTo %>">← Back to <%= returnLabel %> message history</a><% } %>
-    <h1><%= sourceLabel ? `Products from ${sourceLabel}` : filters.archivedOnly ? 'Archived products' : activeGroup ? activeGroup.name.replace(/^[0-9]+ /, '').replace(/^[a-z]/, function (c) { return c.toUpperCase(); }) : 'Inventory' %></h1>
+    <h1><%= sourceLabel ? `Products from ${sourceLabel}` : filters.archivedOnly ? 'Archived products' : activeGroup ? activeGroup.name.replace(/^[0-9]+ /, '').replace(/^[a-z]/, function (c) { return c.toUpperCase(); }) : 'Products' %></h1>
     <div class="page-sub"><%= sourceLabel ? 'The exact original product records from this import, whether active or archived.' : filters.archivedOnly ? 'Products kept for history but not currently active.' : activeGroup ? activeGroup.detail : 'Everything you track, and how much of it you have.' %></div>
   </div>
-  <div class="page-actions">
-      <a class="btn" href="/imports">File imports and results</a>
-      <%# Purchasing is how stock arrives, so it belongs to Inventory rather
-          than to a department of its own in the sidebar. %>
-      <a class="btn" href="/purchasing"><%- helpers.icon('purchasing', { size: 15 }) %> Ordering and suppliers</a>
-      <a class="btn" href="/planning">What happens next</a>
-    <a class="btn btn--primary" href="/inventory/new"><%- helpers.icon('plus', { size: 16 }) %> Add item</a>
+  <div class="page-actions"><a class="btn" href="/inventory/overview">Stock overview</a><a class="btn" href="/imports">Import</a><a class="btn btn--primary" href="/inventory/new">Add product</a>
   </div>
 </div>
 
@@ -22,7 +16,7 @@
   </div>
 <% } %>
 
-<% if(locals.postgresNative&&currentUser.role==='owner'&&items.length){ %><form id="catalog-bulk-form" class="card card-body form-inline" method="post" action="/inventory/bulk"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label><input type="checkbox" data-select-all-products> Select all products on this page</label><label for="catalog-bulk-action">With selected products</label><select class="select" name="kind" id="catalog-bulk-action"><option value="export">Export selection</option><option value="price">Change selling prices</option><option value="move">Request stock to move</option><option value="archive">Archive products with zero stock</option><option value="restore">Restore archived products</option></select><button class="btn" type="submit">Continue</button></form><% } %>
+<% if(locals.postgresNative&&currentUser.role==='owner'&&items.length){ %><form id="catalog-bulk-form" data-bulk-toolbar class="card card-body form-inline" method="post" action="/inventory/bulk"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label><input type="checkbox" data-select-all-products> Select all products on this page</label><label for="catalog-bulk-action">With selected products</label><select class="select" name="kind" id="catalog-bulk-action"><option value="export">Export selection</option><option value="price">Change selling prices</option><option value="move">Request stock to move</option><option value="archive">Archive products with zero stock</option><option value="restore">Restore archived products</option></select><button class="btn" type="submit">Continue</button></form><% } %>
 <form class="filters" method="get" action="<%= locals.postgresNative?'/inventory/table':'/inventory' %>">
   <input class="input filter-search" type="search" name="q" value="<%= filters.q %>" placeholder="Search items, SKUs, serials, lots" aria-label="Search inventory">
   <select class="select" name="tracking" aria-label="Tracking type" data-auto-submit>

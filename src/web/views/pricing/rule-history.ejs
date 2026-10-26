@@ -1,3 +1,3 @@
 <link rel="stylesheet" href="/pricing-rules.css">
 <section class="pricing-page-head"><h1>Pricing history</h1><p>Each approved version is retained. Changing a rule does not rewrite existing transactions.</p></section>
-<% for(const version of versions){ %><section class="card"><h2><%= version.definition.name %> · revision <%= version.revision %></h2><p><%= version.created_at %></p><dl><% for(const [name,value]of version.rows){ %><dt><strong><%= name %></strong></dt><dd><%= value %></dd><% } %></dl></section><% } %><a href="/sales/pricing">Back to pricing</a>
+<% for(const version of versions){ %><section class="card"><h2><%= version.definition.name %> · revision <%= version.revision %></h2><p><%= helpers.dateTime(version.created_at) %></p><dl><% for(const [name,value]of version.rows){ %><dt><strong><%= name %></strong></dt><dd><%= value %></dd><% } %></dl></section><% } %><a href="/sales/pricing">Back to pricing</a>

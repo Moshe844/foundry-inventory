@@ -75,7 +75,7 @@ async function saveGoals(database, ctx, input) {
   return goals(database, ctx.workspaceId);
 }
 
-async function position(database, workspaceId) {
+async function position(database, workspaceId, {recommendationsOnly=false}={}) {
   const result = await database.query(`WITH movement_sales AS (
       SELECT sku_id,location_id,COALESCE(SUM(-quantity_delta),0) AS sold_90
       FROM movements WHERE workspace_id=$1 AND operation='issue' AND quantity_delta<0
@@ -95,13 +95,20 @@ async function position(database, workspaceId) {
     ), latest_cost AS (
       SELECT DISTINCT ON (sku_id) sku_id,amount_minor FROM sku_purchase_costs WHERE workspace_id=$1
       ORDER BY sku_id,created_at DESC,id DESC
+    ), position_scope AS MATERIALIZED (
+      SELECT sku_id,location_id FROM movement_sales WHERE $2::boolean AND sold_90>0
+      UNION ALL
+      SELECT sku.id,location.id FROM skus sku CROSS JOIN locations location
+      WHERE NOT $2::boolean AND sku.workspace_id=$1 AND sku.is_active=1
+        AND location.workspace_id=$1 AND location.is_active=1
     )
     SELECT s.id AS sku_id,s.code,i.id AS item_id,i.name,i.tracking_mode,l.id AS location_id,l.name AS location_name,
       COALESCE(b.on_hand,0) AS on_hand,COALESCE(c.units,0) AS committed,COALESCE(inc.units,0) AS incoming,
       COALESCE(ms.sold_90,0) AS sold_90,rp.id AS policy_id,rp.reorder_point,rp.target_stock,rp.safety_stock,
       COALESCE(rp.lead_time_days,14) AS lead_time_days,lc.amount_minor AS cost_minor
-    FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
-    CROSS JOIN locations l LEFT JOIN balances b ON b.workspace_id=s.workspace_id AND b.sku_id=s.id AND b.location_id=l.id
+    FROM position_scope scope JOIN skus s ON s.id=scope.sku_id AND s.workspace_id=$1
+    JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
+    JOIN locations l ON l.id=scope.location_id AND l.workspace_id=$1 LEFT JOIN balances b ON b.workspace_id=s.workspace_id AND b.sku_id=s.id AND b.location_id=l.id
     LEFT JOIN movement_sales ms ON ms.sku_id=s.id AND ms.location_id=l.id
     LEFT JOIN committed c ON c.sku_id=s.id AND c.location_id=l.id
     LEFT JOIN incoming inc ON inc.sku_id=s.id AND inc.location_id=l.id
@@ -111,7 +118,7 @@ async function position(database, workspaceId) {
       ORDER BY (policy.location_id IS NOT NULL) DESC,policy.updated_at DESC,policy.id LIMIT 1) rp ON TRUE
     LEFT JOIN latest_cost lc ON lc.sku_id=s.id
     WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 AND l.workspace_id=$1 AND l.is_active=1
-    ORDER BY i.name,s.position,l.name`, [workspaceId]);
+    ORDER BY i.name,s.position,l.name`, [workspaceId,recommendationsOnly]);
   return result.rows.map(row => {
     const onHand = Number(row.on_hand); const committed = Number(row.committed); const incoming = Number(row.incoming);
     const sold90 = Number(row.sold_90); const dailyRate = sold90 / 90; const available = onHand - committed;
@@ -202,7 +209,7 @@ async function overview(database, workspaceId) {
 // evaluation. Inspecting a forecast is a read, including for the agent browser.
 async function refreshRecommendations(database,workspaceId){
   await require('../commercial/enforcement').workspace(database,workspaceId,'planning.transfer_before_buy');
-  await ensureRecommendations(database,workspaceId,await position(database,workspaceId));
+  await ensureRecommendations(database,workspaceId,await position(database,workspaceId,{recommendationsOnly:true}));
 }
 
 async function decide(database, ctx, id, decision) {

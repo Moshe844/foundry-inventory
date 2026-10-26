@@ -156,216 +156,24 @@
   ];
 %>
 
-<header class="rm-head">
-  <p class="rm-head__eyebrow"><%- helpers.icon('link', { size: 15 }) %> <%= inventorySetup?'Inventory setup':'Integrations' %></p>
-  <h1><%= inventorySetup?'Connect a platform':'Where your business already happens' %></h1>
-  <p>
-    <%= inventorySetup?'Choose a platform that can supply your starting products, SKUs or stock. Other operational connections remain available in Integrations after setup.':'Each inventory has its own accounts. Connect your systems, review their status and resolve records that need matching.' %>
-  </p>
-</header>
-
-<% problems.forEach(function (problem) { %>
-  <div class="rm-note rm-note--warn">
-    <%- helpers.icon('alert', { size: 16 }) %>
-    <div>
-      <strong><%= problem.title %></strong>
-      <%= problem.body %>
-      <% if (problem.where) { %> <a href="<%= problem.where %>">Open it</a><% } %>
-    </div>
-  </div>
-<% }) %>
-
-<%# ------------------------------------------------------------- what is live %>
-<div class="rm-sect">
-  <h2>Working now</h2>
-  <% if (live.length) { %><span class="rm-sect__c"><%= live.length %> connected</span><% } %>
+<header class="rm-head"><h1><%= inventorySetup?'Connect a platform':'Integrations' %></h1><p><%= inventorySetup?'Start with a system that holds your products, SKUs or stock.':'Connect this business’s accounts. Each connection keeps its own authorization, records and sync settings.' %></p></header>
+<% const providerCards=helpers.connectionCards(providerCatalog,connections).filter(card=>card.provider.available||card.connection); %>
+<div class="rm-choices-grid sc-integration-grid">
+<% for(const card of providerCards){ const provider=card.provider,requiredCommercialCapability=providerCommercialCapability(provider.type),includedOnPlan=commercialPlanUnrestricted||!requiredCommercialCapability||includedCommercialCapabilities.has(requiredCommercialCapability); %>
+ <article class="rm-provider" data-integration-card="<%= provider.type %>"><div class="rm-provider__h"><span class="rm-provider__mark" aria-hidden="true"><%= provider.mark||'↗' %></span><strong class="rm-provider__n"><%= provider.name %></strong><span class="badge <%= card.state==='Connected'?'badge--success':card.state==='Error'?'badge--danger':'badge--muted' %>"><%= card.state %></span></div>
+ <p><%= provider.description %></p>
+ <% if(card.connection){ %><p><strong><%= card.connection.provider_account_name||card.connection.display_name %></strong></p><p class="sc-last-sync">Last sync: <%= card.lastSync?helpers.dateTime(card.lastSync):'Not synced yet' %></p><% if(card.needsMatching){ %><p class="quiet"><%= card.needsMatching %> product or location matches need review.</p><% } %><a class="btn btn--primary" href="<%= card.href %>"><%= card.state==='Error'?'Fix connection':'Manage' %></a>
+ <% if(card.records.length>1){ %><details><summary><%= card.records.length %> accounts</summary><% for(const record of card.records){ %><p><a href="/settings/connections/<%= record.id %>"><%= record.display_name %></a></p><% } %></details><% } %>
+ <% }else{ %><p class="sc-last-sync">Last sync: Not connected</p><% if(provider.authorizationPrerequisite){ %><p class="quiet"><%= provider.authorizationPrerequisite.message %> <a href="<%= provider.authorizationPrerequisite.href %>" target="_blank" rel="noopener noreferrer"><%= provider.authorizationPrerequisite.label %></a></p><% } %><% if(['shopify','woocommerce','bigcommerce'].includes(provider.type)||provider.integrationMode==='custom_contract'||provider.type==='reference_webhook'){ %><button type="button" class="btn btn--primary sc-connect-action" data-modal-open="connect-<%= provider.type %>">Connect <%= provider.name %></button><dialog class="sc-connect-dialog" id="connect-<%= provider.type %>" aria-label="Connect <%= provider.name %>"><header><h2>Connect <%= provider.name %></h2><button type="button" class="btn btn--ghost" data-modal-close>Close</button></header><%- include('provider-connect-form',{provider,requiredCommercialCapability,includedOnPlan,postgresMode,csrfToken}) %></dialog><% }else{ %><%- include('provider-connect-form',{provider,requiredCommercialCapability,includedOnPlan,postgresMode,csrfToken}) %><% } %><% } %>
+ </article>
+<% } %>
+<% if(!inventorySetup&&pay){ %><article class="rm-provider" data-integration-card="stripe"><div class="rm-provider__h"><strong class="rm-provider__n">Stripe</strong><span class="badge <%= pay.connected&&!unfinishedStripe?'badge--success':'badge--muted' %>"><%= pay.connected&&!unfinishedStripe?'Connected':'Not connected' %></span></div><p>Collect invoice payments and verify refunds through your own merchant account.</p><% if(pay.connected){ %><p class="quiet"><%= pay.liveMode?'Live merchant':'Test merchant' %> · <%= pay.displayName||'Stripe account' %></p><% } %><p class="sc-last-sync"><%= pay.checkedAt?'Last checked: '+helpers.dateTime(pay.checkedAt):'No account check recorded yet' %></p><a class="btn btn--primary" href="<%= pay.connected||!grant?.available?'#payments':'/settings/connections/payments/launch?ticket='+encodeURIComponent(locals.launchTicket||'') %>" <%- !pay.connected&&grant?.available?'data-provider-connect':'' %>><%= pay.connected?'Manage':'Connect Stripe' %></a></article><% } %>
+<% if(!inventorySetup&&locals.cardknoxAccount){ %><article class="rm-provider" data-integration-card="cardknox"><div class="rm-provider__h"><strong class="rm-provider__n">Sola / Cardknox</strong><span class="badge"><%= cardknoxAccount.connected?'Connected':'Not connected' %></span></div><p>Connect your own merchant keys to collect invoice payments securely.</p><a class="btn btn--primary" href="#cardknox"><%= cardknoxAccount.connected?'Manage':'Connect Sola' %></a></article><% } %>
+<% if(!inventorySetup){ %><article class="rm-provider" data-integration-card="shipping"><div class="rm-provider__h"><strong class="rm-provider__n">Shipping accounts</strong><span class="badge"><%= shipping?.connected?'Connected':'Not connected' %></span></div><p>Compare rates, prepare labels and track shipments. Your provider bills your own account.</p><a class="btn btn--primary" href="/settings/shipping">Manage shipping</a></article><% } %>
 </div>
-
-<% if (!live.length) { %>
-  <div class="rm-empty">
-    <span class="rm-empty__ic"><%- helpers.icon('link', { size: 19 }) %></span>
-    <strong>Nothing is connected yet</strong>
-    <p>
-      Connect where you make sales and StockChief brings them in automatically, asking only when a
-      product or location cannot be matched. Pick one below.
-    </p>
-  </div>
-<% } else { %>
-  <div class="rm-told">
-    <% live.forEach(function (row) { %>
-      <a class="rm-told__row" href="<%= row.href %>">
-        <span class="rm-told__t">
-          <%= row.name %>
-          <small><%= row.meta %></small>
-        </span>
-        <span class="rm-told__m <%= row.tone %>"><%= row.status %></span>
-      </a>
-    <% }) %>
-  </div>
-<% } %>
-
-<% if (setupAttempts.length) { %>
-  <details class="rm-work">
-    <summary>
-      <%= setupAttempts.length %> unfinished setup attempt<%= setupAttempts.length === 1 ? '' : 's' %>
-      — nothing working was replaced or disconnected
-    </summary>
-    <div class="rm-work__body">
-      <% setupAttempts.forEach(function (connection) { %>
-        <p><strong><%= connection.display_name %></strong> — <%= connection.last_error || 'Authorization was not completed.' %></p>
-      <% }) %>
-    </div>
-  </details>
-<% } %>
-
-<% if (disconnectedConnections.length) { %>
-  <details class="rm-work">
-    <summary><%= disconnectedConnections.length %> disconnected or incomplete connection<%= disconnectedConnections.length === 1 ? '' : 's' %> · history retained</summary>
-    <div class="rm-work__body">
-      <% disconnectedConnections.forEach(function (connection) { %>
-        <p><strong><%= connection.display_name %></strong> · <%= connection.provider_type.replaceAll('_', ' ') %>
-          — <%= connection.last_error || 'Not connected to this inventory.' %>
-          <a href="/settings/connections/<%= connection.id %>">View record</a></p>
-      <% }) %>
-    </div>
-  </details>
-<% } %>
-
-<%# ----------------------------------------------------- what you can connect %>
-<% providerGroups.forEach(function (group) {
-     var groupProviders = providerCatalog.filter(function (p) { return p.category === group.key; });
-     if (!groupProviders.length) return; %>
-  <%# Supplier screens link here directly. Keep the other historic group IDs
-      while giving supplier communication a real, stable destination. %>
-  <div class="rm-sect" id="<%= group.key === 'supplier' ? 'supplier-communication' : 'group-' + group.key %>">
-    <h2><%= group.title %></h2>
-    <p><%= group.description %></p>
-  </div>
-  <div class="rm-choices-grid">
-    <% groupProviders.forEach(function (provider) {
-         var alreadyConnected = activeConnections.some(function (connection) {
-           return connection.provider_type === provider.type && connection.status === 'connected';
-         });
-         var requiredCommercialCapability = providerCommercialCapability(provider.type);
-         var includedOnPlan = commercialPlanUnrestricted || !requiredCommercialCapability
-           || includedCommercialCapabilities.has(requiredCommercialCapability); %>
-      <div class="rm-provider">
-        <div class="rm-provider__top">
-          <span class="rm-provider__mark <%= String(provider.mark).length > 2 ? 'is-word' : '' %>" aria-hidden="true"><%= provider.mark %></span>
-          <span class="rm-provider__n"><%= provider.name %></span>
-          <span class="rm-provider__s">
-          <% if(provider.pilot){ %><span class="rm-pillbadge">Test connection</span><% } %>
-          <% if (alreadyConnected) { %><span class="rm-pillbadge is-ok">Connected</span>
-            <% } else if (!provider.available) { %><span class="rm-pillbadge">Not ready to connect</span>
-            <% } else if (!includedOnPlan) { %><span class="rm-pillbadge">Growth</span><% } %>
-          </span>
-        </div>
-        <p><%= provider.description %></p>
-      <% if(postgresMode&&provider.initialInventoryImport&&provider.integrationClass!=='accounting'){ %><p class="hint">Connecting imports new products, initial prices, locations and reported opening stock once. Missing quantities and costs need review. Historical sales are not replayed.</p><% } %>
-        <% if (provider.available && provider.authorizationPrerequisite) { %>
-          <div class="rm-note rm-note--warn" data-authorization-prerequisite>
-            <p><%= provider.authorizationPrerequisite.message %>
-              <a href="<%= provider.authorizationPrerequisite.href %>" target="_blank" rel="noopener noreferrer"><%= provider.authorizationPrerequisite.label %></a>
-            </p>
-          </div>
-        <% } %>
-
-        <% if (!provider.available) { %>
-          <p class="quiet"><%= provider.unavailableReason %></p>
-        <% } else if (currentUser.role !== 'owner') { %>
-          <p class="quiet">An owner can connect this</p>
-        <% } else if (!includedOnPlan) { %>
-          <p class="quiet">Available on Growth. Let StockChief bring this system into the operation automatically.</p>
-          <a class="rm-btn rm-btn--wash" href="/upgrade?capability=<%= encodeURIComponent(requiredCommercialCapability) %>&return=<%= encodeURIComponent('/settings/connections') %>">See Growth</a>
-        <% } else if (provider.type === 'reference_webhook' || provider.integrationMode === 'custom_contract') { %>
-          <form method="post" action="<%= postgresMode ? '/settings/connections/custom' : '/settings/connections' %>">
-            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-            <input type="hidden" name="providerType" value="reference_webhook">
-            <label class="visually-hidden" for="ref-name-<%= provider.type %>">Connection name</label>
-            <input class="input" id="ref-name-<%= provider.type %>" name="displayName" placeholder="<%= provider.integrationMode === 'custom_contract' ? 'Name this ERP or business system' : 'Warehouse ERP' %>" required>
-            <button class="rm-btn rm-btn--wash" type="submit"><%= provider.integrationMode === 'custom_contract' ? 'Start verified ERP connection' : 'Create connection' %></button>
-          </form>
-        <% } else if (provider.type==='woocommerce') { %>
-          <%- include('woocommerce-connect',{provider,postgresMode,csrfToken}) %>
-        <% } else if (postgresMode && ['oauth', 'application_auth'].includes(provider.authMode)
-            && !['shopify', 'woocommerce', 'bigcommerce'].includes(provider.type)) { %>
-          <a class="rm-btn <%= alreadyConnected ? 'rm-btn--ghost' : 'rm-btn--wash' %>"
-            href="/settings/connections/<%= provider.type %>/launch?ticket=<%= encodeURIComponent(launchTicket) %>"
-            data-provider-connect><%= alreadyConnected ? 'Connect another ' : 'Connect ' %><%= provider.name %></a>
-        <% } else { %>
-          <form method="post" action="<%= postgresMode ? '/settings/connections/' + provider.type + '/authorize' : '/settings/connections/connect' %>"
-            data-oauth-connect="<%= ['oauth', 'application_auth'].includes(provider.authMode) ? provider.type : '' %>"
-            data-provider-name="<%= provider.name %>">
-            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-            <input type="hidden" name="providerType" value="<%= provider.type %>">
-            <% if (provider.type === 'shopify') { %>
-              <label class="visually-hidden" for="shop-<%= provider.type %>">Shopify store</label>
-              <input class="input" id="shop-<%= provider.type %>" name="shop" placeholder="your-store.myshopify.com" required>
-            <% } %>
-            <% if (provider.type === 'woocommerce') { %>
-              <label class="visually-hidden" for="store-<%= provider.type %>">WooCommerce store URL</label>
-              <input class="input" id="store-<%= provider.type %>" type="url" name="storeUrl" placeholder="https://shop.example.com" required>
-            <% } %>
-            <% if (provider.type === 'bigcommerce') { %>
-              <label for="store-bigcommerce">Permanent BigCommerce store address</label>
-              <input class="input" id="store-bigcommerce" type="url" name="storeUrl" placeholder="https://store-….mybigcommerce.com" required>
-              <p>Your control panel shows this address. Sign in at BigCommerce and select this same store to authorize it.</p>
-            <% } %>
-            <button class="rm-btn <%= alreadyConnected ? 'rm-btn--ghost' : 'rm-btn--wash' %>" type="submit"><%= alreadyConnected ? 'Connect another' : 'Connect' %></button>
-          </form>
-        <% } %>
-
-        <% if (currentUser.role === 'owner' && (provider.type === 'quickbooks' || provider.type === 'xero')) { %>
-          <details class="rm-more rm-provider-setup">
-            <summary><%= provider.available ? 'Developer app settings' : 'How to enable this connection' %></summary>
-            <div>
-              <p>Create a standard OAuth web app in <%= provider.name %>.</p>
-              <% if (provider.type === 'quickbooks' && provider.environment) { %>
-                <p><strong>Credential set in use</strong></p>
-                <code><%= provider.environment === 'production' ? 'Production' : 'Sandbox' %></code>
-              <% } %>
-              <% if (provider.type === 'xero') { %>
-                <p><strong>Company or application URL</strong></p>
-                <code><%= publicOrigin || 'https://your-public-foundry-domain.example' %></code>
-              <% } %>
-              <p><strong>OAuth redirect URI — copy this exactly</strong></p>
-              <code><%= provider.type === 'xero' ? xeroRedirectOrigin : (publicOrigin || 'https://your-public-foundry-domain.example') %>/settings/connections/<%= provider.type %>/callback</code>
-              <% if (!provider.available) { %>
-                <p>Set <code><%= provider.type === 'quickbooks' ? 'QUICKBOOKS_CLIENT_ID' : 'XERO_CLIENT_ID' %></code> and <code><%= provider.type === 'quickbooks' ? 'QUICKBOOKS_CLIENT_SECRET' : 'XERO_CLIENT_SECRET' %></code> on the StockChief server, then restart StockChief. The Connect button will appear here.</p>
-              <% } else { %>
-                <p>The developer app must contain this exact callback, including the protocol, hostname and path.</p>
-              <% } %>
-              <% if (!publicOrigin) { %><p>Set <code>FOUNDRY_PUBLIC_URL</code> to the public HTTPS address first.</p><% } %>
-            </div>
-          </details>
-        <% } %>
-
-        <%# What it brings in, and what happens when you press connect, are both
-            real but neither is needed before somebody has decided this is their
-            till. %>
-        <details class="rm-more">
-          <summary>What this brings in</summary>
-          <div>
-            <p><strong>Provides:</strong> <%= provider.provides.join(', ') %>.</p>
-            <% if (!provider.available) { %>
-              <p><%= provider.unavailableReason %></p>
-            <% } else if (provider.type === 'reference_webhook' || provider.integrationMode === 'custom_contract') { %>
-              <p>StockChief gives your technical team one endpoint, a scoped API token and the complete event contract. It proves each event is valid, correctly ordered and applied once before it can affect operations.</p>
-            <% } else if (provider.type === 'shopify') { %>
-              <p>An installed store in this Shopify organization connects directly. Other stores open Shopify for approval. StockChief stores the resulting credential encrypted.</p>
-            <% } else if (provider.type === 'clover') { %>
-              <p>Clover opens so you can choose and authorize the merchant. StockChief then discovers that merchant’s catalog and store automatically.</p>
-            <% } else { %>
-              <p>You sign in with <%= provider.name %> and approve access. StockChief stores the resulting credential encrypted.</p>
-            <% } %>
-          </div>
-        </details>
-      </div>
-    <% }) %>
-  </div>
-<% }) %>
-
-<% if(!inventorySetup){ %><details class="rm-work" id="developer-api" <%= postgresMode || apiToken || webhookSecret ? 'open' : '' %>>
+<% if(connections.length){ %><details class="rm-work"><summary>Connection history</summary><div class="rm-work__body"><% for(const connection of connections){ %><p><a href="/settings/connections/<%= connection.id %>"><%= connection.display_name %></a> · <%= connection.status==='disconnected'?'Not connected':connection.publicStatus %></p><% } %></div></details><% } %>
+<% if(!inventorySetup){ %><details class="rm-work" id="connection-account-settings"><summary>Payment, shipping and developer settings</summary><div class="rm-work__body">
+<% if(!inventorySetup){ %><details class="rm-work" id="developer-api" <%= apiToken || webhookSecret ? 'open' : '' %>>
   <summary>Advanced: connect custom software with APIs and webhooks</summary>
   <div class="rm-work__body">
     <p class="quiet"><strong>Most business owners do not need this.</strong> Use it only when your ERP, warehouse system, developer, or reporting tool needs to exchange data directly with StockChief.</p>
@@ -610,6 +418,7 @@
 
 <span hidden data-connection-host data-workspace-id="<%= currentWorkspaceId||'' %>" data-public-origin="<%= publicOrigin||'' %>"></span>
 <script src="/connection-return.js?v=<%= assetVersion %>"></script>
+</div></details><% } %>
 <script>
 (function () {
   // Authorization links follow the current tab. Their saved return intent is

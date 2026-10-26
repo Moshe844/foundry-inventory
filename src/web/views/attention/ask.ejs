@@ -1,4 +1,4 @@
-<%- include('../partials/ai-spending-status') %>
+
 <%
   /*
    * The Line — the running conversation with StockChief.
@@ -79,7 +79,10 @@
   }
 %>
 
-<div class="rm-chat<%= guidedEmailStep ? ' rm-chat--guided' : '' %>" data-conversation="<%= locals.conversationId || '' %>">
+<div class="sc-chat-workspace"><aside class="sc-chat-history" aria-label="Conversation history"><h2>Conversations</h2><a href="/ask/history" class="btn">Saved requests</a><a href="/ask/capabilities">What StockChief can do</a><% for(const request of (locals.recentRequests||[])){ %><a class="sc-recent-request" href="/ask/history?goal=<%= encodeURIComponent(request.id) %>"><%= request.original_request %><small><%= helpers.dateTime(request.created_at) %></small></a><% } %><details class="sc-ai-details"><summary>AI credits</summary><%- include('../partials/ai-spending-status') %></details><% if (currentUser && ['owner','manager','staff'].includes(currentUser.role)) { %><p class="sc-feedback"><a href="/autopilot/misses">Report a wrong answer or missing requirement</a></p><% } %>
+
+</aside>
+<div class="rm-chat<%= guidedEmailStep ? ' rm-chat--guided' : '' %>" data-conversation="<%= locals.conversationId || '' %>"><div class="sc-chat-scroll" data-chat-scroll data-navigation-scroll id="chat-messages" role="log" aria-label="Conversation" aria-live="polite">
   <% if(locals.showAgentDiagnostics===true&&locals.codexPilot){ %>
     <section class="rm-note" style="display:block" aria-label="Staging agent controls">
       <p><strong>Staging agent pilot</strong> · <%= locals.codexPilot.enabled?'Codex SDK · Adaptive reasoning':'Existing Ask' %></p>
@@ -98,7 +101,7 @@
   <% if (started) { %>
   <div class="rm-chat__bar">
     <div><p class="rm-stamp">Your direct line</p><h1 class="rm-chat__title">Ask StockChief</h1></div>
-      <div class="rm-chat__new"><a class="rm-btn rm-btn--ghost rm-btn--sm" href="/ask/history">Saved requests</a><a class="rm-btn rm-btn--ghost rm-btn--sm" href="/ask/capabilities">What I can do here</a>
+      <div class="rm-chat__new"><a class="rm-btn rm-btn--ghost rm-btn--sm" href="/ask/history">All conversations</a><a class="rm-btn rm-btn--ghost rm-btn--sm" href="/ask/capabilities">What I can do here</a>
         <form method="post" action="/ask/new">
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
           <button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">New conversation</button>
@@ -115,7 +118,7 @@
         <p class="rm-prose">
           Ask about the business or tell me what should happen. I will find the records and show any change before it is made.
         </p>
-        <p><a class="rm-btn rm-btn--ghost rm-btn--sm" href="/ask/history">Saved requests</a> <a class="rm-btn rm-btn--ghost rm-btn--sm" href="/ask/capabilities">See everything I can do in this inventory</a></p>
+        <p><a class="rm-btn rm-btn--ghost rm-btn--sm" href="/ask/history">All conversations</a> <a class="rm-btn rm-btn--ghost rm-btn--sm" href="/ask/capabilities">See everything I can do in this inventory</a></p>
       </div>
     </header>
   <% } %>
@@ -443,19 +446,6 @@
     </div>
   <% }) %>
 
-  <%# ------------------------------------------------------------- composer %>
-  <%- include('../partials/composer', {
-    queryConversation: true,
-    emailBodyContinuation: locals.emailBodyContinuation,
-    continuationGoalId: locals.continuationGoalId,
-    composerPrefill: error ? question : locals.prefill ? locals.prefill : about ? 'About ' + about + ': ' : '',
-    composerPlaceholder: locals.emailBodyContinuation ? 'Write the email message to ' + locals.emailBodyContinuation.recipient + '…' : result && result.actionClarification ? 'Answer the question above…' : 'Ask what’s happening or tell StockChief what to do…',
-    actionClarification: result && result.actionClarification ? result.actionClarification : null,
-    usageKey: locals.usageKey,
-    sourcePath: locals.sourcePath,
-    hideAttachment: false,
-  }) %>
-
   <% if (!aiConfigured) { %>
     <p class="rm-stamp" style="margin-top:14px;color:var(--copper)">
       Broader free-form language needs a model connection. Grounded questions and deterministic workflows still work without one.
@@ -484,5 +474,19 @@
   <% } %>
 
 </div>
-<% if(locals.adaptiveGoal&&!locals.agentInspection){ %><script src="/agent-answer.js?v=<%= assetVersion %>" defer></script><script src="/adaptive-goal.js?v=<%= assetVersion %>" defer></script><% } %>
-<% if (currentUser && ['owner','manager','staff'].includes(currentUser.role)) { %><p class="rm-disclose"><a href="/autopilot/misses">Report a wrong answer or missing requirement</a></p><% } %>
+  <%# ------------------------------------------------------------- composer %>
+  <%- include('../partials/composer', {
+    queryConversation: true,
+    emailBodyContinuation: locals.emailBodyContinuation,
+    continuationGoalId: locals.continuationGoalId,
+    composerPrefill: error ? question : locals.prefill ? locals.prefill : about ? 'About ' + about + ': ' : '',
+    composerPlaceholder: locals.emailBodyContinuation ? 'Write the email message to ' + locals.emailBodyContinuation.recipient + '…' : result && result.actionClarification ? 'Answer the question above…' : 'Ask what’s happening or tell StockChief what to do…',
+    actionClarification: result && result.actionClarification ? result.actionClarification : null,
+    usageKey: locals.usageKey,
+    sourcePath: locals.sourcePath,
+    hideAttachment: false, chatComposer:true,
+  }) %>
+
+
+</div>
+</div><% if(locals.adaptiveGoal&&!locals.agentInspection){ %><script src="/agent-answer.js?v=<%= assetVersion %>" defer></script><script src="/adaptive-goal.js?v=<%= assetVersion %>" defer></script><% } %>

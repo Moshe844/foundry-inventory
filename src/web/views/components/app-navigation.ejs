@@ -1,0 +1,20 @@
+<header class="sc-sidebar" id="app-sidebar" aria-label="StockChief navigation">
+  <button type="button" class="btn btn--ghost sc-sidebar-close" data-sidebar-close>Close menu</button>
+  <a class="sc-brand" href="/" aria-label="StockChief"><span class="sc-brand-mark"><%- helpers.icon('inventory',{size:20}) %></span>StockChief</a>
+  <% if(workspace){ %>
+  <div class="sc-workspace" data-switcher>
+    <button class="sc-workspace__btn" type="button" data-switcher-toggle aria-expanded="false" aria-controls="rail-inventory-menu"><span><small>Business</small><strong><%= workspace.name %></strong></span><%- helpers.icon('chevronDown',{size:14}) %></button>
+    <div class="sc-workspace__menu" id="rail-inventory-menu" data-switcher-menu hidden>
+      <% for(const other of others){ %><form method="post" action="/inventories/switch"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="workspaceId" value="<%= other.workspaceId %>"><input type="hidden" name="next" value="/"><button class="sc-workspace__item" type="submit"><%= other.name %></button></form><% } %>
+      <a class="sc-workspace__item" href="/inventories">All inventories</a><a class="sc-workspace__item" href="/inventories/new">New inventory</a>
+    </div>
+  </div>
+  <nav class="sc-primary" aria-label="Primary navigation">
+    <% for(const item of navigation.sections){ %><a href="<%= item.href %>" <%- pageSection?.id===item.id?'aria-current="page"':'' %>><%- helpers.icon(item.icon,{size:19}) %><span><%= item.label %></span></a><% } %>
+  </nav>
+  <nav class="sc-account-nav" aria-label="Account navigation">
+    <% for(const item of navigation.footer){ %><a href="<%= item.href %>" <%- currentHref.startsWith(item.href)?'aria-current="page"':'' %>><%- helpers.icon(item.icon,{size:19}) %><span><%= item.label %></span></a><% } %>
+  </nav>
+  <% }else{ %><nav class="sc-primary" aria-label="Primary navigation"><a href="/inventories">Your inventories</a><a href="/inventories/new">New inventory</a></nav><% } %>
+  <% const person=currentUser||account; if(person){ %><div class="sc-person"><span><%= person.name %></span><form method="post" action="/logout"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost btn--sm" type="submit">Sign out</button></form></div><% } %>
+</header>

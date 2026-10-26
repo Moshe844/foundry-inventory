@@ -1,0 +1,7 @@
+<% const selected=locals.pageSection; if(selected&&selected.tabs.length){ %>
+<nav class="sc-section-tabs" aria-label="Section navigation">
+  <% for(const tab of selected.tabs){ const path=tab.href.split('#')[0];const active=currentHref.split('?')[0]===path || currentHref.startsWith(path+'/'); %>
+    <a href="<%= tab.href %>" <%- active?'aria-current="page"':'' %>><%= tab.label %></a>
+  <% } %>
+</nav>
+<% } %>

@@ -185,12 +185,15 @@ async function planningRows(database,workspaceId){return (await database.query(`
     ) sources GROUP BY sku_id,location_id),
   demand AS (SELECT sku_id,location_id,COUNT(*) AS issue_events,SUM(-quantity_delta) AS issued FROM movements
       WHERE workspace_id=$1 AND operation='issue' AND quantity_delta<0 AND occurred_at >= (CURRENT_TIMESTAMP-INTERVAL '30 days')::text
-      GROUP BY sku_id,location_id)
+      GROUP BY sku_id,location_id),
+  eligible_skus AS MATERIALIZED (SELECT sku_id FROM reorder_policies WHERE workspace_id=$1
+    UNION SELECT sku_id FROM demand WHERE issue_events>=2)
   SELECT s.id AS sku_id,s.code,s.variant_label,i.name AS item_name,i.tracking_mode,l.id AS location_id,l.name AS location_name,
     COALESCE(b.on_hand,0)::bigint AS on_hand,COALESCE(c.quantity,0)::bigint AS committed,COALESCE(inc.quantity,0)::bigint AS incoming,
     COALESCE(d.issue_events,0)::bigint AS issue_events,COALESCE(d.issued,0)::bigint AS issued,rp.reorder_point,rp.target_stock,
     rp.safety_stock,rp.default_order_quantity,rp.preferred_supplier_id,rp.lead_time_days
-  FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id CROSS JOIN locations l
+  FROM eligible_skus eligible JOIN skus s ON s.id=eligible.sku_id AND s.workspace_id=$1
+  JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id CROSS JOIN locations l
   LEFT JOIN balances b ON b.workspace_id=s.workspace_id AND b.sku_id=s.id AND b.location_id=l.id
   LEFT JOIN committed c ON c.sku_id=s.id AND c.location_id=l.id LEFT JOIN incoming inc ON inc.sku_id=s.id AND inc.location_id=l.id
   LEFT JOIN demand d ON d.sku_id=s.id AND d.location_id=l.id LEFT JOIN LATERAL (SELECT * FROM reorder_policies p

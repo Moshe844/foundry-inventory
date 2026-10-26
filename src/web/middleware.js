@@ -486,7 +486,7 @@ function pageRenderer(req, res, next) {
         body: html,
         flash: flashMessages,
         title: data.title || 'StockChief',
-        nav: data.nav || null,
+        nav: data.nav || null,navigation:require('./presentation/navigation'),pageSection:require('./presentation/navigation').sectionFor(req.path),panelMode:req.path==='/ask'&&req.query.panel==='1',
         /*
          * A page nobody can leave.
          *

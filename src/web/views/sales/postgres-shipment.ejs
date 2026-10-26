@@ -46,5 +46,5 @@
   <% if (shipment.tracking_number) { %><form method="post" action="/fulfilment/<%= shipment.id %>/tracking/refresh">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--quiet" type="submit">Check carrier now</button></form><% } %>
   <% if (!state.events.length) { %><p>No carrier scans yet.</p><% } %>
-  <% state.events.forEach(function(event){ %><div class="rm-row"><span><strong><%= event.status %></strong><small><%= event.detail || '' %></small></span><time><%= event.occurred_at %></time></div><% }) %>
+  <% state.events.forEach(function(event){ %><div class="rm-row"><span><strong><%= event.status %></strong><small><%= event.detail || '' %></small></span><time><%= helpers.dateTime(event.occurred_at) %></time></div><% }) %>
 </section>

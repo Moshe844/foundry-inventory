@@ -53,4 +53,4 @@
   <% } else if(!returns.length && ['PARTIALLY_FULFILLED','FULFILLED'].includes(order.status)){ %><div class="quiet-note">Every fulfilled unit is already covered by a return.</div><% } %>
 </section>
 
-<section class="section"><div class="section-head"><h2>Verified history</h2></div><div class="rm-feed"><% events.forEach(function(event){ %><div class="rm-feed__row"><span class="rm-feed__ic">✓</span><span class="rm-feed__t"><%= event.event_type %><small><%= event.created_at %></small></span></div><% }) %></div></section>
+<section class="section"><div class="section-head"><h2>Verified history</h2></div><div class="rm-feed"><% events.forEach(function(event){ %><div class="rm-feed__row"><span class="rm-feed__ic">✓</span><span class="rm-feed__t"><%= event.event_type %><small><%= helpers.dateTime(event.created_at) %></small></span></div><% }) %></div></section>

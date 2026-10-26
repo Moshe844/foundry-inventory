@@ -1,0 +1,13 @@
+<article class="sc-decision" data-home-suggestion>
+  <span class="badge badge--warn">Prepared · needs your approval</span>
+  <h3><%= suggestion.title %></h3>
+  <p><%= suggestion.recommendation||suggestion.why %></p>
+  <div class="form-actions">
+    <a class="btn btn--primary" href="<%= suggestion.href %>">Review &amp; approve</a>
+    <a class="btn" href="/ask?goal=<%= encodeURIComponent(suggestion.approval.goalId) %>#tell-foundry">Edit</a>
+    <% if(suggestion.kind==='approval'&&suggestion.approval.scope==='single_operation'){ %>
+    <form method="post" action="/ask/goals/<%= suggestion.approval.goalId %>/approval" data-confirm="Dismiss this prepared change? Nothing will be executed.">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="decision" value="reject"><input type="hidden" name="deliveryId" value="<%= suggestion.approval.goalId+':approval:'+suggestion.approval.revision %>"><input type="hidden" name="sha256" value="<%= suggestion.approval.revision %>"><button class="btn btn--ghost" type="submit">Dismiss</button>
+    </form><% } %>
+  </div>
+</article>

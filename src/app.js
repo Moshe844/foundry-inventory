@@ -101,6 +101,7 @@ function createApp(options = {}) {
     next();
   });
 
+  app.get('/app-system.css',(req,res)=>res.type('text/css').set('Cache-Control','public, max-age=86400').send(require('./web/presentation/stylesheets').stylesheet()));
   app.use(
     express.static(path.join(__dirname, 'web', 'public'), {
       maxAge: isProduction ? '7d' : 0,

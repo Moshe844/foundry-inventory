@@ -64,6 +64,7 @@ function createPostgresApp({database,resourceDatabase=database,sessionStore,sess
   app.set('trust proxy',1);
   app.disable('x-powered-by');
   app.use(require('./commercial/resource-metrics').middleware(resourceDatabase));
+  app.get('/app-system.css',(req,res)=>res.type('text/css').set('Cache-Control','public, max-age=86400').send(require('./web/presentation/stylesheets').stylesheet()));
   app.use(express.static(path.join(__dirname,'web','public'),{maxAge:env==='production'?'7d':0}));
   // The restricted agent renderer uses the same public asset boundary as the
   // actual website. Every application/API read after static files still crosses

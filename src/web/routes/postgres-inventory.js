@@ -58,13 +58,9 @@ function createPostgresInventoryRouter(database) {
       stockGroups:presenters.STOCK_GROUPS,activeGroup,query:{...req.query},postgresNative:true,
       layoutOnboardingEntry:{...res.locals.globalOnboardingEntry,state}});
   };
-  router.get('/inventory',asyncRoute(async(req,res)=>{
-    const hasFilters=['q','location','tracking','archived','sort','page','sourceDocument','fromConnection','fromMessage','group']
-      .some((key)=>req.query[key]!==undefined&&req.query[key]!=='');
-    if(hasFilters)return renderList(req,res);
-    return res.page('inventory/position',{title:'Inventory',nav:'inventory',room:true,postgresNative:true,
-      ...(await presenters.inventoryPosition(database,req.ctx.workspaceId))});
-  }));
+  router.get('/inventory',asyncRoute(renderList));
+  router.get('/inventory/overview',asyncRoute(async(req,res)=>res.page('inventory/position',{title:'Stock overview',nav:'inventory',room:true,postgresNative:true,
+    ...(await presenters.inventoryPosition(database,req.ctx.workspaceId))})));
   router.get('/inventory/table',asyncRoute(renderList));
   router.post('/inventory/bulk',requireOwner,asyncRoute(async(req,res)=>{
     const bulk=require('../../domain/postgres-catalog-bulk'),items=await bulk.selected(database,req.ctx,values(req.body.itemIds));

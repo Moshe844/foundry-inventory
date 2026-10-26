@@ -3,9 +3,9 @@
 const {newId,nowIso}=require('../lib/util');
 
 const INVARIANTS=Object.freeze([
-  {key:'inventory.balance_equals_movements',query:`WITH expected AS (
+  {key:'inventory.balance_equals_movements',query:`WITH expected AS MATERIALIZED (
       SELECT sku_id,location_id,SUM(quantity_delta)::bigint AS quantity FROM movements
-      WHERE workspace_id=$1 GROUP BY sku_id,location_id), actual AS (
+      WHERE workspace_id=$1 GROUP BY sku_id,location_id), actual AS MATERIALIZED (
       SELECT sku_id,location_id,on_hand::bigint AS quantity FROM balances WHERE workspace_id=$1)
     SELECT COALESCE(expected.sku_id,actual.sku_id) AS sku_id,
       COALESCE(expected.location_id,actual.location_id) AS location_id,
@@ -13,14 +13,14 @@ const INVARIANTS=Object.freeze([
       COALESCE(actual.quantity,0)::bigint AS actual_quantity
     FROM expected FULL OUTER JOIN actual USING(sku_id,location_id)
     WHERE COALESCE(expected.quantity,0)<>COALESCE(actual.quantity,0) LIMIT 100`},
-  {key:'accounting.posted_journals_balance',query:`SELECT entry.id AS journal_entry_id,entry.entry_number,
-      COALESCE(SUM(line.debit_minor),0)::bigint AS debits,
-      COALESCE(SUM(line.credit_minor),0)::bigint AS credits
-    FROM accounting_journal_entries entry LEFT JOIN accounting_journal_lines line
-      ON line.workspace_id=entry.workspace_id AND line.entry_id=entry.id
-    WHERE entry.workspace_id=$1 AND entry.status='POSTED'
-    GROUP BY entry.id,entry.entry_number
-    HAVING COALESCE(SUM(line.debit_minor),0)<>COALESCE(SUM(line.credit_minor),0) LIMIT 100`},
+  {key:'accounting.posted_journals_balance',query:`WITH posted AS MATERIALIZED (
+      SELECT id,entry_number FROM accounting_journal_entries WHERE workspace_id=$1 AND status='POSTED'),
+    totals AS MATERIALIZED (SELECT entry_id,COALESCE(SUM(debit_minor),0)::bigint AS debits,
+      COALESCE(SUM(credit_minor),0)::bigint AS credits FROM accounting_journal_lines
+      WHERE workspace_id=$1 GROUP BY entry_id)
+    SELECT entry.id AS journal_entry_id,entry.entry_number,COALESCE(line.debits,0)::bigint AS debits,
+      COALESCE(line.credits,0)::bigint AS credits FROM posted entry LEFT JOIN totals line ON line.entry_id=entry.id
+    WHERE COALESCE(line.debits,0)<>COALESCE(line.credits,0) LIMIT 100`},
   {key:'purchasing.received_quantity_matches_evidence',query:`SELECT line.id AS purchase_order_line_id,
       line.quantity_received_units::bigint AS recorded_quantity,
       COALESCE(SUM(receipt.quantity_units),0)::bigint AS evidenced_quantity

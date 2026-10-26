@@ -169,7 +169,7 @@
 .rm-chat__intro .rm-prose { max-width: 68ch; margin: 8px 0 0; font-size: 14px; line-height: 1.55; }
 /* A turn is as wide as what it says. The person's bubble used to be a fixed
    three-quarters of the page whatever it held, so "hi" was a 700px blue bar. */
-:is(.rm-chat, .rm-history__body) > .rm-turn {
+:is(.rm-chat, .sc-chat-scroll, .rm-history__body) > .rm-turn {
   width: auto;
   max-width: min(88%, 840px);
   margin: 0;
@@ -177,7 +177,7 @@
   border: 0;
   animation: rm-in var(--dur-2, .18s) var(--ease, ease-out);
 }
-:is(.rm-chat, .rm-history__body) > .rm-turn--you {
+:is(.rm-chat, .sc-chat-scroll, .rm-history__body) > .rm-turn--you {
   scroll-margin-top: 18px;
   display: flex;
   flex-direction: column;
@@ -185,10 +185,10 @@
   align-self: flex-end;
   max-width: min(74%, 680px);
 }
-:is(.rm-chat, .rm-history__body) > .rm-turn--you .rm-turn__who { justify-content: flex-end; padding-right: 4px; }
+:is(.rm-chat, .sc-chat-scroll, .rm-history__body) > .rm-turn--you .rm-turn__who { justify-content: flex-end; padding-right: 4px; }
 .rm-turn__coverage { font-weight: 500; color: var(--muted); }
 .rm-turn__coverage--open { color: var(--copper, #9A5B00); }
-:is(.rm-chat, .rm-history__body) > .rm-turn--you .rm-turn__said {
+:is(.rm-chat, .sc-chat-scroll, .rm-history__body) > .rm-turn--you .rm-turn__said {
   width: fit-content;
   max-width: 100%;
   padding: 11px 16px;
@@ -198,14 +198,14 @@
   box-shadow: 0 8px 22px -16px rgba(72, 50, 190, .8);
   overflow-wrap: anywhere;
 }
-:is(.rm-chat, .rm-history__body) > .rm-turn--you details.rm-turn__said > summary { cursor: pointer; list-style: none; display: block; color: inherit; }
-:is(.rm-chat, .rm-history__body) > .rm-turn--you details.rm-turn__said > summary::-webkit-details-marker { display: none; }
-:is(.rm-chat, .rm-history__body) > .rm-turn--you details.rm-turn__said > summary::after { content: ' Show all'; opacity: .8; font-size: 12.5px; white-space: nowrap; }
-:is(.rm-chat, .rm-history__body) > .rm-turn--you details[open].rm-turn__said > summary::after { content: ' Show less'; }
-:is(.rm-chat, .rm-history__body) > .rm-turn--foundry { align-self: flex-start; min-width: min(100%, 420px); }
-:is(.rm-chat, .rm-history__body) > .rm-turn--foundry .rm-turn__who { padding-left: 4px; color: var(--brand-2); }
+:is(.rm-chat, .sc-chat-scroll, .rm-history__body) > .rm-turn--you details.rm-turn__said > summary { cursor: pointer; list-style: none; display: block; color: inherit; }
+:is(.rm-chat, .sc-chat-scroll, .rm-history__body) > .rm-turn--you details.rm-turn__said > summary::-webkit-details-marker { display: none; }
+:is(.rm-chat, .sc-chat-scroll, .rm-history__body) > .rm-turn--you details.rm-turn__said > summary::after { content: ' Show all'; opacity: .8; font-size: 12.5px; white-space: nowrap; }
+:is(.rm-chat, .sc-chat-scroll, .rm-history__body) > .rm-turn--you details[open].rm-turn__said > summary::after { content: ' Show less'; }
+:is(.rm-chat, .sc-chat-scroll, .rm-history__body) > .rm-turn--foundry { align-self: flex-start; min-width: min(100%, 420px); }
+:is(.rm-chat, .sc-chat-scroll, .rm-history__body) > .rm-turn--foundry .rm-turn__who { padding-left: 4px; color: var(--brand-2); }
 /* StockChief mid-thought (inserted by the script while the answer is computed). */
-:is(.rm-chat, .rm-history__body) > .rm-turn--foundry > .rm-turn__said {
+:is(.rm-chat, .sc-chat-scroll, .rm-history__body) > .rm-turn--foundry > .rm-turn__said {
   padding: 14px 18px;
   border: 1px solid var(--line);
   border-radius: 18px 18px 18px 5px;
@@ -495,9 +495,9 @@ details[open].rm-said__text > summary::after { content: ' Show less'; }
 @media (max-width: 680px) {
   .rm-chat__intro { grid-template-columns: 36px minmax(0, 1fr); padding: 18px; border-radius: 18px; }
   .rm-chat__mark { width: 36px; height: 36px; border-radius: 11px; }
-  :is(.rm-chat, .rm-history__body) > .rm-turn { max-width: 96%; }
-  :is(.rm-chat, .rm-history__body) > .rm-turn--you { max-width: 90%; }
-  :is(.rm-chat, .rm-history__body) > .rm-turn--foundry { min-width: 0; }
+  :is(.rm-chat, .sc-chat-scroll, .rm-history__body) > .rm-turn { max-width: 96%; }
+  :is(.rm-chat, .sc-chat-scroll, .rm-history__body) > .rm-turn--you { max-width: 90%; }
+  :is(.rm-chat, .sc-chat-scroll, .rm-history__body) > .rm-turn--foundry { min-width: 0; }
   .rm-chat > .rm-composer { grid-template-columns: 1fr; border-radius: 18px; }
   .rm-chat > .rm-composer .rm-composer__foot { justify-content: space-between; padding: 0 4px 2px; }
   .rm-chat > .rm-composer .rm-composer__foot .right { margin-left: auto; }

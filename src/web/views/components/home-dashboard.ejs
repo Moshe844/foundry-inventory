@@ -1,0 +1,31 @@
+<%
+ const needs=locals.homeDecisions||home.needsYou||[],suggestions=locals.homeSuggestions||[];
+ const firstName=(currentUser?.name||'').trim().split(/\s+/)[0];
+ const paused=home.status.paused||home.status.suspended;
+ const activity=locals.completedWork||home.did?.actions||[];
+%>
+<div class="sc-home">
+  <header class="sc-home-header"><div><h1><span data-local-greeting>Hello</span><%= firstName?', '+firstName:'' %></h1><p>Your business at a glance.</p></div><div><span class="badge <%= paused?'badge--warn':'badge--success' %>"><%= paused?'Automatic work paused':home.status.checkStale?'Last check needs refreshing':home.status.lastLookedAt?'Monitoring your business':'Ready for your first check' %></span><% if(home.status.lastLookedAt){ %><p class="t-xs">Checked <%= helpers.dateTime(home.status.lastLookedAt) %></p><% } %><% if(canOperate&&!paused&&(!home.status.lastLookedAt||home.status.checkStale)){ %><form method="post" action="/autopilot/run"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="returnToHome" value="1"><button class="btn" type="submit">Check now</button></form><% } %></div></header>
+  <%- include('../manager/coverage-warning',{inbox:home}) %>
+  <% if(paused){ %><div class="notice notice--warn"><p><%= home.status.suspendedReason||home.status.pausedReason||'Automatic work is paused.' %></p><% if(canOperate){ %><form method="post" action="/autopilot/resume"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="returnToHome" value="1"><button class="btn" type="submit">Resume automatic work</button></form><% } %></div><% } %>
+  <section class="sc-home-block" data-home-section="needs" id="needs-you" aria-labelledby="home-needs-title"><header><h2 id="home-needs-title">Needs you <span class="badge"><%= Number(home.needsYouTotal||0) %></span></h2><a href="/needs-you">View all</a></header>
+    <% if(needs.length){ %><div class="sc-decision-list"><% for(const decision of needs){ %><article class="sc-decision"><span class="badge <%= decision.importance==='Urgent'?'badge--danger':'badge--warn' %>"><%= decision.importance||'Needs attention' %></span><h3><%= decision.title %></h3><p><%= decision.why||decision.because||decision.happened %></p><a class="btn" href="<%= decision.href %>"><%= decision.actionLabel||decision.action||'Review' %></a></article><% } %></div><% }else{ %><p class="sc-home__quiet"><%= suggestions.length?'Your prepared changes are ready for review below.':'No known decisions are waiting for you.' %></p><% } %>
+  </section>
+  <section class="sc-home-block" data-home-section="suggestions" aria-labelledby="home-suggestions-title"><header><h2 id="home-suggestions-title">Suggested actions</h2><a href="/ask">Ask for a recommendation</a></header>
+    <% if(suggestions.length){ %><div class="sc-suggestion-grid"><% for(const suggestion of suggestions.slice(0,6)){ %><%- include('home-suggestion',{suggestion}) %><% } %></div><% }else{ %><p class="sc-home__quiet">No prepared suggestions yet.</p><% } %>
+  </section>
+  <section class="sc-home-block sc-metrics" data-home-section="numbers" aria-label="Business numbers">
+    <a class="sc-metric" href="/inventory"><span>Active products · <%= helpers.qty(stats.skuCount) %> SKUs</span><strong data-home-number="products"><%= helpers.qty(stats.itemCount) %></strong></a>
+    <a class="sc-metric" href="/inventory/table"><span>Units on hand</span><strong data-home-number="units"><%= helpers.qty(stats.unitsOnHand) %></strong></a>
+    <a class="sc-metric" href="/orders"><span>Open customer orders</span><strong data-home-number="orders"><%= helpers.qty(stats.openOrders) %></strong></a>
+    <a class="sc-metric" href="/inventory/table?group=empty"><span>SKUs out of stock</span><strong data-home-number="low"><%= helpers.qty(stats.zeroCount) %></strong></a>
+  </section>
+  <section class="sc-home-block sc-ask-card" data-home-section="ask" aria-labelledby="home-ask-title"><header><h2 id="home-ask-title">Ask StockChief</h2><a href="/ask/history">Your conversations</a></header>
+    <%- include('../partials/composer',{composerPlaceholder:'What would you like to know or do?',homeHandoff:!!locals.postgresAsk,hideAttachment:!!locals.postgresAsk}) %>
+    <div class="sc-home__suggestions" aria-label="Available actions"><% for(const entry of (locals.askSuggestions||[])){ %><a class="btn btn--ghost btn--sm" href="/ask?q=<%= encodeURIComponent(entry.prompt) %>" title="<%= entry.description %>"><%= entry.label %></a><% } %></div>
+  </section>
+  <section class="sc-home-block" data-home-section="activity" id="handled" aria-labelledby="home-activity-title"><header><h2 id="home-activity-title">What StockChief did today</h2><a href="/activity">Activity log</a></header>
+    <% if(activity.length){ %><div class="sc-activity"><% for(const event of activity.slice(0,8)){ %><div><span><a href="<%= event.link %>"><%= event.headline %></a><% if(event.detail){ %><small><%= event.detail %></small><% } %></span><time datetime="<%= event.at %>"><%= helpers.dateTime(event.at) %></time></div><% } %></div><% }else{ %><p class="sc-home__quiet">No completed automatic or Ask work recorded today.</p><% } %>
+  </section>
+  <% if(home.guidance?.next){ const next=home.guidance.next; %><aside class="card"><div class="card-body"><h2><%= next.title %></h2><p><%= next.recommendation||next.what %></p><a class="btn btn--primary" href="<%= next.href %>"><%= next.action %></a></div></aside><% } %>
+</div>

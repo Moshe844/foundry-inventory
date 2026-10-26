@@ -6,11 +6,11 @@ const express=require('express');
 const sections=[
  {id:'home',label:'Home',href:'/',icon:'overview',tabs:[]},
  {id:'orders',label:'Orders',href:'/orders',icon:'sales',tabs:[{label:'Orders',href:'/orders'},{label:'Returns',href:'/returns'},{label:'Customers',href:'/sales/customers'}]},
- {id:'stock',label:'Stock',href:'/inventory',icon:'inventory',tabs:[{label:'Products',href:'/inventory'},{label:'Locations',href:'/locations'},{label:'Transfers',href:'/transfers'},{label:'Counts',href:'/warehouse'}]},
+ {id:'stock',label:'Stock',href:'/inventory',icon:'inventory',tabs:[{label:'Products',href:'/inventory'},{label:'Locations',href:'/locations'},{label:'Transfers',href:'/transfers'},{label:'Counts',href:'/warehouse/operations#counts'}]},
  {id:'buy',label:'Buy',href:'/purchasing/orders',icon:'purchasing',tabs:[{label:'Purchase orders',href:'/purchasing/orders'},{label:'Receive stock',href:'/purchasing/receive'},{label:'Suppliers',href:'/suppliers'}]},
  {id:'money',label:'Money',href:'/money',icon:'wallet',tabs:[{label:'Overview',href:'/money'},{label:'Transactions',href:'/accounting/transactions'},{label:'P&L',href:'/accounting/reports/profit-and-loss'},{label:'Invoices',href:'/accounting/receivables'}]},
 ];
-const footer=[{id:'reports',label:'Reports',href:'/reports',icon:'chart'},{id:'settings',label:'Settings',href:'/settings',icon:'settings'}];
+const footer=[{id:'reports',label:'Reports',href:'/reports',icon:'accounting'},{id:'settings',label:'Settings',href:'/settings',icon:'settings'}];
 const aliases=[
  ['/signup','/register'],['/help','/guide'],['/team','/settings#people'],['/settings/team','/settings#people'],['/profile','/settings#account'],['/account','/settings#account'],['/receive','/purchasing/receive'],['/sales/returns','/returns'],['/settings/billing','/billing'],
  ['/sales','/orders'],['/sales/new','/orders/new'],['/customers','/sales/customers'],['/accounting','/money'],['/accounting/books','/money'],['/money/books','/money'],['/accounting/accounts','/accounting/chart'],['/overview','/'],['/foundry/briefing','/'],

@@ -28,6 +28,8 @@ const STOCK_GROUPS=Object.freeze([
 ]);
 
 async function home(database,workspaceId,actorId=null){
+  const clock=await require('../lib/business-time').forWorkspace(database,workspaceId);
+  const dayStart=require('../lib/business-time').dayBoundary(clock.calendarDate,clock.timeZone);
   const [brief,state,completed,executing,upcoming]=await Promise.all([
     projections.brief(database,workspaceId,actorId),autonomy.getState(database,workspaceId),
     database.query(`SELECT id,recommended_action,outcome,completed_at,COUNT(*) OVER() AS total
@@ -77,10 +79,14 @@ async function home(database,workspaceId,actorId=null){
   const nextDates=upcoming.rows.map((row)=>({text:row.kind==='purchase'
     ?`${row.party} delivery expected · ${row.reference}`:`${row.party} order needed by · ${row.reference}`,
     when:row.event_date,href:row.kind==='purchase'?`/purchasing/orders/${row.id}`:`/orders/${row.id}`}));
+  const executed=actorId?(await database.query(`SELECT p.id,p.summary,p.executed_at,p.action_type,u.role,u.permissions FROM stockchief_runtime.assistant_action_proposals p JOIN users u ON u.id=p.actor_user_id AND u.workspace_id=p.workspace_id
+    WHERE p.workspace_id=$1 AND p.actor_user_id=$2 AND p.status='EXECUTED' AND p.executed_at>=$3
+    ORDER BY executed_at DESC,id DESC LIMIT 8`,[workspaceId,actorId,dayStart])).rows:[];
+  const completedWork=[...handled.filter(e=>e.at&&new Date(e.at)>=new Date(dayStart)),...executed.filter(e=>{const contract=require('../assistant/postgres-capability-registry').registry.get(e.action_type);return contract&&(!contract.ownerOnly||e.role==='owner')&&require('../actions/permissions').can(e,contract.permission);}).map(e=>({headline:e.summary,detail:'Completed through Ask StockChief',link:'/actions/'+e.id,at:e.executed_at}))].sort((a,b)=>new Date(b.at)-new Date(a.at)).slice(0,8);
   const noticed=[];
   if(brief.stats.zeroCount>0)noticed.push({text:`${brief.stats.zeroCount} item${brief.stats.zeroCount===1?' is':'s are'} currently out of stock.`,
     detail:'Open inventory to see which ones; customer shortages needing a decision are listed above.',href:'/inventory'});
-  return {brief,home:{needsYou:needs,needsYouTotal:brief.needs.length,coverageErrors:[],handling:active,setup:null,
+  return {brief,completedWork,home:{needsYou:needs,needsYouTotal:brief.needs.length,coverageErrors:[],handling:active,setup:null,
     status:{paused:state.paused,pausedReason:state.pausedReason,suspended:state.suspended,
       suspendedReason:state.suspendedReason,lastLookedAt,lastEvaluatedText:checkedText(lastLookedAt),
       checkPending,checkStale:stale},

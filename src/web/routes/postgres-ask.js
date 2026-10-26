@@ -363,8 +363,9 @@ function createPostgresAskRouter(database,options={}){
         &&await goalStore.get(database,req.ctx,focusedGoalId))
       return res.redirect(303,'/ask/history?goal='+encodeURIComponent(focusedGoalId));
     const hasActiveNative=recentGoals.some(goal=>goal.checkpoint.runtime==='codex-staging'&&!['COMPLETED','CANCELLED','BLOCKED'].includes(goal.status));
-    const nativeInboxAvailable=!options.agentInspection&&hasActiveNative&&pilot.configured(req.ctx)
-      &&Boolean(pilotView||await pilot.selected(database,req.ctx));
+    const nativeServiceSelected=!options.agentInspection&&pilot.configured(req.ctx)
+      &&Boolean(pilotView?.enabled||await pilot.selected(database,req.ctx).catch(error=>{if(error instanceof ValidationError)return false;throw error;}));
+    const nativeInboxAvailable=hasActiveNative&&nativeServiceSelected;
     const canContinue=goal=>['COMPLETED','CANCELLED','BLOCKED'].includes(goal.status)||options.agentInspection
       ||(goal.checkpoint.runtime==='codex-staging'?nativeInboxAvailable:goalStore.enabled(req.ctx));
     // When execution is deliberately disabled, unfinished work is readable in
@@ -393,13 +394,14 @@ function createPostgresAskRouter(database,options={}){
     transcript=require('../../assistant/goal-transcript').mergeGoalTranscript(transcript,recentGoals,{focusedGoalId:focusedGoal?.id});
     const continuationGoal=focusedGoal||transcript.at(-1)?.agentGoal;
     const submission=req.session.askSubmission?.workspaceId===req.ctx.workspaceId?req.session.askSubmission:null;
-    return res.page('attention/ask',{title:'Ask StockChief',nav:'ask',room:true,suppressBack:true,postgresAsk:true,aiCost:require('../../commercial/ai-spending-limits').forAsk(await require('../../commercial/ai-spending-limits').availability(database,req.ctx.workspaceId,req.ctx.actorId)),...rules,
+    const recentRequests=(await require('../../assistant/postgres-goal-history').list(database,req.ctx,{})).rows.slice(0,10);
+    return res.page('attention/ask',{recentRequests,title:'Ask StockChief',nav:'ask',room:true,suppressBack:true,postgresAsk:true,aiCost:require('../../commercial/ai-spending-limits').forAsk(await require('../../commercial/ai-spending-limits').availability(database,req.ctx.workspaceId,req.ctx.actorId)),...rules,
       codexPilot:pilotView,adaptiveGoal:activeGoal,agentInspection:Boolean(options.agentInspection),focusedGoalId:focusedGoal?.id||null,renderAgentAnswer:require('../public/agent-answer').render,
       about:String(req.query.about||'').slice(0,2000),stockActivity:req.query.task==='stock-activity'&&sourcePage?.path==='/inventory',
       question:submission?.draft||latest?.message||'',result:submission?null:resultFor(latest,latestProposal),error:submission?.message||null,submissionError:submission,
       prefill:String(req.query.q||'').slice(0,2000),
       conversation:null,transcript,currentGoalId:latest?.id||null,conversationId:`postgres:${req.ctx.workspaceId}`,
-      aiConfigured:Boolean(options.provider||config.ai.configured),usageKey:newId('askusage'),
+      aiConfigured:Boolean(options.provider||config.ai.configured||nativeServiceSelected||options.agentInspection&&activeGoal?.checkpoint.runtime==='codex-staging'),usageKey:newId('askusage'),
       sourcePath:sourcePage?.path||null,emailBodyContinuation,protectedNames,
       continuationGoalId:continuationGoal?.status==='WAITING_USER'?continuationGoal.id:null,
       continuationQuestionId:continuationGoal?.conversation?.input?.id||null,

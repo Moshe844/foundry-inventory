@@ -1,5 +1,5 @@
 <p class="rm-stamp"><a href="/mail">Mail</a> · <%= message.display_name %></p><h1 class="rm-verdict"><%= message.subject || '(No subject)' %></h1>
-<p class="rm-sub">From <%= message.sender %> · <%= message.received_at %> · <%= message.classification %></p>
+<p class="rm-sub">From <%= message.sender %> · <%= helpers.dateTime(message.received_at) %> · <%= message.classification %></p>
 <article class="section"><p class="rm-prose"><%= message.body_text || 'This message had no plain-text body.' %></p></article>
 <section class="section"><div class="section-head"><h2>Reply</h2></div><p class="rm-sub">Saving and sending are separate. StockChief sends exactly the approved text below and never retries an uncertain provider outcome automatically.</p>
   <% if(message.outbox_status==='AMBIGUOUS'){ %><div class="quiet-note">Delivery could not be verified. StockChief did not retry and will not send another reply for this message. Check the mailbox Sent folder, then mark the conversation waiting or handled.</div><% } %>

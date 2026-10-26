@@ -58,7 +58,7 @@
   <div class="section"><h3>Evidence</h3><pre><%= JSON.stringify(repairCase.evidence, null, 2) %></pre>
     <h3>Before / after</h3><pre><%= JSON.stringify({ before: repairCase.beforeEvidence, after: repairCase.afterEvidence }, null, 2) %></pre>
     <h3>Immutable case history</h3><ol><% events.forEach(function (event) { %>
-      <li><strong><%= event.event.replaceAll('_', ' ') %></strong> · <%= event.createdAt %><% if (event.actorName) { %> · <%= event.actorName %><% } %></li>
+      <li><strong><%= event.event.replaceAll('_', ' ') %></strong> · <%= helpers.dateTime(event.createdAt) %><% if (event.actorName) { %> · <%= event.actorName %><% } %></li>
     <% }) %></ol>
   </div>
 </details>
