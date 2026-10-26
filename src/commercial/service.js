@@ -46,7 +46,7 @@ async function getSelfServicePlan(database,planId,options={}){
   const plan=normalizePlan((await database.query(`SELECT * FROM commercial_plans
     WHERE id=$1 AND status='ACTIVE' AND is_public=1 AND sales_only=0`,[planId])).rows[0]);
   if(!plan)throw new ValidationError('That plan is not available for self-service signup. Contact StockChief directly for a custom plan.');
-  if(options.requireApproved!==false&&plan.packaging_status!=='APPROVED')throw new ValidationError(
+  if(options.requireApproved!==false&&plan.packaging_status!=='APPROVED'&&!release.stagingTestCheckout())throw new ValidationError(
     'Checkout is not open for this plan until its feature and pricing review is approved.');
   return plan;
 }
@@ -62,10 +62,12 @@ async function validatePromotion(database,codeInput,planId,options={}){
 }
 
 async function beginCheckout(database, account, input, options = {}) {
-  await release.assertCheckoutOpen(database,options);
+  await release.assertSubscriptionCheckoutOpen(database,options);
   const plan=await getSelfServicePlan(database,input.planId);const interval=assertMonthly(input.interval);
   const priceId=interval==='ANNUAL'?plan.stripe_annual_price_id:plan.stripe_monthly_price_id;
   if(!priceId)throw new ValidationError('Checkout for this plan is not configured yet. Contact StockChief support.');
+  const current=await entitlements.subscriptionFor(database,account.id);
+  if(current?.refunded_at&&(await database.query("SELECT 1 FROM commercial_subscription_refund_retention WHERE account_id=$1 AND status<>'PURGED' LIMIT 1",[account.id])).rows.length)throw new ValidationError('Your refunded inventories are read-only during their retention period. Export your records before the displayed deletion date. A new subscription can start after deletion finishes; no card has been charged.');
   const attemptId=newId('checkout');const promoCode=String(input.promoCode||'').trim().toUpperCase();let promotion=null;
   await database.transaction(async(client)=>{
     if(promoCode){promotion=await validatePromotion(client,promoCode,plan.id,{lock:true});
@@ -75,10 +77,9 @@ async function beginCheckout(database, account, input, options = {}) {
       VALUES($1,$2,$3,$4,'CREATED',$5,$6,$7)`,[attemptId,account.id,plan.id,interval,input.returnPath||'/onboarding',
       promotion?.code||null,promotion?'RESERVED':null]);
   },{isolation:'SERIALIZABLE'});
-  const current=await entitlements.subscriptionFor(database,account.id);
   let session;try{session=await (options.provider||stripe).createCheckout({attemptId,accountId:account.id,planId:plan.id,
       email:account.email,customerId:current?.stripe_customer_id || null,priceId,
-      trialDays:Math.max(Number(plan.trial_days||0),Number(promotion?.trial_days||0)),
+      trialDays:0,
       promotionCodeId:promotion?.stripe_promotion_code_id||null,
       successUrl:`${input.origin}/billing/checkout/complete?session_id={CHECKOUT_SESSION_ID}`,
       cancelUrl:`${input.origin}/pricing?checkout=cancelled&plan=${encodeURIComponent(plan.id)}`},options.providerOptions||{});
@@ -231,7 +232,7 @@ async function upsertSubscription(client, data, options={}) {
     VALUES($1,$2,$3,(SELECT id FROM commercial_plan_versions WHERE plan_id=$3 AND status='ACTIVE' ORDER BY version_number DESC LIMIT 1),
       $4,$5,$6,$7,to_timestamp($8),to_timestamp($9),to_timestamp($10),$11,$12,to_timestamp($13),
       'SELF_SERVICE',$14::jsonb,$15::timestamptz,now())
-    ON CONFLICT(account_id) DO UPDATE SET plan_id=EXCLUDED.plan_id,status=EXCLUDED.status,
+    ON CONFLICT(account_id) DO UPDATE SET plan_id=EXCLUDED.plan_id,status=EXCLUDED.status,source=EXCLUDED.source,
       plan_version_id=CASE WHEN account_subscriptions.plan_id=EXCLUDED.plan_id
         THEN COALESCE(account_subscriptions.plan_version_id,EXCLUDED.plan_version_id) ELSE EXCLUDED.plan_version_id END,
       billing_interval=EXCLUDED.billing_interval,stripe_customer_id=EXCLUDED.stripe_customer_id,
@@ -248,7 +249,11 @@ async function upsertSubscription(client, data, options={}) {
     periodStart || null,periodEnd || null,data.trial_end || null,graceEnds,
     data.cancel_at_period_end?1:0,data.canceled_at || null,JSON.stringify({stripeStatus:data.status,stripePlanId:requestedPlanId,
       scheduledPlanId:deferPlan?requestedPlanId:null}),providerCreatedAt]);
-  const saved={...result.rows[0],scheduledChange:deferPlan?pending:null};
+  let saved={...result.rows[0],scheduledChange:deferPlan?pending:null};
+  if(saved.refunded_at&&status==='ACTIVE'){
+   const prior=(await client.query('SELECT status,stripe_subscription_id FROM commercial_subscription_refund_retention WHERE account_id=$1',[accountId])).rows;
+   if(prior.length&&prior.every(r=>r.status==='PURGED'&&r.stripe_subscription_id!==data.id))saved={...saved,...(await client.query('UPDATE account_subscriptions SET refunded_at=NULL,refund_deletion_at=NULL WHERE account_id=$1 RETURNING *',[accountId])).rows[0]};
+  }
   if(existing&&existing.plan_id!==saved.plan_id){const applied=await client.query(`UPDATE commercial_subscription_changes
       SET status='APPLIED',effective_at=COALESCE(effective_at,now()),provider_reference=COALESCE(provider_reference,$4),updated_at=now()
       WHERE account_id=$1 AND from_plan_id=$2 AND to_plan_id=$3 AND status='PENDING' RETURNING id`,
@@ -277,8 +282,9 @@ async function handleBillingEvent(database,event) {
         await require('./stripe-financials').handle(client,event);
       if(addonHandled){} else if(event.type==='checkout.session.completed'){
         const attempt=(await client.query(`SELECT * FROM commercial_checkout_attempts WHERE stripe_checkout_session_id=$1 FOR UPDATE`,[object.id])).rows[0];
-        if(attempt&&attempt.status!=='COMPLETED')await client.query(`UPDATE commercial_checkout_attempts SET status='COMPLETED',
-          promo_status=CASE WHEN promo_status='RESERVED' THEN 'REDEEMED' ELSE promo_status END,updated_at=now() WHERE id=$1`,[attempt.id]);
+        if(attempt&&(object.metadata?.stockchief_account_id!==attempt.account_id||object.metadata?.stockchief_plan_id!==attempt.plan_id||attempt.paid_subscription_id&&attempt.paid_subscription_id!==(typeof object.subscription==='string'?object.subscription:object.subscription?.id)))throw new ValidationError('This paid checkout does not match its saved account, plan or subscription.');
+        if(attempt&&object.payment_status==='paid'&&Number(object.amount_total)>0)await client.query(`UPDATE commercial_checkout_attempts SET status='COMPLETED',paid_at=coalesce(paid_at,to_timestamp($2)),paid_provider_event_id=coalesce(paid_provider_event_id,$3),paid_subscription_id=coalesce(paid_subscription_id,$4),
+          promo_status=CASE WHEN promo_status='RESERVED' THEN 'REDEEMED' ELSE promo_status END,updated_at=now() WHERE id=$1`,[attempt.id,event.created,event.id,typeof object.subscription==='string'?object.subscription:object.subscription?.id]);
       } else if(event.type==='checkout.session.expired'){
         const attempt=(await client.query(`SELECT * FROM commercial_checkout_attempts WHERE stripe_checkout_session_id=$1 FOR UPDATE`,[object.id])).rows[0];
         if(attempt){if(attempt.promo_code&&attempt.promo_status==='RESERVED')await client.query(`UPDATE commercial_promo_codes
@@ -348,7 +354,7 @@ async function handleBillingEvent(database,event) {
           // actual amount before this receipt contributes to margin reporting.
           [newId('revenue'),owner.account_id,`invoice:${object.id}`,0,
             String(object.currency||'usd').toUpperCase(),object.period_start||null,object.period_end||null,event.created||Math.floor(Date.now()/1000),
-            JSON.stringify({invoiceId:object.id,paymentIntentId:paymentIntentIds[0]||null,paymentIntentIds,
+            JSON.stringify({invoiceId:object.id,stripeSubscriptionId:invoiceSubscription,paymentIntentId:paymentIntentIds[0]||null,paymentIntentIds,
               unverifiedAmountPaid:object.amount_paid,taxes:object.total_taxes||null,discounts:object.total_discount_amounts||[],
               stripeCashVerified:false})]);
         if(owner){
@@ -367,6 +373,13 @@ async function handleBillingEvent(database,event) {
             [newId('critical'),owner.account_id,`stripe-payment-fee:${intent}`,JSON.stringify({paymentIntentId:intent,invoiceId:object.id})]);
             await require('./stripe-financials').reconcileForPayment(client,intent);}
         }
+      }
+      // A signed paid Checkout and an active subscription may arrive in either
+      // order. Provision once even if the customer closes the return window.
+      const activationAccountId=object.metadata?.stockchief_account_id||subscription?.account_id||((typeof object.customer==='string'?object.customer:object.customer?.id)?(await client.query('SELECT account_id FROM account_subscriptions WHERE stripe_customer_id=$1',[typeof object.customer==='string'?object.customer:object.customer.id])).rows[0]?.account_id:null);
+      if(activationAccountId){
+       const ready=(await client.query(`SELECT a.id FROM accounts a JOIN account_subscriptions s ON s.account_id=a.id JOIN commercial_checkout_attempts t ON t.account_id=a.id AND t.plan_id=s.plan_id WHERE a.id=$1 AND a.plan='commercial_pending' AND a.email_verified_at IS NOT NULL AND s.status='ACTIVE' AND s.refunded_at IS NULL AND t.status='COMPLETED' AND t.paid_at IS NOT NULL AND t.paid_subscription_id=s.stripe_subscription_id LIMIT 1`,[activationAccountId])).rows[0];
+       if(ready){const scoped={query:client.query.bind(client),transaction:fn=>fn(client)};await require('./context').run({database:scoped,scope:{accountId:ready.id,workspaceId:null}},()=>require('../domain/postgres-auth-service').provisionFirstWorkspace(scoped,ready.id));}
       }
       await client.query(`UPDATE commercial_billing_events SET status=$2,processed_at=now() WHERE provider_event_id=$1`,
         [event.id,subscription||addonHandled||event.type.startsWith('checkout.')||event.type.startsWith('invoice.')

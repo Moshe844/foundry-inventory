@@ -7,6 +7,7 @@ const LAUNCH_BLOCKERS=Object.freeze(['UNVERIFIED_STRIPE_BILLING_VOLUME_COST',
   'UNVERIFIED_OTHER_LAUNCH_PROVIDER_FEES','UNVERIFIED_MIXED_WORKLOAD_CAPACITY',
   'MISSING_COST_RATE','MISSING_HISTORICAL_COST_RATE','AMBIGUOUS_PROVIDER_USAGE']);
 async function state(database){return (await database.query('SELECT * FROM commercial_release_control WHERE singleton=true')).rows[0];}
+function stagingTestCheckout(){return process.env.STOCKCHIEF_RUNTIME_ENV==='staging'&&process.env.STOCKCHIEF_STAGING_SUBSCRIPTION_CHECKOUT==='1'&&/^sk_test_/.test(config.commercial.stripeSecretKey||'');}
 async function isOpen(database){const release=await state(database);
  if(!(config.commercial.checkoutEnabled&&release?.checkout_enabled&&release.economics_approved_at&&release.readiness_approved_at))return false;
  // Stripe Tax is out of the initial technical launch scope. Turning it on
@@ -32,4 +33,6 @@ async function assertCheckoutOpen(database,options={}){
   if(!await isOpen(database))
     throw new ValidationError('Checkout is closed pending approval of the Commercial Readiness Report and final usage pricing.');
 }
-module.exports={state,isOpen,assertCheckoutOpen,LAUNCH_BLOCKERS};
+async function isSubscriptionCheckoutOpen(database){return stagingTestCheckout()||await isOpen(database);}
+async function assertSubscriptionCheckoutOpen(database,options={}){if(stagingTestCheckout())return;return assertCheckoutOpen(database,options);}
+module.exports={stagingTestCheckout,isSubscriptionCheckoutOpen,assertSubscriptionCheckoutOpen,state,isOpen,assertCheckoutOpen,LAUNCH_BLOCKERS};

@@ -1,6 +1,7 @@
 'use strict';
 
 const express=require('express');
+const permissions=require('../../actions/permissions');
 const autopilot=require('../../autopilot/postgres-service');
 const connections=require('../../connections/postgres-service');
 const operatingInstructions=require('../../manager/postgres-operating-instructions');
@@ -111,7 +112,7 @@ async function settingsPage(database,req,res){const [counts,users,instructions,e
     integrity:{...integrity,ok:integrity.result?.ok,problems},eventFeed:{configured:Boolean(feed),connected:feed?.status==='connected',
       recentEvents:events.rows.map((event)=>({eventId:event.external_event_id,type:event.event_type,status:event.status,
         error:event.error_message,processedAt:event.processed_at}))},newFeedToken,learnedInstructions:instructions.rows.map(instructionFrom),
-    stockGuards:[],emailAlerts,aiUsage:null,answerPreferences:await require('../../assistant/postgres-answer-preferences').read(database,req.ctx),aiCost:await require('../../commercial/ai-spending-limits').availability(database,req.ctx.workspaceId,req.ctx.actorId),commercialLimitsPooled:true,entitlements:{plan:{label:res.locals.commercial?.subscription?.plan_name||
+    stockGuards:[],emailAlerts,aiUsage:null,answerPreferences:await require('../../assistant/postgres-answer-preferences').read(database,req.ctx),recordAliases:permissions.can(req.user,permissions.ADMIN)?await require('../../assistant/postgres-record-aliases').list(database,req.ctx):[],aiCost:await require('../../commercial/ai-spending-limits').availability(database,req.ctx.workspaceId,req.ctx.actorId),commercialLimitsPooled:true,entitlements:{plan:{label:res.locals.commercial?.subscription?.plan_name||
       (res.locals.commercial?.access?.mode==='DEVELOPMENT'?'Pre-subscription · unlimited':'No paid plan')},
       limits:(res.locals.commercial?.meters||[]).filter((meter)=>['workspaces','members','locations','connections'].includes(meter.meter))
         .map((meter)=>({key:meter.meter,used:meter.used,limit:meter.hardLimit??meter.included,

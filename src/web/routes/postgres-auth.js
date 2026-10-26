@@ -36,9 +36,9 @@ function matchingPasswords(body){
 
 function createPostgresAuthRouter(database,options={}) {
   const router = express.Router();
-  router.use((req,res,next)=>{res.locals.trialPolicy=require('../../commercial/self-service-trial').policy();if(req.account?.email_verified_at){const relevant=m=>m.code!=='verify_email_pending'&&!String(m.message||'').includes('Check your email to verify');res.locals.flash=(res.locals.flash||[]).filter(relevant);if(req.session?.flash)req.session.flash=req.session.flash.filter(relevant);}next();});
+  router.use((req,res,next)=>{res.locals.trialPolicy=require('../../commercial/self-service-trial').policy();res.locals.subscriptionTestMode=commercialRelease.stagingTestCheckout();if(req.account?.email_verified_at){const relevant=m=>m.code!=='verify_email_pending'&&!String(m.message||'').includes('Check your email to verify');res.locals.flash=(res.locals.flash||[]).filter(relevant);if(req.session?.flash)req.session.flash=req.session.flash.filter(relevant);}next();});
   const checkoutAvailable=()=>options.testMode===true&&process.env.NODE_ENV==='test'
-    ?Promise.resolve(true):commercialRelease.isOpen(database);
+    ?Promise.resolve(true):commercialRelease.isSubscriptionCheckoutOpen(database);
   router.get('/login', (req,res) => {
     if (req.account) return res.redirect(req.account.plan==='commercial_pending'
       ?(req.account.email_verified_at?'/complete-signup':'/verify-email/pending'):(req.user?'/':'/inventories'));
@@ -135,7 +135,7 @@ function createPostgresAuthRouter(database,options={}) {
     return res.render('auth/verify-pending',{title:'Verify your email',csrfToken:res.locals.csrfToken,
       flash:res.locals.flash,account:req.account,origin:res.locals.origin});
   });
-  router.get('/complete-signup',async(req,res)=>{if(!req.account)return res.redirect('/login');if(req.user&&req.account.plan!=='commercial_pending')return res.redirect('/');
+  router.get('/complete-signup',async(req,res)=>{if(!req.account)return res.redirect('/login');if(req.user&&req.account.plan!=='commercial_pending'&&req.account.plan!=='trial'){const current=await require('../../commercial/entitlements').subscriptionFor(database,req.account.id);if(current?.stripe_subscription_id)return res.redirect('/billing');}
     if(!req.account.email_verified_at)return res.redirect('/verify-email/pending');const plans=await commercial.listPlans(database);
     const selection=pendingSelection(req.account,req.session.commercialSelection);
     const requested=selfServiceSelection(plans,String(req.query.plan||''));

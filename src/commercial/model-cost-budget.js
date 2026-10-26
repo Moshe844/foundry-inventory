@@ -5,6 +5,7 @@ const paidBudget=require('./paid-model-budget');
 const VERSION={anthropic:'2023-06-01',openai:'responses-2026-10-11'};
 const DEFAULTS={operation:{ask:.30,instruction:1.50,import_mapping:.30},
  period:{starter:25,growth:75,pro:100,enterprise:250}};
+const creditsOnly=()=>process.env.STOCKCHIEF_AI_METER!=='cost';
 const MAX_PROVIDER_EXECUTIONS=3; // Initial request plus SDK's two transport retries.
 const INPUT_OVERHEAD_TOKENS=8192; // Conservative protocol/tool overhead on top of UTF-8 bytes.
 function configuredUsd(name,fallback){const raw=process.env[name];const value=raw===undefined?fallback:Number(raw);
@@ -109,7 +110,8 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
    const goalLimit=await require('./staging-native-goal-cost-approval').effective(client,scope,
     {id:goalScope.goalId,actorId:goalScope.actorId,runtime:goal.runtime,budgetMinor:goal.budget_minor},{nativeTransport});
    temporaryGoalApproval=goalLimit.approval;
-   if(Number(goal.exposure)+bound.maximumMinor>goalLimit.maximumMinor)
+   const commercialGoal=creditsOnly()&&(await client.query("SELECT 1 FROM stockchief_runtime.codex_pilot_workspace_access WHERE workspace_id=$1 AND pilot->>'admission_kind'='COMMERCIAL'",[scope.workspaceId])).rows.length>0;
+   if(!commercialGoal&&Number(goal.exposure)+bound.maximumMinor>goalLimit.maximumMinor)
     throw Object.assign(new RateLimitError('This goal reached its cumulative model-cost ceiling. No model call was made.'),{limitKind:'goal_cost'});
    if(nativeTransport&&process.env.STOCKCHIEF_STAGING_NATIVE_COST_APPROVALS){
     const funding=(await client.query(`SELECT funding_workspace_id,pilot FROM stockchief_runtime.codex_pilot_workspace_access
@@ -143,6 +145,7 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
   if(fundingUsageKey!==idempotencyKey&&!fundedRequest)
    throw new ValidationError('This internal model call has no funded Ask request. No provider call was made.');
   const totalUnits=usage.reduce((sum,row)=>sum+Number(row.units),0);
+  if(creditsOnly()&&(!fundedRequest||totalUnits<=0))throw new ValidationError('Reserve available AI credits before starting this model request.');
   if(usage.some(row=>row.grant_id&&Number(row.pack_version)>=2&&!row.budget_minor))
    throw new RateLimitError('Purchased AI funding is not reconciled. No model call was made.');
   const funded=usage.filter(row=>row.grant_id&&row.budget_minor);
@@ -174,10 +177,24 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
     FROM commercial_model_cost_hold_allocations a JOIN commercial_model_cost_holds h ON h.id=a.hold_id
     WHERE h.account_id=$1 AND h.period_start=$2 AND a.source='INCLUDED'`,
    [scope.accountId,bounds.start.toISOString(),scope.workspaceId])).rows[0];
+  let certificationFundingWorkspaceId=null;
+  if(creditsOnly()&&!nativeTransport){
+   const f=(await client.query("SELECT funding_workspace_id,pilot FROM stockchief_runtime.codex_pilot_workspace_access WHERE workspace_id=$1 AND owner_account_id=$2 AND coalesce(pilot->>'admission_kind','PILOT')='PILOT'",[scope.workspaceId,scope.accountId])).rows[0];
+   if(f){
+    await client.query('SELECT workspace_id FROM stockchief_runtime.codex_pilots WHERE workspace_id=$1 FOR UPDATE',[f.funding_workspace_id]);
+    const pilot=(await client.query('SELECT * FROM stockchief_runtime.codex_pilots WHERE workspace_id=$1',[f.funding_workspace_id])).rows[0];
+    if(!pilot?.enabled||pilot.stopped||new Date(pilot.period_ends_at)<=new Date())throw new RateLimitError('The separately approved Staging certification window has ended. Your customer credits and saved file are preserved.');
+    const actor=(await client.query('SELECT account_id,role FROM users WHERE workspace_id=$1 AND id=$2',[scope.workspaceId,scope.actorId||goalScope.actorId||null])).rows[0];
+    if(!actor||!(f.pilot.account_inherited?actor.account_id===scope.accountId&&actor.role==='owner':pilot.authorized_actor_ids.includes(scope.actorId||goalScope.actorId)))throw new ValidationError('This signed-in account is not authorized for the private certification allowance.');
+    const exposure=(await client.query(`SELECT coalesce((SELECT sum(CASE WHEN state='SETTLED' THEN charged ELSE reserved END) FROM stockchief_runtime.codex_pilot_calls WHERE funding_workspace_id=$1),0)+coalesce((SELECT sum(CASE WHEN status='SETTLED' THEN actual_minor WHEN status IN ('RESERVED','UNKNOWN') THEN maximum_minor ELSE 0 END)*10000 FROM commercial_model_cost_holds WHERE detail->>'certificationFundingWorkspaceId'=$1),0) AS amount`,[f.funding_workspace_id])).rows[0];
+    if(Number(exposure.amount)+Math.ceil(bound.maximumMinor*10000)>Number(pilot.ceiling_micro_usd))throw new RateLimitError('The separately approved Staging certification allowance is exhausted. Customer credits are preserved; no provider call was made.');
+    certificationFundingWorkspaceId=f.funding_workspace_id;
+   }
+  }
   const baseMaximum=sources.filter(row=>row.source==='INCLUDED').reduce((sum,row)=>sum+row.maximumMinor,0);
-  if(baseMaximum>0&&Number(current.account_exposure)+baseMaximum>accountCap)
+  if(!creditsOnly()&&baseMaximum>0&&Number(current.account_exposure)+baseMaximum>accountCap)
    throw Object.assign(new RateLimitError('AI spending protection has paused included file reading and Ask work for this billing period. Review AI spending in Settings. Your saved file and records remain available; no model call was made.'),{limitKind:'account_period_cost'});
-  if(baseMaximum>0&&Number(current.workspace_exposure)+baseMaximum>workspaceCap)
+  if(!creditsOnly()&&baseMaximum>0&&Number(current.workspace_exposure)+baseMaximum>workspaceCap)
    throw Object.assign(new RateLimitError('AI spending protection has paused included file reading and Ask work for this billing period. Review AI spending in Settings. Your saved file and records remain available; no model call was made.'),{limitKind:'workspace_period_cost'});
   for(const source of sources.filter(row=>row.source==='PURCHASED')){
    const exposure=(await client.query(`SELECT COALESCE(SUM(CASE WHEN h.status IN ('RESERVED','UNKNOWN') THEN a.maximum_minor
@@ -186,7 +203,7 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
      WHERE a.grant_id=$1`,[source.grantId])).rows[0];
    const effective=paidBudget.effectiveLimit({budget_minor:source.budgetMinor},{units:source.grantUnits,
     revoked_units:source.revokedUnits,dispute_hold_units:source.disputeHoldUnits});
-   if(Number(exposure.amount)+source.maximumMinor>effective+1e-6)
+   if(!creditsOnly()&&Number(exposure.amount)+source.maximumMinor>effective+1e-6)
     throw Object.assign(new RateLimitError('This purchased AI pack reached its provider-cost safety budget. No model call was made.'),{limitKind:'purchased_pack_cost'});
   }
   // Calculations and rounding remain in the canonical engine above. Persist
@@ -204,7 +221,7 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
     bound.provider,bound.model,operation,bound.maximumMinor,
     JSON.stringify({inputTokenUpperBound:bound.inputTokens,outputTokenLimit:bound.outputTokens,
       providerExecutions:bound.providerExecutions,providerVersion:bound.providerVersion,rateSources:bound.rateSources,
-      operationCapMinor:operationCap,accountPeriodCapMinor:accountCap,workspacePeriodCapMinor:workspaceCap,
+      operationCapMinor:operationCap,...(certificationFundingWorkspaceId?{certificationFundingWorkspaceId}:{}),accountPeriodCapMinor:accountCap,workspacePeriodCapMinor:workspaceCap,
       ...(temporaryGoalApproval?{temporaryGoalApproval:{approvalReference:temporaryGoalApproval.approvalReference,
        goalId:temporaryGoalApproval.goalId,maximumMinor:temporaryGoalApproval.maximumMinor,expiresAt:temporaryGoalApproval.expiresAt}}:{}),
       ...(temporaryCostApproval?{temporaryCostApproval:{approvalReference:temporaryCostApproval.approvalReference,
@@ -278,7 +295,7 @@ async function status(database,workspaceId){
  const effectiveLimits=sharedTestAllowance&&!limits.ownerConfigured?{...limits,accountCapMinor:Math.max(limits.accountCapMinor,sharedTestAllowance.maximumMinor),workspaceCapMinor:Math.max(limits.workspaceCapMinor,sharedTestAllowance.maximumMinor)}:limits;
  const usage={accountMinor:Number(row.account),workspaceMinor:Number(row.workspace),...effectiveLimits,sharedTestAllowance,
   importRequestCapMinor:operationLimit('import_mapping')*100,periodEndsAt:bounds.end.toISOString()};
- return {...usage,warning:usage.accountMinor>=usage.accountCapMinor*.8||usage.workspaceMinor>=usage.workspaceCapMinor*.8,
-  blocked:usage.accountMinor>=usage.accountCapMinor||usage.workspaceMinor>=usage.workspaceCapMinor};
+ return {...usage,creditsOnly:creditsOnly(),warning:!creditsOnly()&&(usage.accountMinor>=usage.accountCapMinor*.8||usage.workspaceMinor>=usage.workspaceCapMinor*.8),
+  blocked:!creditsOnly()&&(usage.accountMinor>=usage.accountCapMinor||usage.workspaceMinor>=usage.workspaceCapMinor)};
 }
-module.exports={reserve,reserveNative,release,settle,estimateMaximumMinor,promptByteAllowance,nativeInputTokenAllowance,operationLimit,periodLimit,DEFAULTS,status};
+module.exports={reserve,reserveNative,release,settle,estimateMaximumMinor,promptByteAllowance,nativeInputTokenAllowance,operationLimit,periodLimit,DEFAULTS,status,creditsOnly};

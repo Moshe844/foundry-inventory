@@ -23,6 +23,12 @@ function createPostgresOnboardingRouter(database) {
       sourcePrompt:null,description:'',canOperate:true,suppressBack:true,onboardingEntry:entry,
       importAction:'/imports',importFieldName:'file',importMultiple:false,importOptionsHref:'/imports'});
   }));
+  router.post('/onboarding/time-zone',requireOwner,asyncRoute(async(req,res)=>{
+    const timeZone=require('../../lib/business-time').zone(req.body.timeZone);
+    await require('../../assistant/postgres-answer-preferences').save(database,req.ctx,{timeZone});await database.query('UPDATE workspaces SET time_zone_confirmed_at=now() WHERE id=$1',[req.ctx.workspaceId]);
+    req.flash('success','Business time zone confirmed. New posting dates and activity times use '+timeZone+'. Existing posted entries retain their audit history.');
+    return res.redirect(303,'/onboarding');
+  }));
   router.post('/onboarding/name',requireOwner,asyncRoute(async(req,res)=>{
     await auth.renameWorkspace(database,req.ctx,req.body.name);
     req.flash('success','Inventory name saved.');

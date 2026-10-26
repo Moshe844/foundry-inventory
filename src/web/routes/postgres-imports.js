@@ -146,6 +146,11 @@ function createPostgresImportsRouter(database,{provider=null}={}){
       usageKey:require('../../imports/usage-key').analysisUsageKey(plan.sourceHash)});
     return res.redirect(303,`/imports/${revised.id}`);
   }));
+  router.post('/imports/:id/location',asyncRoute(async(req,res)=>{
+    try{await require('../../imports/postgres-inline-location').create(database,req.ctx,req.params.id,{name:req.body.name,kind:req.body.kind,expectedHash:req.body.integrityHash});req.flash('success','Location added and selected. Review the updated preview before importing.');}
+    catch(error){if(!(error instanceof ValidationError))throw error;res.status(error.status||400);return renderPreview(req,res,{reviewError:error.message});}
+    return res.redirect(303,'/imports/'+req.params.id+'#import-approval-review');
+  }));
   router.post('/imports/:id/revise',asyncRoute(async(req,res)=>{
     try{
       const plan=await imports.get(database,req.ctx.workspaceId,req.params.id);

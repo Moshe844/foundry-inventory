@@ -1,4 +1,4 @@
-'use strict';process.env.NODE_ENV='test';const test=require('node:test'),assert=require('node:assert/strict');
+'use strict';process.env.NODE_ENV='test';process.env.STOCKCHIEF_AI_METER='cost';const test=require('node:test'),assert=require('node:assert/strict');
 test('expiring shared certification funding uses the same admission cap for Ask, documents and the displayed meter',{timeout:90000},async t=>{
  const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx,owner}=f,scope={accountId:owner.accountId,workspaceId:ctx.workspaceId,actorId:ctx.actorId},budget=require('../../src/commercial/model-cost-budget'),model=require('../../src/commercial/model'),guard=require('../../src/commercial/staging-shared-cost-approval');
  const keys=['STOCKCHIEF_RUNTIME_ENV','STOCKCHIEF_STAGING_SHARED_COST_APPROVALS','STOCKCHIEF_AI_PERIOD_COST_CAP_USD_STARTER'],prior=Object.fromEntries(keys.map(k=>[k,process.env[k]]));t.after(()=>{for(const[k,v]of Object.entries(prior))if(v===undefined)delete process.env[k];else process.env[k]=v;});

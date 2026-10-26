@@ -208,5 +208,6 @@ function summarise(decorated) {
   return `${parts.join(', ')}.`;
 }
 
-function label(status,fulfilled=0,deliveryMethod=null){const gone=deliveryMethod==='PICKUP'?'collected':deliveryMethod==='DELIVER'?'delivered':'shipped';if(status==='CANCELLED')return Number(fulfilled)>0?'Partly '+gone+' · remainder cancelled':'Cancelled';return {DRAFT:'Being prepared',CONFIRMED:'Confirmed — stock held',PARTIALLY_FULFILLED:'Partly '+gone,FULFILLED:gone[0].toUpperCase()+gone.slice(1),BACKORDERED:'Waiting for stock'}[status]||status;}
-module.exports = { nextStep, decorate, summarise, RANK,label };
+function handoff(method){const value=String(method||'').trim().toUpperCase();return ['PICKUP','COLLECT','COLLECTION'].includes(value)?'collected':['DELIVER','DELIVERY','LOCAL_DELIVERY'].includes(value)?'delivered':['SHIP','SHIPPING','CARRIER'].includes(value)?'shipped':'fulfilled';}
+function label(status,fulfilled=0,deliveryMethod=null){const gone=handoff(deliveryMethod);if(status==='CANCELLED')return Number(fulfilled)>0?'Partly '+gone+' · remainder cancelled':'Cancelled';return {DRAFT:'Being prepared',CONFIRMED:'Confirmed — stock held',PARTIALLY_FULFILLED:'Partly '+gone,FULFILLED:gone[0].toUpperCase()+gone.slice(1),BACKORDERED:'Waiting for stock'}[status]||status;}
+module.exports = { nextStep, decorate, summarise, RANK,label,handoff };

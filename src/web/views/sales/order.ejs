@@ -1,10 +1,4 @@
 <%
-  var statusLabels = { DRAFT: 'Being prepared', CONFIRMED: 'Confirmed — stock held',
-    BACKORDERED: 'Confirmed — waiting for stock', PARTIALLY_FULFILLED: 'Partly gone',
-    FULFILLED: (locals.goneWord === 'shipped' ? 'Fulfilled — shipped'
-      : locals.goneWord === 'collected' ? 'Collected'
-      : locals.goneWord === 'delivered' ? 'Delivered' : 'Gone'),
-    CANCELLED: 'Cancelled' };
   var setupRequired = Boolean(order.customer_decision_required || order.delivery_decision_required);
   var money = locals.money || { invoiced: false, heldReason: {} };
 

@@ -3,6 +3,7 @@
   <h1>Add your inventory</h1>
   <p>Bring the records you already have. Start with one source; add others later.</p>
   <% if (currentUser.role === 'owner') { %>
+    <form method="post" action="/onboarding/time-zone" class="rm-inline-name"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label>Business time zone <input name="timeZone" data-business-time-zone value="<%= locals.account?.timeZone||'UTC' %>" required maxlength="100"></label><button class="btn btn--secondary" type="submit">Confirm time zone</button><small>Used for new posting dates, reports and activity times.</small></form>
     <form method="post" action="/onboarding/name" class="rm-inline-name">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <label for="inventory-name">Inventory name</label>

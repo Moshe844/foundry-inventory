@@ -65,6 +65,7 @@ async function record(database,ctx,kind,reference,message=''){
     else if(mentioned.length>1)return {ambiguous:true,label:source.label};
   }
   if(!wanted)return {missing:true,label:source.label};
+  const alias=await require('./postgres-record-aliases').resolve(database,ctx.workspaceId,kind,wanted);if(alias)wanted=alias.id;
   const rows=(await database.query(`SELECT * FROM ${source.table} WHERE workspace_id=$1
     AND (lower(id)=lower($2) OR lower(${source.number})=lower($2))
     ORDER BY ${source.sort||'created_at'} DESC LIMIT 2`,
@@ -697,6 +698,7 @@ async function accountMapping(database,ctx,row,args){
 }
 
 const SPECS=Object.freeze([
+  ...require('./postgres-record-aliases').specs,
   {name:'customer_return.credit_receipt',description:'Prepare an owner-approved credit note for goods already received on a legacy refund return. Preserve physical receipts, original journals and cash. Review exact original receipt dates, discount, tax, invoice balance and any deferred-cost release. Never duplicates an existing credit or refund.',record:'customer_return',fields:['recordReference'],permission:permissions.MANAGE_ACCOUNTING,ownerOnly:true,capability:'returns.core',resultingRecords:['accounting_return_receipt_credits','accounting_customer_invoices','accounting_journal_entries'],
    build:async(db,ctx,row)=>{const review=await require('../operations/postgres-legacy-return-credits').preview(db,ctx,row.id);return prepareResult({recordId:row.id,review},'Credit '+pricing.formatMinor(review.totalMinor,review.currency)+' for received '+review.returnNumber+' including '+pricing.formatMinor(review.taxMinor,review.currency)+' tax, on its recorded receipt dates: '+[...new Set(review.batches.map(b=>b.postingDate))].join(', ')+'. Recognize '+pricing.formatMinor(review.pendingCostMinor,review.currency)+' of returned cost. Reduce unpaid invoice amounts and record paid portions as owed refunds. No cash or stock moves.');},
    execute:(db,ctx,p)=>require('../operations/postgres-legacy-return-credits').apply(db,ctx,p.review),verify:async(db,ctx,r,p)=>Boolean((await db.query('SELECT 1 FROM accounting_return_credit_conversions WHERE workspace_id=$1 AND customer_return_id=$2 AND review_hash=$3',[ctx.workspaceId,r.customerReturnId,p.review.integrity])).rows.length)},

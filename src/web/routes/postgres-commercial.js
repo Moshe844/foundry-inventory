@@ -61,7 +61,7 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     title:'Switching to StockChief',nav:'switching',description:'Bring inventory records into StockChief through preview, clarification, reconciliation and controlled approval.'})));
   router.get('/pricing',asyncRoute(async(req,res)=>{const plans=await commercial.listPlans(database);await commercial.track(database,{eventName:'pricing_viewed',
     anonymousId:req.sessionID,accountId:req.account?.id||null,sourcePath:'/pricing'});return renderPublic(req,res,'public/pricing',{
-    title:'Pricing',nav:'pricing',plans,checkoutOpen:await release.isOpen(database),
+    title:'Pricing',nav:'pricing',plans,checkoutOpen:await release.isSubscriptionCheckoutOpen(database),
     checkoutCancelled:req.query.checkout==='cancelled'});}));
   router.get(['/control','/trust'],asyncRoute(async(req,res)=>renderPublic(req,res,'public/trust',{title:'Control and trust',nav:'control',
     description:'Understand StockChief authority, approvals, evidence, tenant isolation, credentials and operational recovery.'})));
@@ -126,7 +126,7 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
     const scope=commercialScope(req);const current=await entitlements.subscriptionFor(database,scope.accountId);
     const origin=options.publicOrigin==='request'?res.locals.origin:(options.publicOrigin||config.connections.publicOrigin||res.locals.origin);
     require('../../commercial/launch-interval').assertMonthly(req.body.interval);
-    if(current?.stripe_customer_id&&current?.stripe_subscription_id)return res.redirect(303,
+    if(current?.stripe_customer_id&&current?.stripe_subscription_id&&!current.refunded_at)return res.redirect(303,
       `/billing/change?plan=${encodeURIComponent(req.body.planId||'')}&interval=monthly`);
     req.session.checkoutSelection={planId:req.body.planId,interval:'monthly'};await saveSession(req);
     const checkout=await commercial.beginCheckout(database,req.account,{planId:req.body.planId,interval:req.body.interval,
@@ -135,11 +135,10 @@ function createPostgresCommercialRouter(database,options={}){const router=expres
       sourcePath:req.get('referer')||'/pricing'});return res.redirect(303,checkout.url);}));
   router.get('/billing/checkout/complete',requireAccount,asyncRoute(async(req,res)=>{const session=await provider.retrieveCheckout(req.query.session_id,
     options.providerOptions||{});if(session.metadata?.stockchief_account_id!==req.account.id)throw new AuthorizationError('That checkout belongs to another account.');
-    if(session.status!=='complete')throw new ValidationError('Stripe has not completed this subscription checkout.');
+    if(session.status!=='complete'||session.payment_status!=='paid')throw new ValidationError('Stripe has not confirmed payment for this subscription checkout. No workspace was created.');
     const saved=await entitlements.subscriptionFor(database,req.account.id);
     const subscriptionId=typeof session.subscription==='string'?session.subscription:session.subscription?.id;
-    if(!saved||saved.stripe_subscription_id!==subscriptionId||!entitlements.operationalAccess(saved).canOperate)
-      throw new ValidationError('The subscription is not active yet. No workspace was created.');
+    if(!saved||saved.stripe_subscription_id!==subscriptionId||!entitlements.operationalAccess(saved).canOperate){res.set('Refresh','2; url=/billing/checkout/complete?session_id='+encodeURIComponent(session.id));return res.status(202).render('auth/payment-confirming',{title:'Preparing your inventory',sessionId:session.id});}
     await commercial.completeCheckoutAttempt(database,session.id);
     const provisioned=await auth.provisionFirstWorkspace(database,req.account.id);req.session.workspaceId=provisioned.workspaceId;
     await commercial.trackOnce(database,{eventName:'subscription_activated',accountId:req.account.id,

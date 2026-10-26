@@ -190,7 +190,7 @@ async function salesOrderPage(database,workspaceId,id){
     cogsMinor:total.cogsMinor+Number(row.cogs_minor)}),{revenueMinor:0,cogsMinor:0});
   const latestAccounting=accountingRows.rows[0];const accounting=latestAccounting?{id:latestAccounting.id,
     journal_entry_id:latestAccounting.id,status:latestAccounting.status,outcome:accountingTotals}:{status:'DISABLED',outcome:{}};
-  const fulfilmentState=totals.fulfilled===totals.ordered?(order.delivery_method==='PICKUP'?'Collected':order.delivery_method==='DELIVER'?'Delivered':'Shipped'):shipments.some((shipment)=>['PICKING','PACKED'].includes(shipment.status))
+  const fulfilmentState=totals.fulfilled===totals.ordered?require('../../sales/order-status').label('FULFILLED',totals.fulfilled,order.delivery_method):shipments.some((shipment)=>['PICKING','PACKED'].includes(shipment.status))
     ?'Being prepared':totals.allocated?'Ready to pick':totals.backordered?'Waiting for stock':'Not started';
   const paymentProviders=await payments.availableProviders(database,workspaceId);
   return {detail,order,shipments,pickable,money,accounting,paymentAccount:{...paymentAccount,connected:paymentAccount.connected||paymentProviders.length>0},paymentProviders,
@@ -291,7 +291,8 @@ function createPostgresCommerceRouter(database,options={}){
       database.query(`SELECT s.id,s.code,s.variant_label,i.name AS item_name,i.unit_label,
         (SELECT si.last_unit_cost FROM supplier_items si WHERE si.workspace_id=s.workspace_id AND si.sku_id=s.id AND si.supplier_id=$2 AND si.is_active=1) AS supplier_unit_cost,
         (SELECT si.lead_time_days FROM supplier_items si WHERE si.workspace_id=s.workspace_id AND si.sku_id=s.id AND si.supplier_id=$2 AND si.is_active=1) AS supplier_lead_days,
-        (SELECT pc.amount_minor FROM sku_purchase_costs pc WHERE pc.workspace_id=s.workspace_id AND pc.sku_id=s.id AND pc.currency=(SELECT currency FROM suppliers WHERE workspace_id=s.workspace_id AND id=$2) ORDER BY pc.created_at DESC,pc.id DESC LIMIT 1) AS purchase_cost_minor
+        (SELECT pc.amount_minor FROM sku_purchase_costs pc WHERE pc.workspace_id=s.workspace_id AND pc.sku_id=s.id AND pc.currency=COALESCE((SELECT currency FROM suppliers WHERE workspace_id=s.workspace_id AND id=$2),(SELECT base_currency FROM accounting_settings WHERE workspace_id=s.workspace_id),'USD') ORDER BY pc.created_at DESC,pc.id DESC LIMIT 1) AS purchase_cost_minor,
+        (SELECT CASE WHEN SUM(c.quantity_units)>0 THEN ROUND(SUM(c.total_cost_minor)::numeric/SUM(c.quantity_units)) END FROM accounting_inventory_cost_balances c WHERE c.workspace_id=s.workspace_id AND c.sku_id=s.id AND COALESCE((SELECT currency FROM suppliers WHERE workspace_id=s.workspace_id AND id=$2),(SELECT base_currency FROM accounting_settings WHERE workspace_id=s.workspace_id))=(SELECT base_currency FROM accounting_settings WHERE workspace_id=s.workspace_id)) AS inventory_unit_cost_minor
         FROM skus s
         JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
         WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 ORDER BY lower(i.name),s.position LIMIT 500`,[req.ctx.workspaceId,req.params.id]),
@@ -314,7 +315,7 @@ function createPostgresCommerceRouter(database,options={}){
     return res.page('purchasing/supplier',{title:supplier.name,nav:'purchasing',supplier,items,
       orders:orderRows.filter((row)=>row.supplier_id===supplier.id).slice(0,10).map(purchaseOrderForView),
       mailboxConnections:mailboxRows.rows,senderRules:senderRows.rows,reliability:null,priceHistory:priceRows.rows,
-      codeMappings:[],catalogue:catalogueRows.rows.map(s=>({...s,purchaseCost:s.supplier_unit_cost!=null?String(s.supplier_unit_cost):s.purchase_cost_minor==null?'':require('../../domain/currency').fromMinor(Number(s.purchase_cost_minor),supplier.currency||'USD'),leadDays:s.supplier_lead_days??supplier.defaultLeadTimeDays??''})),usage:{deletable:used.length===0,used,total:used.reduce((sum,row)=>sum+row.count,0)},
+      codeMappings:[],catalogue:catalogueRows.rows.map(s=>({...s,purchaseCost:s.supplier_unit_cost!=null?String(s.supplier_unit_cost):(s.purchase_cost_minor??s.inventory_unit_cost_minor)==null?'':require('../../domain/currency').fromMinor(Number(s.purchase_cost_minor??s.inventory_unit_cost_minor),supplier.currency||'USD'),leadDays:s.supplier_lead_days??supplier.defaultLeadTimeDays??''})),usage:{deletable:used.length===0,used,total:used.reduce((sum,row)=>sum+row.count,0)},
       permissions:purchasingPermissions(req)});
   }));
 
@@ -906,7 +907,7 @@ function createPostgresCommerceRouter(database,options={}){
     ]);
     return res.page('sales/order',{title:`${page.order.order_number} · ${page.order.customer.name}`,nav:'sales',room:false,
       suppressBack:true,screenGuide:null,story:null,evidenceTrace:null,order:page.order,shortButAvailable:0,postgresPlacement:true,
-      shortageDetails:[],cameFromEmail:null,goneWord:page.order.delivery_method==='PICKUP'?'collected':'shipped',
+      shortageDetails:[],cameFromEmail:null,goneWord:require('../../sales/order-status').handoff(page.order.delivery_method),
       accounting:page.accounting,money:page.money,orderNext:null,openSection:['fulfilment','money'].includes(req.query.open)?req.query.open:null,
       shipments:page.shipments,pickable:page.order.delivery_method==='PICKUP'?[]:page.pickable,fulfilment:page.fulfilment,customerNotices:page.customerNotices,
       customerReceipts:page.customerReceipts,paymentRequests:page.paymentRequests,paymentCompleted:req.query.payment==='paid',

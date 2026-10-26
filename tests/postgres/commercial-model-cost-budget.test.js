@@ -1,5 +1,5 @@
 'use strict';
-process.env.NODE_ENV='test';
+process.env.NODE_ENV='test';process.env.STOCKCHIEF_AI_METER='cost';
 const test=require('node:test');const assert=require('node:assert/strict');
 const {startCluster}=require('../helpers/postgres-cluster');const {openPostgres}=require('../../src/db/postgres');
 const {migratePostgres}=require('../../src/db/migrate-postgres');const auth=require('../../src/domain/postgres-auth-service');

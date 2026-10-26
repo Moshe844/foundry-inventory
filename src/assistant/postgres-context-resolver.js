@@ -44,6 +44,7 @@ function convert(field,value){
 
 async function choices(database,workspaceId,entity,{scope=null,wanted=null}={}){
   const def=ENTITIES[entity];if(!def)return [];
+  let matchedAlias=null;if(wanted){const alias=await require('./postgres-record-aliases').resolve(database,workspaceId,entity,wanted);if(alias){matchedAlias=wanted;wanted=alias.value;}}
   let statement=def.query;
   if(entity==='sku'&&scope==='currently_stocked')statement+=` AND EXISTS (
     SELECT 1 FROM balances b WHERE b.workspace_id=s.workspace_id AND b.sku_id=s.id AND b.on_hand>0)`;
@@ -52,7 +53,7 @@ async function choices(database,workspaceId,entity,{scope=null,wanted=null}={}){
     const exact=(await database.query(`SELECT * FROM ${source}
       WHERE lower(value)=lower($2) OR lower(label)=lower($2) ORDER BY label LIMIT 9`,
     [workspaceId,wanted])).rows;
-    if(exact.length)return exact;
+    if(exact.length)return exact.map(r=>matchedAlias?{...r,matchedAlias}:r);
     const partial=(await database.query(`SELECT * FROM ${source}
       WHERE strpos(lower(label),lower($2))>0 ORDER BY label LIMIT 9`,
     [workspaceId,wanted])).rows;
@@ -76,7 +77,7 @@ async function choices(database,workspaceId,entity,{scope=null,wanted=null}={}){
 function choose(rows,wanted){
   if(!wanted)return rows.length===1?{value:rows[0].value,source:'single_valid_candidate'}:
     rows.length?{ambiguous:rows.slice(0,8)}:{missing:true};
-  const exact=rows.filter((row)=>normalize(row.value)===normalize(wanted)||normalize(row.label)===normalize(wanted));
+  const exact=rows.filter((row)=>normalize(row.value)===normalize(wanted)||normalize(row.label)===normalize(wanted)||normalize(row.matchedAlias)===normalize(wanted));
   if(exact.length===1)return {value:exact[0].value,source:'exact_record'};
   if(exact.length>1)return {ambiguous:exact.slice(0,8)};
   const embedded=rows.filter((row)=>normalize(row.value).length>=5&&normalize(wanted).includes(normalize(row.value)));

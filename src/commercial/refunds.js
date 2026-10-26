@@ -43,6 +43,7 @@ async function reconcile(client,event,accountId,purchase=null){
        stale?Math.floor(priorAt/1000):event.created,JSON.stringify({...detail,refundReversed:true,refundStatus:status})]);
   }
  }
+ if(!purchase)await require('./subscription-refund-retention').observe(client,{...event,data:{...event.data,object:{...refund,status}}},accountId);
  return {status};
 }
 module.exports={reconcile};

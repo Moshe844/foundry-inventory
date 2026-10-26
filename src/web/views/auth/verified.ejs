@@ -12,12 +12,12 @@
     <div class="auth-centered__card">
       <span class="auth-mail auth-mail--ok">✓</span>
       <h1><%= locals.trialPolicy?.enabled?'Start your trial.':selection.planId?'Review your plan.':'Choose your plan.' %></h1>
-      <p><%= locals.trialPolicy?.enabled?'Your email is verified. Start a '+trialPolicy.days+'-day trial with your first inventory. No card or payment is required.':'Your email is verified. Choose a monthly plan to activate your business workspace.' %></p>
+      <p>Your email is verified. Choose a paid monthly plan and enter your card securely to activate your business workspace. Includes a 14-day money-back guarantee.</p>
       <% if(flash&&flash.length){flash.forEach(function(message){ %>
         <div class="auth-message auth-message--<%= message.type %>" role="alert"><%= message.message %></div>
       <% });} %>
       <% if(locals.trialPolicy?.enabled){ %><form method="post" action="/complete-signup/trial"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="pub-btn pub-btn--block" type="submit">Start <%= trialPolicy.days %>-day trial</button></form><p class="auth-help">Includes the <%= trialPolicy.planId %> plan's standard limits. The trial ends automatically. No automatic charge.</p><% } %>
-      <% if(checkoutOpen){ %><form method="post" action="/billing/checkout">
+      <% if(locals.subscriptionTestMode){ %><p class="auth-message" role="status">Test checkout: use a Stripe test card. No real payment is taken.</p><% } %><% if(checkoutOpen){ %><form method="post" action="/billing/checkout">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <input type="hidden" name="promoCode" value="<%= selection.promoCode||'' %>">
         <label class="auth-field" for="activation-plan">

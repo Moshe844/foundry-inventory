@@ -17,6 +17,7 @@ function createCommercialAccounting(database){return {
     FROM stockchief_runtime.assistant_goals g WHERE g.id=$1 AND g.workspace_id=$2 AND g.actor_user_id=$3`,
    [goalId,ctx.workspaceId,ctx.actorId])).rows[0];
     if(!row)throw new Error('GOAL_NOT_FOUND');
+    if(cost.creditsOnly()&&(await database.query("SELECT 1 FROM stockchief_runtime.codex_pilot_workspace_access WHERE workspace_id=$1 AND pilot->>'admission_kind'='COMMERCIAL'",[ctx.workspaceId])).rows.length)return Infinity;
     let maximumMinor=Number(row.budget_minor);
     if(process.env.STOCKCHIEF_STAGING_NATIVE_GOAL_COST_APPROVALS&&row.runtime==='codex-staging'){
      const scope=await entitlements.ownerScopeForWorkspace(database,ctx.workspaceId),limit=await require('../../src/commercial/staging-native-goal-cost-approval').effective(database,scope,

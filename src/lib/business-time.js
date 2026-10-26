@@ -10,4 +10,12 @@ async function forWorkspace(db,workspaceId,now=new Date()){
  return context(row?.time_zone||'UTC',now);
 }
 async function today(db,workspaceId,now=new Date()){return (await forWorkspace(db,workspaceId,now)).calendarDate;}
-module.exports={zone,context,forWorkspace,today,parts,wall,dayBoundary};
+async function alignAutomaticStart(db,workspaceId,oldZone,newZone){
+ const w=(await db.query('SELECT created_at FROM workspaces WHERE id=$1',[workspaceId])).rows[0];if(!w)return;
+ const s=(await db.query('SELECT accounting_start_date,start_date_basis FROM accounting_settings WHERE workspace_id=$1 FOR UPDATE',[workspaceId])).rows[0];if(s?.start_date_basis!=='WORKSPACE_CREATION')return;
+ const instant=new Date(w.created_at),prior=context(oldZone,instant).calendarDate,next=context(newZone,instant).calendarDate;
+ if(s.accounting_start_date!==prior||prior===next)return;
+ if((await db.query("SELECT 1 FROM accounting_periods WHERE workspace_id=$1 AND starts_on<=$2 AND ends_on>=$2 AND status<>'OPEN' LIMIT 1",[workspaceId,next])).rows.length)throw new ValidationError('The new business start date falls in a closed accounting period. Review Money → Accounting periods before changing the time zone.');
+ await db.query('UPDATE accounting_settings SET accounting_start_date=$2,updated_at=$3 WHERE workspace_id=$1 AND start_date_basis=$4',[workspaceId,next,new Date().toISOString(),'WORKSPACE_CREATION']);
+}
+module.exports={zone,context,forWorkspace,today,parts,wall,dayBoundary,alignAutomaticStart};

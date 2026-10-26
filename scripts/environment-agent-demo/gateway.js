@@ -89,13 +89,12 @@ function initialContractsSnapshot(catalogue,actor,{clock=null}={}){
       }
       const readSignatures=[...groupedReads.values()];
       const datasets=require('../../src/reports/postgres-registry').list(actor);
-      const datasetIndex=datasets.map(({key:name,label,filterValues})=>({name,label,detailsByName:true,
-        ...(filterValues?{filterValues}:{})}));
+      const datasetIndex=datasets.map(({key:name,label})=>({name,label,detailsByName:true}));
       const packet=()=>({operations,operationIndex,navigationSignatures,recordCollections,readSignatures,readArgumentsComplete:true,readDescriptionsComplete:true,
-        readAccess:'readSignatures gives complete inputs, required arguments and authority for every authorized read; operations gives every read purpose. Use matching known reads directly. Discover omitted execution details when needed. Metadata grants no authority and proves no business facts.',
-        navigationAccess:'Grouped signatures apply to every listed name. recordCollections are list paths for inspection, never record IDs or facts. Arrival and authority are rechecked.',datasetIndex,datasetFieldsComplete:datasetIndex.every(d=>d.fields),datasetFilterValuesComplete:datasetIndex.every((d,i)=>!datasets[i].filterValues||Object.hasOwn(d,'filterValues')),indexComplete:true,total:contracts.length,complete:operations.length===contracts.length,...(clock?{clock}:{}),
-        datasetAccess:'Scoped projections, not SQL/pages. Use known typed fields/filters; inspect missing metadata. Extent distinguishes rows/groups and complete first-page source totals. Reads recheck scope/permissions.',
-        coverage:'All authorized names, bounded details. Browser discovers screens; environment_interfaces supplies omissions. Fresh canonical checks remain.'});
+        readAccess:'readSignatures supplies complete read inputs/authority; operations supplies purposes. Use known reads directly. Discover omitted details. Metadata proves no facts or authority.',
+        navigationAccess:'Signatures apply to listed names. recordCollections are list paths, never record IDs or facts. Arrival/authority are rechecked.',datasetIndex,datasetFieldsComplete:datasetIndex.every(d=>d.fields),datasetFilterValuesComplete:datasetIndex.every((d,i)=>!datasets[i].filterValues||Object.hasOwn(d,'filterValues')),indexComplete:true,total:contracts.length,complete:operations.length===contracts.length,...(clock?{clock}:{}),
+        datasetAccess:'Scoped typed projections. Discover missing fields/filters. Extent distinguishes rows/groups and complete source totals. Rechecks permissions.',
+        coverage:'Complete names, bounded details: environment_interfaces or browser discovery. Canonical checks remain.'});
       const size=()=>Buffer.byteLength(JSON.stringify(require('./interface-presentation').compact(packet())));
       const details=datasets.map((dataset,index)=>({index,fields:dataset.fields,bytes:Buffer.byteLength(JSON.stringify(dataset.fields))})).sort((a,b)=>a.bytes-b.bytes);
       // Reserve a small part of the SAME packet budget for compact typed
@@ -138,6 +137,14 @@ function initialContractsSnapshot(catalogue,actor,{clock=null}={}){
       for(const detail of datasets.map((d,index)=>({index,bytes:Buffer.byteLength(JSON.stringify(d.filterValues||{}))})).sort((a,b)=>b.bytes-a.bytes)){
         if(size()<=28000)break;
         delete datasetIndex[detail.index].filterValues;
+      }
+      // Typed field names let ordinary reads execute without another model
+      // round. Enumerated value lists use only the remaining space; they are
+      // always recoverable by exact-name discovery, regardless of dataset.
+      for(const {index} of datasets.map((d,index)=>({index,bytes:Buffer.byteLength(JSON.stringify(d.filterValues||{}))})).sort((a,b)=>a.bytes-b.bytes)){
+        if(!datasets[index].filterValues)continue;
+        datasetIndex[index].filterValues=datasets[index].filterValues;
+        if(size()>28000)delete datasetIndex[index].filterValues;
       }
       if(Buffer.byteLength(JSON.stringify(require('./interface-presentation').compact(packet())))>28000)
         throw Error('INITIAL_INTERFACE_INDEX_LIMIT');

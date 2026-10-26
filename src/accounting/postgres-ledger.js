@@ -50,12 +50,12 @@ async function configureInTransaction(client, ctx, input) {
   }
   const at = nowIso();
   await client.query(`INSERT INTO accounting_settings
-      (workspace_id,enabled,accounting_start_date,base_currency,costing_method,configured_by_user_id,configured_at,updated_at)
-      VALUES($1,1,$2,$3,'WEIGHTED_AVERAGE',$4,$5,$5)
+      (workspace_id,enabled,accounting_start_date,base_currency,costing_method,configured_by_user_id,configured_at,updated_at,start_date_basis)
+      VALUES($1,1,$2,$3,'WEIGHTED_AVERAGE',$4,$5,$5,$6)
       ON CONFLICT(workspace_id) DO UPDATE SET enabled=1,accounting_start_date=EXCLUDED.accounting_start_date,
         base_currency=EXCLUDED.base_currency,configured_by_user_id=EXCLUDED.configured_by_user_id,
-        configured_at=COALESCE(accounting_settings.configured_at,EXCLUDED.configured_at),updated_at=EXCLUDED.updated_at`,
-  [ctx.workspaceId,startDate,currency,ctx.actorId,at]);
+        configured_at=COALESCE(accounting_settings.configured_at,EXCLUDED.configured_at),updated_at=EXCLUDED.updated_at,start_date_basis=EXCLUDED.start_date_basis`,
+  [ctx.workspaceId,startDate,currency,ctx.actorId,at,input.startDateBasis==='WORKSPACE_CREATION'?'WORKSPACE_CREATION':'USER_CHOSEN']);
   for (const account of DEFAULT_ACCOUNTS) {
     await client.query(`INSERT INTO accounting_accounts
         (id,workspace_id,code,name,account_type,subtype,normal_balance,system_key,is_control,active,created_at,updated_at)

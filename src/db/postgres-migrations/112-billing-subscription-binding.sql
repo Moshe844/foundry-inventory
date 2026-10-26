@@ -1,0 +1,1 @@
+ALTER TABLE commercial_checkout_attempts ADD COLUMN paid_subscription_id TEXT;

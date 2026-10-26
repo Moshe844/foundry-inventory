@@ -14,9 +14,10 @@ function createBudget(db,ctx,goalId){
     FROM stockchief_runtime.codex_pilot_calls WHERE funding_workspace_id=p.funding_workspace_id) u
    WHERE p.workspace_id=$1`,[ctx.workspaceId])).rows[0]||{pilot:null,committed:0,calls:0,unresolved:0};
   const p=row.pilot,u=row;
-  return {approval:p?.approval_reference,ceiling:Number(p?.ceiling_micro_usd||0),expires:p?new Date(p.period_ends_at).getTime():0,
+  if(p?.admission_kind!=='COMMERCIAL'&&p){const legacy=(await client.query(`SELECT coalesce(sum(CASE WHEN status='SETTLED' THEN actual_minor WHEN status IN ('RESERVED','UNKNOWN') THEN maximum_minor ELSE 0 END)*10000,0) AS amount,count(*) FILTER(WHERE status IN ('RESERVED','UNKNOWN')) AS unresolved FROM commercial_model_cost_holds WHERE detail->>'certificationFundingWorkspaceId'=$1`,[p.funding_workspace_id||p.workspace_id])).rows[0];u.committed=Number(u.committed)+Number(legacy.amount);u.unresolved=Number(u.unresolved)+Number(legacy.unresolved);}
+  return {creditMeterOnly:p?.admission_kind==='COMMERCIAL'&&require('../commercial/model-cost-budget').creditsOnly(),approval:p?.approval_reference,ceiling:Number(p?.ceiling_micro_usd||0),expires:p?new Date(p.period_ends_at).getTime():0,
    stopped:!p?.enabled||p.stopped,committed:Number(u.committed),calls:Number(u.calls),unresolved:Number(u.unresolved),
-   remaining:Math.max(0,Number(p?.ceiling_micro_usd||0)-Number(u.committed))};
+   remaining:p?.admission_kind==='COMMERCIAL'&&require('../commercial/model-cost-budget').creditsOnly()?Infinity:Math.max(0,Number(p?.ceiling_micro_usd||0)-Number(u.committed))};
  }
  return {status,
   async reserve({candidate,task,upperBoundMicroUsd,detail={}}){

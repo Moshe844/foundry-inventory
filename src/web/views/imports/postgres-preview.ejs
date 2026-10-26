@@ -40,7 +40,7 @@
     <span class="spacer"></span><span class="badge badge--<%= run.verified?'ok':'danger' %>"><%= run.verified?'Verified':'Not verified' %></span></div>
     <div class="card-body"><p class="lede"><%= helpers.qty(run.rowsImported) %> <%= helpers.plural(run.rowsImported, 'row') %> created <%= helpers.qty(run.itemsCreated) %> <%= helpers.plural(run.itemsCreated, 'product') %><% if(run.itemsUpdated>0){ %>, updated <%= helpers.qty(run.itemsUpdated) %> <%= helpers.plural(run.itemsUpdated, 'product') %><% } %>, <%= helpers.qty(run.skusCreated) %> <%= helpers.plural(run.skusCreated, 'SKU') %> and <%= helpers.qty(run.unitsEstablished) %> opening <%= helpers.plural(run.unitsEstablished, 'unit') %>.</p>
       <% if(run.verified){ %><p>Your approved inventory is saved. The stock and accounting checks passed.</p><% } %>
-      <% if(activity?.startedAt){ %><p class="muted">Started <time data-import-time datetime="<%= activity.startedAt %>"><%= new Date(activity.startedAt).toUTCString() %></time><% if(activity.completedAt){ %><br>Finished <time data-import-time datetime="<%= activity.completedAt %>"><%= new Date(activity.completedAt).toUTCString() %></time><% } %></p><% } %>
+      <% if(activity?.startedAt){ %><p class="muted">Started <time data-import-time datetime="<%= activity.startedAt %>"><%= helpers.dateTime(activity.startedAt) %></time><% if(activity.completedAt){ %><br>Finished <time data-import-time datetime="<%= activity.completedAt %>"><%= helpers.dateTime(activity.completedAt) %></time><% } %></p><% } %>
       <details <% if(!run.verified){ %>open<% } %>><summary>Verification details · <%= run.checks.length %> <%= run.verified?'checks passed':'checks to review' %></summary>
       <table class="table table--tight"><thead><tr><th>Check</th><th>Expected</th><th>Found</th></tr></thead><tbody>
         <% run.checks.forEach(function(check){ %><tr><td><%= check.name %></td><td><%= helpers.qty(check.expected) %></td><td><%= helpers.qty(check.observed) %></td></tr><% }) %>
@@ -148,7 +148,8 @@
       <% if(locations.length){ %><div class="btn-row"><% locations.forEach(function(location){ %>
         <form method="post" action="/imports/<%= plan.id %>/revise"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>">
           <button class="btn btn--sm" type="submit" name="defaultLocationId" value="<%= location.id %>"><%= location.name %></button></form>
-      <% }) %></div><% } else { %><p><a href="/locations">Add a stock location</a> first, then return to this preview.</p><% } %>
+      <% }) %></div><% } %>
+      <details <%= locations.length?'':'open' %>><summary>Add a stock location here</summary><form method="post" action="/imports/<%= plan.id %>/location"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>"><label class="rm-field"><span>Location name</span><input name="name" required maxlength="120" placeholder="Main warehouse"></label><input type="hidden" name="kind" value="warehouse"><button class="btn btn--secondary" type="submit">Add and use this location</button><p class="hint">Creates the location and updates this preview. No stock or inventory value is imported.</p></form></details>
     </div>
   </section>
 <% } %>

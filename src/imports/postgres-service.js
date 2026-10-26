@@ -79,19 +79,21 @@ function problem(code, message) {
   return { code, message };
 }
 
-async function workspaceContext(database, workspaceId,{sourceHash=null}={}) {
+async function workspaceContext(database, workspaceId,{sourceHash=null,codes=null}={}) {
+  const keys=codes===null?null:[...new Set(codes.filter(Boolean).map(c=>require('../domain/catalog-identity').codeKey(c)))];
+  const scopedSkus="SELECT id FROM skus WHERE workspace_id=$1 AND ($2::text[] IS NULL OR lower(btrim(code))=ANY($2::text[]))";
   const [locations, skus, accounting,serials,positions,suppliers,reorders,currentPrices] = await Promise.all([
     database.query(`SELECT id,name FROM locations WHERE workspace_id=$1 AND is_active=1 ORDER BY name,id`,[workspaceId]),
     database.query(`SELECT s.id,s.code,s.item_id,i.name,i.tracking_mode,s.is_active AS sku_active,i.is_active AS item_active FROM skus s
       JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
-      WHERE s.workspace_id=$1`,[workspaceId]),
+      WHERE s.workspace_id=$1 AND ($2::text[] IS NULL OR lower(btrim(s.code))=ANY($2::text[]))`,[workspaceId,keys]),
     database.query(`SELECT enabled,base_currency FROM accounting_settings WHERE workspace_id=$1`,[workspaceId]),
-    database.query(`SELECT s.code,u.serial FROM serial_units u JOIN skus s ON s.workspace_id=u.workspace_id AND s.id=u.sku_id WHERE u.workspace_id=$1 AND u.status='in_stock'`,[workspaceId]),
+    database.query(`SELECT s.code,u.serial FROM serial_units u JOIN skus s ON s.workspace_id=u.workspace_id AND s.id=u.sku_id WHERE u.workspace_id=$1 AND u.status='in_stock' AND ($2::text[] IS NULL OR lower(btrim(s.code))=ANY($2::text[]))`,[workspaceId,keys]),
     database.query(`SELECT b.sku_id,b.location_id,b.on_hand,COALESCE(c.quantity_units,0) AS costed,COALESCE(c.total_cost_minor,0) AS value
-      FROM balances b LEFT JOIN accounting_inventory_cost_balances c ON c.workspace_id=b.workspace_id AND c.sku_id=b.sku_id AND c.location_id=b.location_id WHERE b.workspace_id=$1`,[workspaceId]),
+      FROM balances b LEFT JOIN accounting_inventory_cost_balances c ON c.workspace_id=b.workspace_id AND c.sku_id=b.sku_id AND c.location_id=b.location_id WHERE b.workspace_id=$1 AND b.sku_id IN (${scopedSkus})`,[workspaceId,keys]),
     database.query('SELECT name,status FROM suppliers WHERE workspace_id=$1',[workspaceId]),
-    database.query('SELECT sku_id,location_id,reorder_point,target_stock FROM reorder_policies WHERE workspace_id=$1',[workspaceId]),
-    database.query('SELECT DISTINCT ON(sku_id,currency) id,sku_id,currency FROM sku_prices WHERE workspace_id=$1 ORDER BY sku_id,currency,created_at DESC,id DESC',[workspaceId]),
+    database.query(`SELECT sku_id,location_id,reorder_point,target_stock FROM reorder_policies WHERE workspace_id=$1 AND sku_id IN (${scopedSkus})`,[workspaceId,keys]),
+    database.query(`SELECT DISTINCT ON(sku_id,currency) id,sku_id,currency FROM sku_prices WHERE workspace_id=$1 AND sku_id IN (${scopedSkus}) ORDER BY sku_id,currency,created_at DESC,id DESC`,[workspaceId,keys]),
   ]);
   const locationByName = new Map();
   for (const row of locations.rows) {
@@ -466,7 +468,9 @@ async function analyse(database, ctx, input) {
   // the source columns and rows in an unapproved preview so the operator can
   // identify the product column without editing and re-uploading the file.
   await input.onProgress?.({stage:'checking',totalRows:sheet.rows.length,worksheets:parsedWorkbook.sheets.length});
-  const context=await workspaceContext(database,ctx.workspaceId,{sourceHash});
+  const canScope=proposal.mappings.code!==undefined&&!(proposal.variantColumns?.length)&&!fields.VARIANT_FIELDS.some(k=>proposal.mappings[k]!==undefined);
+  const codes=canScope?sheet.rows.map(r=>Object.hasOwn(input.codeOverrides||{},r.sourceRow)?input.codeOverrides[r.sourceRow]:textCell(r,proposal.mappings.code)):null;
+  const context=await workspaceContext(database,ctx.workspaceId,{sourceHash,codes});
   if(input.defaultLocationId && !context.locations.some((row)=>row.id===input.defaultLocationId))
     throw new ValidationError('That destination location is not in this inventory.');
   proposal.variantBases=require('./source-identity').bases(sheet,proposal.mappings,proposal,input);

@@ -96,14 +96,14 @@ async function createBusiness(database, input) {
       await client.query(`INSERT INTO accounts(id,email,name,password_hash,plan,last_workspace_id,email_verified_at,created_at,time_zone)
         VALUES($1,$2,$3,$4,'free',$5,$6::timestamptz,$6::text,$7)`,
       [accountId,email,name,auth.hashPassword(password),workspaceId,at,timeZone]);
-      await client.query(`INSERT INTO workspaces(id,name,owner_account_id,data_mode,created_at)
-        VALUES($1,$2,$3,'production',$4)`, [workspaceId,businessName,accountId,at]);
+      await client.query(`INSERT INTO workspaces(id,name,owner_account_id,data_mode,created_at,time_zone)
+        VALUES($1,$2,$3,'production',$4,$5)`, [workspaceId,businessName,accountId,at,timeZone]);
       await client.query(`INSERT INTO account_inventory_onboarding(account_id,first_inventory_created_at)
         VALUES($1,$2) ON CONFLICT(account_id) DO NOTHING`, [accountId,at]);
       await client.query(`INSERT INTO users(id,workspace_id,account_id,name,role,created_at)
         VALUES($1,$2,$3,$4,'owner',$5)`, [userId,workspaceId,accountId,name,at]);
       await ledger.configureInTransaction(client, { workspaceId, actorId:userId }, {
-        startDate:require('../lib/business-time').context(timeZone,new Date(at)).calendarDate, currency:'USD',
+        startDate:require('../lib/business-time').context(timeZone,new Date(at)).calendarDate, currency:'USD',startDateBasis:'WORKSPACE_CREATION',
       });
       return { accountId,workspaceId,userId,email,name,businessName };
     }, { isolation:'SERIALIZABLE' });
@@ -131,12 +131,16 @@ async function createPendingAccount(database,input){
 }
 
 async function provisionFirstWorkspace(database,accountId,input={}){
-  const account=await getAccount(database,accountId);if(!account)throw new NotFoundError('That account could not be found.');
-  const existing=await defaultWorkspaceFor(database,accountId);if(existing)return {workspaceId:existing,created:false};
-  const created=await createWorkspace(database,accountId,{name:input.businessName||account.pending_business_name||`${account.name}'s inventory`});
-  await database.query(`UPDATE accounts SET pending_business_name=NULL,pending_commercial_plan_id=NULL,
-    pending_billing_interval=NULL,pending_promo_code=NULL,plan='paid',last_workspace_id=$2 WHERE id=$1`,[accountId,created.workspaceId]);
-  return {...created,created:true};
+ const work=async client=>{
+  await client.query('SELECT id FROM accounts WHERE id=$1 FOR UPDATE',[accountId]);
+  const scoped={query:client.query.bind(client),transaction:fn=>fn(client)},account=await getAccount(scoped,accountId);if(!account)throw new NotFoundError('That account could not be found.');
+  const existing=(await client.query('SELECT id FROM workspaces WHERE owner_account_id=$1 AND deletion_requested_at IS NULL ORDER BY created_at,id LIMIT 1',[accountId])).rows[0]?.id;
+  const created=existing?{workspaceId:existing,created:false}:await createWorkspace(scoped,accountId,{name:input.businessName||account.pending_business_name||account.name+"'s inventory"});
+  await client.query("UPDATE accounts SET pending_business_name=NULL,pending_commercial_plan_id=NULL,pending_billing_interval=NULL,pending_promo_code=NULL,plan='paid',last_workspace_id=$2 WHERE id=$1",[accountId,created.workspaceId]);
+  await client.query('INSERT INTO account_inventory_onboarding(account_id,first_inventory_created_at) VALUES($1,$2) ON CONFLICT(account_id) DO NOTHING',[accountId,new Date().toISOString()]);
+  return {...created,created:!existing};
+ };
+ return database.transaction?database.transaction(work,{isolation:'SERIALIZABLE',retrySafe:true}):work(database);
 }
 
 async function createWorkspace(database,accountId,input={}){
@@ -148,11 +152,11 @@ async function createWorkspace(database,accountId,input={}){
     if(!account)throw new NotFoundError('That account could not be found.');
     await entitlements.assertCapability(client,{accountId,workspaceId:null},'workspace.core');
     await entitlements.assertMeterCapacity(client,{accountId,workspaceId:null},'workspaces',1);
-    await client.query(`INSERT INTO workspaces(id,name,owner_account_id,data_mode,created_at)
-      VALUES($1,$2,$3,$4,$5)`,[workspaceId,businessName,accountId,dataMode,at]);
+    await client.query(`INSERT INTO workspaces(id,name,owner_account_id,data_mode,created_at,time_zone)
+      VALUES($1,$2,$3,$4,$5,$6)`,[workspaceId,businessName,accountId,dataMode,at,account.time_zone||'UTC']);
     await client.query(`INSERT INTO users(id,workspace_id,account_id,name,role,created_at)
       VALUES($1,$2,$3,$4,'owner',$5)`,[userId,workspaceId,accountId,account.name,at]);
-    await ledger.configureInTransaction(client,{workspaceId,actorId:userId},{startDate:require('../lib/business-time').context(account.time_zone||'UTC',new Date(at)).calendarDate,currency:'USD'});
+    await ledger.configureInTransaction(client,{workspaceId,actorId:userId},{startDate:require('../lib/business-time').context(account.time_zone||'UTC',new Date(at)).calendarDate,currency:'USD',startDateBasis:'WORKSPACE_CREATION'});
     await client.query('UPDATE accounts SET last_workspace_id=$2 WHERE id=$1',[accountId,workspaceId]);
     return {workspaceId,userId,businessName};
   },{isolation:'SERIALIZABLE',retrySafe:true});

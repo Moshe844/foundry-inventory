@@ -1,5 +1,14 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),{compact,expand}=require('../../scripts/environment-agent-demo/interface-presentation');
+test('signature names share delivered operation positions with exact authority and ordering',()=>{
+ const operations=Array.from({length:60},(_,i)=>({name:'read.unfamiliar_signature_record_'+i,kind:'read'})),value={operations,readSignatures:[{names:operations.map(o=>o.name),fields:{},authority:{mode:'none'}}],navigationSignatures:[{names:['navigate.undelivered'],required:['reference']}]};
+ const wire=compact(value);assert.equal(wire._stockchiefSignatureIndexEncoding,'operation_numbers');assert.deepEqual(expand(wire),value);assert.deepEqual(compact(wire),wire);
+ for(const invalid of [-1,1.5,null,1000]){const bad=structuredClone(wire);bad.readSignatures[0].names[0]=invalid;assert.throws(()=>expand(bad),/INTERFACE_SIGNATURE_REFERENCE_UNAVAILABLE/);}
+});
+test('initial read metadata shares repeated discovery flags without losing a purpose or input',()=>{
+ const original={operations:Array.from({length:80},(_,i)=>({name:'read.unfamiliar_'+i,kind:'read',description:'Read current record '+i,fieldsBySignature:true,detailsByName:true})),readArgumentsComplete:true};
+ const wire=compact(original);assert.equal(wire._stockchiefOperationDefaults.fieldsBySignature,true);assert.equal(wire._stockchiefOperationDefaults.detailsByName,true);assert.deepEqual(expand(wire),original);assert(Buffer.byteLength(JSON.stringify(wire))<Buffer.byteLength(JSON.stringify(original))-2500);assert.deepEqual(compact(wire),wire);
+});
 test('operation index prefix groups preserve complete names and order without changing any operation authority',()=>{
  const names=Array.from({length:180},(_,i)=>'unfamiliar_extension.workflow_operation_'+i),value={operations:[{name:'read.existing',kind:'read',fields:{},authority:{mode:'none'}}],operationIndex:{read:['read.existing'],mutation:names},indexComplete:true};const wire=compact(value);assert.equal(wire._stockchiefOperationIndexEncoding,'operation_numbers_and_prefix_groups');assert.deepEqual(expand(wire),value);assert(Buffer.byteLength(JSON.stringify(wire))<Buffer.byteLength(JSON.stringify(value))/2);const corrupt=structuredClone(wire);corrupt.operationIndex.mutation[0].suffixes[0]=4;assert.throws(()=>expand(corrupt),/INVALID_INTERFACE_INDEX_PREFIX/);
 });

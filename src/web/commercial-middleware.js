@@ -17,6 +17,7 @@ const OPERATIONAL_BYPASSES=[
   /^\/commercial-admin(?:\/|$)/,
   /^\/commercial\/events$/,
   /^\/logout(?:-all)?$/,
+  /^\/support\/requests$/,
   /^\/verify-email(?:\/|$)/,
   /^\/reset-password$/,
   /^\/settings\/connections\/[^/]+\/(?:disconnect|pause)$/,

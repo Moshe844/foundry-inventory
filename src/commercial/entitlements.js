@@ -31,6 +31,8 @@ async function subscriptionFor(database, accountId) {
 
 function operationalAccess(subscription, now = new Date()) {
   if (!subscription) return {mode:'UNSUBSCRIBED',canOperate:false,canRead:true};
+  if(subscription.refunded_at)return {mode:'REFUNDED_READ_ONLY',canOperate:false,canRead:true,deleteAfter:subscription.refund_deletion_at};
+  if(subscription.source==='SELF_SERVICE_TRIAL')return {mode:'PAID_ACTIVATION_REQUIRED',canOperate:false,canRead:true};
   if(subscription.status==='GRACE'&&subscription.grace_ends_at&&new Date(subscription.grace_ends_at)<=now)
     return {mode:'SUSPENDED',canOperate:false,canRead:true};
   if(subscription.status==='TRIALING'&&subscription.trial_ends_at&&new Date(subscription.trial_ends_at)<=now)

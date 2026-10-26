@@ -12,7 +12,7 @@ test('recorded clarification and unfamiliar multi-turn domains traverse the real
  await require('../../src/db/migrate-postgres').migratePostgres(db);
  const email=randomUUID()+'@example.test',password='Offline!'+randomUUID();
  const owner=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'Offline verification',businessName:'Offline lifecycle verification',email,password});
- const ctx={workspaceId:owner.workspaceId,actorId:owner.userId};process.env.STOCKCHIEF_RUNTIME_ENV='staging';
+ const ctx={workspaceId:owner.workspaceId,actorId:owner.userId};await db.query("INSERT INTO account_subscriptions(id,account_id,plan_id,plan_version_id,status,billing_interval,source) VALUES($1,$2,'starter','wallet-foundation:starter','COMP','CUSTOM','OFFLINE_TEST')",[randomUUID(),owner.accountId]);process.env.STOCKCHIEF_RUNTIME_ENV='staging';
  Object.assign(process.env,(await require('../../scripts/provision-codex-staging').provision(db,{businessName:'Offline lifecycle verification',emails:[email]})).environment);
  process.env.FOUNDRY_DATABASE_URL=cluster.connectionString;
  await db.query(`UPDATE stockchief_runtime.codex_pilots SET enabled=true,stopped=false,ceiling_micro_usd=1000000,approval_reference='OFFLINE FAKE ONLY' WHERE workspace_id=$1`,[ctx.workspaceId]);

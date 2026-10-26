@@ -545,8 +545,8 @@ function create(providers=defaultProviders,options={}){return {'system.runtime-s
   }),
   'shipping.tracking.check':external((job,database)=>require('../shipping/postgres-tracking').check(database,job,{providerResolver:options.shippingProviderResolver})),
   'shipping.webhook.setup':external((job,database)=>require('../shipping/postgres-webhook-setup').run(database,job,{providerResolver:options.shippingProviderResolver})),
-  'import.revise-preview':external((job,database)=>require('../imports/postgres-preview-revisions').run(job,database),'bulk'),
-  'import.analyse-source':external((job,database)=>require('../imports/postgres-source-uploads').run(job,database,{provider:options.aiProvider}),'bulk'),
+  'import.revise-preview':external((job,database)=>require('../imports/postgres-preview-revisions').run(job,database),'reading'),
+  'import.analyse-source':external((job,database)=>require('../imports/postgres-source-uploads').run(job,database,{provider:options.aiProvider}),'reading'),
   'import.execute-approved':external(async(job,database)=>{
       const {planId,actorId,integrityHash,retryExecutionId}=job.payload||{};
     if(!job.workspaceId||!planId||!actorId||!integrityHash)throw Object.assign(
@@ -593,6 +593,8 @@ function create(providers=defaultProviders,options={}){return {'system.runtime-s
   'provider.webhook-process':external((job,database)=>require('../connections/postgres-webhook-inbox').job(job,database,providers)),
   'commercial.auto-top-up':external((job,database)=>require('../commercial/addons').runTopup(database,
     {accountId:job.payload.accountId,workspaceId:job.workspaceId},job.payload.category,options.commercialOptions||{})),
+  'commercial.subscription-refund-cancel':external((job,database)=>require('../commercial/subscription-refund-retention').cancel(database,job,options.commercialOptions||{})),
+  'commercial.refund-retention-delete':external((job,database)=>require('../commercial/subscription-refund-retention').remove(database,job)),
   'commercial.stripe-financial-sync':external((job,database)=>require('../commercial/stripe-financials').sync(database,job,options.commercialOptions||{})),
     'commercial.stripe-invoice-sync':external((job,database)=>require('../commercial/stripe-financials').syncInvoice(database,job,options.commercialOptions||{})),
   'provider.effect':external((job,database)=>providerEffect(job,database,options,providers)),

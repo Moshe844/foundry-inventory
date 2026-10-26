@@ -51,7 +51,8 @@ async function createCheckout(input, options = {}) {
       'metadata[stockchief_plan_id]':input.planId,
       'metadata[stockchief_checkout_attempt_id]':input.attemptId,
       allow_promotion_codes:input.promotionCodeId?undefined:'true',
-      'subscription_data[trial_period_days]':input.trialDays>0?input.trialDays:undefined,
+      'payment_method_types[0]':'card',
+      payment_method_collection:'always',
       billing_address_collection:'auto',
       'automatic_tax[enabled]':automaticTax?'true':undefined,
       ...promotion,
@@ -156,6 +157,7 @@ async function scheduleDowngrade(input,options={}){
   'phases[1][proration_behavior]':'none'}});
 }
 
+async function cancelImmediately(input,options={}){return call('/subscriptions/'+encodeURIComponent(input.subscriptionId),{...options,method:'DELETE',idempotencyKey:'stockchief-refund-cancel:'+input.refundId,values:{invoice_now:'false',prorate:'false'}});}
 async function setCancellation(input,options={}){
   return call(`/subscriptions/${encodeURIComponent(input.subscriptionId)}`,{...options,
     idempotencyKey:`stockchief-subscription-cancellation:${input.subscriptionId}:${input.requestId}`,
@@ -206,5 +208,5 @@ function verifyEvent(raw, headers = {}, options = {}) {
 module.exports = { createCheckout,createPortal,retrieveCheckout,retrieveSubscription,previewSubscriptionChange,updateSubscription,
   createAddonCheckout,createTopupPayment,retrievePrice,retrievePaymentMethod,retrieveBalanceTransaction,retrieveInvoice,retrievePaymentIntent,listInvoicePayments,listCreditNotes,listCustomerBalanceTransactions,
   scheduleDowngrade,
-  setCancellation,listInvoices,createInvoiceItem,verifyEvent,
+  cancelImmediately,setCancellation,listInvoices,createInvoiceItem,verifyEvent,
   __internal:{call,form,apiVersion:API_VERSION} };
