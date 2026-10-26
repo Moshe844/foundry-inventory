@@ -1,4 +1,4 @@
 'use strict';
-(()=>{let formatter;try{formatter=new Intl.DateTimeFormat(undefined,{year:'numeric',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',second:'2-digit',timeZoneName:'short',...(document.documentElement.dataset.timeZone?{timeZone:document.documentElement.dataset.timeZone}:{})});const zone=formatter.resolvedOptions().timeZone;for(const label of document.querySelectorAll('[data-inbox-time-zone]'))label.textContent=zone;}catch{return;}
- for(const time of document.querySelectorAll('time[data-inbox-instant]')){const date=new Date(time.dateTime);if(!Number.isNaN(date.getTime())){time.textContent=formatter.format(date);time.title=date.toISOString();}}
+(()=>{let formatter;try{formatter=window.StockChiefFormat.create(document.documentElement.dataset.timeZone);const zone=formatter.timeZone;for(const label of document.querySelectorAll('[data-inbox-time-zone]'))label.textContent=zone;}catch{return;}
+ for(const time of document.querySelectorAll('time[data-inbox-instant]')){const date=new Date(time.dateTime);if(!Number.isNaN(date.getTime())){time.textContent=formatter.dateTime(date);time.title=date.toISOString();}}
 })();

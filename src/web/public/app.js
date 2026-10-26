@@ -17,7 +17,7 @@
   // leave the person at an unrelated position from a previous visit. StockChief
   // owns that landing behaviour instead: full pages start at the top, while a
   // fragment reveals the named section.
-  if ('scrollRestoration' in window.history) window.history.scrollRestoration = 'manual';
+
 
   /* ------------------------------------------------------------ search -- */
 
@@ -29,6 +29,7 @@
     let timer = null;
     let controller = null;
     let activeIndex = -1;
+    let generation = 0;
 
     const close = () => {
       panel.hidden = true;
@@ -36,7 +37,10 @@
       activeIndex = -1;
     };
 
-    const render = (results) => {
+    const render = (records) => {
+      const term=input.value.trim();
+      const results=records.filter(r=>{try{return new URL(r.href,location.origin).origin===location.origin;}catch{return false;}});
+      if(term){const ask={title:'Ask StockChief: '+term,subtitle:'Open this question in Ask',href:'/ask?'+new URLSearchParams({q:term,from:location.pathname+location.search})};if(/[?？]$/.test(term)||term.split(/\s+/).length>=3)results.unshift(ask);else results.push(ask);}
       if (!results.length) {
         panel.innerHTML = '<div class="search-empty">No matches yet.</div>';
         panel.hidden = false;
@@ -45,7 +49,7 @@
       panel.innerHTML = results
         .map(
           (r) =>
-            `<a class="search-hit" href="${r.href}"><span><strong>${escapeHtml(r.title)}</strong>` +
+            `<a class="search-hit" role="option" aria-selected="false" href="${escapeHtml(r.href)}"><span><strong>${escapeHtml(r.title)}</strong>` +
             `<span class="sub"> ${escapeHtml(r.subtitle)}</span></span>` +
             `<span class="meta">${escapeHtml(r.meta || '')}</span></a>`
         )
@@ -55,18 +59,12 @@
     };
 
     input.addEventListener('input', () => {
-      const term = input.value.trim();
-      window.clearTimeout(timer);
-      if (term.length < 2) return close();
-      timer = window.setTimeout(() => {
-        if (controller) controller.abort();
-        controller = new AbortController();
-        fetch(`/api/search?q=${encodeURIComponent(term)}`, { signal: controller.signal })
-          .then((res) => (res.ok ? res.json() : { results: [] }))
-          .then((data) => render(data.results || []))
-          .catch(() => {});
-      }, 160);
-      return undefined;
+      const term=input.value.trim(),current=++generation;window.clearTimeout(timer);if(controller)controller.abort();
+      if(!term)return close();if(term.length<2){render([]);return;}
+      timer=window.setTimeout(()=>{controller=new AbortController();fetch('/api/search?q='+encodeURIComponent(term),{signal:controller.signal})
+       .then(res=>{if(!res.ok)throw new Error('Search is unavailable');return res.json();})
+       .then(data=>{if(current===generation)render(data.results||[]);})
+       .catch(error=>{if(current!==generation||error.name==='AbortError')return;render([]);const note=document.createElement('div');note.className='search-empty';note.setAttribute('role','status');note.textContent='Record search is temporarily unavailable. Try again.';panel.prepend(note);});},150);
     });
 
     input.addEventListener('keydown', (event) => {
@@ -78,7 +76,7 @@
         activeIndex += event.key === 'ArrowDown' ? 1 : -1;
         if (activeIndex < 0) activeIndex = hits.length - 1;
         if (activeIndex >= hits.length) activeIndex = 0;
-        hits.forEach((hit, index) => hit.classList.toggle('is-active', index === activeIndex));
+        hits.forEach((hit,index)=>{hit.classList.toggle('is-active',index===activeIndex);hit.setAttribute('aria-selected',String(index===activeIndex));});
         hits[activeIndex].scrollIntoView({ block: 'nearest' });
       }
       if (event.key === 'Enter' && activeIndex >= 0) {
@@ -93,7 +91,7 @@
     });
 
     document.addEventListener('keydown', (event) => {
-      if (event.key === '/' && document.activeElement === document.body) {
+      if (((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='k') || (event.key === '/' && document.activeElement === document.body)) {
         event.preventDefault();
         input.focus();
       }
@@ -133,8 +131,9 @@
               select.dispatchEvent(new Event('change', { bubbles: true }));
             }
           }
+          dialog.scrollTop=0;dialog.querySelectorAll('.modal-body,[data-dialog-scroll]').forEach(node=>node.scrollTop=0);
           dialog.showModal();
-          const focusable = dialog.querySelector('select, input:not([type=hidden]), textarea');
+          const focusable = dialog.querySelector('[autofocus]:not(:disabled),select:not(:disabled), input:not([type=hidden]):not(:disabled), textarea:not(:disabled)');
           if (focusable) window.setTimeout(() => focusable.focus(), 30);
         }
         return;
@@ -299,6 +298,10 @@
 
   function initNavigationLanding() {
     let scheduledFrame = null;
+    let interactedUrl = null;
+    const respectInteraction = () => { interactedUrl = window.location.href; if(scheduledFrame!==null){window.cancelAnimationFrame(scheduledFrame);scheduledFrame=null;} };
+    document.addEventListener("pointerdown",respectInteraction,{capture:true});
+    document.addEventListener("keydown",respectInteraction,{capture:true});
 
     const hashTarget = () => {
       if (!window.location.hash) return null;
@@ -313,6 +316,7 @@
       if (scheduledFrame !== null) window.cancelAnimationFrame(scheduledFrame);
       scheduledFrame = window.requestAnimationFrame(() => {
         scheduledFrame = null;
+        if(window.StockChiefNavigation?.wasRestored() || interactedUrl===window.location.href)return;
         const target = hashTarget();
 
         // Modal fragments are handled by initModals. Moving the document
@@ -381,7 +385,7 @@
       const sameDocument = destination.origin === window.location.origin
         && destination.pathname === window.location.pathname
         && destination.search === window.location.search;
-      if (sameDocument && destination.hash) window.setTimeout(land, 0);
+      if (sameDocument && destination.hash) { interactedUrl=null; window.setTimeout(land, 0); }
     });
 
     land();
@@ -1813,6 +1817,7 @@
    * under it and the box to reply is beneath both.
    */
   function initAskScroll() {
+    if(window.StockChiefNavigation?.wasRestored())return;
     const chat = document.querySelector('.rm-chat');
     if (!chat || !chat.querySelector('.rm-history, .rm-turn--past')) return;
     // Back from a page with something to say ("Remembered…", "Dana Brook is
@@ -1824,7 +1829,7 @@
     // is what the page opens on, never the folded history above it.
     const current = chat.querySelector('.rm-turn--latest') || chat.querySelector('.rm-turn--you:not(.rm-turn--past)') || chat.querySelector('.rm-composer');
     if (!current) return;
-    if ('scrollRestoration' in window.history) window.history.scrollRestoration = 'manual';
+
     current.scrollIntoView({ block: 'start' });
   }
 

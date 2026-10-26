@@ -72,6 +72,7 @@ function createPostgresApp({database,resourceDatabase=database,sessionStore,sess
     if(!agentInspection||typeof agentInspectionGuard!=='function')throw new TypeError('An inspection guard requires the restricted agent renderer.');
     app.use(agentInspectionGuard);
   }
+  app.use(require('./web/presentation/navigation').createAliasRouter());
   // Webhooks and token APIs run before cookie authentication, but still need a
   // database context so an unscoped external request cannot escape accounting.
   app.use(require('./commercial/enforcement').contextMiddleware(database));

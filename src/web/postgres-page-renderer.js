@@ -46,7 +46,7 @@ function postgresPageRenderer(req,res,next){
         if(href!==currentHref)arrivedFrom={href,label:req.session?.renderedPageLabels?.[href]||'previous page'};}}
     catch{arrivedFrom=null;}}
     return res.render('layout',{...data,body,title:data.title || 'StockChief',nav:data.nav || null,
-      moreSections,
+      moreSections,navigation:require('./presentation/navigation'),pageSection:require('./presentation/navigation').sectionFor(req.path),
       assetVersion:res.locals.assetVersion,
       flash:flashMessages,csrfToken:res.locals.csrfToken,
       backTo:data.suppressBack?null:(data.backTo || arrivedFrom || data.backToFallback || null),

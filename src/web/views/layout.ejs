@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-time-zone="<%= locals.account?.timeZone||'' %>">
+<html lang="en" data-time-zone="<%= locals.account?.timeZone||'' %>" data-account-id="<%= locals.account?.id||'' %>" data-workspace-id="<%= locals.workspace?.id||'' %>">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -31,6 +31,7 @@
   <% if (nav === 'home') { %><link rel="stylesheet" href="/home.css?v=<%= assetVersion %>"><% } %>
   <% if (nav === 'ask') { %><link rel="stylesheet" href="/ask.css?v=<%= assetVersion %>"><% } %>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%235B4BE8'/%3E%3Cpath d='M6 8.5 12 5.8l6 2.7v6L12 17.2 6 14.5z' fill='none' stroke='white' stroke-width='1.5' stroke-linejoin='round'/%3E%3C/svg%3E">
+<script src="/presentation-format.js?v=<%= assetVersion %>" defer></script>
 </head>
 <body class="page-<%= nav || 'plain' %>">
 <%
@@ -186,7 +187,7 @@
         <div class="import-activity__head"><span>File import activity</span><a href="/imports">All imports and results</a></div>
         <% visibleImports.forEach(function(importState){ %>
           <div class="import-activity__row" data-import-progress="<%= importState.href %>/progress" aria-live="polite">
-            <div class="import-activity__copy"><strong data-import-status><%= importState.label %></strong><span><%= importState.sourceName %> · <%= helpers.qty(importState.readyRows) %> <%= importState.state==='UPDATING_PREVIEW'?'preview':'approved' %> rows</span><small data-import-note><%= importState.state==='UPDATING_PREVIEW'?'Checking the preview only; no stock changes.':'Products and stock appear after verification finishes.' %></small><small data-import-timing><%= importState.startedAt?'Started':'Queued' %> <time data-import-time datetime="<%= importState.startedAt||importState.queuedAt||importState.createdAt %>"><%= new Date(importState.startedAt||importState.queuedAt||importState.createdAt).toISOString().replace('T',' ').replace('Z',' UTC') %></time></small></div>
+            <div class="import-activity__copy"><strong data-import-status><%= importState.label %></strong><span><%= importState.sourceName %> · <%= helpers.qty(importState.readyRows) %> <%= importState.state==='UPDATING_PREVIEW'?'preview':'approved' %> rows</span><small data-import-note><%= importState.state==='UPDATING_PREVIEW'?'Checking the preview only; no stock changes.':'Products and stock appear after verification finishes.' %></small><small data-import-timing><%= importState.startedAt?'Started':'Queued' %> <time data-import-time datetime="<%= importState.startedAt||importState.queuedAt||importState.createdAt %>"><%= helpers.dateTime(importState.startedAt||importState.queuedAt||importState.createdAt) %></time></small></div>
             <a class="btn btn--secondary btn--sm" href="<%= importState.href %>" data-import-result>View progress</a>
               <%- include('partials/import-meter',{activity:importState}) %>
           </div>
@@ -230,7 +231,7 @@
       <%- include('partials/screen-guide', { screenGuide: screenGuide }) %>
     <% } %>
     <% if (typeof backTo !== 'undefined' && backTo && backTo.href) { %>
-      <a class="page-back" href="<%= backTo.href %>"><span aria-hidden="true">←</span> Back to <%= backTo.label %></a>
+      <a class="page-back" data-return-to href="<%= backTo.href %>"><span aria-hidden="true">←</span> Back to <%= backTo.label %></a>
     <% } %>
     <% if(locals.passwordUpgradeRequired){ %><div class="notice notice--warn" role="status"><div><strong>Please strengthen your password.</strong><p>Your account uses an older password policy. <a href="/settings/password">Update your password</a> to meet the current security requirements.</p><form method="post" action="/settings/password/remind-later"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="returnTo" value="<%= locals.currentPath||'/' %>"><button class="btn btn--sm" type="submit">Remind me next sign-in</button></form></div></div><% } %>
     <%- body %>
@@ -238,6 +239,7 @@
 </div>
 <script src="/table-overflow.js?v=<%= assetVersion %>" defer></script>
 <script src="/local-time.js?v=<%= assetVersion %>" defer></script>
+<script src="/navigation-state.js?v=<%= assetVersion %>" defer></script>
 <script src="/app.js?v=<%= assetVersion %>" defer></script>
 <% if(locals.globalImportActivity?.length||nav==='imports'){ %><script src="/import-progress.js?v=<%= assetVersion %>" defer></script><% } %>
 <% if(locals.agentArrival){ %>

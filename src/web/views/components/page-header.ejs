@@ -1,0 +1,8 @@
+<header class="page-head" data-page-header>
+  <div class="titles">
+    <% if(header.back){ %><a class="back-link" href="<%= header.back.href %>"><%- helpers.icon('chevron',{size:14}) %> <%= header.back.label %></a><% } %>
+    <h1><%= header.title %></h1>
+    <% if(header.description){ %><p class="page-sub"><%= header.description %></p><% } %>
+  </div>
+  <% if(header.actions?.length){ %><div class="page-actions"><% header.actions.forEach(function(action){ %><a class="btn <%= action.primary?'btn--primary':'' %>" href="<%= action.href %>"><%= action.label %></a><% }); %></div><% } %>
+</header>

@@ -1,0 +1,5 @@
+<% var paymentView=helpers.paymentSummary(money); %>
+<section class="card section" role="region" aria-label="Payment summary">
+ <div class="card-head"><h2>Payment</h2><span class="badge"><%= paymentView.state %></span></div>
+ <div class="card-body"><dl class="kv"><% paymentView.rows.forEach(function(row){ %><dt><%= row.label %></dt><dd><%= helpers.money(row.amountMinor,money.currency||currency||'USD') %></dd><% }); %></dl></div>
+</section>

@@ -1,0 +1,15 @@
+<% var supplierForm=locals.prefill||{}; %>
+<% if(locals.formError){ %><div class="notice notice--warn" role="alert" tabindex="-1" data-form-error><%= formError %></div><% } %>
+<form method="post" action="/suppliers" class="card form-card" data-busy>
+ <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+ <input type="hidden" name="formOrigin" value="<%= locals.formOrigin||'/suppliers' %>">
+ <div class="card-body grid grid--2">
+  <label class="field"><span class="field-label">Name</span><input class="input" name="name" required maxlength="160" value="<%= supplierForm.name||'' %>" autofocus></label>
+  <label class="field"><span class="field-label">Contact</span><input class="input" name="contactName" maxlength="120" value="<%= supplierForm.contactName||'' %>"></label>
+  <label class="field"><span class="field-label">Email</span><input class="input" type="email" name="email" maxlength="160" value="<%= supplierForm.email||'' %>"></label>
+  <label class="field"><span class="field-label">Phone</span><input class="input" name="phone" maxlength="60" value="<%= supplierForm.phone||'' %>"></label>
+  <label class="field"><span class="field-label">Usual lead time (days)</span><input class="input" type="number" min="0" max="365" name="defaultLeadTimeDays" value="<%= supplierForm.defaultLeadTimeDays??'' %>"><span class="field-help">The supplier's usual delivery time.</span></label>
+  <label class="field"><span class="field-label">Payment terms</span><input class="input" name="paymentTerms" maxlength="80" value="<%= supplierForm.paymentTerms||'' %>" placeholder="For example, net 30 days"></label>
+ </div>
+ <div class="card-foot"><button class="btn btn--primary" type="submit">Save supplier</button><a class="btn btn--ghost" href="/suppliers">Cancel</a></div>
+</form>

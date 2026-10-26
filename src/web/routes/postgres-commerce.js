@@ -267,9 +267,11 @@ function createPostgresCommerceRouter(database,options={}){
       permissions:purchasingPermissions(req)});
   }));
   router.post('/suppliers',requireAuth,requirePermission(permissions.MANAGE_SUPPLIERS,'add suppliers'),asyncRoute(async(req,res)=>{
-    const supplier=await commerce.createSupplier(database,req.ctx,req.body);req.flash('success',`${supplier.name} was added.`);
-    return res.redirect(303,`/suppliers/${supplier.id}`);
+    try {const supplier=await commerce.createSupplier(database,req.ctx,req.body);req.flash('success',`${supplier.name} was added.`);return res.redirect(303,`/suppliers/${supplier.id}`);}
+    catch(error){if(!(error instanceof ValidationError))throw error;return res.status(400).page('purchasing/supplier-new',{title:'Add supplier',nav:'purchasing',prefill:req.body,formError:error.message,formOrigin:'/suppliers/new'});}
   }));
+
+  router.get('/suppliers/new',requireAuth,requirePermission(permissions.MANAGE_SUPPLIERS,'add suppliers'),asyncRoute(async(req,res)=>res.page('purchasing/supplier-new',{title:'Add supplier',nav:'purchasing',prefill:{},formOrigin:'/suppliers/new'})));
 
   router.get('/suppliers/:id',requireAuth,requirePermission(permissions.VIEW_PURCHASING,'see suppliers'),asyncRoute(async(req,res)=>{
     const [supplierRows,itemRows,orderRows,mailboxRows,senderRows,priceRows,catalogueRows,usageRows]=await Promise.all([

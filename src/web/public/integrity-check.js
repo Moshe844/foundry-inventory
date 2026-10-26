@@ -6,7 +6,7 @@
    const counts=Object.entries(body.result).filter(([key,value])=>key!=='ok'&&Number(value)>0);
    result.textContent=body.result.ok?'Stock, tracked units and journal totals balanced at this check.':counts.map(([key,value])=>value+' '+key.replaceAll('_',' ')).join('; ');
    if(badge){badge.textContent=body.result.ok?'balanced at last check':counts.length+' to check';badge.classList.toggle('is-ok',body.result.ok);badge.classList.toggle('is-warn',!body.result.ok);}
-   const time=document.createElement('p');time.className='rm-quiet';time.textContent='Checked '+new Intl.DateTimeFormat(undefined,{dateStyle:'medium',timeStyle:'medium'}).format(new Date(body.checkedAt))+'. Later changes are not included.';result.append(time);
+   const time=document.createElement('p');time.className='rm-quiet';time.textContent='Checked '+window.StockChiefFormat.create(document.documentElement.dataset.timeZone).dateTime(body.checkedAt)+'. Later changes are not included.';result.append(time);
   }catch{if(badge){badge.textContent='check interrupted';badge.classList.remove('is-ok');badge.classList.add('is-warn');}result.textContent='This check could not finish. Your stock and books were not changed. Try again shortly.';}
   finally{button.disabled=false;}
  });

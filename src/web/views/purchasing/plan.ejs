@@ -59,7 +59,6 @@
   } else { %>Nothing needs ordering right now.<% } %></p>
 <% if (locals.postgresQuickEntry && catalogueCount && !hasPlan) { %><p class="owner-verdict-note">This is not a stock all-clear. No verified reorder recommendation is recorded here yet. <a href="/planning">See measured shortages and planning evidence</a>.</p><% } %>
 
-<%- include('../partials/owner-direct-line', { directLineContext: 'Ask what should be ordered, or tell StockChief to prepare a purchase.' }) %>
 
 <% if (drafts.length) { %>
   <div class="flash section" role="status" style="margin-top:0">

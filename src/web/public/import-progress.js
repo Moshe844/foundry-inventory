@@ -21,7 +21,7 @@
  }
  const advance=()=>requestAnimationFrame(()=>requestAnimationFrame(nextStep));
  if(document.readyState==='complete')advance();else window.addEventListener('load',advance,{once:true});
- const format=iso=>new Intl.DateTimeFormat(undefined,{year:'numeric',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',second:'2-digit',timeZoneName:'short',...(document.documentElement.dataset.timeZone?{timeZone:document.documentElement.dataset.timeZone}:{})}).format(new Date(iso));
+ const clock=window.StockChiefFormat.create(document.documentElement.dataset.timeZone);const format=value=>clock.dateTime(value);
  document.querySelectorAll('[data-import-time]').forEach(time=>{if(Number.isFinite(Date.parse(time.dateTime))){time.textContent=format(time.dateTime);time.title=time.dateTime;}});
  document.querySelectorAll('[data-import-file-upload]').forEach(form=>form.querySelector('[type=file]')?.addEventListener('change',()=>{const key=form.querySelector('[name=uploadKey]');if(key)key.value=crypto.randomUUID();}));
  const sourceGroups=new Map();

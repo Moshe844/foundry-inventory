@@ -209,7 +209,7 @@
 <%# ------------------------------------------------------------- the facts %>
 <div class="rm-split" style="margin-bottom:16px">
   <div class="rm-stack">
-    <section class="rm-panel">
+    <section class="rm-panel" id="people">
       <div class="rm-panel__head">
         <%- helpers.icon('user', { size: 15, className: 'rm-quiet' }) %>
         <h2>People</h2>
@@ -380,7 +380,7 @@
     </section>
     <% if(locals.postgresMode){ %><script src="/integrity-check.js?v=<%= assetVersion %>" defer></script><% } %>
 
-    <section class="rm-panel">
+    <section class="rm-panel" id="account">
       <div class="rm-panel__head">
         <%- helpers.icon('user', { size: 15, className: 'rm-quiet' }) %>
         <h2>Your account</h2>

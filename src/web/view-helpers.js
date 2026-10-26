@@ -36,23 +36,13 @@ function plural(count, one, many) {
  * a day, not an instant, so they are formatted in UTC. Formatting them locally
  * would show "Oct 29" for an October 30th expiry west of Greenwich.
  */
-function shortDate(iso) {
-  if (!iso) return '';
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '';
-  return date.toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    timeZone: 'UTC',
-  });
-}
+function shortDate(iso,timeZone='UTC') { return require('./presentation/formatting').forTimeZone(timeZone).date(iso); }
 
 function dateInputValue(iso) {
   if(!iso)return '';if(iso instanceof Date)return Number.isNaN(iso.getTime())?'':iso.toISOString().slice(0,10);return /^\d{4}-\d{2}-\d{2}/.test(String(iso))?String(iso).slice(0,10):'';
 }
 
-function timeAgo(iso) {
+function timeAgo(iso,timeZone='UTC') {
   if (!iso) return '';
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return '';
@@ -64,22 +54,10 @@ function timeAgo(iso) {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
   if (days < 7) return `${days}d ago`;
-  return shortDate(iso);
+  return shortDate(iso,timeZone);
 }
 
-function dateTime(iso,timeZone='UTC') {
-  if (!iso) return '';
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '';
-  return date.toLocaleString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-    timeZone,timeZoneName:'short',
-  });
-}
+function dateTime(iso,timeZone='UTC') { return require('./presentation/formatting').forTimeZone(timeZone).dateTime(iso); }
 
 function trackingLabel(mode, hasVariants) {
   const base = TRACKING_MODES[mode] ? TRACKING_MODES[mode].label : mode;
@@ -222,6 +200,7 @@ function columnLabel(key) {
 }
 
 module.exports = {
+  paymentSummary:require('./presentation/payment-summary').present,
   importSourceFormats: require('../imports/source-formats'),
   orderStatus:require('../sales/order-status').label,
   aiCustomerMeter:require('../commercial/ai-spending-limits').customerMeter,

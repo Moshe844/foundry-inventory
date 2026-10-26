@@ -11,7 +11,7 @@
 <div class="card errorpage">
   <div class="empty">
     <div class="icon-wrap"><%- helpers.icon(status === 404 ? 'empty' : 'alert', { size: 22 }) %></div>
-    <h3><%= status === 404 ? 'We could not find that' : 'Something went wrong' %></h3>
+    <h1><%= status === 404 ? 'We could not find that' : 'Something went wrong' %></h1>
     <p><%= message %></p>
     <div class="btn-row" style="justify-content: center;">
       <a class="btn btn--primary" href="/">Back to overview</a>

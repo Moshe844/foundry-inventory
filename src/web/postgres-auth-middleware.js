@@ -36,7 +36,7 @@ function loadUser(database,{readonly=false}={}) {
       }
       req.account = account;
       res.locals.account = { id:account.id,name:account.name,email:account.email,plan:account.plan,timeZone:account.time_zone||null };
-      res.locals.helpers={...res.locals.helpers,dateTime:iso=>require('./view-helpers').dateTime(iso,account.time_zone||'UTC'),dateInputValue:value=>value instanceof Date?require('../lib/business-time').context(account.time_zone||'UTC',value).calendarDate:require('./view-helpers').dateInputValue(value)};
+      const accountFormatting=require('./presentation/formatting').forTimeZone(account.time_zone||'UTC');res.locals.helpers={...res.locals.helpers,shortDate:accountFormatting.date,timeAgo:iso=>require('./view-helpers').timeAgo(iso,accountFormatting.timeZone),dateTime:accountFormatting.dateTime,dateInputValue:value=>value instanceof Date?require('../lib/business-time').context(account.time_zone||'UTC',value).calendarDate:require('./view-helpers').dateInputValue(value)};
       const memberships = await auth.listWorkspacesForAccount(database, account.id);
       res.locals.workspaces = memberships.map((row) => workspaceSummary(row, account.id));
       if (!memberships.length) return next();
@@ -56,7 +56,7 @@ function loadUser(database,{readonly=false}={}) {
       const { workspace,membership } = resolved;
       req.user = { ...membership,email:account.email,plan:account.plan };
       req.workspace = workspace;
-      const businessClock=await require('../lib/business-time').forWorkspace(database,workspace.id);req.businessTimeZone=businessClock.timeZone;req.ctx = { workspaceId:workspace.id,actorId:membership.id,accountId:account.id,businessTimeZone:businessClock.timeZone };res.locals.account.timeZone=businessClock.timeZone;res.locals.helpers={...res.locals.helpers,dateTime:iso=>require('./view-helpers').dateTime(iso,businessClock.timeZone),dateInputValue:value=>value instanceof Date?require('../lib/business-time').context(businessClock.timeZone,value).calendarDate:require('./view-helpers').dateInputValue(value)};
+      const businessClock=await require('../lib/business-time').forWorkspace(database,workspace.id);req.businessTimeZone=businessClock.timeZone;req.ctx = { workspaceId:workspace.id,actorId:membership.id,accountId:account.id,businessTimeZone:businessClock.timeZone };res.locals.account.timeZone=businessClock.timeZone;const businessFormatting=require('./presentation/formatting').forTimeZone(businessClock.timeZone);res.locals.helpers={...res.locals.helpers,shortDate:businessFormatting.date,timeAgo:iso=>require('./view-helpers').timeAgo(iso,businessClock.timeZone),dateTime:businessFormatting.dateTime,dateInputValue:value=>value instanceof Date?require('../lib/business-time').context(businessClock.timeZone,value).calendarDate:require('./view-helpers').dateInputValue(value)};
       res.locals.currentUser = { id:membership.id,name:membership.name,email:account.email,role:membership.role };
       res.locals.workspace = workspace;
       return next();

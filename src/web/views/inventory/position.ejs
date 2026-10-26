@@ -33,7 +33,6 @@
     <%= totals.skus %> products is past that line, so here is the table instead, which is what
     you would want at this size anyway.
   </p>
-  <%- include('../partials/owner-direct-line', { directLineContext: 'Ask what you have, what is short, or tell StockChief about a change.' }) %>
   <p class="rm-choices"><a class="rm-btn" href="/inventory/table">Open the stock table</a></p>
 
 <% } else { %>
@@ -62,7 +61,6 @@
     <p class="rm-sub"><a href="/accounting#inventory">Show the units and recorded cost</a>.</p>
   <% } %>
 
-  <%- include('../partials/owner-direct-line', { directLineContext: 'Ask what you have, what is short, or tell StockChief about a change.' }) %>
 
   <div class="rm-groups">
     <% position.groups.forEach(function (group) { %>

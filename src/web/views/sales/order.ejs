@@ -41,10 +41,10 @@
   var shipped = order.totals.fulfilled || 0;
 %>
 <div class="breadcrumb"><a href="/orders">Orders</a> <%- helpers.icon('chevron', { size: 13 }) %> <span><%= order.order_number %></span></div>
-<div class="page-head"><div class="titles"><p class="eyebrow">Customer order</p><h1><%= order.order_number %> · <%= order.customer.name %></h1><p>Created <%= order.order_date %><%= order.needed_by ? ' · customer needs it by ' + order.needed_by : '' %></p></div><span class="badge <%= setupRequired || order.status === 'BACKORDERED' ? 'badge--warn' : order.status === 'FULFILLED' ? 'badge--success' : 'badge--muted' %>"><%= setupRequired ? 'Waiting for customer details' : helpers.orderStatus(order.status,order.totals.fulfilled,order.delivery_method) %></span></div>
+<div class="page-head"><div class="titles"><p class="eyebrow">Customer order</p><h1><%= order.order_number %> · <%= order.customer.name %></h1><p>Created <%= helpers.shortDate(order.order_date) %><%= order.needed_by ? ' · needed by ' + helpers.shortDate(order.needed_by) : '' %></p></div><span class="badge <%= setupRequired || order.status === 'BACKORDERED' ? 'badge--warn' : order.status === 'FULFILLED' ? 'badge--success' : 'badge--muted' %>"><%= setupRequired ? 'Waiting for customer details' : helpers.orderStatus(order.status,order.totals.fulfilled,order.delivery_method) %></span></div>
 <% if(order.reference){ %><p class="t-muted">Reference: <%= order.reference %></p><% } %>
 
-<% if (!locals.room) { %><%- include('allocation-settings') %><% } %>
+
 
 <% if (locals.money && Number(money.totalMinor || 0) > 0 && Number(money.outstandingMinor || 0) === 0
     && !['FULFILLED','CANCELLED'].includes(order.status)) { %>
@@ -163,6 +163,7 @@
 <% } %>
 
 <% if(locals.postgresPlacement){ %><section class="card section"><div class="card-body"><h2>Order contact and destination</h2><p><%= order.customer.name %> · <%= order.customer.email||'No email' %> · <%= order.customer.phone||'No phone' %></p><p><%= order.delivery_method==='PICKUP'?'Customer pickup':order.ship_to_address||'Delivery address missing' %></p><div class="form-actions"><% if(order.status==='DRAFT'){ %><a class="btn" href="/orders/<%= order.id %>/edit">Edit draft order</a><% } %><a class="btn btn--ghost" href="/orders/new?duplicate=<%= order.id %>">Duplicate order</a></div></div></section><% } %>
+<% if(money.invoiced){ %><%- include('../components/payment-summary',{money,currency:order.currency}) %><% } %>
 <% if(locals.postgresPlacement&&shipments.some(s=>['SHIPPED','DELIVERED'].includes(s.status))){ %><section class="card section" aria-label="Shipment tracking"><div class="card-body"><h2>Shipment tracking</h2><% shipments.filter(s=>['SHIPPED','DELIVERED'].includes(s.status)).forEach(s=>{const url=s.tracking_url||s.trackingUrl; %><p><a href="/fulfilment/<%= s.id %>"><%= s.shipment_number %></a> · <%= s.carrier_name||s.carrier||s.handover||'Shipped' %><% if(s.tracking_number){ %> · <% if(url){ %><a href="<%= url %>" target="_blank" rel="noopener noreferrer"><%= s.tracking_number %></a><% }else{ %><%= s.tracking_number %><% } %><% } %></p><% }); %></div></section><% } %>
 <% if (order.customer_decision_required) { %>
   <div class="card sales-action-card sales-primary-action" id="customer-decision">
@@ -212,7 +213,7 @@
 <% } %>
 
 <% if (setupRequired) { %>
-  <details class="panel section fold">
+  <details class="panel section fold" open data-order-lines>
     <summary class="panel-head"><div><h2>What they ordered</h2><span class="t-xs t-muted"><%= order.lines.length %> product<%= order.lines.length === 1 ? '' : 's' %> · nothing can leave yet</span></div></summary>
     <div class="card-body"><% order.lines.forEach(function (line) { %><p><strong><%= line.quantity_ordered %> × <%= line.displayName %></strong><% if (line.unit_price_minor !== null) { %> · <%= helpers.money(line.lineTotalMinor, order.currency) %><% } %></p><% }) %></div>
   </details>
@@ -434,12 +435,12 @@
   of a table saying nothing happened, next to the one number that matters.
 %>
 <div class="stats-row">
-  <div class="stat"><strong><%= order.totals.ordered %></strong><span>Units ordered</span></div>
+  <div class="stat"><strong><%= order.totals.ordered %></strong><span><%= helpers.plural(order.totals.ordered,'Unit') %> ordered</span></div>
   <% if (order.totals.allocated) { %>
-    <div class="stat"><strong><%= order.totals.allocated %></strong><span>committed to this customer</span></div>
+    <div class="stat"><strong><%= order.totals.allocated %></strong><span>Reserved</span></div>
   <% } %>
   <% if (order.totals.backordered) { %>
-    <div class="stat"><strong class="is-warn"><%= order.totals.backordered %></strong><span><%= order.status === 'DRAFT' ? 'not committed yet' : 'waiting for stock' %></span></div>
+    <div class="stat"><strong class="is-warn"><%= order.totals.backordered %></strong><span><%= order.status === 'DRAFT' ? 'Not reserved yet' : 'Waiting for stock' %></span></div>
   <% } %>
   <% if (order.totals.fulfilled || order.totals.ordered === order.totals.fulfilled) { %>
     <div class="stat"><strong><%= order.totals.fulfilled %></strong><span><%= locals.goneWord || 'gone' %></span></div>
@@ -456,7 +457,7 @@
           − product cost <%= helpers.money(accounting.outcome.cogsMinor || 0, order.currency) %>
           = gross profit <%= helpers.money((accounting.outcome.revenueMinor || 0) - (accounting.outcome.cogsMinor || 0), order.currency) %>.
         </h2>
-        <span class="spacer"></span><span class="fold-note">nothing for you to do</span>
+        <span class="spacer"></span>
       </summary>
       <div class="card-body">
         <p><strong>Inventory, revenue, COGS and the customer invoice changed together.</strong> It went on the books automatically: revenue, the customer receivable, product cost, and inventory value. The exact amounts were recorded from this fulfilment.</p>
@@ -493,7 +494,7 @@
 <% if (fulfilment && order.status !== 'DRAFT') { %>
   <%# Closed when the step above already carries the pick button: two of the
       same button on one screen is the thing this page was full of. %>
-  <details class="panel section fold" id="fulfilment"<% if (locals.openSection === 'fulfilment') { %> open<% } %>>
+  <details class="panel section fold" id="fulfilment" open>
     <summary class="panel-head">
       <div>
         <h2>Fulfilment</h2>
@@ -655,10 +656,10 @@
       </div>
     </div>
   <% } %>
-  <details class="panel section fold" id="money"<% if (locals.paymentCompleted || locals.openSection === 'money' || money.dueNowMinor > 0) { %> open<% } %>>
+  <details class="panel section fold" id="money" open>
     <summary class="panel-head">
       <div>
-        <h2>Money<%= money.outstandingMinor
+        <h2>Payments and receipts<%= money.outstandingMinor
           ? ' — ' + helpers.money(money.outstandingMinor, money.currency) + ' still owed'
           : '' %></h2>
         <span class="t-xs t-muted">
@@ -672,35 +673,6 @@
       </span>
     </summary>
     <div class="card-body">
-      <div class="stat-strip sales-money-summary">
-        <div>
-          <span class="stat-value"><%= helpers.money(money.totalMinor, money.currency) %></span>
-          <%#
-            Before the invoice exists this is what the order is worth, not what
-            anybody has been billed. Calling it "invoiced" would be StockChief
-            stating a document that does not exist.
-          %>
-          <span class="stat-label"><%= money.hasInvoice ? 'invoiced' : 'order value' %></span>
-        </div>
-        <div>
-          <span class="stat-value <%= money.paidMinor ? '' : 'stat-value--quiet' %>">
-            <%= helpers.money(money.paidMinor, money.currency) %>
-          </span>
-          <span class="stat-label">paid</span>
-        </div>
-        <div>
-          <span class="stat-value <%= money.outstandingMinor ? 'stat-value--warn' : 'stat-value--quiet' %>">
-            <%= helpers.money(money.outstandingMinor, money.currency) %>
-          </span>
-          <span class="stat-label">still owed</span>
-        </div>
-        <% if (money.dueNowMinor) { %>
-          <div>
-            <span class="stat-value stat-value--warn"><%= helpers.money(money.dueNowMinor, money.currency) %></span>
-            <span class="stat-label">due now</span>
-          </div>
-        <% } %>
-      </div>
       <%
         /*
          * What was actually taken, and something to hand the customer.
@@ -934,7 +906,7 @@
   </details>
 <% } %>
 
-<details class="card fold">
+<details class="card fold" open data-order-lines>
   <summary class="card-head">
     <h2>Order lines</h2>
     <span class="spacer"></span>
@@ -1016,6 +988,7 @@
 <% } %>
 
 <% var eventLabels = { CREATED: 'Order created', CONFIRMED: 'Customer order confirmed and stock checked', CHANGED: 'Order changed and reservations recalculated', ALLOCATION_CHANGED: 'Stock reservation updated automatically', PARTIALLY_FULFILLED: 'Part of the order left', FULFILLED: 'The whole order left', ALLOCATED_FROM_STOCK: 'Stock that arrived was committed to this customer', CANCELLED: 'Remaining order cancelled' }; %>
+<% if (!locals.room) { %><%- include('allocation-settings') %><% } %>
 <details class="card order-activity fold"><summary class="card-head"><h2>Order activity</h2><span class="spacer"></span><span class="fold-note"><%= order.events.length %> <%= order.events.length === 1 ? 'entry' : 'entries' %></span></summary><div class="list-rows"><% order.events.slice().reverse().forEach(function(event){ %><div class="list-row"><span><strong><%= eventLabels[event.event_type] || event.event_type.replace(/_/g,' ').toLowerCase() %></strong><small><%= event.actor_name || 'StockChief' %> · <time data-local-time datetime="<%= event.created_at %>"><%= helpers.dateTime(event.created_at) %></time></small></span></div><% }) %></div></details>
 
 <%#
@@ -1076,9 +1049,9 @@
             confirms it.
           </p>
           <div class="pay-modal__buttons">
-            <a class="btn btn--primary" id="pay-window-receipt" href="#" hidden>Print the receipt</a>
-            <a class="btn" id="pay-window-invoice" href="#" target="_blank" rel="noopener noreferrer" hidden>View or print Stripe invoice</a>
-            <a class="btn btn--primary" id="pay-window-tab" href="#" target="_blank" rel="noopener noreferrer">
+            <a class="btn btn--primary" id="pay-window-receipt" href="/orders/<%= order.id %>#money" hidden>Print the receipt</a>
+            <a class="btn" id="pay-window-invoice" href="<%= payable.hostedUrl %>" target="_blank" rel="noopener noreferrer" hidden>View or print Stripe invoice</a>
+            <a class="btn btn--primary" id="pay-window-tab" href="<%= payable.hostedUrl %>" target="_blank" rel="noopener noreferrer">
               Open the payment page
             </a>
             <button class="btn" type="button" id="pay-window-front" data-pay-front hidden>Bring it forward</button>
