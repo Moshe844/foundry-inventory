@@ -53,6 +53,8 @@ test('shared channel policy governs prices, costed sellable quantities, conflict
  await assert.rejects(sync.execute(db,ctx.workspaceId,conflicted.effectIds[0],{providers:registry}));assert.equal(writes,1,'the fresh provider comparison prevents overwriting its concurrent change');assert.equal((await prices.currentPrice(db,ctx.workspaceId,sku)).amount_minor,1600);
  const reviewedConflict=await sync.prepare(db,ctx,c,{sku:'ORC-7',location:loc.id,priceSyncMode:'two_way',initialSyncSource:'provider'},{providers:registry});await db.transaction(tx=>sync.configureInTransaction(tx,ctx,reviewedConflict.payload));await db.transaction(tx=>sync.reconcile(tx,c));
  remote.quantity=4;await cacheRemote();assert.equal((await db.transaction(tx=>sync.reconcile(tx,c))).conflicts,1);
+ const heldPosition=(await sync.list(db,ctx.workspaceId,id)).find(p=>p.field==='quantity');assert(heldPosition.review_issue_id,'the exact stock hold is visible through the existing connection read');assert.equal(heldPosition.review_title,'Review channel stock difference');
+ assert.deepEqual(await sync.list(db,'unrelated-workspace',id),[],'hold identities remain workspace scoped');
  assert.equal((await db.query('SELECT count(*)::int n FROM movements WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,0,'provider count is not fabricated physical receipt');
  const count=await sync.prepareCount(db,ctx,c,{sku:'ORC-7',location:loc.id,countedQuantity:4,reason:'Owner confirmed the four physical test units'},{providers:registry});
  const countProposal=await assistant.createProposal(db,ctx,'Confirm the reviewed physical test count.','connection.confirm_count',count.payload,count.summary);assert.equal((await assistant.executeProposal(db,ctx,countProposal.proposal.id)).status,'EXECUTED');

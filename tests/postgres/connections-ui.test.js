@@ -95,6 +95,19 @@ test('real Chromium qualifies same-tab OAuth return, ownership, encryption, repl
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM workspace_connectors
       WHERE provider_type='fixture_oauth'`)).rows[0].count,'1');
 
+    const issueAt=new Date().toISOString();
+    await database.query(`INSERT INTO connection_issues(id,workspace_id,connector_id,issue_type,fingerprint,title,detail,resolution_hint,status,created_at,updated_at)
+      VALUES('review-owned',$1,$2,'CHANNEL_STOCK_DIFFERENCE','fixture-review','Review channel count','The channel reports 9 units; no physical receipt was confirmed.','Confirm the physical count before correcting stock.','OPEN',$3,$3),
+      ('review-resolved',$1,$2,'CHANNEL_STOCK_DIFFERENCE','fixture-resolved','Resolved issue must stay hidden','Private resolved detail','No action','RESOLVED',$3,$3)`,[connector.workspace_id,connector.id,issueAt]);
+    await page.reload();
+    const issuePanel=page.getByRole('region',{name:'Connection issues',exact:true});
+    assert.match(await issuePanel.innerText(),/The channel reports 9 units/);
+    assert.match(await issuePanel.innerText(),/Confirm the physical count/);
+    assert.doesNotMatch(await page.locator('main').innerText(),/Resolved issue must stay hidden/);
+    await page.goto(base+'/settings/connections/'+connector.id+'?issue=review-resolved#connection-issues');
+    assert.doesNotMatch(await page.locator('main').innerText(),/Private resolved detail/,'a direct issue link cannot expose resolved or unrelated evidence');
+    await database.query("UPDATE connection_issues SET status='RESOLVED' WHERE workspace_id=$1 AND id='review-owned'",[connector.workspace_id]);
+
     await page.goto(base+originalLaunch);await page.waitForURL(base+'/settings/connections');
     assert.match(await page.locator('[data-flash-stack]').innerText(),/connection link expired/);
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM workspace_connectors WHERE provider_type='fixture_oauth'`)).rows[0].count,'1','a consumed launch never repeats provider authorization');

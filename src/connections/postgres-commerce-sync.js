@@ -245,9 +245,10 @@ async function verifyDelivery(db,workspaceId,effectId,options={}){
    await audit(tx,p,'connection.commerce_sync.verified',{effectId:e.id,value:observed.value,writeRepeated:false});}});
  }catch(error){await effects.finishError(db,workspaceId,e.id,e.claimToken,error,{ambiguous:true});throw error;}
 }
-async function list(db,workspaceId,connectorId){return (await db.query(`SELECT p.id,p.field,p.mode,p.revision,p.baseline_local,p.baseline_provider,p.pending_effect_id,p.last_verified_at,s.code,l.name AS location,e.status AS delivery_status
+async function list(db,workspaceId,connectorId){return (await db.query(`SELECT p.id,p.field,p.mode,p.revision,p.baseline_local,p.baseline_provider,p.pending_effect_id,p.last_verified_at,s.code,l.name AS location,e.status AS delivery_status,issue.id AS review_issue_id,issue.title AS review_title
  FROM connection_commerce_positions p JOIN skus s ON s.workspace_id=p.workspace_id AND s.id=p.sku_id JOIN locations l ON l.workspace_id=p.workspace_id AND l.id=p.location_id
  LEFT JOIN stockchief_runtime.provider_effects e ON e.workspace_id=p.workspace_id AND e.id=p.pending_effect_id
+ LEFT JOIN connection_issues issue ON issue.workspace_id=p.workspace_id AND issue.connector_id=p.connector_id AND issue.fingerprint='commerce-position:'||p.id AND issue.status='OPEN'
  WHERE p.workspace_id=$1 AND p.connector_id=$2 ORDER BY s.code,p.field,l.name`,[workspaceId,connectorId])).rows;}
 async function prepareCount(db,ctx,c,args,options={}){
  c=await connection(db,ctx,c.id);

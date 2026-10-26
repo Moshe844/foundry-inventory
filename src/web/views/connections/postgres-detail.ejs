@@ -22,6 +22,23 @@
 </header>
 
 <% if(connection.last_error){ %><div class="notice notice--warn section"><div><strong>This connection needs attention.</strong><p><%= connection.last_error %></p></div></div><% } %>
+<% if(locals.connectionIssues&&(connectionIssues.total||connectionIssues.focused)){ %>
+<section class="card section" id="connection-issues" aria-label="Connection issues">
+  <div class="card-head"><h2>What needs attention</h2><span class="badge badge--warn"><%= connectionIssues.total %> open</span></div>
+  <div class="card-body grid">
+    <% if(!connectionIssues.rows.length){ %><p>No open issue matches this view.</p><% } %>
+    <% connectionIssues.rows.forEach(function(issue){ %><article id="issue-<%= issue.id %>">
+      <h3><%= issue.title %></h3>
+      <% if(issue.code){ %><p><strong><%= issue.code %></strong><% if(issue.location){ %> · <%= issue.location %><% } %><% if(issue.field){ %> · <%= issue.field==='quantity'?'Sellable stock':'Selling price' %><% } %></p><% } %>
+      <p><%= issue.detail %></p><% if(issue.resolution_hint){ %><p><strong>Next step:</strong> <%= issue.resolution_hint %></p><% } %>
+      <p class="hint">Last checked <time data-local-time datetime="<%= new Date(issue.updated_at).toISOString() %>"><%= helpers.dateTime(issue.updated_at) %></time></p>
+    </article><% }); %>
+    <nav class="form-actions" aria-label="Connection issue pages">
+      <% if(connectionIssues.focused){ %><a class="btn" href="/settings/connections/<%= encodeURIComponent(connection.id) %>#connection-issues">View all open issues</a>
+      <% }else{ %><% if(connectionIssues.page>1){ %><a class="btn" href="?issuesPage=<%= connectionIssues.page-1 %>#connection-issues">Previous issues</a><% } %><% if(connectionIssues.page*10<connectionIssues.total){ %><a class="btn" href="?issuesPage=<%= connectionIssues.page+1 %>#connection-issues">Next issues</a><% } %><% } %>
+    </nav>
+  </div>
+</section><% } %>
 <% if(connected&&currentUser.role==='owner'&&proof.push_setup_failed){ %>
 <form method="post" action="/settings/connections/<%= encodeURIComponent(connection.id) %>/retry-events" class="section"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--secondary" type="submit">Retry event setup</button></form>
 <% } %>
@@ -54,7 +71,7 @@
   <% if(!locals.commercePositions?.length){ %><p>No stock or price write-back has been authorized yet. Ask StockChief to prepare the direction and starting source for the products and locations you want to synchronize.</p><% }else{ %>
   <div class="table-scroll"><table class="table"><thead><tr><th>SKU</th><th>Location</th><th>Field</th><th>Direction</th><th>Last verified values</th><th>Delivery</th></tr></thead><tbody>
   <% commercePositions.forEach(function(p){ const show=function(v){return v===null?'Unknown':typeof v==='object'?helpers.money(v.amount,v.currency):v;}; %>
-  <tr><td><%= p.code %></td><td><%= p.location %></td><td><%= p.field==='quantity'?'Sellable units':'Selling price' %></td><td><%= {off:'Off',inbound:'Provider → StockChief',outbound:'StockChief → provider',two_way:'Both directions'}[p.mode] %></td><td>StockChief: <%= show(p.baseline_local) %><br>Provider: <%= show(p.baseline_provider) %></td><td><%= p.mode==='off'?'Off':p.pending_effect_id?({PENDING:'Queued',RUNNING:'Verifying with provider',AMBIGUOUS:'Needs review: delivery uncertain',FAILED:'Needs review: delivery failed'}[p.delivery_status]||'Awaiting provider verification'):p.last_verified_at?'Verified':'Awaiting first check' %></td></tr>
+  <tr><td><%= p.code %></td><td><%= p.location %></td><td><%= p.field==='quantity'?'Sellable units':'Selling price' %></td><td><%= {off:'Off',inbound:'Provider → StockChief',outbound:'StockChief → provider',two_way:'Both directions'}[p.mode] %></td><td>StockChief: <%= show(p.baseline_local) %><br>Provider: <%= show(p.baseline_provider) %></td><td><% if(p.review_issue_id){ %><a href="?issue=<%= encodeURIComponent(p.review_issue_id) %>#connection-issues">Needs review: <%= p.review_title %></a><% }else{ %><%= p.mode==='off'?'Off':p.pending_effect_id?({PENDING:'Queued',RUNNING:'Verifying with provider',AMBIGUOUS:'Needs review: delivery uncertain',FAILED:'Needs review: delivery failed'}[p.delivery_status]||'Awaiting provider verification'):p.last_verified_at?'Verified':'Awaiting first check' %><% } %></td></tr>
   <% }); %></tbody></table></div><% } %><p><a href="/ask?from=<%= encodeURIComponent('/settings/connections/'+connection.id) %>">Ask StockChief to review or change these settings</a></p>
 </div></section><% } %>
 <% const sync=connection.synchronization; if(sync?.supported){ %>

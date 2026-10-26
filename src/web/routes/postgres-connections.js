@@ -195,7 +195,7 @@ function createPostgresConnectionsRouter(database,options={}){
       return res.redirect(303,'/settings/connections');
     }
     const requestOrigin=`${req.protocol}://${req.get('host')}`;
-    const started=await paymentConnect.begin(database,req.ctx,{requestOrigin,
+    const started=await paymentConnect.begin(database,req.ctx,{requestOrigin,popup:false,
       publicOrigin:options.publicOrigin==='request'?requestOrigin:options.publicOrigin,
       businessName:req.workspace?.name,email:req.account?.email,
       authorizeEndpoint:options.paymentConnectOptions?.authorizeEndpoint});
@@ -276,6 +276,16 @@ function createPostgresConnectionsRouter(database,options={}){
       }
     }
     const pendingWebhooks=(await database.query("SELECT id,status,lease_until,received_at,updated_at,result FROM connection_webhook_receipts WHERE workspace_id=$1 AND connector_id=$2 AND status<>'COMPLETED' ORDER BY received_at DESC,id DESC LIMIT 20",[req.ctx.workspaceId,connection.id])).rows;
+    const issueId=typeof req.query.issue==='string'&&req.query.issue.length<=100?req.query.issue:null;
+    const issuePage=Math.max(1,Math.min(1000000,Number.parseInt(req.query.issuesPage,10)||1)),issueOffset=(issuePage-1)*10;
+    const connectionIssues={focused:Boolean(issueId),page:issuePage,total:connection.openIssues,rows:(await database.query(`
+      SELECT issue.id,issue.title,issue.detail,issue.resolution_hint,issue.updated_at,s.code,l.name AS location,p.field
+      FROM connection_issues issue LEFT JOIN connection_commerce_positions p ON p.workspace_id=issue.workspace_id
+        AND p.connector_id=issue.connector_id AND issue.fingerprint='commerce-position:'||p.id
+      LEFT JOIN skus s ON s.workspace_id=p.workspace_id AND s.id=p.sku_id
+      LEFT JOIN locations l ON l.workspace_id=p.workspace_id AND l.id=p.location_id
+      WHERE issue.workspace_id=$1 AND issue.connector_id=$2 AND issue.status='OPEN' AND ($3::text IS NULL OR issue.id=$3)
+      ORDER BY issue.updated_at DESC,issue.id LIMIT 10 OFFSET $4`,[req.ctx.workspaceId,connection.id,issueId,issueId?0:issueOffset])).rows};
     const catalogueReview=adapter?.discover&&!isMailbox
       ?await catalogue.describe(database,req.ctx,connection.id):null;
     const connectionProof=(await database.query(`SELECT
@@ -290,7 +300,7 @@ function createPostgresConnectionsRouter(database,options={}){
       title:'Connection',nav:'connections',room:true,backTo:{href:'/settings/connections',label:'Connections'},
       connection,newConnectionToken,provider:adapter?.metadata?.()||{name:connection.display_name},
       commercePositions:await require('../../connections/postgres-commerce-sync').list(database,req.ctx.workspaceId,connection.id),
-      canDiscover:Boolean(adapter?.discover)&&!isMailbox,isMailbox,mailboxLastPollAt,pendingWebhooks,catalogueReview,connectionProof,
+      canDiscover:Boolean(adapter?.discover)&&!isMailbox,isMailbox,mailboxLastPollAt,pendingWebhooks,catalogueReview,connectionProof,connectionIssues,
     });
   }));
   router.post('/settings/connections/:id/retry-events',requireOwner,asyncRoute(async(req,res)=>{

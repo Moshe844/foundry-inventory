@@ -49,7 +49,7 @@ async function begin(database,ctx,input={}){const held=legacy.platform();
     await client.query(`INSERT INTO connection_authorization_states
       (id,state_hash,workspace_id,connector_id,provider_type,actor_id,metadata,expires_at,created_at)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,[newId('cauth'),providerService.stateHash(state),ctx.workspaceId,
-      connectorId,STATE_PROVIDER,ctx.actorId,JSON.stringify({returnOrigin:input.requestOrigin,popup:true,callbackUrl}),
+      connectorId,STATE_PROVIDER,ctx.actorId,JSON.stringify({returnOrigin:input.requestOrigin,popup:Boolean(input.popup),callbackUrl}),
       new Date(Date.now()+15*60000).toISOString(),at]);},{isolation:'SERIALIZABLE',retrySafe:true});
   const query=new URLSearchParams({response_type:'code',client_id:held.clientId,scope:'read_write',state,
     redirect_uri:callbackUrl});if(input.businessName)query.set('stripe_user[business_name]',input.businessName);
