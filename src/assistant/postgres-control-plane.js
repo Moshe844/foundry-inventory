@@ -197,10 +197,17 @@ async function executeStep(service,database,ctx,step,{actor,provider,rawProvider
   // Preparation may need to ground quoted prices or other stated facts in the
   // original instruction. A short answer to a clarification is not a new,
   // self-contained request; preserve both turns through the canonical engine.
-  const result=await contract.prepare(service,database,ctx,resolutionMessage,args,
+  let result;
+  try{result=await contract.prepare(service,database,ctx,resolutionMessage,args,
     {preparedContent,emailDraftProvider:contract.name==='communication.send_email'&&!preparedContent?provider:null,
       reportProvider:contract.name==='report.template.create'?provider:null,
-      reportContext:contract.name==='report.template.create'?priorReport:null});
+      reportContext:contract.name==='report.template.create'?priorReport:null});}
+  catch(error){
+    // Only the canonical preparation boundary can certify that no effect
+    // occurred. Uncertain outcomes must retain their existing recovery gate.
+    if(error.code!=='validation_error'||error.effectMayHaveOccurred!==false)throw error;
+    return {result:{status:'CLARIFY',answer:error.message,reason:'input_required',rows:[],columns:[]},args,provenance:resolved.provenance};
+  }
   if(result?.status==='PREPARED'&&!await contract.verify(service,database,ctx,result))
     return {result:{status:'CLARIFY',answer:'StockChief could not verify the prepared change. Nothing changed.',
       rows:[],columns:[],reason:'unverified'},args,provenance:resolved.provenance};

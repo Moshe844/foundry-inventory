@@ -62,12 +62,19 @@ async function audit(db,p,type,detail){const id=newId('evt'),at=nowIso();await d
  VALUES($1,$2,$3,$4,'commerce_sync','connection',$5,$1,'PROCESSED','{"verified":true}',$6,$6)`,[id,p.workspace_id,type,JSON.stringify({positionId:p.id,skuId:p.sku_id,locationId:p.location_id,field:p.field,...detail}),p.connector_id,at]);}
 async function advance(db,p,l,r){await db.query(`UPDATE connection_commerce_positions SET baseline_local=$4::jsonb,baseline_provider=$5::jsonb,last_verified_at=now(),updated_at=now() WHERE workspace_id=$1 AND id=$2 AND revision=$3`,[p.workspace_id,p.id,p.revision,JSON.stringify(l),JSON.stringify(r)]);await issue(db,p,null);}
 async function prepare(db,ctx,c,args,options={}){
+ // This phase only reads canonical/provider evidence and freezes a review.
+ // No policy, stock, price or provider write precedes a returned proposal.
+ try{return await prepareReadOnly(db,ctx,c,args,options);}catch(error){error.effectMayHaveOccurred=false;throw error;}
+}
+async function prepareReadOnly(db,ctx,c,args,options={}){
  const disabling=[args.quantitySyncMode,args.priceSyncMode].some(v=>v==='off')&&[args.quantitySyncMode,args.priceSyncMode].every(v=>v==null||v==='off');
  const active=await connection(db,ctx,c.id,{allowInactive:disabling}),adapter=(options.providers||providers).get(active.provider_type);
  if(!active.provider_account_id)throw new ValidationError('Verify the connected provider account identity before authorizing write-back.');
  if(!adapter?.readSyncPosition||!adapter?.writeSyncPosition)throw new ValidationError('This connection does not support governed stock and price synchronization.');
  const sku=(await db.query('SELECT id,code FROM skus WHERE workspace_id=$1 AND is_active=1 AND (id=$2 OR lower(code)=lower($2)) LIMIT 2',[ctx.workspaceId,args.sku])).rows;
- const loc=(await db.query('SELECT id,name FROM locations WHERE workspace_id=$1 AND is_active=1 AND (id=$2 OR lower(name)=lower($2)) LIMIT 2',[ctx.workspaceId,args.location])).rows;
+ const loc=args.location?(await db.query('SELECT id,name FROM locations WHERE workspace_id=$1 AND is_active=1 AND (id=$2 OR lower(name)=lower($2)) LIMIT 2',[ctx.workspaceId,args.location])).rows:
+  (await db.query(`SELECT DISTINCT l.id,l.name FROM connection_mappings m JOIN locations l ON l.workspace_id=m.workspace_id AND l.id=m.foundry_record_id
+   WHERE m.workspace_id=$1 AND m.connector_id=$2 AND m.entity_type='location' AND l.is_active=1 LIMIT 2`,[ctx.workspaceId,c.id])).rows;
  if(sku.length!==1||loc.length!==1)throw new ValidationError('Choose one exact mapped SKU and location for this synchronization policy.');
  const skumaps=(await db.query(`SELECT m.external_id,e.parent_external_id FROM connection_mappings m JOIN connection_external_records e ON e.workspace_id=m.workspace_id AND e.connector_id=m.connector_id AND e.entity_type=m.entity_type AND e.external_id=m.external_id
   WHERE m.workspace_id=$1 AND m.connector_id=$2 AND m.entity_type='sku' AND m.foundry_record_id=$3 AND e.selected=1`,[ctx.workspaceId,c.id,sku[0].id])).rows;

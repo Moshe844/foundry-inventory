@@ -191,7 +191,8 @@ function createPostgresConnectionsRouter(database,options={}){
     if(!launch||launch.workspaceId!==req.ctx.workspaceId||launch.expiresAt<Date.now()
         ||typeof req.query.ticket!=='string'||req.query.ticket.length!==launch.ticket.length
         ||!crypto.timingSafeEqual(Buffer.from(req.query.ticket),Buffer.from(launch.ticket))){
-      return res.status(403).send('This connection window expired. Return to Connections and try again.');
+      req.flash('warn','That connection link expired. Choose Connect again to start a fresh authorization.');
+      return res.redirect(303,'/settings/connections');
     }
     const requestOrigin=`${req.protocol}://${req.get('host')}`;
     const started=await paymentConnect.begin(database,req.ctx,{requestOrigin,
@@ -222,11 +223,12 @@ function createPostgresConnectionsRouter(database,options={}){
     if(!launch||launch.workspaceId!==req.ctx.workspaceId||launch.expiresAt<Date.now()
         ||typeof req.query.ticket!=='string'||req.query.ticket.length!==launch.ticket.length
         ||!crypto.timingSafeEqual(Buffer.from(req.query.ticket),Buffer.from(launch.ticket))){
-      return res.status(403).send('This connection window expired. Return to Connections and try again.');
+      req.flash('warn','That connection link expired. Choose Connect again to start a fresh authorization.');
+      return res.redirect(303,'/settings/connections');
     }
     const requestOrigin=`${req.protocol}://${req.get('host')}`;
     const started=await providerService.beginAuthorization(database,req.ctx,{providerType:req.params.provider,
-      popup:'1'},requestOrigin,{providers:registry,
+      popup:req.query.popup==='1'?'1':''},requestOrigin,{providers:registry,
       publicOrigin:options.publicOrigin==='request'?requestOrigin:options.publicOrigin});
     if(started.authorizationState)require('../../connections/oauth-session-intent').remember(req.session,req.params.provider,started.authorizationState);
     return res.redirect(303,started.redirectUrl);

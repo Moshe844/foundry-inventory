@@ -357,6 +357,11 @@ function createPostgresAskRouter(database,options={}){
     // permissions. An actor's owned saved conversation remains readable in
     // commercial accounts, after disabling the pilot, and during rollback.
     let recentGoals=await goalStore.recent(database,req.ctx,startedAt,focusedGoalId);
+    // An explicit link to owned earlier work must not silently select the
+    // latest conversation. Keep the new chat boundary and open saved history.
+    if(focusedGoalId&&!recentGoals.some(goal=>goal.id===focusedGoalId)
+        &&await goalStore.get(database,req.ctx,focusedGoalId))
+      return res.redirect(303,'/ask/history?goal='+encodeURIComponent(focusedGoalId));
     const hasActiveNative=recentGoals.some(goal=>goal.checkpoint.runtime==='codex-staging'&&!['COMPLETED','CANCELLED','BLOCKED'].includes(goal.status));
     const nativeInboxAvailable=!options.agentInspection&&hasActiveNative&&pilot.configured(req.ctx)
       &&Boolean(pilotView||await pilot.selected(database,req.ctx));
@@ -589,6 +594,10 @@ function createPostgresAskRouter(database,options={}){
     const message=expected?conversation.publicText(error.message,'This request cannot continue. Reload Ask to check its current state.'):
       'StockChief could not continue this step. Your conversation is saved; reload Ask to check its current state.';
     if(!expected)console.error('[stockchief agent lifecycle]',error.code||error.name||'Error');
+    if(req.method==='GET'&&req.path==='/ask'&&!req.xhr&&req.accepts('html')){
+      const status=expected?error.status||400:500;res.status(status);
+      return res.page('error',{title:'Ask StockChief needs another try',status,message,detail:null});
+    }
     if(req.method==='POST'&&req.session&&!req.xhr&&req.accepts('html')){req.flash('error',message);return res.redirect(303,'/ask#latest');}
     return res.status(expected?error.status||400:500).json({error:{code:'conversation_unavailable',message}});
   });

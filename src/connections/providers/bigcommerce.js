@@ -6,7 +6,11 @@ const {ValidationError}=require('../../domain/errors');
 const {jsonRequest,safeEqual,requireVerified,postalAddress}=require('./common');
 const money=require('../../domain/currency'),facts=require('../commerce-facts');
 const REQUIRED_SCOPES=Object.freeze(['store_v2_products','store_inventory','store_v2_orders_read_only','store_v2_information_read_only']);
-const HOOK_SCOPES=Object.freeze(['store/product/created','store/product/updated','store/product/deleted','store/product/inventory/updated','store/sku/inventory/updated','store/order/created','store/order/updated','store/order/statusUpdated','store/order/refund/created']);
+const HOOK_SCOPES=Object.freeze(['store/product/created','store/product/updated','store/product/deleted','store/sku/created','store/sku/updated','store/sku/deleted',
+ 'store/product/inventory/updated','store/sku/inventory/updated','store/product/inventory/order/updated','store/sku/inventory/order/updated',
+ 'store/channel/*/inventory/product/stock_changed','store/channel/*/inventory/product/settings_changed',
+ 'store/inventory/location/created','store/inventory/location/updated','store/inventory/location/deleted',
+ 'store/order/created','store/order/updated','store/order/statusUpdated','store/order/refund/created']);
 function settings(){return {clientId:process.env.BIGCOMMERCE_CLIENT_ID||'',clientSecret:process.env.BIGCOMMERCE_CLIENT_SECRET||''};}
 function metadata(){const s=settings(),available=Boolean(s.clientId&&s.clientSecret);return {type:'bigcommerce',name:'BigCommerce',mark:'B',category:'selling',authMode:'oauth',available,
  description:'Connect your store to discover products, variants, prices and location stock. Review matches and authorize synchronization before writes.',
@@ -85,7 +89,8 @@ function orderFacts(order,products){const currency=money.code(order.default_curr
  const result=facts.order({currency,lines,charges,totalMinor:money.toMinor(order.total_inc_tax,currency)});if(order.total_tax!=null&&money.toMinor(order.total_tax,currency)!==result.taxMinor)throw new ValidationError('BigCommerce tax does not reconcile with the actual lines and charges.');return result;}
 async function v2Pages(credentials,path){const rows=[];for(let page=1;;page++){const body=(await api(credentials,path+(path.includes('?')?'&':'?')+new URLSearchParams({page:String(page),limit:'250'}))).body;if(!Array.isArray(body))throw new ValidationError('BigCommerce did not return a complete order record list.');rows.push(...body);if(body.length<250)break;if(page>=100000)throw new ValidationError('This BigCommerce order needs review before continuing pagination.');}return rows;}
 async function normalizeWebhook({body,credentials}){const prefix=facts.effectKey('bigcommerce',body.producer,body.scope,body.hash),occurredAt=new Date(Number(body.created_at)*1000).toISOString(),version=String(body.created_at);
- if(/^store\/(product|sku)\//.test(body.scope))return [{eventId:prefix,type:'product.changed',version,occurredAt,data:{externalProductId:String(body.data?.id||body.data?.product_id||body.data?.variant_id)}}];
+ if(/^store\/inventory\/location\/(created|updated|deleted)$/.test(body.scope))return [{eventId:prefix,type:'location.changed',version,occurredAt,data:{externalLocationId:id(body.data?.location_id??body.data?.id,'location')}}];
+ if(/^store\/(product|sku)\//.test(body.scope)||/^store\/channel\/\*\/inventory\/product\/(stock_changed|settings_changed)$/.test(body.scope))return [{eventId:prefix,type:'product.changed',version,occurredAt,data:{externalProductId:id(body.data?.product_id??body.data?.sku?.product_id??body.data?.inventory?.product_id??body.data?.id,'product')}}];
  // Orders are fetched from the authenticated store before canonical ingestion;
  // financial refunds remain observations and never imply physical returns.
  if(body.scope==='store/order/refund/created')return [{eventId:prefix,type:'return.reported',version,occurredAt,aggregateId:String(body.data.order_id||body.data.id),data:{externalOrderId:String(body.data.order_id||body.data.id),refundId:String(body.data.refund_id||body.hash),reason:'BigCommerce reported a refund. Physical receipt and posted accounting require their canonical review.'}}];

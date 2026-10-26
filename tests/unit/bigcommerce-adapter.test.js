@@ -1,8 +1,21 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),crypto=require('node:crypto');
 const credentials={storeHash:'ab12cd',accessToken:'private-provider-token',currency:'USD',scopes:['store_v2_products','store_inventory']};
+const catalogEvents=['store/sku/created','store/sku/updated','store/sku/deleted','store/product/inventory/order/updated','store/sku/inventory/order/updated','store/channel/*/inventory/product/stock_changed','store/channel/*/inventory/product/settings_changed'];
+const locationEvents=['store/inventory/location/created','store/inventory/location/updated','store/inventory/location/deleted'];
 function response(data){return new Response(JSON.stringify(data),{status:200,headers:{'content-type':'application/json'}});}
 function adapter(){return require('../../src/connections/providers/bigcommerce');}
+test('BigCommerce subscribes to documented variant, order-driven stock and location changes',async t=>{
+ const saved=[];t.mock.method(global,'fetch',async(url,init)=>{if(init.method==='POST'){saved.push(JSON.parse(init.body));return response({data:{id:saved.length}});}return response({data:[],meta:{pagination:{current_page:1,total_pages:1}}});});
+ await adapter().registerWebhooks({credentials:{...credentials,webhookSecret:'private-webhook-fixture'},webhookUrl:'https://app.example.test/events'});
+ for(const scope of [...catalogEvents,...locationEvents])assert(saved.some(h=>h.scope===scope&&h.is_active&&h.destination==='https://app.example.test/events'));
+ assert.equal(new Set(saved.map(h=>h.scope)).size,saved.length);
+});
+test('BigCommerce variant and location notifications trigger refresh without inventing stock',async()=>{
+ for(const scope of [...catalogEvents,...locationEvents]){const body={producer:'stores/ab12cd',scope,hash:'hash-'+scope,created_at:Math.floor(Date.now()/1000),data:{id:81,sku:{product_id:5,variant_id:17},inventory:{product_id:5,variant_id:17},product_id:5,variant_id:17,location_id:3}};
+  const [event]=await adapter().normalizeWebhook({body,credentials});assert.equal(event.type,locationEvents.includes(scope)?'location.changed':'product.changed');assert.deepEqual(Object.keys(event.data),locationEvents.includes(scope)?['externalLocationId']:['externalProductId']);assert.equal(Object.values(event.data)[0],locationEvents.includes(scope)?'3':'5');
+ }
+});
 test('BigCommerce discovers untracked physical variants with their real options and prices, without copying shared stock',async t=>{
  t.mock.method(global,'fetch',async url=>{
   if(String(url).endsWith('/v2/store'))return response({currency:'USD'});

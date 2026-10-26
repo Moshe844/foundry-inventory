@@ -11,5 +11,10 @@ test('Ask resolves scoped entity IDs and clarifies an explicitly invalid optiona
  const actor=(await db.query('SELECT * FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];let preparations=0;
  const service={prepareAction:()=>{preparations++;throw Error('Preparation must not receive an unresolved supplied entity');}},result=await require('../../src/assistant/postgres-control-plane').executeStep(service,db,ctx,{contract,args:{...args,sku:sku.code,location:'Unrecognized receiving place'}},{actor,sourceMessage:'Prepare stock synchronization at Unrecognized receiving place',preparedContent:true,usageKey:'identity-test'});
  assert.equal(result.result.status,'CLARIFY');assert.equal(result.result.awaitingField,'location');assert.equal(preparations,0);
+ const safeFailure={...contract,prepare:async()=>{throw Object.assign(new (require('../../src/domain/errors').ValidationError)('Choose the warehouse for this connection.'),{effectMayHaveOccurred:false});}};
+ const clarified=await require('../../src/assistant/postgres-control-plane').executeStep({},db,ctx,{contract:safeFailure,args},{actor,sourceMessage:'Prepare the mapped channel policy',preparedContent:true,usageKey:'safe-preparation-failure'});
+ assert.equal(clarified.result.status,'CLARIFY');assert.equal(clarified.result.answer,'Choose the warehouse for this connection.');
+ const uncertain={...contract,prepare:async()=>{throw Object.assign(new Error('Unknown write outcome'),{effectMayHaveOccurred:true});}};
+ await assert.rejects(require('../../src/assistant/postgres-control-plane').executeStep({},db,ctx,{contract:uncertain,args},{actor,sourceMessage:'Prepare a policy',preparedContent:true,usageKey:'uncertain-stays-blocked'}),/Unknown write outcome/);
  assert.equal((await db.query('SELECT count(*)::int n FROM stockchief_runtime.assistant_action_proposals WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,0);
 });

@@ -291,7 +291,7 @@
             && !['shopify', 'woocommerce', 'bigcommerce'].includes(provider.type)) { %>
           <a class="rm-btn <%= alreadyConnected ? 'rm-btn--ghost' : 'rm-btn--wash' %>"
             href="/settings/connections/<%= provider.type %>/launch?ticket=<%= encodeURIComponent(launchTicket) %>"
-            target="_blank" rel="opener" data-provider-connect><%= alreadyConnected ? 'Connect another ' : 'Connect ' %><%= provider.name %></a>
+            data-provider-connect><%= alreadyConnected ? 'Connect another ' : 'Connect ' %><%= provider.name %></a>
         <% } else { %>
           <form method="post" action="<%= postgresMode ? '/settings/connections/' + provider.type + '/authorize' : '/settings/connections/connect' %>"
             data-oauth-connect="<%= ['oauth', 'application_auth'].includes(provider.authMode) ? provider.type : '' %>"
@@ -534,7 +534,7 @@
           <% } %>
           <div class="rm-choices">
             <a class="rm-btn rm-btn--wash" href="<%= postgresMode ? '/settings/connections/payments/launch?ticket=' + encodeURIComponent(launchTicket) : '/settings/connections/payments/start' %>"
-              target="_blank" <%- postgresMode ? 'data-provider-connect rel="opener"' : 'data-stripe-connect' %>><%= grant.flow === 'hosted'
+              target="<%= postgresMode ? '_self' : '_blank' %>" <%- postgresMode ? 'data-provider-connect' : 'data-stripe-connect' %>><%= grant.flow === 'hosted'
                 ? grant.testMode ? 'Create sandbox merchant account' : 'Set up Stripe for this business'
                 : postgresMode ? 'Connect existing Stripe account' : 'Connect Stripe' %></a>
           </div>
@@ -612,17 +612,8 @@
 <script src="/connection-return.js?v=<%= assetVersion %>"></script>
 <script>
 (function () {
-  <% if (postgresMode) { %>
-  document.querySelectorAll('[data-provider-connect]').forEach(function (link) {
-    link.addEventListener('click', function (event) {
-      event.preventDefault();
-      var popup = window.open(link.href, 'stockchief-provider-connect',
-        'popup=yes,width=720,height=780,resizable=yes,scrollbars=yes');
-      if (!popup) { window.location.assign(link.href); return; }
-      popup.focus();
-    });
-  });
-  <% } %>
+  // Authorization links follow the current tab. Their saved return intent is
+  // independent of opener, popup permissions and cross-origin window policy.
   function showPopupBlocked(control, providerName) {
     var card = control.closest('.rm-provider') || control.parentElement;
     if (!card) return;

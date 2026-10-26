@@ -22,6 +22,14 @@ test('shared channel policy governs prices, costed sellable quantities, conflict
  const cacheRemote=()=>db.transaction(async tx=>{await cache(tx,c,{entityType:'sku',externalId:'variant-9',code:'ORC-7',displayName:'Orchid vessel',providerData:{itemName:'Orchid vessel',priceMoney:remote.price,inventoryCounts:[{externalLocationId:'room-3',quantity:remote.quantity}]}});await cache(tx,c,{entityType:'location',externalId:'room-3',displayName:'Packing room'});});
  await prices.setPrice(db,ctx,{skuId:sku,amountMinor:1299,currency:'USD'});
  await cacheRemote();
+ const inferred=await sync.prepare(db,ctx,c,{sku:'ORC-7',priceSyncMode:'two_way',quantitySyncMode:'two_way'},{providers:registry});
+ assert.equal(inferred.payload.location,loc.name,'the connection’s only active mapped location is authoritative, even when other inventory locations exist');
+ const second=await locations.createLocation(db,ctx,{name:'Returns dock',kind:'warehouse'});
+ await db.transaction(tx=>cache(tx,c,{entityType:'location',externalId:'room-4',displayName:'Returns dock'}));
+ await assert.rejects(sync.prepare(db,ctx,c,{sku:'ORC-7',priceSyncMode:'two_way'},{providers:registry}),e=>e.code==='validation_error'&&e.effectMayHaveOccurred===false&&/location/i.test(e.message));
+ await assert.rejects(sync.prepare(db,{...ctx,actorId:'other'},c,{sku:'ORC-7',priceSyncMode:'two_way'},{providers:registry}),e=>e.effectMayHaveOccurred===false);
+ assert.equal(writes,0,'preparing or clarifying a policy cannot write to the provider');
+ assert.equal((await db.query('SELECT count(*)::int n FROM connection_commerce_positions WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,0);
  await assert.rejects(sync.prepare(db,{...ctx,actorId:'other'},c,{sku:'ORC-7',location:loc.id,priceSyncMode:'two_way'},{providers:registry}),/owner/);
  const prepared=await sync.prepare(db,ctx,c,{sku:'ORC-7',location:loc.id,priceSyncMode:'two_way',quantitySyncMode:'two_way'},{providers:registry});
  const stored=(await db.query('SELECT $1::jsonb AS payload',[JSON.stringify(prepared.payload)])).rows[0].payload;
