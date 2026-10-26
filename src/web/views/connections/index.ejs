@@ -56,7 +56,7 @@
   var commercialPlanUnrestricted = typeof commercialDevelopment === 'undefined' ? true : commercialDevelopment;
   function providerCommercialCapability(type) {
     if (['gmail', 'microsoft365'].includes(type)) return 'connection.email';
-    if (['shopify', 'square', 'clover', 'woocommerce'].includes(type)) return 'connection.commerce';
+    if (['shopify', 'square', 'clover', 'woocommerce', 'bigcommerce'].includes(type)) return 'connection.commerce';
     if (['quickbooks', 'xero'].includes(type)) return 'connection.accounting';
     return null;
   }
@@ -288,7 +288,7 @@
         <% } else if (provider.type==='woocommerce') { %>
           <%- include('woocommerce-connect',{provider,postgresMode,csrfToken}) %>
         <% } else if (postgresMode && ['oauth', 'application_auth'].includes(provider.authMode)
-            && !['shopify', 'woocommerce'].includes(provider.type)) { %>
+            && !['shopify', 'woocommerce', 'bigcommerce'].includes(provider.type)) { %>
           <a class="rm-btn <%= alreadyConnected ? 'rm-btn--ghost' : 'rm-btn--wash' %>"
             href="/settings/connections/<%= provider.type %>/launch?ticket=<%= encodeURIComponent(launchTicket) %>"
             target="_blank" rel="opener" data-provider-connect><%= alreadyConnected ? 'Connect another ' : 'Connect ' %><%= provider.name %></a>
@@ -305,6 +305,11 @@
             <% if (provider.type === 'woocommerce') { %>
               <label class="visually-hidden" for="store-<%= provider.type %>">WooCommerce store URL</label>
               <input class="input" id="store-<%= provider.type %>" type="url" name="storeUrl" placeholder="https://shop.example.com" required>
+            <% } %>
+            <% if (provider.type === 'bigcommerce') { %>
+              <label for="store-bigcommerce">Permanent BigCommerce store address</label>
+              <input class="input" id="store-bigcommerce" type="url" name="storeUrl" placeholder="https://store-….mybigcommerce.com" required>
+              <p>Your control panel shows this address. Sign in at BigCommerce and select this same store to authorize it.</p>
             <% } %>
             <button class="rm-btn <%= alreadyConnected ? 'rm-btn--ghost' : 'rm-btn--wash' %>" type="submit"><%= alreadyConnected ? 'Connect another' : 'Connect' %></button>
           </form>

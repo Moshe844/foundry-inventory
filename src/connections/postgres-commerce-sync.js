@@ -200,9 +200,11 @@ async function execute(db,workspaceId,effectId,options={}){
    const credentials=await require('./postgres-provider-service').loadProviderCredentials(db,c,adapter);
    await effects.checkpoint(db,workspaceId,e.id,token,{externalId:p.external_id,positionId:p.id});
    attempted=true;
-   return adapter.writeSyncPosition({...readInput(p,credentials),value:e.payload.value,expected:e.payload.expected,idempotencyKey:e.id});
+   return adapter.writeSyncPosition({...readInput(p,credentials),value:e.payload.value,expected:e.payload.expected,idempotencyKey:e.id,
+    onAccepted:reference=>effects.checkpoint(db,workspaceId,e.id,token,{externalId:p.external_id,positionId:p.id,transactionId:reference.transactionId},{allowCommerceTransaction:true})});
   });
-  return await effects.succeed(db,workspaceId,e.id,token,{providerReference:{externalId:p.external_id,positionId:p.id},result,
+  const retained=(await effects.get(db,workspaceId,e.id)).providerReference;
+  return await effects.succeed(db,workspaceId,e.id,token,{providerReference:retained||{externalId:p.external_id,positionId:p.id},result,
    apply:async tx=>{const current=(await tx.query('SELECT * FROM connection_commerce_positions WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[workspaceId,p.id])).rows[0];
     if(current?.revision===p.revision){await advance(tx,p,e.payload.value,result.value);await tx.query('UPDATE connection_commerce_positions SET pending_effect_id=NULL WHERE workspace_id=$1 AND id=$2 AND pending_effect_id=$3',[workspaceId,p.id,e.id]);}
     await audit(tx,p,'connection.commerce_sync.published',{effectId:e.id,value:result.value,verified:true});}});

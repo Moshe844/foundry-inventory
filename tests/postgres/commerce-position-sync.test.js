@@ -69,16 +69,25 @@ test('shared channel policy governs prices, costed sellable quantities, conflict
  assert.equal((await require('../../src/operations/postgres-provider-effects').get(db,ctx.workspaceId,p.pending_effect_id)).status,'AMBIGUOUS');
  await assert.rejects(sync.execute(db,ctx.workspaceId,p.pending_effect_id,{providers:registry}),/uncertain/);assert.equal(writes,3,'uncertain writes do not repeat');
  const recovered=await sync.verifyDelivery(db,ctx.workspaceId,p.pending_effect_id,{providers:registry});assert.equal(recovered.status,'SUCCEEDED');assert.equal(recovered.result.recoveredByReadback,true);assert.equal(writes,3,'recovery is read-only');
+ // Asynchronous adapters checkpoint the accepted provider transaction before
+ // eventual read-back. A crash or delay must never buy another write.
+ let acceptedId;
+ const asyncAdapter={...adapter,writeSyncPosition:async input=>{writes++;acceptedId=input.idempotencyKey;await input.onAccepted({transactionId:'provider-transaction-7'});throw Object.assign(new Error('waiting for provider readback'),{providerOutcomeUncertain:true});}};
+ uncertain=false;await cacheRemote();const asyncPrice=await prices.setPrice(db,ctx,{skuId:sku,amountMinor:1850,currency:'USD'}),asyncId=asyncPrice.effectIds[0];
+ await assert.rejects(sync.execute(db,ctx.workspaceId,asyncId,{providers:{get:()=>asyncAdapter}}),/waiting for provider readback/);
+ assert.equal(acceptedId,asyncId);const asyncEffect=await require('../../src/operations/postgres-provider-effects').get(db,ctx.workspaceId,asyncId);assert.equal(asyncEffect.providerReference.transactionId,'provider-transaction-7');assert.equal(asyncEffect.status,'AMBIGUOUS');
+ await assert.rejects(sync.execute(db,ctx.workspaceId,asyncId,{providers:{get:()=>asyncAdapter}}),/uncertain/);assert.equal(writes,4);
+ remote.price={amount:1850,currency:'USD'};const verifiedAsync=await sync.verifyDelivery(db,ctx.workspaceId,asyncId,{providers:registry});assert.equal(verifiedAsync.status,'SUCCEEDED');assert.equal(verifiedAsync.providerReference.transactionId,'provider-transaction-7');assert.equal(writes,4);
  uncertain=false;await cacheRemote();await prices.setPrice(db,ctx,{skuId:sku,amountMinor:1900,currency:'USD'});await db.transaction(tx=>sync.reconcile(tx,c));
  p=(await db.query("SELECT * FROM connection_commerce_positions WHERE connector_id=$1 AND field='price'",[id])).rows[0];rateLimited=true;
  await assert.rejects(sync.execute(db,ctx.workspaceId,p.pending_effect_id,{providers:registry}),e=>e.status===429&&e.retryable===true&&e.retryAfterMs===60002);
- assert.equal((await require('../../src/operations/postgres-provider-effects').get(db,ctx.workspaceId,p.pending_effect_id)).status,'PENDING');assert.equal(writes,3,'a known rate-limit rejection did not write');
- rateLimited=false;await sync.execute(db,ctx.workspaceId,p.pending_effect_id,{providers:registry});assert.equal(writes,4);assert.equal(remote.price.amount,1900,'safe delayed retry uses the original delivery and fresh expected value');
+ assert.equal((await require('../../src/operations/postgres-provider-effects').get(db,ctx.workspaceId,p.pending_effect_id)).status,'PENDING');assert.equal(writes,4,'a known rate-limit rejection did not write');
+ rateLimited=false;await sync.execute(db,ctx.workspaceId,p.pending_effect_id,{providers:registry});assert.equal(writes,5);assert.equal(remote.price.amount,1900,'safe delayed retry uses the original delivery and fresh expected value');
  await cacheRemote();await prices.setPrice(db,ctx,{skuId:sku,amountMinor:1950,currency:'USD'});await db.transaction(tx=>sync.reconcile(tx,c));
  p=(await db.query("SELECT * FROM connection_commerce_positions WHERE connector_id=$1 AND field='price'",[id])).rows[0];const pending=p.pending_effect_id;
  const off=await sync.prepare(db,ctx,c,{sku:'ORC-7',location:loc.id,priceSyncMode:'off'},{providers:registry});await db.transaction(tx=>sync.configureInTransaction(tx,ctx,off.payload));
  assert.equal((await require('../../src/operations/postgres-provider-effects').get(db,ctx.workspaceId,pending)).status,'CANCELLED','turning off authority cancels an unsent write');
- await assert.rejects(sync.execute(db,ctx.workspaceId,pending,{providers:registry}));assert.equal(writes,4);
+ await assert.rejects(sync.execute(db,ctx.workspaceId,pending,{providers:registry}));assert.equal(writes,5);
  await db.query("UPDATE workspace_connectors SET provider_account_id='another-merchant' WHERE id=$1",[id]);remote.price={amount:2000,currency:'USD'};await cacheRemote();assert((await db.transaction(tx=>sync.reconcile(tx,c))).conflicts>=1,'changing provider accounts revokes the original sync mapping authority');
  assert.deepEqual(await sync.list(db,'another-workspace',id),[],'another tenant cannot read these policies');
 });

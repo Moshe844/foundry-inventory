@@ -74,6 +74,15 @@ async function succeed(database,workspaceId,id,token,input={}){return database.t
   return hydrate(row);
 },{isolation:'SERIALIZABLE',retrySafe:true});}
 async function checkpoint(database,workspaceId,id,token,providerReference,options={}){
+ if(options.allowCommerceTransaction)return database.transaction(async client=>{
+  const row=(await client.query('SELECT * FROM stockchief_runtime.provider_effects WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[workspaceId,id])).rows[0],old=row?.provider_reference;
+  if(!row||row.kind!=='commerce.position.publish'||row.status!=='RUNNING'||row.claim_token!==token||!old?.externalId||!old.positionId)
+   throw new InvariantError('The asynchronous result no longer belongs to this delivery.','provider_effect_claim_lost');
+  const {transactionId,...identity}=providerReference;
+  if(typeof transactionId!=='string'||!transactionId||transactionId.length>240||JSON.stringify(identity)!==JSON.stringify({externalId:old.externalId,positionId:old.positionId})||old.transactionId&&old.transactionId!==transactionId)
+   throw new InvariantError('A saved provider transaction cannot be replaced.','provider_reference_changed');
+  const saved=(await client.query('UPDATE stockchief_runtime.provider_effects SET provider_reference=$4::jsonb,updated_at=now() WHERE workspace_id=$1 AND id=$2 AND claim_token=$3 RETURNING *',[workspaceId,id,token,JSON.stringify({...old,transactionId})])).rows[0];return hydrate(saved);
+ },{isolation:'SERIALIZABLE',retrySafe:true});
  if(options.allowReferenceExtension)return database.transaction(async client=>{
   const row=(await client.query('SELECT * FROM stockchief_runtime.provider_effects WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[workspaceId,id])).rows[0];
   if(!row||row.kind!=='shipping.label.purchase'||row.status!=='RUNNING'||row.claim_token!==token)

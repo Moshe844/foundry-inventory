@@ -1,0 +1,5 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict'),intents=require('../../src/connections/oauth-session-intent');
+test('installation consent cannot select another session or replace the original opaque state',t=>{const session={};intents.remember(session,'provider','a'.repeat(43));assert.equal(intents.resolve(session,'provider'),'a'.repeat(43));assert.throws(()=>intents.resolve({},'provider'));assert.throws(()=>intents.resolve(session,'other'));intents.forget(session,'provider');assert.throws(()=>intents.resolve(session,'provider'));});
+test('expired installation intents cannot authorize a connection',t=>{const session={};intents.remember(session,'provider','b'.repeat(43));t.mock.timers.enable({apis:['Date'],now:Date.now()+16*60000});assert.throws(()=>intents.resolve(session,'provider'));});
+test('a second connection cannot replace an open installation’s original business binding',()=>{const session={};intents.remember(session,'provider','a'.repeat(43));assert.throws(()=>intents.remember(session,'provider','b'.repeat(43)),/already open/);assert.equal(intents.resolve(session,'provider'),'a'.repeat(43));});

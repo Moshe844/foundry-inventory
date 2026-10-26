@@ -26,7 +26,7 @@ function definition(url){const address=new URL(url);const host=address.hostname;
  [/intuit\.com$/,'quickbooks','connections.accounting'],[/xero\.com$/,'xero','connections.accounting'],
  [/stripe\.com$/,'stripe','payments.customer'],[/easypost\.com$/,'easypost','shipping.rates'],[/goshippo\.com$/,'shippo','shipping.rates'],
  [/shipengine\.com$/,'shipengine','shipping.rates'],[/shipstation\.com$/,'shipstation','shipping.rates'],
- [/shopify\.com$/,'shopify','connections.commerce'],[/squareup\.com$/,'square','connections.commerce'],[/clover\.com$/,'clover','connections.commerce']];
+ [/shopify\.com$/,'shopify','connections.commerce'],[/squareup\.com$/,'square','connections.commerce'],[/clover\.com$/,'clover','connections.commerce'],[/(^|\.)bigcommerce\.com$/,'bigcommerce','connections.commerce']];
  const found=rows.find(([pattern])=>pattern.test(host));return {provider:found?.[1]||host,capability:found?.[2]||'connections.commerce',
  version:address.pathname.match(/\/(v\d+(?:\.\d+)?)\//)?.[1]||'unversioned',host};}
 async function reserveGmailQuota(database,quota,ceiling=GMAIL_PROJECT_DAILY_SAFE_CEILING){

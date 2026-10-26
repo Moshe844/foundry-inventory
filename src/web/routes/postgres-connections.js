@@ -39,7 +39,7 @@ function createPostgresConnectionsRouter(database,options={}){
   const callbackProviders=new Set((registry.catalog?registry.catalog():[]).map((provider)=>provider.type));
   async function connectionAllowed(req,res,providerType){
     const type=String(providerType||'').toLowerCase();const capability={gmail:'connection.email',microsoft365:'connection.email',
-      shopify:'connection.commerce',square:'connection.commerce',clover:'connection.commerce',woocommerce:'connection.commerce',
+      shopify:'connection.commerce',square:'connection.commerce',clover:'connection.commerce',woocommerce:'connection.commerce',bigcommerce:'connection.commerce',
       quickbooks:'connection.accounting',xero:'connection.accounting'}[type];
     if(!capability)return true;
     const state=await entitlements.capabilityState(database,commercialScope(req),capability);
@@ -112,9 +112,20 @@ function createPostgresConnectionsRouter(database,options={}){
     let context=null;
     let metadata=null;
     try{
-      context=await providerService.callbackContext(database,req.query.state,providerType);
+      const sessionBound=registry.get(providerType)?.oauthSessionBound===true;
+      if(sessionBound&&(req.query.handoff!=='1'||req.get('sec-fetch-dest')==='iframe')){
+        // Installation callbacks may arrive in a third-party frame without
+        // cookies or Fetch Metadata headers. Navigate to our own top-level
+        // callback before resolving its original, session-bound tenant intent.
+        const query=new URLSearchParams({handoff:'1'});for(const key of ['code','context','scope','account_uuid','external_install','error'])if(typeof req.query[key]==='string'&&req.query[key].length<=4096)query.set(key,req.query[key]);
+        res.removeHeader('X-Frame-Options');res.set('Content-Security-Policy',"default-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors https://*.mybigcommerce.com https://login.bigcommerce.com");res.set('Cache-Control','no-store');res.set('Referrer-Policy','no-referrer');
+        return res.page('connections/provider-handoff',{title:'Continue to StockChief',layout:false,continueUrl:'/settings/connections/'+encodeURIComponent(providerType)+'/callback?'+query});
+      }
+      const state=sessionBound?require('../../connections/oauth-session-intent').resolve(req.session,providerType):req.query.state;
+      context=await providerService.callbackContext(database,state,providerType);
       metadata=registry.get(providerType)?.metadata();
-      const connection=await providerService.completeOAuth(database,providerType,req.query,requestOrigin,{providers:registry,
+      if(sessionBound)require('../../connections/oauth-session-intent').forget(req.session,providerType);
+      const connection=await providerService.completeOAuth(database,providerType,{...req.query,state},requestOrigin,{providers:registry,
         publicOrigin:options.publicOrigin==='request'?requestOrigin:options.publicOrigin});
       // Finish on an authenticated, repeatable page backed by the saved
       // connection. Reloading completion must never reuse an OAuth code.
@@ -124,6 +135,13 @@ function createPostgresConnectionsRouter(database,options={}){
         connection:context?.connection,returnOrigin:context?.returnOrigin,requestOrigin,
         message:error.message||'The connection was not completed.'});
     }
+  }));
+
+  router.get('/settings/connections/bigcommerce/:callback(load|uninstall|remove_user)',asyncRoute(async(req,res)=>{
+    const claims=registry.get('bigcommerce').verifySignedCallback(req.query.signed_payload_jwt);res.set('Cache-Control','no-store');res.set('Referrer-Policy','no-referrer');
+    if(req.params.callback!=='load')return res.json(await require('../../connections/postgres-install-callbacks').revokeBigCommerce(database,claims,req.params.callback));
+    res.removeHeader('X-Frame-Options');res.set('Content-Security-Policy',"default-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors https://*.mybigcommerce.com https://login.bigcommerce.com");
+    return res.page('connections/provider-handoff',{title:'Open StockChief',layout:false,continueUrl:'/settings/connections'});
   }));
 
   router.use('/settings/connections',requireAuth);
@@ -198,6 +216,7 @@ function createPostgresConnectionsRouter(database,options={}){
   }));
   router.get('/settings/connections/:provider/launch',requireOwner,asyncRoute(async(req,res)=>{
     if(!await connectionAllowed(req,res,req.params.provider))return;
+    if(registry.get(req.params.provider)?.oauthSessionBound)require('../../connections/oauth-session-intent').assertCanStart(req.session,req.params.provider);
     const launch=req.session.connectionLaunch;
     delete req.session.connectionLaunch;
     if(!launch||launch.workspaceId!==req.ctx.workspaceId||launch.expiresAt<Date.now()
@@ -209,6 +228,7 @@ function createPostgresConnectionsRouter(database,options={}){
     const started=await providerService.beginAuthorization(database,req.ctx,{providerType:req.params.provider,
       popup:'1'},requestOrigin,{providers:registry,
       publicOrigin:options.publicOrigin==='request'?requestOrigin:options.publicOrigin});
+    if(started.authorizationState)require('../../connections/oauth-session-intent').remember(req.session,req.params.provider,started.authorizationState);
     return res.redirect(303,started.redirectUrl);
   }));
   router.get('/settings/connections/:id/complete',requireOwner,asyncRoute(async(req,res)=>{
@@ -397,10 +417,12 @@ function createPostgresConnectionsRouter(database,options={}){
   }));
   router.post('/settings/connections/:provider/authorize',requireOwner,asyncRoute(async(req,res)=>{
     if(!await connectionAllowed(req,res,req.params.provider))return;
+    if(registry.get(req.params.provider)?.oauthSessionBound)require('../../connections/oauth-session-intent').assertCanStart(req.session,req.params.provider);
     const requestOrigin=`${req.protocol}://${req.get('host')}`;
     const started=await providerService.beginAuthorization(database,req.ctx,{...req.body,
       providerType:req.params.provider},requestOrigin,{providers:registry,
       publicOrigin:options.publicOrigin==='request'?requestOrigin:options.publicOrigin});
+    if(started.authorizationState)require('../../connections/oauth-session-intent').remember(req.session,req.params.provider,started.authorizationState);
     return res.redirect(303,started.redirectUrl);
   }));
   router.post('/settings/connections/custom',requireOwner,asyncRoute(async(req,res)=>{

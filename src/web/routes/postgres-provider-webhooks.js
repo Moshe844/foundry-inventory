@@ -83,7 +83,7 @@ function createPostgresProviderWebhooks(database,options={}){
       return res.status(202).json({received:true,receiptId:receipt.receiptId,processingStatus:receipt.status,accepted:0,replayed:0,needsMapping:0});
     }catch(error){return apiError(res,error);}
   };
-  for(const providerType of ['shopify','square','woocommerce'])router.post(
+  for(const providerType of ['shopify','square','woocommerce','bigcommerce'])router.post(
     `/api/v1/connections/:providerType(${providerType})/webhooks/:connectorId`,
     express.raw({type:'*/*',limit:'1mb'}),handler);
   // Square subscriptions belong to the application, not individual merchants.

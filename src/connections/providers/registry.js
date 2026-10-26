@@ -4,6 +4,7 @@ const shopify = require('./shopify');
 const square = require('./square');
 const clover = require('./clover');
 const woocommerce = require('./woocommerce');
+const bigcommerce = require('./bigcommerce');
 const gmail = require('./gmail');
 const microsoft365 = require('./microsoft365');
 const quickbooks = require('./quickbooks');
@@ -11,7 +12,7 @@ const xero = require('./xero');
 const supplierEmail = require('./supplier-email');
 const launchPolicy = require('../launch-policy');
 
-const adapters = Object.freeze({ shopify, square, clover, woocommerce, gmail, microsoft365,
+const adapters = Object.freeze({ shopify, square, clover, woocommerce, bigcommerce, gmail, microsoft365,
   quickbooks, xero, supplier_email:supplierEmail });
 
 const generic = Object.freeze({
@@ -34,7 +35,7 @@ function withInventoryCapabilities(meta,adapter){
   ?[...adapter.catalogueCapabilities]:[];
  return {...meta,inventoryCapabilities:capabilities,initialInventoryImport:capabilities.some(c=>['products','skus','stock'].includes(c))};
 }
-function catalog(ctx,authorizationOptions) { return [shopify.metadata(), square.metadata(authorizationOptions), clover.metadata(), woocommerce.metadata(), generic,
+function catalog(ctx,authorizationOptions) { return [shopify.metadata(), square.metadata(authorizationOptions), clover.metadata(), woocommerce.metadata(), bigcommerce.metadata(), generic,
   ...future, gmail.metadata(), microsoft365.metadata(), quickbooks.metadata(), xero.metadata()]
   .map(meta=>launchPolicy.metadata(withInventoryCapabilities(meta,get(meta.type)),ctx)); }
 function inventorySources(ctx,options){return catalog(ctx,options).filter(meta=>meta.initialInventoryImport);}

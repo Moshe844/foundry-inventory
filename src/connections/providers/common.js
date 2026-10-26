@@ -9,6 +9,7 @@ function providerNameFor(url) {
   if (/shopify/.test(host)) return 'Shopify';
   if (/squareup/.test(host)) return 'Square';
   if (/clover/.test(host)) return 'Clover';
+  if (/(^|\.)bigcommerce\.com$/.test(host)) return 'BigCommerce';
   if (/intuit|quickbooks/.test(host)) return 'QuickBooks';
   if (/xero/.test(host)) return 'Xero';
   if (/googleapis|google/.test(host)) return 'Gmail';

@@ -48,7 +48,7 @@
 <% } %>
 <% if(newConnectionToken){ %><div class="notice notice--warn section"><div><strong>Copy this secure connection key now. StockChief will not show it again.</strong><input class="input mono" aria-label="Connection token" value="<%= newConnectionToken %>" readonly onclick="this.select()"></div></div><% } %>
 
-<% if(['shopify','square','clover','woocommerce'].includes(connection.provider_type)){ %>
+<% if(['shopify','square','clover','woocommerce','bigcommerce'].includes(connection.provider_type)){ %>
 <section class="card section" aria-label="Stock and price synchronization"><div class="card-head"><h2>Stock and price synchronization</h2></div><div class="card-body">
 <p>Outgoing stock is costed, uncommitted stock available to sell. Incoming count differences need physical confirmation. Conflicts are held for review; a queued delivery is complete only after provider read-back.</p>
   <% if(!locals.commercePositions?.length){ %><p>No stock or price write-back has been authorized yet. Ask StockChief to prepare the direction and starting source for the products and locations you want to synchronize.</p><% }else{ %>

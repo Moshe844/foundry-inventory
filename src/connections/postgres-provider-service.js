@@ -60,7 +60,7 @@ async function beginAuthorization(database,ctx,input,requestOrigin,options={}){
       providerType,ctx.actorId,JSON.stringify({...auth.metadata,returnOrigin:requestOrigin,
         popup:String(input.popup||'')==='1'}),new Date(Date.now()+15*60000).toISOString(),now]);
   },{isolation:'SERIALIZABLE',retrySafe:true});
-  return {connectorId,redirectUrl:auth.url};
+  return {connectorId,redirectUrl:auth.url,...(adapter.oauthSessionBound?{authorizationState:state}:{})};
 }
 
 async function readState(database,state,providerType,{consume=false}={}){
@@ -86,6 +86,8 @@ async function callbackContext(database,stateValue,providerType){
 
 async function finishAuthorization(database,connection,actorId,result){
   return database.transaction(async(client)=>{
+    const authorizer=(await client.query("SELECT role FROM users WHERE workspace_id=$1 AND id=$2 FOR UPDATE",[connection.workspace_id,actorId])).rows[0];
+    if(authorizer?.role!=='owner')throw new AuthenticationError('The owner who started this connection no longer has permission to authorize it. Start again with a current owner.');
     const scope=await entitlements.ownerScopeForWorkspace(client,connection.workspace_id);
     await entitlements.assertCapability(client,scope,['gmail','microsoft365'].includes(connection.provider_type)?'communications.email_ingestion':
       ['quickbooks','xero'].includes(connection.provider_type)?'connections.accounting':'connections.commerce');
