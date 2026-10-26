@@ -51,7 +51,7 @@ async function createCheckout(input, options = {}) {
       'metadata[stockchief_plan_id]':input.planId,
       'metadata[stockchief_checkout_attempt_id]':input.attemptId,
       allow_promotion_codes:input.promotionCodeId?undefined:'true',
-      'payment_method_types[0]':'card',
+      'allowed_payment_method_types[0]':'card',
       payment_method_collection:'always',
       billing_address_collection:'auto',
       'automatic_tax[enabled]':automaticTax?'true':undefined,
