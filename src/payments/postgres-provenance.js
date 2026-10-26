@@ -3,10 +3,10 @@ const {newId,nowIso}=require('../lib/util');
 const {ValidationError}=require('../domain/errors');
 const providers=require('./index'),jobs=require('../operations/postgres-job-queue');
 const supported=name=>{const p=providers.get(name);return typeof p.readInvoice==='function'&&typeof p.eventFromInvoice==='function';};
-async function queue(database,request){
+async function queue(database,request,{sourceEventId=null}={}){
  if(!request?.id||Number(request.paid_minor)<=0||!supported(request.provider))return null;
  return jobs.enqueue(database,{workspaceId:request.workspace_id,kind:'payment.provenance',
-   payload:{requestId:request.id},idempotencyKey:`payment-provenance:${request.id}:${request.paid_minor}`,priority:30,maxAttempts:6});
+   payload:{requestId:request.id,...(sourceEventId?{sourceEventId}:{})},idempotencyKey:`payment-provenance:${request.id}:${request.paid_minor}${sourceEventId?':event:'+sourceEventId:''}`,priority:30,maxAttempts:6});
 }
 async function queueMissing(database){
  const rows=(await database.query(`SELECT r.* FROM payment_requests r WHERE r.paid_minor>0 AND r.external_invoice_id IS NOT NULL
@@ -14,6 +14,13 @@ async function queueMissing(database){
     AND e.payment_id IS NOT NULL AND e.external_payment_id IS NOT NULL)
   ORDER BY r.updated_at,r.id LIMIT 50`)).rows;
  let queued=0;for(const row of rows)if(providers.has(row.provider)&&supported(row.provider)){const result=await queue(database,row);if(result?.created)queued++;}
+ const orphans=(await database.query(`SELECT orphan.id,orphan.workspace_id,MIN(known.request_id) AS request_id
+   FROM payment_provider_events orphan JOIN payment_provider_events known
+     ON known.workspace_id=orphan.workspace_id AND known.provider=orphan.provider AND known.external_payment_id=orphan.external_payment_id
+   WHERE orphan.event_type='REFUNDED' AND orphan.request_id IS NULL AND known.request_id IS NOT NULL AND known.payment_id IS NOT NULL
+   GROUP BY orphan.id,orphan.workspace_id HAVING COUNT(DISTINCT known.request_id)=1 ORDER BY orphan.id LIMIT 50`)).rows;
+ for(const orphan of orphans){const request=(await database.query('SELECT * FROM payment_requests WHERE workspace_id=$1 AND id=$2',[orphan.workspace_id,orphan.request_id])).rows[0];
+   if(request&&providers.has(request.provider)&&supported(request.provider)){const result=await queue(database,request,{sourceEventId:orphan.id});if(result?.created)queued++;}}
  return {queued};
 }
 async function reconcile(database,workspaceId,requestId,options={}){
@@ -51,7 +58,21 @@ async function reconcile(database,workspaceId,requestId,options={}){
        JSON.stringify({source:'provider_invoice_readback',invoiceId:request.externalInvoiceId,paymentId:evidence.externalPaymentId,
          amountMinor:request.paidMinor,currency:request.currency,providerAccountId:account.provider_account_id}),requestId,receipts[0].id,evidence.externalPaymentId,
        'Verified the original payment against the provider invoice. Existing cash, invoice allocation and stock were preserved.',at]);
-   return {verified:true,replayed:!result.rows.length,requestId,paymentId:receipts[0].id,externalPaymentId:evidence.externalPaymentId,financialPostingCreated:false};
+   const retained=(await client.query(`SELECT id,external_event_id,outcome FROM payment_provider_events WHERE workspace_id=$1 AND provider=$2
+     AND request_id IS NULL AND event_type='REFUNDED' AND external_payment_id=$3 AND ($4::text IS NULL OR id=$4) FOR UPDATE`,
+     [workspaceId,request.provider,evidence.externalPaymentId,options.sourceEventId||null])).rows;
+   const competing=(await client.query(`SELECT DISTINCT request_id FROM payment_provider_events WHERE workspace_id=$1 AND provider=$2
+     AND external_payment_id=$3 AND payment_id IS NOT NULL AND request_id IS NOT NULL`,[workspaceId,request.provider,evidence.externalPaymentId])).rows;
+   let linkedEvents=0;if(competing.length===1&&competing[0].request_id===requestId)for(const event of retained){
+     await client.query(`INSERT INTO payment_provider_events(id,workspace_id,provider,external_event_id,event_type,payload,request_id,
+       payment_id,external_payment_id,outcome,received_at,processed_at) VALUES($1,$2,$3,$4,'EVENT_LINK_VERIFIED',$5,$6,$7,$8,$9,$10,$10)
+       ON CONFLICT(workspace_id,provider,external_event_id) DO NOTHING`,[newId('payevt'),workspaceId,request.provider,'linked-event:'+event.external_event_id,
+       JSON.stringify({source:'retained_signed_event',sourceEventId:event.id,sourceExternalEventId:event.external_event_id,originalOutcome:event.outcome,
+         paymentId:evidence.externalPaymentId,invoiceId:request.externalInvoiceId}),requestId,receipts[0].id,evidence.externalPaymentId,
+       'Linked retained refund evidence to its verified original payment. No payment, refund or stock posting was created.',at]);
+     const linked=await client.query('UPDATE payment_provider_events SET request_id=$3 WHERE workspace_id=$1 AND id=$2 AND request_id IS NULL',[workspaceId,event.id,requestId]);linkedEvents+=linked.rowCount;
+   }
+   return {verified:true,replayed:!result.rows.length,linkedEvents,requestId,paymentId:receipts[0].id,externalPaymentId:evidence.externalPaymentId,financialPostingCreated:false};
  },{isolation:'SERIALIZABLE',retrySafe:true});
 }
 module.exports={queue,queueMissing,reconcile};

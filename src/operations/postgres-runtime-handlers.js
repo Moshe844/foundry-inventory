@@ -599,7 +599,7 @@ function create(providers=defaultProviders,options={}){return {'system.runtime-s
   'commercial.stripe-financial-sync':external((job,database)=>require('../commercial/stripe-financials').sync(database,job,options.commercialOptions||{})),
     'commercial.stripe-invoice-sync':external((job,database)=>require('../commercial/stripe-financials').syncInvoice(database,job,options.commercialOptions||{})),
   'payment.provenance':external((job,database)=>require('../payments/postgres-provenance').reconcile(database,job.workspaceId,job.payload.requestId,{
-    providerResolver:options.paymentProviderResolver,accountContext:options.paymentAccountContext})),
+    providerResolver:options.paymentProviderResolver,accountContext:options.paymentAccountContext,sourceEventId:job.payload.sourceEventId})),
   'provider.effect':external((job,database)=>providerEffect(job,database,options,providers)),
   'provider.commerce-verify':external((job,database)=>require('../connections/postgres-commerce-sync').verifyDelivery(database,job.workspaceId,job.payload.effectId,{providers})),
   // Whole-inventory planning can outlast several provider polling intervals.

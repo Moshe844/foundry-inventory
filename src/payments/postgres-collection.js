@@ -178,9 +178,19 @@ async function receiveVerifiedEvent(database,workspaceId,providerName,event,opti
     const prior=(await client.query(`SELECT outcome,payment_id FROM payment_provider_events
       WHERE workspace_id=$1 AND provider=$2 AND external_event_id=$3`,[workspaceId,providerName,externalEventId])).rows[0];
     if(prior)return {applied:false,replayed:true,outcome:prior.outcome,paymentId:prior.payment_id};
-    const request=read.externalInvoiceId?(await client.query(`SELECT * FROM payment_requests
+    let request=read.externalInvoiceId?(await client.query(`SELECT * FROM payment_requests
       WHERE workspace_id=$1 AND provider=$2 AND external_invoice_id=$3 FOR UPDATE`,
     [workspaceId,providerName,read.externalInvoiceId])).rows[0]:null;
+    // Some refund events identify the original payment rather than an invoice.
+    // Only a unique, already-verified receipt in this merchant's workspace may
+    // supply the missing association. This never creates a refund posting.
+    if(!request&&read.kind==='REFUNDED'&&read.externalPaymentId){
+      const matches=(await client.query(`SELECT DISTINCT r.* FROM payment_requests r
+        JOIN payment_provider_events e ON e.workspace_id=r.workspace_id AND e.request_id=r.id AND e.provider=r.provider
+        WHERE r.workspace_id=$1 AND r.provider=$2 AND e.external_payment_id=$3 AND e.payment_id IS NOT NULL LIMIT 2`,
+        [workspaceId,providerName,read.externalPaymentId])).rows;
+      if(matches.length===1)request=matches[0];
+    }
     const eventId=newId('payevt');const at=nowIso();
     await client.query(`INSERT INTO payment_provider_events
       (id,workspace_id,provider,external_event_id,event_type,payload,request_id,external_payment_id,received_at)
