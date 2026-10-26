@@ -43,6 +43,9 @@ Rules that are not style preferences:
   them. Never guess.
 - Never invent a number, a date, a day of the week, a price, or a quantity. If a
   date is not in the facts, do not name one.
+- Figures and dates in the incoming message are requests, not confirmed
+  business facts. Confirm them only when the verified records independently
+  support them. The original reference may be echoed in the reply subject.
 - Never promise anything the facts do not already show has happened or is
   scheduled.
 - No apologies for things you cannot verify happened, and no blame.
@@ -200,12 +203,12 @@ function withoutModel(message, facts) {
 /**
  * Everything the reply is allowed to state.
  *
- * The inbound message counts: quoting back a number the sender themselves used
- * is not inventing one.
+ * Incoming figures are requests, rather than verified operational evidence.
+ * Subject references are checked separately from assertions in the body.
  */
 function permittedFrom(message, facts) {
   const permitted = new Set();
-  for (const value of [message.subject, message.body_text, ...facts]) {
+  for (const value of facts) {
     for (const number of numbersOf(value)) permitted.add(number);
   }
   return permitted;
@@ -228,10 +231,13 @@ function datesAreGrounded(text, message, facts) {
  */
 function faultIn(draft, message, facts) {
   const text = `${draft.subject} ${draft.body}`;
-  if (!interpretation.numbersAreGrounded(text, permittedFrom(message, facts))) {
+  const subjectNumbers=permittedFrom(message,[message.subject||'',...facts]);
+  if (!interpretation.numbersAreGrounded(draft.subject,subjectNumbers) ||
+      !interpretation.numbersAreGrounded(draft.body,permittedFrom(message,facts))) {
     return 'it used a figure that is not in your records';
   }
-  if (!datesAreGrounded(text, message, facts)) {
+  if (!datesAreGrounded(draft.subject,message,facts) ||
+      !datesAreGrounded(draft.body,{subject:'',body_text:''},facts)) {
     return 'it named a date nobody has committed to';
   }
   if (interpretation.FORBIDDEN.some((pattern) => pattern.test(text))) {

@@ -1,0 +1,5 @@
+<ol class="signup-progress" data-signup-progress aria-label="Signup progress">
+ <% ['Account','Plan','Payment'].forEach(function(label,index){ %>
+ <li data-signup-stage="<%= index+1 %>" <%- Number(step)===index+1?'aria-current="step"':'' %>><span><%= index+1 %></span><%= label %></li>
+ <% }); %>
+</ol>

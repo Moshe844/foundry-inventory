@@ -10,29 +10,36 @@ const {nowIso,trimOrNull,newId}=require('../lib/util');
 const permissions=require('../actions/permissions');
 
 async function factsFor(database,workspaceId,message){
-  const facts=[];
-  const customer=(await database.query(`SELECT id,name FROM customers WHERE workspace_id=$1
-    AND record_state='ACTIVE' AND lower(email)=lower($2) LIMIT 1`,[workspaceId,message.sender])).rows[0];
-  const supplier=(await database.query(`SELECT id,name FROM suppliers WHERE workspace_id=$1
-    AND status='active' AND (id=$2 OR lower(email)=lower($3)) LIMIT 1`,
-  [workspaceId,message.supplier_id||'',message.sender])).rows[0];
-  if(customer){
-    facts.push(`The sender is customer ${customer.name}.`);
-    const orders=(await database.query(`SELECT order_number,status,needed_by FROM sales_orders
-      WHERE workspace_id=$1 AND customer_id=$2 ORDER BY created_at DESC LIMIT 5`,
-    [workspaceId,customer.id])).rows;
-    for(const order of orders)facts.push(`Customer order ${order.order_number} has status ${order.status}`+
-      (order.needed_by?` and recorded needed-by date ${order.needed_by}`:'')+'.');
+ const facts=[],sender=String(message.sender||'').trim();
+ const customers=(await database.query("SELECT id,name FROM customers WHERE workspace_id=$1 AND record_state='ACTIVE' AND lower(email)=lower($2) ORDER BY id LIMIT 2",[workspaceId,sender])).rows;
+ const suppliers=(await database.query("SELECT id,name FROM suppliers WHERE workspace_id=$1 AND status='active' AND (id=$2 OR lower(email)=lower($3)) ORDER BY id LIMIT 2",[workspaceId,message.supplier_id||'',sender])).rows;
+ // Ambiguous contacts never let one customer's or supplier's private records
+ // become evidence for another contact's reply.
+ if(customers.length===1){const customer=customers[0];facts.push('The sender is customer '+customer.name+'.');
+  const orders=(await database.query('SELECT id,order_number,status,needed_by,currency FROM sales_orders WHERE workspace_id=$1 AND customer_id=$2 ORDER BY created_at DESC,id DESC LIMIT 5',[workspaceId,customer.id])).rows;
+  for(const order of orders){facts.push('Customer order '+order.order_number+' has status '+order.status+(order.needed_by?' and recorded needed-by date '+order.needed_by:'')+'.');
+   const lines=(await database.query(`SELECT l.sku_id,s.code,i.name,l.quantity_ordered,l.quantity_fulfilled,l.unit_price_minor
+    FROM sales_order_lines l JOIN skus s ON s.workspace_id=l.workspace_id AND s.id=l.sku_id
+    JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
+    WHERE l.workspace_id=$1 AND l.sales_order_id=$2 ORDER BY l.id LIMIT 50`,[workspaceId,order.id])).rows;
+   for(const line of lines)facts.push('Order '+order.order_number+', '+line.name+' ('+line.code+'): '+line.quantity_ordered+' ordered, '+line.quantity_fulfilled+' fulfilled; recorded unit selling price '+order.currency+' '+(Number(line.unit_price_minor)/100).toFixed(2)+'.');
+   if(lines.length){const positions=(await database.query('SELECT s.id AS sku_id,l.id AS location_id,l.name AS location_name FROM skus s CROSS JOIN locations l WHERE s.workspace_id=$1 AND s.id=ANY($2::text[]) AND l.workspace_id=$1 AND l.is_active=1 AND l.custody_agreement_id IS NULL ORDER BY s.id,l.id',[workspaceId,lines.map(l=>l.sku_id)])).rows;
+    const availability=require('../domain/postgres-stock-availability'),stock=await availability.readMany(database,workspaceId,positions.map(p=>({skuId:p.sku_id,locationId:p.location_id})));
+    for(const position of positions){const current=stock.get(availability.key(position.sku_id,position.location_id));if(current){const line=lines.find(l=>l.sku_id===position.sku_id);facts.push('Current stock for '+line.code+' at '+position.location_name+': '+current.onHand+' physically on hand, '+current.available+' available after existing commitments. Availability is not a delivery promise.');}}
+   }
+   const shipments=(await database.query("SELECT shipment_number,status,carrier,tracking_number,shipped_at,delivered_at FROM sales_shipments WHERE workspace_id=$1 AND sales_order_id=$2 AND status<>'CANCELLED' ORDER BY created_at DESC,id DESC LIMIT 10",[workspaceId,order.id])).rows;
+   for(const shipment of shipments)facts.push('Order '+order.order_number+' shipment record: '+JSON.stringify(shipment)+'.');
+   const invoices=(await database.query('SELECT invoice_number,total_minor,balance_minor,currency,due_date FROM accounting_customer_invoices WHERE workspace_id=$1 AND sales_order_id=$2 ORDER BY created_at DESC,id DESC LIMIT 10',[workspaceId,order.id])).rows;
+   for(const invoice of invoices)facts.push('Order '+order.order_number+' invoice '+invoice.invoice_number+': '+invoice.currency+' '+(Number(invoice.total_minor)/100).toFixed(2)+' total, '+invoice.currency+' '+(Number(invoice.balance_minor)/100).toFixed(2)+' outstanding'+(invoice.due_date?', due '+invoice.due_date:'')+'.');
   }
-  if(supplier){
-    facts.push(`The sender is supplier ${supplier.name}.`);
-    const orders=(await database.query(`SELECT po_number,status,expected_date FROM purchase_orders
-      WHERE workspace_id=$1 AND supplier_id=$2 ORDER BY created_at DESC LIMIT 5`,
-    [workspaceId,supplier.id])).rows;
-    for(const order of orders)facts.push(`Our purchase order ${order.po_number} has status ${order.status}`+
-      (order.expected_date?` and recorded expected date ${order.expected_date}`:'')+'.');
-  }
-  return facts;
+ }
+ if(suppliers.length===1){const supplier=suppliers[0];facts.push('The sender is supplier '+supplier.name+'.');
+  const orders=(await database.query('SELECT id,po_number,status,expected_date FROM purchase_orders WHERE workspace_id=$1 AND supplier_id=$2 ORDER BY created_at DESC,id DESC LIMIT 5',[workspaceId,supplier.id])).rows;
+  for(const order of orders){facts.push('Our purchase order '+order.po_number+' has status '+order.status+(order.expected_date?' and recorded expected date '+order.expected_date:'')+'.');const lines=(await database.query(`SELECT s.code,i.name,l.quantity_ordered,l.quantity_received,l.unit_cost_minor FROM purchase_order_lines l
+   JOIN skus s ON s.workspace_id=l.workspace_id AND s.id=l.sku_id JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id
+   WHERE l.workspace_id=$1 AND l.purchase_order_id=$2 ORDER BY l.id LIMIT 50`,[workspaceId,order.id])).rows;for(const line of lines)facts.push('Purchase order '+order.po_number+' line: '+JSON.stringify(line)+'.');}
+ }
+ return facts;
 }
 
 async function prepare(database,ctx,id,options={}){

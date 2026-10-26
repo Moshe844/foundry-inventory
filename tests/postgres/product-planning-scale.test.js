@@ -30,5 +30,15 @@ test('large catalogs do not expand irrelevant planning positions and reconciliat
    const mismatch=(await db.query(checks[0].query,[ctx.workspaceId])).rows;assert.equal(mismatch.length,1);assert.equal(mismatch[0].sku_id,f.item.skuIds[0]);assert.equal(Number(mismatch[0].actual_quantity)-Number(mismatch[0].expected_quantity),3);
    await db.query('UPDATE balances SET on_hand=on_hand-3 WHERE workspace_id=$1 AND sku_id=$2 AND location_id=$3',[ctx.workspaceId,f.item.skuIds[0],f.location.id]);
  });
+ await t.test('catalog-wide rules without suppliers do not perform one database read per stock position',async()=>{
+  await db.query(`INSERT INTO reorder_policies(id,workspace_id,sku_id,location_id,reorder_point,target_stock,safety_stock,created_at,updated_at)
+   SELECT 'many-policy-'||n,$1,'scale-'||n,$2,0,4,0,$3,$3 FROM generate_series(1,1200)n`,[ctx.workspaceId,destination.id,new Date().toISOString()]);
+  let queries=0;const measured={...db,query:async(sql,args)=>{queries++;return db.query(sql,args);}};
+  const result=await require(root+'/src/autopilot/postgres-service').plan(measured,ctx.workspaceId);
+  assert(result.considered.filter(c=>c.reason==='no_supplier').length>=1200);assert(queries<20,'Planner performs one read per position: '+queries);
+  await db.query(`INSERT INTO supplier_items(id,workspace_id,supplier_id,sku_id,supplier_sku,purchase_unit,units_per_purchase_unit,last_unit_cost,lead_time_days,minimum_order_quantity,order_multiple,is_preferred,is_active,created_at,updated_at)
+   SELECT 'many-link-'||n,$1,'fixture-supplier','scale-'||n,'SUPPLIER-'||n,'unit',1,1,7,1,1,1,1,$2,$2 FROM generate_series(1,1200)n`,[ctx.workspaceId,new Date().toISOString()]);
+  queries=0;const linked=await require(root+'/src/autopilot/postgres-service').plan(measured,ctx.workspaceId);assert.equal(linked.created.length,1200);assert(queries<20,'Suggestion/audit persistence performs one write per position: '+queries);assert.equal((await db.query("SELECT count(*)::int n FROM work_item_events WHERE workspace_id=$1 AND event='planned'",[ctx.workspaceId])).rows[0].n,1201);assert.equal((await require(root+'/src/autopilot/postgres-service').plan(measured,ctx.workspaceId)).created.length,0,'A retry cannot duplicate suggestions or their audit records');
+ });
  assert.deepEqual((await db.query('SELECT sum(on_hand)::text stock FROM balances WHERE workspace_id=$1',[ctx.workspaceId])).rows[0],snapshot);
 });

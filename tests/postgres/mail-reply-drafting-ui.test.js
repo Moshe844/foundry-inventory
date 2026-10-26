@@ -41,8 +41,12 @@ test('business mail gets a safe editable draft, with metered record-grounded imp
       businessName:'Mail Draft Business',email:'mail-draft@example.test',password:'draft-test-password'});
     const ctx=(await database.query(`SELECT w.id AS "workspaceId",u.id AS "actorId",w.owner_account_id AS "accountId" FROM workspaces w
       JOIN users u ON u.workspace_id=w.id WHERE w.name='Mail Draft Business'`)).rows[0];
-    await database.query("UPDATE account_subscriptions SET plan_id='growth',plan_version_id=NULL WHERE account_id=$1",
-      [ctx.accountId]);
+    await database.query("INSERT INTO account_subscriptions(id,account_id,plan_id,status,billing_interval,source) VALUES($1,$2,'growth','COMP','CUSTOM','OFFLINE_PAID_MAIL_FIXTURE')",
+      [newId('sub'),ctx.accountId]);
+    // This provider-boundary fixture opts into the separate draft capability.
+    // It must still reserve and settle ordinary subscription credits. Public
+    // launch packaging/availability is a distinct certification gate.
+    await database.query("UPDATE commercial_plan_entitlements SET enabled=1 WHERE plan_id='growth' AND capability='communications.ai_drafts'");
     const draftCapability=await require('../../src/entitlements/postgres-service').capabilityState(database,
       {accountId:ctx.accountId,workspaceId:ctx.workspaceId},'communications.ai_drafts');
     assert.equal(draftCapability.enabled,true,JSON.stringify(draftCapability));
@@ -65,7 +69,7 @@ test('business mail gets a safe editable draft, with metered record-grounded imp
     assert.equal(queued.length,1,'one durable automatic draft job is queued');
     const auto=await jobs.processOne(database,runtimeHandlers.create(undefined,{aiProvider}),
       {owner:'reply-draft-test',kinds:['mail.reply-draft']});
-    assert.equal(auto.status,'COMPLETED');assert.equal(calls,1);
+    assert.equal(auto.status,'COMPLETED');assert.equal(calls,1,JSON.stringify(auto.result));
     row=await mail.get(database,ctx.workspaceId,row.id);
     assert.equal(row.draft_source,'model');assert.match(row.draft_body,/checking the stock availability/);
     assert.equal(row.reply_sent_at,null);

@@ -156,12 +156,7 @@ async function capture(database,connection,message){
 }
 
 async function counts(database,workspaceId){
-  const rows=(await database.query(`SELECT CASE WHEN EXISTS (SELECT 1 FROM stockchief_runtime.email_reply_outbox outbox
-      WHERE outbox.workspace_id=message.workspace_id AND outbox.message_id=message.id
-      AND outbox.status IN ('PENDING','SENDING')) THEN 'SENDING'
-      WHEN EXISTS (SELECT 1 FROM stockchief_runtime.email_reply_outbox outbox
-        WHERE outbox.workspace_id=message.workspace_id AND outbox.message_id=message.id
-        AND outbox.status='AMBIGUOUS') THEN 'UNCERTAIN' ELSE message.reply_state END AS drawer,
+  const rows=(await database.query(`SELECT ${require('./mail-presentation').DRAWER_SQL} AS drawer,
       COUNT(*)::integer AS count FROM connection_email_messages message
     WHERE message.workspace_id=$1 GROUP BY drawer`,[workspaceId])).rows;
   return Object.fromEntries(rows.map((row)=>[row.drawer,Number(row.count)]));
@@ -233,18 +228,13 @@ async function adoptSetAside(database,ctx,id,input,options={}){
 }
 
 async function list(database,workspaceId,state='NEEDS_REPLY'){
-  return (await database.query(`SELECT message.*,connector.display_name,connector.provider_type,
+  return (await database.query(`SELECT message.*,${require('./mail-presentation').DRAWER_SQL} AS display_reply_state,connector.display_name,connector.provider_type,
       supplier.name AS supplier_name,
       COALESCE((SELECT COUNT(*) FROM connection_email_attachments attachment
         WHERE attachment.workspace_id=message.workspace_id AND attachment.message_id=message.id),0)::integer AS attachment_count
     FROM connection_email_messages message JOIN workspace_connectors connector ON connector.id=message.connector_id
     LEFT JOIN suppliers supplier ON supplier.id=message.supplier_id AND supplier.workspace_id=message.workspace_id
-    WHERE message.workspace_id=$1 AND (CASE WHEN EXISTS (SELECT 1 FROM stockchief_runtime.email_reply_outbox outbox
-      WHERE outbox.workspace_id=message.workspace_id AND outbox.message_id=message.id
-      AND outbox.status IN ('PENDING','SENDING')) THEN 'SENDING'
-      WHEN EXISTS (SELECT 1 FROM stockchief_runtime.email_reply_outbox outbox
-        WHERE outbox.workspace_id=message.workspace_id AND outbox.message_id=message.id
-        AND outbox.status='AMBIGUOUS') THEN 'UNCERTAIN' ELSE message.reply_state END)=$2
+    WHERE message.workspace_id=$1 AND (${require('./mail-presentation').DRAWER_SQL})=$2
     ORDER BY message.received_at ASC,message.id ASC`,
   [workspaceId,state])).rows;
 }

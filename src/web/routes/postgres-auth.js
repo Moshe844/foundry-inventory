@@ -92,7 +92,7 @@ function createPostgresAuthRouter(database,options={}) {
       flash:res.locals.flash,form:{},appName:res.locals.appName,origin:res.locals.origin,
       selectedPlan:selected?.id||'',selectedInterval:'monthly',
       selectedPromo:String(req.query.promo||'').trim().toUpperCase(),plans,
-      checkoutOpen:!config.commercial.requirePaidWorkspace||await checkoutAvailable() });
+      paidSignup:config.commercial.requirePaidWorkspace,checkoutOpen:!config.commercial.requirePaidWorkspace||await checkoutAvailable() });
     } catch(error) { return next(error); }
   });
   router.post('/register', async (req,res,next) => {
@@ -125,7 +125,7 @@ function createPostgresAuthRouter(database,options={}) {
         flash:[{ type:'error',message:error.message }],form:req.body,appName:res.locals.appName,origin:res.locals.origin,
         selectedPlan:selected?.id||'',selectedInterval:'monthly',
         selectedPromo:String(req.body.promoCode||'').trim().toUpperCase(),plans,
-        checkoutOpen:!config.commercial.requirePaidWorkspace||await checkoutAvailable(),
+        paidSignup:config.commercial.requirePaidWorkspace,checkoutOpen:!config.commercial.requirePaidWorkspace||await checkoutAvailable(),
       });}
       return next(error);
     }

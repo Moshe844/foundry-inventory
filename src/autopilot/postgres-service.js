@@ -208,7 +208,15 @@ function position(row){const available=Number(row.on_hand)-Number(row.committed)
   return {...row,onHand:Number(row.on_hand),committed:Number(row.committed),available,incoming:Number(row.incoming),
     issueEvents:Number(row.issue_events),issued:Number(row.issued),rate,safety,reorder,target,projected:available+Number(row.incoming)};}
 
-async function supplierChoice(database,workspaceId,shortage){const result=await database.query(`SELECT si.*,s.name AS supplier_name,
+async function planningSuppliers(database,workspaceId){
+ const rows=(await database.query(`SELECT si.*,s.name AS supplier_name,s.currency,s.minimum_order_amount,
+  COALESCE(si.lead_time_days,s.default_lead_time_days,30) AS effective_lead
+  FROM supplier_items si JOIN suppliers s ON s.id=si.supplier_id AND s.workspace_id=si.workspace_id
+  WHERE si.workspace_id=$1 AND si.is_active=1 AND s.status='active'
+  ORDER BY si.sku_id,si.is_preferred DESC,COALESCE(si.last_unit_cost,1e100),effective_lead,si.id`,[workspaceId])).rows;
+ const bySku=new Map();for(const row of rows){if(!bySku.has(row.sku_id))bySku.set(row.sku_id,[]);bySku.get(row.sku_id).push(row);}return bySku;
+}
+async function supplierChoice(database,workspaceId,shortage,cached=null){const result=cached?{rows:(cached.get(shortage.sku_id)||[]).filter(row=>!shortage.preferred_supplier_id||row.supplier_id===shortage.preferred_supplier_id)}:await database.query(`SELECT si.*,s.name AS supplier_name,
     s.currency,s.minimum_order_amount,COALESCE(si.lead_time_days,s.default_lead_time_days,30) AS effective_lead
   FROM supplier_items si JOIN suppliers s ON s.id=si.supplier_id AND s.workspace_id=si.workspace_id
   WHERE si.workspace_id=$1 AND si.sku_id=$2 AND si.is_active=1 AND s.status='active'
@@ -251,24 +259,36 @@ function workFrom(row){return {...row,sourceEvidence:parse(row.source_evidence,[
   movementIds:parse(row.movement_ids,[]),outcome:parse(row.outcome,{})};}
 async function getWork(database,workspaceId,id){const row=(await database.query('SELECT * FROM work_items WHERE workspace_id=$1 AND id=$2',[workspaceId,id])).rows[0];
   if(!row)throw new NotFoundError('That prepared work is not in this inventory.');return workFrom(row);}
-async function insertWork(database,workspaceId,candidate,evaluation){const key=`autopilot:${hash({candidate,balance:candidate.destinationAvailable,incoming:candidate.incoming}).slice(0,40)}`;
-  const existing=(await database.query('SELECT * FROM work_items WHERE workspace_id=$1 AND idempotency_key=$2',[workspaceId,key])).rows[0];
-  if(existing)return {item:workFrom(existing),created:false};const id=newId('wi');const at=nowIso();const automatic=evaluation.decision==='authorized';
-  const category=candidate.type==='transfer'?'stock_transfer':'replenishment_plan';
-  await database.query(`INSERT INTO work_items(id,workspace_id,category,source,source_evidence,affected_entities,recommended_action,
-    priority,urgency,confidence,policy_id,policy_evaluation,approval_requirement,execution_status,verification_status,movement_ids,
-    idempotency_key,outcome,attempts,created_at) VALUES($1,$2,$3,'postgres_autopilot',$4,$5,$6,$7,$8,'high',$9,$10,$11,$12,'PENDING','[]',$13,'{}',0,$14)`,
-  [id,workspaceId,category,JSON.stringify(candidate.evidence),JSON.stringify({skuId:candidate.skuId,displayName:candidate.displayName}),
-    JSON.stringify(candidate),candidate.priority,candidate.urgency,evaluation.policy?.id||null,
-    JSON.stringify({decision:evaluation.decision,reason:evaluation.reason,policyVersion:evaluation.policy?.version||null,
-      policyHash:evaluation.policy?.integrityHash||null}),automatic?'NONE':'REQUIRED',automatic?STATUSES.AUTHORIZED:STATUSES.WAITING,key,at]);
-  await database.query(`INSERT INTO work_item_events(id,workspace_id,work_item_id,event,detail,created_at)
-    VALUES($1,$2,$3,'planned',$4,$5)`,[newId('wievt'),workspaceId,id,JSON.stringify({automatic,reason:evaluation.reason}),at]);
-  return {item:await getWork(database,workspaceId,id),created:true};}
+async function persistPlannedWork(database,workspaceId,entries){
+ const created=[];
+ // Bound each SQL payload rather than performing four network round trips per
+ // suggestion. The unique idempotency key and its audit event commit together.
+ for(let offset=0;offset<entries.length;offset+=250){const batch=entries.slice(offset,offset+250).map(({candidate,evaluation})=>{
+  const automatic=evaluation.decision==='authorized';return {id:newId('wi'),event_id:newId('wievt'),
+   category:candidate.type==='transfer'?'stock_transfer':'replenishment_plan',source_evidence:candidate.evidence,
+   affected_entities:{skuId:candidate.skuId,displayName:candidate.displayName},recommended_action:candidate,
+   priority:candidate.priority,urgency:candidate.urgency,policy_id:evaluation.policy?.id||null,
+   policy_evaluation:{decision:evaluation.decision,reason:evaluation.reason,policyVersion:evaluation.policy?.version||null,policyHash:evaluation.policy?.integrityHash||null},
+   approval_requirement:automatic?'NONE':'REQUIRED',execution_status:automatic?STATUSES.AUTHORIZED:STATUSES.WAITING,
+   idempotency_key:'autopilot:'+hash({candidate,balance:candidate.destinationAvailable,incoming:candidate.incoming}).slice(0,40),
+   event_detail:{automatic,reason:evaluation.reason}};});
+  const result=await database.query(`WITH supplied AS MATERIALIZED (SELECT * FROM jsonb_to_recordset($2::jsonb)
+   AS d(id text,event_id text,category text,source_evidence jsonb,affected_entities jsonb,recommended_action jsonb,
+    priority integer,urgency text,policy_id text,policy_evaluation jsonb,approval_requirement text,execution_status text,idempotency_key text,event_detail jsonb)),
+   saved AS (INSERT INTO work_items(id,workspace_id,category,source,source_evidence,affected_entities,recommended_action,
+    priority,urgency,confidence,policy_id,policy_evaluation,approval_requirement,execution_status,verification_status,movement_ids,idempotency_key,outcome,attempts,created_at)
+    SELECT id,$1,category,'postgres_autopilot',source_evidence,affected_entities,recommended_action,priority,urgency,'high',policy_id,policy_evaluation,approval_requirement,execution_status,'PENDING','[]',idempotency_key,'{}',0,$3 FROM supplied
+    ON CONFLICT DO NOTHING RETURNING *),
+   events AS (INSERT INTO work_item_events(id,workspace_id,work_item_id,event,detail,created_at)
+    SELECT d.event_id,$1,saved.id,'planned',d.event_detail,$3 FROM saved JOIN supplied d ON d.id=saved.id RETURNING id)
+   SELECT saved.* FROM saved CROSS JOIN (SELECT count(*) FROM events) audit`,[workspaceId,JSON.stringify(batch),nowIso()]);
+  const byId=new Map(result.rows.map(row=>[row.id,row]));for(const entry of batch)if(byId.has(entry.id))created.push(workFrom(byId.get(entry.id)));
+ }return created;
+}
 
 async function plan(database,workspaceId){const state=await ensure(database,workspaceId);const rows=(await planningRows(database,workspaceId)).map(position);
   const bySku=new Map();for(const row of rows){if(!bySku.has(row.sku_id))bySku.set(row.sku_id,[]);bySku.get(row.sku_id).push(row);}
-  const created=[];const considered=[];
+  const prepared=[];const considered=[];const suppliers=await planningSuppliers(database,workspaceId);
   for(const locations of bySku.values()){for(const shortage of locations.filter((row)=>row.reorder!==null&&row.projected<=row.reorder)){
     const needed=Math.max(1,(shortage.target??shortage.reorder)-shortage.projected);
     const source=locations.filter((row)=>row.location_id!==shortage.location_id&&row.available>row.safety)
@@ -281,7 +301,7 @@ async function plan(database,workspaceId){const state=await ensure(database,work
         sourceSafety:source.safety,priority:90,urgency:shortage.available<=0?'immediate':'soon',evidence:[
           {fact:'destination_available',value:shortage.available},{fact:'destination_reorder_point',value:shortage.reorder},
           {fact:'source_available',value:source.available},{fact:'source_safety_stock',value:source.safety}]};
-    }else{const supplier=await supplierChoice(database,workspaceId,{...shortage,needed});if(!supplier){considered.push({skuId:shortage.sku_id,reason:'no_supplier'});continue;}
+    }else{const supplier=await supplierChoice(database,workspaceId,{...shortage,needed},suppliers);if(!supplier){considered.push({skuId:shortage.sku_id,reason:'no_supplier'});continue;}
       candidate={type:'purchase',skuId:shortage.sku_id,displayName:`${shortage.item_name}${shortage.variant_label?` — ${shortage.variant_label}`:''}`,
         code:shortage.code,quantity:supplier.quantity,purchaseUnits:supplier.purchaseUnits,unitsPerPurchaseUnit:supplier.unitsPer,
         supplierId:supplier.supplier_id,supplierName:supplier.supplier_name,supplierSku:supplier.supplier_sku,
@@ -291,8 +311,8 @@ async function plan(database,workspaceId){const state=await ensure(database,work
           {fact:'available',value:shortage.available},{fact:'incoming',value:shortage.incoming},{fact:'reorder_point',value:shortage.reorder},
           {fact:'supplier_pack',value:supplier.unitsPer},{fact:'supplier_minimum_purchase_units',value:Number(supplier.minimum_order_quantity||1)}]};}
     considered.push(candidate);const evaluation=await evaluate(database,workspaceId,candidate,state);if(evaluation.decision==='refused')continue;
-    const stored=await insertWork(database,workspaceId,candidate,evaluation);if(stored.created)created.push(stored.item);
-  }}await database.query(`UPDATE workspace_autopilot SET last_evaluated_at=$2,next_evaluation_at=$3,updated_at=$2 WHERE workspace_id=$1`,
+    prepared.push({candidate,evaluation});
+  }}const created=await persistPlannedWork(database,workspaceId,prepared);await database.query(`UPDATE workspace_autopilot SET last_evaluated_at=$2,next_evaluation_at=$3,updated_at=$2 WHERE workspace_id=$1`,
     [workspaceId,nowIso(),new Date(Date.now()+15*60000).toISOString()]);return {state,created,considered};}
 
 async function revalidate(database,workspaceId,action){

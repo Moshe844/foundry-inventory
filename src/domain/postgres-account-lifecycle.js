@@ -66,7 +66,7 @@ async function createInvitation(database,ctx,input,options={}){
     const link=`${origin.replace(/\/$/,'')}/invite?token=${encodeURIComponent(token)}`;
     await queueEmail(client,{to:email,subject:`Join ${workspace.name} in StockChief`,messageType:'workspace_invitation',
       idempotencyKey:`workspace-invitation:${id}`,text:`You were invited to ${workspace.name} in StockChief:\n\n${link}`,
-      html:`<p>You were invited to <strong>${workspace.name}</strong> in StockChief.</p><p><a href="${link}">Accept invitation</a></p>`});
+      html:`<p>You were invited to <strong>${require('../operations/system-email-layout').escape(workspace.name)}</strong> in StockChief.</p><p><a href="${link}">Accept invitation</a></p>`});
     return {id,email,role,token:options.includeToken?token:undefined};},{isolation:'SERIALIZABLE'});
 }
 

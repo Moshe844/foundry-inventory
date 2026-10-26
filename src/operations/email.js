@@ -14,6 +14,7 @@ function unseal(payload) {
 }
 
 async function sendResend(message, options = {}) {
+  message=require('./system-email-layout').render(message);
   const apiKey = options.apiKey || config.email.apiKey;
   const from = options.from || config.email.from;
   if (!apiKey || !from) {

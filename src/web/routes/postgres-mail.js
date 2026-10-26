@@ -15,13 +15,13 @@ const DRAWERS=[{key:'needs-reply',state:'NEEDS_REPLY',label:'Needs a reply'},
 
 const STATE_WORDS={NEEDS_REPLY:'Needs a reply',WAITING:'Waiting on them',HANDLED:'Handled'};
 
-function inboxMessage(row){return {...row,counterpartyName:row.supplier_name||row.sender,
+function inboxMessage(raw){const row=require('../../connections/mail-presentation').message(raw);return {...row,counterpartyName:row.supplier_name||row.sender,
   preview:String(row.body_text||'').replace(/\s+/g,' ').slice(0,180),attachment_count:Number(row.attachment_count||0),
   decidedByPerson:Boolean(row.reply_state_by_user_id)};}
 
-function messageForView(row){return {...row,connector_name:row.display_name,
+function messageForView(raw){const row=require('../../connections/mail-presentation').message(raw);return {...row,connector_name:row.display_name,
   stateWords:['PENDING','SENDING'].includes(row.outbox_status)?'Sending reply':
-    row.outbox_status==='AMBIGUOUS'?'Delivery uncertain':STATE_WORDS[row.reply_state]||row.reply_state,
+    row.outbox_status==='AMBIGUOUS'?'Delivery uncertain':row.stateWords,
   decidedByPerson:Boolean(row.reply_state_by_user_id)};}
 
 function createPostgresMailRouter(database,options={}){

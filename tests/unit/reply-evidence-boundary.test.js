@@ -1,0 +1,4 @@
+'use strict';const test=require('node:test'),assert=require('node:assert/strict'),guard=require('../../src/connections/reply-drafting');
+test('incoming requested figures and dates cannot become confirmed business facts in a prepared reply',()=>{
+ for(const requested of [137,9127,41503]){const message={subject:'Question '+requested,body_text:'Can you confirm '+requested+' units by tomorrow?'},facts=['Current available stock: 7 units.'];assert.match(guard.faultIn({subject:'Re: '+message.subject,body:'There are '+requested+' units available.'},message,facts),/figure/);assert.match(guard.faultIn({subject:'Re: '+message.subject,body:'Delivery is tomorrow.'},message,facts),/date/);assert.equal(guard.faultIn({subject:'Re: '+message.subject,body:'There are 7 units currently available. I am checking the delivery date.'},message,facts),null);}
+});

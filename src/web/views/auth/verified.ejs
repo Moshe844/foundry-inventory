@@ -5,18 +5,17 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Choose your plan · StockChief</title>
   <link rel="stylesheet" href="/commercial.css?v=auth-plan-choice">
-</head>
-<body class="commercial-auth">
+<link rel="stylesheet" href="/signup.css?v=<%= locals.assetVersion||'signup' %>"></head>
+<body class="commercial-auth signup-auth">
   <main class="auth-centered">
     <a class="pub-brand" href="/"><span class="pub-brand__mark">◇</span><span>StockChief</span></a>
-    <div class="auth-centered__card">
+    <div class="auth-centered__card"><%- include('../components/signup-progress',{step:3}) %>
       <span class="auth-mail auth-mail--ok">✓</span>
-      <h1><%= locals.trialPolicy?.enabled?'Start your trial.':selection.planId?'Review your plan.':'Choose your plan.' %></h1>
-      <p>Your email is verified. Choose a paid monthly plan and enter your card securely to activate your business workspace. Includes a 14-day money-back guarantee.</p>
+      <h1>3. Activate your workspace.</h1>
+      <p>Your email is verified. Review a paid monthly plan and enter your card securely to activate your business workspace. Includes a 14-day money-back guarantee.</p>
       <% if(flash&&flash.length){flash.forEach(function(message){ %>
         <div class="auth-message auth-message--<%= message.type %>" role="alert"><%= message.message %></div>
       <% });} %>
-      <% if(locals.trialPolicy?.enabled){ %><form method="post" action="/complete-signup/trial"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="pub-btn pub-btn--block" type="submit">Start <%= trialPolicy.days %>-day trial</button></form><p class="auth-help">Includes the <%= trialPolicy.planId %> plan's standard limits. The trial ends automatically. No automatic charge.</p><% } %>
       <% if(locals.subscriptionTestMode){ %><p class="auth-message" role="status">Test checkout: use a Stripe test card. No real payment is taken.</p><% } %><% if(checkoutOpen){ %><form method="post" action="/billing/checkout">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <input type="hidden" name="promoCode" value="<%= selection.promoCode||'' %>">
@@ -38,7 +37,7 @@
         </label>
         <button class="pub-btn pub-btn--block" type="submit">Continue to secure checkout</button>
       </form>
-      <p class="auth-help">Stripe handles payment details. StockChief never receives your card number.</p><% }else if(!locals.trialPolicy?.enabled){ %>
+      <p class="auth-help">Stripe handles payment details. StockChief never receives your card number.</p><% }else{ %>
         <% const chosen=plans.find(function(plan){return plan.id===(lastSelection?.planId||selection.planId);}); %>
         <p><%= chosen?'You selected '+chosen.public_name+' with monthly billing.':'No plan has been selected yet.' %></p>
         <div class="auth-message auth-message--warning" role="status">Checkout is not open yet. Your email is verified, but no payment has been taken and no inventory has been activated. We will not send you to a checkout that cannot complete.</div>

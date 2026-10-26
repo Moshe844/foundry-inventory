@@ -14,7 +14,7 @@ function createBudget(db,ctx,goalId){
     FROM stockchief_runtime.codex_pilot_calls WHERE funding_workspace_id=p.funding_workspace_id) u
    WHERE p.workspace_id=$1`,[ctx.workspaceId])).rows[0]||{pilot:null,committed:0,calls:0,unresolved:0};
   const p=row.pilot,u=row;
-  if(p?.admission_kind!=='COMMERCIAL'&&p){const legacy=(await client.query(`SELECT coalesce(sum(CASE WHEN status='SETTLED' THEN actual_minor WHEN status IN ('RESERVED','UNKNOWN') THEN maximum_minor ELSE 0 END)*10000,0) AS amount,count(*) FILTER(WHERE status IN ('RESERVED','UNKNOWN')) AS unresolved FROM commercial_model_cost_holds WHERE detail->>'certificationFundingWorkspaceId'=$1`,[p.funding_workspace_id||p.workspace_id])).rows[0];u.committed=Number(u.committed)+Number(legacy.amount);u.unresolved=Number(u.unresolved)+Number(legacy.unresolved);}
+  if(p?.admission_kind!=='COMMERCIAL'&&p){const exposure=await require('../commercial/staging-certification-budget').exposure(client,p.funding_workspace_id||p.workspace_id);u.committed=exposure.committed;u.unresolved=exposure.unresolved;}
   return {creditMeterOnly:p?.admission_kind==='COMMERCIAL'&&require('../commercial/model-cost-budget').creditsOnly(),approval:p?.approval_reference,ceiling:Number(p?.ceiling_micro_usd||0),expires:p?new Date(p.period_ends_at).getTime():0,
    stopped:!p?.enabled||p.stopped,committed:Number(u.committed),calls:Number(u.calls),unresolved:Number(u.unresolved),
    remaining:p?.admission_kind==='COMMERCIAL'&&require('../commercial/model-cost-budget').creditsOnly()?Infinity:Math.max(0,Number(p?.ceiling_micro_usd||0)-Number(u.committed))};
@@ -23,6 +23,8 @@ function createBudget(db,ctx,goalId){
   async reserve({candidate,task,upperBoundMicroUsd,detail={}}){
    if(candidate!=='codex'||task!==goalId||!Number.isSafeInteger(upperBoundMicroUsd)||upperBoundMicroUsd<=0||upperBoundMicroUsd>300000)throw Error('INVALID_PILOT_RESERVATION');
    return db.transaction(async client=>{
+    const pool=require('../commercial/staging-certification-budget');
+    const certificationFundingWorkspaceId=await pool.reserve(client,upperBoundMicroUsd,{goalId});
     const {pilot}=await require('./postgres-codex-pilot').access(client,ctx,{enabled:true});
     await client.query('SELECT workspace_id FROM stockchief_runtime.codex_pilots WHERE workspace_id=$1 FOR UPDATE',[pilot.funding_workspace_id]);
     await require('./postgres-codex-pilot').access(client,ctx,{enabled:true});const state=await status(client);
@@ -30,16 +32,16 @@ function createBudget(db,ctx,goalId){
     if(state.unresolved)throw Error('UNRESOLVED_MODEL_CALL');
     if(upperBoundMicroUsd>state.remaining)throw Error('SHARED_SPENDING_CEILING');
     const id=randomUUID();await client.query(`INSERT INTO stockchief_runtime.codex_pilot_calls(id,workspace_id,actor_id,goal_id,reserved,state,detail,funding_workspace_id)
-     VALUES($1,$2,$3,$4,$5,'RESERVED',$6::jsonb,$7)`,[id,ctx.workspaceId,ctx.actorId,goalId,upperBoundMicroUsd,JSON.stringify(detail),pilot.funding_workspace_id]);return id;
+     VALUES($1,$2,$3,$4,$5,'RESERVED',$6::jsonb,$7)`,[id,ctx.workspaceId,ctx.actorId,goalId,upperBoundMicroUsd,JSON.stringify(pool.detail(detail,certificationFundingWorkspaceId)),pilot.funding_workspace_id]);return id;
    },{isolation:'SERIALIZABLE',retrySafe:true});
   },
   async settle(id,charged,detail={}){
    if(!Number.isSafeInteger(charged)||charged<0)throw Error('INVALID_PILOT_SETTLEMENT');
-   const r=await db.query(`UPDATE stockchief_runtime.codex_pilot_calls SET state='SETTLED',charged=$5,detail=$6::jsonb
+   const r=await db.query(`UPDATE stockchief_runtime.codex_pilot_calls SET state='SETTLED',charged=$5,detail=($6::jsonb-'certificationFundingWorkspaceId') || CASE WHEN detail ? 'certificationFundingWorkspaceId' THEN jsonb_build_object('certificationFundingWorkspaceId',detail->>'certificationFundingWorkspaceId') ELSE '{}'::jsonb END
     WHERE id=$1 AND workspace_id=$2 AND actor_id=$3 AND goal_id=$4 AND state='RESERVED' AND reserved>=$5 RETURNING id`,
     [id,ctx.workspaceId,ctx.actorId,goalId,charged,JSON.stringify(detail)]);if(!r.rowCount)throw Error('PILOT_SETTLEMENT_REQUIRES_RECONCILIATION');
   },
-  async unknown(id,reason,detail={}){await db.query(`UPDATE stockchief_runtime.codex_pilot_calls SET state='UNKNOWN',detail=detail||$5::jsonb
+  async unknown(id,reason,detail={}){await db.query(`UPDATE stockchief_runtime.codex_pilot_calls SET state='UNKNOWN',detail=detail||($5::jsonb-'certificationFundingWorkspaceId')
    WHERE id=$1 AND workspace_id=$2 AND actor_id=$3 AND goal_id=$4 AND state='RESERVED'`,[id,ctx.workspaceId,ctx.actorId,goalId,JSON.stringify({...detail,reason})]);},
   async stop(){const {pilot}=await require('./postgres-codex-pilot').access(db,ctx);
    await db.query('UPDATE stockchief_runtime.codex_pilots SET stopped=true WHERE workspace_id=$1',[pilot.funding_workspace_id]);}

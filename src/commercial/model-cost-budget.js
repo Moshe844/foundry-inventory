@@ -177,8 +177,9 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
     FROM commercial_model_cost_hold_allocations a JOIN commercial_model_cost_holds h ON h.id=a.hold_id
     WHERE h.account_id=$1 AND h.period_start=$2 AND a.source='INCLUDED'`,
    [scope.accountId,bounds.start.toISOString(),scope.workspaceId])).rows[0];
-  let certificationFundingWorkspaceId=null;
-  if(creditsOnly()&&!nativeTransport){
+  const certificationPool=require('./staging-certification-budget');
+  let certificationFundingWorkspaceId=!nativeTransport?await certificationPool.reserve(client,Math.ceil(bound.maximumMinor*10000)):null;
+  if(creditsOnly()&&!nativeTransport&&!certificationFundingWorkspaceId){
    const f=(await client.query("SELECT funding_workspace_id,pilot FROM stockchief_runtime.codex_pilot_workspace_access WHERE workspace_id=$1 AND owner_account_id=$2 AND coalesce(pilot->>'admission_kind','PILOT')='PILOT'",[scope.workspaceId,scope.accountId])).rows[0];
    if(f){
     await client.query('SELECT workspace_id FROM stockchief_runtime.codex_pilots WHERE workspace_id=$1 FOR UPDATE',[f.funding_workspace_id]);
@@ -186,8 +187,8 @@ async function reserveBound(database,scope,bound,operation,idempotencyKey,fundin
     if(!pilot?.enabled||pilot.stopped||new Date(pilot.period_ends_at)<=new Date())throw new RateLimitError('The separately approved Staging certification window has ended. Your customer credits and saved file are preserved.');
     const actor=(await client.query('SELECT account_id,role FROM users WHERE workspace_id=$1 AND id=$2',[scope.workspaceId,scope.actorId||goalScope.actorId||null])).rows[0];
     if(!actor||!(f.pilot.account_inherited?actor.account_id===scope.accountId&&actor.role==='owner':pilot.authorized_actor_ids.includes(scope.actorId||goalScope.actorId)))throw new ValidationError('This signed-in account is not authorized for the private certification allowance.');
-    const exposure=(await client.query(`SELECT coalesce((SELECT sum(CASE WHEN state='SETTLED' THEN charged ELSE reserved END) FROM stockchief_runtime.codex_pilot_calls WHERE funding_workspace_id=$1),0)+coalesce((SELECT sum(CASE WHEN status='SETTLED' THEN actual_minor WHEN status IN ('RESERVED','UNKNOWN') THEN maximum_minor ELSE 0 END)*10000 FROM commercial_model_cost_holds WHERE detail->>'certificationFundingWorkspaceId'=$1),0) AS amount`,[f.funding_workspace_id])).rows[0];
-    if(Number(exposure.amount)+Math.ceil(bound.maximumMinor*10000)>Number(pilot.ceiling_micro_usd))throw new RateLimitError('The separately approved Staging certification allowance is exhausted. Customer credits are preserved; no provider call was made.');
+    const exposure=await certificationPool.exposure(client,f.funding_workspace_id);
+    if(exposure.committed+Math.ceil(bound.maximumMinor*10000)>Number(pilot.ceiling_micro_usd))throw new RateLimitError('The separately approved Staging certification allowance is exhausted. Customer credits are preserved; no provider call was made.');
     certificationFundingWorkspaceId=f.funding_workspace_id;
    }
   }

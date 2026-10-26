@@ -1,0 +1,5 @@
+'use strict';const test=require('node:test'),assert=require('node:assert/strict');
+test('system email layout preserves approved content and links, escapes the heading and adds one support signature',()=>{
+ const template=require('../../src/operations/system-email-layout'),original={to:'owner@example.test',subject:'Verify <Owner> & continue',html:'<p>Review your account.</p><p><a href="https://example.test/verify?token=test">Verify email</a></p>',text:'Review your account.\nhttps://example.test/verify?token=test'};
+ const rendered=template.render(original);assert.equal(rendered.to,original.to);assert.equal(rendered.subject,original.subject);assert(rendered.html.includes(original.html));assert(rendered.html.includes('Verify &lt;Owner&gt; &amp; continue'));assert.match(rendered.html,/data-stockchief-email/);assert.match(rendered.html,/max-width:600px/);assert.match(rendered.text,/support@stockchiefhq.com/);assert.deepEqual(template.render(rendered),rendered);assert(original.html!==rendered.html);assert(!Object.hasOwn(original,'replyTo'));
+});

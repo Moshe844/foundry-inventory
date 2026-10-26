@@ -37,9 +37,8 @@ function billingUrl() {
 }
 
 async function queuePaymentFailed(database, input) {
-  const deadline = input.graceEnds ? new Date(input.graceEnds).toLocaleDateString('en-US', {
-    year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC',
-  }) : 'the end of the grace period';
+  const owner=(await database.query('SELECT time_zone FROM accounts WHERE id=$1',[input.accountId])).rows[0];
+  const deadline=input.graceEnds?require('../web/presentation/formatting').forTimeZone(owner?.time_zone).dateTime(input.graceEnds):'the end of the grace period';
   const url = billingUrl();
   return queueAccountEmail(database, {
     accountId: input.accountId,
@@ -58,8 +57,8 @@ async function queueSubscriptionSuspended(database, input) {
     idempotencyKey: `billing-subscription-suspended:${input.accountId}:${input.expiredAt}`,
     messageType: 'billing_subscription_suspended',
     subject: 'StockChief is now read-only',
-    text: (account) => `Hi ${account.name || 'there'},\n\nYour StockChief subscription is now read-only because the trial or payment grace period ended. Your business records remain available and unchanged. Restore operational access here: ${url}`,
-    html: (account) => `<p>Hi ${account.name || 'there'},</p><p>Your StockChief subscription is now read-only because the trial or payment grace period ended.</p><p>Your business records remain available and unchanged.</p><p><a href="${url}">Restore operational access</a></p>`,
+    text: (account) => `Hi ${account.name || 'there'},\n\nYour StockChief subscription is now read-only because subscription access or the payment grace period ended. Your business records remain available and unchanged. Restore operational access here: ${url}`,
+    html: (account) => `<p>Hi ${account.name || 'there'},</p><p>Your StockChief subscription is now read-only because subscription access or the payment grace period ended.</p><p>Your business records remain available and unchanged.</p><p><a href="${url}">Restore operational access</a></p>`,
   });
 }
 

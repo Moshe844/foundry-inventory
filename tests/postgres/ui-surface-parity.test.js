@@ -52,7 +52,7 @@ test('PostgreSQL core pages render and expose only live local navigation and for
     await page.getByLabel('Work email').fill('surface-audit@example.test');
     await page.locator('input[name="password"]').fill('surface-audit-password');if(await page.locator('input[name="confirmPassword"]').count())await page.locator('input[name="confirmPassword"]').fill('surface-audit-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
-    const missing=[];
+    const missing=[],interactionProof=[];
     await page.goto(`${base}/everything`);
     const listed=await page.locator('.rm-vault__links a').evaluateAll((links)=>links
       .map((link)=>link.getAttribute('href')).filter((href)=>href&&href!=='/settings/export'));
@@ -60,6 +60,7 @@ test('PostgreSQL core pages render and expose only live local navigation and for
       const response=await page.goto(`${base}${surface}`);
       assert.ok(response&&response.status()<400,`${surface} returned ${response?.status()}`);
       assert.ok((await page.locator('#main').innerText()).trim(),`${surface} was empty`);
+      interactionProof.push(await require('../helpers/browser-control-contract').inspect(page,{origin:base,routes,routeExists,source:surface}));
       const controls=await page.locator('a[href^="/"],form[action^="/"]').evaluateAll((nodes)=>nodes.map((node)=>({
         method:node.tagName==='FORM'?String(node.method||'GET').toUpperCase():'GET',
         href:node.tagName==='FORM'?node.action:node.href,
@@ -79,8 +80,8 @@ test('PostgreSQL core pages render and expose only live local navigation and for
     const supplier=await commerce.createSupplier(database,{workspaceId:identity.workspace_id,actorId:identity.actor_id},
       {name:'Surface Supplier',email:'surface-supplier@example.test'});
     await page.goto(`${base}/accounting/receivables/new`);
-    await page.getByLabel('Customer').selectOption(customer.id);
-    await page.getByLabel('Description').fill('Consulting service');
+    await page.getByRole('combobox',{name:/^Customer/}).selectOption(customer.id);
+    await page.getByRole('textbox',{name:'Description',exact:true}).fill('Consulting service');
     await page.getByLabel('Unit amount').fill('150.00');
     await Promise.all([page.waitForURL(`${base}/accounting/receivables`),page.getByRole('button',{name:'Record invoice'}).click()]);
     assert.match(await page.locator('#main').innerText(),/INV-0001/);
@@ -96,7 +97,7 @@ test('PostgreSQL core pages render and expose only live local navigation and for
     await page.goto(`${base}/accounting/payables/new`);
     await page.locator('select[name="counterpartyId"]').selectOption(supplier.id);
     await page.getByLabel('Supplier invoice number').fill('SUP-001');
-    await page.getByLabel('Description').fill('Warehouse rent');
+    await page.getByRole('textbox',{name:'Description',exact:true}).fill('Warehouse rent');
     await page.getByLabel('Unit amount').fill('40.00');
     await Promise.all([page.waitForURL(`${base}/accounting/payables`),page.getByRole('button',{name:'Record bill'}).click()]);
     const totals=(await database.query(`SELECT
@@ -120,7 +121,7 @@ test('PostgreSQL core pages render and expose only live local navigation and for
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Add account'}).click()]);
     assert.match(await page.locator('#main').innerText(),/Surface Bank/);
     await page.getByText('Surface Bank',{exact:true}).click();
-    await page.getByText('Fallback: enter one statement line manually').click();
+    await require('../helpers/browser-control-contract').reveal(page,page.getByText('Fallback: enter one statement line manually'));
     await page.getByLabel('Amount shown by the bank').fill('20.00');
     await page.getByLabel('Description',{exact:true}).fill('Customer payment');
     await page.getByLabel('Bank reference (optional)').fill('STMT-001');
@@ -131,6 +132,7 @@ test('PostgreSQL core pages render and expose only live local navigation and for
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Match exact activity'}).click()]);
     assert.equal((await database.query('SELECT status FROM accounting_bank_transactions')).rows[0].status,'MATCHED');
     await page.getByText('Surface Bank',{exact:true}).click();
+    await require('../helpers/browser-control-contract').reveal(page,page.getByLabel('Statement ending balance'));
     await page.getByLabel('Statement ending balance').fill('20.00');
     await page.getByLabel('Complete only if exact and every line is matched').check();
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Check reconciliation'}).click()]);
@@ -150,6 +152,7 @@ test('PostgreSQL core pages render and expose only live local navigation and for
         if(!routeExists(routes,control.method,control.href))missing.push(`${surface}: ${control.method} ${pathname} (${control.label})`);
       }
     }
+    if(process.env.STOCKCHIEF_CONTROL_ARTIFACT_DIR){const fs=require('fs'),path=require('path');fs.mkdirSync(process.env.STOCKCHIEF_CONTROL_ARTIFACT_DIR,{recursive:true});fs.writeFileSync(path.join(process.env.STOCKCHIEF_CONTROL_ARTIFACT_DIR,'interaction-contract.json'),JSON.stringify({at:new Date().toISOString(),pages:interactionProof,commandTargetsChecked:true,allCommandsExecuted:false,realProviders:false},null,2));}
     assert.deepEqual(missing,[]);
     assert.deepEqual(errors,[]);
   });
