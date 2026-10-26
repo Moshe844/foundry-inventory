@@ -130,7 +130,9 @@ async function paymentLink(database,ctx,order,args){
   if(invoice.length!==1)throw new ValidationError(invoice.length?
     'This order has more than one open invoice. Open the order and choose the exact invoice.':
     'This order has no open invoice to collect. Fulfill it first, or review deposit terms on the order.');
-  const available=await payments.availableProviders(database,ctx.workspaceId),provider=args.paymentProvider|| (available.length===1?available[0]:null);
+  const available=await payments.availableProviders(database,ctx.workspaceId);
+  const requestedProvider=String(args.paymentProvider||'').trim().toLowerCase();
+  const provider=requestedProvider|| (available.length===1?available[0]:null);
   if(!provider||!available.includes(provider))throw new ValidationError(available.length>1?
     'Choose which connected payment gateway should collect this invoice: '+available.join(', ')+'.':
     'Connect and activate this inventory’s own payment account before preparing a customer payment link.');

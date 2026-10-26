@@ -533,12 +533,18 @@ function createPostgresAskRouter(database,options={}){
       WHERE workspace_id=$1 AND actor_user_id=$2 AND status='ADVANCING'
         AND steps @> $3::jsonb LIMIT 1`,[req.ctx.workspaceId,req.ctx.actorId,
       JSON.stringify([{proposalId:proposal.id}])])).rows.length>0;
-    const native=(await database.query(`SELECT id,status FROM stockchief_runtime.assistant_goals WHERE workspace_id=$1 AND actor_user_id=$2
+    const native=(await database.query(`SELECT id,status,expires_at,checkpoint FROM stockchief_runtime.assistant_goals WHERE workspace_id=$1 AND actor_user_id=$2
       AND checkpoint->>'runtime'='codex-staging' AND EXISTS(SELECT 1 FROM jsonb_each(COALESCE(checkpoint#>'{harness,approvalDeliveries}','{}'::jsonb)) d WHERE d.value->>'proposalId'=$3) LIMIT 1`,[req.ctx.workspaceId,req.ctx.actorId,proposal.id])).rows[0];
     const nativeCard=native&&!['COMPLETED','CANCELLED','BLOCKED'].includes(native.status)?(await pilot.inbox(database,req.ctx,native.id)).approvals.find(card=>card.proposalId===proposal.id):null;
+    const approvedDelivery=native&&proposal.status==='EXECUTED'&&native.status!=='CANCELLED'&&new Date(native.expires_at)>new Date()
+      &&mission?.approval_status==='APPROVED'&&['ADVANCING','BLOCKED'].includes(mission.status)
+      ?Object.values(native.checkpoint?.harness?.approvalDeliveries||{}).find(d=>d.proposalId===proposal.id
+        &&d.decision?.source==='human_user'&&d.decision.approved===true&&d.decision.scope?.kind==='mission'
+        &&d.decision.scope.id===mission.id&&d.decision.scope.sha256===mission.plan_hash):null;
     return res.page('attention/postgres-proposal',{title:mission?'Review operating mission':'Review prepared change',nav:'ask',proposal,presentation:require('../proposal-presentation').present(proposal),mission,nativeApproval:nativeCard?{goalId:native.id,...nativeCard}:null,
+      nativeResume:approvedDelivery?{goalId:native.id,id:approvedDelivery.id,sha256:approvedDelivery.sha256}:null,
       missionSteps:(mission?.approved_steps||[]).map((step,index)=>{const contract=capabilities.get(step.capability);return {label:(contract?.legacyAction||step.capability).replace(/[._]/g,' ').replace(/^./,s=>s.toUpperCase()),args:step.args,fields:require('../proposal-presentation').fields(step.args),index:index+1,state:mission.steps[index]?.state||'BLOCKED'};}),
-      resumeAvailable:proposal.status==='EXECUTED'&&resuming});
+      resumeAvailable:proposal.status==='EXECUTED'&&resuming&&!native});
   }));
   router.post('/actions/:id/approve-mission',asyncRoute(async(req,res)=>{
     if(await pilotProposalGuard(req,res))return;

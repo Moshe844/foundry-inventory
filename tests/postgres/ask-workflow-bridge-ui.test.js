@@ -422,7 +422,7 @@ test('Ask browser controls a real customer order, payment, and return through th
       VALUES('ask-payment-account',$1,'stripe','acct_fixture_ask','Fixture merchant',1,0,$2,$3,$2,$2)`,
     [ctx.workspaceId,at,ctx.actorId]);
     const link=`Prepare a Stripe payment link for the open balance on ${shipmentOrder.orderNumber}`;
-    plans.set(link,step('customer_payment.link',{recordReference:shipmentOrder.orderNumber,paymentPurpose:'BALANCE'}));
+    plans.set(link,step('customer_payment.link',{recordReference:shipmentOrder.orderNumber,paymentPurpose:'BALANCE',paymentProvider:' StRiPe '}));
     const linkProposal=await prepareAndApprove(page,base,database,ctx.workspaceId,link,'customer_payment.link');
     assert.equal(linkProposal.result.request.amountMinor,2500);
     assert.equal((await database.query(`SELECT COUNT(*)::int AS count FROM payment_requests

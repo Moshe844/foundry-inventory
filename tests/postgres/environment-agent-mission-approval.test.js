@@ -37,7 +37,7 @@ test('native chat supports exact individual or full-mission approval, with durab
  const scope={kind:'mission',id:card.mission.id,sha256:card.mission.sha256},decision={source:'human_user',approved:true,responseReference:'OFFLINE EXACT REVIEW',scope};
  const missionBefore=(await db.query('SELECT * FROM stockchief_runtime.assistant_capability_plans WHERE id=$1',[scope.id])).rows[0];
  const html=await require('ejs').renderFile(require('node:path').join(__dirname,'../../src/web/views/attention/postgres-proposal.ejs'),{
-  proposal:card.proposal,mission:missionBefore,nativeApproval:{goalId:goal.id,...card},csrfToken:'offline-csrf',helpers:require('../../src/web/view-helpers'),resumeAvailable:false,
+  proposal:card.proposal,presentation:require('../../src/web/proposal-presentation').present(card.proposal),mission:missionBefore,nativeApproval:{goalId:goal.id,...card},csrfToken:'offline-csrf',helpers:require('../../src/web/view-helpers'),resumeAvailable:false,
  });
  assert(html.includes('Approve all remaining changes'));assert(html.includes('Approve only this change'));assert(html.includes('name="scope" value="mission"'));assert(html.includes('name="missionHash" value="'+scope.sha256+'"'));
  assert(!html.includes('action="/actions/'+card.proposalId+'/approve-mission"'),'native review must use the durable signed chat handoff');

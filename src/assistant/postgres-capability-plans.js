@@ -1,6 +1,7 @@
 'use strict';
 
 const {newId}=require('../lib/util');
+const {ValidationError}=require('../domain/errors');
 const {registry}=require('./postgres-capability-registry');
 const {executeStep,synthesizeReads}=require('./postgres-control-plane');
 const memory=require('./postgres-business-memory');
@@ -129,8 +130,9 @@ async function metricsSummary(database,workspaceId){const row=(await database.qu
       standingRules:{outcomes:Number(rules.outcomes),completed:Number(rules.completed)},
       autonomousPurchases:{outcomes:Number(autonomous.outcomes),completed:Number(autonomous.completed)}}};}
 
-function readyIndexes(steps){return steps.flatMap((step,index)=>step.state==='BLOCKED'
-  &&step.reason==='dependency_waiting'&&step.dependsOn.every((dependency)=>steps[dependency]?.state==='DONE')
+function readyIndexes(steps,{retryPreparationFailures=false}={}){return steps.flatMap((step,index)=>step.state==='BLOCKED'
+  &&(step.reason==='dependency_waiting'||retryPreparationFailures&&step.reason==='preparation_failed')
+  &&step.dependsOn.every((dependency)=>steps[dependency]?.state==='DONE')
   ?[index]:[]);}
 
 function ancestorIndexes(steps,index){
@@ -304,7 +306,7 @@ async function resume(database,ctx,proposalId,{service,provider,rawProvider,reco
         // canonical executor still locks, authorizes and verifies every effect.
         const preparedIndex=claimed.authorization_mode==='MISSION'&&claimed.approval_status==='APPROVED'&&executeAuthorizedProposal
           ?steps.findIndex(step=>step.state==='WAITING'&&step.proposalId&&step.dependsOn.every(i=>steps[i]?.state==='DONE')):-1;
-        const next=preparedIndex>=0?preparedIndex:readyIndexes(steps)[0];if(next===undefined)break;
+        const next=preparedIndex>=0?preparedIndex:readyIndexes(steps,{retryPreparationFailures:Boolean(missionId)})[0];if(next===undefined)break;
         const stored=steps[next];const contract=registry.get(stored.capability);
         if(!contract){stored.state='BLOCKED';stored.reason='capability_removed';break;}
         const satisfiedBy=stored.dependsOn.map((index)=>steps[index]).filter((parent)=>
@@ -353,6 +355,20 @@ async function resume(database,ctx,proposalId,{service,provider,rawProvider,reco
           console.warn('[stockchief] Ask plan step failed',JSON.stringify({
             capability:stored.capability,code:error.code||error.name||'unknown',
           }));
+          // Preparation has not executed this step. Keep earlier verified
+          // effects, persist the business refusal, and stop claiming progress.
+          // Only an explicit mission continuation retries a refused step.
+          if(error instanceof ValidationError){
+            stored.state='BLOCKED';stored.reason='preparation_failed';
+            stored.failure={code:error.code,message:error.message};
+            const refusal={status:'CLARIFY',reason:'preparation_failed',
+              answer:`Earlier verified changes are preserved. This step could not be prepared: ${error.message}`};
+            await update(database,claimed,token,steps,'BLOCKED');
+            await record(claimed,next,{step:{contract,dependsOn:stored.dependsOn,continuesPending:false},args:executionArgs,result:refusal});
+            // Existing callers use continuationError to show a failed mission.
+            // Persist first, then preserve that error contract for the UI.
+            throw error;
+          }
           throw error;
         }
         // A read resumed after approval must answer the owner's original
@@ -370,6 +386,7 @@ async function resume(database,ctx,proposalId,{service,provider,rawProvider,reco
             [{step:{contract},...outcome}],{completedActions});
           outcome={...outcome,result:answered[0].result};
         }
+        delete stored.failure;
         stored.args=outcome.args;stored.state=outcome.result.status==='ANSWERED'?'DONE':
           outcome.result.status==='PREPARED'?'WAITING':'BLOCKED';
         stored.reason=outcome.result.reason||null;stored.proposalId=outcome.result.proposal?.id||null;

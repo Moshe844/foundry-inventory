@@ -21,7 +21,7 @@
       <% } else if (mission.status === 'DONE' && mission.verification_status === 'VERIFIED') { %>
         <div class="notice notice--ok"><strong>Mission completed and verified.</strong> All approved changes finished. Their outcomes are recorded.</div>
       <% } else if (mission.status === 'BLOCKED') { %>
-        <div class="notice"><strong>Mission stopped safely.</strong> StockChief could not verify the next step. Review the supplier reply or changed terms before starting another action.</div>
+        <div class="notice"><strong>Request paused.</strong> Earlier verified changes are saved. <% const failed=(mission.steps||[]).find(step=>step.failure?.message); %><%= failed?failed.failure.message:'StockChief could not confirm the next step. Review the recorded changes before continuing.' %></div>
       <% } %>
     <% } %>
     <% if (proposal.status === 'PENDING') { %><p class="muted">Nothing has changed yet. Check the business result above before approving.</p><% } %>
@@ -42,5 +42,6 @@
     <form method="post" action="<%= native?'/ask/goals/'+native.goalId+'/approval':'/actions/'+proposal.id+'/cancel' %>"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <% if(native){ %><input type="hidden" name="decision" value="reject"><input type="hidden" name="deliveryId" value="<%= native.id %>"><input type="hidden" name="sha256" value="<%= native.sha256 %>"><% } %><button class="btn" type="submit">Reject this change</button></form><% } %>
   </div><% } %>
+  <% if (typeof nativeResume !== 'undefined' && nativeResume) { %><div class="card-foot"><p>Your approval is saved. Continue only the remaining approved work; StockChief rechecks access and conditions and preserves completed changes.</p><form method="post" action="/ask/goals/<%= nativeResume.goalId %>/approval"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="decision" value="approve"><input type="hidden" name="deliveryId" value="<%= nativeResume.id %>"><input type="hidden" name="sha256" value="<%= nativeResume.sha256 %>"><input type="hidden" name="scope" value="mission"><input type="hidden" name="missionId" value="<%= mission.id %>"><input type="hidden" name="missionHash" value="<%= mission.plan_hash %>"><button class="btn btn--primary" type="submit">Continue approved request</button></form></div><% } %>
   <% if (typeof resumeAvailable !== 'undefined' && resumeAvailable) { %><div class="card-foot"><p>That change completed. StockChief paused before preparing the next step.</p><form method="post" action="/actions/<%= proposal.id %>/continue"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Continue the remaining request</button></form></div><% } %>
 </div>

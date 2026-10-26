@@ -2,10 +2,10 @@
 process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 test('recorded OWN_DELIVERY constraint failure resumes one approved six-step mission without repeated receipt, broadened scope or another model call',{timeout:180000},async t=>{
- const cluster=await require('../helpers/postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString);
+ const cluster=await require('../helpers/postgres-cluster').startCluster(),db=require('../../src/db/postgres').openPostgres(cluster.connectionString),cleanup=[];
  const keys=['STOCKCHIEF_RUNTIME_ENV','STOCKCHIEF_CODEX_PILOT','STOCKCHIEF_CODEX_PILOT_WORKSPACES','STOCKCHIEF_CODEX_PILOT_EMAILS','FOUNDRY_DATABASE_URL'],old=Object.fromEntries(keys.map(k=>[k,process.env[k]]));
- t.after(async()=>{await db.close();cluster.stop();for(const[k,v]of Object.entries(old))if(v===undefined)delete process.env[k];else process.env[k]=v;});await require('../../src/db/migrate-postgres').migratePostgres(db);
- const email=randomUUID()+'@example.test',owner=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'Owner',businessName:'Testing',email,password:'Offline!'+randomUUID()}),ctx={workspaceId:owner.workspaceId,actorId:owner.userId};
+ t.after(async()=>{for(const close of cleanup.reverse())await close();await db.close();cluster.stop();for(const[k,v]of Object.entries(old))if(v===undefined)delete process.env[k];else process.env[k]=v;});await require('../../src/db/migrate-postgres').migratePostgres(db);
+ const email=randomUUID()+'@example.test',password='Offline!'+randomUUID(),owner=await require('../../src/domain/postgres-auth-service').createBusiness(db,{name:'Owner',businessName:'Testing',email,password}),ctx={workspaceId:owner.workspaceId,actorId:owner.userId};
  process.env.STOCKCHIEF_RUNTIME_ENV='staging';Object.assign(process.env,(await require('../../scripts/provision-codex-staging').provision(db,{businessName:'Testing',emails:[email]})).environment);process.env.FOUNDRY_DATABASE_URL=cluster.connectionString;
  await db.query("UPDATE stockchief_runtime.codex_pilots SET enabled=true,stopped=false,ceiling_micro_usd=1000000,approval_reference='OFFLINE ONLY' WHERE workspace_id=$1",[ctx.workspaceId]);
  await require('../../scripts/environment-agent-demo/run-pilot').seedPrices(db);await require('../../src/accounting/postgres-ledger').configure(db,ctx,{startDate:'2026-01-01',currency:'USD'});
@@ -53,7 +53,11 @@ test('recorded OWN_DELIVERY constraint failure resumes one approved six-step mis
  await db.query('UPDATE stockchief_runtime.assistant_action_proposals SET payload=$2::jsonb WHERE id=$1',[preparedId,JSON.stringify({...payload,lines:payload.lines.map(line=>({...line,unitPriceMinor:9900}))})]);
  await pilot.decide(db,ctx,goal.id,card.id,card.sha256,true,decision);assert.equal(Number((await db.query('SELECT count(*) AS n FROM sales_orders WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n),0,'A revised payload is never covered by the original frozen approval');
  await db.query('UPDATE stockchief_runtime.assistant_action_proposals SET payload=$2::jsonb WHERE id=$1',[preparedId,JSON.stringify(payload)]);
- await pilot.decide(db,ctx,goal.id,card.id,card.sha256,true,decision);mission=(await db.query('SELECT * FROM stockchief_runtime.assistant_capability_plans WHERE id=$1',[scope.id])).rows[0];
+ // A business owner must recover through the normal website using the saved
+ // approval, without a developer calling the handoff or changing a goal.
+ const app=require('../../src/postgres-app').createPostgresApp({database:db,env:'test',sessionSecret:randomUUID()}),server=await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));}),browser=await require('playwright').chromium.launch();cleanup.push(()=>app.locals.sessionStore.close(),()=>new Promise(resolve=>server.close(resolve)),()=>browser.close());
+ const origin='http://127.0.0.1:'+server.address().port,page=await browser.newPage(),web=require('supertest').agent(app),login=await web.get('/login'),csrf=/name="_csrf" value="([^"]+)"/.exec(login.text)[1],signed=await web.post('/login').type('form').send({_csrf:csrf,email,password}),cookie=signed.headers['set-cookie'].find(c=>c.startsWith('foundry.sid='));await page.context().addCookies([{name:'foundry.sid',value:cookie.split(';')[0].slice('foundry.sid='.length),url:origin}]);
+ await page.goto(origin+'/actions/'+card.proposalId);await page.getByRole('button',{name:'Continue approved request',exact:true}).waitFor();await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Continue approved request',exact:true}).click()]);mission=(await db.query('SELECT * FROM stockchief_runtime.assistant_capability_plans WHERE id=$1',[scope.id])).rows[0];
  assert.equal(mission.status,'DONE',JSON.stringify(mission.steps));assert.equal(mission.metrics.approvalInteractions,1);assert.equal(mission.plan_hash,scope.sha256);assert(mission.steps.every(s=>s.state==='DONE'));
  const order=(await db.query('SELECT * FROM sales_orders WHERE workspace_id=$1',[ctx.workspaceId])).rows[0];assert.equal(order.delivery_method,'SHIP');assert.equal(order.status,'FULFILLED');
  assert.equal((await db.query('SELECT status FROM sales_shipments WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].status,'DELIVERED');assert.equal(Number((await db.query('SELECT balance_minor FROM accounting_customer_invoices WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].balance_minor),7500);
@@ -61,5 +65,6 @@ test('recorded OWN_DELIVERY constraint failure resumes one approved six-step mis
  const before=await counts();assert.equal(Number(before.movements),2);assert.equal(Number(before.stock),0);assert.equal(Number(before.payments),0);assert.equal(Number(before.model_calls),0);
  await pilot.decide(db,ctx,goal.id,card.id,card.sha256,true,decision);assert.deepEqual(await counts(),before,'Repeated approval delivery must not repeat any effect');
  await assert.rejects(workflows.createSalesOrder(db,ctx,{customerId:customer,deliveryMethod:'UNSUPPORTED',shipToAddress:'1 Test Ave',idempotencyKey:'invalid-mode',lines:[{skuId,quantity:1,unitPriceMinor:7500}]}),/Choose shipped delivery/);
- t.diagnostic(JSON.stringify({recordedConstraintReproduced:true,stepsCompleted:6,humanApprovals:1,duplicateEffects:0,modifiedPayloadRejected:true,modelCalls:0}));
+ await page.goto(origin+'/actions/'+card.proposalId);assert.equal(await page.getByRole('button',{name:'Continue approved request',exact:true}).count(),0,'a completed request has no retry control');
+ t.diagnostic(JSON.stringify({recordedConstraintReproduced:true,stepsCompleted:6,humanApprovals:1,actualBrowserContinuation:true,duplicateEffects:0,modifiedPayloadRejected:true,modelCalls:0}));
 });

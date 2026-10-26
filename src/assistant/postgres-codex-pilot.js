@@ -97,7 +97,18 @@ async function decide(db,ctx,id,deliveryId,sha256,approved,{responseReference,mi
   execute:async(proposal,executionDb,scope)=>{
    if(!proposal.action_type)return require('../manager/postgres-operating-instructions').approve(executionDb,ctx,proposal.id,proposal.integrity_hash);
    const service=require('./postgres-service'),options={provider:{name:'openai',model:'gpt-6.1-sol',complete:async()=>{throw Error('UNAPPROVED_HELPER_MODEL_CALL');}}};
-   if(scope){options.missionApproval={expectedHash:scope.sha256,expectedId:scope.id};return service.executeMission(executionDb,{...ctx,goalId:id},proposal.id,options);}
+   if(scope){
+    // The handoff rechecks the recorded human decision and frozen scope before
+    // this callback. Continue its remaining steps; never reapprove or rerun a
+    // completed first operation to recover a later preparation.
+    if(proposal.status==='EXECUTED'){
+      try{return {...proposal,replayed:true,missionId:scope.id,
+        continued:await service.resumeMission(executionDb,{...ctx,goalId:id},scope.id,options)};}
+      catch(error){console.warn('[stockchief] approved mission continuation failed',error.code||error.name);
+        return {...proposal,replayed:true,missionId:scope.id,continuationError:error.message};}
+    }
+    options.missionApproval={expectedHash:scope.sha256,expectedId:scope.id};return service.executeMission(executionDb,{...ctx,goalId:id},proposal.id,options);
+   }
    return service.executeProposal(executionDb,{...ctx,goalId:id},proposal.id,options);
   }});
  if(!approved){const current=await inbox(db,ctx,id),card=current.approvals.find(c=>c.id===deliveryId);
