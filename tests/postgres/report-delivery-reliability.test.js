@@ -1,6 +1,15 @@
 'use strict';process.env.NODE_ENV='test';
 const test=require('node:test'),assert=require('node:assert/strict');
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
+test('every current report delivery exposes its durable identity in the service and visible review',{timeout:90000},async t=>{
+ const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx}=f,reports=require('../../src/reports/postgres-service'),controls=require('../../src/reports/postgres-delivery-controls'),actor={role:'owner',permissions:[],email:f.email};
+ const report=await reports.save(db,ctx,actor,{dataset:'stock',title:'Independent delivery identity',columns:['sku','on_hand'],sort:'sku'});
+ const first=await controls.change(db,ctx,actor,report.id,{action:'send_now',requestKey:'first-request'});await db.query("UPDATE stockchief_runtime.report_deliveries SET created_at=now()-interval '2 minutes' WHERE workspace_id=$1 AND id=$2",[ctx.workspaceId,first.deliveryId]);
+ const latest=await controls.change(db,ctx,actor,report.id,{action:'send_now',requestKey:'second-request'}),saved=await reports.load(db,ctx,actor,report.id),listed=(await reports.list(db,ctx,actor)).find(r=>r.id===report.id);assert.equal(saved.latest_delivery.id,latest.deliveryId);assert.equal(listed.latest_delivery.id,latest.deliveryId);assert.notEqual(saved.latest_delivery.id,first.deliveryId);assert.equal(saved.latest_delivery.status,'PENDING');
+ const ejs=require('ejs'),path=require('path'),html=await ejs.renderFile(path.join(__dirname,'../../src/web/views/reports/delivery-actions.ejs'),{report:saved,helpers:{dateTime:d=>new Date(d).toISOString()},csrfToken:'isolated-csrf',reportActionKey:'isolated-action'});assert(html.includes(latest.deliveryId),'The exact delivery reference must be visible to both the owner and Ask');assert(!html.includes(first.deliveryId),'A previous delivery must never be represented as the latest');assert(html.includes('Preparing or sending'));assert(!html.includes('Accepted by email provider</strong>'));
+ await assert.rejects(reports.load(db,{...ctx,actorId:'foreign-actor'},actor,report.id));await assert.rejects(reports.load(db,{...ctx,workspaceId:'foreign-business'},actor,report.id));assert.equal((await reports.list(db,{...ctx,actorId:'foreign-actor'},actor)).length,0);
+ assert.equal((await db.query('SELECT count(*)::int n FROM commercial_email_deliveries e JOIN stockchief_runtime.jobs j ON j.id=e.job_id WHERE j.workspace_id=$1',[ctx.workspaceId])).rows[0].n,0,'Reading identity must never send a message');
+});
 test('routine report delivery is not starved by a continuing maintenance batch',{timeout:90000},async t=>{
  const f=await require('../helpers/postgres-shipping-fixture').fixture(t),{db,ctx}=f;
  await require('../helpers/postgres-model-fixture').fundWorkspace(db,ctx.workspaceId);

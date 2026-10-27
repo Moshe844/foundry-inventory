@@ -300,13 +300,13 @@ async function save(database,ctx,actor,spec,{id=null,schedule=null,expectedRevis
 }
 async function list(database,ctx,actor){
   const rows=(await database.query(`SELECT id,title,definition,schedule_frequency,schedule_hour_utc,schedule_hour_local,schedule_minute,schedule_weekday,schedule_time_zone,schedule_paused,next_send_at,revision,
-      delivery_email,last_delivered_at,last_error,updated_at,(SELECT jsonb_build_object('status',d.status,'requestedAt',d.created_at,'completedAt',d.completed_at) FROM stockchief_runtime.report_deliveries d WHERE d.workspace_id=report_templates.workspace_id AND d.template_id=report_templates.id ORDER BY d.created_at DESC,d.id DESC LIMIT 1) latest_delivery
+      delivery_email,last_delivered_at,last_error,updated_at,(SELECT jsonb_build_object('id',d.id,'status',d.status,'requestedAt',d.created_at,'completedAt',d.completed_at) FROM stockchief_runtime.report_deliveries d WHERE d.workspace_id=report_templates.workspace_id AND d.template_id=report_templates.id ORDER BY d.created_at DESC,d.id DESC LIMIT 1) latest_delivery
       FROM stockchief_runtime.report_templates WHERE workspace_id=$1 AND owner_user_id=$2 AND deleted_at IS NULL
       ORDER BY updated_at DESC LIMIT 100`,[ctx.workspaceId,ctx.actorId])).rows;
   return rows.filter((row)=>{try{normalize(row.definition,actor);return true;}catch{return false;}});
 }
 async function load(database,ctx,actor,id){
-  const row=(await database.query(`SELECT t.*,(SELECT jsonb_build_object('status',d.status,'requestedAt',d.created_at,'completedAt',d.completed_at) FROM stockchief_runtime.report_deliveries d WHERE d.workspace_id=t.workspace_id AND d.template_id=t.id ORDER BY d.created_at DESC,d.id DESC LIMIT 1) latest_delivery FROM stockchief_runtime.report_templates t
+  const row=(await database.query(`SELECT t.*,(SELECT jsonb_build_object('id',d.id,'status',d.status,'requestedAt',d.created_at,'completedAt',d.completed_at) FROM stockchief_runtime.report_deliveries d WHERE d.workspace_id=t.workspace_id AND d.template_id=t.id ORDER BY d.created_at DESC,d.id DESC LIMIT 1) latest_delivery FROM stockchief_runtime.report_templates t
     WHERE workspace_id=$1 AND owner_user_id=$2 AND id=$3 AND deleted_at IS NULL`,[ctx.workspaceId,ctx.actorId,id])).rows[0];
   if(!row)invalid('That saved report is unavailable.');
   return {...row,definition:normalize(row.definition,actor)};
