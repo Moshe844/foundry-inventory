@@ -442,9 +442,9 @@ function createPostgresCommerceRouter(database,options={}){
   }));
 
   router.get('/purchasing/orders',requirePermission(permissions.VIEW_PURCHASING,'see purchasing'),asyncRoute(async(req,res)=>{
-    const orders=(await commerce.purchaseOrders(database,req.ctx.workspaceId)).map(purchaseOrderForView);
+    const orders=(await commerce.purchaseOrders(database,req.ctx.workspaceId,{q:req.query.q})).map(purchaseOrderForView);
     return res.page('purchasing/orders',{title:'Purchases',nav:'purchasing',room:true,orders:orders.slice(0,200),
-      truncated:orders.length>200,view:['late','waiting','open','done'].includes(req.query.view)?req.query.view:'all',
+      q:String(req.query.q||'').slice(0,120),truncated:orders.length>200,view:['late','waiting','open','done'].includes(req.query.view)?req.query.view:'all',
       status:null,statuses:['DRAFT','AWAITING_APPROVAL','APPROVED','ORDERED','PARTIALLY_RECEIVED','RECEIVED','CANCELLED'],
       permissions:purchasingPermissions(req)});
   }));
@@ -475,6 +475,7 @@ function createPostgresCommerceRouter(database,options={}){
       suppliers:supplierRows.map((row)=>supplierForView(row)),canManage:permissions.can(req.user,permissions.MANAGE_REPLENISHMENT),
       canManageSuppliers:permissions.can(req.user,permissions.MANAGE_SUPPLIERS)});
   }));
+  router.get('/reorder-rules',requirePermission(permissions.VIEW_PURCHASING,'see reorder settings'),asyncRoute(async(req,res)=>{const q=String(req.query.q||'').trim().slice(0,120),rows=(await database.query("SELECT s.id,s.code,i.name FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 AND ($2='' OR s.code ILIKE '%'||$2||'%' OR i.name ILIKE '%'||$2||'%') ORDER BY lower(i.name),s.id LIMIT 50",[req.ctx.workspaceId,q])).rows;return res.page('purchasing/reorder-rules',{title:'Reorder settings',nav:'purchasing',rows,q});}));
   router.get('/purchasing/why/:skuId',requirePermission(permissions.VIEW_PURCHASING,'see replenishment settings'),asyncRoute(async(req,res)=>{
     const sku=(await database.query(`SELECT s.id,s.code,i.id AS item_id,i.name AS product
       FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
@@ -751,7 +752,7 @@ function createPostgresCommerceRouter(database,options={}){
   }));
 
   const renderOrders=async(req,res)=>{
-    const result=await presenters.sales(database,req.ctx.workspaceId);
+    const result=await presenters.sales(database,req.ctx.workspaceId,{q:req.query.q});result.q=String(req.query.q||'').slice(0,120);
     result.view=['stuck','ready','moving','unpaid','done'].includes(req.query.view)?req.query.view:'all';
     return res.page('sales/orders',{title:'Orders',nav:'sales',room:true,...result,postgresQuickEntry:true});
   };

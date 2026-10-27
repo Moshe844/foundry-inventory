@@ -1,11 +1,12 @@
-<% if(!provider.available){ %><p class="quiet">This connection is unavailable on this installation.</p><a class="btn" href="/support">Get help connecting</a>
+<% if(!provider.available){ %><p class="quiet"><%= provider.unavailableReason||'This connection is unavailable on this installation.' %></p><a class="btn" href="/support">Get help connecting</a>
 <% }else if(currentUser.role!=='owner'){ %><p class="quiet">A business owner can connect this account.</p>
 <% }else if(!includedOnPlan){ %><a class="btn" href="/upgrade?capability=<%= encodeURIComponent(requiredCommercialCapability) %>&return=<%= encodeURIComponent('/settings/connections') %>">View plan options</a>
+<% }else if(locals.connectionCapacity?.remaining===0){ %><p class="notice notice--warn" role="status">This account has reached its connection limit (<%= connectionCapacity.hardLimit %>). Disconnect an unused connection or choose a plan with more connections.</p><a class="btn" href="/billing">Review connection allowance</a>
 <% }else if(provider.type==='reference_webhook'||provider.integrationMode==='custom_contract'){ %>
   <form method="post" action="<%= postgresMode?'/settings/connections/custom':'/settings/connections' %>"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="providerType" value="reference_webhook"><label class="field"><span>Connection name</span><input class="input" name="displayName" required maxlength="100"></label><button class="btn" type="submit">Create connection</button></form>
 <% }else if(provider.type==='woocommerce'){ %><%- include('woocommerce-connect',{provider,postgresMode,csrfToken}) %>
 <% }else if(postgresMode&&['oauth','application_auth'].includes(provider.authMode)&&!['shopify','bigcommerce'].includes(provider.type)){ %>
-  <a class="btn btn--primary" href="/settings/connections/<%= provider.type %>/launch?ticket=<%= encodeURIComponent(launchTicket) %>" data-provider-connect>Connect <%= provider.name %></a>
+  <a class="btn btn--primary" href="/settings/connections/<%= provider.type %>/launch?ticket=<%= encodeURIComponent(launchTicket) %>" data-provider-connect data-provider-type="<%= provider.type %>" data-provider-name="<%= provider.name %>">Connect <%= provider.name %></a>
 <% }else{ %>
   <form method="post" action="<%= postgresMode?'/settings/connections/'+provider.type+'/authorize':'/settings/connections/connect' %>" data-oauth-connect="<%= ['oauth','application_auth'].includes(provider.authMode)?provider.type:'' %>" data-provider-name="<%= provider.name %>">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="providerType" value="<%= provider.type %>">

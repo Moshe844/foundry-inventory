@@ -194,7 +194,7 @@ async function locations(database, workspaceId) {
     [workspaceId])).rows;
 }
 
-async function purchaseOrders(database, workspaceId) {
+async function purchaseOrders(database, workspaceId, {q=''}={}) {
   const result=await database.query(`SELECT po.*,s.name AS supplier_name,
       COUNT(pol.id)::integer AS line_count,
       COALESCE(SUM(pol.line_total),0) AS total,
@@ -205,7 +205,7 @@ async function purchaseOrders(database, workspaceId) {
         WHERE b.workspace_id=po.workspace_id AND b.purchase_order_id=po.id AND b.status<>'VOID'),0)::bigint AS balance_minor
     FROM purchase_orders po JOIN suppliers s ON s.id=po.supplier_id AND s.workspace_id=po.workspace_id
     LEFT JOIN purchase_order_lines pol ON pol.purchase_order_id=po.id AND pol.workspace_id=po.workspace_id
-    WHERE po.workspace_id=$1 GROUP BY po.id,s.name ORDER BY po.created_at DESC,po.id DESC`,[workspaceId]);
+    WHERE po.workspace_id=$1 AND ($2='' OR po.po_number ILIKE '%'||$2||'%' OR s.name ILIKE '%'||$2||'%') GROUP BY po.id,s.name ORDER BY po.created_at DESC,po.id DESC`,[workspaceId,String(q||'').trim().slice(0,120)]);
   return result.rows.map((row)=>({...row,line_count:Number(row.line_count),total:Number(row.total),
     ordered_units:Number(row.ordered_units),units_outstanding:Number(row.units_outstanding),
     priced_line_count:Number(row.priced_line_count),balance_minor:Number(row.balance_minor)}));
@@ -231,7 +231,7 @@ async function purchaseOrder(database, workspaceId, id) {
     total_minor:Number(row.total_minor),balance_minor:Number(row.balance_minor),paid_minor:Number(row.paid_minor)})),events:events.rows};
 }
 
-async function salesOrders(database, workspaceId) {
+async function salesOrders(database, workspaceId, {q=''}={}) {
   const result=await database.query(`SELECT so.*,c.name AS customer_name,
       COUNT(sol.id)::integer AS line_count,
       COALESCE(SUM(sol.quantity_ordered),0)::bigint AS units_ordered,
@@ -241,7 +241,7 @@ async function salesOrders(database, workspaceId) {
         WHERE i.workspace_id=so.workspace_id AND i.sales_order_id=so.id AND i.status<>'VOID'),0)::bigint AS balance_minor
     FROM sales_orders so JOIN customers c ON c.id=so.customer_id AND c.workspace_id=so.workspace_id
     LEFT JOIN sales_order_lines sol ON sol.sales_order_id=so.id AND sol.workspace_id=so.workspace_id
-    WHERE so.workspace_id=$1 GROUP BY so.id,c.name ORDER BY so.created_at DESC,so.id DESC`,[workspaceId]);
+    WHERE so.workspace_id=$1 AND ($2='' OR so.order_number ILIKE '%'||$2||'%' OR c.name ILIKE '%'||$2||'%') GROUP BY so.id,c.name ORDER BY so.created_at DESC,so.id DESC`,[workspaceId,String(q||'').trim().slice(0,120)]);
   return result.rows.map((row)=>({...row,line_count:Number(row.line_count),units_ordered:Number(row.units_ordered),
     units_fulfilled:Number(row.units_fulfilled),total_minor:Number(row.total_minor),balance_minor:Number(row.balance_minor)}));
 }

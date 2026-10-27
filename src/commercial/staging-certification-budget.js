@@ -13,7 +13,9 @@ async function exposure(db,id){
     OR detail->>'certificationFundingWorkspaceId'=$1),0)
   +coalesce((SELECT sum(CASE WHEN status='SETTLED' THEN actual_minor
     WHEN status IN ('RESERVED','UNKNOWN') THEN maximum_minor ELSE 0 END)*10000
-   FROM commercial_model_cost_holds WHERE detail->>'certificationFundingWorkspaceId'=$1),0) AS committed,
+   FROM commercial_model_cost_holds WHERE detail->>'certificationFundingWorkspaceId'=$1),0) +coalesce((SELECT sum(receipt.charged_micro_usd) FROM commercial_deleted_ai_receipts receipt WHERE receipt.funding_workspace_id=$1
+    AND (receipt.receipt_kind<>'native' OR NOT EXISTS(SELECT 1 FROM stockchief_runtime.codex_pilot_calls live WHERE live.id=receipt.receipt_id))
+    AND (receipt.receipt_kind<>'model_hold' OR NOT EXISTS(SELECT 1 FROM commercial_model_cost_holds live WHERE live.id=receipt.receipt_id))),0) AS committed,
   (SELECT count(*) FROM stockchief_runtime.codex_pilot_calls WHERE
    (funding_workspace_id=$1 OR detail->>'certificationFundingWorkspaceId'=$1)
     AND state IN ('RESERVED','UNKNOWN'))

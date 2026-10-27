@@ -591,19 +591,23 @@ async function lookupRecords(database,ctx,request,options={}) {
     rows:[],columns:[],reason:'unverified'};
   if(request.view==='sales_activity')return salesActivity(database,ctx,request.timeframe);
   if(request.view==='replenishment'){
-    const overview=await autonomy.dashboard(database,ctx.workspaceId);
+    const actor=(await database.query('SELECT role,permissions FROM users WHERE workspace_id=$1 AND id=$2',[ctx.workspaceId,ctx.actorId])).rows[0];
+    const [overview,stock,decisions]=await Promise.all([autonomy.dashboard(database,ctx.workspaceId),require('../reports/postgres-service').run(database,ctx,actor,{dataset:'low_stock',columns:['sku','product','location','on_hand','reorder_point','target_stock']},{limit:201}),projections.needs(database,ctx.workspaceId,ctx.actorId)]);
     const recommendations=overview.recent.filter((item)=>item.category==='replenishment_plan'
       &&['WAITING_FOR_APPROVAL','AUTHORIZED','EXECUTING'].includes(item.execution_status)).slice(0,12);
-    const rows=recommendations.map((item)=>{
+    const plans=recommendations.map((item)=>{
       const action=item.recommendedAction||{};
       return evidenceRow({product:action.displayName||action.code||'Product',quantity:action.quantity||0,
         supplier:action.supplierName||'Not selected',status:item.execution_status},`/autopilot/work/${item.id}`);
     });
-    const answer=rows.length?`StockChief has ${rows.length} purchase ${rows.length===1?'recommendation':'recommendations'} in progress. The first is ${rows[0].quantity} ${rows[0].product} from ${rows[0].supplier}. Review the evidence before ordering.`:
+    const answer=plans.length?`StockChief has ${plans.length} purchase ${plans.length===1?'recommendation':'recommendations'} in progress. The first is ${plans[0].quantity} ${plans[0].product} from ${plans[0].supplier}. Review the evidence before ordering.`:
       !overview.state.lastEvaluatedAt?'StockChief has not run its first business check, so there is no verified reorder recommendation yet. Run the first check on Home.':
         'StockChief has no open purchase recommendation from its latest check. That does not prove nothing should be bought; check stock rules and current demand before deciding.';
-    return {answer,rows,columns:['product','quantity','supplier','status'],
-      handoff:{href:rows.length?'/needs-you':'/',label:rows.length?'Review recommendations':'Open Home'}};
+    const rows=stock.rows.map(row=>({...row,kind:'at_or_below_reorder_point'}));
+    const inventoryWarnings=decisions.filter(item=>item.kind==='inventory').map(item=>({id:item.sourceId,title:item.title,reason:item.why||item.happened,href:item.href}));
+    return {answer:(rows.length?`${rows.length}${stock.hasMore?'+':''} stock positions are at or below their saved reorder point. `:'No stock position is at or below a configured reorder point. This does not classify products without a saved reorder point. ')+(inventoryWarnings.length?inventoryWarnings.length+' inventory warnings are open in Needs you. First: '+inventoryWarnings[0].title+'. ':'')+answer,
+      rows,plans,inventoryWarnings,columns:['sku','product','location','on_hand','reorder_point','target_stock'],coverage:{complete:!stock.hasMore,limit:200},
+      handoff:{href:'/reports/builder?dataset=low_stock',label:'Review low stock'}};
   }
   if(request.view==='general_knowledge'){
     let explained;
@@ -667,7 +671,7 @@ async function lookupRecords(database,ctx,request,options={}) {
     return {answer:answer+(complete?'':` Showing the first ${rows.length} of ${needs.length}; this is not the complete list. Open the full list to inspect the rest.`),
       rows,columns:['decision','importance','reason','recordedAt','timeLabel','updatedAt','dueDate'],
       coverage:{total:needs.length,returned:rows.length,complete,scope:'Workspace decisions and this actor\'s native Ask approvals',allHref:'/needs-you/all'},
-      handoff:{href:needs.length?(complete?'/needs-you':'/needs-you/all'):'/',label:needs.length?'Review what needs you':'Open Home'}};
+      handoff:needs.length?{href:complete?'/needs-you':'/needs-you/all',label:'Review what needs you'}:null};
   }
   if(request.view==='inventory_summary'){
     const {products,productsEver,skus,onHand}=await require('./postgres-inventory-summary').read(database,ctx.workspaceId);

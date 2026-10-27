@@ -13,7 +13,7 @@
 <p class="rm-stamp">StockChief's work</p>
 <h1 class="rm-figure"><%= waitingCount ? waitingCount + (waitingCount === 1 ? ' thing needs a closer look.' : ' things need a closer look.') : handledCount ? handledCount + (handledCount === 1 ? ' outcome recorded.' : ' outcomes recorded.') : anything ? 'Work is recorded below.' : 'Nothing to report yet.' %></h1>
 <p class="rm-sub">Completed work and anything StockChief could not finish are here. Routine checks are kept below; <a href="/activity">Activity</a> holds the underlying business record.</p>
-<p class="rm-choices"><a class="rm-btn rm-btn--ghost" href="/ask">Ask about this work</a><a class="rm-btn rm-btn--ghost" href="/needs-you">Open decisions</a></p>
+<p class="rm-choices"><a class="rm-btn rm-btn--ghost" href="/ask?from=%2Fautopilot%2Fhistory">Ask about this work</a><a class="rm-btn rm-btn--ghost" href="/needs-you">Open decisions</a></p>
 
 <% if (!anything) { %>
   <p class="rm-quiet section">Once StockChief plans, completes or stops work, the outcome appears here. No work has been recorded yet.</p>

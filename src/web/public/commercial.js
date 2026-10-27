@@ -2,6 +2,7 @@
   'use strict';
   document.querySelectorAll('[data-business-time-zone]').forEach(function(input){if(!input.value)input.value=Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC';});
 
+  document.querySelectorAll('[data-authority-demo-toggle]').forEach(function(button){button.addEventListener('click',function(){var paused=button.getAttribute('aria-pressed')!=='true';button.setAttribute('aria-pressed',String(paused));button.textContent=paused?'Resume':'Pause';button.setAttribute('aria-label',(paused?'Resume':'Pause')+' authority illustration');button.closest('.authority-panel').querySelector('[data-authority-demo-status]').textContent=paused?'Example paused':'Example active';});});
   var nav=document.querySelector('[data-public-nav]');
   var navToggle=document.querySelector('[data-nav-toggle]');
   if(nav&&navToggle){

@@ -12,7 +12,7 @@
   <section class="sc-home-block" data-home-section="needs" id="needs-you" aria-labelledby="home-needs-title"><header><h2 id="home-needs-title">Needs you <span class="badge"><%= Number(home.needsYouTotal||0) %></span></h2><a href="/needs-you">View all</a></header>
     <% if(needs.length){ %><div class="sc-decision-list"><% for(const decision of needs){ %><article class="sc-decision"><span class="badge <%= decision.importance==='Urgent'?'badge--danger':'badge--warn' %>"><%= decision.importance||'Needs attention' %></span><h3><%= decision.title %></h3><p><%= decision.why||decision.because||decision.happened %></p><a class="btn" href="<%= decision.href %>"><%= decision.actionLabel||decision.action||'Review' %></a></article><% } %></div><% }else{ %><p class="sc-home__quiet"><%= suggestions.length?'Your prepared changes are ready for review below.':'No known decisions are waiting for you.' %></p><% } %>
   </section>
-  <section class="sc-home-block" data-home-section="suggestions" aria-labelledby="home-suggestions-title"><header><h2 id="home-suggestions-title">Suggested actions</h2><a href="/ask">Ask for a recommendation</a></header>
+  <section class="sc-home-block" data-home-section="suggestions" id="suggestions" aria-labelledby="home-suggestions-title"><header><h2 id="home-suggestions-title">Suggested actions</h2></header>
     <% if(suggestions.length){ %><div class="sc-suggestion-grid"><% for(const suggestion of suggestions.slice(0,6)){ %><%- include('home-suggestion',{suggestion}) %><% } %></div><% }else{ %><p class="sc-home__quiet">No prepared suggestions yet.</p><% } %>
   </section>
   <section class="sc-home-block sc-metrics" data-home-section="numbers" aria-label="Business numbers">
@@ -23,7 +23,7 @@
   </section>
   <section class="sc-home-block sc-ask-card" data-home-section="ask" aria-labelledby="home-ask-title"><header><h2 id="home-ask-title">Ask StockChief</h2><a href="/ask/history">Your conversations</a></header>
     <%- include('../partials/composer',{composerPlaceholder:'What would you like to know or do?',homeHandoff:!!locals.postgresAsk,hideAttachment:!!locals.postgresAsk}) %>
-    <div class="sc-home__suggestions" aria-label="Available actions"><% for(const entry of (locals.askSuggestions||[])){ %><a class="btn btn--ghost btn--sm" href="/ask?q=<%= encodeURIComponent(entry.prompt) %>" title="<%= entry.description %>"><%= entry.label %></a><% } %></div>
+    <div class="sc-home__suggestions" aria-label="Available actions"><% for(const entry of (locals.askSuggestions||[])){ %><a class="btn btn--ghost btn--sm" href="<%= entry.href %>"><%= entry.label %></a><% } %></div>
   </section>
   <section class="sc-home-block" data-home-section="activity" id="handled" aria-labelledby="home-activity-title"><header><h2 id="home-activity-title">What StockChief did today</h2><a href="/activity">Activity log</a></header>
     <% if(activity.length){ %><div class="sc-activity"><% for(const event of activity.slice(0,8)){ %><div><span><a href="<%= event.link %>"><%= event.headline %></a><% if(event.detail){ %><small><%= event.detail %></small><% } %></span><time datetime="<%= event.at %>"><%= helpers.dateTime(event.at) %></time></div><% } %></div><% }else{ %><p class="sc-home__quiet">No completed automatic or Ask work recorded today.</p><% } %>

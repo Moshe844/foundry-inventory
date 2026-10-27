@@ -27,11 +27,10 @@ test('PostgreSQL account menu pages render truthful native settings and rename t
     await page.goto(`${base}/everything`);const directory=await page.locator('main').innerText();
     assert.match(directory,/Full stock table/);assert.match(directory,/All connections/);
     assert.match(directory,/Picking and packing queue/);assert.match(directory,/Chart of accounts/);
-    const downloadPromise=page.waitForEvent('download');await page.getByRole('link',{name:'Export everything'}).click();
-    const download=await downloadPromise;assert.match(download.suggestedFilename(),/^settings-operation-\d{4}-\d{2}-\d{2}\.json$/);
+    const downloadPromise=page.waitForEvent('download');await page.getByRole('link',{name:'Export this inventory'}).click();
+    const download=await downloadPromise;assert.match(download.suggestedFilename(),/^settings-operation-.*\.zip$/i);
     const chunks=[];for await(const chunk of await download.createReadStream())chunks.push(chunk);
-    const exported=JSON.parse(Buffer.concat(chunks).toString('utf8'));assert.equal(exported.tables.workspaces[0].name,'Settings Operation');
-    assert.equal(exported.tables.users.length,1);await page.goto(`${base}/everything`);
+    const exported=Buffer.concat(chunks);assert.equal(exported.subarray(0,2).toString(),'PK');assert(exported.includes(Buffer.from('Inventory.csv')));assert(exported.includes(Buffer.from('Products.csv')));await page.goto(`${base}/everything`);
     const establishedRoutes=['/orders','/orders/new','/fulfilment','/sales/customers/new','/purchasing',
       '/purchasing/orders/new','/suppliers','/purchasing/setup','/inventory/table','/inventory/new','/locations',
       '/warehouse','/transfers','/planning','/pricing/new','/imports/start','/accounting/books',

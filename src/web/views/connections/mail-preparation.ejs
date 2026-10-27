@@ -1,4 +1,4 @@
-<section class="card" id="reply-preparation" data-mail-preparation data-status-url="/settings/connections/<%= encodeURIComponent(connection.id) %>/reply-preparation">
+<section class="card" id="reply-preparation-<%= encodeURIComponent(connection.id) %>" data-mail-preparation data-status-url="/settings/connections/<%= encodeURIComponent(connection.id) %>/reply-preparation">
   <div class="card-head"><h2>Let StockChief prepare your replies</h2></div>
   <div class="card-body grid">
     <p><strong data-mail-preparation-state><%= mailPreparation.label %></strong></p>

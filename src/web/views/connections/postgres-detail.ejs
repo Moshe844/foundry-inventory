@@ -22,6 +22,7 @@
 </header>
 
 <% if(connection.last_error){ %><div class="notice notice--warn section"><div><strong>This connection needs attention.</strong><p><%= connection.last_error %></p></div></div><% } %>
+<% if(connection.provider_type==='woocommerce'&&currentUser.role==='owner'){ %><details class="card" id="reauthorize-woocommerce"><summary>Update WooCommerce authorization</summary><div class="card-body"><%- include('woocommerce-connect',{provider,postgresMode:true,csrfToken}) %></div></details><% } %>
 <% if(isMailbox&&connected){ %><%- include('mail-preparation',{mailPreparation,connection}) %><% } %>
 <% if(locals.connectionIssues&&(connectionIssues.total||connectionIssues.focused)){ %>
 <section class="card section" id="connection-issues" aria-label="Connection issues">
@@ -58,7 +59,7 @@
 <% if(needsAuthorization&&currentUser.role==='owner'&&provider?.available){ %>
   <section class="rm-note" aria-label="Restore provider authorization"><p><strong>Sign in again to <%= providerName %></strong></p><p>This restores the existing connection. Its records, mappings and history are kept.</p>
     <% if(provider.authorizationPrerequisite){ %><p><strong>Sandbox testing only.</strong> <%= provider.authorizationPrerequisite.message %> <a href="<%= provider.authorizationPrerequisite.href %>" target="_blank" rel="noopener noreferrer"><%= provider.authorizationPrerequisite.label %></a> Real customer connections use the provider’s normal sign-in and consent screen.</p><% } %>
-    <form method="post" action="/settings/connections/<%= encodeURIComponent(connection.provider_type) %>/authorize"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="connectorId" value="<%= connection.id %>">
+    <form method="post" action="/settings/connections/<%= encodeURIComponent(connection.provider_type) %>/authorize" data-oauth-connect="<%= connection.provider_type %>" data-provider-name="<%= providerName %>"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="connectorId" value="<%= connection.id %>">
       <% if(connection.config.shop){ %><input type="hidden" name="shop" value="<%= connection.config.shop %>"><% } %><% if(connection.config.storeUrl){ %><input type="hidden" name="storeUrl" value="<%= connection.config.storeUrl %>"><% } %>
       <button class="btn btn--primary" type="submit">Sign in again to <%= providerName %></button>
     </form>
@@ -98,13 +99,13 @@
 <% } %>
 
 <% if(!accounting){ %>
-<div class="stats-row section">
+<% if(canDiscover){ %><div class="stats-row section">
   <div class="stat"><strong><%= connection.productsMapped %></strong><span>products mapped</span></div>
   <div class="stat"><strong><%= connection.locationsMapped %></strong><span>locations mapped</span></div>
   <div class="stat"><strong><%= connection.itemsNeedingMapping %></strong><span>need matching</span></div>
   <div class="stat"><strong><%= eventAt?helpers.timeAgo(eventAt):'None yet' %></strong><span><%= isMailbox?'last mailbox check':'last event processed' %></span></div>
 </div>
-<% if(!isMailbox){ %><p class="rm-sub">Products mapped <strong><%= connection.productsMapped %></strong> · Locations mapped <strong><%= connection.locationsMapped %></strong> · Need your match <strong><%= connection.itemsNeedingMapping %></strong>.</p><% } %>
+<% } %><% if(!isMailbox){ %><p class="rm-sub">Products mapped <strong><%= connection.productsMapped %></strong> · Locations mapped <strong><%= connection.locationsMapped %></strong> · Need your match <strong><%= connection.itemsNeedingMapping %></strong>.</p><% } %>
 
 <section class="setup-journey section">
   <div class="setup-journey__head"><div class="setup-journey__head-copy"><span class="setup-journey__eyebrow">Is it working?</span>

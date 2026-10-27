@@ -11,6 +11,7 @@ function postgresPageRenderer(req,res,next){
     if(typeof data==='function'){callback=data;data=undefined;}
     return render(view,data,(error,body)=>{
       if(!error&&res.statusCode===200&&req.ctx?.workspaceId)res.set('X-StockChief-Page','1');
+      if(!error&&typeof body==='string')body=require('./presentation/link-destinations').declare(body);
       if(callback)return callback(error,body);
       if(error)return next(error);
       return res.send(body);

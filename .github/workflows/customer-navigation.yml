@@ -1,0 +1,36 @@
+name: Customer navigation gate
+on:
+  pull_request:
+  push:
+    branches: [main, codex/staging-codex-pilot]
+jobs:
+  customer-navigation:
+    name: Required customer navigation and account safety
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      NODE_ENV: test
+      STOCKCHIEF_POSTGRES_BIN: /usr/lib/postgresql/17/bin
+      STOCKCHIEF_CLICK_ARTIFACT_DIR: output/customer-navigation-ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      # PostgreSQL's official repository; use the same major as Staging.
+      # https://www.postgresql.org/download/linux/ubuntu/
+      - run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl --fail -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          printf '%s\n' 'Types: deb' 'URIs: https://apt.postgresql.org/pub/repos/apt' 'Suites: noble-pgdg' 'Components: main' 'Signed-By: /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc' | sudo tee /etc/apt/sources.list.d/pgdg.sources > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y postgresql-17
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:customer-navigation
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: customer-navigation-results
+          path: output/customer-navigation-ci

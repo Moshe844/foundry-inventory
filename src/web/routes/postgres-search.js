@@ -12,7 +12,7 @@ function createPostgresSearchRouter(database){
   }));
   router.get('/api/search',requireAuth,asyncRoute(async(req,res)=>{
     const term=String(req.query.q||'').trim();if(term.length<2)return res.json({results:[]});
-    const result=await searchService.search(database,req.ctx.workspaceId,term,{limit:8});
+    const result=await searchService.search(database,req.ctx.workspaceId,term,{limit:16});
     return res.json({results:result.results.map(({type,typeLabel,title,subtitle,meta,href})=>({type,typeLabel,title,subtitle,meta,href}))});
   }));
   return router;

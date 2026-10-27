@@ -1,3 +1,4 @@
+<% if(locals.developerAccounts){ %><section class="card"><div class="card-body"><h2>Developer test accounts</h2><p>Review and permanently remove an exact Staging sign-in account so its email can be used again.</p><a class="btn" href="/commercial-admin/accounts">Manage Staging test accounts</a></div></section><% } %>
 <%
   /*
    * Settings is the technical half. The owner-facing half — the standing rules
@@ -55,7 +56,7 @@
   <p class="rm-next__d">Tell it a rule and it writes the rule down for you to check, change or take away.</p>
   <p class="rm-choices" style="margin-top:11px">
     <a class="rm-btn rm-btn--sm" href="/what-you-told-me">What you've told me</a>
-    <a class="rm-btn rm-btn--ghost rm-btn--sm" href="/ask">Tell StockChief something</a>
+    <a class="rm-btn rm-btn--ghost rm-btn--sm" href="/ask?from=%2Fsettings">Tell StockChief something</a>
   </p>
 </div>
 
@@ -74,7 +75,7 @@
     <span class="rm-choice__b">Reorder points, targets, safety stock and who supplies what.</span>
     <span class="rm-choice__go">Open <%- helpers.icon('arrowRight', { size: 14 }) %></span>
   </a>
-  <a class="rm-choice" href="/foundry">
+  <a class="rm-choice" href="/inventory/table">
     <span class="rm-choice__ic"><%- helpers.icon('spark', { size: 19 }) %></span>
     <span class="rm-choice__t">How stock is tracked</span>
     <span class="rm-choice__b">What you call things, and whether they need variants, serials or lots.</span>

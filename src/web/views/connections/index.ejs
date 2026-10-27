@@ -157,18 +157,18 @@
 %>
 
 <header class="rm-head"><h1><%= inventorySetup?'Connect a platform':'Integrations' %></h1><p><%= inventorySetup?'Start with a system that holds your products, SKUs or stock.':'Connect this business’s accounts. Each connection keeps its own authorization, records and sync settings.' %></p></header>
-<% const providerCards=helpers.connectionCards(providerCatalog,connections).filter(card=>card.provider.available||card.connection); %>
+<% const providerCards=helpers.connectionCards(providerCatalog,connections); %>
 <div class="rm-choices-grid sc-integration-grid">
 <% for(const card of providerCards){ const provider=card.provider,requiredCommercialCapability=providerCommercialCapability(provider.type),includedOnPlan=commercialPlanUnrestricted||!requiredCommercialCapability||includedCommercialCapabilities.has(requiredCommercialCapability); %>
  <article class="rm-provider" data-integration-card="<%= provider.type %>"><div class="rm-provider__h"><span class="rm-provider__mark" aria-hidden="true"><%= provider.mark||'↗' %></span><strong class="rm-provider__n"><%= provider.name %></strong><span class="badge <%= card.state==='Connected'?'badge--success':card.state==='Error'?'badge--danger':'badge--muted' %>"><%= card.state %></span></div>
  <p><%= provider.description %></p>
- <% if(card.connection){ %><p><strong><%= card.connection.provider_account_name||card.connection.display_name %></strong></p><p class="sc-last-sync">Last sync: <%= card.lastSync?helpers.dateTime(card.lastSync):'Not synced yet' %></p><% if(card.needsMatching){ %><p class="quiet"><%= card.needsMatching %> product or location matches need review.</p><% } %><a class="btn btn--primary" href="<%= card.href %>"><%= card.state==='Error'?'Fix connection':'Manage' %></a>
+ <% if(card.connection){ %><p><strong><%= card.connection.provider_account_name||card.connection.display_name %></strong></p><p class="sc-last-sync">Last sync: <%= card.lastSync?helpers.dateTime(card.lastSync):'Not synced yet' %></p><% if(card.needsMatching){ %><p class="quiet"><%= card.needsMatching %> product or location matches need review.</p><% } %><a class="btn btn--primary" href="<%= card.href %>"><%= card.state==='Error'?'Fix connection':'Manage '+provider.name %></a><% if(locals.mailPreparationStates?.[card.connection.id]){ %><details><summary>Let StockChief handle replies</summary><%- include('mail-preparation',{connection:card.connection,mailPreparation:mailPreparationStates[card.connection.id]}) %></details><% } %>
  <% if(card.records.length>1){ %><details><summary><%= card.records.length %> accounts</summary><% for(const record of card.records){ %><p><a href="/settings/connections/<%= record.id %>"><%= record.display_name %></a></p><% } %></details><% } %>
- <% }else{ %><p class="sc-last-sync">Last sync: Not connected</p><% if(provider.authorizationPrerequisite){ %><p class="quiet"><%= provider.authorizationPrerequisite.message %> <a href="<%= provider.authorizationPrerequisite.href %>" target="_blank" rel="noopener noreferrer"><%= provider.authorizationPrerequisite.label %></a></p><% } %><% if(['shopify','woocommerce','bigcommerce'].includes(provider.type)||provider.integrationMode==='custom_contract'||provider.type==='reference_webhook'){ %><button type="button" class="btn btn--primary sc-connect-action" data-modal-open="connect-<%= provider.type %>">Connect <%= provider.name %></button><dialog class="sc-connect-dialog" id="connect-<%= provider.type %>" aria-label="Connect <%= provider.name %>"><header><h2>Connect <%= provider.name %></h2><button type="button" class="btn btn--ghost" data-modal-close>Close</button></header><%- include('provider-connect-form',{provider,requiredCommercialCapability,includedOnPlan,postgresMode,csrfToken}) %></dialog><% }else{ %><%- include('provider-connect-form',{provider,requiredCommercialCapability,includedOnPlan,postgresMode,csrfToken}) %><% } %><% } %>
+ <% }else{ %><p class="sc-last-sync">Last sync: Not connected</p><% if(provider.authorizationPrerequisite){ %><p class="quiet"><%= provider.authorizationPrerequisite.message %> <a href="<%= provider.authorizationPrerequisite.href %>" target="_blank" rel="noopener noreferrer"><%= provider.authorizationPrerequisite.label %></a></p><% } %><% if(provider.available&&includedOnPlan&&locals.connectionCapacity?.remaining!==0&&(['shopify','woocommerce','bigcommerce'].includes(provider.type)||provider.integrationMode==='custom_contract'||provider.type==='reference_webhook')){ %><button type="button" class="btn btn--primary sc-connect-action" data-modal-open="connect-<%= provider.type %>">Connect <%= provider.name %></button><dialog class="sc-connect-dialog" id="connect-<%= provider.type %>" aria-label="Connect <%= provider.name %>"><header><h2>Connect <%= provider.name %></h2><button type="button" class="btn btn--ghost" data-modal-close>Close</button></header><%- include('provider-connect-form',{provider,requiredCommercialCapability,includedOnPlan,postgresMode,csrfToken}) %></dialog><% }else{ %><%- include('provider-connect-form',{provider,requiredCommercialCapability,includedOnPlan,postgresMode,csrfToken}) %><% } %><% } %>
  </article>
 <% } %>
 <% if(!inventorySetup&&pay){ %><article class="rm-provider" data-integration-card="stripe"><div class="rm-provider__h"><strong class="rm-provider__n">Stripe</strong><span class="badge <%= pay.connected&&!unfinishedStripe?'badge--success':'badge--muted' %>"><%= pay.connected&&!unfinishedStripe?'Connected':'Not connected' %></span></div><p>Collect invoice payments and verify refunds through your own merchant account.</p><% if(pay.connected){ %><p class="quiet"><%= pay.liveMode?'Live merchant':'Test merchant' %> · <%= pay.displayName||'Stripe account' %></p><% } %><p class="sc-last-sync"><%= pay.checkedAt?'Last checked: '+helpers.dateTime(pay.checkedAt):'No account check recorded yet' %></p><a class="btn btn--primary" href="<%= pay.connected||!grant?.available?'#payments':'/settings/connections/payments/launch?ticket='+encodeURIComponent(locals.launchTicket||'') %>" <%- !pay.connected&&grant?.available?'data-provider-connect':'' %>><%= pay.connected?'Manage':'Connect Stripe' %></a></article><% } %>
-<% if(!inventorySetup&&locals.cardknoxAccount){ %><article class="rm-provider" data-integration-card="cardknox"><div class="rm-provider__h"><strong class="rm-provider__n">Sola / Cardknox</strong><span class="badge"><%= cardknoxAccount.connected?'Connected':'Not connected' %></span></div><p>Connect your own merchant keys to collect invoice payments securely.</p><a class="btn btn--primary" href="#cardknox"><%= cardknoxAccount.connected?'Manage':'Connect Sola' %></a></article><% } %>
+<% if(!inventorySetup&&locals.cardknoxAccount){ %><article class="rm-provider" data-integration-card="cardknox"><div class="rm-provider__h"><strong class="rm-provider__n">Sola / Cardknox</strong><span class="badge"><%= cardknoxAccount.connected?'Connected':'Not connected' %></span></div><p>Connect your own merchant keys to collect invoice payments securely.</p><a class="btn btn--primary" href="/settings/connections?section=cardknox#cardknox"><%= cardknoxAccount.connected?'Manage':'Connect Sola' %></a></article><% } %>
 <% if(!inventorySetup){ %><article class="rm-provider" data-integration-card="shipping"><div class="rm-provider__h"><strong class="rm-provider__n">Shipping accounts</strong><span class="badge"><%= shipping?.connected?'Connected':'Not connected' %></span></div><p>Compare rates, prepare labels and track shipments. Your provider bills your own account.</p><a class="btn btn--primary" href="/settings/shipping">Manage shipping</a></article><% } %>
 </div>
 <% if(connections.length){ %><details class="rm-work"><summary>Connection history</summary><div class="rm-work__body"><% for(const connection of connections){ %><p><a href="/settings/connections/<%= connection.id %>"><%= connection.display_name %></a> · <%= connection.status==='disconnected'?'Not connected':connection.publicStatus %></p><% } %></div></details><% } %>
@@ -419,144 +419,4 @@
 <span hidden data-connection-host data-workspace-id="<%= currentWorkspaceId||'' %>" data-public-origin="<%= publicOrigin||'' %>"></span>
 <script src="/connection-return.js?v=<%= assetVersion %>"></script>
 </div></details><% } %>
-<script>
-(function () {
-  // Authorization links follow the current tab. Their saved return intent is
-  // independent of opener, popup permissions and cross-origin window policy.
-  function showPopupBlocked(control, providerName) {
-    var card = control.closest('.rm-provider') || control.parentElement;
-    if (!card) return;
-    var message = card.querySelector('[data-connection-popup-blocked]');
-    if (!message) {
-      message = document.createElement('p');
-      message.className = 'quiet';
-      message.setAttribute('data-connection-popup-blocked', '');
-      card.appendChild(message);
-    }
-    message.textContent = 'Your browser blocked the ' + providerName
-      + ' connection window. Allow pop-ups for this site and try again. This page will stay open.';
-  }
-
-  /*
-   * Every provider authorization opens from the owner's click in its own
-   * window. StockChief stays put, shows what it is waiting for, and refreshes the
-   * exact connection when the one-time OAuth return reports completion.
-   */
-  document.querySelectorAll('form[data-oauth-connect]:not([data-oauth-connect=""])')
-    .forEach(function (form) {
-      form.addEventListener('submit', function (event) {
-        var providerType = form.dataset.oauthConnect;
-        var providerName = form.dataset.providerName || 'connection';
-        var popupName = 'foundry-' + providerType + '-connect';
-        var popup = window.open('', popupName,
-          'popup=yes,width=680,height=780,resizable=yes,scrollbars=yes');
-        if (!popup) {
-          event.preventDefault();
-          showPopupBlocked(form, providerName);
-          return;
-        }
-        event.preventDefault();
-
-        try {
-          popup.document.title = 'Opening ' + providerName + ' · StockChief';
-          popup.document.body.style.cssText = 'margin:0;min-height:100vh;display:grid;place-items:center;'
-            + 'background:#f4f5fb;color:#191b2a;font:16px system-ui,sans-serif';
-          popup.document.body.innerHTML = '<div style="text-align:center;padding:32px">'
-            + '<div style="font-size:28px;margin-bottom:12px">↗</div>'
-            + '<strong>Opening ' + providerName.replace(/[&<>"']/g, '') + '</strong>'
-            + '<p style="color:#666b80">StockChief will stay open here while you approve the connection.</p></div>';
-        } catch (_) { /* The provider navigation can begin immediately. */ }
-
-        var popupField = form.querySelector('input[name="popup"]');
-        if (!popupField) {
-          popupField = document.createElement('input');
-          popupField.type = 'hidden';
-          popupField.name = 'popup';
-          form.appendChild(popupField);
-        }
-        popupField.value = '1';
-        form.target = popupName;
-        var button = form.querySelector('button[type="submit"]');
-        if (button) {
-          button.disabled = true;
-          button.dataset.originalText = button.textContent;
-          button.textContent = 'Waiting for ' + providerName + '…';
-        }
-        HTMLFormElement.prototype.submit.call(form);
-        popup.focus();
-
-        var checks = 0;
-        var closePoll = window.setInterval(function () {
-          checks += 1;
-          if (popup.closed) {
-            window.clearInterval(closePoll);
-            if (button) {
-              button.disabled = false;
-              button.textContent = button.dataset.originalText || 'Connect';
-            }
-          } else if (checks >= 1800) {
-            window.clearInterval(closePoll);
-          }
-        }, 1000);
-      });
-    });
-
-  /*
-   * A plain target=_blank is treated as `noopener` by modern browsers. That
-   * made the Stripe return page unable to notify/close itself, leaving the
-   * owner stranded in the popup. Open it directly from the user's click so
-   * the window keeps its opener and behaves like a normal Connect popup.
-   */
-  document.querySelectorAll('[data-stripe-connect]').forEach(function (link) {
-    link.addEventListener('click', function (event) {
-      event.preventDefault();
-      var requireCharges = link.hasAttribute('data-stripe-require-charges');
-      var popup = window.open(link.href, 'foundry-stripe-connect',
-        'popup=yes,width=620,height=760,resizable=yes,scrollbars=yes');
-      if (!popup) {
-        showPopupBlocked(link, 'Stripe');
-        return;
-      }
-      popup.focus();
-
-      var checks = 0;
-      var poll = window.setInterval(function () {
-        checks += 1;
-        fetch('/settings/connections/payments/state', {
-          credentials: 'same-origin', headers: { accept: 'application/json' }
-        }).then(function (response) {
-          if (!response.ok) throw new Error('Stripe status could not be checked.');
-          return response.json();
-        }).then(function (status) {
-          if (requireCharges ? !status.chargesEnabled : !status.connected) return;
-          window.clearInterval(poll);
-          try { popup.close(); } catch (_) { /* The parent still updates. */ }
-          window.location.replace('/settings/connections#payments');
-        }).catch(function () {
-          /* A temporary network failure is not a failed Stripe connection. */
-        });
-        if (checks >= 200) window.clearInterval(poll);
-      }, 3000);
-    });
-  });
-
-  var trustedStripeReturnOrigins = [window.location.origin];
-  var configuredStripeReturnOrigin = <%- JSON.stringify(paymentReturnOrigin || '') %>;
-  var currentStripeWorkspaceId = <%- JSON.stringify(currentWorkspaceId || '') %>;
-  if (configuredStripeReturnOrigin
-      && trustedStripeReturnOrigins.indexOf(configuredStripeReturnOrigin) === -1) {
-    trustedStripeReturnOrigins.push(configuredStripeReturnOrigin);
-  }
-  window.addEventListener('message', function (event) {
-    if (trustedStripeReturnOrigins.indexOf(event.origin) === -1) return;
-    if (!event.data || event.data.type !== 'foundry:stripe-return') return;
-    if (event.data.workspaceId && currentStripeWorkspaceId
-        && event.data.workspaceId !== currentStripeWorkspaceId) {
-      window.location.replace('/inventories');
-      return;
-    }
-    window.location.replace('/settings/connections#payments');
-  });
-
-}());
-</script>
+<script src="/provider-connect.js?v=<%= assetVersion %>" defer></script>

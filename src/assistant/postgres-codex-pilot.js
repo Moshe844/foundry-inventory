@@ -65,11 +65,13 @@ async function start(db,ctx,message,options={}){
  await require('./postgres-codex-enrollment').ensure(db,ctx);
  const {pilot}=await access(db,ctx,{enabled:true});
  const locked=spendingLockMessage(pilot);if(locked)throw new ValidationError('Ask is temporarily paused because its usage allowance is unavailable. Your message has not run. It is kept below so you can try again when access is restored.',{reason:'agent_allowance_unavailable'});
- const conversation=await require('./postgres-agent-context').capture(db,ctx,options.startedAt||null);
+ const chatId=typeof options.conversationId==='string'&&/^[a-zA-Z0-9_-]{8,160}$/.test(options.conversationId)?options.conversationId:null;
+ const hasChatHistory=chatId&&(await db.query("SELECT 1 FROM stockchief_runtime.assistant_goals WHERE workspace_id=$1 AND actor_user_id=$2 AND checkpoint->>'chatId'=$3 LIMIT 1",[ctx.workspaceId,ctx.actorId,chatId])).rows.length;
+ const conversation=await require('./postgres-agent-context').capture(db,hasChatHistory?{...ctx,conversationId:chatId}:ctx,options.startedAt||null);
  const goal=await store.create(db,ctx,message,{...options,budgetMinor:Math.min(options.budgetMinor||100,100)});
  if(goal.checkpoint.runtime&&goal.checkpoint.runtime!=='codex-staging')throw new ValidationError('That request already belongs to another Ask runtime.');
  await db.query(`UPDATE stockchief_runtime.assistant_goals SET checkpoint=$4::jsonb||checkpoint||$5::jsonb WHERE workspace_id=$1 AND actor_user_id=$2 AND id=$3`,
-  [ctx.workspaceId,ctx.actorId,goal.id,JSON.stringify({conversation,clientIntegration:1}),JSON.stringify({runtime:'codex-staging',pilotRevision:pilot.revision,
+  [ctx.workspaceId,ctx.actorId,goal.id,JSON.stringify({conversation,clientIntegration:1,...(chatId?{chatId}:{})}),JSON.stringify({runtime:'codex-staging',pilotRevision:pilot.revision,
    ...(!goal.checkpoint.modelRouting&&!goal.checkpoint.harness?.native?.codex?{modelRouting:require('./codex-model-routing').initial(ctx)}:{})})]);
  goal.checkpoint.runtime='codex-staging';
  await store.enqueue(db,goal);return {status:'CLARIFY',answer:'StockChief is investigating your goal.',goalId:goal.id,goalStatus:goal.status};
@@ -87,7 +89,7 @@ async function inbox(db,ctx,id,{progress=false}={}){await access(db,ctx);
  }
  return {goal:result?await read(db,ctx,id):goal,approvals};
 }
-async function decide(db,ctx,id,deliveryId,sha256,approved,{responseReference,missionScope=null}={}){
+async function decide(db,ctx,id,deliveryId,sha256,approved,{responseReference,missionScope=null,stopOnReject=false}={}){
  await access(db,ctx,{enabled:true});
  const goal=await store.get(db,ctx,id);if(goal?.checkpoint.runtime!=='codex-staging')throw new ValidationError('Pilot goal not found.');
  if(goal.checkpoint.harness?.approvalDeliveries?.[deliveryId]?.sha256!==sha256)throw new ValidationError('The prepared approval changed. Reload its exact card before approving.');
@@ -111,9 +113,10 @@ async function decide(db,ctx,id,deliveryId,sha256,approved,{responseReference,mi
    }
    return service.executeProposal(executionDb,{...ctx,goalId:id},proposal.id,options);
   }});
- if(!approved){const current=await inbox(db,ctx,id),card=current.approvals.find(c=>c.id===deliveryId);
+ if(!approved){const card=result.card;
   if(card?.kind==='rule')await require('../manager/postgres-operating-instructions').cancel(db,ctx,card.proposalId);
   else if(card)await require('./postgres-service').cancelProposal(db,ctx,card.proposalId);}
+ if(!approved&&stopOnReject){await store.cancel(db,ctx,id);return result;}
  const updated=await require('../../scripts/environment-agent-demo/waits').refresh(db,ctx,id);
  if(updated?.status==='READY')await store.enqueue(db,updated);return result;
 }

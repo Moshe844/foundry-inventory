@@ -152,10 +152,11 @@ function createPostgresProjectionsRouter(database){
     res.locals.attentionCount=result.brief.needs.length;
     return res.page('foundry/brief',{title:'Home',nav:'home',room:true,suppressBack:true,postgresAsk:true,...result,
       maintenanceProgress:await require('../../operations/postgres-maintenance-progress').read(database,req.ctx.workspaceId),
-      askSuggestions,homeSuggestions:result.brief.needs.filter(item=>item.approval),homeDecisions:result.brief.needs.filter(item=>!item.approval).slice(0,4),
+      askSuggestions:require('../presentation/action-destinations').home(askSuggestions),homeSuggestions:[...new Map(result.brief.needs.filter(item=>item.approval).map(item=>[item.approval.kind+':'+item.approval.proposalId,item])).values()],homeDecisions:result.brief.needs.filter(item=>!item.approval).slice(0,4),
       stats:result.brief.stats,brief:{body:'',source:'deterministic',createdAt:null},activeMigration:null,
       routineProposal:null,financialPulse:null,observedBrief:'',canOperate:permissions.can(req.user,permissions.OPERATE)});
   }));
+  router.get('/needs-you/questions/:id',requireAuth,asyncRoute(async(req,res)=>{const entries=await require('../../assistant/postgres-approval-projection').pending(database,req.ctx.workspaceId,req.ctx.actorId);const entry=entries.find(e=>e.question?.goalId===req.params.id);if(!entry){req.flash('info','That question is no longer waiting for an answer.');return res.redirect(303,'/needs-you');}return res.page('manager/question',{title:'Answer a question',nav:'home',entry});}));
   router.get(['/needs-you','/needs-you/all'],requireAuth,asyncRoute(async(req,res)=>{
     const [items,failures]=await Promise.all([projections.needs(database,req.ctx.workspaceId,req.ctx.actorId),
       req.user.role==='owner'?projections.runtimeFailures(database,req.ctx.workspaceId):Promise.resolve(null)]);
@@ -188,7 +189,7 @@ function createPostgresProjectionsRouter(database){
     if(plan?.status==='READY'&&plan.approvalStatus==='AWAITING_APPROVAL')await require('../../imports/postgres-service').revise(database,req.ctx,plan.id,{expectedHash:plan.integrityHash});
     req.flash('success','Money is ready. Review the recalculated file before approving any stock or value.');return res.redirect(303,plan?'/imports/'+plan.id:'/money');
   }));
-  router.get(['/accounting/books','/money/books'],requireAuth,(req,res)=>res.redirect(302,'/money'));
+  router.get(['/accounting/books','/money/books'],requireAuth,requirePermission(permissions.VIEW_ACCOUNTING,'view the books'),(req,res)=>res.page('accounting/books',{title:'Books & accounting detail',nav:'accounting'}));
   router.get('/accounting/transactions',requireAuth,requirePermission(permissions.VIEW_ACCOUNTING,'view accounting transactions'),asyncRoute(async(req,res)=>{const dates=period(req.query,await require('../../lib/business-time').today(database,req.ctx.workspaceId));
     const entries=(await database.query(`SELECT * FROM accounting_journal_entries WHERE workspace_id=$1 AND status='POSTED'
       AND posting_date BETWEEN $2 AND $3 ORDER BY posting_date DESC,entry_number DESC`,[req.ctx.workspaceId,dates.from,dates.to])).rows;

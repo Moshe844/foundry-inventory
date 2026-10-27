@@ -51,7 +51,7 @@ test('recorded missing native approvals appear consistently in the actor inbox w
  assert.equal((await projection.needs(readonly,foreign.workspaceId,ctx.actorId)).filter(i=>i.approval).length,0);
  assert(!native.some(i=>i.approval.proposalId===other.proposalId));
  const first=native.find(i=>i.approval.proposalId===ready[0].proposalId);assert.equal(first.approval.scope,'single_operation');assert.deepEqual(first.approval.missionOption,{id:mission,sha256:hash,count:2});
- assert.match(first.href,new RegExp(ready[0].goalId));assert(!JSON.stringify(first).includes('payload'));
+ assert.equal(first.href,'/actions/'+ready[0].proposalId);assert(!JSON.stringify(first).includes('payload'));
  const read=await service.lookup(readonly,ctx,{view:'needs_you'});assert.equal(read.coverage.returned,items.length);assert.equal(read.coverage.total,items.length);assert.equal(read.coverage.complete,true);assert.equal(read.handoff.href,'/needs-you');assert(!read.answer.includes('not the complete list'));
  assert.deepEqual(new Set(read.rows.map(row=>row.decision)),new Set(items.map(item=>item.title)));
  assert(!JSON.stringify(read).includes('foreign workspace change'));assert(!JSON.stringify(read).includes('private colleague change'));
@@ -69,12 +69,12 @@ test('recorded missing native approvals appear consistently in the actor inbox w
  await context.addCookies([{name:'foundry.sid',value:cookie.split(';')[0].slice('foundry.sid='.length),url:origin}]);const page=await context.newPage();
  await page.goto(origin+'/needs-you/all');assert.equal(await page.getByRole('link',{name:'Review approval',exact:true}).count(),12);assert.equal((await page.locator('a[href="/needs-you"] .nav-count').innerText()).trim(),String(items.length));
  const artifacts=require('node:path').resolve('data/native-approval-inbox');require('node:fs').mkdirSync(artifacts,{recursive:true});await page.screenshot({path:artifacts+'/all-pending.png',fullPage:true});
- const href=await page.getByRole('link',{name:'Review approval',exact:true}).first().getAttribute('href');await page.goto(origin+href);
- assert.equal(await page.locator('[data-adaptive-goal="'+ready[0].goalId+'"] [data-approval-id]').count(),1);
+ const href='/actions/'+ready[0].proposalId;await page.goto(origin+href);
+ assert.equal(await page.locator('form[action="/ask/goals/'+ready[0].goalId+'/approval"] input[name=sha256]').first().inputValue(),ready[0].card.sha256);assert.equal(await page.locator('dialog[data-ask-panel][open]').count(),0);
  assert.equal(Number((await db.query('SELECT count(*) AS n FROM stockchief_runtime.codex_pilot_calls WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n),0);
  assert.equal((await db.query('SELECT status FROM stockchief_runtime.assistant_action_proposals WHERE id=$1',[ready[0].proposalId])).rows[0].status,'PENDING');
  assert.equal(Number((await db.query('SELECT count(*) AS n FROM locations WHERE workspace_id=$1 AND name=$2',[ctx.workspaceId,ready[0].label])).rows[0].n),0,'Opening review grants no execution authority');
- const expiredState=(await db.query('SELECT status,checkpoint FROM stockchief_runtime.assistant_goals WHERE id=$1',[expired.goalId])).rows[0];assert.equal(expiredState.status,'BLOCKED');assert.equal(expiredState.checkpoint.harness.failure.code,'GOAL_EXPIRED');
+ const expiredState=(await db.query('SELECT status,checkpoint FROM stockchief_runtime.assistant_goals WHERE id=$1',[expired.goalId])).rows[0];assert.equal(expiredState.status,'WAITING_APPROVAL','Opening another review does not mutate this expired request');
  assert.equal((await db.query('SELECT status FROM stockchief_runtime.assistant_action_proposals WHERE id=$1',[expired.proposalId])).rows[0].status,'PENDING','Expiry does not execute or erase the canonical proposal');
  const progress=await page.evaluate(async id=>{const r=await fetch('/ask/goals/'+id);return {status:r.status,body:await r.json()};},expired.goalId);assert.equal(progress.status,200);assert.equal(progress.body.status,'BLOCKED');assert.deepEqual(progress.body.approvalIds,[]);assert.match(progress.body.answer,/expired/);
  const expiryClock=(await db.query('SELECT updated_at FROM stockchief_runtime.assistant_goals WHERE id=$1',[expired.goalId])).rows[0].updated_at;

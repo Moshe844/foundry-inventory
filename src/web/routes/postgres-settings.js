@@ -66,13 +66,13 @@ const sections=[
 
 const guideTopics=[
   {title:'Set up inventory',path:'Choose the setup path that matches where your records live, then approve the products, variants and locations StockChief found.',tell:'“We are starting from scratch” or attach your existing file.',href:'/onboarding?add=1',action:'Choose a source'},
-  {title:'Record a sale',path:'Tell StockChief what sold, how many, and where. Check the preview, then approve it.',tell:'“We sold 1 item at Main Warehouse.”',href:'/ask',action:'Record a sale'},
-  {title:'Receive stock',path:'Tell StockChief what arrived and where. If it belongs to a PO, name the PO number.',tell:'“We received 10 units at Main Warehouse.”',href:'/ask',action:'Receive stock'},
+  {title:'Record a sale',path:'Tell StockChief what sold, how many, and where. Check the preview, then approve it.',tell:'“We sold 1 item at Main Warehouse.”',href:'/orders/new',action:'Record a sale'},
+  {title:'Receive stock',path:'Tell StockChief what arrived and where. If it belongs to a PO, name the PO number.',tell:'“We received 10 units at Main Warehouse.”',href:'/purchasing/receive',action:'Receive stock'},
   {title:'Move stock',path:'Name the item, quantity, source and destination. StockChief verifies that totals stay unchanged.',tell:'“Move 5 units from Main Warehouse to Overflow.”',href:'/transfers/new',action:'Move stock'},
-  {title:'Fix a count',path:'Report the physical count. If it disagrees with the ledger, StockChief opens one investigation and does not silently change stock.',tell:'“I counted 12 units at Main Warehouse.”',href:'/ask',action:'Report a count'},
+  {title:'Fix a count',path:'Report the physical count. If it disagrees with the ledger, StockChief opens one investigation and does not silently change stock.',tell:'“I counted 12 units at Main Warehouse.”',href:'/warehouse/counts/new',action:'Report a count'},
   {title:'Set low-stock and reorder rules',path:'Open planning to review evidence-based reorder points, targets and supplier choices.',tell:'“Set a reorder point for this product.”',href:'/planning',action:'Review planning'},
   {title:'Set up suppliers and purchase orders',path:'Add the supplier, then record price, pack size, minimum and lead time before StockChief prepares a PO.',tell:'“Help me add a supplier.”',href:'/suppliers',action:'Set up purchasing'},
-  {title:'Receive a purchase order',path:'Open the placed purchase order, count what arrived, and record only what physically arrived.',tell:'“The purchase order arrived.”',href:'/purchasing',action:'View purchase orders'},
+  {title:'Receive a purchase order',path:'Open the placed purchase order, count what arrived, and record only what physically arrived.',tell:'“The purchase order arrived.”',href:'/purchasing/orders',action:'View purchase orders'},
   {title:'Control automatic work',path:'Choose Ask me first or explicitly enable bounded routine transfers and purchasing.',tell:'“Automatically transfer up to 5 units at a time.”',href:'/autopilot',action:'Choose automatic work'},
   {title:'Find what needs attention',path:'Needs you is the inbox for real decisions and physical facts.',tell:'“What needs my attention?”',href:'/needs-you',action:'Open Needs you'},
 ];
@@ -108,7 +108,7 @@ async function settingsPage(database,req,res){const [counts,users,instructions,e
   const feed=feedRows.rows[0]||null;const problems=Object.entries(integrity.result||{}).filter(([key,value])=>key!=='ok'&&Number(value)>0)
     .map(([kind,value])=>({kind:kind.replaceAll('_',' '),detail:`${value} record${Number(value)===1?'':'s'} do not reconcile.`}));
   const newFeedToken=req.session.newFeedToken||null;delete req.session.newFeedToken;
-  return res.page('settings',{title:'Settings',nav:'settings',room:true,postgresMode:true,users:users.rows,workspace:req.workspace,
+  return res.page('settings',{title:'Settings',nav:'settings',room:true,postgresMode:true,developerAccounts:process.env.STOCKCHIEF_RUNTIME_ENV==='staging'&&Boolean((await database.query('SELECT 1 FROM developer_account_administrators WHERE account_id=$1',[req.account?.id])).rows.length),users:users.rows,workspace:req.workspace,
     integrity:{...integrity,ok:integrity.result?.ok,problems},eventFeed:{configured:Boolean(feed),connected:feed?.status==='connected',
       recentEvents:events.rows.map((event)=>({eventId:event.external_event_id,type:event.event_type,status:event.status,
         error:event.error_message,processedAt:event.processed_at}))},newFeedToken,learnedInstructions:instructions.rows.map(instructionFrom),
@@ -149,7 +149,7 @@ function createPostgresSettingsRouter(database,options={}){const router=express.
     database,req.ctx.workspaceId,req.params.id);const fromAsk=req.query.from==='ask';const nativeGoal=await require('../../assistant/postgres-native-proposal').find(database,req.ctx,req.params.id);return res.page('settings/postgres-operating-instruction',{
       title:'Review standing instruction',nav:'settings',room:true,
       backTo:fromAsk?{href:'/ask#latest',label:'Ask StockChief'}:{href:'/what-you-told-me',label:"What you've told me"},
-      fromAsk,proposal,nativeGoal,descriptions:proposal.resolvedChanges.map(operatingInstructions.describe),usageKey:newId('instructionusage')});}));
+      fromAsk,proposal,nativeGoal,editProposal:req.query.edit==='1',descriptions:proposal.resolvedChanges.map(operatingInstructions.describe),usageKey:newId('instructionusage')});}));
   router.post('/operating-instructions/:id/answer',requireOwner,asyncRoute(async(req,res)=>{
     const native=await require('../../assistant/postgres-native-proposal').find(database,req.ctx,req.params.id);
     if(native){req.flash('success','Continue this instruction in Ask so its original goal and approvals stay together.');return res.redirect(303,'/ask?goal='+encodeURIComponent(native.id)+'#focused-goal');}

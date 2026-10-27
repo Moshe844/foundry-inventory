@@ -164,8 +164,8 @@ function nextForOrder(order){
   return {text:require('../sales/order-status').label(order.status,number(order.units_fulfilled)),detail:Number(order.units_fulfilled)>0?'Shipped goods and their invoice remain recorded; only the unshipped remainder was cancelled.':'No further work is planned.',rank:0,action:null,href:`/orders/${order.id}`};
 }
 
-async function sales(database,workspaceId){
-  const [rows,customers,catalogue,locations,connections]=await Promise.all([commerce.salesOrders(database,workspaceId),
+async function sales(database,workspaceId,options={}){
+  const [rows,customers,catalogue,locations,connections]=await Promise.all([commerce.salesOrders(database,workspaceId,options),
     commerce.customers(database,workspaceId),Promise.resolve([]),commerce.locations(database,workspaceId),
     database.query(`SELECT COUNT(*)::bigint AS count FROM workspace_connectors
       WHERE workspace_id=$1 AND status='connected' AND paused_at IS NULL

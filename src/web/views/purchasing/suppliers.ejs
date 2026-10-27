@@ -5,14 +5,14 @@
     <div class="page-sub">Who you buy from, what they sell you, and how they pack it.</div>
   </div>
   <% if (permissions.suppliers) { %>
-    <div class="page-actions"><a class="btn btn--primary" href="#add-supplier"><%- helpers.icon('plus', { size: 15 }) %> Add a supplier</a></div>
+    <div class="page-actions"><a class="btn btn--primary" href="/suppliers/new"><%- helpers.icon('plus', { size: 15 }) %> Add a supplier</a></div>
   <% } %>
 </div>
 
 <div class="card section">
   <div class="card-head"><h2><%= suppliers.length %> supplier<%= suppliers.length === 1 ? '' : 's' %></h2></div>
   <% if (suppliers.length === 0) { %>
-    <div class="empty-state"><p class="empty-state__title">No suppliers yet</p><p class="empty-state__body">Add who you buy inventory from so StockChief can prepare replenishment orders and understand pack sizes, costs and lead times.</p><a class="btn btn--primary" href="#add-supplier">Add supplier</a><p class="hint">StockChief needs their pack sizes, lead time and costs, so this one is a form rather than a sentence.</p></div>
+    <div class="empty-state"><p class="empty-state__title">No suppliers yet</p><p class="empty-state__body">Add who you buy inventory from so StockChief can prepare replenishment orders and understand pack sizes, costs and lead times.</p><a class="btn btn--primary" href="/suppliers/new">Add supplier</a><p class="hint">StockChief needs their pack sizes, lead time and costs, so this one is a form rather than a sentence.</p></div>
   <% } else { %>
     <table class="table table--tight">
       <thead><tr><th>Supplier</th><th>Contact</th><th class="num">Lead time</th><th class="num">Products</th><th class="num">Open orders</th><th class="num"><span class="sr-only">Actions</span></th></tr></thead>

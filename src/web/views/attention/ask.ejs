@@ -79,7 +79,7 @@
   }
 %>
 
-<div class="sc-chat-workspace"><aside class="sc-chat-history" aria-label="Conversation history"><h2>Conversations</h2><a href="/ask/history" class="btn">Saved requests</a><a href="/ask/capabilities">What StockChief can do</a><% for(const request of (locals.recentRequests||[])){ %><a class="sc-recent-request" href="/ask/history?goal=<%= encodeURIComponent(request.id) %>"><%= request.original_request %><small><%= helpers.dateTime(request.created_at) %></small></a><% } %><details class="sc-ai-details"><summary>AI credits</summary><%- include('../partials/ai-spending-status') %></details><% if (currentUser && ['owner','manager','staff'].includes(currentUser.role)) { %><p class="sc-feedback"><a href="/autopilot/misses">Report a wrong answer or missing requirement</a></p><% } %>
+<div class="sc-chat-workspace"><aside class="sc-chat-history" aria-label="Conversation history"><h2>Conversations</h2><a href="/ask/history" class="btn">Saved requests</a><a href="/ask/capabilities">What StockChief can do</a><% for(const request of (locals.recentRequests||[])){ %><a class="sc-recent-request" href="<%= request.href %>"><strong><%= request.original_request %></strong><time data-local-time datetime="<%= new Date(request.created_at).toISOString() %>"><%= helpers.dateTime(request.created_at) %></time></a><% } %><details class="sc-ai-details"><summary>AI credits</summary><%- include('../partials/ai-spending-status') %></details><% if (currentUser && ['owner','manager','staff'].includes(currentUser.role)) { %><p class="sc-feedback"><a href="/autopilot/misses">Report a wrong answer or missing requirement</a></p><% } %>
 
 </aside>
 <div class="rm-chat<%= guidedEmailStep ? ' rm-chat--guided' : '' %>" data-conversation="<%= locals.conversationId || '' %>"><div class="sc-chat-scroll" data-chat-scroll data-navigation-scroll id="chat-messages" role="log" aria-label="Conversation" aria-live="polite">
@@ -149,7 +149,7 @@
      * and the page does not have to be scrolled back up to find it.
      */
     var latestIndex = transcript.length - 1;
-    var earlier = latestIndex;
+    var earlier = 0;
     transcript.forEach(function(turn,index){if(turn.agentGoal&&(['WAITING_APPROVAL','WAITING_USER'].includes(turn.agentGoal.status)||turn.agentGoal.id===locals.focusedGoalId))earlier=Math.min(earlier,index);});
   %>
   <% transcript.forEach(function (turn, turnIndex) { %>

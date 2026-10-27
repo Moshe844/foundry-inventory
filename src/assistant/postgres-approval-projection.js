@@ -59,8 +59,8 @@ async function pending(database,workspaceId,actorId){
    items.set(sourceId,{kind:'clarification',requiredPermissions:[permissions.VIEW],importance:'Important',priority:85,
     sourceId,title:'Answer StockChief’s question',happened:state.input.question,
     why:'Your request is waiting for information or a business choice.',
-    recommendation:'Reply in Ask StockChief to continue the same request.',
-    href:'/ask?goal='+encodeURIComponent(row.goal_id)+'#focused-goal',actionLabel:'Answer question',
+    recommendation:'Answer the question to continue the same request.',question:{goalId:row.goal_id,id:state.input.id,text:state.input.question},
+    href:'/needs-you/questions/'+encodeURIComponent(row.goal_id),actionLabel:'Answer question',
     createdAt:askedAt,timeLabel:askedAt?'Question asked':'Question time unavailable',updatedAt:row.updated_at,at:askedAt});
    continue;
   }
@@ -102,7 +102,7 @@ async function pending(database,workspaceId,actorId){
    recommendation:recovery?'Open the saved workflow to review its recorded authority and unfinished work.':
      missionOption?`Review this change or its frozen ${missionOption.count}-step plan in Ask StockChief.`:
      'Review the prepared change in Ask StockChief.',
-   href:'/ask?goal='+encodeURIComponent(row.goal_id)+'#focused-goal',actionLabel:recovery?'Review workflow':'Review approval',createdAt:p.created_at||card.createdAt||null,timeLabel:'Proposal created',at:p.created_at||card.createdAt||null,
+   href:(card.kind==='business'?'/actions/':'/operating-instructions/')+encodeURIComponent(p.id),actionLabel:recovery?'Review workflow':'Review approval',createdAt:p.created_at||card.createdAt||null,timeLabel:'Proposal created',at:p.created_at||card.createdAt||null,
    approval:{goalId:row.goal_id,proposalId:p.id,kind:card.kind,revision,scope:recovery?'review_existing_mission':'single_operation',missionOption,recordedMission}});
  }
  return [...items].filter(([key])=>!decisions.has(key)).map(([,item])=>item);

@@ -40,7 +40,7 @@
     const render = (records) => {
       const term=input.value.trim();
       const results=records.filter(r=>{try{return new URL(r.href,location.origin).origin===location.origin;}catch{return false;}});
-      if(term){const ask={title:'Ask StockChief: '+term,subtitle:'Open this question in Ask',href:'/ask?'+new URLSearchParams({q:term,from:location.pathname+location.search})};if(/[?？]$/.test(term)||term.split(/\s+/).length>=3)results.unshift(ask);else results.push(ask);}
+      if(term){const ask={type:'ask',title:'Ask StockChief: '+term,subtitle:'Open this question in Ask',href:'/ask?'+new URLSearchParams({q:term,from:location.pathname+location.search})};results.push(ask);results.push({title:'See all results',subtitle:'Search every matching record',href:'/search?'+new URLSearchParams({q:term})});}
       if (!results.length) {
         panel.innerHTML = '<div class="search-empty">No matches yet.</div>';
         panel.hidden = false; input.setAttribute('aria-expanded','true');
@@ -49,7 +49,7 @@
       panel.innerHTML = results
         .map(
           (r) =>
-            `<a class="search-hit" role="option" aria-selected="false" href="${escapeHtml(r.href)}"><span><strong>${escapeHtml(r.title)}</strong>` +
+            `<a class="search-hit" role="option" ${r.type==='ask'?'data-ask-panel':''} aria-selected="false" href="${escapeHtml(r.href)}" data-dest="${escapeHtml(r.href)}"><span><strong>${escapeHtml(r.title)}</strong>` +
             `<span class="sub"> ${escapeHtml(r.subtitle)}</span></span>` +
             `<span class="meta">${escapeHtml(r.meta || '')}</span></a>`
         )
@@ -70,6 +70,7 @@
     input.addEventListener('keydown', (event) => {
       const hits = [...panel.querySelectorAll('.search-hit')];
       if (event.key === 'Escape') return close();
+      if(event.key==='Enter'&&!hits.length&&input.value.trim()){event.preventDefault();location.assign('/ask?'+new URLSearchParams({q:input.value.trim(),from:location.pathname+location.search}));return;}
       if (!hits.length) return undefined;
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();
@@ -79,9 +80,9 @@
         hits.forEach((hit,index)=>{hit.classList.toggle('is-active',index===activeIndex);hit.setAttribute('aria-selected',String(index===activeIndex));});
         hits[activeIndex].scrollIntoView({ block: 'nearest' });
       }
-      if (event.key === 'Enter' && activeIndex >= 0) {
+      if (event.key === 'Enter') {
         event.preventDefault();
-        hits[activeIndex].click();
+        hits[Math.max(0,activeIndex)].click();
       }
       return undefined;
     });

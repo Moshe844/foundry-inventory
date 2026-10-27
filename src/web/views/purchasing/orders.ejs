@@ -1,3 +1,4 @@
+<form role="search" method="get" action="/purchasing/orders" class="form-actions"><label class="field"><span>Search purchase orders</span><input class="input" type="search" name="q" value="<%= locals.q||'' %>" placeholder="Order number or contact name"></label><input type="hidden" name="view" value="<%= locals.view||'all' %>"><button class="btn" type="submit">Search</button></form>
 <%
   /*
    * Purchases, as a list of stories.
@@ -177,5 +178,5 @@
 
 <p class="rm-disclose">
   <a href="/suppliers">Suppliers and their terms</a>
-  <a href="/ask?about=<%= encodeURIComponent('my purchases') %>">Ask about your purchases</a>
+  <a href="/ask?from=%2Fpurchasing%2Forders">Ask about your purchases</a>
 </p>

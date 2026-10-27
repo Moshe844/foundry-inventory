@@ -152,6 +152,14 @@ async function proposalStates(database,workspaceId,interactions){
 function createPostgresAskRouter(database,options={}){
   const router=express.Router();
   router.use(['/ask','/actions'],requireAuth);
+  router.use('/ask',(req,res,next)=>{
+    if(req.ctx?.workspaceId){
+      const id=req.ctx.workspaceId,previous=req.session.postgresAskWorkspace;
+      req.session.postgresAskChats=req.session.postgresAskChats||{};
+      if(previous&&previous!==id){req.session.postgresAskChats[previous]={id:req.session.postgresAskConversationId,startedAt:req.session.postgresAskStartedAt};const saved=req.session.postgresAskChats[id]||{};req.session.postgresAskConversationId=saved.id||null;req.session.postgresAskStartedAt=saved.startedAt||null;req.session.postgresAskNavigationGoal=null;}
+      req.session.postgresAskWorkspace=id;
+    }next();
+  });
   const goalStore=require('../../assistant/postgres-goal-store');
   const pilot=require('../../assistant/postgres-codex-pilot');
   const agentNavigation=require('../../assistant/postgres-agent-navigation');
@@ -180,7 +188,7 @@ function createPostgresAskRouter(database,options={}){
     const currentPage=remembered?.workspaceId===req.ctx.workspaceId
       ?await require('../../assistant/postgres-page-context').load(database,req.ctx.workspaceId,remembered.path):null;
     const next=await pilot.start(database,req.ctx,message,{usageKey:`next:${goal.id}:${key}`,
-      page:currentPage||goal.checkpoint.page,startedAt:req.session.postgresAskStartedAt||null,
+      page:currentPage||goal.checkpoint.page,conversationId:req.session.postgresAskConversationId,startedAt:req.session.postgresAskStartedAt||null,
       continuation:{sourceGoalId:goal.id,deliveryId:saved.id,sourcePage:goal.checkpoint.page,workProducts:saved.workProducts}});
     req.session.postgresAskNavigationGoal=next.goalId;return next;
   }
@@ -234,9 +242,13 @@ function createPostgresAskRouter(database,options={}){
     if(!['approve','reject'].includes(req.body.decision))throw new ValidationError('Choose approve or reject.');
     await entitlements.assertCapability(database,commercialScope(req),'ask.prepare_actions');
     await pilot.decide(database,req.ctx,req.params.id,String(req.body.deliveryId||''),String(req.body.sha256||''),req.body.decision==='approve',
-      {responseReference:`Authenticated website ${req.body.decision} by ${req.ctx.actorId} at ${new Date().toISOString()}`,
+      {stopOnReject:req.body.returnTo==='/'&&req.body.decision==='reject',responseReference:`Authenticated website ${req.body.decision} by ${req.ctx.actorId} at ${new Date().toISOString()}`,
         missionScope:req.body.scope==='mission'?{kind:'mission',id:String(req.body.missionId||''),sha256:String(req.body.missionHash||'')}:null});
     req.flash('success',req.body.decision==='approve'?'Approved. StockChief is checking the recorded outcome.':'The proposal was rejected.');
+    if(req.body.returnTo==='/'&&req.body.decision==='reject'){
+      if(req.accepts(['html','json'])==='json')return res.json({dismissed:true});
+      return res.redirect(303,'/#suggestions');
+    }
     req.session.postgresAskNavigationGoal=req.params.id;
     return res.redirect(303,'/ask?goal='+encodeURIComponent(req.params.id)+'#focused-goal');
   }));
@@ -275,7 +287,7 @@ function createPostgresAskRouter(database,options={}){
     else if(!goalStore.enabled(req.ctx))throw new ValidationError('Adaptive Ask is disabled.');
     const goal=await goalStore.reply(database,req.ctx,req.params.id,req.body.message,{questionId:req.body.questionId||null});
     if(!goal)throw new ValidationError('This goal is not waiting for an answer.');
-    if(!goal.replyReplayed)await goalStore.enqueue(database,goal);return res.redirect(303,'/ask');
+    if(!goal.replyReplayed)await goalStore.enqueue(database,goal);if(req.body.returnTo==='/needs-you'){req.flash('success','Your answer was saved. StockChief will continue the request.');return res.redirect(303,'/needs-you');}return res.redirect(303,'/ask');
   }));
   router.post('/ask/goals/:id/cancel',asyncRoute(async(req,res)=>{
     await goalStore.cancel(database,req.ctx,req.params.id);return res.redirect(303,'/ask');
@@ -310,7 +322,8 @@ function createPostgresAskRouter(database,options={}){
         conversation:{...state,history:(state.history||[]).map(turn=>({...turn,text:conversation.publicText(turn.text)}))},
         delivery:delivery.visible(goal),effects:recorded.get(goal.id)||[],continuation:await pilot.continuation(database,req.ctx,goal.id)};
     }
-    const saved=selected?null:await history.list(database,req.ctx,{before:req.query.before,status:req.query.status||''});
+    if(!selected&&!req.query.status&&!req.query.before)return res.page('attention/conversations',{title:'Your conversations',nav:'ask',requireLabels:history.labels,chats:await require('../../assistant/postgres-chats').list(database,req.ctx,{limit:100})});
+    const saved=selected?null:await history.list(database,req.ctx,{before:req.query.before,status:req.query.status==='all'?'':req.query.status||''});
     return res.page('attention/ask-history',{title:'Saved requests',nav:'ask',room:true,selected,saved,
       labels:history.labels,renderAgentAnswer:require('../public/agent-answer').render});
   }));
@@ -318,6 +331,7 @@ function createPostgresAskRouter(database,options={}){
     const remembered=req.session.postgresAskPageContext;
     const requestedPath=req.query.from===undefined&&remembered?.workspaceId===req.ctx.workspaceId
       ?remembered.path:req.query.from;
+    if(typeof req.query.chat==='string'){const owned=await require('../../assistant/postgres-chats').owned(database,req.ctx,req.query.chat);req.session.postgresAskConversationId=req.query.chat;req.session.postgresAskStartedAt=new Date(new Date(owned.created_at).getTime()-1).toISOString();}
     const startedAt=req.session.postgresAskStartedAt||null;
     const [sourcePage,interactions,nameRows,pilotView]=await Promise.all([
       require('../../assistant/postgres-page-context').load(database,req.ctx.workspaceId,requestedPath),
@@ -330,7 +344,7 @@ function createPostgresAskRouter(database,options={}){
     ]);
     if(req.query.from!==undefined)req.session.postgresAskPageContext=sourcePage
       ?{workspaceId:req.ctx.workspaceId,path:sourcePage.path}:null;
-    const visible=interactions.slice(-12);const latest=visible.at(-1)||null;
+    const visible=interactions;const latest=visible.at(-1)||null;
     const emailBodyContinuation=latest?.status==='CLARIFY'
       &&latest.intent?.controlPlane?.capability==='communication.send_email'
       &&latest.intent?.presentation?.awaitingField==='body'
@@ -356,7 +370,7 @@ function createPostgresAskRouter(database,options={}){
     // Paid execution eligibility and a Staging-only banner are not history
     // permissions. An actor's owned saved conversation remains readable in
     // commercial accounts, after disabling the pilot, and during rollback.
-    let recentGoals=await goalStore.recent(database,req.ctx,startedAt,focusedGoalId);
+    let recentGoals=await goalStore.recent(database,req.ctx,startedAt,focusedGoalId,req.session.postgresAskConversationId||null);
     // An explicit link to owned earlier work must not silently select the
     // latest conversation. Keep the new chat boundary and open saved history.
     if(focusedGoalId&&!recentGoals.some(goal=>goal.id===focusedGoalId)
@@ -394,7 +408,7 @@ function createPostgresAskRouter(database,options={}){
     transcript=require('../../assistant/goal-transcript').mergeGoalTranscript(transcript,recentGoals,{focusedGoalId:focusedGoal?.id});
     const continuationGoal=focusedGoal||transcript.at(-1)?.agentGoal;
     const submission=req.session.askSubmission?.workspaceId===req.ctx.workspaceId?req.session.askSubmission:null;
-    const recentRequests=(await require('../../assistant/postgres-goal-history').list(database,req.ctx,{})).rows.slice(0,10);
+    const recentRequests=await require('../../assistant/postgres-chats').list(database,req.ctx,{limit:10});
     return res.page('attention/ask',{recentRequests,title:'Ask StockChief',nav:'ask',room:true,suppressBack:true,postgresAsk:true,aiCost:require('../../commercial/ai-spending-limits').forAsk(await require('../../commercial/ai-spending-limits').availability(database,req.ctx.workspaceId,req.ctx.actorId)),...rules,
       codexPilot:pilotView,adaptiveGoal:activeGoal,agentInspection:Boolean(options.agentInspection),focusedGoalId:focusedGoal?.id||null,renderAgentAnswer:require('../public/agent-answer').render,
       about:String(req.query.about||'').slice(0,2000),stockActivity:req.query.task==='stock-activity'&&sourcePage?.path==='/inventory',
@@ -411,7 +425,7 @@ function createPostgresAskRouter(database,options={}){
     // Use the database clock that timestamps interactions, then persist the
     // boundary before redirecting so the next GET cannot resurrect old turns.
     const boundary=(await database.query('SELECT clock_timestamp()::text AS started_at')).rows[0].started_at;
-    req.session.postgresAskStartedAt=boundary;
+    req.session.postgresAskStartedAt=boundary;req.session.postgresAskConversationId=newId('chat');
     delete req.session.askSubmission;
     req.session.postgresAskPageContext=null;
     req.session.postgresAskNavigationGoal=null;
@@ -420,6 +434,7 @@ function createPostgresAskRouter(database,options={}){
     return res.redirect(303,'/ask');
   }));
   async function runAsk(req){
+    if(!req.session.postgresAskConversationId)req.session.postgresAskConversationId=newId('chat');
     const scope=commercialScope(req);await entitlements.assertCapability(database,scope,'ask.lookup');
     const files=(req.files||[]).filter((entry)=>entry.field==='file'&&entry.size>0);
     if(files.length){
@@ -457,7 +472,7 @@ function createPostgresAskRouter(database,options={}){
       // and its fresh permission check belong to assistant.ask, once here.
       background:goalStore.enabled(req.ctx),
       usageKey:String(req.body.usageKey||newId('askusage')),
-      page,startedAt:req.session.postgresAskStartedAt||null,
+      page,conversationId:req.session.postgresAskConversationId,startedAt:req.session.postgresAskStartedAt||null,
       continueInteractionId:String(req.body.continueInteractionId||'')});
     req.session.postgresAskNavigationGoal=result.goalId||null;
     return result;
@@ -527,6 +542,9 @@ function createPostgresAskRouter(database,options={}){
       examples:await askExamples(database,req.ctx),question:null,unsupported:null,assistantGoal:null,where:null,
       blocked:null,physicalEventId:null,choices:null,continuationId:null,questionTone:null});
   }));
+  async function revisePrepared(req,res,kind){const text=String(req.body.message||'').trim();if(!text||text.length>10000)throw new ValidationError('Describe the revised request in at most 10,000 characters.');const rule=kind==='rule',p=rule?await require('../../manager/postgres-operating-instructions').get(database,req.ctx.workspaceId,req.params.id):await assistant.getProposal(database,req.ctx.workspaceId,req.params.id);if(p.status!=='PENDING')throw new ValidationError('Only a change still awaiting approval can be revised.');const owner=rule?p.createdByUserId||p.created_by_user_id:p.actor_user_id;if(owner&&owner!==req.ctx.actorId)throw new ValidationError('This prepared request belongs to another member.');const mission=rule?null:await require('../../assistant/postgres-capability-plans').missionForProposal(database,req.ctx.workspaceId,req.ctx.actorId,p.id);if(mission?.approval_status==='APPROVED')throw new ValidationError('This request is part of an approved workflow. Review that workflow before changing its remaining steps.');const native=await require('../../assistant/postgres-native-proposal').find(database,req.ctx,p.id);if(native){await pilot.decide(database,req.ctx,native.id,native.delivery_id,native.card.sha256,false,{responseReference:'Owner requested a revision from its exact review page.',stopOnReject:true});}else if(rule)await require('../../manager/postgres-operating-instructions').cancel(database,req.ctx,p.id);else await assistant.cancelProposal(database,req.ctx,p.id);const recordPath=(rule?'/operating-instructions/':'/actions/')+encodeURIComponent(p.id);const result=await assistant.ask(database,req.ctx,'Prepare a replacement for the withdrawn request at '+recordPath+'. Revised request: '+text,{provider:options.provider,background:true,usageKey:newId('revision'),conversationId:req.session.postgresAskConversationId,startedAt:req.session.postgresAskStartedAt||null});req.session.postgresAskNavigationGoal=result.goalId||null;return res.redirect(303,result.goalId?'/ask?goal='+encodeURIComponent(result.goalId)+'#focused-goal':'/ask');}
+  router.post('/actions/:id/revise',asyncRoute((req,res)=>revisePrepared(req,res,'business')));
+  router.post('/operating-instructions/:id/revise',asyncRoute((req,res)=>revisePrepared(req,res,'rule')));
   router.get('/actions/:id',asyncRoute(async(req,res)=>{
     const proposal=await assistant.getProposal(database,req.ctx.workspaceId,req.params.id);
     const mission=await require('../../assistant/postgres-capability-plans').missionForProposal(
@@ -543,7 +561,7 @@ function createPostgresAskRouter(database,options={}){
       ?Object.values(native.checkpoint?.harness?.approvalDeliveries||{}).find(d=>d.proposalId===proposal.id
         &&d.decision?.source==='human_user'&&d.decision.approved===true&&d.decision.scope?.kind==='mission'
         &&d.decision.scope.id===mission.id&&d.decision.scope.sha256===mission.plan_hash):null;
-    return res.page('attention/postgres-proposal',{title:mission?'Review operating mission':'Review prepared change',nav:'ask',proposal,presentation:require('../proposal-presentation').present(proposal),mission,nativeApproval:nativeCard?{goalId:native.id,...nativeCard}:null,
+    return res.page('attention/postgres-proposal',{title:mission?'Review operating mission':'Review prepared change',nav:'ask',editProposal:req.query.edit==='1',proposal,presentation:require('../proposal-presentation').present(proposal),mission,nativeApproval:nativeCard?{goalId:native.id,...nativeCard}:null,
       nativeResume:approvedDelivery?{goalId:native.id,id:approvedDelivery.id,sha256:approvedDelivery.sha256}:null,
       missionSteps:(mission?.approved_steps||[]).map((step,index)=>{const contract=capabilities.get(step.capability);return {label:(contract?.legacyAction||step.capability).replace(/[._]/g,' ').replace(/^./,s=>s.toUpperCase()),args:step.args,fields:require('../proposal-presentation').fields(step.args),index:index+1,state:mission.steps[index]?.state||'BLOCKED'};}),
       resumeAvailable:proposal.status==='EXECUTED'&&resuming&&!native});

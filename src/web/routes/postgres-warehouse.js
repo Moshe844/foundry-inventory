@@ -16,6 +16,7 @@ function createPostgresWarehouseRouter(database){
     return res.page('warehouse/label',{title:`Print ${label.title}`,nav:'warehouse',room:true,
       label,barcodeSvg:labels.code128Svg(label.barcode),verified:labels.verifyRoundTrip(label)});
   }));
+  router.get('/warehouse/counts/new',requirePermission(permissions.VIEW,'see stock'),asyncRoute(async(req,res)=>{const q=String(req.query.q||'').trim().slice(0,120),rows=(await database.query("SELECT i.id,i.name,s.code FROM items i JOIN skus s ON s.workspace_id=i.workspace_id AND s.item_id=i.id WHERE i.workspace_id=$1 AND i.is_active=1 AND s.is_active=1 AND ($2='' OR i.name ILIKE '%'||$2||'%' OR s.code ILIKE '%'||$2||'%') ORDER BY lower(i.name),s.code LIMIT 50",[req.ctx.workspaceId,q])).rows;return res.page('warehouse/count-picker',{title:'Record a physical count',nav:'inventory',rows,q});}));
   router.get('/warehouse',(req,res)=>res.redirect(302,'/warehouse/operations'));
   router.get('/warehouse/operations',asyncRoute(async(req,res)=>res.page('warehouse/postgres-operations',{
     title:'Warehouse operations',nav:'warehouse',room:true,

@@ -47,7 +47,7 @@ test('recorded discovery gaps: paginated owned history exposes canonical effects
  }};
  let page=await history.list(guarded,ctx,{status:'BLOCKED'}),all=[];
  assert.deepEqual(page.statusCounts.find(r=>r.status==='BLOCKED'),{status:'BLOCKED',label:history.labels.BLOCKED,total:44,expired:44,withinLifetime:0});
- assert(page.rows.every(r=>r.expired&&r.phase==='failed'&&r.publicSummary==='Saved result before final reporting.'));
+ assert(page.rows.every(r=>r.expired&&r.phase==='failed'&&r.publicSummary.includes('could not confirm')));
  assert(!JSON.stringify(page).includes('PRIVATE_NATIVE_SECRET'));assert(page.rows.every(r=>!Object.hasOwn(r,'public_checkpoint')&&!Object.hasOwn(r,'answer')));
  while(true){assert.equal(page.total,44);assert(page.rows.length<=20);all.push(...page.rows.map(g=>g.id));if(!page.next)break;page=await history.list(guarded,ctx,{status:'BLOCKED',before:page.next});}
  assert.equal(all.length,44);assert.equal(new Set(all).size,44);assert.deepEqual(new Set(all),new Set(ids));
@@ -76,7 +76,7 @@ test('recorded discovery gaps: paginated owned history exposes canonical effects
  const currentCsrf=/name="_csrf" value="([^"]+)"/.exec(currentChat.text)[1];assert.equal((await web.post('/ask/new').type('form').send({_csrf:currentCsrf})).status,303);
  const resetChat=await web.get('/ask');for(const id of Object.values(ruleIds))assert(!resetChat.text.includes('/operating-instructions/'+id));
  assert((await db.query('SELECT status FROM operating_instruction_proposals WHERE workspace_id=$1 AND id=ANY($2::text[])',[ctx.workspaceId,Object.values(ruleIds)])).rows.every(r=>r.status==='PENDING'),'Conversation scoping never cancels, approves or activates the global pending records');
- const detail=await web.get('/ask/history?goal='+ids[0]);assert.equal(detail.status,200);assert.match(detail.text,/Saved result before final reporting/);assert.match(detail.text,/Rule approval does not prove/);assert.match(detail.text,/Operation recorded/);assert(!detail.text.includes('Email delivered'));
+ const detail=await web.get('/ask/history?goal='+ids[0]);assert.equal(detail.status,200);assert.match(detail.text,/could not confirm/);assert.match(detail.text,/Rule approval does not prove/);assert.match(detail.text,/Operation recorded/);assert(!detail.text.includes('Email delivered'));
  // The recorded slow investigation had to open four individual clarification
  // pages and a blocked page because the index omitted these public states.
  const publicFixtureBefore=(await db.query('SELECT id,status,answer,expires_at,checkpoint,updated_at FROM stockchief_runtime.assistant_goals WHERE id=ANY($1::text[])',[[ids[3],ids[4]]])).rows;

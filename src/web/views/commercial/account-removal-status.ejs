@@ -1,0 +1,5 @@
+<header class="page-head"><div><h1>Test account removal</h1><a href="/commercial-admin/accounts">Developer test accounts</a></div></header><section class="card"><div class="card-body">
+<% if(removal.status==='COMPLETED'){ %><h2>Account removed</h2><p>The sign-in email is available to register again. Its owned test inventories and sessions were removed. The approved spending ledger remains intact.</p>
+<% }else if(job?.status==='DEAD'){ %><h2>Removal stopped safely</h2><p><%= job.last_error?.message||'The account changed or linked records need review. No partial account deletion was committed.' %></p><p>Review the account again before submitting another confirmation.</p>
+<% }else{ %><h2>Removal queued</h2><p>The background worker will check developer access, account identity and outstanding operations again before removing anything.</p><a class="btn" href="/commercial-admin/accounts/removals/<%= removal.id %>">Refresh status</a><% } %>
+</div></section>

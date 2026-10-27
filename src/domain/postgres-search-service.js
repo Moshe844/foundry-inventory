@@ -4,7 +4,7 @@ const TYPE_LABEL={item:'Product',sku:'Product',variant:'Variant',serial:'Unit',l
   supplier:'Supplier',purchase_order:'Purchase order',customer:'Customer',sales_order:'Sales order'};
 
 async function search(database,workspaceId,rawTerm,{limit=25}={}){
-  const term=String(rawTerm||'').trim();if(!term)return {term,results:[],total:0};
+  const term=String(rawTerm||'').trim().slice(0,200),short=compactReference(term);if(!term)return {term,results:[],total:0};
   const result=await database.query(`WITH matches AS (
     SELECT CASE WHEN sku.variant_label IS NULL OR sku.variant_label='' THEN 'sku' ELSE 'variant' END AS type,
       sku.id,CASE WHEN sku.variant_label IS NULL OR sku.variant_label='' THEN item.name ELSE item.name||' / '||sku.variant_label END AS title,
@@ -40,7 +40,7 @@ async function search(database,workspaceId,rawTerm,{limit=25}={}){
     SELECT 'purchase_order',purchase.id,purchase.po_number,'Purchase order · '||supplier.name,replace(purchase.status,'_',' '),
       '/purchasing/orders/'||purchase.id,CASE WHEN lower(purchase.po_number)=lower($2) THEN 125 ELSE 65 END
     FROM purchase_orders purchase JOIN suppliers supplier ON supplier.id=purchase.supplier_id
-    WHERE purchase.workspace_id=$1 AND (purchase.po_number ILIKE '%'||$2||'%' OR supplier.name ILIKE '%'||$2||'%')
+    WHERE purchase.workspace_id=$1 AND (purchase.po_number ILIKE '%'||$2||'%' OR lower(regexp_replace(purchase.po_number,'(^[A-Za-z]+[- ]*)0+','\\1'))=lower($4) OR supplier.name ILIKE '%'||$2||'%')
     UNION ALL
     SELECT 'customer',customer.id,customer.name,'Customer',replace(customer.record_state,'_',' '),
       '/sales/customers/'||customer.id,CASE WHEN lower(customer.name)=lower($2) THEN 115 ELSE 55 END
@@ -52,10 +52,13 @@ async function search(database,workspaceId,rawTerm,{limit=25}={}){
       ELSE initcap(replace(sales.status,'_',' ')) END,
       '/sales/orders/'||sales.id,CASE WHEN lower(sales.order_number)=lower($2) THEN 125 ELSE 65 END
     FROM sales_orders sales JOIN customers customer ON customer.id=sales.customer_id
-    WHERE sales.workspace_id=$1 AND (sales.order_number ILIKE '%'||$2||'%' OR customer.name ILIKE '%'||$2||'%')
-  ) SELECT * FROM matches ORDER BY score DESC,title,id LIMIT $3`,[workspaceId,term,Math.min(100,Math.max(1,Number(limit)||25))]);
+    WHERE sales.workspace_id=$1 AND (sales.order_number ILIKE '%'||$2||'%' OR lower(regexp_replace(sales.order_number,'(^[A-Za-z]+[- ]*)0+','\\1'))=lower($4) OR customer.name ILIKE '%'||$2||'%')
+  ) SELECT * FROM matches ORDER BY score DESC,title,id LIMIT $3`,[workspaceId,term,Math.min(100,Math.max(1,Number(limit)||25)),short]);
+  if(result.rows.length<limit&&term.length>=4){const prefix=term.toLowerCase().slice(0,2),near=(await database.query(`SELECT s.id,'sku' AS type,i.name AS title,'Product · '||s.code AS subtitle,'' AS meta,'/inventory/'||i.id||'#sku-'||s.id AS href,s.code FROM skus s JOIN items i ON i.workspace_id=s.workspace_id AND i.id=s.item_id WHERE s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 AND (i.name ILIKE $2||'%' OR i.name ILIKE '% '||$2||'%' OR s.code ILIKE $2||'%') ORDER BY abs(length(i.name)-length($3)),i.name,s.id LIMIT 300`,[workspaceId,prefix,term])).rows;const known=new Set(result.rows.map(r=>r.id));for(const r of near){const distance=Math.min(editDistance(term.toLowerCase(),r.title.toLowerCase()),editDistance(term.toLowerCase(),r.code.toLowerCase()),...r.title.toLowerCase().split(/\s+/).map(word=>editDistance(term.toLowerCase(),word)));if(distance<=Math.min(2,Math.floor(term.length/4))&&!known.has(r.id)){result.rows.push({...r,score:40-distance});known.add(r.id);}}result.rows.sort((a,b)=>b.score-a.score||a.title.localeCompare(b.title));result.rows=result.rows.slice(0,limit);}
   const results=result.rows.map((row)=>({...row,typeLabel:TYPE_LABEL[row.type]||row.type,score:Number(row.score)}));
   return {term,results,total:results.length};
 }
 
-module.exports={TYPE_LABEL,search};
+function compactReference(value){const m=/^([a-z]+)[- ]*([0-9]+)$/i.exec(value);return m?m[1]+'-'+m[2].replace(/^0+(?=\d)/,''):value;}
+function editDistance(a,b){if(Math.abs(a.length-b.length)>2)return 3;let prior=Array.from({length:b.length+1},(_,i)=>i);for(let i=1;i<=a.length;i++){const row=[i];for(let j=1;j<=b.length;j++)row[j]=Math.min(row[j-1]+1,prior[j]+1,prior[j-1]+(a[i-1]===b[j-1]?0:1));prior=row;}return prior[b.length];}
+module.exports={TYPE_LABEL,search,compactReference,editDistance};

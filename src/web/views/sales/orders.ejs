@@ -1,3 +1,4 @@
+<form role="search" method="get" action="/orders" class="form-actions"><label class="field"><span>Search customer orders</span><input class="input" type="search" name="q" value="<%= locals.q||'' %>" placeholder="Order number or contact name"></label><input type="hidden" name="view" value="<%= locals.view||'all' %>"><button class="btn" type="submit">Search</button></form>
 <%
   /*
    * Customer orders, as a list of stories rather than a table of rows.
@@ -208,5 +209,5 @@
   <a href="/sales/pricing">Pricing and promotions</a>
   <a href="/accounting/receivables">Money customers owe</a>
   <% if (!sellingConnectionCount) { %><a href="/settings/connections">Connect a shop so orders arrive on their own</a><% } %>
-  <a href="/ask?about=<%= encodeURIComponent('my orders') %>">Ask about your orders</a>
+  <a href="/ask?from=%2Forders">Ask about your orders</a>
 </p>

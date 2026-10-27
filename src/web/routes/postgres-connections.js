@@ -44,6 +44,10 @@ function createPostgresConnectionsRouter(database,options={}){
     if(!capability)return true;
     const state=await entitlements.capabilityState(database,commercialScope(req),capability);
     if(state.enabled)return true;
+    if(req.query.popup==='1'||req.body?.popup==='1'){
+      oauthReturnPage(res,{connected:false,providerName:registry.get(type)?.metadata()?.name||'Connection',workspaceId:req.ctx.workspaceId,
+        requestOrigin:`${req.protocol}://${req.get('host')}`,popup:true,message:'This connection is not included in the current plan. Return to StockChief to review the available plan options.'});return false;
+    }
     res.redirect(303,`/upgrade?capability=${encodeURIComponent(capability)}&return=${encodeURIComponent('/settings/connections')}`);return false;
   }
 
@@ -58,12 +62,13 @@ function createPostgresConnectionsRouter(database,options={}){
     const requestPublicOrigin=options.publicOrigin==='request'?requestOrigin:(options.publicOrigin||requestOrigin);
     const connectionCapabilities=[['connection.email','communications.email_ingestion'],
       ['connection.commerce','connections.commerce'],['connection.accounting','connections.accounting']];
-    const [connectionRows,clients,payment,shipping,capabilityStates]=await Promise.all([
+    const [connectionRows,clients,payment,shipping,capabilityStates,connectionCapacity]=await Promise.all([
       connections.list(database,req.ctx.workspaceId),publicApi.list(database,req.ctx.workspaceId),
       paymentConnect.describe(database,req.ctx.workspaceId),shippingAccounts.describe(database,req.ctx.workspaceId),
-      entitlements.capabilityStates(database,commercialScope(req),connectionCapabilities.map(([,key])=>key)),
+      entitlements.capabilityStates(database,commercialScope(req),connectionCapabilities.map(([,key])=>key)),entitlements.meterState(database,commercialScope(req),'connections'),
     ]);
-    return res.page('connections/index',{
+    const mailPreparationStates=Object.fromEntries(await Promise.all(connectionRows.filter(c=>['gmail','microsoft365'].includes(c.provider_type)&&c.status==='connected').map(async c=>[c.id,await require('../../connections/postgres-mail-preparation').state(database,req.ctx,c.id,{providerConfigured:Boolean(options.draftProviderConfigured)})])));
+    return res.page('connections/index',{connectionCapacity,mailPreparationStates,
       title:inventorySetup?'Connect a platform':'Integrations',nav:'connections',room:true,backTo:inventorySetup?{href:'/onboarding',label:'Inventory setup'}:{href:'/settings',label:'Settings'},launchTicket,
       postgresMode:true,inventorySetup,connections:inventorySetup?connectionRows.filter(c=>providerCatalog.some(p=>p.type===c.provider_type)):connectionRows,
       providerCatalog,
@@ -195,7 +200,7 @@ function createPostgresConnectionsRouter(database,options={}){
       return res.redirect(303,'/settings/connections');
     }
     const requestOrigin=`${req.protocol}://${req.get('host')}`;
-    const started=await paymentConnect.begin(database,req.ctx,{requestOrigin,popup:false,
+    const started=await paymentConnect.begin(database,req.ctx,{requestOrigin,popup:req.query.popup==='1',
       publicOrigin:options.publicOrigin==='request'?requestOrigin:options.publicOrigin,
       businessName:req.workspace?.name,email:req.account?.email,
       authorizeEndpoint:options.paymentConnectOptions?.authorizeEndpoint});
@@ -490,6 +495,12 @@ function createPostgresConnectionsRouter(database,options={}){
     req.flash('success','Connection disconnected. Credentials were removed; mappings and audit history remain.');
     return res.redirect(303,`/settings/connections/${req.params.id}`);
   }));
+  router.use((error,req,res,next)=>{
+    if(!res.headersSent&&(req.query.popup==='1'||req.body?.popup==='1')&&/(?:\/launch|\/authorize)$/.test(req.path)&&['validation_error','entitlement_required','rate_limited'].includes(error.code))
+      return oauthReturnPage(res,{connected:false,providerName:registry.get(req.params.provider)?.metadata()?.name||'Connection',workspaceId:req.ctx?.workspaceId,
+        requestOrigin:`${req.protocol}://${req.get('host')}`,popup:true,message:error.message});
+    return next(error);
+  });
   return router;
 }
 

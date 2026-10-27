@@ -1,0 +1,36 @@
+'use strict';process.env.NODE_ENV='test';
+const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
+test('developer removal deletes the actual Staging sign-in account and its owned test data, preserving other owners and funded usage',{timeout:180000},async t=>{
+ const prior=process.env.STOCKCHIEF_RUNTIME_ENV;process.env.STOCKCHIEF_RUNTIME_ENV='staging';t.after(()=>{if(prior===undefined)delete process.env.STOCKCHIEF_RUNTIME_ENV;else process.env.STOCKCHIEF_RUNTIME_ENV=prior;});
+ const f=await require('../helpers/postgres-shipping-fixture').fixture(t,{units:7}),{db}=f,auth=require('../../src/domain/postgres-auth-service'),service=require('../../src/domain/postgres-developer-accounts');
+ await db.query("INSERT INTO developer_account_administrators(account_id,granted_by) VALUES($1,'isolated qualification')",[f.owner.accountId]);
+ const email=randomUUID()+'@example.test',password='Target!'+randomUUID(),target=await auth.createBusiness(db,{name:'Disposable owner',businessName:'Disposable business',email,password}),ctx={workspaceId:target.workspaceId,actorId:target.userId};
+ const location=await require('../../src/domain/postgres-location-service').createLocation(db,ctx,{name:'Target shelf',kind:'warehouse'}),item=await require('../../src/domain/postgres-catalog-service').createItem(db,ctx,{name:'Target product',baseCode:'DELETE-'+randomUUID().slice(0,8),trackingMode:'quantity'});
+ await require('../../src/domain/postgres-inventory-engine').receive(db,ctx,{skuId:item.skuIds[0],locationId:location.id,quantity:2,idempotencyKey:'target-stock'});
+
+ await require('../../src/accounting/postgres-ledger').configure(db,ctx,{startDate:'2026-01-01',currency:'USD'});
+ const costs=require('../../src/accounting/postgres-inventory-costs'),cost=await costs.preview(db,ctx,{skuId:item.skuIds[0],locationId:location.id,quantity:2,unitCost:'1.00',currency:'USD',basis:'opening_inventory',evidenceReference:'Independently documented disposable fixture'});await db.transaction(c=>costs.establishInTransaction(c,ctx,{...cost.payload,idempotencyKey:'target-cost'}));
+ assert.equal((await db.query('SELECT count(*)::int n FROM accounting_journal_entries WHERE workspace_id=$1',[ctx.workspaceId])).rows[0].n,1);
+ await db.query("INSERT INTO stockchief_runtime.codex_pilots(workspace_id,approved_by,period_ends_at,admission_kind) VALUES($1,$2,now()+interval '1 day','COMMERCIAL')",[ctx.workspaceId,ctx.actorId]);
+ const goal=await require('../../src/assistant/postgres-goal-store').create(db,ctx,'Isolated settled usage receipt',{usageKey:'target-settled-call'});await db.query("UPDATE stockchief_runtime.assistant_goals SET status='COMPLETED' WHERE id=$1",[goal.id]);
+ await db.query("INSERT INTO stockchief_runtime.codex_pilot_calls(id,workspace_id,actor_id,goal_id,reserved,charged,state,funding_workspace_id,detail) VALUES($1,$2,$3,$4,100000,1234,'SETTLED',$2,$5::jsonb)",['deleted-native-receipt',ctx.workspaceId,ctx.actorId,goal.id,JSON.stringify({certificationFundingWorkspaceId:f.ctx.workspaceId})]);
+ const exposure=require('../../src/commercial/staging-certification-budget');assert.equal((await exposure.exposure(db,f.ctx.workspaceId)).committed,1234);
+ await db.query('INSERT INTO stockchief_runtime.sessions(sid,expires_at,data) VALUES($1,$2,$3::jsonb)',['target-session',Date.now()+60000,JSON.stringify({accountId:target.accountId,workspaceId:ctx.workspaceId})]);
+ const snapshot=await service.review(db,f.owner.accountId,email);assert(snapshot.canDelete,snapshot.blockers.join(' '));
+ await db.query(`INSERT INTO stockchief_runtime.jobs(id,kind,workspace_id,payload,status,priority,max_attempts,available_at,idempotency_key,lease_owner,lease_token,lease_expires_at,created_at,updated_at) VALUES('running-delete-guard','certification.noop',$1,'{}','RUNNING',10,1,0,'running-delete-guard','isolated-qualification','isolated-lease',extract(epoch FROM now())::bigint*1000+60000,now(),now())`,[ctx.workspaceId]);
+ assert.equal((await service.review(db,f.owner.accountId,email)).canDelete,false,'An active job must block removal');await db.query("DELETE FROM stockchief_runtime.jobs WHERE id='running-delete-guard'");
+ await assert.rejects(service.queue(db,f.owner.accountId,{email,confirmEmail:'someone-else@example.test',confirmed:'yes',password:f.password,reviewHash:snapshot.reviewHash}),/exact account email/);
+ await assert.rejects(service.review(db,target.accountId,f.email),/authorized StockChief developer/);
+ const self=await service.review(db,f.owner.accountId,f.email);assert.equal(self.canDelete,false);
+ const queued=await service.queue(db,f.owner.accountId,{email,confirmEmail:email,confirmed:'yes',password:f.password,reviewHash:snapshot.reviewHash});
+ const result=await service.execute(db,queued.requestId);assert(result.signInAccountRemoved);
+ assert.equal((await db.query('SELECT 1 FROM accounts WHERE id=$1 OR email=$2',[target.accountId,email])).rows.length,0);
+ assert.equal((await db.query('SELECT 1 FROM workspaces WHERE owner_account_id=$1',[target.accountId])).rows.length,0);
+ assert.equal((await db.query("SELECT 1 FROM stockchief_runtime.sessions WHERE sid='target-session'")).rows.length,0);
+ assert.equal((await exposure.exposure(db,f.ctx.workspaceId)).committed,1234);assert.equal((await db.query("SELECT charged_micro_usd FROM commercial_deleted_ai_receipts WHERE receipt_id='deleted-native-receipt'")).rows[0].charged_micro_usd,'1234');
+ assert.equal(await f.balance(),7);assert.equal((await db.query('SELECT 1 FROM accounts WHERE id=$1',[f.owner.accountId])).rows.length,1);
+ assert.equal((await service.execute(db,queued.requestId)).replayed,true);
+ const registered=await auth.createPendingAccount(db,{name:'Registered again',businessName:'New test business',email,password,confirmPassword:password,timeZone:'America/New_York',termsAccepted:true});assert(registered.accountId||registered.id);
+ process.env.STOCKCHIEF_RUNTIME_ENV='production';await assert.rejects(service.review(db,f.owner.accountId,email),/Staging only/);
+ t.diagnostic(JSON.stringify({actualPostgres:true,actualAccountDeleted:true,sameEmailCanRegisterAgain:true,otherOwnerStockPreserved:true,productionBlocked:true,externalProviderCalls:0}));
+});

@@ -57,16 +57,16 @@ async function capture(db,ctx,startedAt=null){
  const [recent,memory,environment]=await Promise.all([db.query(`SELECT * FROM (
   (SELECT id,original_request AS message,answer,status,created_at,checkpoint->'conversationState' AS conversation_state FROM stockchief_runtime.assistant_goals
    WHERE workspace_id=$1 AND actor_user_id=$2 AND ($3::timestamptz IS NULL OR created_at>$3)
-   AND ($5::boolean OR checkpoint#>>'{harness,authorityStamp}'=$4)
+   AND ($5::boolean OR checkpoint#>>'{harness,authorityStamp}'=$4) AND ($6::text IS NULL OR checkpoint->>'chatId'=$6)
    ORDER BY created_at DESC,id DESC LIMIT 6)
   UNION ALL
   (SELECT i.id,i.message,i.answer,i.status,i.created_at,NULL::jsonb AS conversation_state FROM stockchief_runtime.assistant_interactions i
-   WHERE i.workspace_id=$1 AND i.actor_user_id=$2 AND ($3::timestamptz IS NULL OR i.created_at>$3) AND $5::boolean
+   WHERE i.workspace_id=$1 AND i.actor_user_id=$2 AND ($3::timestamptz IS NULL OR i.created_at>$3) AND $5::boolean AND $6::text IS NULL
    AND NOT EXISTS(SELECT 1 FROM stockchief_runtime.assistant_goals g
     WHERE g.workspace_id=i.workspace_id AND g.actor_user_id=i.actor_user_id
      AND (i.intent->>'batchId'=g.id OR starts_with(i.intent->>'batchId',g.id||':')))
    ORDER BY i.created_at DESC,i.id DESC LIMIT 6)
- ) recent ORDER BY created_at DESC,id DESC LIMIT 6`,[ctx.workspaceId,ctx.actorId,startedAt,stamp,fullBusinessRead]),
+ ) recent ORDER BY created_at DESC,id DESC LIMIT 6`,[ctx.workspaceId,ctx.actorId,startedAt,stamp,fullBusinessRead,ctx.conversationId||null]),
  fullBusinessRead?require('./postgres-business-memory').plannerContext(db,ctx.workspaceId,{limit:12}):[],
  learnedEnvironment(db,ctx,startedAt,actor)]);
  const rows=recent.rows.reverse();
