@@ -1,6 +1,6 @@
 'use strict';
 (()=>{
- const oldSections={'ask-preferences':'ai','ai-spending':'ai','email-alerts':'notifications','account':'advanced','integrity-check':'data'};
+ const oldSections=JSON.parse(document.querySelector('[data-settings-hashes]')?.dataset.settingsHashes||'{}');
  if(!new URLSearchParams(location.search).has('section')&&oldSections[location.hash.slice(1)]){
   location.replace('/settings?section='+oldSections[location.hash.slice(1)]+location.hash);return;
  }

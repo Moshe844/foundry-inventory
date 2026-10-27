@@ -51,6 +51,19 @@ test('Connections, Settings and related pages use their real controls without co
   await page.goto(base+'/settings?section=general');const save=page.getByRole('button',{name:'Save',exact:true});assert(await save.isDisabled());const name=page.getByLabel('Inventory name',{exact:true}),initial=await name.inputValue();await name.fill(initial+' updated');assert(await save.isEnabled());await name.fill(initial);assert(await save.isDisabled());
   await page.goto(base+'/settings?section=ai');assert(await page.getByLabel('Answer style').isVisible());await page.getByLabel('Answer style').fill('Concise');assert(await page.getByRole('button',{name:'Save',exact:true}).isEnabled());
  });
+ await t.test('Settings aliases and legacy links open the canonical section without losing the origin',async()=>{
+  const navigation=require('../../src/web/presentation/navigation'),declare=require('../../src/web/presentation/link-destinations').declare;
+  for(const [alias,section,hash]of [['/team','team','people'],['/settings/team','team','people'],['/profile','advanced','account'],['/account','advanced','account']]){
+   const response=await context.request.get(base+alias+'?q=preserve&section=general',{maxRedirects:0});assert.equal(response.status(),301);
+   const target=new URL(response.headers().location,base);assert.equal(target.searchParams.get('q'),'preserve');assert.equal(target.searchParams.get('section'),section);assert.equal(target.hash,'#'+hash);
+   const visits=[];const record=request=>{if(request.isNavigationRequest()&&request.frame()===page.mainFrame())visits.push(request.url());};page.on('request',record);
+   await page.goto(base+alias);await page.waitForLoadState('networkidle');page.off('request',record);assert.equal(new URL(page.url()).searchParams.get('section'),section);assert.equal(await page.locator('[data-settings-section]').getAttribute('data-settings-section'),section);assert.equal(visits.length,2,'Only the alias and one canonical document may load');assert.equal(await page.locator('a[data-return-to]').count(),0);
+  }
+  for(const [hash,section]of Object.entries(navigation.settingsSectionHashes)){
+   const html=declare('<a href="/settings?q=kept#'+hash+'">Settings control</a>');assert(html.includes('section='+section));assert(html.includes('q=kept'));assert(html.includes('data-dest='));
+  }
+  const origin='/orders?q=keep-this-filter';await page.goto(base+origin);await page.evaluate(()=>{const a=document.createElement('a');a.href='/profile';a.textContent='Open profile for routing verification';document.querySelector('main').append(a);});await page.getByRole('link',{name:'Open profile for routing verification',exact:true}).click();await page.waitForURL('**/settings?section=advanced#account');assert.equal(await page.locator('a[data-return-to]').getAttribute('href'),origin);await page.locator('a[data-return-to]').click();await page.waitForURL(base+origin);
+ });
  await t.test('Orders, Buy, Home, Stock, reports and hero use the requested presentation',async()=>{
   await db.query(`INSERT INTO reorder_policies(id,workspace_id,sku_id,location_id,reorder_point,target_stock,created_at,updated_at) VALUES('stock-pill-test',$1,$2,$3,2,8,now(),now())`,[ctx.workspaceId,f.item.skuIds[0],f.location.id]);
   await page.goto(base+'/inventory/table');assert.equal(await page.locator('td.sc-stock-selection').count(),1);assert.equal(await page.locator('td .badge').filter({hasText:/^Low$/}).count(),1);

@@ -1,7 +1,7 @@
 <% const isOwner=currentUser.role==='owner',section=locals.settingsSection||'general';const sections=[['general','General'],['team','Team'],['notifications','Notifications'],['ai','StockChief AI'],['connections','Connections'],['billing','Plan & billing'],['data','Data'],['advanced','Advanced']]; %>
 <header class="rm-head"><h1>Settings</h1><p>Manage your business, team and StockChief preferences.</p></header>
 <div class="sc-settings-layout"><nav class="sc-settings-nav" aria-label="Settings sections"><% for(const [id,label] of sections){ %><a href="<%= id==='connections'?'/settings/connections':id==='billing'?'/billing':'/settings?section='+id %>" <%- section===id?'aria-current="page"':'' %>><%= label %></a><% } %></nav>
-<div class="sc-settings-content" data-settings-section="<%= section %>">
+<div class="sc-settings-content" data-settings-section="<%= section %>" data-settings-hashes="<%= JSON.stringify(locals.settingsSectionHashes||{}) %>">
 <% if(section==='general'){ %><section class="rm-panel">
       <div class="rm-panel__head">
         <%- helpers.icon('inventory', { size: 15, className: 'rm-quiet' }) %>
