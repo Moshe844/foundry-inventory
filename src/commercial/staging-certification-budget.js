@@ -23,7 +23,7 @@ async function exposure(db,id){
     AND status IN ('RESERVED','UNKNOWN')) AS unresolved`,[id])).rows[0];
  return {committed:Number(row.committed),unresolved:Number(row.unresolved)};
 }
-async function reserve(client,maximumMicroUsd,{fundingId=fundingWorkspaceId(),goalId=null}={}){
+async function reserve(client,maximumMicroUsd,{fundingId=fundingWorkspaceId(),goalId=null,ctx=null,nativeTransport=false}={}){
  if(!fundingId)return null;
  if(!Number.isSafeInteger(maximumMicroUsd)||maximumMicroUsd<=0||maximumMicroUsd>300000)throw Error('INVALID_CERTIFICATION_RESERVATION');
  const pilot=(await client.query("SELECT * FROM stockchief_runtime.codex_pilots WHERE workspace_id=$1 AND admission_kind='PILOT' FOR UPDATE",[fundingId])).rows[0];
@@ -31,10 +31,21 @@ async function reserve(client,maximumMicroUsd,{fundingId=fundingWorkspaceId(),go
  const used=await exposure(client,fundingId);
  if(used.unresolved)throw Error('CERTIFICATION_UNRESOLVED');
  if(used.committed+maximumMicroUsd>Number(pilot.ceiling_micro_usd))throw Error('CERTIFICATION_SPENDING_CEILING');
- if(goalId){const goal=(await client.query(`SELECT coalesce(sum(CASE WHEN state='SETTLED' THEN charged ELSE reserved END),0) AS amount
+ if(goalId){let goalCeiling=1000000;
+  // Use the same exact, expiring human grant as the native commercial guard.
+  // No grant changes the default, the shared pool, or a different goal/actor.
+  if(nativeTransport&&ctx){const owned=(await client.query(`SELECT g.id,g.actor_user_id,g.budget_minor,g.checkpoint->>'runtime' AS runtime,w.owner_account_id
+    FROM stockchief_runtime.assistant_goals g JOIN workspaces w ON w.id=g.workspace_id
+    WHERE g.id=$1 AND g.workspace_id=$2 AND g.actor_user_id=$3`,[goalId,ctx.workspaceId,ctx.actorId])).rows[0];
+   if(!owned)throw Error('CERTIFICATION_GOAL_SCOPE_INVALID');
+   const limit=await require('./staging-native-goal-cost-approval').effective(client,{accountId:owned.owner_account_id,workspaceId:ctx.workspaceId},
+    {id:owned.id,actorId:owned.actor_user_id,runtime:owned.runtime,budgetMinor:Number(owned.budget_minor)},{nativeTransport:true});
+   if(limit.approval)goalCeiling=Math.max(goalCeiling,limit.maximumMinor*10000);
+  }
+  const goal=(await client.query(`SELECT coalesce(sum(CASE WHEN state='SETTLED' THEN charged ELSE reserved END),0) AS amount
    FROM stockchief_runtime.codex_pilot_calls WHERE goal_id=$1
     AND (funding_workspace_id=$2 OR detail->>'certificationFundingWorkspaceId'=$2)`,[goalId,fundingId])).rows[0];
-  if(Number(goal.amount)+maximumMicroUsd>1000000)throw Error('CERTIFICATION_GOAL_CEILING');}
+  if(Number(goal.amount)+maximumMicroUsd>goalCeiling)throw Error('CERTIFICATION_GOAL_CEILING');}
  return fundingId;
 }
 function detail(value={},fundingId=null){

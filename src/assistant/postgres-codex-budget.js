@@ -24,7 +24,7 @@ function createBudget(db,ctx,goalId){
    if(candidate!=='codex'||task!==goalId||!Number.isSafeInteger(upperBoundMicroUsd)||upperBoundMicroUsd<=0||upperBoundMicroUsd>300000)throw Error('INVALID_PILOT_RESERVATION');
    return db.transaction(async client=>{
     const pool=require('../commercial/staging-certification-budget');
-    const certificationFundingWorkspaceId=await pool.reserve(client,upperBoundMicroUsd,{goalId});
+    const certificationFundingWorkspaceId=await pool.reserve(client,upperBoundMicroUsd,{goalId,ctx,nativeTransport:true});
     const {pilot}=await require('./postgres-codex-pilot').access(client,ctx,{enabled:true});
     await client.query('SELECT workspace_id FROM stockchief_runtime.codex_pilots WHERE workspace_id=$1 FOR UPDATE',[pilot.funding_workspace_id]);
     await require('./postgres-codex-pilot').access(client,ctx,{enabled:true});const state=await status(client);
