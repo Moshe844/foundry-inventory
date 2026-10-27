@@ -267,7 +267,7 @@ async function lookupRecords(database,ctx,request,options={}) {
         updatedAt:row.updated_at})),
     ];
     const detail=rows.map((row)=>row.kind==='stock_warning'
-      ?`${row.sku} ${row.location}: monitoring enabled for a Needs You warning ${row.comparator==='below'?'strictly below':'at or below'} ${row.threshold} ${row.metric==='available_to_fulfill'?'available to fulfill':'physically on hand'}; it does not email or purchase. Next threshold notification: ${row.armed?'ready':'waiting for stock recovery before another notification'}. Recorded warning: ${row.currentWarning?row.currentWarning.status+' — '+row.currentWarning.title:'none'}.`
+      ?`${row.sku} ${row.location}: monitoring enabled for a Needs You warning ${row.comparator==='below'?'strictly below':'at or below'} ${row.threshold} ${row.metric==='available_to_fulfill'?'available to fulfill':'physically on hand'}; ${row.externalEmail?'it emails '+row.notification.recipient+' through '+row.notification.mailbox+' once per crossing. Last email: '+(row.notification.lastDelivery?.messageStatus||row.notification.lastDelivery?.status||'none'):'it does not email'}. It never purchases. Next threshold notification: ${row.armed?'ready':'waiting for stock recovery before another notification'}. Recorded warning: ${row.currentWarning?row.currentWarning.status+' — '+row.currentWarning.title:'none'}.`
       :`${row.kind.replaceAll('_',' ')}: ${JSON.stringify(row)}`).join(' ');
     return {answer:rows.length?`Current in-force settings: ${detail}`:
       'No current approved operating rule matched that request.',rows,inactiveStockWarnings,stockWarningCoverage,
