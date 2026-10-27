@@ -164,7 +164,14 @@
      const timeline=panel.querySelector('[data-goal-timeline]');
      if(timeline){timeline.replaceChildren();for(const row of rows){const li=document.createElement('li');li.textContent=row.label;timeline.append(li);}}
      if(['COMPLETED','BLOCKED','CANCELLED'].includes(status)){
-      panel.dataset.active='false';hint.textContent='';if(changed&&panel.dataset.goalLatest==='true'){const input=document.querySelector('#tell-foundry textarea[name=message]');if(input&&!document.querySelector('dialog[open]')&&([document.body,input].includes(document.activeElement)||document.activeElement?.closest('#tell-foundry')))input.focus({preventScroll:true});}
+      panel.dataset.active='false';hint.textContent='';if(changed&&panel.dataset.goalLatest==='true'){
+       const input=document.querySelector('#tell-foundry textarea[name=message]'),active=document.activeElement;
+       // Fragment navigation focuses a non-interactive answer marker. Treat
+       // that like page focus, while preserving a field or control the user
+       // deliberately selected elsewhere during the investigation.
+       const otherControl=active?.matches('input,textarea,select,button,a[href],[contenteditable="true"]')&&!active.closest('#tell-foundry');
+       if(input&&!input.disabled&&!document.querySelector('dialog[open]')&&!otherControl)input.focus({preventScroll:true});
+      }
       const stop=panel.querySelector('form[action$="/cancel"]');if(stop)stop.hidden=true;
       panel.querySelector('[data-goal-elapsed]').hidden=true;
      }
