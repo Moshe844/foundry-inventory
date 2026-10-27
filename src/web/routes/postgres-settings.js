@@ -108,7 +108,7 @@ async function settingsPage(database,req,res){const [counts,users,instructions,e
   const feed=feedRows.rows[0]||null;const problems=Object.entries(integrity.result||{}).filter(([key,value])=>key!=='ok'&&Number(value)>0)
     .map(([kind,value])=>({kind:kind.replaceAll('_',' '),detail:`${value} record${Number(value)===1?'':'s'} do not reconcile.`}));
   const newFeedToken=req.session.newFeedToken||null;delete req.session.newFeedToken;
-  return res.page('settings',{title:'Settings',nav:'settings',room:true,postgresMode:true,developerAccounts:process.env.STOCKCHIEF_RUNTIME_ENV==='staging'&&Boolean((await database.query('SELECT 1 FROM developer_account_administrators WHERE account_id=$1',[req.account?.id])).rows.length),users:users.rows,workspace:req.workspace,
+  return res.page('settings',{title:'Settings',nav:'settings',room:true,postgresMode:true,settingsSection:['general','team','notifications','ai','data','advanced'].includes(req.query.section)?req.query.section:'general',users:users.rows,workspace:req.workspace,
     integrity:{...integrity,ok:integrity.result?.ok,problems},eventFeed:{configured:Boolean(feed),connected:feed?.status==='connected',
       recentEvents:events.rows.map((event)=>({eventId:event.external_event_id,type:event.event_type,status:event.status,
         error:event.error_message,processedAt:event.processed_at}))},newFeedToken,learnedInstructions:instructions.rows.map(instructionFrom),
@@ -131,8 +131,8 @@ function createPostgresSettingsRouter(database,options={}){const router=express.
     title:'Everything else',nav:'settings',room:true,sections,
   })));
   router.get('/settings',requireAuth,asyncRoute(async(req,res)=>settingsPage(database,req,res)));
-  router.post('/settings/ask-preferences',requireOwner,asyncRoute(async(req,res)=>{await require('../../assistant/postgres-answer-preferences').save(database,req.ctx,req.body);req.flash('success','Ask language, style and business time zone saved. Historical accounting corrections are reviewed separately.');return res.redirect(303,'/settings#ask-preferences');}));
-  router.post('/settings/ai-spending',requireOwner,asyncRoute(async(req,res)=>{await require('../../commercial/ai-spending-limits').save(database,req.ctx,req.body);req.flash('success','Your AI spending limits were saved for this billing period. Credits, provider prices and separate request, goal and test-authority guards were not changed.');return res.redirect(303,'/settings#ai-spending');}));
+  router.post('/settings/ask-preferences',requireOwner,asyncRoute(async(req,res)=>{await require('../../assistant/postgres-answer-preferences').save(database,req.ctx,req.body);req.flash('success','Ask language, style and business time zone saved. Historical accounting corrections are reviewed separately.');return res.redirect(303,'/settings?section=ai#ask-preferences');}));
+  router.post('/settings/ai-spending',requireOwner,asyncRoute(async(req,res)=>{await require('../../commercial/ai-spending-limits').save(database,req.ctx,req.body);req.flash('success','Your AI spending limits were saved for this billing period. Credits, provider prices and separate request, goal and test-authority guards were not changed.');return res.redirect(303,'/settings?section=advanced#ai-spending');}));
   router.post('/settings/integrity/check',requireAuth,asyncRoute(async(req,res)=>{
     res.set('Cache-Control','no-store');return res.json(await require('../../operations/postgres-integrity-check').run(database,req.ctx.workspaceId));
   }));
@@ -197,11 +197,11 @@ function createPostgresSettingsRouter(database,options={}){const router=express.
       recipients=EXCLUDED.recipients,updated_at=EXCLUDED.updated_at`,[req.ctx.workspaceId,enabled?1:0,minimum,JSON.stringify(recipients),at]);
     req.flash(enabled&&!config.email.configured?'warn':'success',enabled&&!config.email.configured
       ?'Alert preferences are saved. Server email delivery still needs a verified sender.'
-      :enabled?'Automatic email alerts are on.':'Automatic email alerts are off.');return res.redirect(303,'/settings#email-alerts');
+      :enabled?'Automatic email alerts are on.':'Automatic email alerts are off.');return res.redirect(303,'/settings?section=notifications#email-alerts');
   }));
   router.post('/settings/email-alerts/test',requireOwner,asyncRoute(async(req,res)=>{
     if(!config.email.configured){req.flash('warn','This server does not have a verified email sender. No test email was sent.');
-      return res.redirect(303,'/settings#email-alerts');}
+      return res.redirect(303,'/settings?section=notifications#email-alerts');}
     const recipient=String(req.account.email||'').trim();
     const sealed=require('../../connections/credentials').encrypt({to:recipient,
       subject:'[StockChief] Email alert delivery test',
@@ -211,7 +211,7 @@ function createPostgresSettingsRouter(database,options={}){const router=express.
       kind:'system.email-send',idempotencyKey:`email-alert-test:${req.ctx.workspaceId}:${req.account.id}:${Math.floor(Date.now()/60000)}`,
       payload:{messageType:'email_alert_test',accountId:req.account.id,sealed},priority:5,maxAttempts:8});
     req.flash('success',`Test email queued for ${recipient}. Delivery may take a moment; check your inbox.`);
-    return res.redirect(303,'/settings#email-alerts');
+    return res.redirect(303,'/settings?section=notifications#email-alerts');
   }));
   router.post('/settings/event-feed/enable',requireOwner,asyncRoute(async(req,res)=>{const existing=(await database.query(`SELECT id FROM workspace_connectors
       WHERE workspace_id=$1 AND provider_type='reference_webhook' ORDER BY updated_at DESC LIMIT 1`,[req.ctx.workspaceId])).rows[0];

@@ -48,8 +48,8 @@ test('real Chromium connects each inventory to its own Stripe account without re
     await page.goto(`${base}/settings/connections#payments`);
     const returnScript=await page.locator('script[src^="/connection-return.js"]').getAttribute('src');
     assert.equal(new URL(returnScript,base).searchParams.get('v'),String(app.locals.assetVersion),'Return scripts must follow the application asset version, not a stale cached literal');
-    assert.match(await page.locator('main').innerText(),/Each inventory uses the business’s own Stripe account/);
-    const link=page.getByRole('link',{name:'Connect existing Stripe account'});assert.equal(await link.getAttribute('target'),'_self');const opened=page.waitForEvent('popup');await link.click();
+    assert.match(await page.locator('main').innerText(),/Collect invoice payments in your own merchant account/);
+    const link=page.getByRole('link',{name:'Connect Stripe'});assert.notEqual(await link.getAttribute('target'),'_blank');const opened=page.waitForEvent('popup');await link.click();
     const popup=await opened;
     await popup.waitForURL(/fixture-stripe-consent/);await popup.waitForLoadState('domcontentloaded');
     await popup.getByRole('heading',{name:'Stripe test authorization'}).waitFor();
@@ -75,7 +75,7 @@ test('real Chromium connects each inventory to its own Stripe account without re
 
     accountReady=true;
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Check Stripe status'}).click()]);
-    assert.match(await page.locator('main').innerText(),/ready to take payments/);
+    assert.match(await page.locator('main').innerText(),/Ready to take payments/);
     assert.equal(Number((await database.query('SELECT charges_enabled FROM payment_connect_accounts WHERE workspace_id=$1',
       [ownerAccount.workspace_id])).rows[0].charges_enabled),1,'Stripe capability verification must be durably recorded.');
 
@@ -86,15 +86,15 @@ test('real Chromium connects each inventory to its own Stripe account without re
     await Promise.all([other.waitForURL(`${base}/onboarding`),other.getByRole('button',{name:'Create account'}).click()]);
     await other.goto(`${base}/settings/connections#payments`);
     assert.equal(await other.getByText('Owner Stripe Sandbox').count(),0);
-    assert.equal(await other.getByRole('link',{name:'Connect existing Stripe account'}).count(),1);
+    assert.equal(await other.getByRole('link',{name:'Connect Stripe'}).count(),1);
     await otherContext.close();
 
     await page.getByRole('button',{name:'Disconnect Stripe'}).click();
-    const confirmation=page.getByRole('dialog');await confirmation.waitFor();
+    const confirmation=page.getByRole('dialog').filter({hasText:'Nothing happens until you choose.'});await confirmation.waitFor();
     await Promise.all([page.waitForNavigation(),confirmation.getByRole('button',{name:'Disconnect Stripe'}).click()]);
     assert.equal(releasedAccount,'acct_fixture_owner');
     assert.equal(await page.getByText('Owner Stripe Sandbox').count(),0);
-    assert.equal(await page.getByRole('link',{name:'Connect existing Stripe account'}).count(),1);
+    assert.equal(await page.getByRole('link',{name:'Connect Stripe'}).count(),1);
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM payment_connect_accounts
       WHERE workspace_id=$1`,[ownerAccount.workspace_id])).rows[0].count,'0');
     assert.deepEqual(errors,[]);

@@ -1,0 +1,58 @@
+[
+  {
+    "type": "shopify",
+    "url": "https://raw.githubusercontent.com/simple-icons/simple-icons/11.15.0/icons/shopify.svg",
+    "license": "CC0 Simple Icons; respective trademarks remain with their owners"
+  },
+  {
+    "type": "woocommerce",
+    "url": "https://raw.githubusercontent.com/simple-icons/simple-icons/11.15.0/icons/woocommerce.svg",
+    "license": "CC0 Simple Icons; respective trademarks remain with their owners"
+  },
+  {
+    "type": "bigcommerce",
+    "url": "https://raw.githubusercontent.com/simple-icons/simple-icons/11.15.0/icons/bigcommerce.svg",
+    "license": "CC0 Simple Icons; respective trademarks remain with their owners"
+  },
+  {
+    "type": "square",
+    "url": "https://raw.githubusercontent.com/simple-icons/simple-icons/11.15.0/icons/square.svg",
+    "license": "CC0 Simple Icons; respective trademarks remain with their owners"
+  },
+  {
+    "type": "gmail",
+    "url": "https://raw.githubusercontent.com/simple-icons/simple-icons/11.15.0/icons/gmail.svg",
+    "license": "CC0 Simple Icons; respective trademarks remain with their owners"
+  },
+  {
+    "type": "quickbooks",
+    "url": "https://raw.githubusercontent.com/simple-icons/simple-icons/11.15.0/icons/quickbooks.svg",
+    "license": "CC0 Simple Icons; respective trademarks remain with their owners"
+  },
+  {
+    "type": "xero",
+    "url": "https://raw.githubusercontent.com/simple-icons/simple-icons/11.15.0/icons/xero.svg",
+    "license": "CC0 Simple Icons; respective trademarks remain with their owners"
+  },
+  {
+    "type": "stripe",
+    "url": "https://raw.githubusercontent.com/simple-icons/simple-icons/11.15.0/icons/stripe.svg",
+    "license": "CC0 Simple Icons; respective trademarks remain with their owners"
+  },
+  {
+    "type": "microsoft365",
+    "url": "https://raw.githubusercontent.com/simple-icons/simple-icons/11.15.0/icons/microsoft.svg",
+    "license": "CC0 Simple Icons; respective trademarks remain with their owners"
+  },
+  {
+    "type": "cardknox",
+    "url": "https://solapayments.com/wp-content/uploads/Sola_Logo-Pos_Clr_RGB.svg",
+    "license": "Provider-published logo; Sola trademark"
+  },
+  {
+    "type": "clover",
+    "url": "https://files.readme.io/6f06232-clover-icon1.svg",
+    "sourcePage": "https://docs.clover.com/",
+    "license": "Provider-published favicon; Clover trademark"
+  }
+]

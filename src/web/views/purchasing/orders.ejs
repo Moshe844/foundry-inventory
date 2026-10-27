@@ -1,4 +1,4 @@
-<form role="search" method="get" action="/purchasing/orders" class="form-actions"><label class="field"><span>Search purchase orders</span><input class="input" type="search" name="q" value="<%= locals.q||'' %>" placeholder="Order number or contact name"></label><input type="hidden" name="view" value="<%= locals.view||'all' %>"><button class="btn" type="submit">Search</button></form>
+
 <%
   /*
    * Purchases, as a list of stories.
@@ -56,8 +56,8 @@
   function dollars(o) { return o.subtotal ? ' · $' + Math.round(o.subtotal).toLocaleString('en-US') : ''; }
 %>
 
-<p class="rm-stamp"><%= counts.open %> on the way · <%= counts.waiting %> waiting on you · <%= counts.done %> done</p>
-<h1 class="rm-figure">
+<h1>Purchase orders</h1>
+<p class="rm-sub">
   <% if (view === 'late') { %>
     <%= counts.late %> purchase<%= counts.late === 1 ? ' is' : 's are' %> late.
   <% } else if (view === 'waiting') { %>
@@ -75,16 +75,10 @@
   <% } else { %>
     Nothing is on order.
   <% } %>
-</h1>
-<p class="rm-sub">
-  <% if (!orders.length) { %>
-    StockChief prepares these when stock falls below where you want it. Nothing is ever sent to a
-    supplier without your approval, unless you have given it a limit you are happy with.
-  <% } else { %>
-    Each of these is a story: why it exists, who was told what, when it arrives and what it costs.
-  <% } %>
 </p>
 
+
+<form role="search" method="get" action="/purchasing/orders" class="form-actions"><label class="field"><span>Search purchase orders</span><input class="input" type="search" name="q" value="<%= locals.q||'' %>" placeholder="Order number or contact name"></label><input type="hidden" name="view" value="<%= locals.view||'all' %>"><button class="btn" type="submit">Search</button></form>
 <div class="rm-choices" style="margin:4px 0 18px">
   <% if (permissions.create) { %><a class="rm-btn" href="/purchasing/orders/new"><%- helpers.icon('plus', { size: 15 }) %> Write a purchase order</a><% } %>
   <% if (permissions.receive) { %><a class="rm-btn rm-btn--ghost" href="/purchasing/receive"><%- helpers.icon('receive', { size: 15 }) %> Book in a delivery</a><% } %>

@@ -1,4 +1,4 @@
-<form role="search" method="get" action="/orders" class="form-actions"><label class="field"><span>Search customer orders</span><input class="input" type="search" name="q" value="<%= locals.q||'' %>" placeholder="Order number or contact name"></label><input type="hidden" name="view" value="<%= locals.view||'all' %>"><button class="btn" type="submit">Search</button></form>
+
 <%
   /*
    * Customer orders, as a list of stories rather than a table of rows.
@@ -48,9 +48,8 @@
 <p><a class="rm-btn rm-btn--ghost" href="/quotes">Customer quotes</a></p>
 
 
-<p class="rm-stamp"><%= counts.stuck %> fulfilment exceptions · <%= waiting.length %> waiting for stock · <%= counts.ready + counts.moving %> ready or moving · <%= counts.unpaid %> unpaid · <%= counts.done %> done</p>
-<p><a href="/returns">Customer returns and refunds</a></p>
-<h1 class="rm-figure">
+<h1>Orders</h1>
+<p class="rm-sub">
   <% if (view === 'stuck') { %><%= counts.stuck %> order<%= counts.stuck === 1 ? ' needs' : 's need' %> you.
   <% } else if (view === 'ready') { %><%= counts.ready %> order<%= counts.ready === 1 ? ' is' : 's are' %> ready to pick.
   <% } else if (view === 'moving') { %><%= counts.moving %> order<%= counts.moving === 1 ? ' is' : 's are' %> being picked or shipped.
@@ -58,32 +57,12 @@
   <% } else if (view === 'done') { %><%= counts.done %> order<%= counts.done === 1 ? ' is' : 's are' %> done.
   <% } else if (!counts.stuck && !counts.ready && !counts.moving && counts.unpaid) { %><%= counts.unpaid %> completed order<%= counts.unpaid === 1 ? ' is' : 's are' %> still unpaid.
   <% } else { %><%= summary %><% } %>
-</h1>
-<p class="rm-sub">
-  <% if (!orders.length) { %>
-    No customer orders yet. When one arrives — typed here, emailed in, or through a connected shop —
-    it becomes a page that tells the whole story of it.
-  <% } else if (stuck.length && view === 'all') { %>
-    The ones that need you are first. Everything below them is moving on its own.
-  <% } else if (waiting.length && view === 'all') { %>
-    <%= waiting.length %> orders are waiting for physical stock. Incoming purchases do not count as available; open an order to review its shortage and supply dates.
-  <% } else if (open.length && counts.unpaid && view === 'all') { %>
-    Open the active <%= open.length === 1 ? 'order' : 'orders' %> to see the current fulfilment step, or follow up on the completed <%= counts.unpaid === 1 ? 'order that still needs' : 'orders that still need' %> payment.
-  <% } else if (open.length) { %>
-    Nothing is stuck. <%= open.length === 1 ? 'The active order is' : 'These active orders are' %> moving.
-  <% } else if (counts.done && !counts.unpaid) { %>
-    No active order is waiting. Completed and cancelled orders remain below as history.
-  <% } else if (counts.unpaid) { %>
-    Nothing is waiting to fulfil, but <%= counts.unpaid === 1 ? 'one completed order has' : counts.unpaid + ' completed orders have' %> not been paid for.
-  <% } else { %>
-    No active order is waiting.
-  <% } %>
 </p>
 
 
+
+<form role="search" method="get" action="/orders" class="form-actions"><label class="field"><span>Search customer orders</span><input class="input" type="search" name="q" value="<%= locals.q||'' %>" placeholder="Order number or contact name"></label><input type="hidden" name="view" value="<%= locals.view||'all' %>"><button class="btn" type="submit">Search</button></form>
 <div class="rm-choices" style="margin:4px 0 18px">
-  <a class="rm-btn rm-btn--ghost" href="/fulfilment">Picking and packing</a>
-  <a class="rm-btn rm-btn--ghost" href="/customers">Customers</a>
   <% if (!locals.postgresQuickEntry) { %><a class="rm-btn rm-btn--ghost" href="/sales/customers/new">Add a customer</a><% } %>
 </div>
 

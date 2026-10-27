@@ -11,6 +11,7 @@ const launchPolicy=require('./launch-policy');
 const jobs=require('../operations/postgres-job-queue');
 const entitlements=require('../entitlements/postgres-service');
 const commercial=require('../commercial/service');
+const intents=require('./authorization-intent');
 
 const stateHash=(value)=>crypto.createHash('sha256').update(String(value)).digest('hex');
 const parseJson=(value)=>connections.parseJson(value,{});
@@ -28,27 +29,22 @@ async function beginAuthorization(database,ctx,input,requestOrigin,options={}){
     adapter.integrationClass==='accounting'?'connections.accounting':'connections.commerce');
   if(!meta.available)throw new ValidationError(meta.unavailableReason||`${meta.name} is not configured.`);
   if(adapter.validateInput)adapter.validateInput(input);
-  const connectorId=input.connectorId||newId('con');
+  const pending=intents.draft(ctx.workspaceId,ctx.actorId,providerType,{name:input.displayName||meta.name,
+    provides:meta.provides,config:{autoImportCatalog:Boolean(adapter.catalogueCapabilities?.length)&&adapter.integrationClass!=='accounting',
+      autoImportOpeningStock:Boolean(adapter.catalogueCapabilities?.length)&&adapter.integrationClass!=='accounting'}});
+  const connectorId=input.connectorId||null;
   const state=crypto.randomBytes(32).toString('base64url');
   const now=nowIso();
   const origin=options.publicOrigin||providerOrigin(requestOrigin);
   let auth;
   await database.transaction(async(client)=>{
     if(input.connectorId){
-      const existing=await client.query(`UPDATE workspace_connectors SET setup_status='AUTHORIZING',
-        status='disconnected',authorized_by_user_id=$3,last_error=NULL,updated_at=$4
-        WHERE workspace_id=$1 AND id=$2 AND provider_type=$5 RETURNING id`,
-      [ctx.workspaceId,connectorId,ctx.actorId,now,providerType]);
+      const existing=await client.query(`SELECT id FROM workspace_connectors
+        WHERE workspace_id=$1 AND id=$2 AND provider_type=$3`,[ctx.workspaceId,connectorId,providerType]);
       if(!existing.rows.length)throw new NotFoundError('Connection not found.');
     }else{
       const commercialScope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId);
       await entitlements.assertMeterCapacity(client,commercialScope,'connections',1);
-      await client.query(`INSERT INTO workspace_connectors
-        (id,workspace_id,connector_key,display_name,provider_type,status,capabilities,provides,config,
-         expected_interval_minutes,setup_status,authorized_by_user_id,created_at,updated_at)
-        VALUES($1,$2,$3,$4,$5,'disconnected','[]',$6,$10,$7,'AUTHORIZING',$8,$9,$9)`,
-      [connectorId,ctx.workspaceId,`${providerType}:${connectorId}`,input.displayName||meta.name,providerType,
-        JSON.stringify(meta.provides||[]),1,ctx.actorId,now,JSON.stringify({autoImportCatalog:Boolean(adapter.catalogueCapabilities?.length)&&adapter.integrationClass!=='accounting',autoImportOpeningStock:Boolean(adapter.catalogueCapabilities?.length)&&adapter.integrationClass!=='accounting'})]);
     }
     auth=adapter.authorizationUrl({state,input:{...input,
       redirectUri:`${origin}/settings/connections/${providerType}/callback`,
@@ -58,7 +54,7 @@ async function beginAuthorization(database,ctx,input,requestOrigin,options={}){
       (id,state_hash,workspace_id,connector_id,provider_type,actor_id,metadata,expires_at,created_at)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,[newId('cauth'),stateHash(state),ctx.workspaceId,connectorId,
       providerType,ctx.actorId,JSON.stringify({...auth.metadata,returnOrigin:requestOrigin,
-        popup:String(input.popup||'')==='1'}),new Date(Date.now()+15*60000).toISOString(),now]);
+        popup:String(input.popup||'')==='1',...(!connectorId?{pendingConnection:pending}:{})}),new Date(Date.parse(now)+intents.TTL_MS).toISOString(),now]);
   },{isolation:'SERIALIZABLE',retrySafe:true});
   return {connectorId,redirectUrl:auth.url,...(adapter.oauthSessionBound?{authorizationState:state}:{})};
 }
@@ -80,11 +76,12 @@ async function readState(database,state,providerType,{consume=false}={}){
 
 async function callbackContext(database,stateValue,providerType){
   const state=await readState(database,stateValue,providerType);
-  return {connection:await connections.get(database,state.workspace_id,state.connector_id),
+  return {connection:state.connector_id?await connections.get(database,state.workspace_id,state.connector_id):null,
+    workspaceId:state.workspace_id,
     returnOrigin:state.metadata.returnOrigin||null,popup:Boolean(state.metadata.popup)};
 }
 
-async function finishAuthorization(database,connection,actorId,result){
+async function finishAuthorization(database,connection,actorId,result,authorizationStateId=null){
   return database.transaction(async(client)=>{
     const authorizer=(await client.query("SELECT role FROM users WHERE workspace_id=$1 AND id=$2 FOR UPDATE",[connection.workspace_id,actorId])).rows[0];
     if(authorizer?.role!=='owner')throw new AuthenticationError('The owner who started this connection no longer has permission to authorize it. Start again with a current owner.');
@@ -99,11 +96,9 @@ async function finishAuthorization(database,connection,actorId,result){
         WHERE workspace_id=$1 AND provider_type=$2 AND provider_account_id=$3 AND id<>$4
           AND status='connected' ORDER BY updated_at DESC LIMIT 1 FOR UPDATE`,
       [connection.workspace_id,connection.provider_type,result.accountId,connection.id]);
-      if(established.rows.length&&connection.setup_status==='AUTHORIZING'&&!connection.credential_ref){
+      if(established.rows.length&&connection._pending){
         await client.query('UPDATE connection_authorization_states SET connector_id=$3 WHERE workspace_id=$1 AND connector_id=$2',
           [connection.workspace_id,connection.id,established.rows[0].id]);
-        await client.query('DELETE FROM workspace_connectors WHERE workspace_id=$1 AND id=$2',
-          [connection.workspace_id,connection.id]);
         target=established.rows[0];
       }
     }
@@ -111,6 +106,7 @@ async function finishAuthorization(database,connection,actorId,result){
     // actual target atomically; another connection may have taken the slot.
     const delta=await require('../commercial/connection-capacity').activationDelta(client,target.workspace_id,target.id);
     await entitlements.assertMeterCapacity(client,scope,'connections',delta);
+    if(target._pending)await intents.insert(client,target);
     await credentials.put(client,target.workspace_id,target.id,'provider',result.credentials,result.expiresAt||null);
     const currentConfig=parseJson(target.config);
     const safeConfig={...currentConfig};
@@ -130,6 +126,8 @@ async function finishAuthorization(database,connection,actorId,result){
         WHERE workspace_id=$1 AND provider_type=$2 AND provider_account_id=$3 AND id<>$4
           AND status<>'disconnected'`,[target.workspace_id,target.provider_type,result.accountId,target.id,now]);
     }
+    if(authorizationStateId)await client.query('UPDATE connection_authorization_states SET connector_id=$2 WHERE id=$1 AND workspace_id=$3 AND actor_id=$4',
+      [authorizationStateId,target.id,target.workspace_id,actorId]);
     const owner=(await client.query('SELECT owner_account_id FROM workspaces WHERE id=$1',[target.workspace_id])).rows[0];
     if(owner?.owner_account_id)await commercial.trackOnce(client,{eventName:'first_integration_connected',
       accountId:owner.owner_account_id,sourcePath:'provider_authorization',detail:{providerType:target.provider_type}});
@@ -191,7 +189,8 @@ async function completeOAuth(database,providerType,query,requestOrigin,options={
   if(registry===defaultProviders&&process.env.STOCKCHIEF_RUNTIME_ENV!=='staging')launchPolicy.assertNewConnection(providerType);
   const state=await readState(database,query.state,providerType,{consume:true});
   if(registry===defaultProviders)await launchPolicy.assertWorkspaceConnection(database,providerType,{workspaceId:state.workspace_id});
-  const connection=await connections.get(database,state.workspace_id,state.connector_id);
+  const connection=await intents.connectionForState(database,state);
+  let authorized=false;
   try{
     const result=await require('../commercial/operations').run(database,connection.workspace_id,{capability:
       ['gmail','microsoft365'].includes(providerType)?'communications.email_ingestion':adapter.integrationClass==='accounting'?'connections.accounting':'connections.commerce',
@@ -200,7 +199,8 @@ async function completeOAuth(database,providerType,query,requestOrigin,options={
       result.verifiedFact=await require('../commercial/operations').run(database,connection.workspace_id,{capability:'connections.accounting',
         key:`oauth-verify:${state.id}`,provider:providerType,operation:'accounting_verify'},()=>adapter.verifyReadOnly({credentials:result.credentials,connection}));
     }
-    const connectorId=await finishAuthorization(database,connection,state.actor_id,result,requestOrigin);
+    const connectorId=await finishAuthorization(database,connection,state.actor_id,result,state.id);
+    authorized=true;
     let connected=await connections.get(database,state.workspace_id,connectorId);
     if(adapter.integrationClass==='accounting'&&result.verifiedFact){
       const accountingSync=require('../accounting/postgres-integration-sync');
@@ -213,9 +213,10 @@ async function completeOAuth(database,providerType,query,requestOrigin,options={
       payload:{connectorId:connected.id,source:'authorization'},priority:25,maxAttempts:5});
     return connected;
   }catch(error){
-    await database.query(`UPDATE workspace_connectors SET status='error',setup_status='AUTHORIZATION_FAILED',
-      last_error=$3,updated_at=$4 WHERE workspace_id=$1 AND id=$2`,[connection.workspace_id,connection.id,
-      String(error.message||'Authorization failed.').slice(0,500),nowIso()]);
+    // Denied or abandoned replacement consent never destroys a working grant.
+    // Post-authorization setup has its own durable jobs/issues and may retry.
+    if(!authorized)await database.query(`UPDATE connection_authorization_states
+      SET metadata=(metadata::jsonb||'{"authorizationFailed":true}'::jsonb)::text WHERE id=$1`,[state.id]);
     throw error;
   }
 }

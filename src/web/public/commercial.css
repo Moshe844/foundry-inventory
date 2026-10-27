@@ -89,3 +89,6 @@ a{color:inherit}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin
 
 /* Keep availability and billing text distinct at every viewport. */
 .plan-price {display:flex;flex-wrap:wrap;align-items:baseline;gap:.4rem .7rem;}
+
+/* Example records are content, so their visibility never depends on animation. */
+.operation-map .flow-card{opacity:1;transform:none;animation:none}

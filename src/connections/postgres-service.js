@@ -54,6 +54,7 @@ const SELECT=`SELECT connector.*,
 
 async function list(database,workspaceId,options={}){
   const result=await database.query(`${SELECT} WHERE connector.workspace_id=$1
+    AND (connector.first_connected_at IS NOT NULL OR connector.status='connected')
     ORDER BY CASE connector.status WHEN 'connected' THEN 0 WHEN 'error' THEN 1 ELSE 2 END,
       connector.updated_at DESC,LOWER(connector.display_name)`,[workspaceId]);
   return result.rows.map((row)=>hydrate(row,options.now));

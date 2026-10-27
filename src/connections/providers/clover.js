@@ -17,6 +17,7 @@ function metadata() {
   return {
     type: 'clover', name: 'Clover', mark: 'C', category: 'selling', authMode: 'oauth',
     available: config.connections.clover.configured,
+    sandboxMode: config.connections.clover.environment==='sandbox',
     description: 'Connect a Clover merchant to receive completed sales, refunds, and inventory catalog changes.',
     provides: ['completed POS sales', 'refund evidence', 'catalog SKUs and merchant location'],
     unavailableReason: config.connections.clover.configured ? null

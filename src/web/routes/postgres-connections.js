@@ -40,7 +40,7 @@ function createPostgresConnectionsRouter(database,options={}){
   async function connectionAllowed(req,res,providerType){
     const type=String(providerType||'').toLowerCase();const capability={gmail:'connection.email',microsoft365:'connection.email',
       shopify:'connection.commerce',square:'connection.commerce',clover:'connection.commerce',woocommerce:'connection.commerce',bigcommerce:'connection.commerce',
-      quickbooks:'connection.accounting',xero:'connection.accounting'}[type];
+      quickbooks:'connection.accounting',xero:'connection.accounting',stripe:'payments.customer'}[type];
     if(!capability)return true;
     const state=await entitlements.capabilityState(database,commercialScope(req),capability);
     if(state.enabled)return true;
@@ -57,19 +57,20 @@ function createPostgresConnectionsRouter(database,options={}){
     const providerCatalog=inventorySetup?registry.inventorySources(providerContext,{oauthOnly:true}):registry.catalog(providerContext,{oauthOnly:true});
     const qualifiedTestConnect=require('../../payments/connect-availability').qualified(options);
     const launchTicket=crypto.randomBytes(24).toString('base64url');
-    req.session.connectionLaunch={ticket:launchTicket,workspaceId:req.ctx.workspaceId,expiresAt:Date.now()+5*60000};
+    req.session.connectionLaunch={ticket:launchTicket,workspaceId:req.ctx.workspaceId,expiresAt:Date.now()+30*60000};
     const requestOrigin=`${req.protocol}://${req.get('host')}`;
     const requestPublicOrigin=options.publicOrigin==='request'?requestOrigin:(options.publicOrigin||requestOrigin);
     const connectionCapabilities=[['connection.email','communications.email_ingestion'],
-      ['connection.commerce','connections.commerce'],['connection.accounting','connections.accounting']];
+      ['connection.commerce','connections.commerce'],['connection.accounting','connections.accounting'],['payments.customer','payments.customer']];
     const [connectionRows,clients,payment,shipping,capabilityStates,connectionCapacity]=await Promise.all([
       connections.list(database,req.ctx.workspaceId),publicApi.list(database,req.ctx.workspaceId),
       paymentConnect.describe(database,req.ctx.workspaceId),shippingAccounts.describe(database,req.ctx.workspaceId),
       entitlements.capabilityStates(database,commercialScope(req),connectionCapabilities.map(([,key])=>key)),entitlements.meterState(database,commercialScope(req),'connections'),
     ]);
     const mailPreparationStates=Object.fromEntries(await Promise.all(connectionRows.filter(c=>['gmail','microsoft365'].includes(c.provider_type)&&c.status==='connected').map(async c=>[c.id,await require('../../connections/postgres-mail-preparation').state(database,req.ctx,c.id,{providerConfigured:Boolean(options.draftProviderConfigured)})])));
-    return res.page('connections/index',{connectionCapacity,mailPreparationStates,
-      title:inventorySetup?'Connect a platform':'Integrations',nav:'connections',room:true,backTo:inventorySetup?{href:'/onboarding',label:'Inventory setup'}:{href:'/settings',label:'Settings'},launchTicket,
+    const developerAccounts=req.query.section==='developers'&&process.env.STOCKCHIEF_RUNTIME_ENV==='staging'&&Boolean((await database.query('SELECT 1 FROM developer_account_administrators WHERE account_id=$1',[req.account?.id])).rows.length);
+    return res.page('connections/index',{connectionCapacity,mailPreparationStates,developerAccounts,connectionSection:req.query.section==='developers'||apiToken?'developers':'connections',
+      title:inventorySetup?'Connect a platform':'Connections',nav:'connections',room:true,backTo:inventorySetup?{href:'/onboarding',label:'Inventory setup'}:{href:'/settings',label:'Settings'},launchTicket,
       postgresMode:true,inventorySetup,connections:inventorySetup?connectionRows.filter(c=>providerCatalog.some(p=>p.type===c.provider_type)):connectionRows,
       providerCatalog,
       apiToken,apiClients:clients,
@@ -105,7 +106,7 @@ function createPostgresConnectionsRouter(database,options={}){
         message:result.connected?'This inventory now uses its own Stripe account for customer payments.':result.message});
     }catch(error){
       return oauthReturnPage(res,{connected:false,providerName:'Stripe',returnPath:'/settings/connections#payments',
-        returnOrigin:context?.metadata?.returnOrigin,requestOrigin,workspaceId:context?.workspace_id,
+        returnOrigin:context?.metadata?.returnOrigin,requestOrigin,workspaceId:context?.workspace_id,popup:context?.metadata?.popup===true,
         message:error.message||'The Stripe connection was not completed.'});
     }
   }));
@@ -137,7 +138,7 @@ function createPostgresConnectionsRouter(database,options={}){
       return res.redirect(303,`${safeOrigin(context.returnOrigin,requestOrigin)}/settings/connections/${encodeURIComponent(connection.id)}/complete${context.popup?'?popup=1':''}`);
     }catch(error){
       return oauthReturnPage(res,{connected:false,providerName:metadata?.name||'Connection',
-        connection:context?.connection,returnOrigin:context?.returnOrigin,requestOrigin,
+        connection:context?.connection,returnOrigin:context?.returnOrigin,requestOrigin,popup:context?.popup,workspaceId:context?.workspaceId,
         message:error.message||'The connection was not completed.'});
     }
   }));
@@ -149,18 +150,26 @@ function createPostgresConnectionsRouter(database,options={}){
     return res.page('connections/provider-handoff',{title:'Open StockChief',layout:false,continueUrl:'/settings/connections'});
   }));
 
+  router.get('/connections',requireAuth,(req,res)=>res.redirect(303,'/settings/connections'));
   router.use('/settings/connections',requireAuth);
   router.get('/settings/connections',asyncRoute(async(req,res)=>{
     const apiToken=req.session.newPublicApiToken||null;
     delete req.session.newPublicApiToken;
     return renderConnections(req,res,apiToken);
   }));
+  router.post('/settings/connections/:provider/cancel-attempt',requireOwner,asyncRoute(async(req,res)=>{
+    const type=String(req.params.provider),saved=req.session.providerInstallIntents?.[type];
+    if(saved?.state){await database.query('DELETE FROM connection_authorization_states WHERE workspace_id=$1 AND actor_id=$2 AND provider_type=$3 AND state_hash=$4 AND used_at IS NULL',
+      [req.ctx.workspaceId,req.ctx.actorId,type,providerService.stateHash(saved.state)]);
+      require('../../connections/oauth-session-intent').forget(req.session,type);}
+    res.set('Cache-Control','no-store');return res.json({cancelled:true});
+  }));
   router.get('/settings/connections/woocommerce/return',requireOwner,asyncRoute(async(req,res)=>{
     const requestOrigin=`${req.protocol}://${req.get('host')}`;
     try{
       const value=req.query.state||req.query.user_id;
       const result=await require('../../connections/postgres-application-authorization').returning(database,req.ctx,value,'woocommerce',req.query.success);
-      const path=`/settings/connections/${encodeURIComponent(result.connection.id)}/complete${result.state.metadata.popup?'?popup=1':''}`;
+      const path=result.connected?`/settings/connections/${encodeURIComponent(result.connection.id)}/complete${result.state.metadata.popup?'?popup=1':''}`:'/settings/connections';
       if(req.accepts(['html','json'])==='json')return res.json({status:result.connected?'connected':result.pending?'pending':'declined',path:result.connected?path:null});
       if(result.connected)return res.redirect(303,path);
       return oauthReturnPage(res,{connected:false,pending:result.pending,providerName:'WooCommerce',connection:result.connection,
@@ -187,12 +196,11 @@ function createPostgresConnectionsRouter(database,options={}){
     await require('../../payments/postgres-cardknox').disconnect(database,req.ctx);req.flash('success','Sola disconnected. Existing payment history is preserved.');return res.redirect(303,'/settings/connections#cardknox');
   }));
   router.get('/settings/connections/payments/launch',requireOwner,asyncRoute(async(req,res)=>{
-    await entitlements.assertCapability(database,commercialScope(req),'merchant_payments');
+    if(!await connectionAllowed(req,res,'stripe'))return;
     const current=await paymentConnect.describe(database,req.ctx.workspaceId);
     if(!current.connected&&!require('../../payments/connect-availability').qualified(options))
       return res.status(403).send('New Stripe connections are not enabled on this installation. Existing payment records remain available.');
     const launch=req.session.connectionLaunch;
-    delete req.session.connectionLaunch;
     if(!launch||launch.workspaceId!==req.ctx.workspaceId||launch.expiresAt<Date.now()
         ||typeof req.query.ticket!=='string'||req.query.ticket.length!==launch.ticket.length
         ||!crypto.timingSafeEqual(Buffer.from(req.query.ticket),Buffer.from(launch.ticket))){
@@ -224,7 +232,6 @@ function createPostgresConnectionsRouter(database,options={}){
     if(!await connectionAllowed(req,res,req.params.provider))return;
     if(registry.get(req.params.provider)?.oauthSessionBound)require('../../connections/oauth-session-intent').assertCanStart(req.session,req.params.provider);
     const launch=req.session.connectionLaunch;
-    delete req.session.connectionLaunch;
     if(!launch||launch.workspaceId!==req.ctx.workspaceId||launch.expiresAt<Date.now()
         ||typeof req.query.ticket!=='string'||req.query.ticket.length!==launch.ticket.length
         ||!crypto.timingSafeEqual(Buffer.from(req.query.ticket),Buffer.from(launch.ticket))){
@@ -317,7 +324,7 @@ function createPostgresConnectionsRouter(database,options={}){
   router.post('/settings/connections/:id/reply-preparation',requireOwner,asyncRoute(async(req,res)=>{
     await require('../../connections/postgres-mail-preparation').configure(database,req.ctx,req.params.id,req.body.enabled==='1');
     req.flash('success',req.body.enabled==='1'?'StockChief will prepare replies to new business emails for your review. Nothing is sent automatically.':'Automatic reply preparation is off. Saved emails and drafts are kept.');
-    return res.redirect(303,'/settings/connections/'+encodeURIComponent(req.params.id)+'#reply-preparation');
+    return res.redirect(303,(req.body.returnTo==='connections'?'/settings/connections':'/settings/connections/'+encodeURIComponent(req.params.id))+'#reply-preparation-'+encodeURIComponent(req.params.id));
   }));
   router.post('/settings/connections/:id/retry-events',requireOwner,asyncRoute(async(req,res)=>{
     const connection=await providerService.setupWebhookDelivery(database,req.ctx,req.params.id,

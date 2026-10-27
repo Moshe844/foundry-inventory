@@ -1,422 +1,47 @@
 <%
-  /*
-   * Connections.
-   *
-   * The page used to open with two full-width sections nobody had asked for —
-   * Stripe first, then shipping, both at full height whether or not either was
-   * connected — followed by the list of what *is* connected, followed by three
-   * more sections carrying seven always-open forms. Payment and postage came
-   * before the tills, the empty state came after the thing that filled it, and
-   * every option shouted at the same volume as every other.
-   *
-   * Two facts run this screen, in this order:
-   *
-   *   1. What is StockChief plugged into, and is it working?
-   *   2. Plug something else in.
-   *
-   * So everything connected — tills, mailboxes, the Stripe account, the
-   * shipping account — is one list, because from the owner's side they are the
-   * same kind of fact. Everything not connected is one uniform grid of cards,
-   * each carrying its own state and its own control, so a card is a thing you
-   * can have rather than a form you must read past. Anything actually wrong is
-   * lifted above both, because a broken connection is not a listing.
-   */
-  var shippingProviderTypes = ['shipengine', 'shipstation', 'easypost', 'shippo'];
-  // Payments and shipping have their own truth-aware cards below. Including
-  // their raw connector rows here made a denied Stripe attempt appear under
-  // "Working now" merely because Stripe had once supplied an account id.
-  var separatelyManagedProviderTypes = shippingProviderTypes.concat(['stripe']);
-  var activeConnections = connections.filter(function (connection) {
-    return connection.status !== 'disconnected'
-      && !separatelyManagedProviderTypes.includes(connection.provider_type) && (
-      connection.credential_ref || connection.provider_account_id
-      || !['AUTHORIZING', 'AUTHORIZATION_FAILED'].includes(connection.setup_status));
-  });
-  var setupAttempts = connections.filter(function (connection) {
-    return !separatelyManagedProviderTypes.includes(connection.provider_type)
-      && connection.status !== 'disconnected'
-      && !activeConnections.includes(connection);
-  });
-  var disconnectedConnections = connections.filter(function (connection) {
-    return connection.status === 'disconnected';
-  });
-
-  var pay = typeof paymentAccount === 'undefined' ? null : paymentAccount;
-  var grant = typeof paymentConnect === 'undefined' ? null : paymentConnect;
-  var shipping = typeof shippingAccount === 'undefined' ? null : shippingAccount;
-  var shippingSetup = typeof shippingPlatform === 'undefined' ? null : shippingPlatform;
-  var publicOrigin = typeof connectionPublicOrigin === 'undefined' ? '' : connectionPublicOrigin;
-  var apiToken = typeof apiToken === 'undefined' ? null : apiToken;
-  var webhookSecret = typeof webhookSecret === 'undefined' ? null : webhookSecret;
-  var apiClients = typeof apiClients === 'undefined' ? [] : apiClients;
-  var outboundWebhooks = typeof outboundWebhooks === 'undefined' ? [] : outboundWebhooks;
-  var postgresMode = typeof postgresMode !== 'undefined' && postgresMode;
-  var inventorySetup=Boolean(locals.inventorySetup);
-  var includedCommercialCapabilities = new Set(typeof commercialCapabilities === 'undefined' ? [] : commercialCapabilities);
-  var commercialPlanUnrestricted = typeof commercialDevelopment === 'undefined' ? true : commercialDevelopment;
-  function providerCommercialCapability(type) {
-    if (['gmail', 'microsoft365'].includes(type)) return 'connection.email';
-    if (['shopify', 'square', 'clover', 'woocommerce', 'bigcommerce'].includes(type)) return 'connection.commerce';
-    if (['quickbooks', 'xero'].includes(type)) return 'connection.accounting';
-    return null;
-  }
-
-  // An account Stripe created but never finished is not a connection. It is
-  // said once, here, and every branch below reads it rather than deciding again.
-  var unfinishedStripe = !!(pay && pay.connected && pay.source === 'connect'
-    && !pay.chargesEnabled && grant && grant.unfinished);
-
-  /*
-   * What is live, in one list.
-   *
-   * A row states the thing, what it is doing for the business, and whether it
-   * is working. Nothing here is a form; anything you can act on is a link to
-   * the place that owns it.
-   */
-  var live = [];
-  activeConnections.forEach(function (connection) {
-    var stuck = connection.status === 'connected' && connection.setup_status === 'MAPPING'
-      && connection.itemsNeedingMapping;
-    live.push({
-      name: connection.display_name,
-      /* What has actually been proven with the provider, in one honest
-         clause: a real exchange with a time on it, or none yet. Being set up
-         is not the same as having worked. */
-      meta: (connection.provider_account_name || connection.provider_type.replaceAll('_', ' '))
-        + ' · ' + (connection.last_activity_at
-          ? 'last event ' + helpers.timeAgo(connection.last_activity_at)
-          : connection.last_synced_at
-            ? 'last successful check ' + helpers.timeAgo(connection.last_synced_at) + ' · no events yet'
-            : 'set up, not yet proven — no successful exchange with ' + (connection.provider_type.replaceAll('_', ' ')) + ' so far'),
-      href: '/settings/connections/' + connection.id,
-      status: connection.publicStatus,
-      tone: connection.publicStatus === 'Connected' ? 'is-ok'
-        : connection.publicStatus === 'Needs attention' ? 'is-warn' : '',
-      issue: stuck
-        ? connection.itemsNeedingMapping + ' '
-          + (connection.itemsNeedingMapping === 1 ? 'record needs' : 'records need')
-          + ' matching before this is finished'
-        : connection.status === 'error' ? 'Open it to see the exact problem' : null,
-    });
-  });
-  if (pay && pay.connected && !unfinishedStripe) {
-    live.push({
-      name: pay.source === 'connect' ? (pay.displayName || 'Stripe') : 'Stripe',
-      meta: (pay.source === 'server'
-        ? 'Taking payment · using the key set on the server'
-        : 'Taking payment · money arrives in this account'
-          + (pay.liveMode ? '' : ' · test mode'))
-        + (pay.checkedAt ? ' · account checked with Stripe ' + helpers.timeAgo(pay.checkedAt) : ' · not yet checked with Stripe'),
-      href: '#payments',
-      status: pay.chargesEnabled ? 'Live' : 'Not taking charges',
-      tone: pay.chargesEnabled ? 'is-ok' : 'is-warn',
-      issue: null,
-    });
-  }
-  if (shipping && shipping.connected) {
-    live.push({
-      name: 'Shipping',
-      meta: 'UPS, FedEx, USPS and DHL · rates, labels and tracking on the order'
-        + (shipping.testMode ? ' · test labels only' : '')
-        + (shipping.lastLabelAt ? ' · last label bought ' + helpers.timeAgo(shipping.lastLabelAt) : ' · no label bought yet, so not yet proven against the carrier'),
-      href: '/settings/shipping',
-      status: shipping.source === 'platform' && !shipping.billingReady ? 'Finish setup' : 'Ready',
-      tone: shipping.source === 'platform' && !shipping.billingReady ? 'is-warn' : 'is-ok',
-      issue: null,
-    });
-  }
-
-  /* Only the things somebody can do something about. */
-  var problems = [];
-  if (unfinishedStripe) {
-    problems.push({ title: 'Unfinished Stripe setup',
-      body: 'Stripe created an account and the form was never finished, so it cannot take payments.',
-      where: '#payments' });
-  } else if (pay && pay.connected && !pay.chargesEnabled && pay.source === 'connect') {
-    problems.push({ title: 'Stripe is not accepting charges on this account yet.',
-      body: pay.because, where: '#payments' });
-  } else if (grant && !grant.connected && grant.lastAttemptError) {
-    problems.push({ title: 'Stripe was not connected',
-      body: 'The last attempt for this inventory ended with: ' + grant.lastAttemptError,
-      where: '#payments' });
-  }
-  if (pay && pay.connected && pay.source === 'server') {
-    problems.push({ title: 'This inventory is using the Stripe key set on the server.',
-      body: pay.because, where: '#payments' });
-  }
-  live.filter(function (row) { return row.issue; }).forEach(function (row) {
-    problems.push({ title: row.name, body: row.issue, where: row.href });
-  });
-
-  var providerGroups = [
-    { key: 'accounting', title: 'Accounting', description: 'Connect read-only first, prove the books agree, then choose whether StockChief may post.' },
-    { key: 'selling', title: 'Selling', description: 'Stores and tills. StockChief brings completed sales in by itself.' },
-    { key: 'business', title: 'Business systems', description: 'Your own POS, ERP or warehouse software.' },
-    { key: 'supplier', title: 'Supplier communication', description: 'Mailboxes carrying supplier invoices and delivery notes.' },
-  ];
+ const inventorySetup=Boolean(locals.inventorySetup),postgresMode=Boolean(locals.postgresMode),pay=locals.paymentAccount,grant=locals.paymentConnect,shipping=locals.shippingAccount;
+ const apiToken=locals.apiToken,webhookSecret=locals.webhookSecret,apiClients=locals.apiClients||[],outboundWebhooks=locals.outboundWebhooks||[],publicOrigin=locals.connectionPublicOrigin||'';
+ const capped=locals.connectionCapacity?.remaining===0;
+ const included=new Set(locals.commercialCapabilities||[]);
+ function capability(type){return ['gmail','microsoft365'].includes(type)?'connection.email':['quickbooks','xero'].includes(type)?'connection.accounting':'connection.commerce';}
+ const catalogCards=helpers.connectionCards(providerCatalog,connections);
+ const groups=[{title:'Sales channels',types:['shopify','woocommerce','bigcommerce','square','clover']},{title:'Email',types:['gmail','microsoft365']},{title:'Accounting',types:['quickbooks','xero']}];
+ const logoTypes=new Set(['shopify','woocommerce','bigcommerce','square','clover','gmail','microsoft365','quickbooks','xero','stripe','cardknox']);
+ const connected=connections.filter(c=>c.status!=='disconnected'&&c.provider_type!=='stripe');
+ const developerMode=locals.connectionSection==='developers';
 %>
-
-<header class="rm-head"><h1><%= inventorySetup?'Connect a platform':'Integrations' %></h1><p><%= inventorySetup?'Start with a system that holds your products, SKUs or stock.':'Connect this business’s accounts. Each connection keeps its own authorization, records and sync settings.' %></p></header>
-<% const providerCards=helpers.connectionCards(providerCatalog,connections); %>
-<div class="rm-choices-grid sc-integration-grid">
-<% for(const card of providerCards){ const provider=card.provider,requiredCommercialCapability=providerCommercialCapability(provider.type),includedOnPlan=commercialPlanUnrestricted||!requiredCommercialCapability||includedCommercialCapabilities.has(requiredCommercialCapability); %>
- <article class="rm-provider" data-integration-card="<%= provider.type %>"><div class="rm-provider__h"><span class="rm-provider__mark" aria-hidden="true"><%= provider.mark||'↗' %></span><strong class="rm-provider__n"><%= provider.name %></strong><span class="badge <%= card.state==='Connected'?'badge--success':card.state==='Error'?'badge--danger':'badge--muted' %>"><%= card.state %></span></div>
- <p><%= provider.description %></p>
- <% if(card.connection){ %><p><strong><%= card.connection.provider_account_name||card.connection.display_name %></strong></p><p class="sc-last-sync">Last sync: <%= card.lastSync?helpers.dateTime(card.lastSync):'Not synced yet' %></p><% if(card.needsMatching){ %><p class="quiet"><%= card.needsMatching %> product or location matches need review.</p><% } %><a class="btn btn--primary" href="<%= card.href %>"><%= card.state==='Error'?'Fix connection':'Manage '+provider.name %></a><% if(locals.mailPreparationStates?.[card.connection.id]){ %><details><summary>Let StockChief handle replies</summary><%- include('mail-preparation',{connection:card.connection,mailPreparation:mailPreparationStates[card.connection.id]}) %></details><% } %>
- <% if(card.records.length>1){ %><details><summary><%= card.records.length %> accounts</summary><% for(const record of card.records){ %><p><a href="/settings/connections/<%= record.id %>"><%= record.display_name %></a></p><% } %></details><% } %>
- <% }else{ %><p class="sc-last-sync">Last sync: Not connected</p><% if(provider.authorizationPrerequisite){ %><p class="quiet"><%= provider.authorizationPrerequisite.message %> <a href="<%= provider.authorizationPrerequisite.href %>" target="_blank" rel="noopener noreferrer"><%= provider.authorizationPrerequisite.label %></a></p><% } %><% if(provider.available&&includedOnPlan&&locals.connectionCapacity?.remaining!==0&&(['shopify','woocommerce','bigcommerce'].includes(provider.type)||provider.integrationMode==='custom_contract'||provider.type==='reference_webhook')){ %><button type="button" class="btn btn--primary sc-connect-action" data-modal-open="connect-<%= provider.type %>">Connect <%= provider.name %></button><dialog class="sc-connect-dialog" id="connect-<%= provider.type %>" aria-label="Connect <%= provider.name %>"><header><h2>Connect <%= provider.name %></h2><button type="button" class="btn btn--ghost" data-modal-close>Close</button></header><%- include('provider-connect-form',{provider,requiredCommercialCapability,includedOnPlan,postgresMode,csrfToken}) %></dialog><% }else{ %><%- include('provider-connect-form',{provider,requiredCommercialCapability,includedOnPlan,postgresMode,csrfToken}) %><% } %><% } %>
- </article>
+<header class="rm-head"><h1><%= inventorySetup?'Connect a platform':'Connections' %></h1><p><%= inventorySetup?'Bring your products and stock into this inventory.':'Connect your business accounts and manage their updates in one place.' %></p></header>
+<% if(capped){ %><div class="notice notice--warn" role="status" data-connection-limit>This account uses all <%= connectionCapacity.hardLimit %> connection slots. Disconnect an unused account or <a href="/billing">review your plan</a>. Unfinished authorization windows do not use a slot.</div><% } %>
+<% if(developerMode){ %><a class="btn" href="/settings/connections">Back to connections</a><% for(const provider of providerCatalog.filter(p=>p.integrationMode==='custom_contract'||p.type==='reference_webhook')){const requiredCommercialCapability=capability(provider.type),includedOnPlan=true; %><section class="card card-body"><h2><%= provider.name %></h2><%- include('provider-connect-form',{provider,requiredCommercialCapability,includedOnPlan,postgresMode,csrfToken}) %></section><% } %><%- include('developer-settings') %><% if(locals.developerAccounts){ %><a class="btn" href="/commercial-admin/accounts">Developer account tools</a><% } %><% }else{ %>
+<% if(connected.length||pay?.connected){ %><section class="sc-connected-section" aria-labelledby="connected-heading"><h2 id="connected-heading">Connected</h2><div class="sc-connected-list">
+ <% for(const connection of connected){ const type=connection.provider_type; %><article class="sc-connected-row" data-connected-id="<%= connection.id %>">
+ <div class="sc-connected-identity"><% if(logoTypes.has(type)){ %><img src="/provider-logos/<%= type %>.svg" alt="" width="32" height="32"><% }else{ %><%- helpers.icon('link',{size:32}) %><% } %><div><strong><%= providerCatalog.find(p=>p.type===type)?.name||connection.display_name||type %></strong><span><%= connection.provider_account_name||connection.display_name||type %></span></div></div>
+ <span class="badge <%= connection.publicStatus==='Connected'?'badge--success':'badge--warn' %>"><%= connection.publicStatus==='Needs attention'?'Error':connection.publicStatus %></span><span class="sc-connected-sync"><%= connection.last_synced_at?'Synced '+helpers.timeAgo(connection.last_synced_at):'Waiting for first sync' %></span>
+ <a class="btn" href="<%= ['shippo','shipstation','shipengine','easypost'].includes(type)?'/settings/shipping':'/settings/connections/'+connection.id %>">Manage <%= providerCatalog.find(p=>p.type===type)?.name||connection.display_name||type %></a>
+ <% if(locals.mailPreparationStates?.[connection.id]){ %><div class="sc-connected-mail"><%- include('mail-preparation',{connection,mailPreparation:mailPreparationStates[connection.id],mailPreparationReturn:'connections'}) %></div><% } %>
+ </article><% } %>
+ <% if(pay?.connected){ %><article class="sc-connected-row"><div class="sc-connected-identity"><img src="/provider-logos/stripe.svg" alt="" width="32" height="32"><div><strong>Stripe</strong><span><%= pay.displayName||pay.accountId %></span></div></div><span class="badge badge--success">Connected<%= pay.liveMode?'':' · Test' %></span><span><%= pay.checkedAt?'Checked '+helpers.timeAgo(pay.checkedAt):'Awaiting account check' %></span><button class="btn" type="button" data-modal-open="payments">Manage Stripe</button></article><% } %>
+ </div></section><% } %>
+<% for(const group of groups){const cards=catalogCards.filter(c=>group.types.includes(c.provider.type));if(!cards.length)continue; %><section class="sc-provider-section" aria-label="<%= group.title %>"><h2><%= group.title %></h2><div class="sc-provider-grid">
+ <% for(const card of cards){const provider=card.provider,requiredCommercialCapability=capability(provider.type),includedOnPlan=locals.commercialDevelopment||included.has(requiredCommercialCapability); %>
+ <article class="rm-provider sc-provider-card" data-integration-card="<%= provider.type %>"><div class="rm-provider__h"><img src="/provider-logos/<%= provider.type %>.svg" alt="" width="32" height="32"><strong class="rm-provider__n"><%= provider.name %></strong><span class="badge <%= card.state==='Connected'?'badge--success':card.state==='Error'?'badge--danger':'badge--muted' %>"><%= card.state %></span></div>
+ <p class="sc-provider-description" title="<%= provider.description %>"><%= String(provider.description||'Connect your business account.').slice(0,60) %></p>
+ <% if(provider.sandboxMode){ %><span class="sc-environment-label">Sandbox</span><% } %>
+ <div class="sc-provider-action"><% if(card.connection){ %><a class="btn btn--primary" href="<%= card.href %>">Manage <%= provider.name %></a>
+ <% }else if(provider.available&&includedOnPlan&&!capped&&['shopify','woocommerce','bigcommerce'].includes(provider.type)){ %><button type="button" class="btn btn--primary" data-modal-open="connect-<%= provider.type %>">Connect <%= provider.name %></button>
+ <dialog class="sc-connect-dialog" id="connect-<%= provider.type %>" aria-label="Connect <%= provider.name %>"><header><h2>Connect <%= provider.name %></h2><button type="button" class="btn btn--ghost" data-modal-close>Close</button></header><%- include('provider-connect-form',{provider,requiredCommercialCapability,includedOnPlan,postgresMode,csrfToken}) %></dialog>
+ <% }else{ %><%- include('provider-connect-form',{provider,requiredCommercialCapability,includedOnPlan,postgresMode,csrfToken}) %><% } %></div></article>
+ <% } %></div></section><% } %>
+<% if(!inventorySetup){ %><section class="sc-provider-section" id="payment-connections"><h2>Payments</h2><div class="sc-provider-grid">
+ <% if(pay){ %><article class="rm-provider sc-provider-card" data-integration-card="stripe"><div class="rm-provider__h"><img src="/provider-logos/stripe.svg" alt="" width="32" height="32"><strong class="rm-provider__n">Stripe</strong><span class="badge <%= pay.connected?'badge--success':'badge--muted' %>"><%= pay.connected?'Connected':'Not connected' %></span></div><p class="sc-provider-description">Collect invoice payments in your own merchant account.</p><% if(grant?.testMode){ %><span class="sc-environment-label">Test mode</span><% } %><div class="sc-provider-action"><% if(pay.connected){ %><button type="button" class="btn btn--primary" data-modal-open="payments">Manage Stripe</button><% }else if(!included.has('payments.customer')){ %><a class="btn" href="/upgrade?capability=payments.customer&amp;return=%2Fsettings%2Fconnections">View plan options</a><% }else if(!capped&&grant?.available){ %><a class="btn btn--primary" href="/settings/connections/payments/launch?ticket=<%= encodeURIComponent(launchTicket) %>" data-provider-connect data-provider-type="stripe" data-provider-name="Stripe">Connect Stripe</a><% }else{ %><a class="btn" href="<%= capped?'/billing':'/support' %>"><%= capped?'Review plan':'Get help connecting' %></a><% } %></div></article><% } %>
+ <% if(locals.cardknoxAccount){ %><article class="rm-provider sc-provider-card" data-integration-card="cardknox"><div class="rm-provider__h"><img src="/provider-logos/cardknox.svg" alt="" width="32" height="32"><strong class="rm-provider__n">Sola / Cardknox</strong><span class="badge <%= cardknoxAccount.connected?'badge--success':'badge--muted' %>"><%= cardknoxAccount.connected?'Connected':'Not connected' %></span></div><p class="sc-provider-description">Accept payments through your own Sola merchant account.</p><div class="sc-provider-action"><% if(!capped||cardknoxAccount.connected){ %><button class="btn btn--primary" type="button" data-modal-open="cardknox"><%= cardknoxAccount.connected?'Manage Sola':'Connect Sola' %></button><% }else{ %><a class="btn" href="/billing">Review plan</a><% } %></div></article><% } %>
+ </div></section>
+ <section class="sc-provider-section" id="shipping"><h2>Shipping</h2><div class="sc-provider-grid"><article class="rm-provider sc-provider-card" data-integration-card="shipping"><div class="rm-provider__h"><%- helpers.icon('ship',{size:32}) %><strong class="rm-provider__n">Shipping accounts</strong><span class="badge"><%= shipping?.connected?'Connected':'Not connected' %></span></div><p class="sc-provider-description">Rates, labels and tracking with your own shipping accounts.</p><div class="sc-provider-action"><a class="btn btn--primary" href="/settings/shipping">Manage shipping</a></div></article></div></section>
+ <% if(locals.cardknoxAccount){ %><dialog class="sc-connect-dialog" id="cardknox" aria-label="Connect Sola"><header><h2><%= cardknoxAccount.connected?'Manage Sola':'Connect Sola' %></h2><button type="button" class="btn btn--ghost" data-modal-close>Close</button></header><%- include('sola-form') %></dialog><% } %>
+ <% if(pay?.connected){ %><dialog class="sc-connect-dialog" id="payments" aria-label="Manage Stripe"><header><h2>Stripe</h2><button type="button" class="btn btn--ghost" data-modal-close>Close</button></header><p><%= pay.displayName||pay.accountId %></p><p><%= pay.liveMode?'Live mode':'Test mode · no real payments' %></p><p><%= pay.chargesEnabled?'Ready to take payments':'Stripe review pending' %></p><form method="post" action="/settings/connections/payments/refresh"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit">Check Stripe status</button></form><form method="post" action="/settings/connections/payments/disconnect" data-confirm="Disconnect Stripe? Existing payment history is kept."><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost" type="submit">Disconnect Stripe</button></form></dialog><% } %>
+ <p class="sc-developer-link"><a class="btn btn--ghost" href="/settings/connections?section=developers#developer-api">For developers</a></p>
 <% } %>
-<% if(!inventorySetup&&pay){ %><article class="rm-provider" data-integration-card="stripe"><div class="rm-provider__h"><strong class="rm-provider__n">Stripe</strong><span class="badge <%= pay.connected&&!unfinishedStripe?'badge--success':'badge--muted' %>"><%= pay.connected&&!unfinishedStripe?'Connected':'Not connected' %></span></div><p>Collect invoice payments and verify refunds through your own merchant account.</p><% if(pay.connected){ %><p class="quiet"><%= pay.liveMode?'Live merchant':'Test merchant' %> · <%= pay.displayName||'Stripe account' %></p><% } %><p class="sc-last-sync"><%= pay.checkedAt?'Last checked: '+helpers.dateTime(pay.checkedAt):'No account check recorded yet' %></p><a class="btn btn--primary" href="<%= pay.connected||!grant?.available?'#payments':'/settings/connections/payments/launch?ticket='+encodeURIComponent(locals.launchTicket||'') %>" <%- !pay.connected&&grant?.available?'data-provider-connect':'' %>><%= pay.connected?'Manage':'Connect Stripe' %></a></article><% } %>
-<% if(!inventorySetup&&locals.cardknoxAccount){ %><article class="rm-provider" data-integration-card="cardknox"><div class="rm-provider__h"><strong class="rm-provider__n">Sola / Cardknox</strong><span class="badge"><%= cardknoxAccount.connected?'Connected':'Not connected' %></span></div><p>Connect your own merchant keys to collect invoice payments securely.</p><a class="btn btn--primary" href="/settings/connections?section=cardknox#cardknox"><%= cardknoxAccount.connected?'Manage':'Connect Sola' %></a></article><% } %>
-<% if(!inventorySetup){ %><article class="rm-provider" data-integration-card="shipping"><div class="rm-provider__h"><strong class="rm-provider__n">Shipping accounts</strong><span class="badge"><%= shipping?.connected?'Connected':'Not connected' %></span></div><p>Compare rates, prepare labels and track shipments. Your provider bills your own account.</p><a class="btn btn--primary" href="/settings/shipping">Manage shipping</a></article><% } %>
-</div>
-<% if(connections.length){ %><details class="rm-work"><summary>Connection history</summary><div class="rm-work__body"><% for(const connection of connections){ %><p><a href="/settings/connections/<%= connection.id %>"><%= connection.display_name %></a> · <%= connection.status==='disconnected'?'Not connected':connection.publicStatus %></p><% } %></div></details><% } %>
-<% if(!inventorySetup){ %><details class="rm-work" id="connection-account-settings"><summary>Payment, shipping and developer settings</summary><div class="rm-work__body">
-<% if(!inventorySetup){ %><details class="rm-work" id="developer-api" <%= apiToken || webhookSecret ? 'open' : '' %>>
-  <summary>Advanced: connect custom software with APIs and webhooks</summary>
-  <div class="rm-work__body">
-    <p class="quiet"><strong>Most business owners do not need this.</strong> Use it only when your ERP, warehouse system, developer, or reporting tool needs to exchange data directly with StockChief.</p>
-    <div class="rm-grid2" style="margin-top:16px">
-  <section class="rm-provider">
-    <div class="rm-provider__top"><span class="rm-provider__mark is-word">API</span><span class="rm-provider__n">Scoped API clients</span></div>
-    <p>Read inventory/events or submit canonical inventory commands. No client can write balance tables directly.</p>
-    <% if (apiToken) { %><div class="rm-note rm-note--warn"><div><strong>Copy this token now</strong><input class="input mono" aria-label="New API token" value="<%= apiToken.token %>" readonly onclick="this.select()"><small>Shown once. Scopes: <%= apiToken.scopes.join(', ') %></small></div></div><% } %>
-    <% apiClients.forEach(function(client) { %><div class="rm-told__row"><span class="rm-told__t"><%= client.name %><small><%= client.scopes.join(', ') %> · <%= client.token_prefix %>…</small></span><span class="rm-told__m <%= client.revoked_at ? '' : 'is-ok' %>"><%= client.revoked_at ? 'Revoked' : 'Active' %></span><% if (!client.revoked_at && currentUser.role === 'owner') { %><form method="post" action="/settings/connections/api-clients/<%= client.id %>/revoke" data-confirm="Revoke this API token immediately?"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost" type="submit">Revoke</button></form><% } %></div><% }) %>
-    <% if (currentUser.role === 'owner') { %>
-      <form method="post" action="/settings/connections/api-clients" class="grid" style="margin-top:16px">
-        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-        <label class="field"><span class="field-label">Client name</span><input class="input" name="name" placeholder="Warehouse automation" required></label>
-        <div class="choice-grid">
-          <label class="choice"><input type="checkbox" name="scopes" value="inventory:read"><span><strong>Read inventory</strong></span></label>
-          <label class="choice"><input type="checkbox" name="scopes" value="inventory:write"><span><strong><%= postgresMode ? 'Receive or correct inventory' : 'Submit inventory commands' %></strong></span></label>
-          <% if (!postgresMode) { %>
-            <label class="choice"><input type="checkbox" name="scopes" value="events:read"><span><strong>Read events</strong></span></label>
-            <label class="choice"><input type="checkbox" name="scopes" value="migration:read"><span><strong>Read migration checks</strong></span></label>
-            <label class="choice"><input type="checkbox" name="scopes" value="migration:write"><span><strong>Stage migration evidence</strong><small>Cannot approve or activate cutover</small></span></label>
-          <% } %>
-        </div>
-        <button class="rm-btn rm-btn--wash" type="submit">Create scoped token</button>
-      </form>
-    <% } %>
-    <details class="rm-more"><summary>How to prove this API works</summary><div><p>Start with a token that has only <strong>Read inventory</strong>. Give it to the test client for this one inventory and request <code>GET /api/v1/public/inventory</code>. The response must identify StockChief as the source of truth and must contain only this inventory’s records.</p><p>Then create a separate write-enabled test token. Send one receive command with an <code>Idempotency-Key</code>, resend the exact same command, and confirm stock changes once. Revoke the token and confirm the next request is refused.</p></div></details>
-    <details class="rm-more"><summary>Endpoints and contract</summary><div><p><code>GET /api/v1/public/inventory</code></p><p><code>GET /api/v1/public/events</code></p><p><code>POST /api/v1/public/commands/inventory/receive</code></p><p><code>POST /api/v1/public/commands/inventory/adjust</code></p><p>Every write requires a stable <code>Idempotency-Key</code>; retrying the same command returns its original result without posting twice.</p></div></details>
-  </section>
-  <section class="rm-provider">
-    <% if (!postgresMode) { %>
-    <div class="rm-provider__top"><span class="rm-provider__mark is-word">WEB</span><span class="rm-provider__n">Signed outbound webhooks</span></div>
-    <p>Deliver committed domain events with HMAC signatures, durable retries, and one delivery per event.</p>
-    <% if (webhookSecret) { %><div class="rm-note rm-note--warn"><div><strong>Copy this signing secret now</strong><input class="input mono" value="<%= webhookSecret.secret %>" readonly onclick="this.select()"></div></div><% } %>
-    <% outboundWebhooks.forEach(function(hook) { %><div class="rm-told__row"><span class="rm-told__t"><%= hook.name %><small><%= hook.endpoint_url %> · <%= hook.eventTypes.join(', ') %></small></span><span class="rm-told__m <%= hook.status === 'ACTIVE' ? 'is-ok' : '' %>"><%= hook.status %></span><% if (hook.status === 'ACTIVE' && currentUser.role === 'owner') { %><form method="post" action="/settings/connections/outbound-webhooks/<%= hook.id %>/revoke" data-confirm="Stop sending all future events to this webhook?"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost" type="submit">Revoke</button></form><% } %></div><% }) %>
-    <% if (currentUser.role === 'owner') { %><form method="post" action="/settings/connections/outbound-webhooks" class="grid" style="margin-top:16px"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label class="field"><span class="field-label">Webhook name</span><input class="input" name="name" placeholder="Data warehouse" required></label><label class="field"><span class="field-label">HTTPS endpoint</span><input class="input" type="url" name="endpointUrl" placeholder="https://example.com/foundry-events" required></label><label class="field"><span class="field-label">Events</span><select class="select" name="eventTypes" multiple required><option value="*">All business events</option><option value="inventory.received">Inventory received</option><option value="inventory.issued">Inventory issued</option><option value="purchase_order.completed">Purchase order completed</option><option value="sales_order.fulfilled">Sales order fulfilled</option></select><span class="field-help">Use Ctrl/Cmd to choose several.</span></label><button class="rm-btn rm-btn--wash" type="submit">Create signed webhook</button></form><% } %>
-    <details class="rm-more"><summary>How to prove this webhook works</summary><div><p>Use an HTTPS test receiver you control. Create the webhook for <strong>Inventory received</strong>, receive one unit in StockChief, and confirm the receiver gets one signed event with its StockChief event ID.</p><p>Return an error once to prove StockChief records the failure and retries durably. Then accept the retry and confirm the same event is not delivered as a second business effect. Revoke the webhook and confirm later events are not sent.</p></div></details>
-    <% } else { %><p>Sending automatic updates to your own external endpoint is not available yet.</p><% } %>
-  </section>
-    </div>
-  </div>
-</details><% } %>
-
-<%# ----------------------------------------------------------- taking payment %>
-<%
-  /*
-   * Whose Stripe account this inventory takes money into.
-   *
-   * A card like every other, but stated in full, because it is the one
-   * connection where getting it wrong does not mean a missing figure — it
-   * means the money arriving in somebody else's bank.
-   */
-%>
-<% if (pay) { %>
-  <% if(postgresMode&&locals.cardknoxAccount){ %>
-  <section class="rm-sect" id="cardknox"><h2>Sola / Cardknox</h2><p>Connect this business’s own merchant account. Its private transaction key stays encrypted on the server; only its public iFields key is used by the secure card fields.</p>
-  <% if(cardknoxAccount.connected){ %><p role="status"><%= cardknoxAccount.chargesEnabled?'Connected and available for customer payment links.':'Account verified. Payment activation is not enabled on this installation yet.' %></p><% } %>
-  <% if(currentUser.role==='owner'){ %><form method="post" action="/settings/connections/cardknox" class="stack-form" data-busy><input type="hidden" name="_csrf" value="<%= csrfToken %>">
-   <label>Private transaction API key<input name="apiKey" type="password" maxlength="250" autocomplete="off" required></label><label>Public iFields key<input name="ifieldsKey" maxlength="250" autocomplete="off" required></label>
-   <label>Merchant environment<select name="testMode"><option value="true">Sola sandbox / test merchant</option><option value="false">Live merchant</option></select></label><p>This setting does not convert a live key into a test key. Use keys issued for the chosen merchant environment.</p><button class="rm-btn" type="submit">Verify and connect Sola</button></form>
-   <% if(cardknoxAccount.connected){ %><form method="post" action="/settings/connections/cardknox/disconnect"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost">Disconnect Sola</button></form><% } %>
-  <% } %></section><% } %>
-  <div class="rm-sect" id="payments">
-    <h2>Taking payment</h2>
-    <p>Each inventory uses the business’s own Stripe account. Payment links are made on this account, and the money arrives in its bank.</p>
-  </div>
-  <div class="rm-grid2">
-    <div class="rm-provider">
-      <div class="rm-provider__top">
-        <span class="rm-provider__mark" aria-hidden="true"><%- helpers.icon('wallet', { size: 17 }) %></span>
-        <span class="rm-provider__n">Stripe</span>
-        <span class="rm-provider__s">
-          <% if (unfinishedStripe) { %><span class="rm-pillbadge is-warn">not connected</span>
-          <% } else if (pay.connected && !pay.chargesEnabled) { %><span class="rm-pillbadge is-warn"><%= postgresMode ? 'Stripe review pending' : 'not taking charges' %></span>
-          <% } else if (pay.connected) { %><span class="rm-pillbadge is-ok"><%= postgresMode ? 'ready to take payments' : 'live' %></span><% } %>
-          <% if (pay.connected && !pay.liveMode) { %><span class="rm-pillbadge is-warn">test mode</span><% } %>
-        </span>
-      </div>
-
-      <% if (postgresMode && pay.connected) { %>
-        <p>Connected to <strong><%= pay.displayName || 'Stripe' %></strong></p>
-        <p class="quiet">This business granted StockChief permission on Stripe’s own page. Customer money goes to this business’s Stripe account, never a shared StockChief account.</p>
-        <p class="quiet">Stripe account <code><%= pay.accountId %></code><%= pay.liveMode ? '' : ' · test mode' %><%= pay.checkedAt ? ' · checked ' + helpers.timeAgo(pay.checkedAt) : '' %></p>
-        <% if (!pay.chargesEnabled) { %><p class="quiet"><%= pay.because %></p><% } %>
-        <div class="rm-choices">
-          <form method="post" action="/settings/connections/payments/refresh"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--wash" type="submit">Check Stripe status</button></form>
-          <form method="post" action="/settings/connections/payments/disconnect" data-confirm="Disconnect this inventory from its Stripe account?"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost" type="submit">Disconnect Stripe</button></form>
-        </div>
-      <% } else if (pay.connected && pay.source === 'connect') { %>
-        <p><%= unfinishedStripe ? 'Unfinished Stripe setup' : 'Connected to ' + (pay.displayName || 'Stripe') %></p>
-        <p class="quiet">
-          <% if (unfinishedStripe) { %>
-            An earlier attempt started Stripe’s new-account onboarding. It did not finish and
-            cannot take payments. StockChief will not treat it as the existing Stripe account you
-            wanted to connect.
-          <% } else { %>
-            This business granted StockChief permission on Stripe’s own page. StockChief holds no key for
-            this account and cannot be made to reveal one, and the business can withdraw the
-            permission from its own Stripe dashboard at any time.
-          <% } %>
-        </p>
-        <p class="quiet">Stripe account <code><%= pay.accountId %></code></p>
-        <% if (!pay.chargesEnabled && !unfinishedStripe) { %>
-          <p class="quiet"><%= pay.because %></p>
-        <% } %>
-        <div class="rm-choices">
-          <% if (unfinishedStripe && grant.available) { %>
-            <a class="rm-btn" href="/settings/connections/payments/start"
-              target="_blank" data-stripe-connect><%= grant.flow === 'hosted'
-                ? 'Continue Stripe setup' : 'Connect existing Stripe account' %></a>
-          <% } else if (!pay.chargesEnabled && grant.available) { %>
-            <a class="rm-btn"
-              href="https://dashboard.stripe.com/<%= encodeURIComponent(pay.accountId) %>/<%= pay.liveMode ? '' : 'test/' %>account/status"
-              target="_blank" data-stripe-connect data-stripe-require-charges><%= grant.testMode
-                ? 'Finish Stripe sandbox setup' : 'Finish Stripe setup' %></a>
-          <% } %>
-          <form method="post" action="/settings/connections/payments/remove" data-busy data-confirm="Disconnect the payment account? New payment links stop working until one is connected again. Payments already recorded are kept.">
-            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-            <button class="rm-btn rm-btn--ghost" type="submit"><%= unfinishedStripe
-              ? 'Discard unfinished setup' : 'Disconnect' %></button>
-          </form>
-        </div>
-
-      <% } else if (pay.connected && pay.source === 'workspace') { %>
-        <p>Connected to Stripe</p>
-        <p class="quiet">
-          Key ending <%= pay.keyEndsWith %>.
-          <%= pay.hasWebhookSecret
-            ? 'Payments are heard about the moment they happen.'
-            : 'No signing secret is set, so StockChief only learns about a payment when it asks.' %>
-        </p>
-        <p class="quiet">Webhook address for this inventory: <code><%= paymentWebhookUrl %></code></p>
-        <div class="rm-choices">
-          <form method="post" action="/settings/connections/payments/remove" data-busy data-confirm="Disconnect the payment account? New payment links stop working until one is connected again. Payments already recorded are kept.">
-            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-            <button class="rm-btn rm-btn--ghost" type="submit">Disconnect</button>
-          </form>
-        </div>
-
-      <% } else { %>
-        <% if (pay.connected && pay.source === 'server') { %>
-          <p>This inventory is using the Stripe key set on the server.</p>
-          <p class="quiet"><%= pay.because %></p>
-        <% } else { %>
-          <%# `because` usually opens with this exact sentence. Saying it twice
-              made the card read as though two different things were wrong. %>
-          <p><%= pay.because || 'No payment account is connected.' %></p>
-        <% } %>
-        <% if (grant && !grant.connected && grant.lastAttemptError) { %>
-          <p class="quiet"><strong>The last Stripe attempt for <%= workspaceName %> did not complete:</strong>
-            <%= grant.lastAttemptError %></p>
-        <% } %>
-        <% if (grant && grant.available && !grant.connected) { %>
-          <p class="quiet">
-            <% if (grant.flow === 'hosted') { %>
-              Stripe opens its secure setup for this business. The account belongs to the business,
-              pays out to its bank, and has its own Stripe dashboard. You never paste a key into StockChief.
-            <% } else { %>
-              Stripe opens in its own window. Sign in, choose the account this business already uses,
-              and StockChief shows it here as connected. You never paste a key into StockChief.
-            <% } %>
-          </p>
-          <% if (grant.testMode) { %>
-            <details class="rm-more"><summary>Test payments only</summary>
-              <p class="quiet">StockChief is using Stripe test credentials, so this setup creates or finishes a sandbox account and cannot move real money. Going live requires the platform’s live Stripe keys on the server.</p>
-            </details>
-          <% } %>
-          <div class="rm-choices">
-            <a class="rm-btn rm-btn--wash" href="<%= postgresMode ? '/settings/connections/payments/launch?ticket=' + encodeURIComponent(launchTicket) : '/settings/connections/payments/start' %>"
-              target="<%= postgresMode ? '_self' : '_blank' %>" <%- postgresMode ? 'data-provider-connect' : 'data-stripe-connect' %>><%= grant.flow === 'hosted'
-                ? grant.testMode ? 'Create sandbox merchant account' : 'Set up Stripe for this business'
-                : postgresMode ? 'Connect existing Stripe account' : 'Connect Stripe' %></a>
-          </div>
-        <% } else if (grant && !grant.connected) { %>
-          <p class="quiet">
-            <% if (postgresMode) { %>
-              <strong>New Stripe connections are not ready here yet.</strong>
-              Existing connected accounts and payment records remain available. StockChief will show the connect action when live setup is qualified; you do not need to paste an API key.
-            <% } else { %>
-              <strong>Stripe account setup is not ready on this installation.</strong>
-              StockChief’s administrator must finish the Stripe Connect platform setup. StockChief will not
-              ask the business to paste an API key.
-            <% } %>
-          </p>
-        <% } %>
-      <% } %>
-    </div>
-  </div>
+<% if(connections.length){ %><details class="rm-work sc-connection-history"><summary>Connection history</summary><div class="rm-work__body"><% for(const connection of connections){ %><p><a href="/settings/connections/<%= connection.id %>"><%= String(connection.display_name||'').trim()||connection.provider_account_name||providerCatalog.find(p=>p.type===connection.provider_type)?.name||connection.provider_type %></a> · <%= connection.status==='disconnected'?'Disconnected':connection.publicStatus %></p><% } %></div></details><% } %>
 <% } %>
-
-<%# --------------------------------------------------------------- shipping %>
-<% if (shipping) { %>
-  <div class="rm-sect" id="shipping">
-    <h2>Shipping</h2>
-    <p>Compare UPS, FedEx, USPS and DHL, buy and print labels, and keep delivery on the order.</p>
-  </div>
-  <div class="rm-grid2">
-    <div class="rm-provider">
-      <div class="rm-provider__top">
-        <span class="rm-provider__mark" aria-hidden="true"><%- helpers.icon('ship', { size: 17 }) %></span>
-        <span class="rm-provider__n">UPS · FedEx · USPS · DHL</span>
-        <span class="rm-provider__s">
-          <% if (shipping.connected) { %>
-            <span class="rm-pillbadge <%= shipping.billingReady ? 'is-ok' : 'is-warn' %>"><%= shipping.billingReady ? 'ready' : 'finish setup' %></span>
-          <% } %>
-        </span>
-      </div>
-      <% if (shipping.connected && shipping.source === 'platform') { %>
-        <p class="quiet">
-          This business has its own shipping account and payment method. StockChief compares its
-          carrier rates without mixing its postage or labels with another business.
-        </p>
-      <% } else if (shipping.connected) { %>
-        <p class="quiet"><%= shipping.testMode ? 'Test labels only right now.'
-          : 'Live rates and labels are available from this account.' %></p>
-      <% } else { %>
-        <% if (shippingSetup && !shippingSetup.available) { %>
-          <p class="quiet">Connect an existing carrier or shipping-provider account that your business pays for.
-            StockChief does not buy postage or labels on a shared account.</p>
-        <% } else { %>
-          <p class="quiet">One short setup connects your carriers, confirms where parcels leave from, and keeps
-            postage on this business’s payment method. StockChief handles the rest from Orders.</p>
-        <% } %>
-      <% } %>
-      <div class="rm-choices">
-        <% if (shipping.connected || !(shippingSetup && !shippingSetup.available)) { %>
-        <a class="rm-btn <%= shipping.connected && shipping.billingReady ? 'rm-btn--ghost' : 'rm-btn--wash' %>"
-          href="/settings/shipping<%= shipping.connected && shipping.source === 'platform' && !shipping.billingReady
-            ? '?setup=shipengine#account' : '#account' %>">
-          <%= shipping.connected && shipping.billingReady ? 'Manage shipping'
-            : shipping.connected ? 'Finish shipping setup' : 'Set up shipping for me' %>
-        </a>
-        <% } %>
-        <% if (!shipping.connected) { %>
-          <a class="rm-btn rm-btn--ghost" href="/settings/shipping#existing-carrier-connection">
-            Connect my carrier accounts
-          </a>
-        <% } %>
-      </div>
-    </div>
-  </div>
-<% } %>
-
-<span hidden data-connection-host data-workspace-id="<%= currentWorkspaceId||'' %>" data-public-origin="<%= publicOrigin||'' %>"></span>
-<script src="/connection-return.js?v=<%= assetVersion %>"></script>
-</div></details><% } %>
-<script src="/provider-connect.js?v=<%= assetVersion %>" defer></script>
+<span hidden data-connection-host data-workspace-id="<%= currentWorkspaceId||'' %>" data-public-origin="<%= publicOrigin %>" data-csrf-token="<%= csrfToken %>"></span>
+<script src="/connection-return.js?v=<%= assetVersion %>"></script><script src="/provider-connect.js?v=<%= assetVersion %>" defer></script>

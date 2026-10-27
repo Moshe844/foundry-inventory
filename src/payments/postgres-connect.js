@@ -8,6 +8,7 @@ const {newId,nowIso}=require('../lib/util');
 const entitlements=require('../entitlements/postgres-service');
 const commercial=require('../commercial/service');
 const operations=require('../commercial/operations');
+const intents=require('../connections/authorization-intent');
 
 const PROVIDER='stripe';
 const STATE_PROVIDER='stripe_connect';
@@ -19,7 +20,7 @@ async function rowFor(database,workspaceId){return (await database.query(`SELECT
   WHERE workspace_id=$1 AND provider=$2`,[workspaceId,PROVIDER])).rows[0]||null;}
 
 async function describe(database,workspaceId){const row=await rowFor(database,workspaceId);const held=legacy.platform();
-  const available=Boolean(held.clientId&&held.secretKey);if(!row)return {connected:false,available,
+  const available=Boolean(held.clientId&&held.secretKey);if(!row)return {connected:false,available,liveMode:Boolean(held.secretKey?.startsWith('sk_live_')),
     because:available?'Connect an existing Stripe account owned by this business.':
       'Stripe existing-account sign-in needs the StockChief platform client ID and secret key.'};
   return {connected:true,available,provider:PROVIDER,accountId:row.provider_account_id,displayName:row.display_name,
@@ -33,24 +34,19 @@ async function begin(database,ctx,input={}){const held=legacy.platform();
   const current=await rowFor(database,ctx.workspaceId);
   if(current&&Number(current.charges_enabled)===1)throw new ValidationError(
     'This inventory already has a Stripe account connected. Disconnect it first to use another account.');
-  const connectorId=current?.connector_id||newId('con');const state=crypto.randomBytes(32).toString('base64url');const at=nowIso();
+  const connectorId=current?.connector_id||null;const pending=intents.draft(ctx.workspaceId,ctx.actorId,'stripe',
+    {name:'Stripe',provides:['payments'],config:{connect:true}});
+  const state=crypto.randomBytes(32).toString('base64url');const at=nowIso();
   const callbackUrl=`${input.publicOrigin||input.requestOrigin}/settings/connections/payments/return`;
-  await database.transaction(async(client)=>{if(current?.connector_id)await client.query(`UPDATE workspace_connectors
-      SET setup_status='AUTHORIZING',status='disconnected',last_error=NULL,authorized_by_user_id=$3,updated_at=$4
-      WHERE workspace_id=$1 AND id=$2`,[ctx.workspaceId,connectorId,ctx.actorId,at]);
-    else {const commercialScope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId);
+  await database.transaction(async(client)=>{if(!connectorId){const commercialScope=await entitlements.ownerScopeForWorkspace(client,ctx.workspaceId);
       await entitlements.assertMeterCapacity(client,commercialScope,'connections',1);
-      await client.query(`INSERT INTO workspace_connectors
-      (id,workspace_id,connector_key,display_name,provider_type,provides,config,status,capabilities,
-       setup_status,authorized_by_user_id,created_at,updated_at)
-      VALUES($1,$2,$3,'Stripe','stripe',$4,$5,'disconnected',$6,'AUTHORIZING',$7,$8,$8)`,
-    [connectorId,ctx.workspaceId,`stripe:${connectorId}`,JSON.stringify(['payments']),JSON.stringify({connect:true}),
-      JSON.stringify(['invoices','refunds']),ctx.actorId,at]);}
+    }
     await client.query(`INSERT INTO connection_authorization_states
       (id,state_hash,workspace_id,connector_id,provider_type,actor_id,metadata,expires_at,created_at)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,[newId('cauth'),providerService.stateHash(state),ctx.workspaceId,
-      connectorId,STATE_PROVIDER,ctx.actorId,JSON.stringify({returnOrigin:input.requestOrigin,popup:Boolean(input.popup),callbackUrl}),
-      new Date(Date.now()+15*60000).toISOString(),at]);},{isolation:'SERIALIZABLE',retrySafe:true});
+      connectorId,STATE_PROVIDER,ctx.actorId,JSON.stringify({returnOrigin:input.requestOrigin,popup:Boolean(input.popup),callbackUrl,
+        ...(!connectorId?{pendingConnection:pending}:{})}),
+      new Date(Date.parse(at)+intents.TTL_MS).toISOString(),at]);},{isolation:'SERIALIZABLE',retrySafe:true});
   const query=new URLSearchParams({response_type:'code',client_id:held.clientId,scope:'read_write',state,
     redirect_uri:callbackUrl});if(input.businessName)query.set('stripe_user[business_name]',input.businessName);
   if(input.email)query.set('stripe_user[email]',input.email);
@@ -61,8 +57,6 @@ async function complete(database,query={},options={}){const state=await provider
     WHERE workspace_id=$1 AND id=$2`,[state.workspace_id,state.actor_id])).rows[0];
   if(actor?.role!=='owner')throw new AuthenticationError('The owner who started this Stripe connection no longer has permission.');
   if(query.error){const reason=String(query.error_description||'The Stripe connection was not approved.').slice(0,500);
-    await database.query(`UPDATE workspace_connectors SET status='disconnected',setup_status='AUTHORIZATION_FAILED',
-      last_error=$3,updated_at=$4 WHERE workspace_id=$1 AND id=$2`,[state.workspace_id,state.connector_id,reason,nowIso()]);
     return {connected:false,workspaceId:state.workspace_id,connectorId:state.connector_id,message:reason,
       returnOrigin:state.metadata.returnOrigin};}
   if(!query.code)throw new AuthenticationError('Stripe sent nothing to complete the connection with.');
@@ -80,10 +74,24 @@ async function complete(database,query={},options={}){const state=await provider
     const displayName=account&&(account.display_name||account.business_profile?.name||account.settings?.dashboard?.display_name||
       account.email)||null;const chargesEnabled=legacy.canTakeCharges(account);
     const liveMode=granted.livemode===true||granted.livemode==='true'||account?.livemode===true;
-    const at=nowIso();await database.transaction(async(client)=>{await client.query(`UPDATE workspace_connectors
+    let connectorId=state.connector_id;
+    const at=nowIso();await database.transaction(async(client)=>{
+    const role=(await client.query('SELECT role FROM users WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[state.workspace_id,state.actor_id])).rows[0];
+    if(role?.role!=='owner')throw new AuthenticationError('Start again with a current business owner.');
+    const commercialScope=await entitlements.ownerScopeForWorkspace(client,state.workspace_id);
+    await entitlements.assertCapability(client,commercialScope,'payments.customer');
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['stripe-connect:'+state.workspace_id]);
+    const saved=await rowFor(client,state.workspace_id);
+    if(saved&&saved.provider_account_id!==accountId)throw new ValidationError('Another Stripe account was connected while this window was open. Review it before replacing it.');
+    const target=saved?.connector_id?{id:saved.connector_id}:await intents.connectionForState(client,state);
+    connectorId=target.id;
+    const delta=await require('../commercial/connection-capacity').activationDelta(client,state.workspace_id,connectorId);
+    await entitlements.assertMeterCapacity(client,commercialScope,'connections',delta);
+    if(target._pending)await intents.insert(client,target);
+    await client.query(`UPDATE workspace_connectors
       SET status='connected',paused_at=NULL,setup_status='CONNECTED',last_error=NULL,provider_account_id=$3,
       provider_account_name=$4,updated_at=$5 WHERE workspace_id=$1 AND id=$2`,
-    [state.workspace_id,state.connector_id,accountId,displayName,at]);
+    [state.workspace_id,connectorId,accountId,displayName,at]);
     await client.query(`INSERT INTO payment_connect_accounts
       (id,workspace_id,connector_id,provider,provider_account_id,display_name,charges_enabled,livemode,
        checked_at,connected_by_user_id,created_at,updated_at)
@@ -92,15 +100,14 @@ async function complete(database,query={},options={}){const state=await provider
        provider_account_id=EXCLUDED.provider_account_id,display_name=EXCLUDED.display_name,
        charges_enabled=EXCLUDED.charges_enabled,livemode=EXCLUDED.livemode,checked_at=EXCLUDED.checked_at,
        connected_by_user_id=EXCLUDED.connected_by_user_id,updated_at=EXCLUDED.updated_at`,
-    [newId('paycon'),state.workspace_id,state.connector_id,accountId,displayName,chargesEnabled?1:0,liveMode?1:0,
-      at,state.actor_id]);const commercialScope=await entitlements.ownerScopeForWorkspace(client,state.workspace_id);
+    [newId('paycon'),state.workspace_id,connectorId,accountId,displayName,chargesEnabled?1:0,liveMode?1:0,
+      at,state.actor_id]);
+    await client.query('UPDATE connection_authorization_states SET connector_id=$2 WHERE id=$1',[state.id,connectorId]);
     await commercial.trackOnce(client,{eventName:'first_integration_connected',accountId:commercialScope.accountId,
       sourcePath:'stripe_connect',detail:{providerType:'stripe'}});},{isolation:'SERIALIZABLE',retrySafe:true});
-    return {connected:true,workspaceId:state.workspace_id,connectorId:state.connector_id,returnOrigin:state.metadata.returnOrigin,
+    return {connected:true,workspaceId:state.workspace_id,connectorId,returnOrigin:state.metadata.returnOrigin,
       ...(await describe(database,state.workspace_id))};
-  }catch(error){await database.query(`UPDATE workspace_connectors SET status='error',setup_status='AUTHORIZATION_FAILED',
-      last_error=$3,updated_at=$4 WHERE workspace_id=$1 AND id=$2`,[state.workspace_id,state.connector_id,
-      String(error.message||'Stripe authorization failed.').slice(0,500),nowIso()]);throw error;}}
+  }catch(error){throw error;}}
 
 async function refresh(database,workspaceId,options={}){const row=await rowFor(database,workspaceId);
   if(!row)return describe(database,workspaceId);const held=legacy.platform();if(!held.secretKey)return describe(database,workspaceId);

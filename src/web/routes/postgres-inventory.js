@@ -48,7 +48,10 @@ function createPostgresInventoryRouter(database) {
       FROM skus s JOIN balances b ON b.workspace_id=s.workspace_id AND b.sku_id=s.id
       LEFT JOIN accounting_inventory_cost_balances c ON c.workspace_id=b.workspace_id AND c.sku_id=b.sku_id AND c.location_id=b.location_id
       WHERE s.workspace_id=$1 AND s.item_id=ANY($2::text[]) AND b.on_hand>0 GROUP BY s.item_id`,[req.ctx.workspaceId,result.items.map(i=>i.id)])).rows;
-      result.items=result.items.map(item=>({...item,missingStockCostUnits:Number(missing.find(r=>r.item_id===item.id)?.missing_units||0)}));}
+      const lowSource=require('../../reports/postgres-registry').get('low_stock').source;
+      const low=(await database.query(`SELECT DISTINCT record_id FROM (${lowSource}) source WHERE record_id=ANY($2::text[])`,[req.ctx.workspaceId,result.items.map(i=>i.id)])).rows;
+      const lowIds=new Set(low.map(r=>r.record_id));
+      result.items=result.items.map(item=>({...item,atOrBelowReorderPoint:lowIds.has(item.id),missingStockCostUnits:Number(missing.find(r=>r.item_id===item.id)?.missing_units||0)}));}
     // Rendering must work with a read-only business connection. Authorized
     // onboarding choices initialize state; browsing never creates it.
     const state=await onboarding.get(database,req.ctx.workspaceId);

@@ -6,8 +6,11 @@
   if(pending||document.hidden)return;pending=true;
   try{
    const response=await fetch(root.dataset.statusUrl,{headers:{accept:'application/json'},credentials:'same-origin',signal:AbortSignal.timeout(10000)});
-   if(!response.ok)return;const state=await response.json(),next=JSON.stringify([state.label,state.entries]);if(next===signature)return;signature=next;
+   if(!response.ok)return;const state=await response.json(),next=JSON.stringify([state.label,state.entries,state.enabled,state.available,state.connected]);if(next===signature)return;signature=next;
    root.querySelector('[data-mail-preparation-state]').textContent=state.label;
+   const toggle=root.querySelector('[role=switch]'),enabled=root.querySelector('[name=enabled]');
+   if(toggle){toggle.setAttribute('aria-checked',String(state.enabled));toggle.disabled=!state.connected||!state.available&&!state.enabled;root.querySelector('[data-mail-preparation-toggle-label]').textContent=state.enabled?'On':'Off';}
+   if(enabled)enabled.value=state.enabled?'0':'1';
    const log=root.querySelector('[data-mail-preparation-log]'),nodes=[];
    for(const entry of state.entries){const p=document.createElement('p'),strong=document.createElement('strong'),a=document.createElement('a'),time=document.createElement('time');
     strong.textContent=entry.label;a.href='/mail/'+encodeURIComponent(entry.id);a.dataset.dest=a.getAttribute('href');a.textContent=entry.subject;time.dateTime=new Date(entry.at).toISOString();time.dataset.localTime='';time.textContent=time.dateTime;
